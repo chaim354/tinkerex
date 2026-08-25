@@ -10,15 +10,28 @@ developers. Working name: **Maker Server** (rename freely).
 > file is loaded into an agent's context on *every* session, so length here is a tax on every
 > future task, and a rule buried in 600 lines of history is a rule nobody reads.
 >
+> **It also holds only what MOST tasks need.** An invariant that binds one area — addons, the
+> Measure view, deploy secrets, backup — lives in **`docs/invariants/<area>.md`** with a stub under
+> its §14 anchor naming the paths that trigger it. That is not a demotion and those files are not
+> optional: **read the pointed-at file before touching the paths its stub names.** Rules move there
+> to be *found when they apply* instead of skimmed on every unrelated session.
+> `test/docs_hygiene_test.rb` fails if a stub loses its file or this file outgrows its ceiling.
+>
 > **It also does not describe the sibling repos.** The sync engine and the Rust client have their
 > own repositories and their own CLAUDE.md (§3). Rules about how the changelog is built, how
 > commits are sequenced, how chunks are refcounted, or how a mount adapter works belong **there** —
 > what belongs here is only what a *maker-app* task needs. When you find yourself needing the
 > other half, you are probably in the wrong repo; check §3 before adding it back.
 >
-> **Do not renumber the sections.** Code comments cite them by number
-> (`§15` ~141 times, `§9` ~175, `§10` ~107, `§5` ~95 — `grep -rn "§[0-9]" app/ lib/`). The same
-> applies to §12's item numbers, which are cited as `§12.7`, `§12.12`, "§12 item 11".
+> **Do not renumber the sections.** Code comments cite them by number — **323 `§` references across
+> `app/` and `lib/`** on 2026-08-25 (`grep -rhoE "§[0-9]+[a-j]?" app/ lib/ | sort | uniq -c | sort -rn`),
+> led by `§14a` 53, `§15` 36, `§14c` 27, `§10` 25, `§6` 20. The same applies to §12's item numbers,
+> cited as `§12.7`, `§12.12`, "§12 item 11" — which is why a CLOSED item keeps its slot.
+> **A section that MOVES keeps its anchor here:** §14c/g/h/i are now stubs pointing into
+> `docs/invariants/`, so every existing citation still resolves.
+> *(Until 2026-08-25 this read "`§15` ~141, `§9` ~175, `§10` ~107, `§5` ~95" — four figures summing
+> to 518 in a tree containing 323 in total. The rule was right; its evidence was invented. §15's
+> "verify a commit reference the way you verify a guard" binds on counts too.)*
 
 ---
 
@@ -250,6 +263,11 @@ Deploy OVH only on explicit request. `docs/DEPLOY.md`.
                  bin/backup-cron-install. No gate covers these; invariants in §14i.
 /docs            sync-protocol.md, SYNC_SERVER.md, STATUS.md, DEPLOY.md, roads-not-taken.md,
                  architecture-sync-engine.md, adr/
+/docs/invariants §14's AREA rules, one file per area — addons.md, measure-view.md,
+                 deploy-secrets.md, backup-restore.md. NOT optional reading and NOT
+                 demoted: each is §14 material that binds only inside its own subsystem,
+                 pointed at from a stub under its original §14 anchor. Read the file before
+                 touching the paths its stub names. Guard: test/docs_hygiene_test.rb.
 ```
 
 **There is no `/engines` and no `/client` here.** The sync engine went to
@@ -302,76 +320,41 @@ on all three OSes against the sync server — that half's status lives in `tinke
 6. **Linux and Windows CI coverage is skipped, not passing** — no linux or windows runner is
    registered in ANY of the three repos (macOS is, in all three). §15 has the measured table and
    its date.
-7. **RESOLVED 2026-08-20 — the `SQLite3::BusyException` intermittent was an FSYNC problem, and the
-   fix is `timeout: 15000`.** Kept as an item rather than deleted because code cites §12 by number.
-   It needed sustained **disk I/O**, never CPU: 0 of 12 suite runs on a quiet box against 3 of 8
-   with `dd`+`sync` loops. Captured mid-failure, one worker held **16 connections all with open
-   transactions** and the raising frame was **`User#next_seq!`**. Verified A/B under identical
-   load: **5 s → 2 of 8 runs red, 15 s → 0 of 8**. The rule that outlives it is in **§14e**.
+7. **RESOLVED 2026-08-20 — the `SQLite3::BusyException` intermittent was a stalled FSYNC, not bad
+   lock logic; the fix is `timeout: 15000`.** The rule that outlives it is **§14e**. Kept as a
+   numbered slot because code cites §12 by number. Measurements: `docs/STATUS.md`.
 8. **`FilesController#index` render cost — BOUNDED UNDER ONE OF THE THREE SORTS, not unbounded.**
    `FOLDER_PAGE = 250` pages the folder view **only under the name sort** (PR #135,
    `files_controller.rb`): `type` is computed and `modified` reads the **port's** mtime, so neither
    is a column an `ORDER BY` could page on without duplicating adapter logic or changing which
    authority answers "Modified". Those two still load the whole folder. The residual is per-row ERB
    — identical on all three backends, so it is HTML generation, not query cost.
-   *(This item read "Pagination never existed" until 2026-08-25. That was false from 2026-08-05
-   onward: PR #135 added the paging and the entry was never updated. Recovered from unmerged
-   PR #142 and re-verified against the code.)*
+   *(Read "Pagination never existed" until 2026-08-25 — stale from 2026-08-05, when PR #135 added
+   the paging. `docs/STATUS.md`.)*
 9. **No web UI at all** for inventory, BOM, suppliers, locations, collections, tags — the models
    and v1 API exist. Obvious next slices.
-10. **CLOSED 2026-08-25 — a device push DOES nudge project-folder filing now. Kept as a numbered
-    slot because §14f and the audit cite "§12.10", and because this item was wrong twice in
-    opposite directions and the next reader deserves both corrections.**
-    `Maker::ProjectIntakeJob.nudge` (PR #135) **enqueues** a delayed sweep rather than running one,
-    with `limits_concurrency` collapsing a burst into a single sweep. It was **callerless** from the
-    engine extraction until now: `984a3dc` moved its caller behind the engine's `Sync::Hooks` seam
-    and the engine left the repo (§12.12). It is now called from
-    **`FileLayer::ChunkRemote::ChangelogSync#call`** — once per pull, after the catch-up loop —
-    because that pull is exactly where this app LEARNS about a node another device pushed. Latency:
-    "up to 15 minutes" → "the 2-minute pull, plus `NUDGE_DELAY`".
-    **Three things not to undo.** Only **live FILE** arrivals are collected (a directory has nothing
-    to file; a tombstone is a removal). The `maker_projects` lookup is asked **once for the whole
-    pull**, never per entry — the per-node form was costed for a door that fires once per file, and
-    in a page loop it would pay a query per entry to enqueue a job `limits_concurrency` discards
-    anyway. And **`full_resync` deliberately does not feed it**: it re-applies the entire tree, so
-    every file would look like an arrival. All three are mutation-checked in
-    `changelog_sync_test.rb`.
-    **The two wrong versions, recorded because both looked reasonable.** Until 2026-08-25 this item
-    refused the fix on the grounds that "a 500-file device sync would become 500 synchronous
-    full-project sweeps" — an objection PR #135 had already answered months earlier. Unmerged
-    PR #142 then recorded the item CLOSED, which was true when written and false by the time it was
-    read. The correction that replaced both, on 2026-08-25, still guessed wrong once more: it said
-    re-wiring "is a protocol question... the signal would have to cross the wire from the standalone
-    sync server." **It does not** — the changelog pull already carries it, locally. Three
-    consecutive wrong answers on one item is why this entry now names its own history.
+10. **CLOSED 2026-08-25 — a device push DOES nudge project-folder filing.**
+    `FileLayer::ChunkRemote::ChangelogSync#call` calls `Maker::ProjectIntakeJob.nudge` once per
+    pull, after the catch-up loop, because that pull is where this app LEARNS about a node another
+    device pushed. Latency: "up to 15 minutes" → "the 2-minute pull, plus `NUDGE_DELAY`". **The
+    three things not to undo are in §14f.** Kept as a numbered slot because §14f and the audit cite
+    "§12.10". This item was wrong three times running, in both directions; that history is worth
+    reading before re-opening it, and it is in `docs/STATUS.md`.
 11. **Whether a project-scoped upload should duplicate-check across the whole project, not just its
     immediate destination, is an open product question.** Today two files can both be named
     `dup.stl` under one project — the first filed into its category subfolder, the second left at
     the root — because the only collision checks are the port's own write-time clobber and
     `Maker::MoveNode`'s destination-folder collision, both scoped to one path.
-12. **DONE (2026-08-25) — embedded `chunk` is retired and the sync engine is not a dependency of
-    this app.** Kept as an item rather than deleted, because these are cited by number and because
-    the entry it replaces said the opposite: for two days this read "chunk IS NOT RETIRED," with
-    the argument for deferring. Arc D Part 2 did it. Consequences are now stated where they belong
-    — `LIBRARY_BACKEND` in §2 and §14a, the dropped tables in §5, the unrouted endpoints in §6.
-    The one thing worth keeping here is **why it was deferred twice**: the "68 of 224 references"
-    figure quoted as the cost was the wrong number to plan from — **36 of 43 app-side hits and 11
-    of 68 test-side hits were PROSE**, and the real coupling was 7 wiring sites and 57 test files,
-    60 of whose references sat in one file that was deleted. A reference count is not a coupling
-    count.
-13. **DONE 2026-08-25 — the two pre-separation `/docs` files are dealt with.**
-    `docs/SYNC_SERVER.md` **moved** to `chaim354/tinkerex-sync` (a redirect stub stays, because ~8
-    docs and `config/database.yml` cite the path); `docs/architecture-sync-engine.md` is marked
-    HISTORICAL rather than rewritten, since it is the pre-split v1 design of all three repos and is
-    worth keeping for the *why*. Four stale citations of the moved doc were corrected in
-    `app/models/user.rb` and `config/database.yml` — including one naming
-    `config/initializers/postgres_pooler_check.rb`, which went with the engine and does not exist
-    here.
-    **The residual, which is NOT this repo's to close:** that pooler probe is unwired in the sync
-    repo too — `Sync::PostgresPoolerCheck` is correct and tested there and nothing invokes it.
-    First recorded in `docs/FIX-LOG-2026-08-19.md` when it meant "unexercised"; the extraction made
-    it "unwired." Recorded in that repo's own CLAUDE.md and doc. **The constraint does not bind this
-    app** — nothing here calls `next_seq!` (§14e).
+12. **DONE 2026-08-25 — embedded `chunk` is retired and the sync engine is not a dependency of this
+    app** (Arc D Part 2). Consequences are stated where they belong: `LIBRARY_BACKEND` in §2 and
+    §14a, the dropped tables in §5, the unrouted endpoints in §6. The lesson that outlives it is in
+    **§14e** ("a reference count is not a coupling count"). Kept as a numbered slot.
+13. **DONE 2026-08-25 — the two pre-separation `/docs` files are dealt with.** `docs/SYNC_SERVER.md`
+    **moved** to `chaim354/tinkerex-sync`, leaving a redirect stub because ~8 docs and
+    `config/database.yml` cite the path; `docs/architecture-sync-engine.md` is marked HISTORICAL
+    rather than rewritten (§10). **The residual is NOT this repo's to close:** the pooler probe is
+    unwired in the sync repo too, and **the constraint does not bind this app** — nothing here calls
+    `next_seq!` (§14e).
 Smaller deliberate leftovers live in `docs/STATUS.md` under "Still open".
 
 ---
@@ -459,22 +442,24 @@ Each line below cost a real bug **in this repo**. `docs/STATUS.md` has the full 
 them. Invariants belonging to the sync engine or the desktop client live in those repos'
 own CLAUDE.md — see §3 and §14j.
 
+**Four subsections live in `docs/invariants/` and are stubs here** — 14c (addons), 14g (deploy
+secrets), 14h (Measure), 14i (backup). They are §14 material, not an appendix: each binds hard
+inside its own subsystem and not at all outside it, so it is loaded when it applies rather than
+skimmed on every unrelated session. **Read the file before touching the paths its stub names.**
+Anything below that binds on only one area belongs there too, with a stub here.
+
 ### 14a. The FileLayer port
 
 - **`LIBRARY_BACKEND=chunk_remote|share|s3`, chosen per DEPLOYMENT, not per user — and `chunk` is
-  REFUSED, not aliased.** Embedded `chunk` was retired 2026-08-25 (§12.12): the gem is gone and
-  `Sync::` is undefined in this process, so `FileLayer.build` raises `ArgumentError` on the old
-  value rather than quietly serving chunk_remote. A deployment still carrying it is misconfigured
-  — its library lives on a sync server it has not been pointed at — and silently substituting a
-  backend would hand it an empty library that reads as data loss. **The default is `share`**, the
-  only hermetic backend left; nothing in production relies on it, since every Kamal destination
-  sets `LIBRARY_BACKEND` explicitly.
-  `chunk_remote` is the maker app as a SYNC CLIENT against a standalone sync server. Reads answer
-  from a locally-mirrored `nodes` (so §2's "the WAN is never in the metadata path" is true of this
-  app), writes go over the v1 API, and **the engine is not in the process at all**. Its
-  capabilities are `versioned`/`syncable` true, **`presignable` FALSE** — it cannot verify that a
-  URL another server signed points off-box, so it streams (`FileLayer::ChunkRemote`'s own header
-  carries the argument).
+  REFUSED, not aliased.** Embedded `chunk` was retired 2026-08-25 (§12.12): `Sync::` is undefined
+  in this process, so `FileLayer.build` raises `ArgumentError` on the old value rather than quietly
+  serving chunk_remote — a deployment still carrying it is misconfigured, and substituting a backend
+  would hand it an empty library that reads as data loss. **The default is `share`**, the only
+  hermetic backend left; nothing in production relies on that, since every Kamal destination sets
+  `LIBRARY_BACKEND` explicitly. `chunk_remote` is the maker app as a SYNC CLIENT: reads answer from
+  a locally-mirrored `nodes`, writes go over the v1 API, **the engine is not in the process at
+  all**. Capabilities `versioned`/`syncable` true, **`presignable` FALSE** — it cannot verify that a
+  URL another server signed points off-box, so it streams.
   Reads — `stat`/`stat_all`/`read`/`download`/`trashed` — are answered by all three adapters, as
   are the metadata writes `mkdir`/`move`/`delete`/`undelete`. Only the BYTE write (`write`) is
   **Share + S3 only**: chunk_remote's upload is the two-phase `begin_upload`/`finalize_upload`
@@ -513,17 +498,14 @@ own CLAUDE.md — see §3 and §14j.
   except `Maker::Addons::LibraryOutput`, which generates bytes server-side and has no client to
   presign for, so it calls the port's own `put_chunk` instead, and `finalize_upload` records the
   version. That is what keeps §15 true for a chunk_remote upload. **`put_chunk` is a PORT VERB
-  rather than one shared call**, and the reason is worth keeping even though only one chunk-family
-  adapter is left: until Arc B (2026-08-23) it *was* one shared call, `Storage::ChunkStore#put`,
-  dialled directly from `LibraryOutput`, and that direct call was a `NameError` on any deployment
-  that does not load the sync engine in-process — `chunk_remote` is exactly that deployment, and
-  **every addon save there raised**, measured against a live standalone server.
-  `FileLayer::ChunkRemote#put_chunk` PUTs to `begun.put_urls[hash]` over HTTP. It could not be one
-  shared implementation with the embedded adapter, because on embedded chunk a presigned URL for a
-  memory/local store can point BACK AT RAILS ITSELF, and a server-side PUT to it is a **loopback
-  call into the same Puma pool** — §14e's recorded reentrancy bug (14–24 second stalls, outright
-  404s). Only the adapter knows which situation it is in, which is why the caller cannot decide.
-  The maker layer now names **zero** chunk-internals references (§14c).
+  rather than one shared call**: until Arc B it *was* one shared call (`Storage::ChunkStore#put`,
+  dialled straight from `LibraryOutput`), which is a `NameError` on any deployment not loading the
+  engine in-process — `chunk_remote` is exactly that, so **every addon save there raised**, measured
+  against a live standalone server. It also could not be shared with the embedded adapter, where a
+  presigned URL for a memory/local store can point BACK AT RAILS and a server-side PUT to it is a
+  **loopback into the same Puma pool** (§14e's reentrancy bug). Only the adapter knows which
+  situation it is in, which is why the caller cannot decide. The maker layer now names **zero**
+  chunk-internals references (§14c).
 - **`finalize_upload` broadcasts by DEFAULT, with exactly one explicit opt-out** —
   `Maker::Addons::LibraryOutput` passes `broadcast: false`, preserving what addon saves have
   always done (never nudged live devices; open item, `docs/STATUS.md`). `mkdir`/`move`/
@@ -532,106 +514,65 @@ own CLAUDE.md — see §3 and §14j.
   rather than delegating the choice — an unwritten third caller that forgets to opt out gets a
   working nudge, not a silent gap.
 - **AN ORPHANED RESTORE IS REFUSED, ON EVERY BACKEND THAT CAN REACH THE STATE — AND THIS REVERSED
-  AN EARLIER RULE, WHICH IS WHY IT IS RECORDED RATHER THAN ASSUMED.** The old rule reparented an
-  orphan to the library ROOT when its parent was itself tombstoned, rather than raising. The
-  evidence that overturned it was already in the old bullet's own text: since `delete` cascades a
-  whole directory in one call, restoring a CHILD before its PARENT is the **mainline** case, not a
-  hand-crafted edge case — and a bottom-up restore "permanently scatters that folder's contents to
-  the root, irreversibly." An outcome that silent, on that common a path, and that irreversible is
-  worth refusing even though refusing is less convenient than succeeding: **a refusal is
-  recoverable — restore the folder, then the file; a scatter is not.**
-  `FileLayer::ChunkRemote` posts no `to_root` in its restore body and takes the sync server's own
-  strict default, so the server's 409 reaches `Transport#interpret` as `UnsupportedOperation` with
-  a message naming the ACTION a user can take ("restore the folder first"), not just the failure.
-  Pinned across the backends by the shared mutation contract
-  (`test/services/file_layer/adapter_mutation_contract.rb`), gated on `dir_deletable?`: share and
-  s3 cannot reach this state through the port AT ALL — directory delete is refused outright on
-  both, so there is no door that ever produces a live child under a tombstoned parent for them to
-  disagree about.
-  The device-facing side of this argument — why the sync server's own trash controller keeps a
-  caller-supplied `to_root:` instead — is that repo's rule now, and lives in its CLAUDE.md. **The
-  web `TrashController` here chooses the refusal on the user's behalf** because a browser Restore
-  click has no prompt to offer; see its own comment for the actionable message.
+  AN EARLIER RULE** (which reparented an orphan to the library ROOT). Since `delete` cascades a
+  whole directory in one call, restoring a CHILD before its PARENT is the **mainline** case, not an
+  edge case — and reparenting permanently scatters that folder's contents to the root. **A refusal
+  is recoverable — restore the folder, then the file; a scatter is not.** `FileLayer::ChunkRemote`
+  posts no `to_root` and takes the sync server's strict default, so the 409 reaches
+  `Transport#interpret` as `UnsupportedOperation` with a message naming the ACTION ("restore the
+  folder first"), not just the failure. Pinned by the shared mutation contract
+  (`adapter_mutation_contract.rb`) gated on `dir_deletable?`: share and s3 cannot reach this state
+  through the port at all, so there is no door producing a live child under a tombstoned parent for
+  them to disagree about. The device-facing half — why the sync server's trash controller keeps a
+  caller-supplied `to_root:` — is that repo's rule. **The web `TrashController` chooses the refusal
+  on the user's behalf** because a browser Restore click has no prompt to offer.
 - **THE LOCAL MIRROR IS DELIBERATELY STALE BETWEEN PULLS, AND ONLY THE RECURRING JOB MAY CLOSE
-  THAT GAP — NEVER A READ PATH.** `FileLayer::ChunkRemote#refresh!` has five TRIGGERING
-  operations, all this app's own writes — `mkdir`/`move`/`delete`/`undelete`/`finalize_upload`
-  (chunk_remote.rb) — and `ChangelogSync`'s only OTHER caller anywhere in `app/`, `lib/` or
-  `config/` is the job named below. A node another device, or the sync server itself, creates is
-  invisible to the maker UI until one of those five fires — confirmed by driving it: a node posted
-  straight to the server's own `/v1/nodes` stayed absent from `user.nodes.present` (checked
-  directly, not merely rendered) with nothing else touched; only after
-  `FileLayer::RemoteChangelogPullJob.perform_now` runs does a subsequent `GET /files` show it.
-  `FileLayer::RemoteChangelogPullJob` (Arc B gap (a)) is the sanctioned freshness
-  mechanism: a per-user recurring pull, `config/recurring.yml`'s `remote_changelog_pull` entry,
-  every 2 minutes, gated to `chunk_remote` ONLY — `.pull_all!`'s
-  `FileLayer.current.is_a?(FileLayer::ChunkRemote)` check, a CLASS check rather than a new
-  `Capabilities` member, because `syncable` was true for embedded chunk AND chunk_remote
-  alike and could not
-  tell "this app's `nodes` table is a mirror of a REMOTE changelog" from "the engine shares this
-  app's own database in-process." (Only chunk_remote is left, but the class check stays: a future
-  syncable backend would face the same ambiguity.) **Do not "fix" staleness by adding a synchronous pull
-  to `FilesController#index` or any other read** — that is precisely the WAN-in-the-metadata-path
-  §2 exists to forbid, made on every request rather than once every 2 minutes, and it is what the
-  journey suite's own rewritten test now pins against (a plain read asserted NOT to see a
-  server-side node) rather than for. Bounded staleness (~2 minutes) is the trade, the same one
-  `Library::ScanJob`'s poll already makes for share/s3.
+  THAT GAP — NEVER A READ PATH.** `FileLayer::ChunkRemote#refresh!` has five TRIGGERING operations,
+  all this app's own writes — `mkdir`/`move`/`delete`/`undelete`/`finalize_upload` — and
+  `ChangelogSync`'s only OTHER caller in `app/`, `lib/` or `config/` is the job named next. A node
+  another device or the sync server creates is invisible to the maker UI until one of those five
+  fires; driven and confirmed, not reasoned. `FileLayer::RemoteChangelogPullJob` is the sanctioned
+  freshness mechanism: a per-user recurring pull (`config/recurring.yml`, every 2 minutes), gated to
+  `chunk_remote` by a CLASS check rather than a `Capabilities` member — `syncable` was true for
+  embedded chunk AND chunk_remote alike and could not tell "this `nodes` table mirrors a REMOTE
+  changelog" from "the engine shares this app's database in-process". (Only chunk_remote is left;
+  the class check stays, because a future syncable backend faces the same ambiguity.) **Do not "fix"
+  staleness with a synchronous pull in `FilesController#index` or any other read** — that is exactly
+  the WAN-in-the-metadata-path §2 forbids, paid per request instead of once every 2 minutes, and the
+  journey suite pins AGAINST it (a plain read asserted NOT to see a server-side node). Bounded
+  staleness (~2 min) is the trade, the same one `Library::ScanJob`'s poll makes for share/s3.
 - **`LibraryBroadcast.batch` HAS TWO ANSWERS, AND THE SPLIT IS "IS THERE A CHANGELOG TO COALESCE
-  AGAINST", NOT "IS THE ENGINE LOADED."** It had three while the engine could be in-process; that
-  branch is gone with the gem. Share and s3 get a bare `yield` — they have no changelog at all,
-  nothing to coalesce, so `yield` is the SAME behaviour with the bookkeeping removed, not a
-  degraded one. `chunk_remote` has no engine in-process yet DOES have a changelog, reached over
-  HTTP: left alone, an eager `Maker::ProjectIntake` sweep paid one changelog PULL per mutation on
-  top of the mutation's own request — a batch of 3 moves cost 3 pulls, measured, two WAN round
-  trips per file. `FileLayer::ChunkRemote#batch` (Arc B gap (c)) is that backend's own coalescing:
-  a `Thread.current` frame, DELIBERATELY never an ivar on `self` — `FileLayer.current` memoizes
-  ONE adapter instance for the whole process, shared across every Puma thread, so per-batch state
-  living on the object would let one request's batch leak into a concurrent request's unrelated
-  mutation. `#move` alone dirties it, through a `#refresh_or_defer!` that marks the open batch
-  dirty instead of pulling; the batch's own `ensure` block pulls exactly once, on ANY exit, not
-  only success, because every move that ran before an exception has already committed on the
-  SERVER. **`mkdir` is DELIBERATELY NOT deferred, and must not be made "uniform" with `move`** —
-  `Maker::LibraryFolder#ensure_segment` reads the mirror row back in the SAME call that creates
-  it, right after `mkdir` returns, so deferring that pull would turn an ordinary new category
-  folder — created mid-sweep the first time a project sees it — into an
-  `ActiveRecord::RecordNotFound`. `delete`/`undelete`/`finalize_upload` keep their unconditional
-  `refresh!` for the identical reason: each hands a caller a state read from the very row the pull
-  just created or updated. `move` alone has no such reader — `Maker::MoveNode#apply_move`'s own
-  comment says outright that the RELOAD is the return value, never trusting what `move` hands
-  back — which is what makes deferring safe there and only there; a future editor "simplifying"
-  the deferral onto all five verbs reintroduces a crash on the very first folder a sweep creates.
-- **`ChunkRemote#transport` IS PER-USER (Arc C, 2026-08-24) AND DELIBERATELY HOLDS NO CACHE AT
-  ALL — NOT AN IVAR, AND NOT `Thread.current` EITHER, WHICH IS THE PART EASY TO GET WRONG BY
-  ANALOGY WITH `#batch` TWO BULLETS UP.** Before Arc C this method was `@transport ||=
-  Transport.new(token: ENV.fetch("CHUNK_REMOTE_TOKEN"))` — one token, because there was only ever
-  one device in the whole deployment. That was THE cross-tenant defect this arc closes:
-  `FileLayer.current` is ONE adapter instance memoized for the whole process
-  (`FileLayer.current ||= build`) and shared across every Puma thread, so an ivar memo here is not
-  a per-request cache, it is PROCESS-WIDE STATE — the first user to call this method after boot
-  would hand every OTHER user's request that same user's token until the process restarts.
-  **Mutation-checked, freshly, for this entry: restoring the one-line `@transport ||=` shape and
-  rerunning `transport_isolation_test.rb` reproduces the leak deterministically — `200 of 400`
-  threaded observations (8 threads, 50 iterations each, a `CountDownLatch` forcing simultaneous
-  start) carried the WRONG user's token, matching "roughly half, once the first caller wins the
-  race" exactly rather than approximately.** The reasoning does NOT stop at "don't use an ivar" —
-  `#batch` two bullets up uses `Thread.current` for a similar-LOOKING problem, and copying that
-  shape here would be strictly WORSE, not merely unnecessary. `#batch`'s frame exists to coalesce
-  STATE ACROSS SEVERAL CALLS within one logical operation (deferring `refresh!` until a batch
-  closes) — there is real work worth caching. A per-user `Transport` has NOTHING to cache:
-  `Transport.new` is four ivar assignments and opens no connection (every request is its own fresh
-  `Net::HTTP.start` block), so building one fresh on every call costs nothing measurable. And Puma
-  REUSES threads across unrelated requests, so a `Thread.current`-cached transport would go on
-  serving a LATER request for a DIFFERENT user with the FIRST user's token until that specific
-  thread happened to rotate back to the first user — a smaller, sneakier version of the identical
-  leak, and one that would also serve a since-rotated token forever once it did. Building fresh
-  every call has no cache to go stale and no shared slot for a second user to land in — which is
-  why the constructor-injected `transport:` (a DIFFERENT ivar, same name, checked FIRST and
-  returned unconditionally for every user) is the one exception and stays exactly that
-  unconditional: an injected transport is a test's explicit "give every caller this one object,"
-  not a cache anything resolves into. **The mutation-check for this method is "put `@transport ||=`
-  back," never "add a different kind of cache" — any caching keyed on less than the user is the
-  shape of the bug, `Thread.current` included.** Full story, including the lazy-provisioning half
-  (`Provisioning#call`, `user.with_lock` across the admin HTTP call, exactly-once under concurrency
-  proved with two real threads and a deliberately-slow fake): `docs/STATUS.md`, "Arc C."
+  AGAINST", NOT "IS THE ENGINE LOADED."** Share and s3 get a bare `yield` — no changelog at all,
+  nothing to coalesce, so that is the SAME behaviour with the bookkeeping removed, not a degraded
+  one. `chunk_remote` has no engine in-process yet DOES have a changelog, over HTTP: left alone, an
+  eager `Maker::ProjectIntake` sweep paid one changelog PULL per mutation — a batch of 3 moves cost
+  3 pulls, measured, two WAN round trips per file. `FileLayer::ChunkRemote#batch` coalesces in a
+  `Thread.current` frame, **DELIBERATELY never an ivar on `self`**: one adapter instance is shared
+  across every Puma thread, so per-batch state on the object leaks one request's batch into
+  another's unrelated mutation. Its `ensure` pulls exactly once on ANY exit, not only success,
+  because every move that ran before an exception has already committed on the SERVER.
+  **`mkdir` IS DELIBERATELY NOT DEFERRED and must not be made "uniform" with `move`** —
+  `Maker::LibraryFolder#ensure_segment` reads the mirror row back in the SAME call that creates it,
+  so deferring turns an ordinary new category folder into `ActiveRecord::RecordNotFound`.
+  `delete`/`undelete`/`finalize_upload` keep their unconditional `refresh!` for the identical
+  reason: each hands a caller state read from the row the pull just wrote. **`move` alone has no
+  such reader** — `Maker::MoveNode#apply_move` treats the RELOAD as the return value, never
+  trusting what `move` hands back — which is what makes deferring safe there and only there.
+- **`ChunkRemote#transport` IS PER-USER (Arc C) AND DELIBERATELY HOLDS NO CACHE AT ALL — NOT AN
+  IVAR, AND NOT `Thread.current` EITHER**, which is the part easy to get wrong by analogy with
+  `#batch` two bullets up. `FileLayer.current` memoizes ONE adapter for the whole process, so an
+  ivar memo here is not a per-request cache, it is PROCESS-WIDE STATE: the pre-Arc-C
+  `@transport ||=` handed every other user the first caller's token until restart. Restoring that
+  one line still reproduces the leak deterministically — **`200 of 400` threaded observations carry
+  the WRONG user's token** (`transport_isolation_test.rb`). `Thread.current` would be strictly
+  WORSE, not merely unnecessary: `#batch` caches real cross-call work, whereas `Transport.new` is
+  four ivar assignments opening no connection — and **Puma REUSES threads across unrelated
+  requests**, so a thread-cached transport serves a LATER user the FIRST user's token, and a
+  since-rotated one forever. The ONE exception is the constructor-injected `transport:` (checked
+  first, returned unconditionally) — a test's explicit "give every caller this object", not a cache
+  anything resolves into. **The mutation-check is "put `@transport ||=` back", never "add a
+  different kind of cache": anything keyed on less than the user is the shape of the bug.**
+  Arc C in full, including lazy provisioning under concurrency: `docs/STATUS.md`.
 - **`port_writable` IS NOT "accepts uploads"** — the single most-misread name here. It
   answers *which upload flow the UI drives*: true → POST bytes to the port (share, s3);
   false → drive the port's own `begin_upload`/`finalize_upload` presigned flow (chunk_remote).
@@ -808,24 +749,22 @@ own CLAUDE.md — see §3 and §14j.
   new path"* — false; a move is self-healing only when its **destination** is observable.
   **Assume every path that writes is exposed until you have checked it** (`observable!`).
 - **`observable!` CANNOT COVER CHUNK, SO THE DOOR DOES — `Library::ReservedNames.reserved?`.**
-  The bullet above says "every path that writes"; on chunk there **is no path through an
-  adapter** (not `port_writable`), so the commit path is driven directly and no `observable!`
-  exists to reach. Probed through the real doors: a `.DS_Store`/`.trash`/`.maker-tmp-x` output
-  was **302 + a live node on chunk** and **422 on share/s3** — §14a's one-condition-two-answers,
-  with the main deployment on the wrong side. **THREE web doors mint a leaf name and all three
-  now ask two questions in the same breath**: `Maker::MoveNode.valid_leaf_name?` (syntax) then
-  `ReservedNames.reserved?` (the library's own namespace) — `Tools::AddonsController#parse_files`,
-  `LibraryBrowseController#create_folder`, `FilesController#begin_upload`. The last had **neither**
-  and was the weakest door in the app: `begin=200, finalize=200`, a live node named
-  `"../../escape.txt"` in the changelog. It is `syncable`-gated (chunk-only), so **no cross-backend
-  leg could ever have caught it**. Three things not to undo: the predicate is the **UNION** of the
-  two adapters' guards, because a door cannot know which backend is deployed and the intersection
-  is the same divergence with the sign flipped (it leaves `.maker-tmp-x` at share 422 / s3 302);
-  it is **composed from `Scanner::TRASH_PREFIX`/`TEMP_PREFIX`/`OsClutter`, never a fourth copy of
-  the strings**; and it is **NOT folded into `valid_leaf_name?`**, because that one is also called
-  by `Maker::MoveNode#call` on a name that usually **already exists**, and a real macOS device
-  mount pushes `.DS_Store` nodes through the sync server's own finalize by design — folding would make a
-  population the product creates permanently unmovable to close a hole about *minting* a name.
+  On chunk there **is no path through an adapter** (not `port_writable`), so the commit path is
+  driven directly and no `observable!` exists to reach. Probed through the real doors: a
+  `.DS_Store`/`.trash`/`.maker-tmp-x` output was **302 + a live node on chunk** and **422 on
+  share/s3** — §14a's one-condition-two-answers, with the main deployment on the wrong side.
+  **THREE web doors mint a leaf name and all three now ask two questions in the same breath**:
+  `Maker::MoveNode.valid_leaf_name?` (syntax) then `ReservedNames.reserved?` (the library's own
+  namespace) — `Tools::AddonsController#parse_files`, `LibraryBrowseController#create_folder`,
+  `FilesController#begin_upload`. The last had **neither** and was the weakest door in the app
+  (`begin=200, finalize=200`, a live node named `"../../escape.txt"` in the changelog); it is
+  `syncable`-gated, so **no cross-backend leg could ever have caught it**. Three things not to
+  undo: the predicate is the **UNION** of the two adapters' guards, because a door cannot know
+  which backend is deployed and the intersection is the same divergence sign-flipped; it is
+  **composed from `Scanner::TRASH_PREFIX`/`TEMP_PREFIX`/`OsClutter`, never a fourth copy of the
+  strings**; and it is **NOT folded into `valid_leaf_name?`**, which `Maker::MoveNode#call` also
+  calls on names that already exist — a macOS mount pushes `.DS_Store` nodes through finalize by
+  design, so folding would make a population the product creates permanently unmovable.
 - **A LISTING IS NOT A SNAPSHOT.** `list_objects_v2` paginates, and a failure on page 7 of
   40 is a **well-formed lie** that reads exactly like the user deleting 82% of their library.
   It is the `EACCES` problem again minus the escape hatch: `unreadable_dirs` scopes a gap to
@@ -861,546 +800,15 @@ own CLAUDE.md — see §3 and §14j.
   deterministic tie-break must compare the old path against every identical candidate —
   removing that trades the no-lost-file guarantee for speed.
 
-### 14c. Addons and GPL sidecars
+### 14c. Addons and GPL sidecars → **`docs/invariants/addons.md`**
 
-- **Two sidecars exist, both GPL invoked ONLY over HTTP, never linked** (§9): `sidecar/boxes`
-  (GPL-3.0) and `sidecar/openscad` (GPL-2.0). **Three facts are guarded by
-  `test/deploy_hygiene_test.rb` rather than memory** — the first two were real shipped bugs,
-  and all three live in files the Rails process never loads, so no other test can see them:
-  1. **`/sidecar/` is in `.dockerignore`** — the Rails `Dockerfile` does `COPY . .`, so
-     without it the copyleft trees are baked into the **permissive** app image. Never
-     imported or executed, but *shipped*, which is exactly what §9 exists to prevent.
-  2. **Each sidecar's URL env var must be EXPLICITLY BLANKED in `deploy.ovh.yml`** — the
-     accessories run on the Unraid host and Kamal **deep-merges** `env.clear`, so the OVH
-     overlay otherwise inherits an Unraid-only hostname, the addon reports itself available,
-     and every call fails — strictly worse than greying out.
-  3. **Each GPL sidecar image must carry its own licence text INSIDE it** — we build and push
-     these to a registry, which is redistribution.
-  The guard is **directory-driven, not a hard-coded pair**, so a third sidecar is covered the
-  day it appears — and it asserts *two* things, because a "has a LICENSE beside it" discovery
-  filter silently skipped the **worse** case: a sidecar whose author never committed a
-  `LICENSE` at all was invisible to the guard written to catch exactly that. Found by
-  planting a synthetic sidecar and watching the test stay green, not by reading it.
-- **A BUNDLED THIRD-PARTY `.scad` MUST CARRY ITS OWN LICENCE, AND THAT IS GUARDED IN RUBY BECAUSE
-  `bin/ci` DOES NOT RUN pytest.** `sidecar/openscad/catalog/` redistributes other people's designs
-  inside an image we push, so §9 binds per FILE, not per repo — and the catalog's own `NOTICE`
-  records why: of four candidates, **two declared a different (more restrictive) licence in their
-  own header than their repo's `LICENSE` file did**, one of them NonCommercial. *Read the file, not
-  the repo.* `sidecar/openscad/tests/test_catalog.py` checks this thoroughly — and **none of
-  `bin/ci`'s gates runs it** (seven when this was written, eight since `test-app` landed
-  2026-08-19 — the count moves, the fact that none of them is pytest does not), so until
-  2026-08-12 the only licence guard that actually
-  EXECUTED was `openscad_controller_test.rb`'s per-tile assertion, which died with that controller.
-  Its replacement is in **`test/deploy_hygiene_test.rb`** (directory-driven over
-  `sidecar/*/catalog/catalog.json`): every entry has a licence, an attribution and a pinned commit;
-  no forbidden term (NC/SA/GPL); every `.scad` on disk is listed; every listed file and ref appears
-  in `NOTICE`. It guards the **DATA, upstream of every renderer** — a catalogued file with no
-  licence makes the display correct and empty — and it is mutation-checked four ways, including the
-  lowercased-needle bug the Python original shipped with (`"-NC" in "cc-by-nc-sa-4.0"` is false).
-  **The DISPLAY half is now the bundles repo's obligation** (`chaim354/tinkerex-addons`): the
-  OpenSCAD UI is a bundle, `GET /generators` hands it `license`/`attribution`/`source_url` per
-  entry, and nothing in THIS repo can assert that a tile paints them. That was a deliberate choice
-  over vendoring the bundle into `test/fixtures/addons/` — the vendored `boxes` copy has **no sync
-  guard on this side**, so a licence assertion against a stale snapshot would go green while the
-  live bundle dropped the line, which is the worst possible failure for a compliance check.
-- **Addons are manifest-driven, not listed in this repo.** `Maker::Addons::Registry` builds
-  `Addon`s from manifests fetched by `Maker::Addons::Source` and caches the index (`CACHE_KEY`,
-  5-minute `TTL`) — republishing a bundle *is* the deploy. Three refusals matter: a manifest
-  missing a `REQUIRED` key or declaring an `api_version` other than `Registry::API_VERSION` is
-  **skipped, not raised on** — one bad addon must never take `/tools` down (the `api_version` arm
-  is mutation-checked); and a source outage returns `[]` for **that request only**, because the
-  `rescue` sits **outside** `Rails.cache.fetch` — inside, a two-second blip greys every addon out
-  for the whole TTL (also mutation-checked, and only against a real `MemoryStore`: the suite's
-  default `:null_store` can't observe caching at all — same shape as §14e's rate-limiting note).
-- **ONE generic surface serves EVERY addon, with NO EXCEPTIONS LEFT** — `Tools::AddonsController`
-  (shell / same-origin asset proxy / save), which is why a new addon needs no Rails redeploy.
-  `generators`, `boxes` and — last, 2026-08-12 — `openscad` have all migrated:
-  `Tools::OpenscadController`, its five views, its five hand-written routes, `OpenscadClient` and
-  the hardcoded gallery card are **gone**. Any statement elsewhere that qualifies this rule
-  ("except openscad", "the last bespoke addon surface") is stale — the gallery is now
-  manifest-only, guarded by a CARD COUNT in `home_controller_test.rb`, which is the only assertion
-  shape that can see a card the `@addons` loop did not produce.
-  **Route order is still load-bearing, but its justification changed**: `tools/:key` matches any
-  two-segment `/tools/*` path and shadows any such route declared after it. It no longer protects a
-  live sibling — there are none — so the ordering is now kept for the NEXT two-segment `/tools/*`
-  route somebody adds, and `config/routes.rb` says exactly that. The mutation check is kept as the
-  evidence precisely because it can no longer be re-run here: moving `tools/:key` above
-  `resources :boxes`, while boxes still had its own block, took `boxes_controller_test.rb` from
-  green to 12 failures + 2 errors. It does **not** collide with `tools/addon_states/:id/params`
-  (four segments; Rails requires a segment-count match) — an earlier draft of the routes comment
-  claimed it did and was verified false via `Rails.application.routes.recognize_path`.
-- **AN ADDON DECLARING A SERVICE THIS DEPLOYMENT HAS NO URL FOR GREYS OUT, NAMING THE SERVICE AND
-  ITS ENV VAR.** This is a REGRESSION the openscad retirement would otherwise have shipped: the
-  hardcoded gallery card greyed itself out on `OpenscadClient.configured?` — an env check living in
-  a view — so deleting the card deleted the only thing that asked before rendering, and a
-  deployment without the accessory would show an ENABLED tile whose bundle 404s on its first
-  `host.service.*` call. `boxes` already had the same latent hole, unobserved only because every
-  leg serving addons happens to set `BOXES_SIDECAR_URL`. It is the second arm of
-  `Addon#unavailable_reason`, after `min_host` — the host level wins when both are wrong, because
-  on a host that cannot run the addon at all "go and set a sidecar URL" is advice that will not
-  help. **`Maker::Addons::Services` owns the env-name derivation, once**, because
-  `Tools::AddonsController#sidecar_url_for` needs the same answer and a second
-  `"#{name.upcase}_SIDECAR_URL"` is a string that drifts silently — get it wrong and the lookup
-  returns nil, which reads as "not deployed". The manifest-vs-ENV split (spec §4.1) is untouched:
-  the **declaration** check stays in the controller because that is the per-addon SSRF guard, and
-  only the deployment-wide lookup is shared. A **blank** counts as unconfigured — Kamal's
-  `env.clear` blanks rather than removes, which is exactly the shape OVH has. Cosmetic only:
-  `Tools::AddonsController` never gates on `available?`, so a greyed addon stays reachable by URL —
-  do not read this as an access control.
-- **Asset paths are REJECTED, never normalized** (§14a's `key_for` rule) — one guard,
-  `Source.validate_asset_path!`, shared by the HTTP and local (`Source::Local`, dev/test)
-  backends. The controller-level traversal test passed under mutation until the fake was seeded
-  with a file the traversal would actually *reach*: asserting only a 404 proved nothing, because
-  "refused" and "not found" both produce one. `Source::Local`'s own test had the same false-green
-  shape one layer down — `Pathname#join` doesn't sanitize `..` the way a URL does, so a made-up
-  escape target just happened not to exist on disk; the fix plants a real file outside the source
-  root and proves it unreachable, not coincidentally missing.
-- **`skip_forgery_protection only: :asset`** — needed because `verify_same_origin_request`
-  (an `append_after_action`, not skipped by this) fires unconditionally on any non-XHR JS
-  response, which is exactly what a `<script type="module" src>` load looks like; skipping the
-  `verify_authenticity_token` before_action is what stops the request from ever being marked for
-  that check, since marking only happens there. On a GET-only action the CSRF-token check itself
-  was already a no-op (GET is exempt), so the skip's sole practical effect is disabling that
-  cross-origin-JS guard. Residual, stated plainly: the endpoint stays behind `authenticate_user!`,
-  so a cross-origin `<script src>` remains a login-state / addon-inventory oracle (200 vs 404 via
-  `onload`/`onerror`, no response bytes leak). Whether to close that residual is a product
-  decision, not one this comment makes.
-- **Each save writes ONE file — its output.** The `.params.json` beside it is gone: it was
-  **write-only** (`Maker::AddonState#data` already recorded the params and every reader went
-  there). Params are now served by `Tools::AddonParamsController` — **one** route for all
-  addons, because `AddonState` is addon-agnostic — and the download serves the whole `data`
-  hash, not `data["params"]`, which is byte-identical to the removed file. Files already
-  written were **left in place** (ordinary library files a user may have renamed or attached;
-  a migration must not delete user bytes).
-- **`Maker::Addons::LibraryOutput` is the ONE output path**, backend-neutral on
-  `port_writable?`. It reaches chunk-family storage entirely through port verbs now —
-  `begin_upload`/`put_chunk`/`finalize_upload` — so the phase-1 decoupling proof is **"no hits, full
-  stop"**:
-  `grep -rn "manifest_chunks\|ChunkStore" $(find app -type d -name maker) --include='*.rb' | grep -v ':[0-9]*: *#'`
-  The `grep -v` is load-bearing, not noise — without it the check reports comments that
-  *describe* the removed coupling. **A proof that cries wolf gets ignored.** So is the `find`:
-  it must cover **every** `app/**/maker` directory (six today), not three, and **`grep -r` does
-  not honour `**`** — spelling the set out named `services`/`models`/`jobs` and silently skipped
-  `app/controllers/v1/maker` (14 files) and `app/models/concerns/maker` (1).
-  **`test/architecture_invariants_test.rb` now RUNS this and DERIVES the directory set from the
-  tree** (`%w[app/**/maker]`) rather than repeating the list, asserting the offending set is
-  *empty* — so the claim can no longer drift the way it did before: it read "no hits" for months
-  after the addon framework made the true answer one (`library_output.rb`'s own direct
-  `Storage::ChunkStore#put` call, the one sanctioned exception between the phase-1 decoupling and
-  Arc B), and it would have gone on reading "exactly one, and it is library_output.rb" indefinitely
-  had Arc B Task 2 not driven the count back to zero by giving `put_chunk` a port-verb
-  implementation on `FileLayer::ChunkRemote` (§14a; the embedded adapter had one too, and
-  went with the engine). A NEW
-  `app/<x>/maker/` is covered the day it is created. Change the code and the test tells you; if a
-  new direct exception ever becomes genuinely unavoidable, update the test and this bullet
-  together, deliberately.
-- **Addon bundles are served by the `addons` Kamal accessory** (`chaim354/tinkerex-addons`), not
-  shipped inside the Rails image — **publishing the bundle image IS the addon deploy; Rails is
-  never rebuilt.** `deploy.yml` sets `ADDON_SOURCE_URL: http://tinkerex-addons`. Read the
-  precedence carefully, because the obvious story is backwards: `Source.current` gives
-  **`ADDON_SOURCE_PATH` precedence over `ADDON_SOURCE_URL`** when both are set (the safer
-  failure mode — a stray URL left in a dev/test env can never make a local run hit the network
-  by surprise). What actually turns production onto the accessory is that **the PATH default
-  itself is conditional**: both `production.rb` and `development.rb` only default
-  `ADDON_SOURCE_PATH` `if ADDON_SOURCE_URL.blank?`, so PATH is never set alongside a real URL.
-  An *unconditional* PATH default would leave PATH always set in production too — and since PATH
-  wins whenever both are present, the accessory would run and answer requests while Rails
-  silently never called it. That conditional default, not a URL-beats-PATH rule, is the whole
-  cutover.
-- **`ADDON_SOURCE_URL` MUST be blanked in `deploy.ovh.yml`** — same rule, same reason, as the two
-  sidecar URLs above: Kamal deep-merges `env.clear`, so OVH would otherwise inherit the
-  Unraid-only `tinkerex-addons` hostname, `Source.configured?` would read true, and every fetch
-  would fail instead of the gallery merely greying out. It does **not** match the `_SIDECAR_URL`
-  suffix the guard originally grepped for, and was silently unguarded until
-  `test/deploy_hygiene_test.rb`'s pattern was widened to `/_SIDECAR_URL\z|\AADDON_SOURCE_URL\z/`
-  — **any future accessory URL needs the same manual addition**, because the guard covers a
-  naming convention, not a category. Consequence for OVH today: an **empty tools gallery**,
-  degrading through `Registry`'s rescue rather than 500ing, until OVH gets its own addons
-  accessory.
-- **The addon system test is hermetic by fixture, deliberately.**
-  `test/system/addon_bundle_test.rb` reads `test/fixtures/addons/`, never the real bundle —
-  pointing it at the `tinkerex-addons` repo's working copy (the dev-default assumption: checked
-  out as a sibling) would make CI depend on a repo a fresh clone never has. The fixture's entry
-  module imports from a **pinned bare specifier** (`fixture-dep`, declared in its own manifest's
-  `pins`) and renders that module's exported value into the DOM, so a pass proves the
-  **merged importmap** actually resolved a bare specifier through the proxy — not merely that
-  the entry module itself loaded. Mutation-checked: blanking `pins` in the fixture manifest
-  turns it red.
-- **The service proxy ALLOWLISTS content types, and `image/svg+xml` is deliberately NOT on it**
-  — the entry most likely to be "restored", because SVG is the box generator's main output.
-  `#service` used to echo the sidecar's `Content-Type` verbatim `inline`, a same-origin
-  script-execution channel: the route is `via: %i[get post]` while boxes' `/generate` is
-  POST-only, so a plain GET returns **Werkzeug's 405 page as `text/html`** under our origin.
-  SVG is script-capable and `nosniff` does not help it. Excluding it costs the generator
-  **nothing** — `preview.js` reads the render with `fetch()` + `res.text()` and re-encodes it as
-  a `data:` URL, and neither header affects a `fetch()` body. Two entries are load-bearing the
-  other way and must stay INLINE: **`image/jpeg`** (`gallery.js` points an `<img src>` straight
-  at this proxy for sample photos) and **`application/json`** (`preview.js` branches on a JSON
-  content-type to read a sidecar's error message). Unlisted types degrade to
-  `octet-stream` + `attachment` rather than 415, so a sidecar upgrade can't become an outage. If
-  a future bundle needs an SVG in an `<img src>`, add it back **with a
-  `Content-Security-Policy: sandbox` response header**, not by relaxing the list.
-- **An addon save validates its filenames AT THE DOOR, backend-neutrally** —
-  `Maker::MoveNode.valid_leaf_name?` in `parse_files`, not inside any adapter. Share and S3 each
-  refuse a traversing name in their own `leaf!`; **chunk has no name check anywhere** (
-  the sync server's commit validates the manifest exhaustively and the name not at all, and `Node`
-  validates `name` for **presence only**), so `"../../escape.txt"` created a live node on the
-  main deployment, bound for the changelog and every device mount. A guard that exists on two
-  backends and silently does not on the third is this repo's recorded failure shape — the fix is
-  the door, never a third copy in the chunk adapter. **The same door asks a SECOND question beside
-  it, `Library::ReservedNames.reserved?`** (§14b): the reserved-namespace half diverged identically,
-  and unlike the traversal half one arm of it was never silent — it reached this controller's
-  `rescue_from FileLayer::NotFound` on share/s3, which is the bullet at the end of this section.
-  The save also pre-checks destination names
-  (a CHECK, not a lock) so chunk stops creating two same-named siblings in one directory, and
-  `Tools::AddonsController` maps `UnsupportedOperation`/`FetchError`/`NotFound` **once** via
-  `rescue_from` — as JSON with a real status, NOT a redirect-with-flash, because the only caller
-  is a `fetch()` that branches on `res.ok` and **fetch follows a 302**, so answering an error the
-  way success is answered reports "Saved." over a save that never happened.
-- **THE CTX BLOB IS AN ADDITION; THE NINE LEGACY DATA ATTRIBUTES STAY FOR THE LIFE OF
-  `api_version: "1"`.** Publishing a bundle *is* the deploy and Rails is never rebuilt, so bundles
-  written against **both** shapes are live against one host at the same time — the host may never
-  assume they moved with it. Guarded by reading both representations out of **ONE** rendered
-  response and comparing them to each other, not by recomputing an expectation each could drift
-  away from independently; mutation-checked by deleting an attribute.
-- **`@maker/addon-sdk` IS A HOST PIN, AND ITS SPECIFIER IS PUBLIC API.** `merged_importmap` draws
-  every host pin before the addon's own, which is what lets a bundle import it having declared
-  nothing in its manifest. The FILE behind the pin may move freely; the **SPECIFIER may not change
-  while `api_version: "1"` lives** — every published bundle names it, and **Rails is never rebuilt
-  when a bundle is**, so nothing in this repo would notice: the failure is an addon 404ing in a
-  browser against a deployment whose suite is green.
-- **`initHost(ctx)` RUNS BEFORE THE BUNDLE IS IMPORTED, AND THE ORDER IS THE CONTRACT** — a
-  bundle's top-level code executes at import time, so `host` must already be bound by then. The
-  corollary is the part that bit twice, and it is **silent rather than loud**: an ES module is
-  evaluated **ONCE PER URL PER PAGE**, so on a Turbo re-mount `initHost` builds a NEW `Host` while
-  the cached module's top level does **not** re-run — a reference captured at top level
-  (`const { files } = host`) then goes on serving the PREVIOUS, torn-down host's context and CSRF
-  token, with nothing thrown and nothing logged. **Read through `host` at call time; never capture
-  it.**
-- **THE CAPABILITY MAP IS SERVER-SIDE AND HAS ONE DEFINITION** (`Maker::Addons::Host`) — §14d's
-  third extension→role table is what a second copy becomes. **Every value must be a real boolean**:
-  a missing key reads as `undefined` in JS and a nil reads as `false`, and neither is
-  distinguishable from a deliberate "off". A capability is **NAMED BEFORE IT IS BUILT, ANSWERED
-  `false`** — that is the whole compatibility mechanism, and what lets an addon be authored against
-  a host level it has not met.
-- **BUMP `Host::LEVEL` IN THE SAME COMMIT THAT FLIPS A CAPABILITY TO TRUE.** A manifest's
-  `min_host` is the only way an addon can say "I need this", and `api_version` **equality** cannot
-  express it — flip without bumping and an addon requiring the new capability has no way to name
-  the host that has it.
-- **A 409 `would_replace` IS A QUESTION; A 422 `name_taken` IS NOT** — the SDK throws
-  `WouldReplaceError` and `NameTakenError` as distinct classes for exactly this, the same
-  distinction §14f draws server-side. Collapse them and a bundle offers an Overwrite button for a
-  save that can never succeed on retry.
-- **A SAVE CARRYING `state_id` REVISES, AND THE OWN-FILE EXEMPTION COVERS BOTH COLLISION CHECKS, NOT
-  ONE.** `Tools::AddonsController#create` resolves the target through `#addon_states` (404 if it does
-  not, never a silent fallback to creating — that would file a revision of an existing design as an
-  unrelated one, the pile-up the feature exists to end), and a collision with one of THAT item's own
-  `AddonFile` nodes is an approved replace while every other collision keeps today's answer. Both
-  halves are needed and they fail in OPPOSITE directions, which is why `owned` is a **required**
-  parameter on each rather than a defaulted one: `refuse_taken_names!` (picked folder, terminal 422)
-  is the only check a box in a plain library folder ever reaches, so exempting only
-  `resolve_placements` leaves the mainline re-save the dead end this arc exists to close; exempting
-  only `refuse_taken_names!` lets the write land as a **CREATE** — probed on chunk, a second live
-  node with the same name in one directory, and on share/s3 the port's own clobber refusal turns the
-  exemption straight back into the 422. An **absent OR empty** `state_id` creates, byte-identical to
-  before: `present?`, never `!nil?`, because a bundle rendering an empty hidden field is the natural
-  way to say "no target yet" and the whole suite stayed green over the `!nil?` spelling.
-- **THAT EXEMPTION IS BY NODE IDENTITY, NOT BY `(parent, name)` — `except_node_id:`, the parameter
-  `Maker::MoveNode.collision?` has always had for this and was being passed nil.** Skipping the query
-  instead ("this state owns that (parent, name), so wave it through") is a DIFFERENT rule, and the
-  difference is a live defect on chunk: two live siblings sharing one `(parent, name)` are reachable
-  there, since the sync server validates a manifest exhaustively and the name not at all (§14a), so a
-  device push can land one. With the check skipped that save answered **302, rewrote the node this
-  state does NOT own, and ADOPTED it into `state.files`** — §14a's orphaning shape with the sign
-  flipped, introduced by the very commit that added the exemption. `resolve_placements`' cheaper
-  `.key?` arm is safe only because it runs AFTER this one; reorder the two and it stops being.
-- **A REVISION ROW IS IMMUTABLE, AND `attr_readonly` IS WHAT REFUSES THE REWRITE — NOT THE MISSING
-  `updated_at`.** `Maker::AddonStateRevision` marks `addon_state_id`/`revision`/`data` readonly, so
-  assignment, `update!` AND `update_columns` all raise on a persisted row (the last with the parent
-  class `ActiveRecordError`, not `ReadonlyAttributeError` — a `rescue` written for one will not catch
-  the other). `update_all` and raw SQL bypass it entirely, the §14e refcount blind spot again; the
-  migration's own backfill is the one legitimate writer that goes around it. **`created_at` is
-  deliberately OUTSIDE the list**, so "immutable" means the snapshot — identity, number, params.
-  There being no `updated_at` column stops nothing by itself; what it buys is that a rewrite forced
-  through one of those doors has no timestamp to bump, so it cannot look like a sanctioned save.
-- **`maker_addon_states.revision` IS THE CURRENT NUMBER AND THERE IS NO COUNT COLUMN**, because
-  nothing deletes a revision, so the count equals the number. Add one with the deletion, not before —
-  today it would be a second value to keep in step for no present reader.
-- **`Host::LEVEL` 3 IS THE WHOLE FEATURE DETECT FOR REVISING, AND IT IS THE FIRST BUMP THAT FLIPPED
-  NO CAPABILITY.** No name was added, for the same reason binary output has none at level 2: revising
-  is the SAME `library:write` door growing an optional parameter, so a capability would answer `true`
-  for exactly the hosts that answer `library:write` true and would carry no information. `min_host: 3`
-  is how a bundle requires it. **`state:crud` stays reserved and false** and keeps its own meaning —
-  the direct `PATCH`/`DELETE /tools/:key/states/:id` endpoints, which this is not; `host.state
-  .revisions` therefore gates on **`state:list`**, the read side it actually belongs to, or it would
-  throw on every host there is. The level is pinned in **two** places on purpose (`host_test.rb`'s
-  ledger and the rendered-ctx literal), and both must move at level 4.
-- **`GET /tools/:key/states` STAYS ONE ENTRY PER SAVED ITEM FOR THE LIFE OF `api_version: "1"`, AND
-  `revision` IS AN ADDITIVE KEY ON IT — never a `revisions` array.** That is exactly what let every
-  already-published bundle keep working across this change (§14c: publishing a bundle IS the deploy,
-  Rails is never rebuilt), and a revision appearing as a second entry would turn one design back into
-  the growing pile the feature ends. The history is served lazily by `#revisions`, **unbounded on
-  purpose**: a cap without paging is §14b's silent truncation, and a bundle handed a history that
-  quietly stops at N cannot tell that from a design saved N times. If human save frequency ever stops
-  bounding it, the fix is **paging**, not a bare limit.
-- **`?state=` IS A HINT AND ANSWERS nil; THE SAME ID AT `#create`/`#revisions` IS A 404. DO NOT
-  HARMONISE THEM.** An unknown, foreign or other-addon id must never 404 the tool — a stale bookmark
-  or a deleted box would take the page down — while a save or a history read naming one is a bundle
-  bug that must not silently do something else. `#find_addon_state` decides nothing itself for
-  exactly that reason. The SDK's `host.launch` getter answers `{stateId: null, ...ctx.launch}` so a
-  bundle on a LEVEL-2 host (which sends no `launch` key at all) still reads an object rather than
-  `undefined` — which means dropping `stateId` from inside the server's hash would NOT surface as a
-  missing value. **Keep the key in `addon_ctx`.**
-- **THE FILE→STATE REVERSE LOOKUP CONSULTS THE REGISTRY ONLY WHEN THE NODE QUERY FOUND A HIT.**
-  `Maker::AddonOrigin.for` makes no `Registry` call at all and `AddonOrigins#addon_origins_for` returns
-  early when it is empty, so a library with no addon output never touches the addon source — a
-  manifest fetch over HTTP behind a 5-minute cache. Collapse the two steps and an addon-source outage
-  becomes a slow Files page for a user who has never opened `/tools`. Pinned with a **counting**
-  double, not a raising one: `Registry.manifests` rescues `StandardError` and answers `[]`, so a
-  raising stub is swallowed and the regression passes.
-- **DO NOT COLLAPSE `Maker::AddonOrigin.for`'S TWO STATEMENTS INTO A JOIN.** The join never reaches
-  the `node_id` index, so its cost grows with the user's SAVED-STATE COUNT — including on the
-  all-miss path, which is the ordinary library that has never saved anything from an addon — and no
-  query-count test can see it, because it is all inside one statement. Measurements are in the
-  method's own comment and in `docs/STATUS.md`.
-- **THE SDK REFUSES A NON-STRING/NON-INTEGER `stateId` RATHER THAN COERCING IT.** `String(...)` would
-  launder the value straight past the server's own allowlist: `String([1, 2])` is `"1,2"`, a perfectly
-  good String to `#find_addon_state`, and ActiveRecord's integer cast resolves `find_by(id: "15,16")`
-  to state **15** — probed against real rows. So a save would have renamed a different design, bumped
-  its revision and attached a file to it, silently, on the door that WRITES. It is deliberately not a
-  validation of the string itself (`"1abc"` casts to 1 and opens state 1 — a bound parameter inside
-  both the user and addon scopes, with nothing to reach); what is refused is only the shape JS itself
-  would flatten.
-- **`defaultFolder` NAMES TWO DIFFERENT SHAPES, DELIBERATELY.** The raw `ctx.defaultFolder` handed
-  to `mount` is a **STRING node id**; the server's ctx blob carries `defaultFolder: {nodeId,
-  label}`. Harmless only because the SDK never exposes its copy — so **never add a
-  `host.defaultFolder` accessor**, which would silently hand an object to every bundle that expects
-  a string.
-- **A SIDECAR'S ERROR NEVER RUNS THROUGH THE HOST'S ERROR TABLE.** A sidecar answers **prose** in
-  its `error` key, not a code, so `errorFrom` would put the message in `.code` and generic filler
-  in `.message` — and a non-JSON body (Werkzeug's HTML 405, the proxy's own body-less 404) would be
-  consumed by the failing `res.json()` and lost entirely. `service.*` raises `ServiceError`, built
-  from the status and the raw text.
-- **A GARBAGE OPENSCAD PARAMETER VALUE RENDERS SUCCESSFULLY, WITH THE DEFAULT GEOMETRY — SO THE
-  SIDECAR REFUSES IT, AND THERE IS EXACTLY ONE COPY OF THAT CHECK.** Observed, not reasoned:
-  `{"cols": "))("}` comes back **200** because OpenSCAD's `parameterSet` silently *ignores* a value
-  it cannot parse, so a pass-through turns a typo into a default-sized model saved to the library
-  with no feedback anywhere. `sidecar/openscad/coerce.py` checks every submitted value against the
-  schema `schema.py` derived for that same source and **refuses** what will not coerce. It lived in
-  Rails (`app/services/openscad_params.rb`) until 2026-08-12 and was **deleted, not duplicated**, on
-  the way out — a browser bundle cannot call a Rails service object, and a guard that runs on one
-  caller's path and silently does not on another's is this repo's recorded failure shape. Four
-  things travel with it: **`choices` beats `type`** (schema.py's TRAP 3 — an enum's declared type is
-  the type of its *values*); the bool mapping is an **ALLOWLIST**, never a framework boolean cast,
-  which maps everything outside its false-list to **`true`** — garbage silently becoming `true` is
-  the same bug wearing a hat; **min/max are NOT enforced**, deliberately, because OpenSCAD *honours*
-  an out-of-range number rather than ignoring it, so refusing one adds false rejections and prevents
-  nothing; and messages are **truncated** so a pasted value cannot become the message.
-- **THE SIDECAR ANSWERS 422 FOR TWO DIFFERENT THINGS, AND ONLY `code: "invalid_params"` TELLS THEM
-  APART — AND THE CONSUMER OF THAT DISTINCTION IS NOW A BUNDLE, NOT RAILS.** A `.scad` it cannot
-  parse and a *value* it refuses are both client conditions and both 422, but they want different
-  UI: a rejected value must come back as a form error with the user's own entries still in it, a
-  broken source has to send the user back to the catalog. That branch used to be Rails' —
-  `OpenscadClient::InvalidParams`, a subclass of `Error`, with `#create`'s two rescue arms ordered
-  subclass-first — and **all of it went with `Tools::OpenscadController` on 2026-08-12**. The rule
-  that survives is the one about the WIRE: **branch on the `code`, never on the prose**, because
-  the prose is a human sentence a sidecar release can reword without anything downstream being
-  rebuilt — which is now doubly true, since the downstream is a bundle published from another repo.
-  Note the SDK does not do this branching for you: `service.*` raises `ServiceError` built from the
-  status and the RAW TEXT, deliberately (see the sidecar-error bullet above), so a bundle that needs
-  the distinction reads `code` out of the body itself.
-- **THE SDK REJECTS A `.`, `..` OR EMPTY PATH SEGMENT RATHER THAN ENCODING IT** —
-  `encodeURIComponent("..")` is `".."`, so the **browser** normalizes the path before the request
-  is sent and it never reaches the route the server guards: it misroutes **silently** instead of
-  being refused. Same rule as §14a's `key_for` and `validate_asset_path!` above: **reject, never
-  normalize.** **THE SERVICE NAME IS THE SAME URL AND GETS THE SAME REFUSAL** — it went unguarded
-  while the `path` beside it did, which made the invariant true of only part of one URL. It
-  additionally rejects a `/` **outright rather than splitting it into segments**, because `:service`
-  is one Rails segment matched VERBATIM against the manifest's `services` list, so `"a/b"` cannot
-  name a service on any host; splitting would normalize a structural error, and would leave the
-  contract incoherent (`"../.."` refused, `"a/b"` accepted) for a value that is one segment by
-  definition. Only `.`, `..` and `""` survive `encodeURIComponent` — `\`, `#`, `?`, `%` need no
-  clause. Proven in a **browser** (`addon_sdk_test.rb`), because the normalization is the URL
-  parser's and no server-side test can observe it.
-- **`service.post` SENDS A JSON BODY, AND A `FormData` IS NOT AN EQUIVALENT SPELLING OF IT.**
-  multipart/form-data serialization **normalizes every text entry's newlines to CRLF** (the HTML
-  standard's own encoding algorithm), and it happens INSIDE THE BROWSER, *after* `append` returns —
-  so a `<textarea>` whose DOM value is LF-clean reached the sidecar as `"+-+-+-+\r\n…"` with no
-  bundle-side fix possible and nothing anywhere reporting it. boxes.py's TrayLayout, whose entire
-  input is that ASCII art, then rendered the wrong tray. `append` ALSO stringifies a nested value to
-  the literal `"[object Object]"`, and `{generator, params: {…}}` is the shape of every real sidecar
-  call. **The server end always wanted JSON** — `ServiceProxy#call` re-emits `params` as a JSON body
-  because Flask's `request.get_json(force=True)` cannot read a form body — so the whole corruption
-  was one-sided and the fix is one-sided. **A unit assertion cannot see this**: every layer this repo
-  can call directly holds a clean string. Pinned in a real browser by `addon_sdk_test.rb`, asserting
-  on **what the proxy RECEIVED** (`FakeServiceProxy#calls`), never on the SDK's intent.
-- **`wrap_parameters format: []` ON `Tools::AddonsController` IS LOAD-BEARING FOR `#service`.** Rails
-  8 defaults `wrap_parameters format: [:json]` in the FRAMEWORK — there is no initializer in this
-  repo, so grepping `config/` finds nothing and the behaviour reads as absent. It is not:
-  ParamsWrapper **merges a complete duplicate of the body** under a controller-derived key into
-  `request.request_parameters`, which is verbatim what `#service` forwards to the sidecar. Probed: a
-  `{generator, params}` body arrived as `{…, "addon" => {…the whole body again…}}`. Inert while the
-  transport was multipart, live the moment it became JSON — a doubled request body on every
-  debounced render, which boxes.py tolerates, which is exactly why nothing would have reported it.
-- **`service.url` SHARES ONE URL BUILDER WITH `get`/`post`, WHICH IS THE WHOLE SAFETY ARGUMENT.** It
-  hands a raw string to an attribute the **browser** dereferences, so there is no request for a
-  server guard to inspect afterwards — a builder that skipped `encodeServiceName` /
-  `encodePathSegments` would be the bullet above's traversal hole with a friendly name. Hence
-  `_serviceUrl`, shared by all three, rather than three call sites that must agree. It exists
-  because `get` PERFORMS the request and resolves a `Response`, which cannot feed an `<img src>`;
-  fetch-and-objectURL defeats `loading="lazy"` across a tile grid and leaks a blob per card. The
-  proxy's `image/jpeg` allowlist entry (above) is for exactly this call site.
-- **AN ABORT IS RETHROWN VERBATIM AND MUST NEVER BECOME `ServiceUnavailableError`** — that class
-  means "retry later, there is nothing to fix now", which is a lie about a request the bundle
-  cancelled itself, and would make a superseded render paint an error banner. **The condition is
-  `init.signal?.aborted`, NOT `err.name === "AbortError"`**: `abort(reason)` makes fetch reject with
-  THAT reason (a plain `Error`, name `"Error"`), so the name test works for the simple caller and
-  **silently fails for the careful one**. Mutation-checked in both directions.
-- **A `service_timeouts` VALUE ABOVE `ADDON_SERVICE_MAX_TIMEOUT` GETS THE CAP, NOT AN ERROR** —
-  the manifest is remote and versioned independently of this host, so refusing would take a working
-  addon down on a deploy that merely lowered the ceiling. The cap is applied at the point of use
-  (`ServiceProxy.read_timeout_for`), **not** in `Registry`, so lowering it does not wait out the
-  5-minute manifest cache; `Registry` records what was ASKED FOR and filters to **positive Integers
-  per entry** (a `"90"` string coerced would honour what a JSON manifest should not contain; a `0`
-  is read by Net::HTTP as "give up immediately", so honouring it takes the sidecar down rather than
-  degrading). **The ceiling exists because the proxy is SYNCHRONOUS**: `#service` holds a Puma
-  thread for the whole round trip and production runs `RAILS_MAX_THREADS: 16` on one worker, so 16
-  concurrent renders at the cap occupy every thread for two minutes and queue the addon page itself
-  behind them. Raising it raises worst-case head-of-line blocking; the fix for a genuinely long
-  render is an async job, which spec §13 lists as **not reserved** — no capability name, nothing to
-  feature-detect — so a bigger number here is not a substitute for building one.
-- **A `states_key` POINTING AT ANOTHER ADDON REQUIRES A MUTUAL DECLARATION** — the claimant names
-  the target, the target names the claimant back in `shares_states_with`, **and the target must
-  itself be a VALID addon** (`build` must succeed on it), or an entry `build` rejects confers a
-  grant nobody can audit. Anything else is SKIPPED, **including a claim on an addon absent from the
-  index** (the permissive "no target, no harm" reading lets a typo reserve a namespace and start
-  colliding the day the real addon ships). Closes the 2026-08-03 audit's §2.1. The check lives in
-  `Registry.all`, **not `build`**, because it is a question about a PAIR of manifests and `build` is
-  handed one. **It is NOT recursive, and an earlier comment claiming otherwise was false:** a target
-  skipped by this same check still confers a grant (probed — A admitted, B absent). Harmless, and
-  the reason is the invariant: that target still wrote `shares_states_with` itself, so **consent**,
-  not gallery visibility, is the property being enforced.
-- **THAT REFUSAL MUST SKIP, NOT GREY OUT — AND IT IS THE OPPOSITE CHOICE FROM `min_host` ONE METHOD
-  AWAY.** `Tools::AddonsController` never gates on `available?` — its ONE consumer is the gallery's
-  `if addon.available?` in `app/views/tools/home/index.html.erb` (two further lines there render
-  `unavailable_reason`), so a listed-but-unavailable addon is still
-  `Registry.find`-able, still resolves through `load_addon`, and still serves `@addon.states_key`
-  from `#states` and `#create`. Greying an unreciprocated claim out would **look closed while
-  leaving the hole open**. Do not harmonise the two.
-- **`Addon#available?` IS NO LONGER HARDCODED TRUE, AND THE GALLERY SHOWS A REASON RATHER THAN A
-  FIXED SENTENCE.** It was true for as long as "registered" meant "fetchable"; `min_host` gives it a
-  second real answer. A too-new addon is still **BUILT** and still **LISTED** — skipping it is the
-  easy wrong answer, because an addon that silently never appears reads as a broken deploy rather
-  than as a version floor, and the old hardcoded "Not configured on this deployment" would send an
-  operator to check env vars that are fine.
-- **A NON-INTEGER `min_host` IS IGNORED, NOT COERCED.** `"2".to_i` is 2, which would honour a value
-  a JSON manifest should not contain. Ignoring it leaves the addon **AVAILABLE** — the failure
-  direction an operator can diagnose, rather than one that makes an addon vanish.
-- **EXACTLY ONE DECLARED PERMISSION IS CHECKED — `library:read`, BY `#file` — AND IT IS
-  DECLARATION CONSISTENCY, NOT CONTAINMENT.** Every other name is displayed only. `states_key` is
-  not an inter-addon boundary either: a bundle runs same-origin in the session and can call another
-  addon's `/tools/<key>/states` — or another addon's `/tools/<key>/file/<id>`, whose manifest may
-  well declare the permission — directly, so what the mutual declaration closes is only that a
-  manifest can no longer redirect **its own saves** into another addon's namespace by declaration
-  alone. Do not describe any of it as a boundary (spec §8.1 says so in those words; this repo's
-  recorded failure shape is a guard everyone believed in that never worked). What the one check
-  buys is that an addon which starts reading the library must SAY SO on the card the operator reads
-  at publish time, in a deployment where publishing a bundle IS the deploy. **Do not add
-  enforcement for the rest without the finished vocabulary:** `data:read:<addon>/<collection>` does
-  not exist until PR 4, and `service:<name>` must reconcile with today's `services` key.
-- **THE PERMISSION VOCABULARY HAS ONE DEFINITION** (`Maker::Addons::Permissions`), distinct from
-  `Host::CAPABILITIES` — a capability is what the host CAN do, a permission is what an addon SAYS it
-  wants, and they already diverge (`state` / `project:read` here against `state:list` /
-  `state:crud` / `project:current` there). **An unknown name falls back to its own raw spelling**
-  rather than rendering blank: a card that silently understates what an addon asked for is worse
-  than one showing a developer-facing string.
-- **`rescue_from FileLayer::NotFound` IN `Tools::AddonsController` IS REACHABLE ON SHARE/S3 ONLY,
-  AND NOT FOR THE FOLDER REASON ITS COMMENT USED TO CLAIM.** A stale/foreign `parent_node_id`
-  resolves to `nil` = the library ROOT in `chosen_parent_node_id` **before any port call**, so that
-  save answers **302 and succeeds** (probed on all three; `docs/addon-api-v1.md` §5 carries the
-  author-facing consequence). What used to reach it was an output NAME the scan can never observe —
-  `observable!`, §14b's skip-list rule: `.DS_Store`, `._x`, `__MACOSX`, `.Trashes`, root `.trash`,
-  and `.maker-tmp-*` **on share but not s3** (`S3#observable!` omits `TEMP_PREFIX` on purpose) —
-  while **chunk accepted all of them**, because `write_chunk` never calls the port. That arm is
-  **now closed one layer earlier**, by `Library::ReservedNames.reserved?` in `#parse_files` (§14b),
-  which refuses those names at the door on every backend before a backend is even chosen. **So the
-  arm's one remaining cause is the TOCTOU** — a destination folder tombstoned between
-  `chosen_parent_node_id`'s lookup and the port write, a real window on share/s3 where
-  `Library::ScanJob` tombstones a folder removed on the NAS. Its message still names the
-  reserved-name cause too, deliberately wider than the arm: trimming a user-facing sentence on the
-  strength of an unreachability argument is the move §14e says to probe rather than trust.
-- **A FILE'S CONTENT NEVER CROSSES THE WIRE AS A BARE MULTIPART TEXT FIELD, AND THE SAVE DOOR'S TWO
-  SHAPES ARE SAFE FOR TWO DIFFERENT REASONS.** multipart serialization rewrites every TEXT entry's
-  newlines to CRLF inside the browser, after `append` — the §14c defect above, one door over. A
-  string `body` rides inside the JSON `files` field, where JSON ESCAPING means the serializer never
-  sees a newline; a binary body rides as a `parts[fN]` FILE part, which the same algorithm
-  transmits verbatim precisely because it is not text. Understand BOTH before adding a third shape:
-  the obvious "just append the body" is neither, and would corrupt every G-code, CSV, `.scad` and
-  SVG an addon writes — silently, since the file still saves and still opens. Pinned in a real
-  browser (`addon_sdk_test.rb` renders `<LF>`/`<CR>` explicitly, because Capybara normalizes
-  whitespace and the corruption is invisible to an ordinary text assertion).
-- **THE JSON `files` ARRAY IS THE ORDERED MANIFEST FOR BOTH SHAPES; A PART IS REFERENCED, NEVER
-  LISTED SEPARATELY.** Order is load-bearing (`AddonFile#position`, and `placements[i]` pairs a file
-  with the destination resolved for it), and a request carrying two collections has no ordering rule
-  that is not implicit. **The NAME always comes from the JSON entry and never from the part's own
-  `filename`** — one source, which is what lets `valid_leaf_name?` + `ReservedNames` cover both
-  shapes with no second copy. **The CONTENT TYPE is the opposite: from the PART, never guessed from
-  the name** (spec §6.1).
-- **A `part` IS LOOKED UP INSIDE `parts[…]` AND MUST BE AN `UploadedFile`.** The key is
-  client-supplied and indexes a params hash: at the top level `part: "name"` resolves to the state's
-  own name — a String, which answers `#size` in CHARACTERS (mis-measuring the cap) and has no
-  `#read` (a 500). Both halves are needed and are separately mutation-checked; the namespace alone
-  is what refuses a real upload posted under some *other* top-level key.
-- **`ADDON_SAVE_MAX_FILES`/`ADDON_SAVE_MAX_BYTES` DEFAULT TO 8 AND 4_000_000 AND ARE PER-REQUEST.**
-  Bytes is a TOTAL across the save, not a per-file allowance — making it per-file would LOOSEN
-  today's rule, and a cap that grows when it is made explicit is not the same cap. Sources are SIZED
-  before any is READ, so an oversized part never enters the heap. A garbage value falls back to the
-  default, never to 0: `"four".to_i` is 0 and a 0 cap refuses every save in the deployment.
-  **THE TWO WIRE SHAPES HIT DIFFERENT RACK LIMITS** (verified, rack 3.2.6): a url-encoded body dies
-  at `RACK_QUERY_PARSER_BYTESIZE_LIMIT` (4 MiB) as a bare 400 before the action runs, while
-  multipart is bound by `RACK_MULTIPART_PARSER_BYTESIZE_LIMIT` (10 GiB) — including the JSON `files`
-  field inside it, which the multipart parser handles and `each_query_pair` never sees. So a raised
-  cap means something to the SDK (always multipart) and nothing to a hand-rolled url-encoded POST.
-- **`GET /tools/:key/file/:node_id` IS ALWAYS `application/octet-stream` + `attachment`, WHATEVER
-  THE FILE IS, AND THERE IS DELIBERATELY NO BYTE-URL HELPER.** Its only caller is
-  `host.files.read`, a `fetch` reading `.arrayBuffer()`, and neither header affects a fetch body —
-  so this costs nothing and removes the inline case entirely, rather than re-deriving
-  `FilesController#blob`'s SAFE_INLINE_TYPES allowlist for a caller that is not a browser tab.
-  **Serving Marcel's type instead was a LIVE BUG, found by probing:** a `.js` in the library came
-  back `text/javascript`, and `verify_same_origin_request` (an `append_after_action` firing on any
-  non-XHR JavaScript response — and `fetch` sets no `X-Requested-With`) raised
-  `InvalidCrossOriginRequest`, so the addon got a **422 HTML page** where its bytes belonged.
-  **`skip_forgery_protection` would be the WORSE fix**, not an equivalent one: `#asset` can afford
-  that skip because its body is the same static bundle for every viewer, while this body is a
-  USER'S OWN FILE — skipped, a third-party `<script src>` would execute it in the attacker's origin
-  and read it out. Octet-stream + `nosniff` makes that structurally impossible and needs no list of
-  script-capable types to keep current (§14b's skip-list blind spot). `FilesController#blob` still
-  serves Marcel's type and has the same latent shape; out of scope, recorded. A URL here also
-  cannot back an `<img src>`, which is why `host.files.blobUrl` does not exist and must not be
-  added. Delivery is consumed exactly as `#blob` consumes it — all three variants, **no `else`**
-  (§14a). On s3 the `Redirect` is cross-origin, so a bundle reading those bytes needs the bucket's
-  CORS to allow this origin; streaming through Rails instead is what §15 forbids.
-- **THAT ENDPOINT'S `NotFound` IS RESCUED IN THE ACTION, NOT LEFT TO THE CLASS-LEVEL ARM.** The
-  class arm answers 422 "Your library refused that write." — right for the save door, a lie on a
-  read. Same shape as `FilesController#geometry` rescuing `RecordNotFound` locally (§14h). One 404
-  for four causes (unknown id, a stranger's, a tombstone, a directory) so the endpoint cannot report
-  which node ids are real.
-- **THE `current_user` SCOPE ON `#file` IS THE REAL GUARD, AND A TEST USING A REAL ADAPTER CANNOT
-  SEE IT.** All three adapters re-scope inside `live_node!`, so deleting the controller's scope
-  still answers 404 — from the port's `NotFound` — and the obvious test passes over a deleted guard.
-  The port's contract is that the CALLER has already decided the request is legitimate, so an
-  adapter may legitimately trust it. Pinned with a port double that does (`PermissiveDownloadPort`).
-- **FILE-PICKER EXTENSION FILTERING IS CLIENT-SIDE, AND FOLDERS ARE NEVER FILTERED.**
-  `/library/children` already answers one bounded folder, so a server-side filter buys no round
-  trips and costs a second definition of the extension vocabulary on an endpoint the form-field
-  chooser shares (§14d's one-vocabulary rule). Filtering folders would hide the path TO a matching
-  file. A malformed `extensions` filters NOTHING rather than everything — an addon's typo must not
-  present an empty picker. It is a convenience for the human, never a restriction on the addon: a
-  bundle can pass any node id to `read`.
-- **`pickFile` RESOLVES `null` FOR CANCEL, AND FILE MODE HAS NO "CHOSE THE ROOT" ANSWER** — a
-  directory is never a valid selection there, so `null` has exactly one meaning, unlike
-  `pickFolder`'s `{nodeId: ""}`. Both halves are driven in a browser, because a picker that simply
-  hung also renders nothing.
+**Read that file before touching** `app/services/maker/addons/`, `app/controllers/tools/`,
+`sidecar/`, the addon SDK, or the save door. It holds the GPL-sidecars-over-HTTP rules and the three
+shipped bugs behind them, the one output path (`Maker::Addons::LibraryOutput`), the manifest/registry
+refusals, the ctx + capability contract and `Host::LEVEL`, the save door's two wire shapes and its
+collision rules, the service proxy's content-type allowlist, and the SDK's reject-never-normalize
+rules. Moved out of this file on 2026-08-25 because it is *area* knowledge — 540 lines paid for on
+every session and needed on few. Nothing was dropped; this anchor stays because code cites `§14c`.
 
 ### 14d. The maker web layer
 
@@ -1408,23 +816,17 @@ own CLAUDE.md — see §3 and §14j.
   API.** `/v1/*` is Bearer-token; the web app is cookies. Consequence: web controllers are not
   limited to what the JSON API exposes.
 - **The `port_writable?` two-door branch is now written out ONCE** (`Maker::Addons::LibraryOutput`)
-  — it was five, not three, until Stage 2 (2026-08-20) gave the chunk family its four metadata
-  verbs and the other four callers (`Maker::LibraryFolder#mkdir`, `FilesController#destroy`,
-  `TrashController#restore`, `Maker::MoveNode`) stopped branching, because the port started
-  answering instead of refusing. **`LibraryOutput` keeps its branch, and it has the argument the
-  other four lacked**: the two-phase presigned upload genuinely IS a different flow from POSTing
-  bytes, not the same verb behind two doors. A NEW copy needs that same argument — "a fourth
-  would be one too many" no longer applies; there is no fourth left to count against.
-  (Excluded on purpose: `require_capability!` gates and views that pick an upload FORM —
-  those select a UI, which is `port_writable`'s stated job.)
-  **THIS COUNT IS NOT §14c's chunk-internals-reference count, and Arc B is exactly where the two
-  stopped agreeing** — both happened to read "one" from the addon framework's start until Arc B
-  Task 2, which is coincidence, not identity (the same warning this file gives repeatedly about
-  `scannable`/`port_writable`/`dir_deletable` agreeing on three backends). This one — how many
-  places branch on `port_writable?` to pick an upload flow — is still ONE, unchanged: `write_chunk`
-  still exists and is still the chunk-family half of that branch. What went to zero is the OTHER
-  count, one level down inside `write_chunk`: how many places call chunk-store internals directly.
-  `put_chunk` becoming a port verb removed that call without touching this branch at all.
+  — it was five until Stage 2 gave the chunk family its four metadata verbs and the other four
+  callers (`Maker::LibraryFolder#mkdir`, `FilesController#destroy`, `TrashController#restore`,
+  `Maker::MoveNode`) stopped branching, because the port started answering instead of refusing.
+  **`LibraryOutput` keeps its branch, and it has the argument the other four lacked**: the
+  two-phase presigned upload genuinely IS a different flow from POSTing bytes, not the same verb
+  behind two doors. A NEW copy needs that same argument. (Excluded on purpose:
+  `require_capability!` gates and views that pick an upload FORM — those select a UI, which is
+  `port_writable`'s stated job.) **THIS COUNT IS NOT §14c's chunk-internals-reference count** —
+  both read "one" until Arc B by coincidence, not identity, the same warning this file gives about
+  `scannable`/`port_writable`/`dir_deletable` agreeing on three backends. This one is still ONE;
+  the OTHER went to zero when `put_chunk` became a port verb, without touching this branch at all.
 - **A verb more than one controller performs gets a named service** — `Maker::MoveNode`,
   `Maker::AttachToProject`, `Maker::LibraryFolder` — rather than being re-inlined per action.
 - **NOTHING HERE REACHES `Sync::` AT ALL — the seam guard asserts ZERO, WITH NO ALLOWLIST.**
@@ -1469,21 +871,16 @@ own CLAUDE.md — see §3 and §14j.
   weaker — it has to guess whether the text after a terminator was meant to be markup or prose).
 - **A `data-controller` NAME THAT RESOLVES TO NOTHING IS A SILENT NO-OP, SO DELETING A STIMULUS FILE
   CAN DELETE A FEATURE WITH NOTHING ANYWHERE GOING RED.** Stimulus neither throws nor warns on an
-  identifier it cannot resolve — the page renders perfectly and the behaviour is simply absent.
-  `6095b87` deleted `boxpreview_controller.js` and `boxfilter_controller.js` while
-  `app/views/tools/openscad/` went on declaring both, and the editor opened on an empty grey preview
-  panel for **nine days**. `openscad_controller_test.rb` stayed green throughout because it POSTs the
-  preview endpoint DIRECTLY and therefore cannot see that the only thing which issues that POST has
-  become inert — a request test proves the endpoint works and nothing about whether anything calls
-  it. *(Both controllers were restored in #177 and then deleted again — for real this time — with
-  the views that were their only callers, when openscad was retired. The reverse direction, a
-  controller file no view names, is deliberately NOT an error here, which is what made that
-  deletion safe.)* Guarded by **`test/stimulus_hygiene_test.rb`**, which DERIVES every registered identifier from
-  the filenames by replicating stimulus-loading's own rule rather than listing them (a new controller
-  needs no test edit), and sweeps **both** spellings — `data-controller="a b"` (several names per
-  attribute) and the Rails `data: { controller: "a" }` hash, which
-  `app/views/shared/_folder_field.html.erb` uses and a literal-attribute grep misses. `data-controller`
-  is the COMPLETE set, not merely the convenient one: Stimulus resolves `data-action` and
+  identifier it cannot resolve — the page renders perfectly and the behaviour is simply absent. Two
+  deleted controllers left the openscad editor opening on an empty grey preview panel for **nine
+  days**, while its request test stayed green throughout: a request test proves the endpoint works
+  and nothing about whether the only thing that CALLS it has gone inert. Guarded by
+  **`test/stimulus_hygiene_test.rb`**, which DERIVES every registered identifier from the filenames
+  by replicating stimulus-loading's own rule rather than listing them (a new controller needs no
+  test edit), and sweeps **both** spellings — `data-controller="a b"` (several names per attribute)
+  and the Rails `data: { controller: "a" }` hash, which a literal-attribute grep misses. The reverse
+  direction — a controller file no view names — is deliberately NOT an error. `data-controller` is
+  the COMPLETE set, not merely the convenient one: Stimulus resolves `data-action` and
   `data-*-target` only for a controller attached through it.
 - **`back_target_path` COMPARES THE REFERER'S ORIGIN AND THEN DISCARDS IT** — only a root-relative
   path ever reaches an `href`, so a cross-origin referer is DROPPED, never sanitised and re-emitted.
@@ -1583,6 +980,10 @@ own CLAUDE.md — see §3 and §14j.
   spends the next reader's attention on finished work — **and in the other direction it hides
   unfinished work behind a row that says done**, which is how the 2026-08-19 audit's own ledger
   came within one `git branch -D` of destroying a fix it had recorded as landed (§15).
+- **A REFERENCE COUNT IS NOT A COUPLING COUNT.** The "68 of 224 references" figure that deferred the
+  chunk retirement twice (§12.12) was the wrong number to plan from: **36 of 43 app-side and 11 of
+  68 test-side hits were PROSE**, and the real coupling was 7 wiring sites and 57 test files, 60 of
+  whose references sat in one file that was then deleted. Grep, then read what you counted.
 - **The suite being green is not evidence a guard works** if the guard's precondition is
   never established in test (see the `STORAGE_BACKEND` 500 in §14a, and the form `scope:` bug
   in §14d). Drive the real request.
@@ -1634,17 +1035,15 @@ own CLAUDE.md — see §3 and §14j.
 - **AN APP MUST NOT POINT A SYNCHRONOUS HTTP CLIENT AT ITSELF.** Serving addon bundles from this
   app's own `public/` over `ADDON_SOURCE_URL` made every asset fetch a **nested** request into the
   same Puma pool already servicing the outer one — reentrancy, not just extra load. Measured, not
-  theorized: the `generators` bundle's own module graph (2 sequential fetches, then 4 of makerjs's
-  bare-specifier deps fetched at once by the browser) against a stock 3-4-thread dev/Capybara Puma
-  pool stalled most requests **14-24 seconds**, and several outright **404'd** — `Net::HTTP`'s own
-  read timeout firing before a thread ever freed up. Fixed by `ADDON_SOURCE_PATH`
-  (`Maker::Addons::Source::Local`), which reads `public/addons` straight off disk in dev/test;
-  `ADDON_SOURCE_URL` (HTTP) stays for Phase B's genuinely separate static container, which has its
-  own pool and is structurally immune to this. A second, smaller effect in the same area: even
-  `Source::Local` needs more than Puma's stock `threads 3, 3` in a real `bin/rails server`, because
-  `config.enable_reloading = true`'s per-request interlock adds overhead a page firing several
-  near-simultaneous asset requests can expose — `RAILS_MAX_THREADS=16` fixed it; production
-  (eager-loaded) and the test env (`enable_reloading = false`) don't carry that overhead.
+  theorized: one bundle's module graph against a stock 3-4-thread dev/Capybara pool stalled most
+  requests **14-24 seconds** and several outright **404'd**, `Net::HTTP`'s read timeout firing
+  before a thread ever freed up. Fixed by `ADDON_SOURCE_PATH` (`Maker::Addons::Source::Local`),
+  reading `public/addons` off disk in dev/test; `ADDON_SOURCE_URL` stays for the genuinely separate
+  static container, which has its own pool and is structurally immune. A smaller effect alongside:
+  even `Source::Local` needs more than Puma's stock `threads 3, 3` in a real `bin/rails server`,
+  because `config.enable_reloading = true`'s per-request interlock adds overhead that several
+  near-simultaneous asset requests expose — `RAILS_MAX_THREADS=16` fixed it; production and the
+  test env don't carry it.
 - **A GUARD THAT SKIPS ON THE THING IT ASSERTS IS VACUOUS.** A boot test that skipped when
   `defined?(Sync)` meant the mutation which loaded the engine skipped every test and reported
   **success**. Skip on whether the leg was **invoked**, so absence is the claim rather than the
@@ -1673,6 +1072,14 @@ own CLAUDE.md — see §3 and §14j.
   `port_writable?` copies, the Scanner's skip-list blind spot). Reading `nodes` — the
   catalog all three backends populate — covers every door, present and future, without
   touching any of them.
+- **THE CHANGELOG PULL'S NUDGE TAKES LIVE FILE ARRIVALS ONLY, ASKS `maker_projects` ONCE PER PULL,
+  AND IS DELIBERATELY NOT FED BY `full_resync`** (§12.10). `ChunkRemote::ChangelogSync#call` is
+  where this app learns about a node another device pushed, so it nudges once per pull. A
+  **directory** has nothing to file and a **tombstone** is a removal — neither is an arrival. The
+  project lookup is **once for the whole pull, never per entry**: per-node, a page loop pays a query
+  each to enqueue a job `limits_concurrency` discards anyway. And `full_resync` re-applies the
+  **entire tree**, so every file there would look like an arrival. Mutation-checked in
+  `changelog_sync_test.rb`.
 - **ADDS NO NEW COPY OF THE `port_writable?` BRANCH — the count named in §14d stays
   five.** Moves run through `Maker::MoveNode`, mkdirs through `Maker::LibraryFolder`; both
   already branch correctly for the deployment, so `ProjectIntake` itself never asks the
@@ -1706,18 +1113,17 @@ own CLAUDE.md — see §3 and §14j.
   terminal ("pick another name" → **422** `unsupported_operation`). `Maker::ProjectIntake
   .destination_for` asks about the **category folder** the sweep will file into, and is answerable
   ("overwrite?" → **409** `would_replace`). A re-save goes straight through the gap: the first copy
-  has already been filed, so the picked folder is vacant, the door accepts, and the sweep then
-  cannot place the second copy — which sits at the project root **forever**, with two copies of one
-  drawing in the library. That is CLAUDE.md §12 item 11 in the wild (`harbor-number-v4.svg`, saved
-  twice, while v3 and v5 sorted fine). **Keep 409 and 422 distinct**: a bundle must be able to tell
-  "never succeeds on retry" from "say yes and it will", or it offers an Overwrite button for a save
-  that can never take one. `destination_for` **creates nothing** — looking up a category folder must
-  not mkdir it (`#relocate`'s recorded bug) — and takes its folder name from
+  has already been filed, so the picked folder is vacant, the door accepts, and the sweep cannot
+  place the second copy — which sits at the project root **forever**, two copies of one drawing in
+  the library. That is §12 item 11 in the wild. **Keep 409 and 422 distinct**: a bundle must be able
+  to tell "never succeeds on retry" from "say yes and it will", or it offers an Overwrite button for
+  a save that can never take one. `destination_for` **creates nothing** — looking up a category
+  folder must not mkdir it (`#relocate`'s recorded bug) — and takes its name from
   `Maker::ProjectFolders.folder_for`, the same pure function `#place` uses, so prediction and
-  behaviour cannot disagree. **Since 2026-08-13 the 422 has ONE exemption, and only one:** an addon
-  save carrying `state_id` may land on a node that saved item itself produced, in either check —
-  §14c's own-file rule. Naming the state is the consent; nothing else moved, and "the destination is
-  taken" is still terminal for every collision with a file this save did not write.
+  behaviour cannot disagree. **The 422 has ONE exemption, and only one:** an addon save carrying
+  `state_id` may land on a node that saved item itself produced, in either check (§14c's own-file
+  rule). Naming the state is the consent; "the destination is taken" is still terminal for every
+  collision with a file this save did not write.
 - **THE `state.id`-IN-THE-FILENAME EXEMPTION IS GONE WITH ITS DOOR, AND THAT IS A WIDENING, NOT A
   TIDY-UP.** `Tools::OpenscadController#create` could not reach the collision above because its
   output name embedded `state.id`, a fresh autoincrement per save, so two saves of one design under
@@ -1766,494 +1172,49 @@ own CLAUDE.md — see §3 and §14j.
   per call measured against a real R2 bucket, **six to fifteen seconds** an upload's response sits
   waiting. 5 keeps the same promise (a handful of files dropped in a folder file themselves
   immediately) at roughly a second. `PROJECT_ORGANIZE_EAGER_MAX_MOVES` still overrides on every
-  backend, so an operator who set it keeps exactly what they set.
-  - **An earlier version of this bullet said "it stays 25 anyway" and was left behind when the
-    code stopped doing that** — it went on asserting a single even bound for months after the
-    split landed, which is the stale-claim shape §15 warns about, in the file that is loaded into
-    every session. Recorded here rather than quietly corrected, because the *first* version of
-    this bullet already argued 25 was uneven across backends and then left the number the same
-    on all three: naming the asymmetry is not the same as fixing it.
+  backend. *(This bullet went on asserting a single even bound for months after the split landed —
+  the stale-claim shape §15 warns about, in the file loaded into every session.)*
   - **`eager_max_moves` ASKS THE ADAPTER'S CLASS (`is_a?(FileLayer::S3)`), AND THAT IS NOT §14b's
     RECORDED TRAP.** That trap was a **gate** — `is_a?(Share)` decided *whether* to index, so an
-    unrecognised backend was silently skipped and an S3 library never got indexed at all. This is
-    a **threshold**, and the property it keys on ("one move here is three network round-trips") is
-    not a capability any adapter declares. An unrecognised backend falls through to 25 — today's
-    behaviour everywhere — so it fails toward SLOW, never toward silence or data loss.
+    unrecognised backend was silently skipped and an S3 library never got indexed. This is a
+    **threshold**, keyed on a property no adapter declares ("one move here is three round-trips"),
+    and an unrecognised backend falls through to 25 — so it fails toward SLOW, never toward
+    silence or data loss.
 - **A CALLER MUST READ `intake_project_folder`'S RETURN VALUE, NOT JUST TRIGGER ITS SIDE
-  EFFECT.** Every caller threw it away until a review caught it: a same-named upload whose
-  eager nudge lost a collision at its destination folder went from a refused write with a
-  flash (before the eager nudge existed) to a silent "Uploaded x." with no sign the file
-  stayed at the project root (after it, before this fix).
-  `ProjectFolderIntake#left_unfiled_by_conflict?` / `#project_intake_notice` read the
-  `:conflict` entry out of `Result#skips` for exactly this — but only in the **three** doors
-  whose response a user actually sees (`FilesController#create`'s HTML branch,
-  `Projects::UploadsController#create`, and the addon save door); the JSON-only branches
-  still run the intake and still file what they can, they just don't surface the fact,
-  because nothing downstream reads that response key today. *(It was four until
-  `Tools::OpenscadController#create` was retired on 2026-08-12 — openscad now goes through
-  `Tools::AddonsController#create` with every other addon.)*
+  EFFECT.** Every caller threw it away until a review caught it: a same-named upload whose eager
+  nudge lost a collision at its destination folder reported a silent "Uploaded x." with no sign the
+  file had stayed at the project root. `ProjectFolderIntake#left_unfiled_by_conflict?` /
+  `#project_intake_notice` read the `:conflict` entry out of `Result#skips` for exactly this — but
+  only in the **three** doors whose response a user actually sees (`FilesController#create`'s HTML
+  branch, `Projects::UploadsController#create`, the addon save door). The JSON-only branches still
+  run the intake and still file what they can; they just don't surface it, because nothing
+  downstream reads that response key today.
 
-### 14g. Deploy secrets
+### 14g. Deploy secrets → **`docs/invariants/deploy-secrets.md`**
 
-- **KAMAL CANNOT NOTICE AN UNREADABLE SECRET, SO `bin/secrets-preflight` IS NOT OPTIONAL.** It
-  expands `$(…)` in `.kamal/secrets*` through Ruby **backticks, which discard exit status** — a
-  locked vault makes `bin/secret` exit 1, the substitution yields `""`, and `Kamal::Secrets#[]`
-  returns that empty string **without raising**. A *missing* key raises; an *empty* one does not,
-  so the failure surfaces later and elsewhere (an empty `KAMAL_REGISTRY_PASSWORD` becomes a
-  confusing `docker login` error — once reported as exit 0 here). Verified against kamal 2.12.0.
-- **SECRETS ARE PER-DESTINATION, AND `.kamal/secrets` IS THE *BASE* FILE, NOT A SHARED ONE.** Kamal
-  reads `[secrets-common, secrets.<dest>]`, so anything added to `.kamal/secrets` is invisible
-  under `-d`. Required, not tidiness: `CHUNK_SECRET_ACCESS_KEY` is **SeaweedFS on Unraid and
-  Cloudflare R2 on OVH** — one name, two credentials, which `secrets-common` cannot tell apart.
-- **ONLY UNIVERSALLY-REQUIRED KEYS MAY LIVE IN `secrets-common`.** `InlineCommandSubstitution` runs
-  every `$(…)` in a parsed file **eagerly**, not lazily per key, so a credential parked there makes
-  `-d share` shell out for something a share container never holds. Guarded, mutation-checked, in
-  `test/deploy_hygiene_test.rb` — which is **static** (no vault needed, passes on a bare runner).
-- **`op read` NEEDS NO SECOND CODE PATH FOR UNATTENDED RUNS** — it uses `OP_SERVICE_ACCOUNT_TOKEN`
-  when set and desktop/biometric auth when not. Items live in the **`tinkerex` vault, never
-  `Personal`**: 1Password *refuses* to grant a service account access to a Personal/Private vault,
-  so `op://Personal/…` failing is by design, not a broken vault.
-- **EVERY SECRET FAILING AT ONCE MEANS THE TOKEN EXPIRED — DON'T DEBUG THE REPO.** The token
-  reaches the process through the environment and so is invisible to this tree: nothing here can
-  be edited to fix it, and `git log` will show nothing that broke it. Re-mint per `docs/DEPLOY.md`.
-  **ONE secret failing is the opposite diagnosis** — a wrong ref or field name in that single
-  `.kamal/secrets*` line. `bin/secrets-preflight --all` tells the two apart at a glance, and prints
-  which auth path is in use.
-- **NEVER `op read "$ref" 2>&1 >/dev/null`** — the redirection order LEAKS the value (`2>&1` points
-  fd2 at the captured stdout *before* `>/dev/null` moves fd1). It printed a live ghcr PAT into a
-  transcript and forced a rotation. `bin/secret` keeps the value on fd1 only.
-- **`kamal deploy` WARNS ON AN UNCOMMITTED TREE, IT DOES NOT REFUSE** (`say "Building with
-  uncommitted changes"`, yellow), and this repo sets no `builder: clone:` — so the image is built
-  from the **working tree** and whatever is half-finished in it ships. Check `git status` first.
+**Read that file before touching** `.kamal/secrets*`, `bin/secret`, `bin/secrets-preflight`,
+`config/deploy*.yml`, or an accessory's env. It holds why the preflight is not optional (kamal
+cannot notice an unreadable secret), the per-destination rule, what may live in `secrets-common`,
+the redirection-order leak, and the accessory-secrets rule. `docs/DEPLOY.md` is the operator
+companion. Nothing was dropped; this anchor stays.
 
-- **AN ACCESSORY'S SECRETS ARE REQUIRED BY EVERY DESTINATION, BECAUSE `accessories:` IS NEVER
-  OVERLAID.** A destination overlay (`deploy.<dest>.yml`) can override `env:`, `servers:` and the
-  rest, but the `accessories:` block is merged from the base file for ALL of them — so
-  `SECRET_KEY_BASE` and `SYNC_ADMIN_TOKEN` on the `sync` accessory are structurally required by
-  base, share, s3, ovh AND remote alike (verified against `Kamal::Configuration.raw_config` for all
-  five, not assumed). That is what makes `.kamal/secrets-common` the right home for an
-  accessory-only secret — the same argument `builder:`'s `TINKEREX_SYNC_DEPLOY_KEY` already had.
-  **`SYNC_ADMIN_TOKEN` is the deliberate exception and is repeated per-destination instead**, on
-  instruction: it also has a genuine per-destination story, since the `remote` maker app SENDS it
-  as well as the accessory receiving it, and both sides must resolve the SAME 1Password item or
-  the far side answers 503.
-- **AN ACCESSORY HAS NO PROXY REGISTRATION UNLESS YOU GIVE IT ONE, AND THAT BREAKS ANY TOOL THAT
-  PROBES HEALTH BY HOST HEADER.** `sync` declares no `port:` and no `proxy:` — correct, since only
-  another container on the kamal network talks to it — but `bin/restore-db` verified a restore with
-  `curl -H "Host: <dest>.tinkerex.local" http://localhost/up`, which for this destination 404s
-  thirty times, sleeps 60 s and reports "no answer" **for a perfectly healthy server**. Probe an
-  accessory from INSIDE it (`docker exec tinkerex-sync curl localhost:3000/up`). The general shape:
-  a health check written for the app tier silently means something else at the accessory tier.
+### 14h. Shape measurement, the Measure view → **`docs/invariants/measure-view.md`**
 
-### 14h. Shape measurement (the Measure view)
+**Read that file before touching** `app/services/maker/previews/`, `Maker::Previews::Geometry` and
+the four formats that feed it, `measure_controller.js`, `lib/print_sheet.js`, or anything that reads
+a `maker_previews` row. It holds the per-format `PAYLOAD_REVISION` arithmetic, the
+`available?`/`available_for?` split, the flattening and thinning rules (measure before thinning), the
+circularity floor, the preview staleness axes, Z-up, and the print sheet's mm-scale mechanism.
+Moved out on 2026-08-25 — 351 lines that bind only inside the preview stack. Nothing was dropped;
+this anchor stays because code cites `§14h`.
 
-> **FOUR FORMATS, ONE PAYLOAD.** `.lbrn/.lbrn2`, `.mage`, `.dxf` and `.svg` all measure, through
-> `Maker::Previews::Geometry` — which owns the wire shape, the thinning, the circularity test and
-> the job box. A format supplies **a traversal and a colour policy, nothing else**. Most rules
-> below were written for LightBurn and now bind on all four; the ones that are format-specific say
-> so. `measure_controller.js` branches on NO file type — a fifth format is a server-side traversal
-> and not a line of JavaScript, and it should stay that way.
+### 14i. Backup and restore → **`docs/invariants/backup-restore.md`**
 
-- **A CHANGE IN `Geometry` MUST BUMP EVERY FORMAT'S `PAYLOAD_REVISION`, NOT ONE.** Each format
-  declares its own and `Enqueue` compares it per row, so a fix to the shared `simplify` that bumps
-  only `LbrnGeometry` leaves every already-measured `.dxf` and `.svg` serving the old algorithm
-  **forever** — a finished design's content never changes. That is exactly how four LightBurn files
-  kept serving mangled curves after the thinning fix deployed. `Geometry::REVISIONED_BY` lists them
-  and `GeometryTest` **enumerates the declaring modules from the code** and compares, so a fifth
-  format cannot be added without appearing there. **Since 2026-08-19 the CORRECT EDIT is one
-  line**: each geometry module is `PAYLOAD_REVISION = Geometry::SHARED_REVISION + FORMAT_REVISION`,
-  so bumping the shared term moves **all THREE declared constants** — `LbrnGeometry`,
-  `DxfGeometry`, `SvgGeometry` — which propagates to **all FOUR formats**, because `.mage` and
-  `.lbrn2` both read `LbrnGeometry`. (This sentence read "all five names" until 2026-08-25; five
-  matched neither count, and the bullet's own closing clause already said three. Measured:
-  `REVISIONED_BY` has 3 entries, and `Lbrn2`/`Mage`/`Dxf`/`Svg` are the 4 formats answering
-  `payload_revision(kind)`.) The outcome above is unchanged — what moved is that the arithmetic
-  now does it, instead of three remembered edits.
-- **`available?` ASKS WHETHER THIS BOX HAS *ANY* PATH TO A THUMBNAIL — NOT WHETHER IT HAS THE
-  RASTERIZER.** `Svg` and `Dxf` gate on **resvg**, because a rasterized SVG is their only path.
-  **`Lbrn2` and `Mage` are unconditionally `true`**, because both formats carry the authoring
-  app's own render in `<Thumbnail Source="base64png">` and extracting it is pure Ruby. That split
-  is the rule; it is not two conventions. Getting it wrong is silent and terminal: `Lbrn2` gated
-  on resvg until 2026-08-19 and marked a file **whose PNG was sitting right there**
-  `unsupported` on any box without the binary, while the byte-identical `.mage` rendered —
-  §14a's one-condition-two-answers, split by format. **A renderer with an embedded-raster path
-  therefore also owns the toolchain check in its FALLBACK** (`#outline_thumbnail`, raising
-  `NoThumbnail` — the same class `Mage` and `ThreeMf` already use), or the check has nowhere to
-  live and a resvg-less box gets an ENOENT from inside the rasterizer instead of a named state.
-- **`available_for?(kind)` EXISTS ONLY WHERE IT CAN ANSWER DIFFERENTLY FROM `available?`** — i.e.
-  on `Svg`/`Dxf`, whose thumbnail needs resvg while the measure payload (Nokogiri + arithmetic)
-  does not. `Lbrn2` and `Mage` **do not define it**: with `available?` already true it could only
-  repeat them, and `GeneratePreviewJob#available_for?` falls through to `available?` for a
-  renderer that omits it. A test asking `available_for?("geometry")` on a box that HAS resvg
-  passes however it is implemented; **stub the rasterizer absent or it proves nothing** — and the
-  same trap has a second mouth: `RendererContractTest` does `next unless renderer.available?`, so
-  flipping a renderer to unconditionally-true **stops it skipping** and its fixture must then be
-  one that renders with no toolchain (hence `embedded-thumb.lbrn2` beside `sample.mage`). Both
-  halves are invisible on a box that has the binary.
-- **A MillMage `<Shape>` CARRIES `OpIndex`, A LIGHTBURN ONE `CutIndex`** — `Lbrn2.layer_index`
-  reads either, and the `||` is unambiguous because no file writes both. The thumbnail cannot see
-  the difference (a MillMage file has no `<CutSetting>`, so a nil index and a real one both fall
-  through to `DEFAULT_STROKE` and draw the same black), so this surfaced only in the payload, where
-  the layer key groups shapes and keys the colour map: **every `.mage` contour landed in one
-  nameless layer**.
-- **MILLMAGE LAYERS GET NO COLOURS, AND THAT IS A REFUSAL RATHER THAN AN ABSENCE.** `LAYER_PALETTE`
-  is defensible only because its values were RECOVERED from 58 real LightBurn exports; MillMage is
-  a different application with its own layer bar and no colour field in `<Operation>`. Reusing
-  LightBurn's palette would be the mistake this section already names in the other direction (a
-  file-supplied colour gets no name, because "Blue" beside a green swatch contradicts itself).
-  Detected by ROOT ELEMENT, not extension, so a future MillMage emitting `<CutSetting>`-shaped
-  elements cannot silently acquire the palette.
-- **`Dxf.to_svg` AND THE DXF PAYLOAD SHARE `each_geometry`; THE SVG LEG CANNOT AND SAYS SO.** For
-  the three formats OUR parser draws, a second parse for measuring is §14b's `LbrnMetadata` bug —
-  so DXF's drawing was rewritten onto the traversal (verified byte-identical across four inputs).
-  An SVG thumbnail is rasterized by **resvg**, which we do not reimplement, so `SvgGeometry` is
-  necessarily an independent second reading: resvg understands the whole format, this parser its
-  geometry subset, and a file using something outside it measures fewer shapes than the picture
-  shows. `<text>`, `<use>` and clip paths are deliberately unparsed. Do not "fix" that asymmetry by
-  giving the other three a second parser.
-- **`$INSUNITS` IS WHERE A DXF BECOMES PHYSICAL, AND `0`/ABSENT MEANS MILLIMETRES BY CHOICE.** The
-  file genuinely does not say; mm is this corpus and it makes a header-less mm file correct, which
-  is the common case (`sample.dxf` has no HEADER at all). An inches file with no header reads 25.4×
-  small and nothing in the format lets us know. **Colours come from the `LAYER` TABLE, not the
-  entity** — an entity's own code 62 is usually absent or `BYLAYER`, so reading only the entity
-  leaves nearly every real file colourless — and a **NEGATIVE table colour means the layer is OFF**,
-  so its geometry is neither drawn nor folded into the measured extent.
-- **SVG IS ALREADY Y-DOWN; DXF IS Y-UP AND MUST BE FLIPPED.** Adding a flip to SVG "for symmetry
-  with Dxf" turns every SVG upside down, and it still draws a plausible picture. Only a positional
-  assertion catches either direction.
-- **AN SVG'S UNITS COME FROM `width`/`height` OVER THE `viewBox`, FALLING BACK TO CSS px AT 96 dpi**
-  — which is by definition, and is what makes a viewBox-only file measurable at all. `%`, `em` and
-  `ex` are **refused** rather than read as bare numbers. `preserveAspectRatio` `meet` uses
-  **min(sx, sy) on both axes**; per-axis reports a stretch the renderer never applies.
-- **CURVE FLATTENING IS BOUNDED BY GEOMETRIC ERROR, NEVER BY A FIXED SAMPLE COUNT** — the same rule
-  as the thinning below, one stage earlier. A fixed count undersamples a large curve, and an
-  undersampled curve's chord sits INSIDE the true curve, so its bbox and its `d` both read small,
-  silently. `SvgPath` subdivides adaptively; `Dxf.arc_samples` bounds relative sagitta and **rounds
-  up to a multiple of 4** so a circle's axis extents are sampled exactly and `d` is the diameter
-  rather than a chord.
-- **`SvgGeometry` RECURSES INTO AN ALLOWLIST OF CONTAINERS, NOT PAST A SKIP-LIST.** It started as
-  the latter, naming `defs`/`symbol`/`clipPath`/…, and that list was **dead code** — nothing
-  recursed into them either way, so removing an entry left every test green. §14b records the
-  skip-list blind spot as this repo's recurring bug, four instances deep; an allowlist excludes a
-  template element the day it is invented, with nobody remembering to add it.
-- **`BITMAP_ALPHABET` IS A `String#count` SET, NOT A REGEX, AND THAT IS A FIX NOT A STYLE CHOICE.**
-  The inlined-photo attribute is routinely 10–25 MB and Rails sets `Regexp.timeout` to **1.0 s**;
-  the old `%r{\A[A-Za-z0-9+/=\s]+\z}` measured **0.467 s standalone and over the limit through the
-  real Nokogiri path**, so it failed by machine speed. `Regexp::TimeoutError` **is** a
-  `StandardError`, so `LbrnMetadata.parse`'s blanket rescue swallowed it into nil metadata while
-  `to_svg` and the payload — which have no rescue — would have failed the whole preview. `count` is
-  45× faster and has no engine to time out; the `+`'s non-empty requirement moved to the caller.
-- **EVERY REPORTED NUMBER COMES FROM FULL-RESOLUTION POINTS; THINNING IS DRAWING-ONLY.**
-  `Geometry` simplifies contours to keep the payload small (the worst real file drops
-  728 KB → 200 KB gzipped) and computes `b` and `d` **before** thinning. Measure after thinning and
-  every curve under-reports, silently, while every "does it draw" test stays green. `d` is the
-  sharper case: a 0.2 mm hole thins to 9 points, below `MIN_CIRCLE_POINTS`, so measuring after
-  would drop its diameter entirely and report a bare bounding box instead of "⌀0.2 mm".
-- **THINNING IS BOUNDED BY GEOMETRIC ERROR, NEVER BY POSITION IN THE ARRAY.** `simplify` is
-  Ramer-Douglas-Peucker against `SIMPLIFY_TOLERANCE` (0.01 mm). **Do not replace it with an index
-  stride** — that is what shipped first, and it was wrong: `Lbrn2.polylines` appends 12 points per
-  `B` (bezier) segment and exactly **ONE** per `L` (straight) segment, so a single straight edge
-  shifts every later index and no vertex lands where a stride expects. For an `L` segment that one
-  point IS a vertex, so dropping it cuts the corner off entirely. Measured over the corpus before
-  the fix: **1148 of 5259 thinned contours displaced by more than 5% of their own size, worst case
-  58.7 mm.** RDP keeps a corner by construction (a corner is the farthest point from any chord
-  spanning it) and is also *smaller* — 200 KB worst case against the stride's 281 KB.
-  - The stride's justification, `BEZIER_SAMPLES % DECIMATE_STRIDE == 0`, was **true but only for
-    an all-bezier contour**, and `bezier-circle.lbrn2` is exactly that (`B0 1B1 2B2 3B3 0`) — so
-    the guard asserting it passed while real mixed-geometry files were being mangled. If you find
-    yourself proving a property on that fixture, check it on a contour with an `L` op too.
-- **THE PAYLOAD'S BBOXES MUST UNION TO `Lbrn2.job_size`** — one traversal, so the Measure view and
-  the Laser Settings panel cannot disagree; §14b's `LbrnMetadata` second-copy bug is the precedent.
-  But **a union is the weakest possible form of that assertion** and cannot catch a
-  measure-after-thinning bug: any per-shape error some other shape already bounds disappears into
-  it. It stayed green on three separate fixtures. The guard with teeth is **per-shape**, on a
-  fixture whose ellipse is not shadowed by a larger Rect.
-- **CIRCULARITY NEEDS THE 12-POINT FLOOR, NOT JUST THE RADIUS TEST.** A square's four corners are
-  all equidistant from its centre — as are any regular polygon's vertices — so radius variance
-  alone calls every square round. Measured: a `Rect` emits 5 points with radial spread **0.00000**
-  while a real bezier circle's 49 points spread **0.00263**, so the naive metric ranks the square
-  as *more* circular. A `Rect` emits 5, a bezier circle 49, an `Ellipse` 33. Accepted consequence:
-  a genuine 16-gon reports as round. `bezier-circle.lbrn2` pins both directions and **the square is
-  the assertion that carries the weight**.
-- **`each_geometry`'s 6th yielded value (`object_id`) counts NON-GROUP `<Shape>`s, and a Text's
-  `<BackupPath>` REUSES its parent's** — the outline *is* the text, so alt-clicking one letter must
-  report the whole word. A Group consumes no id. **Ids are DISTINCT PER OBJECT and nothing more —
-  never assume contiguity**: a shape that yields nothing (a Rect without W/H, an Ellipse without
-  Rx/Ry, a Text with no BackupPath) still spends a tick, so gaps are ordinary in a real file.
-- **Bitmap base64 is EXCLUDED from the geometry payload, deliberately.** It is the single reason
-  the payload is cheap: `metal test 5.lbrn2` is 1.45 MB gzipped as SVG and 0.1 KB as geometry JSON.
-  A measuring view needs the rectangle, not the photo. Restoring it re-inflates every
-  photo-engraving file by three orders of magnitude. `rake lbrn:geometry_report` is what notices —
-  no fixture is big enough to.
-- **A CORRUPT DOCUMENT RAISES; AN EMPTY ONE DOES NOT.** `LbrnGeometry` raises `ParseError` when
-  `doc.root` is nil, matching `to_svg`, so the job marks it `failed`. A document that parses with no
-  shapes returns the empty payload and goes `ready`. Collapse them and a corrupt file presents as a
-  working Measure view reading "No measurable geometry in this file" — a lie about the file.
-- **`geometry` IS THE FIRST KIND TO EXERCISE THE PREVIEW `kind` SEAM END TO END.** `model_glb` is
-  declared in `Preview::KINDS` but refused by `Mesh`, so nothing produced a second artifact from one
-  file until this. `RendererContractTest` still passes because its `render_with` never sends
-  `kind:` — it exercises the thumbnail path, where "must be an inline-safe raster" stays true.
-- **A CONTENT REPOINT BLANKS THE ARTIFACT; A RENDERER REBUILD DOES NOT.** `pending` exists so a user
-  never sees an artifact of the PREVIOUS CONTENT labelled as the current file — a lie the spinner
-  honestly replaces. A renderer bump is not that case: the stored artifact still depicts this exact
-  file, only the code that built it moved on. Blanking it swapped a correct picture for a spinner
-  on a page that **does not poll**, so it stayed a spinner until someone reloaded, and read as
-  "generating preview is broken".
-- **A CONSUMER THAT CANNOT TOLERATE AN OLDER BUILD'S OUTPUT SAYS SO ITSELF.**
-  `FilesController#geometry` answers `pending` whenever it had to enqueue, **without reading the
-  row's status** — geometry is DATA the client measures from (an older build's payload is wrong,
-  not merely old) and its client polls, so pending resolves itself. The thumbnail is a picture on a
-  page that doesn't poll. Same mechanism, opposite right answers; do not unify them.
-- **A REVISION CHECK IN `Enqueue` IS USELESS UNLESS THE READ PATH ASKS FOR IT — and for thumbnails
-  it did not.** `Enqueue` compared revisions correctly from the day it shipped, but only something
-  that CALLS it can act on that, and the caller skips any node the read reports a row for. That
-  query matched on `(kind, node_id, version_id)` alone — so a stale row satisfied it, nothing
-  re-enqueued, and **172 of 174 LightBurn thumbnails sat at revision 1 through two deploys that had
-  bumped it**, leaving the layer colours those deploys added invisible. **Every test of the
-  mechanism passed throughout**, because they all called `Enqueue` directly and none drove the thing
-  a user does — open a page. `test/integration/web/maker_page_thumbnails_test.rb` exists for exactly
-  that gap and drives real requests.
-- **`Maker::Previews::ThumbnailMap` IS THE ONE IMPLEMENTATION OF BOTH THE REVISION FILTER AND THE
-  BACKFILL, AND `FilesController` CALLS IT RATHER THAN KEEPING ITS OWN.** The bug above was fixed in
-  `FilesController#thumbnails_for`/`#backfill_thumbnails` and nowhere else, so the Models page, the
-  project covers and `ProjectsController#show`'s two maps — five call sites that go through
-  `ThumbnailMap` — had **neither**: a missing row spun forever (nothing in that path ever called
-  `Enqueue`, and `/files/thumbnails` omits a row-less node from its JSON, so the client's
-  `if (!entry) continue` gives up after 40 polls, still spinning) and a stale row was **served**, an
-  old picture presented as the file's current thumbnail. Those three controller privates are **gone**,
-  not duplicated — the enqueue belongs to the service and not the callers (§14d) because its inputs
-  are precisely what this class computes and does not expose, and because a sixth caller must get it
-  without knowing to ask. Two consequences to keep: **`from_info`'s `backfill:` is REQUIRED, not
-  defaulted**, because its two callers disagree and both wrong answers are silent (`#index` must
-  self-heal; `#thumbnails` is polled every 2 s for 40 ticks and must not write) — guarded by driving
-  the real endpoint, since no unit test of the map can see which flag an action passes; and the
-  **renderable-only check earns its place at the BUDGET, not at correctness** — `Enqueue` already
-  refuses a name no renderer handles, so deleting the check creates no rows and enqueues no jobs and
-  came back GREEN under mutation, while `budget -= 1` runs unconditionally, so a wall of `.gcode`
-  ahead of the models would spend the whole budget on files that can never have a thumbnail and the
-  backlog would never drain.
-- **`pending` AND `processing` ARE ASSERTIONS THAT A JOB EXISTS, AND `Enqueue::STALLED_AFTER` IS THE
-  ONLY THING THAT EVER VERIFIES THEM.** `failed` re-enqueues, `ready` is done, `unsupported` is
-  terminal by design — those two were the only statuses with **no way back**, so a lost job wedged
-  the row FOREVER: `Enqueue`'s early return fires for every caller, so the 15-minute scan,
-  `ThumbnailMap`'s backfill, `#current_thumbnail` and the addon door all no-op'd on it, and
-  `MissingBackfill` looks only for content with NO row. Three rows sat wedged on the live share
-  library, the oldest over a week, spinning. **The window is what keeps the escape from becoming a
-  stampede** (the backfill calls `Enqueue` per row on every Files render), and **the
-  explicit `updated_at` restamp is what keeps the heal from repeating** — healing changes no other
-  attribute and `save!` on an unchanged record is a NO-OP that leaves the timestamp alone, so
-  without it every scan and page load adds another duplicate job. All three halves are
-  mutation-checked; dropping `|| stalled` must produce **two** failures, not one.
-- **A JOB WHOSE ARGUMENT IS A PRIMARY-DB ROW ID MUST SET `enqueue_after_transaction_commit`, BECAUSE
-  THE JOB LIVES IN A DIFFERENT DATABASE FROM THE ROW.** Rails 8.1 defaults it to **false**, so
-  `perform_later` commits to the QUEUE database on its own connection **immediately** while the row
-  is still inside the caller's open transaction — and Solid Queue runs IN THE PUMA PROCESS here
-  (`SOLID_QUEUE_IN_PUMA`) polling sub-second, so it wins that race. `Maker::GeneratePreviewJob`'s
-  own `discard_on ActiveRecord::RecordNotFound` then made the loss **silent**: no failure, no log,
-  job marked finished, row stranded at `pending`. Proven on the box — job 15583 created *and*
-  finished at 2026-08-13 23:09:20 while preview 1747 was never touched. **Every addon save is inside
-  a transaction** (`Tools::AddonsController#create`), which is why addon output was hit and uploads
-  were not. Set PER JOB, not globally: it is a claim about that job's argument, and it belongs
-  beside the `discard_on` it interacts with.
-- **A PREVIEW IS STALE ON TWO INDEPENDENT AXES, AND `version_id` IS ONLY THE FIRST.** It asks
-  whether an artifact was made from the file's current CONTENT; `renderer_revision` asks whether it
-  was made by the current CODE. With only the first, a payload change invalidated **nothing** —
-  a finished design's content never changes — so the .lbrn2 thinning fix deployed and four
-  already-measured files kept serving mangled curves until they were destroyed by hand, on the one
-  backend of three that had them. **Change a payload → bump the renderer's `PAYLOAD_REVISION`.**
-  - **Revisions are PER KIND** (`Lbrn2.payload_revision(kind)`): one renderer emits both a
-    thumbnail and a geometry payload, and bumping geometry must not rebuild ~1400 thumbnails as a
-    side effect of an unrelated fix.
-  - **`renderer_revision` is `NOT NULL DEFAULT 1`, and both halves are load-bearing.** Nullable, a
-    NULL would differ from every declared revision, so adding the column would itself have
-    triggered a full-library re-render; and `Enqueue` is **not** the only creator —
-    `V1::Maker::PreviewsController` builds rows via `find_or_initialize_by`, which with no default
-    would leave them stale forever, re-enqueueing on every request.
-  - **`SCHEMA_VERSION` is NOT this**, and is the easy thing to bump by mistake. It is the wire
-    contract the JS checks; `PAYLOAD_REVISION` is the server-side cache key. Revision 2 changed
-    every coordinate while touching no key, so the schema was rightly left alone.
-  - **A RENDERER WHOSE OUTPUT IS BUILT BY ANOTHER RENDERER MUST TRACK THAT ONE'S REVISION.**
-    `ThreeMf`'s mesh fallback calls `Stl.render`, so bumping `Stl` alone leaves every CAD-exported
-    3MF (Shapr3D, Onshape, Fusion — none carry an embedded slicer thumbnail) rendering from the old
-    code forever, with nothing anywhere to say so. Pinned as a RELATIONSHIP in `stl_test.rb`, never
-    as two literals.
-  - **AND A CHANGE IN THE RUST CRATE NEEDS THE RUBY-SIDE BUMP, WHICH IS THE HALF WITH NO COMPILER
-    BEHIND IT.** `tools/stl-thumbnailer` has no idea a `maker_previews` row exists. Rebuilding the
-    binary without bumping `Stl::THUMBNAIL_REVISION` re-renders nothing; bumping without rebuilding
-    re-renders everything with the old binary. **Ship both or neither.**
-- **THE STL/3MF WORLD IS Z-UP, IN BOTH RENDERERS, AND NO EXISTING TEST COULD SEE IT WHEN IT WAS NOT.**
-  The formats declare no orientation, but every producer and consumer in 3D printing treats +Z as up
-  (the 3MF core spec puts the build plate in the XY plane). `auto_frame` orbited **Y** and the Three.js
-  viewer used the library default, so every model rendered **tipped onto its side** — consistently
-  enough to read as a house style. Every thumbnail test asked "is the frame non-blank?", which a model
-  lying down answers exactly as well as one standing up; **only a POSITIONAL assertion catches this**,
-  and it needs BOTH directions (a tall column must render tall AND a flat slab must render wide) or a
-  fix that merely swapped which axis is wrong still passes. `.obj` stays Y-up — that is Wavefront's own
-  convention, and guessing Z there breaks the case the per-format map exists to get right.
-  - **THE VIEWER MOVES THE CAMERA, NOT THE MODEL**, and three.js's own 3MFLoader docblock suggests the
-    opposite (`object.rotation.set(-Math.PI/2, 0, 0)`). Equivalent on screen, wrong for `showDims`: the
-    bounding box is read AFTER parse, so a rotated 10×20×30 model reports "10 × 30 × 20 mm" — a
-    measurement contradicting the user's own slicer.
-- **`FilesController#geometry` READS THE EXISTING PREVIEW ROW BEFORE CALLING `Enqueue`.** `Enqueue`
-  resets a `failed` row to `pending` and re-enqueues *whenever called* — right for a one-shot nudge
-  at upload time, wrong for a poll. Unconditional, it makes the action's own `"failed"` branch
-  **dead code** and re-enqueues a doomed render on every poll of a broken file. Accepted: a `failed`
-  geometry preview is terminal until the content changes, which is honest because a transient
-  byte-store failure is a `FetchError` that leaves the row `processing` and self-heals.
-- **`#geometry` RESCUES `RecordNotFound` LOCALLY**, because the class-level `rescue_from` branches
-  on format and answers a plain `get` — html, the default with no Accept header — with a **302 to
-  `files_path`**. Right for `#show`/`#blob`, which render a page; wrong for a JSON poller, which
-  would read a redirect body carrying neither a status key nor a 404.
-- **The Measure view builds its SVG with `createElementNS`, never `innerHTML`.**
-  `Maker::Previews::Svg` rasterizes precisely because the web layer refuses to inline SVG;
-  constructing elements from parsed coordinates sidesteps that rule rather than excepting it.
-- **Hit-testing is PAINT ORDER, not geometry.** Contours are appended in DESCENDING bbox-area order
-  so the browser's own topmost-wins dispatch selects the hole rather than the plate around it.
-  There is no point-in-polygon code; reversing that sort silently makes every small feature inside
-  a larger one unclickable, while drawing an identical picture. Pinned by
-  `nested-plate.lbrn2` — a plate and a hole on a SHARED CENTRE, clicked at the SVG element's own
-  centre so paint order alone decides the answer. `bezier-circle.lbrn2` cannot test this and the
-  gap went unclosed for a while because of it: its two shapes are equal-area AND disjoint, so
-  neither ever covers the other.
-- **LIGHTBURN'S LAYER PALETTE IS A HARD-CODED TABLE, AND THAT WAS RELITIGATED ON PURPOSE.** §14's
-  earlier note refused one, on the grounds it would mean "30 colours guessed from thumbnails". The
-  Measure view changed the calculus — it draws OUR outlines, where the file's own render is
-  unavailable and the alternative is flat black — and the values are no longer guesses: most were
-  RECOVERED from the embedded thumbnails by mapping contours into pixel space and reading what
-  LightBurn painted. `Lbrn2::LAYER_PALETTE` marks each entry `measured` or `palette strip`. It is
-  cosmetic by construction: nothing measures or decides anything from it.
-- **THE PANEL LABELS A LAYER BY COLOUR ONLY WHEN LIGHTBURN NAMED IT AFTER ITS INDEX**, and the
-  precedence has three arms, all load-bearing: a name its owner CHOSE wins outright; else the
-  colour's name, since "C01" says nothing the swatch does not; else the file's own label
-  **verbatim**. That last arm is reached whenever a file OVERRIDES a layer's colour — there is then
-  no palette name — and reconstructing it as `"C#{index}"` loses LightBurn's zero padding, turning
-  `C00` into `C0`. A pre-existing flow test caught exactly that.
-- **A FILE-SUPPLIED COLOUR GETS NO NAME.** `Lbrn2.layer_name` names the PALETTE entry for an index,
-  so naming a recoloured layer prints "Blue" beside a green swatch — a label contradicting the
-  thing it labels. `LbrnMetadata` returns nil there and the view falls through. The names are ours,
-  not LightBurn's (it identifies layers only by number), which is why a user's own name outranks
-  them.
-- **THE PALETTE HAS ONE DEFINITION, SERVER-SIDE.** The geometry payload carries a `colors` map for
-  the layers a file uses, rather than the client looking indices up in a copy — §14d's third
-  extension→role table is the precedent for what a second copy does. It also means a file that DOES
-  override a layer's colour is honoured without the client knowing that is possible.
-- **THE LAYER COLOUR IS AN SVG PRESENTATION ATTRIBUTE, NEVER `node.style`, AND `.measure-contour` MUST
-  NOT DECLARE A STROKE.** Presentation attributes sit BELOW every CSS rule, which is exactly what
-  lets `--hover`/`--selected` recolour a contour. Set it inline instead and selection silently stops
-  changing colour (only width moves); give `.measure-contour` a stroke and every layer flattens to one
-  colour. Both directions are mutation-checked, and both need the COMPUTED style asserted — reading
-  the attribute reports what we wrote even when a rule outranks it.
-- **The pan/click slop is in SCREEN PIXELS, not user units.** Zoomed in, one mm is many pixels, so a
-  user-space threshold calls an ordinary click a drag and silently swallows the selection.
-- **THE PRINT SHEET'S SCALE IS `width="215.9mm"` PLUS A `viewBox` SPANNING 215.9 USER UNITS, AND
-  THAT PAIR IS THE WHOLE MECHANISM.** There is no transform and no dpi constant. A px width over
-  the same viewBox draws an identical-looking page at the wrong size, **on paper**, where the error
-  is discoverable only with a ruler — so `measure_print_test.rb` asserts both literals AND
-  separately asserts that a 60 mm part spans 60 units. "A polygon exists" is answered exactly as
-  well by a polygon of the wrong size — and nothing pinned the printed size against the PAGE until
-  late in the arc: `transform: scale(0.9)` on the print stylesheet's `svg` rule left the file green
-  at 45 runs / 444 assertions.
-  Same trap one attribute over: a unit suffix inside an SVG attribute resolves through CSS at
-  96 dpi, so `font-size="3mm"` computes to 11.3386px — a header nearly four times too tall on a
-  sheet that still looks like a sheet.
-- **THE HEADER AND CALIBRATION STRIPS ARE RESERVED, NOT OVERLAID — the deliberate divergence from
-  the `boxes` sibling**, which draws its bar over its own content because it knows that content is
-  a tray plan of known extent. Measure prints arbitrary user geometry that can be anywhere, so an
-  overlaid ruler lands across a part outline. The consequence is a real `<clipPath>` where the
-  sibling gets away with a bbox filter — and a `clip-path` naming a missing id is **silently
-  inert**, so the guard asserts the browser's own geometry (a point inside the window is painted,
-  one outside is not) rather than reading the attribute back.
-- **THAT CLIP AND THE PAGE TRANSFORM MUST STAY ON TWO NESTED `<g>`s — COLLAPSING THEM PRINTS A
-  BLANK SHEET.** `clipPathUnits` defaults to `userSpaceOnUse`, which is the user space of the
-  element **referencing** the clip, not the page — so one group carrying both makes the window
-  travel with the geometry. Verified in Chrome by hit testing, not reasoned: on `nested-plate` the
-  sheet prints a 20 × 3 mm scrap of one corner, and for an ordinary file whose parts sit at
-  POSITIVE coordinates the translate is negative, the window lands off-paper, and the whole sheet
-  prints **blank** — no error, nothing logged, on a document that is otherwise perfectly formed.
-  It survived all **24** of that task's mutations because the clip was never asserted at all:
-  deleting the `<clipPath>` element AND the `clip-path` attribute outright left the suite green.
-- **THE PRINTED SIZE LABEL COMES FROM `sizeLabel()`, INJECTED FROM THE CONTROLLER, NEVER RE-DERIVED
-  FROM `shape.p`.** Those are the THINNED drawing points: measuring from them under-reports every
-  curve, and a re-derivation loses the ⌀ ENTIRELY, printing a bounding box where a diameter
-  belongs — because the CLIENT HAS NO CIRCULARITY TEST AT ALL; `d` is decided server-side from
-  full-resolution points. (An earlier wording blamed `nested-plate.lbrn2`'s ⌀10 hole thinning below
-  `MIN_CIRCLE_POINTS`. Measured: it keeps **49** points against a floor of 12 — the mechanism is
-  the missing test, not the point count. The 0.2 mm hole two bullets up is the real floor case.) The same trap as measuring before
-  thinning, one surface further out, and on the one surface a maker may read INSTEAD of measuring.
-  Mutation-checked.
-- **THE PRINT IFRAME IS BUILT AS NODES, NOT `doc.write` ON A MARKUP STRING**, because the header
-  carries a library FILENAME — user-controlled, and legitimately able to contain `<` on a
-  NAS-scanned share. The `boxes` sibling can use `doc.write` because its plan carries no user text;
-  copying that pattern across is an injection into a same-origin iframe with this page's cookies
-  behind it.
-- **`lib/print_sheet.js` DUPLICATES THE `boxes` BUNDLE'S `sheet.js` CONVENTIONS ON PURPOSE** —
-  same `MARGIN`/`OVERLAP` = 10, same `MAX_SHEETS` = 40, same `Sheet c,r of C×R`. That bundle lives
-  in `chaim354/tinkerex-addons`, where **publishing IS the deploy and Rails is never rebuilt**
-  (§14c), so importing it through the addon asset proxy would let an addon republish break a core
-  file page — and would remove Measure's print button outright on OVH, which blanks
-  `ADDON_SOURCE_URL`. Conventions copied, code not. If they ever must agree mechanically, move the
-  pagination to ONE place; do not add a third copy.
-- **A SINGLE SHEET CARRIES NO `Sheet 1,1 of 1×1` LABEL**, because there is nothing to register
-  against — and both halves of that rule are mutation-checked, since an implementation that always
-  labels and one that never does each pass half the tests.
-
-### 14i. Backup and restore
-
-> **NOTHING IN `bin/ci` CAN GO RED FOR ANY LINE BELOW** — this is shell, cron and docs, and the five
-> scripts have no gate at all. Their shared failure mode is *you find out when you need a restore*.
-> **Only CROSS-FILE rules are here.** The single-site ones (`tar --anchored`, `docker ps -a`,
-> `--keep` ≥ 1 and its deliberate divergence from §14a, `ping.env` parsed-never-sourced, the Active
-> Storage blobs in the archive) carry their whole argument *inside `ops/backup-db.sh` itself* — beside
-> the line you must edit to break them, or in that file's header — so loading them every session buys
-> nothing that opening the file does not. They are not weaker for it; `docs/DEPLOY.md` §6 restates
-> them for operators. Below spans two files or more, where no one comment can be the guard.
-> `docs/STATUS.md` has the arc and the stubbed-box harness. Prove a change against stubs, never the
-> live NAS or a real volume.
-
-- **`ops/backup-db.sh` IS THE ONLY IMPLEMENTATION, AND `bin/backup-cron-install` IS THE ONLY THING
-  THAT WRITES THE INSTALLED COPY.** `bin/backup-db` pushes to a per-run temp path; it used to `scp`
-  straight onto `~/tinkerex-ops/backup-db.sh`, so every ad-hoc run — including the pre-restore one
-  inside `bin/restore-db`, fired mid-incident — silently replaced what cron would execute that night
-  with whatever was in that person's checkout. Two unsynchronised writers to one remote file is not
-  "one implementation, two callers"; it is a way for an unrelated command to change the nightly.
-- **A `--to-stdout` RUN NEVER PINGS, IN EITHER DIRECTION — and the vanished-container arm sits ABOVE
-  the `$TO_STDOUT` branch, so it must opt out ITSELF.** An ad-hoc `up` papers over a nightly dead for
-  a week; an ad-hoc `down` marks the nightly failing over a backup to someone's laptop. Both corrupt
-  the same signal, and the second shipped. The failure is still reported, by exit status, to whoever
-  is standing there.
-- **`--to-volume` REFUSES A VOLUME WITH NO DEVICE OPTION, because a missing volume IS NOT AN ERROR TO
-  DOCKER** — `docker run -v name:/dst` **creates** it, plain-local, on the VM's own disk. The job then
-  writes ~44 MB a night into the disk the array exists to avoid, verifies its own archives there, and
-  pings green, while `bin/backup-status` reads the same recreated name and calls it healthy. The
-  installer compares the EXACT device (it knows `BACKUP_NAS`); the nightly is handed only a name and
-  asks the weaker sufficient question — do **not** thread the path through the crontab line, where a
-  bare `%` is a newline and this box has a share whose name contains a space.
-- **THE ARGUMENT GUARDS EXIT BEFORE ANY PING; THE VOLUME GUARD PINGS `down`. Do not harmonise them.**
-  A bad `--keep` is a typo from someone still at the keyboard, and a monitor event for a run that
-  never started is noise. A volume that has stopped pointing at the array is box state that will fail
-  unattended at 03:30 with nobody watching — knowable now, like the vanished container, so it is said
-  now.
-- **THE REHEARSAL VERIFY RUNS AS THE CONTAINER'S OWN `Config.User`, NEVER `--user 0`.** Root reads a
-  file whatever its mode, so the root version could not fail for the one reason `--into` exists — it
-  shipped advertising "file ownership" it structurally could not test. It does **not** boot the app
-  and must not claim to: a bare `docker run` has no `RAILS_MASTER_KEY` and no `LIBRARY_*`, so
-  `LibraryBackendCheck` (§14a) refuses and the failure says nothing about the archive.
-- **`--no-pre-backup` EXISTS, AND THE DEFAULT STAYS FATAL.** The reasons `bin/backup-db` fails — a
-  corrupt database, a container that will not start — are the reasons you are restoring, so the
-  safety net could block the emergency it exists for; but making a failed pre-backup non-fatal
-  restores over a state nobody preserved. The refusal names the flag instead.
-- **THE SCHEDULE'S TIMEZONE IS ASSERTED, NOT PINNED WITH `CRON_TZ`.** A crontab time is a LOCAL time
-  and a stock Ubuntu VM is `Etc/UTC`, which fires the documented 03:30 at 23:30 Eastern with nothing
-  looking wrong. `CRON_TZ` looks like the stronger move and is worse: a cron that does not implement
-  it (busybox; it is not POSIX) parses the line as an ordinary environment assignment and ignores it
-  — a guard that silently does nothing. The installer reads the zone back and refuses *before*
-  touching anything; `bin/backup-status` re-reads the BOX's zone, but the LINE records none — so it
-  compares against its own `BACKUP_TZ` default, and a zone ACCEPTED at install reads as a mismatch.
-- **The archives are UNENCRYPTED on a guest-writable CIFS share, and that is a recorded decision, not
-  an oversight** — readable *and deletable* by anyone on the LAN. Accepted for a home LAN; the
-  catalog and every preview blob are in the clear (the digests are the least of it). Revisit before
-  this box is reachable from anywhere else, and alongside `docs/plan-encryption.md` (§12.2), which is
-  the same question one layer down. `docs/DEPLOY.md` §6 states what each alternative costs.
+**Read that file before touching** `ops/backup-db.sh`, `bin/backup-db`, `bin/restore-db`,
+`bin/backup-status`, or `bin/backup-cron-install`. **Nothing in `bin/ci` can go red for any of it** —
+it is shell, cron and docs, and the shared failure mode is *you find out when you need a restore*.
+The single-site rules live inside `ops/backup-db.sh` itself; that file carries the cross-file ones,
+including the unencrypted-archives decision. Nothing was dropped; this anchor stays.
 
 ---
 
@@ -2283,17 +1244,15 @@ Four rules survive on **this** side of the boundary:
   `require "bundler/setup"`) sets `BUNDLE_GEMFILE` to THIS repo's Gemfile and a `RUBYOPT` that
   force-requires `bundler/setup`, **process-wide** — every child inherits both. A second Rails
   app's own ordinary `config/boot.rb` does `ENV["BUNDLE_GEMFILE"] ||= …`, and `||=` means the
-  INHERITED value wins. Reproduced directly: exporting exactly `BUNDLE_GEMFILE`/`RUBYOPT`/`RUBYLIB`
-  and nothing else turned a working `POST /v1/admin/libraries` into a bare 404 on an
-  otherwise-identical boot, while `/up` and `/v1/devices/whoami` kept answering — enough of Rails
-  is close between the two locked versions to boot either way, and ROUTE DRAWING was where they had
-  diverged. `bin/sync-server`'s `unset_inherited_bundler_env` is the fix, clearing
-  `BUNDLE_GEMFILE`/`BUNDLE_BIN_PATH`/`BUNDLE_LOCKFILE`/`BUNDLER_VERSION`/`BUNDLER_SETUP`/`RUBYOPT`/
-  `RUBYLIB` — deliberately **not** `PATH`/`GEM_HOME`/`GEM_PATH`, which is how the shell finds `ruby`
-  at all. **This protects only `bin/sync-server`.** The next script that shells out to a second
-  bundled Ruby process from inside a `bin/ci`-launched one gets no protection and will hit the
-  identical failure: silent, plausible-looking, and invisible until the two lockfiles drift far
-  enough for something like route drawing to differ.
+  INHERITED value wins. Reproduced directly: exporting those three and nothing else turned a working
+  `POST /v1/admin/libraries` into a bare 404 on an otherwise-identical boot, while `/up` and
+  `/v1/devices/whoami` kept answering — the two locked versions are close enough to boot either way,
+  and ROUTE DRAWING was where they had diverged. `bin/sync-server`'s `unset_inherited_bundler_env`
+  clears `BUNDLE_GEMFILE`/`BUNDLE_BIN_PATH`/`BUNDLE_LOCKFILE`/`BUNDLER_VERSION`/`BUNDLER_SETUP`/
+  `RUBYOPT`/`RUBYLIB` — deliberately **not** `PATH`/`GEM_HOME`/`GEM_PATH`, which is how the shell
+  finds `ruby` at all. **This protects only `bin/sync-server`.** The next script shelling out to a
+  second bundled Ruby process from inside a `bin/ci`-launched one gets no protection and hits the
+  identical failure: silent, plausible-looking, invisible until the lockfiles drift.
 - **`V1::BaseController` STANDS ON `ActionController::API`.** It briefly inherited the engine's
   base controller so the fourteen `v1/maker/*` controllers rode the engine's v1 infrastructure — a
   superclass resolves when the class body loads, so with no engine this app's own API had no base
@@ -2392,20 +1351,12 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
   (`ubuntu/macos/windows-latest`; macOS 10×, Windows 2×); self-hosted are **free**. So
   **never add `*-latest`** to a workflow.
 - **RUNNERS ARE REGISTERED PER REPOSITORY, AND ALL THREE REPOS NOW HAVE ONE — macOS ONLY.**
-  Measured 2026-08-24 via `gh api repos/:owner/:repo/actions/runners`, all `status=online`,
-  all `labels=[self-hosted, macOS, ARM64, maker-mac]`:
-
-  | repo | runner |
-  |---|---|
-  | `tinkerex` | `charless-MacBook-Pro-maker-mac` |
-  | `tinkerex-sync` | `charless-MBP-maker-mac` |
-  | `tinkerex-client` | `charless-MBP-maker-mac` |
-
-  **`flasher-maker-linux` and `CHAIMDESK-maker-windows` are registered NOWHERE**, so the
-  linux/windows conclusion below is unchanged.
-
-  **Verify rather than trusting this table** — that is the whole reason it names a date. It needs
-  an **admin-scoped** token: `administration` is not a permission a workflow `GITHUB_TOKEN` can be
+  Measured 2026-08-24 via `gh api repos/:owner/:repo/actions/runners`: `tinkerex`, `tinkerex-sync`
+  and `tinkerex-client` each have one online runner, all
+  `labels=[self-hosted, macOS, ARM64, maker-mac]`. **`flasher-maker-linux` and
+  `CHAIMDESK-maker-windows` are registered NOWHERE**, so the linux/windows conclusion below stands.
+  **Re-measure rather than trusting this paragraph** — that is why it names a date. It needs an
+  **admin-scoped** token: `administration` is not a permission a workflow `GITHUB_TOKEN` can be
   granted, so it **403s from inside Actions** and works only from a developer shell.
 - **`ci.yml`'s jobs therefore target `macos`**, and linux/windows jobs elsewhere are
   `if:`-gated on the repo variable **`CI_RUNNERS`** via `ci/preflight.sh`, so a job whose
@@ -2427,7 +1378,17 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
   names, suite counts and per-phase detail there.
 - **What belongs HERE is an invariant** — something a future editor could undo by accident.
   Put it in §14, one line, with the consequence named. If it needs a paragraph of story to
-  justify, the story goes in STATUS.md and the rule comes here.
+  justify, the story goes in STATUS.md and the rule comes here. **This rule was systematically
+  broken and then enforced:** on 2026-08-25, 49 of §14's 211 bullets carried their own case history
+  and occupied 672 lines — 36% of §14 — and eight of nine sampled evidence figures were ALREADY in
+  STATUS.md, so it was duplication rather than unique content. Write the rule; link the story.
+- **AN INVARIANT THAT BINDS ONE AREA GOES IN `docs/invariants/<area>.md`, WITH A STUB UNDER ITS §14
+  ANCHOR.** Not a demotion — the point is that a rule is loaded when it APPLIES instead of skimmed
+  on every session that never touches it, and the stub names the paths that should send a reader
+  there. **Keep the §14 anchor whatever you move**, because code cites sections by number and a
+  citation resolving to nothing is worse than a long file. `test/docs_hygiene_test.rb` fails if a
+  stub loses its file, a file loses its stub, or this file passes its line ceiling — and the
+  ceiling is a **ratchet**: lower it as the file shrinks; argue in review before raising it.
 - **AND IT MUST BE AN INVARIANT OF *THIS* REPO.** A rule about the sync engine or the desktop
   client goes in that repo's CLAUDE.md, however hard-won it was here. This file is loaded on every
   session; a rule nobody working in this repo can act on is pure tax. (Both sibling files carry an
