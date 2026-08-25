@@ -47,6 +47,9 @@ fi
 # expansion: probed under the same `bash -s` this heredoc runs, in a cwd holding files named
 # `chunk` and `s3`, `set -- $line` yielded 24 fields and a destination list of
 # `chunk s3 chunk s3 chunk s3 chunk share s3`. With `set -f` it is 18 fields and `chunk share s3`.
+# (Those two counts were MEASURED against the three-destination line that predates the `sync`
+# accessory; a four-destination line is one field longer. The counts are quoted as evidence for
+# why `set -f` is mandatory, not as a value anything checks — nothing here compares against them.)
 # Destinations also stay the CLOSED SET ops/backup-db.sh itself accepts, so nothing else on the
 # line — the log path, `2>&1`, the marker comment — can be mistaken for one.
 set -f
@@ -64,14 +67,14 @@ for tok in "$@"; do
   case $tok in
     --to-volume) want_value=volume ;;
     --keep)      want_value=other ;;    # consume the VALUE so it can never be read as a destination
-    chunk|share|s3) line_dests="${line_dests:+$line_dests }$tok" ;;
+    chunk|share|s3|sync) line_dests="${line_dests:+$line_dests }$tok" ;;
   esac
 done
 # A hand-edited, absent or unparseable line falls back to what this script always assumed — NEVER
 # to an empty list. `for dest in` over nothing prints no rows, measures no age and exits 0, which
 # is the single answer a backup monitor must never give.
 volume=${line_volume:-$volume}
-dests=${line_dests:-chunk share s3}
+dests=${line_dests:-chunk share s3 sync}
 
 # THE CRONTAB LINE IS A LOCAL TIME, so it says nothing on its own about when the job actually runs.
 # bin/backup-cron-install asserts this at install time; re-reading it here means a timezone changed

@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-24 (**Stage 5 Arc A+B+C: chunk_remote closes 10/10 and gets per-user enrolment — `test-chunk-remote` is a real `bin/ci` gate; deployed to all three Unraid backends; the full-suite-against-a-real-server leg Arc A deferred has now been TRIED and MEASURED, honestly, and it is not gate-worthy yet — see "Arc C" below for precisely why**)
+**Updated:** 2026-08-24 (**Stage 5 Arc A+B+C+D Part 1: `chunk_remote` is now a LIVE DEPLOYMENT — a fourth Unraid destination talking to a standalone sync server over HTTP, with the engine absent from the maker process entirely, proven by round-trip on hardware. Embedded `chunk` is NOT retired; the deletion is deferred to its own arc and costs 68 of 224 test files — see "Arc D Part 1" below**)
 
 ## What this file is
 
@@ -71,7 +71,171 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-24): Stage 5 Arc A+B+C — chunk_remote closes 10/10, gets per-user enrolment, and the full-suite leg gets measured — Arc A+B **MERGED + DEPLOYED**, Arc C on branch `claude/stage-5-arc-c` (branches `claude/stage-5-arc-a`, `claude/stage-5-arc-b`, `claude/stage-5-arc-c`)
+## Latest (2026-08-24): Stage 5 Arc A+B+C+D — chunk_remote closes 10/10, gets per-user enrolment, and then GOES LIVE as a fourth deployment — Arc A+B+C+D Part 1 **MERGED + DEPLOYED** (branches `claude/stage-5-arc-a`, `claude/stage-5-arc-b`, `claude/stage-5-arc-c`, `claude/stage-5-arc-d`, `claude/arc-d-sync-backups`)
+
+### Arc D Part 1 (2026-08-24) — `chunk_remote` becomes a LIVE deployment, and `chunk` is NOT retired
+
+**THE HEADLINE: the maker app now serves a library it holds no engine for.** A fourth Unraid
+destination (`remote`) runs `LIBRARY_BACKEND=chunk_remote` against a standalone sync server running
+as a Kamal accessory, and `Sync` is **undefined in that Rails process** — `engine_wanted?=false`,
+checked in the running container, not argued from config. Every file it serves resolves over HTTP.
+STATUS.md has said since Stage 4 that `chunk_remote` had never been exercised against a real remote
+server on hardware. **That is now closed.**
+
+#### What is deployed
+
+| destination | image | `LIBRARY_BACKEND` | `/up` (`.local` / `.home`) |
+|---|---|---|---|
+| chunk | `f539501` (Arc C) | `chunk` | 200 / 200 |
+| share | `f539501` (Arc C) | `share` | 200 / 200 |
+| s3 | `f539501` (Arc C) | `s3` | 200 / 200 |
+| **remote** | **`8a2849f` (Arc D)** | **`chunk_remote`** | **200 / 200** |
+
+Plus the `sync` accessory — `ghcr.io/chaim354/tinkerex-sync:latest`, container `tinkerex-sync`,
+no `port:`, reachable only on the kamal network. **The three existing deployments were deliberately
+left on `f539501`**, per the plan's own "the three existing ones must be untouched": `f539501..8a2849f`
+is three commits, all of them the accessory and fourth-destination CONFIG, none of which changes
+maker behaviour on chunk/share/s3. That is a deliberate hold, not drift — but it does mean the four
+boxes are not on one image, which is worth knowing before reading a container SHA as the answer to
+"is my change live".
+
+#### A standalone `tinkerex-sync` service was already running, and the accessory collided with it
+
+`kamal accessory boot sync` refused: *"a container already exists"*. The box was running
+`tinkerex-sync-web-7c42565…`, deployed 35 hours earlier from that repo's OWN `deploy.yml` as a full
+Kamal **service** with kamal-proxy hostnames `sync.tinkerex.local` / `.home`. So two things claimed
+the name `tinkerex-sync`, and the accessory's whole premise — a stable network alias — was the thing
+the service could not provide: **`http://tinkerex-sync:3000` returned `000`**, because a service gets
+a per-deploy `<name>-<sha>` container name while an accessory gets a fixed one.
+
+Resolved by **replacing the service with the accessory** (an explicit decision, since it destroys a
+running deployment). It was safe for a reason worth recording: the service already used the volume
+`tinkerex_sync_storage` — the same name the accessory declares — so the database carried over rather
+than being stranded, and it held **1 user, 1 device, 0 nodes, 0 chunks, 0 versions**: a bootstrap
+identity, no synced data. Backed up first anyway. Deregistered from kamal-proxy, removed both
+containers, booted the accessory; `:latest` was NEWER than the running SHA (2026-08-25 vs 08-23
+build), so it was an upgrade rather than a silent downgrade — checked before acting, because it is
+the sort of thing that only reads as obvious afterwards. `http://tinkerex-sync:3000/up` from a maker
+container then answered **200**.
+
+**Consequence to know: the accessory has NO proxy registration at all.** `sync.tinkerex.local` is
+gone. That is correct — the only thing that talks to it is another container on the kamal network —
+but it broke `bin/restore-db`'s health probe (below), and it will surprise anyone who tries to reach
+the sync server from a browser.
+
+#### The live two-box proof
+
+Driven through the real port verbs in the deployed container, against the real accessory:
+
+```
+maker user id=2 enrolled_before=false
+mkdir -> node_id=bbffb629-… kind=dir
+enrolled_after=true                      <-- lazy per-user enrolment, over the admin API
+begin_upload -> missing=1 put_urls=1
+  put_chunk d6d45e31a19e… ok
+finalize -> version_id=a44dd3c5-… seq=2
+stat -> proof.txt 93 bytes
+read back 93 bytes; BYTE-IDENTICAL=true
+```
+
+And on the **other** process, confirming it genuinely crossed the boundary rather than being served
+locally: the sync server holds `proof.txt` under **its own** `user_id=3`
+(`live-proof-2f982062@example.com`, provisioned by Arc C's mechanism), with `chunks=1 versions=1` and
+2 changelog entries. Two apps, two SQLite databases, one HTTP contract.
+
+**Not done, and not claimed:** the plan's *"drive a real desktop MOUNT → sync server → maker UI"*
+leg. What ran is the maker app as a sync CLIENT, end to end. The Rust mount against this deployed
+server is a separate exercise needing a `tinkerex-client` checkout and a device enrolled on the sync
+side; it is listed under "Still open" rather than quietly folded into the sentence above.
+
+#### Task 3 — a second database nothing backed up, and the seven defects rehearsing it found
+
+The sync server is a **second** database on the box, holding the chunk catalog every `chunk_remote`
+file resolves through. Nothing backed it up. `sync` is now a destination in all five backup scripts,
+in the nightly's default `DESTS`, and in `bin/backup-status`. Its volume happens to have the same
+internal shape as the maker ones (`production.sqlite3` at the root, plus a `nodes` table for the
+verify step to count), so the snapshot worker needed no arm of its own — checked, not assumed.
+
+§14i's rule is that **nothing in `bin/ci` can go red for any of this** and the shared failure mode is
+that you find out when you need a restore. So it was rehearsed, and the rehearsal found seven real
+defects. **Not one of them was findable by reading:**
+
+1. **`CHUNK_LOCAL_DIR` was unset, so every chunk byte in the library sat on the container's
+   EPHEMERAL layer.** `Sync::Storage::LocalChunkStore` defaults to `Rails.root.join("tmp",
+   "chunk-store")` = `/rails/host/tmp/chunk-store`, and the only mount was `/rails/host/storage`. Any
+   container replacement — a reboot, an image bump, the accessory swap performed an hour earlier —
+   destroyed the bytes while the catalog survived on the volume **still claiming the files existed**.
+   Silent at reboot; it surfaces later, per file, on read. Found because the backup printed
+   `chunk bytes (files) 0` beside `chunks 1`. Fixed by putting the store **under the storage volume**
+   — one volume, so catalog and bytes are captured in ONE archive and restored at ONE instant; two
+   volumes could be captured by two archives, and a catalog restored to a different instant than its
+   bytes is precisely the corruption content-addressing exists to prevent.
+   **Verified by performing the operation that used to destroy the data**: bytes migrated, then
+   `kamal accessory reboot sync`, then the two-box proof's file re-read — 93 bytes, still readable.
+   The volume's own comment had ASSERTED it held "every chunk byte". That was written from the design
+   rather than the box and was simply **false**; corrected in place, with the correction stated
+   rather than quietly applied.
+2. `bin/backup-db`'s verify queried `active_storage_blobs`. sqlite3 stops at the first unknown table,
+   so a perfectly good sync archive reported `Parse error` — and `users` and `nodes` never printed
+   either, so the whole inventory was lost to one maker-only table.
+3. `bin/restore-db`'s live verify called `Maker::Project.count`. **The sync server has no maker
+   layer** — `NameError`, after a restore that had actually worked.
+4. `bin/restore-db`'s live health probe used a `<dest>.tinkerex.local` Host header. The accessory has
+   no proxy registration, so this would 404 thirty times, sleep a full 60 s, and report "no answer"
+   **for a healthy server** — a restore reporting failure over a good database, mid-incident.
+5. `bin/restore-db`'s archive pre-check counted `maker_projects`, printing `"3 nodes,  projects"`. A
+   failed command substitution yields an empty string, so the sentence stays grammatically intact
+   with a hole in it and the script continues at exit 0.
+6. `bin/backup-cron-install` hard-coded `PING_CHUNK PING_SHARE PING_S3` while `ops/backup-db.sh`'s
+   `ping_kuma` **already derives** `PING_<DEST>`. So `sync` backed itself up nightly and reported its
+   failures to nothing — and `ping_kuma` skips a missing URL with a bare `return 0`, so nothing would
+   ever have said so. Both ends now derive from `$DESTS`, and the installer **names any destination
+   lacking a heartbeat at install time**, which is the only moment that can be said without crying
+   wolf on every run. (`sync` still has no Kuma monitor — creating one needs the Kuma UI. The
+   installer now says so, loudly, every time it runs.)
+7. **The seventh was in the guard written for the sixth.** `ssh host bash -s -- "$DESTS"` is word-split
+   by the **remote** shell, so `$1` was the single word `chunk` — which is the one destination that
+   *has* a heartbeat, so the new check reported all-clear while looking at a quarter of its input.
+   Caught by re-running the installer and noticing the warning did not appear. `$*`, not `$1`.
+
+Verified both directions, on the live box, and the maker leg re-verified for regression since the
+edits are to shared code:
+
+```
+sync   backup 3 nodes / 1 version / 1 chunk byte  ->  restore: 3 nodes readable
+share  backup 2006 nodes / 5 projects / 36M       ->  restore: 2006 nodes readable
+```
+
+Nightly now runs `chunk share s3 sync`, status=0.
+
+#### `chunk` IS NOT RETIRED, AND NOTHING HERE SHOULD BE READ AS SAYING IT IS
+
+The spec's end state is that embedded `chunk` goes away and `chunk_remote` becomes the only
+chunk-family backend. **That has not happened and is deferred to its own arc.** `chunk` is still the
+base destination, still deployed, still the default, and still what `bin/ci`'s `test` gate runs
+against.
+
+The number is why: **68 of 224 test files** name `Sync::` or `FileLayer::Chunk` (66 and 9
+respectively, overlapping) — measured, not estimated. Retiring embedded chunk means rewriting or
+deleting 30% of the suite, and doing that in the same arc that first stood the remote server up
+would have meant changing the thing under test and the test of it together, with no green baseline
+in between. Arc D was staged D1–D3 now, D4 later, on exactly that reasoning.
+
+So the true state is: **two chunk-family backends are live at once**, `chunk` on the base
+destination and `chunk_remote` on `remote`, sharing no process. That is the intended intermediate
+state, not an oversight.
+
+#### Still open after Arc D Part 1
+
+- **The deletion (D4)** — retiring embedded `chunk`, 68 of 224 test files. Its own arc.
+- **The real desktop-mount leg** of the two-box proof (above).
+- **No Uptime Kuma monitor for `sync`** — nightly runs, failures reported to nothing. The installer
+  names it every run; creating the monitor needs the Kuma UI.
+- **`ENABLE_TEST_SIGNUP` is ON on the `remote` destination**, inherited from `deploy.yml`'s base env
+  like the other three Unraid boxes. Correct for a test box, and the boot banner says so on every
+  start — but it means the unverified `POST /v1/test/users` seam is open on the newest deployment
+  too, and that is worth a deliberate decision rather than inheritance if `remote` ever becomes
+  anything other than a test box.
 
 ### Deployed to the three Unraid backends, 2026-08-24
 
@@ -107,8 +271,10 @@ folder (watching the cascade tombstone the child), then `undelete` the child —
   why the probe exists and why the first probe attempt failing on a wrong
   `Sync::Mutation.apply` signature was worth redoing through the port rather than talking around.
 
-`chunk_remote` ships in this image but is selected by no deployment — the three boxes still run
-chunk, share and s3. Standing a remote sync server up is Stage 5 Arc D, not started.
+`chunk_remote` shipped in THIS image selected by no deployment — the three boxes ran chunk,
+share and s3. **That is no longer the state; Arc D Part 1 (below, same day) stood the remote
+server up and added a fourth destination that selects it.** The sentence is left here rather
+than rewritten because it is the honest record of what this particular deploy shipped.
 
 **Plan:** `docs/superpowers/plans/2026-08-23-arc-a-chunk-remote-proof.md` (Arc A) and
 `docs/superpowers/plans/2026-08-24-arc-b-close-the-four-gaps.md` (Arc B, Tasks 1–5). **Design:**

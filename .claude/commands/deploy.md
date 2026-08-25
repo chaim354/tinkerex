@@ -4,6 +4,14 @@ description: Deploy the merged main to the three Unraid backends (chunk, share, 
 
 Deploy to **the three Unraid backends only** — `chunk` (base), `share`, `s3`.
 
+**There is a FOURTH Unraid destination, `remote`, and it is deliberately NOT in this set.** It runs
+`LIBRARY_BACKEND=chunk_remote` against the `sync` accessory (added 2026-08-24, CLAUDE.md §7). Bare
+"deploy" is what one word triggers, so widening it is a deliberate decision, not a side effect of
+a fourth destination existing. Deploy it only when the user names it: `kamal deploy -d remote`.
+Note the cost of that choice, so it is not rediscovered as a surprise: **an excluded destination
+drifts**, and the three original boxes are already one image ahead/behind `remote` for exactly
+this reason.
+
 **Never deploy OVH unless the user explicitly says "OVH" or "-d ovh" in this request.** Bare
 "deploy" means Unraid. OVH is a separate, prod-like box serving a real domain; assuming it is a
 one-word difference with real consequences.

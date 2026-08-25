@@ -154,6 +154,16 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 chunk st
 `STORAGE_BACKEND=s3` + `CHUNK_*` (see `docs/SYNC_SERVER.md`). **A share/s3 *library*
 deployment sets NO `STORAGE_BACKEND` and NO `CHUNK_*`** — see §14a.
 
+**THERE ARE FOUR UNRAID DESTINATIONS SINCE 2026-08-24, AND BARE "DEPLOY" STILL MEANS THREE.**
+`remote` (`config/deploy.remote.yml`, `LIBRARY_BACKEND=chunk_remote`) joined chunk/share/s3 on
+the same box, talking to the standalone sync server that runs as the `sync` **accessory**. It is
+deliberately NOT in the bare-"deploy" set — that set is what one word triggers, and widening it
+silently is not a change to make on the way past. **The cost of leaving it out is real and should
+be named rather than discovered: an excluded destination drifts**, which is exactly how
+`chunk_remote` reached Stage 5 having never run on hardware. Whether `remote` joins the set is a
+decision to take deliberately; until it is taken, deploy it explicitly (`kamal deploy -d remote`).
+`.claude/commands/deploy.md` says the same thing and must keep saying the same thing.
+
 Bare "deploy" means **the three Unraid backends only** (chunk + share + s3). Deploy OVH
 only on explicit request. `docs/DEPLOY.md`.
 
@@ -301,6 +311,21 @@ Genuinely open:
     port's own write-time clobber and `Maker::MoveNode`'s destination-folder collision,
     both scoped to one path, not a project-wide name scan.
 
+12. **EMBEDDED `chunk` IS NOT RETIRED, AND `chunk_remote` BEING LIVE MUST NOT BE READ AS SAYING IT
+    IS.** Since 2026-08-24 there is a fourth Unraid destination, `remote`, running
+    `LIBRARY_BACKEND=chunk_remote` against a standalone sync server — with `Sync` **undefined in
+    that Rails process** (`engine_wanted?=false`, checked in the running container), which is the
+    whole point of Stage 5. **Two chunk-family backends are therefore live at once**, `chunk` on
+    the base destination and `chunk_remote` on `remote`, sharing no process. That is the intended
+    intermediate state, not an oversight, and `chunk` remains the base deployment, the default, and
+    what `bin/ci`'s `test` gate runs against.
+    **The number is why the deletion was deferred to its own arc: `68` of `224` test files name
+    `Sync::` or `FileLayer::Chunk`** (66 and 9, overlapping — measured, not estimated). Retiring
+    embedded chunk means rewriting or deleting ~30% of the suite, and doing that in the same arc
+    that first stood the remote server up would change the thing under test and the test of it
+    together, with no green baseline in between. `docs/STATUS.md`'s "Arc D Part 1" entry has the
+    live evidence and the seven defects the backup rehearsal found.
+
 Smaller deliberate leftovers live in `docs/STATUS.md` under "Still open".
 
 ---
@@ -331,7 +356,22 @@ bin/ci                 # bin/ci --list for gate names; config/ci.rb is the singl
 # every credential (exported shell value wins, else 1Password) and backs each .kamal/secrets*
 # file. ALWAYS preflight first — kamal expands `$(…)` through Ruby BACKTICKS, which discard
 # exit status, so an unreadable secret becomes an EMPTY one that deploys silently (§14g):
-bin/secrets-preflight --all      # or: (omit) | s3 | share | ovh
+bin/secrets-preflight --all      # or: (omit) | s3 | share | ovh | remote
+
+# THE SYNC SERVER runs as a Kamal ACCESSORY, not a service -- that is what gives it the FIXED
+# container name `tinkerex-sync`, which is the whole point: it is the stable network alias the
+# maker app puts in CHUNK_REMOTE_URL. A Kamal *service* gets a per-deploy `<name>-<sha>` name, so
+# `http://tinkerex-sync:3000` does not resolve to one (measured: 000). A standalone service
+# deployed from chaim354/tinkerex-sync's own deploy.yml COLLIDES with this accessory on the
+# `service=tinkerex-sync` label -- pick one shape per box.
+kamal accessory boot sync            # first time
+kamal accessory reboot sync          # pick up a new :latest, or an env change
+kamal deploy -d remote --skip-push   # the fourth destination (LIBRARY_BACKEND=chunk_remote)
+
+# THE SYNC SERVER IS A SECOND DATABASE ON THE BOX and the backup scripts know it as `sync`:
+bin/backup-db sync                                   # ad-hoc, to this Mac
+bin/restore-db sync <archive> --into rehearsal --yes # throwaway volume, live untouched
+bin/backup-status                                    # all four destinations
 
 # Server tests (SQLite; proves adapter-agnosticism)
 bin/rails test
@@ -1810,6 +1850,25 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 - **`kamal deploy` WARNS ON AN UNCOMMITTED TREE, IT DOES NOT REFUSE** (`say "Building with
   uncommitted changes"`, yellow), and this repo sets no `builder: clone:` — so the image is built
   from the **working tree** and whatever is half-finished in it ships. Check `git status` first.
+
+- **AN ACCESSORY'S SECRETS ARE REQUIRED BY EVERY DESTINATION, BECAUSE `accessories:` IS NEVER
+  OVERLAID.** A destination overlay (`deploy.<dest>.yml`) can override `env:`, `servers:` and the
+  rest, but the `accessories:` block is merged from the base file for ALL of them — so
+  `SECRET_KEY_BASE` and `SYNC_ADMIN_TOKEN` on the `sync` accessory are structurally required by
+  base, share, s3, ovh AND remote alike (verified against `Kamal::Configuration.raw_config` for all
+  five, not assumed). That is what makes `.kamal/secrets-common` the right home for an
+  accessory-only secret — the same argument `builder:`'s `TINKEREX_SYNC_DEPLOY_KEY` already had.
+  **`SYNC_ADMIN_TOKEN` is the deliberate exception and is repeated per-destination instead**, on
+  instruction: it also has a genuine per-destination story, since the `remote` maker app SENDS it
+  as well as the accessory receiving it, and both sides must resolve the SAME 1Password item or
+  the far side answers 503.
+- **AN ACCESSORY HAS NO PROXY REGISTRATION UNLESS YOU GIVE IT ONE, AND THAT BREAKS ANY TOOL THAT
+  PROBES HEALTH BY HOST HEADER.** `sync` declares no `port:` and no `proxy:` — correct, since only
+  another container on the kamal network talks to it — but `bin/restore-db` verified a restore with
+  `curl -H "Host: <dest>.tinkerex.local" http://localhost/up`, which for this destination 404s
+  thirty times, sleeps 60 s and reports "no answer" **for a perfectly healthy server**. Probe an
+  accessory from INSIDE it (`docker exec tinkerex-sync curl localhost:3000/up`). The general shape:
+  a health check written for the app tier silently means something else at the accessory tier.
 
 ### 14h. Shape measurement (the Measure view)
 

@@ -36,7 +36,13 @@ SUBDIR="${BACKUP_SUBDIR:-tinkerex-backups}"
 VOLUME="${BACKUP_VOLUME:-tinkerex_backups}"
 KEEP="${BACKUP_KEEP:-14}"
 AT="${BACKUP_AT:-30 3}"
-DESTS="${BACKUP_DESTS:-chunk share s3}"
+# `sync` IS THE SYNC SERVER'S DATABASE (the `sync` accessory, config/deploy.yml) AND BELONGS IN
+# THE DEFAULT, not left to an operator to remember. It is a SECOND database on this box, holding
+# the chunk catalog the `remote` deployment resolves every file through; a nightly that backs up
+# the maker databases and not this one produces a restore that brings the app back pointing at
+# nothing. Adding it here rather than documenting it is the §14i rule that these scripts have no
+# gate behind them — the failure mode is that you find out when you need a restore.
+DESTS="${BACKUP_DESTS:-chunk share s3 sync}"
 OPS_DIR="tinkerex-ops"
 MARKER="# tinkerex-nightly-backup"
 TZ_EXPECT="${BACKUP_TZ:-America/New_York}"
@@ -185,14 +191,29 @@ ssh "$HOST" "chmod +x $OPS_DIR/backup-db.sh"
 # that is never pinged is indistinguishable from one that was never configured until its heartbeat
 # window lapses. Tokens live only on the box, chmod 600, never in git.
 echo "==> Uptime Kuma push URLs"
+# THE KEY LIST IS DERIVED FROM $DESTS, NOT ENUMERATED. ops/backup-db.sh's ping_kuma already builds
+# `PING_$(upper dest)` from the destination name, so the READING half generalizes to a new
+# destination for free — this WRITING half was the only place that still hard-coded
+# `PING_CHUNK PING_SHARE PING_S3`, which is exactly how `sync` arrived monitored by nothing while
+# the other three were watched. Deriving both ends from the same source is what stops the two
+# halves from disagreeing again the next time a destination is added.
 UPDATES=""
-for k in PING_CHUNK PING_SHARE PING_S3; do
+for d in $DESTS; do
+  k="PING_$(printf '%s' "$d" | tr '[:lower:]' '[:upper:]')"
   v="${!k:-}"
   [ -n "$v" ] && UPDATES="${UPDATES}${k}=${v}"$'\n'
 done
 printf '%s' "$UPDATES" | ssh "$HOST" "cat > $OPS_DIR/ping.updates"
-ssh "$HOST" bash -s <<'REMOTE'
+ssh "$HOST" bash -s -- "$DESTS" <<'REMOTE'
 set -euo pipefail
+# `$*`, NOT `$1`. The argument crosses ssh as part of a COMMAND STRING, so the REMOTE shell word-
+# splits it before bash ever sees it: `ssh host bash -s -- "chunk share s3 sync"` arrives as four
+# separate arguments, and `$1` is the single word `chunk`. That is not a hypothetical — it is what
+# this line said when first written, and the unmonitored-destination check below silently found
+# nothing missing because `chunk` happens to be the one destination that HAS a heartbeat. A guard
+# reporting all-clear while looking at a quarter of its input is worse than no guard; caught by
+# re-running the installer and noticing the warning did not appear, not by reading it.
+dests="$*"
 cd "$HOME/tinkerex-ops"
 touch ping.env
 while IFS='=' read -r k v; do
@@ -206,7 +227,23 @@ if [ -s ping.env ]; then
   sed -E 's#(/api/push/).*#\1********#' ping.env | sed 's/^/    /'
 else
   echo "    none configured — the nightly will run but nothing will notice if it stops."
-  echo "    Set PING_CHUNK / PING_SHARE / PING_S3 and re-run this installer."
+fi
+# AN UNMONITORED DESTINATION IS NAMED HERE, BECAUSE NOTHING ELSE WILL EVER MENTION IT.
+# ops/backup-db.sh's ping_kuma does `[ -n "$url" ] || return 0` — a destination with no push URL is
+# skipped SILENTLY and correctly (an operator may deliberately not monitor one), so the only moment
+# this gap can be surfaced without crying wolf on every nightly run is install time, right here.
+# Left unsaid, a destination backs itself up nightly and reports its failures to nobody, which is
+# indistinguishable from being monitored right up until the day you need it. `sync` was in exactly
+# that state between the accessory landing and this line being written.
+missing=""
+for d in $dests; do
+  k="PING_$(printf '%s' "$d" | tr '[:lower:]' '[:upper:]')"
+  grep -q "^$k=" ping.env 2>/dev/null || missing="${missing:+$missing }$d"
+done
+if [ -n "$missing" ]; then
+  echo "    !! NO HEARTBEAT for: $missing"
+  echo "       These back up nightly and report failures to nothing. Create a push monitor in"
+  echo "       Uptime Kuma for each, then re-run with e.g. PING_$(printf '%s' "${missing%% *}" | tr '[:lower:]' '[:upper:]')=<push-url> bin/backup-cron-install"
 fi
 REMOTE
 

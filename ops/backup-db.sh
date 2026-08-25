@@ -2,7 +2,7 @@
 # THE definition of how a backup is taken. Runs ON the Unraid VM; installed to
 # /home/kamal1/tinkerex-ops/backup-db.sh by bin/backup-cron-install.
 #
-#   backup-db.sh --to-volume tinkerex_backups --keep 14 chunk share s3   # what cron runs
+#   backup-db.sh --to-volume tinkerex_backups --keep 14 chunk share s3 sync  # what cron runs
 #   backup-db.sh --to-stdout share > local.tar.gz                        # what bin/backup-db runs
 #
 # ONE IMPLEMENTATION, TWO CALLERS, ON PURPOSE. The nightly and the ad-hoc Mac command differ only
@@ -37,8 +37,8 @@ while [ $# -gt 0 ]; do
     --to-volume) OUT_VOLUME="${2:?--to-volume needs a docker volume name}"; shift 2 ;;
     --to-stdout) TO_STDOUT=true; shift ;;
     --keep)      KEEP="${2:?--keep needs a number}"; shift 2 ;;
-    chunk|share|s3) DESTS+=("$1"); shift ;;
-    *) echo "usage: backup-db.sh (--to-volume NAME [--keep N] | --to-stdout) <chunk|share|s3>..." >&2; exit 64 ;;
+    chunk|share|s3|sync) DESTS+=("$1"); shift ;;
+    *) echo "usage: backup-db.sh (--to-volume NAME [--keep N] | --to-stdout) <chunk|share|s3|sync>..." >&2; exit 64 ;;
   esac
 done
 [ ${#DESTS[@]} -gt 0 ] || { echo "no destinations given" >&2; exit 64; }
@@ -183,10 +183,26 @@ container_for() {
     chunk) docker ps -a -qf name='^tinkerex-web-[0-9a-f]' | head -1 ;;
     share) docker ps -a -qf name='^tinkerex-web-share-'   | head -1 ;;
     s3)    docker ps -a -qf name='^tinkerex-web-s3-'      | head -1 ;;
+    # THE ONLY ANCHORED PATTERN HERE ($), AND IT MUST STAY ANCHORED. `sync` is a Kamal ACCESSORY,
+    # so its container name is the fixed string `tinkerex-sync` rather than a per-deploy
+    # `<name>-<sha>` — that is exactly what gives the maker app a stable network alias to put in
+    # CHUNK_REMOTE_URL (config/deploy.yml's `sync:` block). Unanchored, `^tinkerex-sync` would
+    # ALSO match a `tinkerex-sync-web-<sha>` container, which is what the STANDALONE deployment of
+    # chaim354/tinkerex-sync names its containers — that service really was running on this box
+    # until 2026-08-24, on the same volume, and `docker ps -a` still lists exited containers by
+    # design (see the comment above). Matching one of those would source the helper image from a
+    # stale revision while `head -1` hid that anything was ambiguous.
+    sync)  docker ps -a -qf name='^tinkerex-sync$'        | head -1 ;;
   esac
 }
 volume_for() {
-  case "$1" in chunk) echo tinkerex_storage ;; share) echo tinkerex_storage_share ;; s3) echo tinkerex_storage_s3 ;; esac
+  # `sync` IS THE SYNC SERVER'S OWN DATABASE, NOT A FOURTH COPY OF THE MAKER'S. It is a different
+  # Rails app (chaim354/tinkerex-sync) holding the chunk catalog — versions, manifest_chunks,
+  # changelog_entries. A restore that recovers the maker database and not this one recovers a
+  # library whose every file resolves to nothing. The volume happens to have the SAME internal
+  # shape (production.sqlite3 at its root, plus a `nodes` table for the verify step to count), so
+  # WORKER needs no arm of its own — checked, not assumed.
+  case "$1" in chunk) echo tinkerex_storage ;; share) echo tinkerex_storage_share ;; s3) echo tinkerex_storage_s3 ;; sync) echo tinkerex_sync_storage ;; esac
 }
 
 # Everything below runs INSIDE the helper. $1 = "" (stdout) or the archive path under /dst.
