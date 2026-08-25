@@ -15,8 +15,9 @@ on:
     # hosted runners. e866bfc and 932eb91 are the same shape.
     #
     # DRIFT WAS ONE-DIRECTIONAL AND SILENT: a new top-level path defaulted to NOT running CI, and
-    # nothing anywhere said so. The `push: main` leg below is unfiltered, so the failure surfaced
-    # as red on main AFTER the merge. Closing the class, rather than enumerating the instances, is
+    # nothing anywhere said so. The `push: main` leg below USED to be unfiltered for exactly that
+    # reason — it surfaced the failure as red on main AFTER the merge — and now carries this same
+    # filter; see its own comment for why that is safe. Closing the class, rather than enumerating the instances, is
     # the same argument ci_hygiene_test.rb:44-52 makes for the self-hosted-label check and
     # deploy_hygiene_test.rb makes for the licence sweep.
     #
@@ -51,8 +52,24 @@ on:
       - '!docs/**'
       - '!client/**'
       - '!**.md'
+  # THE PUSH LEG CARRIES THE SAME FILTER AS THE PR LEG, AND THAT IS A DELIBERATE REVERSAL.
+  # It was unfiltered on purpose: the paths list was an allowlist that drifted silently, a new
+  # top-level path defaulted to NOT running CI, and this leg was the net that surfaced the gap as
+  # red on main AFTER the merge. Two things changed. The filter is now a closed set (see `paths:`
+  # above), and test/ci_hygiene_test.rb pins it in BOTH directions against real files
+  # (PATHS_THAT_MUST_RUN_CI / PATHS_THAT_MUST_SKIP_CI) — a stronger net than re-running six jobs
+  # on main, because it fails at PR time instead of after the merge.
+  # Consequence, intended: a docs-only merge runs zero jobs. If you ever loosen the hygiene test's
+  # two path lists, restore this leg to unfiltered in the same commit.
   push:
     branches: [ main ]
+    paths:
+      - '**'
+      - '.*'
+      - '.*/**'
+      - '!docs/**'
+      - '!client/**'
+      - '!**.md'
 
 # Serialize runs on the single self-hosted runner (a newer run cancels the older for the ref).
 concurrency:
