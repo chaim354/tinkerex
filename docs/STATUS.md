@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-25 (**Stage 5 COMPLETE — Arc D Part 2 retired embedded `chunk`. The sync engine is no longer a dependency of this app: the gem is gone, `Sync::` is undefined here, and the maker app no longer serves a device sync API at all. `LIBRARY_BACKEND` is `chunk_remote | share | s3`, three Unraid destinations again with the chunk-family one as the base, and all three backend legs run the FULL suite at identical counts — the chunk_remote one against a real sync server**)
+**Updated:** 2026-08-25 (**Stage 5 COMPLETE AND DEPLOYED — Arc D Part 2 retired embedded `chunk`. The sync engine is no longer a dependency of this app: the gem is gone, `Sync::` is undefined here, and the maker app no longer serves a device sync API at all. `LIBRARY_BACKEND` is `chunk_remote | share | s3`, three Unraid destinations again with the chunk-family one as the base, and all three backend legs run the FULL suite at identical counts — the chunk_remote one against a real sync server**)
 
 ## What this file is
 
@@ -199,6 +199,113 @@ against the standalone server, never against this app — the whole point, and w
 `client-contract.yml` now checks out `chaim354/tinkerex-sync` and boots it via `bin/sync-server`
 instead of booting this app.
 
+#### Deployed 2026-08-25 — and the base destination changed backend under a live library
+
+`ghcr.io/chaim354/tinkerex:485ad42`, built once and rolled to all three. **OVH untouched** — a bare
+"deploy" is Unraid only (§7).
+
+| destination | `LIBRARY_BACKEND` | `/up` (`.local` / `.home`) |
+|---|---|---|
+| chunk (base) | **`chunk_remote`** — was embedded `chunk` | 200 / 200 |
+| share | `share` | 200 / 200 |
+| s3 | `s3` | 200 / 200 |
+| `sync` accessory | — | 200 (probed in-container; it has no proxy route, §14g) |
+
+**Verified by EXERCISING it, not by reading the image.** In the running base container:
+
+```
+LIBRARY_BACKEND="chunk_remote"      adapter=FileLayer::ChunkRemote
+Sync defined?                        no — engine absent
+engine_wanted? method exists?        false
+STORAGE_BACKEND                      nil
+v1 sync routes still drawn?          false
+```
+
+…then a full round trip through the port: `enrolled_before=false` → `enrolled_after=true` (Arc C's
+lazy per-user provisioning firing against the accessory), mkdir → begin_upload → put_chunk →
+finalize → read back **byte-identical**.
+
+#### THE MIRROR WAS STALE ON ARRIVAL, WHICH IS THE PART WORTH RECORDING
+
+The base deployment kept its old volume through the backend switch, so it booted `chunk_remote`
+carrying **2192 `nodes` rows written by the embedded engine** — a mirror of a sync server that has
+never seen any of them. Predicted by the plan, and confirmed by probing rather than assumed:
+reading one gave `FileLayer::NotFound: no manifest for "node-18b815daa033a868"`. The library page
+listed ~2046 files that could not be opened.
+
+**A backend switch does not migrate the mirror, and nothing warns you.** `/up` answered 200
+throughout, every container was healthy, and the only symptom was files failing to open one at a
+time. Any future `LIBRARY_BACKEND` change on a deployment that already holds data has this same
+shape.
+
+Volume reset (`tinkerex_storage` wiped, container restarted — `bin/docker-entrypoint`'s
+`db:prepare` rebuilt the schema, healthy in 6 s): **2192 nodes / 486 users → 0 / 0**, and a fresh
+round trip byte-identical on the empty box.
+
+**The backup was verified RESTORABLE before anything was destroyed, not merely present**: extracted
+`tinkerex-chunk-20260825T124825Z.tar.gz` (11 MB), ran `PRAGMA integrity_check` (`ok`), and read
+`users=486 nodes=2192` out of it. "A file exists" is not a backup.
+
+#### The `remote` destination was retired with its config
+
+`config/deploy.remote.yml` was deleted in this arc, which left `tinkerex-web-remote-8a2849f…`
+**running but unmanaged** — kamal no longer knew about it, while kamal-proxy still routed
+`remote.tinkerex.local` to it and it served an old image. Deregistered from the proxy, container
+removed, volume `tinkerex_storage_remote` removed (snapshotted to `/tmp/remote-storage-pre-removal
+.tgz` first). `remote.tinkerex.local` now 404s, which is the correct answer for a host with no
+route. **Deleting a destination's config file does not stop its containers** — that cleanup is
+manual, and an orphan is invisible to `kamal deploy` precisely because kamal has stopped tracking it.
+
+#### share was untouched throughout, and re-checked after every step
+
+1750 live nodes / 176 dirs / 5 projects / 3 models, with a real 138 KB file read back through the
+port. Same numbers before the deploy, after the deploy, and after the base volume reset.
+
+#### The deploy was blocked for ~20 minutes by the 1Password CLI, not by anything in the repo
+
+`bin/secrets-preflight` hung with **no output**. Diagnosed rather than worked around: `op --version`
+answered instantly (2.32.0), `https://my.1password.com` returned 200 in 80 ms, and GitHub and the
+Unraid box were both reachable — but `op whoami` and `op read` both hung indefinitely, one of them
+for **13 minutes** before being killed (`exit=143`, SIGTERM, i.e. it never returned on its own).
+`OP_SERVICE_ACCOUNT_TOKEN` was present the whole time. It cleared on its own.
+
+**Deploying anyway was the wrong move and was not made.** §14g is exact about why: kamal expands
+`$(…)` through Ruby BACKTICKS, which discard exit status, so an unreadable secret becomes an EMPTY
+one that `Kamal::Secrets#[]` returns without raising. The deploy would have succeeded and surfaced
+later as something unrelated. The preflight exists for this and is not optional.
+
+#### "Is it fully separated?" — measured on the deployed box, not asserted
+
+Yes for the CODE, with one honest caveat about the SCHEMA. Read out of the running base container:
+
+```
+gem in the bundle?                    false
+engine CONSTANTS loadable?            no
+v1 routes this app serves             v1/devices  v1/maker  v1/test      <- no sync endpoints
+engine TABLES still in the schema     8/8  (versions chunks manifest_chunks changelog_entries
+                                            pending_commits conflicts file_locks share_links)
+rows in them                          []   <- all empty
+```
+
+So the two communicate over HTTP and nothing else: separate process, separate database, no shared
+constants, no shared gem, and the maker app serves none of the sync API. **What remains is eight
+EMPTY TABLES in this app's schema**, created by `db/migrate/` — which §14j says was deliberately
+never rewritten, because inventing new timestamps for the engine half makes every already-migrated
+database (every environment this app has) report those migrations PENDING and then fail with "table
+already exists", fixable only by hand-editing `schema_migrations` on each live box. Vestigial and
+inert; removing them is a migration decision, not a coupling.
+
+**For the Rust rewrite this is the state that was wanted**: the boundary is a wire contract, so a
+replacement sync server has to satisfy `bin/ci test-chunk-remote` (the full 2346-test suite against
+a booted server) plus the conformance corpus in `chaim354/tinkerex-sync` — and nothing in this app
+needs to know what language answers those calls.
+
+#### One consequence to expect tonight
+
+The nightly (`chunk share s3 sync`, 03:30 America/New_York) will write a **near-empty `chunk`
+archive** rather than the usual 11 MB, because that database is now empty by design. That is not a
+backup failure. The pre-reset copy holding the old contents is on this Mac and on the NAS.
+
 #### Still open after Arc D Part 2
 
 - **`client-contract.yml` has not executed.** It is linux-gated and no linux runner is registered
@@ -211,7 +318,8 @@ instead of booting this app.
   pinned the three engine jobs' `limits_concurrency`. tinkerex-sync's suite covers the Hooks
   MECHANISM and the transaction boundary but not the response shape, and it cannot test
   `limits_concurrency` at all because solid_queue is the host's (§14j). Both should move there.
-- **The deploy has not run.** The three Unraid destinations still run the pre-Arc-D-Part-2 image.
+- **~~The deploy has not run.~~ DONE 2026-08-25** — all three destinations on `485ad42`, the base
+  one now `chunk_remote` with the engine absent, proven by round-trip. See the deploy section above.
 
 ### Arc D Part 1 (2026-08-24) — `chunk_remote` becomes a LIVE deployment, and `chunk` is NOT retired
 
