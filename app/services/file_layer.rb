@@ -116,8 +116,19 @@ module FileLayer
     end
 
     def build
-      case ENV.fetch("LIBRARY_BACKEND", "chunk")
-      when "chunk" then Chunk.new
+      # THE DEFAULT IS `share`, AND IT USED TO BE `chunk`. Embedded chunk was retired in Arc D
+      # Part 2, so the old default named a backend that no longer exists — every context that did
+      # not set LIBRARY_BACKEND explicitly got `NameError: uninitialized constant FileLayer::Chunk`
+      # from inside this method, several call frames from anything that mentioned a backend.
+      #
+      # `share` rather than `chunk_remote`, deliberately, even though chunk_remote is now the
+      # primary: it is the only HERMETIC backend left. chunk_remote resolves every read and write
+      # against a standalone sync server, so defaulting to it would mean a developer who has not
+      # set anything gets a WAN/localhost dependency and a connection error instead of a working
+      # library. Nothing in production relies on this default either way — all four Kamal
+      # destinations set LIBRARY_BACKEND explicitly, and LibraryBackendCheck refuses to boot on a
+      # value it does not recognise — so this governs dev and test only, where hermetic wins.
+      case ENV.fetch("LIBRARY_BACKEND", "share")
       when "share"
         # Validate before constructing: Share.new defaults to ENV.fetch("LIBRARY_PATH"), which
         # raises a bare KeyError naming nothing. The boot guard normally catches this first, but
