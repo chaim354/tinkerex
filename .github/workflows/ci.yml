@@ -15,9 +15,11 @@ on:
     # hosted runners. e866bfc and 932eb91 are the same shape.
     #
     # DRIFT WAS ONE-DIRECTIONAL AND SILENT: a new top-level path defaulted to NOT running CI, and
-    # nothing anywhere said so. The `push: main` leg below USED to be unfiltered for exactly that
-    # reason — it surfaced the failure as red on main AFTER the merge — and now carries this same
-    # filter; see its own comment for why that is safe. Closing the class, rather than enumerating the instances, is
+    # nothing anywhere said so. A `push: main` leg used to be the net that surfaced it as red on
+    # main AFTER the merge; that leg is GONE (see below), so this filter is now the only thing
+    # deciding whether a change is tested at all — and test/ci_hygiene_test.rb pins it in both
+    # directions against real files, which is the net that replaced it.
+    # Closing the class, rather than enumerating the instances, is
     # the same argument ci_hygiene_test.rb:44-52 makes for the self-hosted-label check and
     # deploy_hygiene_test.rb makes for the licence sweep.
     #
@@ -52,24 +54,28 @@ on:
       - '!docs/**'
       - '!client/**'
       - '!**.md'
-  # THE PUSH LEG CARRIES THE SAME FILTER AS THE PR LEG, AND THAT IS A DELIBERATE REVERSAL.
-  # It was unfiltered on purpose: the paths list was an allowlist that drifted silently, a new
-  # top-level path defaulted to NOT running CI, and this leg was the net that surfaced the gap as
-  # red on main AFTER the merge. Two things changed. The filter is now a closed set (see `paths:`
-  # above), and test/ci_hygiene_test.rb pins it in BOTH directions against real files
-  # (PATHS_THAT_MUST_RUN_CI / PATHS_THAT_MUST_SKIP_CI) — a stronger net than re-running six jobs
-  # on main, because it fails at PR time instead of after the merge.
-  # Consequence, intended: a docs-only merge runs zero jobs. If you ever loosen the hygiene test's
-  # two path lists, restore this leg to unfiltered in the same commit.
-  push:
-    branches: [ main ]
-    paths:
-      - '**'
-      - '.*'
-      - '.*/**'
-      - '!docs/**'
-      - '!client/**'
-      - '!**.md'
+  # NO `push:` TRIGGER, AND THE ARGUMENT IS A PROBE RATHER THAN AN ASSUMPTION.
+  #
+  # A `pull_request` run does NOT test the branch tip — `actions/checkout` resolves
+  # `github.ref` to `refs/pull/<n>/merge`, the branch ALREADY MERGED INTO main. Verified on run
+  # 32883429503 (PR #245), which fetched `+7f8e0c54…:refs/remotes/pull/245/merge` and then
+  # `git checkout --force refs/remotes/pull/245/merge`. So the tree a PR run exercises is the tree
+  # the merge produces, and a `push: main` run afterwards re-tests what was just tested.
+  #
+  # MEASURED COST OF NOT KNOWING THAT: the last 40 CI runs were an exact 20/20 push/pull_request
+  # split — every change paid for CI twice, at a ~175s median, on a runner that IS the developer's
+  # own Mac (§15). Roughly six minutes of the dev box per change for one tree's worth of answer.
+  #
+  # THE RESIDUAL RISK, NAMED RATHER THAN WAVED AWAY: if `main` advances between a PR's last run
+  # and its merge, the merge ref that was tested is not the `main` that results. §15 already
+  # forbids pushing to `main` directly, so that can only happen when a SECOND PR merges in the
+  # window — and the next PR's own merge-ref run tests the combined tree. The failure mode is
+  # "main is briefly unverified", not "main is silently broken". If this repo ever gains
+  # concurrent contributors, turn on "require branches to be up to date" (needs a paid plan for a
+  # private repo) or restore a `push: main` leg here.
+  #
+  # workflow_dispatch stays so a run can still be forced by hand without a PR.
+  workflow_dispatch: {}
 
 # Serialize runs on the single self-hosted runner (a newer run cancels the older for the ref).
 concurrency:

@@ -78,7 +78,91 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-25): the cross-repo CI leaves, and two green signals turn out to be vacuous (branch `claude/optimize-claude-md`)
+## Latest (2026-08-25): CI wall-clock cut ~64% per change, and a guard that was permanently maxed out (branch `claude/faster-ci`)
+
+The complaint was that CI is slow and runs on the same Mac it is developed on. Measured before
+changing anything: median run **175s**, and the last 40 runs were an **exact 20/20 push /
+pull_request split** — every change tested twice. Jobs run strictly sequentially (one runner, one
+job at a time), so wall clock is the SUM of seven jobs, of which `system-test` was **83–97s on
+nine consecutive runs, median 84s, never once fast**.
+
+### Every change was tested twice, and the second time was free of information
+
+**Probed, not assumed:** a `pull_request` run does not test the branch tip. `actions/checkout`
+resolves `github.ref` to `refs/pull/<n>/merge` — the branch ALREADY MERGED into main. Run
+32883429503 fetched `+7f8e0c54…:refs/remotes/pull/245/merge` and checked that ref out. So the
+`push: main` leg re-tested the tree the PR run had just tested. Dropped it; `workflow_dispatch`
+stays for manual runs. Residual risk recorded in the file: if `main` advances between a PR's last
+run and its merge, the tested merge ref is not the resulting `main` — §15 already forbids pushing
+to `main` directly, so that needs a second PR merging inside the window, and the next PR's own
+merge-ref run covers the combined tree.
+
+### The worker budget was throttling on a proxy that is permanently tripped here
+
+`WorkerBudget` reduced browser workers based on AVAILABLE MEMORY, as a stand-in for "another
+browser suite is running" — a real condition, measured: two suites at six workers each produced
+**152 and 166 errors** where either alone produces zero. But the CI runner IS a developer's Mac
+(§15), and macOS `available` (free + inactive) on a machine with apps open never looks idle. So it
+returned **1 worker every time**: the protection sat at maximum permanently and the cost was paid
+on every run, including the overwhelming majority with no second suite anywhere. Local, same box,
+same free memory: **1 worker 75.3s, 6 workers 30.2s, zero failures either way.**
+
+**Counting Chrome processes cannot fix it, and the measurement is the interesting part.** Sampled
+repeatedly during a real system run, the process table held **44 `Google Chrome Helper (Renderer)`
+processes that were the DEVELOPER'S OWN BROWSER** — identical before, during and after the suite —
+and `chromedriver` never appeared under that name at all. A count cannot tell our Chrome from the
+one you are reading this in.
+
+So the suites announce themselves: `WorkerBudget.register!` drops a pidfile,
+`concurrent_browser_suite?` asks whether any OTHER live process has one. Registration happens
+BEFORE the budget call, so two suites starting together cannot both miss each other. Stale
+pidfiles from a killed run are swept as they are read — the failure mode a naive lockfile has.
+Cannot-tell takes the conservative branch.
+
+**The protection was re-verified by re-running the original experiment, not by argument:** two
+concurrent full system suites now report `179 runs, 1498 assertions, 0 failures, 0 errors` on
+BOTH sides, with both pidfiles live mid-run. Mutation-checked: detector forced false → 3 failures,
+forced true → 2, stale-sweep removed → 1.
+
+One bug worth keeping: `PIDFILE_DIR` was first defined inside `class << self`, which puts a
+constant on the SINGLETON — `WorkerBudget::PIDFILE_DIR` raised `NameError` while
+`WorkerBudget.singleton_class::PIDFILE_DIR` resolved. Caught within a minute by the test that
+names the constant directly, which is the argument for writing one that does.
+
+### Result
+
+`bin/ci` **2m12.45s → 1m26.21s**, entirely from `system-test` 77s → 35.16s. Combined with running
+once per change instead of twice: roughly **350s → 125s of the dev box per change, ~64%**.
+Three legs identical at 2364 runs.
+
+### The third lever was measured and DECLINED — read this before re-opening it
+
+`MeasurePrintTest` is 77 of 179 system tests and ~45% of the suite's test-time, and its own header
+says the pure layout maths only lives in the browser tier "because this repo has NO JS test
+runner". Moving it to `node:test` looked like the obvious next win. Classifying all 77 says
+otherwise:
+
+| | count | |
+|---|---|---|
+| doc-free (movable with no DOM at all) | **8** | ~3s — not worth a CI gate |
+| need a `doc` (assert literal SVG wire format) | **41** | a hand-rolled fake doc IS the FakeS3 shape |
+| real clicks / iframe / a11y | 28 | must stay |
+
+The 41 are the prize, and they are exactly what a hand-rolled fake cannot carry: the file's own
+header says **"ASSERT THE WIRE FORMAT, NEVER A ROUND-TRIP THROUGH OUR OWN READER… parsing our own
+SVG with our own parser would be that shape again"** (§14e, FakeS3: 79/80 green over silent data
+loss). Asserting what our own fake recorded is that shape verbatim. Carrying them needs a REAL DOM
+(jsdom), i.e. a new npm dependency, a `package.json` in a repo that has neither, and a new gate.
+
+Also checked and rejected as a cheaper route: the per-test setup is **107.5 ms** (Scanner 41.3 ms
++ four geometry renders 19.7/12.6/12.7/21.2 ms), about 1.4s of wall across the file at six
+workers. Not the bottleneck.
+
+Estimated remaining win: ~10s off a 35s `system-test`, on a `bin/ci` that is already 86s and now
+runs once per change. **Not obviously worth a dependency and a gate** — recorded here so the next
+person re-opens it with the numbers rather than the intuition.
+
+## 2026-08-25: the cross-repo CI leaves, and two green signals turn out to be vacuous (branch `claude/optimize-claude-md`)
 
 Follow-on to the CLAUDE.md work below, same branch: with the sync engine and the Rust client in
 their own repos, the *testing and CI* story had not caught up. **The local gate story was never
