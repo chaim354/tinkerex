@@ -405,6 +405,40 @@ uses `WinfspMount`" — both pre-flip. `maker-app/src-tauri/src/lib.rs:102-107` 
 byte-for-byte check. Corrected in that repo, `cargo check` clean and **no new rustdoc warnings**
 (28 before, 28 after).
 
+### §12.13 closed — the two pre-separation `/docs` files, and a gap that was already known
+
+**`docs/SYNC_SERVER.md` MOVED to `chaim354/tinkerex-sync` rather than being rewritten here.** It was
+never stale about its subject — its opening line, "the Rails app *is* the sync engine's source of
+truth," was simply in the wrong repository, and is true again in the new one. A **redirect stub**
+stays, because ~8 documents plus `config/database.yml` cite the path and deleting it would break
+every one silently.
+
+**`docs/architecture-sync-engine.md` is marked HISTORICAL, not rewritten.** It is the pre-split v1
+design and describes all three repos at once; it is worth keeping for the *why* (the WAN
+measurement that killed the remote mount, the coarse-protocol argument) and explicitly not for what
+any repo contains. Its "Components" and "Local SQLite schema (client)" sections describe code that
+is not in this repository at all.
+
+**Four stale citations corrected** in `app/models/user.rb` and `config/database.yml` — including one
+naming `config/initializers/postgres_pooler_check.rb`, which went with the engine and does not exist
+here. The pooler constraint does not bind this app: nothing calls `next_seq!` (§14e).
+
+**The gap found on the way, AND IT WAS ALREADY RECORDED — which is the part worth keeping.**
+`Sync::PostgresPoolerCheck` is unwired in the sync repo: correct, tested, and invoked by nothing
+(`host/config/initializers/` holds only `limits_concurrency_shim.rb`). Moving the doc without
+noticing would have shipped "enforced at boot" into a repo where it is false.
+
+But this was **not a discovery**. `docs/FIX-LOG-2026-08-19.md` recorded it six days before the
+extraction: *"the probe itself never executes anywhere. Both `docs/SYNC_SERVER.md` and CLAUDE.md
+§14e assert a boot refusal no gate exercises."* What changed is the severity — it meant
+**"unexercised"** then and means **"unwired"** now, because the extraction removed the initializer
+entirely. Credited rather than claimed, because a ledger that re-reports known items as findings is
+the stale-open-list failure wearing the opposite face.
+
+**Corrected, deliberately not wired.** A boot probe that REFUSES to start takes a deployment down
+precisely when it is misconfigured — which is its job, and not a thing to switch on as a side effect
+of moving a document. Recorded in `tinkerex-sync`'s CLAUDE.md §2 and in the doc's own pooler section.
+
 **Not verified, and named rather than glossed:** the historical MEASUREMENTS baked into the prose
 — "0.467 s standalone", "14–24 second stalls", "728 KB → 200 KB gzipped", "1148 of 5259 thinned
 contours displaced". Those record past observations, not current state; re-running them is a

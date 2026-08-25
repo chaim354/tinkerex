@@ -264,11 +264,13 @@ forward everywhere, where rewriting history does not** — a rewrite invents tim
 already-migrated databases fail with "table already exists," fixable only by hand-inserting
 `schema_migrations` rows on every live database.
 
-> **Two docs under `/docs` describe the OTHER repo and are stale here.**
-> `docs/SYNC_SERVER.md` opens by calling this Rails app the sync engine's source of truth, and
-> `docs/architecture-sync-engine.md` was last updated 2026-06-10, before either extraction.
-> `docs/sync-protocol.md` is current and remains the normative wire spec. Fixing the first two is
-> an open item, not a claim that they are accurate.
+> **Both stale `/docs` files were dealt with on 2026-08-25 (§12.13).** `docs/SYNC_SERVER.md`
+> **moved** to `chaim354/tinkerex-sync` — it was not stale about its subject, it was in the wrong
+> repository — leaving a redirect stub here because ~8 documents and `config/database.yml` cite the
+> old path. `docs/architecture-sync-engine.md` is **marked HISTORICAL**: it is the pre-split v1
+> design and describes all three repos at once, so it is kept for the *why* (the WAN measurement,
+> the coarse-protocol argument) and explicitly not for what any repo contains.
+> `docs/sync-protocol.md` is current and remains the normative wire spec.
 
 ---
 
@@ -357,9 +359,19 @@ on all three OSes against the sync server — that half's status lives in `tinke
     of 68 test-side hits were PROSE**, and the real coupling was 7 wiring sites and 57 test files,
     60 of whose references sat in one file that was deleted. A reference count is not a coupling
     count.
-13. **`docs/SYNC_SERVER.md` and `docs/architecture-sync-engine.md` describe the pre-separation
-    world** and should be rewritten or moved to `tinkerex-sync` (§10).
-
+13. **DONE 2026-08-25 — the two pre-separation `/docs` files are dealt with.**
+    `docs/SYNC_SERVER.md` **moved** to `chaim354/tinkerex-sync` (a redirect stub stays, because ~8
+    docs and `config/database.yml` cite the path); `docs/architecture-sync-engine.md` is marked
+    HISTORICAL rather than rewritten, since it is the pre-split v1 design of all three repos and is
+    worth keeping for the *why*. Four stale citations of the moved doc were corrected in
+    `app/models/user.rb` and `config/database.yml` — including one naming
+    `config/initializers/postgres_pooler_check.rb`, which went with the engine and does not exist
+    here.
+    **The residual, which is NOT this repo's to close:** that pooler probe is unwired in the sync
+    repo too — `Sync::PostgresPoolerCheck` is correct and tested there and nothing invokes it.
+    First recorded in `docs/FIX-LOG-2026-08-19.md` when it meant "unexercised"; the extraction made
+    it "unwired." Recorded in that repo's own CLAUDE.md and doc. **The constraint does not bind this
+    app** — nothing here calls `next_seq!` (§14e).
 Smaller deliberate leftovers live in `docs/STATUS.md` under "Still open".
 
 ---

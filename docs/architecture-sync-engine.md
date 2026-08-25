@@ -1,5 +1,18 @@
 # Architecture — Local-First Sync Engine (v1)
 
+> **HISTORICAL — the original design document, superseded 2026-08-25.** This is the v1 design from
+> before the system was split into three repositories, and it describes all three halves at once:
+> the maker app, the sync engine, and the desktop client. Read it for **why** the architecture is
+> shaped this way — the WAN measurement that killed the remote mount, the coarse-protocol argument,
+> the multi-tenancy reasoning. Do **not** read it for what any repo contains today.
+>
+> Current, per repo: `CLAUDE.md` here (the maker app), and the CLAUDE.md in `chaim354/tinkerex-sync`
+> and `chaim354/tinkerex-client`. The normative wire spec is `docs/sync-protocol.md`, which IS
+> current. The condensed "considered → rejected → current" record is `docs/roads-not-taken.md`.
+> Its "Local SQLite schema (client)" and "Components" sections describe code that is no longer in
+> this repository at all.
+
+
 **Status:** active — supersedes the direct-mount / direct-client plans.
 **Last updated:** 2026-06-10
 
