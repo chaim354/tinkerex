@@ -231,7 +231,10 @@ only on explicit request. `docs/DEPLOY.md`.
 **There is no `/engines` here any more either.** The sync engine was extracted to
 `chaim354/tinkerex-sync` on 2026-08-20 and arrives as a private `git:` gem (see the Gemfile's
 own comment for what that costs, and §14j for what moved with it). `db/migrate/` still creates
-its eight tables for THIS app — those migrations were deliberately never rewritten.
+its eight tables for THIS app — those migrations were deliberately never rewritten. A LATER
+migration DROPS those tables (`DropRetiredSyncEngineTables`, 2026-08-25), which is not the same
+thing and is not forbidden by that rule: adding a drop runs forward everywhere, where rewriting
+history does not.
 
 **There is no `/client` here any more.** The Rust crates (fs-provider, fs-fuse, fs-cfapi,
 fs-winfsp, fs-webdav, fs-fskit, sync-client, sync-engine, maker-app the Tauri app, plus
@@ -328,6 +331,15 @@ Genuinely open:
     **36 of 43 app-side hits and 11 of 68 test-side hits were PROSE**, and the real coupling was 7
     wiring sites and 57 test files, 60 of whose references sat in one file that was deleted.
     Recorded because the misleading number is the reason this was deferred twice.
+    **The eight engine tables were dropped on 2026-08-25** (`DropRetiredSyncEngineTables`), after
+    verifying 0 rows in all eight on every live deployment — "nothing reads it" is not the question
+    for a DROP, "nothing is in it" is. §14j's "`db/migrate/` is never REWRITTEN" does not forbid
+    ADDING a drop: rewriting invents timestamps that make already-migrated databases fail with
+    "table already exists", while a drop runs forward on all of them. **`remote_manifest_chunks` is
+    a different, LIVE table and stays** (`FileLayer::ChunkRemote` reads it), as does
+    `users.head_seq` (`User#next_seq!`, `V1::DevicesController`). The migration is irreversible on
+    purpose: a `down` would restate the engine's DDL here, which is the drifting second copy this
+    arc deleted.
 
 Smaller deliberate leftovers live in `docs/STATUS.md` under "Still open".
 
