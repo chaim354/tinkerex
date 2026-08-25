@@ -259,6 +259,41 @@ and `Maker::AddonOrigin.for(user:, node_ids: [])` returns `{}` with **zero** `Re
 calls under a counting double, confirming an addon-source outage cannot slow a Files page for a
 user who has never opened `/tools`.
 
+### §14h audited — 45 bullets, ~60 checks, ONE error found and fixed
+
+The Measure view, 347 lines and the second-largest section. Unlike §14c there was no prior signal
+either way.
+
+**The error: §14h[0] said "all five names move together."** Five matches neither real count, and
+the bullet's own closing clause already said "three remembered edits" — an internal contradiction
+inside one bullet. Measured: `Geometry::REVISIONED_BY` names **3** modules (`LbrnGeometry`,
+`DxfGeometry`, `SvgGeometry`, with `FORMAT_REVISION` 4/1/1 over `SHARED_REVISION = 0`), and **4**
+formats answer `payload_revision(kind)` (`Lbrn2`, `Mage`, `Dxf`, `Svg` — `.mage` and `.lbrn2` both
+read `LbrnGeometry`). Corrected to say three constants propagating to four formats, with the old
+wording recorded rather than silently replaced. Low stakes on its own; the MECHANISM it describes
+is right and is guarded by `GeometryTest`, which does enumerate the declaring modules from the code
+as claimed.
+
+Everything else held. As in §14c, every other ✗ was the CHECK being weak — `innerHTML` and
+`doc.write` appear only in comments saying they are NEVER used; `width="215.9mm"` is composed as
+`${paper.w}mm` from a paper table rather than written literally; the two nested `<g>`s are built
+through an `el()` helper my pattern missed; `layer_name`'s nil-for-a-file-colour lives in
+`LbrnMetadata` (`"color_name" => (c.present? ? nil : Lbrn2.layer_name(idx))`), not in `Lbrn2`.
+
+**One probe was INCONCLUSIVE and is recorded as such** rather than counted as a pass. To test
+"every reported number comes from full-resolution points; thinning is drawing-only," a payload was
+built for three fixtures and each shape's reported `b` compared against the bbox of its own thinned
+`p`. All three came back with a zero difference — which proves nothing, because **RDP preserves
+extreme points by construction** (a corner is the farthest point from any chord spanning it), so a
+simplified contour's bbox normally equals the full-resolution bbox. The claim was instead confirmed
+DECISIVELY by code order in `geometry.rb`: `"b"` is built from `x0,y0,x1,y1` (L135) and `d` is
+`Geometry.diameter(points, ...)` (L145) — both from the full-resolution `points` — while only
+`"p"` is `Geometry.simplify(points)` (L138). Worth recording because a probe that cannot fail is
+the same trap this file warns about elsewhere, and it nearly went into the ledger as a pass.
+
+Suites green throughout: 91 runs / 953 assertions (measure system), 267 runs / 963 assertions
+(previews unit), 12 runs / 96 assertions (geometry).
+
 **Not verified, and named rather than glossed:** the historical MEASUREMENTS baked into the prose
 — "0.467 s standalone", "14–24 second stalls", "728 KB → 200 KB gzipped", "1148 of 5259 thinned
 contours displaced". Those record past observations, not current state; re-running them is a

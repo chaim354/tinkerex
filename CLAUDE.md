@@ -1821,9 +1821,14 @@ own CLAUDE.md — see §3 and §14j.
   kept serving mangled curves after the thinning fix deployed. `Geometry::REVISIONED_BY` lists them
   and `GeometryTest` **enumerates the declaring modules from the code** and compares, so a fifth
   format cannot be added without appearing there. **Since 2026-08-19 the CORRECT EDIT is one
-  line**: each format is `PAYLOAD_REVISION = Geometry::SHARED_REVISION + FORMAT_REVISION`, so a
-  shared change bumps the shared term and all five names move together. The outcome above is
-  unchanged — what moved is that the arithmetic now does it, instead of three remembered edits.
+  line**: each geometry module is `PAYLOAD_REVISION = Geometry::SHARED_REVISION + FORMAT_REVISION`,
+  so bumping the shared term moves **all THREE declared constants** — `LbrnGeometry`,
+  `DxfGeometry`, `SvgGeometry` — which propagates to **all FOUR formats**, because `.mage` and
+  `.lbrn2` both read `LbrnGeometry`. (This sentence read "all five names" until 2026-08-25; five
+  matched neither count, and the bullet's own closing clause already said three. Measured:
+  `REVISIONED_BY` has 3 entries, and `Lbrn2`/`Mage`/`Dxf`/`Svg` are the 4 formats answering
+  `payload_revision(kind)`.) The outcome above is unchanged — what moved is that the arithmetic
+  now does it, instead of three remembered edits.
 - **`available?` ASKS WHETHER THIS BOX HAS *ANY* PATH TO A THUMBNAIL — NOT WHETHER IT HAS THE
   RASTERIZER.** `Svg` and `Dxf` gate on **resvg**, because a rasterized SVG is their only path.
   **`Lbrn2` and `Mage` are unconditionally `true`**, because both formats carry the authoring
