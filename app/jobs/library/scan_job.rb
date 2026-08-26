@@ -93,6 +93,7 @@ module Library
       observer = root ? Library::Scanner.new(user, root:) : observer_for(user)
       observer.call
       warn_unreadable(observer, user)
+      discover_projects(user)
       intake_project_folders(user)
       intake_models(user)
     end
@@ -193,6 +194,36 @@ module Library
         "(#{dirs.first(3).map(&:inspect).join(', ')}#{'...' if dirs.size > 3}). " \
         "Is the share fully mounted?"
       )
+    end
+
+    # STRICTLY AFTER THE RECONCILE AND STRICTLY BEFORE THE PROJECT INTAKE, and BOTH orderings
+    # change the ANSWER rather than the timing.
+    #
+    # After the RECONCILE because discovery reads names and parentage, and a folder the Scanner has
+    # not settled is a wrong answer — the same reason the two methods below give.
+    #
+    # Before the PROJECT INTAKE because a discovered project's loose files must be filed in the SAME
+    # pass. Left at `Projects/new-thing/`, the seeded `*` shelf makes `Projects` the nearest shelf
+    # above them, so the whole `new-thing` FOLDER becomes one model titled "new-thing" — and nothing
+    # reaps an auto model, so the wrong row is permanent. That is #intake_models' own IntakeOrderTest
+    # hazard, one step earlier in the chain. Pinned by DiscoveryOrderTest, which is RED on the swap.
+    #
+    # CALLS THE JOB, NOT Maker::ProjectDiscovery DIRECTLY, for the reason #intake_project_folders
+    # records as a finding rather than a preference: the SERVICE logs nothing, so the JOB is the
+    # only place a run's created count is ever written down. Calling the service here would give a
+    # share/s3 deployment LESS operator visibility than chunk_remote gets from its schedule.
+    # Concurrency controls apply at ENQUEUE, so ProjectDiscoveryJob's own limit cannot discard this
+    # perform_now — and its #chain_intake declines on a scannable backend, so this call cannot
+    # enqueue a second, unsequenced filer.
+    #
+    # RESCUED AND NARROWLY SCOPED, like its two siblings: the reconcile above is already committed,
+    # so a discovery bug must not tell an operator reading the failed-jobs table that the library
+    # did not index.
+    def discover_projects(user)
+      Maker::ProjectDiscoveryJob.perform_now(user_id: user.id)
+    rescue StandardError => e
+      Rails.logger.error("Library::ScanJob: the reconcile SUCCEEDED but project discovery " \
+                         "failed for user #{user.id}: #{e.class}: #{e.message}")
     end
 
     # THE PROJECT-FOLDER INTAKE RUNS HERE, INLINE AND STRICTLY AFTER THE RECONCILE, and the

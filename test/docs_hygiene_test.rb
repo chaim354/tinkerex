@@ -34,7 +34,7 @@ class DocsHygieneTest < ActiveSupport::TestCase
   # added here is paid on every session forever. If a rule genuinely needs the room, ask first
   # whether it is an AREA rule that belongs in docs/invariants/ instead — that is what the split is
   # for, and it costs the reader nothing.
-  MAX_LINES = 1_475
+  MAX_LINES = 1_350
 
   test "CLAUDE.md stays under its line ceiling" do
     lines = CLAUDE_MD.readlines.size
@@ -130,7 +130,11 @@ class DocsHygieneTest < ActiveSupport::TestCase
 
   test "the moved sections keep their anchors, because code cites them by number" do
     claude = CLAUDE_MD.read
-    moved = %w[14c 14g 14h 14i]
+    # EVERY SECTION THAT MOVED TO docs/invariants/, INCLUDING 14k — it was omitted here when the
+    # model catalog moved out, so its anchor was covered only by the two generic pointer tests and
+    # not by this one. A list that is supposed to be exhaustive and silently is not is the same
+    # shape as a guard scanning an empty set (§14e): it reports success over what it never checked.
+    moved = %w[14c 14f 14g 14h 14i 14k]
 
     moved.each do |anchor|
       assert_match(/^### #{anchor}\. /, claude,

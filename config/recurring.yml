@@ -69,6 +69,28 @@ production:
     queue: background
     schedule: every day at 5am
 
+  # Auto-create a project for every folder directly under the library's Projects/ that no project
+  # claims. CHUNK DEPLOYMENTS ONLY — sweep_all! declines when the backend is `scannable`, because on
+  # share/s3 Library::ScanJob calls discovery at the start of its own post-reconcile sequence,
+  # strictly BEFORE the project intake. A second caller there would adopt folders the reconcile has
+  # not settled yet.
+  #
+  # `command:` rather than `class:`, matching every other gated entry here, because the backend gate
+  # lives in a class method rather than in #perform — a caller who names a user deserves the
+  # operation.
+  #
+  # EVERY 15 MINUTES, matching its two siblings — and arbitrary for the same reason
+  # project_folder_intake states below: on chunk_remote there is no poll behind it, so this interval
+  # is the ONLY latency bound discovery gets. It is not a floor inherited from anything.
+  #
+  # A RUN THAT CREATES SOMETHING CHAINS Maker::ProjectIntakeJob rather than waiting for the next
+  # project_folder_intake tick, so a newly adopted folder's files are filed seconds later instead of
+  # up to fifteen minutes later. See ProjectDiscoveryJob#chain_intake for why that chain is gated
+  # off scannable backends.
+  project_discovery:
+    command: "Maker::ProjectDiscoveryJob.sweep_all!"
+    schedule: every 15 minutes
+
   # Project-folder intake: attach what is under each Projects/<slug>/ folder, file what is loose at
   # its root. CHUNK DEPLOYMENTS ONLY — sweep_all! declines when the backend is `scannable`, because
   # on share/s3 Library::ScanJob already calls the intake at the end of its own perform, strictly

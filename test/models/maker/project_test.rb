@@ -72,5 +72,48 @@ module Maker
       assert_equal "active", project.status
       assert_nil project.archived_at
     end
+
+    test "slugify normalizes a folder name" do
+      assert_equal "desk-lamp", Maker::Project.slugify("Desk Lamp")
+      assert_equal "desk-lamp", Maker::Project.slugify("  Desk--Lamp!  ")
+      assert_equal "", Maker::Project.slugify("プロジェクト")
+    end
+
+    test "available_slug de-dups against the user's existing projects" do
+      @user.maker_projects.create!(name: "Desk Lamp")
+
+      assert_equal "desk-lamp-2", Maker::Project.available_slug(@user, from: "Desk Lamp")
+    end
+
+    # ANY PURELY NON-LATIN NAME REDUCES TO "" — slugify keeps only [a-z0-9] — and
+    # `validates :slug, presence: true` would then raise inside a recurring job. Not exotic:
+    # プロジェクト, Проект, 模型.
+    test "available_slug falls back to project for a name with no latin characters" do
+      assert_equal "project", Maker::Project.available_slug(@user, from: "プロジェクト")
+    end
+
+    # THE SLUG MUST SURVIVE THE CALLBACK. #ensure_slug re-normalizes `slug.presence || name`, so a
+    # de-duped slug handed in explicitly has to normalize to itself — otherwise the -2 is stripped
+    # back off on save and the create raises anyway.
+    test "an explicitly supplied de-duped slug is stable through ensure_slug" do
+      @user.maker_projects.create!(name: "Desk Lamp")
+      slug = Maker::Project.available_slug(@user, from: "Desk Lamp")
+
+      project = @user.maker_projects.create!(name: "Desk Lamp", slug:)
+
+      assert_equal "desk-lamp-2", project.slug
+    end
+
+    # THE WEB FORM'S BEHAVIOUR IS DELIBERATELY UNCHANGED. A human typing a duplicate name SHOULD be
+    # told; only the sweep gets the import treatment. This is the guard that Task 2's refactor did
+    # not quietly turn #ensure_slug into a de-duper.
+    test "a duplicate name still fails validation when no slug is supplied" do
+      @user.maker_projects.create!(name: "Desk Lamp")
+
+      duplicate = @user.maker_projects.new(name: "Desk Lamp")
+
+      refute_predicate duplicate, :valid?
+      assert_includes duplicate.errors[:slug], "has already been taken"
+    end
   end
 end

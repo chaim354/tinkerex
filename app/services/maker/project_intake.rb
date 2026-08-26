@@ -433,9 +433,13 @@ module Maker
     # Projects::AttachmentsController#relocate shipped ("the endpoint created Projects/<slug> as a
     # side effect of being POSTed to"), at library scale. The MoveConflicts concern reads rather
     # than calls for the same reason.
+    #
+    # MEMOIZED because #place now reads it once per file. Without the memo a 200-file inbox pays 200
+    # identical lookups; #call already returns early when it is nil, so the `||=` never re-queries a
+    # miss in a live run.
     def live_folder
       return nil if @project.folder_node_id.blank?
-      @user.nodes.present.find_by(node_id: @project.folder_node_id, kind: "dir")
+      @live_folder ||= @user.nodes.present.find_by(node_id: @project.folder_node_id, kind: "dir")
     end
 
     # Every live FILE in the folder's subtree, breadth-first — ONE QUERY PER LEVEL, not per node.
@@ -691,17 +695,19 @@ module Maker
     # File.extname all became a flash message with a green suite. InvalidName is a NAMED subclass
     # created for exactly this purpose; ArgumentError itself is not.
     def place(node)
-      # `within_own_folder: true` — this move is `Projects/<slug>/x` -> `Projects/<slug>/<cat>/x`,
-      # inside the folder this project already owns, so :attached_elsewhere does not apply to it.
-      # See #refusal_for for the full argument; the short version is that the rule's stated reason is
-      # about the move's SOURCE ("yanked out of the folder that project put it in") and there is no
-      # other project's folder here to yank it out of. Left unscoped, a file any second project also
-      # claimed sat at the root through every sweep forever, silently.
+      # `within_own_folder: true` — this move stays INSIDE the folder this project already owns:
+      # from that folder's own root to a category subfolder directly beneath it, whatever that
+      # folder is actually named or wherever it actually sits (see #live_folder) — so
+      # :attached_elsewhere does not apply to it. See #refusal_for for the full argument; the short
+      # version is that the rule's stated reason is about the move's SOURCE ("yanked out of the
+      # folder that project put it in") and there is no other project's folder here to yank it out
+      # of. Left unscoped, a file any second project also claimed sat at the root through every
+      # sweep forever, silently.
       refusal = attach_policy.refusal_for(node, within_own_folder: true)
       return refusal if refusal
 
       dest = Maker::ProjectFolders.folder_for(node.name)
-      # Before ensure_path! and Maker::MoveNode.call, so a dry run creates no folder and writes
+      # Before create_child! and Maker::MoveNode.call, so a dry run creates no folder and writes
       # nothing — the reason it is a `dry run` and not a `report`.
       #
       # THE COST OF THAT ORDERING: collision detection lives INSIDE Maker::MoveNode.call (its own
@@ -712,7 +718,17 @@ module Maker
       # this is not a gap to close, it is what "writes nothing" costs.
       return dest if @dry_run
 
-      target = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", @project.slug, dest ])
+      # UNDER THE PROJECT'S OWN FOLDER NODE, NEVER A PATH REBUILT FROM THE SLUG. The two agree only
+      # while #ensure_library_folder! is the sole writer of folder_node_id and the slug has never
+      # changed — and Maker::ProjectDiscovery adopts folders whose NAME is not their slug as the
+      # mainline case. Rebuilding the path mints a second `Projects/<slug>/` tree and moves the
+      # user's file into it, silently. `create_child!` is ensure_path!'s single-segment sibling and
+      # is find-or-create, so this stays idempotent.
+      #
+      # THIS IS ALSO WHAT MAKES #place AGREE WITH .destination_for, which has always resolved the
+      # category folder under `parent_node_id` (§14f: prediction and behaviour cannot disagree).
+      target = Maker::LibraryFolder.create_child!(@user, parent_node_id: live_folder.node_id,
+                                                  name: dest)
       Maker::MoveNode.call(@user, node:, new_parent_node_id: target.node_id)
       dest
     rescue Maker::MoveNode::Collision => e
