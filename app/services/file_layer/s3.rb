@@ -1037,8 +1037,20 @@ module FileLayer
       # Library::OsClutter predicate the S3Observer skips on — so an object the write path creates
       # can never sit at a key the scan will never observe. TEMP_PREFIX stays absent here: it is a
       # Share concept (this adapter writes no temp keys, see #write).
+      # And a git repository's own directory, which is the same coupling read from the other side:
+      # Library::RepoMetadata keeps the `.git` NODE and skips what is under it, so `.git/**` is
+      # unobservable and must be unwritable. This backend's observer has no directory to meet, so it
+      # SYNTHESIZES the marker from the keys it is dropping — which makes the coupling tighter here,
+      # not looser: an object written under `.git/` would be a live node at a key that observer
+      # deliberately never emits. The MARKER itself is refused too, though it is observed, because
+      # nothing here mints a `.git` — the real one arrives from git itself, and a hand-made one
+      # silently switches off the intake sweep for that whole folder (Maker::AttachToProject's
+      # :in_working_tree reads exactly this marker). `marker_prefix` is non-nil AT or BENEATH the
+      # marker, so one term covers both halves. Unlike TEMP_PREFIX above, this arm is NOT a Share
+      # concept: both observers skip `.git` contents, so both adapters must refuse them.
       return unless rel.to_s.split("/").first == Library::Scanner::TRASH_PREFIX ||
-                    Library::OsClutter.ignore?(rel)
+                    Library::OsClutter.ignore?(rel) ||
+                    Library::RepoMetadata.marker_prefix(rel.to_s).present?
       raise NotFound, "#{rel.inspect} is a reserved path the library scan does not index"
     end
 

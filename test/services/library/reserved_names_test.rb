@@ -52,6 +52,35 @@ module Library
       assert ReservedNames.reserved?(".maker-tmp-abc123")
     end
 
+    # THE ARM THAT JOINS FOR A DIFFERENT REASON, and the module header states it: `.git` is not
+    # clutter and IS observed when it already exists on disk. What has no legitimate use is MINTING
+    # one through a web door.
+    test "a door may not MINT .git" do
+      assert ReservedNames.reserved?(".git")
+    end
+
+    # DELEGATION, NOT A COPIED STRING — the same mutation the OS-clutter arm gets above, for the
+    # same reason. A literal ".git" here would keep passing after Library::RepoMetadata moved, which
+    # is the drift the one-predicate-both-sides law exists to stop. Hand-rolled: minitest 6 dropped
+    # minitest/mock, so `stub` does not exist here.
+    test "the repo-marker arm delegates to RepoMetadata rather than holding its own copy" do
+      original = RepoMetadata.method(:marker?)
+      RepoMetadata.define_singleton_method(:marker?) { |_name| false }
+      assert_not ReservedNames.reserved?(".git"),
+                 "reserved? must ask RepoMetadata, not a private copy of the name"
+    ensure
+      RepoMetadata.define_singleton_method(:marker?, original)
+    end
+
+    # WHOLE SEGMENT, NOT A PREFIX — `.gitignore` and `.gitmodules` are ordinary files a repo's own
+    # author writes, and `git` is an ordinary folder name. Refusing those would make the doors
+    # reject the very files a working tree is full of.
+    test "but ordinary git-adjacent filenames stay mintable" do
+      assert_not ReservedNames.reserved?(".gitignore")
+      assert_not ReservedNames.reserved?(".gitmodules")
+      assert_not ReservedNames.reserved?("git")
+    end
+
     test "ordinary names are not reserved" do
       %w[grid.svg .gitignore trash.txt DS_Store MACOSX
          maker-tmp-x .hidden Thumbs.db desktop.ini].each do |name|

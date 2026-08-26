@@ -255,6 +255,63 @@ module FileLayerWritableContract
     assert @user.nodes.find_by!(node_id: child.node_id).deleted
   end
 
+  # A GIT REPOSITORY'S OWN DIRECTORY — the same coupling the clutter block above pins, arrived at
+  # from the opposite side. Library::RepoMetadata keeps the MARKER and skips what is under it: the
+  # observers observe `.git` and refuse to descend, so `.git/**` is unobservable and must be
+  # unwritable, or a write lands a live node at a path no observation can ever pair — the wedge
+  # phase 2b/4 paid for four times.
+  #
+  # THE MARKER IS REFUSED TOO, though it is observable, and that asymmetry is deliberate rather
+  # than an over-reach: nothing in this app has any business MINTING a `.git`. The real one arrives
+  # on disk from git itself and is observed, never written by us, so refusing costs nothing real —
+  # while allowing it lets a hand-made marker silently switch off the intake sweep for a whole
+  # folder (Maker::AttachToProject's :in_working_tree reads exactly this marker and asks nothing
+  # else). Refusing at-or-beneath needs no new predicate: RepoMetadata.marker_prefix is non-nil for
+  # both, which is why `observable!` grows one term rather than a second raise.
+  #
+  # NotFound with /reserved path/, per the clutter block above: a clobber is UnsupportedOperation,
+  # a reserved/unobservable destination is NotFound. Two different refusals.
+  REPO_METADATA_DESTINATIONS = %w[.git].freeze
+
+  def test_write_contract_write_refuses_repo_metadata_destinations
+    REPO_METADATA_DESTINATIONS.each do |name|
+      err = assert_raises(FileLayer::NotFound, "write(#{name.inspect}) must be refused") do
+        adapter.write(@user, parent_node_id: nil, name: name, io: StringIO.new("x"))
+      end
+      assert_match(/reserved path/, err.message, name)
+      assert_nil @user.nodes.find_by(storage_path: name),
+                 "#{name.inspect} must not have landed a node — that is the wedge this prevents"
+    end
+  end
+
+  def test_write_contract_move_refuses_repo_metadata_destinations
+    REPO_METADATA_DESTINATIONS.each do |name|
+      info = adapter.write(@user, parent_node_id: nil, name: "mv-#{name.delete('.')}.stl",
+                                  io: StringIO.new("b"))
+      err = assert_raises(FileLayer::NotFound, "move to #{name.inspect} must be refused") do
+        adapter.move(@user, node_id: info.node_id, new_parent_node_id: nil, new_name: name)
+      end
+      assert_match(/reserved path/, err.message, name)
+    end
+  end
+
+  # A destination BENEATH the marker, which no leaf name can express — the contents half of the
+  # rule, and the half that is a ghost rather than a policy. Reached through a poisoned parent, the
+  # same `update_column` standard the reserved-path and escape-guard tests use, for the reason they
+  # state: storage_path is a plain column, and "no caller writes anything bad today" is the
+  # assumption this coupling has been wrong about repeatedly.
+  def test_write_contract_write_refuses_a_destination_beneath_the_marker
+    parent = adapter.mkdir(@user, parent_node_id: nil, name: "firmware")
+    @user.nodes.find_by!(node_id: parent.node_id).update_column(:storage_path, "firmware/.git")
+
+    err = assert_raises(FileLayer::NotFound) do
+      adapter.write(@user, parent_node_id: parent.node_id, name: "config", io: StringIO.new("x"))
+    end
+    assert_match(/reserved path/, err.message)
+    assert_nil @user.nodes.find_by(storage_path: "firmware/.git/config"),
+               "a node beneath the marker is unpairable — the tombstone wedges every later scan"
+  end
+
   # Terminal-vs-retryable, the port's most consequential distinction, applies to writes too:
   # a transient backend failure must NEVER read as "the file is gone".
   def test_write_contract_transient_failure_on_write_raises_fetch_error

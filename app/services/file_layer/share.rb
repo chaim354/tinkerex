@@ -653,9 +653,20 @@ module FileLayer
       # the moment the observers began skipping it — so a write/move/undelete onto one of these
       # names is the same wedge `.trash` was: a live node at a path no scan can pair. The reject
       # predicate is the SAME Library::OsClutter the observers skip on (see that module).
+      # A git repository's own directory is that same coupling read from the other side.
+      # Library::RepoMetadata keeps the `.git` NODE and skips everything under it, so `.git/**` is
+      # unobservable and must be unwritable — a write there is the wedge above wearing a different
+      # name. The MARKER is refused too, though it IS observed, and that is deliberate rather than
+      # over-reach: nothing here mints a `.git`, the real one arrives on disk from git itself, and a
+      # hand-made one would silently switch off the intake sweep for that whole folder
+      # (Maker::AttachToProject's :in_working_tree reads exactly this marker). `marker_prefix` is
+      # non-nil AT or BENEATH the marker, which is why one term covers both halves and no new
+      # predicate is needed. `.to_s` like every other arm here: a Pathname would answer nil and
+      # silently skip this check alone, which is the divergence shape, not a missing nicety.
       return unless segments.first == Library::Scanner::TRASH_PREFIX ||
                     segments.any? { |s| s.start_with?(Library::Scanner::TEMP_PREFIX) } ||
-                    Library::OsClutter.ignore?(rel)
+                    Library::OsClutter.ignore?(rel) ||
+                    Library::RepoMetadata.marker_prefix(rel.to_s).present?
       raise NotFound, "#{rel.inspect} is a reserved path the library scan does not index"
     end
 

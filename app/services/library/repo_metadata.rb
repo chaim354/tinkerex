@@ -5,8 +5,8 @@ module Library
   # Scanner::TRASH_PREFIX and Library::OsClutter skip the ENTRY — the observers never look, so no
   # node exists at all. The `.git` rule keeps the entry and skips what is under it:
   #
-  #   .git            observed, indexed, one dir node   <- the MARKER
-  #   .git/**         never observed, never writable    <- the contents
+  #   .git            observed, indexed, one dir node; never minted   <- the MARKER
+  #   .git/**         never observed, never writable                  <- the contents
   #
   # The marker is kept because it is the evidence that a directory IS a working tree. Delete it and
   # Maker::AttachToProject's :in_working_tree has nothing to detect, and the intake sweep goes back
@@ -16,16 +16,24 @@ module Library
   # this app likes it or not (§14j): a marker present on all three backends makes the working-tree
   # question answerable uniformly, rather than one condition having two answers (§14a).
   #
-  # THE CONTENTS HALF IS ONLY HALF-WIRED TODAY, and the missing half is named here so the second
-  # line of that table is not mistaken for something the code already enforces. The OBSERVERS skip
-  # the contents: Library::Scanner declines the DESCENT (it meets a real directory and observes
-  # it), Library::S3Observer drops the keys and SYNTHESIZES the marker (it has no directory to
-  # meet). The WRITE refusal is not here yet, and it is not optional — OsClutter's header states
-  # the law it owes: a path the observers skip must ALSO be refused as a write destination, or a
-  # write lands a live node at a path no observation can ever pair, whose tombstone trips the
-  # mass-deletion guard and refuses that scan and every scan after it, permanently. Its home is the
-  # adapters' own `observable!` guards, beside the clutter refusal that already pins the same
-  # coupling.
+  # BOTH HALVES ARE WIRED, and they are wired in the two places OsClutter's header demands, which
+  # is why this module is a predicate and not a list anyone copies. The OBSERVERS skip the contents:
+  # Library::Scanner declines the DESCENT (it meets a real directory and observes it),
+  # Library::S3Observer drops the keys and SYNTHESIZES the marker (it has no directory to meet). The
+  # WRITE GUARDS refuse them: FileLayer::Share#observable! and FileLayer::S3#observable! ask
+  # #marker_prefix, beside the clutter refusal that already pins the same coupling, so a write can
+  # never land a live node at a path no observation can pair — the ghost whose tombstone trips the
+  # mass-deletion guard and refuses that scan and every scan after it, permanently.
+  #
+  # THE WRITE GUARDS REFUSE AT-OR-BENEATH THE MARKER, WHICH IS ONE SEGMENT STRICTER THAN THE SKIP,
+  # and the asymmetry is deliberate rather than a sloppy predicate. Refusing the marker creates no
+  # ghost, because the marker is observed. What it stops is MINTING one: you cannot create a
+  # repository by creating the folder, so a `.git` written through this app is never a repo — it is
+  # a folder that silently switches off the intake sweep for everything under it, since
+  # Maker::AttachToProject's :in_working_tree reads exactly this marker and asks nothing else. The
+  # real marker arrives on disk from git itself and is OBSERVED, never written by us, so the refusal
+  # costs nothing real. Library::ReservedNames says the same thing at the web doors, for the doors
+  # that mint a leaf name before any adapter is asked.
   #
   # A DIRECTORY, NEVER A FILE. A real repo can carry a `.git` FILE — a submodule or a linked
   # worktree stores a `gitdir:` pointer there — and treating that as a marker would be right by
@@ -62,6 +70,11 @@ module Library
     # Library::S3Observer uses it to emit one dir observation for a repo whose keys it is dropping
     # — S3 has no directories, so the marker has to be synthesized from the keys beneath it or it
     # would not exist on that backend at all.
+    #
+    # THE WRITE GUARDS ASK IT TOO, and they want a different shade of the same answer: they need
+    # "is this destination at or beneath a marker?", which is `.present?` on this return rather than
+    # the prefix itself. One predicate serves both because the marker's own path satisfies it — see
+    # the header for why refusing AT the marker is right and not merely convenient.
     #
     # WHOLE SEGMENTS, NEVER A PREFIX MATCH: `.gitignore` is an ordinary file and `notes/git/` is an
     # ordinary folder. A `start_with?` here would drop both from the catalog.

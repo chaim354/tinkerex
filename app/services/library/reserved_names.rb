@@ -43,6 +43,17 @@ module Library
   # shipping the fifth [wedge]. One predicate, consulted from both sides, is how the two cannot
   # drift." A fourth spelling of `.trash` here would be that bug, in the file written to prevent it.
   #
+  # RepoMetadata.marker? JOINS THE UNION FOR A DIFFERENT REASON THAN THE OTHERS, and the difference
+  # is worth stating because it inverts the argument above. Every other arm here names something the
+  # observers REFUSE TO INDEX; `.git` is not clutter and IS observed when it already exists on disk
+  # — a real repo's marker is a legitimate node, deliberately kept, because it is the evidence that
+  # a directory is a working tree (Library::RepoMetadata's header carries that argument). What has
+  # no legitimate use is MINTING one: you cannot create a repository by creating the folder, so a
+  # `.git` made through a web door is never a repo — it is a folder that silently switches off the
+  # intake sweep for everything under it, since Maker::AttachToProject's :in_working_tree reads
+  # exactly this marker and asks nothing else. Observed-but-not-mintable is the same shape
+  # `.DS_Store` already has here, arrived at from the opposite side.
+  #
   # WHAT THIS IS NOT:
   #
   #   NOT Maker::MoveNode.valid_leaf_name?, and deliberately not folded into it. That answers a
@@ -69,7 +80,8 @@ module Library
       # is an ordinary file. TEMP_PREFIX is a PREFIX, matching `name.start_with?(TEMP_PREFIX)` there.
       name == Library::Scanner::TRASH_PREFIX ||
         name.start_with?(Library::Scanner::TEMP_PREFIX) ||
-        Library::OsClutter.clutter_segment?(name)
+        Library::OsClutter.clutter_segment?(name) ||
+        Library::RepoMetadata.marker?(name)
     end
   end
 end

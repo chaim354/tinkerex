@@ -80,7 +80,7 @@ reading the last entry.
 
 ## Latest (2026-08-25): a git repo in the library, and the sweep that was tearing one apart (branch `claude/codemirror-code-editor`)
 
-**IN PROGRESS — one of nine tasks landed.** Spec:
+**IN PROGRESS — four of nine tasks landed.** Spec:
 `docs/superpowers/specs/2026-08-25-codemirror-code-viewer-design.md`. Plan:
 `docs/superpowers/plans/2026-08-25-codemirror-code-viewer.md`.
 
@@ -215,11 +215,81 @@ sees an idle box. Cross-process, not cross-test, which is why the fork runner's 
 help and why back-to-back `bin/ci` runs make it likelier. Nothing to do with the library; the fix
 belongs to the `claude/faster-ci` arc that added it (point `PIDFILE_DIR` at a per-test tmpdir).
 
-### Still to land (tasks 4–9 of the plan)
+### The write side: `.git` is refused at the port and at the doors (task 4, landed)
 
-The write guards and door refusal; hiding the marker in the Files listing; the one-time purge
-migration; the `code` role and collapsing `preview_kind`'s second extension vocabulary into the
-first; the bundle and its never-pin-per-package guard; the `codeview` controller.
+The other half of `Library::OsClutter`'s law — a name the observers skip must ALSO be refused as a
+write destination — closed for `.git`. **Three lines of code**, which is the point: the predicate
+existed after task 3, so both write guards grow ONE TERM inside their existing
+`return unless <disjunction>` and reuse the existing raise and message unchanged. It is the same
+refusal extended, not a new one.
+
+- `FileLayer::Share#observable!` and `FileLayer::S3#observable!` each gain
+  `Library::RepoMetadata.marker_prefix(rel.to_s).present?`. Every write verb already calls these:
+  share asks from `write`/`mkdir`/`move`/`undelete`, s3 from the same four.
+- `Library::ReservedNames.reserved?` gains `Library::RepoMetadata.marker?(name)`, so no web door
+  can MINT a folder named `.git`.
+
+**`NotFound`, not `UnsupportedOperation`** — the write contract states the split in as many words:
+a clobber is `UnsupportedOperation`, a reserved/unobservable destination is `NotFound`. An earlier
+draft of the plan said otherwise and was corrected before any code was written.
+
+**AT-OR-BENEATH the marker, not strictly beneath, which is why `internal?` still does not exist.**
+Refusing the marker itself creates no ghost — ghosts come from writing where the observers do not
+look, and the marker IS observed. What it stops is minting: you cannot create a repository by
+creating the folder, so a hand-made `.git` is never a repo, it is a folder that silently switches
+off the intake sweep for everything under it (`Maker::AttachToProject`'s `:in_working_tree` reads
+exactly this marker and asks nothing else). `marker_prefix` is non-nil for both halves, so one term
+covers both and the purge (task 6) remains `internal?`'s first real caller.
+
+`.to_s` on the argument, unlike the plan's snippet: every sibling arm in those disjunctions already
+calls it, and `marker_prefix` answers **nil** for a non-String — so a caller handing in a Pathname
+would silently skip this arm alone while the others still fired. That is the divergence shape, not
+a missing nicety.
+
+The tests EXTEND `adapter_write_contract.rb` beside `OS_CLUTTER_DESTINATIONS` rather than inventing
+a second mechanism, so both adapters answer identically by construction: `write` onto the marker,
+`move` onto it, and a write BENEATH it. The third needs a destination no leaf name can express, so
+it goes through a poisoned parent (`update_column`) — the standard the neighbouring reserved-path
+and escape-guard tests already use, for the reason they state. `reserved_names_test.rb` gets the
+`.git` case, the `.gitignore`/`.gitmodules`/`git` negatives, and a **delegation** test mirroring the
+OS-clutter one: redefine `RepoMetadata.marker?` to false and assert `reserved?` follows, which a
+copied `".git"` string could never satisfy. Hand-rolled with `define_singleton_method` plus an
+`ensure` restore — minitest 6 dropped `minitest/mock`, so `stub` does not exist in this suite.
+
+**Mutation-checked four ways, and one of them corrected the plan's stated expectation.**
+
+| mutation | result |
+|---|---|
+| drop the term from `share.rb` only | 3 red, **both legs** — all three `FileLayer::ShareTest` |
+| drop the term from `s3.rb` only | 3 red, both legs — all three `FileLayer::S3Test` |
+| drop the `marker?` arm from `ReservedNames` | 1 red — `a door may not MINT .git` |
+| replace that arm with a literal `name == ".git"` | 1 red — the delegation test, **and nothing else** |
+
+The plan predicted the share mutation would leave `test-s3` GREEN, demonstrating a cross-backend
+divergence. **It does not, and the reason is worth recording:** `ShareTest` and `S3Test` each build
+their own adapter directly (`FileLayer::Share.new(root:)`, `FileLayer::S3.new(client: FakeS3)`) and
+read nothing from the ambient `LIBRARY_BACKEND`, while every leg runs the FULL suite. So both
+adapter suites run on both legs and an adapter regression is caught twice, not once. That is a
+stronger guarantee than the plan assumed, but the prediction as written was wrong — and the
+failures are `FileLayer::ShareTest#…` on the s3 leg too, which is the evidence that it is one
+adapter's regression seen twice rather than two.
+
+The last mutation is the one that matters most: it failed the delegation test **alone**, leaving
+every other `.git` assertion green. That is exactly what a delegation guard is for — a copied
+string passes every behavioural test forever after the predicate moves.
+
+Legs measured for this task: share and s3, both **2395 runs / 8765 assertions / 30 skips**,
+identical. `test-chunk-remote` not run here (needs the sibling checkout).
+
+`repo_metadata.rb`'s header said "THE CONTENTS HALF IS ONLY HALF-WIRED TODAY … the WRITE refusal is
+not here yet". That claim is now false, so it was rewritten rather than left standing — the stale-
+claim shape CLAUDE.md's own preamble records about its `§` counts.
+
+### Still to land (tasks 5–9 of the plan)
+
+Hiding the marker in the Files listing; the one-time purge migration; the `code` role and
+collapsing `preview_kind`'s second extension vocabulary into the first; the bundle and its
+never-pin-per-package guard; the `codeview` controller.
 
 ### Decided and NOT built, so it is not rediscovered as an oversight
 
