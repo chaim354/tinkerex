@@ -181,5 +181,57 @@ module Maker
 
       assert_equal before, @user.nodes.count
     end
+
+    test "a run over the cap adopts deterministically and says it was capped" do
+      dir("d-c", "Gamma", "d-projects")
+      dir("d-a", "Alpha", "d-projects")
+      dir("d-b", "Beta", "d-projects")
+
+      run = Maker::ProjectDiscovery.for_user(user: @user, cap: 2)
+
+      assert_equal :capped, run.status
+      assert_equal 2, run.created
+      assert_equal 3, run.candidates
+      # ORDERED BY node_id, so a second run continues where this one stopped rather than
+      # re-rolling the dice.
+      assert_equal %w[d-a d-b], @user.maker_projects.order(:folder_node_id).pluck(:folder_node_id)
+    end
+
+    test "the next run continues where a capped run stopped" do
+      dir("d-a", "Alpha", "d-projects")
+      dir("d-b", "Beta", "d-projects")
+      Maker::ProjectDiscovery.for_user(user: @user, cap: 1)
+
+      run = Maker::ProjectDiscovery.for_user(user: @user, cap: 1)
+
+      assert_equal :ok, run.status
+      assert_equal %w[d-a d-b], @user.maker_projects.order(:folder_node_id).pluck(:folder_node_id)
+    end
+
+    # `Integer("-5")` SUCCEEDS, so a rescue never sees a negative — it reaches `first(-5)` and
+    # raises "negative array size" from inside a recurring job, far from the typo.
+    test "a nonsense cap override falls back instead of crashing" do
+      dir("d-lamp", "Desk Lamp", "d-projects")
+
+      ENV["PROJECT_DISCOVERY_MAX"] = "-5"
+      assert_equal Maker::ProjectDiscovery::MAX_PROJECTS, Maker::ProjectDiscovery.max_projects
+      assert_nothing_raised { Maker::ProjectDiscovery.for_user(user: @user) }
+
+      ENV["PROJECT_DISCOVERY_MAX"] = "0"
+      assert_equal Maker::ProjectDiscovery::MAX_PROJECTS, Maker::ProjectDiscovery.max_projects
+
+      ENV["PROJECT_DISCOVERY_MAX"] = "banana"
+      assert_equal Maker::ProjectDiscovery::MAX_PROJECTS, Maker::ProjectDiscovery.max_projects
+    ensure
+      ENV.delete("PROJECT_DISCOVERY_MAX")
+    end
+
+    test "a valid cap override is honoured" do
+      ENV["PROJECT_DISCOVERY_MAX"] = "7"
+
+      assert_equal 7, Maker::ProjectDiscovery.max_projects
+    ensure
+      ENV.delete("PROJECT_DISCOVERY_MAX")
+    end
   end
 end
