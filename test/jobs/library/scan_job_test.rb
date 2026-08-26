@@ -422,4 +422,54 @@ module Library
       end
     end
   end
+
+  # DISCOVERY RUNS AFTER THE RECONCILE AND BEFORE THE FILING SWEEP, and both orderings change the
+  # ANSWER rather than the timing. This drives the whole feature end to end through the only door a
+  # share deployment has: someone makes Projects/Desk Lamp/ in Finder and drops a file in it.
+  class DiscoveryOrderTest < ActiveSupport::TestCase
+    setup do
+      @root = Dir.mktmpdir
+      @user = User.create!(email: "job-#{SecureRandom.hex(6)}@example.com")
+      # A Share adapter rooted at @root, so the intake's own move (Maker::MoveNode ->
+      # FileLayer.current.move) lands on the same directory the scan just read.
+      FileLayer.current = FileLayer::Share.new(root: @root)
+
+      # ON DISK ONLY — no project row, no node rows. This is the feature's whole subject.
+      FileUtils.mkdir_p(File.join(@root, "Projects", "Desk Lamp"))
+      File.binwrite(File.join(@root, "Projects", "Desk Lamp", "panel.svg"), "<svg/>")
+    end
+
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root && File.directory?(@root)
+    end
+
+    test "one perform discovers the project AND attaches and files its loose file" do
+      Library::ScanJob.perform_now(user_id: @user.id, root: @root)
+
+      project = @user.maker_projects.sole
+      assert_equal "Desk Lamp", project.name
+      assert_equal "desk-lamp", project.slug
+
+      att = project.file_attachments.sole
+      node = @user.nodes.find_by!(node_id: att.node_id)
+      assert_equal "panel.svg", node.name
+      assert_equal "vector", att.role
+      assert_equal "design", @user.nodes.find_by(node_id: node.parent_node_id).name,
+                   "discovery ran BEFORE the project intake — the intake filed a folder that " \
+                   "discovery had only just adopted. Swap the two calls in ScanJob#perform and " \
+                   "this goes red: the file stays at the project root, where the seeded `*` shelf " \
+                   "makes the whole folder one model, permanently."
+    end
+
+    # THE CATEGORY FOLDER GOES UNDER THE FOLDER THE USER MADE, not a second `Projects/desk-lamp/`
+    # tree rebuilt from the slug. See Task 3 — this is that fix, driven through the real door.
+    test "the category folder is created under the discovered folder, not a slug-named twin" do
+      Library::ScanJob.perform_now(user_id: @user.id, root: @root)
+
+      assert_path_exists File.join(@root, "Projects", "Desk Lamp", "design", "panel.svg")
+      refute File.exist?(File.join(@root, "Projects", "desk-lamp")),
+             "no second Projects/<slug> tree may be minted"
+    end
+  end
 end
