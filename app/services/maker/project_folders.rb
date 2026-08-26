@@ -36,10 +36,23 @@ module Maker
 
     # The library folder every project's own folder lives under: `Projects/<slug>/`.
     #
-    # ONE DEFINITION, THREE READERS — Maker::Project#ensure_library_folder!,
-    # Maker::ProjectIntake#place and Maker::ProjectDiscovery. It was a bare literal in the first two
-    # and the third was about to add a copy. Guarded by project_folders_test.rb, which fails if the
-    # literal reappears in any of them.
+    # ONE READER TODAY — Maker::Project#ensure_library_folder!. It was two from the day this
+    # constant was extracted until Maker::ProjectIntake#place stopped rebuilding a project's
+    # folder path from ROOT + slug — a path that could disagree with folder_node_id, the
+    # project's ACTUAL folder; #place's own comment has the full argument — and started
+    # resolving the destination from folder_node_id directly instead. Maker::ProjectDiscovery (a
+    # later task) becomes the second reader, minting a project's folder from a name the user
+    # chose rather than a generated slug.
+    #
+    # THE GUARD SCANS THREE FILES REGARDLESS OF HOW MANY CURRENTLY READ THE CONSTANT —
+    # Maker::Project, Maker::ProjectIntake and Maker::ProjectDiscovery, in
+    # project_folders_test.rb — because those are the files that HANDLE project folder paths, so
+    # a future edit to any of them is exactly where "Projects" would get re-spelled as a bare
+    # literal, whether or not that file reads ROOT today. project_intake.rb keeps its place on
+    # that list precisely because it once spelled the literal out: dropping a file the moment it
+    # stops reading the constant is how a convention nothing else enforces starts drifting again
+    # (this repo's own recorded case — FilesHelper::EXT_FAMILIES vs ROLE_BY_EXT disagreeing about
+    # .svg for months).
     ROOT = "Projects".freeze
 
     ROLE_FOLDERS = {
