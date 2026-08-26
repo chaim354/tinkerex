@@ -1,6 +1,6 @@
 # Build status — the maker app (`chaim354/tinkerex`)
 
-**Updated:** 2026-08-25 (**CLAUDE.md cut 2,449 → 1,389 lines / ~51.5k → ~27.4k tokens per session. §14c/g/h/i moved to `docs/invariants/` behind stubs at their original anchors — verified lossless; 49 case-history bullets compressed; §12's closed items tombstoned. No section renumbered. New guard: `test/docs_hygiene_test.rb`.**)
+**Updated:** 2026-08-25 (**the Box Generator's edge dropdowns explain their letters again — the sidecar advertises boxes.py's own `edges.getDescriptions()` as `choice_labels`, the bundle composes the option text. 45 labelled params across 10 dests, not just top/bottom.**)
 
 ## What this file is
 
@@ -226,6 +226,128 @@ The scope stays, and the finding is written at the line so the next reader does 
   banner plus a Restore button on the show page for `dismissed_at.present?`.
 - **The sweep does not attach to import-origin models.** Import owns those rows.
 - **`importer_controller.js`'s third extension table** is untouched — already recorded above.
+
+---
+
+## 2026-08-25: the edge dropdowns say what their letters mean again (branch `claude/dropdown-explanations-top-bottom-9495d4`)
+
+The complaint was concrete: the Box Generator's **top** and **bottom** dropdowns are single letters,
+and boxes.py's own site explains each one. `top_edge` offers **sixteen** of them —
+`e f F h c E S Š i k v L t G y Y` — with nothing to choose between them.
+
+**Upstream never rendered them bare, and the mechanism was already there to copy.**
+`boxes/__init__.py`'s `ArgparseEdgeType` carries `names = edges.getDescriptions()` as a CLASS
+attribute on the argparse `type`, and `ArgparseEdgeType.html` composes each option as
+`"{letter} {description}"`. `boxesserver`'s `arg2html` reaches it via `hasattr(a.type, "html")`;
+a plain `a.choices` param (FingerJoint_style, Lid_style) renders bare there too, which is why the
+official site explains the edge dropdowns and only those.
+
+### The sidecar advertises the map; the bundle composes the text
+
+- **`sidecar/boxes/app.py` gained `_choice_labels(a)`** — `{choice: description}` for an enum whose
+  argparse type carries a `names` mapping, `None` otherwise — emitted from `_param` as
+  **`choice_labels`**, beside the unchanged `choices`. `choices` stays the authority on the SET and
+  the ORDER; the new key only explains it. Additive in both directions, the same contract
+  `multiline` already documents: a bundle that predates the key ignores it, and a bundle newer than
+  a deployed sidecar reads `undefined` and falls back to the bare value.
+- **Keyed on the TYPE, not on a list of param names** — the mirror-the-rule move `_multiline` and
+  `_offered` already make here. `bottom_edge`/`top_edge` are the two a user meets first, but the
+  pinned boxes.py declares edge params under **eight more dests** (`right_edge`, `left_edge`,
+  `back_edge`, `sideedges`, `side_edges`, `panel_edge`, `edgetype`, `edge_style`). Measured across
+  the offered catalogue: **45 labelled params over 10 dests** (bottom_edge 21, top_edge 13,
+  right/left/back_edge 2 each, five more once each), and **zero** choices with no description — a
+  name list would have left five of those ten rendering bare letters while looking finished.
+- **`fields.js` composes `"{letter} — {description}"`** and leaves the option's **value** the bare
+  letter. That split is the whole safety property: boxes.py parses the letter, and `paramValues`
+  reads `el.value`, so a label written into the value would look right on screen and 422 every
+  render.
+
+### What was measured, and what it caught
+
+- **Sidecar suite: 22 → 24 tests, all green** (`sidecar/boxes`, pytest against the pinned
+  `florianfesti/boxes @ 836f5f7`). One test pins TypeTray's two maps verbatim; the other is a
+  **sweep** over every offered generator, for the same reason
+  `test_every_generator_renders_with_its_own_advertised_defaults` is one — a map that covers
+  `top_edge` and misses one letter of `sideedges` leaves a lone "Š" in a dropdown nobody thought to
+  single out. It asserts a non-empty result too (`>= 40` params, `>= 5` distinct dests), because
+  "no bare choices" is satisfied perfectly by an empty set.
+  **Mutation-checked:** narrowing the rule to a `("top_edge", "bottom_edge")` name list → RED on the
+  distinct-dest floor; dropping one letter from every map → RED on both tests.
+- **System suite: one new test, 11 assertions** (`box_sections_test.rb`, against the bundle SNAPSHOT
+  in `test/fixtures/addons/boxes/`, sidecar stubbed at `FakeBoxesSidecar`, which grew TypeTray's two
+  real edge params — upstream's exact letters, order, defaults and wording).
+  **Mutation-checked three ways:** `new Option(key, key)` (no label) → RED on the option text;
+  the label written into the VALUE as well → RED on `bottom.value` and on the recorded sidecar call;
+  the compatibility fallback removed → RED with `"rectangular — undefined"` for every
+  FingerJoint_style option, which is exactly what a mid-rollout deployment would have shown.
+- **`text(:all)` is load-bearing in that last arm.** The advanced group ships FOLDED, and Capybara's
+  plain `#text` answers `""` inside a closed `<details>` — written the obvious way, the assertion
+  compared four empty strings against four empty strings and passed either way. Found by running it,
+  not by reading it.
+
+### The one thing neither suite can see: the key is a string literal in two repos
+
+pytest asserts the sidecar EMITS `choice_labels`; the system test asserts the bundle READS it —
+against a hand-written fake. A typo in that key on one side passes both. So it was probed directly:
+the real sidecar's `/generators` bytes (curl, 1.6 MB, the pinned boxes.py) served beside the real
+`addons/boxes/fields.js` and imported into a browser, unmodified. TypeTray came back with **16
+labelled top_edge options** and **4 bottom_edge**, and — the assertion that matters — every option's
+`value` still the bare letter (`top_edge` "e", `bottom_edge` "h"). No test file: a live-sidecar test
+here would skip on every box that has no sidecar, which this repo already refuses as
+indistinguishable from no test at all.
+
+### Deployed 2026-08-25 — two images, no Rails rebuild
+
+Merged as `2882474` (this repo) and `645aa12` (tinkerex-addons), then published as the two images
+that actually carry the change. **The three `tinkerex-web` containers were deliberately left alone**,
+still on `9faa7783`: `/sidecar/` is in the Rails `.dockerignore` and publishing a bundle IS the addon
+deploy (§14c), so rebuilding Rails would have shipped a behaviourally identical image.
+
+| accessory | image digest | provenance | after |
+|---|---|---|---|
+| `tinkerex-boxes` | `sha256:fa263777` | label `org.opencontainers.image.revision=28824742…` | Up, `/up` 200 |
+| `tinkerex-addons` | `sha256:18193c03` | tag `645aa122…` (no revision label — that image carries `BUNDLE_VERSION`, not an OCI label) | Up, `/health` 200 |
+
+**Exercised on the box, not read off an exit code.** BEFORE, in the running sidecar, `top_edge`'s
+keys were `choices, default, help, multiline, name, type` — no `choice_labels`. AFTER: the key is
+present, `choices` still `efFhcESŠikvLtGyY`, **45 labelled params and 0 choices without a label**
+across the live catalogue, `FingerJoint_style` still `None`. The addons container SERVES the new
+`fields.js` over HTTP (`const opt = new Option(label ? …)`). From inside a `tinkerex-web` container:
+`tinkerex-boxes:8000/up` 200, `tinkerex-addons/health` 200 — the network aliases survived both
+reboots, which is the actual risk of rolling an accessory — and the bytes Rails proxies carry the map
+(`e => Straight Edge`, `y => Handle for e.g. a drawer`). All six proxy health checks 200
+(`chunk|share|s3` × `.local|.home`).
+
+**Both accessories reported an EMPTY revision label BEFORE this deploy, and the first reading of that
+was WRONG in one direction.** It said the addons image "cannot name its own build" — it could, and
+always could: its Dockerfile writes `BUNDLE_VERSION` into `/version.json`, and the live container
+answered `{"version":"645aa122…"}` when finally asked. The real defect was narrower and still worth
+fixing: the two accessories answered one question by two different mechanisms, so a `docker inspect`
+sweep across both reported one of them as unknown. Closed the same evening in
+`chaim354/tinkerex-addons#14` — `bin/build-push` now stamps
+`org.opencontainers.image.revision` from the SAME variable that feeds `BUNDLE_VERSION`, so the two
+cannot disagree, with a `git status --porcelain` dirty check (not `git describe --dirty`, which
+ignores the untracked files that image would ship) scoped to what it actually `COPY`s. Published as
+`1332bf70` / `sha256:a28c83da` and rolled: label and `version.json` now both read `1332bf70…`, the
+sweep names both accessories, and Rails still reaches both aliases (`/up` 200, `/health` 200,
+`/boxes/fields.js` 200). **The bundle content is unchanged by that second roll** — `fields.js` still
+serves the edge labels.
+
+### Two repos, and the fixture is the seam
+
+The display half is the bundles repo's (`chaim354/tinkerex-addons`, `addons/boxes/fields.js`), the
+schema half is this one's. The change is mirrored into `test/fixtures/addons/boxes/fields.js` —
+`bin/check-fixture-drift` there refuses to publish otherwise — and the two files are byte-identical.
+
+**Not deployed by this branch, and it is a two-part deploy:** the sidecar image must be rebuilt and
+pushed (`bin/build-boxes-sidecar`, then `kamal accessory reboot boxes`) *and* the bundle republished
+(`bin/build-push` + `kamal accessory reboot addons` in the addons repo). Rails is rebuilt for
+neither. Either half alone is harmless — old sidecar + new bundle shows the letters, new sidecar +
+old bundle shows the letters — which is what the additive key buys.
+
+**Deliberately out of scope:** a saved box's detail page (`show.js`) still lists `top_edge: e`. It
+renders `state.data.params` with no schema in hand, so explaining a letter there means fetching the
+generator's params for a page that currently needs no sidecar call at all.
 
 ## 2026-08-25: CI wall-clock cut ~64% per change, and a guard that was permanently maxed out (branch `claude/faster-ci`)
 

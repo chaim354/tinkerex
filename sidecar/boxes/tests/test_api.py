@@ -368,3 +368,63 @@ def test_the_flat_params_key_is_the_non_advanced_groups_and_nothing_else():
     assert {"x", "y", "h"} <= flat_names
     assert "FingerJoint_style" in grouped_names
     assert "FingerJoint_style" not in flat_names
+
+
+def test_edge_choices_carry_the_descriptions_boxes_pys_own_ui_puts_in_the_dropdown():
+    """An edge param's choices are single LETTERS, and a letter on its own is not a choice a user can
+    make. boxes.py's own web UI never shows them bare: `ArgparseEdgeType.html` renders each option as
+    "{char} {description}" out of `edges.getDescriptions()`. We advertise that map as
+    `choice_labels` so the form can do the same.
+
+    Keyed on the action TYPE carrying a `names` map — the same mirror-the-rule move `_multiline` and
+    `_offered` make — not on a list of param names: `bottom_edge`/`top_edge` are the two a user
+    meets first, but this boxes.py declares edge params under EIGHT more dests (`right_edge`,
+    `left_edge`, `back_edge`, `sideedges`, `side_edges`, `panel_edge`, `edgetype`, `edge_style`),
+    and a name list would leave those bare while looking finished.
+    """
+    bottom = _params("TypeTray")["bottom_edge"]
+    assert bottom["choices"] == ["F", "h", "s", "e"], "the pinned boxes.py's own order and set"
+    assert bottom["choice_labels"] == {
+        "F": "Finger Joint (opposing side)",
+        "h": "Edge (parallel Finger Joint Holes)",
+        "s": "Stackable (bottom, finger joint holes)",
+        "e": "Straight Edge",
+    }
+
+    top = _params("TypeTray")["top_edge"]
+    assert top["choice_labels"]["f"] == "Finger Joint"
+    assert top["choice_labels"]["e"] == "Straight Edge"
+
+    # An ordinary enum has no description map upstream, and inventing one is not this endpoint's job:
+    # ABSENT, so the form falls back to the bare value rather than rendering "rectangular — ".
+    assert _params("ABox")["FingerJoint_style"]["choice_labels"] is None
+    assert _params("ABox")["x"]["choice_labels"] is None
+
+
+def test_every_edge_choice_on_every_generator_has_a_label():
+    """Breadth, for the same reason `test_every_generator_renders_with_its_own_advertised_defaults`
+    is a sweep: a label map that covers `top_edge` and quietly misses one letter of `sideedges` leaves
+    a lone "Š" in a dropdown, and nobody would have thought to single that generator out.
+
+    A MISSING label is the failure mode to watch — upstream builds its map from every BaseEdge
+    subclass that declares a `char`, so a choice whose letter is not in it is a boxes.py bump we have
+    not noticed, not a cosmetic gap.
+    """
+    bare = []
+    for g in client().get("/generators").get_json():
+        for grp in g["param_groups"]:
+            for p in grp["params"]:
+                labels = p["choice_labels"]
+                if labels is None:
+                    continue
+                bare += [(g["key"], p["name"], c) for c in p["choices"] if not labels.get(c)]
+    assert not bare, f"{len(bare)} edge choice(s) would render as a bare letter: {bare[:10]}"
+    # ...and the sweep must actually have swept something, or it asserts nothing at all — the
+    # vacuous-guard shape (an empty set satisfies "no bare choices" perfectly). Measured against the
+    # pinned boxes.py: 45 labelled params across the 10 dests listed above, of which bottom_edge (21)
+    # and top_edge (13) are the bulk. The floors are under those so an upstream bump that adds or
+    # drops a generator does not fail this, while a rule that stopped matching does.
+    labelled = [p["name"] for g in client().get("/generators").get_json()
+                for grp in g["param_groups"] for p in grp["params"] if p["choice_labels"]]
+    assert len(labelled) >= 40, f"only {len(labelled)} labelled params — the rule stopped matching"
+    assert len(set(labelled)) >= 5, f"only {sorted(set(labelled))} — this is matching a name, not a rule"

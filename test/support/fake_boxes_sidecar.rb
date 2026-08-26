@@ -31,6 +31,36 @@ class FakeBoxesSidecar
     circle 10 45 3.5
   DSL
 
+  # boxes.py's edge descriptions, carried over from the pinned upstream VERBATIM (letters, wording
+  # and all) — `boxes/edges.py`'s `getDescriptions()`, which the real sidecar advertises per param as
+  # `choice_labels` (sidecar/boxes/app.py `_choice_labels`). Only the letters TypeTray actually
+  # offers are here; upstream's map covers every edge class it ships.
+  EDGE_LABELS = {
+    "e" => "Straight Edge",
+    "f" => "Finger Joint",
+    "F" => "Finger Joint (opposing side)",
+    "h" => "Edge (parallel Finger Joint Holes)",
+    "s" => "Stackable (bottom, finger joint holes)",
+    "c" => "Click on (bottom side)",
+    "E" => "Straight Edge (outset by thickness)",
+    "S" => "Stackable (top)",
+    "Š" => "Stackable edge with finger holes (top)",
+    "i" => "Straight edge with hinge eye",
+    "k" => "Straight edge with hinge eye (both ends)",
+    "v" => "Edge with cabinet hinges for 90° lid",
+    "L" => "Edge for slide on lid (box back)",
+    "t" => "Triangle for handle",
+    "G" => "Edge with pear shaped mounting holes",
+    "y" => "Handle for e.g. a drawer",
+    "Y" => "Handle with holes for parallel finger joint"
+  }.freeze
+
+  # TypeTray's own two edge params, upstream's exact sets, order and defaults. They are the reason
+  # `choice_labels` exists: every choice here is ONE LETTER, so a dropdown that renders the values
+  # bare offers the user "e / f / F / h / c / E / S / Š …" and nothing to choose between them.
+  TOP_EDGE_CHOICES = %w[e f F h c E S Š i k v L t G y Y].freeze
+  BOTTOM_EDGE_CHOICES = %w[F h s e].freeze
+
   GENERATORS = [
     { "key" => "ABox", "title" => "Simple box", "group" => "Box",
       "param_groups" => [
@@ -53,7 +83,11 @@ class FakeBoxesSidecar
           { "name" => "sx", "type" => "str", "default" => "50*3", "help" => "sections in x" },
           { "name" => "sy", "type" => "str", "default" => "50*2", "help" => "sections in y" },
           { "name" => "thickness", "type" => "float", "default" => 3.0,
-            "help" => "thickness of the material (in mm)" }
+            "help" => "thickness of the material (in mm)" },
+          { "name" => "top_edge", "type" => "enum", "default" => "e", "help" => "edge type for top edge",
+            "choices" => TOP_EDGE_CHOICES, "choice_labels" => EDGE_LABELS.slice(*TOP_EDGE_CHOICES) },
+          { "name" => "bottom_edge", "type" => "enum", "default" => "h", "help" => "edge type for bottom edge",
+            "choices" => BOTTOM_EDGE_CHOICES, "choice_labels" => EDGE_LABELS.slice(*BOTTOM_EDGE_CHOICES) }
         ] }
       ] },
     # A TrayLayout-shaped generator: sx/sy sizes plus a MULTILINE `layout` — ASCII art that
