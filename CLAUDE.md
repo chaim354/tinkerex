@@ -1235,6 +1235,11 @@ ordering that changes the answer rather than the timing.
   how a mount adapter works, the boundary is wrong — stop, and check whether the work belongs in
   `tinkerex-sync` or `tinkerex-client` instead (§3, §14j).
 
+- **EXECUTING A PLAN WITH SUBAGENTS — READ `.claude/commands/execute-plan.md` FIRST.** Batch tasks
+  by FILE, dispatch independent ones in PARALLEL, run NO spec-compliance stage (six such dispatches
+  found zero divergences), and CAP each quality review to named claims. Measured 2026-08-26: review
+  cost more than implementation, ~1.8 h against ~1.6 h. Quality reviews themselves stay full-depth.
+
 ### Finishing work: commit, push, and open the PR without asking
 
 On a **`claude/*` or other non-default branch**, when the work is complete and the gates are
