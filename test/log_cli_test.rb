@@ -289,6 +289,32 @@ class LogCliTest < ActiveSupport::TestCase
     stub&.shutdown
   end
 
+  # RUBY DOES NOT ROUTE AN EXCEPTION RAISED INSIDE A `rescue` CLAUSE TO THAT BEGIN'S SIBLING
+  # RESCUES — it escapes straight to the caller. So a spool failure (a read-only filesystem, a
+  # container with no git on PATH, tmp/ owned by another user) used to skip main's catch-all
+  # entirely and exit 1 with a raw FileUtils trace, having already printed the reassuring
+  # "unreachable" message. The record was simply gone. This pins the recovered behaviour: the
+  # spool failure is caught, and the payload is printed so the entry is not unrecoverable.
+  test "a spool that cannot be written says so and prints the payload rather than losing it" do
+    Dir.mktmpdir do |dir|
+      blocked = File.join(dir, "blocked")
+      FileUtils.mkdir_p(blocked)
+      File.chmod(0o500, blocked)
+
+      _out, err, code = run_log("open", "an arc worth keeping", env: {
+        "FORGEJO_TOKEN" => "t0ken", "LOG_SPOOL_DIR" => File.join(blocked, "spool"),
+        "LOG_BRANCH" => "claude/example"
+      })
+
+      assert_includes err, "THE SPOOL ALSO FAILED"
+      assert_includes err, "an arc worth keeping",
+                       "the payload was not printed — the record is unrecoverable"
+      refute_equal 1, code, "the spool failure escaped to Ruby's default handler"
+    ensure
+      File.chmod(0o700, blocked) if File.exist?(blocked)
+    end
+  end
+
   # A READ VERB HAS NOTHING TO FILE. Spooling one would make `bin/log status` report unfiled work
   # that never existed, permanently, since nothing drains it — a false positive in the one
   # mechanism whose whole job is making real debt visible.
@@ -404,6 +430,26 @@ class LogCliTest < ActiveSupport::TestCase
     stub&.shutdown
   end
 
+  # REFUSE, NEVER GUESS. `--dest` used to be read positionally (`argv[0] == "--dest" ? argv[1] :
+  # ...`), so a typo'd flag name fell straight through to the three-destination default — filing a
+  # deploy record claiming chunk_remote, share AND s3 were deployed when the operator named only
+  # one. That is a false record from the very tool that exists because the old record kept going
+  # stale, and it fails silently: the command exits 0.
+  test "an unrecognised deploy flag is refused, never silently defaulted" do
+    _out, err, code = run_log("deploy", "--image", "abc123", "--destination", "only-share",
+                              env: { "FORGEJO_TOKEN" => "t0ken" })
+
+    assert_equal 2, code, "a typo'd flag filed a record instead of being refused"
+    assert_includes err, "unrecognised argument"
+  end
+
+  test "deploy --dest with no value is a usage error, not a crash" do
+    _out, _err, code = run_log("deploy", "--image", "abc123", "--dest",
+                               env: { "FORGEJO_TOKEN" => "t0ken" })
+
+    assert_equal 2, code
+  end
+
   # A CORRECTION IS A COMMENT, NOT AN EDIT. This is the whole reason the move helps: STATUS.md's
   # recurring failure was a stale claim buried mid-file, and CLAUDE.md records several in its own
   # voice ("this bullet went on asserting a single even bound for months"). A dated comment appends
@@ -425,6 +471,31 @@ class LogCliTest < ActiveSupport::TestCase
     refute request.json.key?("title"), "note sent a title — it is editing the issue, not commenting"
   ensure
     stub&.shutdown
+  end
+
+  # `note` IS THE ONLY VERB WHOSE TARGET LIVES IN THE URL RATHER THAN THE PAYLOAD. Spooling only
+  # the payload during an outage left the text with no way to say which issue it corrects — a
+  # correction spooled and later replayed by hand is unrecoverable without the issue number.
+  test "a note spooled during an outage records which issue it belongs to" do
+    Dir.mktmpdir do |spool|
+      run_log("note", "128", "The measured figure was 7.8 ms.", env: {
+        "FORGEJO_TOKEN" => "t0ken", "LOG_SPOOL_DIR" => spool, "LOG_BRANCH" => "claude/example"
+      })
+
+      spooled = File.read(File.join(spool, "claude-example.md"))
+      assert_includes spooled, "128",
+                      "the issue number is only in the URL, so without it the correction is orphaned"
+    end
+  end
+
+  # REJECT, NEVER NORMALIZE — CLAUDE.md §14a's `key_for` rule, same repo, different subsystem.
+  # Net::HTTP does not normalise a `..` segment, so it reaches the wire verbatim and a normalising
+  # reverse proxy in front of Forgejo can resolve it outside the repo scope.
+  test "an issue number containing path traversal is refused before it reaches the wire" do
+    _out, err, code = run_log("show", "../../../../admin/users", env: { "FORGEJO_TOKEN" => "t0ken" })
+
+    assert_equal 2, code, "a traversal segment was sent to the server"
+    assert_includes err, "not an issue number"
   end
 
   # SEARCH SPANS OPEN AND CLOSED. An arc issue is CLOSED the moment its PR merges, so a search

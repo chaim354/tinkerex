@@ -45,6 +45,11 @@ module Log
   # indistinguishable from "there is unfiled work" to /finish-branch, which reads this code.
   EXIT_UNFILED     = 4   # `status` found a backlog. Loud on purpose, like bin/backup-status.
 
+  # A BUG IS NOT AN OUTAGE. Exit 3 means "unreachable, and a write was spooled"; a NoMethodError is
+  # neither spooled nor a network problem, and treating it as non-blocking lets /finish-branch
+  # proceed past a broken bin/log as though it were a blip.
+  EXIT_BUG = 5
+
   # ONE TABLE, NOT FOUR LISTS. USAGE is DERIVED from this and `main` dispatches on it, so a
   # subcommand cannot exist in one place and be missing from another. §14d's "ONE file-type
   # vocabulary": EXT_FAMILIES is derived from ROLE_BY_EXT precisely because the second inline list
@@ -73,11 +78,12 @@ module Log
   # accumulates across calls, so a loop failing on its Nth write cannot re-spool the N-1 already
   # filed. (PR 2's import is exactly that loop.)
   class Unreachable < StandardError
-    attr_reader :payload
+    attr_reader :payload, :path
 
-    def initialize(message, payload: nil)
+    def initialize(message, payload: nil, path: nil)
       super(message)
       @payload = payload
+      @path = path
     end
   end
 
@@ -88,6 +94,14 @@ module Log
   def repo        = ENV.fetch("FORGEJO_REPO", "tinkerex")
 
   def repo_path(suffix) = "/api/v1/repos/#{owner}/#{repo}#{suffix}"
+
+  # REJECT, NEVER NORMALIZE — §14a's key_for rule. Net::HTTP does not normalise, so a `..` segment
+  # reaches the wire and any normalising reverse proxy resolves it out of the repo scope.
+  def issue_number!(value)
+    raise UsageError, "not an issue number: #{value.inspect}" unless value.to_s.match?(/\A\d+\z/)
+
+    value
+  end
 
   # THROUGH bin/secret, NEVER `op read` DIRECTLY. That file is this repo's single definition of
   # where a credential comes from, and it is what makes an exported value win over the vault.
@@ -107,13 +121,15 @@ module Log
   def api(method, path, body = nil, allow: [])
     perform(method, path, body, allow)
   rescue Unreachable => e
-    # Attach what was being sent, at the one place that knows both. A failure raised from `token`
-    # carries no payload of its own, and a WRITE must still be spooled.
-    raise(e.payload ? e : Unreachable.new(e.message, payload: body))
+    # Attach what was being sent, and to what path, at the one place that knows all three. A
+    # failure raised from `token` carries neither payload nor path of its own, and a WRITE must
+    # still be spooled with enough context to refile it — `note`'s target lives in the PATH, not
+    # the payload, so losing it here makes a spooled correction unrecoverable (see spool!).
+    raise Unreachable.new(e.message, payload: e.payload || body, path: e.path || path)
   rescue SystemCallError, SocketError, EOFError, IOError, Timeout::Error,
          Net::OpenTimeout, Net::ReadTimeout, Net::ProtocolError,
          OpenSSL::SSL::SSLError => e
-    raise Unreachable.new("#{forgejo_url}: #{e.class}: #{e.message}", payload: body)
+    raise Unreachable.new("#{forgejo_url}: #{e.class}: #{e.message}", payload: body, path: path)
   end
 
   # URI.join DROPS A PATH PREFIX — URI.join("http://host/git", "/api/v1/x") is
@@ -163,6 +179,7 @@ module Log
 
   def show(argv)
     number = argv.shift or raise UsageError, "show needs an issue number"
+    number = issue_number!(number)
     issue = parse(api(:get, repo_path("/issues/#{number}")), "/issues/#{number}")
 
     puts "##{issue['number']} #{issue['title']} [#{issue['state']}]"
@@ -254,11 +271,25 @@ module Log
   # A DEPLOY IS AN ISSUE, WHICH IS WHAT DELETES CLAUDE.md §15's PUSH-TO-MAIN EXCEPTION. Today a
   # deploy record is the one sanctioned direct commit to main, because a deploy happens after the
   # merge and its record cannot live in the work's own PR. As an issue that reasoning evaporates.
-  def deploy(argv)
-    raise UsageError, "deploy needs --image SHA" unless argv.shift == "--image"
+  DEFAULT_DESTS = %w[chunk_remote share s3].freeze
 
-    image = argv.shift or raise UsageError, "deploy needs --image SHA"
-    dests = (argv[0] == "--dest" ? argv[1] : "chunk_remote,share,s3").split(",")
+  def deploy(argv)
+    image = nil
+    dests = DEFAULT_DESTS
+
+    until argv.empty?
+      flag = argv.shift
+      case flag
+      when "--image" then image = argv.shift or raise UsageError, "--image needs a value"
+      when "--dest"  then dests = (argv.shift or raise UsageError, "--dest needs a value").split(",")
+      # REFUSE, NEVER GUESS. A typo'd flag used to fall through to the three defaults silently,
+      # filing a deploy record naming destinations nobody deployed.
+      else raise UsageError, "deploy: unrecognised argument #{flag.inspect}"
+      end
+    end
+
+    raise UsageError, "deploy needs --image SHA" if image.nil?
+
     body = "Image: `#{image}`\n\nDestinations:\n#{dests.map { |d| "- #{d}" }.join("\n")}\n"
     issue = create_issue("Deploy #{image}", body: body, labels: [ "deploy" ])
 
@@ -269,6 +300,7 @@ module Log
   # A CORRECTION IS A COMMENT, NOT AN EDIT — never rewrite the issue body.
   def note(argv)
     number = argv.shift or raise UsageError, "note needs an issue number"
+    number = issue_number!(number)
     text = argv.shift or raise UsageError, "note needs text"
     api(:post, repo_path("/issues/#{number}/comments"), { body: text })
 
@@ -283,11 +315,17 @@ module Log
     ENV["LOG_BRANCH"] || Open3.capture2("git", "branch", "--show-current").first.strip
   end
 
-  def spool!(command, payload)
+  def spool!(command, payload, path = nil)
     FileUtils.mkdir_p(spool_dir)
-    path = File.join(spool_dir, "#{current_branch.tr('/', '-')}.md")
-    File.open(path, "a") { |f| f.puts("# unfiled: #{command}", "", JSON.pretty_generate(payload), "") }
-    path
+    file = File.join(spool_dir, "#{current_branch.tr('/', '-')}.md")
+    File.open(file, "a") do |f|
+      f.puts("# unfiled: #{command}")
+      # note's TARGET lives in the URL, not the payload. Without this line a correction spooled
+      # during an outage has the text and no way to know which issue it belongs to.
+      f.puts("# endpoint: #{path}") if path
+      f.puts("", JSON.pretty_generate(payload), "")
+    end
+    file
   end
 
   def status
@@ -349,18 +387,37 @@ module Log
       return EXIT_UNREACHABLE
     end
 
-    path = spool!(command, e.payload)
-    warn "bin/log: the entry was NOT filed. It is spooled at #{path}"
-    warn "bin/log: `bin/log status` will keep reporting it until you file it."
+    # THE SPOOL NEEDS ITS OWN RESCUE. Ruby does NOT route an exception raised inside a `rescue`
+    # clause to that begin's SIBLING rescues — measured: it escapes straight to the caller. So a
+    # failing spool skipped main's catch-all entirely and exited 1 with a raw FileUtils trace,
+    # having already printed the recoverable "unreachable" message. The record was simply gone.
+    # Ordinary triggers here: a read-only filesystem, a container without git (current_branch
+    # shells out to it), tmp/ owned by another user after one sudo run, ENOSPC.
+    begin
+      path = spool!(command, e.payload, e.path)
+      warn "bin/log: the entry was NOT filed. It is spooled at #{path}"
+      warn "bin/log: `bin/log status` will keep reporting it until you file it."
+    rescue StandardError => spool_error
+      warn "bin/log: THE SPOOL ALSO FAILED (#{spool_error.class}: #{spool_error.message})."
+      warn "bin/log: the entry is LOST unless you copy it from here:"
+      warn JSON.pretty_generate(e.payload)
+    end
+
     EXIT_UNREACHABLE
   rescue StandardError => e
     # THE CATCH-ALL IS STRUCTURAL, NOT A CONVENIENCE. Enumerating transport exception classes never
     # closes the gap — JSON::ParserError, Net::HTTPBadResponse, OpenSSL::SSL::SSLError and EOFError
-    # all escaped the first list, and every one of them exited 1. Reporting anything unexpected as
-    # UNREACHABLE is the honest answer: we do not know that the record was filed.
+    # all escaped the first list at one point, and every one of them exited 1. This arm exists so an
+    # unanticipated exception still gets a controlled exit rather than Ruby's own crash handler.
+    #
+    # A BUG IS NOT AN OUTAGE. Whatever lands here was never wrapped in `Unreachable`, so it was
+    # never spooled — reporting it as EXIT_UNREACHABLE claimed a write had been queued when nothing
+    # had. EXIT_BUG says plainly that this is neither spooled nor a network problem, so a caller
+    # like /finish-branch does not treat a broken bin/log as a blip it can sail past.
     warn "bin/log: unexpected failure — #{e.class}: #{e.message}"
+    warn "bin/log: THIS WAS NOT SPOOLED. Nothing has been recorded."
     warn e.backtrace.first(3).join("\n") if e.backtrace
-    EXIT_UNREACHABLE
+    EXIT_BUG
   end
 
   # EVERY SUBCOMMAND DECLARED IN SUBCOMMANDS NOW HAS AN ARM HERE — the table and the dispatch
