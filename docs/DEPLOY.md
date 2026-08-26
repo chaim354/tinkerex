@@ -260,10 +260,19 @@ what it did:
     -- destroyed 4812 node(s) indexed beneath a .git directory
        -> KEPT 9f2c… (user 3) — a file attachment points at it
 
-A `KEPT` line is a node the purge REFUSED to destroy because a project attachment points at it;
-destroying one would silently orphan that reference. Nothing is required of you, but those files
-are inside a repo's `.git` and the next scan will tombstone them normally — worth a look if the
-project cares.
+A `KEPT` line is a node the purge REFUSED to destroy because something points at it — a file
+attachment, or a project's or model's cover image. Destroying one would silently orphan that
+reference. Nothing is required of you, but those files are inside a repo's `.git` and the next scan
+will tombstone them normally — worth a look if the project cares.
+
+**On a `chunk_remote` deployment it declines, and says so:**
+
+    -- declined: FileLayer::ChunkRemote is not a scannable backend, so nothing here indexed the
+       contents of a .git and nothing scans them away
+
+That is correct, not a misconfiguration. There the `nodes` table MIRRORS the sync server's tree,
+the mass-deletion guard never runs (`Library::ScanJob` gates on the same capability), and
+`app/models/node.rb` records that `.git`'s contents are HIDDEN there rather than removed.
 
 **The one failure mode.** If a library was scanned by the new code before the migration ran, that
 scan REFUSES with `Library::Scanner::UnsafeScan` — a mass-deletion guard trip, so **nothing was

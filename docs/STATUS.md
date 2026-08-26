@@ -461,19 +461,93 @@ turn a real breakage into a silent success on every future deploy. Both branches
 `Library::RepoMetadataPurge is gone; nothing to purge on a fresh database`. `down` raises
 `IrreversibleMigration`, because the rows are gone and the paths they named are no longer observable.
 
+**SCANNABLE BACKENDS ONLY — the review caught this contradicting Task 5's own recorded
+limitation.** `node.rb`, landed four commits earlier on this branch, says that on `chunk_remote` the
+files inside `.git` DO exist as rows and this arc deliberately hides rather than removes them —
+and the purge destroyed exactly those rows, since `ChangelogSync#upsert` writes `parent_node_id`
+and never `storage_path`, which is the shape the purge's own test asserts gets destroyed.
+`RepoMetadataPurge.call` now gates on `FileLayer.current.capabilities.scannable?`, the same gate
+`Library::ScanJob` asks, and `Result` carries `declined` so a hand-run on the wrong deployment
+cannot read as "destroyed 0". Three reasons, the first sufficient: the guard this prevents runs
+only from `ScanJob`, so on chunk_remote there is nothing to prevent; the mirror is the sync
+server's tree and destroying rows makes it lie until a gapped `full_resync`; and `node.rb`'s
+statement stays true. An unset `LIBRARY_BACKEND` defaults to `share`, so a missing env fails toward
+RUNNING the purge, never toward silently skipping it.
+
+**THE GATE RETIRED THE PARENT CHAIN'S ORIGINAL ARGUMENT AND A BETTER ONE WAS ALREADY THERE.** "Read
+the chain, not `storage_path`" was justified by chunk_remote's NULL column — and the gate means
+those rows are never looked at. Checked rather than assumed: every node-creation site on share and
+s3 (`Share#write`, `#mkdir`, the S3 pair, `Reconciler#create_or_revive!`) sets both columns. But
+`FileLayer::Share#delete` ends `update!(deleted: true, storage_path: nil)` — it NULLS the column
+deliberately, so a revive cannot fire on a trashed path — so **a trash-kind tombstone on share has
+a NULL `storage_path` and an intact parent chain**. A file trashed out of a `.git` before this arc
+is exactly that row, on a backend the gate DOES cover, and a column-only purge leaves every one
+behind. Pinned by its own test, driven through `#delete`'s real column writes; the column mutation
+is red there for a share-native reason.
+
+**TWO MORE POINTERS PINNED, and the second is the worse one.** Only `maker_file_attachments` was
+consulted; `maker_projects.cover_node_id` and `maker_models.cover_node_id` were not. A cover is
+worse than an attachment, not lesser: `Maker::DeadNodes.reapable?` returns TRUE for a **nil** node,
+so a destroyed cover is reaped immediately with none of the grace a tombstone buys — cleared
+silently, nothing saying why. Practically unreachable (covers are images), and it costs one pluck
+each.
+
+**TWO DECISIONS THIS ARC EMPHASISED HAD NO TEST THAT COULD FAIL FOR THEM — the fourth vacuous-guard
+instance in this arc, found by review mutation.** Both are now pinned:
+
+- **The local parent-lookup cache.** Restoring the plan's module-level `@cache` left the purge suite
+  **fully green** over a real defect. The idempotency test structurally cannot see it: after run 1
+  the only rows left are ABOVE the marker, so run 2 destroys 0 either way. The defect needs the tree
+  to CHANGE between two runs in one process — rename the marker to `notgit`, add a file under it,
+  and a stale cached row still says `.git`, so **the second run destroys a file beneath no marker at
+  all**. Now driven: module memo `Expected: 0 / Actual: 1`, and it is the ONLY failure in the file.
+- **Task 5's placement decision** — `.outside_repo_metadata` on the `scope =` assignment rather than
+  the `.order` chain, so `@child_count` counts what the page renders. Moving it one line down left
+  the ENTIRE suite green (2412 runs, 0 failures) while a 250-file folder gained a **phantom second
+  page that renders nothing**. Guarded in `files_git_marker_test.rb` with a fixture sitting exactly
+  on the `FOLDER_PAGE = 250` boundary — the only size at which one extra counted row changes
+  `@pages`. Two independent assertions, each shown to bite alone: `nav.pager` present where there
+  should be none, and `?page=2` rendering `Expected: 250 / Actual: 0`.
+
+Two comments were also wrong and are corrected rather than softened. `MAX_ANCESTOR_WALK`'s said a
+truncated walk "answers false and therefore SKIPS the node — the safe direction", which is wrong in
+**both** halves: the cap drops the TOP of the path and `marker_prefix` scans the surviving suffix
+from the left, so a truncated path answers whatever its suffix says; and a `false` there leaves a
+live node beneath a marker, which is the ghost that RE-ARMS the guard trip. And the
+tombstone-revival note read as exhaustive with one route named — there are **two**, both exact-
+`storage_path`: `Reconciler#create_or_revive!` for files and `#ensure_dirs` for directories. The
+conclusion survived; the completeness claim had not been checked.
+
 | mutation | result |
 |---|---|
-| `internal?(node.storage_path.to_s)` — read the column, not the chain | red — the chunk_remote-shaped test, `Expected true to be nil or false` |
+| `internal?(node.storage_path.to_s)` — read the column, not the chain | red — the NULL-`storage_path` test, `Expected true to be nil or false`; and the trash-tombstone test, `Expected: 1 / Actual: 0` |
 | drop the attachment skip | red — `destroying an attached node silently orphans a project reference` |
 | drop the ancestor pinning | red — the re-run reports `[]` instead of the skipped `node_id` |
 | comment out `RepoMetadataPurge.call` in the scan test | red — the `UnsafeScan` quoted above |
 | `internal?` → at-or-beneath (`!prefix.nil?`) | red — the marker itself is destroyed |
 | `marker_prefix`'s `index(DIR_NAME)` → `start_with?` | red — `.github/workflows/ci.yml` and its dir node, `Expected: 0 / Actual: 2` |
+| remove the `scannable?` gate | red — `the mirror is the sync server's tree — destroying rows makes it lie (§14a)` |
+| the plan's module-level `@cache` | red — `Expected: 0 / Actual: 1`, and nothing else in the file |
+| unpin the two `cover_node_id` columns | red — `a project cover is a reference like any other` |
+| `.outside_repo_metadata` moved to the `.order` chain | red — `Expected exactly 0 elements matching "nav.pager", found 1`, and separately `Expected: 250 / Actual: 0`; the other three tests in that file stay green |
 
-Legs measured for this task: share and s3, both **2412 runs / 8824 assertions / 30 skips**,
-identical — task 5's 2405/8802 plus this file's 7 runs and 22 assertions. `test-chunk-remote` not
-run here (needs the sibling checkout). One share run tripped the documented `WorkerBudgetTest`
-cross-process pidfile flake and was clean on the two runs after it.
+**`db:migrate` FROM AN EMPTY DATABASE NEVER RUNS THE `up`, AND THE PLAN'S STEP-6 CHECK PROVES LESS
+THAN IT LOOKS.** Rails 8.1's `initialize_database` loads `schema.rb` and stamps all 68 versions
+before `db:migrate` looks for work, so a from-scratch run reports success having executed nothing.
+True of every migration in this repo, not a defect in this one — but recorded so the next person
+does not mistake a vacuous check for a passing one. The path that matters is an existing deployment
+with the version row absent, and it does run: driven both ways, scannable →
+`destroyed 0 node(s) indexed beneath a .git directory`, `LIBRARY_BACKEND=chunk_remote` →
+`declined: FileLayer::ChunkRemote is not a scannable backend…` with no sync server reachable, which
+is also the evidence the gate makes no port call. The missing-constant branch was driven by moving
+the service aside: `Library::RepoMetadataPurge is gone; nothing to purge on a fresh database`.
+
+Legs measured for this task: share and s3, both **2417 runs / 8844 assertions / 30 skips**,
+identical — task 5's 2405/8802 plus this task's 12 runs and 42 assertions (7 purge tests, then 4
+more from the review round, plus Task 5's missing placement guard).
+`test-chunk-remote` not run here (needs the sibling checkout). Two runs tripped documented
+intermittents and were clean on re-run — `WorkerBudgetTest`'s cross-process pidfile flake, and
+§12.7's `SQLite3::BusyException` in `Tools::AddonsControllerTest` on a back-to-back leg.
 
 ### Still to land (tasks 7–9 of the plan)
 
