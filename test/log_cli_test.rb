@@ -119,14 +119,37 @@ class LogCliTest < ActiveSupport::TestCase
     end
   end
 
-  # exit(nil) is a TypeError and exit(false) is a SILENT status 1 — and 1 is EXIT_UNFILED, so an
-  # arm that forgets its return value would report a SUCCESSFUL file to /finish-branch as a
-  # backlog. Note an `assert_equal 0, code` test cannot catch a `true`-returning arm.
+  # exit(nil) is a TypeError and exit(false) is a SILENT status 1 — Ruby's own uncaught-exception
+  # status, distinct from any EXIT_* constant of ours now that EXIT_UNFILED has moved off 1. An
+  # arm that forgets its return value must still be LOUD, not silently misread as some other
+  # outcome. Note an `assert_equal 0, code` test cannot catch a `true`-returning arm.
   test "main returning a non-integer is loud, not a wrong exit code" do
     _out, err, code = run_log("--help", env: { "LOG_FORCE_BAD_RETURN" => "1" })
 
     assert_equal 1, code
     assert_match(/not an exit code/, err,
-                 "a non-integer return exited silently — 1 is EXIT_UNFILED, so success reads as a backlog")
+                 "a non-integer return exited silently instead of naming the bad value")
+  end
+
+  # US-ASCII IS THE DEFAULT EXTERNAL ENCODING WHENEVER LANG/LC_ALL IS UNSET — cron, systemd,
+  # Docker, a bare runner. bin/secret's diagnostics carry a UTF-8 ellipsis, so `err.strip` raised
+  # Encoding::CompatibilityError and the credential path exited 1 — which was EXIT_UNFILED, so a
+  # locked vault told /finish-branch there was a backlog. No developer shell reproduces this, which
+  # is why the test unsets the locale itself.
+  test "a credential failure with no locale exits cleanly, not as a stack trace" do
+    Dir.mktmpdir do |dir|
+      op = File.join(dir, "op")
+      File.write(op, "#!/bin/sh\nprintf 'op: vault locked \\342\\200\\246\\n' >&2\nexit 1\n")
+      File.chmod(0o755, op)
+
+      _out, err, code = run_log("show", "1", env: {
+        "PATH" => "#{dir}:#{ENV['PATH']}", "LANG" => nil, "LC_ALL" => nil, "FORGEJO_TOKEN" => nil
+      })
+
+      assert_equal 3, code, "a locale-less credential failure did not reach the clean unreachable exit"
+      refute_includes err, "Encoding::CompatibilityError",
+                      "the encoding crash is back — bin/log must set default_external"
+      refute_includes err, "in 'Log.token'", "a stack trace reached the user"
+    end
   end
 end

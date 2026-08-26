@@ -24,15 +24,26 @@ require "fileutils"
 require "json"
 require "net/http"
 require "open3"
+require "openssl"
 require "uri"
+
+# CAPTURED SUBPROCESS OUTPUT IS TAGGED WITH THE DEFAULT EXTERNAL ENCODING, which is US-ASCII
+# whenever LANG/LC_ALL is unset — cron, systemd, Docker, a bare CI runner. bin/secret's own
+# diagnostics carry a UTF-8 ellipsis, so `err.strip` raised Encoding::CompatibilityError and the
+# CREDENTIAL path exited 1 with a stack trace instead of 3. Reproduced against this file; no
+# developer shell shows it, which is why the test for it unsets LANG explicitly.
+Encoding.default_external = Encoding::UTF_8
 
 module Log
   module_function
 
   EXIT_OK          = 0
-  EXIT_UNFILED     = 1   # `status` found a backlog. Loud on purpose, like bin/backup-status.
   EXIT_USAGE       = 2   # the caller spelled the command wrong
   EXIT_UNREACHABLE = 3   # Forgejo or the vault could not be reached; any write is spooled
+  # DELIBERATELY NOT 1. Ruby's own uncaught-exception status IS 1 — measured — so a crash that no
+  # rescue can reach (SyntaxError from a bad edit, LoadError, NoMemoryError) would be
+  # indistinguishable from "there is unfiled work" to /finish-branch, which reads this code.
+  EXIT_UNFILED     = 4   # `status` found a backlog. Loud on purpose, like bin/backup-status.
 
   # ONE TABLE, NOT FOUR LISTS. USAGE is DERIVED from this and `main` dispatches on it, so a
   # subcommand cannot exist in one place and be missing from another. §14d's "ONE file-type
@@ -96,8 +107,10 @@ module Log
     # Attach what was being sent, at the one place that knows both. A failure raised from `token`
     # carries no payload of its own, and a WRITE must still be spooled.
     raise(e.payload ? e : Unreachable.new(e.message, payload: body))
-  rescue SystemCallError, Net::OpenTimeout, Net::ReadTimeout, SocketError => e
-    raise Unreachable.new("#{forgejo_url}: #{e.message}", payload: body)
+  rescue SystemCallError, SocketError, EOFError, IOError, Timeout::Error,
+         Net::OpenTimeout, Net::ReadTimeout, Net::ProtocolError,
+         OpenSSL::SSL::SSLError => e
+    raise Unreachable.new("#{forgejo_url}: #{e.class}: #{e.message}", payload: body)
   end
 
   # URI.join DROPS A PATH PREFIX — URI.join("http://host/git", "/api/v1/x") is
@@ -105,6 +118,9 @@ module Log
   # built by concatenation instead.
   def perform(method, path, body)
     uri = URI.parse("#{forgejo_url.chomp('/')}#{path}")
+    # A scheme-less FORGEJO_URL parses to host=nil, and Net::HTTP.start(nil, nil) then reports
+    # "connection refused for nil port 80" — a misleading answer to a malformed env var.
+    raise UsageError, "FORGEJO_URL has no scheme or host: #{forgejo_url.inspect}" unless uri.host
 
     request = case method
     when :get  then Net::HTTP::Get.new(uri)
@@ -132,9 +148,18 @@ module Log
     response
   end
 
+  # A 2xx WHOSE BODY IS NOT JSON IS AN OUTAGE, NOT A CRASH. A proxy error page and Forgejo's own
+  # login page on a session redirect both arrive as 200 text/html. Unwrapped, JSON::ParserError
+  # escaped to Ruby's default handler and exited 1.
+  def parse(response, path)
+    JSON.parse(response.body)
+  rescue JSON::ParserError => e
+    raise Unreachable, "#{path} returned #{response.code} with a non-JSON body: #{e.message}"
+  end
+
   def show(argv)
     number = argv.shift or raise UsageError, "show needs an issue number"
-    issue = JSON.parse(api(:get, repo_path("/issues/#{number}")).body)
+    issue = parse(api(:get, repo_path("/issues/#{number}")), "/issues/#{number}")
 
     puts "##{issue['number']} #{issue['title']} [#{issue['state']}]"
     puts
@@ -182,6 +207,14 @@ module Log
   rescue Unreachable => e
     warn "bin/log: Forgejo is unreachable — #{e.message}"
     EXIT_UNREACHABLE
+  rescue StandardError => e
+    # THE CATCH-ALL IS STRUCTURAL, NOT A CONVENIENCE. Enumerating transport exception classes never
+    # closes the gap — JSON::ParserError, Net::HTTPBadResponse, OpenSSL::SSL::SSLError and EOFError
+    # all escaped the first list, and every one of them exited 1. Reporting anything unexpected as
+    # UNREACHABLE is the honest answer: we do not know that the record was filed.
+    warn "bin/log: unexpected failure — #{e.class}: #{e.message}"
+    warn e.backtrace.first(3).join("\n") if e.backtrace
+    EXIT_UNREACHABLE
   end
 
   # Tasks 2-7 replace this arm by arm. Every subcommand is declared in SUBCOMMANDS from the start so
@@ -189,8 +222,10 @@ module Log
   # so a scripted caller cannot tell them apart — only the human-facing message differs.
   #
   # EVERY ARM ENDS IN AN EXPLICIT EXIT_* CONSTANT. `puts` returns nil, and exit(nil) is a
-  # TypeError whose status is 1 — which is EXIT_UNFILED. An arm that forgets would report a
-  # successful file as a backlog. The guard at the bottom of the file makes that loud.
+  # TypeError whose status is 1 — Ruby's own uncaught-exception status, and no longer any of our
+  # EXIT_* constants now that EXIT_UNFILED has moved off 1 (see its comment above). An arm that
+  # forgets would report a successful file as an opaque crash. The guard at the bottom of the
+  # file makes that loud instead of silent.
   def dispatch(command, argv)
     case command
     when "show" then show(argv)
