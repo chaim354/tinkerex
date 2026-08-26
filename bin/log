@@ -212,6 +212,20 @@ module Log
     EXIT_OK
   end
 
+  def spool_dir = ENV.fetch("LOG_SPOOL_DIR", File.expand_path("../tmp/log-pending", __dir__))
+
+  # THE BRANCH NAMES THE SPOOL FILE, so two branches cannot overwrite each other's unfiled record.
+  def current_branch
+    ENV["LOG_BRANCH"] || Open3.capture2("git", "branch", "--show-current").first.strip
+  end
+
+  def spool!(command, payload)
+    FileUtils.mkdir_p(spool_dir)
+    path = File.join(spool_dir, "#{current_branch.tr('/', '-')}.md")
+    File.open(path, "a") { |f| f.puts("# unfiled: #{command}", "", JSON.pretty_generate(payload), "") }
+    path
+  end
+
   def usage_text
     rows = SUBCOMMANDS.map do |name, (args, description)|
       "    " + "bin/log #{name} #{args}".rstrip.ljust(34) + description
@@ -219,7 +233,8 @@ module Log
 
     ([ "bin/log — record work in Forgejo. The single write door.", "" ] + rows + [
       "",
-      "Env: FORGEJO_URL (default http://forgejo.home), FORGEJO_OWNER, FORGEJO_REPO"
+      "Env: FORGEJO_URL (default http://forgejo.home), FORGEJO_OWNER, FORGEJO_REPO, " \
+      "LOG_SPOOL_DIR (default tmp/log-pending), LOG_BRANCH"
     ]).join("\n")
   end
 
@@ -251,6 +266,15 @@ module Log
     EXIT_USAGE
   rescue Unreachable => e
     warn "bin/log: Forgejo is unreachable — #{e.message}"
+
+    if e.payload.nil?
+      warn "bin/log: nothing to file (#{command} sends no payload)."
+      return EXIT_UNREACHABLE
+    end
+
+    path = spool!(command, e.payload)
+    warn "bin/log: the entry was NOT filed. It is spooled at #{path}"
+    warn "bin/log: `bin/log status` will keep reporting it until you file it."
     EXIT_UNREACHABLE
   rescue StandardError => e
     # THE CATCH-ALL IS STRUCTURAL, NOT A CONVENIENCE. Enumerating transport exception classes never

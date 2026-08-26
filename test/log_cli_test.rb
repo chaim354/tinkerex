@@ -235,4 +235,63 @@ class LogCliTest < ActiveSupport::TestCase
   ensure
     stub&.shutdown
   end
+
+  # THE CHOSEN FAILURE MODE: loud, spooled, NON-BLOCKING. Blocking the close-out was considered and
+  # declined; so was a spool that replays automatically, because a queue that silently drains is
+  # data loss wearing a fix. What remains must make the debt VISIBLE — that is `bin/log status`.
+  #
+  # LOG_SPOOL_DIR IS NOT A TEST CONVENIENCE. test_helper parallelizes by processor, so without it
+  # these tests write the SAME absolute path from several forked workers at once — and that path is
+  # the developer's real spool.
+  test "an unreachable Forgejo spools the write, says so, and exits 3" do
+    Dir.mktmpdir do |spool|
+      _out, err, code = run_log("open", "Something worth keeping", env: {
+        "FORGEJO_TOKEN" => "t0ken", "LOG_SPOOL_DIR" => spool, "LOG_BRANCH" => "claude/example"
+      })
+
+      assert_equal 3, code, "unreachable must be its own code, distinguishable from a usage error"
+
+      spooled = File.join(spool, "claude-example.md")
+      assert File.exist?(spooled), "the entry was not spooled — it is simply lost"
+      assert_includes File.read(spooled), "Something worth keeping"
+      assert_includes err, spooled, "the spool path must be PRINTED; an invisible spool drains silently"
+    end
+  end
+
+  # A 502 FROM A DEAD CONTAINER BEHIND A LIVE PROXY IS THE LIKELIEST REAL OUTAGE, and it is an HTTP
+  # RESPONSE — so a handler that only caught connection errors would exit 3 without spooling while
+  # the docs promised a spool file. This is the case the whole raise-don't-exit restructure exists
+  # for; it is asserted, not argued.
+  test "an HTTP error response spools too, not just a refused connection" do
+    stub = StubForgejo.new(status: 502, response: { "message" => "bad gateway" })
+
+    Dir.mktmpdir do |spool|
+      _out, err, code = run_log("open", "Filed during an outage", env: {
+        "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+        "LOG_SPOOL_DIR" => spool, "LOG_BRANCH" => "claude/example"
+      })
+
+      assert_equal 3, code
+      assert_includes err, "502"
+      assert_includes File.read(File.join(spool, "claude-example.md")), "Filed during an outage",
+                      "a 502 exited without spooling — the exact hole the raise-don't-exit rule closes"
+    end
+  ensure
+    stub&.shutdown
+  end
+
+  # A READ VERB HAS NOTHING TO FILE. Spooling one would make `bin/log status` report unfiled work
+  # that never existed, permanently, since nothing drains it — a false positive in the one
+  # mechanism whose whole job is making real debt visible.
+  test "a failed read spools nothing" do
+    Dir.mktmpdir do |spool|
+      _out, _err, code = run_log("show", "1", env: {
+        "FORGEJO_TOKEN" => "t0ken", "LOG_SPOOL_DIR" => spool
+      })
+
+      assert_equal 3, code
+      assert_empty Dir.glob(File.join(spool, "*.md")),
+                   "a read verb spooled phantom work — status will report it forever"
+    end
+  end
 end
