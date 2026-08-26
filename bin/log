@@ -66,7 +66,10 @@ module Log
     "status" => [ "",               "Report anything unfiled" ]
   }.freeze
 
-  TOKEN_REF = "op://tinkerex/Forgejo/token"
+  # The vault item is titled "forgejo key" and is an API_CREDENTIAL, so the token lives in its
+  # `credential` field — not a field named "token". Verified by reading the item's field
+  # LABELS; the reference resolves to 40 bytes through bin/secret.
+  TOKEN_REF = "op://tinkerex/forgejo key/credential"
 
   LABELS = %w[arc open-work deploy blocked deliberate
               filelayer library-scan addons previews maker-web ci].freeze
@@ -118,8 +121,8 @@ module Log
     end
   end
 
-  def api(method, path, body = nil, allow: [])
-    perform(method, path, body, allow)
+  def api(method, path, body = nil)
+    perform(method, path, body)
   rescue Unreachable => e
     # Attach what was being sent, and to what path, at the one place that knows all three. A
     # failure raised from `token` carries neither payload nor path of its own, and a WRITE must
@@ -135,7 +138,7 @@ module Log
   # URI.join DROPS A PATH PREFIX — URI.join("http://host/git", "/api/v1/x") is
   # "http://host/api/v1/x". Forgejo behind a subpath is an ordinary self-host shape, so the URL is
   # built by concatenation instead.
-  def perform(method, path, body, allow)
+  def perform(method, path, body)
     uri = URI.parse("#{forgejo_url.chomp('/')}#{path}")
     # A scheme-less FORGEJO_URL parses to host=nil, and Net::HTTP.start(nil, nil) then reports
     # "connection refused for nil port 80" — a misleading answer to a malformed env var.
@@ -161,7 +164,7 @@ module Log
     # handler that only caught connection errors would let the LIKELIEST outage exit without
     # spooling, which is how an arc gets lost while the docs promise otherwise.
     code = response.code.to_i
-    unless code.between?(200, 299) || allow.include?(code)
+    unless code.between?(200, 299)
       raise Unreachable, "HTTP #{response.code} from #{path}: #{response.body.to_s[0, 200]}"
     end
 
@@ -203,13 +206,36 @@ module Log
     EXIT_OK
   end
 
-  # LABELS ARE NAMES ON THE WIRE, NOT IDS. Forgejo accepts either; names are what a human reads in
-  # a diff and what survives the labels being recreated. `setup` guarantees they exist.
+  # LABELS ARE RESOLVED TO IDS, BECAUSE FORGEJO REFUSES NAMES. Measured against the live instance:
+  #   422 "cannot unmarshal string into Go struct field CreateIssueOption.labels of type int64"
+  # This file asserted the opposite, and no test could catch it — StubForgejo records what we send
+  # and models nothing, so the wire-format test pinned a contract that was INVENTED rather than
+  # observed. §14e's FakeS3 rule guards the code and the fake sharing a misunderstanding OF EACH
+  # OTHER; it does not guard both of them misunderstanding the SERVER. Only the live probe did.
+  def label_index
+    @label_index ||= parse(api(:get, repo_path("/labels?limit=100")), "/labels")
+                     .to_h { |l| [ l["name"], l["id"] ] }
+  end
+
+  def label_ids(names)
+    missing = names - label_index.keys
+    raise Unreachable, "labels absent from #{repo} (run `bin/log setup`): #{missing.join(', ')}" if missing.any?
+
+    names.map { |name| label_index.fetch(name) }
+  end
+
   def create_issue(title, body:, labels:)
+    # THE PAYLOAD IS BUILT WITH NAMES BEFORE THE IDS ARE RESOLVED, and that ordering is the whole
+    # point. Resolving labels makes a GET the FIRST wire call of every write verb, so if the payload
+    # were built in one expression it would still be nil when that GET failed — and the rescue below
+    # would report "nothing to file" for what is unambiguously a write. An `open` against a dead
+    # server would silently become a no-record. Measured as a regression the moment id resolution
+    # landed.
     payload = { title: title, body: body, labels: labels }
+    resolved = payload.merge(labels: label_ids(labels))
     # Through `parse`, not JSON.parse — a WRITE against a broken proxy answers 200 text/html just
     # as readily as a read does, and an unwrapped JSON::ParserError exits 1 instead of spooling.
-    parse(api(:post, repo_path("/issues"), payload), "/issues")
+    parse(api(:post, repo_path("/issues"), resolved), "/issues")
   rescue Unreachable => e
     # `parse` RAISES WITH NO PAYLOAD OF ITS OWN — it only ever sees the response, never what was
     # sent. That is fine for a GET (show, search), which has no payload to lose, but `create_issue`
@@ -257,23 +283,25 @@ module Log
     EXIT_OK
   end
 
-  # IDEMPOTENT BY DECLARING 422 ACCEPTABLE AT THE CALL SITE, not by matching on a message string.
-  # Forgejo answers 422 for a label that already exists — the ordinary case on every run after the
-  # first — so treating it as failure would make `setup` a one-shot command, and a one-shot setup
-  # is one nobody re-runs after adding a label.
+  # IDEMPOTENT BY ASKING WHAT EXISTS, NOT BY TOLERATING A REFUSAL. Forgejo ALLOWS DUPLICATE LABEL
+  # NAMES — measured: a second `setup` run created a second copy of all eleven and reported
+  # "11 labels present" both times, leaving 22. The previous design tolerated a 422 that Forgejo
+  # never sends, and a test could not have caught it: the stub answered 422 because the test said to.
   #
-  # `allow:` rather than a rescue, for two reasons. `perform`'s message embeds the RESPONSE BODY,
-  # so `e.message.include?("HTTP 422")` would also swallow any other status whose body happened to
-  # contain that text — and, far likelier, changing the message format would silently stop setup
-  # being idempotent, failing only on the SECOND run. And a rescue around the call can grow to
-  # swallow a genuine connection failure, which is exactly what C1 exists to prevent. An
-  # expectation declared before the fact cannot drift.
+  # It VERIFIES rather than assuming its POSTs worked. "I sent eleven requests" is not the claim
+  # this command makes; "eleven labels exist" is.
   def setup
-    LABELS.each do |name|
-      api(:post, repo_path("/labels"), { name: name, color: "#666666" }, allow: [ 422 ])
+    already = LABELS & label_index.keys
+
+    (LABELS - already).each do |name|
+      api(:post, repo_path("/labels"), { name: name, color: "#666666" })
     end
 
-    puts "bin/log: #{LABELS.size} labels present."
+    @label_index = nil
+    missing = LABELS - label_index.keys
+    raise Unreachable, "labels missing after setup: #{missing.join(', ')}" if missing.any?
+
+    puts "bin/log: #{LABELS.size} labels present (#{LABELS.size - already.size} created, #{already.size} already there)."
     EXIT_OK
   end
 
@@ -457,7 +485,11 @@ module Log
   end
 end
 
-code = Log.main(ARGV)
+# ARGV IS TAGGED BEFORE LINE 1 RUNS, so the default_external set above cannot retag it. Under a
+# locale-less shell an argument containing any non-ASCII byte — an em dash, which this repo's titles
+# use constantly — arrives as ASCII-8BIT, and JSON.generate warns today and RAISES in json 3.0.
+# Measured: `ARGV[0].encoding` is ASCII-8BIT for "smoke test — safe" with LANG unset.
+code = Log.main(ARGV.map { |arg| arg.dup.force_encoding(Encoding::UTF_8) })
 code = "not-an-integer" if ENV["LOG_FORCE_BAD_RETURN"]   # exercises the guard below; see the test
 
 raise "bin/log: main returned #{code.inspect}, not an exit code" unless code.is_a?(Integer)

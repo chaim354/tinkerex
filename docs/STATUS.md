@@ -144,10 +144,37 @@ absent from `Gemfile.lock` since it left stdlib in Ruby 3.0; and Task 2's `PATH=
 resolves to **Ruby 2.6.10**, which cannot parse the endless methods Task 2 introduces — the test
 would have blamed credentials for a `SyntaxError`.
 
-**Not verified:** the live smoke test against `forgejo.home`. It needs a Forgejo token
-(`op://tinkerex/Forgejo/token`) and the three repos created or mirrored, both operator steps. The
-suite never touches the instance by design — `run_log` defaults `FORGEJO_URL` to an unroutable
-address, so reaching the network is opt-in.
+**THE LIVE SMOKE TEST RAN, AND FOUND THREE BUGS THAT 31 TESTS AND 30 MUTATIONS DID NOT.** This is
+the entry's most important paragraph, because all three share one cause.
+
+- **Forgejo's issue-create takes label IDs, not names.** Measured: `422 "cannot unmarshal string
+  into Go struct field CreateIssueOption.labels of type int64"`. The code asserted the opposite in
+  a comment.
+- **`setup` was never idempotent.** Forgejo **allows duplicate label names**, so a second run
+  created a second copy of all eleven and reported "11 labels present" both times, leaving 22. The
+  design tolerated a 422 the server never sends.
+- **A non-ASCII title crashes under a locale-less shell.** `ARGV[0].encoding` is ASCII-8BIT for
+  `"smoke test — safe"` with `LANG` unset; `JSON.generate` warns today and **raises in json 3.0**.
+  This repo's titles use em dashes constantly.
+
+**One cause: `StubForgejo` records what we send and validates nothing** — by design, per §14e. That
+rule guards the code and the fake sharing a misunderstanding **of each other**; it does not guard
+both of them misunderstanding **the server**. Every wire assertion pinned a contract that was
+invented rather than observed, and each passed. §15's "prefer a probe over an argument" is the rule
+that actually caught these, and it caught them on the first live run.
+
+Fixing the first introduced a fourth, caught immediately: resolving labels makes a **GET the first
+wire call of every write verb**, so a payload built in one expression was still nil when that GET
+failed, and an `open` against a dead server reported "nothing to file" — silently turning a write
+into a no-record. The payload is now built with names before the ids are resolved.
+
+**What the failure machinery got right, under a real outage rather than a stub:** the 422 was
+treated as unreachable, the entry was spooled, and `bin/log status` reported it at exit 4. Nothing
+was lost. Live path now verified end to end — `setup` twice (0 created both times), an issue with an
+em dash, `search`, `note` (a comment, not an edit), `show`, `deploy --dest share`, `status` clean.
+
+Four new mutations, all red: labels-as-names, unconditional `setup` POSTs, un-force-encoded ARGV,
+and the one-expression payload.
 
 **PR 2** is the migration itself: split `STATUS.md`'s 110 entries, rubric-strict prune (~35–50
 expected to survive), hand-dedupe the three open-work lists, import oldest-first with a mapping,
