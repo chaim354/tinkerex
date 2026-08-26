@@ -26,6 +26,91 @@ module Maker
 
     MODEL_ROLE = "model".freeze
 
+    # What one run did. `status` is :ok or :capped -- a caller has to be able to tell "your library
+    # is catalogued" from "there is more of it than one run will do".
+    #
+    # `attached` IS THIS RUN'S DELTA, NOT THE TOTAL -- the rows insert_all actually wrote, so a
+    # steady-state sweep over a fully catalogued library reports 0 rather than the library's size.
+    # Measured, not assumed: the conflicting rows come back out of RETURNING, so `result.rows` is
+    # the inserted set alone (see .attach_all).
+    RunResult = Data.define(:created, :attached, :skipped, :status, :cap)
+
+    # The ceiling on models created in one UNATTENDED run. ABSOLUTE, NOT A PERCENTAGE, for the
+    # reason Maker::ProjectIntake::MAX_MOVES gives at length: the intended first run catalogues
+    # 100% of what is there, so a percentage would be guarding against success.
+    #
+    # THERE IS DELIBERATELY NO SECOND, SMALLER CAP. Maker::ProjectIntake carries MAX_MOVES AND
+    # EAGER_MAX_MOVES because it has an entry point that runs inside a browser request. This class
+    # does not: nothing in a web request sweeps. If a nudge is ever added it needs its own cap, for
+    # the reason §14f states at both of those constants.
+    MAX_MODELS = 200
+
+    def self.max_models
+      Integer(ENV.fetch("MODEL_CATALOG_MAX_MODELS", MAX_MODELS))
+    rescue ArgumentError
+      MAX_MODELS
+    end
+
+    def self.for_user(user:, cap: nil)
+      Maker::Shelf.seed_once!(user)
+      cap ||= max_models
+      plan = classify(user)
+
+      existing = user.maker_models.where(auto_node_id: plan.model_keys).index_by(&:auto_node_id)
+      # A folder an IMPORT-origin model already claims is that model's, not ours (§14f's "reads
+      # folder_node_id, never calls ensure_library_folder!" has the same shape: look, do not take).
+      claimed = user.maker_models.where(origin: "import")
+                    .where(folder_node_id: plan.model_keys).pluck(:folder_node_id).to_set
+
+      # DETERMINISTIC ORDER so a capped run is reproducible and a second run continues where the
+      # first stopped instead of re-rolling the dice.
+      todo = plan.model_keys.reject { |k| existing.key?(k) || claimed.include?(k) }.sort
+      capped = todo.size > cap
+      todo = todo.first(cap)
+
+      created = 0
+      todo.each do |key|
+        model = user.maker_models.create!(
+          title: plan.titles.fetch(key, key),
+          origin: "auto",
+          auto_node_id: key,
+          # A DIR KEY IS ALREADY THE MODEL'S FOLDER. Setting it here creates nothing; calling
+          # ensure_library_folder! would mint Models/<slug> per model as a side effect of looking
+          # (§14f, and Projects::AttachmentsController#relocate's recorded bug).
+          folder_node_id: plan.dir_keys.include?(key) ? key : nil
+        )
+        existing[key] = model
+        created += 1
+      end
+
+      attached = attach_all(user, plan, existing)
+      RunResult.new(created:, attached:, skipped: plan.skips.size,
+                    status: capped ? :capped : :ok, cap:)
+    end
+
+    # ONE STATEMENT, NOT ONE QUERY PER FILE. `unique_by` names the existing uniqueness index, so a
+    # re-sweep of an already-attached library inserts nothing rather than raising. insert_all
+    # bypasses timestamp autofill, hence the explicit stamps.
+    def self.attach_all(user, plan, models)
+      now = Time.current
+      rows = plan.owners.filter_map do |file_id, key|
+        model = models[key]
+        next unless model
+        next if model.dismissed_at.present?
+
+        { user_id: user.id, attachable_type: "Maker::Model", attachable_id: model.id,
+          node_id: file_id, role: Maker::FileAttachment.role_for(plan.names[file_id]), position: 0,
+          created_at: now, updated_at: now }
+      end
+      return 0 if rows.empty?
+
+      result = Maker::FileAttachment.insert_all(
+        rows, unique_by: %i[user_id attachable_type attachable_id node_id]
+      )
+      result.rows.size
+    end
+    private_class_method :attach_all
+
     # PURE. Reads `nodes` and `maker_shelves`, writes nothing, and is the whole rule.
     def self.classify(user)
       tree     = Maker::LibraryTree.new(user)
