@@ -1820,6 +1820,23 @@ git commit -m "codeview: a read-only CodeMirror source viewer, replacing the bar
 
 ## Close-out
 
+> **THIS CHECK CANNOT ANSWER THE QUESTION IT APPEARS TO (found 2026-08-26, while implementing).**
+> Two builds two minutes apart produce identical digests whether or not the build is actually
+> pinned, because the npm registry does not move in two minutes. Measured: the `package.json` in
+> Task 8's script pinned **15 direct packages** and **25 more arrived transitively** through
+> `^6.0.0` ranges — including `@codemirror/state` itself, every `@lezer/*`, `crelt`, `style-mod`,
+> `w3c-keyname` and `@marijn/find-cluster-break`. The digest check passed over all of it.
+>
+> The real property is "every resolved package is pinned", and the way to check it is to compare
+> the pin list against the lockfile, not to build twice. Task 8 pins all **40** and verifies 40
+> pins → 40 resolved → zero floating. Keep the digest check — it catches a non-deterministic
+> BUILD — but do not read it as evidence about dependency drift.
+>
+> A second lesson from the same task, worth as much: the implementer's first draft of that 40-pin
+> list was written from memory and was wrong on nearly every line (`@codemirror/state` guessed
+> 6.5.2, actually 6.7.1; `@lezer/common` guessed 1.2.3, actually 1.5.2). It threw the draft away
+> and derived the list from the lockfile. A version number is a measurement, not a recollection.
+
 - [ ] **Verify the bundle is reproducible**
 
 ```bash
