@@ -1,0 +1,34 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Cut docs/STATUS.md into one file per `## ` section, for import by `bin/log arc --from-file`.
+#
+# ONE-SHOT AND DELETED IN THE SAME PR. It exists so the import is reproducible and reviewable
+# rather than a hand-run pipeline, not because the repo needs a permanent splitter.
+#
+#   bin/split-status <outdir>
+require "fileutils"
+
+# STATUS.md'S TITLES CARRY EM DASHES CONSTANTLY (CLAUDE.md says so directly), and
+# File.readlines with no explicit encoding tags every line with Encoding.default_external —
+# US-ASCII whenever LANG/LC_ALL/LC_CTYPE is unset (a bare shell, cron, CI). Reading this file
+# under one then crashes on the FIRST section: `## Latest (2026-08-26): ... — the single write
+# door` is already non-ASCII. bin/log fixed the identical failure mode for its own input at its
+# very top; the same fix applies here to the file we read rather than globally.
+out = ARGV[0] or abort "usage: bin/split-status <outdir>"
+FileUtils.mkdir_p(out)
+
+lines = File.readlines(File.expand_path("../docs/STATUS.md", __dir__), encoding: Encoding::UTF_8)
+starts = lines.each_index.select { |i| lines[i].start_with?("## ") }
+abort "no '## ' sections found — has the file moved?" if starts.empty?
+
+starts.each_with_index do |start, n|
+  finish = starts[n + 1] || lines.size
+  title = lines[start][3..].strip
+  date = title[/\d{4}-\d{2}-\d{2}/] || "0000-00-00"
+  slug = title.downcase.gsub(/[^a-z0-9]+/, "-")[0, 60].delete_prefix("-").delete_suffix("-")
+
+  File.write(File.join(out, format("%03d-%s-%s.md", n, date, slug)), lines[start...finish].join)
+end
+
+puts "#{starts.size} sections written to #{out}"
