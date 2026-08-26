@@ -167,6 +167,25 @@ module Log
     EXIT_OK
   end
 
+  # LABELS ARE NAMES ON THE WIRE, NOT IDS. Forgejo accepts either; names are what a human reads in
+  # a diff and what survives the labels being recreated. `setup` guarantees they exist.
+  def create_issue(title, body:, labels:)
+    payload = { title: title, body: body, labels: labels }
+    # Through `parse`, not JSON.parse — a WRITE against a broken proxy answers 200 text/html just
+    # as readily as a read does, and an unwrapped JSON::ParserError exits 1 instead of spooling.
+    parse(api(:post, repo_path("/issues"), payload), "/issues")
+  end
+
+  # NOT `open` — inside this module that name would resolve ahead of Kernel#open for every other
+  # method here, and File.open is one edit away from being needed.
+  def open_item(argv)
+    title = argv.shift or raise UsageError, "open needs a title"
+    issue = create_issue(title, body: argv.shift.to_s, labels: [ "open-work" ])
+
+    puts "##{issue['number']} #{issue['title']}"
+    EXIT_OK
+  end
+
   def usage_text
     rows = SUBCOMMANDS.map do |name, (args, description)|
       "    " + "bin/log #{name} #{args}".rstrip.ljust(34) + description
@@ -229,6 +248,7 @@ module Log
   def dispatch(command, argv)
     case command
     when "show" then show(argv)
+    when "open" then open_item(argv)
     else
       warn "bin/log: #{command} is not implemented yet"
       EXIT_USAGE

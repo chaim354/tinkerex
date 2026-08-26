@@ -2,6 +2,7 @@ require "test_helper"
 require "open3"
 require "tmpdir"
 require "fileutils"
+require "support/stub_forgejo"
 
 # Guards bin/log — the SINGLE write door onto the Forgejo that replaces docs/STATUS.md.
 #
@@ -151,5 +152,51 @@ class LogCliTest < ActiveSupport::TestCase
                       "the encoding crash is back — bin/log must set default_external"
       refute_includes err, "in 'Log.token'", "a stack trace reached the user"
     end
+  end
+
+  # THE WIRE FORMAT IS THE ASSERTION. Not "the issue came back with our title" — that passes even
+  # when both sides share a bug. Path, auth header and JSON body, each checked literally.
+  test "open POSTs the documented issue payload to the documented path" do
+    stub = StubForgejo.new
+
+    out, err, code = run_log("open", "The scan tombstones a live node", env: {
+      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+    })
+
+    assert_equal 0, code, "bin/log open failed: #{err}"
+    assert_equal 1, stub.requests.size, "expected exactly one API call"
+    assert_includes out, "#42"
+
+    request = stub.requests.first
+    assert_equal "POST", request.method
+    assert_equal "/api/v1/repos/chaim354/tinkerex/issues", request.path
+    assert_equal "token t0ken", request.headers["authorization"]
+    assert_equal "application/json", request.headers["content-type"]
+
+    assert_equal "The scan tombstones a live node", request.json["title"]
+    assert_equal [ "open-work" ], request.json["labels"],
+                 "an open item without the open-work label is invisible to the open-work view"
+  ensure
+    stub&.shutdown
+  end
+
+  # A 2xx WHOSE BODY IS NOT JSON IS AN OUTAGE, NOT A CRASH. A proxy error page and Forgejo's own
+  # login page on a session redirect both arrive as 200 text/html. Unwrapped, JSON::ParserError
+  # escaped to Ruby's default handler and exited 1 — which was EXIT_UNFILED, so a broken proxy
+  # reported a backlog.
+  test "a 2xx with a non-JSON body is unreachable, not a stack trace" do
+    stub = StubForgejo.new(status: 200, response: "<html>502 Bad Gateway</html>")
+
+    _out, err, code = run_log("show", "1", env: {
+      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url
+    })
+
+    assert_equal 3, code, "a non-JSON 2xx did not reach the clean unreachable exit"
+    assert_includes err, "non-JSON body"
+    refute_includes err, "JSON::ParserError:", "a raw parser error reached the user"
+    assert_empty stub.errors, "the stub itself raised: #{stub.errors.map(&:message)}"
+  ensure
+    stub&.shutdown
   end
 end
