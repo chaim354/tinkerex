@@ -1,0 +1,465 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# THE SINGLE WRITE DOOR onto the Forgejo that replaces docs/STATUS.md.
+# `bin/log --help` lists the subcommands; they are defined once, in SUBCOMMANDS.
+#
+# WHY ONE DOOR. An MCP write path plus a CLI write path is one verb with two answers — the shape
+# CLAUDE.md §14a forbids and the shape §14d spent five copies of the `port_writable?` branch
+# learning to avoid. MCP stays available for READING and browsing; it is never required, and it
+# never writes. A CLI also works everywhere MCP does not: CI, cloud sessions, subagents, worktrees.
+#
+# NO BUNDLER, NO RAILS, STDLIB ONLY. §14j records that a bundled Ruby process exports
+# BUNDLE_GEMFILE and a RUBYOPT force-requiring bundler/setup process-wide, and every child
+# inherits both. Loading no gem means this script never needs `bundle install` — a fresh clone, a
+# worktree and a cloud session all run it. It is NOT full immunity: an inherited RUBYOPT is applied
+# by the ruby binary before line 1, so a caller launching this from inside a bundled process must
+# clear those names itself, exactly as bin/sync-server does.
+#
+# NOTHING BELOW CALLS `exit`. Helpers raise; Log.main decides the code in ONE place. A helper that
+# exited raised SystemExit — not a StandardError, not Unreachable — so it sailed straight past the
+# rescue that spools, losing the record on the likeliest outage there is (a 502 from a dead
+# container behind a live proxy) while the docs promised a spool file.
+require "fileutils"
+require "json"
+require "net/http"
+require "open3"
+require "openssl"
+require "uri"
+
+# CAPTURED SUBPROCESS OUTPUT IS TAGGED WITH THE DEFAULT EXTERNAL ENCODING, which is US-ASCII
+# whenever LANG/LC_ALL is unset — cron, systemd, Docker, a bare CI runner. bin/secret's own
+# diagnostics carry a UTF-8 ellipsis, so `err.strip` raised Encoding::CompatibilityError and the
+# CREDENTIAL path exited 1 with a stack trace instead of 3. Reproduced against this file; no
+# developer shell shows it, which is why the test for it unsets LANG explicitly.
+Encoding.default_external = Encoding::UTF_8
+
+module Log
+  module_function
+
+  EXIT_OK          = 0
+  EXIT_USAGE       = 2   # the caller spelled the command wrong
+  EXIT_UNREACHABLE = 3   # Forgejo or the vault could not be reached; any write is spooled
+  # DELIBERATELY NOT 1. Ruby's own uncaught-exception status IS 1 — measured — so a crash that no
+  # rescue can reach (SyntaxError from a bad edit, LoadError, NoMemoryError) would be
+  # indistinguishable from "there is unfiled work" to /finish-branch, which reads this code.
+  EXIT_UNFILED     = 4   # `status` found a backlog. Loud on purpose, like bin/backup-status.
+
+  # A BUG IS NOT AN OUTAGE. Exit 3 means "unreachable, and a write was spooled"; a NoMethodError is
+  # neither spooled nor a network problem, and treating it as non-blocking lets /finish-branch
+  # proceed past a broken bin/log as though it were a blip.
+  EXIT_BUG = 5
+
+  # ONE TABLE, NOT FOUR LISTS. USAGE is DERIVED from this and `main` dispatches on it, so a
+  # subcommand cannot exist in one place and be missing from another. §14d's "ONE file-type
+  # vocabulary": EXT_FAMILIES is derived from ROLE_BY_EXT precisely because the second inline list
+  # had already drifted. This file's own first draft drifted between its header and its usage text
+  # before it was 62 lines old.
+  SUBCOMMANDS = {
+    "setup"  => [ "",               "Create the labels, idempotently" ],
+    "arc"    => [ "--from-pr N",    "Arc issue built from PR N's body" ],
+    "open"   => [ '"<title>"',      "File an open item" ],
+    "deploy" => [ "--image SHA",    "Record a deploy" ],
+    "note"   => [ 'ISSUE "<text>"', "Append a comment to a past issue" ],
+    "show"   => [ "ISSUE",          "Print one issue" ],
+    "search" => [ '"<query>"',      "Search issues" ],
+    "status" => [ "",               "Report anything unfiled" ]
+  }.freeze
+
+  TOKEN_REF = "op://tinkerex/Forgejo/token"
+
+  LABELS = %w[arc open-work deploy blocked deliberate
+              filelayer library-scan addons previews maker-web ci].freeze
+
+  # THE PAYLOAD RIDES ON THE EXCEPTION, never on a module-level accumulator. `api` knows both what
+  # failed and what was being sent, so it attaches the payload at the ONE raise site. Two things
+  # fall out that a shared accumulator could not give: a GET carries no payload, so a READ verb
+  # spools nothing BY CONSTRUCTION rather than by a rule someone remembers to apply; and nothing
+  # accumulates across calls, so a loop failing on its Nth write cannot re-spool the N-1 already
+  # filed. (PR 2's import is exactly that loop.)
+  class Unreachable < StandardError
+    attr_reader :payload, :path
+
+    def initialize(message, payload: nil, path: nil)
+      super(message)
+      @payload = payload
+      @path = path
+    end
+  end
+
+  class UsageError < StandardError; end
+
+  def forgejo_url = ENV.fetch("FORGEJO_URL", "http://forgejo.home")
+  def owner       = ENV.fetch("FORGEJO_OWNER", "chaim354")
+  def repo        = ENV.fetch("FORGEJO_REPO", "tinkerex")
+
+  def repo_path(suffix) = "/api/v1/repos/#{owner}/#{repo}#{suffix}"
+
+  # REJECT, NEVER NORMALIZE — §14a's key_for rule. Net::HTTP does not normalise, so a `..` segment
+  # reaches the wire and any normalising reverse proxy resolves it out of the repo scope.
+  def issue_number!(value)
+    raise UsageError, "not an issue number: #{value.inspect}" unless value.to_s.match?(/\A\d+\z/)
+
+    value
+  end
+
+  # THROUGH bin/secret, NEVER `op read` DIRECTLY. That file is this repo's single definition of
+  # where a credential comes from, and it is what makes an exported value win over the vault.
+  # capture3 keeps the streams apart: bin/secret sends the value only on fd1 and its diagnostics
+  # only on fd2, so forwarding err cannot leak. Any rewrite that merges them re-opens the
+  # 2026-07-29 leak. `.chomp` because nothing else asserts bin/secret's --no-newline contract, and
+  # a trailing newline is an ArgumentError inside the header assignment.
+  def token
+    @token ||= begin
+      out, err, status = Open3.capture3(File.expand_path("secret", __dir__), "FORGEJO_TOKEN", TOKEN_REF)
+      raise Unreachable, "could not resolve FORGEJO_TOKEN from #{TOKEN_REF}: #{err.strip}" if !status.success? || out.empty?
+
+      out.chomp
+    end
+  end
+
+  def api(method, path, body = nil, allow: [])
+    perform(method, path, body, allow)
+  rescue Unreachable => e
+    # Attach what was being sent, and to what path, at the one place that knows all three. A
+    # failure raised from `token` carries neither payload nor path of its own, and a WRITE must
+    # still be spooled with enough context to refile it — `note`'s target lives in the PATH, not
+    # the payload, so losing it here makes a spooled correction unrecoverable (see spool!).
+    raise Unreachable.new(e.message, payload: e.payload || body, path: e.path || path)
+  rescue SystemCallError, SocketError, EOFError, IOError, Timeout::Error,
+         Net::OpenTimeout, Net::ReadTimeout, Net::ProtocolError,
+         OpenSSL::SSL::SSLError => e
+    raise Unreachable.new("#{forgejo_url}: #{e.class}: #{e.message}", payload: body, path: path)
+  end
+
+  # URI.join DROPS A PATH PREFIX — URI.join("http://host/git", "/api/v1/x") is
+  # "http://host/api/v1/x". Forgejo behind a subpath is an ordinary self-host shape, so the URL is
+  # built by concatenation instead.
+  def perform(method, path, body, allow)
+    uri = URI.parse("#{forgejo_url.chomp('/')}#{path}")
+    # A scheme-less FORGEJO_URL parses to host=nil, and Net::HTTP.start(nil, nil) then reports
+    # "connection refused for nil port 80" — a misleading answer to a malformed env var.
+    raise UsageError, "FORGEJO_URL has no scheme or host: #{forgejo_url.inspect}" unless uri.host
+
+    request = case method
+    when :get  then Net::HTTP::Get.new(uri)
+    when :post then Net::HTTP::Post.new(uri)
+    else raise ArgumentError, "unsupported method #{method.inspect}"
+    end
+
+    request["Authorization"] = "token #{token}"
+    request["Content-Type"]  = "application/json"
+    request.body = JSON.generate(body) if body
+
+    response = Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https",
+                                                   open_timeout: 5, read_timeout: 15) do |http|
+      http.request(request)
+    end
+
+    # A NON-2xx IS UNREACHABLE TOO, AND THAT IS THE POINT OF THIS METHOD. A dead container behind
+    # a live proxy answers 502 and a rotated token answers 401 — both are HTTP RESPONSES, so a
+    # handler that only caught connection errors would let the LIKELIEST outage exit without
+    # spooling, which is how an arc gets lost while the docs promise otherwise.
+    code = response.code.to_i
+    unless code.between?(200, 299) || allow.include?(code)
+      raise Unreachable, "HTTP #{response.code} from #{path}: #{response.body.to_s[0, 200]}"
+    end
+
+    response
+  end
+
+  # A 2xx WHOSE BODY IS NOT JSON IS AN OUTAGE, NOT A CRASH. A proxy error page and Forgejo's own
+  # login page on a session redirect both arrive as 200 text/html. Unwrapped, JSON::ParserError
+  # escaped to Ruby's default handler and exited 1.
+  def parse(response, path)
+    JSON.parse(response.body)
+  rescue JSON::ParserError => e
+    raise Unreachable, "#{path} returned #{response.code} with a non-JSON body: #{e.message}"
+  end
+
+  def show(argv)
+    number = argv.shift or raise UsageError, "show needs an issue number"
+    number = issue_number!(number)
+    issue = parse(api(:get, repo_path("/issues/#{number}")), "/issues/#{number}")
+
+    puts "##{issue['number']} #{issue['title']} [#{issue['state']}]"
+    puts
+    puts issue["body"]
+    EXIT_OK
+  end
+
+  # state=all is load-bearing: an arc closes when its PR merges, so the default would hide every
+  # finished piece of work — which is most of the record.
+  def search(argv)
+    query = argv.shift or raise UsageError, "search needs a query"
+    path = repo_path("/issues?state=all&q=#{URI.encode_www_form_component(query)}")
+    issues = parse(api(:get, path), path)
+
+    if issues.empty?
+      puts "bin/log: no issues matching #{query.inspect}."
+    else
+      issues.each { |i| puts "##{i['number']} [#{i['state']}] #{i['title']}" }
+    end
+    EXIT_OK
+  end
+
+  # LABELS ARE NAMES ON THE WIRE, NOT IDS. Forgejo accepts either; names are what a human reads in
+  # a diff and what survives the labels being recreated. `setup` guarantees they exist.
+  def create_issue(title, body:, labels:)
+    payload = { title: title, body: body, labels: labels }
+    # Through `parse`, not JSON.parse — a WRITE against a broken proxy answers 200 text/html just
+    # as readily as a read does, and an unwrapped JSON::ParserError exits 1 instead of spooling.
+    parse(api(:post, repo_path("/issues"), payload), "/issues")
+  rescue Unreachable => e
+    # `parse` RAISES WITH NO PAYLOAD OF ITS OWN — it only ever sees the response, never what was
+    # sent. That is fine for a GET (show, search), which has no payload to lose, but `create_issue`
+    # calls `parse` AFTER `api` has already returned successfully — outside api's own rescue, which
+    # only wraps the `perform` call inside IT. A 2xx with a garbled body (the exact shape a broken
+    # proxy produces) therefore failed here with payload: nil, was reported as "nothing to file",
+    # and the issue being created was silently lost. `e.payload || payload` only fills the gap;
+    # a failure `api` already payloaded (a connection error, a non-2xx) passes through unchanged.
+    raise Unreachable.new(e.message, payload: e.payload || payload, path: e.path || "/issues")
+  end
+
+  # NOT `open` — inside this module that name would resolve ahead of Kernel#open for every other
+  # method here, and File.open is one edit away from being needed.
+  def open_item(argv)
+    title = argv.shift or raise UsageError, "open needs a title"
+    issue = create_issue(title, body: argv.shift.to_s, labels: [ "open-work" ])
+
+    puts "##{issue['number']} #{issue['title']}"
+    EXIT_OK
+  end
+
+  # GH_BIN is an override, not a convenience — it is what lets the suite drive this path with no
+  # network and no GitHub credential. Defaulting to the PATH lookup keeps normal use unchanged.
+  def pull_request(number)
+    out, err, status = Open3.capture3(ENV.fetch("GH_BIN", "gh"), "pr", "view", number.to_s,
+                                      "--json", "title,body,url")
+    raise Unreachable, "could not read PR #{number}: #{err.strip}" unless status.success?
+
+    # Not `parse` — that takes a Forgejo response. gh answering non-JSON (an auth prompt, a
+    # rate-limit notice) would otherwise surface through the catch-all as "unexpected failure",
+    # which names neither gh nor the PR.
+    JSON.parse(out)
+  rescue JSON::ParserError => e
+    raise Unreachable, "gh returned non-JSON for PR #{number}: #{e.message}"
+  end
+
+  def arc(argv)
+    raise UsageError, "arc needs --from-pr N" unless argv.shift == "--from-pr"
+
+    number = argv.shift or raise UsageError, "arc needs --from-pr N"
+    pr = pull_request(number)
+    issue = create_issue(pr["title"], body: "#{pr['body']}\n\n---\nPR: #{pr['url']}\n", labels: [ "arc" ])
+
+    puts "##{issue['number']} #{issue['title']}"
+    EXIT_OK
+  end
+
+  # IDEMPOTENT BY DECLARING 422 ACCEPTABLE AT THE CALL SITE, not by matching on a message string.
+  # Forgejo answers 422 for a label that already exists — the ordinary case on every run after the
+  # first — so treating it as failure would make `setup` a one-shot command, and a one-shot setup
+  # is one nobody re-runs after adding a label.
+  #
+  # `allow:` rather than a rescue, for two reasons. `perform`'s message embeds the RESPONSE BODY,
+  # so `e.message.include?("HTTP 422")` would also swallow any other status whose body happened to
+  # contain that text — and, far likelier, changing the message format would silently stop setup
+  # being idempotent, failing only on the SECOND run. And a rescue around the call can grow to
+  # swallow a genuine connection failure, which is exactly what C1 exists to prevent. An
+  # expectation declared before the fact cannot drift.
+  def setup
+    LABELS.each do |name|
+      api(:post, repo_path("/labels"), { name: name, color: "#666666" }, allow: [ 422 ])
+    end
+
+    puts "bin/log: #{LABELS.size} labels present."
+    EXIT_OK
+  end
+
+  # A DEPLOY IS AN ISSUE, WHICH IS WHAT DELETES CLAUDE.md §15's PUSH-TO-MAIN EXCEPTION. Today a
+  # deploy record is the one sanctioned direct commit to main, because a deploy happens after the
+  # merge and its record cannot live in the work's own PR. As an issue that reasoning evaporates.
+  DEFAULT_DESTS = %w[chunk_remote share s3].freeze
+
+  def deploy(argv)
+    image = nil
+    dests = DEFAULT_DESTS
+
+    until argv.empty?
+      flag = argv.shift
+      case flag
+      when "--image" then image = argv.shift or raise UsageError, "--image needs a value"
+      when "--dest"  then dests = (argv.shift or raise UsageError, "--dest needs a value").split(",")
+      # REFUSE, NEVER GUESS. A typo'd flag used to fall through to the three defaults silently,
+      # filing a deploy record naming destinations nobody deployed.
+      else raise UsageError, "deploy: unrecognised argument #{flag.inspect}"
+      end
+    end
+
+    raise UsageError, "deploy needs --image SHA" if image.nil?
+
+    body = "Image: `#{image}`\n\nDestinations:\n#{dests.map { |d| "- #{d}" }.join("\n")}\n"
+    issue = create_issue("Deploy #{image}", body: body, labels: [ "deploy" ])
+
+    puts "##{issue['number']} #{issue['title']}"
+    EXIT_OK
+  end
+
+  # A CORRECTION IS A COMMENT, NOT AN EDIT — never rewrite the issue body.
+  def note(argv)
+    number = argv.shift or raise UsageError, "note needs an issue number"
+    number = issue_number!(number)
+    text = argv.shift or raise UsageError, "note needs text"
+    api(:post, repo_path("/issues/#{number}/comments"), { body: text })
+
+    puts "noted on ##{number}"
+    EXIT_OK
+  end
+
+  def spool_dir = ENV.fetch("LOG_SPOOL_DIR", File.expand_path("../tmp/log-pending", __dir__))
+
+  # THE BRANCH NAMES THE SPOOL FILE, so two branches cannot overwrite each other's unfiled record.
+  def current_branch
+    ENV["LOG_BRANCH"] || Open3.capture2("git", "branch", "--show-current").first.strip
+  end
+
+  def spool!(command, payload, path = nil)
+    FileUtils.mkdir_p(spool_dir)
+    file = File.join(spool_dir, "#{current_branch.tr('/', '-')}.md")
+    File.open(file, "a") do |f|
+      f.puts("# unfiled: #{command}")
+      # note's TARGET lives in the URL, not the payload. Without this line a correction spooled
+      # during an outage has the text and no way to know which issue it belongs to.
+      f.puts("# endpoint: #{path}") if path
+      f.puts("", JSON.pretty_generate(payload), "")
+    end
+    file
+  end
+
+  def status
+    pending = Dir.glob(File.join(spool_dir, "*.md")).sort
+
+    if pending.empty?
+      puts "bin/log: nothing unfiled."
+      return EXIT_OK
+    end
+
+    puts "bin/log: #{pending.size} unfiled record(s) — these are NOT in Forgejo:"
+    pending.each { |path| puts "    #{path}" }
+    EXIT_UNFILED
+  end
+
+  def usage_text
+    rows = SUBCOMMANDS.map do |name, (args, description)|
+      "    " + "bin/log #{name} #{args}".rstrip.ljust(34) + description
+    end
+
+    ([ "bin/log — record work in Forgejo. The single write door.", "" ] + rows + [
+      "",
+      "Env: FORGEJO_URL (default http://forgejo.home), FORGEJO_OWNER, FORGEJO_REPO, " \
+      "LOG_SPOOL_DIR (default tmp/log-pending), LOG_BRANCH"
+    ]).join("\n")
+  end
+
+  def main(argv)
+    command = argv.shift
+
+    # AN ASKED-FOR USAGE IS NOT AN ERROR: stdout, exit 0, so `bin/log --help | less` works.
+    # A no-argument invocation IS one, so it goes to stderr and exits 2.
+    if [ "--help", "-h", "help" ].include?(command)
+      puts usage_text
+      return EXIT_OK
+    end
+
+    if command.nil?
+      warn usage_text
+      return EXIT_USAGE
+    end
+
+    unless SUBCOMMANDS.key?(command)
+      warn "bin/log: unknown command #{command.inspect}"
+      warn usage_text
+      return EXIT_USAGE
+    end
+
+    dispatch(command, argv)
+  rescue UsageError => e
+    warn "bin/log: #{e.message}"
+    warn usage_text
+    EXIT_USAGE
+  rescue Unreachable => e
+    warn "bin/log: Forgejo is unreachable — #{e.message}"
+
+    if e.payload.nil?
+      warn "bin/log: nothing to file (#{command} sends no payload)."
+      return EXIT_UNREACHABLE
+    end
+
+    # THE SPOOL NEEDS ITS OWN RESCUE. Ruby does NOT route an exception raised inside a `rescue`
+    # clause to that begin's SIBLING rescues — measured: it escapes straight to the caller. So a
+    # failing spool skipped main's catch-all entirely and exited 1 with a raw FileUtils trace,
+    # having already printed the recoverable "unreachable" message. The record was simply gone.
+    # Ordinary triggers here: a read-only filesystem, a container without git (current_branch
+    # shells out to it), tmp/ owned by another user after one sudo run, ENOSPC.
+    begin
+      path = spool!(command, e.payload, e.path)
+      warn "bin/log: the entry was NOT filed. It is spooled at #{path}"
+      warn "bin/log: `bin/log status` will keep reporting it until you file it."
+    rescue StandardError => spool_error
+      warn "bin/log: THE SPOOL ALSO FAILED (#{spool_error.class}: #{spool_error.message})."
+      warn "bin/log: the entry is LOST unless you copy it from here:"
+      warn JSON.pretty_generate(e.payload)
+    end
+
+    EXIT_UNREACHABLE
+  rescue StandardError => e
+    # THE CATCH-ALL IS STRUCTURAL, NOT A CONVENIENCE. Enumerating transport exception classes never
+    # closes the gap — JSON::ParserError, Net::HTTPBadResponse, OpenSSL::SSL::SSLError and EOFError
+    # all escaped the first list at one point, and every one of them exited 1. This arm exists so an
+    # unanticipated exception still gets a controlled exit rather than Ruby's own crash handler.
+    #
+    # A BUG IS NOT AN OUTAGE. Whatever lands here was never wrapped in `Unreachable`, so it was
+    # never spooled — reporting it as EXIT_UNREACHABLE claimed a write had been queued when nothing
+    # had. EXIT_BUG says plainly that this is neither spooled nor a network problem, so a caller
+    # like /finish-branch does not treat a broken bin/log as a blip it can sail past.
+    warn "bin/log: unexpected failure — #{e.class}: #{e.message}"
+    warn "bin/log: THIS WAS NOT SPOOLED. Nothing has been recorded."
+    warn e.backtrace.first(3).join("\n") if e.backtrace
+    EXIT_BUG
+  end
+
+  # EVERY SUBCOMMAND DECLARED IN SUBCOMMANDS NOW HAS AN ARM HERE — the table and the dispatch
+  # cannot drift apart, because the `else` below raises rather than reading as a quiet "not
+  # implemented yet" the way it did while this file was still being built arm by arm.
+  #
+  # EVERY ARM ENDS IN AN EXPLICIT EXIT_* CONSTANT. `puts` returns nil, and exit(nil) is a
+  # TypeError whose status is 1 — Ruby's own uncaught-exception status, and no longer any of our
+  # EXIT_* constants now that EXIT_UNFILED has moved off 1 (see its comment above). An arm that
+  # forgets would report a successful file as an opaque crash. The guard at the bottom of the
+  # file makes that loud instead of silent.
+  def dispatch(command, argv)
+    case command
+    when "show" then show(argv)
+    when "open" then open_item(argv)
+    when "arc" then arc(argv)
+    when "status" then status
+    when "setup" then setup
+    when "deploy" then deploy(argv)
+    when "note" then note(argv)
+    when "search" then search(argv)
+    else
+      # Every subcommand in SUBCOMMANDS is now implemented, so this arm is unreachable. Raising
+      # loudly means a future subcommand added to SUBCOMMANDS without a dispatch arm fails loudly
+      # instead of silently exiting 2, which is what the old "not implemented yet" warning did.
+      raise "unreachable: #{command}"
+    end
+  end
+end
+
+code = Log.main(ARGV)
+code = "not-an-integer" if ENV["LOG_FORCE_BAD_RETURN"]   # exercises the guard below; see the test
+
+raise "bin/log: main returned #{code.inspect}, not an exit code" unless code.is_a?(Integer)
+
+exit code

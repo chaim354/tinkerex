@@ -1,6 +1,6 @@
 # Build status — the maker app (`chaim354/tinkerex`)
 
-**Updated:** 2026-08-26 (**`bin/ci setup` is green again — `FileLayer.build` was letting `LibraryBackendCheck` re-derive a backend it already knew, so the one backend reachable without setting `LIBRARY_BACKEND` was the one the guard never checked. The obvious fix — correcting the guard's own default — refuses an unconfigured dev box's boot instead, measured.**)
+**Updated:** 2026-08-26 (**`bin/log` lands — PR 1 of retiring this file to a self-hosted Forgejo. Six defects found by review, each reproduced first; 30 of 30 mutations red.**) (**`bin/ci setup` is green again — `FileLayer.build` was letting `LibraryBackendCheck` re-derive a backend it already knew, so the one backend reachable without setting `LIBRARY_BACKEND` was the one the guard never checked. The obvious fix — correcting the guard's own default — refuses an unconfigured dev box's boot instead, measured.**)
 
 ## What this file is
 
@@ -78,7 +78,85 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-26): the one backend you can reach without configuring one was the one the guard never checked (branch `claude/fix-setup-migration-backend-gate`)
+## Latest (2026-08-26): `bin/log` — the single write door onto Forgejo, PR 1 of the STATUS.md retirement (branch `claude/status-to-forgejo`)
+
+`docs/STATUS.md` had reached **12,680 lines / 916 KB — roughly 234k tokens**, so the canonical
+record no longer fits a context window and CLAUDE.md's ~20 citations of it were dead links in
+practice. It was also mandatory on every PR (§15), accounting for **191 of 1,091 commits** in 60
+days, and a single append-at-top file every parallel `claude/*` branch collided on — **18 merge
+commits** had to touch it. The unit was never the problem; the container was.
+
+**Decision (`docs/superpowers/specs/2026-08-26-status-to-forgejo-design.md`):** a self-hosted
+Forgejo — already up at `forgejo.home`, 11.0.16, measured 7.8 ms round-trip — becomes canonical for
+both halves. Arcs are closed issues, open work open issues, deploys issues, corrections comments.
+Plane was rejected on two hard facts: its MCP server is an **Enterprise add-on**, which defeats an
+agent-first workflow, and it wants 8–16 GB on a VM already under-provisioned. Forgejo is also the
+only candidate matching §9 outright.
+
+**The mutable half is what actually rotted.** "What to do next" lives in three places today —
+`OPEN-WORK.md` 19, §12 13, "Still open" 7 — with **zero GitHub issues ever filed**. §12 keeping four
+CLOSED items in their slots permanently, because code cites `§12.7` by number, is the proof that a
+file cannot garbage-collect mutable state.
+
+**PR 1 deletes nothing.** It builds `bin/log` (stdlib-only Ruby, no bundler — §14j) and proves it
+works before anything depends on it. **31 tests / 159 assertions**; `bin/ci` green with all three
+legs at an identical **2554 runs**.
+
+**Six defects were found by review and each reproduced before acting**, five of them in the *plan*
+rather than the code:
+
+- `assert_includes usage, "arc"` **could never fail** — "se**arc**h" contains it. Deleting the arc
+  usage line left the guard green, for the one subcommand this migration exists for.
+- A helper ending `exit EXIT_UNREACHABLE` raises `SystemExit`, which is neither `StandardError` nor
+  `Unreachable`, so it **sailed past the rescue that spools**. Since `Unreachable` only fired on TCP
+  errors, the likeliest real outage — a **502** from a dead container behind a live proxy — took
+  exactly that path.
+- **`EXIT_UNFILED = 1` collided with Ruby's own crash status.** Measured: `ruby -e 'raise'` exits 1.
+  So every unhandled path reported itself to `/finish-branch` as "there is unfiled work". Moved to 4,
+  plus a catch-all and `EXIT_BUG = 5`, because `SyntaxError`/`LoadError` are not `StandardError` and
+  no rescue can close that.
+- **A credential failure crashed on any locale-less runner.** `Encoding.default_external` is US-ASCII
+  when `LANG`/`LC_ALL` are unset — cron, Docker, a bare runner — and `bin/secret`'s diagnostics carry
+  a UTF-8 ellipsis, so `err.strip` raised at `bin/log:87` and exited 1. No developer shell reproduces it.
+- **A raise inside a `rescue` does not reach sibling rescues** (measured), so a failing spool bypassed
+  the catch-all entirely: exit 1, raw trace, record gone, right after printing the reassuring
+  "unreachable" line.
+- `deploy --destination x` (a typo) **silently filed a record naming three destinations** the
+  operator never deployed.
+
+**A process failure worth recording:** the first round of corrections was written as a preamble with
+"this section wins where a task body contradicts it". Re-review found that was decoration — six of
+nine corrections existed only as prose while the task bodies still contained **8 live `exit EXIT_*`
+sites, 4 `PENDING_BODY`/`ARGV_SNAPSHOT` references, 3 `webrick`**, the PATH nuke, `URI.join`, and a
+hard-coded `SPOOL_DIR`; Task 2 told an implementer to replace a `case command` block Task 1 had
+deleted. That is exactly what CLAUDE.md's preamble warns about — a rule buried in front of 600 lines
+is a rule nobody reads. The corrections were re-applied *into* the task bodies.
+
+**Mutation sweep: 30 of 30 go red.** Three were green on the first pass and all three were real test
+gaps, not unnecessary guards: the locale test cleared `LANG`/`LC_ALL` but not `LC_CTYPE` (so it went
+green in one environment and red in another on ambient locale alone); nothing drove a genuinely
+uncaught `StandardError` into the catch-all, so neither it nor `EXIT_BUG` was asserted anywhere; and
+the real-spool guard compared a file **count**, which cannot distinguish "nothing written" from
+"appended to an existing file" — one stray spool file produced a false green.
+
+**Two later tasks could not have run as written**, both reproduced: Task 3's stub required `webrick`,
+absent from `Gemfile.lock` since it left stdlib in Ruby 3.0; and Task 2's `PATH=/usr/bin:/bin`
+resolves to **Ruby 2.6.10**, which cannot parse the endless methods Task 2 introduces — the test
+would have blamed credentials for a `SyntaxError`.
+
+**Not verified:** the live smoke test against `forgejo.home`. It needs a Forgejo token
+(`op://tinkerex/Forgejo/token`) and the three repos created or mirrored, both operator steps. The
+suite never touches the instance by design — `run_log` defaults `FORGEJO_URL` to an unroutable
+address, so reaching the network is opt-in.
+
+**PR 2** is the migration itself: split `STATUS.md`'s 110 entries, rubric-strict prune (~35–50
+expected to survive), hand-dedupe the three open-work lists, import oldest-first with a mapping,
+rewrite the 20 code citations plus §11/§12/§15 and the two commands, then delete `STATUS.md` and
+`OPEN-WORK.md` in the same PR as the rewrite.
+
+---
+
+## 2026-08-26: the one backend you can reach without configuring one was the one the guard never checked (branch `claude/fix-setup-migration-backend-gate`)
 
 `bin/ci setup` was red on `main` at `6273b60` with a clean tree — `db:prepare` aborted inside
 `PurgeRepoMetadataNodes` with `KeyError: key not found: "LIBRARY_PATH"`, five frames below the
