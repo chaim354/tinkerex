@@ -536,7 +536,9 @@ module Maker
     # justification is positional — Maker::AttachToProject's header: "another project already claims
     # it, and a file should not be YANKED OUT OF THE FOLDER THAT PROJECT PUT IT IN" — and it was
     # written for #call/#relocate, where the destination is THIS project's folder and the source may
-    # well be the other project's. #place's move is `Projects/<slug>/` -> `Projects/<slug>/<cat>/`:
+    # well be the other project's. #place's move goes from this project's OWN folder to a category
+    # subfolder beneath it — resolved under `folder_node_id`, so the folder need not be named after
+    # the slug (Maker::ProjectDiscovery adopts folders that are not):
     # the file is already inside this project's own folder, so there is no other project's folder to
     # yank it out of and the rule's precondition cannot hold. Nothing about the other project's view
     # changes either — node_id never changes across a move (Maker::MoveNode's stated promise), so its
