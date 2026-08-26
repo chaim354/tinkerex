@@ -100,10 +100,12 @@ module Library
       assert_equal 0, RepoMetadataPurge.call.destroyed
     end
 
-    test "a chunk_remote-shaped node (NULL storage_path) is resolved by its parent chain" do
-      # On chunk_remote there is no storage_path at all (§14a), so a purge that only reads that
-      # column would silently do nothing on the product's main deployment — green suite, zero
-      # effect. The path is rebuilt from parent_node_id instead.
+    # A NULL `storage_path` is not a chunk_remote curiosity, and this is the SHAPE test for it: a
+    # purge reading only that column answers `false` here and destroys nothing. It is the shape a
+    # chunk_remote mirror row has (§14a — ChangelogSync#upsert writes parent_node_id and never
+    # storage_path), and, on the scannable backends this service actually runs on, the shape a
+    # TRASH-KIND TOMBSTONE has; the next test drives that one through the real door.
+    test "a node with a NULL storage_path is resolved by its parent chain" do
       repo = @user.nodes.create!(node_id: SecureRandom.uuid, name: "firmware", kind: "dir")
       marker = @user.nodes.create!(node_id: SecureRandom.uuid, name: ".git", kind: "dir",
                                    parent_node_id: repo.node_id)
@@ -114,6 +116,85 @@ module Library
 
       assert Node.exists?(marker.id)
       assert_not Node.exists?(inner.id)
+    end
+
+    # THE SHAPE ABOVE, REACHED THE WAY A REAL SHARE LIBRARY REACHES IT. `FileLayer::Share#delete`
+    # ends `update!(deleted: true, storage_path: nil)` — it nulls the column deliberately, so
+    # Reconciler#create_or_revive! cannot revive the row onto a new file dropped at that path. So a
+    # file trashed out of a `.git` before this arc landed is a live-parented row with no path, on a
+    # backend the scannable gate DOES cover. Without the parent chain every one of them survives
+    # the purge.
+    test "a trash-kind tombstone beneath the marker (path released) is purged too" do
+      dir("firmware/.git")
+      hook = file("firmware/.git/pre-commit")
+      hook.update!(deleted: true, storage_path: nil)
+
+      assert_equal 1, RepoMetadataPurge.call.destroyed
+      assert_not Node.exists?(hook.id)
+    end
+
+    # THE SCANNABLE GATE, asserted as a SURVIVAL rather than as "a share-shaped node is destroyed"
+    # — the second can pass while the gate does nothing at all. Constructing the adapter needs no
+    # sync server (`capabilities` is a constant and no port call is made), the precedent
+    # rescan_test.rb states for the same construction.
+    test "a non-scannable backend is DECLINED, and its mirror rows survive untouched" do
+      repo = @user.nodes.create!(node_id: SecureRandom.uuid, name: "firmware", kind: "dir")
+      marker = @user.nodes.create!(node_id: SecureRandom.uuid, name: ".git", kind: "dir",
+                                   parent_node_id: repo.node_id)
+      inner = @user.nodes.create!(node_id: SecureRandom.uuid, name: "config", kind: "file",
+                                  parent_node_id: marker.node_id, size: 1)
+      FileLayer.current = FileLayer::ChunkRemote.new
+
+      result = RepoMetadataPurge.call
+
+      # THE SURVIVAL ASSERTION GOES FIRST, and the order is the point rather than taste: removing
+      # the gate makes `declined` false too, so a `declined` assertion above this one would fail
+      # first and report a flag instead of the harm. This line names the harm.
+      assert Node.exists?(inner.id),
+             "the mirror is the sync server's tree — destroying rows makes it lie (§14a), and " \
+             "node.rb records these as HIDDEN rather than removed"
+      assert Node.exists?(marker.id)
+      assert result.declined, "an operator must not read a declined run as `destroyed 0`"
+      assert_equal 0, result.destroyed
+    ensure
+      FileLayer.reset!
+    end
+
+    # A PROJECT'S OR MODEL'S COVER IS A THIRD POINTER, and the worse one: Maker::DeadNodes
+    # .reapable? answers TRUE for a nil node, so a destroyed cover is reaped immediately with none
+    # of the grace a tombstone buys — cleared silently, with nothing anywhere saying why.
+    test "a node chosen as a project or model cover is REPORTED, never destroyed" do
+      art = file("firmware/.git/art.png")
+      other = file("firmware/.git/model.png")
+      @user.maker_projects.create!(name: "Lamp", cover_node_id: art.node_id)
+      @user.maker_models.create!(title: "Bracket", slug: "bracket", cover_node_id: other.node_id)
+
+      result = RepoMetadataPurge.call
+
+      assert Node.exists?(art.id), "a project cover is a reference like any other"
+      assert Node.exists?(other.id), "a model cover too"
+      assert_equal [ art.node_id, other.node_id ].sort, result.skipped.map(&:node_id).sort
+      assert_equal 0, result.destroyed
+    end
+
+    # THE LOCAL PARENT-LOOKUP CACHE, WHICH NOTHING ELSE HERE CAN FAIL FOR. Restoring the plan's
+    # module-level `@cache` leaves the rest of this file fully green: the idempotency test cannot
+    # see it, because after run 1 the only rows left are ABOVE the marker and run 2 has nothing to
+    # get wrong either way. The defect needs the tree to CHANGE between two runs in one process —
+    # then a stale cached row still says `.git` for a directory that has been renamed, and the
+    # second run destroys a file sitting beneath no marker at all.
+    test "a second run in one process reads the tree, not a memo from the first" do
+      marker = dir("firmware/.git")
+      file("firmware/.git/config")
+
+      assert_equal 1, RepoMetadataPurge.call.destroyed
+
+      marker.update!(name: "notgit", storage_path: "firmware/notgit")
+      @dirs["firmware/notgit"] = @dirs.delete("firmware/.git")
+      innocent = file("firmware/notgit/readme.md")
+
+      assert_equal 0, RepoMetadataPurge.call.destroyed
+      assert Node.exists?(innocent.id), "there is no marker above it any more"
     end
 
     # THE WEDGE THIS WHOLE TASK EXISTS TO PREVENT, driven rather than argued (§15). The first scan

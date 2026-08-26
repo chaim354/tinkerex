@@ -28,12 +28,23 @@ class PurgeRepoMetadataNodes < ActiveRecord::Migration[8.1]
     end
 
     result = purge.call
+    if result.declined
+      # SCANNABLE BACKENDS ONLY. On chunk_remote the `nodes` table mirrors the sync server's tree,
+      # the mass-deletion guard this purge protects never runs there (Library::ScanJob gates on the
+      # same capability), and app/models/node.rb records — as a decision of this same arc — that
+      # those rows are HIDDEN rather than removed. The service owns that gate; this reports it, so
+      # a declined run cannot be misread as "there was nothing to purge".
+      say "declined: #{FileLayer.current.class} is not a scannable backend, so nothing here " \
+          "indexed the contents of a .git and nothing scans them away"
+      return
+    end
+
     say "destroyed #{result.destroyed} node(s) indexed beneath a .git directory"
-    # A node carrying a maker_file_attachments row is kept, and the report is the whole value of
-    # keeping it — destroying one silently orphans a project reference, and a skip nobody prints is
-    # the same silence with extra steps.
+    # A node the maker layer points at — a file attachment, or a project's or model's cover — is
+    # kept, and the report is the whole value of keeping it: destroying one silently orphans that
+    # reference, and a skip nobody prints is the same silence with extra steps.
     result.skipped.each do |node|
-      say "KEPT #{node.node_id} (user #{node.user_id}) — a file attachment points at it", true
+      say "KEPT #{node.node_id} (user #{node.user_id}) — an attachment or cover points at it", true
     end
   end
 
