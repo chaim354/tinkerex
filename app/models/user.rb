@@ -74,6 +74,7 @@ class User < ApplicationRecord
   has_many :maker_sheets, class_name: "Maker::Sheet", dependent: :destroy
   has_many :maker_models, class_name: "Maker::Model", dependent: :destroy
   has_many :maker_print_runs, through: :maker_models, source: :print_runs
+  has_many :maker_shelves, class_name: "Maker::Shelf", dependent: :destroy
   has_many :identities, class_name: "UserIdentity", dependent: :destroy
 
   # Human-identity auth via Devise (CLAUDE.md §8; replaces the hand-rolled password +

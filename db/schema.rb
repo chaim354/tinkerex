@@ -229,12 +229,15 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_26_130000) do
   end
 
   create_table "maker_models", force: :cascade do |t|
+    t.string "auto_node_id"
     t.string "cover_node_id"
     t.datetime "created_at", null: false
     t.string "designer"
+    t.datetime "dismissed_at"
     t.string "folder_node_id"
     t.string "license"
     t.text "notes"
+    t.string "origin", default: "import", null: false
     t.json "print_settings"
     t.string "print_status", default: "want_to_print", null: false
     t.string "slug", null: false
@@ -242,6 +245,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_26_130000) do
     t.string "title", null: false
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
+    t.index ["user_id", "auto_node_id"], name: "index_maker_models_on_auto_node_id", unique: true, where: "auto_node_id IS NOT NULL"
     t.index ["user_id", "print_status"], name: "index_maker_models_on_user_id_and_print_status"
     t.index ["user_id", "slug"], name: "index_maker_models_on_user_id_and_slug", unique: true
   end
@@ -311,6 +315,14 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_26_130000) do
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
     t.index ["user_id", "project_id", "position"], name: "index_maker_sheets_on_project_position"
+  end
+
+  create_table "maker_shelves", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "path", default: "", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "path"], name: "index_maker_shelves_on_user_id_and_path", unique: true
   end
 
   create_table "maker_suppliers", force: :cascade do |t|
@@ -423,6 +435,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_26_130000) do
     t.bigint "remote_sync_cursor", default: 0, null: false
     t.datetime "reset_password_sent_at"
     t.string "reset_password_token"
+    t.datetime "shelves_seeded_at"
     t.integer "sign_in_count", default: 0, null: false
     t.string "sync_device_token"
     t.string "unconfirmed_email"

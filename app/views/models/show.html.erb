@@ -16,8 +16,18 @@
     <% if @model.folder_node_id %>
       <%= link_to "Open in Files", files_path(folder: @model.folder_node_id), class: "linkbtn" %>
     <% end %>
-    <%= button_to "Delete", model_path(@model), method: :delete, class: "linkbtn danger",
-                  form: { data: { turbo_confirm: "Delete #{@model.title}? (files are kept)" } } %>
+    <%# THE BUTTON MUST SAY WHAT THE CONTROLLER WILL ACTUALLY DO. An auto model is DISMISSED, not
+        destroyed -- the row survives so Maker::ModelIntake does not recreate it on the next sweep
+        -- so a button reading "Delete" over a confirm promising deletion describes the other
+        branch of models#destroy. Both halves already keep the files; what differs is the row. %>
+    <% if @model.auto? %>
+      <%= button_to "Remove from catalog", model_path(@model), method: :delete, class: "linkbtn danger",
+                    form: { data: { turbo_confirm: "Remove #{@model.title} from the catalog? " \
+                                                   "The files stay, and it won't be re-added by the next scan." } } %>
+    <% else %>
+      <%= button_to "Delete", model_path(@model), method: :delete, class: "linkbtn danger",
+                    form: { data: { turbo_confirm: "Delete #{@model.title}? (files are kept)" } } %>
+    <% end %>
   </div>
 </div>
 

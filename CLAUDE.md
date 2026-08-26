@@ -264,7 +264,7 @@ Deploy OVH only on explicit request. `docs/DEPLOY.md`.
 /docs            sync-protocol.md, SYNC_SERVER.md, STATUS.md, DEPLOY.md, roads-not-taken.md,
                  architecture-sync-engine.md, adr/
 /docs/invariants §14's AREA rules, one file per area — addons.md, measure-view.md,
-                 deploy-secrets.md, backup-restore.md. NOT optional reading and NOT
+                 deploy-secrets.md, backup-restore.md, model-intake.md. NOT optional reading and NOT
                  demoted: each is §14 material that binds only inside its own subsystem,
                  pointed at from a stub under its original §14 anchor. Read the file before
                  touching the paths its stub names. Guard: test/docs_hygiene_test.rb.
@@ -447,8 +447,8 @@ Each line below cost a real bug **in this repo**. `docs/STATUS.md` has the full 
 them. Invariants belonging to the sync engine or the desktop client live in those repos'
 own CLAUDE.md — see §3 and §14j.
 
-**Four subsections live in `docs/invariants/` and are stubs here** — 14c (addons), 14g (deploy
-secrets), 14h (Measure), 14i (backup). They are §14 material, not an appendix: each binds hard
+**Five subsections live in `docs/invariants/` and are stubs here** — 14c (addons), 14g (deploy
+secrets), 14h (Measure), 14i (backup), 14k (the model catalog). They are §14 material, not an appendix: each binds hard
 inside its own subsystem and not at all outside it, so it is loaded when it applies rather than
 skimmed on every unrelated session. **Read the file before touching the paths its stub names.**
 Anything below that binds on only one area belongs there too, with a stub here.
@@ -1314,6 +1314,15 @@ Four rules survive on **this** side of the boundary:
   bodies while they shared a process; it went with the extraction, and **nothing checks that
   agreement now.** If you change device-token verification here, change it there in the same
   breath — that obligation has no guard behind it.
+
+### 14k. The model catalog and shelves → **`docs/invariants/model-intake.md`**
+
+**Read that file before touching** `app/services/maker/model_intake.rb`,
+`app/services/maker/library_tree.rb`, `app/models/maker/shelf.rb`,
+`app/controllers/shelves_controller.rb`, `app/jobs/maker/model_intake_job.rb`, or the
+`origin`/`auto_node_id`/`dismissed_at` columns on `maker_models`. It holds the nearest-shelf rule,
+why a shelf is a PATH and a model is a NODE ID, why dismissing is not deleting, and the ScanJob
+ordering that changes the answer rather than the timing.
 
 ## 15. Working agreements for the coding agent
 

@@ -156,6 +156,9 @@ module Web
         "model detail" => model_path(@model),
         "model new" => new_model_path,
         "model edit" => edit_model_path(@model),
+        # The model catalog's one setting page. Needs no fixture of its own: it seeds its
+        # three shelves on first visit, and renders the shared folder chooser either way.
+        "shelves" => shelves_path,
         "tools gallery" => tools_path,
         "tools addon" => tools_addon_path("fixture"),
         "trash" => trash_index_path
