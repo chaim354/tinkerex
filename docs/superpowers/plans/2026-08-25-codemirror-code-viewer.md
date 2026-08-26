@@ -670,48 +670,101 @@ Expected: PASS.
 
 - [ ] **Step 5: Write the failing write-guard test**
 
-Find the shared adapter write contract (`test/support/adapter_write_contract.rb` — locate it with
-`grep -rl "adapter_write_contract\|clobber" test/`) and append a case beside the existing clobber
-test, so it runs on **both** writable adapters:
+**READ `test/services/file_layer/adapter_write_contract.rb` FIRST — it already has this exact
+mechanism and this task extends it rather than inventing a second one.** Two corrections to what an
+earlier draft of this plan said, both found by reading the file:
+
+- **The class is `FileLayer::NotFound`, NOT `UnsupportedOperation`.** That contract states the rule
+  in as many words: "A clobber is UnsupportedOperation; a reserved/unobservable destination is
+  NotFound. Two different refusals." The message must match `/reserved path/`.
+- **The refusal is AT-OR-BENEATH the marker (`marker_prefix(rel)` non-nil), not strictly beneath
+  (`internal?`).** Nothing in this app has any business creating a `.git` through the port — the
+  real one arrives on disk from git itself and is *observed*, never written by us — and refusing
+  the marker as a write destination is strictly safer than allowing it. It also creates no ghost:
+  ghosts come from writing to paths the observers SKIP, and the marker is observed. This means
+  Task 4 needs no new predicate at all; `marker_prefix` from Task 3 is enough, and `internal?`
+  (strictly beneath, which the purge genuinely needs because the marker must survive there) is
+  added in Task 6 where it first has a caller.
+
+Add beside `OS_CLUTTER_DESTINATIONS` in `adapter_write_contract.rb`:
 
 ```ruby
-    test "#{backend}: a destination inside .git is refused" do
-      assert_raises(FileLayer::UnsupportedOperation) do
-        adapter.write(user, rel_path: "firmware/.git/hooks/pre-commit", io: StringIO.new("x"))
-      end
-    end
+  # A git repository's own directory. The observers OBSERVE the marker and refuse to descend into
+  # it (Library::RepoMetadata), so its contents are unobservable and must be unwritable — the same
+  # coupling the clutter list above pins, for the same reason. The MARKER is refused too, though it
+  # is observable: nothing here has any business minting one, the real one arrives from git itself,
+  # and refusing is strictly safer than allowing a fake marker that would silently switch off the
+  # intake sweep for a whole folder (Maker::AttachToProject's :in_working_tree reads exactly this).
+  REPO_METADATA_DESTINATIONS = %w[.git].freeze
 
-    test "#{backend}: a destination merely NAMED .gitignore is accepted" do
-      adapter.write(user, rel_path: ".gitignore", io: StringIO.new("tmp/"))
-      assert adapter.stat(user, rel_path: ".gitignore")
+  def test_write_contract_write_refuses_repo_metadata_destinations
+    REPO_METADATA_DESTINATIONS.each do |name|
+      err = assert_raises(FileLayer::NotFound, "write(#{name.inspect}) must be refused") do
+        adapter.write(@user, parent_node_id: nil, name: name, io: StringIO.new("x"))
+      end
+      assert_match(/reserved path/, err.message, name)
+      assert_nil @user.nodes.find_by(storage_path: name),
+                 "#{name.inspect} must not have landed a node — that is the wedge this prevents"
     end
+  end
+
+  def test_write_contract_move_refuses_repo_metadata_destinations
+    REPO_METADATA_DESTINATIONS.each do |name|
+      info = adapter.write(@user, parent_node_id: nil, name: "mv-#{name.delete('.')}.stl",
+                                  io: StringIO.new("b"))
+      err = assert_raises(FileLayer::NotFound, "move to #{name.inspect} must be refused") do
+        adapter.move(@user, node_id: info.node_id, new_parent_node_id: nil, new_name: name)
+      end
+      assert_match(/reserved path/, err.message, name)
+    end
+  end
+
+  # A destination BENEATH the marker, which no leaf name can express. Reached through a poisoned
+  # parent — the same `update_column` standard the reserved-path and escape-guard tests above use,
+  # and for the stated reason: storage_path is a plain column and "no caller writes anything bad
+  # today" is the assumption this coupling has been wrong about repeatedly.
+  def test_write_contract_write_refuses_a_destination_beneath_the_marker
+    parent = adapter.mkdir(@user, parent_node_id: nil, name: "firmware")
+    @user.nodes.find_by(node_id: parent.node_id).update_column(:storage_path, "firmware/.git")
+
+    err = assert_raises(FileLayer::NotFound) do
+      adapter.write(@user, parent_node_id: parent.node_id, name: "config", io: StringIO.new("x"))
+    end
+    assert_match(/reserved path/, err.message)
+  end
 ```
 
-Match the contract file's existing signature style exactly — read one neighbouring test first; the
-argument names above are illustrative of intent, not of this file's API.
+Match the surrounding methods' exact signatures — read two neighbouring tests before writing these,
+and adjust the `mkdir`/`write` keyword arguments to whatever this contract actually uses.
 
 - [ ] **Step 6: Run it and watch it fail**
 
 ```bash
-bin/rails test test/services/file_layer/ 2>&1 | tail -20
-LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test test/services/file_layer/ 2>&1 | tail -20
+bin/ci test
+```
+```bash
+bin/ci test-s3
 ```
 
-Expected: FAIL — the write into `.git` succeeds.
+Expected: FAIL on both legs — the writes into and onto `.git` succeed today.
 
 - [ ] **Step 7: Implement the guard in both adapters**
 
-In `app/services/file_layer/share.rb` and `app/services/file_layer/s3.rb`, inside each
-`#observable!`, add beside the existing `OsClutter` refusal:
+**Join the existing disjunction; do not add a second raise.** In
+`app/services/file_layer/share.rb#observable!` and `app/services/file_layer/s3.rb#observable!`, add
+one term to the `return unless ...` condition each:
 
 ```ruby
-      # BENEATH `.git` only — the marker directory itself is observed and indexed
-      # (Library::RepoMetadata explains the asymmetry). This is OsClutter's law applied to the
-      # one skip that keeps its entry: the CONTENTS are unobservable, so they must be unwritable,
-      # or a write manufactures a node no scan can ever pair.
-      raise UnsupportedOperation, "#{rel} is inside a git repository's metadata" if
-        Library::RepoMetadata.internal?(rel)
+                    Library::RepoMetadata.marker_prefix(rel).present? ||
 ```
+
+and extend each method's comment to say why, in that file's voice: the observers keep the `.git`
+node and skip its contents, so the contents are unobservable and must be unwritable — the same
+one-fact-two-sides coupling the `OsClutter` line above it already documents — and the marker itself
+is refused because nothing here mints one.
+
+The existing raise and message (`"#{rel.inspect} is a reserved path the library scan does not
+index"`) are reused unchanged, which is the point: this is the same refusal, extended.
 
 - [ ] **Step 8: Run all three backend legs**
 
@@ -726,9 +779,9 @@ Expected: PASS on both.
 
 - [ ] **Step 9: Mutation-check (§15)**
 
-Remove the `RepoMetadata.internal?` raise from `share.rb` only. Run `bin/ci test`. Expected:
-**RED** on the share leg while `test-s3` stays green — which is the cross-backend divergence §14a
-forbids, demonstrated. Restore it.
+Remove the `RepoMetadata` term from `share.rb` only. Run `bin/ci test`. Expected: **RED** on the
+share leg while `test-s3` stays green — which is the cross-backend divergence §14a forbids,
+demonstrated. Restore it.
 
 - [ ] **Step 10: Commit**
 
