@@ -1334,7 +1334,7 @@ In `app/services/maker/project_folders.rb`, add to `ROLE_FOLDERS`:
 In `app/controllers/files_controller.rb`, replace the `:text` line at ~1130:
 
 ```ruby
-    # DERIVED FROM THE ONE VOCABULARY (§14d). This was an inline list of 25 extensions sitting
+    # DERIVED FROM THE ONE VOCABULARY (§14d). This was an inline list of 26 extensions sitting
     # beside Maker::FileAttachment::ROLE_BY_EXT — a second table that had already drifted from the
     # first, and would have drifted further the moment `code` added fifteen more. Adding an
     # extension is still a one-line edit to ROLE_BY_EXT and nothing here has to hear about it.
