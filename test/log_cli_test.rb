@@ -22,6 +22,14 @@ require "support/stub_forgejo"
 class LogCliTest < ActiveSupport::TestCase
   BIN_LOG = Rails.root.join("bin/log").to_s
 
+  # WHAT THE LIVE INSTANCE ACTUALLY RETURNS. Issue-create takes int64 label IDs and REFUSES names
+  # (measured: 422 "cannot unmarshal string into ... type int64"), so every wire assertion below is
+  # written against ids. The earlier tests asserted names and passed, because the stub records what
+  # we send and validates nothing — a contract invented rather than observed.
+  LABEL_NAMES = %w[arc open-work deploy blocked deliberate
+                   filelayer library-scan addons previews maker-web ci].freeze
+  LABEL_FIXTURE = LABEL_NAMES.each_with_index.map { |n, i| { "id" => i + 1, "name" => n } }.freeze
+
   # The seven names bin/sync-server's unset_inherited_bundler_env already clears. §14j: a bundled
   # parent exports these process-wide and every child inherits them, so a harness that MERGES its
   # own environment runs bin/log as a bundled child every time — exercising "needs no gem" only in
@@ -192,7 +200,7 @@ class LogCliTest < ActiveSupport::TestCase
   # THE WIRE FORMAT IS THE ASSERTION. Not "the issue came back with our title" — that passes even
   # when both sides share a bug. Path, auth header and JSON body, each checked literally.
   test "open POSTs the documented issue payload to the documented path" do
-    stub = StubForgejo.new
+    stub = StubForgejo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
 
     # THE TRAILING NEWLINE IS DELIBERATE, NOT A TYPO. `bin/secret` returns an EXPORTED override
     # verbatim (`printf '%s'`, no stripping — only the 1Password path is `--no-newline`), so this
@@ -206,10 +214,13 @@ class LogCliTest < ActiveSupport::TestCase
     })
 
     assert_equal 0, code, "bin/log open failed: #{err}"
-    assert_equal 1, stub.requests.size, "expected exactly one API call"
     assert_includes out, "#42"
 
-    request = stub.requests.first
+    # The GET resolves names to ids; the POST carries the ids. Both halves are the real contract.
+    assert_equal %w[GET POST], stub.requests.map(&:method)
+    assert_includes stub.requests.first.path, "/labels"
+
+    request = stub.requests.last
     assert_equal "POST", request.method
     assert_equal "/api/v1/repos/chaim354/tinkerex/issues", request.path
     assert_equal "token t0ken", request.headers["authorization"],
@@ -217,8 +228,8 @@ class LogCliTest < ActiveSupport::TestCase
     assert_equal "application/json", request.headers["content-type"]
 
     assert_equal "The scan tombstones a live node", request.json["title"]
-    assert_equal [ "open-work" ], request.json["labels"],
-                 "an open item without the open-work label is invisible to the open-work view"
+    assert_equal [ 2 ], request.json["labels"],
+                 "labels must be int64 ids — Forgejo answers 422 for names (measured, live)"
   ensure
     stub&.shutdown
   end
@@ -269,7 +280,7 @@ class LogCliTest < ActiveSupport::TestCase
   # hand is exactly the per-PR tax that made docs/STATUS.md unworkable, so bin/log reads it back
   # out of the PR. GH_BIN stubs `gh`; Task 8 mutation-checks that the stub is actually consulted.
   test "arc --from-pr builds the issue from the PR body and links back to it" do
-    stub = StubForgejo.new
+    stub = StubForgejo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
 
     Dir.mktmpdir do |dir|
       gh = File.join(dir, "gh")
@@ -287,14 +298,14 @@ class LogCliTest < ActiveSupport::TestCase
       })
 
       assert_equal 0, code, "bin/log arc failed: #{err}"
-      request = stub.requests.first
+      request = stub.requests.find { |r| r.method == "POST" }
 
       assert_equal "Fix the tombstone cascade", request.json["title"]
       assert_includes request.json["body"], "The delete was applied per-node.",
                       "the PR body was not carried into the arc issue"
       assert_includes request.json["body"], "https://github.com/chaim354/tinkerex/pull/261",
                       "the arc must link the PR it describes, or the diff is unreachable from the record"
-      assert_equal [ "arc" ], request.json["labels"]
+      assert_equal [ 1 ], request.json["labels"], "labels must be int64 ids, not names"
     end
   ensure
     stub&.shutdown
@@ -438,59 +449,101 @@ class LogCliTest < ActiveSupport::TestCase
   LABEL_NAMES = %w[arc open-work deploy blocked deliberate
                    filelayer library-scan addons previews maker-web ci].freeze
 
-  test "setup creates each label idempotently, by name" do
-    stub = StubForgejo.new(status: 201, response: { "id" => 1, "name" => "arc" })
+  # IDEMPOTENCY IS ASKING WHAT EXISTS, NOT TOLERATING A REFUSAL. Forgejo ALLOWS DUPLICATE LABEL
+  # NAMES — measured against the live instance: a second `setup` run created a second copy of all
+  # eleven and reported "11 labels present" both times, leaving 22. The test this replaces asserted
+  # a 422 the server never sends, and passed because the stub answered 422 because the test said to.
+  test "setup creates nothing when every label already exists" do
+    stub = StubForgejo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
 
-    _out, err, code = run_log("setup", env: {
+    out, err, code = run_log("setup", env: {
       "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
       "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
     })
 
     assert_equal 0, code, "bin/log setup failed: #{err}"
-
-    created = stub.requests.select { |r| r.method == "POST" }.map { |r| r.json["name"] }
-    assert_includes created, "arc"
-    assert_includes created, "open-work"
-    assert_includes created, "deploy"
-    # NOT `assert_operator created.size, :>=, 3` — cutting LABELS from eleven names to three left
-    # that assertion green, because three still satisfies ">= 3". The full set, by name, is the
-    # only assertion a shrunk list cannot also pass.
-    assert_equal LABEL_NAMES.sort, created.sort,
-                "setup created #{created.inspect} — expected exactly #{LABEL_NAMES.sort.inspect}"
-    assert_equal [ "/api/v1/repos/chaim354/tinkerex/labels" ], stub.requests.map(&:path).uniq
+    assert_empty stub.requests.select { |r| r.method == "POST" },
+                 "setup POSTed a label that already existed — Forgejo creates a DUPLICATE, silently"
+    assert_includes out, "0 created"
   ensure
     stub&.shutdown
   end
 
-  # THE 422 PATH IS THE ONLY ONE THAT RUNS AFTER THE FIRST TIME, and a stub answering 201 never
-  # reaches it. Without this test `allow: [422]` — the entire idempotency claim — is asserted
-  # nowhere, and a setup that silently stopped being idempotent would fail for the first time
-  # months later, in front of whoever added a label.
-  test "setup tolerates 422, the ordinary case on every run after the first" do
-    stub = StubForgejo.new(status: 422, response: { "message" => "label already exists" })
-
-    _out, err, code = run_log("setup", env: {
-      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url
+  # AND IT VERIFIES RATHER THAN ASSUMING ITS POSTs WORKED. "I sent eleven requests" is not the claim
+  # this command makes; "eleven labels exist" is. The first GET lacks `ci`; the second, after the
+  # POST, has it.
+  test "setup creates only what is missing, then confirms the whole set" do
+    partial = LABEL_FIXTURE.reject { |l| l["name"] == "ci" }
+    stub = StubForgejo.new(routes: {
+      "GET /labels" => [ [ 200, partial ], [ 200, LABEL_FIXTURE ] ],
+      "POST /labels" => [ 201, { "id" => 11, "name" => "ci" } ]
     })
 
-    assert_equal 0, code, "setup treated an already-existing label as a failure: #{err}"
-    assert_operator stub.requests.size, :>=, 3,
-                    "setup stopped at the first 422 instead of continuing through the list"
+    out, err, code = run_log("setup", env: { "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url })
+
+    assert_equal 0, code, "bin/log setup failed: #{err}"
+    assert_equal [ "ci" ], stub.requests.select { |r| r.method == "POST" }.map { |r| r.json["name"] },
+                 "setup POSTed a label that already existed"
+    assert_includes out, "1 created"
   ensure
     stub&.shutdown
   end
 
-  # A DEPLOY IS AN ISSUE, WHICH IS WHAT DELETES §15's PUSH-TO-MAIN EXCEPTION. Today a deploy record
-  # is the one sanctioned direct commit to main, because a deploy happens after the merge and its
-  # record cannot live in the work's own PR. As an issue that reasoning evaporates.
-  # --dest MUST NARROW THE RECORD, NOT MERELY BE PRESENT. This used to pass all three destinations
-  # — byte-identical to DEFAULT_DESTS — so a `deploy` that silently IGNORED --dest and always filed
-  # the hardcoded default passed too: asserting that each of the three names appears cannot tell
-  # "the flag was read" from "the flag was ignored and the default happened to agree." Naming
-  # exactly ONE destination and asserting the OTHER TWO are absent is what forces --dest to
-  # actually be read, not just accepted on the command line.
+  # A WRITE'S FIRST WIRE CALL IS NOW A READ (the label resolve), and that must not turn a write into
+  # a no-record. Regression the moment id resolution landed: the payload was built in one expression
+  # whose own label lookup raised, leaving it nil, so the rescue reported "nothing to file" for an
+  # unambiguous write.
+  test "a write whose label lookup fails still spools what it was going to send" do
+    Dir.mktmpdir do |spool|
+      _out, err, code = run_log("open", "must survive a failed label resolve", env: {
+        "FORGEJO_TOKEN" => "t0ken", "LOG_SPOOL_DIR" => spool, "LOG_BRANCH" => "claude/example"
+      })
+
+      assert_equal 3, code
+      refute_includes err, "nothing to file", "a write was reported as having nothing to spool"
+      assert_includes File.read(File.join(spool, "claude-example.md")),
+                      "must survive a failed label resolve"
+    end
+  end
+
+  # AN EM DASH IN A TITLE, UNDER A LOCALE-LESS SHELL, ARRIVES AS ASCII-8BIT. Measured:
+  # ARGV[0].encoding is ASCII-8BIT for "smoke test — safe" with LANG unset, and JSON.generate warns
+  # today and RAISES in json 3.0. This repo's titles use em dashes constantly, so it is not an edge
+  # case — and none of the thirty mutations found it. The live smoke test did, on its first run.
+  test "a non-ASCII title survives a locale-less environment" do
+    stub = StubForgejo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
+
+    _out, err, code = run_log("open", "an arc — with an em dash", env: {
+      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+      "LANG" => nil, "LC_ALL" => nil, "LC_CTYPE" => nil
+    })
+
+    assert_equal 0, code, "bin/log open failed: #{err}"
+    refute_includes err, "BINARY", "JSON.generate warned — json 3.0 raises on this"
+    assert_equal "an arc — with an em dash",
+                 stub.requests.find { |r| r.method == "POST" }.json["title"]
+  ensure
+    stub&.shutdown
+  end
+
+  # A LABEL THE REPO DOES NOT HAVE NAMES ITSELF AND SAYS WHAT TO RUN, rather than surfacing Forgejo's
+  # "cannot unmarshal string into ... int64", which describes our bug and not the user's.
+  test "a missing label names itself and points at setup" do
+    stub = StubForgejo.new(routes: {
+      "GET /labels" => [ 200, LABEL_FIXTURE.reject { |l| l["name"] == "open-work" } ]
+    })
+
+    _out, err, code = run_log("open", "x", env: { "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url })
+
+    assert_equal 3, code
+    assert_includes err, "open-work"
+    assert_includes err, "bin/log setup"
+  ensure
+    stub&.shutdown
+  end
+
   test "deploy --dest share files a record naming only share, not the other two backends" do
-    stub = StubForgejo.new
+    stub = StubForgejo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
 
     _out, err, code = run_log("deploy", "--image", "e079d433", "--dest", "share", env: {
       "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
@@ -498,9 +551,9 @@ class LogCliTest < ActiveSupport::TestCase
     })
 
     assert_equal 0, code, "bin/log deploy failed: #{err}"
-    request = stub.requests.first
+    request = stub.requests.find { |r| r.method == "POST" }
 
-    assert_equal [ "deploy" ], request.json["labels"]
+    assert_equal [ 3 ], request.json["labels"], "labels must be int64 ids, not names"
     assert_includes request.json["title"], "e079d433"
     assert_includes request.json["body"], "share"
     refute_includes request.json["body"], "chunk_remote",
@@ -542,7 +595,7 @@ class LogCliTest < ActiveSupport::TestCase
     })
 
     assert_equal 0, code, "bin/log note failed: #{err}"
-    request = stub.requests.first
+    request = stub.requests.find { |r| r.method == "POST" }
 
     assert_equal "POST", request.method
     assert_equal "/api/v1/repos/chaim354/tinkerex/issues/128/comments", request.path

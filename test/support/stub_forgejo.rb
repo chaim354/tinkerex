@@ -32,9 +32,16 @@ class StubForgejo
 
   attr_reader :requests, :errors
 
-  def initialize(status: 201, response: { "number" => 42, "title" => "stub", "state" => "open", "body" => "" })
+  # `routes` maps "METHOD /path-fragment" to a reply, so one stub can serve a GET /labels list and a
+  # POST /issues result in the same test — which the real flow needs, because an issue create must
+  # first resolve label NAMES to the int64 IDs Forgejo demands. A value may be a single
+  # [status, body] pair, or an ARRAY of them consumed in order (last one repeats), for flows whose
+  # second call must see the effect of the first.
+  def initialize(status: 201, response: { "number" => 42, "title" => "stub", "state" => "open", "body" => "" },
+                 routes: {})
     @requests = []
     @errors = []
+    @routes = routes.transform_values { |v| v.first.is_a?(Array) ? v.dup : [ v ] }
     @server = TCPServer.new("127.0.0.1", 0)
     # A String response is sent RAW — that is how a test drives the non-JSON-2xx path, which is
     # what a proxy error page and Forgejo's own login page both look like on the wire.
@@ -88,7 +95,8 @@ class StubForgejo
     body = headers["content-length"] ? socket.read(headers["content-length"].to_i).to_s : ""
     @requests << Request.new(method: method, path: path, headers: headers, body: body)
 
-    respond(socket, @status, @payload)
+    status, payload = reply_for(method, path)
+    respond(socket, status, payload)
   rescue StandardError => e
     @errors << e
     # `respond` CAN ITSELF RAISE Errno::EPIPE (the client already gave up and closed its end) —
@@ -99,6 +107,18 @@ class StubForgejo
     respond(socket, 500, JSON.generate({ "stub_error" => "#{e.class}: #{e.message}" })) rescue nil
   ensure
     socket.close rescue nil
+  end
+
+  def reply_for(method, path)
+    @routes.each do |key, queued|
+      verb, fragment = key.split(" ", 2)
+      next unless verb == method && path.include?(fragment)
+
+      status, body = queued.size > 1 ? queued.shift : queued.first
+      return [ status, body.is_a?(String) ? body : JSON.generate(body) ]
+    end
+
+    [ @status, @payload ]
   end
 
   def respond(socket, status, payload)
