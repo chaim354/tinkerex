@@ -357,14 +357,22 @@ module Library
       assert_equal 2, files.count, "the pointer and main.c — nothing dropped"
     end
 
-    # Whole segments, never prefixes: a repo's tracked dotfiles are ordinary library files, and a
-    # folder a maker called `git` is their folder.
-    test "a key merely NAMED like git metadata is indexed normally" do
+    # Whole segments, never prefixes — and the fixture has to be at DEPTH for this to be able to
+    # fail. An earlier version seeded only `.gitignore` at the library root, where a segment-PREFIX
+    # match still resolves the marker prefix to the key ITSELF, so `internal?` answers false and
+    # the key survives anyway: the test passed under the very mutation it named. `.github/` is the
+    # honest fixture — a directory a real code library HAS, beginning with the marker's own name —
+    # and the assertion is on the LEAF, because a prefix match keeps the `.github` dir node while
+    # silently dropping everything under it.
+    test "a key merely NAMED like git metadata is indexed normally, at any depth" do
       @fake.seed!("#{PREFIX}/.gitignore", "tmp/")
+      @fake.seed!("#{PREFIX}/.github/workflows/ci.yml", "on: push")
       @fake.seed!("#{PREFIX}/notes/git/todo.txt", "not a repo")
       scan!
 
       assert @user.nodes.find_by(storage_path: ".gitignore")
+      assert @user.nodes.find_by(storage_path: ".github/workflows/ci.yml"),
+             "a prefix match would drop this and leave `.github` a childless dir node"
       assert @user.nodes.find_by(storage_path: "notes/git/todo.txt")
     end
 

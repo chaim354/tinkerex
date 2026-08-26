@@ -133,20 +133,31 @@ module Library
     # so it is an ordinary file and its bytes are the point. Structurally this is why the skip
     # lives inside the `stat.directory?` arm — hoisting it would silently stop indexing this file.
     test "a .git FILE — a submodule's gitdir pointer — is indexed as an ordinary file" do
-      write!("sub/.git", "gitdir: ../.git/modules/sub")
+      pointer = "gitdir: ../.git/modules/sub"
+      write!("sub/.git", pointer)
       write!("sub/main.c", "int main(){}")
       found = by_path
 
       assert_not found.fetch("sub/.git").dir, "a `gitdir:` pointer is a file, not the marker"
-      assert_equal 27, found.fetch("sub/.git").size
+      # Bound to the fixture, never a literal: a literal turns an edit to the string above into a
+      # failure that says nothing about the behaviour under test.
+      assert_equal pointer.bytesize, found.fetch("sub/.git").size
       assert_includes found.keys, "sub/main.c"
     end
 
-    # Whole segments, never prefixes. A repo's own tracked dotfiles are ordinary library files.
-    test "a file merely named .gitignore is indexed normally" do
+    # Whole segments, never prefixes — and the fixture must be at DEPTH to be able to fail. A
+    # root-level `.gitignore` survives a segment-PREFIX match anyway (the marker prefix resolves to
+    # the key itself, which is not BENEATH a marker), so a test seeding only that one passes under
+    # the mutation it names. `.github/` is a directory a real code library has, and the assertion
+    # is on the LEAF: a prefix match keeps `.github` and silently drops everything under it.
+    test "a path merely NAMED like git metadata is indexed normally, at any depth" do
       write!(".gitignore", "tmp/")
+      write!(".github/workflows/ci.yml", "on: push")
+      paths = observe.map(&:rel_path)
 
-      assert_includes observe.map(&:rel_path), ".gitignore"
+      assert_includes paths, ".gitignore"
+      assert_includes paths, ".github/workflows/ci.yml",
+                      "a prefix match would drop this and leave `.github` a childless dir"
     end
 
     test "does not index or follow symlinks" do

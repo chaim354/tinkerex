@@ -41,16 +41,14 @@ module Library
   # directory named .git"; a submodule's real `.git` directory, wherever it actually lives, does
   # its own work.
   #
-  # THAT RULE HOLDS ON ALL THREE BACKENDS, and on one of them it costs a term that reads as
-  # redundant. Library::Scanner holds an lstat and asks the kind outright. Library::S3Observer
-  # holds a key in a FLAT KEYSPACE, which permits an OBJECT exactly at the marker path, so it asks
-  # the question the only way that keyspace allows: `marker_prefix(rel) != rel`, the object AT the
-  # marker path being the pointer file rather than the marker. Delete that term and a `gitdir:`
-  # pointer becomes a marker on s3 alone, with its bytes unindexed — one condition with two answers
-  # across backends (§14a). Recorded because the first draft of this file asserted the flat
-  # keyspace "cannot" tell them apart and wrote the divergence down as a decision: the rule was
-  # right and its evidence was invented, which is the failure CLAUDE.md's own preamble records
-  # about its `§` reference counts.
+  # THAT RULE HOLDS ON ALL THREE BACKENDS, and on one of them it is a question rather than a look.
+  # Library::Scanner holds an lstat and asks the kind outright. Library::S3Observer holds a key in
+  # a FLAT KEYSPACE, which permits an OBJECT exactly AT the marker path — what a submodule or a
+  # linked worktree writes — so it asks `internal?` instead, and the pointer falls through to be
+  # indexed as the ordinary file the Scanner also makes it. Recorded because the first draft of
+  # this file asserted the flat keyspace "cannot" tell the two apart and wrote the divergence down
+  # as a decision: the rule was right and its evidence was invented, which is the failure
+  # CLAUDE.md's own preamble records about its `§` reference counts.
   #
   # SCOPE: git only. `.svn`, `.hg` and friends are deliberately absent — adding one is a real
   # indexing change and a new write refusal, the same explicit decision OsClutter's header demands,
@@ -88,6 +86,28 @@ module Library
       segments = rel.split("/")
       idx = segments.index(DIR_NAME)
       idx && segments[0..idx].join("/")
+    end
+
+    # Is `rel` STRICTLY BENEATH a marker? The observers' question, and the exact complement of the
+    # write guards', which is `marker_prefix(rel).present?` — AT or beneath. The two differ on
+    # precisely one path, the marker itself, and that path is the entire design: it is indexed
+    # (so `internal?` is false for it) and it is not writable (so the guards' question is true).
+    #
+    # ONE QUESTION MUST NOT BE SPELLED TWO WAYS, which is why this is DERIVED from marker_prefix
+    # rather than re-deriving segments. It began life inline in Library::S3Observer as
+    # `marker_prefix(rel) && marker_prefix(rel) != rel`, with a paragraph explaining why the second
+    # term was not redundant — and a term defended by a comment is one a later reader deletes,
+    # while a NAME is not. Deriving it also makes the two questions provably consistent: they
+    # cannot drift into disagreeing about which paths have a marker at all.
+    #
+    # WHY THE MARKER PATH ITSELF MATTERS, since `!= rel` still looks like a no-op: a flat keyspace
+    # permits an OBJECT exactly at the marker path. That object is a `gitdir:` POINTER FILE, what a
+    # submodule or a linked worktree writes where a plain repo has a directory. Answer true for it
+    # and s3 alone calls it the marker and drops its bytes, while Library::Scanner — which holds an
+    # lstat and sees a file — indexes it: one condition with two answers across backends (§14a).
+    def self.internal?(rel)
+      prefix = marker_prefix(rel)
+      !prefix.nil? && prefix != rel
     end
   end
 end

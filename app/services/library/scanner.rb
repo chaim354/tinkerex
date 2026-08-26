@@ -221,9 +221,11 @@ module Library
             next
           end
 
-        # `name` travels alongside `rel` because a LEAF and a PATH answer different questions and
-        # only this frame holds both: Library::RepoMetadata.marker? takes a leaf, and rebuilding
-        # one with File.basename at the call site would derive what we are already holding.
+        # `name` travels alongside `rel` so the call site can ask a LEAF question
+        # (Library::RepoMetadata.marker?) without rebuilding one. A PREFERENCE, not a necessity:
+        # the block also receives `path`, and `path.basename.to_s` is the same string. Passing the
+        # name Dir.children already handed us is one derivation fewer to trust, and it leaves the
+        # call site reading as the question it asks.
         yield path, rel, stat, name
       end
     end
