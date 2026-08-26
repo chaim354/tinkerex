@@ -94,7 +94,11 @@ class DocsHygieneTest < ActiveSupport::TestCase
 
   test "the moved sections keep their anchors, because code cites them by number" do
     claude = CLAUDE_MD.read
-    moved = %w[14c 14f 14g 14h 14i]
+    # EVERY SECTION THAT MOVED TO docs/invariants/, INCLUDING 14k — it was omitted here when the
+    # model catalog moved out, so its anchor was covered only by the two generic pointer tests and
+    # not by this one. A list that is supposed to be exhaustive and silently is not is the same
+    # shape as a guard scanning an empty set (§14e): it reports success over what it never checked.
+    moved = %w[14c 14f 14g 14h 14i 14k]
 
     moved.each do |anchor|
       assert_match(/^### #{anchor}\. /, claude,
