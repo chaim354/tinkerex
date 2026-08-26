@@ -1235,10 +1235,11 @@ ordering that changes the answer rather than the timing.
   how a mount adapter works, the boundary is wrong — stop, and check whether the work belongs in
   `tinkerex-sync` or `tinkerex-client` instead (§3, §14j).
 
-- **EXECUTING A PLAN WITH SUBAGENTS — READ `.claude/commands/execute-plan.md` FIRST.** Batch tasks
-  by FILE, dispatch independent ones in PARALLEL, run NO spec-compliance stage (six such dispatches
-  found zero divergences), and CAP each quality review to named claims. Measured 2026-08-26: review
-  cost more than implementation, ~1.8 h against ~1.6 h. Quality reviews themselves stay full-depth.
+- **EXECUTING A PLAN WITH SUBAGENTS: `.claude/commands/execute-plan.md` IS THE DEFAULT AND
+  OVERRIDES ANY GENERIC SUBAGENT-DRIVEN LOOP A SKILL OFFERS.** Read it before dispatching; you do
+  not need to be asked. Batch by FILE, run independent tasks in PARALLEL, no spec-compliance stage,
+  and CAP each quality review to named claims — quality reviews themselves stay FULL-DEPTH. That
+  file carries the measurements, and `/execute-plan` is the same content if you prefer to invoke it.
 
 ### Finishing work: commit, push, and open the PR without asking
 
