@@ -78,7 +78,7 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-25): a git repo in the library, and the sweep that was tearing one apart (branch `claude/codemirror-code-editor`)
+## Latest (2026-08-25): a git repo in the library, and the sweep that was tearing one apart (branch `claude/codemirror-code-editor-629b04`)
 
 **COMPLETE — nine of nine tasks landed.** Spec:
 `docs/superpowers/specs/2026-08-25-codemirror-code-viewer-design.md`. Plan:
@@ -137,19 +137,35 @@ discriminator now matches the WHERE clause, which is what its own prose always c
 comment said "identifying the walk took two tries"; it is three now, and says so. Re-verified by
 mutation: making the walk `SELECT "nodes".*` still goes red.
 
-### Measured: the three legs
+### Measured: the three legs, at the END of the arc
 
 | leg | runs | assertions | skips |
 |---|---|---|---|
-| share | 2374 | 8703 | 30 |
-| s3 | 2374 | 8703 | 30 |
-| chunk_remote | 2374 | 8860 | 5 |
+| share | 2441 | 9158 | 30 |
+| s3 | 2441 | 9158 | 30 |
+| chunk_remote | 2441 | 9315 | 5 |
 
 **Run counts identical**, which is the §15 rule. The assertion and skip gap on chunk_remote is
 capability-gated skipping (restore/versioning tests that only run where `versioned` is true) and
-predates this work — it is the divergence already recorded under "Still open", not a new one. One
-share run flaked on the documented §12.7 `SQLite3::BusyException` in an unrelated test
-(`current_project_topbar_test.rb`) and was clean on re-run.
+predates this work — it is the divergence already recorded under "Still open", not a new one.
+`system`: 185 runs / 1541 assertions / 1 skip. Per-task figures are in each section below and are
+scoped to that task; **this table is the arc's, and it carried task 2's numbers through eight more
+tasks until a final pass caught it** — the stale-claim shape §15 warns about, in the file whose job
+is to prevent it.
+
+**`test-chunk-remote` IS THE LEG THAT FOUND THE ARC'S LAST BUG, AND NO SUBAGENT RAN IT.** Every
+task was verified on share and s3 only. The final full run came back with **8 failures in
+`RepoMetadataPurgeTest`**, all reading "the purge did nothing": task 6's `scannable?` gate is false
+on chunk_remote, so the purge declines, and every test asserting it destroys or reports something
+failed — while the other two legs stayed green because their ambient backend happens to satisfy the
+new gate. The tests inherited `LIBRARY_BACKEND` instead of pinning it, which §15 names as a real bug
+rather than a test-environment quirk. **A NINTH test was worse than the eight**: the negatives case
+asserts `destroyed == 0`, which a *declined* run satisfies for free, so it was green on chunk_remote
+while testing nothing at all.
+
+The lesson, stated plainly because it generalises: **a capability gate added to a service
+retroactively changes what every existing test of that service asserts, and the legs that stay green
+are not evidence — they are the legs whose ambient backend happens to satisfy the new gate.**
 
 ### The observers: `.git` is ONE node and its contents are none (task 3, landed)
 
