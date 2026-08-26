@@ -657,7 +657,9 @@ and add to the module's header comment, after the OsClutter paragraph:
   # through a web door: you cannot create a repository by creating the folder, and a folder named
   # `.git` made by hand silently turns off intake for everything under it
   # (Maker::AttachToProject's :in_working_tree reads exactly this marker). Observed-but-not-
-  # mintable is the same shape `.DS_Store` already has here, arrived at from the opposite side.
+  # mintable is the same shape `.DS_Store` has ON CHUNK_REMOTE, where a device push puts one in
+  # the catalog this app may not mint — NOT "here": on share and s3 the observers skip `.DS_Store`
+  # entirely, which is the very reason it is in this union.
 ```
 
 - [ ] **Step 4: Run it and watch it pass**
