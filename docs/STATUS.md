@@ -140,6 +140,42 @@ misunderstanding, in its most literal form. It is a real 160-byte 1x1 JPEG now.
   columns, 413px for a 321px need), 768px (two), 375px (one clean column, no horizontal overflow,
   both labels fully visible).
 
+### Deployed 2026-08-26 — image `e079d433`, all three backends, plus the bundle
+
+**THIS DEPLOY SHIPPED TWO OTHER ARCS AS WELL, and that is worth saying plainly rather than leaving
+to be inferred from the image tag.** `main` advanced while this branch was open, so `e079d433`
+carries #250 (STL/3MF models) and #251 (CodeMirror / git projects) alongside this one. The branch
+was merged with `main` and the full gates re-run on the combined tree before any of it went out.
+
+| what | before | after |
+|---|---|---|
+| `tinkerex-web`, `-share`, `-s3` | `9faa7783` (17 h) | **`e079d433`** |
+| `tinkerex-addons` | `645aa122` | **`b0e6c0f1`** (label and `version.json` agree) |
+| `tinkerex-boxes` | `28824742` | unchanged — nothing in it moved |
+
+**#251's data migration was checked BEFORE rolling, not explained afterwards.**
+`PurgeRepoMetadataNodes` destroys `nodes` rows beneath a `.git` marker and is explicitly
+irreversible, so the live libraries were counted first: share **2020 nodes, 0 `.git` dirs, 0 rows
+beneath one**; s3 **0 nodes**; chunk_remote declined by capability. After the deploy the migration
+reads `applied` on all three and share still counts **2020** — it destroyed nothing anywhere, which
+is what the pre-check predicted.
+
+**Exercised, not read.** The CSS was verified as the COMPILED asset the browser is served
+(`/assets/application-28d58b7c.css`, 33,975 bytes) rather than as source in the image — source
+present proves the copy, not the precompile. In a real browser on `share.tinkerex.local`: the ten
+sample-less generators all render the `no sample photo` frame, **every one of the 181 cards measures
+187px and every thumb box 120px**, so nothing can move under a click; `top_edge` has **480px for a
+321px need** and `bottom_edge` 480 for 297, nothing clipped, no horizontal overflow, and a plain
+enum (`FingerJoint_style`) is still one column at 226px. All six proxy health checks 200
+(`chunk|share|s3` × `.local|.home`).
+
+**One gate is still red on `main`, and it is not this arc's.** `bin/ci setup` fails with
+`key not found: "LIBRARY_PATH"` — #251's migration resolves `FileLayer.current` at migrate time, so
+a shell without that variable cannot run `bin/setup`. Verified against `6273b60` with a clean tree,
+before this branch merged. It is invisible to CI because `setup` is in `LOCAL_ONLY_GATES`, and it
+does not affect the box, where every destination sets its own backend's env. Recorded here rather
+than fixed in passing.
+
 ### A flake that was blocking the merge, diagnosed rather than re-run
 
 `WorkerBudgetTest#test_a_detector_that_raises_is_treated_as_contended` failed twice on 2026-08-26 —
