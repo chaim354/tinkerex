@@ -341,19 +341,20 @@ module Library
                    @user.nodes.present.order(:storage_path).pluck(:storage_path)
     end
 
-    # A DIVERGENCE FROM THE SHARE BACKEND, PINNED SO IT IS A DECISION AND NOT A DISCOVERY. A
-    # submodule (or a linked worktree) writes a `gitdir:` POINTER FILE where a plain repo has a
-    # directory. Library::Scanner holds an lstat and indexes that as the ordinary file it is; a
-    # flat keyspace has no kind to read, so here it becomes the marker and its bytes go unindexed
-    # — the same direction LANDMINE 7 above already resolves a both-kinds collision in, and the
-    # direction that leaves :in_working_tree protecting that submodule's files.
-    test "a .git OBJECT is the marker on this backend, and its bytes are not indexed" do
+    # A DIRECTORY, NEVER A FILE — ON THIS BACKEND TOO, which takes one deliberate term
+    # (`metadata_dir != rel`) because a flat keyspace permits an OBJECT exactly at the marker path.
+    # That object is what a submodule or a linked worktree writes: a small `gitdir:` POINTER FILE
+    # where a plain repo has a directory. The Scanner holds an lstat, sees a file, and indexes it;
+    # without the term this backend would call it the marker and drop its bytes, which is §14a's
+    # one-condition-two-answers. The share-side half of this pair is in scanner_test.rb.
+    test "a .git OBJECT is a FILE, like the Scanner's, not a synthesized marker" do
       @fake.seed!("#{PREFIX}/sub/.git", "gitdir: ../.git/modules/sub")
       @fake.seed!("#{PREFIX}/sub/main.c", "int main(){}")
       scan!
 
-      assert_equal "dir", @user.nodes.find_by!(storage_path: "sub/.git").kind
-      assert_equal 1, files.count, "the pointer file is not indexed as a file"
+      node = @user.nodes.find_by!(storage_path: "sub/.git")
+      assert_equal "file", node.kind, "a `gitdir:` pointer is a file, and its bytes are the point"
+      assert_equal 2, files.count, "the pointer and main.c — nothing dropped"
     end
 
     # Whole segments, never prefixes: a repo's tracked dotfiles are ordinary library files, and a

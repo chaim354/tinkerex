@@ -137,17 +137,24 @@ module Library
         # rejects are dropped outright and nothing downstream sees the key, but this skip has to
         # RECORD something before dropping. The prefix is the only evidence the repo exists.
         #
-        # STATED CONSEQUENCE, because it is a real decision and a real divergence from the share
-        # backend rather than a tidy-up: a `.git` OBJECT — the `gitdir:` pointer a submodule or a
-        # linked worktree writes where a plain repo puts a directory — becomes the MARKER here, and
-        # its bytes are not indexed at all. Library::RepoMetadata's rule is "a DIRECTORY named
-        # .git", and Library::Scanner can honour it because it holds an lstat; a flat keyspace has
-        # no kind to read, so this backend cannot. Both halves of the fallout are acceptable and
-        # neither is silent by accident: dropping the pointer's bytes matches what LANDMINE 7 below
-        # already decides for a key claimed by both kinds (the DIRECTORY wins), and the resulting
-        # marker makes :in_working_tree protect that submodule's working tree from the intake
-        # sweep, which is the outcome we would want if we could choose it per backend.
-        if (metadata_dir = Library::RepoMetadata.marker_prefix(rel))
+        # `metadata_dir != rel` IS WHAT KEEPS "A DIRECTORY, NEVER A FILE" TRUE ON THIS BACKEND, and
+        # it is the term most likely to be deleted as redundant. A flat keyspace permits an OBJECT
+        # exactly AT the marker path — which is what a submodule or a linked worktree writes, a
+        # small `gitdir:` POINTER FILE where a plain repo has a directory. Without this term that
+        # object becomes the marker and its bytes are never indexed, so one condition has two
+        # answers across backends (§14a): the Scanner holds an lstat, sees a FILE, and indexes it
+        # as the ordinary file it is. With it, the key falls through and is observed as a file
+        # there too. A first draft of this comment claimed a flat keyspace "cannot" tell the two
+        # apart and recorded the divergence as a decision; it is one term, and the claim was false.
+        #
+        # It does NOT let a repo's own keys through. A zero-byte `firmware/.git/` FOLDER MARKER
+        # arrives with its slash already stripped, so it fails this term and falls to the
+        # marker-object branch below, which synthesizes the same dir node. And a key claimed by
+        # BOTH kinds (`sub/.git` the object beside `sub/.git/config`) still resolves the documented
+        # way: `sub/.git/config` puts the dir in `dirs`, the object becomes a file observation, and
+        # LANDMINE 7's partition drops the file WITH ITS WARNING — where swallowing it here would
+        # have been the same outcome, silently.
+        if (metadata_dir = Library::RepoMetadata.marker_prefix(rel)) && metadata_dir != rel
           dirs.merge(dir_chain(metadata_dir))
           next
         end

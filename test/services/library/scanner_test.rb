@@ -127,6 +127,21 @@ module Library
                    "nothing beneath .git may be observed"
     end
 
+    # THE MARKER IS A DIRECTORY, NEVER A FILE, and this is the share half of a cross-backend pair
+    # (Library::S3ObserverTest holds the other). A submodule or a linked worktree writes a
+    # `gitdir:` POINTER FILE where a plain repo has a directory; nothing here reads that pointer,
+    # so it is an ordinary file and its bytes are the point. Structurally this is why the skip
+    # lives inside the `stat.directory?` arm — hoisting it would silently stop indexing this file.
+    test "a .git FILE — a submodule's gitdir pointer — is indexed as an ordinary file" do
+      write!("sub/.git", "gitdir: ../.git/modules/sub")
+      write!("sub/main.c", "int main(){}")
+      found = by_path
+
+      assert_not found.fetch("sub/.git").dir, "a `gitdir:` pointer is a file, not the marker"
+      assert_equal 27, found.fetch("sub/.git").size
+      assert_includes found.keys, "sub/main.c"
+    end
+
     # Whole segments, never prefixes. A repo's own tracked dotfiles are ordinary library files.
     test "a file merely named .gitignore is indexed normally" do
       write!(".gitignore", "tmp/")

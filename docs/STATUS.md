@@ -182,19 +182,38 @@ Mutation-checked six ways, each red for its own reason: `index`→`rindex` (the 
 `==`→`start_with?` in `marker?` (`.gitignore` becomes a marker), a segment-**prefix** match in
 `marker_prefix` (`.gitignore` gets one), dropping the non-String guard (`NoMethodError` on nil),
 removing the Scanner's `unless` (four nodes beneath `.git`), and dropping the S3 `dirs.merge` (the
-marker vanishes from both new tests). Legs measured for this task: share and s3, both **2385 runs /
-8734 assertions / 30 skips**, identical. `test-chunk-remote` was not re-run here — the table above
-is task 2's measurement.
+marker vanishes from both new tests, in both directions), and two more on the term below.
 
-**One cross-backend divergence, found in review, kept and pinned rather than closed.** A submodule
-or linked worktree writes a `gitdir:` POINTER FILE where a plain repo has a directory. The Scanner
-holds an lstat and indexes it as the ordinary file it is; a flat keyspace has no kind to read, so
-on s3 it becomes the MARKER and its bytes go unindexed. Probed, not reasoned: `sub/.git` +
-`sub/main.c` yields `[["sub","dir"], ["sub/.git","dir"], ["sub/main.c","file"]]`. Kept because both
-halves land on the tolerable side — dropping the pointer's bytes is the direction LANDMINE 7
-already resolves a both-kinds collision in, and the resulting marker is what leaves
-`:in_working_tree` protecting that submodule's files from the sweep. `RepoMetadata`'s
-"a DIRECTORY, never a FILE" header now says which backend cannot check it.
+**A cross-backend divergence was written in, reviewed, and then closed — the review finding is the
+part worth keeping.** A submodule or linked worktree writes a `gitdir:` POINTER FILE where a plain
+repo has a directory. The first cut of the s3 branch made that object the MARKER and dropped its
+bytes, and its comment justified this by asserting that a flat keyspace has no kind to read, so
+"this backend cannot" honour `RepoMetadata`'s "a DIRECTORY, never a FILE". **That was false.** One
+term closes it — `&& metadata_dir != rel`, the object AT the marker path being the pointer rather
+than the marker — and it costs nothing else: `firmware/.git/config`, `firmware/.git/objects/` and
+the zero-byte `firmware/.git/` folder marker all behave exactly as before, and a `sub/.git` object
+beside `sub/.git/config` now resolves through LANDMINE 7's partition **with its warning** instead
+of being swallowed silently. So s3 matches the Scanner and §14a's one-condition-one-answer holds.
+Pinned as a cross-backend PAIR — a test in each observer suite — and mutation-checked from both
+ends: dropping the term gives `Expected: "file" / Actual: "dir"`, and hoisting the Scanner's skip
+out of its `stat.directory?` arm kills the pointer file on that side too.
+
+The rule was right and its evidence was invented, which is the failure CLAUDE.md's own preamble
+records about its `§` reference counts; `repo_metadata.rb`'s header now carries the corrected
+version rather than the retracted one.
+
+Legs measured for this task: share and s3, both **2386 runs / 8738 assertions / 30 skips**,
+identical. `test-chunk-remote` was not re-run here — the table above is task 2's measurement.
+
+**An unrelated flake surfaced during those runs, with a mechanism, so it is written down rather
+than re-diagnosed later.** `WorkerBudgetTest#test_a_detector_that_raises_is_treated_as_contended`
+failed `Expected: 1 / Actual: 6` once in twelve full-suite runs, and is 8/8 green run alone.
+`WorkerBudget::PIDFILE_DIR` is a REAL shared directory (`tmp/browser-suites`) and
+`concurrent_browser_suite?` UNLINKS any pidfile whose pid is not alive — so any other process
+calling it deletes this test's `999998.pid` between its two assertions, and the second one then
+sees an idle box. Cross-process, not cross-test, which is why the fork runner's isolation does not
+help and why back-to-back `bin/ci` runs make it likelier. Nothing to do with the library; the fix
+belongs to the `claude/faster-ci` arc that added it (point `PIDFILE_DIR` at a per-test tmpdir).
 
 ### Still to land (tasks 4–9 of the plan)
 

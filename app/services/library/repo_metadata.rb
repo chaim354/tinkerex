@@ -33,12 +33,16 @@ module Library
   # directory named .git"; a submodule's real `.git` directory, wherever it actually lives, does
   # its own work.
   #
-  # ONE BACKEND CANNOT HONOUR THAT RULE, and it is named here rather than left to be discovered.
-  # Library::Scanner holds an lstat and asks the kind. Library::S3Observer holds a key in a FLAT
-  # KEYSPACE, where there is no kind to ask about — so a `.git` OBJECT is the marker there, and its
-  # bytes go unindexed. That observer's own comment argues why the fallout is the tolerable side of
-  # the trade; what belongs here is that the rule above describes what a caller may ASSUME (a
-  # marker node is a directory node, on every backend) and not what every observer could check.
+  # THAT RULE HOLDS ON ALL THREE BACKENDS, and on one of them it costs a term that reads as
+  # redundant. Library::Scanner holds an lstat and asks the kind outright. Library::S3Observer
+  # holds a key in a FLAT KEYSPACE, which permits an OBJECT exactly at the marker path, so it asks
+  # the question the only way that keyspace allows: `marker_prefix(rel) != rel`, the object AT the
+  # marker path being the pointer file rather than the marker. Delete that term and a `gitdir:`
+  # pointer becomes a marker on s3 alone, with its bytes unindexed — one condition with two answers
+  # across backends (§14a). Recorded because the first draft of this file asserted the flat
+  # keyspace "cannot" tell them apart and wrote the divergence down as a decision: the rule was
+  # right and its evidence was invented, which is the failure CLAUDE.md's own preamble records
+  # about its `§` reference counts.
   #
   # SCOPE: git only. `.svn`, `.hg` and friends are deliberately absent — adding one is a real
   # indexing change and a new write refusal, the same explicit decision OsClutter's header demands,
