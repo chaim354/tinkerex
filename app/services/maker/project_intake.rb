@@ -433,9 +433,13 @@ module Maker
     # Projects::AttachmentsController#relocate shipped ("the endpoint created Projects/<slug> as a
     # side effect of being POSTed to"), at library scale. The MoveConflicts concern reads rather
     # than calls for the same reason.
+    #
+    # MEMOIZED because #place now reads it once per file. Without the memo a 200-file inbox pays 200
+    # identical lookups; #call already returns early when it is nil, so the `||=` never re-queries a
+    # miss in a live run.
     def live_folder
       return nil if @project.folder_node_id.blank?
-      @user.nodes.present.find_by(node_id: @project.folder_node_id, kind: "dir")
+      @live_folder ||= @user.nodes.present.find_by(node_id: @project.folder_node_id, kind: "dir")
     end
 
     # Every live FILE in the folder's subtree, breadth-first — ONE QUERY PER LEVEL, not per node.
@@ -712,8 +716,17 @@ module Maker
       # this is not a gap to close, it is what "writes nothing" costs.
       return dest if @dry_run
 
-      target = Maker::LibraryFolder.ensure_path!(@user,
-                                                 [ Maker::ProjectFolders::ROOT, @project.slug, dest ])
+      # UNDER THE PROJECT'S OWN FOLDER NODE, NEVER A PATH REBUILT FROM THE SLUG. The two agree only
+      # while #ensure_library_folder! is the sole writer of folder_node_id and the slug has never
+      # changed — and Maker::ProjectDiscovery adopts folders whose NAME is not their slug as the
+      # mainline case. Rebuilding the path mints a second `Projects/<slug>/` tree and moves the
+      # user's file into it, silently. `create_child!` is ensure_path!'s single-segment sibling and
+      # is find-or-create, so this stays idempotent.
+      #
+      # THIS IS ALSO WHAT MAKES #place AGREE WITH .destination_for, which has always resolved the
+      # category folder under `parent_node_id` (§14f: prediction and behaviour cannot disagree).
+      target = Maker::LibraryFolder.create_child!(@user, parent_node_id: live_folder.node_id,
+                                                  name: dest)
       Maker::MoveNode.call(@user, node:, new_parent_node_id: target.node_id)
       dest
     rescue Maker::MoveNode::Collision => e

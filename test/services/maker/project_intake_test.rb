@@ -1261,5 +1261,35 @@ module Maker
       assert_equal 1, result.moved
       assert_not_equal @folder.node_id, loose.reload.parent_node_id
     end
+
+  # THE DESTINATION IS RESOLVED UNDER THE PROJECT'S FOLDER NODE, NEVER A PATH REBUILT FROM ITS SLUG.
+  #
+  # Reachable two ways, and Maker::ProjectDiscovery makes the second one the MAINLINE case:
+  #   * rename a project's slug after its folder was minted — folder_node_id keeps pointing at the
+  #     old `Projects/<old-slug>`;
+  #   * adopt a folder whose NAME is not its slug — `Projects/Desk Lamp` with slug `desk-lamp`.
+  #
+  # Rebuilding the path mints a SECOND tree and moves the user's file into it, leaving the folder
+  # the user made looking empty while the project still points at it. Nothing errors and nothing
+  # logs — this repo's dominant failure shape.
+  #
+  # A SECOND PROJECT, not the fixture's @project, precisely because setup's
+  # `ensure_library_folder!` gave that one a folder that DOES match its slug — which is the only
+  # arrangement the old code could handle, and so the only one that could not catch this.
+  test "a file is filed under the project's own folder node even when it is not named after the slug" do
+    folder = dir("Desk Lamp", parent: nil)
+    other  = @user.maker_projects.create!(name: "Bench Rig")
+    other.update_column(:folder_node_id, folder.node_id)
+    panel = file("panel.svg", parent: folder.node_id)
+
+    Maker::ProjectIntake.for_project(user: @user, project: other)
+
+    design = @user.nodes.present.find_by(parent_node_id: folder.node_id, name: "design",
+                                         kind: "dir")
+    refute_nil design, "the category folder must be created UNDER the project's own folder node"
+    assert_equal design.node_id, panel.reload.parent_node_id
+    assert_nil @user.nodes.present.find_by(name: "bench-rig", kind: "dir"),
+               "no second Projects/<slug> tree may be minted"
+  end
   end
 end
