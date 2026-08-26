@@ -397,6 +397,17 @@ bin/sync-server prepare && bin/sync-server start
 # status, so an unreadable secret becomes an EMPTY one that deploys silently (§14g):
 bin/secrets-preflight --all      # or: (omit) | s3 | share | ovh
 
+# RECORDING WORK -- bin/log is the SINGLE write door onto the Forgejo at forgejo.home. MCP may READ
+# it and never writes. Token via bin/secret (op://tinkerex/Forgejo/token); never `export`.
+bin/log setup                    # create the labels, idempotently (safe to re-run)
+bin/log arc --from-pr 261        # arc issue built from the merged PR body
+bin/log open "<t>" | deploy --image SHA | note N "<text>" | search "<q>" | show N | status
+# EXIT CODES ARE LOAD-BEARING. 3 = unreachable, and a WRITE was spooled to $LOG_SPOOL_DIR (default
+# tmp/log-pending/<branch>.md); a 502 counts as unreachable, there is NO auto-replay, and
+# `bin/log status` exits 4 until you file it. 5 = a BUG in bin/log -- NOT spooled, do not proceed.
+# It needs no gem, but an inherited RUBYOPT force-requiring bundler applies before its first line,
+# so a caller inside a bundled process must clear those names, as bin/sync-server does (§14j).
+
 # THE SYNC SERVER runs as a Kamal ACCESSORY, not a service -- that is what gives it the FIXED
 # container name `tinkerex-sync`, the stable network alias this app puts in CHUNK_REMOTE_URL. A
 # Kamal *service* gets a per-deploy `<name>-<sha>` name, so `http://tinkerex-sync:3000` does not
