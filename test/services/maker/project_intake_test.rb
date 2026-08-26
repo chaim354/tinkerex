@@ -1216,9 +1216,10 @@ module Maker
     #
     # THE BUG THIS FIXES SHIPPED AND RAN UNATTENDED. §14f's root-is-inbox rule files every file at
     # a project folder's root by category, so a repo cloned at `Projects/<slug>/` lost README.md to
-    # docs/, main.py to other/ and platformio.ini to other/ on every sweep — a delete plus an
-    # untracked add as far as git is concerned. Nested files were always safe (already in a
-    # subfolder, never revisited); the root files are most of what identifies a repo.
+    # docs/, and main.py and platformio.ini to code/ (to other/, before the `code` role existed) on
+    # every sweep — a delete plus an untracked add as far as git is concerned. Nested files were
+    # always safe (already in a subfolder, never revisited); the root files are most of what
+    # identifies a repo.
     test "a repo cloned at the project folder root is left entirely alone" do
       dir(".git")
       readme = file("README.md")

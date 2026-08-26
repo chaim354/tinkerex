@@ -1135,8 +1135,15 @@ class FilesController < ApplicationController
     # PDF before the :thumbnail branch: the detail view EMBEDS the whole PDF for the browser's own
     # viewer (a full, scrollable preview), while pdf is ALSO in Registry for a page-1 grid thumbnail.
     return :pdf   if ext == "pdf"
-    return :text  if %w[txt md markdown csv json xml yml yaml log rb js ts py rs go
-                        c h cpp html css toml ini cfg conf sh gcode].include?(ext)
+    # DERIVED FROM THE ONE VOCABULARY (§14d), not a second list beside it. This was an inline set
+    # of 26 extensions sitting next to Maker::FileAttachment::ROLE_BY_EXT, and it had already
+    # drifted: five of its entries (xml log ini cfg conf) were in no ROLE_BY_EXT entry at all, so
+    # the two tables disagreed about what those files even were. Adding an extension is now a
+    # one-line edit to ROLE_BY_EXT and nothing here has to hear about it.
+    #
+    # ORDER IS LOAD-BEARING and this line must stay below the three branches above: an .svg is a
+    # text file too, and the measure/image/pdf branches own those pages on purpose.
+    return :text  if Maker::FileAttachment::TEXT_ROLES.include?(Maker::FileAttachment.role_for(name))
     # Mesh formats the browser can parse itself -> the interactive client-side 3D viewer
     # (modelviewer_controller.js), which supersedes the static thumbnail on the detail page. The
     # thumbnail is still generated (Registry has these) and serves as the viewer's fallback poster.

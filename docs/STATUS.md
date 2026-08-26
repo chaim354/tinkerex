@@ -80,7 +80,7 @@ reading the last entry.
 
 ## Latest (2026-08-25): a git repo in the library, and the sweep that was tearing one apart (branch `claude/codemirror-code-editor`)
 
-**IN PROGRESS — six of nine tasks landed.** Spec:
+**IN PROGRESS — seven of nine tasks landed.** Spec:
 `docs/superpowers/specs/2026-08-25-codemirror-code-viewer-design.md`. Plan:
 `docs/superpowers/plans/2026-08-25-codemirror-code-viewer.md`.
 
@@ -549,10 +549,81 @@ more from the review round, plus Task 5's missing placement guard).
 intermittents and were clean on re-run — `WorkerBudgetTest`'s cross-process pidfile flake, and
 §12.7's `SQLite3::BusyException` in `Tools::AddonsControllerTest` on a back-to-back leg.
 
-### Still to land (tasks 7–9 of the plan)
+### One text vocabulary instead of two, and a `code` role (task 7, landed)
 
-The `code` role and collapsing `preview_kind`'s second extension vocabulary into the first; the
-bundle and its never-pin-per-package guard; the `codeview` controller.
+The visible half is that source code became a file type: a `code` role (label "Code", between
+`cad_source` and `gcode`), a `code/` project folder, and 26 extensions wired to it — `c h cpp cc
+hpp ino py rb js ts rs go sh lua sql html css xml log toml ini cfg conf yml yaml cmake`. A firmware
+tree now files itself instead of scattering into `other/`, and the Files-page filter grows a "Code"
+family for free, because `FilesHelper::EXT_FAMILIES` has derived from `ROLE_BY_EXT` since
+2026-07-29.
+
+**The half that mattered is that `FilesController#preview_kind` stopped carrying its own list.** It
+held 26 extensions inline, beside `Maker::FileAttachment::ROLE_BY_EXT` — the second vocabulary
+§14d exists to forbid, and this task's own 26 would have had to be kept in step across both. (The
+plan, the task brief and the first draft of every comment here said 25; counted, it is 26 — the
+invented-evidence shape §15 names, caught by running the count instead of repeating it.) `TEXT_ROLES = %w[document code gcode]` lives with the vocabulary and the branch is now
+`TEXT_ROLES.include?(role_for(name))`.
+
+**IT HAD ALREADY DRIFTED, AND THE COLLAPSE IS WHAT SHOWED IT.** Five of that inline list's
+entries — `xml log ini cfg conf` — were in **no** `ROLE_BY_EXT` entry at all: files the detail page
+previewed as text while the vocabulary called them `other`. Deriving the branch without wiring them
+first would have silently taken away a preview those files already had, which is why the guard for
+it is a FROZEN copy of the old list (`PREVIOUSLY_TEXT` in
+`test/controllers/files_controller_preview_kind_test.rb`) rather than anything re-derived from the
+new one.
+
+**One deliberate widening:** the branch now takes the whole `gcode` ROLE rather than the single
+`gcode` extension, so `.nc`, `.tap`, `.ngc` and `.gco` preview as text instead of offering nothing
+but a download. A CAM post's output is g-code text; only the old list disagreed.
+
+`pdf` stays `instructions` — `Models::AttachmentsController` dispatches `ExtractPdfMetadataJob` on
+that exact value — and `instructions` is deliberately absent from `TEXT_ROLES`.
+
+Mutations run, each red for its own reason:
+
+| mutation | result |
+|---|---|
+| `TEXT_ROLES = %w[document]` | red 4 ways — `xml` and `util.cc` `Expected: :text / Actual: :other`, the sweep's size floor `Expected 5 to be > 20`, and the driven page `Expected at least 1 element matching "pre.preview-text", found 0` |
+| `TEXT_ROLES` minus `gcode` only | red on the frozen list (`gcode`) and on `pocket.nc` — **the derived sweep stays green**, which is why the frozen list exists |
+| drop `"code" => "code"` from `ROLE_FOLDERS` | red — the totality guard, `add the new role to ROLE_FOLDERS — a role with no folder is never filed`, plus `KeyError: key not found: "code"` from `folder_for`'s no-default `fetch` |
+| add a 9-character extension (`gitignore`) | red twice — the model's EXT_RE test and `files_helper_test`'s chip test, `Expected /\A[a-z0-9]{1,8}\z/ to match "gitignore"` |
+| drop `xml` from `ROLE_BY_EXT` | red — the frozen list, `xml. Expected: :text / Actual: :other` |
+| wire `svg` into `code` | red — the derived sweep `Expected: :text / Actual: :measure`, **and nothing else in the file**: the branch test asks for `:measure` and still gets it |
+| add `instructions` to `TEXT_ROLES` | red — the constant assertion; see below |
+
+**THE LAST MUTATION DISPROVED A CLAIM IN THE CODE'S OWN COMMENTS, WHICH IS WHY IT WAS RUN.** Two
+comments said preview_kind "cannot catch" an `instructions` leak because its `:pdf` branch returns
+first. Half true: `preview_kind("manual.pdf") == :pdf` does stay green, but the DERIVED sweep goes
+red — as a contradiction reporting that pdf failed to be text, naming the wrong culprit. Both
+comments now say the measured thing.
+
+The sweep ("every extension with a text role reaches the text branch") is kept with its limits
+stated: it takes its subject FROM `TEXT_ROLES`, so it cannot catch a copy, and a one-role shrink
+merely narrows it. What it catches alone is the ORDER — an extension wired into a text role that an
+earlier branch (measure/image/pdf) already owns.
+
+**KNOWN RESIDUAL, RECORDED RATHER THAN LEFT TO BE FOUND.** Each earlier role addition shipped a
+`Rederive*Roles` data migration (`vector`/`cad_source` 2026-07-28, `document` 07-29, `laser` 07-30)
+to move existing `maker_file_attachments` rows out of `other`. This task ships none, because the
+plan's file list does not call for one and a data migration is not a decision to take in passing.
+Nothing MISFILES as a result — `Maker::ProjectFolders` asks `role_for` (pure, current) and never the
+stored column — but an attachment row written before today for a `.ino` or `.py` file keeps
+`role: "other"` and renders under "Other" in a project's Files panel until it is re-attached. One
+migration in the predecessors' shape closes it.
+
+Legs measured for this task: share and s3, both **2427 runs / 9069 assertions / 30 skips**,
+identical — task 6's 2417/8844 plus 10 runs (5 preview_kind, 3 model, 1 folder, 1 driven page).
+`test-chunk-remote` not run here (needs the sibling checkout). Both legs tripped the documented
+`WorkerBudgetTest` pidfile intermittent while being run back-to-back — share three times in five
+runs, s3 once — and `worker_budget_test.rb` is 3/3 green run alone, matching what task 2 recorded
+about it. One s3 run also reported a single error whose identity was not captured and did not
+recur. Assertion counts across repeated runs of the SAME leg varied 9067–9069, which is the ±2
+flap already under "Still open", not a backend difference.
+
+### Still to land (tasks 8–9 of the plan)
+
+The bundle and its never-pin-per-package guard; the `codeview` controller.
 
 ### Decided and NOT built, so it is not rediscovered as an oversight
 

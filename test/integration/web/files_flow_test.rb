@@ -375,6 +375,18 @@ module Web
       assert_select "pre.preview-text"
     end
 
+    # THE DRIVEN HALF of test/controllers/files_controller_preview_kind_test.rb, which asks
+    # preview_kind directly. That a source file resolves to :text says nothing about whether the
+    # PAGE reaches the text container — the branch is in the view, and this is the one backend
+    # suite that renders it.
+    test "a source file's detail page renders the text container too" do
+      sign_in
+      node_id = upload("firmware.cpp", "#include <Arduino.h>\nvoid setup() {}\n".b)
+      get file_path(node_id)
+      assert_response :success
+      assert_select "pre.preview-text"
+    end
+
     test "the file detail page shows a notes section and renders note bodies" do
       user = sign_in
       node_id = upload("part.stl", "solid".b)

@@ -29,6 +29,17 @@ module Maker
       assert_equal "docs",     Maker::ProjectFolders.folder_for("notes.md")
       assert_equal "images",   Maker::ProjectFolders.folder_for("photo.jpg")
       assert_equal "archives", Maker::ProjectFolders.folder_for("printables.zip")
+      assert_equal "code",     Maker::ProjectFolders.folder_for("main.cpp")
+    end
+
+    # THE ARGUABLE HALF OF THE `code` ROLE, pinned separately from the roll-call above because it
+    # is the decision someone would reverse: a build/config file lands beside the code it
+    # configures, not in `docs` with the READMEs. `docs` is where `document` and `instructions`
+    # both go, so the alternative was real and this is what rules it out.
+    test "build and config files file with the code, not with the documents" do
+      assert_equal "code", Maker::ProjectFolders.folder_for("platformio.ini")
+      assert_equal "code", Maker::ProjectFolders.folder_for("Cargo.toml")
+      assert_equal "docs", Maker::ProjectFolders.folder_for("README.md")
     end
 
     # An unrecognised extension must land somewhere rather than raise: role_for defaults to
