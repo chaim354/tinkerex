@@ -72,28 +72,47 @@ module Maker
 
     # ARCHIVING IS THE DISMISSAL, AND THIS IS THE TEST THAT MAKES IT ONE. An archived project keeps
     # its folder_node_id, so the unscoped claim lookup passes over its folder forever.
+    #
+    # d-rack IS A POSITIVE CONTROL, AND IT MUST BE A DIFFERENT FOLDER FROM THE ARCHIVED ONE'S. A
+    # bare "nothing changed" assertion cannot tell "the archived folder was correctly passed over"
+    # from "the sweep is broken and adopted nothing at all" — see "dot-folders are skipped" for the
+    # concrete mutation that stayed green under the old, absence-only version of this test. Asserting
+    # the exact final folder set proves both halves at once: d-lamp was NOT re-adopted (it appears
+    # once, not twice) and d-rack WAS (the sweep still works).
     test "an archived project still claims its folder" do
       folder = dir("d-lamp", "Desk Lamp", "d-projects")
       project = @user.maker_projects.create!(name: "Desk Lamp")
       project.update_column(:folder_node_id, folder.node_id)
       project.archive!
+      dir("d-rack", "Rack", "d-projects")
 
       run = Maker::ProjectDiscovery.for_user(user: @user)
 
-      assert_equal 0, run.created
-      assert_equal 1, @user.maker_projects.count
+      assert_equal 1, run.created
+      assert_equal %w[d-lamp d-rack], @user.maker_projects.order(:folder_node_id).pluck(:folder_node_id)
     end
 
     # `.git` KEEPS ITS NODE (§14b) — it is the evidence a directory is a working tree — so without
     # the dot rule a repo checked out at the Projects/ root becomes a project titled ".git".
+    #
+    # d-lamp IS A POSITIVE CONTROL, NOT DECORATION. A bare `run.created == 0` is satisfied just as
+    # happily by a sweep that correctly skips dot-folders as by one that is completely broken and
+    # adopts NOTHING — concretely, `root.node_id` typo'd to `root.id` (the AR primary key, sitting
+    # right on the same object) makes the candidate query match zero rows, ever, and this test
+    # stayed green through that mutation before the sibling was added. `run.candidates == 1` is
+    # kept alongside `run.created == 1` because it has independent discriminating power here: if
+    # the dot-filter itself regresses, candidates jumps to 3 while created could still coincidentally
+    # read 1 depending on the cap math, so the two assertions catch different breakages.
     test "dot-folders are skipped" do
       dir("d-git", ".git", "d-projects")
       dir("d-hidden", ".scratch", "d-projects")
+      dir("d-lamp", "Desk Lamp", "d-projects")
 
       run = Maker::ProjectDiscovery.for_user(user: @user)
 
-      assert_equal 0, run.created
-      assert_equal 0, run.candidates
+      assert_equal 1, run.created
+      assert_equal 1, run.candidates
+      assert_equal [ "d-lamp" ], @user.maker_projects.pluck(:folder_node_id)
     end
 
     test "a folder deeper than a direct child is not adopted" do
@@ -105,20 +124,29 @@ module Maker
       assert_equal [ "d-lamp" ], @user.maker_projects.pluck(:folder_node_id)
     end
 
+    # d-lamp IS A POSITIVE CONTROL — see "dot-folders are skipped" for why a bare `created == 0`
+    # cannot tell "the file was correctly skipped" from "the sweep found nothing at all".
     test "a file directly under Projects is not adopted" do
       file("f-stray", "stray.stl", "d-projects")
+      dir("d-lamp", "Desk Lamp", "d-projects")
 
       run = Maker::ProjectDiscovery.for_user(user: @user)
 
-      assert_equal 0, run.created
+      assert_equal 1, run.created
+      assert_equal [ "d-lamp" ], @user.maker_projects.pluck(:folder_node_id)
     end
 
+    # d-lamp IS A POSITIVE CONTROL — see "dot-folders are skipped" for why a bare `created == 0`
+    # cannot tell "the tombstoned folder was correctly skipped" from "the sweep found nothing at
+    # all".
     test "a tombstoned folder is not adopted" do
       dir("d-gone", "Gone", "d-projects").update!(deleted: true)
+      dir("d-lamp", "Desk Lamp", "d-projects")
 
       run = Maker::ProjectDiscovery.for_user(user: @user)
 
-      assert_equal 0, run.created
+      assert_equal 1, run.created
+      assert_equal [ "d-lamp" ], @user.maker_projects.pluck(:folder_node_id)
     end
 
     # NEVER MINTS `Projects/`. A user with no Projects folder is not swept — creating one as a side
