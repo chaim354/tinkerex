@@ -48,5 +48,22 @@ module Maker
       @user.maker_shelves.create!(path: "Models")
       assert_not @user.maker_shelves.new(path: "Models").valid?
     end
+
+    # EVERY SEEDED PATH MUST SURVIVE THIS CLASS'S OWN VALIDATION. Nothing else checks that: once
+    # seeding is wired up, an invalid SEEDS entry surfaces as create! raising for every user on
+    # their first visit, at the door rather than here.
+    test "every seeded path is valid" do
+      Maker::Shelf::SEEDS.each do |seeded|
+        assert @user.maker_shelves.new(path: seeded).valid?, "#{seeded.inspect} should be valid"
+      end
+    end
+
+    # NIL IS NOT THE ROOT. "" is; a missing path is a caller that forgot one, and letting it
+    # validate defers the failure to the database's NOT NULL as a 500.
+    test "a nil path is refused rather than deferred to the database" do
+      shelf = @user.maker_shelves.new(path: nil)
+      assert_not shelf.valid?
+      assert_includes shelf.errors[:path].join, "isn't allowed"
+    end
   end
 end

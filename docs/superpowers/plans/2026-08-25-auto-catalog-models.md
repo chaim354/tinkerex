@@ -7,7 +7,7 @@ without anyone walking the Import flow.
 
 **Architecture:** A folder is either a *shelf* or a *model*; the nearest shelf ancestor decides which.
 Shelves are user-editable path patterns; models are keyed by `node_id` so a rename keeps one entry.
-A sweep over the `nodes` catalog -- never a hook per upload door (CLAUDE.md 14f) -- creates the rows.
+A sweep over the `nodes` catalog -- never a hook per upload door (CLAUDE.md §14f) -- creates the rows.
 
 **Tech Stack:** Rails 8, Minitest, Solid Queue recurring jobs, server-rendered Hotwire.
 
@@ -20,7 +20,7 @@ the arguments this plan implements.
 
 You are working in the **maker app**. Five things about this repo will bite you if you skip them:
 
-1. **CLAUDE.md 15 requires you to mutation-check every guard you write.** After a test that exists
+1. **CLAUDE.md §15 requires you to mutation-check every guard you write.** After a test that exists
    to *forbid* something goes green, break the thing it guards, confirm the test goes **RED**, then
    restore. A guard that has never failed has not been shown to work. Several steps below make this
    explicit; do it for the others too.
@@ -30,11 +30,11 @@ You are working in the **maker app**. Five things about this repo will bite you 
    `test/services/maker/project_intake_test.rb`, which moves real files and therefore needs one.
 3. **Never call `Maker::Model#ensure_library_folder!` from the sweep.** It *creates*
    `Models/<slug>` as a side effect of looking, which at sweep scale would mint a folder per model.
-   14f records the same bug in `Projects::AttachmentsController#relocate`.
+   §14f records the same bug in `Projects::AttachmentsController#relocate`.
 4. **Assert query counts as constant in N, never as a literal.** The counts differ per backend, so
    a literal pins one leg and fails the other two. `test/integration/web/page_query_budget_test.rb`
    is the pattern to copy.
-5. **`docs/STATUS.md` is part of this branch, not a follow-up** (15). Task 9.
+5. **`docs/STATUS.md` is part of this branch, not a follow-up** (§15). Task 9.
 
 Run the whole suite with `bin/rails test`. Run one file with
 `bin/rails test test/path/to/file_test.rb`, one case with `-n test_name`.
@@ -56,7 +56,7 @@ Run the whole suite with `bin/rails test`. Run one file with
 | `app/controllers/shelves_controller.rb` | the settings page |
 | `app/views/shelves/index.html.erb` | the shelf list and add form |
 | `lib/tasks/models.rake` | `rake models:catalog` |
-| `docs/invariants/model-intake.md` | the area invariants, anchored at 14k |
+| `docs/invariants/model-intake.md` | the area invariants, anchored at §14k |
 
 **Modified:** `app/models/user.rb`, `app/models/maker/model.rb`, `app/controllers/models_controller.rb`,
 `app/views/models/index.html.erb`, `app/jobs/library/scan_job.rb`, `config/recurring.yml`,
@@ -135,7 +135,7 @@ module Maker
     # THE REJECTIONS ARE THE POINT. A shelf path is compared against real library paths, so a
     # traversal segment or a reserved name is a typo worth refusing at the door -- and this asks
     # the SAME two questions LibraryBrowseController#create_folder asks rather than a private,
-    # weaker spelling (14b).
+    # weaker spelling (§14b).
     test "traversal, absolute, empty and reserved segments are refused" do
       [ "..", "a/../b", "/Models", "Models/", "Models//parts", ".trash", "a/.trash/b",
         ".maker-tmp-x" ].each do |bad|
@@ -153,6 +153,23 @@ module Maker
     test "paths are unique per user" do
       @user.maker_shelves.create!(path: "Models")
       assert_not @user.maker_shelves.new(path: "Models").valid?
+    end
+
+    # EVERY SEEDED PATH MUST SURVIVE THIS CLASS'S OWN VALIDATION. Nothing else checks that: once
+    # seeding is wired up, an invalid SEEDS entry surfaces as create! raising for every user on
+    # their first visit, at the door rather than here.
+    test "every seeded path is valid" do
+      Maker::Shelf::SEEDS.each do |seeded|
+        assert @user.maker_shelves.new(path: seeded).valid?, "#{seeded.inspect} should be valid"
+      end
+    end
+
+    # NIL IS NOT THE ROOT. "" is; a missing path is a caller that forgot one, and letting it
+    # validate defers the failure to the database's NOT NULL as a 500.
+    test "a nil path is refused rather than deferred to the database" do
+      shelf = @user.maker_shelves.new(path: nil)
+      assert_not shelf.valid?
+      assert_includes shelf.errors[:path].join, "isn't allowed"
     end
   end
 end
@@ -202,7 +219,7 @@ module Maker
     # first a user reaches -- the settings page and the sweep -- so neither has to be first.
     #
     # WITHOUT THE STAMP, deleting every shelf resurrects all three on the next tick: the
-    # fight-the-user shape 14f exists to prevent, and the same argument that makes a dismissed
+    # fight-the-user shape §14f exists to prevent, and the same argument that makes a dismissed
     # model stay dismissed.
     def self.seed_once!(user)
       return if user.shelves_seeded_at.present?
@@ -215,9 +232,16 @@ module Maker
 
     # THE SAME TWO QUESTIONS EVERY OTHER LEAF-NAME DOOR ASKS, composed rather than re-spelled:
     # Maker::MoveNode.valid_leaf_name? for syntax and Library::ReservedNames.reserved? for the
-    # library's own namespace (14b -- a private, weaker spelling is how `..` becomes a live node).
+    # library's own namespace (§14b -- a private, weaker spelling is how `..` becomes a live node).
     def path_segments_are_allowed
-      raw = path.to_s
+      # NIL IS NOT THE ROOT, AND THE DIFFERENCE MATTERS AT A DOOR. `""` is the library root and is
+      # valid; a MISSING path is a caller that forgot one. Without this the record validates and
+      # then dies on the database's NOT NULL, turning a routine form error into a 500 in
+      # ShelvesController.
+      return errors.add(:path, "isn't allowed - a shelf needs a path (\"\" is the library root)") if path.nil?
+
+      raw = path
+      # The library root, which is a perfectly ordinary shelf and has no segments to check.
       return if raw.empty?
 
       if raw.start_with?("/") || raw.end_with?("/") || raw.include?("//")
@@ -227,7 +251,13 @@ module Maker
 
       raw.split("/").each do |segment|
         next if segment == WILDCARD
-        next if Maker::MoveNode.valid_leaf_name?(segment) && !Library::ReservedNames.reserved?(segment)
+        # THE WILDCARD CLAUSE IS THIS CLASS'S OWN AND CANNOT BE DELEGATED. `*` is an ordinary legal
+        # filename byte, so valid_leaf_name?("*x") is TRUE and reserved?("*x") is FALSE -- neither
+        # composed check knows this class has a wildcard syntax at all. Without it `Projects/*x/models`
+        # saves happily and then matches nothing, forever, silently.
+        next if !segment.include?(WILDCARD) &&
+                Maker::MoveNode.valid_leaf_name?(segment) &&
+                !Library::ReservedNames.reserved?(segment)
 
         errors.add(:path, "isn't allowed - #{segment.inspect} can't be a folder name")
         return
@@ -248,7 +278,7 @@ has_many :maker_shelves, class_name: "Maker::Shelf", dependent: :destroy
 - [ ] **Step 6: Migrate and run the test**
 
 Run: `bin/rails db:migrate && bin/rails test test/models/maker/shelf_test.rb`
-Expected: PASS, 6 runs.
+Expected: PASS, 8 runs.
 
 - [ ] **Step 7: Mutation-check the rejection guard**
 
@@ -284,12 +314,12 @@ Create `db/migrate/20260825150100_add_auto_catalog_to_maker_models.rb`:
 # that exists today came through models#new.
 #
 # `auto_node_id` IS A node_id AND NOT A PATH, unlike a shelf. Library::Reconciler's pairing by
-# (content_hash, size) keeps a renamed node's node_id -- 14b's headline promise -- so renaming
+# (content_hash, size) keeps a renamed node's node_id -- §14b's headline promise -- so renaming
 # `3D Models/Enclosure` to `3D Models/Enclosure v2` keeps ONE catalog entry where a path key would
 # abandon the old row and mint a second.
 #
 # `dismissed_at` IS WHY DELETING AN AUTO MODEL DOES NOT DESTROY IT. A destroyed row is recreated by
-# the next sweep and the user deletes it again -- 14f's recorded fight-the-user failure, which on
+# the next sweep and the user deletes it again -- §14f's recorded fight-the-user failure, which on
 # chunk_remote also costs a changelog entry per round.
 class AddAutoCatalogToMakerModels < ActiveRecord::Migration[8.1]
   def change
@@ -423,7 +453,7 @@ module Maker
                            confirmed_at: Time.current, omniauth_signup: true)
       # BACKEND-NEUTRAL FIXTURES ON PURPOSE. This class reads `nodes` and never touches the port,
       # so a bare create! is a complete fixture here -- unlike project_intake_test.rb, which moves
-      # real files and therefore needs a real share library (14a's NULL storage_path trap).
+      # real files and therefore needs a real share library (§14a's NULL storage_path trap).
       dir("d-models", "3D Models", nil)
       dir("d-enc", "Enclosure", "d-models")
       dir("d-parts", "parts", "d-enc")
@@ -563,7 +593,7 @@ end
 - [ ] **Step 4: Run the test**
 
 Run: `bin/rails test test/services/maker/library_tree_test.rb`
-Expected: PASS, 6 runs.
+Expected: PASS, 8 runs.
 
 - [ ] **Step 5: Mutation-check the cycle guard**
 
@@ -877,7 +907,7 @@ module Maker
       Maker::ModelIntake.for_user(user: @user)
 
       assert_equal "d-enc", @user.maker_models.find_by!(auto_node_id: "d-enc").folder_node_id
-      # ensure_library_folder! would have minted Models/<slug>; the sweep must never call it (14f).
+      # ensure_library_folder! would have minted Models/<slug>; the sweep must never call it (§14f).
       assert_nil @user.nodes.present.find_by(name: "Models", kind: "dir")
     end
 
@@ -903,7 +933,7 @@ module Maker
     end
 
     # DISMISSAL IS PERMANENT AND THE SWEEP MUST RESPECT IT -- otherwise the next tick recreates the
-    # row the user just deleted, and they delete it again (14f).
+    # row the user just deleted, and they delete it again (§14f).
     test "a dismissed model is not recreated" do
       Maker::ModelIntake.for_user(user: @user)
       @user.maker_models.find_by!(auto_node_id: "d-enc").update!(dismissed_at: Time.current)
@@ -992,7 +1022,7 @@ Append to `app/services/maker/model_intake.rb`, inside `class ModelIntake`, belo
     # THERE IS DELIBERATELY NO SECOND, SMALLER CAP. Maker::ProjectIntake carries MAX_MOVES AND
     # EAGER_MAX_MOVES because it has an entry point that runs inside a browser request. This class
     # does not: nothing in a web request sweeps. If a nudge is ever added it needs its own cap, for
-    # the reason 14f states at both of those constants.
+    # the reason §14f states at both of those constants.
     MAX_MODELS = 200
 
     def self.max_models
@@ -1007,7 +1037,7 @@ Append to `app/services/maker/model_intake.rb`, inside `class ModelIntake`, belo
       plan = classify(user)
 
       existing = user.maker_models.where(auto_node_id: plan.model_keys).index_by(&:auto_node_id)
-      # A folder an IMPORT-origin model already claims is that model's, not ours (14f's "reads
+      # A folder an IMPORT-origin model already claims is that model's, not ours (§14f's "reads
       # folder_node_id, never calls ensure_library_folder!" has the same shape: look, do not take).
       claimed = user.maker_models.where(origin: "import")
                     .where(folder_node_id: plan.model_keys).pluck(:folder_node_id).to_set
@@ -1026,7 +1056,7 @@ Append to `app/services/maker/model_intake.rb`, inside `class ModelIntake`, belo
           auto_node_id: key,
           # A DIR KEY IS ALREADY THE MODEL'S FOLDER. Setting it here creates nothing; calling
           # ensure_library_folder! would mint Models/<slug> per model as a side effect of looking
-          # (14f, and Projects::AttachmentsController#relocate's recorded bug).
+          # (§14f, and Projects::AttachmentsController#relocate's recorded bug).
           folder_node_id: plan.dir_keys.include?(key) ? key : nil
         )
         existing[key] = model
@@ -1064,7 +1094,7 @@ Append to `app/services/maker/model_intake.rb`, inside `class ModelIntake`, belo
 
 **No memo anywhere in this class, and that is deliberate.** The role of a file is looked up from
 `plan.names`, which the classifier already collected. The tempting alternative -- a
-`@role_names ||=` hash keyed on `user.id` -- is the process-wide-state bug 14a records for
+`@role_names ||=` hash keyed on `user.id` -- is the process-wide-state bug §14a records for
 `ChunkRemote#transport`: a class-level memo is not a per-request cache, it is state that outlives
 every request in the process, and the next user gets the first user's answer.
 
@@ -1211,7 +1241,7 @@ In `app/controllers/models_controller.rb`, replace `#destroy`:
 ```ruby
   # AN AUTO MODEL IS DISMISSED, NOT DESTROYED, AND THE ASYMMETRY IS THE POINT. Maker::ModelIntake
   # recreates any auto row whose node still holds a model file, so destroying one means the user
-  # deletes it again on the next tick -- 14f's fight-the-user failure, which on chunk_remote costs
+  # deletes it again on the next tick -- §14f's fight-the-user failure, which on chunk_remote costs
   # a changelog entry per round. The row IS the memory. Nothing recreates an imported model, so
   # that one keeps today's behaviour.
   def destroy
@@ -1249,7 +1279,7 @@ and, after the `@models = ...` assignment, filter empties:
 - [ ] **Step 5: Run the test**
 
 Run: `bin/rails test test/integration/web/models_catalog_test.rb`
-Expected: PASS, 6 runs.
+Expected: PASS, 8 runs.
 
 - [ ] **Step 6: Mutation-check both rules**
 
@@ -1407,7 +1437,7 @@ And beside `#intake_project_folders`, add:
 ```ruby
     # STRICTLY AFTER THE PROJECT INTAKE, IN THIS JOB, AND THE ORDER IS LOAD-BEARING TWICE OVER.
     #
-    # After the RECONCILE for the reason 14f already gives: the catalog reads paths, and a path the
+    # After the RECONCILE for the reason §14f already gives: the catalog reads paths, and a path the
     # Scanner has not settled is a wrong answer.
     #
     # After the PROJECT INTAKE because that step MOVES files. Cataloguing first would key a model
@@ -1602,7 +1632,7 @@ Create `app/controllers/shelves_controller.rb`:
 
 ```ruby
 # Which library folders are SHELVES -- folders that are not themselves models. Session-authed web
-# layer (14d), not the device-token v1 API. Reads `nodes` and writes only maker_shelves rows; no
+# layer (§14d), not the device-token v1 API. Reads `nodes` and writes only maker_shelves rows; no
 # bytes and no port calls, so there is nothing to capability-gate.
 class ShelvesController < ApplicationController
   def index
@@ -1625,7 +1655,7 @@ class ShelvesController < ApplicationController
     # uniqueness, and the reserved/traversal segment check -- and a picker CAN reach the second: a
     # library with a real `.trash` directory in it offers that folder like any other. Assuming
     # "already a shelf" here would tell a user the wrong fact about their own library, which is the
-    # shape 14a records for a clobber answered as "File not found."
+    # shape §14a records for a clobber answered as "File not found."
     redirect_to shelves_path, alert: "#{display(path)} #{shelf.errors[:path].first || 'could not be added'}."
   end
 
@@ -1773,7 +1803,7 @@ Create `docs/invariants/model-intake.md` with exactly this content:
 ```markdown
 # The model catalog and shelves
 
-> CLAUDE.md 14k's area file. Read before touching `app/services/maker/model_intake.rb`,
+> CLAUDE.md §14k's area file. Read before touching `app/services/maker/model_intake.rb`,
 > `app/services/maker/library_tree.rb`, `app/models/maker/shelf.rb`,
 > `app/controllers/shelves_controller.rb`, or the `origin` / `auto_node_id` / `dismissed_at`
 > columns on `maker_models`. The arc that produced it is in `docs/STATUS.md`.
@@ -1786,7 +1816,7 @@ Create `docs/invariants/model-intake.md` with exactly this content:
 - **A SHELF IS A PATH PATTERN AND A MODEL IS A NODE ID. The two identities differ on purpose and
   neither may be "unified".** Only a pattern can express `Projects/*/models` -- one rule over a
   folder per project, none of which need exist. Only a node_id survives a rename: `Library::
-  Reconciler` pairs by `(content_hash, size)` and keeps a renamed node's `node_id` (14b), so a path
+  Reconciler` pairs by `(content_hash, size)` and keeps a renamed node's `node_id` (§14b), so a path
   key would abandon a renamed folder's row and mint a second, leaving two models for one folder.
   The cost of path-keyed shelves -- a renamed folder silently stops matching -- is paid by the
   settings page's live/missing indicator, which is therefore not decoration.
@@ -1801,22 +1831,22 @@ Create `docs/invariants/model-intake.md` with exactly this content:
   themselves age out through `Maker::AttachmentReaper` on the ordinary grace window. Do not add a
   second reaper for this.
 - **SHELVES ARE SEEDED ONCE, GUARDED BY `users.shelves_seeded_at`.** Ensuring the three defaults on
-  every sweep would resurrect every row a user deleted, the fight-the-user shape 14f exists to
+  every sweep would resurrect every row a user deleted, the fight-the-user shape §14f exists to
   prevent. Both first-touch doors -- the settings page and the sweep -- call the same
   `Maker::Shelf.seed_once!`, so neither has to be first.
 - **THE SWEEP NEVER CALLS THE PORT AND NEVER CALLS `ensure_library_folder!`.** It writes database
   rows only, which is what makes it identical on all three backends and testable without a library
   on disk. `folder_node_id` is set from the dir key the classifier already resolved; calling the
   ensure would MINT `Models/<slug>` for every model as a side effect of merely looking -- the bug
-  14f records for `Projects::AttachmentsController#relocate`, at library-sweep scale.
+  §14f records for `Projects::AttachmentsController#relocate`, at library-sweep scale.
 - **ONE CAP, NOT TWO, AND THE SECOND ONE IS OWED BY WHOEVER ADDS A NUDGE.** `MAX_MODELS` bounds an
   unattended run's churn and is absolute rather than a percentage, because the intended first run
   catalogues 100% of what is there. `Maker::ProjectIntake` carries a second, smaller cap only
   because it has an entry point inside a browser request; nothing here does. If a nudge is ever
-  added it needs its own cap, for the reason 14f states at both of those constants.
+  added it needs its own cap, for the reason §14f states at both of those constants.
 - **IN `Library::ScanJob` THE CATALOG RUNS AFTER THE RECONCILE **AND** AFTER THE PROJECT INTAKE, in
   that job, and both orderings are load-bearing.** After the reconcile because the catalog reads
-  paths and an unsettled path is a wrong answer (14f). After the project intake because that step
+  paths and an unsettled path is a wrong answer (§14f). After the project intake because that step
   MOVES files: catalogue first and a model is keyed on a file about to be filed into
   `Projects/<slug>/models/`, created at one location and emptied moments later by the same job.
 - **`Maker::LibraryTree`'s ancestor walk MUST keep its cycle guard.** A parent cycle is
@@ -1824,13 +1854,13 @@ Create `docs/invariants/model-intake.md` with exactly this content:
   the sweep rather than failing it. An unresolvable chain answers `nil`, which callers skip -- a
   library-wide sweep must not abort over one broken node.
 - **THE TRIGGER SET IS `Maker::FileAttachment.role_for(name) == "model"`, never a fresh extension
-  list.** 14d allows one file-type vocabulary. Consequence, stated rather than discovered: `.obj`,
+  list.** §14d allows one file-type vocabulary. Consequence, stated rather than discovered: `.obj`,
   `.step` and `.stp` are catalogued alongside `.stl` and `.3mf`.
 ```
 
 - [ ] **Step 3: Add the CLAUDE.md stub**
 
-In `CLAUDE.md`, after the `14j` section, add a new anchor - **do not renumber anything**:
+In `CLAUDE.md`, after the `§14j` section, add a new anchor - **do not renumber anything**:
 
 ```markdown
 ### 14k. The model catalog and shelves -> **`docs/invariants/model-intake.md`**
@@ -1842,7 +1872,7 @@ rule, why a shelf is a path and a model is a node_id, why dismissal is not delet
 ScanJob ordering.
 ```
 
-Add the file to `10`'s `/docs/invariants` listing beside the other four.
+Add the file to §10's `/docs/invariants` listing beside the other four.
 
 - [ ] **Step 4: Check the docs guard**
 
@@ -1866,19 +1896,19 @@ Run: `bin/ci`
 Expected: all seven gates green. **Read the three backend legs' run counts** (`test`, `test-s3`,
 `test-chunk-remote`) and confirm they match within the known flap of plus or minus 2 assertions and
 1 skip. A structural difference means a test in this branch depends on the ambient
-`LIBRARY_BACKEND`, which is a real bug (15). `test-chunk-remote` needs a sibling checkout:
+`LIBRARY_BACKEND`, which is a real bug (§15). `test-chunk-remote` needs a sibling checkout:
 `gh repo clone chaim354/tinkerex-sync ../tinkerex-sync`.
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add lib/tasks/models.rake docs/invariants/model-intake.md CLAUDE.md docs/STATUS.md
-git commit -m "Document the model catalog: rake task, 14k invariants, STATUS entry"
+git commit -m "Document the model catalog: rake task, §14k invariants, STATUS entry"
 ```
 
 - [ ] **Step 8: Finish the branch**
 
-Per 15's close-out rule, with `bin/ci` green: commit, push and open a PR without stopping to ask.
+Per §15's close-out rule, with `bin/ci` green: commit, push and open a PR without stopping to ask.
 Use `/finish-branch`. **Do not merge** - that always needs an explicit go-ahead. State plainly in
 the PR what was verified and what was not; in particular, whether the sweep has been run against a
 real library or only against fixtures.
@@ -1893,7 +1923,7 @@ real library or only against fixtures.
   `.for_node(user:, node:)` as a surviving entry point "the rake task uses". It has no caller:
   the rake task sweeps whole users, and the nudge that would need it is deferred. An entry point
   with no caller is dead code that the next reader has to evaluate, so `for_user` is the only one.
-  Whoever adds the nudge adds `for_node` with it, plus its own cap, for the reason 14f gives at
+  Whoever adds the nudge adds `for_node` with it, plus its own cap, for the reason §14f gives at
   `EAGER_MAX_MOVES`.
 - **The sweep does not attach to import-origin models.** A file appearing under `Models/<slug>/`
   is left alone - Import owns those rows.
