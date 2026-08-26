@@ -50,6 +50,98 @@ module Log
     "status" => [ "",               "Report anything unfiled" ]
   }.freeze
 
+  TOKEN_REF = "op://tinkerex/Forgejo/token"
+
+  # THE PAYLOAD RIDES ON THE EXCEPTION, never on a module-level accumulator. `api` knows both what
+  # failed and what was being sent, so it attaches the payload at the ONE raise site. Two things
+  # fall out that a shared accumulator could not give: a GET carries no payload, so a READ verb
+  # spools nothing BY CONSTRUCTION rather than by a rule someone remembers to apply; and nothing
+  # accumulates across calls, so a loop failing on its Nth write cannot re-spool the N-1 already
+  # filed. (PR 2's import is exactly that loop.)
+  class Unreachable < StandardError
+    attr_reader :payload
+
+    def initialize(message, payload: nil)
+      super(message)
+      @payload = payload
+    end
+  end
+
+  class UsageError < StandardError; end
+
+  def forgejo_url = ENV.fetch("FORGEJO_URL", "http://forgejo.home")
+  def owner       = ENV.fetch("FORGEJO_OWNER", "chaim354")
+  def repo        = ENV.fetch("FORGEJO_REPO", "tinkerex")
+
+  def repo_path(suffix) = "/api/v1/repos/#{owner}/#{repo}#{suffix}"
+
+  # THROUGH bin/secret, NEVER `op read` DIRECTLY. That file is this repo's single definition of
+  # where a credential comes from, and it is what makes an exported value win over the vault.
+  # capture3 keeps the streams apart: bin/secret sends the value only on fd1 and its diagnostics
+  # only on fd2, so forwarding err cannot leak. Any rewrite that merges them re-opens the
+  # 2026-07-29 leak. `.chomp` because nothing else asserts bin/secret's --no-newline contract, and
+  # a trailing newline is an ArgumentError inside the header assignment.
+  def token
+    @token ||= begin
+      out, err, status = Open3.capture3(File.expand_path("secret", __dir__), "FORGEJO_TOKEN", TOKEN_REF)
+      raise Unreachable, "could not resolve FORGEJO_TOKEN from #{TOKEN_REF}: #{err.strip}" if !status.success? || out.empty?
+
+      out.chomp
+    end
+  end
+
+  def api(method, path, body = nil)
+    perform(method, path, body)
+  rescue Unreachable => e
+    # Attach what was being sent, at the one place that knows both. A failure raised from `token`
+    # carries no payload of its own, and a WRITE must still be spooled.
+    raise(e.payload ? e : Unreachable.new(e.message, payload: body))
+  rescue SystemCallError, Net::OpenTimeout, Net::ReadTimeout, SocketError => e
+    raise Unreachable.new("#{forgejo_url}: #{e.message}", payload: body)
+  end
+
+  # URI.join DROPS A PATH PREFIX — URI.join("http://host/git", "/api/v1/x") is
+  # "http://host/api/v1/x". Forgejo behind a subpath is an ordinary self-host shape, so the URL is
+  # built by concatenation instead.
+  def perform(method, path, body)
+    uri = URI.parse("#{forgejo_url.chomp('/')}#{path}")
+
+    request = case method
+    when :get  then Net::HTTP::Get.new(uri)
+    when :post then Net::HTTP::Post.new(uri)
+    else raise ArgumentError, "unsupported method #{method.inspect}"
+    end
+
+    request["Authorization"] = "token #{token}"
+    request["Content-Type"]  = "application/json"
+    request.body = JSON.generate(body) if body
+
+    response = Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https",
+                                                   open_timeout: 5, read_timeout: 15) do |http|
+      http.request(request)
+    end
+
+    # A NON-2xx IS UNREACHABLE TOO, AND THAT IS THE POINT OF THIS METHOD. A dead container behind
+    # a live proxy answers 502 and a rotated token answers 401 — both are HTTP RESPONSES, so a
+    # handler that only caught connection errors would let the LIKELIEST outage exit without
+    # spooling, which is how an arc gets lost while the docs promise otherwise.
+    unless response.code.to_i.between?(200, 299)
+      raise Unreachable, "HTTP #{response.code} from #{path}: #{response.body.to_s[0, 200]}"
+    end
+
+    response
+  end
+
+  def show(argv)
+    number = argv.shift or raise UsageError, "show needs an issue number"
+    issue = JSON.parse(api(:get, repo_path("/issues/#{number}")).body)
+
+    puts "##{issue['number']} #{issue['title']} [#{issue['state']}]"
+    puts
+    puts issue["body"]
+    EXIT_OK
+  end
+
   def usage_text
     rows = SUBCOMMANDS.map do |name, (args, description)|
       "    " + "bin/log #{name} #{args}".rstrip.ljust(34) + description
@@ -83,15 +175,35 @@ module Log
     end
 
     dispatch(command, argv)
+  rescue UsageError => e
+    warn "bin/log: #{e.message}"
+    warn usage_text
+    EXIT_USAGE
+  rescue Unreachable => e
+    warn "bin/log: Forgejo is unreachable — #{e.message}"
+    EXIT_UNREACHABLE
   end
 
   # Tasks 2-7 replace this arm by arm. Every subcommand is declared in SUBCOMMANDS from the start so
   # an unbuilt one READS as "not implemented yet" rather than "unknown command". Both still exit 2,
   # so a scripted caller cannot tell them apart — only the human-facing message differs.
-  def dispatch(command, _argv)
-    warn "bin/log: #{command} is not implemented yet"
-    EXIT_USAGE
+  #
+  # EVERY ARM ENDS IN AN EXPLICIT EXIT_* CONSTANT. `puts` returns nil, and exit(nil) is a
+  # TypeError whose status is 1 — which is EXIT_UNFILED. An arm that forgets would report a
+  # successful file as a backlog. The guard at the bottom of the file makes that loud.
+  def dispatch(command, argv)
+    case command
+    when "show" then show(argv)
+    else
+      warn "bin/log: #{command} is not implemented yet"
+      EXIT_USAGE
+    end
   end
 end
 
-exit Log.main(ARGV)
+code = Log.main(ARGV)
+code = "not-an-integer" if ENV["LOG_FORCE_BAD_RETURN"]   # exercises the guard below; see the test
+
+raise "bin/log: main returned #{code.inspect}, not an exit code" unless code.is_a?(Integer)
+
+exit code

@@ -82,4 +82,51 @@ class LogCliTest < ActiveSupport::TestCase
     assert_equal 2, code
     assert_includes err, "frobnicate"
   end
+
+  # THE TOKEN MUST NEVER REACH fd2. bin/secret's header records the mechanism: writing
+  # `op read "$ref" 2>&1 >/dev/null` points fd2 at the CURRENT stdout and only then moves fd1, so
+  # the value lands in whatever captured the command. That printed a live ghcr PAT into an agent
+  # transcript on 2026-07-29 and the token had to be rotated. Open3.capture3 keeps the streams
+  # apart, which is why bin/log must use it rather than a backtick or a merging redirect.
+  test "a resolved token never appears on either stream" do
+    out, err, _code = run_log("show", "1", env: { "FORGEJO_TOKEN" => "sentinel-token-value" })
+
+    refute_includes err, "sentinel-token-value", "the token reached stderr"
+    refute_includes out, "sentinel-token-value", "the token reached stdout"
+  end
+
+  # AN EXPORTED VALUE WINS OVER THE VAULT — bin/secret's own documented order, which bin/log gets
+  # for free by going through that door instead of calling `op` itself. Asserting it is what stops
+  # someone "simplifying" bin/log into a direct `op read` and silently dropping the override.
+  #
+  # THE VAULT IS DEFEATED WITH A STUB `op` ON A PREPENDED PATH, NOT BY NUKING PATH. Setting
+  # PATH=/usr/bin:/bin resolves `#!/usr/bin/env ruby` to /usr/bin/ruby, which is 2.6.10 on this
+  # box and cannot parse an endless method — the test would have died of SyntaxError while its
+  # message blamed credentials. Reproduced before this was written.
+  test "an exported FORGEJO_TOKEN is used without consulting 1Password" do
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, "op"), "#!/bin/sh\necho 'op: vault locked' >&2\nexit 1\n")
+      File.chmod(0o755, File.join(dir, "op"))
+
+      _out, err, code = run_log("show", "1", env: {
+        "FORGEJO_TOKEN" => "exported-wins",
+        "PATH"          => "#{dir}:#{ENV['PATH']}"
+      })
+
+      assert_equal 3, code, "expected the UNREACHABLE exit, not a credential failure"
+      refute_includes err, "vault locked",
+                      "bin/log consulted the vault despite an exported value — the override was lost"
+    end
+  end
+
+  # exit(nil) is a TypeError and exit(false) is a SILENT status 1 — and 1 is EXIT_UNFILED, so an
+  # arm that forgets its return value would report a SUCCESSFUL file to /finish-branch as a
+  # backlog. Note an `assert_equal 0, code` test cannot catch a `true`-returning arm.
+  test "main returning a non-integer is loud, not a wrong exit code" do
+    _out, err, code = run_log("--help", env: { "LOG_FORCE_BAD_RETURN" => "1" })
+
+    assert_equal 1, code
+    assert_match(/not an exit code/, err,
+                 "a non-integer return exited silently — 1 is EXIT_UNFILED, so success reads as a backlog")
+  end
 end
