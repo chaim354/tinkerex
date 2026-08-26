@@ -69,5 +69,84 @@ module Maker
       assert_equal "プロジェクト", project.name
       assert_equal "project", project.slug
     end
+
+    # ARCHIVING IS THE DISMISSAL, AND THIS IS THE TEST THAT MAKES IT ONE. An archived project keeps
+    # its folder_node_id, so the unscoped claim lookup passes over its folder forever.
+    test "an archived project still claims its folder" do
+      folder = dir("d-lamp", "Desk Lamp", "d-projects")
+      project = @user.maker_projects.create!(name: "Desk Lamp")
+      project.update_column(:folder_node_id, folder.node_id)
+      project.archive!
+
+      run = Maker::ProjectDiscovery.for_user(user: @user)
+
+      assert_equal 0, run.created
+      assert_equal 1, @user.maker_projects.count
+    end
+
+    # `.git` KEEPS ITS NODE (§14b) — it is the evidence a directory is a working tree — so without
+    # the dot rule a repo checked out at the Projects/ root becomes a project titled ".git".
+    test "dot-folders are skipped" do
+      dir("d-git", ".git", "d-projects")
+      dir("d-hidden", ".scratch", "d-projects")
+
+      run = Maker::ProjectDiscovery.for_user(user: @user)
+
+      assert_equal 0, run.created
+      assert_equal 0, run.candidates
+    end
+
+    test "a folder deeper than a direct child is not adopted" do
+      lamp = dir("d-lamp", "Desk Lamp", "d-projects")
+      dir("d-models", "models", lamp.node_id)
+
+      Maker::ProjectDiscovery.for_user(user: @user)
+
+      assert_equal [ "d-lamp" ], @user.maker_projects.pluck(:folder_node_id)
+    end
+
+    test "a file directly under Projects is not adopted" do
+      file("f-stray", "stray.stl", "d-projects")
+
+      run = Maker::ProjectDiscovery.for_user(user: @user)
+
+      assert_equal 0, run.created
+    end
+
+    test "a tombstoned folder is not adopted" do
+      dir("d-gone", "Gone", "d-projects").update!(deleted: true)
+
+      run = Maker::ProjectDiscovery.for_user(user: @user)
+
+      assert_equal 0, run.created
+    end
+
+    # NEVER MINTS `Projects/`. A user with no Projects folder is not swept — creating one as a side
+    # effect of merely looking is Projects::AttachmentsController#relocate's recorded bug at
+    # library-sweep scale.
+    test "a library with no Projects folder creates nothing and mints nothing" do
+      @user.nodes.destroy_all
+      dir("d-other", "3D Models", nil)
+
+      run = Maker::ProjectDiscovery.for_user(user: @user)
+
+      assert_equal :no_projects_folder, run.status
+      assert_equal 0, run.created
+      assert_nil @user.nodes.present.find_by(name: "Projects", kind: "dir")
+    end
+
+    # THE PORT IS NEVER TOUCHED — no mkdir, no move, no bytes. That is what makes this sweep
+    # identical on all three backends.
+    test "the sweep creates no library nodes at all" do
+      dir("d-lamp", "Desk Lamp", "d-projects")
+      before = @user.nodes.count
+
+      # ASSERT THE SCANNED SET IS NON-EMPTY FIRST (§14e): "no nodes were created" is satisfied just
+      # as happily by a sweep that found nothing to do, and that arm proves nothing.
+      run = Maker::ProjectDiscovery.for_user(user: @user)
+      assert_equal 1, run.created, "precondition: the sweep must actually have adopted something"
+
+      assert_equal before, @user.nodes.count
+    end
   end
 end
