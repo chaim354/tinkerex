@@ -377,6 +377,40 @@ module Library
                    "the attachment must point at the node THIS scan created"
     end
 
+    # THE SAME PROMISE FOR PROJECT DISCOVERY, and it needs its own test rather than riding either
+    # rescue below: the three are separate, and #discover_projects is the FIRST of them — it runs
+    # immediately after the reconcile and strictly before the project intake — so a raise there is
+    # the one an operator reading the failed-jobs table is likeliest to mistake for "the reconcile
+    # itself failed."
+    #
+    # ALSO PINS THAT THE RAISE REACHES THAT RESCUE THROUGH THE JOB WRAPPER. #discover_projects
+    # calls Maker::ProjectDiscoveryJob.perform_now, and ActiveJob is entitled to swallow or
+    # re-raise on its own terms (its discard_on covers RecordNotFound); a RuntimeError must arrive
+    # at the rescue that logs it.
+    test "a project discovery failure does not fail a scan that already succeeded" do
+      original = Maker::ProjectDiscovery.method(:for_user)
+      Maker::ProjectDiscovery.define_singleton_method(:for_user) { |**| raise "discovery exploded" }
+      begin
+        log = nil
+        prior = Rails.logger
+        io = StringIO.new
+        Rails.logger = Logger.new(io)
+        begin
+          assert_nothing_raised { Library::ScanJob.perform_now(user_id: @user.id, root: @root) }
+        ensure
+          log = io.string
+          Rails.logger = prior
+        end
+
+        assert @user.nodes.present.exists?(name: "panel.svg"),
+               "the reconcile's work stands — it committed before discovery ran"
+        assert_match(/project discovery failed for user #{@user.id}: RuntimeError: discovery exploded/,
+                     log, "the swallowed failure must still be written down somewhere")
+      ensure
+        Maker::ProjectDiscovery.define_singleton_method(:for_user, original)
+      end
+    end
+
     # A scan that SUCCEEDED must not be reported as failed because the intake blew up. The
     # reconcile is already committed (there is no transaction), so an operator reading a failed
     # ScanJob would conclude the library did not index — which would be false.
