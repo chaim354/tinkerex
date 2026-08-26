@@ -22,6 +22,10 @@ module Maker
     def path_for(node_id)
       segments = []
       each_ancestor(node_id) do |entry|
+        # BOTH CALLERS MUST CHECK THE SENTINEL, AND FORGETTING IT FAILS QUIETLY HERE. `:broken`
+        # answers `.name` too (Ruby 3+), so an unchecked sentinel becomes an ordinary-looking path
+        # segment rather than an error -- a wrong path, silently. In ancestors_of the same omission
+        # raises NoMethodError instead. Both are mutation-checked.
         return nil if entry == :broken
 
         segments.unshift(entry.name)

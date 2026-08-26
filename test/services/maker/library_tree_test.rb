@@ -47,6 +47,18 @@ module Maker
       assert_nil Maker::LibraryTree.new(@user).path_for("d-enc")
     end
 
+    # ancestors_of HAS THE SAME GUARD AND A WORSE FAILURE WITHOUT IT. path_for's unguarded
+    # mutation yields a quietly wrong string (`:broken.name` is "broken" in Ruby 3+, so the
+    # sentinel reads as an ordinary path segment); ancestors_of's raises NoMethodError on
+    # `entry.node_id`. Maker::ModelIntake calls this for EVERY file in the library, so a broken
+    # chain is a normal Tuesday, not an exotic input.
+    test "ancestors of an unresolvable chain are nil, not a raise" do
+      dir("d-dead2", "Dead", nil).update!(deleted: true)
+      tree = Maker::LibraryTree.new(@user)
+      assert_nil tree.ancestors_of("d-dead2")
+      assert_nil tree.ancestors_of("nope")
+    end
+
     test "the index costs one query regardless of how many dirs there are" do
       before = count_queries { Maker::LibraryTree.new(@user) }
       12.times { |i| dir("bulk-#{i}", "bulk#{i}", nil) }
