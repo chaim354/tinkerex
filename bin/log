@@ -2,61 +2,97 @@
 # frozen_string_literal: true
 
 # THE SINGLE WRITE DOOR onto the Forgejo that replaces docs/STATUS.md.
-#
-#   bin/log setup                    # create the labels, idempotently
-#   bin/log arc --from-pr 261        # arc issue built from the merged PR body
-#   bin/log open "<title>"           # file an open item
-#   bin/log deploy --image e079d433  # record a deploy
-#   bin/log note 128 "<correction>"  # append a comment to a past arc
-#   bin/log show 128                 # read one
-#   bin/log search "<query>"         # find
-#   bin/log status                   # report anything unfiled
+# `bin/log --help` lists the subcommands; they are defined once, in SUBCOMMANDS.
 #
 # WHY ONE DOOR. An MCP write path plus a CLI write path is one verb with two answers — the shape
 # CLAUDE.md §14a forbids and the shape §14d spent five copies of the `port_writable?` branch
 # learning to avoid. MCP stays available for READING and browsing; it is never required, and it
 # never writes. A CLI also works everywhere MCP does not: CI, cloud sessions, subagents, worktrees.
 #
-# NO BUNDLER, NO RAILS, STDLIB ONLY — DELIBERATELY. §14j records that a bundled Ruby process
-# exports BUNDLE_GEMFILE and a RUBYOPT force-requiring bundler/setup process-wide, and every child
-# inherits both. This script is invoked from inside bin/ci, /finish-branch and /deploy, so needing
-# no gem is what keeps it indifferent to whatever launched it.
+# NO BUNDLER, NO RAILS, STDLIB ONLY. §14j records that a bundled Ruby process exports
+# BUNDLE_GEMFILE and a RUBYOPT force-requiring bundler/setup process-wide, and every child
+# inherits both. Loading no gem means this script never needs `bundle install` — a fresh clone, a
+# worktree and a cloud session all run it. It is NOT full immunity: an inherited RUBYOPT is applied
+# by the ruby binary before line 1, so a caller launching this from inside a bundled process must
+# clear those names itself, exactly as bin/sync-server does.
+#
+# NOTHING BELOW CALLS `exit`. Helpers raise; Log.main decides the code in ONE place. A helper that
+# exited raised SystemExit — not a StandardError, not Unreachable — so it sailed straight past the
+# rescue that spools, losing the record on the likeliest outage there is (a 502 from a dead
+# container behind a live proxy) while the docs promised a spool file.
+require "fileutils"
 require "json"
 require "net/http"
 require "open3"
 require "uri"
 
-EXIT_USAGE       = 2   # the caller spelled the command wrong
-EXIT_UNREACHABLE = 3   # Forgejo (or the vault) could not be reached — distinct on purpose, see below
+module Log
+  module_function
 
-USAGE = <<~TEXT
-  bin/log — record work in Forgejo. The single write door.
+  EXIT_OK          = 0
+  EXIT_UNFILED     = 1   # `status` found a backlog. Loud on purpose, like bin/backup-status.
+  EXIT_USAGE       = 2   # the caller spelled the command wrong
+  EXIT_UNREACHABLE = 3   # Forgejo or the vault could not be reached; any write is spooled
 
-    bin/log setup                    Create the labels, idempotently
-    bin/log arc --from-pr N          Arc issue built from PR N's body
-    bin/log open "<title>"           File an open item
-    bin/log deploy --image SHA       Record a deploy
-    bin/log note ISSUE "<text>"      Append a comment to a past issue
-    bin/log show ISSUE               Print one issue
-    bin/log search "<query>"         Search issues
-    bin/log status                   Report anything unfiled
+  # ONE TABLE, NOT FOUR LISTS. USAGE is DERIVED from this and `main` dispatches on it, so a
+  # subcommand cannot exist in one place and be missing from another. §14d's "ONE file-type
+  # vocabulary": EXT_FAMILIES is derived from ROLE_BY_EXT precisely because the second inline list
+  # had already drifted. This file's own first draft drifted between its header and its usage text
+  # before it was 62 lines old.
+  SUBCOMMANDS = {
+    "setup"  => [ "",               "Create the labels, idempotently" ],
+    "arc"    => [ "--from-pr N",    "Arc issue built from PR N's body" ],
+    "open"   => [ '"<title>"',      "File an open item" ],
+    "deploy" => [ "--image SHA",    "Record a deploy" ],
+    "note"   => [ 'ISSUE "<text>"', "Append a comment to a past issue" ],
+    "show"   => [ "ISSUE",          "Print one issue" ],
+    "search" => [ '"<query>"',      "Search issues" ],
+    "status" => [ "",               "Report anything unfiled" ]
+  }.freeze
 
-  Env: FORGEJO_URL (default http://forgejo.home), FORGEJO_OWNER, FORGEJO_REPO
-TEXT
+  def usage_text
+    rows = SUBCOMMANDS.map do |name, (args, description)|
+      "    " + "bin/log #{name} #{args}".rstrip.ljust(34) + description
+    end
 
-def usage!(message = nil)
-  warn "bin/log: #{message}" if message
-  warn USAGE
-  exit EXIT_USAGE
+    ([ "bin/log — record work in Forgejo. The single write door.", "" ] + rows + [
+      "",
+      "Env: FORGEJO_URL (default http://forgejo.home), FORGEJO_OWNER, FORGEJO_REPO,",
+      "     LOG_SPOOL_DIR (default tmp/log-pending), LOG_BRANCH"
+    ]).join("\n")
+  end
+
+  def main(argv)
+    command = argv.shift
+
+    # AN ASKED-FOR USAGE IS NOT AN ERROR: stdout, exit 0, so `bin/log --help | less` works.
+    # A no-argument invocation IS one, so it goes to stderr and exits 2.
+    if [ "--help", "-h", "help" ].include?(command)
+      puts usage_text
+      return EXIT_OK
+    end
+
+    if command.nil?
+      warn usage_text
+      return EXIT_USAGE
+    end
+
+    unless SUBCOMMANDS.key?(command)
+      warn "bin/log: unknown command #{command.inspect}"
+      warn usage_text
+      return EXIT_USAGE
+    end
+
+    dispatch(command, argv)
+  end
+
+  # Tasks 2-7 replace this arm by arm. Every subcommand is declared in SUBCOMMANDS from the start
+  # so an unbuilt one says "not implemented yet" rather than "unknown command" — the caller learns
+  # which of the two it is.
+  def dispatch(command, _argv)
+    warn "bin/log: #{command} is not implemented yet"
+    EXIT_USAGE
+  end
 end
 
-command = ARGV.shift
-usage! if command.nil?
-
-case command
-when "setup", "arc", "open", "deploy", "note", "show", "search", "status"
-  warn "bin/log: #{command} is not implemented yet"
-  exit EXIT_USAGE
-else
-  usage! "unknown command #{command.inspect}"
-end
+exit Log.main(ARGV)
