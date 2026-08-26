@@ -736,6 +736,27 @@ class LogCliTest < ActiveSupport::TestCase
     stub&.shutdown
   end
 
+  # `closed:` DEFAULTS TO FALSE, AND ONLY open/deploy EXERCISE THAT DEFAULT. `arc` always passes an
+  # explicit boolean, so Ruby's keyword default is dead code from its call site — which means the
+  # mutation "default closed: to true" stayed GREEN when it was run. Observed, not predicted. This
+  # is the test that makes the default real: an ordinary open item or deploy record must never
+  # arrive already closed.
+  test "open and deploy never send closed" do
+    stub = StubForgejo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
+
+    run_log("open", "an ordinary item", env: { "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url })
+    run_log("deploy", "--image", "abc123", env: { "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url })
+
+    posts = stub.requests.select { |r| r.method == "POST" }
+    assert_equal 2, posts.size, "expected one POST each from open and deploy"
+    posts.each do |post|
+      refute post.json.key?("closed"),
+             "#{post.json['title'].inspect} arrived already closed — it is live work, not history"
+    end
+  ensure
+    stub&.shutdown
+  end
+
   # A FILE WITH NO HEADING IS REFUSED, not imported under a guessed title. 112 sections import
   # unattended; one silently titled "" is one nobody finds again.
   test "arc --from-file refuses a file with no leading heading" do
