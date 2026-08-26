@@ -542,12 +542,52 @@ with the version row absent, and it does run: driven both ways, scannable →
 is also the evidence the gate makes no port call. The missing-constant branch was driven by moving
 the service aside: `Library::RepoMetadataPurge is gone; nothing to purge on a fresh database`.
 
-Legs measured for this task: share and s3, both **2417 runs / 8844 assertions / 30 skips**,
-identical — task 5's 2405/8802 plus this task's 12 runs and 42 assertions (7 purge tests, then 4
-more from the review round, plus Task 5's missing placement guard).
-`test-chunk-remote` not run here (needs the sibling checkout). Two runs tripped documented
-intermittents and were clean on re-run — `WorkerBudgetTest`'s cross-process pidfile flake, and
-§12.7's `SQLite3::BusyException` in `Tools::AddonsControllerTest` on a back-to-back leg.
+**THE SCANNABLE GATE MADE THE SUITE LEG-DEPENDENT, AND ONLY THE LEG NOBODY RAN COULD SEE IT.** The
+purge tests were written before the gate existed and took `FileLayer.current` from the ambient
+`LIBRARY_BACKEND`. On `test-chunk-remote` that is `FileLayer::ChunkRemote`, `scannable?` is false,
+the purge declines, and **eight tests failed** — every one asserting it destroys or reports
+something. Share and s3 were green for no better reason than that their ambient backend happens to
+be scannable, which is exactly the shape §15 names as a bug in its own right. Worse than the eight:
+the negatives test ("paths merely NAMED like the marker are untouched") asserts `destroyed == 0`,
+which a DECLINED run satisfies for free — green on that leg while testing nothing at all.
+
+Fixed by pinning rather than inheriting. `setup` calls `use_fresh_share_library!`, a direct
+`FileLayer.current =` rather than `pin_file_layer_backend` for the reason `rescan_test.rb` records:
+pin rebuilds from ENV and a Share adapter needs a tmpdir ROOT that ENV does not supply on the other
+two legs. A `teardown` does the reset (a direct assignment does not set test_helper's
+`@file_layer_backend_pinned`, so its own teardown will not clean up after one) and sweeps the
+tmpdir. The guard-trip test now uses that same root instead of making a second one, so the pin and
+the fixture cannot disagree about which library is current.
+
+**The decline test already pinned `chunk_remote` explicitly, and the setup pin makes that pin
+STRONGER rather than redundant.** Before, it would have been green-by-accident on the chunk_remote
+leg — the leg supplying what the test should assert for itself, the mirror image of the same bug.
+Now setup pins scannable on every leg, so deleting its `FileLayer.current = FileLayer::ChunkRemote
+.new` is RED on all three. Checked in both directions:
+
+| mutation | result |
+|---|---|
+| remove `setup`'s pin | chunk_remote ambient: **8 failures**, the same eight, by name. Share ambient: green — which IS the leg-dependence, reproduced |
+| remove the decline test's own pin | RED on **both** ambients (`the mirror is the sync server's tree…`), where before the setup pin it would have been green on chunk_remote |
+
+Legs measured for this task, all three, **2441 runs each — identical, which is the §15 rule**:
+
+| leg | runs | assertions | skips |
+|---|---|---|---|
+| share | 2441 | 9158 | 30 |
+| s3 | 2441 | 9158 | 30 |
+| chunk_remote | 2441 | 9315 | 5 |
+
+The assertion and skip gap on chunk_remote is the pre-existing capability-gated divergence recorded
+under "Still open", not this work's. Two runs tripped documented intermittents and were clean on
+re-run — `WorkerBudgetTest`'s cross-process pidfile flake, in both of its tests on different runs,
+and §12.7's `SQLite3::BusyException` in `Tools::AddonsControllerTest` on a back-to-back leg.
+
+**The lesson, because this arc has now paid for it twice:** a capability gate added to a service
+retroactively changes what every existing test of that service asserts, and the legs that stay
+green are not evidence — they are the legs whose ambient backend happens to satisfy the new gate.
+`bin/ci test-chunk-remote` is the only one that would have said so, and it is the primary
+deployment's backend.
 
 ### One text vocabulary instead of two, and a `code` role (task 7, landed)
 
