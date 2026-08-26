@@ -1,0 +1,62 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# THE SINGLE WRITE DOOR onto the Forgejo that replaces docs/STATUS.md.
+#
+#   bin/log setup                    # create the labels, idempotently
+#   bin/log arc --from-pr 261        # arc issue built from the merged PR body
+#   bin/log open "<title>"           # file an open item
+#   bin/log deploy --image e079d433  # record a deploy
+#   bin/log note 128 "<correction>"  # append a comment to a past arc
+#   bin/log show 128                 # read one
+#   bin/log search "<query>"         # find
+#   bin/log status                   # report anything unfiled
+#
+# WHY ONE DOOR. An MCP write path plus a CLI write path is one verb with two answers — the shape
+# CLAUDE.md §14a forbids and the shape §14d spent five copies of the `port_writable?` branch
+# learning to avoid. MCP stays available for READING and browsing; it is never required, and it
+# never writes. A CLI also works everywhere MCP does not: CI, cloud sessions, subagents, worktrees.
+#
+# NO BUNDLER, NO RAILS, STDLIB ONLY — DELIBERATELY. §14j records that a bundled Ruby process
+# exports BUNDLE_GEMFILE and a RUBYOPT force-requiring bundler/setup process-wide, and every child
+# inherits both. This script is invoked from inside bin/ci, /finish-branch and /deploy, so needing
+# no gem is what keeps it indifferent to whatever launched it.
+require "json"
+require "net/http"
+require "open3"
+require "uri"
+
+EXIT_USAGE       = 2   # the caller spelled the command wrong
+EXIT_UNREACHABLE = 3   # Forgejo (or the vault) could not be reached — distinct on purpose, see below
+
+USAGE = <<~TEXT
+  bin/log — record work in Forgejo. The single write door.
+
+    bin/log setup                    Create the labels, idempotently
+    bin/log arc --from-pr N          Arc issue built from PR N's body
+    bin/log open "<title>"           File an open item
+    bin/log deploy --image SHA       Record a deploy
+    bin/log note ISSUE "<text>"      Append a comment to a past issue
+    bin/log show ISSUE               Print one issue
+    bin/log search "<query>"         Search issues
+    bin/log status                   Report anything unfiled
+
+  Env: FORGEJO_URL (default http://forgejo.home), FORGEJO_OWNER, FORGEJO_REPO
+TEXT
+
+def usage!(message = nil)
+  warn "bin/log: #{message}" if message
+  warn USAGE
+  exit EXIT_USAGE
+end
+
+command = ARGV.shift
+usage! if command.nil?
+
+case command
+when "setup", "arc", "open", "deploy", "note", "show", "search", "status"
+  warn "bin/log: #{command} is not implemented yet"
+  exit EXIT_USAGE
+else
+  usage! "unknown command #{command.inspect}"
+end
