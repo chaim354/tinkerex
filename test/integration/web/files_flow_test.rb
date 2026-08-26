@@ -59,7 +59,14 @@ module Web
       end
     end
 
-    test "the thumbnails endpoint reports a ready thumbnail and omits nodes without one" do
+    # THE FOREVER-SPINNER GUARD. This asserted the OPPOSITE until 2026-08-26 — that a node with no
+    # row is ABSENT from the payload — which described the code exactly and was the bug:
+    # `thumbs_controller`'s `if (!entry) continue` leaves such a cell spinning AND in the poll set,
+    # so it burns all 40 tries and then spins for as long as the page stays open. The failure had
+    # been worked around three times at the callers (`_list`, `_grid`, `_hero_poster`) and was
+    # still live in `projects/_attachment_group`. A terminal answer here fixes every caller at
+    # once, including the two cover cards that hold no filename and cannot guard themselves.
+    test "the thumbnails endpoint reports a ready thumbnail and a terminal status for one with no row" do
       user = sign_in
       # A renderable upload — the eager seam creates a pending thumbnail row for it (keyed by the
       # node's content_token). A non-renderable upload gets no row at all.
@@ -77,7 +84,29 @@ module Web
       data = JSON.parse(response.body)
       assert_equal "ready", data[with_thumb]["status"]
       assert data[with_thumb]["url"].present?, "a ready thumbnail must expose a url"
-      assert_not data.key?(without), "a node with no thumbnail row is absent from the payload"
+      assert_equal "unsupported", data[without]&.dig("status"),
+                   "a node nothing can render must get a TERMINAL status, not be omitted — an " \
+                   "omitted key is what the poller treats as 'keep waiting', forever"
+      assert_nil data[without]["url"]
+    end
+
+    # THE OTHER HALF OF THE SAME RULE, AND THE ONE A CARELESS FIX BREAKS. "No row" has two causes
+    # and only ONE of them is terminal: a name nothing renders is done forever, but a RENDERABLE
+    # name whose row simply has not been created yet is still coming. Answering `unsupported` for
+    # the second freezes a thumbnail that was genuinely on its way — trading a hung spinner for a
+    # wrong badge, which is worse because it looks correct. `backfill: false` on this door is what
+    # makes the second case reachable at all.
+    test "a renderable node with no row yet is still omitted, so the client keeps polling" do
+      user = sign_in
+      stl = upload("pending.stl", "solid p\nendsolid\n".b)
+      user.maker_previews.where(node_id: stl).delete_all
+
+      get thumbnails_files_path, params: { ids: stl },
+                                 headers: { "Accept" => "application/json" }
+      assert_response :success
+      data = JSON.parse(response.body)
+      assert_not data.key?(stl),
+                 "a renderable file whose row is merely absent must NOT be reported terminal"
     end
 
     # THE POLL IS THE ONE READ THAT MUST NOT WRITE, and it shares its implementation with the page

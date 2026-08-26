@@ -51,9 +51,14 @@ class FilesControllerPreviewKindTest < ActiveSupport::TestCase
     assert_equal :model3d, kind("bracket.stl")
   end
 
+  # `Makefile` WAS THE SECOND CASE HERE AND HAD TO MOVE, which is worth recording rather than
+  # quietly swapping: it stood for "no extension, therefore no preview", and since 2026-08-26 that
+  # inference is exactly what TEXT_BASENAMES removes — a Makefile is plain text and now previews as
+  # such. The CLAIM this test makes is unchanged, so it keeps an extensionless name that is
+  # genuinely not in that set; substituting one that IS would make the test agree with itself.
   test "an unknown extension is still :other" do
     assert_equal :other, kind("mystery.qqq")
-    assert_equal :other, kind("Makefile")
+    assert_equal :other, kind("firmware")
   end
 
   # TEXT_EXTS — ROLE AND CONTENT TYPE ARE DIFFERENT QUESTIONS, AND `.scad` ANSWERS THEM
@@ -114,6 +119,62 @@ class FilesControllerPreviewKindTest < ActiveSupport::TestCase
       assert_not_nil Maker::Previews::Registry.for(ext),
                      ".#{ext} previews as text but nothing renders it — a blank cell in the grid"
     end
+  end
+
+  # EXTENSIONLESS TEXT. `File.extname("LICENSE")` is `""` and so is `File.extname(".gitignore")`,
+  # so NO entry in an extension table can reach these — they answered `:other` and rendered
+  # "No inline preview for this file type." over plain text. The live share library holds
+  # LICENSE x6, Makefile/makefile x7 and README x3.
+  #
+  # BOTH CASES OF `Makefile` ARE THE TEST, not decoration: the library really contains both
+  # spellings, so a predicate that forgot to downcase would pass on one and fail on the other.
+  test "extensionless text files preview as text" do
+    %w[LICENSE LICENCE Makefile makefile README CHANGELOG Dockerfile Rakefile
+       .gitignore .editorconfig .clang-format].each do |name|
+      assert_equal :text, kind(name), name
+    end
+  end
+
+  # THE OTHER HALF, AND WHAT KEEPS THE BASENAME LIST FROM BECOMING "anything without a dot".
+  # An extensionless BINARY exists and rendering it as text is mojibake — the same argument that
+  # keeps `.f3d` out of TEXT_EXTS. Absence from the list must stay a real answer.
+  test "an unlisted extensionless name is still not text" do
+    %w[firmware blob a.out mystery].each do |name|
+      assert_equal :other, kind(name), name
+    end
+  end
+
+  # A BASENAME MATCH MUST ALSO REACH A RENDERER, or the file previews as text on the detail page
+  # and shows a blank grid cell — the exact split this arc's first half existed to close, and one
+  # `Registry.for_filename` reintroduces for these names unless it asks about basenames too.
+  test "extensionless text files also resolve to a thumbnail renderer" do
+    %w[LICENSE Makefile README .gitignore].each do |name|
+      assert_equal Maker::Previews::TextThumb, Maker::Previews::Registry.for_filename(name), name
+    end
+  end
+
+  # `Registry.for` TAKES AN EXTENSION AND MUST NOT GAIN THE BASENAME FALLBACK. Only the filename
+  # door holds a filename; teaching the extension door to also answer for "LICENSE" would let a
+  # caller holding a genuine extension match a basename by coincidence.
+  test "the raw extension door does not answer for a basename" do
+    assert_nil Maker::Previews::Registry.for("license")
+    assert_nil Maker::Previews::Registry.for("makefile")
+  end
+
+  # THE ROLE IS DELIBERATELY UNCHANGED, so these files do not MOVE on the user's NAS. Same split
+  # `.scad` carries: role answers "where does this file live", content type answers "how do we show
+  # it". Making LICENSE a `document` would file it into `docs/` — a change to their files, which
+  # nobody asked for.
+  #
+  # MUTATION-CHECK BY TEACHING `role_for` ABOUT `TEXT_BASENAMES`, which is the realistic way this
+  # gets undone (one plausible line: `return "document" if TEXT_BASENAMES.include?(...)`). Adding
+  # "license" to ROLE_BY_EXT does NOT work and was the first thing tried: that hash is keyed by
+  # EXTENSION, and `LICENSE` has none, so the entry is unreachable from `role_for` — it reddens a
+  # different test entirely, by making `Registry.for("license")` resolve. Recorded because a
+  # mutation that cannot express the defect proves nothing about the guard.
+  test "previewing an extensionless text file did not move its role or its folder" do
+    assert_equal "other", Maker::FileAttachment.role_for("LICENSE")
+    assert_equal "other", Maker::ProjectFolders.folder_for("LICENSE")
   end
 
   # THE DERIVATION ASSERTED AS A PROPERTY: every extension whose role is a text role must actually
