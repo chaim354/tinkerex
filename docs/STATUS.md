@@ -78,7 +78,122 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-26): the one backend you can reach without configuring one was the one the guard never checked (branch `claude/fix-setup-migration-backend-gate`)
+## Latest (2026-08-26): a folder under `Projects/` becomes a project, and the filing sweep had been rebuilding its destination from the wrong thing (branch `claude/auto-create-projects-folders-7725e3`)
+
+The ask was one sentence: "if a folder is added under projects auto make that a project." It is the
+same shape as `Maker::ModelIntake` one level up — a sweep over `nodes`, the catalog all three
+backends populate, so it covers every door that can land a folder there without hooking any of them.
+
+**No migration.** Archiving is the dismissal: `ProjectsController#destroy` already archives rather
+than destroys, an archived project keeps its `folder_node_id`, and the sweep's claim lookup is
+unscoped — so an archived project passes over its folder forever. The row is the memory. That
+decision is what removed `origin` / `auto_node_id` / `dismissed_at` from the design; `Maker::Model`
+needs `auto_node_id` separately only because an import writes `folder_node_id` too, and a project
+has exactly one writer of it (`#ensure_library_folder!`, grep-verified).
+
+Rules: `docs/invariants/project-intake.md`. §14f moved there in this branch — see below.
+
+### What shipped
+
+`Maker::ProjectDiscovery` + `Maker::ProjectDiscoveryJob`, a `project_discovery` entry in
+`config/recurring.yml`, a `discover_projects` step in `Library::ScanJob#perform`, and
+`rake projects:discover`. Supporting: `Maker::ProjectFolders::ROOT`, and
+`Maker::Project.slugify` / `.available_slug`.
+
+The sweep writes `maker_projects` rows and nothing else — no mkdir, no move, no bytes — which is
+what makes it identical on all three backends and testable with no library on disk.
+
+### The bug the PLAN found, before any code was written
+
+`Maker::ProjectIntake#place` built its destination as `ensure_path!([ROOT, @project.slug, dest])` —
+a path rebuilt from the **slug** — while `.destination_for` has always resolved that same category
+folder under the project's `folder_node_id`. They agree on the folder's NAME and disagree on its
+PARENT, and §14f already required that prediction and behaviour cannot disagree.
+
+It went unnoticed because `#ensure_library_folder!` is the only writer of `folder_node_id` and
+always mints `Projects/<slug>`, so the two coincided. Discovery breaks that as the **mainline**
+case: a project adopted from `Projects/Desk Lamp` has slug `desk-lamp`, so `#place` would have minted
+a second `Projects/desk-lamp/` tree and moved the user's file into it — leaving the folder they made
+looking empty while the project still pointed at it. Nothing errors, nothing logs.
+
+Fixed with `Maker::LibraryFolder.create_child!(parent_node_id: live_folder.node_id, name: dest)`.
+Already reachable without discovery: rename a project's slug after its folder was minted.
+
+### Ordering is a correctness constraint, and it is now pinned by the hazard itself
+
+`Library::ScanJob#perform` runs reconcile → **discover** → intake → catalog. Both edges change the
+ANSWER, not the timing. Before the filing sweep, because a discovered project's loose files left at
+its root have no shelf nearer than `Projects` (the seeded `*`), so `Maker::ModelIntake` turns the
+whole folder into one model — permanently, since nothing reaps an auto model.
+
+The first version of that test could not see it: the fixture used `panel.svg`, role `vector`, and
+the catalog only touches `model`-role files, so the hazard the test's own comment named was never
+exercised. Re-pinned with `bracket.stl`, and the swap now produces a real `Maker::Model` titled
+"Desk Lamp" with `auto_node_id == folder_node_id == the folder's own node`. Verified by ground truth
+in a rolled-back transaction, not by reading the failure message.
+
+### Measured
+
+| | |
+|---|---|
+| `test/jobs/` | 110 runs, 292 assertions, 0 failures |
+| `test/jobs/` + `test/services/` | 1,204 runs, 3,610 assertions, 0 failures, 20 pre-existing skips |
+| `test/services/maker/project_discovery_test.rb` | 17 tests |
+| CLAUDE.md | 1,487 → 1,362 lines; `MAX_LINES` ratcheted 1,500 → 1,400 |
+| §14f citations at the time of the move | 32 occurrences across 22 files under `app/`, `lib/`, `test/` |
+
+### What the review rounds actually caught — the reason this arc took eleven tasks
+
+Every task ran implement → spec review → quality review, and the reviews were not decoration:
+
+- **Three skip-rule tests asserted only an absence and passed vacuously.** Demonstrated, not argued:
+  mutating `root.node_id` to `root.id` (the AR primary key, on the same object) makes the candidate
+  query match nothing, ever — and four tests stayed green. Fixed with positive controls asserting the
+  exact surviving set.
+- **Nothing verified that `PROJECT_DISCOVERY_MAX` reaches a real sweep.** Mutating `cap ||=
+  max_projects` to `cap ||= MAX_PROJECTS` — ignoring the env knob entirely — left all 16 tests green.
+  The operator knob could have been inert in production. Closed by a test that passes no `cap:`.
+- **`ProjectDiscoveryJob`'s `limits_concurrency` comment claimed protection it does not provide.**
+  Solid Queue acquires the semaphore in an `after_create` on the job row, so it engages at ENQUEUE
+  only; `Library::ScanJob` calls the job with `perform_now`. On share/s3 that line protects nothing —
+  `ScanJob`'s own limit does. Recorded so nobody deletes that one as redundant.
+- **Seven false comments, corrected.** Five were path illustrations (`Projects/<slug>/x` →
+  `Projects/<slug>/<cat>/x`) that the `#place` fix made untrue, in four files; one asserted
+  `ProjectFolders::ROOT` had "three readers" when the fix left it one; one claimed share/s3 got less
+  visibility "than chunk_remote gets from its schedule" before that schedule existed. An eighth was
+  pre-existing: `IntakeOrderTest`'s comment said its mutation yields `["Projects"]`. Re-measured:
+  `["desk-lamp"]`. `Maker::Shelf::SEEDS` gained `"*"` after that comment was written, which moves the
+  swallowed-model boundary one level down.
+- **A query-cost guard needed a fake port to mean anything.** `FileLayer::Share#move`'s internal
+  `parent_dir_rel!` emits byte-identical SQL to `#live_folder` (Rails logs `?` placeholders), so
+  against the real adapter a legitimate per-file cost is indistinguishable from a memo regression.
+
+### Decided and NOT built, so it is not rediscovered as an oversight
+
+- **No unique index on `(user_id, folder_node_id)`.** It would be the natural safety net and **it
+  would fail to apply on a live database**: give project A slug `x` (folder minted at `Projects/x`),
+  rename A to `y` — `folder_node_id` still points at `Projects/x` — then create a new project with
+  slug `x`, whose `#ensure_library_folder!` finds and adopts that same node. Discovery tolerates the
+  state; it does not fix it.
+- **`V1::Maker::ProjectsController#destroy` still hard-deletes.** If the folder still exists, the next
+  sweep re-adds the project. That is the price of archiving-as-dismissal. Closing it means changing a
+  shipped API endpoint's semantics — a separate decision.
+- **On `chunk_remote`, `model_catalog_intake` can still run before `project_folder_intake`** and mint
+  a transient model for a whole project folder. Pre-existing; it self-hides once empty and ages out
+  via `Maker::AttachmentReaper`. Discovery widens the window slightly; it does not create it.
+- **No first-run watermark and no "adopt only non-empty folders" rule.** Position is the marker. An
+  empty folder becomes an empty project, which is archivable.
+- **No UI change.** A discovered project is an ordinary project — no badge, no separate list.
+
+### Not verified
+
+**None of this has run on hardware.** Discovery has never swept a live `Projects/` folder, and the
+first run on the share deployment will adopt every unclaimed folder there at once, up to
+`MAX_PROJECTS = 50`. `rake projects:discover` before the schedule fires is the cheap look.
+
+---
+
+## 2026-08-26: the one backend you can reach without configuring one was the one the guard never checked (branch `claude/fix-setup-migration-backend-gate`)
 
 `bin/ci setup` was red on `main` at `6273b60` with a clean tree — `db:prepare` aborted inside
 `PurgeRepoMetadataNodes` with `KeyError: key not found: "LIBRARY_PATH"`, five frames below the
