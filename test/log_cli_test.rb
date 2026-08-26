@@ -690,4 +690,63 @@ class LogCliTest < ActiveSupport::TestCase
       assert_includes err, "261"
     end
   end
+
+  # HISTORICAL ARCS ARRIVE ALREADY FINISHED, so they must be created CLOSED. Probed against the
+  # live instance: CreateIssueOption accepts `closed: true` and returns state "closed".
+  test "arc --from-file imports a section, closed, with its first heading as the title" do
+    stub = StubForgejo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
+
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "entry.md")
+      File.write(path, "## 2026-07-29: the audit-fix arc\n\nTwo security gates ran zero.\n")
+
+      _out, err, code = run_log("arc", "--from-file", path, "--closed", env: {
+        "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+        "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+      })
+
+      assert_equal 0, code, "import failed: #{err}"
+      post = stub.requests.find { |r| r.method == "POST" }
+
+      assert_equal "2026-07-29: the audit-fix arc", post.json["title"],
+                   "the leading '## ' must be stripped, or every title starts with markup"
+      assert_includes post.json["body"], "Two security gates ran zero."
+      assert_equal true, post.json["closed"], "a finished arc must not import as open work"
+      assert_equal [ 1 ], post.json["labels"]
+    end
+  ensure
+    stub&.shutdown
+  end
+
+  # WITHOUT --closed IT STAYS OPEN. The same verb serves a live arc (opened at PR time, closed at
+  # merge) and a historical import, so the default must be the live case — an import that forgets
+  # the flag leaves a visible open issue, while the reverse silently closes live work.
+  test "arc --from-file without --closed does not send closed" do
+    stub = StubForgejo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
+
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "entry.md")
+      File.write(path, "## live arc\n\nbody\n")
+      run_log("arc", "--from-file", path, env: { "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url })
+
+      post = stub.requests.find { |r| r.method == "POST" }
+      refute post.json.key?("closed"), "an import default of closed would silently close live work"
+    end
+  ensure
+    stub&.shutdown
+  end
+
+  # A FILE WITH NO HEADING IS REFUSED, not imported under a guessed title. 112 sections import
+  # unattended; one silently titled "" is one nobody finds again.
+  test "arc --from-file refuses a file with no leading heading" do
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "bad.md")
+      File.write(path, "no heading here\n")
+
+      _out, err, code = run_log("arc", "--from-file", path, env: { "FORGEJO_TOKEN" => "t0ken" })
+
+      assert_equal 2, code
+      assert_includes err, "no leading heading"
+    end
+  end
 end
