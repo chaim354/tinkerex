@@ -1047,6 +1047,24 @@ Add `LOG_SPOOL_DIR (default tmp/log-pending), LOG_BRANCH` to `usage_text`'s env 
   ensure
     stub&.shutdown
   end
+
+  # THE 422 PATH IS THE ONLY ONE THAT RUNS AFTER THE FIRST TIME, and a stub answering 201 never
+  # reaches it. Without this test `allow: [422]` — the entire idempotency claim — is asserted
+  # nowhere, and a setup that silently stopped being idempotent would fail for the first time
+  # months later, in front of whoever added a label.
+  test "setup tolerates 422, the ordinary case on every run after the first" do
+    stub = StubForgejo.new(status: 422, response: { "message" => "label already exists" })
+
+    _out, err, code = run_log("setup", env: {
+      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url
+    })
+
+    assert_equal 0, code, "setup treated an already-existing label as a failure: #{err}"
+    assert_operator stub.requests.size, :>=, 3,
+                    "setup stopped at the first 422 instead of continuing through the list"
+  ensure
+    stub&.shutdown
+  end
 ```
 
 - [ ] **Step 2: Run to verify they fail.**
@@ -1107,7 +1125,7 @@ Add `when "status" then status` and `when "setup" then setup` to `dispatch`.
     end
 ```
 
-- [ ] **Step 4: Run to verify they pass** — PASS, 17 tests.
+- [ ] **Step 4: Run to verify they pass** — PASS, 19 tests.
 - [ ] **Step 5: rubocop, then commit** — subject: `bin/log status and setup: make the debt visible, make the labels exist`.
 
 ---
@@ -1235,7 +1253,7 @@ Not optional extras: §6.1 points CLAUDE.md §11 at `bin/log search`, §6.2 repl
 
 Add the three `dispatch` arms. Every subcommand in `SUBCOMMANDS` is now implemented, so `dispatch`'s `else` becomes unreachable — leave it, and make it `raise "unreachable: #{command}"` rather than a silent fallthrough.
 
-- [ ] **Step 4: Run to verify they pass** — PASS, 20 tests.
+- [ ] **Step 4: Run to verify they pass** — PASS, 22 tests.
 - [ ] **Step 5: rubocop, then commit** — subject: `bin/log deploy, note and search — the three PR 2 calls`.
 
 ---
