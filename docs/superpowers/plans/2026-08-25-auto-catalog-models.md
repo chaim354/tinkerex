@@ -597,7 +597,7 @@ end
 - [ ] **Step 4: Run the test**
 
 Run: `bin/rails test test/services/maker/library_tree_test.rb`
-Expected: PASS, 8 runs.
+Expected: PASS, 6 runs.
 
 - [ ] **Step 5: Mutation-check the cycle guard**
 
@@ -1283,7 +1283,7 @@ and, after the `@models = ...` assignment, filter empties:
 - [ ] **Step 5: Run the test**
 
 Run: `bin/rails test test/integration/web/models_catalog_test.rb`
-Expected: PASS, 8 runs.
+Expected: PASS, 6 runs.
 
 - [ ] **Step 6: Mutation-check both rules**
 
