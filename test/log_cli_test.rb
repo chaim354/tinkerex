@@ -574,4 +574,33 @@ class LogCliTest < ActiveSupport::TestCase
   ensure
     stub&.shutdown
   end
+
+  # A SCHEME-LESS FORGEJO_URL parses to host=nil, and Net::HTTP.start(nil, nil) then reports
+  # "connection refused for nil port 80" — a confident, wrong answer to a malformed env var.
+  test "a FORGEJO_URL with no scheme is a usage error, not a phantom connection refusal" do
+    _out, err, code = run_log("show", "1", env: {
+      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => "forgejo.home"
+    })
+
+    assert_equal 2, code, "a malformed FORGEJO_URL was reported as a network failure"
+    assert_includes err, "no scheme or host"
+  end
+
+  # gh ANSWERING NON-JSON — an auth prompt, a rate-limit notice — must name gh and the PR. Left
+  # unwrapped it surfaces through main's catch-all as "unexpected failure", which names neither.
+  test "gh returning non-JSON names gh and the PR" do
+    Dir.mktmpdir do |dir|
+      gh = File.join(dir, "gh")
+      File.write(gh, "#!/bin/sh\necho 'gh auth login required'\n")
+      File.chmod(0o755, gh)
+
+      _out, err, code = run_log("arc", "--from-pr", "261", env: {
+        "FORGEJO_TOKEN" => "t0ken", "GH_BIN" => gh
+      })
+
+      assert_equal 3, code, "a non-JSON gh reply did not become a clean unreachable exit"
+      assert_includes err, "gh returned non-JSON"
+      assert_includes err, "261"
+    end
+  end
 end
