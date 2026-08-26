@@ -641,13 +641,15 @@ class StubForgejo
     def json = JSON.parse(body)
   end
 
-  attr_reader :requests
+  attr_reader :requests, :errors
 
   def initialize(status: 201, response: { "number" => 42, "title" => "stub", "state" => "open", "body" => "" })
     @requests = []
     @errors = []
     @server = TCPServer.new("127.0.0.1", 0)
-    @payload = JSON.generate(response)
+    # A String response is sent RAW — that is how a test drives the non-JSON-2xx path, which is
+    # what a proxy error page and Forgejo's own login page both look like on the wire.
+    @payload = response.is_a?(String) ? response : JSON.generate(response)
     @status = status
 
     @thread = Thread.new do
@@ -684,8 +686,6 @@ class StubForgejo
   # RE-RAISES it from inside the test's `ensure`, masking the assertion that actually failed.
   # Answering 500 with the diagnostic fails the client fast AND keeps the thread alive; `errors`
   # lets a test assert the stub itself stayed healthy.
-  attr_reader :errors
-
   def handle(socket)
     request_line = socket.gets.to_s
     method, path, = request_line.split(" ")
@@ -770,9 +770,6 @@ Add a second test — the real trigger for Task 2b's catch-all, covering it with
   end
 ```
 
-`StubForgejo#initialize` JSON-encodes `response`; this test needs it sent raw, so make it
-`@payload = response.is_a?(String) ? response : JSON.generate(response)`.
-
 - [ ] **Step 3: Run to verify it fails** — exit 2, `open is not implemented yet`.
 
 - [ ] **Step 4: Implement, inside `module Log`**
@@ -781,7 +778,10 @@ Add a second test — the real trigger for Task 2b's catch-all, covering it with
   # LABELS ARE NAMES ON THE WIRE, NOT IDS. Forgejo accepts either; names are what a human reads in
   # a diff and what survives the labels being recreated. `setup` guarantees they exist.
   def create_issue(title, body:, labels:)
-    JSON.parse(api(:post, repo_path("/issues"), { title: title, body: body, labels: labels }).body)
+    payload = { title: title, body: body, labels: labels }
+    # Through `parse`, not JSON.parse — a WRITE against a broken proxy answers 200 text/html just
+    # as readily as a read does, and an unwrapped JSON::ParserError exits 1 instead of spooling.
+    parse(api(:post, repo_path("/issues"), payload), "/issues")
   end
 
   # NOT `open` — inside this module that name would resolve ahead of Kernel#open for every other
