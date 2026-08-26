@@ -45,9 +45,15 @@ module Maker
     # the reason §14f states at both of those constants.
     MAX_MODELS = 200
 
+    # A BAD OVERRIDE FALLS BACK; IT DOES NOT CRASH THE JOB. `Integer("-5")` SUCCEEDS, so the rescue
+    # below never sees a negative -- and a negative reaches `todo.first(-5)`, which raises
+    # `ArgumentError: negative array size` deep inside a recurring job, long after the typo. Zero
+    # is refused for the same reason it would be surprising: a cap of 0 catalogues nothing, forever,
+    # silently. Both fall back to the default rather than guessing what was meant.
     def self.max_models
-      Integer(ENV.fetch("MODEL_CATALOG_MAX_MODELS", MAX_MODELS))
-    rescue ArgumentError
+      value = Integer(ENV.fetch("MODEL_CATALOG_MAX_MODELS", MAX_MODELS))
+      value.positive? ? value : MAX_MODELS
+    rescue ArgumentError, TypeError
       MAX_MODELS
     end
 
@@ -71,7 +77,11 @@ module Maker
       created = 0
       todo.each do |key|
         model = user.maker_models.create!(
-          title: plan.titles.fetch(key, key),
+          # fetch WITHOUT A DEFAULT, deliberately. `classify` writes titles[key] on the line above
+          # the one that adds the key, so a key with no title is unreachable -- and the tempting
+          # `fetch(key, key)` would ship a model TITLED `d-enc` if it ever became reachable, a
+          # visible bug wearing a successful sweep. §14b's `fetch` with no default, same argument.
+          title: plan.titles.fetch(key),
           origin: "auto",
           auto_node_id: key,
           # A DIR KEY IS ALREADY THE MODEL'S FOLDER. Setting it here creates nothing; calling

@@ -525,6 +525,31 @@ module Maker
       assert_equal before, after
     end
 
+    # THE OTHER HALF OF "LOOK, DO NOT TAKE". The assertion above proves no AUTO row is created for a
+    # folder an import already claims; this proves the sweep also leaves that folder's FILES alone.
+    # Without it, "skipped" could mean "created no row but filed its contents anyway", which is the
+    # more damaging half and the one nothing was pinning.
+    test "an imported model's files are left unattached by the sweep" do
+      imported = @user.maker_models.create!(title: "Hand imported", folder_node_id: "d-enc")
+
+      Maker::ModelIntake.for_user(user: @user)
+
+      assert_empty imported.file_attachments
+      assert_empty Maker::FileAttachment.where(user: @user, node_id: %w[f-body f-manual])
+    end
+
+    # A NEGATIVE OR ZERO OVERRIDE FALLS BACK RATHER THAN CRASHING A RECURRING JOB. Integer("-5")
+    # succeeds, so this cannot be left to the rescue: a negative reaches todo.first(-5), which
+    # raises "negative array size" from inside the job with nothing naming the typo that caused it.
+    test "a nonsense cap override falls back to the default" do
+      %w[-5 0 banana].each do |bad|
+        ENV["MODEL_CATALOG_MAX_MODELS"] = bad
+        assert_equal Maker::ModelIntake::MAX_MODELS, Maker::ModelIntake.max_models, bad
+      end
+    ensure
+      ENV.delete("MODEL_CATALOG_MAX_MODELS")
+    end
+
     def count_queries(&block)
       n = 0
       counter = ->(*, payload) { n += 1 unless payload[:name].in?(%w[SCHEMA TRANSACTION]) }
@@ -1130,7 +1155,8 @@ every request in the process, and the next user gets the first user's answer.
 - [ ] **Step 4: Run the tests**
 
 Run: `bin/rails test test/services/maker/model_intake_test.rb test/services/maker/model_intake_classify_test.rb`
-Expected: PASS, 20 runs (9 classify + 11 sweep).
+Expected: PASS, 18 runs (9 classify + 9 sweep). Step 6 and the two tests above bring the
+sweep file to 12.
 
 - [ ] **Step 5: Mutation-check the dismissal guard**
 
@@ -1171,7 +1197,7 @@ Append to `test/services/maker/model_intake_test.rb`:
 ```
 
 Run: `bin/rails test test/services/maker/model_intake_test.rb`
-Expected: PASS, 11 runs.
+Expected: PASS, 12 runs.
 
 - [ ] **Step 7: Commit**
 
@@ -1922,7 +1948,13 @@ minutes behind an upload).
 - [ ] **Step 6: Run the whole local gate**
 
 Run: `bin/ci`
-Expected: all seven gates green. **Read the three backend legs' run counts** (`test`, `test-s3`,
+Expected: all seven gates green.
+
+**Two things measured on this branch that will otherwise waste your time.** Bare `bin/rails test`
+reports ~178 errors — the missing-`LIBRARY_PATH` failure §13 warns about, pre-existing and not
+yours; `bin/ci test` sets the env and is the real gate. And `../tinkerex-sync` does not resolve
+from inside `.claude/worktrees/`, so the chunk_remote leg needs
+`TINKEREX_SYNC_DIR=/Users/charlesschwartz/Desktop/repos/tinkerex-sync`. **Read the three backend legs' run counts** (`test`, `test-s3`,
 `test-chunk-remote`) and confirm they match within the known flap of plus or minus 2 assertions and
 1 skip. A structural difference means a test in this branch depends on the ambient
 `LIBRARY_BACKEND`, which is a real bug (§15). `test-chunk-remote` needs a sibling checkout:

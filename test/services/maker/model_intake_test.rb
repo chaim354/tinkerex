@@ -164,6 +164,31 @@ module Maker
       assert_equal 1, @user.maker_models.where(auto_node_id: "d-enc").count
     end
 
+    # THE OTHER HALF OF "LOOK, DO NOT TAKE". The assertion above proves no AUTO row is created for a
+    # folder an import already claims; this proves the sweep also leaves that folder's FILES alone.
+    # Without it, "skipped" could mean "created no row but filed its contents anyway", which is the
+    # more damaging half and the one nothing was pinning.
+    test "an imported model's files are left unattached by the sweep" do
+      imported = @user.maker_models.create!(title: "Hand imported", folder_node_id: "d-enc")
+
+      Maker::ModelIntake.for_user(user: @user)
+
+      assert_empty imported.file_attachments
+      assert_empty Maker::FileAttachment.where(user: @user, node_id: %w[f-body f-manual])
+    end
+
+    # A NEGATIVE OR ZERO OVERRIDE FALLS BACK RATHER THAN CRASHING A RECURRING JOB. Integer("-5")
+    # succeeds, so this cannot be left to the rescue: a negative reaches todo.first(-5), which
+    # raises "negative array size" from inside the job with nothing naming the typo that caused it.
+    test "a nonsense cap override falls back to the default" do
+      %w[-5 0 banana].each do |bad|
+        ENV["MODEL_CATALOG_MAX_MODELS"] = bad
+        assert_equal Maker::ModelIntake::MAX_MODELS, Maker::ModelIntake.max_models, bad
+      end
+    ensure
+      ENV.delete("MODEL_CATALOG_MAX_MODELS")
+    end
+
     def count_queries(&block)
       n = 0
       counter = ->(*, payload) { n += 1 unless payload[:name].in?(%w[SCHEMA TRANSACTION]) }
