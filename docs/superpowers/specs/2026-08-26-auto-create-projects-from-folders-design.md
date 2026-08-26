@@ -128,6 +128,31 @@ string that must agree is the drift shape this repo has paid for twice (`FilesHe
 vs `ROLE_BY_EXT`; `preview_kind`'s inline extension list). `Maker::ProjectFolders` is already the
 module that owns "what the folders under a project are called".
 
+### 3c. `#place` must resolve under the project's folder NODE — a bug this feature exposes
+
+*Added 2026-08-26 while writing the implementation plan; not in the first draft of this spec.*
+
+`Maker::ProjectIntake#place` builds its destination as `ensure_path!([ROOT, @project.slug, dest])` —
+a path **rebuilt from the slug** — while `Maker::ProjectIntake.destination_for` resolves the same
+folder under the project's actual `folder_node_id`. §14f already requires that prediction and
+behaviour cannot disagree; they agree on the folder *name* and **not on its parent**, and that has
+gone unnoticed because `#ensure_library_folder!` is the only writer of `folder_node_id` and always
+mints `Projects/<slug>`, so the two coincide.
+
+**Discovery makes them diverge as the mainline case.** A project adopted from `Projects/Desk Lamp`
+has slug `desk-lamp`, so `#place` would mint a **second** `Projects/desk-lamp/` tree and move the
+user's file into it — leaving the folder they made looking empty while the project still points at
+it. Nothing errors and nothing logs.
+
+**The fix:** `Maker::LibraryFolder.create_child!(@user, parent_node_id: live_folder.node_id, name:
+dest)` — `ensure_path!`'s single-segment sibling, already find-or-create, so it stays idempotent.
+`#live_folder` gains a memo because `#place` now reads it once per file.
+
+**Not a widening of scope, and it is a fix in its own right:** the divergence is reachable today
+without discovery — rename a project's slug after its folder was minted and `folder_node_id` keeps
+pointing at `Projects/<old-slug>`, which is the same case §5 cites for *not* adding a unique index
+on `folder_node_id`.
+
 ---
 
 ## 4. Wiring
@@ -312,7 +337,9 @@ identical run counts.
 **Changed**
 - `app/models/maker/project.rb` — `.slugify`, `.available_slug`; `#ensure_slug` reuses `.slugify`
 - `app/services/maker/project_folders.rb` — `ROOT`
-- `app/services/maker/project_intake.rb` — read `ROOT` instead of the literal
+- `app/services/maker/project_intake.rb` — read `ROOT`; `#place` resolves under the project's folder
+  node (§3c); `#live_folder` memoized
+- `test/services/maker/project_intake_test.rb` — the §3c fix
 - `app/jobs/library/scan_job.rb` — `#discover_projects`, before `#intake_project_folders`
 - `config/recurring.yml` — `project_discovery`
 - `lib/tasks/projects.rake` — `projects:discover`
