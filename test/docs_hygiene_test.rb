@@ -34,7 +34,7 @@ class DocsHygieneTest < ActiveSupport::TestCase
   # added here is paid on every session forever. If a rule genuinely needs the room, ask first
   # whether it is an AREA rule that belongs in docs/invariants/ instead — that is what the split is
   # for, and it costs the reader nothing.
-  MAX_LINES = 1_500
+  MAX_LINES = 1_400
 
   test "CLAUDE.md stays under its line ceiling" do
     lines = CLAUDE_MD.readlines.size
@@ -94,7 +94,7 @@ class DocsHygieneTest < ActiveSupport::TestCase
 
   test "the moved sections keep their anchors, because code cites them by number" do
     claude = CLAUDE_MD.read
-    moved = %w[14c 14g 14h 14i]
+    moved = %w[14c 14f 14g 14h 14i]
 
     moved.each do |anchor|
       assert_match(/^### #{anchor}\. /, claude,

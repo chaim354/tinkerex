@@ -447,11 +447,12 @@ Each line below cost a real bug **in this repo**. `docs/STATUS.md` has the full 
 them. Invariants belonging to the sync engine or the desktop client live in those repos'
 own CLAUDE.md — see §3 and §14j.
 
-**Five subsections live in `docs/invariants/` and are stubs here** — 14c (addons), 14g (deploy
-secrets), 14h (Measure), 14i (backup), 14k (the model catalog). They are §14 material, not an appendix: each binds hard
-inside its own subsystem and not at all outside it, so it is loaded when it applies rather than
-skimmed on every unrelated session. **Read the file before touching the paths its stub names.**
-Anything below that binds on only one area belongs there too, with a stub here.
+**Six subsections live in `docs/invariants/` and are stubs here** — 14c (addons), 14f (project
+intake), 14g (deploy secrets), 14h (Measure), 14i (backup), 14k (the model catalog). They are §14
+material, not an appendix: each binds hard inside its own subsystem and not at all outside it, so
+it is loaded when it applies rather than skimmed on every unrelated session. **Read the file
+before touching the paths its stub names.** Anything below that binds on only one area belongs
+there too, with a stub here.
 
 ### 14a. The FileLayer port
 
@@ -1103,148 +1104,22 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   set is NON-EMPTY before trusting what it reports.** This generalises past the extraction: any
   guard whose subject is a path can be silently retired by a move.
 
-### 14f. Project-folder intake
+### 14f. Project-folder intake → **`docs/invariants/project-intake.md`**
 
-- **`:in_working_tree` IS UNSCOPED, UNLIKE `:attached_elsewhere` — DO NOT ADD A KWARG TO IT.** A
-  refusal from `#refusal_for` does not mean "refuse the attachment": `#call` returns
-  `relocation: (move(node) if refusal.nil?)`, so it means **attach the row, leave the bytes**,
-  which is the right answer at all four callers. `:attached_elsewhere` needed `within_own_folder:`
-  because its stated reason is positional and stopped applying to one caller; "do not move a file
-  out from under git" has no such exception. Detection memoizes per PARENT, not per node — a sweep
-  files N nodes under one parent and the ancestor walk is two queries per level (measured: 45
-  queries against 15 for ten files at depth four).
-
-- **ROOT = INBOX IS THE WHOLE SORT RULE, AND IT IS STATELESS.** Only files at a project
-  folder's own root are ever filed; anything already in a subfolder — including one filed
-  "wrong" by hand — is never revisited, and no column records that a file was "handled."
-  Position is the marker. Re-filing a subfolder would fight the user every 15 minutes, and
-  on chunk each round of that fight is a changelog entry broadcast to every device.
-- **A SWEEP OVER `nodes`, NOT A HOOK PER DOOR — because there are SEVEN doors and no
-  funnel.** `FilesController#create` (share/s3), `#finalize_upload` (chunk),
-  `Library::Reconciler` (the scan), a device push landing on the sync server,
-  `Maker::Addons::LibraryOutput`, `Maker::MoveNode`, and a trash restore can all land a
-  file under `Projects/<slug>/`. Hooking each is seven sites that must agree, and an
-  EIGHTH would silently skip the rule — this repo's recorded failure shape (the five
-  `port_writable?` copies, the Scanner's skip-list blind spot). Reading `nodes` — the
-  catalog all three backends populate — covers every door, present and future, without
-  touching any of them.
-- **THE CHANGELOG PULL'S NUDGE TAKES LIVE FILE ARRIVALS ONLY, ASKS `maker_projects` ONCE PER PULL,
-  AND IS DELIBERATELY NOT FED BY `full_resync`** (§12.10). `ChunkRemote::ChangelogSync#call` is
-  where this app learns about a node another device pushed, so it nudges once per pull. A
-  **directory** has nothing to file and a **tombstone** is a removal — neither is an arrival. The
-  project lookup is **once for the whole pull, never per entry**: per-node, a page loop pays a query
-  each to enqueue a job `limits_concurrency` discards anyway. And `full_resync` re-applies the
-  **entire tree**, so every file there would look like an arrival. Mutation-checked in
-  `changelog_sync_test.rb`.
-- **ADDS NO NEW COPY OF THE `port_writable?` BRANCH — the count named in §14d stays
-  five.** Moves run through `Maker::MoveNode`, mkdirs through `Maker::LibraryFolder`; both
-  already branch correctly for the deployment, so `ProjectIntake` itself never asks the
-  question.
-- **READS `folder_node_id`, NEVER CALLS `Project#ensure_library_folder!`.** Calling the
-  ensure would make a sweep CREATE `Projects/<slug>` for every project that never had one,
-  as a side effect of merely looking — the same bug
-  `Projects::AttachmentsController#relocate` once shipped, now at library-sweep scale. A
-  project with no folder is simply not swept (`status: :no_folder`).
-- **ASKS `Maker::AttachToProject#refusal_for` BEFORE EVERY MOVE — which is why that
-  method is public.** Its three rules (`:not_a_file`, `:model_bundle`,
-  `:attached_elsewhere`) are policy about where a file may go, not a suggestion; skipping
-  them is exactly how `#relocate` once silently pulled a file out of a model's bundle
-  folder while reporting success. `ProjectIntake#place` is a third door onto that one
-  policy, not a second copy of it.
-- **`:attached_elsewhere` IS THE ONE RULE THAT DOES NOT TRANSFER TO THE INTAKE, and it is
-  scoped AT `#refusal_for` (`within_own_folder:`), never by `#place` filtering the answer.**
-  Its stated reason is positional — "yanked out of the folder that project put it in" — and
-  `#place`'s move is `Projects/<slug>/x` → `Projects/<slug>/<cat>/x`, so there is no other
-  project's folder to yank it out of; `node_id` never changes, so the other project's
-  attachment survives. Unscoped it was **silent and permanent**: a file any second project
-  also claimed sat at the root through every 15-minute sweep forever, recorded only in a
-  `skips` entry nothing but `rake projects:organize` prints. Reachable without doing
-  anything unusual — `CurrentProject#attach_addon_files_to_current_project` attaches an
-  addon's output to whatever project is **current**, regardless of which folder the save
-  dialog wrote it into. `:not_a_file` and `:model_bundle` stay unconditional: the bundle
-  rule is deliberately about the ATTACHMENT rather than the folder, so it makes no claim
-  about where the file currently sits and has no equivalent argument for relaxing.
-- **TWO COLLISION CHECKS, AGAINST TWO DIFFERENT FOLDERS, AND THE GAP BETWEEN THEM WAS A REAL BUG.**
-  A door's own check (`refuse_taken_names!`) asks about the folder the user **picked** and is
-  terminal ("pick another name" → **422** `unsupported_operation`). `Maker::ProjectIntake
-  .destination_for` asks about the **category folder** the sweep will file into, and is answerable
-  ("overwrite?" → **409** `would_replace`). A re-save goes straight through the gap: the first copy
-  has already been filed, so the picked folder is vacant, the door accepts, and the sweep cannot
-  place the second copy — which sits at the project root **forever**, two copies of one drawing in
-  the library. That is §12 item 11 in the wild. **Keep 409 and 422 distinct**: a bundle must be able
-  to tell "never succeeds on retry" from "say yes and it will", or it offers an Overwrite button for
-  a save that can never take one. `destination_for` **creates nothing** — looking up a category
-  folder must not mkdir it (`#relocate`'s recorded bug) — and takes its name from
-  `Maker::ProjectFolders.folder_for`, the same pure function `#place` uses, so prediction and
-  behaviour cannot disagree. **The 422 has ONE exemption, and only one:** an addon save carrying
-  `state_id` may land on a node that saved item itself produced, in either check (§14c's own-file
-  rule). Naming the state is the consent; "the destination is taken" is still terminal for every
-  collision with a file this save did not write.
-- **THE `state.id`-IN-THE-FILENAME EXEMPTION IS GONE WITH ITS DOOR, AND THAT IS A WIDENING, NOT A
-  TIDY-UP.** `Tools::OpenscadController#create` could not reach the collision above because its
-  output name embedded `state.id`, a fresh autoincrement per save, so two saves of one design under
-  one name still produced two filenames — a confirm dialog there would have been UI for an
-  unreachable branch, and dropping `state.id` turned `openscad_controller_test.rb` red. That door
-  was retired on 2026-08-12 and **openscad now saves through `Tools::AddonsController#create` like
-  every other addon**, where the name is whatever the BUNDLE sends. So the branch that was
-  unreachable is now reachable for openscad too, and the 409 `would_replace` / 422 `name_taken`
-  distinction below is what covers it. If a bundle chooses to embed a unique token in its output
-  name it gets the old property back — but that is now the bundle's choice, made in another repo,
-  and nothing in this one can assert it.
-- **EVERY ADDON SAVE DOOR FIRES THE EAGER NUDGE — there is now exactly ONE**
-  (`Tools::AddonsController#create`), and the concern is included on `Tools::BaseController` so a
-  second inherits it. It was TWO until openscad's own door was retired. This was the last
-  browser-facing door without one: the save dialog DEFAULTS to the current project's folder,
-  so the user watched the redirect land on a file that visibly did not sort — 15 minutes on
-  chunk, and on share/s3 there is no `project_folder_intake` schedule at all
-  (`ProjectIntakeJob.sweep_all!` declines on a scannable backend), so it waits on
-  `Library::ScanJob`'s poll. **ONE sweep per save, not one per file** (every file in a save
-  shares `parent_node_id` and `.for_node` sweeps the owning PROJECT), **after** the attach
-  per `ProjectFolderIntake`'s call-site rule. The conflict clause has one home,
-  `#project_intake_sentence` — the doors differ on the LEAD-IN ("Uploaded grid.svg" vs
-  "Saved “X”") and must not differ on what follows — and `#unfiled_by_conflict` is its plural
-  form, because a save writes a SET and the colliding output need not be the first.
-- **THE SCANJOB ORDERING — INTAKE STRICTLY AFTER THE RECONCILE, SAME JOB — IS A
-  CORRECTNESS CONSTRAINT, NOT A CONVENIENCE.** A move made after the Scanner has captured
-  its observations gets paired back by `(content_hash, size)` — `best_pairing` working
-  exactly as designed — which re-points the node to its OLD path while the bytes sit at
-  the new one. In that window a download does NOT get the retryable 503 (`library_present?`
-  still reads true): `Share#download`'s `ENOENT` maps to `NotFound`, and `FilesController`
-  renders that as a TERMINAL 404. Running the intake inline in `Library::ScanJob`, right
-  after `observer.call`, makes the overlap impossible instead of merely unlikely — the
-  reason `Maker::ProjectIntakeJob`'s own schedule declines on scannable backends (next
-  bullet).
-- **TWO CAPS, DELIBERATELY NOT ONE.** `MAX_MOVES` (500) bounds an unattended run's CHURN
-  and is absolute, not a percentage — the only honest denominator is "files currently at
-  project roots," of which the intended first run files 100%, so a percentage would be
-  guarding against SUCCESS. `EAGER_MAX_MOVES` (25) bounds request LATENCY for `.for_node`,
-  the one entry point that runs inside a browser-facing request (the eager nudge) rather
-  than an unattended job. Collapsing them would let one upload's response wait on the cost
-  `MAX_MOVES` is willing to accept for a background job.
-- **THE EAGER CAP IS BACKEND-AWARE: `EAGER_MAX_MOVES = 25`, `EAGER_MAX_MOVES_S3 = 5`.** 25 was
-  measured on chunk / local SQLite and is not an even bound across backends: `FileLayer::S3#move`
-  is three sequential, unbatched network calls per file (a HEAD, a COPY, a DELETE), so 25 eager
-  moves is **75 sequential S3 round-trips inside one browser-facing request** — at the 85–205 ms
-  per call measured against a real R2 bucket, **six to fifteen seconds** an upload's response sits
-  waiting. 5 keeps the same promise (a handful of files dropped in a folder file themselves
-  immediately) at roughly a second. `PROJECT_ORGANIZE_EAGER_MAX_MOVES` still overrides on every
-  backend. *(This bullet went on asserting a single even bound for months after the split landed —
-  the stale-claim shape §15 warns about, in the file loaded into every session.)*
-  - **`eager_max_moves` ASKS THE ADAPTER'S CLASS (`is_a?(FileLayer::S3)`), AND THAT IS NOT §14b's
-    RECORDED TRAP.** That trap was a **gate** — `is_a?(Share)` decided *whether* to index, so an
-    unrecognised backend was silently skipped and an S3 library never got indexed. This is a
-    **threshold**, keyed on a property no adapter declares ("one move here is three round-trips"),
-    and an unrecognised backend falls through to 25 — so it fails toward SLOW, never toward
-    silence or data loss.
-- **A CALLER MUST READ `intake_project_folder`'S RETURN VALUE, NOT JUST TRIGGER ITS SIDE
-  EFFECT.** Every caller threw it away until a review caught it: a same-named upload whose eager
-  nudge lost a collision at its destination folder reported a silent "Uploaded x." with no sign the
-  file had stayed at the project root. `ProjectFolderIntake#left_unfiled_by_conflict?` /
-  `#project_intake_notice` read the `:conflict` entry out of `Result#skips` for exactly this — but
-  only in the **three** doors whose response a user actually sees (`FilesController#create`'s HTML
-  branch, `Projects::UploadsController#create`, the addon save door). The JSON-only branches still
-  run the intake and still file what they can; they just don't surface it, because nothing
-  downstream reads that response key today.
+**Read that file before touching** `app/services/maker/project_intake.rb`,
+`app/services/maker/project_discovery.rb`, `app/services/maker/attach_to_project.rb`,
+`app/services/maker/project_folders.rb`, `app/jobs/maker/project_intake_job.rb`,
+`app/jobs/maker/project_discovery_job.rb`, or `Library::ScanJob`'s post-reconcile sequence. It
+holds both halves of the feature: **Discovery** — a folder dropped directly under `Projects/` with
+no claimant becomes its own project, the statelessness and dismissal rules, the two caps, the
+can't-fail slug, and why `#place` resolves under the folder's own node rather than a path rebuilt
+from the slug — and **Filing** — the sweep that attaches and files what is loose at a project
+folder's root: the seven doors it must cover with one reader instead of a hook per door, the two
+collision checks (409 vs 422), the eager-nudge and changelog-pull triggers, and the ScanJob
+ordering that makes a race a correctness bug rather than a timing quirk. Moved out of this file on
+2026-08-26, together with the new rules the discovery feature earned — 245 lines total that bind
+only inside project intake. Nothing was dropped; this anchor stays because code cites `§14f` — 32
+references across 22 files in `app/`, `lib/` and `test/` (`grep -rl '§14f' app/ lib/ test/`).
 
 ### 14g. Deploy secrets → **`docs/invariants/deploy-secrets.md`**
 
