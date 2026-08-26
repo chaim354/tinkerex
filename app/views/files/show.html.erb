@@ -116,10 +116,19 @@
     <%# Full PDF preview via the browser's own viewer (served inline from the blob endpoint). %>
     <iframe src="<%= blob_file_path(@node.node_id) %>" class="preview-pdf" title="<%= @node.name %> (PDF)"></iframe>
   <% elsif @kind == :text %>
-    <%# Inline text preview — fetched from the blob endpoint (however this backend delivers). %>
-    <pre class="preview-text"
-         data-controller="textpreview"
-         data-textpreview-url-value="<%= blob_file_path(@node.node_id) %>">Loading…</pre>
+    <%# Read-only source viewer — CodeMirror 6, loaded dynamically by codeview_controller so the
+        bundle ships only on a page that actually has a text file on it. The inner preformatted
+        block is the FALLBACK and the resting state at once: the controller fetches the bytes
+        into it first and removes it only once the editor has mounted, so a failed bundle load
+        degrades to exactly the plain preview this branch used to be. Never write a
+        percent-greater-than sequence inside one of these comments — an ERB comment ends at the
+        first one and the rest of the prose prints into the page (§14d). %>
+    <div class="preview-code"
+         data-controller="codeview"
+         data-codeview-url-value="<%= blob_file_path(@node.node_id) %>"
+         data-codeview-ext-value="<%= File.extname(@node.name).downcase.delete(".") %>">
+      <pre class="preview-text" data-codeview-target="fallback">Loading…</pre>
+    </div>
   <% elsif @kind == :model3d %>
     <%# Interactive client-side 3D viewer (Three.js), see modelviewer_controller.js. `lazy` gates
         the byte fetch + Three.js download behind the "View in 3D" button, so nothing heavy loads

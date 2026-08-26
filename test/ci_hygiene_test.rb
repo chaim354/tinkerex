@@ -30,6 +30,14 @@ require "test_helper"
 # The binstub checks below extend this file past .github/workflows/. They belong here anyway: a
 # binstub is CI's actual entry point, the Rails process never loads it either, and the failure it
 # caused was a gate result rather than a code result.
+#
+# The importmap checks at the bottom extend it once more, for the same reason in a different
+# direction: config/importmap.rb IS loaded by the Rails process, but what those tests guard is a
+# fact about how a dependency was VENDORED, which no runtime assertion can reach. A second copy of
+# @codemirror/state does not raise, warn, or log — CodeMirror 6 matches facets and StateFields by
+# OBJECT identity, so an extension built against copy A is silently ignored by a view built on copy
+# B and the editor just renders without the feature. There is no red anything to observe. See
+# bin/build-codemirror.
 class CiHygieneTest < ActiveSupport::TestCase
   WORKFLOW_DIR = Rails.root.join(".github/workflows")
 
@@ -329,6 +337,36 @@ class CiHygieneTest < ActiveSupport::TestCase
     assert_empty offenders,
                  "--ensure-latest fails the scan gate on brakeman's own version rather than on " \
                  "this code; gem freshness is Dependabot's job:\n  #{offenders.join("\n  ")}"
+  end
+
+  # ---------------------------------------------------------------------------------------------
+  # CodeMirror is ONE vendored bundle, and per-package pins are forbidden.
+
+  test "the CodeMirror bundle is pinned once, and never per package" do
+    importmap = Rails.root.join("config/importmap.rb").read
+    pins = importmap.scan(/^\s*pin\s+"([^"]+)"/).flatten
+
+    # NON-VACUOUS FIRST (§14e): a guard that scans a file dies silently when the file moves or the
+    # syntax changes, and `assert_empty offenders` over an empty parse passes perfectly forever.
+    assert_operator pins.size, :>, 5, "parsed #{pins.size} pins — the importmap parse is broken, " \
+                                      "so everything below this line is vacuous"
+
+    assert_includes pins, "codemirror", "the bundle pin is missing"
+
+    offenders = pins.grep(%r{\A@codemirror/})
+    assert_empty offenders,
+                 "per-package CodeMirror pins (#{offenders.join(', ')}) load a second copy of " \
+                 "@codemirror/state, which makes CM6 ignore extensions SILENTLY — no error, no " \
+                 "console warning. Add languages to vendor/javascript/codemirror-entry.js and " \
+                 "re-run bin/build-codemirror instead."
+  end
+
+  test "the pinned CodeMirror bundle file actually exists" do
+    # The pin above names a filename; nothing else in the boot resolves it, so a missing artifact
+    # is a 404 in the browser and a green suite. Propshaft serves vendor/javascript, so existence
+    # here is the whole of the check.
+    assert Rails.root.join("vendor/javascript/codemirror.js").exist?,
+           "run bin/build-codemirror"
   end
 
   private

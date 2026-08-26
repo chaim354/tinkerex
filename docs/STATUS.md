@@ -1,6 +1,6 @@
 # Build status — the maker app (`chaim354/tinkerex`)
 
-**Updated:** 2026-08-25 (**the two labelled edge dropdowns get two columns so their labels are readable, and a sample-less generator keeps its frame so the gallery cannot reflow under a click. 171 of 181 generators have a photo — the code said the opposite. The fixture's own 'photo' turned out to be undecodable bytes.**)
+**Updated:** 2026-08-26 (**the two labelled edge dropdowns get two columns so their labels are readable, and a sample-less generator keeps its frame so the gallery cannot reflow under a click — 171 of 181 generators have a photo, the code said the opposite, and the fixture's own 'photo' was undecodable bytes. Merged after the CodeMirror/git-projects arc below, which is the entry to read for the library-side work.**)
 
 ## What this file is
 
@@ -78,7 +78,7 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-25): the labelled dropdowns get room to be read, and the gallery stops moving under the pointer (branch `claude/boxes-ui-truncation-and-stable-gallery`)
+## Latest (2026-08-26): the labelled dropdowns get room to be read, and the gallery stops moving under the pointer (branch `claude/boxes-ui-truncation-and-stable-gallery`)
 
 Two UI defects found by driving the deployed app rather than by reading it, both in the surface the
 edge labels had just landed on.
@@ -150,6 +150,1031 @@ the tests are this repo's. The mirror in `test/fixtures/addons/boxes/` is byte-i
 placeholder live in `app/assets/stylesheets/application.css`, so the three web containers do need to
 roll. Either half alone is harmless: the class with no CSS is inert, the CSS with no class matches
 nothing.
+
+## 2026-08-26: a git repo in the library, and the sweep that was tearing one apart (branch `claude/codemirror-code-editor-629b04`)
+
+**COMPLETE — nine of nine tasks landed.** Spec:
+`docs/superpowers/specs/2026-08-25-codemirror-code-viewer-design.md`. Plan:
+`docs/superpowers/plans/2026-08-25-codemirror-code-viewer.md`.
+
+Started as "should we use CodeMirror for a lightweight code editor and viewer", widened by the
+user to "full git projects that combine code with hardware and making". The widening is what
+mattered: **the editor is the small half**, and asking where a repo would actually live surfaced
+two live bugs that have nothing to do with an editor.
+
+### The question as asked, answered
+
+**Yes, CodeMirror 6.** MIT throughout (`codemirror`, every `@codemirror/*`, `@lezer/*` — read from
+the installed `package.json`s, not assumed), so §9 costs nothing here. The packaging is the real
+price, and the measured figures are:
+
+| bundle | minified | gzipped |
+|---|---|---|
+| core only (view + state + basicSetup + StreamLanguage) | 385.4 KB | 124.8 KB |
+| minimal (cpp, python, json, markdown) | 751.6 KB | 257.5 KB |
+| maker-focused (+ javascript, yaml, xml) | 777.9 KB | 267.5 KB |
+| **broad — the chosen set** | **911.9 KB** | **317.0 KB** |
+
+Marginal cost per language, measured on top of core: `markdown` +217.1, `html` +173.2, `cpp`
++125.7, `javascript` +113.8, `rust` +93.3, `python` +72.9, `go` +59.0, `sql` +55.8, `css` +52.3,
+`yaml` +43.4, `xml` +38.4, `json` +26.4 KB. **The twelve sum to 1071 KB apart and cost 527 KB
+together** (912 − 385), because markdown/html/css/javascript share lezer parsers — which is a size
+argument for one bundle on top of the correctness one. **Legacy stream modes are free** (+0.4,
+−1.0, +0.1 KB), and neither g-code nor OpenSCAD exists upstream (checked, `legacy-modes` 6.5.3), so
+both get `simpleMode` definitions of our own. For scale, `three.core.js` is already 1409 KB in
+`vendor/javascript` and dynamic-imported.
+
+### The bug that was already running (landed)
+
+`Maker::AttachToProject#refusal_for` had three rules and none knew what a working tree is. §14f's
+root-is-inbox sweep therefore filed a repo's **root-level** files away by category, unattended,
+every 15 minutes — `README.md` → `docs/`, `main.py` → `other/`, `platformio.ini` → `other/`, each
+one a delete plus an untracked add as far as git is concerned. Nested files were always safe (never
+revisited); a repo's root files are most of what identifies it.
+
+Fixed by a fourth refusal, `:in_working_tree`, **unscoped** — unlike `:attached_elsewhere`, which
+needed `within_own_folder:`. The asymmetry has an argument: a refusal here means "attach the row,
+leave the bytes", which is the right answer at all four callers of `#refusal_for`.
+
+Detection memoizes per **parent**, not per node, because a sweep files N nodes under one parent and
+the ancestor walk is two queries per level. **Measured by removing the memo: 45 queries against 15**
+for ten files at depth four.
+
+### A guard needed repairing before it could be trusted
+
+`project_intake_test`'s "the subtree walk selects only the columns it reads" identified the walk
+with `include?("parent_node_id")` — which matches any query *mentioning* the column, including the
+new `walk_for_marker`'s parent hop (`SELECT parent_node_id WHERE node_id = ?`). It was swept in and
+failed the columns assertion, **reading as a caught regression when nothing had regressed**. The
+discriminator now matches the WHERE clause, which is what its own prose always claimed it did. Its
+comment said "identifying the walk took two tries"; it is three now, and says so. Re-verified by
+mutation: making the walk `SELECT "nodes".*` still goes red.
+
+### Measured: the three legs, at the END of the arc
+
+| leg | runs | assertions | skips |
+|---|---|---|---|
+| share | 2441 | 9158 | 30 |
+| s3 | 2441 | 9158 | 30 |
+| chunk_remote | 2441 | 9315 | 5 |
+
+**Run counts identical**, which is the §15 rule. The assertion and skip gap on chunk_remote is
+capability-gated skipping (restore/versioning tests that only run where `versioned` is true) and
+predates this work — it is the divergence already recorded under "Still open", not a new one.
+`system`: 185 runs / 1541 assertions / 1 skip. Per-task figures are in each section below and are
+scoped to that task; **this table is the arc's, and it carried task 2's numbers through eight more
+tasks until a final pass caught it** — the stale-claim shape §15 warns about, in the file whose job
+is to prevent it.
+
+**`test-chunk-remote` IS THE LEG THAT FOUND THE ARC'S LAST BUG, AND NO SUBAGENT RAN IT.** Every
+task was verified on share and s3 only. The final full run came back with **8 failures in
+`RepoMetadataPurgeTest`**, all reading "the purge did nothing": task 6's `scannable?` gate is false
+on chunk_remote, so the purge declines, and every test asserting it destroys or reports something
+failed — while the other two legs stayed green because their ambient backend happens to satisfy the
+new gate. The tests inherited `LIBRARY_BACKEND` instead of pinning it, which §15 names as a real bug
+rather than a test-environment quirk. **A NINTH test was worse than the eight**: the negatives case
+asserts `destroyed == 0`, which a *declined* run satisfies for free, so it was green on chunk_remote
+while testing nothing at all.
+
+The lesson, stated plainly because it generalises: **a capability gate added to a service
+retroactively changes what every existing test of that service asserts, and the legs that stay green
+are not evidence — they are the legs whose ambient backend happens to satisfy the new gate.**
+
+### The observers: `.git` is ONE node and its contents are none (task 3, landed)
+
+`Library::RepoMetadata` gained the predicates the observers and the write guards call. `marker?` takes a **leaf**
+(`.gitignore` and `a/.git` both false); `marker_prefix` returns the path up to and including the
+**outermost** `.git` — `index`, never `rindex`, so `a/.git/modules/b/.git/HEAD` resolves to `a/.git`
+and a submodule cannot hide the subtree between two markers. `internal?` names the STRICTLY-beneath question and is
+DERIVED from `marker_prefix` (`prefix && prefix != rel`), so the observers' "may I index this" and
+the write guards' at-or-beneath "may a write land here" cannot drift about which paths have a marker
+at all. They differ on exactly one path — the marker itself — which is the whole design.
+
+**IT WAS NOT WRITTEN THAT WAY FIRST, AND THE CORRECTION IS THE POINT.** The plan was amended
+mid-arc to say task 4 wanted at-or-beneath, "therefore `internal?` is unnecessary" — a non-sequitur
+found in review. Task 4 wanting at-or-beneath does not make strictly-beneath unnecessary; it means
+BOTH questions exist. In between, `marker_prefix` carried two meanings at two call sites,
+distinguished only by what each caller did with the return value (`.present?` versus `!= rel`), and
+the inline term's own comment called it "the term most likely to be deleted as redundant" and then
+defended it in prose. A name cannot be deleted as redundant.
+
+The two observers differ, and the difference is the whole task. `Library::Scanner` meets a real
+directory: it observes the marker and declines only the **descent**, one `unless` on the worklist
+push — the one place that walk decides to descend. Its `each_child` now yields the leaf `name`
+beside `rel`, so the call site can ask `marker?` a leaf question without rebuilding one — a preference, not a necessity, since the block also receives `path` and `path.basename.to_s` is the same string. `Library::S3Observer`
+has no directory to meet: the marker exists only as a prefix of the keys being dropped, so it is
+**synthesized** (`dirs.merge(dir_chain(marker_prefix(rel)))`, gated on `internal?`) before the keys are skipped.
+
+Two placement decisions there, both load-bearing and both pinned by their own test. It goes
+**first, above the directory-marker branch**: a zero-byte `firmware/.git/objects/` folder object
+reaches `#observe` as a marker, and the marker branch would merge its whole ancestor chain into a
+dir node BENEATH `.git`. And it is **not in `#indexable?`**, where the other path-shape skips live (the non-UTF-8 skip is in `#utf8_key`) — that
+predicate's rejects are dropped outright, while this skip must RECORD the prefix before dropping
+the key.
+
+Not a fifth skip-list wedge, which is the question §14b's blind spot forces: a wedge needs a live
+node at a path no observation can pair, and the marker IS observed, so it pairs like any other
+directory.
+
+Mutations run, each red for its own reason — enumerated rather than totalled, because a running
+count is the shape this arc has already had to retract once: `index`→`rindex` (the submodule case);
+`==`→`start_with?` in `marker?` (`.gitignore` becomes a marker, and the scanner depth test); a
+segment-**prefix** match in `marker_prefix` (the s3 depth test); dropping the non-String guard
+(`NoMethodError` on nil); removing the Scanner's `unless` (four nodes beneath `.git`); dropping the
+S3 `dirs.merge` (the marker vanishes from both tests); moving the S3 branch below the
+directory-marker branch (`firmware/.git/objects` returns); `internal?` dropping `!= prefix` (the
+marker becomes internal); hoisting the Scanner's skip out of its `stat.directory?` arm, and
+extending that skip to files (both kill the pointer file).
+
+**TWO OF THOSE GUARDS WERE VACUOUS WHEN FIRST WRITTEN, AND A REVIEW MUTATION IS WHAT SHOWED IT.**
+Both observer suites carried a test named "a key merely NAMED like git metadata is indexed
+normally", whose comment claimed it caught a segment-**prefix** match. Neither could: on s3,
+`.gitignore` sits at the library ROOT, so `marker_prefix(rel) == rel` and the `internal?` term
+rescued the key regardless; on the Scanner, `.gitignore` is a FILE and the skip lives in the
+`stat.directory?` arm, so `marker?` was never consulted at all. Under the mutation
+`.github/workflows/ci.yml` vanished silently and `.github` became a childless dir node while both
+assertions passed. Both now seed at DEPTH and assert the leaf node, and both fail under their own
+mutation. Nothing shipped unguarded — the unit tests always caught it — but the observer-level
+guards could not do the job their comments claimed, which is the same defect class as the retracted
+"cannot" below: a claim nothing could falsify.
+
+**A cross-backend divergence was written in, reviewed, and then closed — the review finding is the
+part worth keeping.** A submodule or linked worktree writes a `gitdir:` POINTER FILE where a plain
+repo has a directory. The first cut of the s3 branch made that object the MARKER and dropped its
+bytes, and its comment justified this by asserting that a flat keyspace has no kind to read, so
+"this backend cannot" honour `RepoMetadata`'s "a DIRECTORY, never a FILE". **That was false.** One
+term closes it, now named `RepoMetadata.internal?` — the object AT the marker path being the
+pointer rather than the marker — and it costs nothing else: `firmware/.git/config`, `firmware/.git/objects/` and
+the zero-byte `firmware/.git/` folder marker all behave exactly as before, and a `sub/.git` object
+beside `sub/.git/config` now resolves through LANDMINE 7's partition **with its warning** instead
+of being swallowed silently. So s3 matches the Scanner and §14a's one-condition-one-answer holds.
+Pinned as a cross-backend PAIR — a test in each observer suite — and mutation-checked from both
+ends: dropping the term gives `Expected: "file" / Actual: "dir"`, and hoisting the Scanner's skip
+out of its `stat.directory?` arm kills the pointer file on that side too.
+
+The rule was right and its evidence was invented, which is the failure CLAUDE.md's own preamble
+records about its `§` reference counts; `repo_metadata.rb`'s header now carries the corrected
+version rather than the retracted one.
+
+Legs measured for this task: share and s3, both **2386 runs / 8738 assertions / 30 skips**,
+identical. `test-chunk-remote` was not re-run here — the table above is task 2's measurement.
+
+**An unrelated flake surfaced during those runs, with a mechanism, so it is written down rather
+than re-diagnosed later.** `WorkerBudgetTest#test_a_detector_that_raises_is_treated_as_contended`
+failed `Expected: 1 / Actual: 6` once in twelve full-suite runs, and is 8/8 green run alone.
+`WorkerBudget::PIDFILE_DIR` is a REAL shared directory (`tmp/browser-suites`) and
+`concurrent_browser_suite?` UNLINKS any pidfile whose pid is not alive — so any other process
+calling it deletes this test's `999998.pid` between its two assertions, and the second one then
+sees an idle box. Cross-process, not cross-test, which is why the fork runner's isolation does not
+help and why back-to-back `bin/ci` runs make it likelier. Nothing to do with the library; the fix
+belongs to the `claude/faster-ci` arc that added it (point `PIDFILE_DIR` at a per-test tmpdir).
+
+### The write side: `.git` is refused at the port and at the doors (task 4, landed)
+
+The other half of `Library::OsClutter`'s law — a name the observers skip must ALSO be refused as a
+write destination — closed for `.git`. **Three lines of code**, which is the point: the predicate
+existed after task 3, so both write guards grow ONE TERM inside their existing
+`return unless <disjunction>` and reuse the existing raise and message unchanged. It is the same
+refusal extended, not a new one.
+
+- `FileLayer::Share#observable!` and `FileLayer::S3#observable!` each gain
+  `Library::RepoMetadata.marker_prefix(rel).present?`. Every write verb already calls these:
+  share asks from `write`/`mkdir`/`move`/`undelete`, s3 from the same four.
+- `Library::ReservedNames.reserved?` gains `Library::RepoMetadata.marker?(name)`, so no web door
+  can MINT a folder named `.git`.
+
+**`NotFound`, not `UnsupportedOperation`** — the write contract states the split in as many words:
+a clobber is `UnsupportedOperation`, a reserved/unobservable destination is `NotFound`. An earlier
+draft of the plan said otherwise and was corrected before any code was written.
+
+**AT-OR-BENEATH the marker, not strictly beneath, which is why `internal?` still does not exist.**
+Refusing the marker itself creates no ghost — ghosts come from writing where the observers do not
+look, and the marker IS observed. What it stops is minting: you cannot create a repository by
+creating the folder, so a hand-made `.git` is never a repo, it is a folder that silently switches
+off the intake sweep for everything under it (`Maker::AttachToProject`'s `:in_working_tree` reads
+exactly this marker and asks nothing else). `marker_prefix` is non-nil for both halves, so one term
+covers both and the purge (task 6) remains `internal?`'s first real caller.
+
+**The `.to_s` ended up inside the predicate, not at the call sites, and the first version was right
+about the risk and wrong about its home.** `Library::OsClutter.ignore?` coerces internally while
+`marker_prefix` refused non-Strings — two sibling predicates in one disjunction with opposite
+policies, so safety depended on every future caller remembering, and `Library::S3Observer` already
+called it without one. `marker_prefix` now coerces (`rel.to_s.split("/")`) and both call sites ask
+plainly. **`marker?` stays strict**, because it takes door-supplied JSON where a nil must reach that
+door's routine refusal. `marker_prefix(nil)` still answers nil, since `"".split("/")` is `[]`.
+
+The tests EXTEND `adapter_write_contract.rb` beside `OS_CLUTTER_DESTINATIONS` rather than inventing
+a second mechanism, so both adapters answer identically by construction: `write` onto the marker,
+`move` onto it, and a write BENEATH it. The third needs a destination no leaf name can express, so
+it goes through a poisoned parent (`update_column`) — the standard the neighbouring reserved-path
+and escape-guard tests already use, for the reason they state. `reserved_names_test.rb` gets the
+`.git` case, the `.gitignore`/`.gitmodules`/`git` negatives, and a **delegation** test mirroring the
+OS-clutter one: redefine `RepoMetadata.marker?` to false and assert `reserved?` follows, which a
+copied `".git"` string could never satisfy. Hand-rolled with `define_singleton_method` plus an
+`ensure` restore — minitest 6 dropped `minitest/mock`, so `stub` does not exist in this suite.
+
+**Mutation-checked four ways, and one of them corrected the plan's stated expectation.**
+
+| mutation | result |
+|---|---|
+| drop the term from `share.rb` only | 3 red, **both legs** — all three `FileLayer::ShareTest` |
+| drop the term from `s3.rb` only | 3 red, both legs — all three `FileLayer::S3Test` |
+| drop the `marker?` arm from `ReservedNames` | 1 red — `a door may not MINT .git` |
+| replace that arm with a literal `name == ".git"` | 1 red — the delegation test, **and nothing else** |
+
+**A REVIEW THEN BROKE THE BLOCK, WHICH IS HOW IT EARNED ITS NEGATIVE CASE.** Every assertion in it
+was a REFUSAL, so nothing distinguished "at-or-beneath a `.git` SEGMENT" from "any path CONTAINING
+`.git`". Replacing the term with `rel.to_s.include?(RepoMetadata::DIR_NAME)` — which still names the
+constant, so it survives the no-second-spelling smell test — left the suite **fully green** while
+`.gitignore`, `.gitmodules` and `.github/workflows/ci.yml` all became unwritable. Those are paths
+`Library::Scanner` explicitly INDEXES, so that mutation ships a destination the observer observes
+and the write guard 404s as a "reserved path" — §14a's one-condition-two-answers, in the direction
+that makes a working tree's own files un-uploadable. Task 3 gave both observer suites this exact
+negative case; the write half now has it too, with DEPTH (`.github/workflows/ci.yml`, built through
+real `mkdir`s because `leaf!` forbids separators in a leaf name). The `include?` mutation is now RED
+on both adapters. **`mkdir` is pinned as well** — the first commit's headline said "refuse minting
+`.git`" while the contract covered only `write` and `move`, and `mkdir` is the verb that mints a
+directory.
+
+The plan predicted the share mutation would leave `test-s3` GREEN, demonstrating a cross-backend
+divergence. **It does not, and the reason is worth recording:** `ShareTest` and `S3Test` each build
+their own adapter directly (`FileLayer::Share.new(root:)`, `FileLayer::S3.new(client: FakeS3)`) and
+read nothing from the ambient `LIBRARY_BACKEND`, while every leg runs the FULL suite. So both
+adapter suites run on both legs and an adapter regression is caught twice, not once. That is a
+stronger guarantee than the plan assumed, but the prediction as written was wrong — and the
+failures are `FileLayer::ShareTest#…` on the s3 leg too, which is the evidence that it is one
+adapter's regression seen twice rather than two.
+
+The last mutation is the one that matters most: it failed the delegation test **alone**, leaving
+every other `.git` assertion green. That is exactly what a delegation guard is for — a copied
+string passes every behavioural test forever after the predicate moves.
+
+Legs measured for this task: share and s3, both **2405 runs / 8802 assertions / 30 skips**,
+identical. `test-chunk-remote` not run here (needs the sibling checkout).
+
+`repo_metadata.rb`'s header said "THE CONTENTS HALF IS ONLY HALF-WIRED TODAY … the WRITE refusal is
+not here yet". That claim is now false, so it was rewritten rather than left standing — the stale-
+claim shape CLAUDE.md's own preamble records about its `§` counts.
+
+### Indexed is not displayed: the marker is hidden in the Files UI (task 5, landed)
+
+`Node.outside_repo_metadata` — `where.not(name: Library::RepoMetadata::DIR_NAME)` — applied to
+**both** of `FilesController#index`'s listing scopes. Two scopes, not one: the flat by-extension
+query and the folder-children query are independent queries over the same catalog, and fixing one
+is the one-condition-two-answers divergence §14a forbids.
+
+**By NAME, and on the SCOPE rather than the `.order` below it.** By name because on share and s3
+the name is the whole of it — the contents beneath the marker are never observed, so they have no
+rows — and it costs no extra query. On the `scope =` assignment because `@match_count` and
+`@child_count` are taken from that same object: applied one line lower, the truncation banner would
+count a file the page never shows, and a folder would paginate rows it does not render.
+
+**THE FLAT SCOPE'S TERM IS LOAD-BEARING, WHICH IS NOT OBVIOUS AND IS WHY THE TEST SEEDS WHAT IT
+DOES.** That scope filters `kind: "file"`, so the marker DIRECTORY can never reach it; the row that
+can is the `gitdir:` POINTER FILE a submodule or linked worktree writes, which task 3 deliberately
+indexes as an ordinary file — and `.git` matches `LIKE '%.git'`, so `?ext=git` lists it. Without a
+pointer-file fixture the flat-scope term is unfalsifiable and the plan's own step-6 mutation stays
+green.
+
+Guard: `test/integration/web/files_git_marker_test.rb` — a new file rather than an addition to
+`files_type_filter_test.rb` (flat only) or `folder_nav_test.rb` (folder only), because the rule's
+whole content is that the two scopes agree, and split across those two suites a reader can delete
+half of it without meeting the other half. It reuses their shared `listed_names` reader verbatim and
+runs on the ambient backend for the reason both of them state.
+
+Mutation-checked four ways, each red for its own reason:
+
+| mutation | result |
+|---|---|
+| drop the term from the FLAT scope only | 1 red — `Expected: ["firmware.git"] / Actual: [".git", "firmware.git"]` |
+| drop the term from the FOLDER scope only | 2 red — `Expected [".gitignore", "main.py", ".git"] to not include ".git"` |
+| `where.not("name LIKE ?", ".git%")` | 1 red — `Expected: [".gitignore", "main.py"] / Actual: ["main.py"]` |
+| `where.not("name LIKE ?", "%.git")` | 1 red — `Expected: ["firmware.git"] / Actual: []` |
+
+The third is the one this arc had already got wrong twice: **both observer suites shipped a
+vacuous version of exactly that `.gitignore` assertion**, rescued by an unrelated term on one
+backend and never reaching the predicate at all on the other. Here the fixture sits in the same
+folder as the marker, where the exclusion really does run over it, and it goes red.
+
+The catalog assertions (`Node.exists?`) are what make the claim *hidden*, not *deleted* — the marker
+has to survive for `Maker::AttachToProject`'s `:in_working_tree` to read it.
+
+**KNOWN LIMITATION, LANDED WITH THE TASK RATHER THAN LEFT TO BE DISCOVERED.** On `chunk_remote` the
+`nodes` table MIRRORS the sync server's tree and the desktop client syncs `.git` whether this app
+likes it or not, so the files INSIDE `.git` exist as rows there — share and s3 never index them at
+all. This scope hides the MARKER on every backend and does **not** hide those descendants from the
+flat view. Closing it needs a recursive CTE on a page already in the hot path — a real per-request
+cost, on the product's main deployment, to tidy a view — and §14j says that tree is the sync
+server's to decide about. If it becomes a real complaint the fix belongs there, or in a
+materialized ancestor column, not in a CTE bolted onto `FilesController#index`. Recorded in
+`node.rb`'s own comment as well, beside the scope, so it is met by whoever next reads the code.
+
+Legs measured for this task: share and s3, both **2405 runs / 8802 assertions / 30 skips**,
+identical.
+`test-chunk-remote` not run here (needs the sibling checkout).
+
+### The already-indexed nodes are purged at deploy, not by a remembered rake task (task 6, landed)
+
+Task 3 stops the observers descending into `.git`. For any library **already** carrying those
+nodes, the first scan afterwards sees every one of them vanish at once — and
+`Library::Reconciler`'s mass-deletion guard is a percentage of the observable library with **no
+floor**. Driven rather than argued: 20 `.git/objects` in a 21-file library gives
+
+> `Library::Scanner::UnsafeScan: scan would tombstone 20/21 observable files (95.2% > 20%).
+> Refusing — is the share mounted? Set LIBRARY_SCAN_MAX_DELETE_PCT to override.`
+
+and the library stops scanning, that pass and every pass after it. The guard raises *before*
+tombstoning, so the cost is an outage rather than lost data. Note what the message asks about: the
+mount, which after this deploy is the wrong diagnosis — hence the `docs/DEPLOY.md` entry.
+
+**A MIGRATION, NOT THE RAKE TASK THE SPEC FIRST PROPOSED.** A rake task has to be *remembered*, in
+the window between the deploy and the next `Library::ScanJob` tick. Kamal runs migrations before it
+boots the new containers, so `PurgeRepoMetadataNodes` closes the window instead of documenting it.
+The logic lives in `Library::RepoMetadataPurge` so it stays testable and re-runnable by hand — which
+is exactly what an operator needs if a scan beat the migration.
+
+Three design points, each with a mutation behind it:
+
+- **DESTROY, not tombstone.** These paths will never be observed again, so a tombstone is a
+  revivable row for a file that cannot come back — and §14a's two-tombstone-kinds rule makes a
+  lingering trash-kind row *worse* than none, since `Reconciler#create_or_revive!` could hand a new,
+  unrelated file that `node_id` with every attachment, BOM link and tag pointing at it. Tombstones
+  already beneath a marker go too: the criterion is "will this path ever be observed again", which
+  the `deleted` flag does not bear on.
+- **An attached node is REPORTED and SKIPPED.** Destroying one silently orphans a project reference.
+  **Its ancestors are kept with it**, which the first cut missed: destroy the directories a skipped
+  node hangs off and it becomes a live row whose `parent_node_id` resolves to nothing — and the next
+  run cannot rebuild its path, so the node it refused to destroy **stops being reported at all**. A
+  skip that reports once and then forgets is not loud. Pinned by a re-run test; without the pinning
+  the second run returns `[]`.
+- **Resolved by the PARENT CHAIN, never `storage_path`.** On `chunk_remote` that column is NULL for
+  every node (§14a), so the obvious version does **nothing at all on the product's main deployment**
+  while every share-fixture test stays green. Mutated to `internal?(node.storage_path.to_s)`: the
+  chunk_remote-shaped test alone goes red.
+
+**It asks `RepoMetadata.internal?` of a rebuilt path rather than testing an ancestor's name** — the
+plan's own code compared `parent.name == DIR_NAME && parent.kind == "dir"`, a third spelling of a
+question two callers already answer by construction. `internal?` is the OBSERVERS' question, and the
+observers are what decide which nodes stop being observed, so matching that population exactly is
+the requirement. It also inherits whole-segment matching, outermost-wins and false-for-the-marker
+for free.
+
+**DECIDE, THEN APPLY — and the split is a correctness constraint found by driving it, not a style
+choice.** The first cut destroyed inside the `find_each`, which removes the very rows the ancestor
+walk still needs: a node whose parent directory was already destroyed this pass has no chain left to
+rebuild, answers `false`, and **survives as a live orphan beneath the marker**. It left 20 of 21
+objects behind and the scan still refused — the guard-trip test caught it before any mutation did.
+The decision pass now collects ids, then destroys in batches, so memory is bounded by an Integer
+array however large the repo is. The parent-lookup memo is a **local** built per call and threaded
+through, never module state: a module memo would outlive the call that filled it and answer a second
+run from rows the first destroyed.
+
+**The plan's own fixtures could not have exercised any of this.** Its `node` helper set
+`storage_path` alone and no `parent_node_id` — a shape no backend produces (`Reconciler`'s
+`#create_or_revive!` and `#ensure_dirs` both set the parent on share and s3), and one against which
+the plan's own parent-chain service would have reported `0 destroyed` and failed the plan's own first
+test. The fixtures build a real chain instead, and the chunk_remote case keeps `storage_path` NULL so
+the two shapes stay distinguishable.
+
+**The negative case is positioned so a prefix bug can reach it, which `.gitignore` alone cannot.**
+`.gitignore` is the LAST segment of its path, so under a `start_with?` mutation `marker_prefix`
+returns the path itself and `internal?` is still false — green. `.github/workflows/ci.yml` is the
+one that falls (2 destroyed: the file and its `workflows` dir). This arc has now shipped a vacuous
+version of that exact assertion twice before; this one was checked.
+
+The migration's `NameError` rescue is **scoped to the constant lookup** (`safe_constantize`), never
+wrapped around the call: a fresh database years from now must no-op if a cleanup deletes the service,
+but a `rescue NameError` around `purge.call` would also swallow a NameError raised *inside* it and
+turn a real breakage into a silent success on every future deploy. Both branches driven — present:
+`destroyed 0 node(s) indexed beneath a .git directory`; moved aside:
+`Library::RepoMetadataPurge is gone; nothing to purge on a fresh database`. `down` raises
+`IrreversibleMigration`, because the rows are gone and the paths they named are no longer observable.
+
+**SCANNABLE BACKENDS ONLY — the review caught this contradicting Task 5's own recorded
+limitation.** `node.rb`, landed four commits earlier on this branch, says that on `chunk_remote` the
+files inside `.git` DO exist as rows and this arc deliberately hides rather than removes them —
+and the purge destroyed exactly those rows, since `ChangelogSync#upsert` writes `parent_node_id`
+and never `storage_path`, which is the shape the purge's own test asserts gets destroyed.
+`RepoMetadataPurge.call` now gates on `FileLayer.current.capabilities.scannable?`, the same gate
+`Library::ScanJob` asks, and `Result` carries `declined` so a hand-run on the wrong deployment
+cannot read as "destroyed 0". Three reasons, the first sufficient: the guard this prevents runs
+only from `ScanJob`, so on chunk_remote there is nothing to prevent; the mirror is the sync
+server's tree and destroying rows makes it lie until a gapped `full_resync`; and `node.rb`'s
+statement stays true. An unset `LIBRARY_BACKEND` defaults to `share`, so a missing env fails toward
+RUNNING the purge, never toward silently skipping it.
+
+**THE GATE RETIRED THE PARENT CHAIN'S ORIGINAL ARGUMENT AND A BETTER ONE WAS ALREADY THERE.** "Read
+the chain, not `storage_path`" was justified by chunk_remote's NULL column — and the gate means
+those rows are never looked at. Checked rather than assumed: every node-creation site on share and
+s3 (`Share#write`, `#mkdir`, the S3 pair, `Reconciler#create_or_revive!`) sets both columns. But
+`FileLayer::Share#delete` ends `update!(deleted: true, storage_path: nil)` — it NULLS the column
+deliberately, so a revive cannot fire on a trashed path — so **a trash-kind tombstone on share has
+a NULL `storage_path` and an intact parent chain**. A file trashed out of a `.git` before this arc
+is exactly that row, on a backend the gate DOES cover, and a column-only purge leaves every one
+behind. Pinned by its own test, driven through `#delete`'s real column writes; the column mutation
+is red there for a share-native reason.
+
+**TWO MORE POINTERS PINNED, and the second is the worse one.** Only `maker_file_attachments` was
+consulted; `maker_projects.cover_node_id` and `maker_models.cover_node_id` were not. A cover is
+worse than an attachment, not lesser: `Maker::DeadNodes.reapable?` returns TRUE for a **nil** node,
+so a destroyed cover is reaped immediately with none of the grace a tombstone buys — cleared
+silently, nothing saying why. Practically unreachable (covers are images), and it costs one pluck
+each.
+
+**TWO DECISIONS THIS ARC EMPHASISED HAD NO TEST THAT COULD FAIL FOR THEM — the fourth vacuous-guard
+instance in this arc, found by review mutation.** Both are now pinned:
+
+- **The local parent-lookup cache.** Restoring the plan's module-level `@cache` left the purge suite
+  **fully green** over a real defect. The idempotency test structurally cannot see it: after run 1
+  the only rows left are ABOVE the marker, so run 2 destroys 0 either way. The defect needs the tree
+  to CHANGE between two runs in one process — rename the marker to `notgit`, add a file under it,
+  and a stale cached row still says `.git`, so **the second run destroys a file beneath no marker at
+  all**. Now driven: module memo `Expected: 0 / Actual: 1`, and it is the ONLY failure in the file.
+- **Task 5's placement decision** — `.outside_repo_metadata` on the `scope =` assignment rather than
+  the `.order` chain, so `@child_count` counts what the page renders. Moving it one line down left
+  the ENTIRE suite green (2412 runs, 0 failures) while a 250-file folder gained a **phantom second
+  page that renders nothing**. Guarded in `files_git_marker_test.rb` with a fixture sitting exactly
+  on the `FOLDER_PAGE = 250` boundary — the only size at which one extra counted row changes
+  `@pages`. Two independent assertions, each shown to bite alone: `nav.pager` present where there
+  should be none, and `?page=2` rendering `Expected: 250 / Actual: 0`.
+
+Two comments were also wrong and are corrected rather than softened. `MAX_ANCESTOR_WALK`'s said a
+truncated walk "answers false and therefore SKIPS the node — the safe direction", which is wrong in
+**both** halves: the cap drops the TOP of the path and `marker_prefix` scans the surviving suffix
+from the left, so a truncated path answers whatever its suffix says; and a `false` there leaves a
+live node beneath a marker, which is the ghost that RE-ARMS the guard trip. And the
+tombstone-revival note read as exhaustive with one route named — there are **two**, both exact-
+`storage_path`: `Reconciler#create_or_revive!` for files and `#ensure_dirs` for directories. The
+conclusion survived; the completeness claim had not been checked.
+
+| mutation | result |
+|---|---|
+| `internal?(node.storage_path.to_s)` — read the column, not the chain | red — the NULL-`storage_path` test, `Expected true to be nil or false`; and the trash-tombstone test, `Expected: 1 / Actual: 0` |
+| drop the attachment skip | red — `destroying an attached node silently orphans a project reference` |
+| drop the ancestor pinning | red — the re-run reports `[]` instead of the skipped `node_id` |
+| comment out `RepoMetadataPurge.call` in the scan test | red — the `UnsafeScan` quoted above |
+| `internal?` → at-or-beneath (`!prefix.nil?`) | red — the marker itself is destroyed |
+| `marker_prefix`'s `index(DIR_NAME)` → `start_with?` | red — `.github/workflows/ci.yml` and its dir node, `Expected: 0 / Actual: 2` |
+| remove the `scannable?` gate | red — `the mirror is the sync server's tree — destroying rows makes it lie (§14a)` |
+| the plan's module-level `@cache` | red — `Expected: 0 / Actual: 1`, and nothing else in the file |
+| unpin the two `cover_node_id` columns | red — `a project cover is a reference like any other` |
+| `.outside_repo_metadata` moved to the `.order` chain | red — `Expected exactly 0 elements matching "nav.pager", found 1`, and separately `Expected: 250 / Actual: 0`; the other three tests in that file stay green |
+
+**`db:migrate` FROM AN EMPTY DATABASE NEVER RUNS THE `up`, AND THE PLAN'S STEP-6 CHECK PROVES LESS
+THAN IT LOOKS.** Rails 8.1's `initialize_database` loads `schema.rb` and stamps all 68 versions
+before `db:migrate` looks for work, so a from-scratch run reports success having executed nothing.
+True of every migration in this repo, not a defect in this one — but recorded so the next person
+does not mistake a vacuous check for a passing one. The path that matters is an existing deployment
+with the version row absent, and it does run: driven both ways, scannable →
+`destroyed 0 node(s) indexed beneath a .git directory`, `LIBRARY_BACKEND=chunk_remote` →
+`declined: FileLayer::ChunkRemote is not a scannable backend…` with no sync server reachable, which
+is also the evidence the gate makes no port call. The missing-constant branch was driven by moving
+the service aside: `Library::RepoMetadataPurge is gone; nothing to purge on a fresh database`.
+
+**THE SCANNABLE GATE MADE THE SUITE LEG-DEPENDENT, AND ONLY THE LEG NOBODY RAN COULD SEE IT.** The
+purge tests were written before the gate existed and took `FileLayer.current` from the ambient
+`LIBRARY_BACKEND`. On `test-chunk-remote` that is `FileLayer::ChunkRemote`, `scannable?` is false,
+the purge declines, and **eight tests failed** — every one asserting it destroys or reports
+something. Share and s3 were green for no better reason than that their ambient backend happens to
+be scannable, which is exactly the shape §15 names as a bug in its own right. Worse than the eight:
+the negatives test ("paths merely NAMED like the marker are untouched") asserts `destroyed == 0`,
+which a DECLINED run satisfies for free — green on that leg while testing nothing at all.
+
+Fixed by pinning rather than inheriting. `setup` calls `use_fresh_share_library!`, a direct
+`FileLayer.current =` rather than `pin_file_layer_backend` for the reason `rescan_test.rb` records:
+pin rebuilds from ENV and a Share adapter needs a tmpdir ROOT that ENV does not supply on the other
+two legs. A `teardown` does the reset (a direct assignment does not set test_helper's
+`@file_layer_backend_pinned`, so its own teardown will not clean up after one) and sweeps the
+tmpdir. The guard-trip test now uses that same root instead of making a second one, so the pin and
+the fixture cannot disagree about which library is current.
+
+**The decline test already pinned `chunk_remote` explicitly, and the setup pin makes that pin
+STRONGER rather than redundant.** Before, it would have been green-by-accident on the chunk_remote
+leg — the leg supplying what the test should assert for itself, the mirror image of the same bug.
+Now setup pins scannable on every leg, so deleting its `FileLayer.current = FileLayer::ChunkRemote
+.new` is RED on all three. Checked in both directions:
+
+| mutation | result |
+|---|---|
+| remove `setup`'s pin | chunk_remote ambient: **8 failures**, the same eight, by name. Share ambient: green — which IS the leg-dependence, reproduced |
+| remove the decline test's own pin | RED on **both** ambients (`the mirror is the sync server's tree…`), where before the setup pin it would have been green on chunk_remote |
+
+Legs measured for this task, all three, **2441 runs each — identical, which is the §15 rule**:
+
+| leg | runs | assertions | skips |
+|---|---|---|---|
+| share | 2441 | 9158 | 30 |
+| s3 | 2441 | 9158 | 30 |
+| chunk_remote | 2441 | 9315 | 5 |
+
+The assertion and skip gap on chunk_remote is the pre-existing capability-gated divergence recorded
+under "Still open", not this work's. Two runs tripped documented intermittents and were clean on
+re-run — `WorkerBudgetTest`'s cross-process pidfile flake, in both of its tests on different runs,
+and §12.7's `SQLite3::BusyException` in `Tools::AddonsControllerTest` on a back-to-back leg.
+
+**The lesson, because this arc has now paid for it twice:** a capability gate added to a service
+retroactively changes what every existing test of that service asserts, and the legs that stay
+green are not evidence — they are the legs whose ambient backend happens to satisfy the new gate.
+`bin/ci test-chunk-remote` is the only one that would have said so, and it is the primary
+deployment's backend.
+
+### One text vocabulary instead of two, and a `code` role (task 7, landed)
+
+The visible half is that source code became a file type: a `code` role (label "Code", between
+`cad_source` and `gcode`), a `code/` project folder, and 26 extensions wired to it — `c h cpp cc
+hpp ino py rb js ts rs go sh lua sql html css xml log toml ini cfg conf yml yaml cmake`. A firmware
+tree now files itself instead of scattering into `other/`, and the Files-page filter grows a "Code"
+family for free, because `FilesHelper::EXT_FAMILIES` has derived from `ROLE_BY_EXT` since
+2026-07-29.
+
+**The half that mattered is that `FilesController#preview_kind` stopped carrying its own list.** It
+held 26 extensions inline, beside `Maker::FileAttachment::ROLE_BY_EXT` — the second vocabulary
+§14d exists to forbid, and this task's own 26 would have had to be kept in step across both. (The
+plan, the task brief and the first draft of every comment here said 25; counted, it is 26 — the
+invented-evidence shape §15 names, caught by running the count instead of repeating it.) `TEXT_ROLES = %w[document code gcode]` lives with the vocabulary and the branch is now
+`TEXT_ROLES.include?(role_for(name))`.
+
+**IT HAD ALREADY DRIFTED, AND THE COLLAPSE IS WHAT SHOWED IT.** Five of that inline list's
+entries — `xml log ini cfg conf` — were in **no** `ROLE_BY_EXT` entry at all: files the detail page
+previewed as text while the vocabulary called them `other`. Deriving the branch without wiring them
+first would have silently taken away a preview those files already had, which is why the guard for
+it is a FROZEN copy of the old list (`PREVIOUSLY_TEXT` in
+`test/controllers/files_controller_preview_kind_test.rb`) rather than anything re-derived from the
+new one.
+
+**One deliberate widening:** the branch now takes the whole `gcode` ROLE rather than the single
+`gcode` extension, so `.nc`, `.tap`, `.ngc` and `.gco` preview as text instead of offering nothing
+but a download. A CAM post's output is g-code text; only the old list disagreed.
+
+`pdf` stays `instructions` — `Models::AttachmentsController` dispatches `ExtractPdfMetadataJob` on
+that exact value — and `instructions` is deliberately absent from `TEXT_ROLES`.
+
+Mutations run, each red for its own reason:
+
+| mutation | result |
+|---|---|
+| `TEXT_ROLES = %w[document]` | red 4 ways — `xml` and `util.cc` `Expected: :text / Actual: :other`, the sweep's size floor `Expected 5 to be > 20`, and the driven page `Expected at least 1 element matching "pre.preview-text", found 0` |
+| `TEXT_ROLES` minus `gcode` only | red on the frozen list (`gcode`) and on `pocket.nc` — **the derived sweep stays green**, which is why the frozen list exists |
+| drop `"code" => "code"` from `ROLE_FOLDERS` | red — the totality guard, `add the new role to ROLE_FOLDERS — a role with no folder is never filed`, plus `KeyError: key not found: "code"` from `folder_for`'s no-default `fetch` |
+| add a 9-character extension (`gitignore`) | red twice — the model's EXT_RE test and `files_helper_test`'s chip test, `Expected /\A[a-z0-9]{1,8}\z/ to match "gitignore"` |
+| drop `xml` from `ROLE_BY_EXT` | red — the frozen list, `xml. Expected: :text / Actual: :other` |
+| wire `svg` into `code` | red — the derived sweep `Expected: :text / Actual: :measure`, **and nothing else in the file**: the branch test asks for `:measure` and still gets it |
+| add `instructions` to `TEXT_ROLES` | red — the constant assertion; see below |
+
+**THE LAST MUTATION DISPROVED A CLAIM IN THE CODE'S OWN COMMENTS, WHICH IS WHY IT WAS RUN.** Two
+comments said preview_kind "cannot catch" an `instructions` leak because its `:pdf` branch returns
+first. Half true: `preview_kind("manual.pdf") == :pdf` does stay green, but the DERIVED sweep goes
+red — as a contradiction reporting that pdf failed to be text, naming the wrong culprit. Both
+comments now say the measured thing.
+
+The sweep ("every extension with a text role reaches the text branch") is kept with its limits
+stated: it takes its subject FROM `TEXT_ROLES`, so it cannot catch a copy, and a one-role shrink
+merely narrows it. What it catches alone is the ORDER — an extension wired into a text role that an
+earlier branch (measure/image/pdf) already owns.
+
+**THE EXISTING ROWS ARE RE-DERIVED, BY A MIGRATION IN THE PREDECESSORS' SHAPE.** Without one, an
+attachment row written before today for a `.ino` or `.py` file keeps `role: "other"` and renders
+under "Other" in a project's Files panel forever — nothing MISFILES (`Maker::ProjectFolders` asks
+`role_for`, pure and current, never the stored column), but the panel goes on disagreeing with the
+vocabulary. `RederiveCodeRoles` (`20260826130000`) closes it, and it is the FIRST TWO predecessors'
+shape rather than the third's, which is the whole choice: `lbrn2` already had a role, so
+`RederiveLaserRoles` selects `vector` and rolls back to `vector`, while all 26 code extensions were
+brand new or mapped nowhere, so every row needing repair is in `other`. Copy the third and `up`
+selects a role no row has and succeeds **silently**, while `down` files these rows under `vector`,
+somewhere they have never been. Self-contained per the predecessors' rule (private
+`MigrationAttachment`/`MigrationNode`, no `role_for`, no app models), and `CODE_EXTS` is a frozen
+COPY with the same accepted cost stated in writing: an extension added to the model after this runs
+never re-derives rows already in `other`, and closing that needs another migration.
+
+| mutation | result |
+|---|---|
+| `PRIOR_ROLE = "vector"` (copy predecessor 3's source) | red 3 ways — the `up`, `down` and idempotency tests, each `Expected: "code" / Actual: "other"`: the migration finds nothing and succeeds |
+| `down` → `update_all(role: "vector")` | red — `Expected: "other" / Actual: "vector"`, and **only** the down test |
+| model drift: `"ino" => "document"` | red — the frozen-copy tripwire, `migration maps ino to code, model says "document"` |
+| drop `next if node.nil?` | red — `NoMethodError: undefined method 'name' for nil` on the orphaned-attachment test |
+| sweep every row, not `where(role: PRIOR_ROLE)` | red — `Expected: "instructions" / Actual: "code"`: a role someone set deliberately is a decision, not a gap to fill |
+
+**A KNOWN COST OF THE WIDENING, MEASURED RATHER THAN ESTIMATED.** A `:text` preview fetches the
+WHOLE blob and truncates client-side: `textpreview_controller.js` sends no `Range` header, reads
+`res.text()` in full, then slices the string at 200,000 characters — and neither the view nor
+`#blob` gates on size. Driven on the share backend with a 2.1 MB `.nc`: the page renders
+`pre.preview-text` and the blob response carries **2,100,000 bytes, `Content-Length: 2100000`, no
+`Accept-Ranges`**. The mechanism is not new — `gcode` was in the old inline list, and a sliced
+print is the largest text file a maker owns — but this task widens the population that hits it to
+`.nc`/`.tap`/`.ngc`/`.gco`, and on `chunk_remote` those bytes STREAM through Puma (§14a:
+`presignable` is false), so a preview of a large sliced print holds a thread for the whole
+transfer — a size nobody here has measured against a real print, which is itself worth knowing. **Task 9 replaces that controller and
+is where the fix belongs** — a `Range: bytes=0-199999` request, or a size gate in the view that
+offers the download instead.
+
+Legs measured for this task: share and s3, both **2434 runs / 9110 assertions / 30 skips**,
+identical — task 6's 2417/8844 plus 17 runs (5 preview_kind, 3 model, 1 folder, 1 driven page,
+7 migration).
+`test-chunk-remote` not run here (needs the sibling checkout). Both legs tripped the documented
+`WorkerBudgetTest` pidfile intermittent while being run back-to-back — share three times in five
+runs, s3 once — and `worker_budget_test.rb` is 3/3 green run alone, matching what task 2 recorded
+about it. One s3 run also reported a single error whose identity was not captured and did not
+recur. Before the migration landed, assertion counts across repeated runs of the SAME leg varied
+9067–9069 (the ±2 flap already under "Still open", not a backend difference); the final round with
+the migration in was clean on both legs at the first attempt.
+
+### One CodeMirror bundle, and the reproducibility claim made true (task 8, landed)
+
+`vendor/javascript/codemirror-entry.js` (committed source, 23 exports), `bin/build-codemirror`,
+the artifact, ONE importmap pin, and two guards in `test/ci_hygiene_test.rb`. **Rebuilt figures,
+measured here rather than carried over: 933,768 bytes minified, 324,586 gzipped** — which is
+911.9 KiB / 317.0 KiB, matching the design-time row in the table above to the tenth of a unit.
+Nothing had drifted; the design measurement was one day old. (Those columns are KiB, not KB —
+esbuild's `911.9kb` is `933768 / 1024`.)
+
+**THE PLAN'S PIN LIST WAS THE 15 DIRECT PACKAGES, AND THAT DOES NOT MAKE A BUILD REPRODUCIBLE.**
+Resolved and counted: **25 more packages arrive transitively through `^6.0.0`-style ranges** —
+`@codemirror/state`, `@codemirror/view`, `@codemirror/language`, every `@lezer/*` parser, plus
+`crelt`, `style-mod`, `w3c-keyname`, `@marijn/find-cluster-break`. Each resolves to whatever is
+newest AT INSTALL TIME, so the same source emits different bytes the day any of them publishes a
+patch, under a script whose header says "reproduces the artifact from pinned versions". All 40 are
+pinned now, and the list was DERIVED FROM THE RESOLVED LOCKFILE, not written from memory — the
+first draft of it was written from memory and was wrong on nearly every line (`@codemirror/state`
+guessed at 6.5.2, actually **6.7.1**; `@lezer/common` guessed at 1.2.3, actually **1.5.2**), which
+is the invented-evidence shape §15 names, caught before it reached a commit.
+
+**THE PRESCRIBED REPRODUCIBILITY CHECK CANNOT SEE THAT, AND SAYING SO IS THE POINT.** Building
+twice and comparing digests gives identical `9a794ca3…` either way: the registry does not move in
+the two minutes between runs, so an unpinned tree passes it perfectly. The check that actually
+answers the question is enumerating the resolved versions — **40 pins, 40 packages resolved
+(excluding the `@esbuild/*` platform binaries, which esbuild pins to its own version and which
+never enter the artifact), zero drift, zero still floating.** Licences read from each installed
+`package.json` at the pinned versions: MIT throughout, §9 satisfied.
+
+**A duplicate check lives in the build script, because it is the only thing that can see it.** The
+importmap guard forbids a second `@codemirror/state` arriving by PIN; one can also arrive by NESTED
+INSTALL, when a package's range stops overlapping a pin and npm gives it a private copy. esbuild
+would bundle both into the one file and the failure is the identical silent one. The script reduces
+every directory under a `@codemirror`/`@lezer` scope to its `scope/package` name and refuses to
+build on a duplicate — 34 packages scanned, and planting a nested
+`@codemirror/lang-cpp/node_modules/@codemirror/state` makes it report `@codemirror/state` and exit
+non-zero. Both families, not just `state`: `@lezer/common` and `@lezer/lr` have the same
+object-identity property for `NodeType`/`NodeProp`.
+
+The artifact was verified rather than assumed: it parses as ESM (`node --check`), its export list is
+byte-identical to the 23 names `codemirror-entry.js` declares, and **re-bundling it reports exactly
+one input — itself** — so there is no dangling relative or bare import of the kind
+`config/importmap.rb` records twice (JSZip's jspm chunk, Three.js's split core). That was the whole
+reason for one bundle over `bin/importmap pin`.
+
+**A comment claim from the plan was corrected rather than copied.** The entry file was to say it is
+"NOT served"; `vendor/javascript` is on Propshaft's asset path (checked by printing
+`config.assets.paths`), so every file in it IS digest-copied into `public/assets`. What is true is
+that no importmap specifier resolves to it, so nothing ever imports it — and the file says that
+instead.
+
+| mutation | result |
+|---|---|
+| add `pin "@codemirror/state"` to the importmap | red — ``per-package CodeMirror pins (@codemirror/state) load a second copy of @codemirror/state… Expected ["@codemirror/state"] to be empty`` |
+| break the scan regex so it matches nothing | red on the **non-vacuity** assertion, not a false green — `parsed 0 pins — the importmap parse is broken, so everything below this line is vacuous. Expected 0 to be > 5` |
+| remove `vendor/javascript/codemirror.js` | red — `run bin/build-codemirror` |
+| plant a nested second `@codemirror/state` | the build refuses, naming it |
+
+The second of those is the one worth having: `assert_empty offenders` over an empty parse passes
+forever, and this arc has already shipped four guards that could not fail for the reason their
+comments claimed. **The third mutation is the honest caveat on this task's TDD claim** — the guards
+were written before the pin existed and the pin guard was watched red first, but the
+artifact-exists guard was green from the moment it was written, because the plan's own step order
+builds the artifact before writing the test. It was mutation-checked instead.
+
+Legs measured for this task: share and s3, both **2436 runs / 9117 assertions / 30 skips**,
+identical — task 7's 2434/9110 plus the two guards. `test-chunk-remote` not run here (needs the
+sibling checkout). No `package.json` or `node_modules` anywhere in the repo: the script installs
+into a `mktemp -d` and removes it on any exit. One share run of five reported a single error whose
+identity was not captured (the run's assertion count read 9114 against the 9117 of every clean run,
+so one test bailed part-way); it did not recur in the four runs after it. Recorded rather than
+claimed as diagnosed — task 7 saw the same shape on the s3 leg.
+
+### The `codeview` controller, and the whole-blob fetch task 7 measured (task 9, landed)
+
+`app/javascript/lib/codemirror_languages.js` (ext → language, plus our own g-code and OpenSCAD
+`simpleMode` tokenizers), `app/javascript/controllers/codeview_controller.js`, one more importmap
+pin, the `:text` branch of `files/show.html.erb`, `.preview-code` styling, and
+`textpreview_controller.js` deleted. **Read-only is two facts, not one:**
+`EditorState.readOnly.of(true)` refuses a document change, `EditorView.editable.of(false)` removes
+the contenteditable, and each is now asserted separately off the live `EditorState` so a mutation
+of either goes red on its own line.
+
+**THE FETCH RUNS FIRST AND THE BUNDLE SECOND.** The inner `<pre>` is the fallback and the resting
+state at once: the controller fills it with the fetched text, then removes it only once the editor
+mounts. Driven with the dynamic import deliberately pointed at a specifier that does not resolve:
+the page shows the file's real text in `pre.preview-text`, no `.cm-editor`, and one console
+WARNING — exactly the plain preview this branch used to be.
+
+**THE `Range` HEADER WAS MEASURED PER BACKEND RATHER THAN ASSUMED, AND IT FIXES NOTHING ON ITS
+OWN.** Task 7 recorded the cost (a 2.1 MB `.nc` crossing the wire in full to display 200 KB) and
+named this task as the fix; `Range: bytes=0-199999` is the obvious approach and here is what each
+backend actually does with it:
+
+| backend | how `#blob` delivers | what a `Range` request gets |
+|---|---|---|
+| share | `send_file` → Rails' own `FileBody` | **IGNORED.** Driven: 1,000,000 bytes asked with the header and 1,000,000 returned, `200`, `Content-Length: 1000000`, no `Accept-Ranges`, no `Content-Range` — byte-identical to the request without it. The app's middleware stack has no range handler (`Rack::Sendfile`/`ActionDispatch::Static`/`Propshaft::Server` answer asset paths only). |
+| s3 | `302` to a presigned URL | **Rails is unaffected** (driven: `302` with and without, `get_object` calls `0`), and the presigned URL signs `X-Amz-SignedHeaders=host` alone, so the `Range` the browser then sends to the store is not part of the signature. What the store does with it is documented S3 behaviour, **not verified against a live bucket from here.** |
+| chunk_remote | `self.response_body = enum` | **IGNORED** — the same action, the same stack that ignored it for share. Inferred from that measurement plus reading, **not driven**: `test-chunk-remote` was out of scope for this task. Here the bytes also stream through Puma (§14a: `presignable` is false), so the cost is a held request thread. |
+
+So the header is sent — free where it is ignored, real egress saved where it is honoured — but
+**what actually bounds the transfer is a stream cancel**, which needs no server cooperation:
+`fetchHead` reads `res.body.getReader()` and calls `reader.cancel()` the moment more than
+`MAX_BYTES` have arrived. Measured in a real browser on a 5 MB `.gcode`, via
+`PerformanceResourceTiming#transferSize`: **300 bytes with the cancel, 5,243,160 without** (the
+file plus 280 bytes of headers). Read the 300 as a floor rather than a literal wire count — Chrome
+does not add the body of a stream the page aborted to `encodedBodySize` — but four orders of
+magnitude is not a measurement artefact.
+
+**THE REQUEST ASKS FOR ONE BYTE MORE THAN IT KEEPS**, which is what makes "truncated" exact rather
+than a guess: receiving more than `MAX_BYTES` is the whole test, and it is true both of a `206`
+that filled the extra byte and of a `200` that was cut off. Reading `Content-Range` instead would
+fail on the s3 path, where a cross-origin response exposes no such header and every file — however
+small — would be labelled truncated.
+
+**THE PLAN'S OPENSCAD TOKEN NAME WAS WRONG, AND IT COSTS THE WHOLE TOKEN, NOT JUST THE MODIFIER.**
+It spelled the `$fn` token `"variableName.special"`. `@codemirror/language`'s stream parser
+resolves a dotted string treating the LAST part as the tag, so that spelling resolves to nothing:
+measured in a real browser, `$fn` then renders with **no span at all**, and the only signal is a
+`console.warn` of `Modifier special used at start of tag` — WARNING level, so even
+`assert_no_console_errors` (SEVERE only) would not see it. The legacy CodeMirror-5 name
+`"variable-2"` resolves to exactly `variableName.special`, gives `$fn` its own span, and warns
+nothing. Both our modes were also run over real samples through the shipped artifact in node — all
+30 extensions the table claims resolve non-null, `txt` returns null, zero warnings.
+
+**THE GUARD FOR IT WAS DELIBERATELY NOT WRITTEN UNTIL `.scad` WAS REACHABLE**, because until then
+it could not have failed for the reason it claimed — a sixth vacuous guard in a branch that had
+already produced five. It exists now, as **two** system-test methods rather than one, for
+`template_hygiene_test.rb`'s stated reason: minitest abandons a method at its first failure, and
+this one defect breaks both halves. Measured — the dotted spelling reports
+`Expected: ["$fn"] / Actual: []` on the token test **and**
+`Expected [… "Modifier special used at start of tag"] to be empty` on the resolution test.
+
+**`.scad` COULD NOT REACH THIS VIEWER AT ALL, AND THE FIX IS A THIRD CONSTANT BESIDE THE OTHER
+TWO.** Found by driving it: `role_for("x.scad")` is `cad_source`, not a text role, so
+`preview_kind` answered `:other` and the page said "No inline preview for this file type" (seen in
+the browser) while a hand-written OpenSCAD mode sat in the bundle as dead code. Since the arc began
+as "a lightweight code editor and viewer for those types of files", that was the wrong place to
+stop.
+
+**`Maker::FileAttachment::TEXT_EXTS = %w[scad]`**, and `preview_kind` is now
+`TEXT_ROLES.include?(role_for(name)) || TEXT_EXTS.include?(ext)`. **ROLE AND CONTENT TYPE ARE
+DIFFERENT QUESTIONS**, and `.scad` answers them differently: it is `cad_source` for FILING (it goes
+to `cad/`, beside the `.f3d`) and plain source for VIEWING. That is not a loophole in §14d — that
+rule forbids a second TABLE in a second PLACE, and this constant lives in the one file that owns
+the vocabulary. **The two obvious fixes are worse and are recorded so they are not retried:**
+adding `cad_source` to `TEXT_ROLES` renders `.f3d`, `.fcstd`, `.sldprt` and `.sldasm` — all
+binary — as mojibake on the main deployment, and a per-extension branch inside `preview_kind`
+rebuilds the second vocabulary in the method that just collapsed it.
+
+**NO RE-DERIVE MIGRATION IS NEEDED, AND THAT WAS VERIFIED RATHER THAN ASSUMED.** `TEXT_EXTS`
+changes what a page RENDERS and nothing that is STORED: `ROLE_BY_EXT` is untouched, so
+`role_for("bracket.scad")` is still `cad_source` and `ProjectFolders.folder_for("bracket.scad")` is
+still `"cad"` (both driven); `preview_kind` is a pure function of the filename that reads no
+column; and `TEXT_EXTS` has exactly one consumer in `app/`, `lib/` and `config/` (grepped). The
+rows were already correct — `RederiveVectorAndCadSourceRoles` (2026-07-28) put `.scad` into
+`cad_source` — so nothing needs moving. Both halves of that claim are pinned by a test rather than
+by this paragraph, and the mutation that WOULD need a migration (moving `scad` into `ROLE_BY_EXT`
+as `code`) turns three tests red, including the pre-existing model guard.
+
+`lbrn`/`lbrn2` stay **dropped** from the language table, because they have no equivalent argument:
+`preview_kind` answers `:measure` for all five measurable extensions, so those entries could never
+run whatever the vocabulary said.
+
+**THE TEMPLATE-HYGIENE SWEEP DID NOT REACH THE `:text` BRANCH, AND THIS ARC IS WHAT MADE THAT
+MATTER.** That comment was one line; it is now seven. `test/integration/web/template_hygiene_test.rb`
+renders a `firmware.cpp` page now, and a `%>` planted inside the new comment goes red on **both**
+of its tests, quoting the leaked prose.
+
+**AND THE LESSON ARRIVED LIVE, WHICH IS A BETTER ARGUMENT FOR LOOKING AT THE PAGE THAN THE
+ORIGINAL BUG WAS.** The first "look at the page" run was made against a working tree where a
+mutation had failed to restore — and **the probe is what caught the leaked ERB prose sitting in
+the middle of the page; reading the file had not.** §14d already says an `assert_select` cannot see
+that defect, because it produces a text node rather than an element. What this arc adds is that a
+careful reader of the SOURCE can miss it too, and that opening the page catches it either way, in
+one screenshot.
+
+**WHAT WAS SEEN IN THE BROWSER**, on real pages served by a real Puma, screenshots included:
+`firmware.cpp` — 19 line numbers, a fold gutter, C++ keywords/strings/comments/numbers coloured,
+19 token spans, no caret. `pocket.gcode` — 38 spans, **both** comment dialects (`; …` and `( … )`)
+in comment colour, `G21 G90 G94 M3 M30` as keywords, `N10`/`T1`/`S12000`/`F300` as atoms, `%` as
+meta. `platformio.ini` — 7 spans through the TOML stream mode. `notes.txt` — numbered, scrollable,
+**zero** spans. `sliced.gcode` (5 MB) — mounts, 216 spans, document exactly 200,014 characters
+(the cap plus `\n… (truncated)`). `bracket.scad` — reaches the viewer via `TEXT_EXTS`, `$fn` in its own colour, both comment forms,
+`module` as a keyword. No SEVERE console output on any of them, and no `console.warn` either.
+
+Guards: 2 rendered-attribute tests in `files_flow_test.rb` (the fixture is deliberately named
+`Firmware.CPP`, so `File.extname(name).downcase.delete(".")`'s three steps all carry weight),
+3 in `files_controller_preview_kind_test.rb` for `TEXT_EXTS`, the extended hygiene page, and
+**`test/system/code_viewer_test.rb`** — 6 tests, the only tier that can see any of the client
+half. `test/stimulus_hygiene_test.rb` covers `codeview` resolving for free.
+
+| mutation | result |
+|---|---|
+| `data-controller="codeview"` → `"textpreview"` | red twice — `Expected exactly 1 element matching "[data-controller=codeview]", found 0` **and** `stimulus_hygiene_test`: `["app/views/files/show.html.erb:127 declares 'textpreview'"] to be empty` |
+| drop `.downcase` from the ext value | red — `Expected exactly 1 element matching "[data-codeview-ext-value=cpp]", found 0` |
+| move the fallback `<pre>` outside the controller element | red — `…"[data-controller=codeview] pre.preview-text[data-codeview-target=fallback]", found 0` |
+| plant `<%= x %>` inside the new ERB comment | red on BOTH hygiene tests — `file detail (text) leaked an ERB closer into the page` and `rendered a code comment into the page (found "§14")` |
+| drop `EditorState.readOnly.of(true)` | red — `{"editable" => false, "readOnly" => false}`, and **only** that field |
+| drop `EditorView.editable.of(false)` | red — `{"editable" => true, "readOnly" => true}`, and only that field |
+| `languageFor` always returns null | red twice — `expected to find css ".cm-line span" at least 1 time but there were no matches` (cpp) and `at least 3 times` (gcode) |
+| wire `txt` to `cm.cpp()` | red — `expected not to find visible css ".cm-line span", found 5 matches: "just", "words", "a", "line", "a"` |
+| drop `this.fallbackTarget.remove()` | red — `expected not to find visible css "pre.preview-text", found 1 match: "#include <Arduino.h>…"` (which also shows the fetch-first fallback holding the whole file) |
+| drop `reader.cancel()` | red — `5243160 bytes crossed the wire for a 5242880-byte file` |
+| add `cad_source` to `TEXT_ROLES` (the obvious wrong fix) | red twice — `part.f3d is a BINARY cad_source file — a text preview of it is mojibake. Expected: :other / Actual: :text`, and the redundancy guard `Expected ["scad"] to be empty` |
+| `TEXT_EXTS = %w[]` | red — `bracket.scad … Expected: :text / Actual: :other` |
+| move `scad` into `ROLE_BY_EXT` as `code` | red 3 ways — the pre-existing `CAD source extensions derive the cad_source role`, the no-migration pin, and the redundancy guard, each `Expected: "cad_source" / Actual: "code"` |
+| `TEXT_EXTS = %w[scad cpp]` | red — `Expected ["cpp"] to be empty` |
+| `$fn` token → the plan's `"variableName.special"` | red twice, one per method — `Expected: ["$fn"] / Actual: []` and `Expected [… "Modifier special used at start of tag"] to be empty` |
+| delete the `$`-variable regex rule | red once — `Expected: ["$fn"] / Actual: []`, and **no** warning, which is what keeps the two methods independent |
+
+`grep -rn "textpreview" app/ config/ test/` returns four hits, all of them prose in
+`codeview_controller.js` naming its predecessor; no live reference remains.
+
+Legs measured for this task: share and s3, both **2441 runs / 9158 assertions / 30 skips**,
+identical. The pre-task-9 baseline was **measured rather than assumed** — the new test methods
+were reverted and the leg re-run: **2436 runs / 9117 assertions** — so this task adds 5 runs and
+41 assertions (2 rendered-attribute tests, 3 for `TEXT_EXTS`, and the hygiene sweep's new page,
+which asserts per page). The first draft of this paragraph wrote 9147 from memory; §15's
+invented-evidence rule is why it was checked. `system` **185 runs / 1541 assertions / 1 skip**,
+of which 6 runs are this task's new file. `style` clean, 499 files. `test-chunk-remote` not run
+here, by instruction.
+
+Two back-to-back leg runs tripped the documented `WorkerBudgetTest` intermittent —
+`test_a_detector_that_raises_is_treated_as_contended`, `Expected: 1 / Actual: 6` — which is the
+cross-process pidfile flake already under "Still open", not a backend difference; 3/3 green run
+alone, and the final all-gates run was clean at the first attempt.
+
+**Two close-out items are NOT closed and are not this task's to close.** Whether the deployed box
+serves `codemirror-<digest>.js` gzipped (933,768 → 324,586 bytes) needs a `curl` against the
+deployed host, and nothing here asserts which one users get. The s3 CORS question the plan raises
+at task 9 step 8 is likewise unverifiable from a stubbed client — and it is pre-existing either
+way, since `textpreview` fetched the same redirect.
+
+### Decided and NOT built, so it is not rediscovered as an oversight
+
+- **Editing and save-back are deferred.** View-only first; nothing written, so all three backends
+  behave identically because nothing is written.
+- **Repos live in the library as plain files**; git-the-tool stays on the user's machine. Remotes
+  are a later arc. A server-side clone was rejected: a storage plane outside `FileLayer`, plus
+  credentials and push permissions.
+- **No tree UI.** `FilesController#index` already does folder navigation with paging, and a repo is
+  just folders.
+- **`chunk_remote`'s mirrored `.git` CONTENTS will stay listable in the flat view.** Hiding them
+  needs a recursive CTE on a hot-path page, and §14j says that tree is the sync server's to decide
+  about.
+
+---
+## 2026-08-26: STL and 3MF are inherently models — the catalog becomes a view over the library (branch `claude/3mf-stl-models-9266dc`)
+
+The complaint was one sentence: "3mf and stl are inherently models." The vocabulary already agreed —
+`ROLE_BY_EXT` has mapped `stl 3mf obj step stp` to role `model` for months, `Maker::ProjectFolders`
+files them into `models/`, and `FilesController`'s `:model3d` branch already gives them the Three.js
+viewer. **Only the catalog disagreed.** A `Maker::Model` existed if and only if someone walked the
+Import flow at `models#new`; an `.stl` arriving any other way — a plain upload, a device push, a NAS
+drop the scanner picked up, an addon save, a move, a trash restore — was a file with role `model` and
+nothing more. `/models` showed what you had imported, not what you had.
+
+### The rule
+
+**A folder is either a *shelf* or a *model*, and the nearest shelf ancestor decides.** A model-role
+file directly under a shelf is its own one-file model; anything deeper belongs to the shelf's direct
+child folder, which claims its whole subtree. `3D Models/` is a shelf, so `3D Models/benchy.stl` is
+one model and `3D Models/Enclosure/` is another holding its parts, PDFs and renders. Mark
+`3D Models/Enclosure/` a shelf too and *its* children become models instead.
+
+Shelves are user-editable at `/settings/shelves`, seeded with three deletable rows — `""` (the
+library root), `Models`, and `Projects/*/models`. The rules and their consequences are in
+`docs/invariants/model-intake.md` (CLAUDE.md §14k); what follows is the arc.
+
+### The two identities differ on purpose
+
+A **shelf is a path pattern**; a **model is a node_id**. Only a pattern expresses `Projects/*/models`
+— one rule over a folder per project, none of which need exist. Only a node_id survives a rename:
+`Library::Reconciler` pairs by `(content_hash, size)` and keeps a renamed node's id, so a path key
+would abandon a renamed folder's row and mint a second, leaving two models for one folder. The cost
+of path-keyed shelves — a renamed folder silently stops matching — is paid by the settings page's
+live/missing indicator rather than argued away.
+
+### What the plan got wrong, and how
+
+Nine tasks, each implemented by a fresh agent against literal code, each ending in a mutation check.
+**Seven of the nine found a real defect in the plan or in an earlier task's work.** Worth recording
+because the plan was written carefully and reviewed before execution; the defects were not sloppiness,
+they were things only running the code could show.
+
+| found by | the defect |
+|---|---|
+| Task 1 | `valid_leaf_name?("*x")` is TRUE and `reserved?("*x")` is FALSE, so composing the two library-name checks let `Projects/*x/models` save and then match nothing, forever. The wildcard clause is this class's own and cannot be delegated. |
+| Task 3 | `ancestors_of`'s `:broken` guard could be deleted with the suite fully green — in the method the classifier calls for **every file in the library**. Its unguarded failure is also the worse of the two: `NoMethodError`, where `path_for`'s is a quietly wrong string, because `:broken` answers `.name` in Ruby 3+ and reads as an ordinary path segment. |
+| Task 4 | The branch was **red on `bin/ci test`** and no task picked it up: `SchemaMapTest` refuses a table absent from `SchemaMap::LAYOUT`, and `maker_shelves` had been added two tasks earlier without one. |
+| Task 4 | One assertion in "a non-model file loose on a shelf becomes nothing" read only `model_keys`, so the filter it existed to pin could be deleted green. |
+| Task 5 | `Integer("-5")` succeeds, so a negative `MODEL_CATALOG_MAX_MODELS` sailed past the rescue and raised "negative array size" from `todo.first(-5)` inside the recurring job. |
+| Task 6 | **`.grid-name` does not exist in this codebase** — the plan invented it. Three `count: 0` assertions would have passed vacuously. The real class is `.model-name`. |
+| Task 6 | `catalogued` could be deleted green: the dismissed-model fixture had no attachments, so the emptied-model rule hid it either way. Two rules, one confounded test. |
+| Task 7 | `Shelf.seed_once!` used `create!`, so a user holding a seed path **without** the stamp raised "Path has already been taken" on every later call — permanently, on the recurring sweep's first line. |
+| Task 8 | `template_hygiene_test` refuses a template no page renders; the new page had to be registered or the gate stayed red. |
+| Task 8 | Two plan assertions could not fail for the reason they existed — `where.not(path: "")` was exactly the filter hiding the row the tenancy test was looking for. |
+
+The controller's own mistake belongs in the list too: the confirm dialog on `models/show` still read
+"Delete X? (files are kept)" after `#destroy` learned to dismiss, so it told a user their model was
+being deleted at the moment the row was about to survive on purpose.
+
+### The defect no test could see, found by running the thing on a real library
+
+With all nine tasks green and `bin/ci` passing on every leg, the feature was **wrong out of the
+box** — and every test agreed it was fine, because every test built its own shelves. Driven against
+a real share library instead:
+
+```
+3D Models/benchy.stl, 3D Models/Enclosure/body.stl, Projects/desk-lamp/cad/mount.stl
+  ->  MODEL "3D Models" <- both files under it
+      MODEL "Projects"  <- the project's CAD file
+```
+
+One catalog entry per **top-level folder**, holding everything beneath it. That is the rule working
+exactly as specified — `""` makes the root a shelf, so each of its child folders is one model — and
+it is the precise opposite of the request that started the arc ("a 3d models folder should not be
+considered all one model"). **The rule was right and the seeded set was wrong**, which no amount of
+unit testing was going to surface: the tests exercised the rule, and the defect was in the data.
+
+Seeding `*` as well — every top-level folder is a shelf — gives all four requested cases:
+
+```
+MODEL "benchy"    <- 3D Models/benchy.stl                    (loose file, its own model)
+MODEL "Enclosure" <- 3D Models/Enclosure/body.stl            (folder, one model)
+MODEL "desk-lamp" <- Projects/desk-lamp/cad/mount.stl        (the project)
+MODEL "bracket"   <- Projects/desk-lamp/models/bracket.stl   (own model: the deeper shelf wins)
+MODEL "enclosure" <- Projects/desk-lamp/models/enclosure/…   (folder under it, one model)
+```
+
+`Projects/*/models` is **not** shadowed by `*` and both seeds are mutation-checked as load-bearing:
+`*` makes `Projects` a shelf, and the deeper pattern is the *nearer* shelf for anything inside
+`models/`. `model_intake_defaults_test.rb` now pins the defaults specifically — every other test in
+the suite builds its own shelves and would stay green through this again.
+
+This is CLAUDE.md §14d's recorded lesson a second time: the ERB-comment bug sat in a page through a
+fully green run and was found by opening it. So was this.
+
+### And a second one, on the page right next to it
+
+Opening a model's own page found the other half. `models#show` builds its Files panel by walking
+`folder_node_id`'s subtree and answering `[]` otherwise — so **a one-file auto model rendered
+"Files (0) / No files yet." while holding a live attachment.** A one-file model is keyed on a FILE
+node and has no folder by construction, so that is roughly half of everything the sweep creates,
+not an edge. It was reachable before this arc too (`ensure_library_folder!` is best-effort at import
+time and the controller rescues it), just rarely.
+
+The panel now falls back to the model's own live attachments. Both halves are mutation-checked: the
+`[]` fallback turns the new test red, and reading the *unpartitioned* attachments raises — which is
+the point, since `@attachments` has already been partitioned against the live-node index and the
+fallback must not reintroduce the dead-attachment bug `PageNodes` exists to prevent.
+
+No test could have caught this either: every assertion on that page reads a tree some fixture's
+FOLDER produced, so none of them described a model with no folder at all.
+
+### One mutation the plan expected to go red cannot
+
+Task 8's plan asked for `current_user.nodes` → `Node` in the shelf-creation path, expecting the
+tenancy test to fail. It stays green, and the implementer showed why rather than working around it:
+tenancy is enforced **twice**, because `Maker::LibraryTree` is built from `current_user`'s dirs
+alone, so an unscoped lookup that finds a foreign node still hits `path_for`'s `:broken` sentinel and
+returns nil. Verified against the full share leg with the scope removed — 0 failures.
+The scope stays, and the finding is written at the line so the next reader does not read GREEN as
+"dead code, delete it."
+
+### Measured
+
+- **Query cost.** A no-op sweep is **7 queries flat** — same on a 2-model library and a 12-model one.
+  The seventh is one `INSERT … ON CONFLICT DO NOTHING`, so the *count* is constant while the
+  *payload* is linear in owned files; 6,000 files in one folder completes fine. `classify` is
+  4 queries, also flat. The settings page is 5 queries at both 3 and 15 shelves — without the
+  `@tree_paths` memo it is one pluck per shelf (7 → 19), now pinned in `page_query_budget_test.rb`.
+- **Suite.** 2,439 runs on all three backend legs — `test` (share), `test-s3`, `test-chunk-remote` —
+  assertions 8943 / 8943 / 9100 and skips 30 / 30 / 5, which is the expected shape: chunk-gated
+  tests execute rather than skip on that leg. §15's identical-counts rule holds.
+- **Cap.** `cap: 5` against 22 candidate keys creates exactly 5 and reports `:capped`; a second run
+  creates the next 5, so the sorted order makes a capped run resume rather than re-roll.
+- **Not yet measured on hardware.** Nothing here has run against the live share library, which is the
+  only deployment holding real data. The first `rake models:catalog` there is the number this entry
+  is missing.
+
+### Left out deliberately
+
+- **No eager nudge.** Nothing in a web request sweeps, so a `.stl` uploaded through Files appears at
+  `/models` within one 15-minute tick rather than immediately. `Maker::ProjectIntake`'s eager path is
+  where §14f's measured latency problems live, and cataloguing is not urgent the way filing a file
+  into the folder you are looking at is. Whoever adds one owes it a second cap.
+- **`for_node` is not built.** The design named it as a surviving entry point; it has no caller
+  without the nudge, and an entry point with no caller is dead code the next reader has to evaluate.
+- **No un-dismiss.** Dismissal is permanent by design, but `models#show` has **no visibility gate** —
+  a dismissed model is still reachable by URL, returning 200 with no banner and no way back. That is
+  a real hole: an accidental "Remove from catalog" is unrecoverable through the UI. Smallest fix is a
+  banner plus a Restore button on the show page for `dismissed_at.present?`.
+- **The sweep does not attach to import-origin models.** Import owns those rows.
+- **`importer_controller.js`'s third extension table** is untouched — already recorded above.
+
+---
 
 ## 2026-08-25: the edge dropdowns say what their letters mean again (branch `claude/dropdown-explanations-top-bottom-9495d4`)
 

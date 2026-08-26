@@ -70,6 +70,11 @@ module Web
       file!("n-stl", "bracket.stl")
       file!("n-bak", "sign_backup.lbrn2", parent_node_id: "d-laser")
       file!("n-mill", "panel.mage", parent_node_id: "d-laser")
+      # THE :text BRANCH, WHICH THIS SWEEP DID NOT REACH UNTIL THE CODE VIEWER LANDED. Its ERB
+      # comment was one line; it is now seven, and a leak from it would print into the page of
+      # every source file in the library. The balance check below covers the two-snippet shape
+      # on disk, but only a rendered page can catch the one-snippet shape's trailing delimiter.
+      file!("n-src", "firmware.cpp")
       @project = @user.maker_projects.create!(name: "Desk Lamp")
       @project.file_attachments.create!(user: @user, node_id: "n-stl", role: "model", position: 0)
       @project.file_attachments.create!(user: @user, node_id: "n-bak", role: "laser", position: 1)
@@ -140,6 +145,7 @@ module Web
         "file detail (3d)" => file_path("n-stl"),
         "file detail (measure, lbrn)" => file_path("n-bak"),
         "file detail (measure, mage)" => file_path("n-mill"),
+        "file detail (text)" => file_path("n-src"),
         "projects index" => projects_path,
         "project detail" => project_path(@project),
         "project new" => new_project_path,
@@ -150,6 +156,9 @@ module Web
         "model detail" => model_path(@model),
         "model new" => new_model_path,
         "model edit" => edit_model_path(@model),
+        # The model catalog's one setting page. Needs no fixture of its own: it seeds its
+        # three shelves on first visit, and renders the shared folder chooser either way.
+        "shelves" => shelves_path,
         "tools gallery" => tools_path,
         "tools addon" => tools_addon_path("fixture"),
         "trash" => trash_index_path

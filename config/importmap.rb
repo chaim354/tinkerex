@@ -45,6 +45,13 @@ pin "lib/file_chooser", to: "lib/file_chooser.js"
 # precisely so neither repo can break the other (the module header argues that in full).
 pin "lib/print_sheet", to: "lib/print_sheet.js"
 
+# The codeview controller's ext -> language table (plus our own g-code and OpenSCAD stream
+# modes). A HOST pin like the three above, so it is drawn into every addon's merged importmap —
+# but a bundle must NOT import it: it takes the CodeMirror namespace as an argument, so it is
+# only meaningful to the one controller that already holds the bundle. DYNAMIC-imported from
+# there, beside "codemirror" itself, so neither ships on a page with no text file.
+pin "lib/codemirror_languages", to: "lib/codemirror_languages.js"
+
 # THE ADDON SDK — a HOST pin, which is the whole point: merged_importmap draws every host pin before
 # the addon's own, so a bundle imports "@maker/addon-sdk" without declaring anything in its manifest
 # and without the host shipping a copy per addon. Unlike lib/file_chooser directly above (which a
@@ -68,6 +75,17 @@ pin "three/addons/controls/OrbitControls.js", to: "OrbitControls.js" # @0.185.1
 pin "three/addons/loaders/STLLoader.js", to: "STLLoader.js" # @0.185.1
 pin "three/addons/loaders/OBJLoader.js", to: "OBJLoader.js" # @0.185.1
 pin "three/addons/loaders/3MFLoader.js", to: "3MFLoader.js" # @0.185.1
+# CodeMirror 6 (MIT) — the read-only source viewer (codeview_controller.js), DYNAMIC-imported so
+# the payload ships only on a page showing a text file. ONE PIN FOR ONE BUNDLE, built by
+# bin/build-codemirror from vendor/javascript/codemirror-entry.js — unlike everything else in
+# vendor/javascript/, these are BUILT bytes rather than untouched upstream ones, which is why that
+# script pins all 40 packages in the resolved tree and not just the 15 direct ones.
+#
+# NEVER add `pin "@codemirror/..."` lines beside this. Two copies of @codemirror/state make
+# facets and StateFields fail to match by object identity, and CM6 responds by silently ignoring
+# the extension — no error, no warning. test/ci_hygiene_test.rb fails the build if a per-package
+# pin appears. To add a language, add it to codemirror-entry.js and rebuild.
+pin "codemirror", to: "codemirror.js" # bundle: see bin/build-codemirror for pinned versions
 # Lexxy (MIT) — the Action Text editor, replacing Trix. Served from the gem's own asset path, so
 # there is nothing vendored under vendor/javascript and no jspm shared-chunk patching (see the
 # jszip notes above). Attachments are disabled at the element, so @rails/activestorage is

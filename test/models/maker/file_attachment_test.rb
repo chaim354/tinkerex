@@ -62,8 +62,8 @@ module Maker
     # Pinned independently of ROLE_LABELS on purpose. Asserting ROLES == ROLE_LABELS.keys is
     # tautological — ROLES is DEFINED as those keys — so it cannot catch a typo'd key like
     # "cad_soruce", which is exactly the failure a reader assumes it guards. This literal can.
-    test "the role vocabulary is exactly these ten values" do
-      assert_equal %w[cad_source document gcode image instructions laser model other source_archive vector],
+    test "the role vocabulary is exactly these eleven values" do
+      assert_equal %w[cad_source code document gcode image instructions laser model other source_archive vector],
                    Maker::FileAttachment::ROLES.sort
     end
 
@@ -141,6 +141,35 @@ module Maker
     # ExtractPdfMetadataJob on this exact value, so the column is behavioural.
     test "pdf is still instructions" do
       assert_equal "instructions", Maker::FileAttachment.role_for("guide.pdf")
+    end
+
+    # SOURCE CODE IS A ROLE, so a firmware tree files itself into `code/` instead of scattering
+    # across `other/`. The names span the four families the role covers — C/C++ and Arduino,
+    # scripting, systems languages, and the config/build formats that sit beside the code they
+    # configure — because a role is worth exactly the extensions wired to it.
+    test "source files resolve to the code role" do
+      %w[main.cpp util.cc driver.h shim.hpp sketch.ino app.py helper.rb bundle.js types.ts
+         lib.rs main.go flash.sh plot.lua schema.sql page.html site.css feed.xml serial.log
+         config.toml platformio.ini app.cfg nginx.conf ci.yml deploy.yaml rules.cmake].each do |name|
+        assert_equal "code", Maker::FileAttachment.role_for(name), name
+      end
+    end
+
+    # TEXT_ROLES is what FilesController#preview_kind derives its :text branch from — the one
+    # vocabulary, not a second extension list beside it (§14d). A role named here that ROLES does
+    # not have would match nothing and fail SILENTLY: the branch goes on working and one file type
+    # quietly loses its preview.
+    test "TEXT_ROLES names only roles that exist" do
+      assert_empty Maker::FileAttachment::TEXT_ROLES - Maker::FileAttachment::ROLES
+    end
+
+    # ASSERTED ON THE CONSTANT, because that is where the rule lives. Mutation-checked: adding
+    # `instructions` to TEXT_ROLES leaves `preview_kind("manual.pdf") == :pdf` GREEN — the `:pdf`
+    # branch returns before the text branch — and trips the derived sweep only as a contradiction
+    # ("expected :text, got :pdf") that names the wrong culprit. What the mistake would really
+    # change is every LATER reader of TEXT_ROLES: a pdf handed to a source-code viewer.
+    test "instructions is not a text role" do
+      assert_not_includes Maker::FileAttachment::TEXT_ROLES, "instructions"
     end
   end
 end

@@ -16,6 +16,7 @@ module Maker
       "vector"         => "Vector",
       "laser"          => "Laser",
       "cad_source"     => "CAD source",
+      "code"           => "Code",
       "gcode"          => "G-code",
       "source_archive" => "Archives",
       "other"          => "Other"
@@ -56,8 +57,59 @@ module Maker
       # `pdf` is NOT here on purpose: it stays `instructions` because
       # Models::AttachmentsController dispatches ExtractPdfMetadataJob on that exact value.
       "txt" => "document", "md" => "document", "markdown" => "document",
-      "json" => "document", "csv" => "document"
+      "json" => "document", "csv" => "document",
+      # Source code, config and build files — the "firmware + software" half of a project (§1),
+      # which until now was filed entirely as `other`. Three groupings are decisions rather than
+      # observations. `h`/`hpp` sit with c/cpp because a firmware tree is headers and sources
+      # together, and splitting them would put one project's files in two folders. The config and
+      # build formats (`toml ini cfg conf yml yaml cmake`) are here rather than under `document`
+      # because they belong beside the code they configure — Maker::ProjectFolders is what that
+      # choice actually decides, and `document` means `docs/`, where the READMEs go. `log` is here
+      # for the same reason: a build or serial log is an artefact of running the code, not a
+      # document someone wrote.
+      "c" => "code", "h" => "code", "cpp" => "code", "cc" => "code", "hpp" => "code",
+      "ino" => "code", "py" => "code", "rb" => "code", "js" => "code", "ts" => "code",
+      "rs" => "code", "go" => "code", "sh" => "code", "lua" => "code", "sql" => "code",
+      "html" => "code", "css" => "code", "xml" => "code", "log" => "code",
+      "toml" => "code", "ini" => "code", "cfg" => "code", "conf" => "code",
+      "yml" => "code", "yaml" => "code", "cmake" => "code"
     }.freeze
+
+    # Roles whose files are TEXT a browser can display as source. Consulted by
+    # FilesController#preview_kind, which carried its own inline list of 26 extensions until
+    # 2026-08-25 — a second vocabulary beside this one, and exactly the drift
+    # FilesHelper::EXT_FAMILIES was rewritten to end (2026-07-29, after two lists disagreed about
+    # `.svg` for months; §14d). Five of that list's entries — xml log ini cfg conf — were in no
+    # ROLE_BY_EXT entry at all, which is how a second table drifts: silently, in the direction of
+    # the list nobody is looking at.
+    #
+    # `instructions` is deliberately ABSENT. A pdf is text-ish only in the sense of not being an
+    # image, and the detail page embeds the browser's own viewer for it. The guard for that is
+    # asserted on this CONSTANT (file_attachment_test.rb) rather than through preview_kind:
+    # measured, adding `instructions` here leaves `preview_kind("manual.pdf") == :pdf` green — the
+    # `:pdf` branch returns first — and reaches the derived sweep only as a contradiction that
+    # reports pdf failing to be text, which is not the rule anyone broke.
+    TEXT_ROLES = %w[document code gcode].freeze
+
+    # Extensions whose files are TEXT even though their ROLE is not a text role — because ROLE and
+    # CONTENT TYPE are two different questions and one file can answer them differently.
+    #
+    # `scad` is the case that forced this, and it is not a loophole in §14d's one-vocabulary rule.
+    # That rule forbids a second TABLE in a second PLACE (FilesController carried its own inline
+    # list of 26 extensions until 2026-08-25, and it had already drifted). This constant lives here,
+    # beside ROLE_BY_EXT and TEXT_ROLES, in the one file that owns the vocabulary — and it exists
+    # because OpenSCAD source is genuinely BOTH: it is `cad_source` for FILING (it belongs in
+    # `cad/` beside the `.f3d` it sits next to, which is what Maker::ProjectFolders
+    # decides) and it is plain source code for VIEWING. The two other candidate fixes are both
+    # worse and both were rejected: adding `cad_source` to TEXT_ROLES would render `.f3d`,
+    # `.sldprt` and `.sldasm` — binary formats — as text, a visible bug on the main deployment; and
+    # a per-extension branch inside `preview_kind` would rebuild the second vocabulary in the very
+    # method that collapsed it.
+    #
+    # STARTS AT ONE ENTRY AND SHOULD STAY SMALL. Every addition is a claim that some role's files
+    # are mostly NOT text while this extension's are, which is a narrow thing to be true. If this
+    # list grows past a handful, the role table is the thing that is wrong.
+    TEXT_EXTS = %w[scad].freeze
 
     # Best-effort role from a filename's extension; unknown -> "other".
     def self.role_for(name)

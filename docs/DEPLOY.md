@@ -248,6 +248,49 @@ curl -s -o /dev/null -w '%{http_code}\n' http://15.204.216.249/up  # OVH → 200
 kamal app logs -f            # add -d ovh for the OVH box
 ```
 
+### The `.git` purge migration — automatic, but know it exists
+
+`PurgeRepoMetadataNodes` (`db/migrate/20260826120000_*`) removes library nodes already indexed
+BENEATH a `.git` directory, keeping the `.git` marker itself. It runs as part of `db:migrate`,
+which kamal does **before** it boots the new containers — that ordering is the whole point, not a
+detail: the same deploy stops the observers descending into `.git`, so without the purge the first
+`Library::ScanJob` tick afterwards sees every one of those nodes vanish at once. Its output names
+what it did:
+
+    -- destroyed 4812 node(s) indexed beneath a .git directory
+       -> KEPT 9f2c… (user 3) — a file attachment points at it
+
+A `KEPT` line is a node the purge REFUSED to destroy because something points at it — a file
+attachment, or a project's or model's cover image. Destroying one would silently orphan that
+reference. Nothing is required of you, but those files are inside a repo's `.git` and the next scan
+will tombstone them normally — worth a look if the project cares.
+
+**On a `chunk_remote` deployment it declines, and says so:**
+
+    -- declined: FileLayer::ChunkRemote is not a scannable backend, so nothing here indexed the
+       contents of a .git and nothing scans them away
+
+That is correct, not a misconfiguration. There the `nodes` table MIRRORS the sync server's tree,
+the mass-deletion guard never runs (`Library::ScanJob` gates on the same capability), and
+`app/models/node.rb` records that `.git`'s contents are HIDDEN there rather than removed.
+
+**The one failure mode.** If a library was scanned by the new code before the migration ran, that
+scan REFUSES with `Library::Scanner::UnsafeScan` — a mass-deletion guard trip, so **nothing was
+deleted**; the library simply stops scanning. The message reads:
+
+    scan would tombstone 20/21 observable files (95.2% > 20%). Refusing — is the share mounted?
+    Set LIBRARY_SCAN_MAX_DELETE_PCT to override.
+
+It asks about the mount because that is the usual cause, and after this deploy it is the wrong
+diagnosis. Fix:
+
+    kamal app exec --reuse "bin/rails runner 'Library::RepoMetadataPurge.call'"
+
+then let the next scheduled scan run. The service is idempotent, so a re-run is free. **Do NOT
+reach for `LIBRARY_SCAN_MAX_DELETE_PCT`** — raising it would let that scan tombstone the nodes
+instead of removing them, which leaves a revivable row per file and disarms the guard for whatever
+goes wrong next.
+
 ## 4. Point clients at it
 
 From a client on the same network (reaches the Rails box and the chunk store):

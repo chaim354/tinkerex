@@ -91,6 +91,15 @@ dl.meta dd { margin: 0; }
 }
 .preview-fallback { text-align: center; padding: 24px; }
 
+/* --- Read-only source viewer (codeview_controller.js) — CodeMirror 6 --- */
+/* The editor needs a bounded height of its own: .cm-scroller only scrolls inside a box with
+   one, so without this the viewer grows to the length of the file and the PAGE scrolls, which
+   is the one thing the 480px cap on .preview-text above was already avoiding. Matching that
+   number keeps a file's page the same height before and after the bundle mounts. */
+.preview-code .cm-editor { max-height: 480px; border-radius: 6px; }
+.preview-code .cm-editor.cm-focused { outline: none; }
+.preview-code .cm-scroller { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+
 /* --- Interactive 3D viewer (modelviewer_controller.js) — STL/3MF/OBJ --- */
 .model-viewer { position: relative; }
 .model-viewer-stage {

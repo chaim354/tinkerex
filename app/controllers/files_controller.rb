@@ -178,7 +178,12 @@ class FilesController < ApplicationController
     if @flat
       @folder = nil
       @crumbs = []
-      scope = flat_ext_scope(@exts)
+      # `.outside_repo_metadata` ON THE SCOPE, NOT ON THE `.order` BELOW, so @match_count is taken
+      # from the same query as the rows and the banner cannot claim a file the page never shows.
+      # A `.git` row reaches THIS scope only as a file — a `gitdir:` pointer, since flat mode
+      # filters kind: "file" — but the rule is the catalog's, not the folder view's, and one
+      # condition must not have two answers across the two scopes (§14a).
+      scope = flat_ext_scope(@exts).outside_repo_metadata
       @match_count = scope.count
       # ORDERED BY THE USER'S SORT, NOT BY NAME, BECAUSE HERE THE ORDER *SELECTS* -- see
       # flat_order. This line used to be `.order(:name)`, and the LIMIT then took the alphabetical
@@ -189,7 +194,10 @@ class FilesController < ApplicationController
     else
       @folder = current_folder
       @crumbs = folder_crumbs(@folder)
+      # `.outside_repo_metadata` here for the same reason it is on the flat scope above, and on
+      # the scope rather than the orders below so @child_count paginates what is actually shown.
       scope = current_user.nodes.present.where(parent_node_id: @folder&.node_id)
+                          .outside_repo_metadata
       # PAGED ONLY UNDER THE NAME SORT — see #paged_folder? for why the other two cannot be.
       @paged = paged_folder?
       if @paged
@@ -1127,8 +1135,20 @@ class FilesController < ApplicationController
     # PDF before the :thumbnail branch: the detail view EMBEDS the whole PDF for the browser's own
     # viewer (a full, scrollable preview), while pdf is ALSO in Registry for a page-1 grid thumbnail.
     return :pdf   if ext == "pdf"
-    return :text  if %w[txt md markdown csv json xml yml yaml log rb js ts py rs go
-                        c h cpp html css toml ini cfg conf sh gcode].include?(ext)
+    # DERIVED FROM THE ONE VOCABULARY (§14d), not a second list beside it. This was an inline set
+    # of 26 extensions sitting next to Maker::FileAttachment::ROLE_BY_EXT, and it had already
+    # drifted: five of its entries (xml log ini cfg conf) were in no ROLE_BY_EXT entry at all, so
+    # the two tables disagreed about what those files even were. Adding an extension is now a
+    # one-line edit to ROLE_BY_EXT and nothing here has to hear about it.
+    #
+    # ORDER IS LOAD-BEARING and this line must stay below the three branches above: an .svg is a
+    # text file too, and the measure/image/pdf branches own those pages on purpose.
+    # OR'd with TEXT_EXTS, which is NOT a second list creeping back in — both constants live in
+    # Maker::FileAttachment, beside ROLE_BY_EXT, and the second one exists because role and content
+    # type are different questions: `.scad` is cad_source for FILING and source code for VIEWING.
+    # That file carries the full argument and the two rejected alternatives.
+    return :text  if Maker::FileAttachment::TEXT_ROLES.include?(Maker::FileAttachment.role_for(name)) ||
+                     Maker::FileAttachment::TEXT_EXTS.include?(ext)
     # Mesh formats the browser can parse itself -> the interactive client-side 3D viewer
     # (modelviewer_controller.js), which supersedes the static thumbnail on the detail page. The
     # thumbnail is still generated (Registry has these) and serves as the viewer's fallback poster.

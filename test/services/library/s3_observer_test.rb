@@ -307,6 +307,75 @@ module Library
       assert_nothing_raised { scan! } # stable on the next pass — no wedge
     end
 
+    # ---------------------------------------------------------------- a repo's own metadata
+
+    # THE SKIP THAT KEEPS ITS ENTRY, and on this backend the entry has to be INVENTED. The Scanner
+    # observes a real `.git` directory and merely declines to descend; S3 has no directories at
+    # all, so the marker exists only as a prefix of the very keys being dropped. Lose it and the
+    # working-tree question has two answers across backends (§14a) and Maker::AttachToProject's
+    # :in_working_tree silently stops firing on an s3 deployment.
+    test ".git becomes ONE synthesized dir node and its keys are dropped" do
+      @fake.seed!("#{PREFIX}/firmware/.git/config", "[core]")
+      @fake.seed!("#{PREFIX}/firmware/.git/objects/ab/cdef", "a loose object")
+      @fake.seed!("#{PREFIX}/firmware/main.cpp", "int main(){}")
+      scan!
+
+      assert_equal [ "firmware", "firmware/.git", "firmware/main.cpp" ],
+                   @user.nodes.present.order(:storage_path).pluck(:storage_path),
+                   "the marker and the working tree, and nothing from inside the repo"
+      assert_equal "dir", @user.nodes.find_by!(storage_path: "firmware/.git").kind,
+                   "S3 has no directories, so the marker must be SYNTHESIZED as a dir node"
+      assert_equal 1, files.count, "main.cpp is the only file — no config, no loose objects"
+    end
+
+    # THE ORDER OF THE TWO BRANCHES, pinned. A zero-byte folder object inside the repo reaches
+    # #observe as a directory MARKER, and the marker branch merges its whole ancestor chain — so
+    # checked in the other order this key would mint a dir node BENEATH `.git`, which is the very
+    # content the skip exists to drop.
+    test "a directory-marker object INSIDE the repo does not mint a node beneath the marker" do
+      @fake.seed!("#{PREFIX}/firmware/.git/objects/", "")
+      @fake.seed!("#{PREFIX}/firmware/main.cpp", "int main(){}")
+      scan!
+
+      assert_equal [ "firmware", "firmware/.git", "firmware/main.cpp" ],
+                   @user.nodes.present.order(:storage_path).pluck(:storage_path)
+    end
+
+    # A DIRECTORY, NEVER A FILE — ON THIS BACKEND TOO, which takes one deliberate term
+    # (`metadata_dir != rel`) because a flat keyspace permits an OBJECT exactly at the marker path.
+    # That object is what a submodule or a linked worktree writes: a small `gitdir:` POINTER FILE
+    # where a plain repo has a directory. The Scanner holds an lstat, sees a file, and indexes it;
+    # without the term this backend would call it the marker and drop its bytes, which is §14a's
+    # one-condition-two-answers. The share-side half of this pair is in scanner_test.rb.
+    test "a .git OBJECT is a FILE, like the Scanner's, not a synthesized marker" do
+      @fake.seed!("#{PREFIX}/sub/.git", "gitdir: ../.git/modules/sub")
+      @fake.seed!("#{PREFIX}/sub/main.c", "int main(){}")
+      scan!
+
+      node = @user.nodes.find_by!(storage_path: "sub/.git")
+      assert_equal "file", node.kind, "a `gitdir:` pointer is a file, and its bytes are the point"
+      assert_equal 2, files.count, "the pointer and main.c — nothing dropped"
+    end
+
+    # Whole segments, never prefixes — and the fixture has to be at DEPTH for this to be able to
+    # fail. An earlier version seeded only `.gitignore` at the library root, where a segment-PREFIX
+    # match still resolves the marker prefix to the key ITSELF, so `internal?` answers false and
+    # the key survives anyway: the test passed under the very mutation it named. `.github/` is the
+    # honest fixture — a directory a real code library HAS, beginning with the marker's own name —
+    # and the assertion is on the LEAF, because a prefix match keeps the `.github` dir node while
+    # silently dropping everything under it.
+    test "a key merely NAMED like git metadata is indexed normally, at any depth" do
+      @fake.seed!("#{PREFIX}/.gitignore", "tmp/")
+      @fake.seed!("#{PREFIX}/.github/workflows/ci.yml", "on: push")
+      @fake.seed!("#{PREFIX}/notes/git/todo.txt", "not a repo")
+      scan!
+
+      assert @user.nodes.find_by(storage_path: ".gitignore")
+      assert @user.nodes.find_by(storage_path: ".github/workflows/ci.yml"),
+             "a prefix match would drop this and leave `.github` a childless dir node"
+      assert @user.nodes.find_by(storage_path: "notes/git/todo.txt")
+    end
+
     # ---------------------------------------------------------------- LANDMINE 6: non-UTF-8 keys
 
     # PLAN DRIFT, VERIFIED, AND THE PLAN'S TEST IS IMPOSSIBLE AS WRITTEN.

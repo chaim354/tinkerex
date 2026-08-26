@@ -121,5 +121,31 @@ module Maker
       assert_equal({ "material" => "PET" }, m.reload.print_settings)
       assert_nil @user.maker_models.create!(title: "y").print_settings
     end
+
+    test "an existing model is import-origin without a backfill" do
+      model = @user.maker_models.create!(title: "Benchy")
+      assert_equal "import", model.origin
+      assert_nil model.auto_node_id
+      assert_nil model.dismissed_at
+    end
+
+    test "two auto models cannot claim one node" do
+      @user.maker_models.create!(title: "A", origin: "auto", auto_node_id: "n-1")
+      assert_raises(ActiveRecord::RecordNotUnique) do
+        @user.maker_models.create!(title: "B", origin: "auto", auto_node_id: "n-1")
+      end
+    end
+
+    test "catalogued excludes dismissed auto models and keeps import models" do
+      keep      = @user.maker_models.create!(title: "Imported")
+      auto      = @user.maker_models.create!(title: "Auto", origin: "auto", auto_node_id: "n-2")
+      dismissed = @user.maker_models.create!(title: "Gone", origin: "auto", auto_node_id: "n-3",
+                                             dismissed_at: Time.current)
+
+      ids = @user.maker_models.catalogued.pluck(:id)
+      assert_includes ids, keep.id
+      assert_includes ids, auto.id
+      assert_not_includes ids, dismissed.id
+    end
   end
 end
