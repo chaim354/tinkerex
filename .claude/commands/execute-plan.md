@@ -1,9 +1,12 @@
 ---
-description: Execute a written implementation plan with subagents — batched by file, parallel where independent, one capped quality review per task
+description: THE DEFAULT way to execute an implementation plan with subagents in this repo — batched by file, parallel where independent, no spec-compliance stage, one capped quality review per task
 ---
 
-Execute an implementation plan by dispatching subagents. This replaces the generic
-subagent-driven-development loop with the calibration this repo actually paid for.
+**THIS IS THE DEFAULT, NOT AN ALTERNATIVE.** Follow it whenever you dispatch subagents to execute a
+plan in this repo, whether or not anyone invoked `/execute-plan`. Where it disagrees with a generic
+subagent-driven-development skill, **this wins** — CLAUDE.md §15 says so, and the superpowers skills
+themselves rank a repo's own instructions above their defaults. You do not need permission to work
+this way; you need a reason not to.
 
 **The measurement this exists because of** (project-discovery arc, 2026-08-26, ~3.4 h of subagent
 time): reviews cost **~1.8 h against ~1.6 h of implementation**, so review was the majority of the
