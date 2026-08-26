@@ -80,7 +80,7 @@ reading the last entry.
 
 ## Latest (2026-08-25): a git repo in the library, and the sweep that was tearing one apart (branch `claude/codemirror-code-editor`)
 
-**IN PROGRESS — five of nine tasks landed.** Spec:
+**IN PROGRESS — six of nine tasks landed.** Spec:
 `docs/superpowers/specs/2026-08-25-codemirror-code-viewer-design.md`. Plan:
 `docs/superpowers/plans/2026-08-25-codemirror-code-viewer.md`.
 
@@ -384,11 +384,101 @@ Legs measured for this task: share and s3, both **2405 runs / 8802 assertions / 
 identical.
 `test-chunk-remote` not run here (needs the sibling checkout).
 
-### Still to land (tasks 6–9 of the plan)
+### The already-indexed nodes are purged at deploy, not by a remembered rake task (task 6, landed)
 
-The one-time purge migration; the `code` role and collapsing `preview_kind`'s second extension
-vocabulary into the first; the bundle and its never-pin-per-package guard; the `codeview`
-controller.
+Task 3 stops the observers descending into `.git`. For any library **already** carrying those
+nodes, the first scan afterwards sees every one of them vanish at once — and
+`Library::Reconciler`'s mass-deletion guard is a percentage of the observable library with **no
+floor**. Driven rather than argued: 20 `.git/objects` in a 21-file library gives
+
+> `Library::Scanner::UnsafeScan: scan would tombstone 20/21 observable files (95.2% > 20%).
+> Refusing — is the share mounted? Set LIBRARY_SCAN_MAX_DELETE_PCT to override.`
+
+and the library stops scanning, that pass and every pass after it. The guard raises *before*
+tombstoning, so the cost is an outage rather than lost data. Note what the message asks about: the
+mount, which after this deploy is the wrong diagnosis — hence the `docs/DEPLOY.md` entry.
+
+**A MIGRATION, NOT THE RAKE TASK THE SPEC FIRST PROPOSED.** A rake task has to be *remembered*, in
+the window between the deploy and the next `Library::ScanJob` tick. Kamal runs migrations before it
+boots the new containers, so `PurgeRepoMetadataNodes` closes the window instead of documenting it.
+The logic lives in `Library::RepoMetadataPurge` so it stays testable and re-runnable by hand — which
+is exactly what an operator needs if a scan beat the migration.
+
+Three design points, each with a mutation behind it:
+
+- **DESTROY, not tombstone.** These paths will never be observed again, so a tombstone is a
+  revivable row for a file that cannot come back — and §14a's two-tombstone-kinds rule makes a
+  lingering trash-kind row *worse* than none, since `Reconciler#create_or_revive!` could hand a new,
+  unrelated file that `node_id` with every attachment, BOM link and tag pointing at it. Tombstones
+  already beneath a marker go too: the criterion is "will this path ever be observed again", which
+  the `deleted` flag does not bear on.
+- **An attached node is REPORTED and SKIPPED.** Destroying one silently orphans a project reference.
+  **Its ancestors are kept with it**, which the first cut missed: destroy the directories a skipped
+  node hangs off and it becomes a live row whose `parent_node_id` resolves to nothing — and the next
+  run cannot rebuild its path, so the node it refused to destroy **stops being reported at all**. A
+  skip that reports once and then forgets is not loud. Pinned by a re-run test; without the pinning
+  the second run returns `[]`.
+- **Resolved by the PARENT CHAIN, never `storage_path`.** On `chunk_remote` that column is NULL for
+  every node (§14a), so the obvious version does **nothing at all on the product's main deployment**
+  while every share-fixture test stays green. Mutated to `internal?(node.storage_path.to_s)`: the
+  chunk_remote-shaped test alone goes red.
+
+**It asks `RepoMetadata.internal?` of a rebuilt path rather than testing an ancestor's name** — the
+plan's own code compared `parent.name == DIR_NAME && parent.kind == "dir"`, a third spelling of a
+question two callers already answer by construction. `internal?` is the OBSERVERS' question, and the
+observers are what decide which nodes stop being observed, so matching that population exactly is
+the requirement. It also inherits whole-segment matching, outermost-wins and false-for-the-marker
+for free.
+
+**DECIDE, THEN APPLY — and the split is a correctness constraint found by driving it, not a style
+choice.** The first cut destroyed inside the `find_each`, which removes the very rows the ancestor
+walk still needs: a node whose parent directory was already destroyed this pass has no chain left to
+rebuild, answers `false`, and **survives as a live orphan beneath the marker**. It left 20 of 21
+objects behind and the scan still refused — the guard-trip test caught it before any mutation did.
+The decision pass now collects ids, then destroys in batches, so memory is bounded by an Integer
+array however large the repo is. The parent-lookup memo is a **local** built per call and threaded
+through, never module state: a module memo would outlive the call that filled it and answer a second
+run from rows the first destroyed.
+
+**The plan's own fixtures could not have exercised any of this.** Its `node` helper set
+`storage_path` alone and no `parent_node_id` — a shape no backend produces (`Reconciler`'s
+`#create_or_revive!` and `#ensure_dirs` both set the parent on share and s3), and one against which
+the plan's own parent-chain service would have reported `0 destroyed` and failed the plan's own first
+test. The fixtures build a real chain instead, and the chunk_remote case keeps `storage_path` NULL so
+the two shapes stay distinguishable.
+
+**The negative case is positioned so a prefix bug can reach it, which `.gitignore` alone cannot.**
+`.gitignore` is the LAST segment of its path, so under a `start_with?` mutation `marker_prefix`
+returns the path itself and `internal?` is still false — green. `.github/workflows/ci.yml` is the
+one that falls (2 destroyed: the file and its `workflows` dir). This arc has now shipped a vacuous
+version of that exact assertion twice before; this one was checked.
+
+The migration's `NameError` rescue is **scoped to the constant lookup** (`safe_constantize`), never
+wrapped around the call: a fresh database years from now must no-op if a cleanup deletes the service,
+but a `rescue NameError` around `purge.call` would also swallow a NameError raised *inside* it and
+turn a real breakage into a silent success on every future deploy. Both branches driven — present:
+`destroyed 0 node(s) indexed beneath a .git directory`; moved aside:
+`Library::RepoMetadataPurge is gone; nothing to purge on a fresh database`. `down` raises
+`IrreversibleMigration`, because the rows are gone and the paths they named are no longer observable.
+
+| mutation | result |
+|---|---|
+| `internal?(node.storage_path.to_s)` — read the column, not the chain | red — the chunk_remote-shaped test, `Expected true to be nil or false` |
+| drop the attachment skip | red — `destroying an attached node silently orphans a project reference` |
+| drop the ancestor pinning | red — the re-run reports `[]` instead of the skipped `node_id` |
+| comment out `RepoMetadataPurge.call` in the scan test | red — the `UnsafeScan` quoted above |
+| `internal?` → at-or-beneath (`!prefix.nil?`) | red — the marker itself is destroyed |
+| `marker_prefix`'s `index(DIR_NAME)` → `start_with?` | red — `.github/workflows/ci.yml` and its dir node, `Expected: 0 / Actual: 2` |
+
+Legs measured for this task: share and s3, both **2412 runs / 8824 assertions / 30 skips**,
+identical — task 5's 2405/8802 plus this file's 7 runs and 22 assertions. `test-chunk-remote` not
+run here (needs the sibling checkout). One share run tripped the documented `WorkerBudgetTest`
+cross-process pidfile flake and was clean on the two runs after it.
+
+### Still to land (tasks 7–9 of the plan)
+
+The `code` role and collapsing `preview_kind`'s second extension vocabulary into the first; the
+bundle and its never-pin-per-package guard; the `codeview` controller.
 
 ### Decided and NOT built, so it is not rediscovered as an oversight
 
