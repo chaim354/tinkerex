@@ -1,6 +1,6 @@
 # Build status — the maker app (`chaim354/tinkerex`)
 
-**Updated:** 2026-08-25 (**the Box Generator's edge dropdowns explain their letters again — the sidecar advertises boxes.py's own `edges.getDescriptions()` as `choice_labels`, the bundle composes the option text. 45 labelled params across 10 dests, not just top/bottom.**)
+**Updated:** 2026-08-25 (**the two labelled edge dropdowns get two columns so their labels are readable, and a sample-less generator keeps its frame so the gallery cannot reflow under a click. 171 of 181 generators have a photo — the code said the opposite. The fixture's own 'photo' turned out to be undecodable bytes.**)
 
 ## What this file is
 
@@ -78,7 +78,80 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-25): the edge dropdowns say what their letters mean again (branch `claude/dropdown-explanations-top-bottom-9495d4`)
+## Latest (2026-08-25): the labelled dropdowns get room to be read, and the gallery stops moving under the pointer (branch `claude/boxes-ui-truncation-and-stable-gallery`)
+
+Two UI defects found by driving the deployed app rather than by reading it, both in the surface the
+edge labels had just landed on.
+
+### A label nobody can finish reading is not a label
+
+`top_edge`'s longest option is "Y — Handle with holes for parallel finger joint". Measured live at a
+976px form (four 232px columns): it needs **324px** and `bottom_edge` **300px**, while the other
+**eleven** selects on that same form have **34–114px of slack**. So exactly the two fields the
+labels were added for were the two being cut off mid-word.
+
+The fix widens those two, not the grid: the bundle tags a field whose param carries `choice_labels`
+with **`box-field-wide`**, and the host spans it two columns (480px). Widening every column instead
+would have taken the form from four columns to three to serve two fields.
+`@media (max-width: 640px)` drops it to `1 / -1`, the shape a multiline field already takes.
+
+**The narrow-width justification was wrong the first time and is corrected in the CSS.** The comment
+claimed `span 2` would overflow the page on a one-column grid. Probed at 375px: it does not overflow
+— it makes the browser add an implicit second track (`190px 169px`), squeezing every ordinary field
+to serve one. That is a real reason to keep the media query, and it is not the reason first written
+down.
+
+### 171 of 181 generators have a sample photo — the opposite of what the code said
+
+A generator with no sample photo had its 120px image box REMOVED when the 404 landed
+(`.addon-thumb.is-missing { display: none }`), so every card below it jumped ~126px **after the
+gallery looked ready**. That is the race `settle_addon_cards` exists to wait out and the one that
+put a healthy-looking gallery in a CI failure screenshot (run 31188332739) — and it still cost real
+mis-clicks: two of mine, on the live box, in the session that found this.
+
+`gallery.js` said "most generators have none". Measured against the deployed sidecar: **171 of the
+181 offered generators ship a photo, 10 do not.** So the frame is now always reserved and the ten
+get a muted "no sample photo" placeholder — ten placeholders bought a gallery that cannot reflow.
+The placeholder carries `.addon-thumb` as well as its own class, so the empty box and the real one
+are sized by one declaration and cannot drift back apart.
+
+### The fixture's sample photo was not a photo
+
+`FakeBoxesSidecar::SAMPLE_JPEG` was `"\xFF\xD8\xFF\xE0JFIFdata"` — correct magic bytes, nothing
+else. Every server-side assertion accepted it and **Chrome could not decode it**, so the one card
+that was supposed to HAVE a photo fired `error` exactly like the three that did not: the fixture
+contained **zero** photos while two files' comments described its photo-and-placeholder mix. Nothing
+noticed until a test asked how many cards had one (0, expected 1). §14e's fake-that-shares-the-
+misunderstanding, in its most literal form. It is a real 160-byte 1x1 JPEG now.
+
+### What was measured
+
+- **`bin/ci` green**, all nine gates; three backend legs identical at **2364 runs**; system suite
+  **182 runs, 1528 assertions, 0 failures**.
+- **Two new system tests, mutation-checked three ways each.** Reverting `span 2` → "top_edge is 61px
+  too narrow"; the bundle not tagging the field → red; the gallery going back to `is-missing` → red
+  on equal card heights.
+- **ONE OF THOSE GUARDS WAS A FALSE GREEN FIRST, AND ONLY THE MUTATION SHOWED IT.** The width probe
+  set `width: auto` and read the box back — but `.box-field` is a flex COLUMN, so a child at `auto`
+  STRETCHES rather than shrinking to content: `need` equalled `have` for every select and the test
+  passed just as happily with the fix reverted. `alignSelf = "flex-start"` before measuring is what
+  makes it bite.
+- **Verified at three widths** against the real `application.css` and the real bundle: 1400px (five
+  columns, 413px for a 321px need), 768px (two), 375px (one clean column, no horizontal overflow,
+  both labels fully visible).
+
+### Two repos again, and one comment that has to stay true in both
+
+`fields.js` and `gallery.js` are the bundle's (`chaim354/tinkerex-addons`); the CSS, the fixture and
+the tests are this repo's. The mirror in `test/fixtures/addons/boxes/` is byte-identical, per
+`bin/check-fixture-drift`.
+
+**Deploy is bundle AND Rails this time** — unlike the edge-label change, the widening and the
+placeholder live in `app/assets/stylesheets/application.css`, so the three web containers do need to
+roll. Either half alone is harmless: the class with no CSS is inert, the CSS with no class matches
+nothing.
+
+## 2026-08-25: the edge dropdowns say what their letters mean again (branch `claude/dropdown-explanations-top-bottom-9495d4`)
 
 The complaint was concrete: the Box Generator's **top** and **bottom** dropdowns are single letters,
 and boxes.py's own site explains each one. `top_edge` offers **sixteen** of them —

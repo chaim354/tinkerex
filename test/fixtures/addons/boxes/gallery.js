@@ -192,6 +192,16 @@ function createSavedMenu({ onEditState, onShowState }) {
   return { open, close }
 }
 
+// The frame a generator with no sample photo gets. It carries `.addon-thumb` as well as its own
+// class so the box is measured by the SAME rule as a real photo — one declaration of the size, so
+// the two cannot drift apart and reintroduce the jump.
+function emptyThumb() {
+  const box = document.createElement("span")
+  box.className = "addon-thumb addon-thumb-empty"
+  box.textContent = "no sample photo"
+  return box
+}
+
 function buildCard(generator, onOpenGenerator) {
   const card = document.createElement("a")
   card.href = "#"
@@ -217,9 +227,24 @@ function buildCard(generator, onOpenGenerator) {
   // CLAUDE.md §14c), so an <img> pointed at it is a supported path rather than a loophole.
   img.src = host.service.url("boxes", `sample/${generator.key}`)
   // Replaces the host's thumbfallback Stimulus controller for this addon: this bundle isn't
-  // Stimulus, so a missing sample photo (most generators have none — 404) is hidden by hand rather
-  // than relying on a host controller auto-connecting to markup this bundle injects.
-  img.addEventListener("error", () => img.classList.add("is-missing"))
+  // Stimulus, so a 404 is handled by hand rather than by a host controller auto-connecting to
+  // markup this bundle injects.
+  //
+  // A MISSING SAMPLE KEEPS ITS FRAME — only the CONTENTS change. This used to add `is-missing`,
+  // whose host CSS is `display: none`, which removed a 120px box AFTER the gallery looked settled:
+  // every card below it jumped ~126px, so a click aimed at a card landed in dead space. That is not
+  // theoretical — tinkerex's system suite carries a `settle_addon_cards` helper written for exactly
+  // this race, its CI went red on it once (run 31188332739), and it still costs real mis-clicks.
+  //
+  // It is also rarer than the old comment here claimed ("most generators have none"): measured
+  // against the deployed sidecar, **171 of the 181 offered generators ship a sample photo and 10 do
+  // not**, so reserving the box costs ten cards a placeholder and buys a gallery that never
+  // reflows.
+  //
+  // SWAPPING IN A REAL ELEMENT, not styling the failed <img>: a broken image paints a
+  // browser-chosen glyph beside its alt text, and how much of that survives `background`/`color`
+  // overrides differs per browser. An element we build renders the same everywhere.
+  img.addEventListener("error", () => img.replaceWith(emptyThumb()))
 
   const label = document.createElement("span")
   label.className = "addon-title"

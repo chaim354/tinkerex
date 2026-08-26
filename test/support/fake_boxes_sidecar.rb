@@ -118,10 +118,22 @@ class FakeBoxesSidecar
   DEFAULT_SVG = %(<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50">) +
                 %(<rect width="100" height="50" fill="none" stroke="#000"/></svg>)
 
-  # ABox has a bundled sample photo; the other three (like most real generators) have none, so the
-  # gallery's <img> 404s for them on purpose and the bundle's own onerror handler hides the tile —
-  # see SAMPLE_404 in the test files that assert_no_console_errors around it.
-  SAMPLE_JPEG = "\xFF\xD8\xFF\xE0JFIFdata".b
+  # ABox has a bundled sample photo; the other three 404 on purpose, and the bundle swaps a
+  # placeholder frame in for those — see SAMPLE_404 in the test files that assert_no_console_errors
+  # around it.
+  #
+  # A REAL 1x1 JPEG, NOT A PLAUSIBLE-LOOKING PREFIX. This was `"\xFF\xD8\xFF\xE0JFIFdata"` — the
+  # right magic bytes and nothing else — which every server-side assertion accepts and **Chrome
+  # cannot decode**, so the one card that is supposed to HAVE a photo fired `error` like the three
+  # that do not and the fixture quietly contained zero photos. Nothing noticed until a test asked
+  # how many cards had one (answer: 0, expected 1). CLAUDE.md §14e's rule about a fake that shares
+  # the code's misunderstanding, in its most literal form: the fake was only ever read by code that
+  # did not decode it.
+  SAMPLE_JPEG = Base64.decode64(<<~B64.delete("\n")).b
+    /9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRof
+    Hh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAAB
+    AAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==
+  B64
 
   # Wires ENV["BOXES_SIDECAR_URL"] (the addon's manifest declares services: ["boxes"], so
   # Tools::AddonsController#sidecar_url_for derives exactly this env var name) and installs a

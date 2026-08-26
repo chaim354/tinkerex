@@ -209,6 +209,17 @@ ul.addon-permissions { list-style: none; margin: 0 0 18px; padding: 0; }
 ul.addon-permissions li { margin-top: 4px; }
 .addon-thumb { width: 100%; height: 120px; object-fit: contain; background: var(--soft); border-radius: 6px; }
 .addon-thumb.is-missing { display: none; }
+/* THE FRAME A GENERATOR WITH NO SAMPLE PHOTO GETS, and it is a placeholder rather than nothing so
+   that the grid never reflows. Dropping the box (`is-missing` above) moved every card below it by
+   ~126px the moment a sample 404'd — AFTER the gallery looked settled — which is why
+   `settle_addon_cards` exists and why a click could land in dead space. 171 of the 181 offered
+   generators ship a photo and 10 do not, so this frame is the exception, not the common case.
+   The size comes from `.addon-thumb`, which this element also carries: one declaration, so the
+   real box and the empty one cannot drift apart and bring the jump back. */
+.addon-thumb-empty {
+  display: flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--line); color: var(--muted); font-size: 11px;
+}
 
 /* --- Box Generator addon --- */
 .box-search {
@@ -300,6 +311,20 @@ details[open] > .box-group-summary::before, details[open] > .box-saved-summary::
    editable in a monospace face that doesn't wrap — and it needs the full grid row, not one
    190px auto-fill column. */
 .box-field-multiline { grid-column: 1 / -1; }
+/* A LABELLED ENUM'S OPTIONS ARE A LETTER PLUS A SENTENCE, so one column cuts them off mid-word.
+   Measured on the deployed app at a 976px form (four 232px columns): `top_edge`'s longest option
+   needs 324px and `bottom_edge`'s 300px, while the other eleven selects on that same form have
+   34–114px of slack. Two columns is 480px. Widening every column instead would drop the form from
+   four columns to three to serve two fields. */
+.box-field-wide { grid-column: span 2; }
+/* On a grid narrow enough to fit only ONE column, `span 2` makes the browser add an IMPLICIT second
+   one. Measured at a 375px viewport, not assumed: the page does NOT overflow — `1 / -1` was chosen
+   partly on that guess and the guess was wrong — but the tracks come back `190px 169px`, so every
+   ordinary field is squeezed into 190px and left ragged to give this one field two columns. With
+   this rule the grid stays a single clean 375px column and the wide field spans it, which is the
+   same full-row shape a multiline field already takes. `1 / -1` is the whole row and never creates
+   a track, at any width. */
+@media (max-width: 640px) { .box-field-wide { grid-column: 1 / -1; } }
 .box-field textarea {
   width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
   background: var(--bg); color: var(--fg);

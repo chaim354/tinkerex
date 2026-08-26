@@ -120,23 +120,31 @@ class BoxSectionsTest < ApplicationSystemTestCase
     end
   end
 
-  # THE GALLERY MOVES UNDER THE POINTER, AND A MISSED CLICK IS SILENT. Each card's
-  # `<img class="addon-thumb">` is a real request through the sidecar proxy, and
-  # `.addon-thumb.is-missing { display: none }` removes a 120px box the moment one fails — so every
-  # card below it jumps up ~126px. Measured for TrayLayout, the last of the four: 1002px -> 624px.
-  # Chromedriver computes ONE click coordinate and then dispatches pointerMove/pointerDown at it, so
-  # a thumbnail resolving in between drops the click into the dead space below the shrunken grid,
-  # where nothing raises and nothing happens. `system-test` was red on main for exactly this (run
-  # 31188332739), and its failure screenshot shows a perfectly healthy gallery.
+  # THE GALLERY MOVED UNDER THE POINTER, AND A MISSED CLICK IS SILENT. Each card's
+  # `<img class="addon-thumb">` is a real request through the sidecar proxy, and a failed one used
+  # to remove a 120px box (`.addon-thumb.is-missing { display: none }`), so every card below it
+  # jumped up ~126px — measured for TrayLayout, the last of the four: 1002px -> 624px. Chromedriver
+  # computes ONE click coordinate and then dispatches pointerMove/pointerDown at it, so a thumbnail
+  # resolving in between dropped the click into dead space, where nothing raises and nothing
+  # happens. `system-test` was red on main for exactly this (run 31188332739), and its failure
+  # screenshot shows a perfectly healthy gallery.
   #
-  # ASSERTED AS THE HELPER'S CONTRACT, NOT AS THE RACE'S OUTCOME, and that is deliberate: the real
-  # window is sub-100ms, so a test that clicked and hoped would be a coin flip in both directions —
-  # green with the bug present often enough to prove nothing. What IS deterministic is the property
-  # that closes the window: by the time open_addon_card clicks, no thumbnail is still loading and
-  # the collapse has already been applied, so nothing is left that could move the target.
+  # THE COLLAPSE ITSELF IS GONE (2026-08-25): a sample-less generator now keeps its frame, so a
+  # 404 changes a card's CONTENTS and never its size — see "a generator with no sample photo keeps
+  # its frame" below, which asserts that directly. This test keeps the OTHER half of the helper's
+  # contract, which the structural fix does not cover: the cards must EXIST and their images must
+  # have finished before anything clicks, because the bundle renders the gallery after two async
+  # fetches and `find(".addon-card")` racing that is its own silent failure.
+  #
+  # THE POSITION RE-CHECK THAT USED TO LIVE HERE IS DELETED RATHER THAN ADAPTED. It re-applied
+  # `is-missing` to every thumb and asserted nothing moved — sound while the real page had already
+  # collapsed those boxes, meaningless once nothing collapses, and actively WRONG if kept: it would
+  # hide the one remaining <img> (ABox's), shrink a card the live page never shrinks, and fail for a
+  # condition the product no longer has. A test that simulates a defect that cannot occur is
+  # measuring its own simulation.
   #
   # MUTATION-CHECKED (2026-08-10): dropped the `i.complete` clause from settle_addon_cards' probe —
-  # red here on both assertions ("4 thumbnails were still loading"), restored, green again.
+  # red here ("N thumbnails were still loading"), restored, green again. Re-checked 2026-08-25.
   test "the gallery is not clicked until its thumbnails have stopped moving" do
     FakeBoxesSidecar.install!(proxy: SlowSamples.new)
     visit tools_addon_path("boxes")
@@ -146,15 +154,7 @@ class BoxSectionsTest < ApplicationSystemTestCase
     still_loading = page.evaluate_script(
       'Array.prototype.slice.call(document.querySelectorAll("img.addon-thumb")).filter(function (i) { return !i.complete }).length'
     )
-    assert_equal 0, still_loading, "#{still_loading} thumbnails were still loading — the cards can still collapse under the click"
-
-    # And the collapse is not merely finished but APPLIED: re-asserting it must move nothing. This is
-    # the half that would still catch a settle that waited on the requests but clicked before the
-    # reflow those requests trigger.
-    positions = 'Array.prototype.slice.call(document.querySelectorAll(".addon-card")).map(function (c) { return Math.round(c.getBoundingClientRect().top) }).join(",")'
-    before = page.evaluate_script(positions)
-    page.execute_script('document.querySelectorAll("img.addon-thumb").forEach(function (i) { i.classList.add("is-missing") })')
-    assert_equal before, page.evaluate_script(positions), "the cards were still going to move after settle_addon_cards returned"
+    assert_equal 0, still_loading, "#{still_loading} thumbnails were still loading when the click was about to go out"
 
     # The click itself, through the real helper, on the card with the most travel to lose.
     open_generator("TrayLayout")
@@ -365,6 +365,108 @@ class BoxSectionsTest < ApplicationSystemTestCase
     # empty strings had the expectation been written the same way.
     assert_equal %w[rectangular springs barbs snap],
                  style.all("option", visible: :all).map { |o| o.text(:all) }
+    assert_no_console_errors ignoring: [ SAMPLE_404 ]
+  end
+
+  # A LABELLED OPTION IS A LETTER PLUS A SENTENCE, AND ONE COLUMN OF THE PARAMS GRID CUTS IT OFF
+  # MID-WORD — which turns the explanation those labels exist to give back into a guess. Measured on
+  # the deployed app at a 976px form (four 232px columns): `top_edge` needs 324px, `bottom_edge`
+  # 300px, and the other eleven selects on that same form have 34–114px of slack. So the fix widens
+  # the two fields that need it (`box-field-wide`, two columns) rather than every column.
+  #
+  # ASKS THE BROWSER FOR THE NEEDED WIDTH RATHER THAN COMPUTING ONE: sized to content, Chrome makes a
+  # select as wide as its own widest option, arrow and padding included, where a canvas `measureText`
+  # plus a guessed constant for the arrow would be a second, wrong implementation of the thing under
+  # test. Restored immediately, so the assertion that follows reads the real layout.
+  #
+  # `alignSelf = "flex-start"` IS LOAD-BEARING AND `width: auto` ALONE IS A FALSE GREEN — found by
+  # mutation-checking this test, not by reading it. `.box-field` is a flex COLUMN, so a child at
+  # `width: auto` STRETCHES to the container instead of shrinking to its content: `need` came back
+  # equal to `have` for every select, and the assertion passed just as happily with
+  # `.box-field-wide` reverted to one column. Shrink-to-fit first, then measure.
+  #
+  # Browser-only twice over: `grid-column` resolves in layout, and a native select's preferred width
+  # is the browser's own opinion about text nobody has measured server-side.
+  test "a labelled edge dropdown is wide enough to read, and a plain enum is left alone" do
+    visit tools_addon_path("boxes")
+    open_generator("TypeTray")
+    assert_selector '[data-param="top_edge"]'
+
+    fits = page.evaluate_script(<<~JS)
+      (function () {
+        var out = {}
+        document.querySelectorAll("select[data-param]").forEach(function (sel) {
+          var prevW = sel.style.width, prevA = sel.style.alignSelf
+          sel.style.alignSelf = "flex-start"
+          sel.style.width = "auto"
+          var need = sel.getBoundingClientRect().width
+          sel.style.width = prevW
+          sel.style.alignSelf = prevA
+          out[sel.dataset.param] = {
+            need: Math.round(need),
+            have: Math.round(sel.getBoundingClientRect().width),
+            wide: sel.closest(".box-field").classList.contains("box-field-wide")
+          }
+        })
+        return out
+      })()
+    JS
+
+    %w[top_edge bottom_edge].each do |param|
+      m = fits.fetch(param)
+      assert m["wide"], "#{param} carries the labels, so its field must be the wide one"
+      assert_operator m["have"], :>=, m["need"],
+                      "#{param} is #{m['need'] - m['have']}px too narrow — its labels are cut off"
+    end
+
+    # ...and the widening is not simply "every field got bigger": a plain enum keeps its column.
+    visit tools_addon_path("boxes")
+    open_generator("ABox")
+    assert_selector '[data-param="FingerJoint_style"]', visible: :all
+    assert page.evaluate_script(<<~JS), "a plain enum must not claim two columns"
+      !document.querySelector('[data-param="FingerJoint_style"]').closest(".box-field")
+        .classList.contains("box-field-wide")
+    JS
+    assert_no_console_errors ignoring: [ SAMPLE_404 ]
+  end
+
+  # THE GALLERY MUST NOT RESHAPE ITSELF AFTER IT LOOKS READY. A generator with no sample photo used
+  # to have its 120px image box REMOVED (`.addon-thumb.is-missing { display: none }`) the moment the
+  # 404 landed, so every card below it jumped ~126px — the race `settle_addon_cards` exists to wait
+  # out, and the one that put a healthy-looking gallery in a CI failure screenshot. It is rarer than
+  # the bundle's old comment claimed: 171 of the 181 offered generators ship a photo, 10 do not.
+  #
+  # ASSERTED AS EQUAL CARD HEIGHTS, not as "the placeholder exists": the placeholder is the
+  # mechanism, uniform geometry is the property, and only the second one is what stops a click
+  # landing in dead space. In this fixture ABox has a sample and the other three 404, so both kinds
+  # are on screen together — which is exactly the mix that used to produce a ragged grid.
+  test "a generator with no sample photo keeps its frame, so no card moves under the pointer" do
+    visit tools_addon_path("boxes")
+    settle_addon_cards
+
+    assert_selector ".addon-thumb-empty", minimum: 3, visible: :all
+    thumbs = page.evaluate_script(<<~JS)
+      (function () {
+        var cards = Array.prototype.slice.call(document.querySelectorAll(".addon-card"))
+        return {
+          cards: cards.length,
+          withPhoto: cards.filter(function (c) { return c.querySelector("img.addon-thumb") }).length,
+          heights: cards.map(function (c) { return Math.round(c.getBoundingClientRect().height) })
+            .filter(function (v, i, a) { return a.indexOf(v) === i }),
+          boxes: cards.map(function (c) {
+            var t = c.querySelector(".addon-thumb")
+            return t ? Math.round(t.getBoundingClientRect().height) : 0
+          }).filter(function (v, i, a) { return a.indexOf(v) === i })
+        }
+      })()
+    JS
+
+    assert_equal 1, thumbs["withPhoto"], "the fixture's mix is the point: one card with a photo"
+    assert_equal 4, thumbs["cards"]
+    assert_equal 1, thumbs["boxes"].size,
+                 "photo and placeholder must measure the same, or the grid still moves: #{thumbs['boxes']}"
+    assert_equal 1, thumbs["heights"].size,
+                 "cards ended up different heights, so the grid still reflows: #{thumbs['heights']}"
     assert_no_console_errors ignoring: [ SAMPLE_404 ]
   end
 end
