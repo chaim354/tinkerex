@@ -10,6 +10,14 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-25-codemirror-code-viewer-design.md`
 
+**PROGRESS (2026-08-25):** **Task 2 is LANDED** (`2217257`), and with it the part of Task 1 it
+needed — `Library::RepoMetadata` exists holding **only `DIR_NAME`**. Its `marker?` / `internal?` /
+`marker_prefix` predicates were deliberately NOT written, because Task 2's rule queries the database
+by name and has no path to test; shipping them early would be uncalled code. **Task 3 adds `marker?`
+and `marker_prefix`, Task 4 adds `internal?`, each TDD in the task that first calls it** — write
+Task 1's test cases for a predicate at the point you add it. Task 1's own step list is otherwise
+complete; skip it and start at Task 3.
+
 **Read before starting:** `CLAUDE.md` §14a (the FileLayer port), §14b (the library scan — especially THE SKIP-LIST BLIND SPOT), §14d (the maker web layer), §14f (project-folder intake), §15 (working agreements — every guard gets mutation-checked).
 
 ---

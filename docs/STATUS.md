@@ -78,7 +78,104 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-25): CI wall-clock cut ~64% per change, and a guard that was permanently maxed out (branch `claude/faster-ci`)
+## Latest (2026-08-25): a git repo in the library, and the sweep that was tearing one apart (branch `claude/codemirror-code-editor`)
+
+**IN PROGRESS — one of nine tasks landed.** Spec:
+`docs/superpowers/specs/2026-08-25-codemirror-code-viewer-design.md`. Plan:
+`docs/superpowers/plans/2026-08-25-codemirror-code-viewer.md`.
+
+Started as "should we use CodeMirror for a lightweight code editor and viewer", widened by the
+user to "full git projects that combine code with hardware and making". The widening is what
+mattered: **the editor is the small half**, and asking where a repo would actually live surfaced
+two live bugs that have nothing to do with an editor.
+
+### The question as asked, answered
+
+**Yes, CodeMirror 6.** MIT throughout (`codemirror`, every `@codemirror/*`, `@lezer/*` — read from
+the installed `package.json`s, not assumed), so §9 costs nothing here. The packaging is the real
+price, and the measured figures are:
+
+| bundle | minified | gzipped |
+|---|---|---|
+| core only (view + state + basicSetup + StreamLanguage) | 385.4 KB | 124.8 KB |
+| minimal (cpp, python, json, markdown) | 751.6 KB | 257.5 KB |
+| maker-focused (+ javascript, yaml, xml) | 777.9 KB | 267.5 KB |
+| **broad — the chosen set** | **911.9 KB** | **317.0 KB** |
+
+Marginal cost per language, measured on top of core: `markdown` +217.1, `html` +173.2, `cpp`
++125.7, `javascript` +113.8, `rust` +93.3, `python` +72.9, `go` +59.0, `sql` +55.8, `css` +52.3,
+`yaml` +43.4, `xml` +38.4, `json` +26.4 KB. **The twelve sum to 1071 KB apart and cost 527 KB
+together** (912 − 385), because markdown/html/css/javascript share lezer parsers — which is a size
+argument for one bundle on top of the correctness one. **Legacy stream modes are free** (+0.4,
+−1.0, +0.1 KB), and neither g-code nor OpenSCAD exists upstream (checked, `legacy-modes` 6.5.3), so
+both get `simpleMode` definitions of our own. For scale, `three.core.js` is already 1409 KB in
+`vendor/javascript` and dynamic-imported.
+
+### The bug that was already running (landed)
+
+`Maker::AttachToProject#refusal_for` had three rules and none knew what a working tree is. §14f's
+root-is-inbox sweep therefore filed a repo's **root-level** files away by category, unattended,
+every 15 minutes — `README.md` → `docs/`, `main.py` → `other/`, `platformio.ini` → `other/`, each
+one a delete plus an untracked add as far as git is concerned. Nested files were always safe (never
+revisited); a repo's root files are most of what identifies it.
+
+Fixed by a fourth refusal, `:in_working_tree`, **unscoped** — unlike `:attached_elsewhere`, which
+needed `within_own_folder:`. The asymmetry has an argument: a refusal here means "attach the row,
+leave the bytes", which is the right answer at all four callers of `#refusal_for`.
+
+Detection memoizes per **parent**, not per node, because a sweep files N nodes under one parent and
+the ancestor walk is two queries per level. **Measured by removing the memo: 45 queries against 15**
+for ten files at depth four.
+
+### A guard needed repairing before it could be trusted
+
+`project_intake_test`'s "the subtree walk selects only the columns it reads" identified the walk
+with `include?("parent_node_id")` — which matches any query *mentioning* the column, including the
+new `walk_for_marker`'s parent hop (`SELECT parent_node_id WHERE node_id = ?`). It was swept in and
+failed the columns assertion, **reading as a caught regression when nothing had regressed**. The
+discriminator now matches the WHERE clause, which is what its own prose always claimed it did. Its
+comment said "identifying the walk took two tries"; it is three now, and says so. Re-verified by
+mutation: making the walk `SELECT "nodes".*` still goes red.
+
+### Measured: the three legs
+
+| leg | runs | assertions | skips |
+|---|---|---|---|
+| share | 2374 | 8703 | 30 |
+| s3 | 2374 | 8703 | 30 |
+| chunk_remote | 2374 | 8860 | 5 |
+
+**Run counts identical**, which is the §15 rule. The assertion and skip gap on chunk_remote is
+capability-gated skipping (restore/versioning tests that only run where `versioned` is true) and
+predates this work — it is the divergence already recorded under "Still open", not a new one. One
+share run flaked on the documented §12.7 `SQLite3::BusyException` in an unrelated test
+(`current_project_topbar_test.rb`) and was clean on re-run.
+
+### Still to land (tasks 3–9 of the plan)
+
+`Library::RepoMetadata` today holds **only `DIR_NAME`** — its path predicates arrive with the
+observers, which is the change that first has a path to test; shipping them now would be uncalled
+code. Remaining: the observers skipping `.git`'s contents while keeping the marker; the write
+guards and door refusal; hiding the marker in the Files listing; the one-time purge migration; the
+`code` role and collapsing `preview_kind`'s second extension vocabulary into the first; the bundle
+and its never-pin-per-package guard; the `codeview` controller.
+
+### Decided and NOT built, so it is not rediscovered as an oversight
+
+- **Editing and save-back are deferred.** View-only first; nothing written, so all three backends
+  behave identically because nothing is written.
+- **Repos live in the library as plain files**; git-the-tool stays on the user's machine. Remotes
+  are a later arc. A server-side clone was rejected: a storage plane outside `FileLayer`, plus
+  credentials and push permissions.
+- **No tree UI.** `FilesController#index` already does folder navigation with paging, and a repo is
+  just folders.
+- **`chunk_remote`'s mirrored `.git` CONTENTS will stay listable in the flat view.** Hiding them
+  needs a recursive CTE on a hot-path page, and §14j says that tree is the sync server's to decide
+  about.
+
+---
+
+## 2026-08-25: CI wall-clock cut ~64% per change, and a guard that was permanently maxed out (branch `claude/faster-ci`)
 
 The complaint was that CI is slow and runs on the same Mac it is developed on. Measured before
 changing anything: median run **175s**, and the last 40 runs were an **exact 20/20 push /
