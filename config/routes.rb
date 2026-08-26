@@ -159,6 +159,11 @@ Rails.application.routes.draw do
     resources :print_runs, only: %i[create destroy], module: :models, shallow: true
   end
 
+  # The model catalog's one setting: which folders are shelves. Path-scoped under /settings so the
+  # URL reads like what it is; the controller is top-level because there is no other settings page
+  # to namespace it with yet.
+  resources :shelves, only: %i[index create destroy], path: "settings/shelves"
+
   # --- Addons (Tools) — the /tools gallery + every addon's UI ---
   # EVERY addon is now manifest-driven and served by the generic surface (Tools::AddonsController,
   # `tools/:key` below). `generators`, `boxes` and — last — `openscad` have all migrated, so no
