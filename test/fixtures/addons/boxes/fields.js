@@ -5,11 +5,11 @@ import { boxHelp, sectionId, clamp, rubyLines } from "./util.js"
 // can all read the live values the same way, without any of them needing a <form> or native
 // submission (this bundle POSTs JSON, not a form-encoded body).
 //
-// param: {name, type, default, help, choices, multiline} — the sidecar's own shape (sidecar/boxes/
-// app.py's `_param`). prefillValues: the params hash of a saved box being duplicated, or null/{} for
-// a fresh generator — presence of `param.name` as a KEY (not just a truthy value) distinguishes "no
-// prefill, use the sidecar's default" from "prefilled with an empty string", exactly as the ERB's
-// `values.present? && values.key?(pname)` did.
+// param: {name, type, default, help, choices, choice_labels, multiline} — the sidecar's own shape
+// (sidecar/boxes/app.py's `_param`). prefillValues: the params hash of a saved box being duplicated,
+// or null/{} for a fresh generator — presence of `param.name` as a KEY (not just a truthy value)
+// distinguishes "no prefill, use the sidecar's default" from "prefilled with an empty string",
+// exactly as the ERB's `values.present? && values.key?(pname)` did.
 export function buildField(param, prefillValues) {
   const name = param.name
   const hasPrefill = !!(prefillValues && Object.prototype.hasOwnProperty.call(prefillValues, name))
@@ -51,8 +51,22 @@ function buildInput(param, name, value, hasPrefill) {
   if (param.choices?.length) {
     input = document.createElement("select")
     for (const choice of param.choices) {
-      const opt = new Option(String(choice), String(choice))
-      if (String(choice) === String(value)) opt.selected = true
+      const key = String(choice)
+      // `choice_labels` is the sidecar's {choice: description} map (sidecar/boxes/app.py's
+      // `_choice_labels`, out of boxes.py's own `edges.getDescriptions()`). An edge param's choices
+      // are single LETTERS — top_edge alone offers "e f F h c E S Š i k v L t G y Y" — so rendering
+      // the value bare is sixteen options and nothing to choose between them. boxes.py's own web UI
+      // never did that: `ArgparseEdgeType.html` composes each option as "{letter} {description}".
+      //
+      // ABSENT for an ordinary enum (FingerJoint_style, Lid_style), and absent from any sidecar
+      // older than that key, and BOTH must fall through to the bare value — a bundle that assumed
+      // the map was there would render "rectangular — undefined" on every deployment mid-rollout.
+      //
+      // The VALUE stays the bare letter. It is what boxes.py parses, and `paramValues` reads
+      // `el.value`, so a label written into the value instead would look right and 422 every render.
+      const label = param.choice_labels?.[key]
+      const opt = new Option(label ? `${key} — ${label}` : key, key)
+      if (key === String(value)) opt.selected = true
       input.add(opt)
     }
   } else if (param.type === "bool") {
