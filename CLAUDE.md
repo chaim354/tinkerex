@@ -6,7 +6,7 @@ developers. Working name: **Maker Server** (rename freely).
 > **How this file is scoped.** It holds what is *permanently* true about **this repo — the maker
 > app**: architecture, the data model, and the **invariants a future editor must not undo** (§14).
 > It does **not** narrate finished work — every arc (dates, branches, suite counts, per-phase
-> detail) lives in **`docs/STATUS.md`**, which is the canonical record. Keep it that way: this
+> detail) lives in **the Forgejo record (§11)**, which is canonical. Keep it that way: this
 > file is loaded into an agent's context on *every* session, so length here is a tax on every
 > future task, and a rule buried in 600 lines of history is a rule nobody reads.
 >
@@ -261,7 +261,7 @@ Deploy OVH only on explicit request. `docs/DEPLOY.md`.
 /sidecar         GPL services invoked over HTTP only: boxes (GPL-3.0), openscad (GPL-2.0)
 /ops             Scripts that run ON the box, not in the app — backup-db.sh, installed by
                  bin/backup-cron-install. No gate covers these; invariants in §14i.
-/docs            sync-protocol.md, SYNC_SERVER.md, STATUS.md, DEPLOY.md, roads-not-taken.md,
+/docs            sync-protocol.md, SYNC_SERVER.md, DEPLOY.md, roads-not-taken.md,
                  architecture-sync-engine.md, adr/
 /docs/invariants §14's AREA rules, one file per area — addons.md, measure-view.md,
                  deploy-secrets.md, backup-restore.md, model-intake.md. NOT optional reading and NOT
@@ -294,8 +294,16 @@ already-migrated databases fail with "table already exists," fixable only by han
 
 ## 11. Status
 
-**`docs/STATUS.md` is the canonical record** — current per-suite test counts, every completed arc,
-and the live open-items list. Read it for anything time-bound; do not re-narrate it here.
+**The canonical record is the self-hosted Forgejo at `http://forgejo.home`, repo `chaim354/tinkerex`**
+— every completed arc as a closed `arc` issue, open work as open `open-work` issues, deploys as
+`deploy` issues, and corrections as COMMENTS on the arc they correct. Read it with `bin/log search
+"<query>"` / `bin/log show N`; write it with `bin/log` and nothing else (§13). Do not re-narrate it
+here.
+
+**THIS BASE URL IS DEFINED HERE AND NOWHERE ELSE.** Code comments cite a bare `tinkerex#N`, so the
+instance can move without touching them. `docs/STATUS.md` held this record until 2026-08-26 and was
+migrated in full — 110 arcs, `tinkerex#6`–`#115` — then deleted. Its text is still in git history
+(`git show <sha>:docs/STATUS.md`); nothing was pruned.
 
 Where things stand: the full stack runs **on real hardware**. Rails is deployed via Kamal on an
 Unraid VM, and all **three `LIBRARY_BACKEND` values are deployed live**. The maker web layer
@@ -307,59 +315,24 @@ on all three OSes against the sync server — that half's status lives in `tinke
 
 ## 12. What's open
 
-**Item numbers are cited from code and from this file — do not renumber them.**
+**A FROZEN POINTER TABLE. The state lives in Forgejo (§11); only the NUMBERS live here**, because
+code cites `§12.7` and `§12 item 11` by number — 21 such citations in `app/ lib/ test/ config/`.
+**Never renumber, and never add an item here** — new open work is `bin/log open`, which needs no
+slot. A closed item keeps its row for the same reason it always did: the citation must resolve.
 
-1. **Real OAuth/OIDC email verification** so the bootstrap proves email ownership. The
-   account-takeover hole is already closed (§8); this is the remaining upgrade.
-2. **At-rest chunk encryption** — deliberately last (`docs/plan-encryption.md`). Largely the sync
-   server's work now.
-3. **Sharing** — `docs/plan-sharing.md`. Needs `share_links`, which lives in the sync server.
-4. **Selective sync needs an app surface** (the engine side landed, in the other repo).
-5. **Managed-Postgres at scale** — pick a session/transaction-mode pooler endpoint and run a
-   concurrent-commit load test.
-6. **Linux and Windows CI coverage is skipped, not passing** — no linux or windows runner is
-   registered in ANY of the three repos (macOS is, in all three). §15 has the measured table and
-   its date. **Since 2026-08-25 this repo schedules no linux or windows jobs at all**, so the gap
-   is entirely the siblings' — `ci/preflight.sh --summary` now says `— no job in this repo targets
-   it` rather than warning about skipped jobs that do not exist.
-7. **RESOLVED 2026-08-20 — the `SQLite3::BusyException` intermittent was a stalled FSYNC, not bad
-   lock logic; the fix is `timeout: 15000`.** The rule that outlives it is **§14e**. Kept as a
-   numbered slot because code cites §12 by number. Measurements: `docs/STATUS.md`.
-8. **`FilesController#index` render cost — BOUNDED UNDER ONE OF THE THREE SORTS, not unbounded.**
-   `FOLDER_PAGE = 250` pages the folder view **only under the name sort** (PR #135,
-   `files_controller.rb`): `type` is computed and `modified` reads the **port's** mtime, so neither
-   is a column an `ORDER BY` could page on without duplicating adapter logic or changing which
-   authority answers "Modified". Those two still load the whole folder. The residual is per-row ERB
-   — identical on all three backends, so it is HTML generation, not query cost.
-   *(Read "Pagination never existed" until 2026-08-25 — stale from 2026-08-05, when PR #135 added
-   the paging. `docs/STATUS.md`.)*
-9. **No web UI at all** for inventory, BOM, suppliers, locations, collections, tags — the models
-   and v1 API exist. Obvious next slices.
-10. **CLOSED 2026-08-25 — a device push DOES nudge project-folder filing.**
-    `FileLayer::ChunkRemote::ChangelogSync#call` calls `Maker::ProjectIntakeJob.nudge` once per
-    pull, after the catch-up loop, because that pull is where this app LEARNS about a node another
-    device pushed. Latency: "up to 15 minutes" → "the 2-minute pull, plus `NUDGE_DELAY`". **The
-    three things not to undo are in §14f.** Kept as a numbered slot because §14f and the audit cite
-    "§12.10". This item was wrong three times running, in both directions; that history is worth
-    reading before re-opening it, and it is in `docs/STATUS.md`.
-11. **Whether a project-scoped upload should duplicate-check across the whole project, not just its
-    immediate destination, is an open product question.** Today two files can both be named
-    `dup.stl` under one project — the first filed into its category subfolder, the second left at
-    the root — because the only collision checks are the port's own write-time clobber and
-    `Maker::MoveNode`'s destination-folder collision, both scoped to one path.
-12. **DONE 2026-08-25 — embedded `chunk` is retired and the sync engine is not a dependency of this
-    app** (Arc D Part 2). Consequences are stated where they belong: `LIBRARY_BACKEND` in §2 and
-    §14a, the dropped tables in §5, the unrouted endpoints in §6. The lesson that outlives it is in
-    **§14e** ("a reference count is not a coupling count"). Kept as a numbered slot.
-13. **DONE 2026-08-25 — the two pre-separation `/docs` files are dealt with.** `docs/SYNC_SERVER.md`
-    **moved** to `chaim354/tinkerex-sync`, leaving a redirect stub because ~8 docs and
-    `config/database.yml` cite the path; `docs/architecture-sync-engine.md` is marked HISTORICAL
-    rather than rewritten (§10). **The residual is NOT this repo's to close:** the pooler probe is
-    unwired in the sync repo too, and **the constraint does not bind this app** — nothing here calls
-    `next_seq!` (§14e).
-Smaller deliberate leftovers live in `docs/STATUS.md` under "Still open".
-
----
+1. Real OAuth/OIDC email verification → `tinkerex#118`
+2. At-rest chunk encryption → `tinkerex#119`
+3. Sharing → `tinkerex#120`
+4. Selective sync needs an app surface → `tinkerex#121`
+5. Managed-Postgres at scale → `tinkerex#122`
+6. Linux and Windows CI coverage is skipped, not passing → `tinkerex#123`
+7. `SQLite3::BusyException` — REOPENED, it recurs → `tinkerex#124`
+8. `FilesController#index` render cost → `tinkerex#125`
+9. No web UI for inventory, BOM, suppliers, locations, collections, tags → `tinkerex#126`
+10. A device push DOES nudge project-folder filing → `tinkerex#127` *(closed)*
+11. Project-scoped upload duplicate-check scope → `tinkerex#128`
+12. Embedded `chunk` retired; the sync engine is not a dependency → `tinkerex#129` *(closed)*
+13. The two pre-separation `/docs` files are dealt with → `tinkerex#130` *(closed)*
 
 ## 13. Build & run cheatsheet (for a fresh context)
 
@@ -454,7 +427,7 @@ they broke a build once; `find . -name '* 2.*' -delete` to sweep.
 > — *what was considered → why rejected → current approach* — live in
 > **`docs/roads-not-taken.md`**. Read it before reviving any of them.
 
-Each line below cost a real bug **in this repo**. `docs/STATUS.md` has the full story for any of
+Each line below cost a real bug **in this repo**. the Forgejo record (§11) has the full story for any of
 them. Invariants belonging to the sync engine or the desktop client live in those repos'
 own CLAUDE.md — see §3 and §14j.
 
@@ -524,7 +497,7 @@ Anything below that binds on only one area belongs there too, with a stub here.
   chunk-internals references (§14c).
 - **`finalize_upload` broadcasts by DEFAULT, with exactly one explicit opt-out** —
   `Maker::Addons::LibraryOutput` passes `broadcast: false`, preserving what addon saves have
-  always done (never nudged live devices; open item, `docs/STATUS.md`). `mkdir`/`move`/
+  always done (never nudged live devices; open item, the Forgejo record (§11)). `mkdir`/`move`/
   `delete`/`undelete` broadcast unconditionally, so a caller cannot forget; this verb has two
   callers wanting different behaviour for one fact, so it defaults to the safe answer (notify)
   rather than delegating the choice — an unwritten third caller that forgets to opt out gets a
@@ -588,7 +561,7 @@ Anything below that binds on only one area belongs there too, with a stub here.
   first, returned unconditionally) — a test's explicit "give every caller this object", not a cache
   anything resolves into. **The mutation-check is "put `@transport ||=` back", never "add a
   different kind of cache": anything keyed on less than the user is the shape of the bug.**
-  Arc C in full, including lazy provisioning under concurrency: `docs/STATUS.md`.
+  Arc C in full, including lazy provisioning under concurrency: the Forgejo record (§11).
 - **`port_writable` IS NOT "accepts uploads"** — the single most-misread name here. It
   answers *which upload flow the UI drives*: true → POST bytes to the port (share, s3);
   false → drive the port's own `begin_upload`/`finalize_upload` presigned flow (chunk_remote).
@@ -883,7 +856,7 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   allowlist went with it and the assertion is now unconditional — **stronger than what it
   replaced, and it must stay that way.** Before Stage 2 the controllers reached into `Sync::`
   wherever the port refused an operation (`FilesController#destroy`, `TrashController#restore`,
-  `FilesController`'s own upload flow); the arc that closed it is in `docs/STATUS.md`. The tripwire
+  `FilesController`'s own upload flow); the arc that closed it is in the Forgejo record (§11). The tripwire
   is about **new** work: **if a maker-layer change needs to touch sync, the changelog, conflicts,
   locks, or the mounts, the boundary is wrong — stop** (§14j). A violation fails `bin/ci`.
 - **CODEMIRROR IS ONE VENDORED BUNDLE AND EXACTLY ONE IMPORTMAP PIN. Never
@@ -1403,7 +1376,7 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
   so if it ran less, **the primary deployment's backend would be the only one without full
   coverage.** It needs `../tinkerex-sync` checked out (§13).
   **`bin/ci` PRINTS the three counts and never COMPARES them** — the rule has always relied on a
-  human reading them, and `docs/STATUS.md` ("Still open") records a small pre-existing flap (±2
+  human reading them, and `tinkerex#131` records a small pre-existing flap (±2
   assertions, ±1 skip) that varies between runs of the *same* leg, so it is nondeterminism rather
   than a backend dependency. A ±2 difference is the known flap; a structural one means a test
   depends on the ambient `LIBRARY_BACKEND` and is a real bug.
@@ -1412,22 +1385,18 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
 - If the gates are red or the work is partial, **stop and report** — do not open a PR to
   "get it reviewed".
 - State plainly in the PR what was verified and what was not.
-- **`docs/STATUS.md` IS PART OF THE WORK, IN THE SAME BRANCH AND THE SAME PR — never a tidy-up
-  afterwards.** Deferred, it does not happen: a single feature ran to eight merged PRs while its
-  STATUS entry went on describing the algorithm the second PR had already deleted, so the
-  canonical record documented code that no longer existed. The entry is also cheapest to write
-  while the numbers are still in front of you — measured figures, suite counts, what was tried and
-  rejected — and those are exactly what a later pass reconstructs badly or omits. Amend the entry
-  the arc already has rather than appending a new one per PR; one arc is one entry.
-- **THE ONE STATUS EDIT THAT CANNOT OBEY THAT RULE IS A DEPLOY RECORD, AND IT IS THE NAMED
-  EXCEPTION TO "never push to `main`".** A deploy happens *after* the merge, so its record cannot
-  live in the work's own PR — and recording it in a follow-up PR makes every deploy cost a second
-  merge whose only content is one paragraph, which is exactly the deferral this bullet forbids.
-  So: **amend the arc's existing entry and commit it directly to `main`.** The exception is
-  deliberately narrow — `docs/STATUS.md` only, doc-only, after a deploy you have already VERIFIED
-  on the box. It is not a licence to push code to `main`, and everything else in the close-out
-  rule above still applies. `.claude/commands/deploy.md` makes this the deploy's last step rather
-  than an optional offer.
+- **THE ARC'S RECORD IS PART OF THE WORK, FILED AS THE PR OPENS — never a tidy-up afterwards.**
+  `bin/log arc --from-pr <n>` right after `gh pr create`; it closes when the PR merges. Deferred, it
+  does not happen: a single feature ran to eight merged PRs while its record went on describing the
+  algorithm the second PR had already deleted. It is also cheapest to write while the numbers are in
+  front of you, and those are exactly what a later pass reconstructs badly or omits. **The arc issue
+  IS the PR body**, so this costs one command rather than a second document. One arc is one issue —
+  a correction to a past arc is `bin/log note <issue>`, a COMMENT, never an edit of the body.
+- **THE DEPLOY-RECORD EXCEPTION TO "never push to `main`" IS GONE, AND THAT IS A SIMPLIFICATION.**
+  It existed because a deploy happens AFTER the merge, so its record could not live in the work's own
+  PR, and a follow-up PR per deploy is the deferral this rule forbids. `bin/log deploy --image <sha>`
+  files an issue instead — no file, nothing to commit, nothing to push. **There is now no sanctioned
+  path that writes to `main` directly.**
 
 ### CI
 
@@ -1462,7 +1431,7 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
 
 ### Keeping the docs honest
 
-- **`docs/STATUS.md` is where an arc gets narrated. This file is not.** Add dates, branch
+- **THE FORGEJO RECORD (§11) is where an arc gets narrated. This file is not.** Add dates, branch
   names, suite counts and per-phase detail there.
 - **What belongs HERE is an invariant** — something a future editor could undo by accident.
   Put it in §14, one line, with the consequence named. If it needs a paragraph of story to
@@ -1482,8 +1451,8 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
   session; a rule nobody working in this repo can act on is pure tax. (Both sibling files carry an
   explicit "inherited, not audited" header — if you verify a section there, rewrite it and drop
   the warning for that section.)
-- Update this file **and** `docs/STATUS.md` when the architecture moves — **in the branch that
-  moves it**, per the close-out rule in §15. A STATUS entry written later is written from
+- Update this file **and** file the arc when the architecture moves — **in the branch that
+  moves it**, per the close-out rule in §15. A record written later is written from
   memory, and the measured numbers that make one worth reading are the first thing lost.
 - **A DOC ROW THAT NAMES A COMMIT IS A CLAIM, AND NO GATE CAN CHECK IT — `bin/verify-fix-log`.**
   Nothing in `bin/ci` reads a ledger row, so a row is only as true as the moment someone wrote it.

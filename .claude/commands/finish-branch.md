@@ -8,6 +8,8 @@ everything below. **Merging is the one thing that still needs an explicit go-ahe
 
 ## 1. Check you're clear to do this
 
+- `bin/log status` — if it exits 4, an earlier record was never filed. Deal with that first; a
+  close-out is a bad moment to discover a backlog.
 - `git branch --show-current` — if it is `main`, **stop**. Never commit or push to `main`.
   Report that the work needs a branch first.
 - `git status --short` — if nothing is modified, say so and stop.
@@ -57,7 +59,7 @@ git push -u origin "$(git branch --show-current)"
 ```
 
 Then `gh pr create --base main`. The body should let a reviewer skip the diff and still
-know what changed:
+know what changed — and it is not written twice, because **the arc issue IS this body** (next step):
 
 - **What was broken / what this adds**, in a sentence
 - **Root cause**, with the specific mechanism
@@ -73,7 +75,20 @@ End with:
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 ```
 
-## 5. Watch CI, then report
+## 5. File the arc
+
+```bash
+bin/log arc --from-pr <n>
+```
+
+Immediately after `gh pr create`, using the body you just wrote. The issue opens now and closes when
+the PR merges — CLAUDE.md §15. **This is one command, not a second document**: writing the record by
+hand in addition to the PR body is exactly the per-PR tax that made the old file unworkable.
+
+If it exits 3 the record is spooled, not filed — say so in your report and leave `bin/log status`
+reporting it. Do not silently continue as though it landed.
+
+## 6. Watch CI, then report
 
 Do not poll in a loop. Arm a monitor that emits one event per check and exits when the run
 completes, then report the results as a table.

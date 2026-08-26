@@ -4,7 +4,7 @@ require "tmpdir"
 require "fileutils"
 require "support/stub_forgejo"
 
-# Guards bin/log — the SINGLE write door onto the Forgejo that replaces docs/STATUS.md.
+# Guards bin/log — the SINGLE write door onto the Forgejo that replaced STATUS.md.
 #
 # WHY A TEST FILE FOR A bin/ SCRIPT. bin/log is the only thing that records an arc, so a silent
 # failure here loses the record with nothing going red — this repo's dominant failure shape
@@ -277,7 +277,7 @@ class LogCliTest < ActiveSupport::TestCase
 
   # THE ARC BODY IS THE PR BODY. /finish-branch already specifies that document — symptom, root
   # cause, why tests missed it, verification table, scope. Rewriting it into a second document by
-  # hand is exactly the per-PR tax that made docs/STATUS.md unworkable, so bin/log reads it back
+  # hand is exactly the per-PR tax that made STATUS.md unworkable, so bin/log reads it back
   # out of the PR. GH_BIN stubs `gh`; Task 8 mutation-checks that the stub is actually consulted.
   test "arc --from-pr builds the issue from the PR body and links back to it" do
     stub = StubForgejo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
