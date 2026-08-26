@@ -37,7 +37,19 @@ module Maker
     def self.seed_once!(user)
       return if user.shelves_seeded_at.present?
 
-      SEEDS.each { |path| user.maker_shelves.create!(path:) }
+      # find_or_create_by!, NOT create!, AND THE STAMP IS WHAT ENDS THE LOOP. A user holding a seed
+      # path WITHOUT the stamp made every later sweep raise "Path has already been taken" --
+      # permanently, because `create!` cannot tolerate the row it finds and the stamp that would
+      # stop it being tried again is written after. Reachable two ways: a process that died between
+      # the rows and the stamp, and anyone who creates "" themselves before their first sweep.
+      # A permanent failure on the recurring job's own first line is not a state to leave live.
+      SEEDS.each { |path| user.maker_shelves.find_or_create_by!(path:) }
+      user.update_column(:shelves_seeded_at, Time.current)
+    rescue ActiveRecord::RecordNotUnique
+      # Two callers seeding at once -- the settings page and the sweep -- with the unique index
+      # deciding which one lost. The rows exist either way, so the loser stamps and carries on;
+      # failing a whole sweep over "someone else already did this" is the wrong answer, and it is
+      # the same reading Models::AttachmentsController#create records for a double-clicked Attach.
       user.update_column(:shelves_seeded_at, Time.current)
     end
 

@@ -167,6 +167,19 @@ module Maker
     # EVERY SEEDED PATH MUST SURVIVE THIS CLASS'S OWN VALIDATION. Nothing else checks that: once
     # seeding is wired up, an invalid SEEDS entry surfaces as create! raising for every user on
     # their first visit, at the door rather than here.
+    # THE STATE THAT USED TO BE PERMANENT. A user holding a seed path with no stamp -- a process
+    # that died between the rows and the stamp, or someone who created "" themselves -- made every
+    # later call raise "Path has already been taken" forever, on the recurring sweep's own first
+    # line. Found by Task 7's implementer when the plan's own job test hit it.
+    test "seeding tolerates a seed path the user already has" do
+      @user.maker_shelves.create!(path: "")
+
+      assert_nothing_raised { Maker::Shelf.seed_once!(@user) }
+
+      assert_equal [ "", "Models", "Projects/*/models" ], @user.maker_shelves.order(:path).pluck(:path)
+      assert_predicate @user.reload.shelves_seeded_at, :present?
+    end
+
     test "every seeded path is valid" do
       Maker::Shelf::SEEDS.each do |seeded|
         assert @user.maker_shelves.new(path: seeded).valid?, "#{seeded.inspect} should be valid"
@@ -233,7 +246,19 @@ module Maker
     def self.seed_once!(user)
       return if user.shelves_seeded_at.present?
 
-      SEEDS.each { |path| user.maker_shelves.create!(path:) }
+      # find_or_create_by!, NOT create!, AND THE STAMP IS WHAT ENDS THE LOOP. A user holding a seed
+      # path WITHOUT the stamp made every later sweep raise "Path has already been taken" --
+      # permanently, because `create!` cannot tolerate the row it finds and the stamp that would
+      # stop it being tried again is written after. Reachable two ways: a process that died between
+      # the rows and the stamp, and anyone who creates "" themselves before their first sweep.
+      # A permanent failure on the recurring job's own first line is not a state to leave live.
+      SEEDS.each { |path| user.maker_shelves.find_or_create_by!(path:) }
+      user.update_column(:shelves_seeded_at, Time.current)
+    rescue ActiveRecord::RecordNotUnique
+      # Two callers seeding at once -- the settings page and the sweep -- with the unique index
+      # deciding which one lost. The rows exist either way, so the loser stamps and carries on;
+      # failing a whole sweep over "someone else already did this" is the wrong answer, and it is
+      # the same reading Models::AttachmentsController#create records for a double-clicked Attach.
       user.update_column(:shelves_seeded_at, Time.current)
     end
 
