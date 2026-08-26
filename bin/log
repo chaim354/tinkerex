@@ -186,6 +186,32 @@ module Log
     EXIT_OK
   end
 
+  # GH_BIN is an override, not a convenience — it is what lets the suite drive this path with no
+  # network and no GitHub credential. Defaulting to the PATH lookup keeps normal use unchanged.
+  def pull_request(number)
+    out, err, status = Open3.capture3(ENV.fetch("GH_BIN", "gh"), "pr", "view", number.to_s,
+                                      "--json", "title,body,url")
+    raise Unreachable, "could not read PR #{number}: #{err.strip}" unless status.success?
+
+    # Not `parse` — that takes a Forgejo response. gh answering non-JSON (an auth prompt, a
+    # rate-limit notice) would otherwise surface through the catch-all as "unexpected failure",
+    # which names neither gh nor the PR.
+    JSON.parse(out)
+  rescue JSON::ParserError => e
+    raise Unreachable, "gh returned non-JSON for PR #{number}: #{e.message}"
+  end
+
+  def arc(argv)
+    raise UsageError, "arc needs --from-pr N" unless argv.shift == "--from-pr"
+
+    number = argv.shift or raise UsageError, "arc needs --from-pr N"
+    pr = pull_request(number)
+    issue = create_issue(pr["title"], body: "#{pr['body']}\n\n---\nPR: #{pr['url']}\n", labels: [ "arc" ])
+
+    puts "##{issue['number']} #{issue['title']}"
+    EXIT_OK
+  end
+
   def usage_text
     rows = SUBCOMMANDS.map do |name, (args, description)|
       "    " + "bin/log #{name} #{args}".rstrip.ljust(34) + description
@@ -249,6 +275,7 @@ module Log
     case command
     when "show" then show(argv)
     when "open" then open_item(argv)
+    when "arc" then arc(argv)
     else
       warn "bin/log: #{command} is not implemented yet"
       EXIT_USAGE

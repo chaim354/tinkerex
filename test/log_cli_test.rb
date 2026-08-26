@@ -199,4 +199,40 @@ class LogCliTest < ActiveSupport::TestCase
   ensure
     stub&.shutdown
   end
+
+  # THE ARC BODY IS THE PR BODY. /finish-branch already specifies that document — symptom, root
+  # cause, why tests missed it, verification table, scope. Rewriting it into a second document by
+  # hand is exactly the per-PR tax that made docs/STATUS.md unworkable, so bin/log reads it back
+  # out of the PR. GH_BIN stubs `gh`; Task 8 mutation-checks that the stub is actually consulted.
+  test "arc --from-pr builds the issue from the PR body and links back to it" do
+    stub = StubForgejo.new
+
+    Dir.mktmpdir do |dir|
+      gh = File.join(dir, "gh")
+      File.write(gh, <<~SH)
+        #!/bin/sh
+        cat <<'JSON'
+        {"title":"Fix the tombstone cascade","body":"## Root cause\\nThe delete was applied per-node.","url":"https://github.com/chaim354/tinkerex/pull/261"}
+        JSON
+      SH
+      File.chmod(0o755, gh)
+
+      _out, err, code = run_log("arc", "--from-pr", "261", env: {
+        "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+        "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex", "GH_BIN" => gh
+      })
+
+      assert_equal 0, code, "bin/log arc failed: #{err}"
+      request = stub.requests.first
+
+      assert_equal "Fix the tombstone cascade", request.json["title"]
+      assert_includes request.json["body"], "The delete was applied per-node.",
+                      "the PR body was not carried into the arc issue"
+      assert_includes request.json["body"], "https://github.com/chaim354/tinkerex/pull/261",
+                      "the arc must link the PR it describes, or the diff is unreachable from the record"
+      assert_equal [ "arc" ], request.json["labels"]
+    end
+  ensure
+    stub&.shutdown
+  end
 end
