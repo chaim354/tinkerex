@@ -26,7 +26,13 @@ export function languageFor(ext, cm) {
   switch (ext) {
     case "c": case "h": case "cpp": case "cc": case "hpp": case "ino": return cm.cpp()
     case "py": return cm.python()
-    case "js": case "ts": return cm.javascript({ typescript: ext === "ts" })
+    // `jsx`/`tsx` ride the SAME already-bundled module, so this costs no rebuild and no bytes —
+    // which is the only reason they are here while `java`, `swift`, `cs`, `php`, `vue` and the
+    // rest of 2026-08-26's new text extensions are NOT. The header's rule holds for those: cpp is
+    // a plausible-looking guess for a Java file and a guess renders confidently wrong, so they
+    // take the honest default of plain text with line numbers until a real mode is bundled.
+    case "js": case "ts": case "jsx": case "tsx":
+      return cm.javascript({ typescript: ext === "ts" || ext === "tsx", jsx: ext.endsWith("x") })
     case "json": return cm.json()
     case "md": case "markdown": return cm.markdown()
     case "yml": case "yaml": return cm.yaml()

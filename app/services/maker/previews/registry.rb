@@ -11,8 +11,9 @@ module Maker
     module Registry
       module_function
 
-      # ext (frozen string) => renderer module/object.
-      RENDERERS = {
+      # Formats with a renderer OF THEIR OWN. Text files are not listed here — they are derived
+      # below and this hash is merged OVER them, so an explicit entry always wins.
+      FORMAT_RENDERERS = {
         "svg"   => Maker::Previews::Svg,
         "lbrn2" => Maker::Previews::Lbrn2,   # LightBurn XML → SVG → reuse Svg   (Nokogiri, MIT)
         "lbrn"  => Maker::Previews::Lbrn2,
@@ -33,13 +34,32 @@ module Maker
         "gif"   => Maker::Previews::ImageThumb,
         "webp"  => Maker::Previews::ImageThumb,
         "bmp"   => Maker::Previews::ImageThumb,
-        "pdf"   => Maker::Previews::Pdf,       # page 1 → PNG via pdfium (BSD-3 binary; CLAUDE.md §9)
-        # Text files → a "first lines" document thumbnail (SVG of the text → resvg PNG; no new binary).
-        "txt"      => Maker::Previews::TextThumb,
-        "md"       => Maker::Previews::TextThumb,
-        "markdown" => Maker::Previews::TextThumb,
-        "json"     => Maker::Previews::TextThumb
+        "pdf"   => Maker::Previews::Pdf        # page 1 → PNG via pdfium (BSD-3 binary; CLAUDE.md §9)
       }.freeze
+
+      # ext (frozen string) => renderer module/object.
+      #
+      # TEXT FILES ARE DERIVED, NOT LISTED, AND THAT IS THE WHOLE FIX HERE. This hash carried four
+      # hand-written TextThumb entries (txt md markdown json) while `FilesController#preview_kind`
+      # had already been collapsed onto the one vocabulary and answered `:text` for 37 extensions.
+      # The other 33 — `.rb`, `.py`, `.gcode`, `.yml`, `.csv`, `.scad`, every `.c` and `.h` — got
+      # the source viewer on the detail page and NO GRID THUMBNAIL AT ALL, because `Enqueue.call`
+      # returns nil for a name no renderer claims. Two tables, one question, and the drift was
+      # invisible because each table looked right on its own.
+      #
+      # THE MERGE DIRECTION IS LOAD-BEARING: FORMAT_RENDERERS goes on TOP, so a text extension that
+      # ever gains a renderer of its own keeps it. There is no collision today (checked), and
+      # `renderer_contract_test.rb` is what keeps it that way — it asserts every renderer's own
+      # EXTENSIONS resolve back through `.for`, so a shadowed TextThumb claim goes RED rather than
+      # sitting in TEXT_EXTENSIONS reading as coverage it does not have.
+      #
+      # ORDER AGAINST `preview_kind` IS NOT AFFECTED. Its `:text` branch returns BEFORE `:thumbnail`,
+      # so registering these changes the GRID and never the detail page — the same "the thumbnail is
+      # a poster, not a replacement" relationship `:model3d` already has with `stl`/`3mf`/`obj`.
+      RENDERERS = Maker::Previews::TextThumb::EXTENSIONS
+                    .index_with { Maker::Previews::TextThumb }
+                    .merge(FORMAT_RENDERERS)
+                    .freeze
 
       # Resolve by raw extension (case-insensitive, leading dot tolerated). nil if none.
       def for(ext)

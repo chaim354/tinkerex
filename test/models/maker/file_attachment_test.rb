@@ -83,6 +83,20 @@ module Maker
       end
     end
 
+    # THE 2026-08-26 WIDENING. These were text the app did not KNOW was text: `role_for` answered
+    # "other", so they got no source viewer, no thumbnail and no filing. Named rather than derived
+    # — a sweep over ROLE_BY_EXT would assert the table equals itself.
+    test "the common source, build and prose formats now carry a role" do
+      { "Main.java" => "code", "App.kt" => "code", "View.swift" => "code", "Program.cs" => "code",
+        "index.php" => "code", "build.pl" => "code", "sim.jl" => "code", "plot.r" => "code",
+        "App.jsx" => "code", "App.tsx" => "code", "App.vue" => "code", "App.svelte" => "code",
+        "flash.bat" => "code", "deploy.ps1" => "code", "rules.mk" => "code",
+        "build.gradle" => "code", "boot.asm" => "code", "vectors.s" => "code",
+        "top.v" => "code", "top.vhd" => "code", "fix.diff" => "code", "fix.patch" => "code",
+        "README.rst" => "document", "paper.tex" => "document", "cutlist.tsv" => "document"
+      }.each { |name, role| assert_equal role, Maker::FileAttachment.role_for(name), name }
+    end
+
     test "document is accepted by the validation" do
       att = @item.file_attachments.build(user: @user, node_id: "n", role: "document")
       assert att.valid?
