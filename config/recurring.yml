@@ -104,6 +104,23 @@ production:
     command: "Maker::ProjectIntakeJob.sweep_all!"
     schedule: every 15 minutes
 
+  # Model catalog: every model-role file in the library belongs to a model, decided by the nearest
+  # shelf above it. CHUNK DEPLOYMENTS ONLY -- sweep_all! declines when the backend is `scannable`,
+  # because on share/s3 Library::ScanJob calls the intake at the end of its own perform, strictly
+  # after the reconcile AND strictly after the project intake (a file this app is about to move has
+  # no business being catalogued at its old path).
+  #
+  # `command:` rather than `class:`, matching every other gated entry here, because the backend gate
+  # lives in a class method rather than in #perform.
+  #
+  # EVERY 15 MINUTES, matching project_folder_intake -- and for the same reason it is arbitrary
+  # there: nothing in a web request sweeps, so this interval is the ONLY latency bound the catalog
+  # gets. An upload's model appears within a tick. That is the accepted trade; see
+  # docs/invariants/model-intake.md for why there is no eager nudge.
+  model_catalog_intake:
+    command: "Maker::ModelIntakeJob.sweep_all!"
+    schedule: every 15 minutes
+
   # Arc B gap (a): FileLayer::ChunkRemote::ChangelogSync had exactly one caller, #refresh!, itself
   # reached only from THIS app's own writes (mkdir/move/delete/undelete/finalize_upload,
   # chunk_remote.rb). A node another device pushed straight to the sync server was invisible to the

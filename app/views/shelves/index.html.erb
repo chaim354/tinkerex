@@ -1,0 +1,38 @@
+<% content_for :title, "Shelves - Tinkerex" %>
+
+<div class="page-head">
+  <h1>Shelves</h1>
+  <%= link_to "Back to models", models_path, class: "linkbtn" %>
+</div>
+
+<p class="muted">
+  A shelf is a folder that is not itself a model. Loose 3D files on a shelf each become their own
+  model; each subfolder of a shelf becomes one model, with everything inside it.
+</p>
+
+<ul class="shelf-list">
+  <% @shelves.each do |shelf| %>
+    <li>
+      <span class="shelf-path"><%= shelf[:label] %></span>
+      <span class="shelf-status muted">
+        <% if shelf[:wildcard] %>
+          <%= pluralize(shelf[:hits], "folder") %> matched
+        <% elsif shelf[:hits].zero? %>
+          no folder at this path
+        <% else %>
+          in your library
+        <% end %>
+      </span>
+      <%= button_to "Remove", shelf_path(shelf[:record]), method: :delete, class: "linkbtn" %>
+    </li>
+  <% end %>
+</ul>
+
+<%= form_with url: shelves_path, method: :post, class: "shelf-add" do %>
+  <%= render "shared/folder_field",
+             name: "node_id",
+             children_url: library_children_path,
+             create_url: library_folders_path,
+             root_label: "/ (library root)" %>
+  <button type="submit" class="btn primary">Add shelf</button>
+<% end %>

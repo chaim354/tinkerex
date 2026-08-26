@@ -94,6 +94,7 @@ module Library
       observer.call
       warn_unreadable(observer, user)
       intake_project_folders(user)
+      intake_models(user)
     end
 
     # recurring.yml has no per-user fan-out pattern (every existing entry is an all-users sweep),
@@ -243,6 +244,37 @@ module Library
     rescue StandardError => e
       Rails.logger.error("Library::ScanJob: the reconcile SUCCEEDED but the project-folder " \
                          "intake failed for user #{user.id}: #{e.class}: #{e.message}")
+    end
+
+    # STRICTLY AFTER THE PROJECT INTAKE, IN THIS JOB, AND THE ORDER IS LOAD-BEARING TWICE OVER.
+    #
+    # After the RECONCILE for the reason §14f already gives, and the one #intake_project_folders
+    # spells out above: the catalog reads PATHS, and a path the Scanner has not settled is a wrong
+    # answer.
+    #
+    # After the PROJECT INTAKE because that step MOVES files, and the model a file belongs to is
+    # decided by the nearest SHELF above it — so a move changes the answer rather than merely the
+    # location. A loose `panel.stl` at `Projects/desk-lamp/` has no shelf nearer than the library
+    # root, which makes the whole `Projects` FOLDER its model; one intake later it sits at
+    # `Projects/desk-lamp/models/panel.stl`, under the seeded `Projects/*/models` shelf, and it is
+    # its own model titled "panel". Catalogue first and the sweep mints the first answer, in the
+    # same job that is about to make it false. Pinned by scan_job_test.rb's IntakeOrderTest
+    # ("cataloguing runs after the project intake…"), which is RED on the swap.
+    #
+    # CALLS THE JOB, NOT Maker::ModelIntake DIRECTLY, for the reason #intake_project_folders
+    # records as a finding rather than a preference: Maker::ModelIntake logs NOTHING itself, so
+    # Maker::ModelIntakeJob#perform is the only place a run's created count or a MAX_MODELS
+    # refusal is ever written down. Calling the service here would give a share/s3 deployment less
+    # operator visibility than the chunk deployment gets from the scheduled sweep — the identical
+    # regression that method's comment reproduces and closes, one file over. Concurrency controls
+    # apply at ENQUEUE, so ModelIntakeJob's own limit cannot discard this perform_now.
+    def intake_models(user)
+      Maker::ModelIntakeJob.perform_now(user_id: user.id)
+    rescue StandardError => e
+      # A catalog failure must not fail the SCAN, whose job was done before this ran — the same
+      # argument, and the same narrow scoping, as the rescue above.
+      Rails.logger.error("Library::ScanJob: the reconcile SUCCEEDED but the model catalog " \
+                         "failed for user #{user.id}: #{e.class}: #{e.message}")
     end
   end
 end

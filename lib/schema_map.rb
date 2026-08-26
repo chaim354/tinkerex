@@ -75,7 +75,7 @@ module SchemaMap
                      maker_tags maker_tasks] },
     { "label" => "Models & projects", "group" => "maker",
       "tables" => %w[maker_models maker_print_runs maker_projects maker_build_log_entries
-                     maker_sheets] },
+                     maker_sheets maker_shelves] },
     { "label" => "Inventory & BOM", "group" => "maker",
       "tables" => %w[maker_boms maker_bom_lines maker_inventory_items
                      maker_inventory_transactions maker_suppliers maker_locations] },
@@ -135,6 +135,16 @@ module SchemaMap
     [ "maker_items.primary_node_id",       "nodes.node_id",       "app", "primary file" ],
     [ "maker_models.cover_node_id",        "nodes.node_id",       "app", "cover" ],
     [ "maker_models.folder_node_id",       "nodes.node_id",       "app", "bundle dir" ],
+    # THE THIRD BARE-STRING JOIN OUT OF maker_models, and the one this file's own warning is
+    # about: an app-level reference nothing derives, so the arrow exists only because it was
+    # written here. Maker::ModelIntake keys an auto-catalogued model on the node it came from --
+    # a DIR for a folder model, a FILE for a one-file model -- which is why it points at
+    # `nodes.node_id` and not at either kind specifically.
+    #
+    # maker_shelves DELIBERATELY HAS NO EDGE HERE. A shelf is a PATH PATTERN, not a node: it has
+    # to be able to name `Projects/*/models`, one folder per project, none of which need exist.
+    # There is nothing to join, and drawing an arrow would claim otherwise.
+    [ "maker_models.auto_node_id",         "nodes.node_id",       "app", "catalogued from" ],
     [ "maker_projects.cover_node_id",      "nodes.node_id",       "app", "cover" ],
     [ "maker_projects.folder_node_id",     "nodes.node_id",       "app", "Projects/<slug>" ],
     [ "maker_bom_lines.node_id",           "nodes.node_id",       "app", "part file" ],

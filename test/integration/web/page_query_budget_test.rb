@@ -139,6 +139,28 @@ module Web
                               "models#index")
     end
 
+    # THIS PAGE GROWS ON TWO AXES AT ONCE -- one row per shelf, and each row's live/missing
+    # indicator scanned against every DIRECTORY in the library -- so it is seeded on both. The scan
+    # is Ruby over ONE pluck that ShelvesController#decorate memoizes across the whole map; drop
+    # that memo and the page costs a pluck per shelf, which is precisely the linear-in-rows shape
+    # this file exists for and which no assertion about the rendered markup can see.
+    test "shelves#index does not grow with shelves or directories" do
+      # Stamped, so seeding is not a write inside the measured requests. It would be absorbed by the
+      # warm-up render either way; this makes what is being counted unambiguous.
+      @user.update_column(:shelves_seeded_at, Time.current)
+      add = lambda do |prefix, count|
+        count.times do |i|
+          @user.maker_shelves.create!(path: "#{prefix}#{i}")
+          @user.nodes.create!(node_id: "sd-#{prefix}#{i}", name: "#{prefix}#{i}", kind: "dir",
+                              size: 0, mtime: 1_700_000_000_000_000_000)
+        end
+      end
+      assert_constant_queries(shelves_path,
+                              -> { add.call("s", SMALL) },
+                              -> { add.call("l", LARGE - SMALL) },
+                              "shelves#index")
+    end
+
     test "models#show does not grow with attachments or print runs" do
       model = @user.maker_models.create!(title: "Shown", slug: "shown")
       add = lambda do |prefix, count|

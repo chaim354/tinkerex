@@ -340,6 +340,34 @@ module Library
       assert_match(/REFUSED to file 2 loose files for user #{@user.id} — over the 1 cap/, log.string)
     end
 
+    # THE MODEL CATALOG RUNS TOO, AND AFTER THE PROJECT INTAKE — proved by EFFECT, like the test
+    # above, because what the swap changes is the ANSWER and not merely the timing.
+    #
+    # `bracket.stl` exists only on disk, so a model keyed on it at all is proof the reconcile ran
+    # first. WHICH model it is proves the rest: a file loose at `Projects/desk-lamp/` has no shelf
+    # nearer than the library root (one of Maker::Shelf::SEEDS), so the nearest-shelf rule makes
+    # the whole `Projects` FOLDER its model, titled "Projects". The project intake then files it
+    # into `Projects/desk-lamp/models/`, under the seeded `Projects/*/models` shelf, where it is
+    # its own model titled "bracket". Run the catalog first and the sweep mints "Projects" in the
+    # same job that is about to make that false — and nothing later removes it, because an auto
+    # model is only ever created, never reaped.
+    #
+    # MUTATION-CHECKED: moving intake_models(user) above intake_project_folders(user) in
+    # Library::ScanJob#perform turns this RED with ["Projects"].
+    test "cataloguing runs after the project intake, so a filed file is its own model" do
+      File.binwrite(File.join(@root, @folder.storage_path, "bracket.stl"), "solid")
+
+      Library::ScanJob.perform_now(user_id: @user.id, root: @root)
+
+      assert_equal [ "bracket" ], @user.maker_models.pluck(:title),
+                   "a model titled Projects means the catalog ran BEFORE the intake moved the file"
+      model = @user.maker_models.sole
+      node = @user.nodes.find_by!(node_id: model.auto_node_id)
+      assert_equal "models", @user.nodes.find_by(node_id: node.parent_node_id).name
+      assert_equal [ node.node_id ], model.file_attachments.pluck(:node_id),
+                   "the attachment must point at the node THIS scan created"
+    end
+
     # A scan that SUCCEEDED must not be reported as failed because the intake blew up. The
     # reconcile is already committed (there is no transaction), so an operator reading a failed
     # ScanJob would conclude the library did not index — which would be false.
@@ -356,6 +384,41 @@ module Library
                "the reconcile's work stands — it committed before the intake ran"
       ensure
         Maker::ProjectIntake.define_singleton_method(:for_user, original)
+      end
+    end
+
+    # THE SAME PROMISE FOR THE CATALOG, and it needs its own test rather than riding the one above:
+    # the rescues are separate, and deleting the one in #intake_models left every test in the
+    # repo green until this existed. The catalog runs LAST, so a raise there is the likeliest of
+    # the three to be mistaken for "the scan failed" by an operator reading the failed-jobs table.
+    #
+    # ALSO PINS THAT THE RAISE REACHES THAT RESCUE THROUGH THE JOB WRAPPER. #intake_models calls
+    # Maker::ModelIntakeJob.perform_now, and ActiveJob is entitled to swallow or re-raise on its
+    # own terms (its discard_on covers RecordNotFound); a RuntimeError must arrive at the rescue
+    # that logs it.
+    test "a model catalog failure does not fail a scan that already succeeded" do
+      original = Maker::ModelIntake.method(:for_user)
+      Maker::ModelIntake.define_singleton_method(:for_user) { |**| raise "catalog exploded" }
+      begin
+        log = nil
+        prior = Rails.logger
+        io = StringIO.new
+        Rails.logger = Logger.new(io)
+        begin
+          assert_nothing_raised { Library::ScanJob.perform_now(user_id: @user.id, root: @root) }
+        ensure
+          log = io.string
+          Rails.logger = prior
+        end
+
+        assert @user.nodes.present.exists?(name: "panel.svg"),
+               "the reconcile's work stands — it committed before the catalog ran"
+        assert @project.file_attachments.any?,
+               "and so does the project intake's, which also ran before it"
+        assert_match(/model catalog failed for user #{@user.id}: RuntimeError: catalog exploded/,
+                     log, "the swallowed failure must still be written down somewhere")
+      ensure
+        Maker::ModelIntake.define_singleton_method(:for_user, original)
       end
     end
   end

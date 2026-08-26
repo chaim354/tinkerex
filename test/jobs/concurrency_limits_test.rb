@@ -21,8 +21,18 @@ class ConcurrencyLimitsTest < ActiveSupport::TestCase
     @b = User.create!(email: "conc-b@example.com")
   end
 
-  # The scan and the intake are per-user: one user's slow library must not stall another's.
-  [ Library::ScanJob, Maker::ProjectIntakeJob ].each do |klass|
+  # The scan and the two intakes are per-user: one user's slow library must not stall another's.
+  #
+  # Maker::ModelIntakeJob JOINED THIS LIST WITH THE JOB ITSELF, not later. A new job copying the
+  # `key: ->(args) { args[:user_id] }` shape is exactly the case this file's header describes — get
+  # the Proc's arity wrong and the key computes to nil, the limit is inert, and nothing anywhere
+  # says so. Mutation-checked, and one tried mutation is worth recording because it stayed GREEN
+  # and was RIGHT to: `on_conflict: :block` turns this RED, and so does a TYPO'd key (`args[:uid]`
+  # -> nil -> the inert limit). `key: ->(args) { args.first }` does NOT, and that is not a gap —
+  # `args` is `[{user_id: 1}]`, so `args.first` still yields a key carrying the user and still
+  # separating two of them. It is uglier, not broken. The defect this guards is a key that is nil
+  # or shared.
+  [ Library::ScanJob, Maker::ProjectIntakeJob, Maker::ModelIntakeJob ].each do |klass|
     test "#{klass} limits concurrency to one run per user" do
       assert_equal 1, klass.concurrency_limit
       assert_equal :discard, klass.concurrency_on_conflict,
