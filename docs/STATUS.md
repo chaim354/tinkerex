@@ -145,6 +145,33 @@ labelled top_edge options** and **4 bottom_edge**, and — the assertion that ma
 here would skip on every box that has no sidecar, which this repo already refuses as
 indistinguishable from no test at all.
 
+### Deployed 2026-08-25 — two images, no Rails rebuild
+
+Merged as `2882474` (this repo) and `645aa12` (tinkerex-addons), then published as the two images
+that actually carry the change. **The three `tinkerex-web` containers were deliberately left alone**,
+still on `9faa7783`: `/sidecar/` is in the Rails `.dockerignore` and publishing a bundle IS the addon
+deploy (§14c), so rebuilding Rails would have shipped a behaviourally identical image.
+
+| accessory | image digest | provenance | after |
+|---|---|---|---|
+| `tinkerex-boxes` | `sha256:fa263777` | label `org.opencontainers.image.revision=28824742…` | Up, `/up` 200 |
+| `tinkerex-addons` | `sha256:18193c03` | tag `645aa122…` (no revision label — that image carries `BUNDLE_VERSION`, not an OCI label) | Up, `/health` 200 |
+
+**Exercised on the box, not read off an exit code.** BEFORE, in the running sidecar, `top_edge`'s
+keys were `choices, default, help, multiline, name, type` — no `choice_labels`. AFTER: the key is
+present, `choices` still `efFhcESŠikvLtGyY`, **45 labelled params and 0 choices without a label**
+across the live catalogue, `FingerJoint_style` still `None`. The addons container SERVES the new
+`fields.js` over HTTP (`const opt = new Option(label ? …)`). From inside a `tinkerex-web` container:
+`tinkerex-boxes:8000/up` 200, `tinkerex-addons/health` 200 — the network aliases survived both
+reboots, which is the actual risk of rolling an accessory — and the bytes Rails proxies carry the map
+(`e => Straight Edge`, `y => Handle for e.g. a drawer`). All six proxy health checks 200
+(`chunk|share|s3` × `.local|.home`).
+
+**Both accessories reported an EMPTY revision label BEFORE this deploy**, so the images they had been
+running for three days could not name their own build. The boxes one can now; the addons image still
+cannot, and that is a real gap in the same provenance argument `bin/build-boxes-sidecar` documents at
+length — it passes `BUNDLE_VERSION` as a build-arg, which no `docker inspect` on the box can read.
+
 ### Two repos, and the fixture is the seam
 
 The display half is the bundles repo's (`chaim354/tinkerex-addons`, `addons/boxes/fields.js`), the
