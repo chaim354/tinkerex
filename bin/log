@@ -57,8 +57,7 @@ module Log
 
     ([ "bin/log — record work in Forgejo. The single write door.", "" ] + rows + [
       "",
-      "Env: FORGEJO_URL (default http://forgejo.home), FORGEJO_OWNER, FORGEJO_REPO,",
-      "     LOG_SPOOL_DIR (default tmp/log-pending), LOG_BRANCH"
+      "Env: FORGEJO_URL (default http://forgejo.home), FORGEJO_OWNER, FORGEJO_REPO"
     ]).join("\n")
   end
 
@@ -86,9 +85,9 @@ module Log
     dispatch(command, argv)
   end
 
-  # Tasks 2-7 replace this arm by arm. Every subcommand is declared in SUBCOMMANDS from the start
-  # so an unbuilt one says "not implemented yet" rather than "unknown command" — the caller learns
-  # which of the two it is.
+  # Tasks 2-7 replace this arm by arm. Every subcommand is declared in SUBCOMMANDS from the start so
+  # an unbuilt one READS as "not implemented yet" rather than "unknown command". Both still exit 2,
+  # so a scripted caller cannot tell them apart — only the human-facing message differs.
   def dispatch(command, _argv)
     warn "bin/log: #{command} is not implemented yet"
     EXIT_USAGE

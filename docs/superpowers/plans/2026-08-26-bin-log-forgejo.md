@@ -78,7 +78,7 @@ Top-level `def`s become private methods on `Object`. The live hazard is Task 3's
 
 ### C7 Test-harness hygiene — three rules for `run_log`
 
-1. **Strip the inherited Bundler env.** `Open3.capture3(env, …)` *merges*, so every test today runs `bin/log` as a bundled child — the property "indifferent to its launcher" is exercised only in the direction that cannot fail. Reproduced: `BUNDLE_GEMFILE=/nonexistent RUBYOPT=-rbundler/setup ./bin/log status` dies with `Bundler::GemfileNotFound` before line 1. Clear the seven names `bin/sync-server`'s `unset_inherited_bundler_env` already lists, and add a test that runs under a hostile bundler env.
+1. **Strip the inherited Bundler env.** `Open3.capture3(env, …)` *merges*, so every test today runs `bin/log` as a bundled child — the property "indifferent to its launcher" is exercised only in the direction that cannot fail. Reproduced: `BUNDLE_GEMFILE=/nonexistent RUBYOPT=-rbundler/setup ./bin/log status` dies with `Bundler::GemfileNotFound` before line 1. Clear the seven names `bin/sync-server`'s `unset_inherited_bundler_env` already lists. **A hostile-env test was considered and deliberately NOT written:** `RUBYOPT` is applied by the ruby binary before line 1, so `bin/log` genuinely cannot survive `RUBYOPT=-rbundler/setup` with a bad `BUNDLE_GEMFILE`, and no re-exec helps because the crash precedes it. The achievable guard is the **stale-`BUNDLE_GEMFILE`** test, which passes today and goes red the moment anyone adds `require "bundler/setup"` — it guards the property that actually matters operationally, "needs no `bundle install`". Stripping those names is the CALLER's obligation, recorded in Task 9's CLAUDE.md block.
 2. **Default `FORGEJO_URL` to an unroutable address.** It defaults to `http://forgejo.home`, so a test that forgets to override it POSTs a real issue into the live instance. Reaching the network must be opt-in.
 3. **Pass the command as `[BIN_LOG, BIN_LOG]`.** With zero trailing args Ruby takes the single-string form and word-splits, so a checkout path containing a space breaks — and the only committed test is exactly the zero-arg call.
 
@@ -392,176 +392,224 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
+## Task 2: The transport — token, `api`, and an exit code that cannot be forgotten
 
-## Task 2: Token resolution through `bin/secret`, with the value never on stderr
+Everything below is written against the `module Log` structure Task 1 landed. There is no `case command` block and no top-level `def`; add methods **inside `module Log`**, above `main`.
 
-**Files:**
-- Modify: `bin/log`
-- Modify: `test/log_cli_test.rb`
+**Files:** modify `bin/log`, `test/log_cli_test.rb`
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `LogCliTest`:
+Append inside `LogCliTest`:
 
 ```ruby
-  # THE TOKEN MUST NEVER REACH fd2. bin/secret's header records the exact mechanism: writing
+  # THE TOKEN MUST NEVER REACH fd2. bin/secret's header records the mechanism: writing
   # `op read "$ref" 2>&1 >/dev/null` points fd2 at the CURRENT stdout and only then moves fd1, so
   # the value lands in whatever captured the command. That printed a live ghcr PAT into an agent
-  # transcript on 2026-07-29 and the token had to be rotated. Open3.capture3 keeps the two streams
-  # separate, which is why bin/log must use it rather than a backtick or `2>&1`.
-  test "a resolved token never appears on stderr" do
-    out, err, _code = run_log("show", "1", env: {
-      "FORGEJO_TOKEN" => "sentinel-token-value",
-      "FORGEJO_URL"   => "http://127.0.0.1:1"   # refused; we are asserting about the diagnostics
-    })
+  # transcript on 2026-07-29 and the token had to be rotated. Open3.capture3 keeps the streams
+  # apart, which is why bin/log must use it rather than a backtick or a merging redirect.
+  test "a resolved token never appears on either stream" do
+    out, err, _code = run_log("show", "1", env: { "FORGEJO_TOKEN" => "sentinel-token-value" })
 
-    refute_includes err, "sentinel-token-value",
-                    "the token reached stderr — see bin/secret's header for how this happens"
-    refute_includes out, "sentinel-token-value",
-                    "the token reached stdout"
+    refute_includes err, "sentinel-token-value", "the token reached stderr"
+    refute_includes out, "sentinel-token-value", "the token reached stdout"
   end
 
-  # An EXPORTED value wins over the vault. This is bin/secret's own documented order, and bin/log
-  # gets it for free by going through that door instead of calling `op` itself. Asserting it here
-  # is what stops someone "simplifying" bin/log into a direct `op read`, which would silently drop
-  # the override every test below depends on.
-  test "an exported FORGEJO_TOKEN is used without invoking 1Password" do
-    # PATH without `op`, so a direct `op read` would fail loudly rather than pass by luck.
-    _out, err, code = run_log("show", "1", env: {
-      "FORGEJO_TOKEN" => "exported-wins",
-      "FORGEJO_URL"   => "http://127.0.0.1:1",
-      "PATH"          => "/usr/bin:/bin"
-    })
+  # AN EXPORTED VALUE WINS OVER THE VAULT — bin/secret's own documented order, which bin/log gets
+  # for free by going through that door instead of calling `op` itself. Asserting it is what stops
+  # someone "simplifying" bin/log into a direct `op read` and silently dropping the override.
+  #
+  # THE VAULT IS DEFEATED WITH A STUB `op` ON A PREPENDED PATH, NOT BY NUKING PATH. Setting
+  # PATH=/usr/bin:/bin resolves `#!/usr/bin/env ruby` to /usr/bin/ruby, which is 2.6.10 on this
+  # box and cannot parse an endless method — the test would have died of SyntaxError while its
+  # message blamed credentials. Reproduced before this was written.
+  test "an exported FORGEJO_TOKEN is used without consulting 1Password" do
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, "op"), "#!/bin/sh\necho 'op: vault locked' >&2\nexit 1\n")
+      File.chmod(0o755, File.join(dir, "op"))
 
-    assert_equal 3, code, "expected the UNREACHABLE exit, not a credential failure"
-    refute_includes err, "1Password",
-                    "bin/log consulted the vault despite an exported value — the override was lost"
+      _out, err, code = run_log("show", "1", env: {
+        "FORGEJO_TOKEN" => "exported-wins",
+        "PATH"          => "#{dir}:#{ENV['PATH']}"
+      })
+
+      assert_equal 3, code, "expected the UNREACHABLE exit, not a credential failure"
+      refute_includes err, "vault locked",
+                      "bin/log consulted the vault despite an exported value — the override was lost"
+    end
+  end
+
+  # exit(nil) is a TypeError and exit(false) is a SILENT status 1 — and 1 is EXIT_UNFILED, so an
+  # arm that forgets its return value would report a SUCCESSFUL file to /finish-branch as a
+  # backlog. Note an `assert_equal 0, code` test cannot catch a `true`-returning arm.
+  test "main returning a non-integer is loud, not a wrong exit code" do
+    _out, err, code = run_log("--help", env: { "LOG_FORCE_BAD_RETURN" => "1" })
+
+    assert_equal 1, code
+    assert_match(/not an exit code/, err,
+                 "a non-integer return exited silently — 1 is EXIT_UNFILED, so success reads as a backlog")
   end
 ```
 
 - [ ] **Step 2: Run to verify they fail**
 
-```bash
-bin/rails test test/log_cli_test.rb
-```
+`bin/rails test test/log_cli_test.rb` — `show` exits 2 (not implemented), not 3.
 
-Expected: FAIL — `show` exits 2 (not implemented), not 3.
+- [ ] **Step 3: Implement, inside `module Log`**
 
-- [ ] **Step 3: Implement token resolution and the HTTP layer**
-
-In `bin/log`, replace the `case command` block with the following, keeping everything above it:
+Add after `SUBCOMMANDS`:
 
 ```ruby
-FORGEJO_URL   = ENV.fetch("FORGEJO_URL", "http://forgejo.home")
-FORGEJO_OWNER = ENV.fetch("FORGEJO_OWNER", "chaim354")
-FORGEJO_REPO  = ENV.fetch("FORGEJO_REPO", "tinkerex")
-TOKEN_REF     = "op://tinkerex/Forgejo/token"
+  TOKEN_REF = "op://tinkerex/Forgejo/token"
 
-class Unreachable < StandardError; end
+  # THE PAYLOAD RIDES ON THE EXCEPTION, never on a module-level accumulator. `api` knows both what
+  # failed and what was being sent, so it attaches the payload at the ONE raise site. Two things
+  # fall out that a shared accumulator could not give: a GET carries no payload, so a READ verb
+  # spools nothing BY CONSTRUCTION rather than by a rule someone remembers to apply; and nothing
+  # accumulates across calls, so a loop failing on its Nth write cannot re-spool the N-1 already
+  # filed. (PR 2's import is exactly that loop.)
+  class Unreachable < StandardError
+    attr_reader :payload
 
-# THROUGH bin/secret, NEVER `op read` DIRECTLY. That file is the single definition of "where does
-# a credential come from" for this repo, and it is what makes an exported value win over the vault.
-#
-# capture3 keeps stdout and stderr SEPARATE. bin/secret sends the value only on fd1 and its own
-# diagnostics only on fd2, so forwarding err below cannot leak. Any rewrite that merges the two
-# streams re-opens the 2026-07-29 leak.
-def token
-  @token ||= begin
-    out, err, status = Open3.capture3(File.expand_path("secret", __dir__), "FORGEJO_TOKEN", TOKEN_REF)
+    def initialize(message, payload: nil)
+      super(message)
+      @payload = payload
+    end
+  end
 
-    if !status.success? || out.empty?
-      warn "bin/log: could not resolve FORGEJO_TOKEN from #{TOKEN_REF}"
-      warn err unless err.empty?
-      exit EXIT_UNREACHABLE
+  def forgejo_url = ENV.fetch("FORGEJO_URL", "http://forgejo.home")
+  def owner       = ENV.fetch("FORGEJO_OWNER", "chaim354")
+  def repo        = ENV.fetch("FORGEJO_REPO", "tinkerex")
+
+  def repo_path(suffix) = "/api/v1/repos/#{owner}/#{repo}#{suffix}"
+
+  # THROUGH bin/secret, NEVER `op read` DIRECTLY. That file is this repo's single definition of
+  # where a credential comes from, and it is what makes an exported value win over the vault.
+  # capture3 keeps the streams apart: bin/secret sends the value only on fd1 and its diagnostics
+  # only on fd2, so forwarding err cannot leak. Any rewrite that merges them re-opens the
+  # 2026-07-29 leak. `.chomp` because nothing else asserts bin/secret's --no-newline contract, and
+  # a trailing newline is an ArgumentError inside the header assignment.
+  def token
+    @token ||= begin
+      out, err, status = Open3.capture3(File.expand_path("secret", __dir__), "FORGEJO_TOKEN", TOKEN_REF)
+      raise Unreachable, "could not resolve FORGEJO_TOKEN from #{TOKEN_REF}: #{err.strip}" if !status.success? || out.empty?
+
+      out.chomp
+    end
+  end
+
+  def api(method, path, body = nil)
+    perform(method, path, body)
+  rescue Unreachable => e
+    # Attach what was being sent, at the one place that knows both. A failure raised from `token`
+    # carries no payload of its own, and a WRITE must still be spooled.
+    raise(e.payload ? e : Unreachable.new(e.message, payload: body))
+  rescue SystemCallError, Net::OpenTimeout, Net::ReadTimeout, SocketError => e
+    raise Unreachable.new("#{forgejo_url}: #{e.message}", payload: body)
+  end
+
+  # URI.join DROPS A PATH PREFIX — URI.join("http://host/git", "/api/v1/x") is
+  # "http://host/api/v1/x". Forgejo behind a subpath is an ordinary self-host shape, so the URL is
+  # built by concatenation instead.
+  def perform(method, path, body)
+    uri = URI.parse("#{forgejo_url.chomp('/')}#{path}")
+
+    request = case method
+              when :get  then Net::HTTP::Get.new(uri)
+              when :post then Net::HTTP::Post.new(uri)
+              else raise ArgumentError, "unsupported method #{method.inspect}"
+              end
+
+    request["Authorization"] = "token #{token}"
+    request["Content-Type"]  = "application/json"
+    request.body = JSON.generate(body) if body
+
+    response = Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https",
+                                                   open_timeout: 5, read_timeout: 15) do |http|
+      http.request(request)
     end
 
-    out
+    # A NON-2xx IS UNREACHABLE TOO, AND THAT IS THE POINT OF THIS METHOD. A dead container behind
+    # a live proxy answers 502 and a rotated token answers 401 — both are HTTP RESPONSES, so a
+    # handler that only caught connection errors would let the LIKELIEST outage exit without
+    # spooling, which is how an arc gets lost while the docs promise otherwise.
+    unless response.code.to_i.between?(200, 299)
+      raise Unreachable, "HTTP #{response.code} from #{path}: #{response.body.to_s[0, 200]}"
+    end
+
+    response
   end
-end
 
-def api(method, path, body = nil)
-  uri = URI.join(FORGEJO_URL, path)
+  def show(argv)
+    number = argv.shift or raise UsageError, "show needs an issue number"
+    issue = JSON.parse(api(:get, repo_path("/issues/#{number}")).body)
 
-  request = case method
-            when :get  then Net::HTTP::Get.new(uri)
-            when :post then Net::HTTP::Post.new(uri)
-            else raise ArgumentError, "unsupported method #{method}"
-            end
-
-  request["Authorization"] = "token #{token}"
-  request["Content-Type"]  = "application/json"
-  request.body = JSON.generate(body) if body
-
-  Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https",
-                                      open_timeout: 5, read_timeout: 15) do |http|
-    http.request(request)
+    puts "##{issue['number']} #{issue['title']} [#{issue['state']}]"
+    puts
+    puts issue["body"]
+    EXIT_OK
   end
-rescue SystemCallError, Net::OpenTimeout, Net::ReadTimeout, SocketError => e
-  raise Unreachable, "#{FORGEJO_URL}: #{e.message}"
-end
 
-def repo_path(suffix) = "/api/v1/repos/#{FORGEJO_OWNER}/#{FORGEJO_REPO}#{suffix}"
-
-def show(number)
-  response = api(:get, repo_path("/issues/#{number}"))
-  issue = JSON.parse(response.body)
-  puts "##{issue['number']} #{issue['title']} [#{issue['state']}]"
-  puts
-  puts issue["body"]
-end
-
-begin
-  case command
-  when "show"
-    number = ARGV.shift or usage!("show needs an issue number")
-    show(number)
-  when "setup", "arc", "open", "deploy", "note", "search", "status"
-    warn "bin/log: #{command} is not implemented yet"
-    exit EXIT_USAGE
-  else
-    usage! "unknown command #{command.inspect}"
-  end
-rescue Unreachable => e
-  warn "bin/log: Forgejo is unreachable — #{e.message}"
-  exit EXIT_UNREACHABLE
-end
+  class UsageError < StandardError; end
 ```
 
-- [ ] **Step 4: Run to verify they pass**
+Replace `dispatch` with a real table, and extend `main`:
 
-```bash
-bin/rails test test/log_cli_test.rb
+```ruby
+  # EVERY ARM ENDS IN AN EXPLICIT EXIT_* CONSTANT. `puts` returns nil, and exit(nil) is a
+  # TypeError whose status is 1 — which is EXIT_UNFILED. An arm that forgets would report a
+  # successful file as a backlog. The guard at the bottom of the file makes that loud.
+  def dispatch(command, argv)
+    case command
+    when "show" then show(argv)
+    else
+      warn "bin/log: #{command} is not implemented yet"
+      EXIT_USAGE
+    end
+  end
 ```
 
-Expected: PASS, 3 tests.
+In `main`, add `UsageError` handling and the `Unreachable` rescue (the spool arrives in Task 5):
 
-- [ ] **Step 5: Commit**
-
-```bash
-git add bin/log test/log_cli_test.rb
-git commit -m "bin/log: resolve the token through bin/secret, never onto stderr
-
-capture3 keeps fd1 and fd2 separate — merging them is the exact shape that
-printed a live PAT into a transcript on 2026-07-29.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+```ruby
+    dispatch(command, argv)
+  rescue UsageError => e
+    warn "bin/log: #{e.message}"
+    warn usage_text
+    EXIT_USAGE
+  rescue Unreachable => e
+    warn "bin/log: Forgejo is unreachable — #{e.message}"
+    EXIT_UNREACHABLE
+  end
 ```
+
+And replace the file's last line:
+
+```ruby
+code = Log.main(ARGV)
+code = "not-an-integer" if ENV["LOG_FORCE_BAD_RETURN"]   # exercises the guard below; see the test
+
+raise "bin/log: main returned #{code.inspect}, not an exit code" unless code.is_a?(Integer)
+
+exit code
+```
+
+- [ ] **Step 4: Run to verify they pass** — `bin/rails test test/log_cli_test.rb`, expect PASS, 7 tests.
+- [ ] **Step 5: `bin/rubocop bin/log test/log_cli_test.rb`** — expect no offenses.
+- [ ] **Step 6: Commit** — subject: `bin/log: the transport, with a 502 treated as unreachable`. Body: name why a non-2xx must raise rather than exit, and why the token goes through `bin/secret`. End with the `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` trailer.
 
 ---
 
 ## Task 3: The stub Forgejo, and the wire format for `open`
 
-**Files:**
-- Create: `test/support/stub_forgejo.rb`
-- Modify: `bin/log`
-- Modify: `test/log_cli_test.rb`
+**Files:** create `test/support/stub_forgejo.rb`; modify `bin/log`, `test/log_cli_test.rb`
 
-- [ ] **Step 1: Write the stub server**
+- [ ] **Step 1: Write the stub — `TCPServer`, not WEBrick**
 
-Create `test/support/stub_forgejo.rb`:
+`webrick` left stdlib in Ruby 3.0 and is **not in this repo's `Gemfile.lock`** — `require "webrick"` is a `LoadError` here (verified). Rather than add a gem for a test double, hand-roll the recorder. Create `test/support/stub_forgejo.rb`:
 
 ```ruby
-require "webrick"
+require "socket"
 require "json"
 
 # A localhost stand-in for Forgejo that RECORDS REQUESTS VERBATIM.
@@ -570,9 +618,24 @@ require "json"
 # replays whatever the test told it to. §14e records why that distinction matters: FakeS3 decoded
 # with CGI.unescape while the adapter encoded with CGI.escape — exact inverses — so 79 of 80 tests
 # were green over silent permanent data loss on any filename containing a space. A fake that
-# implements the same misunderstanding as the code confirms it rather than catching it.
+# implements the same misunderstanding as the code under test confirms it rather than catching it.
+# So: assert against `stub.requests`, never against a round-trip through this object.
 #
-# So: tests assert against `server.requests`, never against a round-trip through this object.
+# FIVE RULES, EACH A REAL WAY THIS BITES IN A FORKING SUITE (test_helper parallelizes by processor):
+#
+#   1. NEVER CONSTRUCT ONE BEFORE THE FORK. A child inherits the LISTENING SOCKET but not the
+#      accept thread, so `connect` still succeeds and the request lands in the parent's backlog —
+#      worker A's bin/log recorded by worker B's stub. Build it inside the test body. Never a
+#      class constant, never parallelize_setup.
+#   2. READ EXACTLY Content-Length BYTES, NEVER TO EOF. Net::HTTP holds the socket open awaiting a
+#      response, so read-to-EOF deadlocks until the 15 s read timeout and the test then sees exit 3
+#      with an empty `requests` — which reads as "bin/log sent nothing".
+#   3. RESPOND WITH AN EXPLICIT Content-Length AND Connection: close.
+#   4. THE ACCEPT LOOP RESCUES IOError/EBADF/ECONNRESET, AND close JOINS INSIDE A RESCUE. Closing
+#      the socket while a thread blocks in accept raises there; unrescued it surfaces at `join`
+#      inside an ensure and fails an otherwise-passing test, masking the real assertion.
+#   5. PORT 0 binds and listens before `new` returns, so `url` is valid immediately — no
+#      did-it-start race — and forked workers can never collide on a port.
 class StubForgejo
   Request = Struct.new(:method, :path, :headers, :body, keyword_init: true) do
     def json = JSON.parse(body)
@@ -582,38 +645,60 @@ class StubForgejo
 
   def initialize(status: 201, response: { "number" => 42, "title" => "stub", "state" => "open", "body" => "" })
     @requests = []
+    @server = TCPServer.new("127.0.0.1", 0)
+    @payload = JSON.generate(response)
     @status = status
-    @response = response
 
-    @server = WEBrick::HTTPServer.new(
-      Port: 0, Logger: WEBrick::Log.new(File::NULL), AccessLog: []
-    )
-
-    @server.mount_proc "/" do |req, res|
-      @requests << Request.new(
-        method: req.request_method, path: req.path,
-        headers: req.header.transform_values(&:first), body: req.body.to_s
-      )
-      res.status = @status
-      res["Content-Type"] = "application/json"
-      res.body = JSON.generate(@response)
+    @thread = Thread.new do
+      loop do
+        socket = @server.accept
+        handle(socket)
+      rescue IOError, Errno::EBADF, Errno::ECONNRESET
+        break
+      end
     end
-
-    @thread = Thread.new { @server.start }
   end
 
-  def url = "http://127.0.0.1:#{@server.config[:Port]}"
+  def url = "http://127.0.0.1:#{@server.addr[1]}"
 
   def shutdown
-    @server.shutdown
-    @thread.join(5)
+    @server.close
+  rescue IOError, Errno::EBADF
+    nil
+  ensure
+    begin
+      @thread&.join(5)
+    rescue IOError, Errno::EBADF, Errno::ECONNRESET
+      nil
+    end
+  end
+
+  private
+
+  def handle(socket)
+    request_line = socket.gets.to_s
+    method, path, = request_line.split(" ")
+
+    headers = {}
+    while (line = socket.gets) && line != "\r\n"
+      key, value = line.split(":", 2)
+      headers[key.to_s.strip.downcase] = value.to_s.strip
+    end
+
+    body = headers["content-length"] ? socket.read(headers["content-length"].to_i).to_s : ""
+    @requests << Request.new(method: method, path: path, headers: headers, body: body)
+
+    socket.write("HTTP/1.1 #{@status}\r\nContent-Type: application/json\r\n" \
+                 "Content-Length: #{@payload.bytesize}\r\nConnection: close\r\n\r\n#{@payload}")
+  ensure
+    socket.close rescue nil
   end
 end
 ```
 
 - [ ] **Step 2: Write the failing wire-format test**
 
-Add to `test/log_cli_test.rb` — put `require "support/stub_forgejo"` at the top, under `require "test_helper"`:
+Add `require "support/stub_forgejo"` under the other requires, then:
 
 ```ruby
   # THE WIRE FORMAT IS THE ASSERTION. Not "the issue came back with our title" — that passes even
@@ -621,15 +706,14 @@ Add to `test/log_cli_test.rb` — put `require "support/stub_forgejo"` at the to
   test "open POSTs the documented issue payload to the documented path" do
     stub = StubForgejo.new
 
-    _out, err, code = run_log("open", "The scan tombstones a live node", env: {
-      "FORGEJO_TOKEN" => "t0ken",
-      "FORGEJO_URL"   => stub.url,
-      "FORGEJO_OWNER" => "chaim354",
-      "FORGEJO_REPO"  => "tinkerex"
+    out, err, code = run_log("open", "The scan tombstones a live node", env: {
+      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
     })
 
     assert_equal 0, code, "bin/log open failed: #{err}"
     assert_equal 1, stub.requests.size, "expected exactly one API call"
+    assert_includes out, "#42"
 
     request = stub.requests.first
     assert_equal "POST", request.method
@@ -639,329 +723,261 @@ Add to `test/log_cli_test.rb` — put `require "support/stub_forgejo"` at the to
 
     assert_equal "The scan tombstones a live node", request.json["title"]
     assert_equal [ "open-work" ], request.json["labels"],
-                 "an open item must carry the open-work label or it is invisible to the open-work view"
+                 "an open item without the open-work label is invisible to the open-work view"
   ensure
     stub&.shutdown
   end
 ```
 
-- [ ] **Step 3: Run to verify it fails**
+- [ ] **Step 3: Run to verify it fails** — exit 2, `open is not implemented yet`.
 
-```bash
-bin/rails test test/log_cli_test.rb -n /open POSTs/
-```
-
-Expected: FAIL — exit 2, `open is not implemented yet`.
-
-- [ ] **Step 4: Implement `open`**
-
-In `bin/log`, add above the `begin` block:
+- [ ] **Step 4: Implement, inside `module Log`**
 
 ```ruby
-# LABELS ARE NAMES ON THE WIRE, NOT IDS. Forgejo's issue-create accepts label IDs in `labels`,
-# and it accepts names too; names are what a human reads in a diff and what survives the labels
-# being recreated. `bin/log setup` (Task 6) is what guarantees they exist.
-def create_issue(title, body:, labels:)
-  response = api(:post, repo_path("/issues"), { title: title, body: body, labels: labels })
-
-  unless response.code.to_i.between?(200, 299)
-    warn "bin/log: Forgejo refused the issue (HTTP #{response.code}): #{response.body}"
-    exit EXIT_UNREACHABLE
+  # LABELS ARE NAMES ON THE WIRE, NOT IDS. Forgejo accepts either; names are what a human reads in
+  # a diff and what survives the labels being recreated. `setup` guarantees they exist.
+  def create_issue(title, body:, labels:)
+    JSON.parse(api(:post, repo_path("/issues"), { title: title, body: body, labels: labels }).body)
   end
 
-  JSON.parse(response.body)
-end
-```
+  # NOT `open` — inside this module that name would resolve ahead of Kernel#open for every other
+  # method here, and File.open is one edit away from being needed.
+  def open_item(argv)
+    title = argv.shift or raise UsageError, "open needs a title"
+    issue = create_issue(title, body: argv.shift.to_s, labels: [ "open-work" ])
 
-And in the `case command`, replace the `"open"` arm:
-
-```ruby
-  when "open"
-    title = ARGV.shift or usage!("open needs a title")
-    issue = create_issue(title, body: ARGV.shift.to_s, labels: [ "open-work" ])
     puts "##{issue['number']} #{issue['title']}"
+    EXIT_OK
+  end
 ```
 
-Remember to drop `"open"` from the not-implemented list in the same `case`.
+Add `when "open" then open_item(argv)` to `dispatch`.
 
-- [ ] **Step 5: Run to verify it passes**
-
-```bash
-bin/rails test test/log_cli_test.rb
-```
-
-Expected: PASS, 4 tests.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add bin/log test/log_cli_test.rb test/support/stub_forgejo.rb
-git commit -m "bin/log open, asserted on the wire format rather than a round-trip
-
-The stub records requests verbatim and models nothing — §14e's FakeS3 lesson,
-where exact-inverse encode/decode kept 79/80 tests green over data loss.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
-```
+- [ ] **Step 5: Run to verify it passes** — PASS, 8 tests.
+- [ ] **Step 6: Run the file 5× to shake out the fork/socket rules** — `for i in 1 2 3 4 5; do bin/rails test test/log_cli_test.rb || break; done`. Any hang or intermittent failure means one of the stub's five rules was not followed; fix it rather than retrying.
+- [ ] **Step 7: rubocop, then commit** — subject: `bin/log open, asserted on the wire format rather than a round-trip`.
 
 ---
 
 ## Task 4: `arc --from-pr` — one document, filed rather than rewritten
 
-**Files:**
-- Modify: `bin/log`
-- Modify: `test/log_cli_test.rb`
+**Files:** modify `bin/log`, `test/log_cli_test.rb`
 
 - [ ] **Step 1: Write the failing test**
 
 ```ruby
   # THE ARC BODY IS THE PR BODY. /finish-branch already specifies that document — symptom, root
-  # cause, why tests missed it, verification table, scope. Rewriting it by hand into a second
-  # document is exactly the per-PR tax that made docs/STATUS.md unworkable, so bin/log reads it
-  # back out of the PR instead. The `gh` call is stubbed here via GH_BIN; Task 7 mutation-checks
-  # that the stub is actually consulted.
+  # cause, why tests missed it, verification table, scope. Rewriting it into a second document by
+  # hand is exactly the per-PR tax that made docs/STATUS.md unworkable, so bin/log reads it back
+  # out of the PR. GH_BIN stubs `gh`; Task 8 mutation-checks that the stub is actually consulted.
   test "arc --from-pr builds the issue from the PR body and links back to it" do
     stub = StubForgejo.new
-    fake_gh = File.join(Dir.mktmpdir, "gh")
-    File.write(fake_gh, <<~SH)
-      #!/bin/sh
-      cat <<'JSON'
-      {"title":"Fix the tombstone cascade","body":"## Root cause\\nThe delete was applied per-node.","url":"https://github.com/chaim354/tinkerex/pull/261"}
-      JSON
-    SH
-    File.chmod(0o755, fake_gh)
 
-    _out, err, code = run_log("arc", "--from-pr", "261", env: {
-      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
-      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex",
-      "GH_BIN" => fake_gh
-    })
+    Dir.mktmpdir do |dir|
+      gh = File.join(dir, "gh")
+      File.write(gh, <<~SH)
+        #!/bin/sh
+        cat <<'JSON'
+        {"title":"Fix the tombstone cascade","body":"## Root cause\\nThe delete was applied per-node.","url":"https://github.com/chaim354/tinkerex/pull/261"}
+        JSON
+      SH
+      File.chmod(0o755, gh)
 
-    assert_equal 0, code, "bin/log arc failed: #{err}"
-    request = stub.requests.first
+      _out, err, code = run_log("arc", "--from-pr", "261", env: {
+        "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+        "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex", "GH_BIN" => gh
+      })
 
-    assert_equal "Fix the tombstone cascade", request.json["title"]
-    assert_includes request.json["body"], "The delete was applied per-node.",
-                    "the PR body was not carried into the arc issue"
-    assert_includes request.json["body"], "https://github.com/chaim354/tinkerex/pull/261",
-                    "the arc must link the PR it describes, or the diff is unreachable from the record"
-    assert_equal [ "arc" ], request.json["labels"]
+      assert_equal 0, code, "bin/log arc failed: #{err}"
+      request = stub.requests.first
+
+      assert_equal "Fix the tombstone cascade", request.json["title"]
+      assert_includes request.json["body"], "The delete was applied per-node.",
+                      "the PR body was not carried into the arc issue"
+      assert_includes request.json["body"], "https://github.com/chaim354/tinkerex/pull/261",
+                      "the arc must link the PR it describes, or the diff is unreachable from the record"
+      assert_equal [ "arc" ], request.json["labels"]
+    end
   ensure
     stub&.shutdown
   end
 ```
 
-Add `require "tmpdir"` at the top of the test file.
-
-- [ ] **Step 2: Run to verify it fails**
-
-```bash
-bin/rails test test/log_cli_test.rb -n /arc --from-pr/
-```
-
-Expected: FAIL — exit 2.
-
-- [ ] **Step 3: Implement `arc`**
-
-Add to `bin/log`:
+- [ ] **Step 2: Run to verify it fails.**
+- [ ] **Step 3: Implement, inside `module Log`**
 
 ```ruby
-# GH_BIN is an override, not a convenience — it is what lets the suite drive this path without a
-# network or a GitHub credential. Defaulting to the PATH lookup keeps normal use unchanged.
-def pull_request(number)
-  gh = ENV.fetch("GH_BIN", "gh")
-  out, err, status = Open3.capture3(gh, "pr", "view", number.to_s, "--json", "title,body,url")
+  # GH_BIN is an override, not a convenience — it is what lets the suite drive this path with no
+  # network and no GitHub credential. Defaulting to the PATH lookup keeps normal use unchanged.
+  def pull_request(number)
+    out, err, status = Open3.capture3(ENV.fetch("GH_BIN", "gh"), "pr", "view", number.to_s,
+                                      "--json", "title,body,url")
+    raise Unreachable, "could not read PR #{number}: #{err.strip}" unless status.success?
 
-  unless status.success?
-    warn "bin/log: could not read PR #{number} via #{gh}"
-    warn err unless err.empty?
-    exit EXIT_UNREACHABLE
+    JSON.parse(out)
   end
 
-  JSON.parse(out)
-end
-```
+  def arc(argv)
+    raise UsageError, "arc needs --from-pr N" unless argv.shift == "--from-pr"
 
-And the `"arc"` arm:
-
-```ruby
-  when "arc"
-    usage!("arc needs --from-pr N") unless ARGV.shift == "--from-pr"
-    number = ARGV.shift or usage!("arc needs --from-pr N")
+    number = argv.shift or raise UsageError, "arc needs --from-pr N"
     pr = pull_request(number)
-    body = "#{pr['body']}\n\n---\nPR: #{pr['url']}\n"
-    issue = create_issue(pr["title"], body: body, labels: [ "arc" ])
+    issue = create_issue(pr["title"], body: "#{pr['body']}\n\n---\nPR: #{pr['url']}\n", labels: [ "arc" ])
+
     puts "##{issue['number']} #{issue['title']}"
+    EXIT_OK
+  end
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+Add `when "arc" then arc(argv)` to `dispatch`.
 
-```bash
-bin/rails test test/log_cli_test.rb
-```
-
-Expected: PASS, 5 tests.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add bin/log test/log_cli_test.rb
-git commit -m "bin/log arc --from-pr: file the PR body, do not rewrite it
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
-```
+- [ ] **Step 4: Run to verify it passes** — PASS, 9 tests.
+- [ ] **Step 5: rubocop, then commit** — subject: `bin/log arc --from-pr: file the PR body, do not rewrite it`.
 
 ---
 
 ## Task 5: Unreachable — fail loudly, spool, let the caller proceed
 
-**Files:**
-- Modify: `bin/log`
-- Modify: `test/log_cli_test.rb`
-- Modify: `.gitignore` (only if Task 1 Step 5 showed `tmp/` is not ignored)
+**Files:** modify `bin/log`, `test/log_cli_test.rb`
 
 - [ ] **Step 1: Write the failing tests**
 
 ```ruby
-  # THE CHOSEN FAILURE MODE: loud, spooled, and NON-BLOCKING. The alternative — blocking the
-  # close-out — was considered and declined; so was a spool that replays automatically, because a
-  # queue that silently drains is data loss wearing a fix. What is left must therefore make the
-  # debt VISIBLE, which is what `bin/log status` is for (Task 6).
-  test "an unreachable Forgejo spools the entry, says so, and exits 3" do
-    spool = Rails.root.join("tmp/log-pending")
-    FileUtils.rm_rf(spool)
+  # THE CHOSEN FAILURE MODE: loud, spooled, NON-BLOCKING. Blocking the close-out was considered and
+  # declined; so was a spool that replays automatically, because a queue that silently drains is
+  # data loss wearing a fix. What remains must make the debt VISIBLE — that is `bin/log status`.
+  #
+  # LOG_SPOOL_DIR IS NOT A TEST CONVENIENCE. test_helper parallelizes by processor, so without it
+  # these tests rm -rf and write the SAME absolute path from several forked workers at once — and
+  # that path is the developer's real spool.
+  test "an unreachable Forgejo spools the write, says so, and exits 3" do
+    Dir.mktmpdir do |spool|
+      _out, err, code = run_log("open", "Something worth keeping", env: {
+        "FORGEJO_TOKEN" => "t0ken", "LOG_SPOOL_DIR" => spool, "LOG_BRANCH" => "claude/example"
+      })
 
-    _out, err, code = run_log("open", "Something worth keeping", env: {
-      "FORGEJO_TOKEN" => "t0ken",
-      "FORGEJO_URL"   => "http://127.0.0.1:1",
-      "LOG_BRANCH"    => "claude/example"
-    })
+      assert_equal 3, code, "unreachable must be its own code, distinguishable from a usage error"
 
-    assert_equal 3, code, "unreachable must be its own exit code, distinguishable from a usage error"
+      spooled = File.join(spool, "claude-example.md")
+      assert File.exist?(spooled), "the entry was not spooled — it is simply lost"
+      assert_includes File.read(spooled), "Something worth keeping"
+      assert_includes err, spooled, "the spool path must be PRINTED; an invisible spool drains silently"
+    end
+  end
 
-    spooled = spool.join("claude-example.md")
-    assert spooled.exist?, "the entry was not spooled — it is simply lost"
-    assert_includes spooled.read, "Something worth keeping"
+  # A 502 FROM A DEAD CONTAINER BEHIND A LIVE PROXY IS THE LIKELIEST REAL OUTAGE, and it is an HTTP
+  # RESPONSE — so a handler that only caught connection errors would exit 3 without spooling while
+  # the docs promised a spool file. This is the case the whole raise-don't-exit restructure exists
+  # for; it is asserted, not argued.
+  test "an HTTP error response spools too, not just a refused connection" do
+    stub = StubForgejo.new(status: 502, response: { "message" => "bad gateway" })
 
-    assert_includes err, spooled.to_s,
-                    "the spool path must be PRINTED; an invisible spool is the silent-drain failure again"
+    Dir.mktmpdir do |spool|
+      _out, err, code = run_log("open", "Filed during an outage", env: {
+        "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+        "LOG_SPOOL_DIR" => spool, "LOG_BRANCH" => "claude/example"
+      })
+
+      assert_equal 3, code
+      assert_includes err, "502"
+      assert_includes File.read(File.join(spool, "claude-example.md")), "Filed during an outage",
+                      "a 502 exited without spooling — the exact hole the raise-don't-exit rule closes"
+    end
   ensure
-    FileUtils.rm_rf(Rails.root.join("tmp/log-pending"))
+    stub&.shutdown
+  end
+
+  # A READ VERB HAS NOTHING TO FILE. Spooling one would make `bin/log status` report unfiled work
+  # that never existed, permanently, since nothing drains it — a false positive in the one
+  # mechanism whose whole job is making real debt visible.
+  test "a failed read spools nothing" do
+    Dir.mktmpdir do |spool|
+      _out, _err, code = run_log("show", "1", env: {
+        "FORGEJO_TOKEN" => "t0ken", "LOG_SPOOL_DIR" => spool
+      })
+
+      assert_equal 3, code
+      assert_empty Dir.glob(File.join(spool, "*.md")),
+                   "a read verb spooled phantom work — status will report it forever"
+    end
   end
 ```
 
-- [ ] **Step 2: Run to verify it fails**
-
-```bash
-bin/rails test test/log_cli_test.rb -n /spools the entry/
-```
-
-Expected: FAIL — no spool file.
-
-- [ ] **Step 3: Implement spooling**
-
-In `bin/log`, add `require "fileutils"` at the top, then:
+- [ ] **Step 2: Run to verify they fail.**
+- [ ] **Step 3: Implement, inside `module Log`**
 
 ```ruby
-SPOOL_DIR = File.expand_path("../tmp/log-pending", __dir__)
+  def spool_dir = ENV.fetch("LOG_SPOOL_DIR", File.expand_path("../tmp/log-pending", __dir__))
 
-# THE BRANCH NAMES THE SPOOL FILE so two branches cannot overwrite each other's unfiled record.
-# LOG_BRANCH is an override for the suite; normal use asks git.
-def current_branch
-  ENV["LOG_BRANCH"] || Open3.capture2("git", "branch", "--show-current").first.strip
-end
+  # THE BRANCH NAMES THE SPOOL FILE, so two branches cannot overwrite each other's unfiled record.
+  def current_branch
+    ENV["LOG_BRANCH"] || Open3.capture2("git", "branch", "--show-current").first.strip
+  end
 
-def spool!(text)
-  FileUtils.mkdir_p(SPOOL_DIR)
-  path = File.join(SPOOL_DIR, "#{current_branch.tr('/', '-')}.md")
-  File.open(path, "a") { |f| f.puts(text, "") }
-  path
-end
+  def spool!(command, payload)
+    FileUtils.mkdir_p(spool_dir)
+    path = File.join(spool_dir, "#{current_branch.tr('/', '-')}.md")
+    File.open(path, "a") { |f| f.puts("# unfiled: #{command}", "", JSON.pretty_generate(payload), "") }
+    path
+  end
 ```
 
-Change the top-level rescue to spool whatever was being filed:
+Replace `main`'s `rescue Unreachable` arm:
 
 ```ruby
-rescue Unreachable => e
-  path = spool!("# unfiled: #{command} #{ARGV_SNAPSHOT.join(' ')}\n\n#{PENDING_BODY}")
-  warn "bin/log: Forgejo is unreachable — #{e.message}"
-  warn "bin/log: the entry was NOT filed. It is spooled at #{path}"
-  warn "bin/log: `bin/log status` will keep reporting it until you file it."
-  exit EXIT_UNREACHABLE
-end
+  rescue Unreachable => e
+    warn "bin/log: Forgejo is unreachable — #{e.message}"
+
+    if e.payload.nil?
+      warn "bin/log: nothing to file (#{command} sends no payload)."
+      return EXIT_UNREACHABLE
+    end
+
+    path = spool!(command, e.payload)
+    warn "bin/log: the entry was NOT filed. It is spooled at #{path}"
+    warn "bin/log: `bin/log status` will keep reporting it until you file it."
+    EXIT_UNREACHABLE
+  end
 ```
 
-Capture the two values that rescue needs, immediately after `command = ARGV.shift`:
+Add `LOG_SPOOL_DIR (default tmp/log-pending), LOG_BRANCH` to `usage_text`'s env line — it is real from this task on, and advertising it earlier would have been a false claim in the file whose whole point is being an honest record.
 
-```ruby
-ARGV_SNAPSHOT = ARGV.dup.freeze
-PENDING_BODY = +""   # each command appends what it was about to send, before it sends it
-```
-
-and in `create_issue`, before the `api` call:
-
-```ruby
-  PENDING_BODY << "#{title}\n\n#{body}"
-```
-
-- [ ] **Step 4: Run to verify it passes**
-
-```bash
-bin/rails test test/log_cli_test.rb
-```
-
-Expected: PASS, 6 tests.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add bin/log test/log_cli_test.rb
-git commit -m "bin/log: an unreachable Forgejo spools loudly rather than losing the entry
-
-Exit 3 is distinct from the usage error so /finish-branch can tell 'could not
-file' from 'spelled it wrong'. No automatic replay — a queue that silently
-drains is data loss wearing a fix.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
-```
+- [ ] **Step 4: Run to verify they pass** — PASS, 12 tests.
+- [ ] **Step 5: rubocop, then commit** — subject: `bin/log: a 502 spools like a refused connection, and reads spool nothing`.
 
 ---
 
 ## Task 6: `bin/log status` and `bin/log setup`
 
-**Files:**
-- Modify: `bin/log`
-- Modify: `test/log_cli_test.rb`
+**Files:** modify `bin/log`, `test/log_cli_test.rb`
 
 - [ ] **Step 1: Write the failing tests**
 
 ```ruby
-  test "status is silent and exits 0 when nothing is unfiled" do
-    FileUtils.rm_rf(Rails.root.join("tmp/log-pending"))
+  test "status is quiet and exits 0 when nothing is unfiled" do
+    Dir.mktmpdir do |spool|
+      out, _err, code = run_log("status", env: { "LOG_SPOOL_DIR" => spool })
 
-    out, _err, code = run_log("status")
-
-    assert_equal 0, code
-    assert_includes out, "nothing unfiled"
+      assert_equal 0, code
+      assert_includes out, "nothing unfiled"
+    end
   end
 
-  # STATUS FAILS LOUD ON A BACKLOG. bin/backup-status exists for the same reason and its header
-  # says it: a nightly that stops is silent, and the failure looks exactly like success right up
+  # STATUS FAILS LOUD ON A BACKLOG. bin/backup-status exists for the same reason and says so in its
+  # header: a nightly that stops is silent, and the failure looks exactly like success right up
   # until the restore. An unfiled arc is the same shape.
-  test "status names every spooled entry and exits non-zero" do
-    spool = Rails.root.join("tmp/log-pending")
-    FileUtils.mkdir_p(spool)
-    spool.join("claude-example.md").write("# unfiled: open Something\n")
+  test "status names every spooled entry and exits 1" do
+    Dir.mktmpdir do |spool|
+      File.write(File.join(spool, "claude-example.md"), "# unfiled: open\n")
 
-    out, _err, code = run_log("status")
+      out, _err, code = run_log("status", env: { "LOG_SPOOL_DIR" => spool })
 
-    assert_equal 1, code, "an outstanding record must fail loud, not print a note and exit 0"
-    assert_includes out, "claude-example.md"
-  ensure
-    FileUtils.rm_rf(Rails.root.join("tmp/log-pending"))
+      assert_equal 1, code, "an outstanding record must fail loud, not print a note and exit 0"
+      assert_includes out, "claude-example.md"
+    end
   end
 
-  test "setup creates each label idempotently and asks for names, not ids" do
+  test "setup creates each label idempotently, by name" do
     stub = StubForgejo.new(status: 201, response: { "id" => 1, "name" => "arc" })
 
     _out, err, code = run_log("setup", env: {
@@ -976,93 +992,67 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
     assert_includes created, "open-work"
     assert_includes created, "deploy"
     assert_operator created.size, :>=, 3, "setup created #{created.size} labels — the list went empty"
+    assert_equal [ "/api/v1/repos/chaim354/tinkerex/labels" ], stub.requests.map(&:path).uniq
   ensure
     stub&.shutdown
   end
 ```
 
-- [ ] **Step 2: Run to verify they fail**
-
-```bash
-bin/rails test test/log_cli_test.rb
-```
-
-Expected: FAIL on all three.
-
-- [ ] **Step 3: Implement both**
+- [ ] **Step 2: Run to verify they fail.**
+- [ ] **Step 3: Implement, inside `module Log`**
 
 ```ruby
-LABELS = %w[arc open-work deploy blocked deliberate
-            filelayer library-scan addons previews maker-web ci].freeze
+  LABELS = %w[arc open-work deploy blocked deliberate
+              filelayer library-scan addons previews maker-web ci].freeze
 
-def status
-  pending = Dir.glob(File.join(SPOOL_DIR, "*.md")).sort
+  def status
+    pending = Dir.glob(File.join(spool_dir, "*.md")).sort
 
-  if pending.empty?
-    puts "bin/log: nothing unfiled."
-    exit 0
+    if pending.empty?
+      puts "bin/log: nothing unfiled."
+      return EXIT_OK
+    end
+
+    puts "bin/log: #{pending.size} unfiled record(s) — these are NOT in Forgejo:"
+    pending.each { |path| puts "    #{path}" }
+    EXIT_UNFILED
   end
 
-  puts "bin/log: #{pending.size} unfiled record(s) — these are NOT in Forgejo:"
-  pending.each { |p| puts "    #{p}" }
-  exit 1
-end
+  # IDEMPOTENT BY TOLERATING 422, which is what Forgejo answers for a label that already exists —
+  # the ordinary case on every run after the first. Treating it as failure would make `setup` a
+  # one-shot command, and a one-shot setup is one nobody re-runs after adding a label. This is the
+  # ONE place a non-2xx is not Unreachable, so it is handled here rather than in `api`.
+  def setup
+    LABELS.each do |name|
+      api(:post, repo_path("/labels"), { name: name, color: "#666666" })
+    rescue Unreachable => e
+      raise unless e.message.include?("HTTP 422")
+    end
 
-# IDEMPOTENT BY IGNORING 422. Forgejo answers 422 for a label that already exists, which is the
-# ordinary case on every run after the first. Treating that as failure would make `setup` a
-# one-shot command, and a one-shot setup is one nobody re-runs after adding a label.
-def setup
-  LABELS.each do |name|
-    response = api(:post, repo_path("/labels"), { name: name, color: "#666666" })
-    code = response.code.to_i
-    next if code.between?(200, 299) || code == 422
-
-    warn "bin/log: could not create label #{name} (HTTP #{code}): #{response.body}"
-    exit EXIT_UNREACHABLE
+    puts "bin/log: #{LABELS.size} labels present."
+    EXIT_OK
   end
-
-  puts "bin/log: #{LABELS.size} labels present."
-end
 ```
 
-Wire both into the `case`, and remove them from the not-implemented arm.
+Add `when "status" then status` and `when "setup" then setup` to `dispatch`.
 
-- [ ] **Step 4: Run to verify they pass**
-
-```bash
-bin/rails test test/log_cli_test.rb
-```
-
-Expected: PASS, 9 tests.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add bin/log test/log_cli_test.rb
-git commit -m "bin/log status and setup: make the debt visible, make the labels exist
-
-status exits non-zero on a backlog for bin/backup-status's reason — a record
-that stops being written is silent, and looks like success until you need it.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
-```
+- [ ] **Step 4: Run to verify they pass** — PASS, 15 tests.
+- [ ] **Step 5: rubocop, then commit** — subject: `bin/log status and setup: make the debt visible, make the labels exist`.
 
 ---
 
 ## Task 7: `deploy`, `note` and `search` — the three PR 2 depends on
 
-**Files:**
-- Modify: `bin/log`
-- Modify: `test/log_cli_test.rb`
+Not optional extras: §6.1 points CLAUDE.md §11 at `bin/log search`, §6.2 replaces `/deploy`'s STATUS step with `bin/log deploy`, and §4's "a correction is a comment" — the sharpest gain from the whole move — is `bin/log note`.
 
-These are not optional extras. Spec §6.1 points CLAUDE.md §11 at `bin/log search`, §6.2 replaces `/deploy`'s STATUS step with `bin/log deploy`, and §4's "a correction is a comment" — the sharpest gain from the whole move — is `bin/log note`. PR 2 calls all three.
+**Files:** modify `bin/log`, `test/log_cli_test.rb`
 
 - [ ] **Step 1: Write the failing tests**
 
 ```ruby
-  # A DEPLOY IS AN ISSUE, WHICH IS WHAT DELETES §15's PUSH-TO-MAIN EXCEPTION. Today a deploy
-  # record is the one sanctioned direct commit to main, because the deploy happens after the merge
-  # and its record cannot live in the work's own PR. As an issue that reasoning evaporates.
+  # A DEPLOY IS AN ISSUE, WHICH IS WHAT DELETES §15's PUSH-TO-MAIN EXCEPTION. Today a deploy record
+  # is the one sanctioned direct commit to main, because a deploy happens after the merge and its
+  # record cannot live in the work's own PR. As an issue that reasoning evaporates.
   test "deploy files an issue carrying the image and every destination" do
     stub = StubForgejo.new
 
@@ -1076,10 +1066,10 @@ These are not optional extras. Spec §6.1 points CLAUDE.md §11 at `bin/log sear
 
     assert_equal [ "deploy" ], request.json["labels"]
     assert_includes request.json["title"], "e079d433"
-    assert_includes request.json["body"], "chunk_remote"
-    assert_includes request.json["body"], "share"
-    assert_includes request.json["body"], "s3",
-                    "a deploy record naming fewer destinations than were deployed is the stale-claim shape §15 warns about"
+    %w[chunk_remote share s3].each do |dest|
+      assert_includes request.json["body"], dest,
+                      "a deploy record naming fewer destinations than were deployed is a stale claim"
+    end
   ensure
     stub&.shutdown
   end
@@ -1088,8 +1078,8 @@ These are not optional extras. Spec §6.1 points CLAUDE.md §11 at `bin/log sear
   # recurring failure was a stale claim buried mid-file, and CLAUDE.md records several in its own
   # voice ("this bullet went on asserting a single even bound for months"). A dated comment appends
   # visibly; finding and rewriting a paragraph at line 4,700 does not happen.
-  test "note posts to the comments endpoint, never re-writing the issue body" do
-    stub = StubForgejo.new
+  test "note posts to the comments endpoint and never rewrites the issue body" do
+    stub = StubForgejo.new(status: 201, response: { "id" => 7 })
 
     _out, err, code = run_log("note", "128", "The measured figure was 7.8 ms, not 5.", env: {
       "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
@@ -1102,15 +1092,14 @@ These are not optional extras. Spec §6.1 points CLAUDE.md §11 at `bin/log sear
     assert_equal "POST", request.method
     assert_equal "/api/v1/repos/chaim354/tinkerex/issues/128/comments", request.path
     assert_equal "The measured figure was 7.8 ms, not 5.", request.json["body"]
-    refute request.json.key?("title"),
-           "note sent a title — it is editing the issue rather than commenting on it"
+    refute request.json.key?("title"), "note sent a title — it is editing the issue, not commenting"
   ensure
     stub&.shutdown
   end
 
   # SEARCH SPANS OPEN AND CLOSED. An arc issue is CLOSED the moment its PR merges, so a search
-  # defaulting to Forgejo's `state=open` would find no finished work at all — every arc, which is
-  # most of the record.
+  # defaulting to Forgejo's state=open would find no finished work at all — which is most of the
+  # record.
   test "search asks for both states" do
     stub = StubForgejo.new(status: 200, response: [])
 
@@ -1132,180 +1121,78 @@ These are not optional extras. Spec §6.1 points CLAUDE.md §11 at `bin/log sear
   end
 ```
 
-- [ ] **Step 2: Run to verify they fail**
-
-```bash
-bin/rails test test/log_cli_test.rb
-```
-
-Expected: FAIL on all three — exit 2, `not implemented yet`.
-
-- [ ] **Step 3: Implement all three**
-
-Add to `bin/log`:
+- [ ] **Step 2: Run to verify they fail.**
+- [ ] **Step 3: Implement, inside `module Log`**
 
 ```ruby
-def comment(number, text)
-  response = api(:post, repo_path("/issues/#{number}/comments"), { body: text })
+  def deploy(argv)
+    raise UsageError, "deploy needs --image SHA" unless argv.shift == "--image"
 
-  unless response.code.to_i.between?(200, 299)
-    warn "bin/log: Forgejo refused the comment (HTTP #{response.code}): #{response.body}"
-    exit EXIT_UNREACHABLE
-  end
-
-  JSON.parse(response.body)
-end
-
-def search(query)
-  # state=all is load-bearing: an arc closes when its PR merges, so the default `open` would hide
-  # every finished piece of work — which is most of the record.
-  path = repo_path("/issues?state=all&q=#{URI.encode_www_form_component(query)}")
-  issues = JSON.parse(api(:get, path).body)
-
-  if issues.empty?
-    puts "bin/log: no issues matching #{query.inspect}."
-  else
-    issues.each { |i| puts "##{i['number']} [#{i['state']}] #{i['title']}" }
-  end
-end
-```
-
-Then the three `case` arms, removing each from the not-implemented list:
-
-```ruby
-  when "deploy"
-    usage!("deploy needs --image SHA") unless ARGV.shift == "--image"
-    image = ARGV.shift or usage!("deploy needs --image SHA")
-    dests = (ARGV[0] == "--dest" ? ARGV[1] : "chunk_remote,share,s3").split(",")
+    image = argv.shift or raise UsageError, "deploy needs --image SHA"
+    dests = (argv[0] == "--dest" ? argv[1] : "chunk_remote,share,s3").split(",")
     body = "Image: `#{image}`\n\nDestinations:\n#{dests.map { |d| "- #{d}" }.join("\n")}\n"
     issue = create_issue("Deploy #{image}", body: body, labels: [ "deploy" ])
+
     puts "##{issue['number']} #{issue['title']}"
+    EXIT_OK
+  end
 
-  when "note"
-    number = ARGV.shift or usage!("note needs an issue number")
-    text = ARGV.shift or usage!("note needs text")
-    comment(number, text)
+  def note(argv)
+    number = argv.shift or raise UsageError, "note needs an issue number"
+    text = argv.shift or raise UsageError, "note needs text"
+    api(:post, repo_path("/issues/#{number}/comments"), { body: text })
+
     puts "noted on ##{number}"
+    EXIT_OK
+  end
 
-  when "search"
-    query = ARGV.shift or usage!("search needs a query")
-    search(query)
+  # state=all is load-bearing: an arc closes when its PR merges, so the default would hide every
+  # finished piece of work — which is most of the record.
+  def search(argv)
+    query = argv.shift or raise UsageError, "search needs a query"
+    path = repo_path("/issues?state=all&q=#{URI.encode_www_form_component(query)}")
+    issues = JSON.parse(api(:get, path).body)
+
+    if issues.empty?
+      puts "bin/log: no issues matching #{query.inspect}."
+    else
+      issues.each { |i| puts "##{i['number']} [#{i['state']}] #{i['title']}" }
+    end
+    EXIT_OK
+  end
 ```
 
-- [ ] **Step 4: Run to verify they pass**
+Add the three `dispatch` arms. Every subcommand in `SUBCOMMANDS` is now implemented, so `dispatch`'s `else` becomes unreachable — leave it, and make it `raise "unreachable: #{command}"` rather than a silent fallthrough.
 
-```bash
-bin/rails test test/log_cli_test.rb
-```
-
-Expected: PASS, 12 tests.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add bin/log test/log_cli_test.rb
-git commit -m "bin/log deploy, note and search — the three PR 2 calls
-
-deploy-as-an-issue is what deletes §15's push-to-main exception. note posts a
-comment rather than editing a body, which is the whole reason corrections stop
-going stale. search asks state=all, or every closed arc is invisible.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
-```
+- [ ] **Step 4: Run to verify they pass** — PASS, 18 tests.
+- [ ] **Step 5: rubocop, then commit** — subject: `bin/log deploy, note and search — the three PR 2 calls`.
 
 ---
 
 ## Task 8: Mutation-check every guard
 
-**No files change.** This task exists because CLAUDE.md §15 requires it: *"After a test that exists to forbid something goes green, break the thing it guards and confirm it goes RED — then restore. A guard that has never failed has not been shown to work."*
+**No files change.** CLAUDE.md §15: *"After a test that exists to forbid something goes green, break the thing it guards and confirm it goes RED — then restore. A guard that has never failed has not been shown to work."*
 
-Do these one at a time. **Restore after each**, and confirm green before the next.
+One at a time. **Restore after each, and confirm green before the next.** Report every result explicitly — a mutation that stays green is a finding, not a formality.
 
-- [ ] **Step 1: The wire-format guard**
+- [ ] **1. Usage anchoring** — delete the `"arc"` row from `SUBCOMMANDS`. Expect RED. (The pre-review spelling stayed GREEN here, because "search" contains "arc".)
+- [ ] **2. Token never on stderr** — add `warn "resolved: #{out}"` inside `token`. Expect RED.
+- [ ] **3. The `bin/secret` override** — replace the `capture3` in `token` with a direct `op read --no-newline #{TOKEN_REF}`. Expect RED.
+- [ ] **4. Non-integer exit guard** — delete the `raise ... unless code.is_a?(Integer)` line. Expect RED.
+- [ ] **5. Wire format** — change `create_issue`'s `labels: labels` to `labels: []`. Expect RED.
+- [ ] **6. `gh` stub consulted** — replace `ENV.fetch("GH_BIN", "gh")` with `"gh"`. Expect RED.
+- [ ] **7. 502 spools** — in `perform`, change the non-2xx `raise` to `return response`. Expect RED on the 502 test.
+- [ ] **8. Reads spool nothing** — in `main`'s rescue, drop the `e.payload.nil?` branch so every failure spools. Expect RED.
+- [ ] **9. Spool exists at all** — delete the `spool!` call from the rescue. Expect RED.
+- [ ] **10. `status` fails loud** — change `status`'s backlog return to `EXIT_OK`. Expect RED.
+- [ ] **11. `note` comments rather than edits** — point `note` at `create_issue` instead of the comments endpoint. Expect RED.
+- [ ] **12. `search` spans both states** — change `state=all` to `state=open`. Expect RED.
+- [ ] **13. Stdlib-only** — add `require "bundler/setup"` to the top of `bin/log`. Expect RED on the stale-`BUNDLE_GEMFILE` test.
 
-In `bin/log`'s `create_issue`, change `labels: labels` to `labels: []`.
-
-```bash
-bin/rails test test/log_cli_test.rb -n /open POSTs/
-```
-
-Expected: **RED** — `[] != ["open-work"]`. Restore, confirm green.
-
-- [ ] **Step 2: The stderr-leak guard**
-
-In `token`, add `warn "resolved: #{out}"` before returning.
-
-```bash
-bin/rails test test/log_cli_test.rb -n /never appears on stderr/
-```
-
-Expected: **RED**. Restore, confirm green.
-
-- [ ] **Step 3: The `bin/secret` override**
-
-Replace the `Open3.capture3` call in `token` with a direct `op read --no-newline #{TOKEN_REF}`.
+- [ ] **Record the result**
 
 ```bash
-bin/rails test test/log_cli_test.rb -n /exported FORGEJO_TOKEN/
-```
-
-Expected: **RED** — the exported value is ignored. Restore, confirm green.
-
-- [ ] **Step 4: The spool**
-
-In the `rescue Unreachable` block, delete the `spool!` call.
-
-```bash
-bin/rails test test/log_cli_test.rb -n /spools the entry/
-```
-
-Expected: **RED** — no spool file. Restore, confirm green.
-
-- [ ] **Step 5: `status` failing loud**
-
-Change `status`'s backlog branch to `exit 0`.
-
-```bash
-bin/rails test test/log_cli_test.rb -n /names every spooled entry/
-```
-
-Expected: **RED**. Restore, confirm green.
-
-- [ ] **Step 6: The `gh` stub is actually consulted**
-
-In `pull_request`, replace `ENV.fetch("GH_BIN", "gh")` with `"gh"`.
-
-```bash
-bin/rails test test/log_cli_test.rb -n /arc --from-pr/
-```
-
-Expected: **RED** — it reaches the real `gh` and gets the wrong title (or fails outright). Restore, confirm green.
-
-- [ ] **Step 7: `note` comments rather than edits**
-
-In the `"note"` arm, replace `comment(number, text)` with
-`create_issue(text, body: text, labels: [])`.
-
-```bash
-bin/rails test test/log_cli_test.rb -n /note posts to the comments endpoint/
-```
-
-Expected: **RED** — the path is `/issues`, not `/issues/128/comments`, and a `title` is sent. Restore, confirm green.
-
-- [ ] **Step 8: `search` spans both states**
-
-In `search`, change `state=all` to `state=open`.
-
-```bash
-bin/rails test test/log_cli_test.rb -n /search asks for both states/
-```
-
-Expected: **RED**. Restore, confirm green.
-
-- [ ] **Step 9: Record the result**
-
-```bash
-git commit --allow-empty -m "Mutation-check bin/log's eight guards: all eight go red on cue
+git commit --allow-empty -m "Mutation-check bin/log's thirteen guards: all thirteen go red on cue
 
 Per §15 — a guard that has never failed has not been shown to work. Each was
 broken individually, confirmed red, and restored.
@@ -1317,44 +1204,30 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ## Task 9: Wire it into CLAUDE.md §13, and close out
 
-**Files:**
-- Modify: `CLAUDE.md` (§13 cheatsheet only — §11/§12/§15 are PR 2's job)
+**Files:** modify `CLAUDE.md` (§13 cheatsheet only — §11/§12/§15 belong to PR 2)
 
 - [ ] **Step 1: Add the cheatsheet block**
 
-In §13, after the `bin/secrets-preflight` block, add:
+In §13, after the `bin/secrets-preflight` block:
 
 ```sh
 # RECORDING WORK. bin/log is the SINGLE write door onto the Forgejo at forgejo.home; MCP may read
-# it, and never writes. Token via bin/secret (op://tinkerex/Forgejo/token) — no `export`.
+# it and never writes. Token via bin/secret (op://tinkerex/Forgejo/token) — no `export`.
 bin/log setup                    # create the labels, idempotently
 bin/log arc --from-pr 261        # arc issue built from the merged PR body
 bin/log open "<title>"           # file an open item
 bin/log deploy --image e079d433  # record a deploy
 bin/log status                   # anything unfiled? exits 1 if so
-# UNREACHABLE IS LOUD, SPOOLED AND NON-BLOCKING (exit 3): the entry lands in
-# tmp/log-pending/<branch>.md and `bin/log status` keeps saying so until you file it.
+# UNREACHABLE IS LOUD, SPOOLED AND NON-BLOCKING (exit 3), and a 502 counts as unreachable — the
+# entry lands in $LOG_SPOOL_DIR (default tmp/log-pending/<branch>.md) and `bin/log status` keeps
+# saying so until you file it. THERE IS NO AUTOMATIC REPLAY.
+# bin/log NEEDS NO GEM, but an inherited RUBYOPT force-requiring bundler still applies before its
+# first line — a caller inside a bundled process must clear those names, as bin/sync-server does.
 ```
 
-- [ ] **Step 2: Verify the line ceiling still holds**
-
-```bash
-bin/rails test test/docs_hygiene_test.rb
-```
-
-Expected: PASS. If the ceiling trips, **do not raise `MAX_LINES`** — trim the block instead. PR 2 lowers the ceiling once §12 collapses.
-
-- [ ] **Step 3: Run the full gate**
-
-```bash
-bin/ci
-```
-
-Expected: every gate green, and the three backend legs reporting identical run counts (±2 assertions / ±1 skip is the known flap recorded in STATUS.md's "Still open").
-
-- [ ] **Step 4: Verify against the real Forgejo, once**
-
-The suite never touches `forgejo.home`. Do this by hand before opening the PR:
+- [ ] **Step 2: Verify the line ceiling** — `bin/rails test test/docs_hygiene_test.rb`. If it trips, **trim the block; do not raise `MAX_LINES`.** PR 2 lowers the ceiling once §12 collapses.
+- [ ] **Step 3: Run the full gate** — `bin/ci`. Every gate green, three backend legs reporting identical run counts (±2 assertions / ±1 skip is the known pre-existing flap).
+- [ ] **Step 4: Verify against the real Forgejo, once.** The suite never touches it. This is the step Task 0's token blocks.
 
 ```bash
 bin/log setup && bin/log open "bin/log smoke test — close me" && bin/log status
@@ -1362,9 +1235,7 @@ bin/log setup && bin/log open "bin/log smoke test — close me" && bin/log statu
 
 Expected: labels reported present, an issue number printed, `nothing unfiled`. Close the smoke-test issue in the UI afterwards.
 
-- [ ] **Step 5: Close out**
-
-Use `/finish-branch`. It will run `bin/ci` again, commit, push, and open the PR. State plainly in the body that **PR 1 deletes nothing** and `docs/STATUS.md` remains canonical until PR 2.
+- [ ] **Step 5: Close out** with `/finish-branch`. State plainly in the PR body that **PR 1 deletes nothing** and `docs/STATUS.md` stays canonical until PR 2.
 
 ---
 
