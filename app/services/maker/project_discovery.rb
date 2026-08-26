@@ -22,6 +22,13 @@ module Maker
     # exists — there is deliberately NO per-reason skips breakdown, because the dominant "skip" is
     # ALREADY CLAIMED, which is the steady state and would print a number every tick meaning
     # nothing happened.
+    #
+    # `status` IS :ok, :capped OR :no_projects_folder — three values, where Maker::ModelIntake's
+    # has two, because this sweep can decline for a reason that one cannot: a library with no
+    # `Projects/` folder at all. SWITCH ON IT FIRST. `candidates` and `cap` are real values in
+    # every branch, never sentinels, so a caller that reads `candidates: 0` without checking
+    # `status` cannot tell "there is nothing to adopt" from "there is nowhere to look" — and only
+    # the second is worth an operator's attention.
     RunResult = Data.define(:created, :candidates, :status, :cap)
 
     # The ceiling on projects created in one run. ABSOLUTE, NOT A PERCENTAGE, for the reason
