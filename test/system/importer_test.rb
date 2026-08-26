@@ -102,7 +102,7 @@ class ImporterTest < ApplicationSystemTestCase
     refute_includes names, ".DS_Store"
 
     # ROLES COME FROM THE SERVER, not from the browser. importer_controller.js has its own
-    # extension→role table (a third hand-copy, already drifted twice — docs/STATUS.md), but only
+    # extension→role table (a third hand-copy, already drifted twice — the Forgejo record), but only
     # node_id and cover are POSTed and Maker::FileAttachment.role_for re-derives authoritatively.
     # This pins that the persisted role is the server's answer, which is what makes the JS copy's
     # drift harmless.

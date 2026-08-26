@@ -28,7 +28,7 @@ module ActiveSupport
     # `test.sqlite3_9`, one per worker, exactly as the comment above says Rails does. (This
     # comment used to claim the opposite, "each worker shares one DB", and it was cited as the
     # explanation for an intermittent `SQLite3::BusyException` that a shared file would explain
-    # and per-worker files cannot — see docs/STATUS.md, "The intermittent".) The chunk dir below
+    # and per-worker files cannot — see the Forgejo record (CLAUDE.md §11), "The intermittent".) The chunk dir below
     # is still needed, and for the reason it gives rather than that one: the MemoryChunkStore
     # writes real files to tmp/dev-chunks that SURVIVE a transaction rollback, so DB isolation
     # buys nothing there. A keyspace-enumerating operation (Sync::ChunkReaper) in one worker would

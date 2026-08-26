@@ -174,7 +174,7 @@ module Maker
       end
 
       # An `unsupported` row IS a row for the current content, so this sweep leaves it alone —
-      # deliberately. Clearing those is the separate, still-open F3D sweep (docs/STATUS.md); doing
+      # deliberately. Clearing those is the separate, still-open F3D sweep (the Forgejo record (CLAUDE.md §11)); doing
       # it here would silently merge two migrations with different correctness arguments.
       test "leaves an unsupported row for the current content alone" do
         n = node!("part.step", "tok-cur")

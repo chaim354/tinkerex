@@ -57,7 +57,7 @@ module Log
   # before it was 62 lines old.
   SUBCOMMANDS = {
     "setup"  => [ "",               "Create the labels, idempotently" ],
-    "arc"    => [ "--from-pr N",    "Arc issue built from PR N's body" ],
+    "arc"    => [ "--from-pr|--from-file", "Arc from a PR, or --from-file PATH to import (add --closed)" ],
     "open"   => [ '"<title>"',      "File an open item" ],
     "deploy" => [ "--image SHA",    "Record a deploy" ],
     "note"   => [ 'ISSUE "<text>"', "Append a comment to a past issue" ],
@@ -224,7 +224,7 @@ module Log
     names.map { |name| label_index.fetch(name) }
   end
 
-  def create_issue(title, body:, labels:)
+  def create_issue(title, body:, labels:, closed: false)
     # THE PAYLOAD IS BUILT WITH NAMES BEFORE THE IDS ARE RESOLVED, and that ordering is the whole
     # point. Resolving labels makes a GET the FIRST wire call of every write verb, so if the payload
     # were built in one expression it would still be nil when that GET failed — and the rescue below
@@ -232,6 +232,11 @@ module Log
     # server would silently become a no-record. Measured as a regression the moment id resolution
     # landed.
     payload = { title: title, body: body, labels: labels }
+    # CLOSED DEFAULTS FALSE AND IS OMITTED ENTIRELY WHEN FALSE, never sent as `closed: false`. The
+    # same verb serves a live arc (opened at PR time, closed later at merge) and a historical import
+    # that arrives already finished — a caller who forgets the flag must get the live behaviour, not
+    # silently closed work.
+    payload[:closed] = true if closed
     resolved = payload.merge(labels: label_ids(labels))
     # Through `parse`, not JSON.parse — a WRITE against a broken proxy answers 200 text/html just
     # as readily as a read does, and an unwrapped JSON::ParserError exits 1 instead of spooling.
@@ -273,14 +278,36 @@ module Log
   end
 
   def arc(argv)
-    raise UsageError, "arc needs --from-pr N" unless argv.shift == "--from-pr"
+    flag = argv.shift
+    title, body = nil
 
-    number = argv.shift or raise UsageError, "arc needs --from-pr N"
-    pr = pull_request(number)
-    issue = create_issue(pr["title"], body: "#{pr['body']}\n\n---\nPR: #{pr['url']}\n", labels: [ "arc" ])
+    case flag
+    when "--from-pr"
+      number = argv.shift or raise UsageError, "arc needs --from-pr N"
+      pr = pull_request(number)
+      title = pr["title"]
+      body = "#{pr['body']}\n\n---\nPR: #{pr['url']}\n"
+    when "--from-file"
+      path = argv.shift or raise UsageError, "arc needs --from-file PATH"
+      title, body = section(path)
+    else
+      raise UsageError, "arc needs --from-pr N or --from-file PATH"
+    end
+
+    issue = create_issue(title, body: body, labels: [ "arc" ], closed: argv.include?("--closed"))
 
     puts "##{issue['number']} #{issue['title']}"
     EXIT_OK
+  end
+
+  # THE FIRST HEADING IS THE TITLE, and its absence is a refusal rather than a guess. 112 sections
+  # import unattended; one silently titled "" is one nobody ever finds again.
+  def section(path)
+    text = File.read(path, encoding: Encoding::UTF_8)
+    heading = text[/\A\s*#+\s*(.+)$/, 1] or
+      raise UsageError, "#{path}: no leading heading — cannot title the issue"
+
+    [ heading.strip, text.sub(/\A\s*#+\s*.+$\n?/, "").strip ]
   end
 
   # IDEMPOTENT BY ASKING WHAT EXISTS, NOT BY TOLERATING A REFUSAL. Forgejo ALLOWS DUPLICATE LABEL

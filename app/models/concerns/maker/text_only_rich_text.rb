@@ -5,7 +5,7 @@ module Maker
   # (CLAUDE.md §15 — bytes stay out of Rails). That attribute governs the browser and NOTHING else:
   # Action Text's sanitizer PRESERVES <action-text-attachment>, so a body posted directly — curl,
   # devtools, a modified fetch — creates a real, rendering attachment with the editor never
-  # involved. Demonstrated, not theorised; see docs/STATUS.md and the overhaul design's §9a.
+  # involved. Demonstrated, not theorised; see the Forgejo record (CLAUDE.md §11) and the overhaul design's §9a.
   #
   # The element is removed rather than its attributes scrubbed, so the guarantee is "no attachment
   # survives a save" regardless of which attributes Action Text or Lexxy emit in a future version.

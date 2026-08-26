@@ -48,7 +48,7 @@ module Maker
       # addon door all no-op'd on it forever while the grid spun until its poll gave up. `failed`
       # re-enqueues, `ready` is done and `unsupported` is terminal by design — these two were the
       # only statuses with no way back. Three rows were wedged this way on the live share library,
-      # the oldest for over a week (docs/STATUS.md).
+      # the oldest for over a week (the Forgejo record (CLAUDE.md §11)).
       #
       # A WINDOW, NOT A BARE "pending → re-enqueue", because `backfill_thumbnails` calls this once
       # per row on every Files page render: without one, every spinner on screen would enqueue a

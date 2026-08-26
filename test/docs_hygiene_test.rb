@@ -34,7 +34,7 @@ class DocsHygieneTest < ActiveSupport::TestCase
   # added here is paid on every session forever. If a rule genuinely needs the room, ask first
   # whether it is an AREA rule that belongs in docs/invariants/ instead — that is what the split is
   # for, and it costs the reader nothing.
-  MAX_LINES = 1_400
+  MAX_LINES = 1_350
 
   test "CLAUDE.md stays under its line ceiling" do
     lines = CLAUDE_MD.readlines.size
@@ -47,6 +47,42 @@ class DocsHygieneTest < ActiveSupport::TestCase
       belongs in docs/invariants/<area>.md with a stub under its §14 anchor, which costs the reader
       nothing on the sessions that never touch that area. See CLAUDE.md's own "How this file is
       scoped" preamble.
+    MSG
+  end
+
+  # DELETING THE OLD STATUS FILE WALKS STRAIGHT INTO §14e's RECORDED TRAP — "a guard that scans a
+  # directory dies silently when the directory leaves". Two architecture guards were `assert_empty`
+  # over a glob of `engines/tinkerex-sync/**`, and the extraction made that glob `[]`, which
+  # satisfies assert_empty perfectly. So this asserts its scanned set is NON-EMPTY first, and that
+  # it is implausibly small.
+  #
+  # THE NEEDLE IS BUILT AT RUNTIME so this file does not contain the literal it forbids. The
+  # alternative — excluding this file by name — is an exclusion that could later hide a real
+  # citation added here. No exclusions is stronger than one exclusion.
+  #
+  # ONE DIRECTORY IS OUT OF SCOPE AND IT IS DELIBERATE: `.claude/worktrees/` holds OTHER BRANCHES'
+  # checkouts. It is gitignored and untracked, and it held 222 of the 241 hits when this was
+  # written — scanning it fails the guard on work that is not in this tree and not this branch's to
+  # fix. CLAUDE.md is also unscanned: §11 names the retired path on purpose, to say where the
+  # record went and to give `git show <sha>:` for it. A historical NAME is not a dead link.
+  STATUS_SCAN_DIRS = %w[app lib test config .claude/commands].freeze
+  RETIRED_RECORD = [ "docs", "STATUS.md" ].join("/").freeze
+
+  test "no source file cites the retired status file" do
+    files = STATUS_SCAN_DIRS.flat_map { |d| Dir.glob("#{d}/**/*.{rb,yml,yaml,md,js}", base: Rails.root) }
+
+    refute_empty files, "the scan found no files at all — did the layout move? " \
+                        "This test cannot guard a set it cannot find."
+    assert_operator files.size, :>, 100, "only #{files.size} files scanned — the glob is too narrow"
+
+    offenders = files.select { |f| Rails.root.join(f).read.include?(RETIRED_RECORD) }
+
+    assert_empty offenders, <<~MSG
+      These cite a file that no longer exists: #{offenders.join(', ')}
+
+      The record lives in Forgejo now. Cite a specific issue as `tinkerex#N`, or point at
+      CLAUDE.md §11 for a generic reference. §11 holds the base URL so the instance can move
+      without touching any of these.
     MSG
   end
 

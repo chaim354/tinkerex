@@ -200,7 +200,7 @@ class CiHygieneTest < ActiveSupport::TestCase
   # `!client/**` line in ci.yml's filter (kept deliberately — see that file) has no representative
   # path left to assert on.
   PATHS_THAT_MUST_SKIP_CI = [
-    "docs/STATUS.md",
+    "docs/DEPLOY.md",
     "CLAUDE.md"                    # root-level markdown: `**.md`, not `**/*.md`
   ].freeze
 
@@ -284,7 +284,7 @@ class CiHygieneTest < ActiveSupport::TestCase
   # brakeman currently latest, `bin/brakeman` exits 0 — identical to the flag being absent — so a
   # run-based guard is green either way and only goes red once upstream releases: a test that
   # cannot fail for the reason it exists, which is this repo's dominant failure shape. That is
-  # exactly how the first green in this branch was worthless (see docs/STATUS.md).
+  # exactly how the first green in this branch was worthless (see the Forgejo record, CLAUDE.md §11).
   #
   # THREE ASSERTIONS, each mutation-checked, because no one of them carries the invariant alone:
   # re-adding the unshift is caught only by the first, gutting the binstub only by the second, and
@@ -417,7 +417,7 @@ class CiHygieneTest < ActiveSupport::TestCase
 
     # One GitHub filter pattern as a Regexp. GitHub documents `*` as "zero or more characters but
     # does not match /" and `**` as "zero or more of ANY character, including /" — which is why
-    # `**.md` matches a root-level CLAUDE.md as well as docs/STATUS.md.
+    # `**.md` matches a root-level CLAUDE.md as well as docs/DEPLOY.md.
     #
     # It also documents `?`, `+` and `[]`, and they do NOT mean what a shell glob means by them
     # (`?` is "zero or one of the PRECEDING character"). Rather than model those wrongly, this
