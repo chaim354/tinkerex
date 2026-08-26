@@ -80,7 +80,7 @@ reading the last entry.
 
 ## Latest (2026-08-25): a git repo in the library, and the sweep that was tearing one apart (branch `claude/codemirror-code-editor`)
 
-**IN PROGRESS — four of nine tasks landed.** Spec:
+**IN PROGRESS — five of nine tasks landed.** Spec:
 `docs/superpowers/specs/2026-08-25-codemirror-code-viewer-design.md`. Plan:
 `docs/superpowers/plans/2026-08-25-codemirror-code-viewer.md`.
 
@@ -310,11 +310,68 @@ identical. `test-chunk-remote` not run here (needs the sibling checkout).
 not here yet". That claim is now false, so it was rewritten rather than left standing — the stale-
 claim shape CLAUDE.md's own preamble records about its `§` counts.
 
-### Still to land (tasks 5–9 of the plan)
+### Indexed is not displayed: the marker is hidden in the Files UI (task 5, landed)
 
-Hiding the marker in the Files listing; the one-time purge migration; the `code` role and
-collapsing `preview_kind`'s second extension vocabulary into the first; the bundle and its
-never-pin-per-package guard; the `codeview` controller.
+`Node.outside_repo_metadata` — `where.not(name: Library::RepoMetadata::DIR_NAME)` — applied to
+**both** of `FilesController#index`'s listing scopes. Two scopes, not one: the flat by-extension
+query and the folder-children query are independent queries over the same catalog, and fixing one
+is the one-condition-two-answers divergence §14a forbids.
+
+**By NAME, and on the SCOPE rather than the `.order` below it.** By name because on share and s3
+the name is the whole of it — the contents beneath the marker are never observed, so they have no
+rows — and it costs no extra query. On the `scope =` assignment because `@match_count` and
+`@child_count` are taken from that same object: applied one line lower, the truncation banner would
+count a file the page never shows, and a folder would paginate rows it does not render.
+
+**THE FLAT SCOPE'S TERM IS LOAD-BEARING, WHICH IS NOT OBVIOUS AND IS WHY THE TEST SEEDS WHAT IT
+DOES.** That scope filters `kind: "file"`, so the marker DIRECTORY can never reach it; the row that
+can is the `gitdir:` POINTER FILE a submodule or linked worktree writes, which task 3 deliberately
+indexes as an ordinary file — and `.git` matches `LIKE '%.git'`, so `?ext=git` lists it. Without a
+pointer-file fixture the flat-scope term is unfalsifiable and the plan's own step-6 mutation stays
+green.
+
+Guard: `test/integration/web/files_git_marker_test.rb` — a new file rather than an addition to
+`files_type_filter_test.rb` (flat only) or `folder_nav_test.rb` (folder only), because the rule's
+whole content is that the two scopes agree, and split across those two suites a reader can delete
+half of it without meeting the other half. It reuses their shared `listed_names` reader verbatim and
+runs on the ambient backend for the reason both of them state.
+
+Mutation-checked four ways, each red for its own reason:
+
+| mutation | result |
+|---|---|
+| drop the term from the FLAT scope only | 1 red — `Expected: ["firmware.git"] / Actual: [".git", "firmware.git"]` |
+| drop the term from the FOLDER scope only | 2 red — `Expected [".gitignore", "main.py", ".git"] to not include ".git"` |
+| `where.not("name LIKE ?", ".git%")` | 1 red — `Expected: [".gitignore", "main.py"] / Actual: ["main.py"]` |
+| `where.not("name LIKE ?", "%.git")` | 1 red — `Expected: ["firmware.git"] / Actual: []` |
+
+The third is the one this arc had already got wrong twice: **both observer suites shipped a
+vacuous version of exactly that `.gitignore` assertion**, rescued by an unrelated term on one
+backend and never reaching the predicate at all on the other. Here the fixture sits in the same
+folder as the marker, where the exclusion really does run over it, and it goes red.
+
+The catalog assertions (`Node.exists?`) are what make the claim *hidden*, not *deleted* — the marker
+has to survive for `Maker::AttachToProject`'s `:in_working_tree` to read it.
+
+**KNOWN LIMITATION, LANDED WITH THE TASK RATHER THAN LEFT TO BE DISCOVERED.** On `chunk_remote` the
+`nodes` table MIRRORS the sync server's tree and the desktop client syncs `.git` whether this app
+likes it or not, so the files INSIDE `.git` exist as rows there — share and s3 never index them at
+all. This scope hides the MARKER on every backend and does **not** hide those descendants from the
+flat view. Closing it needs a recursive CTE on a page already in the hot path — a real per-request
+cost, on the product's main deployment, to tidy a view — and §14j says that tree is the sync
+server's to decide about. If it becomes a real complaint the fix belongs there, or in a
+materialized ancestor column, not in a CTE bolted onto `FilesController#index`. Recorded in
+`node.rb`'s own comment as well, beside the scope, so it is met by whoever next reads the code.
+
+Legs measured for this task: share and s3, both **2405 runs / 8802 assertions / 30 skips**,
+identical.
+`test-chunk-remote` not run here (needs the sibling checkout).
+
+### Still to land (tasks 6–9 of the plan)
+
+The one-time purge migration; the `code` role and collapsing `preview_kind`'s second extension
+vocabulary into the first; the bundle and its never-pin-per-package guard; the `codeview`
+controller.
 
 ### Decided and NOT built, so it is not rediscovered as an oversight
 

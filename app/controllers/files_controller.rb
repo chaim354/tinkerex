@@ -178,7 +178,12 @@ class FilesController < ApplicationController
     if @flat
       @folder = nil
       @crumbs = []
-      scope = flat_ext_scope(@exts)
+      # `.outside_repo_metadata` ON THE SCOPE, NOT ON THE `.order` BELOW, so @match_count is taken
+      # from the same query as the rows and the banner cannot claim a file the page never shows.
+      # A `.git` row reaches THIS scope only as a file — a `gitdir:` pointer, since flat mode
+      # filters kind: "file" — but the rule is the catalog's, not the folder view's, and one
+      # condition must not have two answers across the two scopes (§14a).
+      scope = flat_ext_scope(@exts).outside_repo_metadata
       @match_count = scope.count
       # ORDERED BY THE USER'S SORT, NOT BY NAME, BECAUSE HERE THE ORDER *SELECTS* -- see
       # flat_order. This line used to be `.order(:name)`, and the LIMIT then took the alphabetical
@@ -189,7 +194,10 @@ class FilesController < ApplicationController
     else
       @folder = current_folder
       @crumbs = folder_crumbs(@folder)
+      # `.outside_repo_metadata` here for the same reason it is on the flat scope above, and on
+      # the scope rather than the orders below so @child_count paginates what is actually shown.
       scope = current_user.nodes.present.where(parent_node_id: @folder&.node_id)
+                          .outside_repo_metadata
       # PAGED ONLY UNDER THE NAME SORT — see #paged_folder? for why the other two cannot be.
       @paged = paged_folder?
       if @paged
