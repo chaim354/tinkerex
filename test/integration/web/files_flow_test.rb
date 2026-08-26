@@ -387,6 +387,41 @@ module Web
       assert_select "pre.preview-text"
     end
 
+    # THE RENDERED ATTRIBUTES, NOT THE RUBY THAT PRODUCES THEM (§14d). A data-controller naming
+    # nothing is a SILENT no-op — Stimulus neither throws nor warns on an identifier it cannot
+    # resolve — and a values mismatch is equally silent, so what reaches the page is the only
+    # thing worth asserting. THE FIXTURE'S NAME IS DELIBERATELY UPPER-CASE: the view's ext value
+    # is `File.extname(name).downcase.delete(".")`, three steps, and a file already called
+    # `x.cpp` would pass with two of them deleted.
+    test "a source file's page wires codeview with a normalised extension" do
+      sign_in
+      node_id = upload("Firmware.CPP", "#include <Arduino.h>\n".b)
+      get file_path(node_id)
+
+      assert_response :success
+      assert_select "[data-controller=codeview]", 1
+      assert_select "[data-codeview-ext-value=cpp]", 1
+      assert_select "[data-codeview-url-value=?]", blob_file_path(node_id), count: 1
+      # INSIDE the controller's own element, not merely somewhere on the page. Stimulus resolves a
+      # target only within the subtree of the controller that declares it, so a fallback that
+      # drifted outside would be a target `this.fallbackTarget` can never find — and the graceful
+      # degradation this whole branch is built around would raise instead.
+      assert_select "[data-controller=codeview] pre.preview-text[data-codeview-target=fallback]", 1
+    end
+
+    # THE DEFAULT IS NO LANGUAGE, NOT A GUESS, and this is the half of that rule the server owns:
+    # `txt` has no entry in app/javascript/lib/codemirror_languages.js and must not get one. What
+    # must still be true is that the value ARRIVES — an empty ext value looks identical on the
+    # page and would mean the controller could never highlight anything at all.
+    test "an extension with no language still reaches codeview, carrying its own ext" do
+      sign_in
+      node_id = upload("notes.txt", "plain words\n".b)
+      get file_path(node_id)
+
+      assert_response :success
+      assert_select "[data-codeview-ext-value=txt]", 1
+    end
+
     test "the file detail page shows a notes section and renders note bodies" do
       user = sign_in
       node_id = upload("part.stl", "solid".b)

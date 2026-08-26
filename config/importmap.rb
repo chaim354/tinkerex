@@ -45,6 +45,13 @@ pin "lib/file_chooser", to: "lib/file_chooser.js"
 # precisely so neither repo can break the other (the module header argues that in full).
 pin "lib/print_sheet", to: "lib/print_sheet.js"
 
+# The codeview controller's ext -> language table (plus our own g-code and OpenSCAD stream
+# modes). A HOST pin like the three above, so it is drawn into every addon's merged importmap —
+# but a bundle must NOT import it: it takes the CodeMirror namespace as an argument, so it is
+# only meaningful to the one controller that already holds the bundle. DYNAMIC-imported from
+# there, beside "codemirror" itself, so neither ships on a page with no text file.
+pin "lib/codemirror_languages", to: "lib/codemirror_languages.js"
+
 # THE ADDON SDK — a HOST pin, which is the whole point: merged_importmap draws every host pin before
 # the addon's own, so a bundle imports "@maker/addon-sdk" without declaring anything in its manifest
 # and without the host shipping a copy per addon. Unlike lib/file_chooser directly above (which a
