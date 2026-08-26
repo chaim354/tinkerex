@@ -182,6 +182,13 @@ module Maker
       assert_equal before, @user.nodes.count
     end
 
+    # THE CREATION ORDER BELOW IS LOAD-BEARING — DO NOT ALPHABETIZE IT. The rows are inserted
+    # `d-c, d-a, d-b`, deliberately NOT in node_id order, and that mismatch is the entire reason
+    # this test can tell "explicitly sorted" from "happened to come back sorted". SQLite with no
+    # ORDER BY returns rowid (insertion) order, so dropping `.order(:node_id)` from `adoptable`
+    # makes `first(2)` pick {d-c, d-a} and this goes red — verified by mutation across five seeds.
+    # Rewrite the fixture as `d-a, d-b, d-c` and the same mutation passes: insertion order would
+    # then coincide with the sorted answer, and the guard would silently stop guarding.
     test "a run over the cap adopts deterministically and says it was capped" do
       dir("d-c", "Gamma", "d-projects")
       dir("d-a", "Alpha", "d-projects")
