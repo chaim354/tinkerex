@@ -240,5 +240,32 @@ module Maker
     ensure
       ENV.delete("PROJECT_DISCOVERY_MAX")
     end
+
+    # THE OVERRIDE MUST REACH A REAL SWEEP, AND ASSERTING `max_projects` ALONE DOES NOT SHOW THAT.
+    # Demonstrated, not theorized: mutating `for_user`'s `cap ||= max_projects` to
+    # `cap ||= MAX_PROJECTS` — hardcoding the constant and ignoring ENV entirely — left every other
+    # test in this file GREEN. The two cap tests above pass `cap:` explicitly, so they never
+    # exercise default resolution at all, and the nonsense-override values (-5, 0, "banana") all
+    # fall back to the very constant the mutation hardcodes, so they cannot tell "reads the knob"
+    # from "ignores the knob". `PROJECT_DISCOVERY_MAX` is an operator-facing knob named in
+    # docs/DEPLOY-adjacent prose and in `rake projects:discover`'s own description; it could have
+    # been inert in production with a fully green suite.
+    #
+    # SO THIS TEST PASSES NO `cap:`. That omission is the whole point — do not "clarify" it by
+    # adding one.
+    test "a valid cap override bounds a real sweep" do
+      ENV["PROJECT_DISCOVERY_MAX"] = "1"
+      dir("d-a", "Alpha", "d-projects")
+      dir("d-b", "Beta", "d-projects")
+
+      run = Maker::ProjectDiscovery.for_user(user: @user)
+
+      assert_equal :capped, run.status
+      assert_equal 1, run.created
+      assert_equal 2, run.candidates
+      assert_equal [ "d-a" ], @user.maker_projects.pluck(:folder_node_id)
+    ensure
+      ENV.delete("PROJECT_DISCOVERY_MAX")
+    end
   end
 end
