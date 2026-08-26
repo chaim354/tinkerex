@@ -108,6 +108,32 @@ module Library
       assert paths.none? { |p| p.include?(".Spotlight-V100") }
     end
 
+    # THE ONE SKIP THAT KEEPS ITS ENTRY, and the reason it is not a fifth skip-list wedge: an
+    # OBSERVED node pairs normally, so nothing here manufactures a ghost. The marker dir is what
+    # makes a working tree detectable (Maker::AttachToProject's :in_working_tree); what is declined
+    # is the DESCENT. Library::RepoMetadata carries the argument.
+    test ".git is observed as ONE dir entry and never descended into" do
+      write!("firmware/.git/objects/ab/cdef", "a loose object")
+      write!("firmware/.git/config", "[core]")
+      write!("firmware/main.cpp", "int main(){}")
+      found = by_path
+      paths = found.keys
+
+      assert_includes paths, "firmware/.git", "the MARKER must be observed — it is what makes " \
+                                              "a working tree detectable"
+      assert found.fetch("firmware/.git").dir, "the marker is a DIRECTORY node, never a file"
+      assert_includes paths, "firmware/main.cpp"
+      assert_empty paths.select { |p| p.start_with?("firmware/.git/") },
+                   "nothing beneath .git may be observed"
+    end
+
+    # Whole segments, never prefixes. A repo's own tracked dotfiles are ordinary library files.
+    test "a file merely named .gitignore is indexed normally" do
+      write!(".gitignore", "tmp/")
+
+      assert_includes observe.map(&:rel_path), ".gitignore"
+    end
+
     test "does not index or follow symlinks" do
       write!("real/inside.stl", "y")
       File.symlink(@root.join("real").to_s, @root.join("link").to_s)

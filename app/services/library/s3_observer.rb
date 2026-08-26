@@ -118,6 +118,40 @@ module Library
       unpairable = 0
 
       each_object do |rel, obj, marker|
+        # A REPO IS ONE DIR NODE AND NO FILES, and here the dir node has to be INVENTED. The
+        # Scanner has it easy: it meets a real `.git` directory, observes it, and simply declines
+        # the descent. S3 has no directories at all — the tree in `nodes` is synthesized from key
+        # prefixes — so the marker exists only as a prefix of the very keys we are dropping. Drop
+        # them without recording it and `.git` would not exist on this backend, so the
+        # working-tree question would have two answers across backends (§14a) and
+        # Maker::AttachToProject's :in_working_tree would silently stop firing on an s3 deployment.
+        # Library::RepoMetadata carries the full argument for keeping the marker.
+        #
+        # FIRST, BEFORE THE MARKER-OBJECT BRANCH, and that order is load-bearing rather than
+        # tidy. A zero-byte folder object INSIDE the repo — `firmware/.git/objects/`, which any
+        # console or sync tool may leave behind — reaches here as a marker, and the marker branch
+        # would merge its whole ancestor chain: a dir node BENEATH `.git`, which is precisely the
+        # content this skip exists to drop. Checked below it, this branch would never see that key.
+        #
+        # DELIBERATELY NOT IN #indexable?, which is where every other skip lives: that predicate's
+        # rejects are dropped outright and nothing downstream sees the key, but this skip has to
+        # RECORD something before dropping. The prefix is the only evidence the repo exists.
+        #
+        # STATED CONSEQUENCE, because it is a real decision and a real divergence from the share
+        # backend rather than a tidy-up: a `.git` OBJECT — the `gitdir:` pointer a submodule or a
+        # linked worktree writes where a plain repo puts a directory — becomes the MARKER here, and
+        # its bytes are not indexed at all. Library::RepoMetadata's rule is "a DIRECTORY named
+        # .git", and Library::Scanner can honour it because it holds an lstat; a flat keyspace has
+        # no kind to read, so this backend cannot. Both halves of the fallout are acceptable and
+        # neither is silent by accident: dropping the pointer's bytes matches what LANDMINE 7 below
+        # already decides for a key claimed by both kinds (the DIRECTORY wins), and the resulting
+        # marker makes :in_working_tree protect that submodule's working tree from the intake
+        # sweep, which is the outcome we would want if we could choose it per backend.
+        if (metadata_dir = Library::RepoMetadata.marker_prefix(rel))
+          dirs.merge(dir_chain(metadata_dir))
+          next
+        end
+
         if marker
           # A directory-marker object IS positive evidence of a directory — including one with no
           # children at all, which nothing else in the listing would reveal. So it becomes a dir

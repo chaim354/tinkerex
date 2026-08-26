@@ -307,6 +307,66 @@ module Library
       assert_nothing_raised { scan! } # stable on the next pass — no wedge
     end
 
+    # ---------------------------------------------------------------- a repo's own metadata
+
+    # THE SKIP THAT KEEPS ITS ENTRY, and on this backend the entry has to be INVENTED. The Scanner
+    # observes a real `.git` directory and merely declines to descend; S3 has no directories at
+    # all, so the marker exists only as a prefix of the very keys being dropped. Lose it and the
+    # working-tree question has two answers across backends (§14a) and Maker::AttachToProject's
+    # :in_working_tree silently stops firing on an s3 deployment.
+    test ".git becomes ONE synthesized dir node and its keys are dropped" do
+      @fake.seed!("#{PREFIX}/firmware/.git/config", "[core]")
+      @fake.seed!("#{PREFIX}/firmware/.git/objects/ab/cdef", "a loose object")
+      @fake.seed!("#{PREFIX}/firmware/main.cpp", "int main(){}")
+      scan!
+
+      assert_equal [ "firmware", "firmware/.git", "firmware/main.cpp" ],
+                   @user.nodes.present.order(:storage_path).pluck(:storage_path),
+                   "the marker and the working tree, and nothing from inside the repo"
+      assert_equal "dir", @user.nodes.find_by!(storage_path: "firmware/.git").kind,
+                   "S3 has no directories, so the marker must be SYNTHESIZED as a dir node"
+      assert_equal 1, files.count, "main.cpp is the only file — no config, no loose objects"
+    end
+
+    # THE ORDER OF THE TWO BRANCHES, pinned. A zero-byte folder object inside the repo reaches
+    # #observe as a directory MARKER, and the marker branch merges its whole ancestor chain — so
+    # checked in the other order this key would mint a dir node BENEATH `.git`, which is the very
+    # content the skip exists to drop.
+    test "a directory-marker object INSIDE the repo does not mint a node beneath the marker" do
+      @fake.seed!("#{PREFIX}/firmware/.git/objects/", "")
+      @fake.seed!("#{PREFIX}/firmware/main.cpp", "int main(){}")
+      scan!
+
+      assert_equal [ "firmware", "firmware/.git", "firmware/main.cpp" ],
+                   @user.nodes.present.order(:storage_path).pluck(:storage_path)
+    end
+
+    # A DIVERGENCE FROM THE SHARE BACKEND, PINNED SO IT IS A DECISION AND NOT A DISCOVERY. A
+    # submodule (or a linked worktree) writes a `gitdir:` POINTER FILE where a plain repo has a
+    # directory. Library::Scanner holds an lstat and indexes that as the ordinary file it is; a
+    # flat keyspace has no kind to read, so here it becomes the marker and its bytes go unindexed
+    # — the same direction LANDMINE 7 above already resolves a both-kinds collision in, and the
+    # direction that leaves :in_working_tree protecting that submodule's files.
+    test "a .git OBJECT is the marker on this backend, and its bytes are not indexed" do
+      @fake.seed!("#{PREFIX}/sub/.git", "gitdir: ../.git/modules/sub")
+      @fake.seed!("#{PREFIX}/sub/main.c", "int main(){}")
+      scan!
+
+      assert_equal "dir", @user.nodes.find_by!(storage_path: "sub/.git").kind
+      assert_equal 1, files.count, "the pointer file is not indexed as a file"
+    end
+
+    # Whole segments, never prefixes: a repo's tracked dotfiles are ordinary library files, and a
+    # folder a maker called `git` is their folder.
+    test "a key merely NAMED like git metadata is indexed normally" do
+      @fake.seed!("#{PREFIX}/.gitignore", "tmp/")
+      @fake.seed!("#{PREFIX}/notes/git/todo.txt", "not a repo")
+      scan!
+
+      assert @user.nodes.find_by(storage_path: ".gitignore")
+      assert @user.nodes.find_by(storage_path: "notes/git/todo.txt")
+    end
+
     # ---------------------------------------------------------------- LANDMINE 6: non-UTF-8 keys
 
     # PLAN DRIFT, VERIFIED, AND THE PLAN'S TEST IS IMPOSSIBLE AS WRITTEN.

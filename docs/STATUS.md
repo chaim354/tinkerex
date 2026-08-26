@@ -151,14 +151,56 @@ predates this work — it is the divergence already recorded under "Still open",
 share run flaked on the documented §12.7 `SQLite3::BusyException` in an unrelated test
 (`current_project_topbar_test.rb`) and was clean on re-run.
 
-### Still to land (tasks 3–9 of the plan)
+### The observers: `.git` is ONE node and its contents are none (task 3, landed)
 
-`Library::RepoMetadata` today holds **only `DIR_NAME`** — its path predicates arrive with the
-observers, which is the change that first has a path to test; shipping them now would be uncalled
-code. Remaining: the observers skipping `.git`'s contents while keeping the marker; the write
-guards and door refusal; hiding the marker in the Files listing; the one-time purge migration; the
-`code` role and collapsing `preview_kind`'s second extension vocabulary into the first; the bundle
-and its never-pin-per-package guard; the `codeview` controller.
+`Library::RepoMetadata` gained the two predicates the observers call. `marker?` takes a **leaf**
+(`.gitignore` and `a/.git` both false); `marker_prefix` returns the path up to and including the
+**outermost** `.git` — `index`, never `rindex`, so `a/.git/modules/b/.git/HEAD` resolves to `a/.git`
+and a submodule cannot hide the subtree between two markers. `internal?` is still unwritten: task 4
+turned out to want `marker_prefix` as well (at-or-beneath — nothing here should mint a marker
+either), which leaves the purge as its first real caller.
+
+The two observers differ, and the difference is the whole task. `Library::Scanner` meets a real
+directory: it observes the marker and declines only the **descent**, one `unless` on the worklist
+push — the one place that walk decides to descend. Its `each_child` now yields the leaf `name`
+beside `rel`, because only that frame holds both and `marker?` takes a leaf. `Library::S3Observer`
+has no directory to meet: the marker exists only as a prefix of the keys being dropped, so it is
+**synthesized** (`dirs.merge(dir_chain(repo_root))`) before the keys are skipped.
+
+Two placement decisions there, both load-bearing and both pinned by their own test. It goes
+**first, above the directory-marker branch**: a zero-byte `firmware/.git/objects/` folder object
+reaches `#observe` as a marker, and the marker branch would merge its whole ancestor chain into a
+dir node BENEATH `.git`. And it is **not in `#indexable?`**, where every other skip lives — that
+predicate's rejects are dropped outright, while this skip must RECORD the prefix before dropping
+the key.
+
+Not a fifth skip-list wedge, which is the question §14b's blind spot forces: a wedge needs a live
+node at a path no observation can pair, and the marker IS observed, so it pairs like any other
+directory.
+
+Mutation-checked six ways, each red for its own reason: `index`→`rindex` (the submodule case),
+`==`→`start_with?` in `marker?` (`.gitignore` becomes a marker), a segment-**prefix** match in
+`marker_prefix` (`.gitignore` gets one), dropping the non-String guard (`NoMethodError` on nil),
+removing the Scanner's `unless` (four nodes beneath `.git`), and dropping the S3 `dirs.merge` (the
+marker vanishes from both new tests). Legs measured for this task: share and s3, both **2385 runs /
+8734 assertions / 30 skips**, identical. `test-chunk-remote` was not re-run here — the table above
+is task 2's measurement.
+
+**One cross-backend divergence, found in review, kept and pinned rather than closed.** A submodule
+or linked worktree writes a `gitdir:` POINTER FILE where a plain repo has a directory. The Scanner
+holds an lstat and indexes it as the ordinary file it is; a flat keyspace has no kind to read, so
+on s3 it becomes the MARKER and its bytes go unindexed. Probed, not reasoned: `sub/.git` +
+`sub/main.c` yields `[["sub","dir"], ["sub/.git","dir"], ["sub/main.c","file"]]`. Kept because both
+halves land on the tolerable side — dropping the pointer's bytes is the direction LANDMINE 7
+already resolves a both-kinds collision in, and the resulting marker is what leaves
+`:in_working_tree` protecting that submodule's files from the sweep. `RepoMetadata`'s
+"a DIRECTORY, never a FILE" header now says which backend cannot check it.
+
+### Still to land (tasks 4–9 of the plan)
+
+The write guards and door refusal; hiding the marker in the Files listing; the one-time purge
+migration; the `code` role and collapsing `preview_kind`'s second extension vocabulary into the
+first; the bundle and its never-pin-per-package guard; the `codeview` controller.
 
 ### Decided and NOT built, so it is not rediscovered as an oversight
 
