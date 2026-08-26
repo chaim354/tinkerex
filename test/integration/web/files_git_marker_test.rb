@@ -78,6 +78,46 @@ module Web
       assert_equal [ ".gitignore", "main.py" ], listed_names.sort
     end
 
+    # WHERE THE EXCLUSION SITS IN THE CHAIN IS A SEPARATE CLAIM FROM WHETHER IT IS THERE, AND
+    # EVERY TEST ABOVE IS GREEN WITHOUT IT. `.outside_repo_metadata` is applied to the `scope =`
+    # assignment rather than to the `.order` chain below it, so `@child_count` — which is what
+    # `@pages` is computed from — counts the rows the page actually renders. Moved one line down,
+    # the marker is still hidden from every listing and the whole suite stays green while the
+    # folder gains a PHANTOM SECOND PAGE that renders nothing: 251 rows counted, 250 shown, page 2
+    # empty. Measured: the mutation leaves 2412 runs / 0 failures without this test.
+    #
+    # FOLDER_PAGE is 250, so the fixture sits exactly ON the boundary — that is the only size at
+    # which one extra counted row changes `@pages`, and it is why this seeds 250 rather than a
+    # round handful. `insert_all` because 250 `create!`s is 250 round trips for fixture setup.
+    # Paging is name-sorted only (`paged_folder?`), which is the default sort, so no sort param.
+    test "the hidden marker does not inflate the folder's page count" do
+      now = Time.current
+      @user.nodes.create!(node_id: "dir-big", name: "repo", kind: "dir")
+      dir(".git", "dir-big")
+      Node.insert_all(250.times.map do |i|
+        { node_id: "big-#{i}", name: format("f%03d.stl", i), kind: "file", user_id: @user.id,
+          parent_node_id: "dir-big", size: 5, mtime: 1_000_000_000, deleted: false,
+          created_at: now, updated_at: now }
+      end)
+
+      get files_path(folder: "dir-big")
+
+      assert_response :success
+      assert_equal 250, listed_names.size
+      assert_not_includes listed_names, ".git"
+      # The claim, stated as the user-visible consequence: 250 renderable rows is ONE page, so no
+      # pager is offered at all. Under the mutation @child_count is 251 and this nav appears.
+      assert_select "nav.pager", count: 0
+
+      # And there is no second page to fall off. resolve_page clamps to @pages, so ?page=2 serves
+      # page 1 again; under the mutation @pages is 2, the clamp lets it through, and the offset
+      # runs off the end of a 250-row set to render an empty table.
+      get files_path(folder: "dir-big", page: 2)
+
+      assert_response :success
+      assert_equal 250, listed_names.size, "a page the folder does not have must not render empty"
+    end
+
     # THE FLAT SCOPE (FilesController#index's `if @flat` branch), which is a different query over
     # the same catalog and so has to answer the same way. It filters kind: "file", so the row that
     # reaches it is the `gitdir:` pointer, not the marker directory.
