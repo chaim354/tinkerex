@@ -153,24 +153,33 @@ share run flaked on the documented §12.7 `SQLite3::BusyException` in an unrelat
 
 ### The observers: `.git` is ONE node and its contents are none (task 3, landed)
 
-`Library::RepoMetadata` gained the two predicates the observers call. `marker?` takes a **leaf**
+`Library::RepoMetadata` gained the predicates the observers and the write guards call. `marker?` takes a **leaf**
 (`.gitignore` and `a/.git` both false); `marker_prefix` returns the path up to and including the
 **outermost** `.git` — `index`, never `rindex`, so `a/.git/modules/b/.git/HEAD` resolves to `a/.git`
-and a submodule cannot hide the subtree between two markers. `internal?` is still unwritten: task 4
-turned out to want `marker_prefix` as well (at-or-beneath — nothing here should mint a marker
-either), which leaves the purge as its first real caller.
+and a submodule cannot hide the subtree between two markers. `internal?` names the STRICTLY-beneath question and is
+DERIVED from `marker_prefix` (`prefix && prefix != rel`), so the observers' "may I index this" and
+the write guards' at-or-beneath "may a write land here" cannot drift about which paths have a marker
+at all. They differ on exactly one path — the marker itself — which is the whole design.
+
+**IT WAS NOT WRITTEN THAT WAY FIRST, AND THE CORRECTION IS THE POINT.** The plan was amended
+mid-arc to say task 4 wanted at-or-beneath, "therefore `internal?` is unnecessary" — a non-sequitur
+found in review. Task 4 wanting at-or-beneath does not make strictly-beneath unnecessary; it means
+BOTH questions exist. In between, `marker_prefix` carried two meanings at two call sites,
+distinguished only by what each caller did with the return value (`.present?` versus `!= rel`), and
+the inline term's own comment called it "the term most likely to be deleted as redundant" and then
+defended it in prose. A name cannot be deleted as redundant.
 
 The two observers differ, and the difference is the whole task. `Library::Scanner` meets a real
 directory: it observes the marker and declines only the **descent**, one `unless` on the worklist
 push — the one place that walk decides to descend. Its `each_child` now yields the leaf `name`
-beside `rel`, because only that frame holds both and `marker?` takes a leaf. `Library::S3Observer`
+beside `rel`, so the call site can ask `marker?` a leaf question without rebuilding one — a preference, not a necessity, since the block also receives `path` and `path.basename.to_s` is the same string. `Library::S3Observer`
 has no directory to meet: the marker exists only as a prefix of the keys being dropped, so it is
-**synthesized** (`dirs.merge(dir_chain(repo_root))`) before the keys are skipped.
+**synthesized** (`dirs.merge(dir_chain(marker_prefix(rel)))`, gated on `internal?`) before the keys are skipped.
 
 Two placement decisions there, both load-bearing and both pinned by their own test. It goes
 **first, above the directory-marker branch**: a zero-byte `firmware/.git/objects/` folder object
 reaches `#observe` as a marker, and the marker branch would merge its whole ancestor chain into a
-dir node BENEATH `.git`. And it is **not in `#indexable?`**, where every other skip lives — that
+dir node BENEATH `.git`. And it is **not in `#indexable?`**, where the other path-shape skips live (the non-UTF-8 skip is in `#utf8_key`) — that
 predicate's rejects are dropped outright, while this skip must RECORD the prefix before dropping
 the key.
 
@@ -178,19 +187,35 @@ Not a fifth skip-list wedge, which is the question §14b's blind spot forces: a 
 node at a path no observation can pair, and the marker IS observed, so it pairs like any other
 directory.
 
-Mutation-checked six ways, each red for its own reason: `index`→`rindex` (the submodule case),
-`==`→`start_with?` in `marker?` (`.gitignore` becomes a marker), a segment-**prefix** match in
-`marker_prefix` (`.gitignore` gets one), dropping the non-String guard (`NoMethodError` on nil),
-removing the Scanner's `unless` (four nodes beneath `.git`), and dropping the S3 `dirs.merge` (the
-marker vanishes from both new tests, in both directions), and two more on the term below.
+Mutations run, each red for its own reason — enumerated rather than totalled, because a running
+count is the shape this arc has already had to retract once: `index`→`rindex` (the submodule case);
+`==`→`start_with?` in `marker?` (`.gitignore` becomes a marker, and the scanner depth test); a
+segment-**prefix** match in `marker_prefix` (the s3 depth test); dropping the non-String guard
+(`NoMethodError` on nil); removing the Scanner's `unless` (four nodes beneath `.git`); dropping the
+S3 `dirs.merge` (the marker vanishes from both tests); moving the S3 branch below the
+directory-marker branch (`firmware/.git/objects` returns); `internal?` dropping `!= prefix` (the
+marker becomes internal); hoisting the Scanner's skip out of its `stat.directory?` arm, and
+extending that skip to files (both kill the pointer file).
+
+**TWO OF THOSE GUARDS WERE VACUOUS WHEN FIRST WRITTEN, AND A REVIEW MUTATION IS WHAT SHOWED IT.**
+Both observer suites carried a test named "a key merely NAMED like git metadata is indexed
+normally", whose comment claimed it caught a segment-**prefix** match. Neither could: on s3,
+`.gitignore` sits at the library ROOT, so `marker_prefix(rel) == rel` and the `internal?` term
+rescued the key regardless; on the Scanner, `.gitignore` is a FILE and the skip lives in the
+`stat.directory?` arm, so `marker?` was never consulted at all. Under the mutation
+`.github/workflows/ci.yml` vanished silently and `.github` became a childless dir node while both
+assertions passed. Both now seed at DEPTH and assert the leaf node, and both fail under their own
+mutation. Nothing shipped unguarded — the unit tests always caught it — but the observer-level
+guards could not do the job their comments claimed, which is the same defect class as the retracted
+"cannot" below: a claim nothing could falsify.
 
 **A cross-backend divergence was written in, reviewed, and then closed — the review finding is the
 part worth keeping.** A submodule or linked worktree writes a `gitdir:` POINTER FILE where a plain
 repo has a directory. The first cut of the s3 branch made that object the MARKER and dropped its
 bytes, and its comment justified this by asserting that a flat keyspace has no kind to read, so
 "this backend cannot" honour `RepoMetadata`'s "a DIRECTORY, never a FILE". **That was false.** One
-term closes it — `&& metadata_dir != rel`, the object AT the marker path being the pointer rather
-than the marker — and it costs nothing else: `firmware/.git/config`, `firmware/.git/objects/` and
+term closes it, now named `RepoMetadata.internal?` — the object AT the marker path being the
+pointer rather than the marker — and it costs nothing else: `firmware/.git/config`, `firmware/.git/objects/` and
 the zero-byte `firmware/.git/` folder marker all behave exactly as before, and a `sub/.git` object
 beside `sub/.git/config` now resolves through LANDMINE 7's partition **with its warning** instead
 of being swallowed silently. So s3 matches the Scanner and §14a's one-condition-one-answer holds.
