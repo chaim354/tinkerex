@@ -858,7 +858,12 @@ Add `when "open" then open_item(argv)` to `dispatch`.
                                       "--json", "title,body,url")
     raise Unreachable, "could not read PR #{number}: #{err.strip}" unless status.success?
 
+    # Not `parse` — that takes a Forgejo response. gh answering non-JSON (an auth prompt, a
+    # rate-limit notice) would otherwise surface through the catch-all as "unexpected failure",
+    # which names neither gh nor the PR.
     JSON.parse(out)
+  rescue JSON::ParserError => e
+    raise Unreachable, "gh returned non-JSON for PR #{number}: #{e.message}"
   end
 
   def arc(argv)
@@ -875,7 +880,7 @@ Add `when "open" then open_item(argv)` to `dispatch`.
 
 Add `when "arc" then arc(argv)` to `dispatch`.
 
-- [ ] **Step 4: Run to verify it passes** — PASS, 9 tests.
+- [ ] **Step 4: Run to verify it passes** — PASS, 11 tests.
 - [ ] **Step 5: rubocop, then commit** — subject: `bin/log arc --from-pr: file the PR body, do not rewrite it`.
 
 ---
@@ -986,7 +991,7 @@ Replace `main`'s `rescue Unreachable` arm:
 
 Add `LOG_SPOOL_DIR (default tmp/log-pending), LOG_BRANCH` to `usage_text`'s env line — it is real from this task on, and advertising it earlier would have been a false claim in the file whose whole point is being an honest record.
 
-- [ ] **Step 4: Run to verify they pass** — PASS, 12 tests.
+- [ ] **Step 4: Run to verify they pass** — PASS, 14 tests.
 - [ ] **Step 5: rubocop, then commit** — subject: `bin/log: a 502 spools like a refused connection, and reads spool nothing`.
 
 ---
@@ -1230,7 +1235,7 @@ Not optional extras: §6.1 points CLAUDE.md §11 at `bin/log search`, §6.2 repl
 
 Add the three `dispatch` arms. Every subcommand in `SUBCOMMANDS` is now implemented, so `dispatch`'s `else` becomes unreachable — leave it, and make it `raise "unreachable: #{command}"` rather than a silent fallthrough.
 
-- [ ] **Step 4: Run to verify they pass** — PASS, 18 tests.
+- [ ] **Step 4: Run to verify they pass** — PASS, 20 tests.
 - [ ] **Step 5: rubocop, then commit** — subject: `bin/log deploy, note and search — the three PR 2 calls`.
 
 ---
