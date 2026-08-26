@@ -779,9 +779,17 @@ Expected: PASS on both.
 
 - [ ] **Step 9: Mutation-check (§15)**
 
-Remove the `RepoMetadata` term from `share.rb` only. Run `bin/ci test`. Expected: **RED** on the
-share leg while `test-s3` stays green — which is the cross-backend divergence §14a forbids,
-demonstrated. Restore it.
+Remove the `RepoMetadata` term from `share.rb` only.
+
+**CORRECTED 2026-08-26, after the task was implemented: this goes RED on BOTH legs, not just the
+share one.** An earlier draft predicted red-on-`test` / green-on-`test-s3` and called that the
+cross-backend divergence demonstrated. Wrong, and the reason is worth knowing before you write
+another mutation expectation against an adapter suite: `FileLayer::ShareTest` and `FileLayer::S3Test`
+each construct their adapter DIRECTLY (`FileLayer::Share.new(root:)`, `FileLayer::S3.new(client:
+FakeS3)`) and read nothing from the ambient `LIBRARY_BACKEND`, while every leg runs the full suite —
+so both adapter suites run on both legs. What identifies the regression as one adapter's rather than
+one leg's is the FAILING TEST NAMES: `FileLayer::ShareTest#…` fails on the s3 leg too. That is a
+stronger signal than the leg split would have been, but it is not what the plan said.
 
 - [ ] **Step 10: Commit**
 
