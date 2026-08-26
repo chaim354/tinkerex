@@ -38,6 +38,17 @@ class CodeViewerTest < ApplicationSystemTestCase
 
   TXT = "just some words\nand a second line\nand a third\n".freeze
 
+# OpenSCAD, exercising every rule the mode has: an angle-bracket include, both comment forms, a
+# `$`-prefixed special variable, a keyword, a builtin and numbers.
+SCAD = <<~SCAD.freeze
+  include <MCAD/gears.scad>
+  // A simple L bracket.
+  /* two
+     lines */
+  $fn = 64;
+  module leg(len) { cube([len, 20, 4]); }
+SCAD
+
   # BIG ENOUGH THAT THE CAP IS OBSERVABLE ON LOOPBACK. A 300 KB file arrives in one burst before
   # any client could cancel, so it would prove nothing; 5 MB is a sliced print's order of
   # magnitude (docs/STATUS.md records 2.1 MB for a modest .nc and notes nobody had measured a real
@@ -49,6 +60,7 @@ class CodeViewerTest < ApplicationSystemTestCase
     @root.join("firmware.cpp").write(CPP)
     @root.join("pocket.gcode").write(GCODE)
     @root.join("notes.txt").write(TXT)
+    @root.join("bracket.scad").write(SCAD)
     # A real g-code shape rather than filler, so the cap is exercised on the kind of file that
     # motivated it. One line is 40 bytes; the whole file is BIG_BYTES rounded to a line.
     line = "G1 X10.5 Y20.25 Z-1.5 F1200 ; cutting\n"
@@ -144,6 +156,47 @@ class CodeViewerTest < ApplicationSystemTestCase
     assert_selector ".cm-content", text: "second line"
     assert_no_selector ".cm-line span"
     assert_no_console_errors
+  end
+
+  # OUR OTHER OWN simpleMode, AND THE ONE DEFECT IN IT THAT NOTHING ELSE CAN SEE. The plan spelled
+  # the `$fn` token `"variableName.special"`; @codemirror/language's stream parser resolves a
+  # dotted string with the LAST part as the tag, so that spelling produces NO TOKEN TYPE AT ALL —
+  # `$fn` renders completely unhighlighted — and says so only as a `console.warn`. Measured both
+  # ways in this browser: `variable-2` gives a `$fn` span and an empty console; the dotted form
+  # gives NO `$fn` span and `Modifier special used at start of tag`. Neither symptom is visible to
+  # any Ruby test, and the warning is WARNING level, so `assert_no_console_errors` (SEVERE only)
+  # would not catch it either.
+  #
+  # `.scad` REACHES THIS PAGE ONLY BECAUSE OF Maker::FileAttachment::TEXT_EXTS — its ROLE is
+  # `cad_source`, which is not a text role. Before that constant existed the page said "No inline
+  # preview for this file type" and this whole mode was documented dead code.
+  #
+  # TWO METHODS, NOT ONE, AND FOR template_hygiene_test.rb'S STATED REASON: minitest abandons a
+  # method at its first failure, so the one defect that breaks BOTH halves — the dotted token name
+  # — can only report both if they live apart. Measured: it does break both, and each message
+  # points at a different thing to fix.
+  #
+  # THE LOG IS READ ONCE, INTO A LOCAL. `logs.get(:browser)` is a DRAIN (see
+  # ApplicationSystemTestCase), so a second read in the same test — including
+  # assert_no_console_errors — asserts about an already-emptied buffer, green whatever happened.
+  test "the OpenSCAD mode gives a special variable its own token" do
+    open_file("bracket.scad")
+
+    assert_selector ".cm-content", text: "$fn"
+    assert_selector ".cm-line span", minimum: 4
+    assert_equal [ "$fn" ], page.all(".cm-line span").map(&:text).select { |t| t.start_with?("$") },
+                 "the $-variable rule produced no token — check the token NAME, not the regex"
+  end
+
+  test "the OpenSCAD mode resolves every token name it uses" do
+    open_file("bracket.scad")
+
+    log = page.driver.browser.logs.get(:browser)
+    assert_empty log.map(&:message).grep(/used at start of tag/),
+                 "a token name in codemirror_languages.js is a dotted `tag.modifier` string; " \
+                 "@codemirror/language wants a legacy CodeMirror-5 name or a bare tag, and " \
+                 "drops the token entirely otherwise"
+    assert_empty log.select { |l| l.level == "SEVERE" }.map(&:message)
   end
 
   # THE CAP IS A TRANSFER CAP NOW, NOT JUST A STRING SLICE — the fix docs/STATUS.md's task-7 entry

@@ -91,6 +91,26 @@ module Maker
     # reports pdf failing to be text, which is not the rule anyone broke.
     TEXT_ROLES = %w[document code gcode].freeze
 
+    # Extensions whose files are TEXT even though their ROLE is not a text role — because ROLE and
+    # CONTENT TYPE are two different questions and one file can answer them differently.
+    #
+    # `scad` is the case that forced this, and it is not a loophole in §14d's one-vocabulary rule.
+    # That rule forbids a second TABLE in a second PLACE (FilesController carried its own inline
+    # list of 26 extensions until 2026-08-25, and it had already drifted). This constant lives here,
+    # beside ROLE_BY_EXT and TEXT_ROLES, in the one file that owns the vocabulary — and it exists
+    # because OpenSCAD source is genuinely BOTH: it is `cad_source` for FILING (it belongs in
+    # `cad/` beside the `.f3d` it sits next to, which is what Maker::ProjectFolders
+    # decides) and it is plain source code for VIEWING. The two other candidate fixes are both
+    # worse and both were rejected: adding `cad_source` to TEXT_ROLES would render `.f3d`,
+    # `.sldprt` and `.sldasm` — binary formats — as text, a visible bug on the main deployment; and
+    # a per-extension branch inside `preview_kind` would rebuild the second vocabulary in the very
+    # method that collapsed it.
+    #
+    # STARTS AT ONE ENTRY AND SHOULD STAY SMALL. Every addition is a claim that some role's files
+    # are mostly NOT text while this extension's are, which is a narrow thing to be true. If this
+    # list grows past a handful, the role table is the thing that is wrong.
+    TEXT_EXTS = %w[scad].freeze
+
     # Best-effort role from a filename's extension; unknown -> "other".
     def self.role_for(name)
       ROLE_BY_EXT.fetch(File.extname(name.to_s).downcase.delete("."), "other")

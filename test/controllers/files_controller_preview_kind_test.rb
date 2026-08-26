@@ -56,6 +56,43 @@ class FilesControllerPreviewKindTest < ActiveSupport::TestCase
     assert_equal :other, kind("Makefile")
   end
 
+  # TEXT_EXTS — ROLE AND CONTENT TYPE ARE DIFFERENT QUESTIONS, AND `.scad` ANSWERS THEM
+  # DIFFERENTLY. OpenSCAD source files into `cad/` with the `.f3d` they generate and reads as
+  # source code on the page. BOTH HALVES ARE THE TEST: the second one is what a careless fix
+  # breaks, because the obvious way to make `.scad` text is to add `cad_source` to TEXT_ROLES —
+  # which drags four BINARY formats along with it and renders them as mojibake on the main
+  # deployment. Mutation-checked in exactly that direction.
+  test "scad previews as text while its binary cad_source siblings do not" do
+    assert_equal :text, kind("bracket.scad")
+
+    %w[part.f3d body.fcstd flange.sldprt rig.sldasm].each do |name|
+      assert_equal :other, kind(name),
+                   "#{name} is a BINARY cad_source file — a text preview of it is mojibake"
+    end
+  end
+
+  # THE NO-MIGRATION CLAIM, PINNED. TEXT_EXTS changes what a page RENDERS and nothing that is
+  # STORED: `.scad` keeps the `cad_source` role RederiveVectorAndCadSourceRoles (2026-07-28)
+  # already wrote into every existing attachment row, and keeps filing into `cad/`. That is the
+  # whole reason this needed no re-derive migration of its own, so it is asserted rather than
+  # asserted-in-a-comment — moving `scad` into ROLE_BY_EXT as `code` would turn both lines red and
+  # WOULD need one.
+  test "viewing scad as text did not move its role or its folder" do
+    assert_equal "cad_source", Maker::FileAttachment.role_for("bracket.scad")
+    assert_equal "cad", Maker::ProjectFolders.folder_for("bracket.scad")
+  end
+
+  # EVERY ENTRY MUST BE DOING WORK. An extension whose role is already a text role reaches the
+  # branch without this constant, so listing it here changes nothing and hides the fact that the
+  # ROLE TABLE is what covers it — the beginning of the second list this whole collapse removed.
+  test "TEXT_EXTS names nothing the role table already covers" do
+    redundant = Maker::FileAttachment::TEXT_EXTS.select do |ext|
+      Maker::FileAttachment::TEXT_ROLES.include?(Maker::FileAttachment::ROLE_BY_EXT[ext])
+    end
+    assert_empty redundant,
+                 "these reach :text through their ROLE already; drop them from TEXT_EXTS"
+  end
+
   # THE DERIVATION ASSERTED AS A PROPERTY: every extension whose role is a text role must actually
   # REACH the text branch. What derivation newly risks is not the mapping but the ORDER — measure,
   # image and pdf all return first — so wiring an extension one of them already claims into a text

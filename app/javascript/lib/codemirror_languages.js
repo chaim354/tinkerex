@@ -13,14 +13,15 @@
 // are cheap: a simpleMode is a regex tokenizer over the StreamLanguage the bundle already ships.
 // Do not reach for a full lezer grammar for either.
 //
-// A TOKEN NAME IS A LEGACY CodeMirror-5 NAME OR A BARE TAG — NEVER A DOTTED `tag.modifier`.
-// @codemirror/language's stream parser resolves a dotted string left to right treating the LAST
-// part as the tag, so `variableName.special` warns `Modifier special used at start of tag` on
-// stderr and drops the modifier, while the legacy name `variable-2` resolves to exactly
-// `variableName.special` with no warning. Measured against the shipped bundle, not reasoned:
-// `variable-2` -> node `variableName.special`, warn []; `variableName.special` -> node
-// `variableName_special`, warn ["Modifier special used at start of tag"]. The plan carried the
-// dotted spelling; it would have printed a console warning on every OpenSCAD file.
+// A TOKEN NAME IS A LEGACY CodeMirror-5 NAME OR A BARE TAG — NEVER A DOTTED `tag.modifier`, AND
+// GETTING IT WRONG COSTS THE TOKEN, NOT JUST THE MODIFIER. @codemirror/language's stream parser
+// resolves a dotted string treating the LAST part as the tag, so `variableName.special` resolves
+// to nothing: measured in a real browser, `$fn` then renders with NO span at all, and the only
+// signal is a `console.warn` of `Modifier special used at start of tag`. The legacy name
+// `variable-2` resolves to exactly `variableName.special`, gives `$fn` its own span, and warns
+// nothing. Both halves are pinned by code_viewer_test.rb's OpenSCAD case, which is the only tier
+// that can see either symptom — a WARNING is not SEVERE, so even a console check has to ask for
+// this specific string.
 export function languageFor(ext, cm) {
   switch (ext) {
     case "c": case "h": case "cpp": case "cc": case "hpp": case "ino": return cm.cpp()
@@ -39,13 +40,11 @@ export function languageFor(ext, cm) {
     case "toml": case "ini": case "cfg": case "conf": return cm.StreamLanguage.define(cm.toml)
     case "gcode": case "gco": case "nc": case "tap": case "ngc":
       return cm.StreamLanguage.define(cm.simpleMode(GCODE))
-    // UNREACHABLE THROUGH THE FILE PAGE TODAY, AND KEPT ANYWAY — say so rather than let a reader
-    // assume it works. `Maker::FileAttachment.role_for("x.scad")` is `cad_source`, which is not in
-    // `TEXT_ROLES`, so `FilesController#preview_kind("x.scad")` answers `:other` and this branch
-    // is never reached from a file's detail page (driven, not assumed). Making it reachable is a
-    // ROLE change — `scad` moving from `cad_source` to `code`, which also moves where
-    // Maker::ProjectFolders files it and needs a re-derive migration for existing attachment rows
-    // — so it belongs with that decision, not here. The mode itself is real and probed.
+    // REACHED VIA `Maker::FileAttachment::TEXT_EXTS`, NOT VIA A ROLE. `role_for("x.scad")` is
+    // `cad_source` — a role whose other four members (f3d fcstd sldprt sldasm) are BINARY — so
+    // `.scad` gets here through the one-entry extension set beside ROLE_BY_EXT instead. Its role
+    // and its folder are deliberately unchanged: OpenSCAD source files into `cad/` with the model
+    // it generates and reads as source code on the page, and those are two different questions.
     case "scad": return cm.StreamLanguage.define(cm.simpleMode(OPENSCAD))
     default: return null
   }

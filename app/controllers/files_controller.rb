@@ -1143,7 +1143,12 @@ class FilesController < ApplicationController
     #
     # ORDER IS LOAD-BEARING and this line must stay below the three branches above: an .svg is a
     # text file too, and the measure/image/pdf branches own those pages on purpose.
-    return :text  if Maker::FileAttachment::TEXT_ROLES.include?(Maker::FileAttachment.role_for(name))
+    # OR'd with TEXT_EXTS, which is NOT a second list creeping back in — both constants live in
+    # Maker::FileAttachment, beside ROLE_BY_EXT, and the second one exists because role and content
+    # type are different questions: `.scad` is cad_source for FILING and source code for VIEWING.
+    # That file carries the full argument and the two rejected alternatives.
+    return :text  if Maker::FileAttachment::TEXT_ROLES.include?(Maker::FileAttachment.role_for(name)) ||
+                     Maker::FileAttachment::TEXT_EXTS.include?(ext)
     # Mesh formats the browser can parse itself -> the interactive client-side 3D viewer
     # (modelviewer_controller.js), which supersedes the static thumbnail on the detail page. The
     # thumbnail is still generated (Registry has these) and serves as the viewer's fallback poster.
