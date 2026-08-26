@@ -20,7 +20,7 @@ class ModelsController < ApplicationController
   private_constant :VIEWABLE_3D_EXTS
 
   def index
-    models = current_user.maker_models.includes(:file_attachments)
+    models = current_user.maker_models.catalogued.includes(:file_attachments)
     models = models.by_status(params[:status])
     if params[:q].present?
       models = models.where("title LIKE ?", "%#{ActiveRecord::Base.sanitize_sql_like(params[:q])}%")
@@ -29,6 +29,13 @@ class ModelsController < ApplicationController
       models = models.joins(:tags).where(maker_tags: { name: params[:tag].to_s.strip.downcase })
     end
     @models = models.order(SORTS.fetch(params[:sort], SORTS["recent"])).to_a
+    # AN AUTO MODEL WITH NO ATTACHMENTS IS AN EMPTIED FOLDER, and it is hidden rather than dismissed
+    # or destroyed: the row keeps the user's title and tags and returns the moment a file does. The
+    # rows themselves are cleared on the ordinary schedule by Maker::AttachmentReaper once the
+    # tombstones age out, so this is a display rule and not a second reaper. Filtering in Ruby off
+    # the ALREADY-LOADED :file_attachments include -- a `where.missing` would be a second query and
+    # would disagree with what the cards render.
+    @models.reject! { |m| m.auto? && m.file_attachments.empty? }
     @covers = Maker::Previews::ThumbnailMap.for(current_user, @models.map(&:cover_node_id))
     @all_tags = current_user.maker_tags.order(:name).pluck(:name)
     @status = params[:status]
@@ -117,11 +124,22 @@ class ModelsController < ApplicationController
     end
   end
 
-  # Delete the CATALOG ENTRY (record + attachments + print runs). The library files at
-  # Models/<slug>/ are deliberately left intact — same stance as archiving a Project.
+  # AN AUTO MODEL IS DISMISSED, NOT DESTROYED, AND THE ASYMMETRY IS THE POINT. Maker::ModelIntake
+  # recreates any auto row whose node still holds a model file, so destroying one means the user
+  # deletes it again on the next tick -- §14f's fight-the-user failure, which on chunk_remote costs
+  # a changelog entry per round. The row IS the memory. Nothing recreates an imported model, so
+  # that one keeps today's behaviour: delete the CATALOG ENTRY (record + attachments + print
+  # runs), leaving the library files at Models/<slug>/ deliberately intact — same stance as
+  # archiving a Project.
   def destroy
-    @model.destroy!
-    redirect_to models_path, notice: "Deleted #{@model.title}."
+    if @model.auto?
+      @model.update!(dismissed_at: Time.current)
+      redirect_to models_path,
+                  notice: "Removed #{@model.title} from the catalog. It won't be re-added by the next scan."
+    else
+      @model.destroy!
+      redirect_to models_path, notice: "Deleted #{@model.title}."
+    end
   end
 
   # An unmounted NAS / bucket blip while ensuring folders: 503, not a 500 or a fake "gone".
