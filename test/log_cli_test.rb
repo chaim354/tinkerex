@@ -30,12 +30,21 @@ class LogCliTest < ActiveSupport::TestCase
   BUNDLER_ENV = %w[BUNDLE_GEMFILE BUNDLE_BIN_PATH BUNDLE_LOCKFILE BUNDLER_VERSION
                    BUNDLER_SETUP RUBYOPT RUBYLIB].freeze
 
+  # LOG_SPOOL_DIR DEFAULTS TO A THROWAWAY, so reaching the developer's REAL spool is opt-in — the
+  # same shape as FORGEJO_URL defaulting to an unroutable address. Two write-verb tests were
+  # unguarded and passed only because their stubs happened to succeed; the moment one failed it
+  # appended to tmp/log-pending/<branch>.md, which `bin/log status` then reports as unfiled work
+  # forever. tmp/ is gitignored, so git status never shows it. Observed once, during a mutation
+  # check, before this existed.
+  setup { @spool = Dir.mktmpdir }
+  teardown { FileUtils.remove_entry(@spool) if @spool && File.exist?(@spool) }
+
   # [BIN_LOG, BIN_LOG] is the explicit argv[0] form. With no trailing arguments Ruby takes the
   # single-string form and word-splits it, so a checkout path containing a space fails with ENOENT
   # on the first fragment — and the zero-argument call is exactly what the usage test makes.
   def run_log(*args, env: {})
     cleared = BUNDLER_ENV.to_h { |name| [ name, nil ] }
-    base = cleared.merge("FORGEJO_URL" => "http://127.0.0.1:1")
+    base = cleared.merge("FORGEJO_URL" => "http://127.0.0.1:1", "LOG_SPOOL_DIR" => @spool)
 
     out, err, status = Open3.capture3(base.merge(env), [ BIN_LOG, BIN_LOG ], *args,
                                       chdir: Rails.root.to_s)
@@ -293,5 +302,17 @@ class LogCliTest < ActiveSupport::TestCase
       assert_empty Dir.glob(File.join(spool, "*.md")),
                    "a read verb spooled phantom work — status will report it forever"
     end
+  end
+
+  # THE GUARD FOR THE ABOVE. Without the default, this test's failed write lands in the real spool.
+  test "a failed write never reaches the developer's real spool" do
+    real = Rails.root.join("tmp/log-pending")
+    before = Dir.glob(real.join("*.md")).size
+
+    _out, _err, code = run_log("open", "must not reach the real spool", env: { "FORGEJO_TOKEN" => "t0ken" })
+
+    assert_equal 3, code
+    assert_equal before, Dir.glob(real.join("*.md")).size,
+                 "a test wrote into the developer's real spool — LOG_SPOOL_DIR is not defaulted"
   end
 end
