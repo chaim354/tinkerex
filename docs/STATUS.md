@@ -185,11 +185,37 @@ Every task ran implement → spec review → quality review, and the reviews wer
   empty folder becomes an empty project, which is archivable.
 - **No UI change.** A discovered project is an ordinary project — no badge, no separate list.
 
+### Deployed 2026-08-26 — image `c0014511178f`, the three Unraid backends
+
+Built once, rolled three times, no migrations in the range (`git diff 616b4c7c..c001451 -- db/migrate/`
+empty, `schema.rb` untouched). Baseline taken from `docker ps` on the box, not from a STATUS row:
+all three were on `616b4c7c`, up 6 hours.
+
+| destination | container | `/up` (`.local` / `.home`) |
+|---|---|---|
+| base (`chunk_remote`) | `tinkerex-web-c0014511178f…` | 200 / 200 |
+| `share` | `tinkerex-web-share-c0014511178f…` | 200 / 200 |
+| `s3` | `tinkerex-web-s3-c0014511178f…` | 200 / 200 |
+
+**Exercised, not merely read.** On the base, `Maker::ProjectDiscovery.for_user` was RUN against the
+live app: it returned the new four-field `RunResult` — `created=0 candidates=0
+status=no_projects_folder cap=50` — which is the third status value this arc added, so the shipped
+code is the new code and not a stale layer. `max_projects` resolved to 50 and the fan-out gate
+reported `enqueues` on the non-scannable backend. Project count unchanged.
+
+**THE FIRST-RUN WARNING THIS ENTRY CARRIED DID NOT MATERIALIZE, AND THE MEASUREMENT IS WHY.** A
+read-only probe of what the first sweep WOULD adopt, run on each deployment before the schedule
+fired: **share has 7 folders under `Projects/` and all 7 are already claimed by its 7 projects — 0
+adoptable, for both users.** chunk_remote and s3 have no `Projects/` root at all
+(`:no_projects_folder`). So the first tick is a no-op everywhere, and no file was reorganized. The
+warning was worth making; it was not worth acting on.
+
 ### Not verified
 
-**None of this has run on hardware.** Discovery has never swept a live `Projects/` folder, and the
-first run on the share deployment will adopt every unclaimed folder there at once, up to
-`MAX_PROJECTS = 50`. `rake projects:discover` before the schedule fires is the cheap look.
+**Discovery has still never ADOPTED a folder in production** — not because it failed, but because
+there was nothing to adopt (see the probe above). The adopt-and-file path has run only in the
+suite. The first real exercise will be whenever a folder is next created under `Projects/` outside
+this app, and `rake projects:discover` remains the cheap way to look before a tick does it.
 
 ---
 
