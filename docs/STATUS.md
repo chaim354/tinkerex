@@ -145,6 +145,33 @@ it names the *configuration* (and not a scannable backend), and — the other di
 the first two are satisfied by a migration that does nothing anywhere — a scannable backend still
 destroys the row.
 
+### Deployed 2026-08-26 — image `616b4c7c`, the three Unraid backends
+
+Baseline taken from `docker ps` on the box, not from a STATUS row: all three were on
+`e079d433d5fc220a466294167be7c94ce925a5f4` (up ~1 h). One `kamal build push`, then three
+`--skip-push` rolls. **Unraid only — OVH was not deployed** (not requested; §7).
+
+| destination | container | `/up` `.local` | `/up` `.home` |
+|---|---|---|---|
+| `chunk_remote` (base) | `tinkerex-web-616b4c7c…` | 200 | 200 |
+| `share` | `tinkerex-web-share-616b4c7c…` | 200 | 200 |
+| `s3` | `tinkerex-web-s3-616b4c7c…` | 200 | 200 |
+
+**THIS DEPLOY CHANGES NOTHING A USER OF THE BOX CAN SEE, AND THAT IS THE EXPECTED RESULT RATHER
+THAN A DISAPPOINTING ONE.** The bug was only reachable where no library backend is configured, and
+every destination sets its own explicitly — so the value here is that the deployed image matches
+`main`, not that anything was repaired in place. `PurgeRepoMetadataNodes` did not re-run either: it
+is already `applied` on all three from the previous deploy, so the `say` change is latent.
+
+**Exercised in the running containers, not read out of the image.** Source being present proves the
+copy, not the behaviour. In each of the three, clearing both knobs in-process and calling
+`FileLayer.build` returned **`LibraryBackendCheck::Error — LIBRARY_BACKEND=share requires
+LIBRARY_PATH…`**, which is exactly the answer the old code could not give (it raised a bare
+`KeyError` naming nothing). On the base container `Library::RepoMetadataPurge.call` returned
+`declined=true destroyed=0 skipped=0` with the reason **byte-identical to what `docs/DEPLOY.md`
+records**, which is the half `Result#reason` was added to make possible.
+
+
 ## 2026-08-26: the labelled dropdowns get room to be read, and the gallery stops moving under the pointer (branch `claude/boxes-ui-truncation-and-stable-gallery`)
 
 Two UI defects found by driving the deployed app rather than by reading it, both in the surface the
