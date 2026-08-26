@@ -61,6 +61,35 @@ module FileLayer
       end
     end
 
+    # THE DEFAULT ARM MUST ASK THE GUARD TOO, and until 2026-08-26 it did not. This is the same
+    # claim as the test above with LIBRARY_BACKEND *unset* — the one configuration a fresh clone
+    # actually has — and that one word is the whole difference: `build` resolved "share" and then
+    # called `LibraryBackendCheck.check!` with NO ARGUMENTS, so the guard re-read ENV with ITS OWN
+    # default (`chunk`, the value Arc D Part 2 retired and `build` itself refuses), matched no arm,
+    # and returned having checked nothing. `Share.new`'s `ENV.fetch("LIBRARY_PATH")` then raised a
+    # bare KeyError naming no setting. THE ONE BACKEND REACHABLE WITHOUT SETTING LIBRARY_BACKEND
+    # WAS THE ONE THE GUARD NEVER CHECKED.
+    #
+    # Neither existing test could catch it, and the pair is the §15 shape exactly: the one above
+    # sets LIBRARY_BACKEND explicitly, and "defaults to the share adapter" supplies a valid
+    # LIBRARY_PATH — so between them the default arm's guard has no test that establishes its
+    # precondition. It surfaced as `bin/ci setup` failing on a clean clone, several frames away,
+    # inside the PurgeRepoMetadataNodes migration.
+    #
+    # The fix is HERE and not in the guard's own default: `check!` is also called with no arguments
+    # by config/initializers/library_backend_check.rb, so making ITS default "share" refuses the
+    # boot of any dev box with nothing configured — measured, and it breaks `bin/setup` one step
+    # EARLIER rather than fixing it.
+    test "the DEFAULT backend arm asks the guard, not just the explicit one" do
+      with_backend(nil) do
+        with_library_path(nil) do
+          err = assert_raises(LibraryBackendCheck::Error) { FileLayer.current }
+          assert_match(/requires LIBRARY_PATH/, err.message,
+                       "the default arm must give the operator the same explanation the explicit one does")
+        end
+      end
+    end
+
     S3_ENV = {
       "LIBRARY_S3_BUCKET" => "b", "LIBRARY_S3_ACCESS_KEY_ID" => "ak",
       "LIBRARY_S3_SECRET_ACCESS_KEY" => "sk", "LIBRARY_S3_REGION" => "us-east-1"

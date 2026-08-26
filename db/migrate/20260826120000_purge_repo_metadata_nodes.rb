@@ -34,8 +34,17 @@ class PurgeRepoMetadataNodes < ActiveRecord::Migration[8.1]
       # same capability), and app/models/node.rb records — as a decision of this same arc — that
       # those rows are HIDDEN rather than removed. The service owns that gate; this reports it, so
       # a declined run cannot be misread as "there was nothing to purge".
-      say "declined: #{FileLayer.current.class} is not a scannable backend, so nothing here " \
-          "indexed the contents of a .git and nothing scans them away"
+      #
+      # IT PRINTS result.reason AND MUST NOT COMPOSE ITS OWN SENTENCE. This line read
+      # `"declined: #{FileLayer.current.class} is not a scannable backend…"` and that was wrong
+      # twice over. It hard-coded ONE of the two decline reasons, so the other — an environment
+      # with no library backend configured, which is what a fresh clone running `bin/setup` has —
+      # would have been reported with an actively FALSE statement about a scannable backend. And it
+      # asked FileLayer a SECOND time to do it: in exactly that case the first ask is what the
+      # service rescued, so re-asking RE-RAISES it and takes `db:prepare` down again from the
+      # branch that exists to handle the condition gracefully. The gate is asked once and answers
+      # once; this reports what it said.
+      say "declined: #{result.reason}"
       return
     end
 

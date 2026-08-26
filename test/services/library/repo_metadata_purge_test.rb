@@ -183,6 +183,62 @@ module Library
       assert_equal 0, result.destroyed
     end
 
+    # AN ENVIRONMENT THAT CANNOT CONSTRUCT A BACKEND AT ALL DECLINES — the SECOND decline reason,
+    # and the one `bin/ci setup` broke on. This service asks FileLayer.current for a capability,
+    # and on a fresh clone with nothing configured it is that CONSTRUCTION which fails, so the
+    # PurgeRepoMetadataNodes migration aborted `db:prepare` with `KeyError: key not found:
+    # "LIBRARY_PATH"`. A backend that cannot be built has indexed nothing and scans nothing away,
+    # so declining is the same no-op a fresh database already takes — an ANSWER rather than a crash.
+    #
+    # THE RESCUE IS SCOPED TO THE PORT LOOKUP AND MUST STAY THERE. Widened around the sweep it
+    # would swallow a real breakage inside the purge and report success; the migration's own
+    # comment states that rule about its NameError rescue, and this is the same rule one method
+    # down (§15). LibraryBackendCheck::Error specifically, NOT StandardError: an unknown
+    # LIBRARY_BACKEND still raises ArgumentError out of FileLayer.build, because that is a
+    # MISCONFIGURED DEPLOYMENT rather than an unconfigured developer and §14a wants it loud.
+    test "an environment with no library backend configured DECLINES rather than raising" do
+      inner = file("firmware/.git/config")
+
+      result = with_unconfigured_backend { RepoMetadataPurge.call }
+
+      # The harm first, as the chunk_remote test above explains: a flag is not the thing at stake.
+      assert Node.exists?(inner.id), "a purge that could not even look must destroy nothing"
+      assert result.declined, "an operator must not read a declined run as `destroyed 0`"
+      assert_equal 0, result.destroyed
+      assert_match(/no library backend is configured/, result.reason)
+    end
+
+    # THE TWO DECLINE REASONS MUST READ DIFFERENTLY, which is the whole reason `reason` exists and
+    # the reason the migration prints it instead of re-deriving one. Both are `declined: true` with
+    # `destroyed: 0`, and they mean opposite things: a chunk_remote decline is CORRECT and is
+    # recorded as expected output in docs/DEPLOY.md, while an unconfigured environment declining on
+    # a real deployment means the purge did not happen. One shared sentence makes the second
+    # unreadable — and printing the first one's text ("FileLayer::ChunkRemote is not a scannable
+    # backend") for it would be an actively FALSE statement about a deployment holding no
+    # ChunkRemote at all.
+    test "the two decline reasons are distinguishable" do
+      FileLayer.current = FileLayer::ChunkRemote.new
+      not_scannable = RepoMetadataPurge.call.reason
+      unconfigured = with_unconfigured_backend { RepoMetadataPurge.call.reason }
+
+      assert_match(/not a scannable backend/, not_scannable)
+      assert_no_match(/not a scannable backend/, unconfigured)
+      assert_not_equal not_scannable, unconfigured
+    end
+
+    # A SUCCESSFUL RUN CARRIES NO REASON. Without this, `reason` could be populated unconditionally
+    # and the two tests above would still pass while an operator reading a report of real work saw
+    # a decline sentence beside it.
+    test "a run that actually did the work reports no decline reason" do
+      file("firmware/.git/config")
+
+      result = RepoMetadataPurge.call
+
+      assert_equal 1, result.destroyed
+      assert_not result.declined
+      assert_nil result.reason
+    end
+
     # A PROJECT'S OR MODEL'S COVER IS A THIRD POINTER, and the worse one: Maker::DeadNodes
     # .reapable? answers TRUE for a nil node, so a destroyed cover is reaped immediately with none
     # of the grace a tombstone buys — cleared silently, with nothing anywhere saying why.
@@ -236,6 +292,25 @@ module Library
       RepoMetadataPurge.call
 
       assert_nothing_raised { Library::Scanner.call(@user, root: @root) }
+    end
+
+    # A backend the factory cannot CONSTRUCT, deterministically on all three CI legs. `share` is
+    # named EXPLICITLY rather than left to the factory's default because the s3 and chunk_remote
+    # legs each carry their own backend's env — unsetting LIBRARY_PATH alone would leave those two
+    # perfectly configured, and the test would assert nothing on two legs out of three.
+    #
+    # FileLayer.reset! on the way IN as well as out: setup's use_fresh_share_library! assigns
+    # FileLayer.current directly, so without the reset the memo answers and the factory — the thing
+    # under test — is never asked at all.
+    def with_unconfigured_backend
+      prior = { "LIBRARY_BACKEND" => ENV["LIBRARY_BACKEND"], "LIBRARY_PATH" => ENV["LIBRARY_PATH"] }
+      ENV["LIBRARY_BACKEND"] = "share"
+      ENV["LIBRARY_PATH"] = nil
+      FileLayer.reset!
+      yield
+    ensure
+      prior.each { |k, v| ENV[k] = v }
+      FileLayer.reset!
     end
 
     # Library::Scanner declines the descent on RepoMetadata.marker?, so lifting that one answer

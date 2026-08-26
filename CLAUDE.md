@@ -667,6 +667,16 @@ Anything below that binds on only one area belongs there too, with a stub here.
   Library` and **took the boot down while every test stayed green** (test env skips it).
   **The S3 boot guard does NO NETWORK** — a boot depending on a third party turns a blip
   into a crash loop. Config *presence* is what boot can honestly check.
+- **`FileLayer.build` TELLS `check!` WHICH BACKEND IT RESOLVED; the guard's no-arg default is the
+  BOOT INITIALIZER's question and is deliberately DIFFERENT.** Calling `check!` with no arguments
+  let it re-read ENV with a default (`chunk`) Arc D Part 2 left behind when `build`'s became
+  `share` — so **the one backend reachable WITHOUT setting `LIBRARY_BACKEND` was the one the guard
+  never checked**, and `Share.new` raised a bare `KeyError` that broke `bin/ci setup`, a gate no CI
+  job runs (`LOCAL_ONLY_GATES`). Do NOT instead match the guard's own default to `build`'s:
+  measured, that refuses an unconfigured dev box's BOOT and moves the same failure one step
+  earlier. A port that cannot be CONSTRUCTED is not a scannable one — `Library::RepoMetadataPurge`
+  declines with a `reason`, rescuing `LibraryBackendCheck::Error` alone, never `KeyError` (too
+  broad) and never around the sweep (§15's silent-success shape).
 - **`write(..., replace: true)` IS AN OPT-IN BESIDE THE CLOBBER REFUSAL, NOT A RELAXATION OF IT.**
   The refusal is still the default on both writable adapters and every existing caller omits the
   kwarg; `replace:` exists for a door that has just asked a user "this would replace `design/x.svg`
