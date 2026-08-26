@@ -140,6 +140,26 @@ misunderstanding, in its most literal form. It is a real 160-byte 1x1 JPEG now.
   columns, 413px for a 321px need), 768px (two), 375px (one clean column, no horizontal overflow,
   both labels fully visible).
 
+### A flake that was blocking the merge, diagnosed rather than re-run
+
+`WorkerBudgetTest#test_a_detector_that_raises_is_treated_as_contended` failed twice on 2026-08-26 —
+once locally, once on CI (run 32968647983) — always that one test, always green in isolation and on
+re-run. Not this arc's code, but it is what a merge waits on, so it was diagnosed instead of
+retried.
+
+**The pidfile directory is shared and the sweep is one of the behaviours under test.** These
+examples write pidfiles for deliberately DEAD pids, and `concurrent_browser_suite?` deletes a dead
+pid's file as it reads it. The unit suite runs 10 processes, so "a stale pidfile is ignored and
+swept" in one worker deletes the file "a detector that raises" just wrote in another, which then
+scans an empty directory and reads CONTENDED as idle. Proven in one line rather than argued:
+writing `999998.pid` and then calling `concurrent_browser_suite?` — what the other worker does —
+leaves `File.exist? == false`.
+
+`with_pidfiles` now gives each example its own `Dir.mktmpdir` and restores the real constant
+afterwards. Production keeps ONE directory by design — a second suite must SEE the first — which is
+why this is a constant swap in the test rather than a configurable path that could drift from the
+real one. **Five consecutive full unit runs: 2516 runs, 0 failures.**
+
 ### Two repos again, and one comment that has to stay true in both
 
 `fields.js` and `gallery.js` are the bundle's (`chaim354/tinkerex-addons`); the CSS, the fixture and
