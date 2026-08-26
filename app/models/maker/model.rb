@@ -8,6 +8,10 @@ module Maker
 
     PRINT_STATUSES = %w[want_to_print printed failed].freeze
 
+    # Where this row came from. "import" is models#new; "auto" is Maker::ModelIntake's sweep over
+    # the library. The two differ in exactly one user-visible way -- see ModelsController#destroy.
+    ORIGINS = %w[import auto].freeze
+
     belongs_to :user
 
     has_many :file_attachments, -> { order(:position) },
@@ -23,8 +27,15 @@ module Maker
     validates :title, presence: true
     validates :slug, presence: true, uniqueness: { scope: :user_id }
     validates :print_status, inclusion: { in: PRINT_STATUSES }
+    validates :origin, inclusion: { in: ORIGINS }
 
     scope :by_status, ->(s) { where(print_status: s) if s.present? }
+
+    # WHAT /models SHOWS. A dismissed auto model is the user's "I do not want this" and is
+    # permanent; the row survives only so the next sweep does not recreate it.
+    scope :catalogued, -> { where(dismissed_at: nil) }
+
+    def auto? = origin == "auto"
 
     def to_param = slug
 

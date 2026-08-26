@@ -65,5 +65,17 @@ module Maker
       assert_not shelf.valid?
       assert_includes shelf.errors[:path].join, "isn't allowed"
     end
+
+    test "seeding is idempotent and does not resurrect deleted rows" do
+      Maker::Shelf.seed_once!(@user)
+      assert_equal [ "", "Models", "Projects/*/models" ], @user.maker_shelves.order(:path).pluck(:path)
+
+      Maker::Shelf.seed_once!(@user)
+      assert_equal 3, @user.maker_shelves.count
+
+      @user.maker_shelves.destroy_all
+      Maker::Shelf.seed_once!(@user.reload)
+      assert_empty @user.maker_shelves.reload
+    end
   end
 end
