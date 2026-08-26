@@ -153,7 +153,12 @@ class LogCliTest < ActiveSupport::TestCase
       File.chmod(0o755, op)
 
       _out, err, code = run_log("show", "1", env: {
-        "PATH" => "#{dir}:#{ENV['PATH']}", "LANG" => nil, "LC_ALL" => nil, "FORGEJO_TOKEN" => nil
+        # LC_CTYPE TOO, NOT JUST LANG/LC_ALL. Ruby resolves the default external encoding from
+        # whichever of the three is set, so clearing two of them leaves the guard vacuous on any
+        # machine that sets the third — measured: this mutation went GREEN in one environment and
+        # RED in another, for no reason but an ambient LC_CTYPE.
+        "PATH" => "#{dir}:#{ENV['PATH']}", "FORGEJO_TOKEN" => nil,
+        "LANG" => nil, "LC_ALL" => nil, "LC_CTYPE" => nil
       })
 
       assert_equal 3, code, "a locale-less credential failure did not reach the clean unreachable exit"
@@ -161,6 +166,27 @@ class LogCliTest < ActiveSupport::TestCase
                       "the encoding crash is back — bin/log must set default_external"
       refute_includes err, "in 'Log.token'", "a stack trace reached the user"
     end
+  end
+
+  # THE CATCH-ALL AND EXIT_BUG, DRIVEN BY A REAL TRIGGER RATHER THAN A TEST HOOK. Forgejo answers
+  # an error as a JSON OBJECT where a list was expected, and `issues.each { |i| i["number"] }` then
+  # indexes an Array with a String — TypeError. Nothing else in the suite reaches main's
+  # `rescue StandardError`, so before this both its existence and its EXIT_BUG return were asserted
+  # nowhere: the mutation sweep found removing the catch-all, and changing its return code, BOTH
+  # green.
+  test "an unexpected error is EXIT_BUG and says plainly that nothing was spooled" do
+    stub = StubForgejo.new(status: 200, response: { "message" => "repository not found" })
+
+    _out, err, code = run_log("search", "anything", env: {
+      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url
+    })
+
+    assert_equal 5, code, "a bug in bin/log reported itself as a recoverable outage"
+    assert_includes err, "unexpected failure"
+    assert_includes err, "NOT SPOOLED",
+                     "the user was not told the record is unrecorded"
+  ensure
+    stub&.shutdown
   end
 
   # THE WIRE FORMAT IS THE ASSERTION. Not "the issue came back with our title" — that passes even
@@ -361,14 +387,22 @@ class LogCliTest < ActiveSupport::TestCase
 
   # THE GUARD FOR THE ABOVE. Without the default, this test's failed write lands in the real spool.
   test "a failed write never reaches the developer's real spool" do
-    real = Rails.root.join("tmp/log-pending")
-    before = Dir.glob(real.join("*.md")).size
+    # COMPARE CONTENT, NOT A FILE COUNT. spool! APPENDS, so a count cannot tell "nothing was
+    # written" from "a line was added to a file that already existed" — and a developer with an
+    # unfiled entry for this branch has exactly that file. Measured: the count version reported a
+    # false GREEN under mutation because of one stray pre-existing spool file.
+    branch = `git branch --show-current`.strip.tr("/", "-")
+    real = Rails.root.join("tmp/log-pending", "#{branch}.md")
+    before = File.exist?(real) ? File.read(real) : nil
 
     _out, _err, code = run_log("open", "must not reach the real spool", env: { "FORGEJO_TOKEN" => "t0ken" })
 
     assert_equal 3, code
-    assert_equal before, Dir.glob(real.join("*.md")).size,
-                 "a test wrote into the developer's real spool — LOG_SPOOL_DIR is not defaulted"
+    after = File.exist?(real) ? File.read(real) : nil
+    # A plain `assert` rather than assert_equal: the ordinary case is nil == nil (no such file
+    # before or after), and minitest refuses assert_equal against nil.
+    assert after == before,
+           "a test wrote into the developer's real spool — LOG_SPOOL_DIR is not defaulted"
   end
 
   test "status is quiet and exits 0 when nothing is unfiled" do
