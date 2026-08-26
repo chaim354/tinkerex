@@ -33,6 +33,22 @@ module Maker
 
     def lamp_folder = @lamp.ensure_library_folder!(@user)
 
+    # Real SQL round-trips inside the block. Same shape as project_intake_test.rb's helper of the
+    # same name: `uncached` so the AR query cache cannot make a repeat measurement read
+    # artificially low, schema and transaction bookkeeping excluded so only real work counts.
+    def count_queries(&block)
+      count = 0
+      counter = ->(_name, _start, _finish, _id, payload) do
+        next if payload[:name] == "SCHEMA" || payload[:cached]
+        next if payload[:sql].match?(/\A\s*(BEGIN|COMMIT|ROLLBACK|RELEASE|SAVEPOINT|PRAGMA)/i)
+        count += 1
+      end
+      ActiveRecord::Base.uncached do
+        ActiveSupport::Notifications.subscribed(counter, "sql.active_record", &block)
+      end
+      count
+    end
+
     # --- #refusal_for: the rules themselves ---------------------------------------
 
     test "an ordinary unattached file has nothing standing in its way" do
@@ -92,6 +108,129 @@ module Maker
     test "this project's own attachment is not 'elsewhere'" do
       @lamp.file_attachments.create!(user: @user, node_id: "f-1", role: "model")
       assert_nil service.refusal_for(@node)
+    end
+
+    # --- :in_working_tree ---------------------------------------------------------
+    #
+    # A REPO IN THE LIBRARY IS AN ORDINARY THING AND THE SWEEP USED TO TEAR IT APART. §14f's
+    # root-is-inbox rule files every file at a project folder's root by category, so a repo cloned
+    # at Projects/<slug>/ lost its README.md to docs/ and its main.py to other/, unattended, every
+    # sweep — a delete plus an untracked add as far as git is concerned.
+    #
+    # UNSCOPED, unlike :attached_elsewhere, and the asymmetry is the point. A refusal here does NOT
+    # mean "refuse the attachment": #call returns `relocation: (move(node) if refusal.nil?)`, so it
+    # means ATTACH THE ROW AND LEAVE THE BYTES WHERE THEY ARE — the right answer at all four of
+    # #refusal_for's callers. :attached_elsewhere needed `within_own_folder:` because its stated
+    # reason is positional and stopped applying to one caller; "do not move a file out from under
+    # git" has no such exception.
+    test "a file inside a working tree is refused, at any depth" do
+      repo = create_node!(@user, node_id: "d-repo", name: "firmware", kind: "dir")
+      create_node!(@user, node_id: "d-git", name: ".git", kind: "dir", parent_node_id: "d-repo")
+      src = create_node!(@user, node_id: "f-src", name: "main.cpp", kind: "file",
+                         parent_node_id: repo.node_id)
+      nested = create_node!(@user, node_id: "d-src", name: "src", kind: "dir",
+                            parent_node_id: repo.node_id)
+      deep = create_node!(@user, node_id: "f-deep", name: "util.cpp", kind: "file",
+                          parent_node_id: nested.node_id)
+
+      assert_equal :in_working_tree, service.refusal_for(src)
+      assert_equal :in_working_tree, service.refusal_for(deep)
+    end
+
+    test "the refusal is NOT scoped by within_own_folder: — it holds for the sweep too" do
+      create_node!(@user, node_id: "d-repo", name: "firmware", kind: "dir")
+      create_node!(@user, node_id: "d-git", name: ".git", kind: "dir", parent_node_id: "d-repo")
+      src = create_node!(@user, node_id: "f-src", name: "main.cpp", kind: "file",
+                         parent_node_id: "d-repo")
+
+      assert_equal :in_working_tree, service.refusal_for(src, within_own_folder: true),
+                   "ProjectIntake#place passes within_own_folder: true; the repo rule must survive it"
+    end
+
+    test "a sibling folder that merely CONTAINS a repo is not itself a working tree" do
+      create_node!(@user, node_id: "d-repo", name: "firmware", kind: "dir")
+      create_node!(@user, node_id: "d-git", name: ".git", kind: "dir", parent_node_id: "d-repo")
+
+      assert_nil service.refusal_for(@node), "bracket.stl is at the root; the repo is one folder over"
+    end
+
+    # A TOMBSTONE IS NOT A WORKING TREE. `present` in the lookup is what makes this true — without
+    # it, deleting a repo would freeze its former folder against the sweep forever, with nothing
+    # visible anywhere saying why.
+    test "a TOMBSTONED .git does not make a folder a working tree" do
+      create_node!(@user, node_id: "d-repo", name: "firmware", kind: "dir")
+      marker = create_node!(@user, node_id: "d-git", name: ".git", kind: "dir",
+                            parent_node_id: "d-repo")
+      src = create_node!(@user, node_id: "f-src", name: "main.cpp", kind: "file",
+                         parent_node_id: "d-repo")
+      marker.update!(deleted: true)
+
+      assert_nil service.refusal_for(src)
+    end
+
+    # A file merely NAMED like git metadata is an ordinary file. This is the segment-vs-prefix
+    # distinction Library::OsClutter gets wrong at everyone's peril.
+    test ".gitignore is a file, not a marker" do
+      create_node!(@user, node_id: "d-repo", name: "firmware", kind: "dir")
+      create_node!(@user, node_id: "f-ign", name: ".gitignore", kind: "file",
+                   parent_node_id: "d-repo")
+      src = create_node!(@user, node_id: "f-src", name: "main.cpp", kind: "file",
+                         parent_node_id: "d-repo")
+
+      assert_nil service.refusal_for(src)
+    end
+
+    # A FILE named `.git` is not a marker either — only a DIRECTORY is. (A real repo can have a
+    # `.git` FILE, in a submodule or a worktree, where it holds a `gitdir:` pointer; treating that
+    # as a marker would be right by accident and wrong by construction, since nothing here reads
+    # the pointer. Keep the rule "a directory named .git" and let a submodule's own .git dir,
+    # wherever it really lives, do the work.)
+    test "a FILE named .git is not a marker" do
+      create_node!(@user, node_id: "d-repo", name: "firmware", kind: "dir")
+      create_node!(@user, node_id: "f-git", name: ".git", kind: "file", parent_node_id: "d-repo")
+      src = create_node!(@user, node_id: "f-src", name: "main.cpp", kind: "file",
+                         parent_node_id: "d-repo")
+
+      assert_nil service.refusal_for(src)
+    end
+
+    # THE COST OF THE RULE IS A PROPERTY WORTH ASSERTING, not trusting: ProjectIntake sweeps every
+    # file at one folder's root through this method, so an uncached ancestor walk is two queries
+    # per LEVEL per FILE on an unattended 15-minute job.
+    #
+    # ASSERTED AS "DEPTH IS FREE", WITH NO LITERAL ANYWHERE. A count of zero is impossible here —
+    # #refusal_for spends two queries per file on :model_bundle and :attached_elsewhere before it
+    # ever reaches this rule — and a literal would pin the sum of all three rules, so it would
+    # break the next time an unrelated rule changed. Constancy in N does not discriminate either:
+    # an uncached walk is still linear in the file count, so doubling the files doubles the cost
+    # whether or not the cache exists. What DOES discriminate is DEPTH: cached, a file four levels
+    # down costs exactly what a file one level down costs; uncached, it costs six queries more.
+    test "the ancestor walk is cached per parent, so depth costs nothing per file" do
+      create_node!(@user, node_id: "d-repo", name: "firmware", kind: "dir")
+      create_node!(@user, node_id: "d-git", name: ".git", kind: "dir", parent_node_id: "d-repo")
+      create_node!(@user, node_id: "d-a", name: "a", kind: "dir", parent_node_id: "d-repo")
+      create_node!(@user, node_id: "d-b", name: "b", kind: "dir", parent_node_id: "d-a")
+      create_node!(@user, node_id: "d-c", name: "c", kind: "dir", parent_node_id: "d-b")
+
+      shallow = 5.times.map do |i|
+        create_node!(@user, node_id: "f-s#{i}", name: "s#{i}.cpp", kind: "file",
+                     parent_node_id: "d-repo")
+      end
+      deep = 5.times.map do |i|
+        create_node!(@user, node_id: "f-d#{i}", name: "d#{i}.cpp", kind: "file",
+                     parent_node_id: "d-c")
+      end
+
+      policy = service
+      policy.refusal_for(shallow.first) # warm each parent's entry
+      policy.refusal_for(deep.first)
+
+      shallow_cost = count_queries { shallow.each { |f| policy.refusal_for(f) } }
+      deep_cost = count_queries { deep.each { |f| policy.refusal_for(f) } }
+
+      assert_equal shallow_cost, deep_cost,
+                   "a file four levels inside the repo cost #{deep_cost} queries against " \
+                   "#{shallow_cost} one level in — the ancestor walk is running per file"
     end
 
     # --- #relocate: the rules, applied ---------------------------------------------
