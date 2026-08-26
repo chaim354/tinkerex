@@ -661,12 +661,12 @@ module FileLayer
       # hand-made one would silently switch off the intake sweep for that whole folder
       # (Maker::AttachToProject's :in_working_tree reads exactly this marker). `marker_prefix` is
       # non-nil AT or BENEATH the marker, which is why one term covers both halves and no new
-      # predicate is needed. `.to_s` like every other arm here: a Pathname would answer nil and
-      # silently skip this check alone, which is the divergence shape, not a missing nicety.
+      # predicate is needed (Library::RepoMetadata.internal? is the strictly-beneath question, and
+      # the observers', not this one's).
       return unless segments.first == Library::Scanner::TRASH_PREFIX ||
                     segments.any? { |s| s.start_with?(Library::Scanner::TEMP_PREFIX) } ||
                     Library::OsClutter.ignore?(rel) ||
-                    Library::RepoMetadata.marker_prefix(rel.to_s).present?
+                    Library::RepoMetadata.marker_prefix(rel).present?
       raise NotFound, "#{rel.inspect} is a reserved path the library scan does not index"
     end
 

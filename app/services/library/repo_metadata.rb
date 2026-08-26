@@ -80,10 +80,18 @@ module Library
     # OUTERMOST WINS (`index`, not `rindex`): a submodule's `a/.git/modules/b/.git` must resolve to
     # `a/.git`, so the whole outer subtree is dropped rather than only the inner one — otherwise a
     # nested repo hides everything between the two markers back in the catalog.
+    #
+    # IT COERCES, WHERE #marker? REFUSES, AND THE ASYMMETRY IS THE POINT rather than an
+    # inconsistency to tidy. #marker? is handed a LEAF a door received as JSON, so a non-String is a
+    # user's malformed input and must answer false and reach that door's routine refusal. This is
+    # handed a PATH the app itself derived, and its callers sit in a disjunction next to
+    # Library::OsClutter.ignore?, which coerces internally — two sibling predicates with opposite
+    # policies makes safety depend on every future caller remembering a `.to_s`, and a Pathname
+    # would then answer nil and silently skip this arm alone while the others still fired. That is
+    # the divergence shape, so the coercion lives here once instead of at each call site.
+    # `nil` still answers nil, because `"".split("/")` is `[]` and nothing indexes to a marker.
     def self.marker_prefix(rel)
-      return nil unless rel.is_a?(String)
-
-      segments = rel.split("/")
+      segments = rel.to_s.split("/")
       idx = segments.index(DIR_NAME)
       idx && segments[0..idx].join("/")
     end

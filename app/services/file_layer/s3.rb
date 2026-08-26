@@ -1050,7 +1050,7 @@ module FileLayer
       # concept: both observers skip `.git` contents, so both adapters must refuse them.
       return unless rel.to_s.split("/").first == Library::Scanner::TRASH_PREFIX ||
                     Library::OsClutter.ignore?(rel) ||
-                    Library::RepoMetadata.marker_prefix(rel.to_s).present?
+                    Library::RepoMetadata.marker_prefix(rel).present?
       raise NotFound, "#{rel.inspect} is a reserved path the library scan does not index"
     end
 

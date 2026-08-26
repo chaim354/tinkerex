@@ -295,6 +295,58 @@ module FileLayerWritableContract
     end
   end
 
+  # MINTING IS THE VERB THIS RULE IS ABOUT, so the directory-making one is pinned beside the two
+  # above. `mkdir` is how a `.git` would actually be conjured through a web door — `write` puts a
+  # FILE there, which a repo could at least survive, while a directory named `.git` is the thing
+  # Maker::AttachToProject reads as "this is a working tree" and stops filing under. Both adapters
+  # route mkdir through the same `observable!`, which is exactly the claim worth pinning rather
+  # than assuming. (The clutter block above has this gap too; it is narrower there, because nobody
+  # is trying to mint a `.DS_Store` DIRECTORY.)
+  def test_write_contract_mkdir_refuses_repo_metadata_destinations
+    REPO_METADATA_DESTINATIONS.each do |name|
+      err = assert_raises(FileLayer::NotFound, "mkdir(#{name.inspect}) must be refused") do
+        adapter.mkdir(@user, parent_node_id: nil, name: name)
+      end
+      assert_match(/reserved path/, err.message, name)
+      assert_nil @user.nodes.find_by(storage_path: name),
+                 "#{name.inspect} must not have landed a dir node — minting one is the whole point"
+    end
+  end
+
+  # THE NEGATIVE CASE, AND THE BLOCK ABOVE IS UNSOUND WITHOUT IT. Every assertion so far is a
+  # REFUSAL, so nothing above distinguishes "at-or-beneath a `.git` SEGMENT" from "any path
+  # CONTAINING the characters `.git`" — a review replaced the guard's term with
+  # `rel.to_s.include?(RepoMetadata::DIR_NAME)`, which still names the constant, and the whole
+  # suite stayed green while `.gitignore`, `.gitmodules` and `.github/workflows/ci.yml` became
+  # unwritable. Those are paths Library::Scanner explicitly INDEXES (pinned in its own suite), so
+  # that mutation ships a destination the observer observes and the write guard 404s as a
+  # "reserved path" — §14a's one-condition-two-answers, in the direction that makes a working
+  # tree's own files un-uploadable. Task 3 gave both observer suites this exact negative case;
+  # this restores the symmetry on the write half of the law.
+  #
+  # DEPTH IS LOAD-BEARING, and a root-only fixture would be a weaker test that looks the same. The
+  # `.github` case is the one that fails a segment-PREFIX match (`.github` survives while
+  # everything under it silently vanishes), and it cannot be written as a leaf — `leaf!` forbids
+  # separators in `name` — so it is built through real mkdirs, which is also what proves mkdir does
+  # not refuse the ancestors.
+  def test_write_contract_git_adjacent_destinations_stay_writable
+    %w[.gitignore .gitmodules].each do |name|
+      info = adapter.write(@user, parent_node_id: nil, name: name, io: StringIO.new("tmp/"))
+      assert_equal "tmp/", adapter.read(@user, node_id: info.node_id),
+                   "#{name.inspect} is an ordinary file — a whole-segment rule must let it through"
+    end
+
+    dot_github = adapter.mkdir(@user, parent_node_id: nil, name: ".github")
+    workflows = adapter.mkdir(@user, parent_node_id: dot_github.node_id, name: "workflows")
+    ci = adapter.write(@user, parent_node_id: workflows.node_id, name: "ci.yml",
+                              io: StringIO.new("on: push"))
+
+    assert_equal "on: push", adapter.read(@user, node_id: ci.node_id),
+                 "`.github/workflows/ci.yml` is indexed by the scan, so it must be writable too"
+    assert_equal ".github/workflows/ci.yml",
+                 @user.nodes.find_by!(node_id: ci.node_id).storage_path
+  end
+
   # A destination BENEATH the marker, which no leaf name can express — the contents half of the
   # rule, and the half that is a ghost rather than a policy. Reached through a poisoned parent, the
   # same `update_column` standard the reserved-path and escape-guard tests use, for the reason they

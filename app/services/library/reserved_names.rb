@@ -51,8 +51,11 @@ module Library
   # no legitimate use is MINTING one: you cannot create a repository by creating the folder, so a
   # `.git` made through a web door is never a repo — it is a folder that silently switches off the
   # intake sweep for everything under it, since Maker::AttachToProject's :in_working_tree reads
-  # exactly this marker and asks nothing else. Observed-but-not-mintable is the same shape
-  # `.DS_Store` already has here, arrived at from the opposite side.
+  # exactly this marker and asks nothing else. Observed-but-not-mintable is not a new shape, but
+  # the parallel is NOT with this list's other arms: on share and s3 the observers SKIP `.DS_Store`
+  # — never observing it is precisely why it is in this union. The shape `.git` has is the one
+  # `.DS_Store` has on CHUNK_REMOTE, where a device push puts one in the catalog this app may not
+  # mint (the header above already says so, for the folding argument). `.git` has it on all three.
   #
   # WHAT THIS IS NOT:
   #

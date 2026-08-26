@@ -74,7 +74,8 @@ module Library
 
     # WHOLE SEGMENT, NOT A PREFIX — `.gitignore` and `.gitmodules` are ordinary files a repo's own
     # author writes, and `git` is an ordinary folder name. Refusing those would make the doors
-    # reject the very files a working tree is full of.
+    # reject the very files a working tree is full of. `.gitignore` sat in the ordinary-names sweep
+    # below until this arm existed; it belongs here, where the reason it is asserted is written.
     test "but ordinary git-adjacent filenames stay mintable" do
       assert_not ReservedNames.reserved?(".gitignore")
       assert_not ReservedNames.reserved?(".gitmodules")
@@ -82,7 +83,7 @@ module Library
     end
 
     test "ordinary names are not reserved" do
-      %w[grid.svg .gitignore trash.txt DS_Store MACOSX
+      %w[grid.svg trash.txt DS_Store MACOSX
          maker-tmp-x .hidden Thumbs.db desktop.ini].each do |name|
         assert_not ReservedNames.reserved?(name), "#{name.inspect} should be writable"
       end
