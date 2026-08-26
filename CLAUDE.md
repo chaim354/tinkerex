@@ -870,19 +870,12 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   the direct ones leaves `@codemirror/state` itself floating, and a build-twice digest check passes
   over that happily, because the registry does not move in two minutes.
 
-- **ONE file-type vocabulary, AND IT NOW REACHES THE RENDERERS.** `FilesHelper::EXT_FAMILIES` is
-  **derived** from `ROLE_BY_EXT`; `preview_kind`'s `:text` branch and `Previews::Registry`'s
-  TextThumb entries are both `Maker::FileAttachment.text?`/`TEXT_EXTENSIONS`. The Registry
-  hand-listed **4** while `preview_kind` called **37** text, so 33 (`.rb`, `.py`, `.gcode`) got the
-  source viewer and a **blank grid cell** — `Enqueue` returns nil for an unclaimed name, and no
-  test spanned the two layers. Add an extension in **`ROLE_BY_EXT` only**.
-  Two consequences: every extension must satisfy `FilesController::EXT_RE`
-  (`/\A[a-z0-9]{1,8}\z/`) or it renders a chip that links and **silently does nothing**
-  (`markdown` is the current bound at exactly 8 chars); and the `role` column is
-  **behavioural** — cover-image selection reads `image`/`model` and
-  `Models::AttachmentsController` dispatches `ExtractPdfMetadataJob` on `instructions`, so
-  `pdf` must stay `instructions`. A third copy in `importer_controller.js`'s `roleFor` has
-  drifted; it is browser-only and the server re-derives authoritatively.
+- **The file-type vocabulary and the preview surfaces → `docs/invariants/files-preview.md`.**
+  Read it before touching `Maker::FileAttachment`'s tables, `app/services/maker/previews/`,
+  `FilesController#preview_kind`/`#index`/`#thumbnails`, `app/views/files/`, `thumbs_controller.js`
+  or `Node`'s display scopes. **Add an extension in `ROLE_BY_EXT` only** — that file holds why
+  (`EXT_RE`, the behavioural `role` column, extensionless text, the thumbnail poll's terminal
+  answer, and why dot-file hiding is a display filter and never a scan skip).
 - **A `form_with` that is missing `scope:` emits param names the controller's `require`
   rejects — and a nested-hash test cannot see it.** Two shipped instances: `form_with model:`
   on a **namespaced** model scopes to `maker_project[...]` while the controller required

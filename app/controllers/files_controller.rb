@@ -170,6 +170,10 @@ class FilesController < ApplicationController
   def index
     @view = resolve_view
     @sort, @dir = resolve_sort
+    # Dot-prefixed entries are hidden unless asked for. Read BEFORE the two scopes below, which
+    # both pass it, so one request cannot answer the question two ways across flat and folder mode
+    # (§14a) — the same reason `.outside_repo_metadata` is on both.
+    @show_hidden = resolve_hidden
     # FLAT MODE. An extension filter is a question about the LIBRARY, not about a folder, so
     # ?folder= is ignored outright rather than intersected -- "show me every .stl" that quietly
     # meant "in this folder" would be the wrong answer to the only question the chips can ask.
@@ -183,7 +187,7 @@ class FilesController < ApplicationController
       # A `.git` row reaches THIS scope only as a file — a `gitdir:` pointer, since flat mode
       # filters kind: "file" — but the rule is the catalog's, not the folder view's, and one
       # condition must not have two answers across the two scopes (§14a).
-      scope = flat_ext_scope(@exts).outside_repo_metadata
+      scope = flat_ext_scope(@exts).visible_entries(@show_hidden)
       @match_count = scope.count
       # ORDERED BY THE USER'S SORT, NOT BY NAME, BECAUSE HERE THE ORDER *SELECTS* -- see
       # flat_order. This line used to be `.order(:name)`, and the LIMIT then took the alphabetical
@@ -197,7 +201,7 @@ class FilesController < ApplicationController
       # `.outside_repo_metadata` here for the same reason it is on the flat scope above, and on
       # the scope rather than the orders below so @child_count paginates what is actually shown.
       scope = current_user.nodes.present.where(parent_node_id: @folder&.node_id)
-                          .outside_repo_metadata
+                          .visible_entries(@show_hidden)
       # PAGED ONLY UNDER THE NAME SORT — see #paged_folder? for why the other two cannot be.
       @paged = paged_folder?
       if @paged
@@ -285,11 +289,33 @@ class FilesController < ApplicationController
     map = Maker::Previews::ThumbnailMap.from_info(current_user, nodes.map(&:node_id), info,
                                                  backfill: false)
 
-    out = nodes.each_with_object({}) do |n, h|
-      p = map.thumb(n.node_id)
-      next unless p
-
-      h[n.node_id] = { status: p.status, url: (p.status == "ready" && p.asset.attached? ? url_for(p.asset) : nil) }
+    # A NODE WITH NO ROW MUST STILL GET AN ANSWER, AND THIS LINE IS WHY THE SPINNER USED TO RUN
+    # FOREVER. This was `next unless p`, which OMITS the key — and `thumbs_controller`'s
+    # `if (!entry) continue` then leaves that cell spinning AND in the poll set, so it burned all
+    # 40 tries and the spinner stayed on screen permanently afterwards. The failure has been worked
+    # around THREE times at the callers (`_list`, `_grid`, and `_hero_poster`, whose comment
+    # describes this exact loop), and was still live in `projects/_attachment_group`, which renders
+    # a poll cell for any attachment. Answering here fixes every caller at once, including the two
+    # cover cards that hold no filename and so cannot guard themselves.
+    #
+    # THE TWO NO-ROW CASES ARE NOT THE SAME QUESTION, and collapsing them would trade a hung
+    # spinner for a wrong one:
+    #   - nothing will EVER render this name (no renderer, or the node is not live) -> `unsupported`,
+    #     a terminal answer the client resolves to a static badge. A tombstone lands here too, which
+    #     is what `_hero_poster` had to guard against by hand.
+    #   - the name IS renderable and the row simply has not been created yet -> OMIT, so the client
+    #     keeps polling. `backfill: false` above means this door never creates one, so saying
+    #     "unsupported" here would freeze a thumbnail that is genuinely on its way.
+    live = nodes.index_by(&:node_id)
+    out = ids.each_with_object({}) do |id, h|
+      node = live[id]
+      preview = node && map.thumb(id)
+      if preview
+        h[id] = { status: preview.status,
+                  url: (preview.status == "ready" && preview.asset.attached? ? url_for(preview.asset) : nil) }
+      elsif node.nil? || Maker::Previews::Registry.for_filename(node.name).nil?
+        h[id] = { status: "unsupported", url: nil }
+      end
     end
     render json: out
   end
@@ -722,6 +748,33 @@ class FilesController < ApplicationController
     end
     saved = cookies[:files_view]
     VIEWS.include?(saved) ? saved : DEFAULT_VIEW
+  end
+
+  # Whether dot-prefixed entries are shown. THE SAME WHITELIST-AND-COOKIE IDIOM AS resolve_view,
+  # and a cookie for a reason a param cannot cover: the choice has to survive clicking INTO a
+  # folder, and folder links are plain `files_path(folder: …)` in the breadcrumb, the list's folder
+  # rows and the grid's folder cards. Threading `hidden` through every one of them is the shape
+  # that goes stale the first time somebody adds another link — which is exactly why `view` and
+  # `sort` are cookies rather than members of `files_query_base`.
+  #
+  # `requested == "1"` IS WHAT MAKES THE CONTROL TWO-WAY, and it is the line to leave alone. The
+  # "Hide" link emits `?hidden=0`, which is `present?` — so the first draft of this, a bare
+  # `@show_hidden = params[:hidden].present?`, read that as SHOW and the toggle could turn dot-files
+  # on and never off again. Pinned by files_git_marker_test's `?hidden=0` case.
+  #
+  # THE WHITELIST IS THE SMALLER CLAIM AND IS DESCRIBED HONESTLY: it bounds what can be WRITTEN
+  # into the cookie, so a hand-edited `?hidden=banana` does not persist junk for a year. It is not
+  # what makes `?hidden=0` behave — swapping it for `present?` leaves every behaviour here
+  # unchanged (mutation-checked; nothing went red), so it earns a sentence, not a warning.
+  HIDDEN_VALUES = %w[0 1].freeze
+
+  def resolve_hidden
+    requested = params[:hidden].presence
+    if HIDDEN_VALUES.include?(requested)
+      cookies[:files_hidden] = { value: requested, expires: 1.year }
+      return requested == "1"
+    end
+    cookies[:files_hidden] == "1"
   end
 
   # Sort key + direction. THE SAME WHITELIST IDIOM AS resolve_view, and for the same reason: an

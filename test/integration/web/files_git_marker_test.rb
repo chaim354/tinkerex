@@ -69,13 +69,74 @@ module Web
 
     # THE `.git` PREFIX IS NOT THE RULE — the rule is the exact name. `.gitignore` and
     # `.gitattributes` are ordinary files a repo's root is full of, and a `LIKE '.git%'` spelling
-    # of the scope would take every one of them out of the listing. This assertion is what makes
-    # that mutation red, which is why the fixture sits in the FOLDER the marker sits in rather
-    # than somewhere the exclusion could never have reached it.
-    test "a file merely named .gitignore is still listed beside the hidden marker" do
-      get files_path(folder: "dir-firmware")
+    # of the marker scope would take every one of them out of the listing PERMANENTLY, with no
+    # toggle able to bring them back. This assertion is what makes that mutation red, which is why
+    # the fixture sits in the FOLDER the marker sits in rather than somewhere the exclusion could
+    # never have reached it.
+    #
+    # ASKED WITH `hidden=1` SINCE 2026-08-26, and the change is a widening rather than a
+    # concession: `.gitignore` is now hidden BY DEFAULT as ordinary dot-file clutter, so asserting
+    # it against the default listing would only re-state that new rule. Asking with hidden files
+    # SHOWN is what still isolates the original claim — the two rules are separate, and only the
+    # marker one is absolute.
+    test "a file merely named .gitignore is reachable, while the marker never is" do
+      get files_path(folder: "dir-firmware", hidden: "1")
 
       assert_equal [ ".gitignore", "main.py" ], listed_names.sort
+      assert_not_includes listed_names, ".git",
+                          "the marker stays hidden even with hidden files shown — a different rule"
+    end
+
+    # THE DEFAULT, stated separately so the two rules cannot be conflated by a reader or collapsed
+    # by an editor. Dot-files are hidden unless asked for; the marker is hidden either way.
+    test "dot-files are hidden by default and the toggle brings them back" do
+      get files_path(folder: "dir-firmware")
+      assert_equal [ "main.py" ], listed_names.sort
+
+      get files_path(folder: "dir-firmware", hidden: "1")
+      assert_includes listed_names, ".gitignore"
+    end
+
+    # THE CONTROL ITSELF MUST RENDER, which every other test in this file is blind to: they drive
+    # `?hidden=` directly, so a typo'd or deleted link in index.html.erb leaves them all green while
+    # the user has no way to reach the behaviour. That is §14d's inert-control shape — a request
+    # test proves the endpoint works and nothing about whether anything CALLS it.
+    #
+    # THE HREF IS ASSERTED, NOT JUST THE TEXT, and the label must FLIP: a control that always says
+    # "Show" and always sends `hidden=1` is a one-way switch, which is the exact defect the
+    # two-way test below covers from the behaviour side.
+    test "the hidden-files toggle renders and flips with the current state" do
+      # A PLAIN STRING, NEVER A REGEXP — §14e. `assert_select "[href*=?]", /hidden=1/` interpolates
+      # the Regexp into the selector and compiles `[href*="(?-mix:hidden=1)"]`, which matches an
+      # attribute whose literal text is that and so can NEVER pass. Walked into while writing this
+      # test; it failed as an un-greenable test rather than a false green, which is the better
+      # direction but only once you know why.
+      get files_path(folder: "dir-firmware")
+      assert_select "a[href*=?]", "hidden=1", { count: 1 }, "the default page must offer SHOW"
+
+      get files_path(folder: "dir-firmware", hidden: "1")
+      assert_select "a[href*=?]", "hidden=0", { count: 1 }, "with hidden shown it must offer HIDE"
+    end
+
+    # THE TOGGLE MUST GO BOTH WAYS, AND THIS IS THE HALF A `present?` SPELLING BREAKS. The "Hide"
+    # link emits `?hidden=0`, which IS present — so `@show_hidden = params[:hidden].present?` reads
+    # it as SHOW and the control turns dot-files on and can never turn them off. That was the first
+    # draft of `resolve_hidden`. It also pins the cookie: `?hidden=1` has to persist across a
+    # request with no parameter at all, or the choice dies the moment the user clicks into a folder,
+    # since folder links carry only `folder:`.
+    test "hidden=0 hides again, and the choice persists across a bare request" do
+      get files_path(folder: "dir-firmware", hidden: "1")
+      assert_includes listed_names, ".gitignore"
+
+      # No parameter: the cookie is the only thing that can still be answering.
+      get files_path(folder: "dir-firmware")
+      assert_includes listed_names, ".gitignore", "the choice must survive folder navigation"
+
+      get files_path(folder: "dir-firmware", hidden: "0")
+      assert_equal [ "main.py" ], listed_names.sort
+
+      get files_path(folder: "dir-firmware")
+      assert_equal [ "main.py" ], listed_names.sort, "hiding must persist too, not just showing"
     end
 
     # WHERE THE EXCLUSION SITS IN THE CHAIN IS A SEPARATE CLAIM FROM WHETHER IT IS THERE, AND

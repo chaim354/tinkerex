@@ -35,6 +35,26 @@
 
 <%= render "ext_filter" %>
 
+<%# HIDDEN-FILE TOGGLE. Dot-prefixed entries are noise in a maker's library — 78 of them on the
+    deployed share box, mostly `.gitignore`, `.github` and `.clang-format` sitting between the
+    models — but hiding them with no way back is how a file becomes unreachable, so this is a
+    toggle rather than a silent filter.
+
+    THE STATE LIVES IN A COOKIE (FilesController#resolve_hidden), not in files_query_base, for the
+    same reason `view` and `sort` do: the choice has to survive clicking into a folder, and folder
+    links carry only `folder:`. The link therefore sends the value it wants rather than a bare
+    flag — `hidden=0` is a real instruction to hide, not an absent parameter.
+
+    `.git` STAYS HIDDEN EITHER WAY and that is not an oversight — Node#visible_entries explains why
+    the marker is a different rule from the clutter. %>
+<p class="hidden-toggle muted">
+  <% if @show_hidden %>
+    <%= link_to "Hide dot-files", files_path(files_query_base.merge(hidden: "0")) %>
+  <% else %>
+    <%= link_to "Show dot-files", files_path(files_query_base.merge(hidden: "1")) %>
+  <% end %>
+</p>
+
 <% if @truncated %>
   <p class="truncated">
     Showing the first <%= number_with_delimiter(@nodes.size) %> of

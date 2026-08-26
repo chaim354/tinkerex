@@ -141,6 +141,36 @@ module Maker
     # list grows past a handful, the role table is the thing that is wrong.
     TEXT_EXTS = %w[scad].freeze
 
+    # TEXT FILES THAT HAVE NO EXTENSION AT ALL, matched on the WHOLE basename, downcased.
+    #
+    # `File.extname("LICENSE")` is `""` and `File.extname(".gitignore")` is `""` too (a leading dot
+    # with no second dot is not an extension) — probed, not assumed — so NO entry in an extension
+    # table can ever reach these files. They answered `role_for -> "other"` and `preview_kind ->
+    # :other`, which rendered "No inline preview for this file type." over a plain text file. On the
+    # deployed share library that is `LICENSE` x6, `Makefile`/`makefile` x7 and `README` x3, plus
+    # the dotfile configs.
+    #
+    # A SEPARATE AXIS FROM `TEXT_EXTS`, NOT A SECOND COPY OF IT. `TEXT_EXTS` answers "this role is
+    # not text but this extension is" (`.scad`). This answers "there is no extension to ask about".
+    # Both live here, beside `ROLE_BY_EXT`, which is what §14d's one-vocabulary rule actually
+    # requires — one PLACE, not one shape.
+    #
+    # BOTH CASES OF `Makefile` ARE REACHED BY DOWNCASING, not by listing two spellings: the live
+    # library really does contain both `Makefile` and `makefile`.
+    #
+    # THIS DOES NOT GIVE THEM A ROLE, AND THAT IS DELIBERATE — the same split `.scad` already
+    # carries. `role_for("LICENSE")` stays `"other"`, so `Maker::ProjectFolders` keeps filing it
+    # where it files it today. Making `LICENSE` a `document` would MOVE it into `docs/` on the
+    # user's NAS, which is a change to their files, not to a preview, and nobody asked for it.
+    TEXT_BASENAMES = %w[
+      license licence copying notice patents authors contributors credits maintainers owners
+      readme changelog changes history news todo install usage manifest version
+      makefile gnumakefile dockerfile containerfile rakefile gemfile guardfile procfile
+      justfile vagrantfile brewfile capfile
+      .gitignore .gitattributes .gitmodules .gitkeep .dockerignore .editorconfig .clang-format
+      .clang-tidy .npmrc .nvmrc .ruby-version .node-version .prettierrc .eslintrc .babelrc
+    ].freeze
+
     # EVERY EXTENSION THIS APP CONSIDERS TEXT — the union of the text roles' extensions and the
     # role-mismatched ones above, DERIVED so the two members can never disagree about it.
     #
@@ -163,10 +193,19 @@ module Maker
 
     # Is this filename's content TEXT? THE ONE definition — `preview_kind`'s `:text` branch and the
     # TextThumb registration are the same question asked by two layers, and they used to answer it
-    # with two different tables. A name with no extension (`Makefile`, `.env`) is false: `extname`
-    # returns "" for both, which is not a member, so this stays honest rather than guessing.
+    # with two different tables.
+    #
+    # EXTENSION FIRST, THEN BASENAME, and the order costs nothing because a name cannot satisfy
+    # both: anything in `TEXT_BASENAMES` has no extension to look up (`README.md` has one and is
+    # covered by the extension arm, which is why `readme` being in the basename list is not a
+    # duplicate of `md` being in the extension list — they match different files).
+    #
+    # A name that is in NEITHER is still false, which is the honest answer rather than a guess: an
+    # extensionless binary exists and rendering it as text is mojibake, the same argument that keeps
+    # `.f3d` out of `TEXT_EXTS`.
     def self.text?(name)
-      TEXT_EXTENSIONS.include?(File.extname(name.to_s).downcase.delete("."))
+      TEXT_EXTENSIONS.include?(File.extname(name.to_s).downcase.delete(".")) ||
+        TEXT_BASENAMES.include?(File.basename(name.to_s).downcase)
     end
 
     # Best-effort role from a filename's extension; unknown -> "other".

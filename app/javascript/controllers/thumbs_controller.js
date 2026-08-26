@@ -24,7 +24,14 @@ export default class extends Controller {
 
   async poll() {
     const ids = this.pendingIds()
-    if (ids.length === 0 || this.tries > 40) return
+    if (ids.length === 0) return
+    // GIVING UP RESOLVES THE SPINNERS, IT DOES NOT JUST STOP ASKING. This used to be part of the
+    // condition above and simply returned, so any cell still spinning at try 41 spun for as long
+    // as the page stayed open — the animation is CSS and does not care that polling ended. The
+    // server now answers "unsupported" for a node with no row, so reaching this line means
+    // something else went wrong (an endpoint erroring, a node appearing mid-session); a static
+    // badge is the honest end state either way, and "forever" stops being reachable at all.
+    if (this.tries > 40) return this.resolveStragglers()
     this.tries += 1
 
     try {
@@ -61,13 +68,24 @@ export default class extends Controller {
     thumb.appendChild(img)
   }
 
+  // Every cell still holding a spinner becomes a static badge. Used when polling gives up.
+  resolveStragglers() {
+    for (const cell of this.cellTargets) {
+      if (cell.querySelector(".thumb-spinner")) this.setIcon(cell)
+    }
+  }
+
   setIcon(cell) {
     const thumb = cell.querySelector(".thumb")
     if (!thumb || thumb.querySelector(".thumb-icon")) return
     const icon = document.createElement("span")
     icon.className = "thumb-icon"
-    icon.setAttribute("aria-hidden", "true")
-    icon.textContent = cell.dataset.ext || ""
+    // Mirrors files/_thumb.html.erb's terminal branch — same title, same em-dash fallback for a
+    // cover cell with no extension. The two must agree: one of them renders on load and the other
+    // replaces a spinner, and a user seeing both would otherwise get two different answers to
+    // "why is there no picture".
+    icon.title = "Preview not supported"
+    icon.textContent = cell.dataset.ext || "—"
     thumb.innerHTML = ""
     thumb.appendChild(icon)
   }

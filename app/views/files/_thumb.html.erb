@@ -11,6 +11,12 @@
   <% elsif thumb.nil? || %w[pending processing].include?(thumb&.status) %>
     <span class="thumb-spinner" aria-hidden="true"></span>
   <% else %>
-    <span class="thumb-icon" aria-hidden="true"><%= ext_label %></span>
+    <%# THE TERMINAL STATE: unsupported, failed, or no row at all. It SAYS SO rather than showing a
+        bare badge — a cover card passes `ext_label: ""`, so this rendered an empty box that read
+        as "still loading" next to a real spinner. `title` is what a hover reveals; the badge text
+        stays the extension where there is one, because that is the more useful glance. Not
+        aria-hidden any more: the label is the only thing telling a screen reader this file has no
+        preview, and hiding it left nothing at all. %>
+    <span class="thumb-icon" title="Preview not supported"><%= ext_label.presence || "—" %></span>
   <% end %>
 </span>

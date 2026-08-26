@@ -67,9 +67,28 @@ module Maker
         RENDERERS[ext.to_s.downcase.delete_prefix(".")]
       end
 
-      # Resolve from a filename or node path (uses its extension).
+      # Resolve from a filename or node path.
+      #
+      # EXTENSION FIRST, THEN THE EXTENSIONLESS-TEXT BASENAMES. `File.extname("LICENSE")` is `""`
+      # and so is `File.extname(".gitignore")`, so an extension lookup can NEVER reach those files
+      # — they resolved to nil, which `Enqueue.call` reads as "no renderer, do not create a row",
+      # and a row that never exists is what left a poll cell spinning with nothing to resolve it.
+      # `Maker::FileAttachment::TEXT_BASENAMES` is the one place that set is written down; this
+      # asks it rather than carrying a second copy.
+      #
+      # `self.for` IS DELIBERATELY NOT GIVEN THE SAME FALLBACK. It takes a raw EXTENSION — callers
+      # pass `"stl"`, and `preview_kind` passes the extension it already split off — so teaching it
+      # to also accept `"LICENSE"` would make one method answer two questions, and a caller holding
+      # a genuine extension could match a basename by coincidence. The filename door is the one
+      # that holds a filename.
       def for_filename(filename)
-        self.for(File.extname(filename.to_s))
+        self.for(File.extname(filename.to_s)) || text_by_basename(filename)
+      end
+
+      def text_by_basename(filename)
+        return nil unless Maker::FileAttachment::TEXT_BASENAMES.include?(File.basename(filename.to_s).downcase)
+
+        Maker::Previews::TextThumb
       end
     end
   end

@@ -34,7 +34,12 @@ class DocsHygieneTest < ActiveSupport::TestCase
   # added here is paid on every session forever. If a rule genuinely needs the room, ask first
   # whether it is an AREA rule that belongs in docs/invariants/ instead — that is what the split is
   # for, and it costs the reader nothing.
-  MAX_LINES = 1_350
+  #
+  # RATCHETED 1,350 -> 1,345 on 2026-08-26, when the file-type vocabulary rule moved to
+  # docs/invariants/files-preview.md and CLAUDE.md fell to 1,342. Lowered rather than banked,
+  # which is the whole point of calling it a ratchet: leaving the old number turns a real
+  # reduction into eight lines of silent headroom for the next unrelated addition.
+  MAX_LINES = 1_345
 
   test "CLAUDE.md stays under its line ceiling" do
     lines = CLAUDE_MD.readlines.size
