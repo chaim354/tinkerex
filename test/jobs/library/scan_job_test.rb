@@ -466,6 +466,93 @@ module Library
     end
   end
 
+  # A GIT WORKING TREE UNDER `Projects/` IS ADOPTED AS A PROJECT AND ITS BYTES ARE LEFT ALONE, and
+  # nothing pinned that combination until this class. Both halves already had guards — discovery's
+  # dot rule in project_discovery_test.rb, `:in_working_tree` in attach_to_project_test.rb — but the
+  # behaviour a user actually gets is their COMPOSITION, which held by luck rather than by contract.
+  # This repo's recorded failure shape is exactly that: two correct halves and nothing asserting the
+  # seam (§14e's "the suite being green is not evidence a guard works").
+  #
+  # WHAT MAKES IT WORTH A TEST RATHER THAN A COMMENT: the intake sweep's whole job is to move loose
+  # files at a project root into category subfolders, and doing that to a tracked file is a delete
+  # plus an untracked add as far as git is concerned. Maker::AttachToProject's `:in_working_tree`
+  # is the only thing standing between the sweep and someone's repository, it is detected purely by
+  # the `.git` MARKER NODE surviving the scan (Library::RepoMetadata), and discovery now hands the
+  # sweep project folders it never had before. Three independent mechanisms, one outcome.
+  class GitWorkingTreeTest < ActiveSupport::TestCase
+    setup do
+      @root = Dir.mktmpdir
+      @user = User.create!(email: "job-#{SecureRandom.hex(6)}@example.com")
+      FileLayer.current = FileLayer::Share.new(root: @root)
+
+      # A repo checked out UNDER Projects/, on disk only — no project row, no node rows.
+      FileUtils.mkdir_p(File.join(@root, "Projects", "my-firmware", ".git"))
+      File.binwrite(File.join(@root, "Projects", "my-firmware", ".git", "HEAD"), "ref: refs/heads/main\n")
+      File.binwrite(File.join(@root, "Projects", "my-firmware", "README.md"), "# firmware\n")
+      File.binwrite(File.join(@root, "Projects", "my-firmware", "bracket.stl"), "solid")
+
+      # And a repo checked out AT the Projects root — the case discovery's dot rule exists for.
+      FileUtils.mkdir_p(File.join(@root, "Projects", ".git"))
+    end
+
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root && File.directory?(@root)
+    end
+
+    def firmware_dir = @user.nodes.present.find_by!(name: "my-firmware", kind: "dir")
+
+    test "the repo is adopted as a project and its files are attached" do
+      Library::ScanJob.perform_now(user_id: @user.id, root: @root)
+
+      project = @user.maker_projects.sole
+      assert_equal "my-firmware", project.name
+      assert_equal firmware_dir.node_id, project.folder_node_id
+      assert_equal %w[bracket.stl README.md].sort,
+                   project.file_attachments.map { |a| @user.nodes.find_by(node_id: a.node_id)&.name }.sort
+    end
+
+    # THE HALF THAT PROTECTS THE REPOSITORY. `:in_working_tree` means "attach the row, leave the
+    # bytes", so the attach above must happen AND nothing may move.
+    test "no file is moved and no category subfolder is minted" do
+      Library::ScanJob.perform_now(user_id: @user.id, root: @root)
+
+      %w[README.md bracket.stl].each do |name|
+        assert_path_exists File.join(@root, "Projects", "my-firmware", name)
+      end
+      # `models` is where bracket.stl WOULD go, and `docs` is where README.md would — naming the two
+      # the fixture can actually produce, rather than asserting over a list that would still pass if
+      # ProjectFolders grew a category tomorrow.
+      %w[models docs].each do |cat|
+        assert_nil @user.nodes.present.find_by(parent_node_id: firmware_dir.node_id, name: cat,
+                                               kind: "dir"),
+                   "the intake minted #{cat}/ inside a git working tree — :in_working_tree did not hold"
+      end
+    end
+
+    # THE MARKER SURVIVES AND ITS CONTENTS DO NOT. Both halves matter: delete the marker and
+    # `:in_working_tree` has nothing to detect (the test above starts passing for the wrong reason,
+    # then failing for the right one); index the contents and a repo's whole object store lands in
+    # the library. Library::RepoMetadata's header calls this asymmetry the design.
+    test "the .git marker is indexed and its contents are not" do
+      Library::ScanJob.perform_now(user_id: @user.id, root: @root)
+
+      marker = @user.nodes.present.find_by(parent_node_id: firmware_dir.node_id, name: ".git",
+                                           kind: "dir")
+      refute_nil marker, "the marker must survive the scan — it is the only evidence of a working tree"
+      assert_equal 0, @user.nodes.present.where(parent_node_id: marker.node_id).count
+    end
+
+    # A REPO AT THE `Projects/` ROOT IS NOT A PROJECT. Without discovery's dot rule this mints one
+    # titled ".git", because `.git` keeps its node where every other skip removes the entry (§14b).
+    test "a repo checked out at the Projects root is not adopted" do
+      Library::ScanJob.perform_now(user_id: @user.id, root: @root)
+
+      assert_equal [ "my-firmware" ], @user.maker_projects.pluck(:name),
+                   "a project named .git means the dot rule stopped covering the marker"
+    end
+  end
+
   # DISCOVERY RUNS AFTER THE RECONCILE AND BEFORE THE FILING SWEEP, and both orderings change the
   # ANSWER rather than the timing. This drives the whole feature end to end through the only door a
   # share deployment has: someone makes Projects/Desk Lamp/ in Finder and drops a file in it.
