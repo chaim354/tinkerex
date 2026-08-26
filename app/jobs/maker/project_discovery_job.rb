@@ -8,12 +8,24 @@ module Maker
     # wrong (GeneratePreviewJob sets the precedent).
     discard_on ActiveRecord::RecordNotFound
 
-    # ONE SWEEP PER USER AT A TIME, and it is load-bearing here in a way it is not for
-    # ModelIntakeJob: maker_projects has a unique index on (user_id, slug) but NONE on
-    # folder_node_id, so two concurrent sweeps would both see one folder unclaimed and mint
-    # `desk-lamp` AND `desk-lamp-2` pointing at the same node. :discard because a queued second
-    # sweep re-does the first one's work; the 15-minute schedule IS the retry, and it re-reads the
-    # world rather than replaying a stale verdict.
+    # ONE SWEEP PER USER AT A TIME. The race it exists for: maker_projects has a unique index on
+    # (user_id, slug) but NONE on folder_node_id, so two concurrent sweeps would both see one
+    # folder unclaimed and mint `desk-lamp` AND `desk-lamp-2` pointing at the same node. :discard
+    # because a queued second sweep re-does the first one's work; the 15-minute schedule IS the
+    # retry, and it re-reads the world rather than replaying a stale verdict.
+    #
+    # IT COVERS THE `sweep_all!` PATH AND NOTHING ELSE — WHICH IS TO SAY chunk_remote ONLY. Solid
+    # Queue acquires the semaphore in an `after_create` on the job ROW, so the limit is consulted
+    # at ENQUEUE and only at enqueue: `perform_now` and `.new.perform` create no row and are
+    # invisible to it (`ProjectIntakeJob`'s header states the same thing about its own limit).
+    # `Library::ScanJob` calls this job with `perform_now`, so ON SHARE/S3 THIS LINE PROTECTS
+    # NOTHING.
+    #
+    # WHAT PROTECTS THAT PATH IS `Library::ScanJob`'S OWN `limits_concurrency` — it is enqueued
+    # exclusively via `perform_later` (`scan_all!` and `FilesController#rescan`; grep-verified), so
+    # its per-user limit is what serializes the share/s3 sweep. DO NOT DELETE IT AS REDUNDANT WITH
+    # THIS ONE: they cover disjoint paths, and removing ScanJob's reopens the duplicate-adoption
+    # race above on the two backends this line cannot reach.
     limits_concurrency to: 1, key: ->(args) { args[:user_id] },
                        duration: 15.minutes, on_conflict: :discard
 

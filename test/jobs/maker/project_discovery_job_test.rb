@@ -62,7 +62,8 @@ module Maker
       dir("d-projects", "Projects", nil)
 
       assert_no_enqueued_jobs(only: Maker::ProjectIntakeJob) do
-        Maker::ProjectDiscoveryJob.new.perform(user_id: @user.id)
+        run = Maker::ProjectDiscoveryJob.new.perform(user_id: @user.id)
+        assert_equal 0, run.created, "precondition: this run must genuinely have created nothing"
       end
     end
 
