@@ -23,9 +23,11 @@ module Library
   # structure this app's whole job is to keep faithful. Third, `app/models/node.rb` records, as a
   # decision of this same arc, that the files inside `.git` DO exist as rows on chunk_remote and are
   # HIDDEN rather than removed; a purge that destroyed them would make that statement false. The
-  # gate keeps the three consistent. (Unset LIBRARY_BACKEND defaults to `share`, which is scannable,
-  # so a missing env fails toward running the purge rather than silently skipping it — and every
-  # Kamal destination sets it explicitly anyway, §7.)
+  # gate keeps the three consistent. (Unset LIBRARY_BACKEND defaults to `share`, which is scannable
+  # — so where a backend can be BUILT, a missing env fails toward running the purge rather than
+  # silently skipping it. Where it cannot be built at all the gate declines instead, which is not
+  # the same fail-toward-running and is argued at #decline_reason. Every Kamal destination sets the
+  # backend explicitly anyway, §7.)
   #
   # DESTROY, NOT TOMBSTONE. These paths will never be observed again, so a tombstone would sit
   # there forever as a revivable row for a file that cannot come back — and §14a's
@@ -81,13 +83,24 @@ module Library
     # the whole run is bounded by an Integer array however large the repository is.
     DESTROY_BATCH = 500
 
-    # `declined` is what makes the scannable gate honest at the call site: an operator who runs
-    # this by hand on the wrong deployment must not read "destroyed 0" as "there was nothing to
-    # do". One gate, asked once, reported rather than re-derived by the caller.
-    Result = Data.define(:destroyed, :skipped, :declined)
+    # `declined` is what makes the gate honest at the call site: an operator who runs this by hand
+    # on the wrong deployment must not read "destroyed 0" as "there was nothing to do". One gate,
+    # asked once, reported rather than re-derived by the caller.
+    #
+    # `reason` CARRIES THE SENTENCE, and the caller must not compose its own. There are TWO ways to
+    # decline and they mean opposite things — a chunk_remote deployment declining is CORRECT and
+    # documented (docs/DEPLOY.md records the exact line), while an environment with no backend
+    # configured declining on a real deployment means the purge DID NOT HAPPEN. Both are
+    # `declined: true, destroyed: 0`, so a caller that wrote its own sentence could only tell them
+    # apart by asking FileLayer again — which is the second reason this member exists rather than
+    # the first: the migration DID exactly that (`say "... #{FileLayer.current.class} ..."`), and in
+    # the unconfigured case that second call RE-RAISES the very error this gate rescued. nil on a
+    # run that did the work, so a report of real work cannot carry a decline sentence beside it.
+    Result = Data.define(:destroyed, :skipped, :declined, :reason)
 
     def self.call
-      return Result.new(destroyed: 0, skipped: [], declined: true) unless scannable?
+      refusal = decline_reason
+      return Result.new(destroyed: 0, skipped: [], declined: true, reason: refusal) if refusal
 
       cache = {}
       keep = Set.new
@@ -107,11 +120,45 @@ module Library
       end
 
       doomed.each_slice(DESTROY_BATCH) { |ids| Node.where(id: ids).destroy_all }
-      Result.new(destroyed: doomed.size, skipped:, declined: false)
+      Result.new(destroyed: doomed.size, skipped:, declined: false, reason: nil)
     end
 
-    def self.scannable? = FileLayer.current.capabilities.scannable?
-    private_class_method :scannable?
+    # Why this run must not proceed, or nil to proceed. ONE ask of FileLayer.current, whose answer
+    # is both the gate and the sentence — see Result.
+    #
+    # A BACKEND THAT CANNOT BE CONSTRUCTED IS NOT A SCANNABLE ONE, and answering "declined" for it
+    # is the same no-op a fresh database already takes. `bin/ci setup` is what proved this belongs
+    # here: on a clean clone nothing sets LIBRARY_PATH, so asking for a capability CONSTRUCTS a
+    # Share that cannot be built, and PurgeRepoMetadataNodes aborted `db:prepare` with a bare
+    # KeyError. Nothing was lost by declining — an environment with no library has indexed nothing
+    # beneath a `.git` and runs no scan to tombstone it away, which is precisely the condition the
+    # purge exists to prevent and precisely the condition that cannot arise there.
+    #
+    # THIS IS A SEPARATE METHOD SO THE RESCUE CANNOT REACH THE SWEEP — that, and not brevity, is
+    # why it exists. The rescue is method-level over four lines, of which only the port lookup can
+    # raise this class; moved up into #call it would sit around the destroy pass and turn a real
+    # breakage into a reported success, which is the shape the migration's own NameError comment
+    # refuses for the same reason and this repo's dominant failure mode (§15).
+    #
+    # LibraryBackendCheck::Error SPECIFICALLY — never StandardError, and never KeyError. An UNKNOWN
+    # LIBRARY_BACKEND still raises ArgumentError out of FileLayer.build and should: that is a
+    # misconfigured DEPLOYMENT rather than an unconfigured developer, and §14a wants it loud. The
+    # bare KeyError this used to die on is unreachable from the factory now that FileLayer.build
+    # passes the backend it resolved to the guard instead of letting the guard re-derive it (see
+    # that method's comment); if it ever comes back, the honest fix is there, not a wider rescue
+    # here.
+    def self.decline_reason
+      adapter = FileLayer.current
+      return if adapter.capabilities.scannable?
+
+      # WORDED EXACTLY AS docs/DEPLOY.md RECORDS IT — an operator matches this line against the
+      # doc to tell a correct skip from a problem.
+      "#{adapter.class} is not a scannable backend, so nothing here indexed the contents of a " \
+        ".git and nothing scans them away"
+    rescue LibraryBackendCheck::Error => e
+      "no library backend is configured here, so there is no catalog to purge (#{e.message})"
+    end
+    private_class_method :decline_reason
 
     # A node something ELSE points at is REPORTED and SKIPPED, never destroyed — destroying it
     # silently orphans that reference, which is this repo's signature failure mode, and a scan

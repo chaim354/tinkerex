@@ -1,6 +1,6 @@
 # Build status — the maker app (`chaim354/tinkerex`)
 
-**Updated:** 2026-08-26 (**the two labelled edge dropdowns get two columns so their labels are readable, and a sample-less generator keeps its frame so the gallery cannot reflow under a click — 171 of 181 generators have a photo, the code said the opposite, and the fixture's own 'photo' was undecodable bytes. Merged after the CodeMirror/git-projects arc below, which is the entry to read for the library-side work.**)
+**Updated:** 2026-08-26 (**`bin/ci setup` is green again — `FileLayer.build` was letting `LibraryBackendCheck` re-derive a backend it already knew, so the one backend reachable without setting `LIBRARY_BACKEND` was the one the guard never checked. The obvious fix — correcting the guard's own default — refuses an unconfigured dev box's boot instead, measured.**)
 
 ## What this file is
 
@@ -78,7 +78,74 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-26): the labelled dropdowns get room to be read, and the gallery stops moving under the pointer (branch `claude/boxes-ui-truncation-and-stable-gallery`)
+## Latest (2026-08-26): the one backend you can reach without configuring one was the one the guard never checked (branch `claude/fix-setup-migration-backend-gate`)
+
+`bin/ci setup` was red on `main` at `6273b60` with a clean tree — `db:prepare` aborted inside
+`PurgeRepoMetadataNodes` with `KeyError: key not found: "LIBRARY_PATH"`, five frames below the
+migration. The entry below recorded it as "#251's migration resolves `FileLayer.current` at migrate
+time". That is where it *surfaced*; it is not what was wrong.
+
+**Root cause: `FileLayer.build` asked its guard to re-derive a value it already had.**
+`LibraryBackendCheck.check!` takes `backend:` defaulted to `env.fetch("LIBRARY_BACKEND", "chunk")`,
+and `build` called it with **no arguments**. Arc D Part 2 changed `build`'s own default from `chunk`
+to `share` and left the guard's behind on a value `build` now *refuses*. With `LIBRARY_BACKEND`
+unset the two disagreed: `build` resolved `share`, the guard matched no `when` arm and returned
+having checked nothing, and `Share.new`'s `ENV.fetch("LIBRARY_PATH")` raised a bare `KeyError`
+naming no setting. **The one backend reachable without setting `LIBRARY_BACKEND` was the one the
+guard never checked** — and that is exactly a fresh clone's configuration.
+
+**Why the whole suite was green over it, in three layers.** `setup` is in `config/ci.rb`'s
+`LOCAL_ONLY_GATES`, so no CI job runs it. Every deployed destination sets its own backend's env, so
+the box was unaffected. And `factory_test.rb` had two tests either side of the hole without covering
+it: *"LIBRARY_BACKEND=share without LIBRARY_PATH explains itself rather than raising KeyError"* sets
+the backend **explicitly**, and *"defaults to the share adapter when LIBRARY_BACKEND is unset"*
+supplies a **valid** LIBRARY_PATH. Between them the default arm's guard had no test that established
+its precondition — §15's "a green suite is not evidence a guard works", found in the wild again.
+
+**The obvious companion fix is a trap, and only a probe showed it.** Correcting `check!`'s *own*
+default from `chunk` to `share` looks like the honest repair — its header claims it "reads the same
+ENV vars, with the same defaults, as FileLayer.build". Measured instead of reasoned:
+`config/initializers/library_backend_check.rb` also calls `check!` with no arguments, and that
+default governs whether an unconfigured dev box **boots**. `LIBRARY_BACKEND=share` with no path →
+boot **refused**; `LIBRARY_BACKEND` unset → boots fine. So that change moves `bin/setup`'s failure
+one step *earlier* rather than fixing it. The no-arg default stays; **the factory passes the backend
+it resolved** (`check!(backend:)`), which also makes `S3.from_env`'s existing "the bare KeyError is
+unreachable in practice" comment true for the share arm, where it was false.
+
+**Second fix: a backend that cannot be CONSTRUCTED is not a scannable one.**
+`Library::RepoMetadataPurge` asks `FileLayer.current` for a capability, so on a fresh clone the
+*construction* is what fails. It now declines — the same no-op a fresh database already takes, since
+an environment with no library has indexed nothing beneath a `.git` and runs no scan to tombstone it
+away. The rescue is scoped to that one expression and catches `LibraryBackendCheck::Error` **only**:
+not `StandardError`, not `KeyError`, and an unknown `LIBRARY_BACKEND` still raises `ArgumentError`
+out of `FileLayer.build`, because that is a misconfigured *deployment* rather than an unconfigured
+*developer* (§14a wants it loud). Widening it around the sweep is the shape the migration's own
+`NameError` comment already refuses.
+
+**Third fix, and it is why `Result` grew a member.** The migration's declined branch read
+`say "declined: #{FileLayer.current.class} is not a scannable backend…"` — wrong twice. It hard-coded
+**one** of the two decline reasons, so the other would have been reported with an actively false
+claim about a scannable backend that is not there; and it asked `FileLayer` a **second** time to do
+it, which in exactly the unconfigured case **re-raises the error the gate just rescued**, taking
+`db:prepare` down again from the branch that exists to handle the condition. `Result` now carries
+`reason` and the migration prints it. The chunk_remote sentence is byte-identical to what
+`docs/DEPLOY.md` records, verified by running it.
+
+**Mutation-checked, five ways, every one red (§15).** M1 factory back to no-arg `check!` → 1F/2E.
+M2 `decline_reason` loses its rescue → 4E. M3 the two decline reasons collapse to one sentence →
+3F. M4 a successful run carries a `reason` anyway → 1F. M5 the migration re-asks `FileLayer` in the
+declined branch → 2E.
+
+**A new leg that can go red for this.** `test/models/library/purge_repo_metadata_nodes_migration_test.rb`
+drives `PurgeRepoMetadataNodes#up` with **both** knobs cleared — not just `LIBRARY_BACKEND`, because
+the s3 and chunk_remote legs each export their own backend's env and clearing one would leave two
+legs out of three asserting nothing. It pins the migration's stdout rather than `Result#reason`,
+because the defect was the migration composing a sentence of its own. Three cases: it does not raise,
+it names the *configuration* (and not a scannable backend), and — the other direction, without which
+the first two are satisfied by a migration that does nothing anywhere — a scannable backend still
+destroys the row.
+
+## 2026-08-26: the labelled dropdowns get room to be read, and the gallery stops moving under the pointer (branch `claude/boxes-ui-truncation-and-stable-gallery`)
 
 Two UI defects found by driving the deployed app rather than by reading it, both in the surface the
 edge labels had just landed on.
@@ -169,12 +236,13 @@ sample-less generators all render the `no sample photo` frame, **every one of th
 enum (`FingerJoint_style`) is still one column at 226px. All six proxy health checks 200
 (`chunk|share|s3` × `.local|.home`).
 
-**One gate is still red on `main`, and it is not this arc's.** `bin/ci setup` fails with
+**One gate was still red on `main`, and it was not this arc's.** `bin/ci setup` failed with
 `key not found: "LIBRARY_PATH"` — #251's migration resolves `FileLayer.current` at migrate time, so
-a shell without that variable cannot run `bin/setup`. Verified against `6273b60` with a clean tree,
-before this branch merged. It is invisible to CI because `setup` is in `LOCAL_ONLY_GATES`, and it
-does not affect the box, where every destination sets its own backend's env. Recorded here rather
-than fixed in passing.
+a shell without that variable could not run `bin/setup`. Verified against `6273b60` with a clean
+tree, before this branch merged. It was invisible to CI because `setup` is in `LOCAL_ONLY_GATES`,
+and it did not affect the box, where every destination sets its own backend's env. Recorded here
+rather than fixed in passing — **fixed on 2026-08-26, in the entry above, where the diagnosis
+turned out to be one layer deeper than this paragraph says.**
 
 ### A flake that was blocking the merge, diagnosed rather than re-run
 
