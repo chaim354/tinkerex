@@ -645,6 +645,7 @@ class StubForgejo
 
   def initialize(status: 201, response: { "number" => 42, "title" => "stub", "state" => "open", "body" => "" })
     @requests = []
+    @errors = []
     @server = TCPServer.new("127.0.0.1", 0)
     @payload = JSON.generate(response)
     @status = status
@@ -675,6 +676,16 @@ class StubForgejo
 
   private
 
+  # HANDLE RESCUES EVERYTHING, AND THAT CLOSES TWO FAILURES AT ONCE. Measured: if `handle` raises,
+  # the `ensure socket.close` fires with no response written and the client sits on its 15 s read
+  # timeout, after which bin/log reports "Forgejo is unreachable - Net::ReadTimeout" - so a STUB
+  # BUG presents as a transport failure, costs 15 s per affected test, and multiplies by three
+  # backend legs. Separately, a non-IO exception kills the accept thread, and `Thread#join`
+  # RE-RAISES it from inside the test's `ensure`, masking the assertion that actually failed.
+  # Answering 500 with the diagnostic fails the client fast AND keeps the thread alive; `errors`
+  # lets a test assert the stub itself stayed healthy.
+  attr_reader :errors
+
   def handle(socket)
     request_line = socket.gets.to_s
     method, path, = request_line.split(" ")
@@ -688,10 +699,17 @@ class StubForgejo
     body = headers["content-length"] ? socket.read(headers["content-length"].to_i).to_s : ""
     @requests << Request.new(method: method, path: path, headers: headers, body: body)
 
-    socket.write("HTTP/1.1 #{@status}\r\nContent-Type: application/json\r\n" \
-                 "Content-Length: #{@payload.bytesize}\r\nConnection: close\r\n\r\n#{@payload}")
+    respond(socket, @status, @payload)
+  rescue StandardError => e
+    @errors << e
+    respond(socket, 500, JSON.generate({ "stub_error" => "#{e.class}: #{e.message}" }))
   ensure
     socket.close rescue nil
+  end
+
+  def respond(socket, status, payload)
+    socket.write("HTTP/1.1 #{status}\r\nContent-Type: application/json\r\n" \
+                 "Content-Length: #{payload.bytesize}\r\nConnection: close\r\n\r\n#{payload}")
   end
 end
 ```
@@ -729,6 +747,32 @@ Add `require "support/stub_forgejo"` under the other requires, then:
   end
 ```
 
+Add a second test — the real trigger for Task 2b's catch-all, covering it without a second test hook in production code:
+
+```ruby
+  # A 2xx WHOSE BODY IS NOT JSON IS AN OUTAGE, NOT A CRASH. A proxy error page and Forgejo's own
+  # login page on a session redirect both arrive as 200 text/html. Unwrapped, JSON::ParserError
+  # escaped to Ruby's default handler and exited 1 — which was EXIT_UNFILED, so a broken proxy
+  # reported a backlog.
+  test "a 2xx with a non-JSON body is unreachable, not a stack trace" do
+    stub = StubForgejo.new(status: 200, response: "<html>502 Bad Gateway</html>")
+
+    _out, err, code = run_log("show", "1", env: {
+      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url
+    })
+
+    assert_equal 3, code, "a non-JSON 2xx did not reach the clean unreachable exit"
+    assert_includes err, "non-JSON body"
+    refute_includes err, "JSON::ParserError:", "a raw parser error reached the user"
+    assert_empty stub.errors, "the stub itself raised: #{stub.errors.map(&:message)}"
+  ensure
+    stub&.shutdown
+  end
+```
+
+`StubForgejo#initialize` JSON-encodes `response`; this test needs it sent raw, so make it
+`@payload = response.is_a?(String) ? response : JSON.generate(response)`.
+
 - [ ] **Step 3: Run to verify it fails** — exit 2, `open is not implemented yet`.
 
 - [ ] **Step 4: Implement, inside `module Log`**
@@ -753,7 +797,7 @@ Add `require "support/stub_forgejo"` under the other requires, then:
 
 Add `when "open" then open_item(argv)` to `dispatch`.
 
-- [ ] **Step 5: Run to verify it passes** — PASS, 8 tests.
+- [ ] **Step 5: Run to verify it passes** — PASS, 10 tests.
 - [ ] **Step 6: Run the file 5× to shake out the fork/socket rules** — `for i in 1 2 3 4 5; do bin/rails test test/log_cli_test.rb || break; done`. Any hang or intermittent failure means one of the stub's five rules was not followed; fix it rather than retrying.
 - [ ] **Step 7: rubocop, then commit** — subject: `bin/log open, asserted on the wire format rather than a round-trip`.
 
@@ -966,13 +1010,15 @@ Add `LOG_SPOOL_DIR (default tmp/log-pending), LOG_BRANCH` to `usage_text`'s env 
   # STATUS FAILS LOUD ON A BACKLOG. bin/backup-status exists for the same reason and says so in its
   # header: a nightly that stops is silent, and the failure looks exactly like success right up
   # until the restore. An unfiled arc is the same shape.
-  test "status names every spooled entry and exits 1" do
+  test "status names every spooled entry and exits EXIT_UNFILED" do
     Dir.mktmpdir do |spool|
       File.write(File.join(spool, "claude-example.md"), "# unfiled: open\n")
 
       out, _err, code = run_log("status", env: { "LOG_SPOOL_DIR" => spool })
 
-      assert_equal 1, code, "an outstanding record must fail loud, not print a note and exit 0"
+      assert_equal 4, code, "an outstanding record must fail loud, not print a note and exit 0"
+      refute_equal 1, code,
+                   "EXIT_UNFILED must not be Ruby's own crash status, or a crash reads as a backlog"
       assert_includes out, "claude-example.md"
     end
   end
@@ -1018,15 +1064,20 @@ Add `LOG_SPOOL_DIR (default tmp/log-pending), LOG_BRANCH` to `usage_text`'s env 
     EXIT_UNFILED
   end
 
-  # IDEMPOTENT BY TOLERATING 422, which is what Forgejo answers for a label that already exists —
-  # the ordinary case on every run after the first. Treating it as failure would make `setup` a
-  # one-shot command, and a one-shot setup is one nobody re-runs after adding a label. This is the
-  # ONE place a non-2xx is not Unreachable, so it is handled here rather than in `api`.
+  # IDEMPOTENT BY DECLARING 422 ACCEPTABLE AT THE CALL SITE, not by matching on a message string.
+  # Forgejo answers 422 for a label that already exists — the ordinary case on every run after the
+  # first — so treating it as failure would make `setup` a one-shot command, and a one-shot setup
+  # is one nobody re-runs after adding a label.
+  #
+  # `allow:` rather than a rescue, for two reasons. `perform`'s message embeds the RESPONSE BODY,
+  # so `e.message.include?("HTTP 422")` would also swallow any other status whose body happened to
+  # contain that text — and, far likelier, changing the message format would silently stop setup
+  # being idempotent, failing only on the SECOND run. And a rescue around the call can grow to
+  # swallow a genuine connection failure, which is exactly what C1 exists to prevent. An
+  # expectation declared before the fact cannot drift.
   def setup
     LABELS.each do |name|
-      api(:post, repo_path("/labels"), { name: name, color: "#666666" })
-    rescue Unreachable => e
-      raise unless e.message.include?("HTTP 422")
+      api(:post, repo_path("/labels"), { name: name, color: "#666666" }, allow: [ 422 ])
     end
 
     puts "bin/log: #{LABELS.size} labels present."
@@ -1036,7 +1087,22 @@ Add `LOG_SPOOL_DIR (default tmp/log-pending), LOG_BRANCH` to `usage_text`'s env 
 
 Add `when "status" then status` and `when "setup" then setup` to `dispatch`.
 
-- [ ] **Step 4: Run to verify they pass** — PASS, 15 tests.
+`allow:` threads through the transport. Give `api` and `perform` a keyword defaulting to empty, and widen the acceptance test:
+
+```ruby
+  def api(method, path, body = nil, allow: [])
+    perform(method, path, body, allow)
+  # ...rescues unchanged
+
+  def perform(method, path, body, allow)
+    # ...
+    code = response.code.to_i
+    unless code.between?(200, 299) || allow.include?(code)
+      raise Unreachable, "HTTP #{response.code} from #{path}: #{response.body.to_s[0, 200]}"
+    end
+```
+
+- [ ] **Step 4: Run to verify they pass** — PASS, 17 tests.
 - [ ] **Step 5: rubocop, then commit** — subject: `bin/log status and setup: make the debt visible, make the labels exist`.
 
 ---
@@ -1187,12 +1253,16 @@ One at a time. **Restore after each, and confirm green before the next.** Report
 - [ ] **10. `status` fails loud** — change `status`'s backlog return to `EXIT_OK`. Expect RED.
 - [ ] **11. `note` comments rather than edits** — point `note` at `create_issue` instead of the comments endpoint. Expect RED.
 - [ ] **12. `search` spans both states** — change `state=all` to `state=open`. Expect RED.
-- [ ] **13. Stdlib-only** — add `require "bundler/setup"` to the top of `bin/log`. Expect RED on the stale-`BUNDLE_GEMFILE` test.
+- [ ] **13. The encoding fix** — comment out `Encoding.default_external = Encoding::UTF_8`. Expect RED on the locale-less credential test. No developer shell reproduces this; the guard is the only thing that will ever notice.
+- [ ] **14. The catch-all** — remove `main`'s `rescue StandardError` arm. Expect RED on the non-JSON-body test, exiting 1 rather than 3.
+- [ ] **15. `EXIT_UNFILED` is not 1** — set `EXIT_UNFILED = 1`. Expect RED on `status`'s `refute_equal`.
+- [ ] **16. `setup`'s `allow: [422]`** — drop the `allow:` argument. Expect RED against a stub answering 422.
+- [ ] **17. Stdlib-only** — add `require "bundler/setup"` to the top of `bin/log`. Expect RED on the stale-`BUNDLE_GEMFILE` test.
 
 - [ ] **Record the result**
 
 ```bash
-git commit --allow-empty -m "Mutation-check bin/log's thirteen guards: all thirteen go red on cue
+git commit --allow-empty -m "Mutation-check bin/log's seventeen guards: all seventeen go red on cue
 
 Per §15 — a guard that has never failed has not been shown to work. Each was
 broken individually, confirmed red, and restored.
@@ -1230,10 +1300,12 @@ bin/log status                   # anything unfiled? exits 1 if so
 - [ ] **Step 4: Verify against the real Forgejo, once.** The suite never touches it. This is the step Task 0's token blocks.
 
 ```bash
-bin/log setup && bin/log open "bin/log smoke test — close me" && bin/log status
+bin/log setup && bin/log setup && bin/log open "bin/log smoke test — close me" && bin/log status
 ```
 
-Expected: labels reported present, an issue number printed, `nothing unfiled`. Close the smoke-test issue in the UI afterwards.
+**`setup` runs TWICE deliberately.** Idempotency is its entire claim, and one run cannot test it — the 422-tolerating path only executes on the second. A `setup` that silently stopped being idempotent would fail for the first time months later, in front of whoever added a label.
+
+Expected: labels reported present both times, an issue number printed, `nothing unfiled`. Close the smoke-test issue in the UI afterwards.
 
 - [ ] **Step 5: Close out** with `/finish-branch`. State plainly in the PR body that **PR 1 deletes nothing** and `docs/STATUS.md` stays canonical until PR 2.
 
