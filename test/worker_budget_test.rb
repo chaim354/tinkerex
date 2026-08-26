@@ -148,16 +148,41 @@ class WorkerBudgetTest < ActiveSupport::TestCase
 
     # Real pidfiles in the real directory: the detector reads the filesystem, so stubbing that away
     # would test nothing. Cleaned up whatever happens.
+    # A PRIVATE PIDFILE DIRECTORY PER EXAMPLE, AND THE SHARED ONE IS A REAL CROSS-WORKER RACE.
+    # These tests write pidfiles for pids that are deliberately DEAD, and `concurrent_browser_suite?`
+    # SWEEPS a dead pid's file as it reads it — that sweep is itself one of the behaviours under test
+    # here. The unit suite runs 10 processes, so "a stale pidfile is ignored and swept" running in
+    # worker 3 would delete the 999_998 file that "a detector that raises" had just written in worker
+    # 7, which then scanned an empty directory and read CONTENDED as idle. Observed twice on
+    # 2026-08-26 — once locally, once on CI (run 32968647983) — always on the raising-detector test,
+    # always passing on re-run and in isolation, which is the signature of exactly this.
+    #
+    # Reassigning the constant rather than adding a seam to `WorkerBudget`: production code has one
+    # directory by design (a second suite must SEE the first), so a configurable path would exist
+    # only for tests and could drift from the real one. Restored in the ensure, and `remove_const`
+    # first because Ruby warns on reassignment.
     def with_pidfiles(*pids)
       require "fileutils"
-      FileUtils.mkdir_p(WorkerBudget::PIDFILE_DIR)
+      require "tmpdir"
+      real_dir = WorkerBudget::PIDFILE_DIR
+      swap_pidfile_dir(Dir.mktmpdir("worker-budget-test"))
       paths = pids.map { |pid| File.join(WorkerBudget::PIDFILE_DIR, "#{pid}.pid") }
       paths.each { |p| File.write(p, "1") }
       yield
     ensure
-      paths&.each { |p| FileUtils.rm_f(p) }
+      FileUtils.remove_entry(WorkerBudget::PIDFILE_DIR) rescue nil
+      real_dir && swap_pidfile_dir(real_dir)
       @sleeper && (Process.kill("TERM", @sleeper) rescue nil)
       @sleeper && (Process.wait(@sleeper) rescue nil)
+    end
+
+    # THE CONSTANT LIVES ON THE SINGLETON, NOT ON `WorkerBudget` ITSELF — `WorkerBudget::PIDFILE_DIR`
+    # resolves through it, but `remove_const` must be sent to the object that actually owns it, which
+    # is the same distinction the file's own comment records about how it shipped wrong once.
+    def swap_pidfile_dir(dir)
+      owner = WorkerBudget.singleton_class.const_defined?(:PIDFILE_DIR, false) ? WorkerBudget.singleton_class : WorkerBudget
+      owner.send(:remove_const, :PIDFILE_DIR)
+      owner.const_set(:PIDFILE_DIR, dir)
     end
 
     def spawn_sleeper

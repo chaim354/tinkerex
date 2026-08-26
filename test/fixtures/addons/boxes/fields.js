@@ -16,7 +16,20 @@ export function buildField(param, prefillValues) {
   const value = hasPrefill ? prefillValues[name] : param.default
 
   const label = document.createElement("label")
-  label.className = param.multiline ? "box-field box-field-multiline" : "box-field"
+  // `box-field-wide` spans two columns of the host's params grid. A LABELLED enum needs it and
+  // nothing else does: its options are a letter plus a sentence — "Y — Handle with holes for
+  // parallel finger joint" measures 324px against the 232px column the grid actually renders at a
+  // 976px form, so the explanation the label exists to give was cut off mid-word. Measured on the
+  // deployed app: of TypeTray's 13 selects exactly two (top_edge, bottom_edge) overflow, by 94px
+  // and 70px; the other eleven have 34–114px of slack, which is why widening every column instead
+  // would cost the form a whole column for no one's benefit.
+  //
+  // Keyed on `choice_labels` being present — the same fact that makes the text long in the first
+  // place — never on the param's name.
+  const classes = [ "box-field" ]
+  if (param.multiline) classes.push("box-field-multiline")
+  else if (param.choice_labels) classes.push("box-field-wide")
+  label.className = classes.join(" ")
 
   const labelSpan = document.createElement("span")
   labelSpan.className = "box-field-label"

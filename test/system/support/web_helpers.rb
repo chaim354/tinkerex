@@ -49,23 +49,30 @@ module WebHelpers
   # already warns about — but it is here for correctness, not tidiness.
   #
   # THE `settle_addon_cards` IS NOT DECORATION — do not collapse this back to a bare click. Every
-  # card carries an `<img class="addon-thumb">` asking the sidecar proxy for a sample photo, and
-  # `.addon-thumb.is-missing { display: none }` removes a 120px-tall box (plus its 6px flex gap) the
-  # moment one fails. FakeBoxesSidecar registers a sample for ABox alone, and even that one is
-  # deliberately truncated JPEG bytes — so ALL FOUR thumbs fire `error`, and every card below the
-  # one that failed jumps up ~126px. Measured for TrayLayout, the last of the four: 1002px -> 624px,
-  # a 378px shift, arriving whenever four real HTTP round-trips happen to land.
+  # card carries an `<img class="addon-thumb">` asking the sidecar proxy for a sample photo, and a
+  # failed one used to remove a 120px-tall box (plus its 6px flex gap) via
+  # `.addon-thumb.is-missing { display: none }`, so every card below it jumped up ~126px. Measured
+  # for TrayLayout, the last of the four: 1002px -> 624px, a 378px shift arriving whenever four real
+  # HTTP round-trips happened to land.
   #
   # Chromedriver's click computes ONE coordinate and then dispatches pointerMove/pointerDown at it.
-  # A thumb resolving inside that window moves the card out from under the pointer, the click lands
-  # in the dead space below the shrunken grid, and NOTHING RAISES — it is a silent no-op, after
-  # which the test waits out its whole timeout on a gallery page that looks perfectly healthy. That
-  # is what had `system-test` red on main (run 31188332739): the failure screenshot shows the
-  # gallery, not the editor, and the tests that failed are exactly the ones opening the LAST card.
+  # A thumb resolving inside that window moved the card out from under the pointer, the click landed
+  # in dead space, and NOTHING RAISED — a silent no-op, after which the test waited out its whole
+  # timeout on a gallery page that looked perfectly healthy. That is what had `system-test` red on
+  # main (run 31188332739): the failure screenshot shows the gallery, not the editor, and the tests
+  # that failed are exactly the ones opening the LAST card.
   #
-  # MUTATION-CHECKED (2026-08-10) — see box_sections_test.rb's "a gallery card that shifts under the
-  # pointer is still opened", which reproduces that window deterministically and goes red without
-  # this call.
+  # THE SHIFT IS GONE AS OF 2026-08-25 — a sample-less generator keeps its frame, so a 404 changes
+  # a card's contents and never its size. TWO THINGS IN THE OLD VERSION OF THIS COMMENT WERE ALSO
+  # FALSE BY THEN and are corrected here rather than left as folklore: FakeBoxesSidecar's ABox
+  # sample was "deliberately truncated JPEG bytes" that Chrome could not decode, so all four thumbs
+  # fired `error` and the fixture contained zero photos — it is a real 1x1 JPEG now, and exactly one
+  # card has a photo.
+  #
+  # THE CALL STAYS, for the race the structural fix does NOT close: the bundle renders this gallery
+  # after two async fetches, so `find(".addon-card")` can outrun it, and the helper waits for the
+  # cards to exist before anything clicks. It is also the cheap insurance that keeps the old failure
+  # from returning silently if the frame ever stops being reserved.
   def open_addon_card(key)
     settle_addon_cards
     find(".addon-card", text: key).click
