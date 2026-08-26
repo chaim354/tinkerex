@@ -78,7 +78,103 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-25): CI wall-clock cut ~64% per change, and a guard that was permanently maxed out (branch `claude/faster-ci`)
+## Latest (2026-08-26): STL and 3MF are inherently models — the catalog becomes a view over the library (branch `claude/3mf-stl-models-9266dc`)
+
+The complaint was one sentence: "3mf and stl are inherently models." The vocabulary already agreed —
+`ROLE_BY_EXT` has mapped `stl 3mf obj step stp` to role `model` for months, `Maker::ProjectFolders`
+files them into `models/`, and `FilesController`'s `:model3d` branch already gives them the Three.js
+viewer. **Only the catalog disagreed.** A `Maker::Model` existed if and only if someone walked the
+Import flow at `models#new`; an `.stl` arriving any other way — a plain upload, a device push, a NAS
+drop the scanner picked up, an addon save, a move, a trash restore — was a file with role `model` and
+nothing more. `/models` showed what you had imported, not what you had.
+
+### The rule
+
+**A folder is either a *shelf* or a *model*, and the nearest shelf ancestor decides.** A model-role
+file directly under a shelf is its own one-file model; anything deeper belongs to the shelf's direct
+child folder, which claims its whole subtree. `3D Models/` is a shelf, so `3D Models/benchy.stl` is
+one model and `3D Models/Enclosure/` is another holding its parts, PDFs and renders. Mark
+`3D Models/Enclosure/` a shelf too and *its* children become models instead.
+
+Shelves are user-editable at `/settings/shelves`, seeded with three deletable rows — `""` (the
+library root), `Models`, and `Projects/*/models`. The rules and their consequences are in
+`docs/invariants/model-intake.md` (CLAUDE.md §14k); what follows is the arc.
+
+### The two identities differ on purpose
+
+A **shelf is a path pattern**; a **model is a node_id**. Only a pattern expresses `Projects/*/models`
+— one rule over a folder per project, none of which need exist. Only a node_id survives a rename:
+`Library::Reconciler` pairs by `(content_hash, size)` and keeps a renamed node's id, so a path key
+would abandon a renamed folder's row and mint a second, leaving two models for one folder. The cost
+of path-keyed shelves — a renamed folder silently stops matching — is paid by the settings page's
+live/missing indicator rather than argued away.
+
+### What the plan got wrong, and how
+
+Nine tasks, each implemented by a fresh agent against literal code, each ending in a mutation check.
+**Seven of the nine found a real defect in the plan or in an earlier task's work.** Worth recording
+because the plan was written carefully and reviewed before execution; the defects were not sloppiness,
+they were things only running the code could show.
+
+| found by | the defect |
+|---|---|
+| Task 1 | `valid_leaf_name?("*x")` is TRUE and `reserved?("*x")` is FALSE, so composing the two library-name checks let `Projects/*x/models` save and then match nothing, forever. The wildcard clause is this class's own and cannot be delegated. |
+| Task 3 | `ancestors_of`'s `:broken` guard could be deleted with the suite fully green — in the method the classifier calls for **every file in the library**. Its unguarded failure is also the worse of the two: `NoMethodError`, where `path_for`'s is a quietly wrong string, because `:broken` answers `.name` in Ruby 3+ and reads as an ordinary path segment. |
+| Task 4 | The branch was **red on `bin/ci test`** and no task picked it up: `SchemaMapTest` refuses a table absent from `SchemaMap::LAYOUT`, and `maker_shelves` had been added two tasks earlier without one. |
+| Task 4 | One assertion in "a non-model file loose on a shelf becomes nothing" read only `model_keys`, so the filter it existed to pin could be deleted green. |
+| Task 5 | `Integer("-5")` succeeds, so a negative `MODEL_CATALOG_MAX_MODELS` sailed past the rescue and raised "negative array size" from `todo.first(-5)` inside the recurring job. |
+| Task 6 | **`.grid-name` does not exist in this codebase** — the plan invented it. Three `count: 0` assertions would have passed vacuously. The real class is `.model-name`. |
+| Task 6 | `catalogued` could be deleted green: the dismissed-model fixture had no attachments, so the emptied-model rule hid it either way. Two rules, one confounded test. |
+| Task 7 | `Shelf.seed_once!` used `create!`, so a user holding a seed path **without** the stamp raised "Path has already been taken" on every later call — permanently, on the recurring sweep's first line. |
+| Task 8 | `template_hygiene_test` refuses a template no page renders; the new page had to be registered or the gate stayed red. |
+| Task 8 | Two plan assertions could not fail for the reason they existed — `where.not(path: "")` was exactly the filter hiding the row the tenancy test was looking for. |
+
+The controller's own mistake belongs in the list too: the confirm dialog on `models/show` still read
+"Delete X? (files are kept)" after `#destroy` learned to dismiss, so it told a user their model was
+being deleted at the moment the row was about to survive on purpose.
+
+### One mutation the plan expected to go red cannot
+
+Task 8's plan asked for `current_user.nodes` → `Node` in the shelf-creation path, expecting the
+tenancy test to fail. It stays green, and the implementer showed why rather than working around it:
+tenancy is enforced **twice**, because `Maker::LibraryTree` is built from `current_user`'s dirs
+alone, so an unscoped lookup that finds a foreign node still hits `path_for`'s `:broken` sentinel and
+returns nil. Verified against the full share leg — 2433 runs, 0 failures — with the scope removed.
+The scope stays, and the finding is written at the line so the next reader does not read GREEN as
+"dead code, delete it."
+
+### Measured
+
+- **Query cost.** A no-op sweep is **7 queries flat** — same on a 2-model library and a 12-model one.
+  The seventh is one `INSERT … ON CONFLICT DO NOTHING`, so the *count* is constant while the
+  *payload* is linear in owned files; 6,000 files in one folder completes fine. `classify` is
+  4 queries, also flat. The settings page is 5 queries at both 3 and 15 shelves — without the
+  `@tree_paths` memo it is one pluck per shelf (7 → 19), now pinned in `page_query_budget_test.rb`.
+- **Suite.** 2,433 runs on all three backend legs — `test` (share), `test-s3`, `test-chunk-remote` —
+  assertions 8925 / 8925 / 9082 and skips 30 / 30 / 5, which is the expected shape: chunk-gated
+  tests execute rather than skip on that leg. §15's identical-counts rule holds.
+- **Cap.** `cap: 5` against 22 candidate keys creates exactly 5 and reports `:capped`; a second run
+  creates the next 5, so the sorted order makes a capped run resume rather than re-roll.
+- **Not yet measured on hardware.** Nothing here has run against the live share library, which is the
+  only deployment holding real data. The first `rake models:catalog` there is the number this entry
+  is missing.
+
+### Left out deliberately
+
+- **No eager nudge.** Nothing in a web request sweeps, so a `.stl` uploaded through Files appears at
+  `/models` within one 15-minute tick rather than immediately. `Maker::ProjectIntake`'s eager path is
+  where §14f's measured latency problems live, and cataloguing is not urgent the way filing a file
+  into the folder you are looking at is. Whoever adds one owes it a second cap.
+- **`for_node` is not built.** The design named it as a surviving entry point; it has no caller
+  without the nudge, and an entry point with no caller is dead code the next reader has to evaluate.
+- **No un-dismiss.** Dismissal is permanent by design, but `models#show` has **no visibility gate** —
+  a dismissed model is still reachable by URL, returning 200 with no banner and no way back. That is
+  a real hole: an accidental "Remove from catalog" is unrecoverable through the UI. Smallest fix is a
+  banner plus a Restore button on the show page for `dismissed_at.present?`.
+- **The sweep does not attach to import-origin models.** Import owns those rows.
+- **`importer_controller.js`'s third extension table** is untouched — already recorded above.
+
+## 2026-08-25: CI wall-clock cut ~64% per change, and a guard that was permanently maxed out (branch `claude/faster-ci`)
 
 The complaint was that CI is slow and runs on the same Mac it is developed on. Measured before
 changing anything: median run **175s**, and the last 40 runs were an **exact 20/20 push /
