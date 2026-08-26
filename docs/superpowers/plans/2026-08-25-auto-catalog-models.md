@@ -18,7 +18,16 @@ the arguments this plan implements.
 
 ## Read before you start
 
-You are working in the **maker app**. Five things about this repo will bite you if you skip them:
+You are working in the **maker app**. Six things about this repo will bite you if you skip them:
+
+0. **A NEW TABLE MUST BE PLACED IN `SchemaMap::LAYOUT`, AND A NEW APP-LEVEL REFERENCE MUST BE
+   DRAWN IN `SchemaMap::EDGES`.** `test/schema_map_test.rb` fails on an unplaced table and on a
+   stale `docs/schema-map.html` (`bin/rails schema:map` regenerates it) — but it says in as many
+   words that it CANNOT catch a new app-level reference nobody adds to `EDGES`: there is no
+   constraint to notice and no naming convention to key on, so the map just lacks that arrow with
+   nothing going red. This feature adds one table (`maker_shelves`, no edge — a shelf is a path
+   pattern, not a node) and one reference (`maker_models.auto_node_id` → `nodes.node_id`). Both
+   were landed alongside Task 4; if you add another, this is on you.
 
 1. **CLAUDE.md §15 requires you to mutation-check every guard you write.** After a test that exists
    to *forbid* something goes green, break the thing it guards, confirm the test goes **RED**, then
@@ -858,7 +867,7 @@ end
 - [ ] **Step 4: Run the test**
 
 Run: `bin/rails test test/services/maker/model_intake_classify_test.rb`
-Expected: PASS, 10 runs.
+Expected: PASS, 9 runs.
 
 - [ ] **Step 5: Mutation-check the nearest-shelf rule**
 
@@ -1121,7 +1130,7 @@ every request in the process, and the next user gets the first user's answer.
 - [ ] **Step 4: Run the tests**
 
 Run: `bin/rails test test/services/maker/model_intake_test.rb test/services/maker/model_intake_classify_test.rb`
-Expected: PASS, 19 runs (10 classify + 9 sweep).
+Expected: PASS, 20 runs (9 classify + 11 sweep).
 
 - [ ] **Step 5: Mutation-check the dismissal guard**
 
