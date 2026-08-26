@@ -1579,6 +1579,29 @@ git commit -m "Vendor CodeMirror 6 as one bundle, and forbid per-package pins"
 
 - [ ] **Step 1: Write the language table**
 
+> **THREE CORRECTIONS TO THE CODE BELOW, ALL FOUND BY RUNNING IT (2026-08-26). Recorded rather
+> than silently patched, because two of them are silent in production.**
+>
+> **1. `token: "variableName.special"` IS THE WRONG SPELLING and prints a console warning on
+> every OpenSCAD file.** `@codemirror/language`'s stream parser treats the LAST dotted part as the
+> tag, so it warns `Modifier special used at start of tag` and drops the modifier. Use the legacy
+> CodeMirror-5 name **`"variable-2"`**, which resolves to exactly `variableName.special` with no
+> warning. Measured against the shipped bundle: `variable-2` → node `variableName.special`,
+> warn `[]`; `variableName.special` → node `variableName_special`, warn
+> `["Modifier special used at start of tag"]`. The other token names below (`comment`, `meta`,
+> `string`, `keyword`, `builtin`, `atom`, `number`, `variableName`) are all clean.
+>
+> **2. `lbrn`/`lbrn2` CANNOT REACH THIS TABLE.** `FilesController#preview_kind` answers `:measure`
+> for `lbrn lbrn2 mage dxf svg` — that branch owns those pages — so the entry could never run.
+> Dropped, with a comment saying why.
+>
+> **3. `scad` CANNOT REACH IT EITHER, TODAY.** `Maker::FileAttachment.role_for("x.scad")` is
+> `cad_source`, not in `TEXT_ROLES`, so `preview_kind` answers `:other` and the page renders "No
+> inline preview for this file type." (driven, and seen in the browser). The OpenSCAD mode is kept
+> — it is real, probed, and the deferred editing arc's obvious consumer — but the plan's step 7
+> instruction to "open a `.scad`" cannot be carried out as written. Making it reachable is a ROLE
+> change belonging with `Maker::ProjectFolders` and a re-derive migration, not with the viewer.
+
 Create `app/javascript/lib/codemirror_languages.js`:
 
 ```javascript
@@ -1797,6 +1820,17 @@ bin/rails server
 Open a `.cpp`, a `.gcode` and a `.scad` file in the library. Confirm: line numbers, highlighting,
 no caret when clicking in the text, and no SEVERE console errors. Then open a `.txt` and confirm
 it renders plainly rather than erroring.
+
+> **CORRECTION TO STEP 2's CONTROLLER, MEASURED (2026-08-26): `Range` alone fixes nothing on two
+> of the three backends.** Driven per backend — share `send_file` returns **200 with the whole
+> body and no `Accept-Ranges`** (1,000,000 asked, 1,000,000 returned, header or not); chunk_remote
+> goes through the same stack and the same action, so the same; s3's 302 is unaffected and its
+> presigned URL signs `host` alone, so the range reaches the store. The controller as shipped
+> therefore sends the header AND reads `res.body.getReader()`, cancelling once more than
+> `MAX_BYTES` have arrived — measured at **300 bytes transferred versus 5,243,160 without the
+> cancel**, on a 5 MB `.gcode` in a real browser. It also asks for `bytes=0-${MAX_BYTES}`, one
+> byte more than it keeps, so "truncated" is exact without reading `Content-Range` (which a
+> cross-origin s3 response does not expose). Full numbers: `docs/STATUS.md`.
 
 - [ ] **Step 8: Verify the s3 fetch path (recorded in the spec as unverified)**
 

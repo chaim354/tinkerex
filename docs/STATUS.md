@@ -80,7 +80,7 @@ reading the last entry.
 
 ## Latest (2026-08-25): a git repo in the library, and the sweep that was tearing one apart (branch `claude/codemirror-code-editor`)
 
-**IN PROGRESS — eight of nine tasks landed.** Spec:
+**COMPLETE — nine of nine tasks landed.** Spec:
 `docs/superpowers/specs/2026-08-25-codemirror-code-viewer-design.md`. Plan:
 `docs/superpowers/plans/2026-08-25-codemirror-code-viewer.md`.
 
@@ -721,9 +721,119 @@ identity was not captured (the run's assertion count read 9114 against the 9117 
 so one test bailed part-way); it did not recur in the four runs after it. Recorded rather than
 claimed as diagnosed — task 7 saw the same shape on the s3 leg.
 
-### Still to land (task 9 of the plan)
+### The `codeview` controller, and the whole-blob fetch task 7 measured (task 9, landed)
 
-The `codeview` controller.
+`app/javascript/lib/codemirror_languages.js` (ext → language, plus our own g-code and OpenSCAD
+`simpleMode` tokenizers), `app/javascript/controllers/codeview_controller.js`, one more importmap
+pin, the `:text` branch of `files/show.html.erb`, `.preview-code` styling, and
+`textpreview_controller.js` deleted. **Read-only is two facts, not one:**
+`EditorState.readOnly.of(true)` refuses a document change, `EditorView.editable.of(false)` removes
+the contenteditable, and each is now asserted separately off the live `EditorState` so a mutation
+of either goes red on its own line.
+
+**THE FETCH RUNS FIRST AND THE BUNDLE SECOND.** The inner `<pre>` is the fallback and the resting
+state at once: the controller fills it with the fetched text, then removes it only once the editor
+mounts. Driven with the dynamic import deliberately pointed at a specifier that does not resolve:
+the page shows the file's real text in `pre.preview-text`, no `.cm-editor`, and one console
+WARNING — exactly the plain preview this branch used to be.
+
+**THE `Range` HEADER WAS MEASURED PER BACKEND RATHER THAN ASSUMED, AND IT FIXES NOTHING ON ITS
+OWN.** Task 7 recorded the cost (a 2.1 MB `.nc` crossing the wire in full to display 200 KB) and
+named this task as the fix; `Range: bytes=0-199999` is the obvious approach and here is what each
+backend actually does with it:
+
+| backend | how `#blob` delivers | what a `Range` request gets |
+|---|---|---|
+| share | `send_file` → Rails' own `FileBody` | **IGNORED.** Driven: 1,000,000 bytes asked with the header and 1,000,000 returned, `200`, `Content-Length: 1000000`, no `Accept-Ranges`, no `Content-Range` — byte-identical to the request without it. The app's middleware stack has no range handler (`Rack::Sendfile`/`ActionDispatch::Static`/`Propshaft::Server` answer asset paths only). |
+| s3 | `302` to a presigned URL | **Rails is unaffected** (driven: `302` with and without, `get_object` calls `0`), and the presigned URL signs `X-Amz-SignedHeaders=host` alone, so the `Range` the browser then sends to the store is not part of the signature. What the store does with it is documented S3 behaviour, **not verified against a live bucket from here.** |
+| chunk_remote | `self.response_body = enum` | **IGNORED** — the same action, the same stack that ignored it for share. Inferred from that measurement plus reading, **not driven**: `test-chunk-remote` was out of scope for this task. Here the bytes also stream through Puma (§14a: `presignable` is false), so the cost is a held request thread. |
+
+So the header is sent — free where it is ignored, real egress saved where it is honoured — but
+**what actually bounds the transfer is a stream cancel**, which needs no server cooperation:
+`fetchHead` reads `res.body.getReader()` and calls `reader.cancel()` the moment more than
+`MAX_BYTES` have arrived. Measured in a real browser on a 5 MB `.gcode`, via
+`PerformanceResourceTiming#transferSize`: **300 bytes with the cancel, 5,243,160 without** (the
+file plus 280 bytes of headers). Read the 300 as a floor rather than a literal wire count — Chrome
+does not add the body of a stream the page aborted to `encodedBodySize` — but four orders of
+magnitude is not a measurement artefact.
+
+**THE REQUEST ASKS FOR ONE BYTE MORE THAN IT KEEPS**, which is what makes "truncated" exact rather
+than a guess: receiving more than `MAX_BYTES` is the whole test, and it is true both of a `206`
+that filled the extra byte and of a `200` that was cut off. Reading `Content-Range` instead would
+fail on the s3 path, where a cross-origin response exposes no such header and every file — however
+small — would be labelled truncated.
+
+**THE PLAN'S OPENSCAD TOKEN NAME WAS WRONG, AND ONLY RUNNING IT SHOWED THAT.** It spelled the
+`$fn` token `"variableName.special"`. `@codemirror/language`'s stream parser warns
+`Modifier special used at start of tag` on that string and drops the modifier; the legacy
+CodeMirror-5 name `"variable-2"` resolves to exactly `variableName.special` with no warning.
+Probed against the shipped bundle rather than reasoned: `variable-2` → node
+`variableName.special`, warn `[]`; `variableName.special` → node `variableName_special`, warn
+`["Modifier special used at start of tag"]`. Both our modes were then run over real samples
+through the shipped artifact — all 30 extensions the table claims resolve non-null, `txt` returns
+null, and the whole probe emits **zero** warnings.
+
+**`.scad` CANNOT REACH THIS VIEWER TODAY, AND THE OPENSCAD MODE IS KEPT ANYWAY.** Driven, not
+assumed: `Maker::FileAttachment.role_for("x.scad")` is `cad_source`, which is not in `TEXT_ROLES`,
+so `preview_kind` answers `:other` and the page renders "No inline preview for this file type."
+(seen in the browser). The task brief and the plan both assumed otherwise. Making it reachable is
+a ROLE change — `scad` moving from `cad_source` to `code`, which also moves where
+`Maker::ProjectFolders` files it and needs a re-derive migration in `RederiveCodeRoles`' shape —
+so it belongs with that decision, not with the viewer. `lbrn`/`lbrn2` were **dropped** from the
+plan's table for the same reason with no such argument to keep them: `preview_kind` answers
+`:measure` for all five measurable extensions, so those entries could never run.
+
+**THE TEMPLATE-HYGIENE SWEEP DID NOT REACH THE `:text` BRANCH, AND THIS ARC IS WHAT MADE THAT
+MATTER.** That comment was one line; it is now seven. `test/integration/web/template_hygiene_test.rb`
+renders a `firmware.cpp` page now, and a `%>` planted inside the new comment goes red on **both**
+of its tests, quoting the leaked prose. That was not hypothetical: the "look at the page" probe
+was first run against a working tree where a mutation had failed to restore, and the probe is what
+showed it — the file listing had not.
+
+**WHAT WAS SEEN IN THE BROWSER**, on real pages served by a real Puma, screenshots included:
+`firmware.cpp` — 19 line numbers, a fold gutter, C++ keywords/strings/comments/numbers coloured,
+19 token spans, no caret. `pocket.gcode` — 38 spans, **both** comment dialects (`; …` and `( … )`)
+in comment colour, `G21 G90 G94 M3 M30` as keywords, `N10`/`T1`/`S12000`/`F300` as atoms, `%` as
+meta. `platformio.ini` — 7 spans through the TOML stream mode. `notes.txt` — numbered, scrollable,
+**zero** spans. `sliced.gcode` (5 MB) — mounts, 216 spans, document exactly 200,014 characters
+(the cap plus `\n… (truncated)`). `bracket.scad` — the download fallback, per the finding above.
+No SEVERE console output on any of them.
+
+Guards: 2 rendered-attribute tests in `files_flow_test.rb` (the fixture is deliberately named
+`Firmware.CPP`, so `File.extname(name).downcase.delete(".")`'s three steps all carry weight), the
+extended hygiene page, and **`test/system/code_viewer_test.rb`** — 4 tests, the only tier that can
+see any of this. `test/stimulus_hygiene_test.rb` covers `codeview` resolving for free.
+
+| mutation | result |
+|---|---|
+| `data-controller="codeview"` → `"textpreview"` | red twice — `Expected exactly 1 element matching "[data-controller=codeview]", found 0` **and** `stimulus_hygiene_test`: `["app/views/files/show.html.erb:127 declares 'textpreview'"] to be empty` |
+| drop `.downcase` from the ext value | red — `Expected exactly 1 element matching "[data-codeview-ext-value=cpp]", found 0` |
+| move the fallback `<pre>` outside the controller element | red — `…"[data-controller=codeview] pre.preview-text[data-codeview-target=fallback]", found 0` |
+| plant `<%= x %>` inside the new ERB comment | red on BOTH hygiene tests — `file detail (text) leaked an ERB closer into the page` and `rendered a code comment into the page (found "§14")` |
+| drop `EditorState.readOnly.of(true)` | red — `{"editable" => false, "readOnly" => false}`, and **only** that field |
+| drop `EditorView.editable.of(false)` | red — `{"editable" => true, "readOnly" => true}`, and only that field |
+| `languageFor` always returns null | red twice — `expected to find css ".cm-line span" at least 1 time but there were no matches` (cpp) and `at least 3 times` (gcode) |
+| wire `txt` to `cm.cpp()` | red — `expected not to find visible css ".cm-line span", found 5 matches: "just", "words", "a", "line", "a"` |
+| drop `this.fallbackTarget.remove()` | red — `expected not to find visible css "pre.preview-text", found 1 match: "#include <Arduino.h>…"` (which also shows the fetch-first fallback holding the whole file) |
+| drop `reader.cancel()` | red — `5243160 bytes crossed the wire for a 5242880-byte file` |
+
+`grep -rn "textpreview" app/ config/ test/` returns four hits, all of them prose in
+`codeview_controller.js` naming its predecessor; no live reference remains.
+
+Legs measured for this task: share and s3, both **2438 runs / 9149 assertions / 30 skips**,
+identical. The pre-task-9 baseline was **measured rather than assumed** — the two new test
+methods were reverted and the leg re-run: **2436 runs / 9117 assertions** — so this task adds
+2 runs and 32 assertions (6 of them the two new tests', the rest the hygiene sweep's new page,
+which asserts per page). The first draft of this paragraph wrote 9147 from memory; §15's
+invented-evidence rule is why it was checked. `system` **183 runs / 1530 assertions / 1 skip**,
+of which 4 runs are this task's new file. `style` clean, 499 files. `test-chunk-remote` not run
+here, by instruction.
+
+**Two close-out items are NOT closed and are not this task's to close.** Whether the deployed box
+serves `codemirror-<digest>.js` gzipped (933,768 → 324,586 bytes) needs a `curl` against the
+deployed host, and nothing here asserts which one users get. The s3 CORS question the plan raises
+at task 9 step 8 is likewise unverifiable from a stubbed client — and it is pre-existing either
+way, since `textpreview` fetched the same redirect.
 
 ### Decided and NOT built, so it is not rediscovered as an oversight
 
