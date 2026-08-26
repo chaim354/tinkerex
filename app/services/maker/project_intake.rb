@@ -707,7 +707,7 @@ module Maker
       return refusal if refusal
 
       dest = Maker::ProjectFolders.folder_for(node.name)
-      # Before ensure_path! and Maker::MoveNode.call, so a dry run creates no folder and writes
+      # Before create_child! and Maker::MoveNode.call, so a dry run creates no folder and writes
       # nothing — the reason it is a `dry run` and not a `report`.
       #
       # THE COST OF THAT ORDERING: collision detection lives INSIDE Maker::MoveNode.call (its own
