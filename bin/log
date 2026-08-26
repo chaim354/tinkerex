@@ -63,6 +63,9 @@ module Log
 
   TOKEN_REF = "op://tinkerex/Forgejo/token"
 
+  LABELS = %w[arc open-work deploy blocked deliberate
+              filelayer library-scan addons previews maker-web ci].freeze
+
   # THE PAYLOAD RIDES ON THE EXCEPTION, never on a module-level accumulator. `api` knows both what
   # failed and what was being sent, so it attaches the payload at the ONE raise site. Two things
   # fall out that a shared accumulator could not give: a GET carries no payload, so a READ verb
@@ -101,8 +104,8 @@ module Log
     end
   end
 
-  def api(method, path, body = nil)
-    perform(method, path, body)
+  def api(method, path, body = nil, allow: [])
+    perform(method, path, body, allow)
   rescue Unreachable => e
     # Attach what was being sent, at the one place that knows both. A failure raised from `token`
     # carries no payload of its own, and a WRITE must still be spooled.
@@ -116,7 +119,7 @@ module Log
   # URI.join DROPS A PATH PREFIX — URI.join("http://host/git", "/api/v1/x") is
   # "http://host/api/v1/x". Forgejo behind a subpath is an ordinary self-host shape, so the URL is
   # built by concatenation instead.
-  def perform(method, path, body)
+  def perform(method, path, body, allow)
     uri = URI.parse("#{forgejo_url.chomp('/')}#{path}")
     # A scheme-less FORGEJO_URL parses to host=nil, and Net::HTTP.start(nil, nil) then reports
     # "connection refused for nil port 80" — a misleading answer to a malformed env var.
@@ -141,7 +144,8 @@ module Log
     # a live proxy answers 502 and a rotated token answers 401 — both are HTTP RESPONSES, so a
     # handler that only caught connection errors would let the LIKELIEST outage exit without
     # spooling, which is how an arc gets lost while the docs promise otherwise.
-    unless response.code.to_i.between?(200, 299)
+    code = response.code.to_i
+    unless code.between?(200, 299) || allow.include?(code)
       raise Unreachable, "HTTP #{response.code} from #{path}: #{response.body.to_s[0, 200]}"
     end
 
@@ -212,6 +216,26 @@ module Log
     EXIT_OK
   end
 
+  # IDEMPOTENT BY DECLARING 422 ACCEPTABLE AT THE CALL SITE, not by matching on a message string.
+  # Forgejo answers 422 for a label that already exists — the ordinary case on every run after the
+  # first — so treating it as failure would make `setup` a one-shot command, and a one-shot setup
+  # is one nobody re-runs after adding a label.
+  #
+  # `allow:` rather than a rescue, for two reasons. `perform`'s message embeds the RESPONSE BODY,
+  # so `e.message.include?("HTTP 422")` would also swallow any other status whose body happened to
+  # contain that text — and, far likelier, changing the message format would silently stop setup
+  # being idempotent, failing only on the SECOND run. And a rescue around the call can grow to
+  # swallow a genuine connection failure, which is exactly what C1 exists to prevent. An
+  # expectation declared before the fact cannot drift.
+  def setup
+    LABELS.each do |name|
+      api(:post, repo_path("/labels"), { name: name, color: "#666666" }, allow: [ 422 ])
+    end
+
+    puts "bin/log: #{LABELS.size} labels present."
+    EXIT_OK
+  end
+
   def spool_dir = ENV.fetch("LOG_SPOOL_DIR", File.expand_path("../tmp/log-pending", __dir__))
 
   # THE BRANCH NAMES THE SPOOL FILE, so two branches cannot overwrite each other's unfiled record.
@@ -224,6 +248,19 @@ module Log
     path = File.join(spool_dir, "#{current_branch.tr('/', '-')}.md")
     File.open(path, "a") { |f| f.puts("# unfiled: #{command}", "", JSON.pretty_generate(payload), "") }
     path
+  end
+
+  def status
+    pending = Dir.glob(File.join(spool_dir, "*.md")).sort
+
+    if pending.empty?
+      puts "bin/log: nothing unfiled."
+      return EXIT_OK
+    end
+
+    puts "bin/log: #{pending.size} unfiled record(s) — these are NOT in Forgejo:"
+    pending.each { |path| puts "    #{path}" }
+    EXIT_UNFILED
   end
 
   def usage_text
@@ -300,6 +337,8 @@ module Log
     when "show" then show(argv)
     when "open" then open_item(argv)
     when "arc" then arc(argv)
+    when "status" then status
+    when "setup" then setup
     else
       warn "bin/log: #{command} is not implemented yet"
       EXIT_USAGE

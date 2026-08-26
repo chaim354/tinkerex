@@ -315,4 +315,68 @@ class LogCliTest < ActiveSupport::TestCase
     assert_equal before, Dir.glob(real.join("*.md")).size,
                  "a test wrote into the developer's real spool — LOG_SPOOL_DIR is not defaulted"
   end
+
+  test "status is quiet and exits 0 when nothing is unfiled" do
+    Dir.mktmpdir do |spool|
+      out, _err, code = run_log("status", env: { "LOG_SPOOL_DIR" => spool })
+
+      assert_equal 0, code
+      assert_includes out, "nothing unfiled"
+    end
+  end
+
+  # STATUS FAILS LOUD ON A BACKLOG. bin/backup-status exists for the same reason and says so in its
+  # header: a nightly that stops is silent, and the failure looks exactly like success right up
+  # until the restore. An unfiled arc is the same shape.
+  test "status names every spooled entry and exits EXIT_UNFILED" do
+    Dir.mktmpdir do |spool|
+      File.write(File.join(spool, "claude-example.md"), "# unfiled: open
+")
+
+      out, _err, code = run_log("status", env: { "LOG_SPOOL_DIR" => spool })
+
+      assert_equal 4, code, "an outstanding record must fail loud, not print a note and exit 0"
+      refute_equal 1, code,
+                   "EXIT_UNFILED must not be Ruby's own crash status, or a crash reads as a backlog"
+      assert_includes out, "claude-example.md"
+    end
+  end
+
+  test "setup creates each label idempotently, by name" do
+    stub = StubForgejo.new(status: 201, response: { "id" => 1, "name" => "arc" })
+
+    _out, err, code = run_log("setup", env: {
+      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+    })
+
+    assert_equal 0, code, "bin/log setup failed: #{err}"
+
+    created = stub.requests.select { |r| r.method == "POST" }.map { |r| r.json["name"] }
+    assert_includes created, "arc"
+    assert_includes created, "open-work"
+    assert_includes created, "deploy"
+    assert_operator created.size, :>=, 3, "setup created #{created.size} labels — the list went empty"
+    assert_equal [ "/api/v1/repos/chaim354/tinkerex/labels" ], stub.requests.map(&:path).uniq
+  ensure
+    stub&.shutdown
+  end
+
+  # THE 422 PATH IS THE ONLY ONE THAT RUNS AFTER THE FIRST TIME, and a stub answering 201 never
+  # reaches it. Without this test `allow: [422]` — the entire idempotency claim — is asserted
+  # nowhere, and a setup that silently stopped being idempotent would fail for the first time
+  # months later, in front of whoever added a label.
+  test "setup tolerates 422, the ordinary case on every run after the first" do
+    stub = StubForgejo.new(status: 422, response: { "message" => "label already exists" })
+
+    _out, err, code = run_log("setup", env: {
+      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url
+    })
+
+    assert_equal 0, code, "setup treated an already-existing label as a failure: #{err}"
+    assert_operator stub.requests.size, :>=, 3,
+                    "setup stopped at the first 422 instead of continuing through the list"
+  ensure
+    stub&.shutdown
+  end
 end
