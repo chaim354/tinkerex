@@ -633,7 +633,8 @@ WHOLE blob and truncates client-side: `textpreview_controller.js` sends no `Rang
 `Accept-Ranges`**. The mechanism is not new — `gcode` was in the old inline list, and a sliced
 print is the largest text file a maker owns — but this task widens the population that hits it to
 `.nc`/`.tap`/`.ngc`/`.gco`, and on `chunk_remote` those bytes STREAM through Puma (§14a:
-`presignable` is false), so a 40 MB preview holds a thread. **Task 9 replaces that controller and
+`presignable` is false), so a preview of a large sliced print holds a thread for the whole
+transfer — a size nobody here has measured against a real print, which is itself worth knowing. **Task 9 replaces that controller and
 is where the fix belongs** — a `Range: bytes=0-199999` request, or a size gate in the view that
 offers the download instead.
 
