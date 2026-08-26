@@ -763,32 +763,67 @@ that filled the extra byte and of a `200` that was cut off. Reading `Content-Ran
 fail on the s3 path, where a cross-origin response exposes no such header and every file — however
 small — would be labelled truncated.
 
-**THE PLAN'S OPENSCAD TOKEN NAME WAS WRONG, AND ONLY RUNNING IT SHOWED THAT.** It spelled the
-`$fn` token `"variableName.special"`. `@codemirror/language`'s stream parser warns
-`Modifier special used at start of tag` on that string and drops the modifier; the legacy
-CodeMirror-5 name `"variable-2"` resolves to exactly `variableName.special` with no warning.
-Probed against the shipped bundle rather than reasoned: `variable-2` → node
-`variableName.special`, warn `[]`; `variableName.special` → node `variableName_special`, warn
-`["Modifier special used at start of tag"]`. Both our modes were then run over real samples
-through the shipped artifact — all 30 extensions the table claims resolve non-null, `txt` returns
-null, and the whole probe emits **zero** warnings.
+**THE PLAN'S OPENSCAD TOKEN NAME WAS WRONG, AND IT COSTS THE WHOLE TOKEN, NOT JUST THE MODIFIER.**
+It spelled the `$fn` token `"variableName.special"`. `@codemirror/language`'s stream parser
+resolves a dotted string treating the LAST part as the tag, so that spelling resolves to nothing:
+measured in a real browser, `$fn` then renders with **no span at all**, and the only signal is a
+`console.warn` of `Modifier special used at start of tag` — WARNING level, so even
+`assert_no_console_errors` (SEVERE only) would not see it. The legacy CodeMirror-5 name
+`"variable-2"` resolves to exactly `variableName.special`, gives `$fn` its own span, and warns
+nothing. Both our modes were also run over real samples through the shipped artifact in node — all
+30 extensions the table claims resolve non-null, `txt` returns null, zero warnings.
 
-**`.scad` CANNOT REACH THIS VIEWER TODAY, AND THE OPENSCAD MODE IS KEPT ANYWAY.** Driven, not
-assumed: `Maker::FileAttachment.role_for("x.scad")` is `cad_source`, which is not in `TEXT_ROLES`,
-so `preview_kind` answers `:other` and the page renders "No inline preview for this file type."
-(seen in the browser). The task brief and the plan both assumed otherwise. Making it reachable is
-a ROLE change — `scad` moving from `cad_source` to `code`, which also moves where
-`Maker::ProjectFolders` files it and needs a re-derive migration in `RederiveCodeRoles`' shape —
-so it belongs with that decision, not with the viewer. `lbrn`/`lbrn2` were **dropped** from the
-plan's table for the same reason with no such argument to keep them: `preview_kind` answers
-`:measure` for all five measurable extensions, so those entries could never run.
+**THE GUARD FOR IT WAS DELIBERATELY NOT WRITTEN UNTIL `.scad` WAS REACHABLE**, because until then
+it could not have failed for the reason it claimed — a sixth vacuous guard in a branch that had
+already produced five. It exists now, as **two** system-test methods rather than one, for
+`template_hygiene_test.rb`'s stated reason: minitest abandons a method at its first failure, and
+this one defect breaks both halves. Measured — the dotted spelling reports
+`Expected: ["$fn"] / Actual: []` on the token test **and**
+`Expected [… "Modifier special used at start of tag"] to be empty` on the resolution test.
+
+**`.scad` COULD NOT REACH THIS VIEWER AT ALL, AND THE FIX IS A THIRD CONSTANT BESIDE THE OTHER
+TWO.** Found by driving it: `role_for("x.scad")` is `cad_source`, not a text role, so
+`preview_kind` answered `:other` and the page said "No inline preview for this file type" (seen in
+the browser) while a hand-written OpenSCAD mode sat in the bundle as dead code. Since the arc began
+as "a lightweight code editor and viewer for those types of files", that was the wrong place to
+stop.
+
+**`Maker::FileAttachment::TEXT_EXTS = %w[scad]`**, and `preview_kind` is now
+`TEXT_ROLES.include?(role_for(name)) || TEXT_EXTS.include?(ext)`. **ROLE AND CONTENT TYPE ARE
+DIFFERENT QUESTIONS**, and `.scad` answers them differently: it is `cad_source` for FILING (it goes
+to `cad/`, beside the `.f3d`) and plain source for VIEWING. That is not a loophole in §14d — that
+rule forbids a second TABLE in a second PLACE, and this constant lives in the one file that owns
+the vocabulary. **The two obvious fixes are worse and are recorded so they are not retried:**
+adding `cad_source` to `TEXT_ROLES` renders `.f3d`, `.fcstd`, `.sldprt` and `.sldasm` — all
+binary — as mojibake on the main deployment, and a per-extension branch inside `preview_kind`
+rebuilds the second vocabulary in the method that just collapsed it.
+
+**NO RE-DERIVE MIGRATION IS NEEDED, AND THAT WAS VERIFIED RATHER THAN ASSUMED.** `TEXT_EXTS`
+changes what a page RENDERS and nothing that is STORED: `ROLE_BY_EXT` is untouched, so
+`role_for("bracket.scad")` is still `cad_source` and `ProjectFolders.folder_for("bracket.scad")` is
+still `"cad"` (both driven); `preview_kind` is a pure function of the filename that reads no
+column; and `TEXT_EXTS` has exactly one consumer in `app/`, `lib/` and `config/` (grepped). The
+rows were already correct — `RederiveVectorAndCadSourceRoles` (2026-07-28) put `.scad` into
+`cad_source` — so nothing needs moving. Both halves of that claim are pinned by a test rather than
+by this paragraph, and the mutation that WOULD need a migration (moving `scad` into `ROLE_BY_EXT`
+as `code`) turns three tests red, including the pre-existing model guard.
+
+`lbrn`/`lbrn2` stay **dropped** from the language table, because they have no equivalent argument:
+`preview_kind` answers `:measure` for all five measurable extensions, so those entries could never
+run whatever the vocabulary said.
 
 **THE TEMPLATE-HYGIENE SWEEP DID NOT REACH THE `:text` BRANCH, AND THIS ARC IS WHAT MADE THAT
 MATTER.** That comment was one line; it is now seven. `test/integration/web/template_hygiene_test.rb`
 renders a `firmware.cpp` page now, and a `%>` planted inside the new comment goes red on **both**
-of its tests, quoting the leaked prose. That was not hypothetical: the "look at the page" probe
-was first run against a working tree where a mutation had failed to restore, and the probe is what
-showed it — the file listing had not.
+of its tests, quoting the leaked prose.
+
+**AND THE LESSON ARRIVED LIVE, WHICH IS A BETTER ARGUMENT FOR LOOKING AT THE PAGE THAN THE
+ORIGINAL BUG WAS.** The first "look at the page" run was made against a working tree where a
+mutation had failed to restore — and **the probe is what caught the leaked ERB prose sitting in
+the middle of the page; reading the file had not.** §14d already says an `assert_select` cannot see
+that defect, because it produces a text node rather than an element. What this arc adds is that a
+careful reader of the SOURCE can miss it too, and that opening the page catches it either way, in
+one screenshot.
 
 **WHAT WAS SEEN IN THE BROWSER**, on real pages served by a real Puma, screenshots included:
 `firmware.cpp` — 19 line numbers, a fold gutter, C++ keywords/strings/comments/numbers coloured,
@@ -796,13 +831,14 @@ showed it — the file listing had not.
 in comment colour, `G21 G90 G94 M3 M30` as keywords, `N10`/`T1`/`S12000`/`F300` as atoms, `%` as
 meta. `platformio.ini` — 7 spans through the TOML stream mode. `notes.txt` — numbered, scrollable,
 **zero** spans. `sliced.gcode` (5 MB) — mounts, 216 spans, document exactly 200,014 characters
-(the cap plus `\n… (truncated)`). `bracket.scad` — the download fallback, per the finding above.
-No SEVERE console output on any of them.
+(the cap plus `\n… (truncated)`). `bracket.scad` — reaches the viewer via `TEXT_EXTS`, `$fn` in its own colour, both comment forms,
+`module` as a keyword. No SEVERE console output on any of them, and no `console.warn` either.
 
 Guards: 2 rendered-attribute tests in `files_flow_test.rb` (the fixture is deliberately named
-`Firmware.CPP`, so `File.extname(name).downcase.delete(".")`'s three steps all carry weight), the
-extended hygiene page, and **`test/system/code_viewer_test.rb`** — 4 tests, the only tier that can
-see any of this. `test/stimulus_hygiene_test.rb` covers `codeview` resolving for free.
+`Firmware.CPP`, so `File.extname(name).downcase.delete(".")`'s three steps all carry weight),
+3 in `files_controller_preview_kind_test.rb` for `TEXT_EXTS`, the extended hygiene page, and
+**`test/system/code_viewer_test.rb`** — 6 tests, the only tier that can see any of the client
+half. `test/stimulus_hygiene_test.rb` covers `codeview` resolving for free.
 
 | mutation | result |
 |---|---|
@@ -816,18 +852,29 @@ see any of this. `test/stimulus_hygiene_test.rb` covers `codeview` resolving for
 | wire `txt` to `cm.cpp()` | red — `expected not to find visible css ".cm-line span", found 5 matches: "just", "words", "a", "line", "a"` |
 | drop `this.fallbackTarget.remove()` | red — `expected not to find visible css "pre.preview-text", found 1 match: "#include <Arduino.h>…"` (which also shows the fetch-first fallback holding the whole file) |
 | drop `reader.cancel()` | red — `5243160 bytes crossed the wire for a 5242880-byte file` |
+| add `cad_source` to `TEXT_ROLES` (the obvious wrong fix) | red twice — `part.f3d is a BINARY cad_source file — a text preview of it is mojibake. Expected: :other / Actual: :text`, and the redundancy guard `Expected ["scad"] to be empty` |
+| `TEXT_EXTS = %w[]` | red — `bracket.scad … Expected: :text / Actual: :other` |
+| move `scad` into `ROLE_BY_EXT` as `code` | red 3 ways — the pre-existing `CAD source extensions derive the cad_source role`, the no-migration pin, and the redundancy guard, each `Expected: "cad_source" / Actual: "code"` |
+| `TEXT_EXTS = %w[scad cpp]` | red — `Expected ["cpp"] to be empty` |
+| `$fn` token → the plan's `"variableName.special"` | red twice, one per method — `Expected: ["$fn"] / Actual: []` and `Expected [… "Modifier special used at start of tag"] to be empty` |
+| delete the `$`-variable regex rule | red once — `Expected: ["$fn"] / Actual: []`, and **no** warning, which is what keeps the two methods independent |
 
 `grep -rn "textpreview" app/ config/ test/` returns four hits, all of them prose in
 `codeview_controller.js` naming its predecessor; no live reference remains.
 
-Legs measured for this task: share and s3, both **2438 runs / 9149 assertions / 30 skips**,
-identical. The pre-task-9 baseline was **measured rather than assumed** — the two new test
-methods were reverted and the leg re-run: **2436 runs / 9117 assertions** — so this task adds
-2 runs and 32 assertions (6 of them the two new tests', the rest the hygiene sweep's new page,
+Legs measured for this task: share and s3, both **2441 runs / 9158 assertions / 30 skips**,
+identical. The pre-task-9 baseline was **measured rather than assumed** — the new test methods
+were reverted and the leg re-run: **2436 runs / 9117 assertions** — so this task adds 5 runs and
+41 assertions (2 rendered-attribute tests, 3 for `TEXT_EXTS`, and the hygiene sweep's new page,
 which asserts per page). The first draft of this paragraph wrote 9147 from memory; §15's
-invented-evidence rule is why it was checked. `system` **183 runs / 1530 assertions / 1 skip**,
-of which 4 runs are this task's new file. `style` clean, 499 files. `test-chunk-remote` not run
+invented-evidence rule is why it was checked. `system` **185 runs / 1541 assertions / 1 skip**,
+of which 6 runs are this task's new file. `style` clean, 499 files. `test-chunk-remote` not run
 here, by instruction.
+
+Two back-to-back leg runs tripped the documented `WorkerBudgetTest` intermittent —
+`test_a_detector_that_raises_is_treated_as_contended`, `Expected: 1 / Actual: 6` — which is the
+cross-process pidfile flake already under "Still open", not a backend difference; 3/3 green run
+alone, and the final all-gates run was clean at the first attempt.
 
 **Two close-out items are NOT closed and are not this task's to close.** Whether the deployed box
 serves `codemirror-<digest>.js` gzipped (933,768 → 324,586 bytes) needs a `curl` against the
