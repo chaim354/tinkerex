@@ -353,19 +353,62 @@ module Library
     # model is only ever created, never reaped.
     #
     # MUTATION-CHECKED: moving intake_models(user) above intake_project_folders(user) in
-    # Library::ScanJob#perform turns this RED with ["Projects"].
+    # Library::ScanJob#perform turns this RED with ["desk-lamp"].
+    #
+    # THAT VALUE USED TO BE ["Projects"], AND THE COMMENT WENT ON SAYING SO AFTER IT STOPPED BEING
+    # TRUE — re-measured 2026-08-26. `Maker::Shelf::SEEDS` gained `"*"` (every top-level folder is
+    # a shelf), which moves the swallowed-model boundary one level DOWN: `Projects` is now itself a
+    # shelf, so the folder that gets swallowed is the project's own `desk-lamp`, not `Projects`.
+    # The hazard is unchanged and the test still pins it; only the name it comes back under moved.
     test "cataloguing runs after the project intake, so a filed file is its own model" do
       File.binwrite(File.join(@root, @folder.storage_path, "bracket.stl"), "solid")
 
       Library::ScanJob.perform_now(user_id: @user.id, root: @root)
 
       assert_equal [ "bracket" ], @user.maker_models.pluck(:title),
-                   "a model titled Projects means the catalog ran BEFORE the intake moved the file"
+                   "a model titled after the PROJECT FOLDER (desk-lamp) rather than the file " \
+                   "means the catalog ran BEFORE the intake moved it: the file was still loose " \
+                   "at the project root, whose nearest shelf is `Projects` itself, so the whole " \
+                   "folder became one model"
       model = @user.maker_models.sole
       node = @user.nodes.find_by!(node_id: model.auto_node_id)
       assert_equal "models", @user.nodes.find_by(node_id: node.parent_node_id).name
       assert_equal [ node.node_id ], model.file_attachments.pluck(:node_id),
                    "the attachment must point at the node THIS scan created"
+    end
+
+    # THE SAME PROMISE FOR PROJECT DISCOVERY, and it needs its own test rather than riding either
+    # rescue below: the three are separate, and #discover_projects is the FIRST of them — it runs
+    # immediately after the reconcile and strictly before the project intake — so a raise there is
+    # the one an operator reading the failed-jobs table is likeliest to mistake for "the reconcile
+    # itself failed."
+    #
+    # ALSO PINS THAT THE RAISE REACHES THAT RESCUE THROUGH THE JOB WRAPPER. #discover_projects
+    # calls Maker::ProjectDiscoveryJob.perform_now, and ActiveJob is entitled to swallow or
+    # re-raise on its own terms (its discard_on covers RecordNotFound); a RuntimeError must arrive
+    # at the rescue that logs it.
+    test "a project discovery failure does not fail a scan that already succeeded" do
+      original = Maker::ProjectDiscovery.method(:for_user)
+      Maker::ProjectDiscovery.define_singleton_method(:for_user) { |**| raise "discovery exploded" }
+      begin
+        log = nil
+        prior = Rails.logger
+        io = StringIO.new
+        Rails.logger = Logger.new(io)
+        begin
+          assert_nothing_raised { Library::ScanJob.perform_now(user_id: @user.id, root: @root) }
+        ensure
+          log = io.string
+          Rails.logger = prior
+        end
+
+        assert @user.nodes.present.exists?(name: "panel.svg"),
+               "the reconcile's work stands — it committed before discovery ran"
+        assert_match(/project discovery failed for user #{@user.id}: RuntimeError: discovery exploded/,
+                     log, "the swallowed failure must still be written down somewhere")
+      ensure
+        Maker::ProjectDiscovery.define_singleton_method(:for_user, original)
+      end
     end
 
     # A scan that SUCCEEDED must not be reported as failed because the intake blew up. The
@@ -420,6 +463,101 @@ module Library
       ensure
         Maker::ModelIntake.define_singleton_method(:for_user, original)
       end
+    end
+  end
+
+  # DISCOVERY RUNS AFTER THE RECONCILE AND BEFORE THE FILING SWEEP, and both orderings change the
+  # ANSWER rather than the timing. This drives the whole feature end to end through the only door a
+  # share deployment has: someone makes Projects/Desk Lamp/ in Finder and drops a file in it.
+  class DiscoveryOrderTest < ActiveSupport::TestCase
+    setup do
+      @root = Dir.mktmpdir
+      @user = User.create!(email: "job-#{SecureRandom.hex(6)}@example.com")
+      # A Share adapter rooted at @root, so the intake's own move (Maker::MoveNode ->
+      # FileLayer.current.move) lands on the same directory the scan just read.
+      FileLayer.current = FileLayer::Share.new(root: @root)
+
+      # ON DISK ONLY — no project row, no node rows. This is the feature's whole subject.
+      FileUtils.mkdir_p(File.join(@root, "Projects", "Desk Lamp"))
+      File.binwrite(File.join(@root, "Projects", "Desk Lamp", "panel.svg"), "<svg/>")
+    end
+
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root && File.directory?(@root)
+    end
+
+    test "one perform discovers the project AND attaches and files its loose file" do
+      Library::ScanJob.perform_now(user_id: @user.id, root: @root)
+
+      project = @user.maker_projects.sole
+      assert_equal "Desk Lamp", project.name
+      assert_equal "desk-lamp", project.slug
+
+      att = project.file_attachments.sole
+      node = @user.nodes.find_by!(node_id: att.node_id)
+      assert_equal "panel.svg", node.name
+      assert_equal "vector", att.role
+      assert_equal "design", @user.nodes.find_by(node_id: node.parent_node_id).name,
+                   "discovery ran BEFORE the project intake — the intake filed a folder that " \
+                   "discovery had only just adopted. Swap the two calls in ScanJob#perform and " \
+                   "this goes red earlier, at `project.file_attachments.sole` above: with no " \
+                   "project row yet when the intake runs, it has nothing to sweep, so panel.svg " \
+                   "is never attached or filed at all. (`panel.svg` is role \"vector\", never " \
+                   "MODEL-role, so it cannot show the whole-folder-becomes-one-model hazard the " \
+                   "ordering comment also names — see the model-role test below for that one.)"
+    end
+
+    # THE CATEGORY FOLDER GOES UNDER THE FOLDER THE USER MADE, not a second `Projects/desk-lamp/`
+    # tree rebuilt from the slug. See Task 3 — this is that fix, driven through the real door.
+    test "the category folder is created under the discovered folder, not a slug-named twin" do
+      Library::ScanJob.perform_now(user_id: @user.id, root: @root)
+
+      assert_path_exists File.join(@root, "Projects", "Desk Lamp", "design", "panel.svg")
+      refute File.exist?(File.join(@root, "Projects", "desk-lamp")),
+             "no second Projects/<slug> tree may be minted"
+    end
+
+    # THE HAZARD #discover_projects' OWN COMMENT NAMES, DRIVEN FOR REAL. `panel.svg` above cannot
+    # exercise it: role "vector" is never MODEL-role, so Maker::ModelIntake.classify never looks at
+    # it regardless of which order the two calls run in — the two tests above only pin the
+    # PROJECT-INTAKE half of the ordering, not the model-catalog half. This adds a model-role file
+    # (.stl) so the nearest-shelf rule in #classify is actually exercised: `Projects/` is a shelf
+    # (the seeded `*`), `Desk Lamp` is not, so a file loose there when the catalog looks makes the
+    # WHOLE `Desk Lamp` FOLDER the nearest-shelf model, titled after the folder — permanently,
+    # because an auto model is only ever created, never reaped.
+    #
+    # THE HAZARD CHECK RUNS BEFORE THE "FILED CORRECTLY" ASSERTIONS BELOW IT, DELIBERATELY. A
+    # failed assertion halts the rest of the test method, and EITHER of #perform's two mutations —
+    # discover_projects swapped with intake_project_folders, or discover_projects moved ahead of
+    # observer.call — ALSO leaves bracket.stl unfiled, the identical symptom the test above already
+    # pins. Asserting "filed correctly" first would hide this hazard's own evidence behind that
+    # earlier, already-covered failure. Checked here first and by itself, so a red run reports what
+    # actually happened: verified against BOTH mutations (driven directly, not assumed) to name a
+    # model titled "Desk Lamp" whose auto_node_id AND folder_node_id both equal the Desk Lamp
+    # folder's own node_id — a real folder swallowed, not merely an absent file.
+    test "the model catalog never swallows the discovered folder as one model" do
+      File.binwrite(File.join(@root, "Projects", "Desk Lamp", "bracket.stl"), "solid")
+
+      Library::ScanJob.perform_now(user_id: @user.id, root: @root)
+
+      folder = @user.nodes.present.find_by!(name: "Desk Lamp", kind: "dir")
+      swallowed = @user.maker_models.find_by(auto_node_id: folder.node_id) ||
+                  @user.maker_models.find_by(folder_node_id: folder.node_id)
+      # NAMES THE PRIMARY CAUSE THIS CLASS EXISTS TO CATCH, NOT THE ONLY ONE THAT CAN REACH HERE.
+      # Any ordering that leaves bracket.stl loose at the Desk Lamp folder root by the time
+      # #intake_models runs reaches this same wrong state — driven and confirmed for both #perform
+      # mutations, not merely this one.
+      assert_nil swallowed,
+                 "the whole Desk Lamp FOLDER became a model — title #{swallowed&.title.inspect}, " \
+                 "auto_node_id #{swallowed&.auto_node_id.inspect} — instead of the file getting " \
+                 "its own. bracket.stl was still loose at the project root when the model catalog " \
+                 "ran (most directly: discover_projects swapped with intake_project_folders in " \
+                 "ScanJob#perform, so the intake had no project yet to file it into)."
+
+      assert_path_exists File.join(@root, "Projects", "Desk Lamp", "models", "bracket.stl"),
+                          "discovery ran before the intake, so the intake had a project folder to file this into"
+      assert_equal [ "bracket" ], @user.maker_models.pluck(:title)
     end
   end
 end

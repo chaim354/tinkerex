@@ -154,8 +154,10 @@ module Maker
     #
     # `within_own_folder:` — THE CALLER'S MOVE KEEPS THE FILE INSIDE THE FOLDER THIS PROJECT ALREADY
     # OWNS, so the :attached_elsewhere arm does not apply to it. Maker::ProjectIntake#place is that
-    # caller and today the only one: it moves `Projects/<slug>/x.svg` to
-    # `Projects/<slug>/design/x.svg`.
+    # caller and today the only one: it moves a file from the project's own folder root into a
+    # category subfolder beneath it (`x.svg` -> `design/x.svg`). NOT `Projects/<slug>/...` — #place
+    # resolves that folder through `folder_node_id`, and Maker::ProjectDiscovery adopts folders
+    # whose name is not the slug, so the folder need not be named after it.
     #
     # THE RULE IS POSITIONAL, WHICH IS WHY IT CAN BE SCOPED AT ALL. Its stated reason (see the header
     # above) is that "a file should not be yanked out of the folder that project put it in" — a fact

@@ -1,4 +1,18 @@
 namespace :projects do
+  desc "Create a project for every unclaimed folder under Projects/ (PROJECT_DISCOVERY_MAX raises the cap)"
+  task discover: :environment do
+    User.find_each do |user|
+      run = Maker::ProjectDiscovery.for_user(user:)
+      # Silent for a user with nothing to adopt — Maker::ProjectIntakeJob#report's own rule, so a
+      # steady-state run prints nothing rather than a row per user per invocation.
+      next if run.created.zero? && run.status != :capped
+
+      puts "user #{user.id}: created #{run.created} of #{run.candidates} candidates, " \
+           "status #{run.status}"
+      puts "  capped at #{run.cap} - run again to continue" if run.status == :capped
+    end
+  end
+
   # DRY_RUN=1 follows the house idiom set by previews:reap_dead_nodes (lib/tasks/previews.rake)
   # rather than the design spec's `projects:organize:dry_run` subtask — consistency with the
   # neighbouring rake tasks wins over the spec text, and the implementation plan already records

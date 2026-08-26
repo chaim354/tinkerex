@@ -79,9 +79,39 @@ module Maker
         live = acting_user.nodes.present.find_by(node_id: folder_node_id, kind: "dir")
         return live if live
       end
-      folder = Maker::LibraryFolder.ensure_path!(acting_user, [ "Projects", slug ])
+      folder = Maker::LibraryFolder.ensure_path!(acting_user, [ Maker::ProjectFolders::ROOT, slug ])
       update_column(:folder_node_id, folder.node_id)
       folder
+    end
+
+    # THE ONE NORMALIZATION. Extracted from #ensure_slug so Maker::ProjectDiscovery can reuse it
+    # without a second copy of the regex.
+    def self.slugify(str)
+      str.to_s.strip.downcase.gsub(/[^a-z0-9]+/, "-").gsub(/\A-+|-+\z/, "")
+    end
+
+    # A SLUG AN UNATTENDED RUN CANNOT FAIL ON — the treatment Maker::Model#ensure_slug already gives
+    # import, for the reason its own comment states: "Project fails validation on collision; import
+    # can't afford that." A sweep can't afford it either, because nobody is there to read the error.
+    #
+    # TWO REACHABLE FAILURES, both of which raise inside a recurring job:
+    #   * COLLISION — `Projects/desk-lamp` (a project's own folder) beside `Projects/Desk Lamp`
+    #     (one the user made by hand). Both slugify to `desk-lamp`.
+    #   * BLANK — slugify keeps only [a-z0-9], so ANY purely non-Latin name reduces to "":
+    #     プロジェクト, Проект, 模型. `validates :slug, presence: true` then raises.
+    #
+    # #ensure_slug IS DELIBERATELY LEFT ALONE. A human typing a duplicate name into the web form
+    # SHOULD be told; only the sweep gets the import treatment.
+    def self.available_slug(user, from:)
+      base = slugify(from)
+      base = "project" if base.blank?
+      candidate = base
+      n = 2
+      while user.maker_projects.exists?(slug: candidate)
+        candidate = "#{base}-#{n}"
+        n += 1
+      end
+      candidate
     end
 
     private
@@ -89,7 +119,7 @@ module Maker
     def ensure_slug
       source = slug.presence || name
       return if source.blank?
-      self.slug = source.to_s.strip.downcase.gsub(/[^a-z0-9]+/, "-").gsub(/\A-+|-+\z/, "")
+      self.slug = self.class.slugify(source)
     end
   end
 end

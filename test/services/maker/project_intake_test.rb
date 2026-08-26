@@ -536,7 +536,9 @@ module Maker
     # justification is positional — Maker::AttachToProject's header: "another project already claims
     # it, and a file should not be YANKED OUT OF THE FOLDER THAT PROJECT PUT IT IN" — and it was
     # written for #call/#relocate, where the destination is THIS project's folder and the source may
-    # well be the other project's. #place's move is `Projects/<slug>/` -> `Projects/<slug>/<cat>/`:
+    # well be the other project's. #place's move goes from this project's OWN folder to a category
+    # subfolder beneath it — resolved under `folder_node_id`, so the folder need not be named after
+    # the slug (Maker::ProjectDiscovery adopts folders that are not):
     # the file is already inside this project's own folder, so there is no other project's folder to
     # yank it out of and the rule's precondition cannot hold. Nothing about the other project's view
     # changes either — node_id never changes across a move (Maker::MoveNode's stated promise), so its
@@ -825,6 +827,94 @@ module Maker
         assert_includes names, moved_name
         assert_equal %i[unavailable unavailable], result.skips.map(&:last)
         assert_equal (names - [ moved_name ]).sort, result.skips.map(&:first).sort
+      end
+    end
+
+    # --- the live_folder memo actually saves a query ------------------------------
+    #
+    # UNTESTED UNTIL NOW (CLAUDE.md §14e: "Query cost is a property nothing asserts unless you
+    # assert it"). The file's one count_queries test ("an over-cap upload costs a small,
+    # backlog-independent number of queries", further down) exercises the path where #place never
+    # runs at all — it cannot regress on THIS. Someone "simplifying" #live_folder back to a plain
+    # find_by would pass every other test in this file.
+    #
+    # WHY THIS RUNS AGAINST A FAKE PORT RATHER THAN THE REAL SHARE ADAPTER SETUP OTHERWISE
+    # INSISTS ON: FileLayer::Share#move (and FileLayer::S3's twin) resolve their destination's
+    # storage path via #parent_dir_rel!, which is find_by(node_id:, kind: "dir") — the EXACT SAME
+    # SHAPE #live_folder queries. Rails logs SQL with `?` placeholders, never the bound values, so
+    # the two calls are BYTE-IDENTICAL text with nothing here able to tell them apart (verified
+    # directly, bin/rails runner, both printed side by side). Run this guard against the real
+    # share port instead and filing 3 files costs 3 parent_dir_rel! lookups — one per move — ON
+    # TOP OF #live_folder's 1, a real and LEGITIMATE cost that has nothing to do with the memo. A
+    # text-based filter cannot tell "the memo broke" from "a different query that is SUPPOSED to
+    # scale with N happens to read identically" — so this fakes the port's #move, which updates
+    # the row directly and never calls #parent_dir_rel! at all, leaving only what ProjectIntake
+    # itself asks for to count.
+    #
+    # MIRRORS with_broken_move ABOVE, DELIBERATELY — same capabilities stub, same defensive
+    # find_by! (bang) on mkdir so a test that forgets to pre-seed the category folder fails loudly
+    # on RecordNotFound rather than silently reporting a wrong count.
+    def with_successful_move
+      fake = Object.new
+      def fake.capabilities = Object.new.tap { |c| def c.port_writable? = true }
+      fake.define_singleton_method(:mkdir) do |user, parent_node_id: nil, name: nil|
+        node = user.nodes.present.find_by!(parent_node_id:, name:, kind: "dir")
+        FileLayer::FileInfo.new(node_id: node.node_id, name: node.name, kind: node.kind,
+                                size: 0, mtime: node.mtime, content_token: nil)
+      end
+      fake.define_singleton_method(:move) do |user, node_id: nil, new_parent_node_id: nil, new_name: nil|
+        user.nodes.present.find_by!(node_id:)
+            .update!(parent_node_id: new_parent_node_id, name: new_name)
+      end
+      FileLayer.current = fake
+      yield
+    ensure
+      FileLayer.reset!
+    end
+
+    # THE FILTER IS NARROWER THAN "MENTIONS node_id AND kind", and it has to be — three OTHER
+    # queries on this table name both columns in one WHERE clause during an ordinary sweep:
+    # Maker::LibraryFolder#ensure_segment's find_by(parent_node_id:, name:, kind: "dir"),
+    # Maker::MoveNode#live_dir!'s exists?(node_id:, kind: "dir"), and — on the real share/s3
+    # ports, which this test deliberately avoids (see with_successful_move) — #parent_dir_rel!'s
+    # own find_by(node_id:, kind: "dir"). Verified directly (bin/rails runner) which of these is
+    # unique to #live_folder's shape: only its own starts `SELECT "nodes".*` (ensure_segment's
+    # does too, but always alongside `parent_node_id`; live_dir!'s starts `SELECT 1 AS one`, the
+    # `.exists?` shape) AND filters `node_id =` AND `kind =`, WITH NO `parent_node_id` alongside
+    # it.
+    def folder_lookup_count(sql_statements)
+      sql_statements.count do |sql|
+        sql.match?(/\ASELECT "nodes"\.\* /) &&
+          sql.include?(%("nodes"."node_id" = )) &&
+          sql.include?(%("nodes"."kind" = )) &&
+          !sql.include?(%("nodes"."parent_node_id"))
+      end
+    end
+
+    # THE GUARD ITSELF. Backend-agnostic on purpose (CLAUDE.md §14e / page_query_budget_test.rb):
+    # asserts filing 3 files costs the SAME number of #live_folder lookups as filing 1, never a
+    # literal count that would pin one LIBRARY_BACKEND and fail the other two.
+    test "the live_folder lookup does not grow with the number of files filed" do
+      dir("design", parent: @folder.node_id) # pre-seeded so create_child! never reaches mkdir
+
+      with_successful_move do
+        file("solo.svg")
+        one = folder_lookup_count(capture_sql {
+          Maker::ProjectIntake.for_project(user: @user, project: @project)
+        })
+
+        3.times { |i| file("many#{i}.svg") }
+        three = folder_lookup_count(capture_sql {
+          Maker::ProjectIntake.for_project(user: @user, project: @project)
+        })
+
+        # SANITY FIRST (this file's own recorded lesson, "the shape of the walk" above): an empty
+        # filter passes an equality trivially without proving it ever saw the query it exists to
+        # count.
+        assert_operator one, :>=, 1, "sanity: the filter must actually see #live_folder's own query"
+        assert_equal one, three,
+                     "filing 3 files must cost the SAME number of project-folder lookups as filing " \
+                     "1 file — #live_folder's memo, not the file count, is what this measures"
       end
     end
 
@@ -1261,5 +1351,35 @@ module Maker
       assert_equal 1, result.moved
       assert_not_equal @folder.node_id, loose.reload.parent_node_id
     end
+
+  # THE DESTINATION IS RESOLVED UNDER THE PROJECT'S FOLDER NODE, NEVER A PATH REBUILT FROM ITS SLUG.
+  #
+  # Reachable two ways, and Maker::ProjectDiscovery makes the second one the MAINLINE case:
+  #   * rename a project's slug after its folder was minted — folder_node_id keeps pointing at the
+  #     old `Projects/<old-slug>`;
+  #   * adopt a folder whose NAME is not its slug — `Projects/Desk Lamp` with slug `desk-lamp`.
+  #
+  # Rebuilding the path mints a SECOND tree and moves the user's file into it, leaving the folder
+  # the user made looking empty while the project still points at it. Nothing errors and nothing
+  # logs — this repo's dominant failure shape.
+  #
+  # A SECOND PROJECT, not the fixture's @project, precisely because setup's
+  # `ensure_library_folder!` gave that one a folder that DOES match its slug — which is the only
+  # arrangement the old code could handle, and so the only one that could not catch this.
+  test "a file is filed under the project's own folder node even when it is not named after the slug" do
+    folder = dir("Desk Lamp", parent: nil)
+    other  = @user.maker_projects.create!(name: "Bench Rig")
+    other.update_column(:folder_node_id, folder.node_id)
+    panel = file("panel.svg", parent: folder.node_id)
+
+    Maker::ProjectIntake.for_project(user: @user, project: other)
+
+    design = @user.nodes.present.find_by(parent_node_id: folder.node_id, name: "design",
+                                         kind: "dir")
+    refute_nil design, "the category folder must be created UNDER the project's own folder node"
+    assert_equal design.node_id, panel.reload.parent_node_id
+    assert_nil @user.nodes.present.find_by(name: "bench-rig", kind: "dir"),
+               "no second Projects/<slug> tree may be minted"
+  end
   end
 end

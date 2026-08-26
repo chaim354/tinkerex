@@ -56,5 +56,57 @@ module Maker
         assert_match(/\A[a-z0-9]+\z/, name, name)
       end
     end
+
+    # THE LITERAL MUST NOT REAPPEAR. ROOT exists because "Projects" was spelled out in two files and
+    # a third was about to add it. A constant nothing enforces is a convention, and this repo's
+    # recorded drift (FilesHelper::EXT_FAMILIES vs ROLE_BY_EXT — two lists that disagreed about .svg
+    # for months) is what a convention buys you.
+    #
+    # Mutation-check, both directions: put a bare `"Projects"` back into any file below AS CODE and
+    # this goes RED; put `"Projects"` into a COMMENT in one of those files and this must stay GREEN.
+    test "no maker file spells the Projects root as a bare literal" do
+      files = %w[
+        app/models/maker/project.rb
+        app/services/maker/project_intake.rb
+        app/services/maker/project_discovery.rb
+      ].map { |f| Rails.root.join(f) }.select(&:exist?)
+
+      # ASSERT THE SCANNED SET FIRST (§14e). Two architecture guards in this repo went on passing
+      # over an empty glob once the directory they scanned moved away; a path-keyed guard can be
+      # silently retired by a rename. THIS CATCHES TOTAL LOSS ONLY: if one of the three files were
+      # renamed while its siblings survived, `files` would silently shrink by one and that file
+      # would drop out of coverage with nothing here to notice — the partial-loss version of the
+      # same shape. An exact-count assertion would close that gap but isn't viable yet:
+      # project_discovery.rb doesn't exist until Task 4, so there is no fixed count to assert
+      # against until all three files do.
+      refute_empty files, "none of the maker files this guards exist — did they move?"
+
+      # code_lines, NOT a raw f.read substring scan — a plain substring match hits "Projects"
+      # inside an ordinary WHY-comment too, and this codebase's own mandated comment style is
+      # exactly the dense narrative kind likely to quote a folder name in passing
+      # (project_discovery.rb, arriving in Task 4, will be written the same way). Demonstrated,
+      # not theorized: adding one ordinary comment to project.rb that only POINTS AT this constant
+      # ("...see ProjectFolders::ROOT") turned this test red with no literal reintroduced anywhere.
+      # That is the same bug shape CLAUDE.md §14d already paid for — the Sync:: seam guard is
+      # Ripper-token-checked rather than a regex, because a regex false-positives on prose naming
+      # "Sync::Gc" in an error string with zero real references. test/ci_hygiene_test.rb's
+      # code_lines strips whole-line comments for the identical reason; this reuses that technique
+      # rather than inventing a second one. A whole-line strip is enough here — the value is a
+      # plain path segment, not a constant reference, so a trailing comment after real code is not
+      # a plausible false positive worth Ripper tokenization to rule out.
+      offenders = files.select { |f| code_lines(f).any? { |l| l.include?('"Projects"') } }
+                       .map { |f| f.relative_path_from(Rails.root).to_s }
+
+      assert_empty offenders, "spell it Maker::ProjectFolders::ROOT, not a bare \"Projects\""
+    end
+
+    private
+
+      # Source lines with blanks and whole-line comments removed — same technique as
+      # test/ci_hygiene_test.rb's helper of the same name, kept for the same reason: a raw
+      # substring scan cannot tell code from prose that happens to quote the same string.
+      def code_lines(path)
+        path.readlines(chomp: true).reject { |l| l.strip.empty? || l.strip.start_with?("#") }
+      end
   end
 end
