@@ -167,10 +167,20 @@ reboots, which is the actual risk of rolling an accessory — and the bytes Rail
 (`e => Straight Edge`, `y => Handle for e.g. a drawer`). All six proxy health checks 200
 (`chunk|share|s3` × `.local|.home`).
 
-**Both accessories reported an EMPTY revision label BEFORE this deploy**, so the images they had been
-running for three days could not name their own build. The boxes one can now; the addons image still
-cannot, and that is a real gap in the same provenance argument `bin/build-boxes-sidecar` documents at
-length — it passes `BUNDLE_VERSION` as a build-arg, which no `docker inspect` on the box can read.
+**Both accessories reported an EMPTY revision label BEFORE this deploy, and the first reading of that
+was WRONG in one direction.** It said the addons image "cannot name its own build" — it could, and
+always could: its Dockerfile writes `BUNDLE_VERSION` into `/version.json`, and the live container
+answered `{"version":"645aa122…"}` when finally asked. The real defect was narrower and still worth
+fixing: the two accessories answered one question by two different mechanisms, so a `docker inspect`
+sweep across both reported one of them as unknown. Closed the same evening in
+`chaim354/tinkerex-addons#14` — `bin/build-push` now stamps
+`org.opencontainers.image.revision` from the SAME variable that feeds `BUNDLE_VERSION`, so the two
+cannot disagree, with a `git status --porcelain` dirty check (not `git describe --dirty`, which
+ignores the untracked files that image would ship) scoped to what it actually `COPY`s. Published as
+`1332bf70` / `sha256:a28c83da` and rolled: label and `version.json` now both read `1332bf70…`, the
+sweep names both accessories, and Rails still reaches both aliases (`/up` 200, `/health` 200,
+`/boxes/fields.js` 200). **The bundle content is unchanged by that second roll** — `fields.js` still
+serves the edge labels.
 
 ### Two repos, and the fixture is the seam
 
