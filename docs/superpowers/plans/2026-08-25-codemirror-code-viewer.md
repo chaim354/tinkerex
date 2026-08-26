@@ -997,6 +997,29 @@ bin/rails test test/services/library/repo_metadata_purge_test.rb
 
 Expected: every test errors with `NameError: uninitialized constant Library::RepoMetadataPurge`.
 
+> **TWO BUGS IN THE CODE BELOW, FOUND BY DRIVING IT (2026-08-26). Both are recorded rather than
+> silently patched, because the failure mode of each is a purge that reports success and does
+> nothing.**
+>
+> **1. Destroying inside `find_each` breaks the ancestor walk it depends on.** The walk rebuilds a
+> node's path from its parents — so once a parent directory has been destroyed earlier in the same
+> pass, its children have no chain left, answer `false`, and **survive as live orphans beneath the
+> marker**. Measured: 20 of 21 objects left behind, and the second scan still raised `UnsafeScan`,
+> which is the exact outcome this task exists to prevent. The fix is decide-then-apply — collect
+> ids first, then `each_slice(500).destroy_all` — which also keeps memory bounded by an Integer
+> array rather than a set of models.
+>
+> **2. The test fixtures below cannot exercise the service below.** The `node` helper sets
+> `storage_path` and NO `parent_node_id` — a shape no backend actually produces — so a
+> parent-chain purge finds nothing and returns `0 destroyed`, failing the plan's own first test.
+> Build a real chain: share-shaped fixtures set BOTH columns (as `Reconciler#create_or_revive!`
+> and `#ensure_dirs` write them), and the chunk_remote case keeps `storage_path` NULL so the two
+> shapes stay distinguishable.
+>
+> The lesson generalises past this task: a plan's code and a plan's fixtures are written in the
+> same sitting, by the same reader, and can agree with each other while both being wrong about the
+> system. That is `FakeS3`'s inverse-encoding bug (§14e) in plan form.
+
 - [ ] **Step 3: Write the service**
 
 Create `app/services/library/repo_metadata_purge.rb`:
