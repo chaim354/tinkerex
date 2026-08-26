@@ -28,11 +28,11 @@ module Web
       post user_session_path, params: { user: { email: user.email, password: PASSWORD } }
     end
 
-    test "the page seeds the three shelves on first visit" do
+    test "the page seeds the default shelves on first visit" do
       get shelves_path
 
       assert_response :success
-      assert_equal [ "", "Models", "Projects/*/models" ], @user.maker_shelves.order(:path).pluck(:path)
+      assert_equal [ "", "*", "Models", "Projects/*/models" ], @user.maker_shelves.order(:path).pluck(:path)
     end
 
     # THE FORM POSTS A FLAT `node_id` AND THE CONTROLLER READS `params[:node_id]`. Asserted on the

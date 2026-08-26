@@ -176,7 +176,7 @@ module Maker
 
       assert_nothing_raised { Maker::Shelf.seed_once!(@user) }
 
-      assert_equal [ "", "Models", "Projects/*/models" ], @user.maker_shelves.order(:path).pluck(:path)
+      assert_equal [ "", "*", "Models", "Projects/*/models" ], @user.maker_shelves.order(:path).pluck(:path)
       assert_predicate @user.reload.shelves_seeded_at, :present?
     end
 
@@ -216,9 +216,21 @@ module Maker
 
     belongs_to :user
 
-    # What ships. All three are ordinary deletable rows -- see .seed_once! for why they are seeded
+    # What ships. All four are ordinary deletable rows -- see .seed_once! for why they are seeded
     # exactly once rather than ensured on every sweep.
-    SEEDS = [ "", "Models", "Projects/*/models" ].freeze
+    #
+    # `*` -- EVERY TOP-LEVEL FOLDER IS A SHELF -- IS THE ONE THAT IS EASY TO READ AS REDUNDANT NEXT
+    # TO `""`, AND REMOVING IT BREAKS THE FEATURE'S HEADLINE CASE. `""` makes the root a shelf,
+    # which makes each of its CHILD FOLDERS one model claiming its whole subtree: measured on a real
+    # share library, `3D Models/` collapsed into a single catalog entry titled "3D Models" holding
+    # every file beneath it, and the entire `Projects/` tree became one entry titled "Projects".
+    # With `*`, `3D Models` is a shelf instead, so `3D Models/benchy.stl` is its own model and
+    # `3D Models/Enclosure/` is one model -- the behaviour this feature exists for.
+    #
+    # `Projects/*/models` IS STILL NEEDED ALONGSIDE IT and is not shadowed: `*` makes `Projects` a
+    # shelf, under which a whole project folder would be one model, while the deeper pattern is the
+    # NEARER shelf for anything inside `models/`, so those files are each their own model.
+    SEEDS = [ "", "*", "Models", "Projects/*/models" ].freeze
 
     # A whole segment may be this and nothing else. `*x` is not a wildcard, it is a filename we
     # cannot match, so it is refused rather than silently never matching.
@@ -376,10 +388,10 @@ Append to `test/models/maker/shelf_test.rb`, inside the class:
 ```ruby
     test "seeding is idempotent and does not resurrect deleted rows" do
       Maker::Shelf.seed_once!(@user)
-      assert_equal [ "", "Models", "Projects/*/models" ], @user.maker_shelves.order(:path).pluck(:path)
+      assert_equal [ "", "*", "Models", "Projects/*/models" ], @user.maker_shelves.order(:path).pluck(:path)
 
       Maker::Shelf.seed_once!(@user)
-      assert_equal 3, @user.maker_shelves.count
+      assert_equal Maker::Shelf::SEEDS.size, @user.maker_shelves.count
 
       @user.maker_shelves.destroy_all
       Maker::Shelf.seed_once!(@user.reload)
@@ -1610,11 +1622,11 @@ module Web
       sign_in_as(@user)
     end
 
-    test "the page seeds the three shelves on first visit" do
+    test "the page seeds the default shelves on first visit" do
       get shelves_path
 
       assert_response :success
-      assert_equal [ "", "Models", "Projects/*/models" ], @user.maker_shelves.order(:path).pluck(:path)
+      assert_equal [ "", "*", "Models", "Projects/*/models" ], @user.maker_shelves.order(:path).pluck(:path)
     end
 
     test "a wildcard row renders and reports how many folders it matches" do

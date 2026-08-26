@@ -61,7 +61,7 @@ module Maker
 
       assert_nothing_raised { Maker::Shelf.seed_once!(@user) }
 
-      assert_equal [ "", "Models", "Projects/*/models" ], @user.maker_shelves.order(:path).pluck(:path)
+      assert_equal [ "", "*", "Models", "Projects/*/models" ], @user.maker_shelves.order(:path).pluck(:path)
       assert_predicate @user.reload.shelves_seeded_at, :present?
     end
 
@@ -81,10 +81,10 @@ module Maker
 
     test "seeding is idempotent and does not resurrect deleted rows" do
       Maker::Shelf.seed_once!(@user)
-      assert_equal [ "", "Models", "Projects/*/models" ], @user.maker_shelves.order(:path).pluck(:path)
+      assert_equal [ "", "*", "Models", "Projects/*/models" ], @user.maker_shelves.order(:path).pluck(:path)
 
       Maker::Shelf.seed_once!(@user)
-      assert_equal 3, @user.maker_shelves.count
+      assert_equal Maker::Shelf::SEEDS.size, @user.maker_shelves.count
 
       @user.maker_shelves.destroy_all
       Maker::Shelf.seed_once!(@user.reload)

@@ -133,13 +133,49 @@ The controller's own mistake belongs in the list too: the confirm dialog on `mod
 "Delete X? (files are kept)" after `#destroy` learned to dismiss, so it told a user their model was
 being deleted at the moment the row was about to survive on purpose.
 
+### The defect no test could see, found by running the thing on a real library
+
+With all nine tasks green and `bin/ci` passing on every leg, the feature was **wrong out of the
+box** — and every test agreed it was fine, because every test built its own shelves. Driven against
+a real share library instead:
+
+```
+3D Models/benchy.stl, 3D Models/Enclosure/body.stl, Projects/desk-lamp/cad/mount.stl
+  ->  MODEL "3D Models" <- both files under it
+      MODEL "Projects"  <- the project's CAD file
+```
+
+One catalog entry per **top-level folder**, holding everything beneath it. That is the rule working
+exactly as specified — `""` makes the root a shelf, so each of its child folders is one model — and
+it is the precise opposite of the request that started the arc ("a 3d models folder should not be
+considered all one model"). **The rule was right and the seeded set was wrong**, which no amount of
+unit testing was going to surface: the tests exercised the rule, and the defect was in the data.
+
+Seeding `*` as well — every top-level folder is a shelf — gives all four requested cases:
+
+```
+MODEL "benchy"    <- 3D Models/benchy.stl                    (loose file, its own model)
+MODEL "Enclosure" <- 3D Models/Enclosure/body.stl            (folder, one model)
+MODEL "desk-lamp" <- Projects/desk-lamp/cad/mount.stl        (the project)
+MODEL "bracket"   <- Projects/desk-lamp/models/bracket.stl   (own model: the deeper shelf wins)
+MODEL "enclosure" <- Projects/desk-lamp/models/enclosure/…   (folder under it, one model)
+```
+
+`Projects/*/models` is **not** shadowed by `*` and both seeds are mutation-checked as load-bearing:
+`*` makes `Projects` a shelf, and the deeper pattern is the *nearer* shelf for anything inside
+`models/`. `model_intake_defaults_test.rb` now pins the defaults specifically — every other test in
+the suite builds its own shelves and would stay green through this again.
+
+This is CLAUDE.md §14d's recorded lesson a second time: the ERB-comment bug sat in a page through a
+fully green run and was found by opening it. So was this.
+
 ### One mutation the plan expected to go red cannot
 
 Task 8's plan asked for `current_user.nodes` → `Node` in the shelf-creation path, expecting the
 tenancy test to fail. It stays green, and the implementer showed why rather than working around it:
 tenancy is enforced **twice**, because `Maker::LibraryTree` is built from `current_user`'s dirs
 alone, so an unscoped lookup that finds a foreign node still hits `path_for`'s `:broken` sentinel and
-returns nil. Verified against the full share leg — 2433 runs, 0 failures — with the scope removed.
+returns nil. Verified against the full share leg with the scope removed — 0 failures.
 The scope stays, and the finding is written at the line so the next reader does not read GREEN as
 "dead code, delete it."
 
@@ -150,8 +186,8 @@ The scope stays, and the finding is written at the line so the next reader does 
   *payload* is linear in owned files; 6,000 files in one folder completes fine. `classify` is
   4 queries, also flat. The settings page is 5 queries at both 3 and 15 shelves — without the
   `@tree_paths` memo it is one pluck per shelf (7 → 19), now pinned in `page_query_budget_test.rb`.
-- **Suite.** 2,433 runs on all three backend legs — `test` (share), `test-s3`, `test-chunk-remote` —
-  assertions 8925 / 8925 / 9082 and skips 30 / 30 / 5, which is the expected shape: chunk-gated
+- **Suite.** 2,437 runs on all three backend legs — `test` (share), `test-s3`, `test-chunk-remote` —
+  assertions 8936 / 8936 / 9093 and skips 30 / 30 / 5, which is the expected shape: chunk-gated
   tests execute rather than skip on that leg. §15's identical-counts rule holds.
 - **Cap.** `cap: 5` against 22 candidate keys creates exactly 5 and reports `:capped`; a second run
   creates the next 5, so the sorted order makes a capped run resume rather than re-roll.
