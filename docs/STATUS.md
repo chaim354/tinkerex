@@ -249,7 +249,7 @@ existed after task 3, so both write guards grow ONE TERM inside their existing
 refusal extended, not a new one.
 
 - `FileLayer::Share#observable!` and `FileLayer::S3#observable!` each gain
-  `Library::RepoMetadata.marker_prefix(rel.to_s).present?`. Every write verb already calls these:
+  `Library::RepoMetadata.marker_prefix(rel).present?`. Every write verb already calls these:
   share asks from `write`/`mkdir`/`move`/`undelete`, s3 from the same four.
 - `Library::ReservedNames.reserved?` gains `Library::RepoMetadata.marker?(name)`, so no web door
   can MINT a folder named `.git`.
@@ -266,10 +266,13 @@ off the intake sweep for everything under it (`Maker::AttachToProject`'s `:in_wo
 exactly this marker and asks nothing else). `marker_prefix` is non-nil for both halves, so one term
 covers both and the purge (task 6) remains `internal?`'s first real caller.
 
-`.to_s` on the argument, unlike the plan's snippet: every sibling arm in those disjunctions already
-calls it, and `marker_prefix` answers **nil** for a non-String — so a caller handing in a Pathname
-would silently skip this arm alone while the others still fired. That is the divergence shape, not
-a missing nicety.
+**The `.to_s` ended up inside the predicate, not at the call sites, and the first version was right
+about the risk and wrong about its home.** `Library::OsClutter.ignore?` coerces internally while
+`marker_prefix` refused non-Strings — two sibling predicates in one disjunction with opposite
+policies, so safety depended on every future caller remembering, and `Library::S3Observer` already
+called it without one. `marker_prefix` now coerces (`rel.to_s.split("/")`) and both call sites ask
+plainly. **`marker?` stays strict**, because it takes door-supplied JSON where a nil must reach that
+door's routine refusal. `marker_prefix(nil)` still answers nil, since `"".split("/")` is `[]`.
 
 The tests EXTEND `adapter_write_contract.rb` beside `OS_CLUTTER_DESTINATIONS` rather than inventing
 a second mechanism, so both adapters answer identically by construction: `write` onto the marker,
@@ -290,6 +293,20 @@ copied `".git"` string could never satisfy. Hand-rolled with `define_singleton_m
 | drop the `marker?` arm from `ReservedNames` | 1 red — `a door may not MINT .git` |
 | replace that arm with a literal `name == ".git"` | 1 red — the delegation test, **and nothing else** |
 
+**A REVIEW THEN BROKE THE BLOCK, WHICH IS HOW IT EARNED ITS NEGATIVE CASE.** Every assertion in it
+was a REFUSAL, so nothing distinguished "at-or-beneath a `.git` SEGMENT" from "any path CONTAINING
+`.git`". Replacing the term with `rel.to_s.include?(RepoMetadata::DIR_NAME)` — which still names the
+constant, so it survives the no-second-spelling smell test — left the suite **fully green** while
+`.gitignore`, `.gitmodules` and `.github/workflows/ci.yml` all became unwritable. Those are paths
+`Library::Scanner` explicitly INDEXES, so that mutation ships a destination the observer observes
+and the write guard 404s as a "reserved path" — §14a's one-condition-two-answers, in the direction
+that makes a working tree's own files un-uploadable. Task 3 gave both observer suites this exact
+negative case; the write half now has it too, with DEPTH (`.github/workflows/ci.yml`, built through
+real `mkdir`s because `leaf!` forbids separators in a leaf name). The `include?` mutation is now RED
+on both adapters. **`mkdir` is pinned as well** — the first commit's headline said "refuse minting
+`.git`" while the contract covered only `write` and `move`, and `mkdir` is the verb that mints a
+directory.
+
 The plan predicted the share mutation would leave `test-s3` GREEN, demonstrating a cross-backend
 divergence. **It does not, and the reason is worth recording:** `ShareTest` and `S3Test` each build
 their own adapter directly (`FileLayer::Share.new(root:)`, `FileLayer::S3.new(client: FakeS3)`) and
@@ -303,7 +320,7 @@ The last mutation is the one that matters most: it failed the delegation test **
 every other `.git` assertion green. That is exactly what a delegation guard is for — a copied
 string passes every behavioural test forever after the predicate moves.
 
-Legs measured for this task: share and s3, both **2395 runs / 8765 assertions / 30 skips**,
+Legs measured for this task: share and s3, both **2405 runs / 8802 assertions / 30 skips**,
 identical. `test-chunk-remote` not run here (needs the sibling checkout).
 
 `repo_metadata.rb`'s header said "THE CONTENTS HALF IS ONLY HALF-WIRED TODAY … the WRITE refusal is
