@@ -99,10 +99,15 @@ module Maker
     # happily by a sweep that correctly skips dot-folders as by one that is completely broken and
     # adopts NOTHING — concretely, `root.node_id` typo'd to `root.id` (the AR primary key, sitting
     # right on the same object) makes the candidate query match zero rows, ever, and this test
-    # stayed green through that mutation before the sibling was added. `run.candidates == 1` is
-    # kept alongside `run.created == 1` because it has independent discriminating power here: if
-    # the dot-filter itself regresses, candidates jumps to 3 while created could still coincidentally
-    # read 1 depending on the cap math, so the two assertions catch different breakages.
+    # stayed green through that mutation before the sibling was added.
+    #
+    # `run.candidates == 1` IS A SECOND MEASUREMENT OF THE SAME FACT, NOT AN INDEPENDENT CHECK, and
+    # is kept only because it reads clearly beside the set assertion. An earlier version of this
+    # comment claimed it caught a different breakage than `created`; that was checked and is FALSE.
+    # `created` counts `candidates.first(cap)`, and no fixture in this file comes near cap (50), so
+    # `.first(cap)` never truncates and `created == candidates.size` always holds here — every
+    # single-rule mutation moves both identically, and `created` fails first. Do not cite this
+    # assertion as extra coverage; if you need cap math tested, that is the cap tests' job.
     test "dot-folders are skipped" do
       dir("d-git", ".git", "d-projects")
       dir("d-hidden", ".scratch", "d-projects")
