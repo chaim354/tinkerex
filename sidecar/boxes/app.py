@@ -172,6 +172,30 @@ def _param_type(action):
     return "str"
 
 
+def _choice_labels(a):
+    """{choice: human description} for an enum whose argparse type carries one, else None.
+
+    An edge param's choices are single LETTERS ("e", "f", "F", "Š"), and a letter on its own says
+    nothing. boxes.py's own web UI never shows them bare: ArgparseEdgeType renders each option as
+    "{char} {description}" out of `edges.getDescriptions()`, which is a class attribute on the TYPE
+    argparse holds. Advertise that map and the form can put the explanation back.
+
+    Keyed on the type CARRYING a `names` mapping, not on a list of param names — the same
+    mirror-the-rule move `_multiline` and `_offered` make. `bottom_edge` and `top_edge` are the two
+    a user meets first, but this boxes.py declares edge params under eight more dests
+    (right_edge, left_edge, back_edge, sideedges, side_edges, panel_edge, edgetype, edge_style), and
+    a name list would leave those rendering bare letters while looking finished.
+
+    NONE for an ordinary enum (FingerJoint_style, Lid_style, …): upstream has no descriptions for
+    those and renders them bare too, so absent means "show the value", not "look up a blank".
+    """
+    names = getattr(a.type, "names", None)
+    if not a.choices or not isinstance(names, dict):
+        return None
+    labels = {str(c): names[c] for c in a.choices if names.get(c)}
+    return labels or None
+
+
 def _multiline(a):
     # boxes.py's own web UI renders a str param as a <textarea> exactly when its default carries a
     # newline (see boxesserver.arg2html). Mirror that RULE rather than naming params: it covers
@@ -232,6 +256,11 @@ def _param(a, box):
         "default": _seeded_default(box, a) if multiline else a.default,
         "help": (a.help or "").strip(),
         "choices": list(a.choices) if a.choices else None,
+        # Additive beside `choices`, which stays the authority on the SET and its ORDER — a bundle
+        # that predates this key reads it as absent and renders the bare values it rendered before,
+        # so the sidecar and the addon bundle can deploy in either order (same contract as
+        # `multiline` below).
+        "choice_labels": _choice_labels(a),
         # Consumed by the form to pick <textarea> over <input type="text">. Additive: an app that
         # predates this key just reads it as falsy and renders what it rendered before, so the
         # sidecar and the app can deploy in either order.

@@ -311,4 +311,60 @@ class BoxSectionsTest < ApplicationSystemTestCase
     assert_selector '[data-role="status"].is-error', exact_text: complaint
     assert_no_console_errors ignoring: [ SAMPLE_404, GENERATE_422 ]
   end
+
+  # AN EDGE PARAM'S CHOICES ARE SINGLE LETTERS ON THE WIRE AND MUST NOT BE SINGLE LETTERS ON THE
+  # PAGE. boxes.py's own web UI has always rendered them as "{letter} {description}"
+  # (`ArgparseEdgeType.html`, out of `edges.getDescriptions()`); this bundle rendered the raw value,
+  # so `top_edge` offered "e / f / F / h / c / E / S / Š / i / k / v / L / t / G / y / Y" — sixteen
+  # letters and no way to tell them apart. The sidecar now advertises the descriptions as
+  # `choice_labels` and fields.js composes the option text from them.
+  #
+  # THE VALUE IS ASSERTED SEPARATELY FROM THE TEXT, AND THAT SPLIT IS THE POINT: the letter is what
+  # boxes.py parses, so a fix that put the description into the option's VALUE would look correct on
+  # screen and 422 every render. Proven on the wire (the recorded sidecar call), not just on
+  # `select.value` — §14e's assert-the-wire-format rule.
+  #
+  # Browser-only in the sense test/system/README.md asks for: this form has no server-rendered
+  # markup at all — fields.js builds every <option> in the page after an async fetch — so `<option>`
+  # text exists nowhere a request test could look.
+  #
+  # It lives in this file rather than its own because it needs the identical fixture/proxy/sign-in
+  # setup and one more `open_generator` call, and TypeTray is already fetched here.
+  test "an edge dropdown says what each letter means, and still submits the letter" do
+    visit tools_addon_path("boxes")
+    open_generator("TypeTray")
+
+    top = find('[data-param="top_edge"]')
+    assert_equal FakeBoxesSidecar::TOP_EDGE_CHOICES, top.all("option", visible: :all).map(&:value),
+                 "the sidecar's own choice set and order is what the letter must round-trip through"
+    assert_equal [ "e — Straight Edge", "f — Finger Joint", "F — Finger Joint (opposing side)" ],
+                 top.all("option", visible: :all).first(3).map(&:text)
+
+    bottom = find('[data-param="bottom_edge"]')
+    assert_equal "h — Edge (parallel Finger Joint Holes)",
+                 bottom.find("option[value='h']", visible: :all).text
+    assert_equal "h", bottom.value, "the label must not have displaced the value it explains"
+
+    find('[data-param="sx"]').set("60*2")
+    wait_until(message: "editing a param did not trigger a fresh sidecar render") do
+      @proxy.calls.any? { |c| c.path == "generate" && c.params.dig("params", "sx") == "60*2" }
+    end
+    sent = @proxy.calls.select { |c| c.path == "generate" }.last.params
+    assert_equal "e", sent.dig("params", "top_edge"), "boxes.py parses the LETTER, not the label"
+    assert_equal "h", sent.dig("params", "bottom_edge")
+
+    # An enum the sidecar has no descriptions for stays BARE — the same arm a sidecar older than
+    # `choice_labels` puts EVERY enum down, so a bundle that assumed the key was always there would
+    # render "rectangular — undefined" on every deployment mid-rollout. A fresh `visit`, because
+    # opening a generator replaces the gallery `open_addon_card` needs.
+    visit tools_addon_path("boxes")
+    open_generator("ABox")
+    style = find('[data-param="FingerJoint_style"]', visible: :all)
+    # `text(:all)`, because this group ships FOLDED and Capybara's plain `#text` answers "" for a
+    # node inside a closed <details> — which would have compared four empty strings against four
+    # empty strings had the expectation been written the same way.
+    assert_equal %w[rectangular springs barbs snap],
+                 style.all("option", visible: :all).map { |o| o.text(:all) }
+    assert_no_console_errors ignoring: [ SAMPLE_404 ]
+  end
 end
