@@ -68,6 +68,17 @@ pin "three/addons/controls/OrbitControls.js", to: "OrbitControls.js" # @0.185.1
 pin "three/addons/loaders/STLLoader.js", to: "STLLoader.js" # @0.185.1
 pin "three/addons/loaders/OBJLoader.js", to: "OBJLoader.js" # @0.185.1
 pin "three/addons/loaders/3MFLoader.js", to: "3MFLoader.js" # @0.185.1
+# CodeMirror 6 (MIT) — the read-only source viewer (codeview_controller.js), DYNAMIC-imported so
+# the payload ships only on a page showing a text file. ONE PIN FOR ONE BUNDLE, built by
+# bin/build-codemirror from vendor/javascript/codemirror-entry.js — unlike everything else in
+# vendor/javascript/, these are BUILT bytes rather than untouched upstream ones, which is why that
+# script pins all 40 packages in the resolved tree and not just the 15 direct ones.
+#
+# NEVER add `pin "@codemirror/..."` lines beside this. Two copies of @codemirror/state make
+# facets and StateFields fail to match by object identity, and CM6 responds by silently ignoring
+# the extension — no error, no warning. test/ci_hygiene_test.rb fails the build if a per-package
+# pin appears. To add a language, add it to codemirror-entry.js and rebuild.
+pin "codemirror", to: "codemirror.js" # bundle: see bin/build-codemirror for pinned versions
 # Lexxy (MIT) — the Action Text editor, replacing Trix. Served from the gem's own asset path, so
 # there is nothing vendored under vendor/javascript and no jspm shared-chunk patching (see the
 # jszip notes above). Attachments are disabled at the element, so @rails/activestorage is

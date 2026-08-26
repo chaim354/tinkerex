@@ -80,7 +80,7 @@ reading the last entry.
 
 ## Latest (2026-08-25): a git repo in the library, and the sweep that was tearing one apart (branch `claude/codemirror-code-editor`)
 
-**IN PROGRESS — seven of nine tasks landed.** Spec:
+**IN PROGRESS — eight of nine tasks landed.** Spec:
 `docs/superpowers/specs/2026-08-25-codemirror-code-viewer-design.md`. Plan:
 `docs/superpowers/plans/2026-08-25-codemirror-code-viewer.md`.
 
@@ -649,9 +649,81 @@ recur. Before the migration landed, assertion counts across repeated runs of the
 9067–9069 (the ±2 flap already under "Still open", not a backend difference); the final round with
 the migration in was clean on both legs at the first attempt.
 
-### Still to land (tasks 8–9 of the plan)
+### One CodeMirror bundle, and the reproducibility claim made true (task 8, landed)
 
-The bundle and its never-pin-per-package guard; the `codeview` controller.
+`vendor/javascript/codemirror-entry.js` (committed source, 23 exports), `bin/build-codemirror`,
+the artifact, ONE importmap pin, and two guards in `test/ci_hygiene_test.rb`. **Rebuilt figures,
+measured here rather than carried over: 933,768 bytes minified, 324,586 gzipped** — which is
+911.9 KiB / 317.0 KiB, matching the design-time row in the table above to the tenth of a unit.
+Nothing had drifted; the design measurement was one day old. (Those columns are KiB, not KB —
+esbuild's `911.9kb` is `933768 / 1024`.)
+
+**THE PLAN'S PIN LIST WAS THE 15 DIRECT PACKAGES, AND THAT DOES NOT MAKE A BUILD REPRODUCIBLE.**
+Resolved and counted: **25 more packages arrive transitively through `^6.0.0`-style ranges** —
+`@codemirror/state`, `@codemirror/view`, `@codemirror/language`, every `@lezer/*` parser, plus
+`crelt`, `style-mod`, `w3c-keyname`, `@marijn/find-cluster-break`. Each resolves to whatever is
+newest AT INSTALL TIME, so the same source emits different bytes the day any of them publishes a
+patch, under a script whose header says "reproduces the artifact from pinned versions". All 40 are
+pinned now, and the list was DERIVED FROM THE RESOLVED LOCKFILE, not written from memory — the
+first draft of it was written from memory and was wrong on nearly every line (`@codemirror/state`
+guessed at 6.5.2, actually **6.7.1**; `@lezer/common` guessed at 1.2.3, actually **1.5.2**), which
+is the invented-evidence shape §15 names, caught before it reached a commit.
+
+**THE PRESCRIBED REPRODUCIBILITY CHECK CANNOT SEE THAT, AND SAYING SO IS THE POINT.** Building
+twice and comparing digests gives identical `9a794ca3…` either way: the registry does not move in
+the two minutes between runs, so an unpinned tree passes it perfectly. The check that actually
+answers the question is enumerating the resolved versions — **40 pins, 40 packages resolved
+(excluding the `@esbuild/*` platform binaries, which esbuild pins to its own version and which
+never enter the artifact), zero drift, zero still floating.** Licences read from each installed
+`package.json` at the pinned versions: MIT throughout, §9 satisfied.
+
+**A duplicate check lives in the build script, because it is the only thing that can see it.** The
+importmap guard forbids a second `@codemirror/state` arriving by PIN; one can also arrive by NESTED
+INSTALL, when a package's range stops overlapping a pin and npm gives it a private copy. esbuild
+would bundle both into the one file and the failure is the identical silent one. The script reduces
+every directory under a `@codemirror`/`@lezer` scope to its `scope/package` name and refuses to
+build on a duplicate — 34 packages scanned, and planting a nested
+`@codemirror/lang-cpp/node_modules/@codemirror/state` makes it report `@codemirror/state` and exit
+non-zero. Both families, not just `state`: `@lezer/common` and `@lezer/lr` have the same
+object-identity property for `NodeType`/`NodeProp`.
+
+The artifact was verified rather than assumed: it parses as ESM (`node --check`), its export list is
+byte-identical to the 23 names `codemirror-entry.js` declares, and **re-bundling it reports exactly
+one input — itself** — so there is no dangling relative or bare import of the kind
+`config/importmap.rb` records twice (JSZip's jspm chunk, Three.js's split core). That was the whole
+reason for one bundle over `bin/importmap pin`.
+
+**A comment claim from the plan was corrected rather than copied.** The entry file was to say it is
+"NOT served"; `vendor/javascript` is on Propshaft's asset path (checked by printing
+`config.assets.paths`), so every file in it IS digest-copied into `public/assets`. What is true is
+that no importmap specifier resolves to it, so nothing ever imports it — and the file says that
+instead.
+
+| mutation | result |
+|---|---|
+| add `pin "@codemirror/state"` to the importmap | red — ``per-package CodeMirror pins (@codemirror/state) load a second copy of @codemirror/state… Expected ["@codemirror/state"] to be empty`` |
+| break the scan regex so it matches nothing | red on the **non-vacuity** assertion, not a false green — `parsed 0 pins — the importmap parse is broken, so everything below this line is vacuous. Expected 0 to be > 5` |
+| remove `vendor/javascript/codemirror.js` | red — `run bin/build-codemirror` |
+| plant a nested second `@codemirror/state` | the build refuses, naming it |
+
+The second of those is the one worth having: `assert_empty offenders` over an empty parse passes
+forever, and this arc has already shipped four guards that could not fail for the reason their
+comments claimed. **The third mutation is the honest caveat on this task's TDD claim** — the guards
+were written before the pin existed and the pin guard was watched red first, but the
+artifact-exists guard was green from the moment it was written, because the plan's own step order
+builds the artifact before writing the test. It was mutation-checked instead.
+
+Legs measured for this task: share and s3, both **2436 runs / 9117 assertions / 30 skips**,
+identical — task 7's 2434/9110 plus the two guards. `test-chunk-remote` not run here (needs the
+sibling checkout). No `package.json` or `node_modules` anywhere in the repo: the script installs
+into a `mktemp -d` and removes it on any exit. One share run of five reported a single error whose
+identity was not captured (the run's assertion count read 9114 against the 9117 of every clean run,
+so one test bailed part-way); it did not recur in the four runs after it. Recorded rather than
+claimed as diagnosed — task 7 saw the same shape on the s3 leg.
+
+### Still to land (task 9 of the plan)
+
+The `codeview` controller.
 
 ### Decided and NOT built, so it is not rediscovered as an oversight
 
