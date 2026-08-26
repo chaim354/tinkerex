@@ -1271,6 +1271,29 @@ module Web
       assert_select ".grid-name", text: "Emptied", count: 1
     end
 
+    # THE BUTTON MUST DESCRIBE THE BRANCH IT TRIGGERS. models#destroy dismisses an auto model and
+    # destroys an imported one; a single "Delete … (files are kept)" confirm describes only the
+    # second, and told a user their model was being deleted when the row was about to survive.
+    test "the auto model's own page offers Remove from catalog, not Delete" do
+      model = @user.maker_models.create!(title: "Enclosure", origin: "auto", auto_node_id: "d-b")
+      model.file_attachments.create!(user: @user, node_id: "f-2", role: "model")
+
+      get model_path(model)
+
+      assert_response :success
+      assert_select "button", text: "Remove from catalog"
+      assert_select "button", text: "Delete", count: 0
+    end
+
+    test "an imported model's page still offers Delete" do
+      model = @user.maker_models.create!(title: "Imported")
+
+      get model_path(model)
+
+      assert_select "button", text: "Delete"
+      assert_select "button", text: "Remove from catalog", count: 0
+    end
+
     test "an imported model with no attachments still shows" do
       @user.maker_models.create!(title: "Fresh import")
       get models_path
