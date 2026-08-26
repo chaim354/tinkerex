@@ -353,14 +353,23 @@ module Library
     # model is only ever created, never reaped.
     #
     # MUTATION-CHECKED: moving intake_models(user) above intake_project_folders(user) in
-    # Library::ScanJob#perform turns this RED with ["Projects"].
+    # Library::ScanJob#perform turns this RED with ["desk-lamp"].
+    #
+    # THAT VALUE USED TO BE ["Projects"], AND THE COMMENT WENT ON SAYING SO AFTER IT STOPPED BEING
+    # TRUE — re-measured 2026-08-26. `Maker::Shelf::SEEDS` gained `"*"` (every top-level folder is
+    # a shelf), which moves the swallowed-model boundary one level DOWN: `Projects` is now itself a
+    # shelf, so the folder that gets swallowed is the project's own `desk-lamp`, not `Projects`.
+    # The hazard is unchanged and the test still pins it; only the name it comes back under moved.
     test "cataloguing runs after the project intake, so a filed file is its own model" do
       File.binwrite(File.join(@root, @folder.storage_path, "bracket.stl"), "solid")
 
       Library::ScanJob.perform_now(user_id: @user.id, root: @root)
 
       assert_equal [ "bracket" ], @user.maker_models.pluck(:title),
-                   "a model titled Projects means the catalog ran BEFORE the intake moved the file"
+                   "a model titled after the PROJECT FOLDER (desk-lamp) rather than the file " \
+                   "means the catalog ran BEFORE the intake moved it: the file was still loose " \
+                   "at the project root, whose nearest shelf is `Projects` itself, so the whole " \
+                   "folder became one model"
       model = @user.maker_models.sole
       node = @user.nodes.find_by!(node_id: model.auto_node_id)
       assert_equal "models", @user.nodes.find_by(node_id: node.parent_node_id).name
