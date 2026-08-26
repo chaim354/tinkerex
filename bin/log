@@ -171,6 +171,21 @@ module Log
     EXIT_OK
   end
 
+  # state=all is load-bearing: an arc closes when its PR merges, so the default would hide every
+  # finished piece of work — which is most of the record.
+  def search(argv)
+    query = argv.shift or raise UsageError, "search needs a query"
+    path = repo_path("/issues?state=all&q=#{URI.encode_www_form_component(query)}")
+    issues = parse(api(:get, path), path)
+
+    if issues.empty?
+      puts "bin/log: no issues matching #{query.inspect}."
+    else
+      issues.each { |i| puts "##{i['number']} [#{i['state']}] #{i['title']}" }
+    end
+    EXIT_OK
+  end
+
   # LABELS ARE NAMES ON THE WIRE, NOT IDS. Forgejo accepts either; names are what a human reads in
   # a diff and what survives the labels being recreated. `setup` guarantees they exist.
   def create_issue(title, body:, labels:)
@@ -233,6 +248,31 @@ module Log
     end
 
     puts "bin/log: #{LABELS.size} labels present."
+    EXIT_OK
+  end
+
+  # A DEPLOY IS AN ISSUE, WHICH IS WHAT DELETES CLAUDE.md §15's PUSH-TO-MAIN EXCEPTION. Today a
+  # deploy record is the one sanctioned direct commit to main, because a deploy happens after the
+  # merge and its record cannot live in the work's own PR. As an issue that reasoning evaporates.
+  def deploy(argv)
+    raise UsageError, "deploy needs --image SHA" unless argv.shift == "--image"
+
+    image = argv.shift or raise UsageError, "deploy needs --image SHA"
+    dests = (argv[0] == "--dest" ? argv[1] : "chunk_remote,share,s3").split(",")
+    body = "Image: `#{image}`\n\nDestinations:\n#{dests.map { |d| "- #{d}" }.join("\n")}\n"
+    issue = create_issue("Deploy #{image}", body: body, labels: [ "deploy" ])
+
+    puts "##{issue['number']} #{issue['title']}"
+    EXIT_OK
+  end
+
+  # A CORRECTION IS A COMMENT, NOT AN EDIT — never rewrite the issue body.
+  def note(argv)
+    number = argv.shift or raise UsageError, "note needs an issue number"
+    text = argv.shift or raise UsageError, "note needs text"
+    api(:post, repo_path("/issues/#{number}/comments"), { body: text })
+
+    puts "noted on ##{number}"
     EXIT_OK
   end
 
@@ -323,9 +363,9 @@ module Log
     EXIT_UNREACHABLE
   end
 
-  # Tasks 2-7 replace this arm by arm. Every subcommand is declared in SUBCOMMANDS from the start so
-  # an unbuilt one READS as "not implemented yet" rather than "unknown command". Both still exit 2,
-  # so a scripted caller cannot tell them apart — only the human-facing message differs.
+  # EVERY SUBCOMMAND DECLARED IN SUBCOMMANDS NOW HAS AN ARM HERE — the table and the dispatch
+  # cannot drift apart, because the `else` below raises rather than reading as a quiet "not
+  # implemented yet" the way it did while this file was still being built arm by arm.
   #
   # EVERY ARM ENDS IN AN EXPLICIT EXIT_* CONSTANT. `puts` returns nil, and exit(nil) is a
   # TypeError whose status is 1 — Ruby's own uncaught-exception status, and no longer any of our
@@ -339,9 +379,14 @@ module Log
     when "arc" then arc(argv)
     when "status" then status
     when "setup" then setup
+    when "deploy" then deploy(argv)
+    when "note" then note(argv)
+    when "search" then search(argv)
     else
-      warn "bin/log: #{command} is not implemented yet"
-      EXIT_USAGE
+      # Every subcommand in SUBCOMMANDS is now implemented, so this arm is unreachable. Raising
+      # loudly means a future subcommand added to SUBCOMMANDS without a dispatch arm fails loudly
+      # instead of silently exiting 2, which is what the old "not implemented yet" warning did.
+      raise "unreachable: #{command}"
     end
   end
 end

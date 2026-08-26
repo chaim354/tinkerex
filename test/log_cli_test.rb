@@ -379,4 +379,74 @@ class LogCliTest < ActiveSupport::TestCase
   ensure
     stub&.shutdown
   end
+
+  # A DEPLOY IS AN ISSUE, WHICH IS WHAT DELETES §15's PUSH-TO-MAIN EXCEPTION. Today a deploy record
+  # is the one sanctioned direct commit to main, because a deploy happens after the merge and its
+  # record cannot live in the work's own PR. As an issue that reasoning evaporates.
+  test "deploy files an issue carrying the image and every destination" do
+    stub = StubForgejo.new
+
+    _out, err, code = run_log("deploy", "--image", "e079d433", "--dest", "chunk_remote,share,s3", env: {
+      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+    })
+
+    assert_equal 0, code, "bin/log deploy failed: #{err}"
+    request = stub.requests.first
+
+    assert_equal [ "deploy" ], request.json["labels"]
+    assert_includes request.json["title"], "e079d433"
+    %w[chunk_remote share s3].each do |dest|
+      assert_includes request.json["body"], dest,
+                      "a deploy record naming fewer destinations than were deployed is a stale claim"
+    end
+  ensure
+    stub&.shutdown
+  end
+
+  # A CORRECTION IS A COMMENT, NOT AN EDIT. This is the whole reason the move helps: STATUS.md's
+  # recurring failure was a stale claim buried mid-file, and CLAUDE.md records several in its own
+  # voice ("this bullet went on asserting a single even bound for months"). A dated comment appends
+  # visibly; finding and rewriting a paragraph at line 4,700 does not happen.
+  test "note posts to the comments endpoint and never rewrites the issue body" do
+    stub = StubForgejo.new(status: 201, response: { "id" => 7 })
+
+    _out, err, code = run_log("note", "128", "The measured figure was 7.8 ms, not 5.", env: {
+      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+    })
+
+    assert_equal 0, code, "bin/log note failed: #{err}"
+    request = stub.requests.first
+
+    assert_equal "POST", request.method
+    assert_equal "/api/v1/repos/chaim354/tinkerex/issues/128/comments", request.path
+    assert_equal "The measured figure was 7.8 ms, not 5.", request.json["body"]
+    refute request.json.key?("title"), "note sent a title — it is editing the issue, not commenting"
+  ensure
+    stub&.shutdown
+  end
+
+  # SEARCH SPANS OPEN AND CLOSED. An arc issue is CLOSED the moment its PR merges, so a search
+  # defaulting to Forgejo's state=open would find no finished work at all — which is most of the
+  # record.
+  test "search asks for both states" do
+    stub = StubForgejo.new(status: 200, response: [])
+
+    _out, err, code = run_log("search", "chunk_remote", env: {
+      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+    })
+
+    assert_equal 0, code, "bin/log search failed: #{err}"
+    request = stub.requests.first
+
+    assert_equal "GET", request.method
+    assert_includes request.path, "/api/v1/repos/chaim354/tinkerex/issues"
+    assert_includes request.path, "state=all",
+                    "search defaulted to open issues, which excludes every finished arc"
+    assert_includes request.path, "chunk_remote"
+  ensure
+    stub&.shutdown
+  end
 end
