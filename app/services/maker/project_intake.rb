@@ -712,7 +712,8 @@ module Maker
       # this is not a gap to close, it is what "writes nothing" costs.
       return dest if @dry_run
 
-      target = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", @project.slug, dest ])
+      target = Maker::LibraryFolder.ensure_path!(@user,
+                                                 [ Maker::ProjectFolders::ROOT, @project.slug, dest ])
       Maker::MoveNode.call(@user, node:, new_parent_node_id: target.node_id)
       dest
     rescue Maker::MoveNode::Collision => e

@@ -79,7 +79,7 @@ module Maker
         live = acting_user.nodes.present.find_by(node_id: folder_node_id, kind: "dir")
         return live if live
       end
-      folder = Maker::LibraryFolder.ensure_path!(acting_user, [ "Projects", slug ])
+      folder = Maker::LibraryFolder.ensure_path!(acting_user, [ Maker::ProjectFolders::ROOT, slug ])
       update_column(:folder_node_id, folder.node_id)
       folder
     end

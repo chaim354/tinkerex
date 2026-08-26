@@ -34,6 +34,14 @@ module Maker
   module ProjectFolders
     module_function
 
+    # The library folder every project's own folder lives under: `Projects/<slug>/`.
+    #
+    # ONE DEFINITION, THREE READERS — Maker::Project#ensure_library_folder!,
+    # Maker::ProjectIntake#place and Maker::ProjectDiscovery. It was a bare literal in the first two
+    # and the third was about to add a copy. Guarded by project_folders_test.rb, which fails if the
+    # literal reappears in any of them.
+    ROOT = "Projects".freeze
+
     ROLE_FOLDERS = {
       "gcode"          => "cnc",
       "laser"          => "laser",

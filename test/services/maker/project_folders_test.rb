@@ -56,5 +56,29 @@ module Maker
         assert_match(/\A[a-z0-9]+\z/, name, name)
       end
     end
+
+    # THE LITERAL MUST NOT REAPPEAR. ROOT exists because "Projects" was spelled out in two files and
+    # a third was about to add it. A constant nothing enforces is a convention, and this repo's
+    # recorded drift (FilesHelper::EXT_FAMILIES vs ROLE_BY_EXT — two lists that disagreed about .svg
+    # for months) is what a convention buys you.
+    #
+    # Mutation-check: put `"Projects"` back into any file below and this goes RED.
+    test "no maker file spells the Projects root as a bare literal" do
+      files = %w[
+        app/models/maker/project.rb
+        app/services/maker/project_intake.rb
+        app/services/maker/project_discovery.rb
+      ].map { |f| Rails.root.join(f) }.select(&:exist?)
+
+      # ASSERT THE SCANNED SET FIRST (§14e). Two architecture guards in this repo went on passing
+      # over an empty glob once the directory they scanned moved away; a path-keyed guard can be
+      # silently retired by a rename.
+      refute_empty files, "none of the maker files this guards exist — did they move?"
+
+      offenders = files.select { |f| f.read.include?('"Projects"') }
+                       .map { |f| f.relative_path_from(Rails.root).to_s }
+
+      assert_empty offenders, "spell it Maker::ProjectFolders::ROOT, not a bare \"Projects\""
+    end
   end
 end
