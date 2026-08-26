@@ -10,6 +10,25 @@ module Library
       @user = User.create!(email: "purge-#{SecureRandom.hex(4)}@example.com",
                            confirmed_at: Time.current, omniauth_signup: true)
       @dirs = {}
+      # THE BACKEND IS PINNED, NOT INHERITED, AND EVERY TEST BELOW DEPENDS ON IT.
+      # RepoMetadataPurge.call gates on FileLayer.current.capabilities.scannable?, so a suite
+      # that took the ambient LIBRARY_BACKEND asserted about a purge that DECLINED on the
+      # chunk_remote leg — eight tests failing there while share and s3 stayed green purely
+      # because their ambient backend happens to be scannable. §15 names that shape as a bug in
+      # its own right, and the negatives test was WORSE than a failure: it asserts
+      # `destroyed == 0`, which a declined run satisfies for free.
+      #
+      # `use_fresh_share_library!` (a direct FileLayer.current =) rather than
+      # pin_file_layer_backend, for the reason rescan_test.rb states: pin rebuilds from ENV, and a
+      # Share adapter needs a tmpdir ROOT that ENV does not supply on the other two legs. The
+      # teardown reset is load-bearing rather than decoration — a direct assignment does not set
+      # test_helper's @file_layer_backend_pinned, so its teardown will not clean up after this one.
+      @root = use_fresh_share_library!
+    end
+
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root&.exist?
     end
 
     # SHARE-SHAPED FIXTURES: storage_path AND a real parent chain, which is what
@@ -143,6 +162,12 @@ module Library
                                    parent_node_id: repo.node_id)
       inner = @user.nodes.create!(node_id: SecureRandom.uuid, name: "config", kind: "file",
                                   parent_node_id: marker.node_id, size: 1)
+      # OVERRIDES setup's scannable pin, which is the other direction of the same rule: without
+      # this line the test asserts a decline that only happens on the chunk_remote leg, so on
+      # share and s3 — where it would be green — the gate is not exercised at all. Mutation-
+      # checked by deleting it. Constructing the adapter needs no sync server: `capabilities` is
+      # a constant and the gate returns before any port call, the precedent rescan_test.rb states
+      # for the same construction. teardown does the restore.
       FileLayer.current = FileLayer::ChunkRemote.new
 
       result = RepoMetadataPurge.call
@@ -156,8 +181,6 @@ module Library
       assert Node.exists?(marker.id)
       assert result.declined, "an operator must not read a declined run as `destroyed 0`"
       assert_equal 0, result.destroyed
-    ensure
-      FileLayer.reset!
     end
 
     # A PROJECT'S OR MODEL'S COVER IS A THIRD POINTER, and the worse one: Maker::DeadNodes
@@ -201,20 +224,18 @@ module Library
     # runs with the marker skip lifted, which is exactly the OLD behaviour every already-deployed
     # library was indexed under; the second runs the code as it now ships.
     test "after the purge, a scan over a repo library does not trip the mass-deletion guard" do
-      root = use_fresh_share_library!
-      (root/"firmware"/".git"/"objects").mkpath
-      20.times { |i| (root/"firmware"/".git"/"objects"/"o#{i}").write("x") }
-      (root/"firmware"/"main.cpp").write("int main(){}")
+      # setup's pinned share library IS this test's library — one root for the suite rather than a
+      # second one here, so the pin and the fixture cannot disagree about which library is current.
+      (@root/"firmware"/".git"/"objects").mkpath
+      20.times { |i| (@root/"firmware"/".git"/"objects"/"o#{i}").write("x") }
+      (@root/"firmware"/"main.cpp").write("int main(){}")
 
-      scanning_the_old_way { Library::Scanner.call(@user, root: root) }
+      scanning_the_old_way { Library::Scanner.call(@user, root: @root) }
       assert_operator @user.nodes.present.count, :>, 20
 
       RepoMetadataPurge.call
 
-      assert_nothing_raised { Library::Scanner.call(@user, root: root) }
-    ensure
-      FileLayer.reset!
-      FileUtils.remove_entry(root) if root&.exist?
+      assert_nothing_raised { Library::Scanner.call(@user, root: @root) }
     end
 
     # Library::Scanner declines the descent on RepoMetadata.marker?, so lifting that one answer
