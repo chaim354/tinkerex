@@ -324,6 +324,19 @@
   label}`. Harmless only because the SDK never exposes its copy — so **never add a
   `host.defaultFolder` accessor**, which would silently hand an object to every bundle that expects
   a string.
+- **AN EDGE PARAM'S OPTION READS `"{letter} — {description}"` AND CARRIES THE BARE LETTER AS ITS
+  VALUE.** boxes.py's edge choices are single letters — `top_edge` offers sixteen — and a letter on
+  its own is not a choice anyone can make; upstream's own web UI never showed them bare
+  (`ArgparseEdgeType` carries `names = edges.getDescriptions()` and composes each option from it).
+  `sidecar/boxes/app.py`'s `_choice_labels` advertises that map per param as **`choice_labels`** and
+  `fields.js` composes the text. **Three things not to undo.** The label is **DISPLAY ONLY**:
+  boxes.py parses the letter and `paramValues` reads `el.value`, so a label written into the VALUE
+  looks right on screen and 422s every render. **`choices` stays the authority on the set and its
+  ORDER**; the map only explains it. And **an absent map must fall through to the bare value** — it
+  is absent for every ordinary enum (`FingerJoint_style`, `Lid_style`) and for any sidecar older
+  than the key, so a bundle that assumes it renders `"rectangular — undefined"` right across a
+  mid-rollout deployment. Keyed on the argparse TYPE carrying a `names` map, **never on a list of
+  param names**: ten dests are edge-typed in the pinned boxes.py, not the two a user meets first.
 - **A SIDECAR'S ERROR NEVER RUNS THROUGH THE HOST'S ERROR TABLE.** A sidecar answers **prose** in
   its `error` key, not a code, so `errorFrom` would put the message in `.code` and generic filler
   in `.message` — and a non-JSON body (Werkzeug's HTML 405, the proxy's own body-less 404) would be
