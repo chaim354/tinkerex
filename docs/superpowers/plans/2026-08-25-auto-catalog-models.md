@@ -395,8 +395,12 @@ Expected: FAIL - `unknown attribute 'origin'` and `undefined method 'catalogued'
 In `app/models/maker/model.rb`, below `PRINT_STATUSES`:
 
 ```ruby
-    # Where this row came from. "import" is models#new; "auto" is Maker::ModelIntake's sweep over
+    # Where this ROW came from. "import" is models#new; "auto" is Maker::ModelIntake's sweep over
     # the library. The two differ in exactly one user-visible way -- see ModelsController#destroy.
+    #
+    # NOT Maker::Item::ORIGINS, which is a DIFFERENT vocabulary under the same constant name one
+    # file away (self_made/downloaded/modified). That one is about how the physical thing was
+    # obtained; this one is about which door wrote the database row. Nothing may map between them.
     ORIGINS = %w[import auto].freeze
 ```
 
