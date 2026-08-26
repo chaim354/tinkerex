@@ -74,8 +74,19 @@ class ModelsController < ApplicationController
     end
     @viewable_3d_default = @viewable_3d.find { |f| f[:node_id] == @model.cover_node_id } || @viewable_3d.first
     # The model's files as a folder TREE (preserves the imported zip's structure) for the detail
-    # page, instead of a flat role-grouped list. Empty until a folder exists.
-    @file_tree  = @model.folder_node_id ? build_file_tree(@model.folder_node_id) : []
+    # page, instead of a flat role-grouped list.
+    #
+    # A MODEL WITH NO FOLDER FALLS BACK TO ITS ATTACHMENTS, AND THE PANEL IS A LIE WITHOUT IT. This
+    # walked `folder_node_id`'s subtree and answered `[]` otherwise -- so a model holding live
+    # attachments and no folder rendered "Files (0) / No files yet." Maker::ModelIntake makes that
+    # the ordinary case rather than an edge: a ONE-FILE auto model is keyed on a FILE node, so it
+    # has no folder by construction, and roughly half of what the sweep creates is one of those.
+    # It was reachable before the sweep too -- `ensure_library_folder!` is best-effort at import
+    # time and the controller rescues it -- just rarely.
+    #
+    # Found by opening the page, not by a test: every assertion here reads the tree the fixture's
+    # folder produced, so none of them could see a model that has no folder at all.
+    @file_tree  = file_tree_for_model
     @file_count = count_files(@file_tree)
     @print_runs = @model.print_runs.reorder(printed_on: :desc, id: :desc).to_a
     @printers = current_user.maker_print_runs.where.not(printer: [ nil, "" ]).distinct.pluck(:printer)
@@ -188,6 +199,14 @@ class ModelsController < ApplicationController
   # Fetch the whole present subtree under a folder node (BFS — one query per depth level, not per
   # node), then nest into [{dir:, children:[...]}, {file:}] with dirs first, alphabetical. Scoped
   # to current_user's nodes, so it can never reach another user's tree.
+  # The model's folder subtree, or -- when it has no folder -- its own live attachments, flat.
+  # See the comment at the assignment for why the fallback is the ordinary case, not an edge.
+  def file_tree_for_model
+    return build_file_tree(@model.folder_node_id) if @model.folder_node_id.present?
+
+    @attachments.map { |a| { file: @page_nodes[a.node_id] } }
+  end
+
   def build_file_tree(root_node_id)
     collected = []
     frontier  = [ root_node_id ]

@@ -57,6 +57,38 @@ module Web
       assert_nil Maker::Model.find_by(id: model.id)
     end
 
+    # A ONE-FILE AUTO MODEL HAS NO FOLDER BY CONSTRUCTION -- it is keyed on a FILE node -- and the
+    # Files panel used to walk folder_node_id's subtree and answer "No files yet." for it, while
+    # holding a live attachment. Roughly half of what Maker::ModelIntake creates is one of those.
+    # Found by opening the page: every other assertion here reads a tree a fixture's FOLDER
+    # produced, so none of them could see a model with no folder at all.
+    test "a model with no folder lists its attachments instead of claiming it has none" do
+      @user.nodes.create!(node_id: "f-solo", name: "benchy.stl", kind: "file", mtime: 1, size: 1)
+      model = @user.maker_models.create!(title: "benchy", origin: "auto", auto_node_id: "f-solo")
+      model.file_attachments.create!(user: @user, node_id: "f-solo", role: "model")
+
+      get model_path(model)
+
+      assert_response :success
+      assert_select ".file-tree .tree-fname", text: "benchy.stl"
+      assert_select "h2", text: /Files \(1\)/
+    end
+
+    # THE TOMBSTONE STILL HAS TO DROP OUT. The fallback reads @attachments, which #show has already
+    # partitioned against the live-node index -- so this asserts the fallback did not reintroduce
+    # the dead-attachment bug PageNodes exists to prevent.
+    test "a dead attachment does not come back through the no-folder fallback" do
+      @user.nodes.create!(node_id: "f-dead", name: "gone.stl", kind: "file", mtime: 1, size: 1,
+                          deleted: true)
+      model = @user.maker_models.create!(title: "ghost", origin: "auto", auto_node_id: "f-dead")
+      model.file_attachments.create!(user: @user, node_id: "f-dead", role: "model")
+
+      get model_path(model)
+
+      assert_response :success
+      assert_select ".tree-fname", text: "gone.stl", count: 0
+    end
+
     test "the index hides a dismissed model" do
       model = @user.maker_models.create!(title: "Gone", origin: "auto", auto_node_id: "d-x",
                                          dismissed_at: Time.current)

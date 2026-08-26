@@ -169,6 +169,23 @@ the suite builds its own shelves and would stay green through this again.
 This is CLAUDE.md §14d's recorded lesson a second time: the ERB-comment bug sat in a page through a
 fully green run and was found by opening it. So was this.
 
+### And a second one, on the page right next to it
+
+Opening a model's own page found the other half. `models#show` builds its Files panel by walking
+`folder_node_id`'s subtree and answering `[]` otherwise — so **a one-file auto model rendered
+"Files (0) / No files yet." while holding a live attachment.** A one-file model is keyed on a FILE
+node and has no folder by construction, so that is roughly half of everything the sweep creates,
+not an edge. It was reachable before this arc too (`ensure_library_folder!` is best-effort at import
+time and the controller rescues it), just rarely.
+
+The panel now falls back to the model's own live attachments. Both halves are mutation-checked: the
+`[]` fallback turns the new test red, and reading the *unpartitioned* attachments raises — which is
+the point, since `@attachments` has already been partitioned against the live-node index and the
+fallback must not reintroduce the dead-attachment bug `PageNodes` exists to prevent.
+
+No test could have caught this either: every assertion on that page reads a tree some fixture's
+FOLDER produced, so none of them described a model with no folder at all.
+
 ### One mutation the plan expected to go red cannot
 
 Task 8's plan asked for `current_user.nodes` → `Node` in the shelf-creation path, expecting the
@@ -186,8 +203,8 @@ The scope stays, and the finding is written at the line so the next reader does 
   *payload* is linear in owned files; 6,000 files in one folder completes fine. `classify` is
   4 queries, also flat. The settings page is 5 queries at both 3 and 15 shelves — without the
   `@tree_paths` memo it is one pluck per shelf (7 → 19), now pinned in `page_query_budget_test.rb`.
-- **Suite.** 2,437 runs on all three backend legs — `test` (share), `test-s3`, `test-chunk-remote` —
-  assertions 8936 / 8936 / 9093 and skips 30 / 30 / 5, which is the expected shape: chunk-gated
+- **Suite.** 2,439 runs on all three backend legs — `test` (share), `test-s3`, `test-chunk-remote` —
+  assertions 8943 / 8943 / 9100 and skips 30 / 30 / 5, which is the expected shape: chunk-gated
   tests execute rather than skip on that leg. §15's identical-counts rule holds.
 - **Cap.** `cap: 5` against 22 candidate keys creates exactly 5 and reports `:capped`; a second run
   creates the next 5, so the sorted order makes a capped run resume rather than re-roll.
