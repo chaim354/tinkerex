@@ -210,6 +210,15 @@ module Log
     # Through `parse`, not JSON.parse — a WRITE against a broken proxy answers 200 text/html just
     # as readily as a read does, and an unwrapped JSON::ParserError exits 1 instead of spooling.
     parse(api(:post, repo_path("/issues"), payload), "/issues")
+  rescue Unreachable => e
+    # `parse` RAISES WITH NO PAYLOAD OF ITS OWN — it only ever sees the response, never what was
+    # sent. That is fine for a GET (show, search), which has no payload to lose, but `create_issue`
+    # calls `parse` AFTER `api` has already returned successfully — outside api's own rescue, which
+    # only wraps the `perform` call inside IT. A 2xx with a garbled body (the exact shape a broken
+    # proxy produces) therefore failed here with payload: nil, was reported as "nothing to file",
+    # and the issue being created was silently lost. `e.payload || payload` only fills the gap;
+    # a failure `api` already payloaded (a connection error, a non-2xx) passes through unchanged.
+    raise Unreachable.new(e.message, payload: e.payload || payload, path: e.path || "/issues")
   end
 
   # NOT `open` — inside this module that name would resolve ahead of Kernel#open for every other

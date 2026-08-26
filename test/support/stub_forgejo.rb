@@ -91,7 +91,12 @@ class StubForgejo
     respond(socket, @status, @payload)
   rescue StandardError => e
     @errors << e
-    respond(socket, 500, JSON.generate({ "stub_error" => "#{e.class}: #{e.message}" }))
+    # `respond` CAN ITSELF RAISE Errno::EPIPE (the client already gave up and closed its end) —
+    # not in the accept loop's rescue list, so unrescued here it would kill this thread and
+    # RE-RAISE at `Thread#join`, inside `shutdown`'s own rescued block only by luck of which
+    # exception class it happens to be. Swallow it: this is already the fallback path, telling the
+    # client what broke, and a client that stopped listening does not need to be told twice.
+    respond(socket, 500, JSON.generate({ "stub_error" => "#{e.class}: #{e.message}" })) rescue nil
   ensure
     socket.close rescue nil
   end

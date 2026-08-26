@@ -168,8 +168,14 @@ class LogCliTest < ActiveSupport::TestCase
   test "open POSTs the documented issue payload to the documented path" do
     stub = StubForgejo.new
 
+    # THE TRAILING NEWLINE IS DELIBERATE, NOT A TYPO. `bin/secret` returns an EXPORTED override
+    # verbatim (`printf '%s'`, no stripping — only the 1Password path is `--no-newline`), so this
+    # is exactly what a value like `export FORGEJO_TOKEN=$(pass show ...)` can hand `token` when
+    # the source appends one. Without `.chomp` this reaches the header as "token t0ken\n" — Ruby's
+    # own Net::HTTP raises `ArgumentError: header field value cannot include CR/LF` for that, so a
+    # dropped `.chomp` doesn't corrupt the request, it crashes it outright.
     out, err, code = run_log("open", "The scan tombstones a live node", env: {
-      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+      "FORGEJO_TOKEN" => "t0ken\n", "FORGEJO_URL" => stub.url,
       "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
     })
 
@@ -180,7 +186,8 @@ class LogCliTest < ActiveSupport::TestCase
     request = stub.requests.first
     assert_equal "POST", request.method
     assert_equal "/api/v1/repos/chaim354/tinkerex/issues", request.path
-    assert_equal "token t0ken", request.headers["authorization"]
+    assert_equal "token t0ken", request.headers["authorization"],
+                "a trailing newline on the exported token reached the Authorization header uncleaned"
     assert_equal "application/json", request.headers["content-type"]
 
     assert_equal "The scan tombstones a live node", request.json["title"]
@@ -205,6 +212,28 @@ class LogCliTest < ActiveSupport::TestCase
     assert_includes err, "non-JSON body"
     refute_includes err, "JSON::ParserError:", "a raw parser error reached the user"
     assert_empty stub.errors, "the stub itself raised: #{stub.errors.map(&:message)}"
+  ensure
+    stub&.shutdown
+  end
+
+  # THE TEST ABOVE ONLY DRIVES A READ (`show`). `create_issue` goes through `parse` too, but
+  # nothing exercised that on a WRITE — so a revert of `create_issue` back to a bare `JSON.parse`
+  # would raise an unwrapped `JSON::ParserError` on exactly this response and stay invisible: the
+  # read-side guard cannot see a write-side regression. Unwrapped, that error is neither
+  # `Unreachable` nor spooled, and used to exit 1 outright.
+  test "a write receiving a non-JSON 2xx is unreachable and spools" do
+    stub = StubForgejo.new(status: 200, response: "<html>proxy</html>")
+
+    Dir.mktmpdir do |spool|
+      _out, err, code = run_log("open", "filed through a broken proxy", env: {
+        "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+        "LOG_SPOOL_DIR" => spool, "LOG_BRANCH" => "claude/example"
+      })
+
+      assert_equal 3, code
+      assert_includes err, "non-JSON body"
+      assert_includes File.read(File.join(spool, "claude-example.md")), "filed through a broken proxy"
+    end
   ensure
     stub&.shutdown
   end
@@ -368,6 +397,13 @@ class LogCliTest < ActiveSupport::TestCase
     end
   end
 
+  # THE EXPECTED SET IS WRITTEN OUT HERE, NOT READ OUT OF bin/log's OWN LABELS CONSTANT — a test
+  # that derives its expectation from the code under test can never disagree with it, and so
+  # asserts nothing about that code being right. This is bin/log's LABELS as of this writing; a
+  # deliberate change there must update this list BY HAND, which is the point.
+  LABEL_NAMES = %w[arc open-work deploy blocked deliberate
+                   filelayer library-scan addons previews maker-web ci].freeze
+
   test "setup creates each label idempotently, by name" do
     stub = StubForgejo.new(status: 201, response: { "id" => 1, "name" => "arc" })
 
@@ -382,7 +418,11 @@ class LogCliTest < ActiveSupport::TestCase
     assert_includes created, "arc"
     assert_includes created, "open-work"
     assert_includes created, "deploy"
-    assert_operator created.size, :>=, 3, "setup created #{created.size} labels — the list went empty"
+    # NOT `assert_operator created.size, :>=, 3` — cutting LABELS from eleven names to three left
+    # that assertion green, because three still satisfies ">= 3". The full set, by name, is the
+    # only assertion a shrunk list cannot also pass.
+    assert_equal LABEL_NAMES.sort, created.sort,
+                "setup created #{created.inspect} — expected exactly #{LABEL_NAMES.sort.inspect}"
     assert_equal [ "/api/v1/repos/chaim354/tinkerex/labels" ], stub.requests.map(&:path).uniq
   ensure
     stub&.shutdown
@@ -409,10 +449,16 @@ class LogCliTest < ActiveSupport::TestCase
   # A DEPLOY IS AN ISSUE, WHICH IS WHAT DELETES §15's PUSH-TO-MAIN EXCEPTION. Today a deploy record
   # is the one sanctioned direct commit to main, because a deploy happens after the merge and its
   # record cannot live in the work's own PR. As an issue that reasoning evaporates.
-  test "deploy files an issue carrying the image and every destination" do
+  # --dest MUST NARROW THE RECORD, NOT MERELY BE PRESENT. This used to pass all three destinations
+  # — byte-identical to DEFAULT_DESTS — so a `deploy` that silently IGNORED --dest and always filed
+  # the hardcoded default passed too: asserting that each of the three names appears cannot tell
+  # "the flag was read" from "the flag was ignored and the default happened to agree." Naming
+  # exactly ONE destination and asserting the OTHER TWO are absent is what forces --dest to
+  # actually be read, not just accepted on the command line.
+  test "deploy --dest share files a record naming only share, not the other two backends" do
     stub = StubForgejo.new
 
-    _out, err, code = run_log("deploy", "--image", "e079d433", "--dest", "chunk_remote,share,s3", env: {
+    _out, err, code = run_log("deploy", "--image", "e079d433", "--dest", "share", env: {
       "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
       "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
     })
@@ -422,10 +468,9 @@ class LogCliTest < ActiveSupport::TestCase
 
     assert_equal [ "deploy" ], request.json["labels"]
     assert_includes request.json["title"], "e079d433"
-    %w[chunk_remote share s3].each do |dest|
-      assert_includes request.json["body"], dest,
-                      "a deploy record naming fewer destinations than were deployed is a stale claim"
-    end
+    assert_includes request.json["body"], "share"
+    refute_includes request.json["body"], "chunk_remote",
+                    "--dest share still filed chunk_remote — --dest is being ignored"
   ensure
     stub&.shutdown
   end
@@ -501,10 +546,16 @@ class LogCliTest < ActiveSupport::TestCase
   # SEARCH SPANS OPEN AND CLOSED. An arc issue is CLOSED the moment its PR merges, so a search
   # defaulting to Forgejo's state=open would find no finished work at all — which is most of the
   # record.
-  test "search asks for both states" do
+  #
+  # THE QUERY MUST BE PERCENT-ENCODED, NOT JUST PRESENT. "chunk_remote" has nothing in it that
+  # needs encoding, so a search query built by straight interpolation instead of
+  # `URI.encode_www_form_component` passed that query unnoticed. `&` and `#` are both wire-active
+  # characters — a bare `&` starts a new query param and a bare `#` starts a fragment — so a query
+  # containing either breaks the request unless encoded.
+  test "search asks for both states and percent-encodes the query" do
     stub = StubForgejo.new(status: 200, response: [])
 
-    _out, err, code = run_log("search", "chunk_remote", env: {
+    _out, err, code = run_log("search", "502 & the proxy #2", env: {
       "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
       "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
     })
@@ -516,7 +567,10 @@ class LogCliTest < ActiveSupport::TestCase
     assert_includes request.path, "/api/v1/repos/chaim354/tinkerex/issues"
     assert_includes request.path, "state=all",
                     "search defaulted to open issues, which excludes every finished arc"
-    assert_includes request.path, "chunk_remote"
+    assert_includes request.path, "%26", "the query's & must be percent-encoded, not sent bare"
+    assert_includes request.path, "%23", "the query's # must be percent-encoded, not sent bare"
+    refute_includes request.path, "& the proxy #2",
+                    "the raw query reached the path unencoded"
   ensure
     stub&.shutdown
   end
