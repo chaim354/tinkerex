@@ -49,7 +49,7 @@ module Maker
     # part the project needs ("4 × M3 bolt"), in a shape `resolved_target` already renders. It MUST
     # run before the pointer is dropped, because the name belongs to the row about to disappear —
     # which is equally why lines already stranded by this bug cannot be repaired after the fact
-    # (the Forgejo record (CLAUDE.md §11)). The line does lose the item's live stock figures, which is honest: there is
+    # (the Forgejo record, CLAUDE.md §11). The line does lose the item's live stock figures, which is honest: there is
     # no stock row any more.
     def release_bom_lines
       mine = bom_lines.where(user_id: user_id)
