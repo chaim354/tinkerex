@@ -35,6 +35,68 @@ CLAUDE.md §14j records the trap: a bundled Ruby process sets `BUNDLE_GEMFILE` a
 
 ---
 
+## Design corrections (2026-08-26, from Task 1's code review)
+
+Task 1 shipped clean and passed both gates, then its code review found four defects **in this plan**. All four were reproduced before acting. They bind on every task below; where a later task's code block contradicts this section, **this section wins**.
+
+### C1 [Critical] A helper that `exit`s never spools — and 502 is the likeliest outage
+
+`exit` raises `SystemExit`, which is not a `StandardError` and not `Unreachable`, so it sails past the top-level `rescue`. Every helper that ended `exit EXIT_UNREACHABLE` — `token`, `create_issue`, `comment`, `setup`, `pull_request` — therefore exits 3 **without writing a spool file**, while Task 9 would have put the opposite in CLAUDE.md ("the entry lands in `tmp/log-pending/`").
+
+Worse, `Unreachable` only fires on TCP-level failures. Forgejo's container down behind a live proxy is a **502** — an HTTP *response* — so the single most likely way the box breaks is the path that silently loses the arc. A rotated token (401) and a locked vault are the same class.
+
+Reproduced: a helper calling `exit(3)` inside `begin/rescue Unreachable` never runs the rescue.
+
+**Rule: no `exit` inside any helper. Raise `Unreachable`; `main` decides the exit code in one place.** This is §14a's `finalize_upload` argument — default to the safe answer so an unwritten caller that forgets gets working behaviour, not a silent gap.
+
+### C2 [Critical] The payload rides on the exception; `PENDING_BODY`/`ARGV_SNAPSHOT` are deleted
+
+A module-level accumulator is the seven-doors-and-no-funnel shape §14f rejects: only `create_issue` appended, `comment` never would, a future verb forgets, and the failure is a spool file with an empty body. It also **accumulates across calls**, so PR 2's import loop would spool issues already filed, and "file this" would duplicate them.
+
+`api` already holds the built request, so it sets the payload at the one `raise` site. **A GET carries no payload, so a read verb spools nothing by construction** rather than by a rule someone has to remember — which also fixes read verbs (`show`, `search`) reporting phantom unfiled work forever.
+
+### C3 [Critical] `assert_includes usage, "arc"` cannot fail — `se`**`arc`**`h` contains it
+
+Reproduced: delete the entire `bin/log arc --from-pr N` usage line and the assertion stays green. Seven of the eight carry weight; the eighth is the subcommand this whole migration exists for.
+
+**Rule: anchor to the documented line —** `assert_match(/^\s*bin\/log #{Regexp.escape(name)}\b/, usage)`.
+
+### C4 Four lists of subcommands, already drifted at 62 lines
+
+The set lived in the header comment, the `USAGE` heredoc, the `when` clause, and the test's `%w[]` — and the first two had *already* diverged ("read one" vs "Print one issue"). Nothing caught a `when`-vs-`USAGE` gap at all.
+
+**Rule: one `SUBCOMMANDS` table. `USAGE` is derived from it and `main` dispatches on it.** §14d's "ONE file-type vocabulary", where `EXT_FAMILIES` is derived from `ROLE_BY_EXT` for exactly this reason.
+
+### C5 Structure: `module Log` with `module_function`, and `Log.main(ARGV)` at the bottom
+
+Top-level `def`s become private methods on `Object`. The live hazard is Task 3's natural spelling, `def open(title)`, which **shadows `Kernel#open` process-wide with no warning**. ~15 lines of diff now versus reindenting 300 later.
+
+### C6 Two later tasks cannot run as written — both reproduced
+
+- **Task 3's stub requires `webrick`**, which left stdlib in Ruby 3.0 and is **not in this repo's `Gemfile.lock`** (`LoadError`, verified). **Build the recorder on `TCPServer`** — ~20 lines — rather than adding a gem.
+- **Task 2's `PATH => "/usr/bin:/bin"` resolves `#!/usr/bin/env ruby` to Ruby 2.6.10** (verified), which cannot parse the endless method `def repo_path(suffix) = ...` (verified: `syntax error, unexpected '='`). The test would see a SyntaxError and exit 1 while blaming credentials. **Do not nuke `PATH`** — put a failing `op` stub on a prepended tmpdir instead.
+
+### C7 Test-harness hygiene — three rules for `run_log`
+
+1. **Strip the inherited Bundler env.** `Open3.capture3(env, …)` *merges*, so every test today runs `bin/log` as a bundled child — the property "indifferent to its launcher" is exercised only in the direction that cannot fail. Reproduced: `BUNDLE_GEMFILE=/nonexistent RUBYOPT=-rbundler/setup ./bin/log status` dies with `Bundler::GemfileNotFound` before line 1. Clear the seven names `bin/sync-server`'s `unset_inherited_bundler_env` already lists, and add a test that runs under a hostile bundler env.
+2. **Default `FORGEJO_URL` to an unroutable address.** It defaults to `http://forgejo.home`, so a test that forgets to override it POSTs a real issue into the live instance. Reaching the network must be opt-in.
+3. **Pass the command as `[BIN_LOG, BIN_LOG]`.** With zero trailing args Ruby takes the single-string form and word-splits, so a checkout path containing a space breaks — and the only committed test is exactly the zero-arg call.
+
+### C8 Spool location must be overridable — the suite forks
+
+`test_helper.rb` runs `parallelize(workers: :number_of_processors)`, and Tasks 5–6 `rm -rf`/`mkdir_p`/write the same absolute `tmp/log-pending` from different workers concurrently — flaky, and it is the developer's live spool. **Add a `LOG_SPOOL_DIR` override** (as `LOG_BRANCH` already does for the branch) and give each test a `Dir.mktmpdir`.
+
+### C9 Minor, all confirmed
+
+- **`--help`/`-h`/`help` print to stdout and exit 0**; a no-arg invocation stays stderr + exit 2. An asked-for usage is not an error.
+- **Name `EXIT_UNFILED = 1`** rather than leaving `status`'s backlog code as a bare literal beside two named constants.
+- **`URI.join(FORGEJO_URL, "/api/v1/…")` drops a path prefix** — Forgejo behind a subpath is an ordinary self-host shape. Build the URL by concatenation instead.
+- **`.chomp` the token.** It relies on `bin/secret`'s `--no-newline` and nothing asserts it; a trailing newline is an `ArgumentError` inside the header assignment.
+- **The test header claims "every assertion below is mutation-checked in Task 8"** — Task 8 never mutated the usage test. Task 8 now opens with that mutation.
+
+
+---
+
 ## Task 0: Forgejo setup (owned by the user — blocks only Task 9's smoke test)
 
 **These are not automatable — they need credentials this session must never handle.**
@@ -70,56 +132,102 @@ Expected: the owner login, e.g. `chaim354`. If it is **not** `chaim354`, change 
 
 ---
 
-## Task 1: `bin/log` skeleton, usage, and the test harness
+## Task 1 (REVISED): `bin/log` skeleton, usage, and the test harness
+
+> **Supersedes commit `9ede0ec`.** That commit was spec-compliant and green; its code review found the four plan defects in "Design corrections" above. This task now restructures it. Land the change as a follow-up commit — the branch is unpushed but history rewriting buys nothing here.
 
 **Files:**
-- Create: `bin/log`
-- Create: `test/log_cli_test.rb`
+- Modify: `bin/log`
+- Modify: `test/log_cli_test.rb`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Rewrite the test**
 
-Create `test/log_cli_test.rb`:
+Replace `test/log_cli_test.rb` entirely:
 
 ```ruby
 require "test_helper"
-require "open3"     # capture3 — required explicitly, not inherited from whatever Rails happens to load
-require "tmpdir"    # Task 4's fake `gh`
-require "fileutils" # Task 5's spool assertions
+require "open3"
+require "tmpdir"
+require "fileutils"
 
 # Guards bin/log — the SINGLE write door onto the Forgejo that replaces docs/STATUS.md.
 #
 # WHY A TEST FILE FOR A bin/ SCRIPT. bin/log is the only thing that records an arc, so a silent
 # failure here loses the record with nothing going red — this repo's dominant failure shape
-# (CLAUDE.md §15, "a green suite over something that never worked"). Every assertion below is
-# mutation-checked in Task 8.
+# (CLAUDE.md §15, "a green suite over something that never worked").
 #
-# THESE TESTS NEVER REACH forgejo.home. They point FORGEJO_URL at a stub on localhost and assert
-# the WIRE FORMAT — the exact path, headers and JSON body sent. §14e records why: FakeS3 decoded
+# THESE TESTS NEVER REACH forgejo.home, and that is enforced rather than asserted: run_log
+# defaults FORGEJO_URL to an unroutable address, so touching the network is opt-in. Left at
+# bin/log's own default a test that merely forgot to override it would POST a real issue into the
+# live instance from anywhere on the LAN.
+#
+# THEY ASSERT THE WIRE FORMAT — exact path, headers, JSON body. §14e records why: FakeS3 decoded
 # with CGI.unescape while the adapter encoded with CGI.escape, exact inverses, so 79/80 tests were
 # green over silent permanent data loss. A fake that shares the code's misunderstanding confirms
-# it. Assert what goes on the wire, not that a round-trip returns what we put in.
+# it rather than catching it.
 class LogCliTest < ActiveSupport::TestCase
   BIN_LOG = Rails.root.join("bin/log").to_s
 
-  # Runs bin/log with stdout and stderr kept SEPARATE. Merging them is not a convenience here —
-  # it is the exact shape that printed a live ghcr PAT into a transcript on 2026-07-29 (see
-  # bin/secret's header). Task 2 asserts the token never reaches fd2, which is unprovable if the
-  # harness itself merges the streams.
+  # The seven names bin/sync-server's unset_inherited_bundler_env already clears. §14j: a bundled
+  # parent exports these process-wide and every child inherits them, so a harness that MERGES its
+  # own environment runs bin/log as a bundled child every time — exercising "needs no gem" only in
+  # the direction that cannot fail. Deliberately NOT PATH/GEM_HOME/GEM_PATH, which is how the shell
+  # finds ruby at all.
+  BUNDLER_ENV = %w[BUNDLE_GEMFILE BUNDLE_BIN_PATH BUNDLE_LOCKFILE BUNDLER_VERSION
+                   BUNDLER_SETUP RUBYOPT RUBYLIB].freeze
+
+  # [BIN_LOG, BIN_LOG] is the explicit argv[0] form. With no trailing arguments Ruby takes the
+  # single-string form and word-splits it, so a checkout path containing a space fails with ENOENT
+  # on the first fragment — and the zero-argument call is exactly what the usage test makes.
   def run_log(*args, env: {})
-    out, err, status = Open3.capture3(env, BIN_LOG, *args, chdir: Rails.root.to_s)
+    cleared = BUNDLER_ENV.to_h { |name| [ name, nil ] }
+    base = cleared.merge("FORGEJO_URL" => "http://127.0.0.1:1")
+
+    out, err, status = Open3.capture3(base.merge(env), [ BIN_LOG, BIN_LOG ], *args,
+                                      chdir: Rails.root.to_s)
     [ out, err, status.exitstatus ]
   end
 
-  test "bin/log with no arguments prints usage naming every subcommand and exits 2" do
+  test "no arguments prints usage on stderr and exits 2" do
     out, err, code = run_log
 
     assert_equal 2, code, "no-args must be a usage error, not a success"
+    assert_empty out, "a usage printed because of an ERROR belongs on stderr"
 
-    usage = out + err
-    %w[arc open deploy note show search status setup].each do |subcommand|
-      assert_includes usage, subcommand,
-                      "usage does not mention `#{subcommand}` — a door nobody is told about is a door nobody uses"
+    # ANCHORED TO THE DOCUMENTED LINE, NOT A SUBSTRING. `assert_includes usage, "arc"` cannot
+    # fail — "se-arc-h" contains it — so deleting the arc line entirely left the guard green,
+    # and arc is the subcommand this whole migration exists for. Reproduced before this changed.
+    %w[setup arc open deploy note show search status].each do |name|
+      assert_match(/^\s*bin\/log #{Regexp.escape(name)}\b/, err,
+                   "usage has no line documenting `#{name}`")
     end
+  end
+
+  test "--help prints usage on stdout and exits 0" do
+    out, _err, code = run_log("--help")
+
+    assert_equal 0, code, "an asked-for usage is not an error"
+    assert_match(/^\s*bin\/log arc\b/, out,
+                 "--help must reach stdout, so `bin/log --help | less` works")
+  end
+
+  # THE STDLIB-ONLY RULE, GUARDED RATHER THAN CLAIMED. A stale BUNDLE_GEMFILE is inert only
+  # because nothing here loads bundler; add `require "bundler/setup"` to bin/log and this goes red.
+  # (It cannot guard against an inherited RUBYOPT force-requiring bundler — that is applied by the
+  # ruby binary before line 1, so the script has no opportunity to defend itself. Stripping those
+  # names is the CALLER's obligation, which is why run_log does it and why Task 9 records it.)
+  test "runs with a stale BUNDLE_GEMFILE, because it loads no gem" do
+    out, err, code = run_log("--help", env: { "BUNDLE_GEMFILE" => "/nonexistent/Gemfile" })
+
+    assert_equal 0, code, "bin/log consulted a Gemfile it does not need: #{err}"
+    assert_match(/^\s*bin\/log arc\b/, out)
+  end
+
+  test "an unknown command names it and exits 2" do
+    _out, err, code = run_log("frobnicate")
+
+    assert_equal 2, code
+    assert_includes err, "frobnicate"
   end
 end
 ```
@@ -130,101 +238,155 @@ end
 bin/rails test test/log_cli_test.rb
 ```
 
-Expected: FAIL — `Errno::ENOENT` for `bin/log`.
+Expected: FAIL. The old `bin/log` has no `--help` arm (exits 2, prints nothing to stdout) and writes its no-arg usage where the new assertions do not expect it.
 
-- [ ] **Step 3: Write the minimal implementation**
+- [ ] **Step 3: Rewrite `bin/log`**
 
-Create `bin/log`:
+Replace it entirely:
 
 ```ruby
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
 # THE SINGLE WRITE DOOR onto the Forgejo that replaces docs/STATUS.md.
-#
-#   bin/log setup                    # create the labels, idempotently
-#   bin/log arc --from-pr 261        # arc issue built from the merged PR body
-#   bin/log open "<title>"           # file an open item
-#   bin/log deploy --image e079d433  # record a deploy
-#   bin/log note 128 "<correction>"  # append a comment to a past arc
-#   bin/log show 128                 # read one
-#   bin/log search "<query>"         # find
-#   bin/log status                   # report anything unfiled
+# `bin/log --help` lists the subcommands; they are defined once, in SUBCOMMANDS.
 #
 # WHY ONE DOOR. An MCP write path plus a CLI write path is one verb with two answers — the shape
 # CLAUDE.md §14a forbids and the shape §14d spent five copies of the `port_writable?` branch
 # learning to avoid. MCP stays available for READING and browsing; it is never required, and it
 # never writes. A CLI also works everywhere MCP does not: CI, cloud sessions, subagents, worktrees.
 #
-# NO BUNDLER, NO RAILS, STDLIB ONLY — DELIBERATELY. §14j records that a bundled Ruby process
-# exports BUNDLE_GEMFILE and a RUBYOPT force-requiring bundler/setup process-wide, and every child
-# inherits both. This script is invoked from inside bin/ci, /finish-branch and /deploy, so needing
-# no gem is what keeps it indifferent to whatever launched it.
+# NO BUNDLER, NO RAILS, STDLIB ONLY. §14j records that a bundled Ruby process exports
+# BUNDLE_GEMFILE and a RUBYOPT force-requiring bundler/setup process-wide, and every child
+# inherits both. Loading no gem means this script never needs `bundle install` — a fresh clone, a
+# worktree and a cloud session all run it. It is NOT full immunity: an inherited RUBYOPT is applied
+# by the ruby binary before line 1, so a caller launching this from inside a bundled process must
+# clear those names itself, exactly as bin/sync-server does.
+#
+# NOTHING BELOW CALLS `exit`. Helpers raise; Log.main decides the code in ONE place. A helper that
+# exited raised SystemExit — not a StandardError, not Unreachable — so it sailed straight past the
+# rescue that spools, losing the record on the likeliest outage there is (a 502 from a dead
+# container behind a live proxy) while the docs promised a spool file.
+require "fileutils"
 require "json"
 require "net/http"
 require "open3"
 require "uri"
 
-EXIT_USAGE       = 2   # the caller spelled the command wrong
-EXIT_UNREACHABLE = 3   # Forgejo (or the vault) could not be reached — distinct on purpose, see below
+module Log
+  module_function
 
-USAGE = <<~TEXT
-  bin/log — record work in Forgejo. The single write door.
+  EXIT_OK          = 0
+  EXIT_UNFILED     = 1   # `status` found a backlog. Loud on purpose, like bin/backup-status.
+  EXIT_USAGE       = 2   # the caller spelled the command wrong
+  EXIT_UNREACHABLE = 3   # Forgejo or the vault could not be reached; any write is spooled
 
-    bin/log setup                    Create the labels, idempotently
-    bin/log arc --from-pr N          Arc issue built from PR N's body
-    bin/log open "<title>"           File an open item
-    bin/log deploy --image SHA       Record a deploy
-    bin/log note ISSUE "<text>"      Append a comment to a past issue
-    bin/log show ISSUE               Print one issue
-    bin/log search "<query>"         Search issues
-    bin/log status                   Report anything unfiled
+  # ONE TABLE, NOT FOUR LISTS. USAGE is DERIVED from this and `main` dispatches on it, so a
+  # subcommand cannot exist in one place and be missing from another. §14d's "ONE file-type
+  # vocabulary": EXT_FAMILIES is derived from ROLE_BY_EXT precisely because the second inline list
+  # had already drifted. This file's own first draft drifted between its header and its usage text
+  # before it was 62 lines old.
+  SUBCOMMANDS = {
+    "setup"  => [ "",               "Create the labels, idempotently" ],
+    "arc"    => [ "--from-pr N",    "Arc issue built from PR N's body" ],
+    "open"   => [ '"<title>"',      "File an open item" ],
+    "deploy" => [ "--image SHA",    "Record a deploy" ],
+    "note"   => [ 'ISSUE "<text>"', "Append a comment to a past issue" ],
+    "show"   => [ "ISSUE",          "Print one issue" ],
+    "search" => [ '"<query>"',      "Search issues" ],
+    "status" => [ "",               "Report anything unfiled" ]
+  }.freeze
 
-  Env: FORGEJO_URL (default http://forgejo.home), FORGEJO_OWNER, FORGEJO_REPO
-TEXT
+  def usage_text
+    rows = SUBCOMMANDS.map do |name, (args, description)|
+      "    " + "bin/log #{name} #{args}".rstrip.ljust(34) + description
+    end
 
-def usage!(message = nil)
-  warn "bin/log: #{message}" if message
-  warn USAGE
-  exit EXIT_USAGE
+    ([ "bin/log — record work in Forgejo. The single write door.", "" ] + rows + [
+      "",
+      "Env: FORGEJO_URL (default http://forgejo.home), FORGEJO_OWNER, FORGEJO_REPO,",
+      "     LOG_SPOOL_DIR (default tmp/log-pending), LOG_BRANCH"
+    ]).join("\n")
+  end
+
+  def main(argv)
+    command = argv.shift
+
+    # AN ASKED-FOR USAGE IS NOT AN ERROR: stdout, exit 0, so `bin/log --help | less` works.
+    # A no-argument invocation IS one, so it goes to stderr and exits 2.
+    if [ "--help", "-h", "help" ].include?(command)
+      puts usage_text
+      return EXIT_OK
+    end
+
+    if command.nil?
+      warn usage_text
+      return EXIT_USAGE
+    end
+
+    unless SUBCOMMANDS.key?(command)
+      warn "bin/log: unknown command #{command.inspect}"
+      warn usage_text
+      return EXIT_USAGE
+    end
+
+    dispatch(command, argv)
+  end
+
+  # Tasks 2-7 replace this arm by arm. Every subcommand is declared in SUBCOMMANDS from the start
+  # so an unbuilt one says "not implemented yet" rather than "unknown command" — the caller learns
+  # which of the two it is.
+  def dispatch(command, _argv)
+    warn "bin/log: #{command} is not implemented yet"
+    EXIT_USAGE
+  end
 end
 
-command = ARGV.shift
-usage! if command.nil?
-
-case command
-when "setup", "arc", "open", "deploy", "note", "show", "search", "status"
-  warn "bin/log: #{command} is not implemented yet"
-  exit EXIT_USAGE
-else
-  usage! "unknown command #{command.inspect}"
-end
+exit Log.main(ARGV)
 ```
 
-- [ ] **Step 4: Make it executable and verify the test passes**
+- [ ] **Step 4: Run to verify it passes**
 
 ```bash
-chmod +x bin/log && bin/rails test test/log_cli_test.rb
+bin/rails test test/log_cli_test.rb
 ```
 
-Expected: PASS, 1 test.
+Expected: PASS, 4 tests.
 
-- [ ] **Step 5: Confirm `tmp/` really is ignored — do not assume**
+- [ ] **Step 5: Check rubocop, since this is new structure**
 
 ```bash
-git check-ignore -v tmp/log-pending/x.md
+bin/rubocop bin/log test/log_cli_test.rb
 ```
 
-Expected: a line naming `.gitignore` and the `tmp/` rule. If it prints nothing, `tmp/` is **not** ignored and Task 5 must add `tmp/log-pending/` to `.gitignore` — a spooled arc body committed by accident is a record in the wrong place.
+Expected: no offenses. Fix any that appear rather than adding a `rubocop:disable`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Mutation-check the assertion the review found vacuous**
+
+Delete the `"arc" => [ "--from-pr N", ... ]` row from `SUBCOMMANDS`, run the usage test, and confirm it now goes **RED** (the previous spelling stayed green, because "search" contains "arc"). Restore, confirm green.
+
+```bash
+bin/rails test test/log_cli_test.rb -n /no arguments/
+```
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add bin/log test/log_cli_test.rb
-git commit -m "bin/log: the skeleton and its usage guard
+git commit -m "bin/log: one subcommand table, no exit inside helpers, and a usage guard that can fail
 
-The single write door onto the Forgejo that replaces docs/STATUS.md. Stdlib
-only and no bundler/setup, so it is indifferent to whatever launched it (§14j).
+Task 1's code review found four defects in the plan, all reproduced. The
+assertion for \`arc\` could never fail, because \"search\" contains \"arc\" —
+deleting the arc line left the guard green. The subcommand set lived in four
+places and two had already drifted. Top-level defs would have let Task 3's
+natural \`def open\` shadow Kernel#open process-wide. And a helper calling exit
+raises SystemExit, which is neither StandardError nor Unreachable, so it would
+have sailed past the rescue that spools — losing the record on a 502, the
+likeliest outage, while CLAUDE.md promised a spool file.
+
+USAGE is now derived from one SUBCOMMANDS table, helpers raise rather than exit,
+the harness clears the inherited bundler env instead of merging it, and
+FORGEJO_URL defaults to an unroutable address so reaching the network is opt-in.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
