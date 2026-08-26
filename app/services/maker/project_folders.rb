@@ -23,8 +23,8 @@ module Maker
   # unmapped role into "other" and never raise at all — a wrong answer nobody could see. Don't add
   # it.
   #
-  # THE FOLDER NAMES ARE NOT ROLE_LABELS, even where five of the nine happen to match it
-  # lowercased (models, images, laser, archives, other) — that agreement is coincidental, not
+  # THE FOLDER NAMES ARE NOT ROLE_LABELS, even where six of the ten happen to match it
+  # lowercased (models, images, laser, code, archives, other) — that agreement is coincidental, not
   # derived, and must stay that way: a UI wording tweak to ROLE_LABELS (capitalization, clarity)
   # must never rename a directory on someone's NAS. The other four folder names are deliberate
   # renames to plainer workflow words: `cnc` (not "G-code"), `design` (not "Vector"), `cad` (not
@@ -40,6 +40,7 @@ module Maker
       "vector"         => "design",
       "model"          => "models",
       "cad_source"     => "cad",
+      "code"           => "code",
       "instructions"   => "docs",
       "document"       => "docs",
       "image"          => "images",

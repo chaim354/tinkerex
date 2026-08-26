@@ -117,8 +117,41 @@ module Library
       dirs  = Set.new
       unpairable = 0
 
-      each_object do |rel, obj, marker|
-        if marker
+      each_object do |rel, obj, dir_marker|
+        # A REPO IS ONE DIR NODE AND NO FILES, and here the dir node has to be INVENTED. The
+        # Scanner has it easy: it meets a real `.git` directory, observes it, and simply declines
+        # the descent. S3 has no directories at all — the tree in `nodes` is synthesized from key
+        # prefixes — so the marker exists only as a prefix of the very keys we are dropping. Drop
+        # them without recording it and `.git` would not exist on this backend, so the
+        # working-tree question would have two answers across backends (§14a) and
+        # Maker::AttachToProject's :in_working_tree would silently stop firing on an s3 deployment.
+        # Library::RepoMetadata carries the argument for keeping the marker, and owns the
+        # STRICTLY-BENEATH question this asks — the marker path itself must fall through, because
+        # an object AT it is a `gitdir:` pointer file rather than a repo's metadata.
+        #
+        # SKIPPED HERE, SO IT CAN NEVER BE TOMBSTONED — the same property #indexable?'s skips have
+        # and for the same reason: a key that never becomes an observation never becomes a
+        # `vanished_path`, so the reconciler cannot read "we declined to index this" as "the user
+        # deleted it". What makes this one safe to write anywhere is that the ancestor prefix IS
+        # recorded, so the marker node it hangs off is observed on every pass.
+        #
+        # NOT IN #indexable?, where the other path-shape skips live: that predicate's rejects are
+        # dropped outright and nothing downstream sees the key, but this skip has to RECORD
+        # something before dropping. The prefix is the only evidence the repo exists.
+        #
+        # FIRST, BEFORE THE DIRECTORY-MARKER BRANCH, and that order is load-bearing rather than
+        # tidy. A zero-byte folder object INSIDE the repo — `firmware/.git/objects/`, which any
+        # console or sync tool may leave behind — reaches here as a directory marker, and that
+        # branch would merge its whole ancestor chain: a dir node BENEATH `.git`, which is
+        # precisely the content this skip exists to drop. Checked below it, this branch would
+        # never see that key. (A `firmware/.git/` folder marker is not beneath anything, so it
+        # falls through to that branch and synthesizes the same dir node either way.)
+        if Library::RepoMetadata.internal?(rel)
+          dirs.merge(dir_chain(Library::RepoMetadata.marker_prefix(rel)))
+          next
+        end
+
+        if dir_marker
           # A directory-marker object IS positive evidence of a directory — including one with no
           # children at all, which nothing else in the listing would reveal. So it becomes a dir
           # observation rather than merely "not a file": the user made a folder in the console and
@@ -330,11 +363,13 @@ module Library
         # storage_path "cad/", living beside the real dir node `cad`. Two live nodes with distinct
         # storage_path strings, so the partial unique index permits both — a phantom file in every
         # browse view, forever, that no delete resolves.
-        marker = rel.end_with?("/")
-        rel = rel.delete_suffix("/") if marker
+        # `dir_marker`, not `marker`: this file now also discusses the REPO marker (`.git`), and
+        # one word for two unrelated things in one block is how a reader mixes them up.
+        dir_marker = rel.end_with?("/")
+        rel = rel.delete_suffix("/") if dir_marker
         next unless indexable?(rel)
 
-        yield rel, obj, marker
+        yield rel, obj, dir_marker
       end
     end
 
@@ -413,7 +448,10 @@ module Library
       # REFUSES a ".." segment as a prefix escape, so indexing such a key would mint a node whose
       # every read raises NotFound — a file in the library that can never be opened.
       #
-      # Skipped in the observer, like every other skip here, so it can never be tombstoned.
+      # Skipped in the observer, like every other skip of a KEY SHAPE here, so it can never be
+      # tombstoned. #observe adds one more skip, for a repo's metadata, and it preserves this
+      # same property for this same reason — it is there rather than here because it has to
+      # RECORD the marker prefix before dropping the key, which a predicate cannot do.
       if segs.any? { |s| s.empty? || s == "." || s == ".." }
         Rails.logger.warn("library s3 scan: skipping #{rel.inspect} — the key is not addressable " \
                           "as a path (an empty, \".\" or \"..\" segment)")

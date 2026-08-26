@@ -118,14 +118,23 @@ module Maker
     # the other way, because a single-directory frontier renders as `= ?` and the walk goes unseen —
     # which is how the first version of this test passed vacuously (it asserted over an empty set).
     #
-    # What is unique to the walk: it filters on parent_node_id and NOT on name. Every by-name
+    # What is unique to the walk: it FILTERS ON parent_node_id and NOT on name. Every by-name
     # lookup carries a `"nodes"."name" = ` term; the walk never does.
+    #
+    # THREE TRIES NOW, and the third is worth recording because it is a different mistake from the
+    # first two. `sql.include?("parent_node_id")` matched any query MENTIONING the column, including
+    # one that merely SELECTS it — and Maker::AttachToProject#walk_for_marker (the :in_working_tree
+    # rule) hops up the tree with exactly that shape: `SELECT parent_node_id WHERE node_id = ?`, no
+    # name term. It was swept in as if it were the walk and failed the columns assertion, which read
+    # as this guard catching a regression when nothing had regressed. Matching the WHERE clause is
+    # what the prose above always claimed the filter did.
     test "the subtree walk selects only the columns it reads, never whole rows" do
       file("bracket.stl")
       dir("cad")
 
       walk = capture_sql { intake }.select do |sql|
-        sql.match?(/\ASELECT/i) && sql.include?("parent_node_id") && !sql.match?(/"nodes"\."name" =/)
+        sql.match?(/\ASELECT/i) && sql.match?(/WHERE.*"nodes"\."parent_node_id"/m) &&
+          !sql.match?(/"nodes"\."name" =/)
       end
 
       assert walk.any?, "expected to observe the breadth-first walk's own query"
@@ -1202,6 +1211,55 @@ module Maker
       assert_not_nil result
       assert_equal :no_folder, result.status
       assert_equal 0, result.attached
+    end
+    # --- the repo shredder --------------------------------------------------------
+    #
+    # THE BUG THIS FIXES SHIPPED AND RAN UNATTENDED. §14f's root-is-inbox rule files every file at
+    # a project folder's root by category, so a repo cloned at `Projects/<slug>/` lost README.md to
+    # docs/, and main.py and platformio.ini to code/ (to other/, before the `code` role existed) on
+    # every sweep — a delete plus an untracked add as far as git is concerned. Nested files were
+    # always safe (already in a subfolder, never revisited); the root files are most of what
+    # identifies a repo.
+    test "a repo cloned at the project folder root is left entirely alone" do
+      dir(".git")
+      readme = file("README.md")
+      main   = file("main.py")
+      ini    = file("platformio.ini")
+
+      result = intake
+
+      assert_equal 0, result.moved, "the sweep must move nothing inside a working tree"
+      [ readme, main, ini ].each do |node|
+        assert_equal @folder.node_id, node.reload.parent_node_id,
+                     "#{node.name} was moved out from under git"
+      end
+    end
+
+    # THE CONTROL, so the test above cannot pass for the wrong reason. Remove the `.git` and the
+    # identical fixtures must sort — otherwise "nothing moved" would be evidence of a broken sweep
+    # rather than of the rule working.
+    test "with NO .git, the same files sort normally" do
+      readme = file("README.md")
+      main   = file("main.py")
+
+      result = intake
+
+      assert_equal 2, result.moved
+      assert_not_equal @folder.node_id, readme.reload.parent_node_id
+      assert_not_equal @folder.node_id, main.reload.parent_node_id
+    end
+
+    # A repo one level down is the ordinary shape — `Projects/lamp/firmware/` is a checkout, and
+    # the project root above it is still an inbox that must go on sorting.
+    test "a repo in a SUBFOLDER does not freeze the project root's inbox" do
+      repo = dir("firmware")
+      dir(".git", parent: repo.node_id)
+      loose = file("sketch.stl")
+
+      result = intake
+
+      assert_equal 1, result.moved
+      assert_not_equal @folder.node_id, loose.reload.parent_node_id
     end
   end
 end

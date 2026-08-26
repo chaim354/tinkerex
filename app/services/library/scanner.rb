@@ -121,7 +121,7 @@ module Library
       stack = [ [ @root, "" ] ]
       until stack.empty?
         dir, prefix = stack.pop
-        each_child(dir, prefix) do |path, rel, stat|
+        each_child(dir, prefix) do |path, rel, stat, name|
           # The dispatch is on an LSTAT, and that is load-bearing for symlink safety rather
           # than incidental: lstat reports a symlink as neither directory? nor file?, so a
           # symlink is never indexed and — crucially — a symlink to a directory is never
@@ -131,7 +131,21 @@ module Library
           # the regression the symlink tests exist to catch.
           if stat.directory?
             out << Observation.new(rel_path: rel, size: nil, mtime: nanos(stat), dir: true)
-            stack << [ path, rel ]
+            # SKIP THE CONTENTS, KEEP THE MARKER — the one skip here that is not a skip of the
+            # ENTRY, and the inversion is deliberate. `.trash`, the temp prefix and OsClutter all
+            # skip the entry, so no node ever exists; a repo's `.git` dir IS observed and indexed,
+            # because that node is the evidence a directory is a working tree and is what
+            # Maker::AttachToProject's :in_working_tree asks the database for. Skip it as well and
+            # the intake sweep goes back to filing a repo's root files away by category, which git
+            # sees as a delete plus an untracked add.
+            #
+            # It is also not a fifth skip-list wedge, and that is worth stating rather than
+            # trusting: the blind spot needs a LIVE NODE at a path no observation can ever pair.
+            # Here the marker is observed like any other directory, so it pairs normally, and what
+            # we decline is the DESCENT — the one explicit decision this worklist exists to make in
+            # one place. The nodes BENEATH it are the ones that must never be minted, which is the
+            # write guards' half of the rule. Library::RepoMetadata carries the full argument.
+            stack << [ path, rel ] unless Library::RepoMetadata.marker?(name)
           elsif stat.file?
             out << Observation.new(rel_path: rel, size: stat.size, mtime: nanos(stat), dir: false)
           end
@@ -207,7 +221,12 @@ module Library
             next
           end
 
-        yield path, rel, stat
+        # `name` travels alongside `rel` so the call site can ask a LEAF question
+        # (Library::RepoMetadata.marker?) without rebuilding one. A PREFERENCE, not a necessity:
+        # the block also receives `path`, and `path.basename.to_s` is the same string. Passing the
+        # name Dir.children already handed us is one derivation fewer to trust, and it leaves the
+        # call site reading as the question it asks.
+        yield path, rel, stat, name
       end
     end
 

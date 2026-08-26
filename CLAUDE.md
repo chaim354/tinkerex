@@ -805,6 +805,25 @@ Anything below that binds on only one area belongs there too, with a stub here.
   deterministic tie-break must compare the old path against every identical candidate —
   removing that trades the no-lost-file guarantee for speed.
 
+- **`.git` IS THE ONE SKIP THAT KEEPS ITS ENTRY, AND THE INVERSION IS LOAD-BEARING.**
+  `Scanner::TRASH_PREFIX`, `TEMP_PREFIX` and `Library::OsClutter` skip the ENTRY, so no node ever
+  exists. A repo's `.git` **directory node is observed and indexed**; only its CONTENTS are
+  dropped. The marker is the evidence a directory IS a working tree — it is what
+  `Maker::AttachToProject`'s `:in_working_tree` asks the database for — and it exists on all three
+  backends, since `chunk_remote` mirrors whatever the desktop client synced. Skip the marker too
+  and the intake sweep goes back to filing a repo's root files away by category. Not a fifth
+  skip-list wedge: a wedge needs a live node at a path no observation can pair, and the marker is
+  observed. `Library::RepoMetadata` owns the one definition — `marker?` (leaf), `marker_prefix`
+  (at-or-beneath, what the write guards refuse), `internal?` (strictly beneath, derived from
+  `marker_prefix` so the two can never drift about which paths have a marker at all). The port
+  refuses `.git` and everything under it as a write DESTINATION on both writable adapters, and
+  `ReservedNames` refuses minting it at the doors — `OsClutter`'s law, which is why the write
+  guards' contract needs a NEGATIVE case: with only refusals asserted, `rel.include?(".git")`
+  passes every test while making `.gitignore` and `.github/**` unwritable.
+- **`Node.outside_repo_metadata` hides the marker in BOTH `FilesController#index` scopes**, and it
+  goes on the `scope =` assignment, not the `.order` chain — `@match_count`/`@child_count` read the
+  same object, so one line lower the truncation banner counts rows the page never renders.
+
 ### 14c. Addons and GPL sidecars → **`docs/invariants/addons.md`**
 
 **Read that file before touching** `app/services/maker/addons/`, `app/controllers/tools/`,
@@ -846,8 +865,21 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   `FilesController`'s own upload flow); the arc that closed it is in `docs/STATUS.md`. The tripwire
   is about **new** work: **if a maker-layer change needs to touch sync, the changelog, conflicts,
   locks, or the mounts, the boundary is wrong — stop** (§14j). A violation fails `bin/ci`.
+- **CODEMIRROR IS ONE VENDORED BUNDLE AND EXACTLY ONE IMPORTMAP PIN. Never
+  `bin/importmap pin @codemirror/*`.** Two copies of `@codemirror/state` make facets and
+  `StateField`s fail to match by object identity, and CM6 responds by **silently ignoring the
+  extension** — no error, no console warning, the editor just renders without the feature.
+  `test/ci_hygiene_test.rb` fails the build if a per-package pin appears, and asserts it parsed the
+  importmap first so it cannot go vacuous. The artifact is built by `bin/build-codemirror` from
+  `vendor/javascript/codemirror-entry.js` with **all 40 resolved packages pinned** — pinning only
+  the direct ones leaves `@codemirror/state` itself floating, and a build-twice digest check passes
+  over that happily, because the registry does not move in two minutes.
+
 - **ONE file-type vocabulary.** `FilesHelper::EXT_FAMILIES` is **derived** from `ROLE_BY_EXT`,
-  grouped by role and labelled by `ROLE_LABELS`. Add an extension in **`ROLE_BY_EXT` only**.
+  grouped by role and labelled by `ROLE_LABELS`; `FilesController#preview_kind`'s `:text` branch
+  is derived the same way, from `Maker::FileAttachment::TEXT_ROLES` — it carried its own inline
+  list of 26 extensions until 2026-08-25, five of which mapped to no role at all, so the second
+  table was already drifting. Add an extension in **`ROLE_BY_EXT` only**.
   Two consequences: every extension must satisfy `FilesController::EXT_RE`
   (`/\A[a-z0-9]{1,8}\z/`) or it renders a chip that links and **silently does nothing**
   (`markdown` is the current bound at exactly 8 chars); and the `role` column is
@@ -1062,6 +1094,15 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   guard whose subject is a path can be silently retired by a move.
 
 ### 14f. Project-folder intake
+
+- **`:in_working_tree` IS UNSCOPED, UNLIKE `:attached_elsewhere` — DO NOT ADD A KWARG TO IT.** A
+  refusal from `#refusal_for` does not mean "refuse the attachment": `#call` returns
+  `relocation: (move(node) if refusal.nil?)`, so it means **attach the row, leave the bytes**,
+  which is the right answer at all four callers. `:attached_elsewhere` needed `within_own_folder:`
+  because its stated reason is positional and stopped applying to one caller; "do not move a file
+  out from under git" has no such exception. Detection memoizes per PARENT, not per node — a sweep
+  files N nodes under one parent and the ancestor walk is two queries per level (measured: 45
+  queries against 15 for ten files at depth four).
 
 - **ROOT = INBOX IS THE WHOLE SORT RULE, AND IT IS STATELESS.** Only files at a project
   folder's own root are ever filed; anything already in a subfolder — including one filed

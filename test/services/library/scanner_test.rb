@@ -108,6 +108,58 @@ module Library
       assert paths.none? { |p| p.include?(".Spotlight-V100") }
     end
 
+    # THE ONE SKIP THAT KEEPS ITS ENTRY, and the reason it is not a fifth skip-list wedge: an
+    # OBSERVED node pairs normally, so nothing here manufactures a ghost. The marker dir is what
+    # makes a working tree detectable (Maker::AttachToProject's :in_working_tree); what is declined
+    # is the DESCENT. Library::RepoMetadata carries the argument.
+    test ".git is observed as ONE dir entry and never descended into" do
+      write!("firmware/.git/objects/ab/cdef", "a loose object")
+      write!("firmware/.git/config", "[core]")
+      write!("firmware/main.cpp", "int main(){}")
+      found = by_path
+      paths = found.keys
+
+      assert_includes paths, "firmware/.git", "the MARKER must be observed — it is what makes " \
+                                              "a working tree detectable"
+      assert found.fetch("firmware/.git").dir, "the marker is a DIRECTORY node, never a file"
+      assert_includes paths, "firmware/main.cpp"
+      assert_empty paths.select { |p| p.start_with?("firmware/.git/") },
+                   "nothing beneath .git may be observed"
+    end
+
+    # THE MARKER IS A DIRECTORY, NEVER A FILE, and this is the share half of a cross-backend pair
+    # (Library::S3ObserverTest holds the other). A submodule or a linked worktree writes a
+    # `gitdir:` POINTER FILE where a plain repo has a directory; nothing here reads that pointer,
+    # so it is an ordinary file and its bytes are the point. Structurally this is why the skip
+    # lives inside the `stat.directory?` arm — hoisting it would silently stop indexing this file.
+    test "a .git FILE — a submodule's gitdir pointer — is indexed as an ordinary file" do
+      pointer = "gitdir: ../.git/modules/sub"
+      write!("sub/.git", pointer)
+      write!("sub/main.c", "int main(){}")
+      found = by_path
+
+      assert_not found.fetch("sub/.git").dir, "a `gitdir:` pointer is a file, not the marker"
+      # Bound to the fixture, never a literal: a literal turns an edit to the string above into a
+      # failure that says nothing about the behaviour under test.
+      assert_equal pointer.bytesize, found.fetch("sub/.git").size
+      assert_includes found.keys, "sub/main.c"
+    end
+
+    # Whole segments, never prefixes — and the fixture must be at DEPTH to be able to fail. A
+    # root-level `.gitignore` survives a segment-PREFIX match anyway (the marker prefix resolves to
+    # the key itself, which is not BENEATH a marker), so a test seeding only that one passes under
+    # the mutation it names. `.github/` is a directory a real code library has, and the assertion
+    # is on the LEAF: a prefix match keeps `.github` and silently drops everything under it.
+    test "a path merely NAMED like git metadata is indexed normally, at any depth" do
+      write!(".gitignore", "tmp/")
+      write!(".github/workflows/ci.yml", "on: push")
+      paths = observe.map(&:rel_path)
+
+      assert_includes paths, ".gitignore"
+      assert_includes paths, ".github/workflows/ci.yml",
+                      "a prefix match would drop this and leave `.github` a childless dir"
+    end
+
     test "does not index or follow symlinks" do
       write!("real/inside.stl", "y")
       File.symlink(@root.join("real").to_s, @root.join("link").to_s)
