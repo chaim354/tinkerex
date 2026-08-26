@@ -1,17 +1,26 @@
 module Maker
   module Previews
-    # Text file (txt/md/markdown/json) → a "document" PNG grid thumbnail: the file's first lines drawn
-    # as monospace text on a white page. Built as an SVG and rasterized through the SAME resvg step the
-    # SVG/DXF/LightBurn thumbnails use (SvgRasterizer) — so NO new binary, and the grid gets a uniform
-    # PNG like every other cell. The deployed image already ships DejaVu fonts + fontconfig, so resvg
-    # can draw the glyphs.
+    # Text file (every extension in Maker::FileAttachment::TEXT_EXTENSIONS) → a "document" PNG grid
+    # thumbnail: the file's first lines drawn as monospace text on a white page. Built as an SVG and
+    # rasterized through the SAME resvg step the SVG/DXF/LightBurn thumbnails use (SvgRasterizer) —
+    # so NO new binary, and the grid gets a uniform PNG like every other cell. The deployed
+    # image already ships DejaVu fonts + fontconfig, so resvg can draw the glyphs.
     #
     # These already preview in the DETAIL view as scrollable raw text; this is only the GRID's
     # at-a-glance thumbnail. `available?` gates on resvg, exactly like Svg.
     module TextThumb
       module_function
 
-      EXTENSIONS = %w[txt md markdown json].freeze
+      # DERIVED FROM THE ONE VOCABULARY, never listed here (§14d). This was a hand-written
+      # `%w[txt md markdown json]` while `FilesController#preview_kind` answered `:text` for 37
+      # extensions — so 33 of them rendered the source viewer on the detail page and NOTHING in
+      # the grid. Both layers now read the same constant, so the set cannot drift again, and
+      # adding an extension is still a one-line edit to ROLE_BY_EXT.
+      #
+      # A TEXT EXTENSION WITH A RICHER RENDERER IS NOT THIS RENDERER'S TO CLAIM — `Registry`
+      # merges its explicit format table OVER these, and `renderer_contract_test.rb` turns red if
+      # that ever happens, rather than letting a shadowed claim sit here reading as coverage.
+      EXTENSIONS = Maker::FileAttachment::TEXT_EXTENSIONS
 
       MAX_LINES = 16
       MAX_COLS  = 46 # ~fits a 512px page at the font size below; longer lines clip at the edge

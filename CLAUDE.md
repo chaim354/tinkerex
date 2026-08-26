@@ -870,11 +870,12 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   the direct ones leaves `@codemirror/state` itself floating, and a build-twice digest check passes
   over that happily, because the registry does not move in two minutes.
 
-- **ONE file-type vocabulary.** `FilesHelper::EXT_FAMILIES` is **derived** from `ROLE_BY_EXT`,
-  grouped by role and labelled by `ROLE_LABELS`; `FilesController#preview_kind`'s `:text` branch
-  is derived the same way, from `Maker::FileAttachment::TEXT_ROLES` — it carried its own inline
-  list of 26 extensions until 2026-08-25, five of which mapped to no role at all, so the second
-  table was already drifting. Add an extension in **`ROLE_BY_EXT` only**.
+- **ONE file-type vocabulary, AND IT NOW REACHES THE RENDERERS.** `FilesHelper::EXT_FAMILIES` is
+  **derived** from `ROLE_BY_EXT`; `preview_kind`'s `:text` branch and `Previews::Registry`'s
+  TextThumb entries are both `Maker::FileAttachment.text?`/`TEXT_EXTENSIONS`. The Registry
+  hand-listed **4** while `preview_kind` called **37** text, so 33 (`.rb`, `.py`, `.gcode`) got the
+  source viewer and a **blank grid cell** — `Enqueue` returns nil for an unclaimed name, and no
+  test spanned the two layers. Add an extension in **`ROLE_BY_EXT` only**.
   Two consequences: every extension must satisfy `FilesController::EXT_RE`
   (`/\A[a-z0-9]{1,8}\z/`) or it renders a chip that links and **silently does nothing**
   (`markdown` is the current bound at exactly 8 chars); and the `role` column is

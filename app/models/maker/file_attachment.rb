@@ -56,8 +56,11 @@ module Maker
       #
       # `pdf` is NOT here on purpose: it stays `instructions` because
       # Models::AttachmentsController dispatches ExtractPdfMetadataJob on that exact value.
+      # `rst`/`tex` join `md` as prose someone WROTE, and `tsv` joins `csv` as tabular data —
+      # all four file into `docs/` for the same reason those already do.
       "txt" => "document", "md" => "document", "markdown" => "document",
-      "json" => "document", "csv" => "document",
+      "json" => "document", "csv" => "document", "tsv" => "document",
+      "rst" => "document", "tex" => "document",
       # Source code, config and build files — the "firmware + software" half of a project (§1),
       # which until now was filed entirely as `other`. Three groupings are decisions rather than
       # observations. `h`/`hpp` sit with c/cpp because a firmware tree is headers and sources
@@ -72,7 +75,34 @@ module Maker
       "rs" => "code", "go" => "code", "sh" => "code", "lua" => "code", "sql" => "code",
       "html" => "code", "css" => "code", "xml" => "code", "log" => "code",
       "toml" => "code", "ini" => "code", "cfg" => "code", "conf" => "code",
-      "yml" => "code", "yaml" => "code", "cmake" => "code"
+      "yml" => "code", "yaml" => "code", "cmake" => "code",
+      # ADDED 2026-08-26, when the previews arc found these were text the app did not KNOW was
+      # text: `role_for` answered "other", so they got no source viewer, no thumbnail and no
+      # filing. Each is here on the same argument the block above already makes, so the folder
+      # decision is inherited rather than new — they belong beside the code they are part of.
+      # Languages: `java`/`kt` (and `kt` covers Kotlin build scripts), `swift`, `cs`, `php`,
+      # `pl`, `jl`, `r`. Web source: `jsx`/`tsx`/`vue`/`svelte`. Windows shell, siblings of `sh`:
+      # `bat`, `ps1`. Build, siblings of `cmake`: `mk`, `gradle`. Firmware and HDL, which is the
+      # "hardware + firmware" half of §1 and the reason a maker app carries them at all: `asm`,
+      # `s`, `v`, `vhd`. And `diff`/`patch`, which are artefacts of EDITING code exactly as `log`
+      # is an artefact of RUNNING it — the argument that entry already carries.
+      #
+      # DELIBERATELY ABSENT, each for a reason that is not "we forgot":
+      #   `m`  — genuinely ambiguous (Objective-C, MATLAB, Mathematica). Text either way, but the
+      #          role table is read as a claim about what a file IS, and this one cannot make it.
+      #   `properties`, `editorconfig`, `gitignore`, `dockerfile`, `kicad_pcb`, `kicad_sch` —
+      #          they FAIL `FilesController::EXT_RE` (/\A[a-z0-9]{1,8}\z/): too long, or an
+      #          underscore. The warning at the top of this hash is not decoration; an entry that
+      #          fails it renders a filter chip that links and silently does nothing.
+      #   `.env`, `Makefile`, `Dockerfile`, `LICENSE` — these have NO EXTENSION at all
+      #          (`File.extname(".env")` is `""`), so no entry in an extension table can ever
+      #          reach them. Covering them needs a basename rule, which is a different mechanism.
+      "java" => "code", "kt" => "code", "swift" => "code", "cs" => "code",
+      "php" => "code", "pl" => "code", "jl" => "code", "r" => "code",
+      "jsx" => "code", "tsx" => "code", "vue" => "code", "svelte" => "code",
+      "bat" => "code", "ps1" => "code", "mk" => "code", "gradle" => "code",
+      "asm" => "code", "s" => "code", "v" => "code", "vhd" => "code",
+      "diff" => "code", "patch" => "code"
     }.freeze
 
     # Roles whose files are TEXT a browser can display as source. Consulted by
@@ -110,6 +140,34 @@ module Maker
     # are mostly NOT text while this extension's are, which is a narrow thing to be true. If this
     # list grows past a handful, the role table is the thing that is wrong.
     TEXT_EXTS = %w[scad].freeze
+
+    # EVERY EXTENSION THIS APP CONSIDERS TEXT — the union of the text roles' extensions and the
+    # role-mismatched ones above, DERIVED so the two members can never disagree about it.
+    #
+    # IT EXISTS BECAUSE THE PREDICATE HAD TWO READERS AND ONLY ONE OF THEM EVER GOT WRITTEN.
+    # `FilesController#preview_kind` was collapsed onto TEXT_ROLES/TEXT_EXTS on 2026-08-25, but
+    # `Maker::Previews::Registry` went on routing a HAND-WRITTEN four entries (txt md markdown
+    # json) to TextThumb — so 33 of the 37 extensions the vocabulary called text got the source
+    # viewer on the detail page and a BLANK CELL in the grid. Measured, not estimated: `.rb`,
+    # `.py`, `.gcode`, `.yml`, `.csv`, `.scad`, every `.c` and `.h`. That is the same second-table
+    # drift §14d exists to stop, one layer down from where it was fixed, and it survived because
+    # the two tables answer questions that SOUND different ("what does the page render?" vs "what
+    # can we make a picture of?") while being the same question about the same files.
+    #
+    # `Maker::Previews::TextThumb::EXTENSIONS` IS THIS CONSTANT, which is what makes
+    # `renderer_contract_test.rb` pin the derivation for free: it already asserts every renderer's
+    # own EXTENSIONS resolve back through `Registry.for`, so a format renderer that ever claims a
+    # text extension turns that test red instead of silently shadowing the thumbnail.
+    TEXT_EXTENSIONS = (ROLE_BY_EXT.select { |_ext, role| TEXT_ROLES.include?(role) }.keys + TEXT_EXTS)
+                      .uniq.sort.freeze
+
+    # Is this filename's content TEXT? THE ONE definition — `preview_kind`'s `:text` branch and the
+    # TextThumb registration are the same question asked by two layers, and they used to answer it
+    # with two different tables. A name with no extension (`Makefile`, `.env`) is false: `extname`
+    # returns "" for both, which is not a member, so this stays honest rather than guessing.
+    def self.text?(name)
+      TEXT_EXTENSIONS.include?(File.extname(name.to_s).downcase.delete("."))
+    end
 
     # Best-effort role from a filename's extension; unknown -> "other".
     def self.role_for(name)

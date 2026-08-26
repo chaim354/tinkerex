@@ -105,26 +105,34 @@ module Maker
         assert_equal "pending", row.status
       end
 
-      # `.gcode` and not `.step`: STEP renders (Mesh, via F3D's OCCT plugin), and the first draft of
-      # this test used it and went red on the implementation that was correct. Registry::RENDERERS
-      # is the list, and it is longer than it looks.
+      # `.sldprt`, AND THE FIXTURE HAS NOW MOVED TWICE — which is the point of the assertion below
+      # rather than a reason to drop it. The first draft used `.step`, which renders (Mesh, via
+      # F3D's OCCT plugin). It then used `.gcode` for a year, until 2026-08-26 wired every text
+      # extension to TextThumb and g-code became renderable too — correctly, and this test went
+      # red the same hour rather than quietly asserting nothing.
+      #
+      # A BINARY PROPRIETARY CAD SOURCE IS THE STABLE CHOICE: §9 records that SolidWorks and Fusion
+      # have no FOSS parser, so `.sldprt` is unrenderable for a reason that does not expire the way
+      # "we haven't got round to it" does. Registry::RENDERERS is longer than it looks, and the
+      # `fixture assumption` line is what makes that survivable.
       test "does not enqueue a name no renderer handles" do
-        serve info("n-gcode", name: "part.gcode", token: "tok")
-        assert_nil Maker::Previews::Registry.for_filename("part.gcode"), "fixture assumption"
-        assert_no_enqueued_jobs { ThumbnailMap.for(@user, [ "n-gcode" ]) }
-        assert_nil @user.maker_previews.find_by(node_id: "n-gcode")
+        serve info("n-cad", name: "part.sldprt", token: "tok")
+        assert_nil Maker::Previews::Registry.for_filename("part.sldprt"), "fixture assumption"
+        assert_no_enqueued_jobs { ThumbnailMap.for(@user, [ "n-cad" ]) }
+        assert_nil @user.maker_previews.find_by(node_id: "n-cad")
       end
 
       # WHAT THE RENDERABLE-ONLY CHECK ACTUALLY BUYS, and the test above cannot see it: `Enqueue`
       # already refuses a name no renderer handles, so deleting the check from the loop creates no
       # rows and enqueues no jobs — it came back GREEN under exactly that mutation. The check earns
       # its place one line further down, where `budget -= 1` runs unconditionally: without it every
-      # unrenderable file SPENDS A SLOT. A folder holding a wall of `.gcode` ahead of its models
+      # unrenderable file SPENDS A SLOT. A folder holding a wall of `.sldprt` ahead of its models
       # would then drain the whole budget onto files that can never have a thumbnail, and the
       # models behind them would spin on every visit forever — the backlog never draining is the
       # precise failure the budget was written to avoid.
       test "an unrenderable file does not spend a slot of the backfill budget" do
-        unrenderable = Array.new(ThumbnailMap::BACKFILL_LIMIT) { |i| info("g#{i}", name: "g#{i}.gcode", token: "t#{i}") }
+        assert_nil Maker::Previews::Registry.for_filename("x.sldprt"), "fixture assumption"
+        unrenderable = Array.new(ThumbnailMap::BACKFILL_LIMIT) { |i| info("g#{i}", name: "g#{i}.sldprt", token: "t#{i}") }
         renderable   = Array.new(3) { |i| info("r#{i}", name: "r#{i}.stl", token: "s#{i}") }
         serve(*(unrenderable + renderable))
 

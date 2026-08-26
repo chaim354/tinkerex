@@ -93,6 +93,29 @@ class FilesControllerPreviewKindTest < ActiveSupport::TestCase
                  "these reach :text through their ROLE already; drop them from TEXT_EXTS"
   end
 
+  # THE CROSS-LAYER CLAIM, AND THE BUG EVERY OTHER TEST IN THIS FILE SAT BESIDE WITHOUT SEEING.
+  # `preview_kind` was collapsed onto the one vocabulary on 2026-08-25. `Maker::Previews::Registry`
+  # was NOT — it went on hand-listing four text extensions (txt md markdown json) — so 33 of the 37
+  # extensions this file asserts are `:text` had NO GRID THUMBNAIL: `Enqueue.call` returns nil for
+  # a name no renderer claims, so no row is ever created and the cell stays blank forever.
+  #
+  # EVERY TEST ABOVE PASSED THROUGHOUT, and the reason is worth naming rather than just fixing:
+  # they all ask what the DETAIL page renders, and the missing half was the GRID. Two layers, one
+  # question, and no test spanned them — which is the same shape as the `scope:` form bugs in
+  # §14d, where the assertion was true and simply about the wrong thing.
+  #
+  # THE SIZE FLOOR IS LOAD-BEARING. Without it a derivation that collapsed to `[]` satisfies this
+  # sweep perfectly — §14e's vacuous-guard shape, which this repo has shipped twice.
+  test "every filename that previews as :text also has a thumbnail renderer" do
+    exts = Maker::FileAttachment::TEXT_EXTENSIONS
+    assert_operator exts.size, :>, 50, "the sweep needs a subject"
+    exts.each do |ext|
+      assert_equal :text, kind("file.#{ext}"), ext
+      assert_not_nil Maker::Previews::Registry.for(ext),
+                     ".#{ext} previews as text but nothing renders it — a blank cell in the grid"
+    end
+  end
+
   # THE DERIVATION ASSERTED AS A PROPERTY: every extension whose role is a text role must actually
   # REACH the text branch. What derivation newly risks is not the mapping but the ORDER — measure,
   # image and pdf all return first — so wiring an extension one of them already claims into a text
