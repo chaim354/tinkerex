@@ -603,23 +603,50 @@ stated: it takes its subject FROM `TEXT_ROLES`, so it cannot catch a copy, and a
 merely narrows it. What it catches alone is the ORDER — an extension wired into a text role that an
 earlier branch (measure/image/pdf) already owns.
 
-**KNOWN RESIDUAL, RECORDED RATHER THAN LEFT TO BE FOUND.** Each earlier role addition shipped a
-`Rederive*Roles` data migration (`vector`/`cad_source` 2026-07-28, `document` 07-29, `laser` 07-30)
-to move existing `maker_file_attachments` rows out of `other`. This task ships none, because the
-plan's file list does not call for one and a data migration is not a decision to take in passing.
-Nothing MISFILES as a result — `Maker::ProjectFolders` asks `role_for` (pure, current) and never the
-stored column — but an attachment row written before today for a `.ino` or `.py` file keeps
-`role: "other"` and renders under "Other" in a project's Files panel until it is re-attached. One
-migration in the predecessors' shape closes it.
+**THE EXISTING ROWS ARE RE-DERIVED, BY A MIGRATION IN THE PREDECESSORS' SHAPE.** Without one, an
+attachment row written before today for a `.ino` or `.py` file keeps `role: "other"` and renders
+under "Other" in a project's Files panel forever — nothing MISFILES (`Maker::ProjectFolders` asks
+`role_for`, pure and current, never the stored column), but the panel goes on disagreeing with the
+vocabulary. `RederiveCodeRoles` (`20260826130000`) closes it, and it is the FIRST TWO predecessors'
+shape rather than the third's, which is the whole choice: `lbrn2` already had a role, so
+`RederiveLaserRoles` selects `vector` and rolls back to `vector`, while all 26 code extensions were
+brand new or mapped nowhere, so every row needing repair is in `other`. Copy the third and `up`
+selects a role no row has and succeeds **silently**, while `down` files these rows under `vector`,
+somewhere they have never been. Self-contained per the predecessors' rule (private
+`MigrationAttachment`/`MigrationNode`, no `role_for`, no app models), and `CODE_EXTS` is a frozen
+COPY with the same accepted cost stated in writing: an extension added to the model after this runs
+never re-derives rows already in `other`, and closing that needs another migration.
 
-Legs measured for this task: share and s3, both **2427 runs / 9069 assertions / 30 skips**,
-identical — task 6's 2417/8844 plus 10 runs (5 preview_kind, 3 model, 1 folder, 1 driven page).
+| mutation | result |
+|---|---|
+| `PRIOR_ROLE = "vector"` (copy predecessor 3's source) | red 3 ways — the `up`, `down` and idempotency tests, each `Expected: "code" / Actual: "other"`: the migration finds nothing and succeeds |
+| `down` → `update_all(role: "vector")` | red — `Expected: "other" / Actual: "vector"`, and **only** the down test |
+| model drift: `"ino" => "document"` | red — the frozen-copy tripwire, `migration maps ino to code, model says "document"` |
+| drop `next if node.nil?` | red — `NoMethodError: undefined method 'name' for nil` on the orphaned-attachment test |
+| sweep every row, not `where(role: PRIOR_ROLE)` | red — `Expected: "instructions" / Actual: "code"`: a role someone set deliberately is a decision, not a gap to fill |
+
+**A KNOWN COST OF THE WIDENING, MEASURED RATHER THAN ESTIMATED.** A `:text` preview fetches the
+WHOLE blob and truncates client-side: `textpreview_controller.js` sends no `Range` header, reads
+`res.text()` in full, then slices the string at 200,000 characters — and neither the view nor
+`#blob` gates on size. Driven on the share backend with a 2.1 MB `.nc`: the page renders
+`pre.preview-text` and the blob response carries **2,100,000 bytes, `Content-Length: 2100000`, no
+`Accept-Ranges`**. The mechanism is not new — `gcode` was in the old inline list, and a sliced
+print is the largest text file a maker owns — but this task widens the population that hits it to
+`.nc`/`.tap`/`.ngc`/`.gco`, and on `chunk_remote` those bytes STREAM through Puma (§14a:
+`presignable` is false), so a 40 MB preview holds a thread. **Task 9 replaces that controller and
+is where the fix belongs** — a `Range: bytes=0-199999` request, or a size gate in the view that
+offers the download instead.
+
+Legs measured for this task: share and s3, both **2434 runs / 9110 assertions / 30 skips**,
+identical — task 6's 2417/8844 plus 17 runs (5 preview_kind, 3 model, 1 folder, 1 driven page,
+7 migration).
 `test-chunk-remote` not run here (needs the sibling checkout). Both legs tripped the documented
 `WorkerBudgetTest` pidfile intermittent while being run back-to-back — share three times in five
 runs, s3 once — and `worker_budget_test.rb` is 3/3 green run alone, matching what task 2 recorded
 about it. One s3 run also reported a single error whose identity was not captured and did not
-recur. Assertion counts across repeated runs of the SAME leg varied 9067–9069, which is the ±2
-flap already under "Still open", not a backend difference.
+recur. Before the migration landed, assertion counts across repeated runs of the SAME leg varied
+9067–9069 (the ±2 flap already under "Still open", not a backend difference); the final round with
+the migration in was clean on both legs at the first attempt.
 
 ### Still to land (tasks 8–9 of the plan)
 
