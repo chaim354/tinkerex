@@ -191,10 +191,199 @@ module Maker
         assert_raises(FileLayer::NotFound) { repo.blob_at(oid: head, path: "Elsewhere/stray.md") }
       end
 
+      # ---- a repository the maker brought with them ---------------------------------------------
+      #
+      # OBSERVED ON THE SHARE BOX: `Projects/TheFlightWall_OSS` is a project folder that already
+      # holds the maker's own clone -- `refs/heads/main` plus two working branches. The port
+      # resolves that project's repository to THEIR `.git`, so the next pass would have stamped
+      # `tinkerex.managed` into their config (adopting the repo forever), cleared their index, and
+      # put a bot commit of 2,305 files on their `main`.
+
+      test "a project folder holding a repository we did not create is refused, untouched" do
+        travel_to(3.days.ago) { file_node("notes.md", content: "hello\n") }
+        theirs = plant_a_foreign_repository!
+        before = repository_digest
+        assert_equal 1, pass.eligible_nodes.count, "fixture is inverted; the test would be vacuous"
+
+        assert_nil pass.call!, "a repository this app did not create must not be committed to"
+
+        assert_equal before, repository_digest,
+                     "the pass wrote into a repository it did not create"
+        repo = ::Rugged::Repository.new(git_dir)
+        assert_equal theirs, repo.references[Maker::Git::Repo::BRANCH].target_id,
+                     "a bot commit was put on the maker's own branch"
+        assert_nil repo.config[Maker::Git::Repo::MANAGED_CONFIG_KEY],
+                   "our marker was stamped into their config, which adopts their repo permanently"
+        assert_equal 1, commit_count(repo), "a commit was added to the maker's own history"
+        assert_nil Maker::GitRepo.find_by(project: @project),
+                   "the app recorded a repository it must not have opened"
+      end
+
+      # A SILENT SKIP IS NOT ACCEPTABLE -- a maker whose project never gains history deserves a line
+      # saying why. It is claimed through the cache so it is one line a day rather than one every
+      # fifteen minutes forever; the test env's NullStore keeps nothing, so it always logs here.
+      test "the refusal is written down, naming the project and the reason" do
+        travel_to(3.days.ago) { file_node("notes.md", content: "hello\n") }
+        plant_a_foreign_repository!
+
+        logs = capturing_logs { pass.call! }
+
+        assert_match(/#{Regexp.escape(@project.slug)}/, logs, "the line must name the project")
+        assert_match(/did not create/, logs, "the line must say why it was skipped")
+        assert_match(/no version history/, logs, "the line must say what the consequence is")
+      end
+
+      # THE OTHER DIRECTION, AND WITHOUT IT THE FIX ABOVE BREAKS EVERY EXISTING PROJECT. The first
+      # pass mints `.git` and the marker; the second must recognise it as ours and commit again.
+      # It is also what makes the nested-working-tree pruning below safe: the project's OWN marker
+      # is exempt, or the feature stops at the second pass on every project that has ever committed.
+      test "a repository this app created is committed to again on the next pass" do
+        travel_to(3.days.ago) { file_node("notes.md", content: "one\n") }
+        first = pass.call!
+        assert first, "expected a first commit"
+        marker_dir_node!(parent: @folder) # what the next scan indexes for the `.git` we just minted
+
+        travel_to(3.days.ago) { file_node("second.md", content: "two\n") }
+        second = pass.call!
+
+        assert second, "the second pass refused a repository this app created itself"
+        refute_equal first, second
+        assert_equal "two\n", read_back.blob_at(oid: second, path: "second.md")
+      end
+
+      # ---- a working tree NESTED inside the project ---------------------------------------------
+      #
+      # THE SAME MISTAKE ONE LEVEL DOWN, observed on the same box:
+      # `Projects/ESPHome-Projection-Clock/.claude/worktrees/<x>/.git`, a working tree inside a
+      # project whose ROOT has no repository at all. Those files are the maker's, tracked by their
+      # own git, and committing them into ours is the thing fix 1 refuses with a smaller radius.
+
+      test "files inside a nested working tree are skipped while a sibling outside it is committed" do
+        travel_to(3.days.ago) do
+          worktrees = dir_node("worktrees", parent: dir_node(".claude", parent: @folder))
+          tree = dir_node("x", parent: worktrees)
+          marker_file_node!(parent: tree)
+          file_node("main.py", parent: tree, content: "theirs\n")
+          file_node("README.md", parent: worktrees, content: "ours\n")
+        end
+
+        head = pass.call!
+        assert head, "the rest of the project must still be committed"
+
+        repo = read_back
+        assert_equal "ours\n", repo.blob_at(oid: head, path: ".claude/worktrees/README.md"),
+                     "a file OUTSIDE the nested working tree must still be committed"
+        assert_raises(FileLayer::NotFound,
+                      "a file inside the maker's own working tree must not enter our history") do
+          repo.blob_at(oid: head, path: ".claude/worktrees/x/main.py")
+        end
+      end
+
+      # THE MARKER ITSELF, WHICH IS INDEXED WHERE `.git/**` IS NOT. A `gitdir:` pointer is an
+      # ordinary FILE to the scan, so it was being committed as `.git.ptr` -- a pointer at the one
+      # path that must never be in a repository at all.
+      test "a `.git` pointer file is not committed as .git.ptr" do
+        travel_to(3.days.ago) do
+          tree = dir_node("x", parent: @folder)
+          marker_file_node!(parent: tree)
+          file_node("kept.md", parent: @folder, content: "ours\n")
+        end
+
+        head = pass.call!
+        repo = read_back
+
+        assert_equal "ours\n", repo.blob_at(oid: head, path: "kept.md")
+        assert_raises(FileLayer::NotFound) { repo.blob_at(oid: head, path: "x/.git.ptr") }
+        assert_raises(FileLayer::NotFound) { repo.blob_at(oid: head, path: "x/.git") }
+      end
+
+      # A VENDORED CLONE IS THE SAME CASE WITH A DIRECTORY MARKER, and it is the one
+      # Maker::AttachToProject already refuses to file. Nested, so the project-root exemption --
+      # which exists only for the marker WE mint -- must not reach it.
+      test "files inside a nested clone with a `.git` directory are skipped" do
+        travel_to(3.days.ago) do
+          vendored = dir_node("lib", parent: dir_node("vendor", parent: @folder))
+          marker_dir_node!(parent: vendored)
+          file_node("driver.c", parent: vendored, content: "theirs\n")
+          file_node("kept.md", parent: @folder, content: "ours\n")
+        end
+
+        head = pass.call!
+        repo = read_back
+
+        assert_equal "ours\n", repo.blob_at(oid: head, path: "kept.md")
+        assert_raises(FileLayer::NotFound) { repo.blob_at(oid: head, path: "vendor/lib/driver.c") }
+      end
+
       private
 
       def pass(scan_started_at: Time.current)
         Maker::Git::ProjectCommit.new(project: @project.reload, scan_started_at:, cache_root:)
+      end
+
+      def git_dir = FileLayer.current.repo_data_dir(@user, project: @project).to_s
+
+      # A REAL REPOSITORY WITH A REAL COMMIT AND NO MARKER -- what `git clone` leaves in a folder a
+      # maker dropped into `Projects/`. Written straight to disk, with the marker NODE the scan
+      # would mint for it, because that is how one actually arrives: git creates it and the scan
+      # observes it (Library::RepoMetadata's one skip that keeps its entry).
+      def plant_a_foreign_repository!
+        FileUtils.mkdir_p(git_dir)
+        their = ::Rugged::Repository.init_at(git_dir, true)
+        their.config["user.name"] = "The Maker"
+        index = their.index
+        index.add(path: "THEIRS.md", oid: their.write("their own work\n", :blob), mode: 0o100644)
+        signature = { name: "The Maker", email: "maker@example.com", time: Time.current.to_time }
+        oid = ::Rugged::Commit.create(their, tree: index.write_tree(their), message: "mine",
+                                             parents: [], author: signature, committer: signature,
+                                             update_ref: Maker::Git::Repo::BRANCH)
+        their.head = Maker::Git::Repo::BRANCH
+        marker_dir_node!(parent: @folder)
+        oid
+      end
+
+      # EVERY FILE'S CONTENT, NOT A COUNT AND NOT A LIST OF NAMES. "We did not commit" is a weaker
+      # claim than "we wrote nothing at all": the config stamp, `index.clear` and `index.write` are
+      # each a silent mutation of the maker's own repository that no commit-shaped assertion sees.
+      def repository_digest
+        Dir.glob("**/*", base: git_dir, flags: File::FNM_DOTMATCH)
+           .reject { |rel| File.basename(rel).match?(/\A\.\.?\z/) }
+           .reject { |rel| File.directory?(File.join(git_dir, rel)) }
+           .sort
+           .map { |rel| [ rel, Digest::SHA256.hexdigest(File.binread(File.join(git_dir, rel))) ] }
+      end
+
+      def commit_count(repo)
+        walker = ::Rugged::Walker.new(repo)
+        walker.push(repo.references[Maker::Git::Repo::BRANCH].target_id)
+        walker.count
+      end
+
+      def capturing_logs
+        original = Rails.logger
+        io = StringIO.new
+        Rails.logger = ActiveSupport::Logger.new(io)
+        yield
+        io.string
+      ensure
+        Rails.logger = original
+      end
+
+      # THE PORT REFUSES TO MINT `.git` AND MUST (Library::RepoMetadata's write guards), so a marker
+      # fixture is written to disk and rowed directly -- which is also the only way a real one
+      # appears: git writes it, the scan observes it.
+      def marker_dir_node!(parent:)
+        rel = File.join(parent.storage_path, Library::RepoMetadata::DIR_NAME)
+        @root.join(rel).mkpath
+        @user.nodes.create!(node_id: SecureRandom.uuid, name: Library::RepoMetadata::DIR_NAME,
+                            kind: "dir", parent_node_id: parent.node_id, storage_path: rel)
+      end
+
+      # A LINKED WORKTREE'S MARKER IS A FILE, not a directory -- `git worktree add` writes a
+      # `gitdir:` pointer. That is the shape actually found on the box.
+      def marker_file_node!(parent:)
+        file_node(Library::RepoMetadata::DIR_NAME, parent:,
+                  content: "gitdir: /elsewhere/.git/worktrees/x\n")
       end
 
       # A SECOND Repo OVER THE SAME REPOSITORY, to read back what the pass wrote. In place, the

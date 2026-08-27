@@ -148,6 +148,19 @@ module Projects
       :unreachable
     rescue FileLayer::NotFound
       :unavailable
+    rescue Maker::Git::Repo::UnmanagedRepository
+      # A REPOSITORY THIS APP DID NOT CREATE, WHERE ONE OF OURS USED TO BE. Reachable in one
+      # narrow way: the project had our repo (hence a `maker_git_repos` row, hence
+      # `never_committed?` is false and the guard above lets us through), and the maker has since
+      # replaced its `.git` with a clone of their own. `Maker::Git::Repo` refuses to open it --
+      # correctly, that is tinkerex#170 -- and without this arm the refusal reaches the browser as
+      # a 500 on an ordinary page view.
+      #
+      # A FIFTH STATE RATHER THAN FOLDING IT INTO `:unavailable`, for the reason the other four
+      # exist: this one is neither missing nor retryable, nothing is wrong with the library, and
+      # the only action that resolves it is the maker's. Saying "your library folder is missing"
+      # would send them looking for a fault that is not there.
+      :unmanaged
     end
 
     def load_history

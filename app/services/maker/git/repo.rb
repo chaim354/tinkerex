@@ -26,10 +26,22 @@ module Maker
     # the index must be written, or `git status` reports every tracked file as DELETED -- which to
     # a maker looking at their own folder reads as "the app deleted my files".
     class Repo
+      # A REPOSITORY IS ALREADY HERE AND IT IS NOT OURS. Raised by #ensure_initialized! before it
+      # writes anything at all, so every door into #hydrate! gets the refusal whether or not its
+      # author remembered to ask. Maker::Git::ProjectCommit turns it into a skip; see there.
+      class UnmanagedRepository < StandardError; end
+
       # The marker that says this repo is OURS. A git config key rather than a database column,
       # because it has to travel WITH the repository: a restore, a re-hydrate, or a maker copying
       # their library to a new NAS all keep it, and a maker who drops their OWN repo into Projects/
       # never acquires it. `maker_git_repos` is an index over this, never the source of truth.
+      #
+      # THE MARKER IS ONLY A MARKER IF IT IS READ BEFORE IT IS WRITTEN. #ensure_initialized! wrote
+      # it unconditionally until 2026-08-27, which meant the one question it exists to answer --
+      # "did we create this repository?" -- was destroyed at the exact moment it was asked. On the
+      # share box `Projects/TheFlightWall_OSS` was a project folder holding the maker's OWN clone,
+      # and the next pass would have stamped our marker into THEIR `.git/config`, cleared THEIR
+      # index, and put a bot commit of 2,305 files on THEIR `refs/heads/main`.
       MANAGED_CONFIG_KEY = "tinkerex.managed".freeze
       BRANCH = "refs/heads/main".freeze
 
@@ -199,7 +211,7 @@ module Maker
       end
 
       def head_oid = rugged.references[BRANCH]&.target_id
-      def managed? = rugged.config[MANAGED_CONFIG_KEY].to_s == "true"
+      def managed? = managed_marker?(rugged)
       def loose_object_rels = Dir.glob("objects/??/*", base: git_dir)
       # ONE PER PACK, and it is the .idx that is counted rather than the .pack: a pack this code can
       # do nothing with is a pack whose index it cannot read, and #repack_all! enumerates through
@@ -390,9 +402,15 @@ module Maker
         end
       end
 
+      # THE READ COMES FIRST, AND THE ORDER IS THE WHOLE FIX. Everything below this line writes --
+      # `mkdir_p` mints the marker directory Maker::AttachToProject reads, `init_at` writes a
+      # repository, and the two `config[...] =` lines write into whatever config is already there.
+      # Ask whether this repository is ours BEFORE any of that, or the answer is one we just wrote.
       def ensure_initialized!
+        existing = refuse_unless_ours!
+
         FileUtils.mkdir_p(git_dir)
-        ::Rugged::Repository.init_at(git_dir, true) unless File.exist?(File.join(git_dir, "HEAD"))
+        ::Rugged::Repository.init_at(git_dir, true) if existing.nil?
         @rugged = nil
         # HEAD FOLLOWS THE BRANCH WE COMMIT TO. libgit2 writes `refs/heads/master` at init; without
         # this the history is intact and `git log` cannot see it. See the class header.
@@ -402,6 +420,59 @@ module Maker
         # cache there is nothing but `.git`, so it stays bare.
         rugged.config["core.bare"] = in_place? ? "false" : "true"
       end
+
+      # Raise unless whatever is at `git_dir` is ours to write into. Returns the OPEN repository
+      # when one is already there (so the caller does not ask twice), and nil when there is nothing
+      # here yet -- which is the ordinary answer and the one that means "initialize".
+      #
+      # "ALREADY EXISTS" IS "libgit2 CAN OPEN IT", NEVER "THE DIRECTORY IS THERE". The hydrated
+      # backends' own #hydrate! runs `mkdir_p(cache_dir)` before this, so a directory that exists is
+      # the NORMAL first-pass state, and refusing on a directory would refuse every s3 and
+      # chunk_remote project that ever ran. An empty `.git` a maker made by hand is not a repository
+      # either -- you cannot create one by creating the folder (Library::RepoMetadata says the same
+      # thing at the write guards) -- so it is ours to initialize, and #config is never asked about
+      # a repository that is not there.
+      #
+      # A FAILURE TO OPEN IS "NOT A REPOSITORY", NOT AN ERROR. Measured against rugged 1.9.6: an
+      # absent path raises Rugged::OSError, an empty directory and a directory holding fragments
+      # (`objects/` but no HEAD) raise Rugged::RepositoryError. Both mean the same thing here.
+      #
+      # A `.git` THAT IS NOT A DIRECTORY IS ALWAYS FOREIGN, and it is checked FIRST because it is
+      # the case the open cannot answer safely. That file is a `gitdir:` pointer -- what `git
+      # worktree add` and a submodule write -- so the folder is somebody else's linked working tree.
+      # If its target resolves, libgit2 opens the MAIN repository and the marker check below refuses
+      # it; if the target is missing, the open raises OSError, which without this guard reads as
+      # "nothing here" and sends `mkdir_p` at an existing FILE (Errno::EEXIST). We only ever create
+      # a DIRECTORY at `git_dir`, so a file there can never be ours whatever the open says.
+      def refuse_unless_ours!
+        if File.exist?(git_dir) && !File.directory?(git_dir)
+          refuse!("#{git_dir} is a `gitdir:` pointer file, so this folder is a linked working " \
+                  "tree belonging to a repository elsewhere")
+        end
+
+        existing = existing_repository
+        return nil if existing.nil?
+        return existing if managed_marker?(existing)
+
+        refuse!("#{git_dir} is a git repository this app did not create -- it carries no " \
+                "#{MANAGED_CONFIG_KEY}, so its history, branches and index are the maker's own")
+      end
+
+      def refuse!(reason)
+        raise UnmanagedRepository,
+              "refusing to write into #{@project.slug} (project #{@project.id}): #{reason}."
+      end
+
+      # THE READ THAT CREATES NOTHING. `Rugged::Repository.new` opens; it never initializes, and it
+      # does NOT search upward (libgit2's plain open, not open_ext) -- so a library that happens to
+      # sit inside somebody's checkout cannot make every project look like a repository.
+      def existing_repository
+        ::Rugged::Repository.new(git_dir)
+      rescue ::Rugged::RepositoryError, ::Rugged::OSError
+        nil
+      end
+
+      def managed_marker?(repository) = repository.config[MANAGED_CONFIG_KEY].to_s == "true"
 
       def rugged = @rugged ||= ::Rugged::Repository.new(git_dir)
 

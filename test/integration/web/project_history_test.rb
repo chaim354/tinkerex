@@ -511,5 +511,28 @@ module Web
                        content_type: "image/png")
       row
     end
+
+    # A REPOSITORY THIS APP DID NOT CREATE, WHERE ONE OF OURS USED TO BE -- the project has a
+    # maker_git_repos row (so the never-committed guard lets the request through) and its `.git` has
+    # since been replaced by a clone of the maker's own. Maker::Git::Repo refuses to open it, which
+    # is tinkerex#170 working; without a page state for it that refusal is a 500 on an ordinary view.
+    test "a project whose repository the app does not manage renders its own state, not a 500" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Foreign #{SecureRandom.hex(3)}")
+      project.ensure_library_folder!(user)
+      Maker::GitRepo.create!(project:, head_oid: "a" * 40, last_commit_at: Time.current)
+
+      # A real repository, carrying no tinkerex.managed -- exactly what a `git clone` leaves.
+      dir = FileLayer.current.repo_data_dir(user, project:)
+      FileUtils.mkdir_p(dir)
+      Rugged::Repository.init_at(dir.to_s, true)
+
+      get project_history_path(project)
+
+      assert_response :success
+      assert_select ".history-unmanaged"
+      assert_select ".history-unavailable", 0, "a foreign repo is not a missing folder"
+      assert_select ".history-empty", 0, "nor is it an empty history"
+    end
   end
 end

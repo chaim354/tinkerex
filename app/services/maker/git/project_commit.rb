@@ -25,6 +25,10 @@ module Maker
       # different claims about how deep a library can get.
       MAX_DEPTH = Maker::AttachToProject::MAX_ANCESTOR_WALK
 
+      # How often one refused project may say so. A day is the granularity an operator reads a log
+      # at; the sweep's is fifteen minutes. See #report_refusal.
+      REFUSAL_LOG_INTERVAL = 1.day
+
       # `cache_root:` IS A SEAM WITH A PRODUCTION-SHAPED REASON, not a test convenience -- it is
       # Repo's own, forwarded, because this class constructs the Repo and a caller otherwise cannot
       # reach it. Repo keys its cache by user and project ID, and IDS ARE NOT UNIQUE OVER TIME
@@ -88,9 +92,44 @@ module Maker
         repo.consolidate!
         repo.persist!
         oid
+      rescue Repo::UnmanagedRepository => e
+        report_refusal(e)
+        nil
       end
 
       private
+
+      # A REPOSITORY WE DID NOT CREATE IS A SKIP, NOT A FAILURE, AND THE DIFFERENCE IS WHY THIS IS
+      # RESCUED HERE RATHER THAN LEFT TO Maker::Git::CommitJob'S PER-PROJECT `rescue StandardError`.
+      # That rescue counts a project as FAILED and prints an error line, which is right for a NAS
+      # that blinked and wrong for this: the refusal is a standing, correct, permanent state, and
+      # letting it land in the failure count would make "N FAILED" mean nothing on a box where one
+      # maker keeps their own clone in Projects/. `nil` is #call!'s already-documented answer for
+      # "nothing to record", which is exactly what happened, so the sweep skips this project and
+      # every other project's pass is untouched.
+      #
+      # THE REFUSAL ITSELF STAYS IN Repo#ensure_initialized! AND MUST. It sits immediately before
+      # the writes, so a future caller that hydrates -- a controller, a rake task, a repack --
+      # inherits the protection instead of having to remember a predicate. A `#foreign?` this class
+      # consulted would be opt-in, and would also be a SECOND read of the same config answering the
+      # same question, which is the one-condition-two-answers shape §14a keeps recording.
+      #
+      # WRITTEN DOWN, BUT NOT NINETY-SIX TIMES A DAY. A silent skip leaves a maker wondering why
+      # their project never gains history; a WARN every 15 minutes forever is how an operator learns
+      # to ignore the log this job also uses for real failures. So it is claimed through the cache,
+      # once per project per day: `unless_exist` writes -- and returns true -- only for the caller
+      # that got there first. A cache is the right store precisely because losing it is harmless:
+      # the entry expiring, a deploy, or a store that keeps nothing at all costs one extra log line
+      # and never silence. (§14e's scar is the same mechanism failing the OTHER way: a rate limit
+      # backed by the test env's NullStore fires never. Measured here rather than assumed --
+      # NullStore#write returns true both times, so the test env logs on every pass.)
+      def report_refusal(error)
+        key = "maker/git/unmanaged-repository/#{@project.id}"
+        return unless Rails.cache.write(key, true, expires_in: REFUSAL_LOG_INTERVAL, unless_exist: true)
+
+        Rails.logger.warn("Maker::Git::ProjectCommit: #{error.message} This project will gain no " \
+                          "version history while that repository is there.")
+      end
 
       # `{ "cad/body.step.ptr" => "version tinkerex/v1\n..." }` -- repository-relative path to the
       # blob body that goes in at it.
@@ -220,20 +259,85 @@ module Maker
       #
       # THE `.git` MARKER IS NOT DESCENDED INTO. On share and s3 nothing beneath it is observed, so
       # there are no rows to find; on chunk_remote the desktop client syncs `.git` and there are.
-      # Walking in would offer the repository its own internals as content to commit. Excluded via
-      # Node.outside_repo_metadata so `.git` keeps being spelled in exactly one place
-      # (Library::RepoMetadata::DIR_NAME).
+      # Walking in would offer the repository its own internals as content to commit. `.git` keeps
+      # being spelled in exactly one place (Library::RepoMetadata), never a second check here.
+      #
+      # A NESTED WORKING TREE IS PRUNED WHOLE, MARKER AND SIBLINGS ALIKE -- the same refusal as the
+      # project-root one (Repo::UnmanagedRepository) applied one level down, and observed on the
+      # same box: `Projects/ESPHome-Projection-Clock/.claude/worktrees/<x>/` is a working tree
+      # inside a project whose root has no repository at all. Skipping only the marker leaves every
+      # file BESIDE it committed into our history, which is the same mistake with a smaller radius:
+      # those bytes are the maker's, tracked by their own git, and ours is not the repository that
+      # should be recording them.
+      #
+      # IT IS THE MARKER'S PARENT THAT IS PRUNED, NOT THE MARKER. `.git/**` contents are never
+      # indexed (Library::RepoMetadata's asymmetry), so there is nothing UNDER the marker to
+      # exclude; what has to go is the directory the marker sits in, and everything below it.
+      #
+      # A `.git` FILE COUNTS HERE, WHERE Maker::AttachToProject#walk_for_marker DELIBERATELY ASKS
+      # FOR A DIRECTORY -- and the two are answering different questions rather than disagreeing. A
+      # linked worktree and a submodule write a `gitdir:` POINTER FILE where a plain clone has a
+      # directory, and git treats that folder as a working tree either way. The pointer is also
+      # exactly what was being committed as `.git.ptr`; pruning its parent drops it with its
+      # siblings, so there is no separate "never commit a file named .git" rule to keep in step.
+      # Being wrong in this direction costs a folder its history, which is recoverable and is
+      # anyway the maker's own repository's job; being wrong in the other puts their tracked files
+      # in a history git cannot prune.
+      #
+      # THE PROJECT'S OWN ROOT MARKER IS EXEMPT ONLY WHEN IT IS A DIRECTORY. That is the marker
+      # every managed project acquires on its first commit, so pruning on it would stop the whole
+      # feature at the second pass; whether THAT repository is ours is Repo#ensure_initialized!'s
+      # question and it is asked before anything is written. The exemption is not extended to a
+      # POINTER FILE at the project root: we only ever create a directory there, so a file means
+      # the project folder is itself somebody else's linked worktree.
+      #
+      # ONE QUERY PER LEVEL STILL. The sweep runs per project per scan over thousands of nodes, so
+      # the marker is found in the same pass that enumerates the directories -- `kind: "dir"` OR a
+      # child named `.git` -- rather than by asking per node.
       def directory_ids_at_or_under(folder)
         ids = [ folder.node_id ]
         seen = []
+        pruned = []
         MAX_DEPTH.times do
           break if ids.empty?
 
           seen.concat(ids)
-          ids = @user.nodes.present.outside_repo_metadata
-                     .where(parent_node_id: ids, kind: "dir").pluck(:node_id) - seen
+          rows = directory_or_marker_children(ids)
+          roots = foreign_work_tree_roots(rows, folder)
+          # The roots were added to `seen` at the top of THIS iteration -- a marker's parent is
+          # always in the frontier whose children we just read -- so this is where they come back
+          # out, before anything asks `seen` for the ids to commit under.
+          seen -= roots
+          pruned.concat(roots)
+          ids = rows.filter_map do |node_id, parent_node_id, name, kind|
+            node_id if kind == "dir" && !Library::RepoMetadata.marker?(name) &&
+                       !pruned.include?(parent_node_id)
+          end
+          ids = ids - seen - pruned
         end
         seen
+      end
+
+      # Every child of `ids` that is either a directory (the descent) or the marker (the pruning),
+      # in one query. The marker may be a directory OR a file, so it cannot be found by the
+      # `kind: "dir"` arm alone.
+      def directory_or_marker_children(ids)
+        children = @user.nodes.present.where(parent_node_id: ids)
+        children.where(kind: "dir")
+                .or(children.where(name: Library::RepoMetadata::DIR_NAME))
+                .pluck(:node_id, :parent_node_id, :name, :kind)
+      end
+
+      # The directories among `rows`' parents that hold a `.git` marker and are therefore somebody
+      # else's working tree. See #directory_ids_at_or_under for why the project folder's own
+      # DIRECTORY marker is the one exemption.
+      def foreign_work_tree_roots(rows, folder)
+        rows.filter_map do |_node_id, parent_node_id, name, kind|
+          next unless Library::RepoMetadata.marker?(name)
+          next if kind == "dir" && parent_node_id == folder.node_id
+
+          parent_node_id
+        end.uniq
       end
     end
   end

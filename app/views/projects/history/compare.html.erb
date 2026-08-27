@@ -29,6 +29,11 @@
     This project's library folder is missing, so there is nowhere to read its history from.
     Restore or re-create the folder and the next scan will pick it up.
   </p>
+<% elsif @state == :unmanaged %>
+  <p class="history-unmanaged notice">
+    This project folder holds a git repository that this app did not create, so it is left alone.
+    There is nothing here to compare; read its history with git directly.
+  </p>
 <% elsif @state == :empty %>
   <p class="history-empty muted">
     No history recorded yet. Versions appear here once this project's files have been still long
