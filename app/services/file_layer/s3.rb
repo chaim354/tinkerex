@@ -668,8 +668,13 @@ module FileLayer
     # NO TEMP-AND-RENAME, matching #write and for the identical reason: put_object is ATOMIC, so a
     # temp key would add a second, unobservable ghost and buy nothing. A reader never sees a
     # half-written object.
+    # `body: io`, NOT `io.read` -- the SDK streams an IO, and a pack is the one thing here that can
+    # be large. It deliberately does NOT go through `read_capped!` the way #write does: that cap is
+    # 256 MiB and answers NotFound, which for a legitimate pack would be a factually wrong TERMINAL
+    # answer to "your repository is too big". (A single PUT still tops out at 5 GiB -- the limit
+    # this adapter already knows as COPY_MAX_BYTES -- so a repo that large needs multipart.)
     def write_repo_data(user, project:, rel:, io:)
-      @client.put_object(bucket: @bucket, key: repo_data_key(user, project, rel), body: io.read)
+      @client.put_object(bucket: @bucket, key: repo_data_key(user, project, rel), body: io)
       nil
     rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
       raise FetchError, "repo write failed for #{rel.inspect}: #{e.message}"
@@ -677,8 +682,13 @@ module FileLayer
 
     def read_repo_data(user, project:, rel:)
       @client.get_object(bucket: @bucket, key: repo_data_key(user, project, rel)).body.read
-    rescue ::Aws::S3::Errors::NoSuchKey
+    rescue ::Aws::S3::Errors::NoSuchKey, ::Aws::S3::Errors::NotFound
       # NotFound, not FetchError: this rel genuinely is not there and a retry cannot change it.
+      #
+      # BOTH CLASSES ARE NAMED, for the reason #read and #object_exists? already name both: an
+      # S3-COMPATIBLE store may pick either, and this backend points at whatever the user runs
+      # (SeaweedFS/MinIO/Ceph). Rescuing NoSuchKey alone makes an absent pack RETRYABLE on those
+      # stores -- and no CI leg can catch it, because FakeS3 always answers NoSuchKey.
       raise NotFound, "no repo data at #{rel.inspect}"
     rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
       # A blip, a throttle, an unreachable store: retryable, and NONE of them means "gone" (§14a).
@@ -692,20 +702,50 @@ module FileLayer
       token = nil
       loop do
         resp = @client.list_objects_v2(bucket: @bucket, prefix: search, continuation_token: token)
-        resp.contents.each { |o| out << o.key.delete_prefix(root) }
+        # DIRECTORY-MARKER OBJECTS ARE DROPPED. The S3 console mints a zero-byte `<prefix>/` object
+        # for a "folder", so a repo can carry `.git/` and `.git/objects/pack/` keys. Left in, the
+        # marker AT the root strips to "" and handing that back to #read_repo_data raises
+        # ArgumentError -- an unhandled class for a caller that is walking a listing. Share drops
+        # these with its `File.directory?` reject; this is the same filter in a flat keyspace.
+        resp.contents.each do |o|
+          key = o.key.delete_prefix(root)
+          out << key unless key.empty? || key.end_with?("/")
+        end
         # COMPLETE OR NOTHING. A truncated listing is a well-formed lie (§14b): the caller reads it
         # as "these are all the packs" and hydrates an incomplete repository, which then fails
         # later and elsewhere. Following the continuation token is the whole of the fix.
         break unless resp.is_truncated
-        token = resp.next_continuation_token
+
+        previous, token = token, resp.next_continuation_token
+        # Truncated but the cursor did not ADVANCE: the store says there is more and has given us
+        # no way to ask for it. Library::S3Observer#paginate refuses the blank half of this for the
+        # identical reason -- real S3 cannot do it, an S3-COMPATIBLE store is not bound by that,
+        # and this backend points at whatever the user runs (SeaweedFS/MinIO/Ceph).
+        #
+        # WITHOUT THIS THE LOOP NEVER ENDS, which is worse here than in the observer: there a bad
+        # page refuses a scan, here it hangs a Puma thread while `out` grows without bound. BOTH
+        # shapes are checked, because both were driven and both hang -- a nil token re-requests
+        # page one forever, and a REPEATED token does the same thing while never being blank. The
+        # honest test is that the cursor moved, not that it exists.
+        if token.blank? || token == previous
+          raise FetchError, "the S3 listing reports more results but its continuation token did " \
+                            "not advance -- the repository listing is incomplete. Refusing."
+        end
       end
       out
     rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
       raise FetchError, "repo list failed: #{e.message}"
     end
 
+    # DELETING WHAT IS ALREADY GONE IS SUCCESS. Real S3 makes a DELETE on an absent key a no-op, so
+    # this rescue is unreachable there -- it is here because the promise must not rest on an
+    # unasserted third-party property. Share earns it with a rescued ENOENT and chunk_remote by
+    # looking the node up first; on this backend alone it was resting on what SeaweedFS/MinIO/Ceph
+    # happen to do, which no CI leg exercises.
     def delete_repo_data(user, project:, rel:)
       @client.delete_object(bucket: @bucket, key: repo_data_key(user, project, rel))
+      nil
+    rescue ::Aws::S3::Errors::NoSuchKey, ::Aws::S3::Errors::NotFound
       nil
     rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
       raise FetchError, "repo delete failed for #{rel.inspect}: #{e.message}"
@@ -1064,8 +1104,12 @@ module FileLayer
     end
 
     # The `.git/` prefix itself, WITH its trailing slash: `list_repo_data` both searches under it
-    # and strips it back off, and a missing slash would make `Projects/lamp.git-notes` match a
-    # search for `Projects/lamp/.git`.
+    # and strips it back off. The slash is what keeps the prefix a DIRECTORY boundary in a flat
+    # keyspace -- without it, `Projects/lamp/.gitignore` and `Projects/lamp/.git-notes/n` both
+    # match a search for `Projects/lamp/.git` and get served as repository data. (An earlier
+    # version of this comment illustrated the hazard with `Projects/lamp.git-notes`, which is not
+    # an instance of it: that key does not start with `Projects/lamp/.git` either way. The rule is
+    # load-bearing; that example did not demonstrate it.)
     def repo_data_root_key(user, project)
       "#{key_for_rel("#{project_folder_rel(user, project)}/#{Library::RepoMetadata::DIR_NAME}")}/"
     end

@@ -541,11 +541,18 @@ module FileLayer
       raise FetchError, "repo write failed for #{rel.inspect}: #{e.message}"
     end
 
+    # ENOENT IS ASKED A SECOND QUESTION, and skipping it is the mistake this method shipped with.
+    # An UNMOUNTED share raises ENOENT -- the mountpoint directory survives the unmount and is
+    # simply empty -- so the naive split sends "the whole NAS is gone" down the TERMINAL arm and
+    # tells the caller a pack is permanently lost. §14a states the rule outright, and #read and
+    # #download both already interpose exactly this probe; this was the third door and did not.
     def read_repo_data(user, project:, rel:)
       path = repo_data_path(user, project, rel)
       File.binread(path)
     rescue Errno::ENOENT
-      # NotFound, not FetchError: this rel genuinely is not there and a retry cannot change it.
+      raise FetchError, "#{rel.inspect}: ENOENT and the library root looks unmounted" unless library_present?
+
+      # The library is there and this one rel is not. Genuinely gone: terminal.
       raise NotFound, "no repo data at #{rel.inspect}"
     rescue SystemCallError => e
       # An unmounted share must never read as "permanently gone" (§14a).
@@ -555,7 +562,15 @@ module FileLayer
     def list_repo_data(user, project:, prefix: nil)
       root = repo_data_root(user, project)
       base = prefix.present? ? repo_data_path(user, project, prefix) : root
-      return [] unless base.directory?
+      unless base.directory?
+        # AN EMPTY ANSWER AND A MISSING LIBRARY ARE NOT THE SAME FACT, and conflating them here
+        # would be the well-formed lie this method's own comment names four lines down: a caller
+        # reads [] as "this repository has no objects" and hydrates an empty repo. A project that
+        # has no `.git` yet legitimately answers []; an unmounted NAS must be retryable (§14a).
+        raise FetchError, "repo list failed: the library root looks unmounted" unless library_present?
+
+        return []
+      end
 
       # FNM_DOTMATCH, AND IT IS LOAD-BEARING: a bare Dir.glob("**/*") SKIPS dotfiles, and a repo
       # holds plenty of them. A hydration driven by a listing that silently omitted them is the
@@ -564,6 +579,13 @@ module FileLayer
       # drops the `.` entry FNM_DOTMATCH adds.
       Dir.glob("**/*", base: base.to_s, flags: File::FNM_DOTMATCH)
          .reject { |r| File.directory?(base.join(r)) }
+         # A CRASH BETWEEN open AND rename STRANDS A TEMP FILE IN HERE FOREVER. `ensure` does not
+         # run on SIGKILL, and nothing sweeps inside `.git` -- the Scanner never descends and the
+         # trash purge only touches `.trash`. Emitting it would feed it to a hydrating caller as
+         # though it were repository data, and a concurrent list during an in-flight write sees it
+         # too. The Scanner skips this prefix at any depth; so does this, sharing the constant
+         # rather than a second copy of the string.
+         .reject { |r| r.split("/").any? { |seg| seg.start_with?(Library::Scanner::TEMP_PREFIX) } }
          .map { |r| prefix.present? ? "#{prefix}/#{r}" : r }
     rescue SystemCallError => e
       raise FetchError, "repo list failed: #{e.message}"
@@ -573,6 +595,11 @@ module FileLayer
       File.unlink(repo_data_path(user, project, rel))
       nil
     rescue Errno::ENOENT
+      # "This rel is already gone" and "the whole library is gone" are the same errno and must not
+      # be the same answer: on an unmounted share every delete in a consolidation sweep would
+      # report success having removed nothing. Same probe #read_repo_data makes, same reason.
+      raise FetchError, "#{rel.inspect}: ENOENT and the library root looks unmounted" unless library_present?
+
       nil # deleting what is already gone is success, not an error
     rescue SystemCallError => e
       raise FetchError, "repo delete failed for #{rel.inspect}: #{e.message}"

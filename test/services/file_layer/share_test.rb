@@ -1154,5 +1154,74 @@ module FileLayer
       assert_equal [ ".gitignore", "objects/.keep" ],
                    adapter.list_repo_data(@user, project: repo_project).sort
     end
+
+    # A CRASHED WRITE STRANDS ITS TEMP FILE INSIDE `.git` PERMANENTLY -- `ensure` does not run on
+    # SIGKILL, and nothing sweeps in there. Emitting it would hand a hydrating caller a file that
+    # is not repository data, so the listing skips the Scanner's own prefix at any depth.
+    test "list_repo_data skips a stranded temp file" do
+      adapter.write_repo_data(@user, project: repo_project, rel: "HEAD", io: StringIO.new("h"))
+      stranded = adapter.send(:repo_data_root, @user, repo_project)
+                        .join("#{Library::Scanner::TEMP_PREFIX}deadbeef")
+      File.binwrite(stranded, "torn")
+
+      assert_equal [ "HEAD" ], adapter.list_repo_data(@user, project: repo_project)
+    end
+
+    # ---- an unmounted share is RETRYABLE, never "permanently gone" (§14a) -----
+    #
+    # THE ERRNO IS THE SAME FOR BOTH FACTS, which is the whole trap: an unmounted share leaves the
+    # mountpoint directory in place and empty, so every one of these raises ENOENT exactly as a
+    # genuinely-absent rel does. #read and #download already interpose `library_present?`; these
+    # three verbs are the doors that were added without it. Emptying the root is how
+    # `library_present?` itself defines the condition, and it is what ShareTest's own
+    # "ENOENT with an EMPTY library root is TRANSIENT" test does for #read.
+    test "read_repo_data on an unmounted share is FetchError, not NotFound" do
+      adapter.write_repo_data(@user, project: repo_project, rel: "HEAD", io: StringIO.new("h"))
+      unmount!
+
+      assert_raises(FileLayer::FetchError) do
+        adapter.read_repo_data(@user, project: repo_project, rel: "HEAD")
+      end
+    end
+
+    test "delete_repo_data on an unmounted share raises rather than reporting success" do
+      adapter.write_repo_data(@user, project: repo_project, rel: "HEAD", io: StringIO.new("h"))
+      unmount!
+
+      # A consolidation sweep must not be told it deleted things it did not touch.
+      assert_raises(FileLayer::FetchError) do
+        adapter.delete_repo_data(@user, project: repo_project, rel: "objects/pack/a.pack")
+      end
+    end
+
+    test "list_repo_data on an unmounted share raises rather than answering empty" do
+      adapter.write_repo_data(@user, project: repo_project, rel: "HEAD", io: StringIO.new("h"))
+      unmount!
+
+      # [] would read as "this repository has no objects" and hydrate an empty repo.
+      assert_raises(FileLayer::FetchError) do
+        adapter.list_repo_data(@user, project: repo_project)
+      end
+    end
+
+    # THE FOLDER REL IS THE HALF `data_rel!` DOES NOT VALIDATE -- it checks the caller's `rel` and
+    # takes the folder's stored path on trust, so `resolve_inside!` is the ONLY guard on this
+    # input, not a second opinion about it. Reachable per #absolute_path's own header: a database
+    # flipped chunk->share carries nodes whose storage_path was never a share path.
+    test "a project folder whose storage_path escapes the root is refused" do
+      project = repo_project
+      @user.nodes.find_by!(node_id: project.folder_node_id).update_column(:storage_path, "../escape")
+
+      assert_raises(FileLayer::NotFound) do
+        adapter.write_repo_data(@user, project:, rel: "HEAD", io: StringIO.new("x"))
+      end
+      assert_raises(FileLayer::NotFound) { adapter.list_repo_data(@user, project:) }
+    end
+
+    # Simulate the share going away WITHOUT removing the mountpoint itself, which is what an
+    # unmount actually looks like and what `library_present?` asks about.
+    def unmount!
+      @root.children.each { |c| FileUtils.remove_entry(c) }
+    end
   end
 end

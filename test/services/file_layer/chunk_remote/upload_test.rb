@@ -126,6 +126,39 @@ module FileLayer
       # server, so the folder node exists on the SERVER and not merely in this app's mirror.
       # TWO projects, because the scoping test's job is to catch an adapter that resolved the
       # destination from anything other than the project's own folder node.
+      # A STALE MIRROR MUST NOT MINT A SECOND NODE. This is the MAINLINE case, not an edge one: an
+      # overwrite takes no `refresh!` (mkdir returns early when the directory exists), so the
+      # `existing` lookup reads whatever the last pull left. With a random node_id a writer that
+      # has not seen the row creates a DUPLICATE at the same (parent, name) -- begin_upload does
+      # not call destination_vacant! and there is no unique index -- and a duplicate is
+      # unrecoverable: a fresh mirror sees both, `repo_data_node` answers arbitrarily, and
+      # `refs/heads/main` flips between two commits by row order. Deriving the id makes the second
+      # writer hit the SAME node: last-writer-wins, a lost commit rather than a corrupt ref.
+      test "an overwrite against a stale mirror updates the same node instead of duplicating it" do
+        project = repo_project
+        adapter.write_repo_data(@user, project:, rel: "refs/heads/main", io: StringIO.new("aaa\n"))
+        first = adapter.send(:repo_data_node, @user, project, "refs/heads/main")
+        parent_node_id, first_id = first.parent_node_id, first.node_id
+
+        first.destroy! # the mirror forgets a row the SERVER still has
+
+        adapter.write_repo_data(@user, project:, rel: "refs/heads/main", io: StringIO.new("bbb\n"))
+
+        # THE ID IS THE ASSERTION THAT CARRIES WEIGHT HERE, and the count is NOT -- checked by
+        # mutation rather than assumed. Reverting to a random node_id leaves this local count at 1
+        # while the SERVER holds two nodes named `main`, because the changelog pull is incremental
+        # and never re-delivers the row this test deleted. The mirror's own view is the
+        # well-formed lie; only the id shows the duplicate was avoided. The count stays as a
+        # regression net for the day a pull does re-deliver it, with its claim written to match
+        # what it can actually see.
+        rows = @user.nodes.where(parent_node_id:, name: "main")
+        assert_equal first_id, rows.first.node_id,
+                     "the node_id must be DERIVED from (parent, name), not random -- a random one " \
+                     "creates a second server-side node at the same path"
+        assert_equal 1, rows.count, "the local mirror must still show exactly one row"
+        assert_equal "bbb\n", adapter.read_repo_data(@user, project:, rel: "refs/heads/main")
+      end
+
       def repo_project
         @repo_project ||= make_repo_project("Repo Project")
       end

@@ -65,6 +65,11 @@ module FileLayer
     # and a 501 here would be factually wrong: the caller used the wrong door (§14a).
     WRITE_MSG = "chunk_remote uploads go through begin_upload/finalize_upload, not write"
 
+    # The namespace `#derived_node_id` hashes into. A FIXED, ARBITRARY UUID: it only has to be
+    # stable forever and distinct from any other namespace, so it is written out rather than
+    # derived from anything that could change.
+    REPO_NODE_NAMESPACE = "6d1f2a54-7c3b-4f8e-9a10-2b7c4e5d8f31".freeze
+
     def write(_user, parent_node_id: nil, name: nil, io: nil, replace: false)
       raise NotImplementedError, WRITE_MSG
     end
@@ -416,14 +421,20 @@ module FileLayer
 
       hash = Digest::SHA256.hexdigest(bytes)
       begun = begin_upload(user, parent_node_id:, name:, size: bytes.bytesize,
-                           node_id: existing&.node_id,
+                           node_id: existing&.node_id || derived_node_id(parent_node_id, name),
                            base_version_id: existing&.current_version_id,
                            manifest: [ { hash:, offset: 0, length: bytes.bytesize } ])
       begun.missing.each { |h| put_chunk(user, begun:, hash: h, bytes:) }
 
-      # `verify: false` -- the bytes were PUT synchronously in this same method call, so asking the
-      # server to re-read them from storage is a wasted round trip (Maker::Addons::LibraryOutput's
-      # argument, at the one other place this app finalizes bytes it just wrote itself).
+      # `verify: false` IS ACCEPTED AND DISCARDED ON THIS BACKEND, and saying so is the point of
+      # this comment. The sync server reads `Rails.configuration.x.verify_finalize`, never
+      # `params[:verify]` -- docs/sync-protocol.md calls the finalize body `{}`, "nothing required"
+      # -- so the field goes on the wire and changes nothing, exactly like `device:` and
+      # `broadcast:`. It is passed anyway to state the caller's intent. An earlier version of this
+      # comment claimed it saved a storage round trip: that is true of FileLayer::Chunk, where the
+      # flag reached Sync::Commit.finalize in-process, and it was carried across the boundary where
+      # it stopped being true. Verifying a claim about the wire the way you would verify a guard
+      # (§15) is what caught it.
       # `broadcast: false` -- repo bookkeeping is not a user-visible file change and must not nudge
       # live devices (§14a). It is accepted-and-unused on this adapter, and passing it anyway is
       # what keeps the INTENT true if that ever stops being so.
@@ -466,14 +477,36 @@ module FileLayer
       Library::RepoMetadata.data_rel!(nil, rel)
     end
 
+    # A NODE ID DERIVED FROM (parent, name) RATHER THAN A FRESH SecureRandom.uuid, AND THIS IS A
+    # CORRECTNESS FIX, NOT A TIDY-UP. The `existing` lookup above reads the local MIRROR, and the
+    # mirror is deliberately stale between pulls (§14a) -- an overwrite takes no `refresh!`,
+    # because `mkdir` returns early when the directory already exists. So a writer that has not
+    # seen another writer's row finds `existing` nil, and with a random id `begin_upload` mints a
+    # SECOND node at the same (parent, name): `begin_upload` does not call `destination_vacant!`
+    # and there is no unique index on (user_id, parent_node_id, name), so nothing at either end
+    # refuses it. Confirmed against a live server's /v1/tree: two nodes named `main`.
+    #
+    # THE DUPLICATE IS UNRECOVERABLE AND THE ALTERNATIVE IS NOT. A fresh mirror sees both, and
+    # `repo_data_node`'s find_by then answers ARBITRARILY -- so `refs/heads/main` flips between two
+    # commits depending on row order, and `list_repo_data` returns it twice, which hydration writes
+    # twice with different bytes. Deriving the id makes the second writer generate the SAME id, so
+    # `Sync::Commit.finalize`'s find_or_initialize_by updates one node: an honest last-writer-wins,
+    # which is a lost commit rather than a corrupt ref. §14a's own rule about refusing an orphaned
+    # restore is the same trade -- recoverable beats silent-and-permanent.
+    #
+    # It does NOT collapse a duplicate the desktop client created with a random id; the `existing`
+    # lookup is what covers that, whenever the mirror is fresh enough to show it.
+    def derived_node_id(parent_node_id, name)
+      Digest::UUID.uuid_v5(REPO_NODE_NAMESPACE, "#{parent_node_id}/#{name}")
+    end
+
     # Walks `.git/objects/pack` into dir nodes, creating whatever is missing, and answers the leaf
     # directory's node_id. `#mkdir` is already idempotent (it returns the existing node) and is
     # deliberately NOT deferred by `#batch`, so the mirror row it creates is readable immediately --
     # which is the same property `Maker::LibraryFolder#ensure_segment` depends on, and the reason
     # `#move` is the only verb that defers (§14a).
     def ensure_repo_dirs(user, project, dir_rel)
-      parent_node_id = project.folder_node_id
-      raise NotFound, "project #{project.id} has no library folder" if parent_node_id.blank?
+      parent_node_id = project_folder_node_id!(user, project)
 
       dir_rel.split("/").each do |segment|
         parent_node_id = mkdir(user, parent_node_id:, name: segment).node_id
@@ -485,6 +518,23 @@ module FileLayer
     # through `project.folder_node_id` is what makes one project's repo unable to address another's
     # -- the rels are identical across projects, so anything resolved from less than the project's
     # own node hands back the wrong repository's bytes with no error anywhere.
+    # THE FOLDER ID IS RESOLVED THROUGH `user.nodes`, NEVER TAKEN ON TRUST. Nothing asserts that
+    # `project` belongs to `user`, and an id taken on trust made a mismatched pair WRITE
+    # SUCCESSFULLY -- driven: it left a `.git` subtree in the caller's own library hanging off a
+    # parent that does not exist there, unreachable from the root, invisible in FilesController,
+    # permanent, and still addressable through `list_repo_data`. No cross-tenant leak (node_id is
+    # namespaced per user by the unique index on [user_id, node_id], so the two libraries stay
+    # disjoint), but an orphan subtree nothing can reach or clean. Resolving it turns the whole
+    # class into NotFound and costs a query the caller was about to make anyway.
+    def project_folder_node_id!(user, project)
+      id = project.folder_node_id
+      raise NotFound, "project #{project.id} has no library folder" if id.blank?
+
+      user.nodes.present.find_by(node_id: id, kind: "dir") ||
+        raise(NotFound, "project #{project.id}'s library folder is not this user's live directory")
+      id
+    end
+
     def repo_root_node(user, project)
       return nil if project.folder_node_id.blank?
 
@@ -510,10 +560,16 @@ module FileLayer
     # Every FILE beneath the marker, as a rel RELATIVE TO THE MARKER -- what the port promises and
     # what `write_repo_data` accepts back. Directory nodes are structure, not repo data, so they are
     # descended into and never emitted.
-    def walk_repo_tree(user, dir_node, prefix)
+    # `seen` IS A CYCLE GUARD, and Maker::LibraryTree carries one over this same table for the same
+    # reason: parent pointers arrive from a REMOTE changelog and nothing in this process enforces
+    # that they form a tree. Without it a cycle is SystemStackError inside a library listing rather
+    # than a wrong answer -- cheap to prevent, and the precedent is already in the repo.
+    def walk_repo_tree(user, dir_node, prefix, seen = Set.new)
+      return [] unless seen.add?(dir_node.node_id)
+
       user.nodes.present.where(parent_node_id: dir_node.node_id).flat_map do |child|
         rel = prefix ? "#{prefix}/#{child.name}" : child.name
-        child.kind == "dir" ? walk_repo_tree(user, child, rel) : [ rel ]
+        child.kind == "dir" ? walk_repo_tree(user, child, rel, seen) : [ rel ]
       end
     end
 

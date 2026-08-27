@@ -95,7 +95,15 @@ module AdapterRepoDataContract
   # absent key is a no-op, chunk_remote because it looks the node up first; three mechanisms, one
   # promise, which is exactly the shape this file exists to hold still.
   def test_repo_data_delete_is_idempotent
+    adapter.write_repo_data(@user, project: repo_project, rel: "HEAD", io: StringIO.new("keep\n"))
     adapter.delete_repo_data(@user, project: repo_project, rel: "objects/pack/never-existed.pack")
+
+    # IT ASSERTS, RATHER THAN RESTING ON "no exception". A bare call passes for an adapter that
+    # swallowed EVERY exception, cannot tell a no-op from a delete that took something else with
+    # it, and trips minitest's own "Test is missing assertions" on all three legs -- a warning two
+    # other files in this suite paid to keep off the run precisely because it reads as a defect.
+    assert_equal "keep\n", adapter.read_repo_data(@user, project: repo_project, rel: "HEAD")
+    assert_equal [ "HEAD" ], adapter.list_repo_data(@user, project: repo_project)
   end
 
   def test_repo_data_rejects_traversal
@@ -133,5 +141,11 @@ module AdapterRepoDataContract
     end
     assert_empty @user.nodes.where("name LIKE ?", "%.pack"),
                  "a repo-data write must not enter the catalog on a scannable backend"
+    # AND NO EXISTING ROW MAY BE REPOINTED INTO THE REPO EITHER. `Node.count` catches a CREATE and
+    # nothing else, so a regression that moved a live node's storage_path under the marker would
+    # build the exact ghost this file's header describes -- unpairable, tombstoned, and refusing
+    # every future scan -- with the count unchanged. Two reviewers found this hole independently.
+    assert_empty @user.nodes.where(deleted: false).where("storage_path LIKE ?", "%/.git/%"),
+                 "no live node may point at a path inside a repository marker"
   end
 end

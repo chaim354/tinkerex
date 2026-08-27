@@ -1,3 +1,4 @@
+require "timeout"
 require "test_helper"
 require_relative "adapter_contract"
 require_relative "adapter_write_contract"
@@ -1681,6 +1682,56 @@ module FileLayer
 
       assert_equal 30, adapter.list_repo_data(@user, project: repo_project,
                                               prefix: "objects/pack").size
+    end
+
+    # A LISTING THAT NEVER TERMINATES IS WORSE THAN A SHORT ONE. Library::S3Observer refuses a
+    # truncated page with no continuation token because real S3 cannot produce one and an
+    # S3-COMPATIBLE store is not bound by that; here the same page would spin forever -- nil
+    # re-requests page one, `is_truncated` is true again -- hanging a Puma thread while the result
+    # array grows without bound. A REPEATED token is the same defect wearing a different shape,
+    # which is why the guard asks whether the cursor ADVANCED and not whether it exists.
+    class NonAdvancingPager
+      Page = Struct.new(:contents, :is_truncated, :next_continuation_token)
+      def initialize(token) = @token = token
+      def list_objects_v2(*) = Page.new([], true, @token)
+    end
+
+    test "list_repo_data refuses a listing whose continuation token never advances" do
+      project = repo_project # minted through the real fake, so the folder node exists
+
+      [ nil, "stuck" ].each do |token|
+        stuck = FileLayer::S3.new(bucket: "b", region: "us-east-1", access_key_id: "ak",
+                                  secret_access_key: "sk", prefix: PREFIX,
+                                  client: NonAdvancingPager.new(token))
+        assert_raises(FileLayer::FetchError, "a #{token.inspect} token must be refused, not looped") do
+          Timeout.timeout(5) { stuck.list_repo_data(@user, project:) }
+        end
+      end
+    end
+
+    # THE S3 CONSOLE MINTS ZERO-BYTE `<prefix>/` OBJECTS for folders, so a repo can carry a `.git/`
+    # key. Left in the listing, the marker AT the root strips to "" -- and feeding "" back to
+    # read_repo_data raises ArgumentError, an unhandled class for a caller walking a listing.
+    test "list_repo_data drops directory-marker objects" do
+      project = repo_project
+      root = adapter.send(:repo_data_root_key, @user, project)
+      @fake.seed!(root, "")
+      @fake.seed!("#{root}objects/pack/", "")
+      adapter.write_repo_data(@user, project:, rel: "HEAD", io: StringIO.new("h"))
+
+      assert_equal [ "HEAD" ], adapter.list_repo_data(@user, project:)
+    end
+
+    # AN S3-COMPATIBLE STORE MAY ANSWER EITHER CLASS for a missing key, which is why #read and
+    # #object_exists? both name both. Rescuing NoSuchKey alone makes an absent pack RETRYABLE on
+    # SeaweedFS/MinIO/Ceph -- and no CI leg can see it, because FakeS3 always says NoSuchKey.
+    test "a missing object reported as NotFound is terminal, not retryable" do
+      project = repo_project
+      @fake.fault!(:get_object, "NotFound")
+
+      assert_raises(FileLayer::NotFound) do
+        adapter.read_repo_data(@user, project:, rel: "objects/pack/absent.pack")
+      end
     end
   end
 end
