@@ -30,7 +30,10 @@ volumes:
 env:
   # env.secret is an ARRAY: Kamal REPLACES it wholesale (deep_merge unions hashes, replaces
   # arrays), so RAILS_MASTER_KEY must be re-listed or boot dies with "Missing secret_key_base".
-  # LIBRARY_S3_SECRET_ACCESS_KEY is added in .kamal/secrets-common (= the seaweednew secret).
+  # LIBRARY_S3_SECRET_ACCESS_KEY is defined in .kamal/secrets.s3 (= the seaweednew secret), NOT in
+  # secrets-common, and that placement is load-bearing: .kamal/secrets.ovh resolves the SAME NAME to
+  # the R2 credential for its own s3 library. One variable, two backends — a shared definition could
+  # not tell them apart, and the loser signs with InvalidAccessKeyId (§14g).
   secret:
     - RAILS_MASTER_KEY
     - LIBRARY_S3_SECRET_ACCESS_KEY

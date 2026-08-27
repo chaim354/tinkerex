@@ -533,18 +533,21 @@ class DeployHygieneTest < ActiveSupport::TestCase
     "share"        => %w[LIBRARY_PATH]
   }.freeze
 
-  # ⚠️ AN EXPLICIT, NAMED EXEMPTION — NOT A SKIP, AND NOT PERMANENT.
-  # `ovh` fails this guard today, and the fix is a PRODUCT DECISION nobody can take from the tree:
-  # it declares no LIBRARY_BACKEND of its own, inherits chunk_remote, and cannot satisfy it (no sync
-  # server runs on that box). Choosing `s3`, `share` or `chunk_remote` for the one internet-facing
-  # host has real and different costs, laid out in config/deploy.ovh.yml's own CHUNK_REMOTE_URL
-  # comment. Recording it here beats dropping ovh from LIBRARY_DESTINATIONS, which would retire the
-  # guard for that destination silently — the §14e failure this whole file keeps re-learning.
+  # ⚠️ AN EXPLICIT, NAMED EXEMPTION — NOT A SKIP, AND NOT PERMANENT. EMPTY IS THE HEALTHY STATE.
+  # `ovh` was the one entry: it declared no LIBRARY_BACKEND of its own, silently inherited the
+  # base's chunk_remote, and could not satisfy it — a destination that could not boot at all. That
+  # was a PRODUCT DECISION nobody could take from the tree, so it was recorded here rather than by
+  # dropping ovh from LIBRARY_DESTINATIONS, which would have retired the guard for that destination
+  # silently — the §14e failure this whole file keeps re-learning. Resolved 2026-08-26: ovh declares
+  # LIBRARY_BACKEND=s3 against R2, and the entry came out.
   #
-  # THE SECOND LOOP BELOW ASSERTS THE EXEMPTION IS STILL NEEDED. The day ovh declares a backend it
-  # can satisfy, this test goes RED telling whoever fixed it to delete the entry. An exemption that
-  # cannot expire is how a guard quietly stops covering the thing it was written for.
-  UNDECIDED_LIBRARY_BACKEND = %w[ovh].freeze
+  # THE MECHANISM STAYS FOR THE NEXT ONE, AND IT EXPIRED CORRECTLY FOR THIS ONE. The second loop
+  # below asserts every exemption is still NEEDED, so the moment a listed destination starts
+  # satisfying its backend the test goes RED naming it — observed, not assumed: with ovh fixed and
+  # still listed, it failed with "ovh is exempted ... but now satisfies LIBRARY_BACKEND=s3 — DELETE
+  # IT FROM THAT LIST". An exemption that cannot expire is how a guard quietly stops covering the
+  # thing it was written for.
+  UNDECIDED_LIBRARY_BACKEND = [].freeze
 
   # What would stop this destination's container booting, read off the MERGED config for the same
   # reason required_secret_keys does — array replacement and hash deep-merge are reflected rather

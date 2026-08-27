@@ -5,14 +5,17 @@
 # the target server, its ssh user, and the env vars naming services that run as accessories on
 # the Unraid host and therefore do not resolve from here.
 #
-# THIS OVERLAY NAMES NO LIBRARY BACKEND, SO IT INHERITS THE BASE'S `chunk_remote` AND CANNOT BOOT.
+# THIS OVERLAY DECLARES LIBRARY_BACKEND=s3, AND IT MUST KEEP DECLARING ONE. It used to name none,
+# which is not a neutral omission: kamal DEEP-MERGES env.clear, so silence inherited the base's
+# `chunk_remote` — with this overlay's own blanked CHUNK_REMOTE_URL and (env.secret being an array
+# kamal REPLACES) no SYNC_ADMIN_TOKEN — and LibraryBackendCheck refused that at boot, so
+# `kamal deploy -d ovh` could not bring a container up at all. Guarded now: test/deploy_hygiene_test.rb's
+# "every destination carries the knobs its resolved LIBRARY_BACKEND requires".
+#
 # It used to describe "the chunk-storage backend (Cloudflare R2 instead of the Unraid SeaweedFS
 # box)" — that axis is gone: Arc D Part 2 moved the chunk store to the `sync` accessory, and no
-# code in this repo reads STORAGE_BACKEND or any CHUNK_* storage knob any more (§7, §14a). What is
-# left behind is a destination whose merged config declares LIBRARY_BACKEND=chunk_remote with a
-# blanked CHUNK_REMOTE_URL and no SYNC_ADMIN_TOKEN, which LibraryBackendCheck refuses at boot.
-# The open decision, and the cost of each answer, is at CHUNK_REMOTE_URL below — deliberately not
-# made in a mechanical cleanup, because this is the one internet-facing box (`servers:` below).
+# code in this repo reads STORAGE_BACKEND or any CHUNK_* storage knob any more (§7, §14a). The R2
+# ACCOUNT survives that retirement: the same bucket and credential now back this box's LIBRARY.
 #
 # Secrets are resolved from 1Password by .kamal/secrets.ovh, this destination's own secrets file
 # (kamal does not read .kamal/secrets under `-d`). No exports needed; verify with
@@ -51,6 +54,8 @@ env:
   # only if this box's app itself starts sending it — i.e. only under LIBRARY_BACKEND=chunk_remote.
   secret:
     - RAILS_MASTER_KEY
+    - LIBRARY_S3_ACCESS_KEY_ID
+    - LIBRARY_S3_SECRET_ACCESS_KEY
   clear:
     # STORAGE_BACKEND / CHUNK_ENDPOINT / CHUNK_BUCKET / CHUNK_REGION WERE HERE (R2: endpoint
     # d1ea7ae1…r2.cloudflarestorage.com, bucket maker-chunks-prod, region auto). Same reason as
@@ -94,34 +99,49 @@ env:
     # resolve here either — same deep-merge trap, same fix. A future `chunk_remote` leg on OVH
     # would need its own real value here, never an inherited Unraid-only one.
     #
-    # ⚠️ BLANKING IT IS NO LONGER SUFFICIENT, AND THIS IS THE OPEN DECISION FOR THIS DESTINATION.
+    # ⚠️ BLANKING IT WAS NOT SUFFICIENT, AND THE REASON IS WHY THIS FILE NOW NAMES A BACKEND.
     # This comment used to say "OVH never runs LIBRARY_BACKEND=chunk_remote", which was true while
     # the base was embedded `chunk` and a fourth `remote` destination carried chunk_remote. Arc D
-    # Part 2 made the BASE chunk_remote, and this overlay declares no LIBRARY_BACKEND of its own —
-    # so it now INHERITS chunk_remote, with this key blank and (see env.secret above) no
-    # SYNC_ADMIN_TOKEN. LibraryBackendCheck refuses that at boot, naming both keys, so
-    # `kamal deploy -d ovh` cannot bring a container up. Measured against the merged config, not
-    # reasoned. (Nobody has inspected the container actually running on this box; it was very
-    # likely deployed from a pre-Arc-D image and is fine until the next `-d ovh` deploy.)
+    # Part 2 made the BASE chunk_remote while this overlay still declared no LIBRARY_BACKEND of its
+    # own — so it silently INHERITED chunk_remote, with this key blank and (env.secret being an
+    # array kamal replaces) no SYNC_ADMIN_TOKEN. LibraryBackendCheck refused that at boot, naming
+    # both keys, so `kamal deploy -d ovh` could not bring a container up. Measured against the
+    # merged config, not reasoned. (Nobody inspected the container actually running on this box; it
+    # was very likely deployed from a pre-Arc-D image and unaffected until the next `-d ovh`.)
     #
-    # THE FIX IS TO DECLARE A LIBRARY_BACKEND THIS BOX CAN SATISFY, AND CHOOSING WHICH IS A PRODUCT
-    # DECISION, NOT A CLEANUP. The three answers and what each actually costs:
-    #   s3           — cheapest, and keeps every existing guard green. Needs LIBRARY_S3_BUCKET and
-    #                  LIBRARY_S3_ACCESS_KEY_ID in clear plus LIBRARY_S3_SECRET_ACCESS_KEY in
-    #                  env.secret (lib/library_backend_check.rb S3_REQUIRED), and a decision about
-    #                  whether the library lives in a new R2 bucket or under a `library/` prefix in
-    #                  maker-chunks-prod — deploy.s3.yml:8-11 is the precedent for the latter.
+    # RESOLVED 2026-08-26: THIS BOX DECLARES LIBRARY_BACKEND=s3 (below), SO THIS KEY STAYS BLANK
+    # AND MUST. The two rejected answers, recorded so the choice is not re-derived:
     #   share        — needs LIBRARY_PATH and a directory that EXISTS (check_share! probes it), so
     #                  it costs a second `volumes:` entry: this overlay declares none and inherits
     #                  only tinkerex_storage:/rails/storage.
     #   chunk_remote — needs a sync server ON OVH, a real URL here, SYNC_ADMIN_TOKEN back in
-    #                  env.secret above, AND a revision of test/deploy_hygiene_test.rb's "the OVH
-    #                  overlay clears every Unraid-host-only service URL" guard, which requires
-    #                  this key BLANK precisely so an unreachable inherited hostname cannot report
-    #                  itself as configured. Largest change; do not pick it to tidy this file.
-    # Whichever is chosen, delete "ovh" from UNDECIDED_LIBRARY_BACKEND in test/deploy_hygiene_test.rb
-    # — that guard asserts the exemption is still NEEDED, so it goes red if you forget.
+    #                  env.secret above, AND a revision of the "the OVH overlay clears every
+    #                  Unraid-host-only service URL" guard, which requires this key BLANK precisely
+    #                  so an unreachable inherited hostname cannot report itself as configured.
+    # s3 won on cost: the R2 account was already here for the retired chunk store, so the change is
+    # two vault references under their real names rather than any new infrastructure.
     CHUNK_REMOTE_URL: ""
+
+    # THE LIBRARY, ON CLOUDFLARE R2. Same bucket the retired chunk store used, under a DISJOINT
+    # `library/` prefix — deploy.s3.yml:8-11 is the precedent and the argument: one bucket, two
+    # non-overlapping keyspaces, so neither can list or clobber the other. The bucket keeps its
+    # chunk-era name because renaming an R2 bucket means copying every object; the prefix is what
+    # carries the meaning.
+    #
+    # NOTE WHAT IS *NOT* HERE: no LIBRARY_S3_ACCESS_KEY_ID line. deploy.s3.yml carries its key id
+    # in clear (an access key ID is an identifier, not a credential), and that reasoning still
+    # holds — but this destination resolves BOTH halves of the pair from .kamal/secrets.ovh, and a
+    # secrets-file value is never visible to ERB in env.clear (see the tombstone above, which this
+    # very destination earned the hard way). Both live in env.secret instead.
+    #
+    # §14a: `presignable` is TRUE and `versioned` is FALSE on s3. This box gets bytes straight out
+    # of R2 by signed URL — §15 survives — and NO version history. That is the deliberate departure,
+    # not an oversight: restore stays chunk_remote-only.
+    LIBRARY_BACKEND: s3
+    LIBRARY_S3_ENDPOINT: https://d1ea7ae1da7f90fb8edd168ab7928e7d.r2.cloudflarestorage.com
+    LIBRARY_S3_BUCKET: maker-chunks-prod
+    LIBRARY_S3_PREFIX: library/
+    LIBRARY_S3_REGION: auto
 
     # THE ONE INTERNET-FACING BOX, SO THE ONE THAT NEEDS TLS ENFORCEMENT (2026-07-30).
     #
