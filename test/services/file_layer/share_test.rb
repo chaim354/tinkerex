@@ -2,6 +2,7 @@ require "test_helper"
 require_relative "adapter_contract"
 require_relative "adapter_write_contract"
 require_relative "adapter_mutation_contract"
+require_relative "adapter_repo_data_contract"
 
 module FileLayer
   # The Share adapter over a plain mounted directory: no chunks, no versions, no history —
@@ -13,6 +14,44 @@ module FileLayer
     # module: Phase 3's S3 adapter includes it, and so cannot answer these differently.
     include FileLayerWritableContract
     include FileLayerMutationContract
+    # The repo-data verbs: opaque bytes under a project's own `.git`, with the CATALOG UNTOUCHED
+    # (`.git/**` is never observed on a scannable backend, so a node there could never be paired).
+    include AdapterRepoDataContract
+
+    # The repo-data contract's two hooks. The folder node is minted THROUGH THE ADAPTER UNDER TEST
+    # — `adapter.mkdir`, twice — rather than through `Maker::Project#ensure_library_folder!`, and
+    # the difference is not stylistic. `ensure_library_folder!` goes through
+    # `Maker::LibraryFolder#ensure_segment` -> `FileLayer.current`, which is the AMBIENT backend:
+    # this file pins none, so on the `test-chunk-remote` leg that folder would be minted over the
+    # wire at the sync server while the adapter under test is a Share rooted at `@root`. A unit
+    # test whose fixture changes shape with `LIBRARY_BACKEND` is exactly the cross-leg dependency
+    # §15 calls a real bug, and it would show up as a run-count or timing difference rather than
+    # as anything naming the cause. Two mkdirs against `adapter` are hermetic on all three legs
+    # and put a real storage_path on the folder node, which is all `project_folder_rel` reads.
+    #
+    # `name:`, not `title:` — Maker::Project's column is `name`, and `slug` is derived from it,
+    # which is what makes the two projects resolve to two different `Projects/<slug>`.
+    #
+    # TWO projects, because the scoping test's whole job is to catch an adapter that resolved the
+    # path from anything other than the project's own folder node.
+    def repo_project
+      @repo_project ||= make_repo_project("Repo Project")
+    end
+
+    def second_repo_project
+      @second_repo_project ||= make_repo_project("Other Repo Project")
+    end
+
+    # `mkdir` is idempotent on a live dir at the same rel, so the second project's `Projects` walk
+    # returns the first's node rather than colliding — the same property Maker::LibraryFolder leans
+    # on in production.
+    def make_repo_project(name)
+      project = @user.maker_projects.create!(name:)
+      root = adapter.mkdir(@user, parent_node_id: nil, name: Maker::ProjectFolders::ROOT)
+      folder = adapter.mkdir(@user, parent_node_id: root.node_id, name: project.slug)
+      project.update_column(:folder_node_id, folder.node_id)
+      project
+    end
 
     # The hooks FileLayerMutationContract requires. Share's real door for creating a file is the
     # port's own write, which is exactly what the four extracted tests used inline before they
@@ -1099,6 +1138,21 @@ module FileLayer
       Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
       node = @user.nodes.find_by(node_id: info.node_id)
       assert node && !node.deleted, "the dir node must survive the scan (the real dir is on disk)"
+    end
+
+    # ---- repo data (the .git verbs) ------------------------------------------
+    # The cross-backend rules are AdapterRepoDataContract's. What is here is share-shaped: the
+    # listing is a Dir.glob, and Dir.glob has a default the contract cannot see.
+
+    # A REPO IS FULL OF DOT-NAMED FILES, and Dir.glob's default is to skip them. A listing that
+    # silently omits them hydrates an incomplete repository — the "well-formed lie" shape, on the
+    # filesystem instead of a paginated bucket.
+    test "list_repo_data includes dot-named entries" do
+      adapter.write_repo_data(@user, project: repo_project, rel: ".gitignore", io: StringIO.new("x"))
+      adapter.write_repo_data(@user, project: repo_project, rel: "objects/.keep", io: StringIO.new("y"))
+
+      assert_equal [ ".gitignore", "objects/.keep" ],
+                   adapter.list_repo_data(@user, project: repo_project).sort
     end
   end
 end

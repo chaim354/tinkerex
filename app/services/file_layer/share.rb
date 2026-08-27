@@ -513,6 +513,71 @@ module FileLayer
       stat(user, node_id: node.node_id)
     end
 
+    # THE REPO-DATA VERBS. Opaque bytes under a project's own `.git`, deliberately NOT catalogued.
+    #
+    # THEY DO NOT GO THROUGH #observable!, AND THAT IS THE POINT RATHER THAN AN OVERSIGHT.
+    # `observable!` refuses everything at or beneath the marker, precisely so the ordinary write
+    # path can never leave a live node at a path no scan can pair. These verbs create no node at
+    # all, so the ghost that guard exists to prevent is unreachable from here — and routing them
+    # through it would refuse the one caller that is safe.
+    #
+    # NO CLOBBER REFUSAL EITHER. `refs/heads/main` is rewritten on every commit; a refusal would
+    # make the second commit impossible. The ordinary #write keeps its refusal, for its own
+    # reasons, and these are a different door.
+    def write_repo_data(user, project:, rel:, io:)
+      path = repo_data_path(user, project, rel)
+      FileUtils.mkdir_p(path.dirname)
+      # Temp-then-rename so a reader never sees a half-written pack. Same argument #write makes,
+      # and the temp name uses the Scanner's own prefix constant rather than a second literal.
+      tmp = path.dirname.join("#{Library::Scanner::TEMP_PREFIX}#{SecureRandom.hex(8)}")
+      begin
+        File.open(tmp, "wb") { |f| IO.copy_stream(io, f) }
+        File.rename(tmp, path)
+      ensure
+        File.unlink(tmp) if File.exist?(tmp)
+      end
+      nil
+    rescue SystemCallError => e
+      raise FetchError, "repo write failed for #{rel.inspect}: #{e.message}"
+    end
+
+    def read_repo_data(user, project:, rel:)
+      path = repo_data_path(user, project, rel)
+      File.binread(path)
+    rescue Errno::ENOENT
+      # NotFound, not FetchError: this rel genuinely is not there and a retry cannot change it.
+      raise NotFound, "no repo data at #{rel.inspect}"
+    rescue SystemCallError => e
+      # An unmounted share must never read as "permanently gone" (§14a).
+      raise FetchError, "repo read failed for #{rel.inspect}: #{e.message}"
+    end
+
+    def list_repo_data(user, project:, prefix: nil)
+      root = repo_data_root(user, project)
+      base = prefix.present? ? repo_data_path(user, project, prefix) : root
+      return [] unless base.directory?
+
+      # FNM_DOTMATCH, AND IT IS LOAD-BEARING: a bare Dir.glob("**/*") SKIPS dotfiles, and a repo
+      # holds plenty of them. A hydration driven by a listing that silently omitted them is the
+      # "well-formed lie" §14b records for a truncated S3 page — the caller reads it as "these are
+      # all the objects" and rebuilds an incomplete repository. The directory reject below also
+      # drops the `.` entry FNM_DOTMATCH adds.
+      Dir.glob("**/*", base: base.to_s, flags: File::FNM_DOTMATCH)
+         .reject { |r| File.directory?(base.join(r)) }
+         .map { |r| prefix.present? ? "#{prefix}/#{r}" : r }
+    rescue SystemCallError => e
+      raise FetchError, "repo list failed: #{e.message}"
+    end
+
+    def delete_repo_data(user, project:, rel:)
+      File.unlink(repo_data_path(user, project, rel))
+      nil
+    rescue Errno::ENOENT
+      nil # deleting what is already gone is success, not an error
+    rescue SystemCallError => e
+      raise FetchError, "repo delete failed for #{rel.inspect}: #{e.message}"
+    end
+
     # Resolve a node's path and refuse anything that escapes the root. Belt and braces: paths
     # come from our own scanner, but the audit that preceded this work found exactly this bug
     # class in client-supplied chunk hashes used as storage keys.
@@ -551,6 +616,24 @@ module FileLayer
     # copies of it is how the trash quietly starts getting indexed. (write's temp prefix makes
     # the identical argument, for the identical reason.)
     def trash_dir(node_id) = @root.join(Library::Scanner::TRASH_PREFIX, node_id)
+
+    def repo_data_root(user, project)
+      resolve_inside!("#{project_folder_rel(user, project)}/#{Library::RepoMetadata::DIR_NAME}")
+    end
+
+    def repo_data_path(user, project, rel)
+      resolve_inside!(Library::RepoMetadata.data_rel!(project_folder_rel(user, project), rel))
+    end
+
+    # The project's folder as a library-relative path. Raises rather than defaulting to the
+    # library ROOT if the folder has no storage_path — #absolute_path's own landmine, where a
+    # NULL storage_path once resolved to the root and handed a DIRECTORY to send_file.
+    def project_folder_rel(user, project)
+      node = live_node!(user, project.folder_node_id)
+      rel = node.storage_path.to_s
+      raise NotFound, "project #{project.id} folder has no storage_path" if rel.blank?
+      rel
+    end
 
     # Deleting a DIRECTORY is refused rather than cascaded. File.rename on a directory succeeds,
     # so without this check `delete` would move a whole subtree into .trash while leaving every
