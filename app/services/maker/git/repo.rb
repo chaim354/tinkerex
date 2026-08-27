@@ -140,7 +140,8 @@ module Maker
         index = rugged.index
         # READ BEFORE THE CLEAR. The index about to be thrown away is the record of what the LAST
         # pass marked absent, and the caller's set cannot replace it -- see #already_absent.
-        absent = absent_from_work_tree.to_set | already_absent(index)
+        previously_flagged = already_absent(index)
+        absent = absent_from_work_tree.to_set | previously_flagged
         index.clear
         parent = head_oid
         carry_forward(index, parent, absent) if parent
@@ -151,7 +152,21 @@ module Maker
         end
 
         tree = index.write_tree(rugged)
-        return nil if parent && rugged.lookup(parent).tree.oid == tree
+        if parent && rugged.lookup(parent).tree.oid == tree
+          # NO COMMIT -- BUT THE INDEX ON DISK MAY STILL BE WRONG, AND THIS IS THE ARM THAT
+          # MIGRATES A REPOSITORY WRITTEN BEFORE THE ASSUME-VALID MARK EXISTED. Its pointers were
+          # committed unflagged, so `git status` reports every one of them as DELETED -- and
+          # returning here without writing means the index is only ever corrected by a pass that
+          # ALSO happens to change the tree. A quiet project would keep lying indefinitely, which
+          # is precisely the state measured on the share box: after the fix shipped, laser-mount
+          # still showed 13 ` D` and zero assume-valid entries, because nothing in it had changed.
+          #
+          # IT FIRES ONCE AND THEN STOPS, by construction rather than by a flag: `absent` is the
+          # union of the caller's set with what the index already carried, so it can only GROW.
+          # Once written, the next pass reads those same entries back and the two sets are equal.
+          index.write if in_place? && absent != previously_flagged
+          return nil
+        end
 
         oid = ::Rugged::Commit.create(rugged, tree:, message:, parents: [ parent ].compact,
                                               author: signature, committer: signature,
