@@ -3,18 +3,21 @@ module Maker
   # FileAttachment), tags, and a print log. Distinct from Maker::Project (a build). Its files
   # live at Models/<slug>/ in the ordinary file library — this record is a curated view over
   # them, so nothing here touches sync/changelog/mounts (§10).
+  #
+  # THE WEB APP'S CATALOG, and narrower than Maker::Item, which is the desktop client's. A Model
+  # is a 3D-print model specifically — swept in by Maker::ModelIntake, shelf-scoped, dismissible;
+  # an Item is any maker artefact and exists only if something POSTs /v1/maker/items. tinkerex#153
+  # settled that both survive; the split is written down in docs/invariants/model-intake.md.
   class Model < ApplicationRecord
     self.table_name = "maker_models"
 
     PRINT_STATUSES = %w[want_to_print printed failed].freeze
 
-    # Where this ROW came from. "import" is models#new; "auto" is Maker::ModelIntake's sweep over
+    # WHICH DOOR WROTE THE ROW. "import" is models#new; "auto" is Maker::ModelIntake's sweep over
     # the library. The two differ in exactly one user-visible way -- see ModelsController#destroy.
-    #
-    # NOT Maker::Item::ORIGINS, which is a DIFFERENT vocabulary under the same constant name one
-    # file away (self_made/downloaded/modified). That one is about how the physical thing was
-    # obtained; this one is about which door wrote the database row. Nothing may map between them.
-    ORIGINS = %w[import auto].freeze
+    # Named for that question, not for its `origin` column, because Maker::Item's origin answers a
+    # different one (how the thing was obtained) — see Maker::Item::ACQUISITION_ORIGINS.
+    ROW_ORIGINS = %w[import auto].freeze
 
     belongs_to :user
 
@@ -31,7 +34,7 @@ module Maker
     validates :title, presence: true
     validates :slug, presence: true, uniqueness: { scope: :user_id }
     validates :print_status, inclusion: { in: PRINT_STATUSES }
-    validates :origin, inclusion: { in: ORIGINS }
+    validates :origin, inclusion: { in: ROW_ORIGINS }
 
     scope :by_status, ->(s) { where(print_status: s) if s.present? }
 

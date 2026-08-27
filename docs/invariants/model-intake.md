@@ -107,3 +107,35 @@
 - **THE SWEEP DOES NOT ATTACH TO IMPORT-ORIGIN MODELS.** A folder an import already claims is that
   model's — look, do not take. Both halves are pinned: no auto row is created for it, *and* its
   files are left unattached, which is the more damaging half and the one nothing was checking.
+
+## `Maker::Model` and `Maker::Item` are two catalogs, not one catalog twice
+
+- **BOTH SURVIVE, AND `tinkerex#153` IS WHERE THAT WAS DECIDED — do not re-open it as a merge.**
+  The two tables overlap on title/description/origin/source_url and both hang `file_attachments`,
+  `taggings` and `tags` off a polymorphic pointer, which reads exactly like duplication. It is not.
+  **`Maker::Model` is the WEB app's catalog** — a 3D-print model specifically, swept in by
+  `Maker::ModelIntake`, shelf-scoped, dismissible, 8 views and full CRUD. **`Maker::Item` is the
+  DESKTOP client's catalog** — any maker artefact (`ITEM_TYPES` is
+  `model_3d/cad/lightburn/electronics/other`), zero web routes, created only by a POST to
+  `/v1/maker/items`. Neither vocabulary fits inside the other: an Item has no `print_status` and a
+  Model has no way to say "this is a LightBurn job".
+- **THE DELETION IS BLOCKED BY A SHIPPED CONSUMER, WHICH IS THE FACT THE ISSUE ASKED FOR AND THE
+  ONE A FUTURE READER WILL NOT HAVE.** `chaim354/tinkerex-client` drives both `/v1/maker/items`
+  and `/v1/maker/collections` end to end: `client/maker-app/src/index.html` has a **Library tab**
+  in its nav (`data-view="library"`), `src/library.js` invokes twelve `maker_*` Tauri commands,
+  `src-tauri/src/lib.rs` registers them, and `sync-client/src/maker.rs` calls the endpoints.
+  Removing either table breaks that tab. **Any future removal is a wire deprecation with a client
+  release behind it, never a deletion in this repo** — and the check is a grep of that repo, not a
+  grep of this one, which is why nothing in `bin/ci` can tell you. Measured 2026-08-26.
+- **THE TWO `origin` COLUMNS ANSWER DIFFERENT QUESTIONS AND THEIR CONSTANTS ARE NAMED FOR THE
+  QUESTIONS, NOT THE COLUMN.** `Maker::Item::ACQUISITION_ORIGINS` (`self_made`/`downloaded`/
+  `modified`) is how the physical thing was obtained; `Maker::Model::ROW_ORIGINS`
+  (`import`/`auto`) is which door wrote the database row. Both were spelled `ORIGINS` until
+  2026-08-26, one file apart, which cost a standing comment telling readers not to map between
+  them. **Do not "tidy" either back to `ORIGINS`**; the collision is what made the comment
+  necessary. The COLUMNS stay named `origin` on both — the client sends that key.
+- **Known asymmetries, recorded so they read as gaps rather than as bugs.** `Maker::Task`'s
+  `TASKABLE_OWNERS` names `Maker::Item` and `Maker::Project` but **not** `Maker::Model`, and
+  `maker_collection_items.item_id` points at `maker_items.id`, so a collection cannot hold a
+  Model. Both are absences, not breakage; closing either is a feature with a wire change, and
+  collections have no web UI at all (§12.9).
