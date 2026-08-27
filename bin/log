@@ -61,6 +61,7 @@ module Log
     "open"   => [ '"<title>"',      "File an open item" ],
     "deploy" => [ "--image SHA",    "Record a deploy" ],
     "note"   => [ 'ISSUE "<text>"', "Append a comment to a past issue" ],
+    "close"  => [ "ISSUE [ISSUE...]", "Close issues that are done" ],
     "show"   => [ "ISSUE",          "Print one issue" ],
     "search" => [ '"<query>"',      "Search issues" ],
     "status" => [ "",               "Report anything unfiled" ]
@@ -145,8 +146,13 @@ module Log
     raise UsageError, "FORGEJO_URL has no scheme or host: #{forgejo_url.inspect}" unless uri.host
 
     request = case method
-    when :get  then Net::HTTP::Get.new(uri)
-    when :post then Net::HTTP::Post.new(uri)
+    when :get   then Net::HTTP::Get.new(uri)
+    when :post  then Net::HTTP::Post.new(uri)
+    # PATCH is what Forgejo's "edit issue" endpoint takes, and closing IS an edit there — there is
+    # no POST /issues/:n/close. Adding the verb here rather than in `close` keeps every request in
+    # this one method, which is what makes the Authorization header, the timeouts and the
+    # Unreachable mapping impossible to bypass by adding a subcommand.
+    when :patch then Net::HTTP::Patch.new(uri)
     else raise ArgumentError, "unsupported method #{method.inspect}"
     end
 
@@ -372,6 +378,41 @@ module Log
     EXIT_OK
   end
 
+  # CLOSING IS A WRITE, SO IT COMES THROUGH THIS DOOR TOO. It exists because nothing else closes
+  # an issue here: the arc header's "it closes when the PR merges" describes a linkage that does
+  # not exist in this setup — the PRs are on GitHub and the record is a self-hosted Forgejo, and
+  # nothing bridges them. tinkerex#154 merged and deployed with its arc, its deploy record and
+  # both issues it resolved still showing [open]. Before this, the only ways to close one were the
+  # web UI (fine for a person, unavailable to CI, a cloud session or a subagent) or a raw curl,
+  # which is precisely the SECOND write path the single-door rule exists to forbid.
+  #
+  # SEVERAL NUMBERS IN ONE CALL, BECAUSE THE UNIT OF WORK IS "this branch is done" and that
+  # routinely resolves an arc plus the issues it answers. Each is its own request; a failure part
+  # way through leaves the earlier ones closed and says which, rather than pretending the batch
+  # was atomic.
+  #
+  # ALREADY-CLOSED IS REPORTED, NOT RE-SENT. Forgejo accepts a redundant close happily, so the
+  # naive version is silently idempotent — which reads as "I closed it" for an issue somebody else
+  # closed for a different reason. The GET costs one round trip and turns that into a fact.
+  def close(argv)
+    numbers = argv.map { |a| issue_number!(a) }
+    raise UsageError, "close needs at least one issue number" if numbers.empty?
+
+    numbers.each do |number|
+      path = repo_path("/issues/#{number}")
+      issue = parse(api(:get, path), path)
+
+      if issue["state"] == "closed"
+        puts "##{number} was already closed"
+        next
+      end
+
+      api(:patch, path, { state: "closed" })
+      puts "closed ##{number} #{issue['title']}"
+    end
+    EXIT_OK
+  end
+
   def spool_dir = ENV.fetch("LOG_SPOOL_DIR", File.expand_path("../tmp/log-pending", __dir__))
 
   # THE BRANCH NAMES THE SPOOL FILE, so two branches cannot overwrite each other's unfiled record.
@@ -502,6 +543,7 @@ module Log
     when "setup" then setup
     when "deploy" then deploy(argv)
     when "note" then note(argv)
+    when "close" then close(argv)
     when "search" then search(argv)
     else
       # Every subcommand in SUBCOMMANDS is now implemented, so this arm is unreachable. Raising
