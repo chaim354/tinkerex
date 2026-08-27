@@ -111,7 +111,7 @@ The sync engine's own design — chunking, versions, the changelog, conflict rec
 
 | Layer | Choice |
 |---|---|
-| Backend | **Rails 8** (Solid Queue/Cache/Cable — all three wired; see §14e for what that requires) |
+| Backend | **Rails 8** (Solid Queue/Cache wired and used; Solid Cable is configured but this app has NO cable endpoint — §14e) |
 | Server DB | **Postgres** (managed) / **SQLite** (self-host) — same adapter-agnostic models |
 | Object storage | **S3-compatible** — R2 (managed), SeaweedFS/MinIO/their S3 (self-host) |
 | Library backend | **`share` / `s3` / `chunk_remote`** — see §2 |
@@ -1028,6 +1028,9 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   resolved to a `FileStore` in the container's `tmp/`, wiped every deploy. Queue and Cable were
   wired; the third was missed while §4 claimed all three. **Resolve it by running
   `Rails.application.config.cache_store`, not by reading the file.**
+- **THIS APP IS NOT A BROADCASTER** — no channel, no subscriber. Deleting the `mount` from
+  `config/routes.rb` does **not** remove `/cable`: ActionCable's engine re-prepends it from
+  `mount_path` in an `after_initialize`. A device's nudge is `tinkerex-sync`'s. `test/cable_absent_test.rb`.
 - **RATE LIMITING COUNTS IN A CACHE, AND `NullStore#increment` RETURNS NIL.**
   `ActionController`'s `rate_limiting` is `count = store.increment(...)` then
   `if count && count > to`, so a throttle backed by the test env's default store fires **never**
@@ -1180,12 +1183,12 @@ Four rules survive on **this** side of the boundary:
 
 ### 14k. The model catalog and shelves → **`docs/invariants/model-intake.md`**
 
-**Read that file before touching** `app/services/maker/model_intake.rb`,
-`app/services/maker/library_tree.rb`, `app/models/maker/shelf.rb`,
-`app/controllers/shelves_controller.rb`, `app/jobs/maker/model_intake_job.rb`, or the
-`origin`/`auto_node_id`/`dismissed_at` columns on `maker_models`. It holds the nearest-shelf rule,
-why a shelf is a PATH and a model is a NODE ID, why dismissing is not deleting, and the ScanJob
-ordering that changes the answer rather than the timing.
+**Read that file before touching** `app/services/maker/model_intake.rb`, `app/models/maker/shelf.rb`,
+`app/services/maker/library_tree.rb`, `app/controllers/shelves_controller.rb`,
+`app/jobs/maker/model_intake_job.rb`, or the `origin`/`auto_node_id`/`dismissed_at` columns on
+`maker_models`. It holds the nearest-shelf rule, why a shelf is a PATH and a model is a NODE ID, why
+dismissing is not deleting, the ScanJob ordering that changes the answer not the timing, and
+`LibraryTree#path_for`'s cycle-guard/memo rules — now binding `FilesController`/`Tools::LibraryFolders` too.
 
 ## 15. Working agreements for the coding agent
 

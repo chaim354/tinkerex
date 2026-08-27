@@ -91,6 +91,22 @@ class StimulusHygieneTest < ActiveSupport::TestCase
 
   test "every Stimulus controller declared in a view resolves to a controller file" do
     known = registered_identifiers
+
+    # NON-VACUITY FIRST (CLAUDE.md §14e: "a guard that scans a directory dies silently when the
+    # directory leaves"). Everything below is `assert_empty offenders`, which passes perfectly and
+    # forever when the sweep finds NOTHING TO CHECK — measured before this line existed: pointing
+    # VIEWS_DIR at a nonexistent directory left this file at 4 runs / 33 assertions / 0 failures,
+    # i.e. exactly its clean state. `refute_empty` rather than a count: views come and go, and the
+    # only degradation that matters is the glob matching nothing at all.
+    #
+    # `refute_empty registered_identifiers` at the bottom of this file does NOT cover this: it
+    # scans CONTROLLERS_DIR, the other half of the comparison, and an empty controller set makes
+    # this test LOUD (every declaration unresolvable) rather than silent.
+    scanned = Dir.glob("**/*.erb", base: VIEWS_DIR)
+    refute_empty scanned,
+                 "app/views matched no .erb templates — this sweep has nothing to check, so it " \
+                 "cannot fail for the reason it exists. Did VIEWS_DIR move?"
+
     offenders = view_declarations.reject { |name, _where| known.include?(name) }
 
     assert_empty offenders.map { |name, where| "#{where} declares `#{name}`" },

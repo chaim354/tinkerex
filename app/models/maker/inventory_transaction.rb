@@ -13,9 +13,15 @@ module Maker
 
     after_create :apply_to_cached_balance
 
-    # Block edits/deletes of a posted ledger row from ordinary code paths.
+    # Block edits/deletes of a posted ledger row. BOTH hooks are unconditional, and the destroy
+    # one deliberately asks nothing about the parent item: it used to permit a destroy whenever
+    # `inventory_item` was nil/destroyed?/marked_for_destruction?, none of which the real cascades
+    # ever set — `dependent: :delete_all` issues one DELETE and instantiates nothing, and a
+    # `:destroy` cascade sets `destroyed_by_association`, not those flags. So the "only with the
+    # parent" branch was never the thing letting a cascade through; declaration ORDER on User was
+    # (see the `dependent:` comment there). Rows are removed row-level, never record-level.
     before_update  { raise ActiveRecord::ReadOnlyRecord, "inventory transactions are immutable" }
-    before_destroy :allow_destroy_only_with_parent
+    before_destroy { raise ActiveRecord::ReadOnlyRecord, "inventory transactions are immutable" }
 
     # Atomic post: insert the ledger row AND move the item's cached balance in one DB transaction,
     # holding a row lock on the item so concurrent posts can't lose an update. Works on SQLite + PG.
@@ -38,14 +44,6 @@ module Maker
     def apply_to_cached_balance
       Maker::InventoryItem.where(id: inventory_item_id)
                           .update_all([ "quantity_cached = quantity_cached + ?", delta ])
-    end
-
-    def allow_destroy_only_with_parent
-      # Permit row removal only when the parent item is being destroyed (dependent: :destroy),
-      # so the immutable ledger can't be cherry-picked apart while the item still exists.
-      unless inventory_item.nil? || inventory_item.destroyed? || inventory_item.marked_for_destruction?
-        raise ActiveRecord::ReadOnlyRecord, "inventory transactions are immutable"
-      end
     end
   end
 end

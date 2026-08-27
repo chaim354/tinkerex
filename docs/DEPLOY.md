@@ -386,8 +386,9 @@ mistyped address. And **the heredoc is quoted (`<<'RUBY'`)**, which is not styli
 
 ## 6. Backup & restore
 
-**A nightly runs on the box at 03:30 America/New_York**, backing up all three deployments to the
-Unraid array and keeping 14 per deployment. Day to day you only need:
+**A nightly runs on the box at 03:30 America/New_York**, backing up all four databases — the three
+maker deployments *and* the `sync` accessory's own — to the Unraid array, keeping 14 each. Day to
+day you only need:
 
 ```sh
 bin/backup-status                                # schedule, last run, inventory, staleness
@@ -497,16 +498,25 @@ it monitors cannot report the failures that matter most — VM off, Docker wedge
 too, and its silence is indistinguishable from everything being fine. It is the same argument that
 put the archives on the array instead of `/dev/vda2`, applied one level up.
 
-Install from Community Apps (default port 3001), then add **one Push monitor per deployment** —
-`tinkerex backup (chunk)`, `(share)`, `(s3)`. Heartbeat Interval **90000** (25 h, so the 03:30 run
-has an hour of slack), Retries **0**. Copy each push URL, then:
+Install from Community Apps (default port 3001), then add **one Push monitor per backed-up
+database** — `tinkerex backup (chunk)`, `(share)`, `(s3)`, **`(sync)`**. Heartbeat Interval
+**90000** (25 h, so the 03:30 run has an hour of slack), Retries **0**. Copy each push URL, then:
 
 ```sh
 PING_CHUNK=http://192.168.1.146:3001/api/push/aB1 \
 PING_SHARE=http://192.168.1.146:3001/api/push/cD2 \
 PING_S3=http://192.168.1.146:3001/api/push/eF3 \
+PING_SYNC=http://192.168.1.146:3001/api/push/gH4 \
   bin/backup-cron-install
 ```
+
+**`(sync)` IS FOURTH AND WAS UNPINGABLE UNTIL 2026-08-26.** `ops/backup-db.sh` reads `ping.env`
+through an enumerated whitelist and had arms for only the first three, so a `PING_SYNC` written
+into that file was never read: the monitor could not be pinged in either direction. If you created
+that monitor before this fix it has been sitting **DOWN** every night over a backup that succeeded
+— that stuck-red state *is* the symptom, and it clears on the first nightly after the installer is
+re-run. If you never created it, `bin/backup-cron-install` has been printing `!! NO HEARTBEAT for:
+sync` on every run; create it now.
 
 **A PUSH MONITOR IS A DEAD-MAN'S SWITCH — it alerts on the ABSENCE of a ping.** That is the whole
 reason to prefer it over anything the job reports about itself: cron unloaded, the VM powered off,
@@ -542,7 +552,9 @@ Four behaviours are deliberate, and each was mutation-checked by breaking the th
   line makes bash read it as a **job separator**: the assignment runs in a background subshell, the
   variable is never set in this shell, and the ping silently does not happen. Sourcing also makes
   every value in that file executable shell. `ops/backup-db.sh` reads it with an explicit
-  three-key whitelist, which takes values literally and can do neither.
+  four-key whitelist, which takes values literally and can do neither. **The price is that the
+  whitelist is enumerated: a new destination needs a new arm by hand, or its pings vanish
+  silently** — that is exactly how `(sync)` went unpingable.
 - **`ping_kuma` STRIPS ANY QUERY STRING** (`url="${url%%\?*}"`). Left on, `curl --get` appends a
   **second** `status`, Express/qs parses the duplicate into an **array**, and Kuma's
   `req.query.status === "down"` compares against an array and is false — so **every failure is
@@ -664,8 +676,8 @@ ssh kamal1@192.168.1.95 '
 # OVH — the repo was an unused leftover (the app already pulls ghcr); removed during this migration.
 ```
 
-Do **not** remove the `tinkerex_storage` Docker volume — it holds the SQLite databases (incl.
-Solid Cable for the nudge) and survives redeploys.
+Do **not** remove the `tinkerex_storage` Docker volume — it holds the SQLite databases and
+survives redeploys.
 
 ---
 
@@ -701,9 +713,6 @@ Solid Cable for the nudge) and survives redeploys.
   is why this is an env gate rather than a line in `production.rb` — before this, neither setting
   was enabled anywhere, so the internet-facing host had no HSTS and its session cookie was sent
   on plain-HTTP requests to the same host.
-
-  The ActionCable nudge is unaffected either way: it works because request-forgery protection is
-  disabled (token-authed cable, not cookies).
 - **Control-plane-only smoke test:** set `STORAGE_BACKEND: memory` (drop the `CHUNK_*`) to test
   tree/changelog/nudge without a chunk store.
 - **Persistence:** the SQLite DBs live on the `tinkerex_storage` volume and survive redeploys —

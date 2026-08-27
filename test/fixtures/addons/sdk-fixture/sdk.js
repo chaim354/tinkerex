@@ -3,14 +3,17 @@ import { host, WouldReplaceError } from "@maker/addon-sdk"
 // A bundle written the way docs/addon-api-v1.md tells an author to write one: it imports the SDK
 // and touches `ctx` for nothing. Its job is to prove, in a real browser, that (a) the host pin
 // resolves inside an addon's merged importmap, (b) initHost ran before this module was imported,
-// (c) capabilities() answers the server's own map, (d) files.save absorbs the 409 overwrite dance
-// every bundle copies today, (e) the service plane — its transport, its URL builder and its
-// abort handling — behaves in a real browser, which for the transport is the ONLY place it can be
-// observed at all (see ART below), and (f) the state-revision surface (`stateId` on save,
-// state.revisions, host.launch) reaches the host with its id intact.
+// (c) capabilities() answers the server's own map, (d) files.save absorbs BOTH ARMS of the 409
+// overwrite dance every bundle used to copy by hand — accepting re-POSTs with overwrite=1,
+// declining writes nothing — which is why `decline` joins the query string below, (e) the service
+// plane — its transport, its URL builder and its abort handling — behaves in a real browser, which
+// for the transport is the ONLY place it can be observed at all (see ART below), and (f) the
+// state-revision surface (`stateId` on save, state.revisions, host.launch) reaches the host with
+// its id intact.
 //
-// The destination and filename come from the QUERY STRING so the Ruby test can point the fixture at
-// whatever project folder it just built, rather than the fixture hard-coding library state.
+// The destination, the filename and the overwrite answer come from the QUERY STRING so the Ruby
+// test can point the fixture at whatever project folder it just built and drive either arm of the
+// 409, rather than the fixture hard-coding library state or one answer.
 
 // MULTI-LINE ON PURPOSE, AND THE WHOLE POINT OF THE POST PROBE BELOW. This mirrors boxes.py's
 // TrayLayout input, whose entire meaning is line-by-line ASCII art. Under the SDK's old FormData
@@ -87,11 +90,14 @@ export default {
           name: "sdk fixture save",
           folderNodeId: q.get("parent") || "",
           files: [ { name: q.get("fname"), contentType: "image/svg+xml", body: "<svg>sdk</svg>" } ],
-          // Answering TRUE here is what exercises the re-POST with overwrite=1. A real bundle would
-          // call window.confirm; the fixture answers deterministically so no dialog is involved.
+          // THE ANSWER COMES FROM THE QUERY STRING, like `parent` and `fname` above, because the
+          // SDK does two DIFFERENT things with it and only a Ruby-side switch can drive both: TRUE
+          // re-POSTs with overwrite=1, FALSE returns `{cancelled: true}` and writes nothing. A real
+          // bundle would call window.confirm; the fixture answers deterministically so no dialog is
+          // involved. TRUE stays the default — declining is the arm a test has to ASK for.
           onReplace: (files) => {
             status.dataset.replaced = files.map((f) => `${f.name}@${f.folder}`).join(",")
-            return true
+            return q.get("decline") !== "1"
           },
         })
         status.textContent = result.cancelled ? "Not saved." : "Saved."

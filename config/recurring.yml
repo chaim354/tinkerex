@@ -155,11 +155,14 @@ production:
   # to live in a class method (FileLayer::RemoteChangelogPullJob.pull_all!) rather than here.
   #
   # EVERY 2 MINUTES, DELIBERATELY SHORTER THAN library_scan's 15. That 15-minute figure is set by
-  # an EXPENSIVE NAS walk (or an S3 list); a changelog pull that finds nothing is ONE CHEAP GET per
-  # user in the common case (ChangelogSync#full_resync_if_gapped's own probe, which returns before
-  # any paging loop even starts). Nothing here is billed per request the way S3 listing is, so
-  # there is no cost argument for spacing it out further — 2 minutes gives a meaningfully fresher
-  # mirror than share/s3 get from their own poll, at negligible cost.
+  # an EXPENSIVE NAS walk (or an S3 list); a changelog pull that finds nothing is ONE GET per user
+  # in the common case — a single PAGE-sized /v1/changes whose body carries the delta AND the
+  # `oldest_seq`/`head_seq` the pruned-gap check reads, so an empty page ends the pull with no
+  # second request. (It was TWO until the probe was folded in: a separate `limit: 1` GET asked for
+  # the gap fields the page was about to carry anyway. changelog_sync_test now pins the count at
+  # exactly one.) Nothing here is billed per request the way S3 listing is, so there is no cost
+  # argument for spacing it out further — 2 minutes gives a meaningfully fresher mirror than
+  # share/s3 get from their own poll, at negligible cost.
   #
   # THIS IS STILL A POLL, NOT THE LATENCY FIX. The real answer is a sync -> maker webhook, or an
   # ActionCable subscription to the remote host's own broadcast (matching what LibraryChannel

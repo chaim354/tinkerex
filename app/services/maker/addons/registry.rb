@@ -97,8 +97,25 @@ module Maker
       # A fetch failure returns [] for THIS request and caches nothing — rescuing outside
       # `Rails.cache.fetch` is deliberate. Rescuing inside would cache the empty result, so a
       # two-second blip would grey every addon out for the whole TTL.
+      #
+      # WHETHER TO CACHE AT ALL IS THE SOURCE'S OWN ANSWER (`Source#cacheable?`), never a class
+      # check here — the same predicate the two asset paths already honour
+      # (Tools::AddonsController's `expires_in` and `#cached_asset`). It was consulted for assets
+      # and NOT for this index, so on a dev box — where `Source::Local` answers false — an addon
+      # author's bundle BYTES updated instantly while the manifest describing them stayed up to
+      # five minutes stale. That is worse than uniform staleness: the half that updates is the half
+      # that makes you believe the other half did. Production is unchanged, because the HTTP source
+      # answers true; a self-hoster baking `public/addons` into the image (production.rb defaults
+      # ADDON_SOURCE_PATH when ADDON_SOURCE_URL is blank) trades the cache for one `Pathname#read`
+      # + `JSON.parse` per call — microseconds, and exactly the trade `Local#cacheable?` declares.
+      #
+      # `Source.current` is resolved ONCE and reused inside the block: it ALLOCATES a source per
+      # call, and this method now asks it two questions.
       def manifests
-        Rails.cache.fetch(CACHE_KEY, expires_in: TTL) { Source.current.manifests }
+        source = Source.current
+        return source.manifests unless source.cacheable?
+
+        Rails.cache.fetch(CACHE_KEY, expires_in: TTL) { source.manifests }
       rescue StandardError => e
         Rails.logger.warn("addon source unavailable: #{e.class}: #{e.message}")
         []

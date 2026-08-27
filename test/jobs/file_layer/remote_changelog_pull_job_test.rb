@@ -11,9 +11,9 @@ module FileLayer
   class RemoteChangelogPullJobTest < ActiveSupport::TestCase
     include ActiveJob::TestHelper
 
-    # Answers an EMPTY changelog -- enough for ChangelogSync#call to complete (one
-    # full_resync_if_gapped probe + one page GET, both reporting nothing to apply) without touching
-    # a real network. Matches ChangelogSyncTest::FakeTransport / RefreshAfterWriteTest's shape.
+    # Answers an EMPTY changelog -- enough for ChangelogSync#call to complete (ONE page GET,
+    # reporting nothing to apply and carrying the gap fields on the same body) without touching a
+    # real network. Matches ChangelogSyncTest::FakeTransport / RefreshAfterWriteTest's shape.
     class FakeTransport
       attr_reader :calls
 

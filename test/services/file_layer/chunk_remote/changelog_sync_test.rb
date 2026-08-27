@@ -31,6 +31,22 @@ module FileLayer
         end
       end
 
+      # FakeTransport plus ONE REFUSAL: a SECOND /v1/tree raises rather than answering. That is
+      # load-bearing, not decoration. Mutation-testing this file once HUNG rather than failed (see
+      # "a changelog that does not advance" below), and a gap check re-asked per page against a
+      # server whose `oldest_seq` stays above every cursor is the same shape -- it resyncs forever,
+      # so the plain fake would spin and the mutation-check would report nothing at all. This turns
+      # that hang into a red test in milliseconds.
+      class ResyncCountingTransport < FakeTransport
+        def get(path, params = {})
+          if path == "/v1/tree"
+            @tree_calls = (@tree_calls || 0) + 1
+            raise FileLayer::FetchError, "resynced more than once" if @tree_calls > 1
+          end
+          super
+        end
+      end
+
       setup do
         @user = User.create!(email: "applier@example.com", password: "correct horse battery staple",
                              confirmed_at: Time.current)
@@ -108,6 +124,24 @@ module FileLayer
       end
 
       # ── the pruned gap ────────────────────────────────────────────────────────────────────────
+
+      # THE REQUEST COUNT, WHICH NOTHING PINNED WHILE IT WAS WRONG. The gap check used to open with
+      # its own `limit: 1` GET, so the overwhelmingly common pull -- the one that finds nothing --
+      # cost TWO WAN round trips for one body's worth of data: `oldest_seq` and `head_seq` are
+      # computed independently of `since`/`limit` and ride on every /v1/changes response.
+      #
+      # The WHOLE `asked` array is asserted rather than its length, so this pins three things at
+      # once: exactly one request, that it is /v1/changes, and that it is PAGE-sized rather than a
+      # probe. Restoring the probe fails it on both the length and the `limit: 1` element.
+      test "a no-op pull issues EXACTLY ONE /v1/changes request, PAGE-sized" do
+        t = FakeTransport.new(pages: {}, head_seq: 0, oldest_seq: 1)
+        sync(t)
+
+        assert_equal [ [ "/v1/changes", { since: 0, limit: ChangelogSync::PAGE } ] ], t.asked,
+                     "the gap fields ride on the page response; a separate probe is a second WAN " \
+                     "round trip for data this body already carries"
+      end
+
       test "a cursor below oldest_seq triggers a FULL RESYNC, not a patched-over hole" do
         @user.update_column(:remote_sync_cursor, 5)
         t = FakeTransport.new(pages: { 50 => [] }, oldest_seq: 50, head_seq: 50,
@@ -138,6 +172,23 @@ module FileLayer
       test "a FIRST sync is not a resync, though cursor 0 is below every oldest_seq" do
         t = FakeTransport.new(pages: { 0 => [ entry(1, "n1", "a.stl", size: 1) ] }, oldest_seq: 1, head_seq: 1)
         assert_not sync(t).resynced, "cursor 0 is the ordinary beginning, not a pruned gap"
+      end
+
+      # THE GAP IS ASKED ONCE, NOT PER PAGE -- the hazard the fold introduces if it is written
+      # carelessly. `oldest_seq` need not fall below the cursor a resync lands on: an emptied
+      # changelog reports `head_seq + 1` (docs/sync-protocol.md), which is ABOVE it, so a per-page
+      # check would resync, re-check, resync... forever, applying nothing and holding the job.
+      test "the pruned-gap check is evaluated ONCE, so an oldest_seq above the post-resync cursor cannot resync forever" do
+        @user.update_column(:remote_sync_cursor, 5)
+        t = ResyncCountingTransport.new(pages: { 50 => [] }, oldest_seq: 51, head_seq: 50,
+                                        tree: [ { "node_id" => "srv", "parent_node_id" => nil,
+                                                  "name" => "kept.stl", "kind" => "file",
+                                                  "mode" => nil, "mtime" => 1 } ])
+        sync(t)
+
+        assert_equal 1, t.asked.count { |path, _| path == "/v1/tree" },
+                     "a per-page gap check resyncs forever against a server reporting oldest_seq " \
+                     "above every cursor"
       end
 
       test "a changelog that does not advance raises instead of looping forever" do

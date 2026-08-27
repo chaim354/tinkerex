@@ -94,12 +94,22 @@ PING_FILE="${PING_FILE:-$HOME/tinkerex-ops/ping.env}"
 # background subshell, the variable is never set in this shell, and the ping silently does not
 # happen. Sourcing also means any value in that file is executable shell. Reading it with an
 # explicit whitelist takes every value literally and cannot do either.
+#
+# THE PRICE OF THE WHITELIST IS THAT IT IS ENUMERATED, SO IT MUST BE EXTENDED BY HAND FOR EVERY NEW
+# DESTINATION ACCEPTED ABOVE — one arm per member of the `chunk|share|s3|sync` case. Nothing catches
+# a missing arm, and `ping_kuma`'s generic `PING_$(upper dest)` below makes the code READ as though
+# it already handles any destination: the variable is simply never set, and `[ -n "$url" ] || return
+# 0` skips that destination silently and for ever. `sync` shipped in exactly that state — its push
+# monitor could not be pinged in EITHER direction, so a configured one sits DOWN every night while
+# the backup succeeds (a crying-wolf monitor), and a real failure degrades to a generic 25-hour
+# silence because the `down` ping with its diagnostic message never arrives.
 if [ -f "$PING_FILE" ]; then
   while IFS='=' read -r _k _v; do
     case "$_k" in
       PING_CHUNK) PING_CHUNK=$_v ;;
       PING_SHARE) PING_SHARE=$_v ;;
       PING_S3)    PING_S3=$_v ;;
+      PING_SYNC)  PING_SYNC=$_v ;;
     esac
   done < "$PING_FILE"
   unset _k _v

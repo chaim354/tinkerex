@@ -260,12 +260,13 @@ accessories:
   # The standalone sync server (repo: chaim354/tinkerex-sync) — Arc D Task 2
   # (docs/superpowers/plans/2026-08-25-arc-d-part-1-a-real-remote-deployment.md). NO `port:` ->
   # internal-only, reachable on the Kamal network as `tinkerex-sync`, exactly like the three
-  # accessories above — but unlike them, only ONE app deployment talks to it: the `remote` destination
-  # (config/deploy.remote.yml, LIBRARY_BACKEND=chunk_remote). chunk/share/s3 never open this door.
+  # accessories above — but unlike them, only ONE app deployment talks to it: the BASE destination,
+  # which carries LIBRARY_BACKEND=chunk_remote since Arc D Part 2 folded the old `remote` overlay
+  # into it. share/s3 never open this door; ovh declares no backend at all (see deploy.ovh.yml).
   #
   # STORAGE_BACKEND=local: chunk bytes AND this host's own SQLite catalog both live on the volume
-  # below, so it needs no SeaweedFS/S3 credential of its own (unlike the maker app's `chunk`/`s3`
-  # legs) — a first deployment works with nothing else standing, matching that repo's own Dockerfile
+  # below, so it needs no SeaweedFS/S3 credential of its own (unlike the maker app's `s3`
+  # leg) — a first deployment works with nothing else standing, matching that repo's own Dockerfile
   # comment. CABLE_ADAPTER=async because this is ONE container; a second would need Redis, or devices
   # attached to one would never hear the other's broadcasts (host/config/cable.yml over there).
   #
@@ -273,17 +274,19 @@ accessories:
   # other secret — but they end up referenced from DIFFERENT files, and that split is deliberate, not
   # an inconsistency. `accessories:` here is never overridden by ANY destination overlay, so BOTH keys
   # are structurally required by every destination's merged config (verified against
-  # Kamal::Configuration.raw_config for all five, not assumed) — exactly the shape
+  # Kamal::Configuration.raw_config for all four, not assumed — five until `remote` folded into the
+  # base; test/deploy_hygiene_test.rb re-derives it every run) — exactly the shape
   # TINKEREX_SYNC_DEPLOY_KEY already has via `builder:`, which is the same kind of never-overlaid
   # block. SECRET_KEY_BASE has ONLY that one consumer (this accessory's own Rails boot), so it follows
   # TINKEREX_SYNC_DEPLOY_KEY straight into `.kamal/secrets-common` (see the comment there). SYNC_ADMIN_TOKEN
   # does NOT, on explicit instruction (§14g) — it also has a genuine per-destination story, since only
-  # the `remote` destination's maker app additionally SENDS it — so it is instead repeated across every
-  # per-destination secrets file (.kamal/secrets, .kamal/secrets.share, .kamal/secrets.s3,
-  # .kamal/secrets.ovh, .kamal/secrets.remote), whose fullest comment lives in .kamal/secrets.remote.
+  # the BASE destination's maker app additionally SENDS it (it is the chunk_remote one) — so it is
+  # instead repeated across every per-destination secrets file (.kamal/secrets, .kamal/secrets.share,
+  # .kamal/secrets.s3, .kamal/secrets.ovh). `.kamal/secrets.remote` was a fifth and is gone with the
+  # overlay it belonged to; THIS comment is the fullest statement of the argument now.
   #
-  # SYNC_ADMIN_TOKEN must resolve to the IDENTICAL value the `remote` destination's own copy resolves
-  # to (config/deploy.remote.yml + .kamal/secrets.remote) — both sides read the SAME 1Password item
+  # SYNC_ADMIN_TOKEN must resolve to the IDENTICAL value the maker app's own copy resolves to
+  # (the base destination: config/deploy.yml's env.secret + .kamal/secrets) — both read the SAME item
   # (op://tinkerex/tinkerex-sync-admin-token/password). That shared reference is what GUARANTEES the
   # match; a divergent value here would make FileLayer::ChunkRemote::Provisioning's admin call 503
   # against Sync::V1::Admin::LibrariesController#authenticate_admin! on the far side (chaim354/

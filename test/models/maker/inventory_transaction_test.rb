@@ -69,5 +69,31 @@ module Maker
         @item.destroy!
       end
     end
+
+    # THE ORDER OF `has_many` DECLARATIONS ON `User` MUST NOT BE LOAD-BEARING. The ledger refuses
+    # record-level destruction outright, so the only reason a user's cascade can reach these rows
+    # is that `maker_inventory_transactions` is removed WITHOUT instantiating them. Mutation-check
+    # by swapping app/models/user.rb's `maker_inventory_items` / `maker_inventory_transactions`
+    # lines: before this pinning that swap raised ReadOnlyRecord mid-cascade and left the whole
+    # account intact, with nothing in the suite noticing.
+    test "destroying a user that holds a posted ledger row deletes the whole account" do
+      Maker::InventoryTransaction.apply!(item: @item, user: @user, delta: 7, reason: "restocked")
+      id = @user.id
+      assert_nothing_raised { @user.destroy! }
+      assert_not User.exists?(id)
+      assert_equal 0, Maker::InventoryTransaction.where(user_id: id).count
+      assert_equal 0, Maker::InventoryItem.where(user_id: id).count
+    end
+
+    # The immutability rule has NO parent-state escape hatch. It used to permit a destroy whenever
+    # the parent item was destroyed/marked-for-destruction — a condition the real `dependent:`
+    # cascades never set — so the rule read as "protected" while the protection was decided by
+    # whether the caller happened to have touched the parent first.
+    test "a ledger row cannot be destroyed even when its item is marked for destruction" do
+      txn = Maker::InventoryTransaction.apply!(item: @item, user: @user, delta: 7, reason: "restocked")
+      txn.inventory_item.mark_for_destruction
+      assert_raises(ActiveRecord::ReadOnlyRecord) { txn.destroy }
+      assert Maker::InventoryTransaction.exists?(txn.id)
+    end
   end
 end

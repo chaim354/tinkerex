@@ -136,6 +136,22 @@ module FileLayer
       manifest = manifest_for(user, version_id)
       raise NotFound, "no manifest for #{node_id.inspect} at #{version_id.inspect}" if manifest.empty?
 
+      # THE PORT'S CAP (FileLayer::MAX_BYTES), KEPT THE ONLY WAY THIS BACKEND CAN KEEP IT -- AND IT
+      # COSTS NOTHING. Share stats the file and S3 bounds a ranged GET; neither mechanism exists
+      # here, but the manifest already in hand carries every chunk's `length` (null: false), so the
+      # EXACT byte count of the String below is known before a single chunk is presigned. Refusing
+      # here also SAVES the POST /v1/chunks/download an over-cap file would otherwise pay for.
+      #
+      # SUMMED OVER ENTRIES, NEVER OVER UNIQUE HASHES. Chunking dedupes, which is why `presign`
+      # uniques the hashes one line down; uniquing HERE would under-count a file with repeated
+      # blocks and let it through. And not `node.size` either: that is the CURRENT version's size,
+      # while `content_token` may name an older one -- exactly the case version-keyed manifests
+      # exist to serve.
+      #
+      # NotFound for "too big" is the KNOWN WART shared with Share and S3 (the port's taxonomy has
+      # no name for terminal-but-present), not a local choice -- see s3.rb's note at the same raise.
+      raise NotFound, "file exceeds #{MAX_BYTES} bytes" if manifest.sum(&:length) > MAX_BYTES
+
       urls = presign(user, manifest.map(&:chunk_hash))
       +"".b.tap { |buf| manifest.each { |c| buf << fetch_chunk(c, urls) } }
     end

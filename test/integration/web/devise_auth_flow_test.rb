@@ -30,6 +30,36 @@ module Web
       assert user.encrypted_password.present?, "password is hashed"
     end
 
+    # ONE OWNER FOR THE FROM-ADDRESS, AND NO LAYOUT AROUND DEVISE'S MAIL.
+    #
+    # Nothing in this suite asserted anything about a message's ENVELOPE, which is how a scaffold
+    # `ApplicationMailer` sat in the tree stating a SECOND from-address (`from@example.com`) that
+    # never reached a message: `config.parent_mailer` was left commented, so `Devise::Mailer`
+    # descended straight from `ActionMailer::Base` — no inherited `default from:`, and `_layout`
+    # nil, so `layouts/mailer.{html,text}.erb` wrapped nothing either. The mailer and both layouts
+    # were deleted; `config.mailer_sender` in config/initializers/devise.rb is the whole mail story
+    # now, and this test is what keeps it that way.
+    test "confirmation mail is sent from the one configured address, with no layout" do
+      assert_emails 1 do
+        User.create!(email: "envelope@example.com", password: PASSWORD)
+      end
+      mail = ActionMailer::Base.deliveries.last
+
+      # DERIVED FROM THE CONFIG, NOT A LITERAL. A literal would pin the address rather than the
+      # property, and would go red on a rename that broke nothing. What is pinned is that the
+      # message agrees with the ONE place the address is stated. A re-introduced parent mailer
+      # carrying its own `default from:` shows up here as from and reply_to DISAGREEING — Devise
+      # sets Reply-To from `mailer_sender` while the parent's `default` wins the From — so the
+      # second assertion is the diagnostic, not a restatement of the first.
+      assert_equal [ Devise.mailer_sender ], mail.from
+      assert_equal [ Devise.mailer_sender ], mail.reply_to
+
+      # THE LAYOUT, ASSERTED RATHER THAN ASSUMED, and it has to be asserted in one direction or
+      # the other: a DOCTYPE check that passes whether or not a layout is applied asserts exactly
+      # what the deleted layouts were doing, which is nothing.
+      assert_not_includes mail.body.encoded, "<!DOCTYPE html>"
+    end
+
     test "sign up with a BLANK password is rejected and creates no user" do
       # password_required? is false when no password is set (so the OmniAuth seam + the
       # device-token bootstrap can create passwordless accounts) — but a HUMAN web sign-up

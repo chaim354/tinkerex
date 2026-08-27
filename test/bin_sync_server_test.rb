@@ -18,9 +18,11 @@ class BinSyncServerTest < ActiveSupport::TestCase
   end
 
   test "a missing sibling checkout exits non-zero and names the clone command" do
-    out, status = Open3.capture2e(
-      { "TINKEREX_SYNC_DIR" => Dir.mktmpdir("absent") }, SCRIPT.to_s, "prepare"
-    )
+    # BLOCK FORM of mktmpdir: the directory only needs to outlive the one child process, and the
+    # non-block arm cleans up after nobody -- it left one `absent*` tmpdir behind per run.
+    out, status = Dir.mktmpdir("absent") do |absent|
+      Open3.capture2e({ "TINKEREX_SYNC_DIR" => absent }, SCRIPT.to_s, "prepare")
+    end
 
     assert_not status.success?, "a missing tinkerex-sync must fail, not fall through:\n#{out}"
     assert_includes out, "chaim354/tinkerex-sync",

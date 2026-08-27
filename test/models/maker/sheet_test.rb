@@ -52,10 +52,37 @@ module Maker
       assert_equal [], sheet.cells
       assert_equal [], sheet.columns
 
-      # A Hash whose inner keys are the wrong shape — Array("x") would make this one garbage row.
+      # The OUTER shape: a "cells" key holding a scalar is nothing, not one garbage row.
       sheet.update!(data: { "cells" => "not an array", "columns" => 42 })
       assert_equal [], sheet.cells
       assert_equal [], sheet.columns
+    end
+
+    # The ELEMENT shapes, which the outer check above says nothing about. `to_csv` calls
+    # `c["title"]` on every column entry, so an Integer or Array entry raised TypeError and a Float
+    # or `true` raised NoMethodError — four shapes that survive a real owner PATCH (driven in
+    # Web::ProjectSheetsTest; `nil` is the one that does NOT, because deep_munge strips it).
+    #
+    # BUILT THROUGH create!/reload ON PURPOSE. `permit(data: {})` yields nested
+    # `ActionController::Parameters`, and `Parameters.is_a?(Hash)` is FALSE — `grep(Hash)` is only
+    # correct because `ActiveRecord::Type::Json#cast` normalises the assignment to a plain Hash.
+    # Asserting against an in-memory literal would never exercise that.
+    test "cells and columns read defensively from malformed ELEMENTS inside a well-shaped blob" do
+      sheet = @project.sheets.create!(user: @user, name: "Ragged", data: {
+        "columns" => [ nil, 1, 1.5, true, [ "a" ], { "title" => "Z" } ],
+        "cells"   => [ { "a" => 1 }, "nope", 7, [ "x" ] ]
+      })
+      sheet.reload
+
+      assert_equal [ { "title" => "Z" } ], sheet.columns
+
+      # NORMALISED, NOT DROPPED: projects/_sheets.html.erb renders `cells.size` as "N rows", so a
+      # `select` here would silently shrink that count. The size assertion is what pins it — the
+      # equality below would still hold for a reader that dropped nothing but reordered nothing.
+      assert_equal 4, sheet.cells.size
+      assert_equal [ [], [], [], [ "x" ] ], sheet.cells
+
+      assert_equal "Z\n\n\n\nx\n", sheet.to_csv
     end
 
     test "to_csv writes the column titles then the cells" do

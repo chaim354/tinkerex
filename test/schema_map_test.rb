@@ -36,7 +36,14 @@ class SchemaMapTest < ActiveSupport::TestCase
   # The test above answers a stale page with "regenerate", which would happily bake a PARSER bug
   # into the map and call it current. These pin the meaning of what is parsed instead: one column
   # per branch of the dump reader — plain, nullable, defaulted, precision/scale, and limit.
+  #
+  # `users.email` is here because it is BADGED: `data` gives it "u" and "ix", so this is the one
+  # assertion that can tell the parse result from the page's copy of it. Every other column below
+  # is badge-free and reads identically either way, which is what let `annotate` badge the memoized
+  # parse in place for as long as it did — the assertions could not fail for the reason they exist,
+  # and whether they saw a clean hash came down to the minitest seed. Do not "simplify" it away.
   test "columns keep their type, nullability and default through the parse" do
+    assert_equal({ "n" => "email", "t" => "string", "req" => true }, column("users", "email"))
     assert_equal({ "n" => "content_hash", "t" => "string" }, column("nodes", "content_hash"))
     assert_equal({ "n" => "deleted", "t" => "boolean", "req" => true, "d" => "false" },
                  column("nodes", "deleted"))
@@ -54,6 +61,12 @@ class SchemaMapTest < ActiveSupport::TestCase
 
     # A single-column unique index is a badge; a composite one names its partners instead.
     assert rendered_column("users", "email")["u"]
+    # Badges are APPENDED to a COPY of the parse result (lib/schema_map.rb, `annotate`), and
+    # `JSON.generate` emits keys in insertion order, so this key list IS the page's bytes stated as
+    # a shape — the same column the parse test above asserts, plus exactly what `data` adds. It is
+    # what makes the copy equivalent to the in-place badging it replaced, and unlike the stale-page
+    # test above it cannot be answered by regenerating the map.
+    assert_equal %w[n t req u ix], rendered_column("users", "email").keys
     assert_equal "user_id, storage_path", rendered_column("nodes", "storage_path")["cu"]
 
     # `node_id` is not a primary key anywhere, and is what half the maker layer points at.

@@ -15,7 +15,7 @@ module Maker
     # the argument: a SCHEDULE may no-op, but a COMMAND naming a user must not silently do nothing.
     test "the scheduled fan-out declines on a scannable backend" do
       pin_file_layer_backend("share")
-      FileLayer.current = FileLayer::Share.new(root: Dir.mktmpdir("pdj"))
+      use_fresh_share_library!
 
       assert_no_enqueued_jobs { Maker::ProjectDiscoveryJob.sweep_all! }
     end
@@ -35,7 +35,7 @@ module Maker
     # #perform CARRIES NO GATE, so an explicit caller gets the sweep on any backend.
     test "perform sweeps on a scannable backend too" do
       pin_file_layer_backend("share")
-      FileLayer.current = FileLayer::Share.new(root: Dir.mktmpdir("pdj"))
+      use_fresh_share_library!
       dir("d-projects", "Projects", nil)
       dir("d-lamp", "Desk Lamp", "d-projects")
 
@@ -74,7 +74,7 @@ module Maker
     # returning a TERMINAL 404.
     test "the chain does not fire on a scannable backend" do
       pin_file_layer_backend("share")
-      FileLayer.current = FileLayer::Share.new(root: Dir.mktmpdir("pdj"))
+      use_fresh_share_library!
       dir("d-projects", "Projects", nil)
       dir("d-lamp", "Desk Lamp", "d-projects")
 

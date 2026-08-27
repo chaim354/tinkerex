@@ -13,8 +13,9 @@
 # the kernel at container start). uid/gid 1000 so the container user can read AND write (the
 # boot guard write-probes, and deletes move files into a .trash/ folder inside the share).
 #
-# STORAGE_BACKEND=memory neutralizes the chunk-store env inherited from deploy.yml (see the
-# note in deploy.s3.yml). A share deployment needs no chunk store and no S3 credentials at all.
+# A share deployment needs no chunk store and no S3 credentials at all — and since Arc D Part 2
+# there is no chunk-store env to inherit either, so nothing has to be neutralised. This header
+# used to describe a STORAGE_BACKEND=memory line that the body below has recorded as removed.
 
 # Two names — see the `proxy:` comment in deploy.yml for why `.home` exists beside `.local`
 # (short version: `.local` is mDNS-reserved, so Apple devices never resolve it via DNS).
@@ -35,8 +36,12 @@ volumes:
   - "tinkerex_library_3dprinting:/library"
 
 env:
-  # Redeclared to DROP the inherited CHUNK_SECRET_ACCESS_KEY — a share container holds no
-  # storage credential. RAILS_MASTER_KEY must stay or boot dies with "Missing secret_key_base".
+  # env.secret is an ARRAY and kamal REPLACES arrays on merge, so this list is the WHOLE list:
+  # RAILS_MASTER_KEY must stay or boot dies with "Missing secret_key_base". What redeclaring it
+  # DROPS is now the base's SYNC_ADMIN_TOKEN, not the CHUNK_SECRET_ACCESS_KEY this comment used to
+  # name (the base has not declared that since Arc D Part 2). Dropping it is harmless and correct:
+  # a share container never sends it, and the `sync` accessory — which is never overlaid — still
+  # gets it from .kamal/secrets.share (docs/invariants/deploy-secrets.md, §14g).
   secret:
     - RAILS_MASTER_KEY
   clear:

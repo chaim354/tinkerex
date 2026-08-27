@@ -66,9 +66,16 @@ module Maker
 
       def asset_path!(path) = self.class.validate_asset_path!(path)
 
-      # MAY ITS ASSETS BE CACHED? A predicate the source ANSWERS, rather than a class check at the
-      # call site — same preference as §14b's Phase 3 trap, and here the two backends genuinely
-      # differ rather than coincidentally agreeing.
+      # MAY THIS SOURCE'S OUTPUT BE CACHED — THE INDEX *AND* ITS ASSETS? A predicate the source
+      # ANSWERS, rather than a class check at the call site — same preference as §14b's Phase 3
+      # trap, and here the two backends genuinely differ rather than coincidentally agreeing.
+      #
+      # THE INDEX ASKS IT TOO (`Registry#manifests`), and that is wider than this comment once
+      # claimed. The cost argument below is an ASSET argument and does not reach manifests.json —
+      # but `Local`'s own reason, at the bottom of this file, is about STALENESS, and that one
+      # applies to the index verbatim. Honouring it for assets only left a dev author with fresh
+      # bundle bytes against a manifest up to five minutes old, which is worse than uniform
+      # staleness: the half that updates makes you believe the other half did.
       #
       # TRUE over HTTP, where every asset is a fresh TCP connection + GET to the accessory
       # (Net::HTTP.start per call, no keep-alive) plus a full-body buffer, repeated per module per

@@ -74,6 +74,24 @@
   `path_for` it becomes an ordinary-looking path segment, while in `ancestors_of` it raises
   `NoMethodError`. An unresolvable chain answers `nil`, which callers skip — a library-wide sweep
   must not abort over one broken node.
+- **`path_for`'S MEMO RESOLVES THE WHOLE CHAIN AND *THEN* WRITES, NEVER PER HOP — a cache is where
+  the `:broken` sentinel comes back.** Writing an entry as the walk climbs caches a PARTIAL PREFIX,
+  so a folder whose grandparent is tombstoned reads back on the next lookup as a top-level folder
+  that does not exist: a wrong path where the un-memoized walk gave `nil`, and quiet, which is the
+  bullet above's failure mode arriving through a new door. On success each visited id is cached with
+  its OWN path (the walk's ids run nearest-first and its segments furthest-first); on `:broken`
+  every id the walk touched is cached `nil`, which is sound because they all share the broken
+  suffix. Mutation-checked by two tests that go red on a per-hop write.
+- **`path_for` IS THE ONE ANCESTRY DEFINITION AND HAS THREE CALLERS OUTSIDE THIS SWEEP** —
+  `ShelvesController`, `FilesController#folder_paths_for` (the flat view's Folder column) and
+  `Tools::LibraryFolders` (the addon save-folder picker). The last two each carried a byte-identical
+  whole-dir pluck with its own in-memory walk, and the three disagreed on a parent cycle: `nil` here,
+  a literal `"…"` spliced into the rendered path there, and unbounded recursion in the third —
+  `SystemStackError`, a 500 on every `/tools/:addon` page for that user. **Do not re-inline a fourth
+  walk.** A caller that cannot skip an unresolvable node degrades `nil` ITSELF, in one named place
+  (`Tools::LibraryFolders#folder_label`); the primitive stays strict, because a lenient mode on it
+  invites each caller to pick a fallback without arguing for it — which is how the three answers
+  happened.
 - **THE TRIGGER SET IS `Maker::FileAttachment.role_for(name) == "model"`, never a fresh extension
   list** (§14d, one file-type vocabulary). Consequence, stated rather than discovered: `.obj`,
   `.step` and `.stp` are catalogued alongside `.stl` and `.3mf`.

@@ -14,23 +14,52 @@ module Maker
       rows = user.nodes.present.where(kind: "dir")
                  .pluck(:node_id, :parent_node_id, :name)
       @dirs = rows.to_h { |id, parent, name| [ id, Entry.new(node_id: id, parent_node_id: parent, name:) ] }
+      @paths = {}
     end
+
+    # Every live dir the user owns. THE PICKER'S SET, so a caller that already holds a tree never
+    # needs a second `where(kind: "dir")` pluck to enumerate the same rows this one indexed.
+    def dir_ids = @dirs.keys
 
     # "" for the library root (node_id nil). nil when the chain is broken -- a tombstoned or
     # missing ancestor, or a cycle. NIL IS AN ANSWER, NOT AN ERROR: a caller sweeping a whole
     # library must skip an unresolvable node, not abort the pass over the other ten thousand.
+    #
+    # MEMOIZED, AND THE MEMO'S SHAPE IS THE WHOLE RISK. Resolve the chain FIRST, then write the
+    # answer for every id the walk visited at once -- never per hop. A per-hop write caches a
+    # PARTIAL PREFIX, so a folder whose grandparent is tombstoned reads back as a top-level folder
+    # that does not exist: the same quiet-wrong-path failure the sentinel comment below describes,
+    # arriving through the cache instead. Every id on one walk shares that walk's suffix, so on
+    # success each gets its own path and on `:broken` every one of them gets nil.
     def path_for(node_id)
+      return @paths[node_id] if @paths.key?(node_id)
+
       segments = []
+      visited  = []
+      broken   = false
       each_ancestor(node_id) do |entry|
         # BOTH CALLERS MUST CHECK THE SENTINEL, AND FORGETTING IT FAILS QUIETLY HERE. `:broken`
         # answers `.name` too (Ruby 3+), so an unchecked sentinel becomes an ordinary-looking path
         # segment rather than an error -- a wrong path, silently. In ancestors_of the same omission
         # raises NoMethodError instead. Both are mutation-checked.
-        return nil if entry == :broken
+        if entry == :broken
+          broken = true
+          next
+        end
 
+        visited << entry.node_id
         segments.unshift(entry.name)
       end
-      segments.join("/")
+
+      if broken
+        visited.each { |id| @paths[id] = nil }
+        return @paths[node_id] = nil
+      end
+
+      # visited runs nearest-first and segments furthest-first, so the i-th visited id owns the
+      # first (size - i) segments -- its OWN path, not the leaf's.
+      visited.each_with_index { |id, i| @paths[id] = segments.first(segments.size - i).join("/") }
+      @paths[node_id] = segments.join("/")
     end
 
     # Nearest-first, ending with nil for the library root: ["d-parts", "d-enc", "d-models", nil].
@@ -47,6 +76,12 @@ module Maker
     end
 
     def dir?(node_id) = @dirs.key?(node_id)
+
+    # The LEAF name of one dir, nil for an id this index does not hold. For the one caller that
+    # cannot skip an unresolvable chain (Tools::LibraryFolders' picker) and needs something to
+    # label the folder with anyway; nil is how it tells "a folder with a broken chain" from "not a
+    # folder of this user's at all", which are different answers on that surface.
+    def name_of(node_id) = @dirs[node_id]&.name
 
     private
 

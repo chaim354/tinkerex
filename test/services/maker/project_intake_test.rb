@@ -9,11 +9,6 @@ module Maker
   # the port wants a real disk or bucket behind every fixture. The doors themselves are covered
   # per-backend in move_node_test.rb and library_folder_test.rb.
   class ProjectIntakeTest < ActiveSupport::TestCase
-    # config/cable.yml uses the `test` adapter, which is what makes these assertions observable at
-    # all — the same shape as §14e's rate-limiting note, where a null backend makes a guard fire
-    # never and the test pass for the wrong reason.
-    include ActionCable::TestHelper
-
     setup do
       # A REAL SHARE LIBRARY, because these fixtures now have to exist on disk. Until Arc D Part 2
       # this suite ran against embedded chunk, where a node is just a row and a move is a changelog

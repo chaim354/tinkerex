@@ -7,8 +7,8 @@ module Web
   #
   # DESTROY IS THE ONE THAT MATTERS. It is irreversible, and measured before the fix, one request
   # carrying only a session cookie took users=1 projects=1 nodes=1 tasks=1 to zero: no password,
-  # no server-side confirmation, no undo. The CASCADE is correct (31 `dependent: :destroy`
-  # associations on User) — which is exactly what made the missing confirmation easy to miss.
+  # no server-side confirmation, no undo. The CASCADE is correct (24 `dependent:` associations on
+  # User) — which is exactly what made the missing confirmation easy to miss.
   class AccountSettingsTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
     NEW_PASSWORD = "a different correct horse".freeze

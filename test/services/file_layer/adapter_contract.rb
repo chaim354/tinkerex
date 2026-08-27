@@ -174,6 +174,45 @@ module FileLayerAdapterContract
     assert_equal "\x00\x01\x02\xFF".b, adapter.read(@user, node_id: id)
   end
 
+  # THE PORT'S ONE PROMISE ABOUT HOW BIG A read MAY GET, ASKED OF EVERY ADAPTER INSTEAD OF LEFT AS
+  # PROSE. file_layer.rb calls MAX_BYTES "port-wide", but the rule lived only in that sentence: share
+  # kept it twice and s3 twice, by two different mechanisms, and chunk_remote not at all -- and no
+  # leg could notice, because nothing here asked. The obligation is what belongs in the contract; the
+  # MECHANISM stays with the adapter (s3's ranged GET and share's cap+1 read each argue for
+  # themselves, in place).
+  #
+  # THE MUTATION IS MEANINGFUL ON chunk_remote ALONE: deleting its manifest pre-check turns this red
+  # while share and s3 stay green. A future reader must not read three green legs as three proofs.
+  #
+  # The constant is SHRUNK rather than a 256 MiB fixture seeded — the pattern share_test and s3_test
+  # already established. BOTH ARMS ARE ASSERTED, and the second is what stops the first going
+  # vacuous: with only the refusal pinned, `>= MAX_BYTES` would pass and "exactly at the cap" would
+  # be nobody's answer.
+  def test_contract_read_refuses_a_file_over_max_bytes
+    id = create_file!(name: "capped.stl", bytes: "hello")
+
+    with_max_bytes(4) do
+      err = assert_raises(FileLayer::NotFound) { adapter.read(@user, node_id: id) }
+      assert_match(/exceeds/, err.message)
+    end
+
+    with_max_bytes(5) do
+      assert_equal "hello", adapter.read(@user, node_id: id),
+                   "a file EXACTLY at the cap must still read — the refusal is > MAX_BYTES, and " \
+                   "an adapter that refused here would truncate the boundary instead of bounding it"
+    end
+  end
+
+  def with_max_bytes(bytes)
+    original = FileLayer::MAX_BYTES
+    FileLayer.send(:remove_const, :MAX_BYTES)
+    FileLayer.const_set(:MAX_BYTES, bytes)
+    yield
+  ensure
+    FileLayer.send(:remove_const, :MAX_BYTES)
+    FileLayer.const_set(:MAX_BYTES, original)
+  end
+
   def test_contract_stat_reports_mtime_in_unix_nanoseconds
     id = create_file!(name: "f.stl", bytes: "timed")
     mtime = adapter.stat(@user, node_id: id).mtime

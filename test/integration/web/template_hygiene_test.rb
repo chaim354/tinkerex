@@ -47,15 +47,19 @@ module Web
     # everything outside it must be swept or the test fails.
     #
     #   users/          — Devise's own pages, rendered LOGGED OUT; this sweep is a signed-in session.
-    #   layouts/        — mailer + Action Text layouts, driven by a mailer/rich-text render, not a page.
-    #                     (TWO of them are swept anyway: `layouts/application`, which every page below
-    #                     wraps in, and `layouts/action_text/contents/_content`, which the project
-    #                     detail page's build-log entry renders. So of the 7 excused `<%#` sites, only
-    #                     3 go genuinely unswept — all Devise. Every one of the 59 is still counted by
-    #                     the balance check above, which needs no request at all.)
     #   pwa/            — a manifest, not HTML; it has no ERB comments and no prose to leak.
     #   active_storage/ — an engine template we neither own nor edit.
-    UNSWEPT_DIRS = %w[users/ layouts/ pwa/ active_storage/].freeze
+    #
+    # `layouts/` WAS EXCUSED HERE AND DELIBERATELY IS NOT ANY MORE — do not add it back by reflex.
+    # The excuse only ever covered the two MAILER layouts, and those were applied to nothing
+    # (`Devise::Mailer._layout` measured nil, because nothing set `config.parent_mailer`) and have
+    # been deleted. Both layouts that remain are swept: `layouts/application`, which every page
+    # below wraps in, and `layouts/action_text/contents/_content`, which the project detail page's
+    # build-log entry renders. Keeping the prefix would have excused a directory the sweep does
+    # reach — an escape hatch covering nothing, which is the vacuous shape this file exists to
+    # refuse. All 3 remaining excused `<%#` sites are Devise's, and every template on disk is still
+    # counted by the balance check above, which needs no request at all.
+    UNSWEPT_DIRS = %w[users/ pwa/ active_storage/].freeze
 
     setup do
       # HERMETIC BY FIXTURE (§14c): the addon pages below read `test/fixtures/addons`, never the

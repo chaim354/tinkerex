@@ -9,12 +9,21 @@ import { saveWithOverwrite } from "./save.js"
 // own value into the DOM means a passing assertion proves the PIN resolved, not merely that this
 // entry module loaded — a fixture that only asserted its own text could pass with `pins` broken.
 //
-// IT ALSO EXERCISES save.js, which is a VERBATIM COPY of the helper all three real bundles import
-// (chaim354/tinkerex-addons addons/<key>/save.js). That helper is the only new logic in the
-// overwrite-confirmation flow, and it is pure client-side behaviour — a 409 from the host, a
-// window.confirm, a re-POST carrying overwrite=1 — none of which any request test can observe. The
-// real bundles are the addons repo's business (see the header note above); what this proves is that
-// the helper and the host's 409 contract actually agree, in a browser, against the real endpoint.
+// IT ALSO EXERCISES save.js — WHICH IS NO LONGER THE CODE THAT SHIPS, AND THIS COMMENT USED TO SAY
+// IT WAS. save.js was a verbatim copy of the helper every real bundle imported; `@maker/addon-sdk`
+// then absorbed that dance (`host.files.save({onReplace})`) and the bundles moved to it
+// (boxes/boxes.js's own header records the move), so nothing published imports a save.js today and
+// this copy has already drifted from the SDK on wire shape — it reads only the FLAT
+// `{error: "would_replace"}` body, where addon_sdk.js's errorFrom reads the nested shape too.
+// THE SHIPPED OVERWRITE FLOW IS ASSERTED AGAINST THE SDK, in test/system/addon_sdk_test.rb, which
+// owns all three of its answers — accept, decline, no callback; nothing here proves anything about
+// that code.
+//
+// WHAT IT STILL PROVES, AND WHY THE FILE STAYS: manifests.json's `sdk-fixture` entry records that
+// `fixture` deliberately holds the RAW-CTX path — `ctx.saveUrl`, `ctx.csrfToken`, a hand-rolled
+// fetch, importing nothing — so both halves of the compatibility rule are covered by something that
+// runs. save.js is that path's save, and its behaviour is pure client-side (a 409 from the host, a
+// window.confirm, a re-POST carrying overwrite=1), none of which any request test can observe.
 //
 // The destination and filename come from the QUERY STRING so the Ruby test can point one fixture at
 // whatever project folder it just built, rather than the fixture hard-coding library state.

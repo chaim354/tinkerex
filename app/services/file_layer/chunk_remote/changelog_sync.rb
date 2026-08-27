@@ -30,13 +30,40 @@ module FileLayer
 
       # Pulls until caught up. Returns a Result; raises FileLayer::FetchError on a wire failure,
       # which the caller renders as a retryable 503 rather than as an empty library.
+      #
+      # ONE GET OPENS IT, NOT TWO. `oldest_seq` and `head_seq` are computed independently of
+      # `since`/`limit` and ride on EVERY /v1/changes response, so the separate `limit: 1` probe
+      # this used to open with asked the WAN for data the first page was about to carry anyway --
+      # a doubled round trip on every pull (720 per user per day at the 2-minute cadence) for a
+      # question that answers "no" in every library where changelog retention is not pruning.
+      # It was also two SEPARATE observations of the server for one decision: a prune landing
+      # between the probe and the page would answer "not gapped" and then apply a page with a
+      # silent hole -- the exact failure the check exists to prevent. One body answers both.
       def call
-        resynced = full_resync_if_gapped
+        resynced = false
         applied = 0
+        body = fetch_changes
+
+        # THE GAP IS DECIDED EXACTLY ONCE, OUTSIDE THE LOOP, AND THAT PLACEMENT IS LOAD-BEARING
+        # RATHER THAN TIDY. A server can report an `oldest_seq` that stays ABOVE the cursor we
+        # resync TO -- `head_seq + 1` is what an emptied changelog reports (sync-protocol.md) --
+        # so re-asking per page would resync forever against it, never applying anything. Once is
+        # also all the question is worth: a resync re-reads the whole tree and leaves the cursor at
+        # the server's own head, which cannot be behind what survived the prune.
+        if gapped?(body)
+          full_resync(head_seq: body["head_seq"].to_i)
+          resynced = true
+          # THE PRE-RESYNC PAGE IS DISCARDED, NEVER APPLIED. It was computed against a cursor the
+          # server has just told us is worthless, and `apply_page` is also what feeds
+          # @nudge_parents -- applying it would file stale arrivals (docs/invariants/
+          # project-intake.md's "the nudge is DELIBERATELY NOT fed by full_resync") and write
+          # partial pre-prune state over the tree the resync just made correct. The cost is one
+          # wasted PAGE-sized body per prune event, against the 720 round trips a day saved.
+          body = fetch_changes
+        end
 
         loop do
           before = cursor
-          body = @transport.get("/v1/changes", { since: cursor, limit: PAGE })
           entries = body["changes"] || []
           break if entries.empty?
 
@@ -59,6 +86,8 @@ module FileLayer
           # 199k would discard all of it and start over. Each page is atomic, so a crash resumes
           # from the last committed page rather than from zero.
           break if entries.size < PAGE
+
+          body = fetch_changes
         end
 
         # THE DEVICE-PUSH FAST PATH, RESTORED HERE RATHER THAN AT A COMMIT.
@@ -97,6 +126,11 @@ module FileLayer
 
       def cursor = @user.remote_sync_cursor
 
+      # ONE PAGE-SIZED GET IS THE WHOLE REQUEST SHAPE. `limit: PAGE` is the server's own default
+      # and is clamped to [1, 2000] there, so this asks for nothing unusual -- it is the same
+      # request the Rust reference client makes, and its body carries the gap fields too.
+      def fetch_changes = @transport.get("/v1/changes", { since: cursor, limit: PAGE })
+
       # THE PRUNED-GAP CHECK, AND `oldest_seq` IS WHY THE SERVER SENDS IT. Retention can prune
       # changelog entries; a cursor below what survives means the delta we would receive has a HOLE,
       # and applying it leaves a tree that is silently wrong -- files the server deleted still
@@ -106,13 +140,15 @@ module FileLayer
       # `cursor.positive?` matters: a FIRST sync has cursor 0, which is below every oldest_seq, and
       # is not a gap -- it is the ordinary beginning. Treating it as one would work, but would call
       # every first sync a "resync" and make the signal useless for spotting real prunes.
-      def full_resync_if_gapped
-        body = @transport.get("/v1/changes", { since: cursor, limit: 1 })
+      #
+      # `cursor < oldest` IS CARRIED OVER VERBATIM AND IS NOT THE PLACE TO TIDY. The Rust client
+      # spells the same question `oldest_seq > cursor + 1`, i.e. it does NOT call `oldest ==
+      # cursor + 1` a gap and this does. That divergence is a wire-spec question for tinkerex-sync
+      # (§14j: the boundary is a network), unreachable while nothing schedules a prune, and
+      # changing it here would silently make the two clients disagree about the same server.
+      def gapped?(body)
         oldest = body["oldest_seq"].to_i
-        return false unless cursor.positive? && oldest.positive? && cursor < oldest
-
-        full_resync(head_seq: body["head_seq"].to_i)
-        true
+        cursor.positive? && oldest.positive? && cursor < oldest
       end
 
       # Re-reads /v1/tree, which returns only LIVE nodes, then marks anything local that the server

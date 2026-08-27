@@ -6,17 +6,12 @@ require "rails/all"
 # you've limited to :test, :development, or :production.
 Bundler.require(*Rails.groups)
 
-# THE SYNC ENGINE IS LOADED ONLY BY THE ONE BACKEND THAT USES IT. The gem is in the Gemfile and the
-# lockfile unconditionally -- a conditional `gem` line makes Gemfile.lock environment-dependent,
-# which BUNDLE_DEPLOYMENT=1 rejects outright -- but it is declared `require: false`, so Bundler.require
-# above does not load it and this line decides.
-#
-# IT HAS TO HAPPEN HERE, not in an initializer: a Rails::Engine subclass registers itself when its
-# class body executes, and initializers run long after the engine would have had to be in the
-# railtie chain to contribute routes, paths or its own initializers.
+# THE SYNC ENGINE IS NOT A DEPENDENCY OF THIS APP (Arc D Part 2 -- see the Gemfile for what went
+# with it): it is in no Gemfile group, nothing here loads it, and `Sync::` is undefined in this
+# process. This line used to be the conditional require that decided. What survives is only
+# LibraryBackend itself, required by hand because it sits in config.autoload_lib's `ignore:` list
+# (that file argues why one constant must not be owned by Zeitwerk and a manual require at once).
 require_relative "../lib/library_backend"
-# THE SYNC ENGINE USED TO BE REQUIRED HERE, conditionally, when LIBRARY_BACKEND wanted it. It is
-# not a dependency of this app any more (Arc D Part 2 -- see the Gemfile for what went with it).
 
 module Tinkerex
   class Application < Rails::Application
@@ -49,6 +44,17 @@ module Tinkerex
     # ActionText::Attachment ever persists. Turning it off therefore removes CVE-2026-66066's
     # code path STRUCTURALLY rather than leaving it merely unreachable by argument.
     config.active_storage.variant_processor = :disabled
+
+    # NO CABLE ENDPOINT. This app defines no channel and nothing subscribes to one (see
+    # test/cable_absent_test.rb); a device's sync nudge comes from the standalone sync server,
+    # which has its own channel and its own cable config on the `sync` accessory.
+    #
+    # `mount_path = nil` IS THE KNOB, AND DELETING THE `mount` LINE FROM config/routes.rb IS NOT.
+    # ActionCable's own engine prepends `mount ActionCable.server => config.action_cable.mount_path`
+    # in an after_initialize whenever that path is non-nil, so /cable was drawn TWICE and the
+    # hand-written mount in routes.rb was pure redundancy — removing it left `bin/rails routes`
+    # byte-identical, which is exactly the shape of a fix that looks done and is not.
+    config.action_cable.mount_path = nil
 
     # Configuration for the application, engines, and railties goes here.
     #

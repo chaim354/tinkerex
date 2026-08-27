@@ -292,7 +292,7 @@ module SchemaMap
         col["tables"].each_with_index.map do |name, oi|
           t = by_name.fetch(name)
           columns = [ { "n" => "id", "t" => "bigint", "req" => true, "pk" => true } ] + t["columns"]
-          columns.each { |c| annotate(c, t, name, sources, targets) }
+          columns = columns.map { |c| annotate(c, t, name, sources, targets) }
           { "name" => name, "db" => t["db"], "group" => col["group"],
             "col" => ci, "order" => oi, "columns" => columns }
         end
@@ -332,17 +332,26 @@ module SchemaMap
     # Per-column badges the page draws. `key` marks a column something POINTS AT that is not a
     # primary key — `nodes.node_id`, `chunks.chunk_hash` — which is most of what is load-bearing
     # about this schema.
+    #
+    # It RETURNS A COPY and must keep doing so. `tables` is memoized, so badging the column hash in
+    # place edited the PARSE RESULT: `SchemaMap.tables` then meant one thing before `data`/`payload`/
+    # `render` had run in this process and another after, and the suite's parse assertions passed or
+    # failed on the minitest seed rather than on the parser. Absent badges are OMITTED, never written
+    # as nil, and the six are appended in u/ix/ref/fkc/key/cu order: `JSON.generate` emits keys in
+    # insertion order and the checked-in page is compared byte for byte, so a reorder here is a stale
+    # page (`test/schema_map_test.rb`, "the checked-in map is the current schema").
     def annotate(col, table, name, sources, targets)
       ref = "#{name}.#{col['n']}"
       single = table["indexes"].find { |i| i["cols"] == [ col["n"] ] }
-      col["u"]   = true if single && single["unique"]
-      col["ix"]  = true if table["indexes"].any? { |i| i["cols"].first == col["n"] } && !col["pk"]
-      col["ref"] = true if sources.include?(ref)
-      col["fkc"] = true if foreign_keys.include?([ name, col["n"] ])
-      col["key"] = true if targets.include?(ref) && !col["pk"]
+      badges = {}
+      badges["u"]   = true if single && single["unique"]
+      badges["ix"]  = true if table["indexes"].any? { |i| i["cols"].first == col["n"] } && !col["pk"]
+      badges["ref"] = true if sources.include?(ref)
+      badges["fkc"] = true if foreign_keys.include?([ name, col["n"] ])
+      badges["key"] = true if targets.include?(ref) && !col["pk"]
       composite = table["indexes"].find { |i| i["unique"] && i["cols"].size > 1 && i["cols"].include?(col["n"]) }
-      col["cu"] = composite["cols"].join(", ") if composite
-      col
+      badges["cu"] = composite["cols"].join(", ") if composite
+      col.merge(badges)
     end
 
     # A schema dump is generated Ruby with a shape that has been stable for years, so it is read

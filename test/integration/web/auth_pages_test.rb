@@ -41,6 +41,45 @@ module Web
       assert_select "form[action=?]", user_confirmation_path
     end
 
+    # THE EMAIL-UNLOCK SURFACE IS ABSENT ON PURPOSE, AND THESE TWO TESTS ARE WHAT KEEP IT ABSENT.
+    #
+    # `config.unlock_strategy = :time` (config/initializers/devise.rb, with the argument for :time
+    # over :email beside it) means `devise_for` draws NO unlock routes at all — measured, zero. The
+    # generated `users/unlocks/new.html.erb` and the `_links` branch offering "Didn't receive unlock
+    # instructions?" were therefore reachable by nothing and were deleted. The view was in fact dead
+    # TWICE over: `Devise.scoped_views` is false, so `Devise::UnlocksController`'s prefixes are
+    # ["devise/unlocks", "devise", "application"] and even a drawn route would have rendered the
+    # GEM's template, not ours. Flipping the strategy back to :email/:both would need
+    # `scoped_views = true` as well before any app-owned unlock view rendered — so do not read a
+    # red here as "restore the deleted files".
+    #
+    # TWO METHODS, NOT ONE: minitest abandons a method at its first failure, so a mutation that
+    # revives BOTH halves of the surface can only report both if the guards live apart.
+    test "no unlock route is drawn under unlock_strategy = :time" do
+      # THE CONTROL IS NOT DECORATION. An assertion that a path 404s passes just as well when the
+      # whole auth stack is down or the path string is a typo, which is the vacuous shape §14e
+      # warns about. This proves the spelling and the stack before the 404 is allowed to mean
+      # anything, using the nearest live neighbour: another Devise "resend me the mail" page,
+      # drawn by the same `devise_for` call, differing only in which module enables it.
+      get "/users/confirmation/new"
+      assert_response :success
+
+      get "/users/unlock/new"
+      assert_response :not_found
+    end
+
+    test "the sign-in page offers no unlock link" do
+      get new_user_session_path
+      assert_response :success
+      # BOTH NEEDLES SURVIVE HTML ESCAPING; THE OBVIOUS ONE DOES NOT. The link's own text is
+      # "Didn't receive unlock instructions?" and `link_to` escapes the apostrophe to `&#39;`, so a
+      # needle carrying a literal `'` matches nothing — an ABSENT guard, not a lenient one, the same
+      # shape template_hygiene_test's LEAKED_PROSE list exists to refuse. This is measured, not
+      # foreseen: the first draft of this test stayed GREEN under the mutation below.
+      assert_not_includes response.body, "receive unlock instructions"
+      assert_not_includes response.body, "/users/unlock"
+    end
+
     test "the password-reset form renders for a valid token" do
       user = User.create!(email: "reset@example.com", password: PASSWORD,
                           confirmed_at: Time.current)

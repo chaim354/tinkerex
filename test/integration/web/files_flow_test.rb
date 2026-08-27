@@ -17,11 +17,11 @@ module Web
   # clobber refusal (§14a) then rejects the second test to upload `pic.png` with "already exists";
   # and `pin_file_layer_backend` rebuilds from ENV, so it would additionally need LIBRARY_PATH,
   # which its teardown does not restore. Same idiom, same reasoning, as share_delivery_test.rb --
-  # including that a direct assignment does not set @file_layer_backend_pinned, so the
-  # `FileLayer.reset!` in teardown is load-bearing rather than decoration.
+  # except that share_delivery_test.rb hand-rolls its root: `use_fresh_share_library!` now resets
+  # FileLayer and removes its own directory in test_helper's teardown, so the pair below is
+  # redundant rather than load-bearing.
   class FilesFlowTest < ActionDispatch::IntegrationTest
     include ActiveJob::TestHelper
-    include ActionCable::TestHelper
 
     setup do
       @root = use_fresh_share_library!

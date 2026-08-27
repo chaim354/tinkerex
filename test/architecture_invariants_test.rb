@@ -26,8 +26,27 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # docs claim — which is precisely how the drift went unnoticed. This only strips whole-line
   # comments, matching `grep -v ':[0-9]*: *#'`; a trailing comment on a code line still counts, and
   # should, because the code on it is real.
-  def offending(globs, pattern)
-    Array(globs).flat_map { |rel| Dir.glob(ROOT.join(rel, "**", "*.rb")) }.sort.flat_map do |file|
+  #
+  # `minimum:` IS REQUIRED, AND THAT IS THE POINT — a guard that scans a directory dies silently
+  # when the directory leaves (CLAUDE.md §14e). Both greps below end in `assert_empty`, which passes
+  # perfectly and forever over ZERO files, so a glob that stops matching retires the invariant with
+  # nothing going red. Measured before this assertion existed: repointing every glob in this file at
+  # a nonexistent directory left it at an identical 6 runs / 14 assertions / 0 failures. A keyword
+  # with no default makes forgetting it an ArgumentError rather than a silent omission, which is the
+  # difference between a helper that offers non-vacuity and one that enforces it.
+  #
+  # It is a PLAUSIBILITY FLOOR, never today's count: pinning the exact number turns an ordinary
+  # file being added or deleted red for a reason that has nothing to do with the rule.
+  def offending(globs, pattern, minimum:)
+    files = Array(globs).flat_map { |rel| Dir.glob(ROOT.join(rel, "**", "*.rb")) }.sort
+
+    assert_operator files.size, :>=, minimum,
+                    "#{Array(globs).join(', ')} matched #{files.size} file(s), below the " \
+                    "plausibility floor of #{minimum} — so `assert_empty` below cannot fail for " \
+                    "the reason it exists (CLAUDE.md §14e). A renamed or moved directory is the " \
+                    "usual cause: fix the glob, and only then lower the floor"
+
+    files.flat_map do |file|
       File.readlines(file, chomp: true).each_with_index.filter_map do |line, idx|
         next if line.lstrip.start_with?("#")
         next unless line.match?(pattern)
@@ -178,7 +197,13 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     # files), where a ChunkStore call left this test GREEN over a live §14a breach — in the very
     # file §14a introduced to replace a remembered grep. Derive, don't enumerate: the same rule as
     # stimulus_hygiene_test.rb's registered_identifiers.
-    hits = offending(%w[app/**/maker], /manifest_chunks|ChunkStore/)
+    #
+    # THE FLOOR IS 50 AGAINST 91 FILES IN 7 DIRECTORIES TODAY. It exists because this glob is
+    # DERIVED FROM A NAMING CONVENTION and CLAUDE.md:4 invites the rename that would empty it —
+    # "Working name: **Maker Server** (rename freely)". Rename `maker` and `app/**/maker` matches
+    # nothing, `hits` is `[]`, and this test goes on passing over a maker layer it can no longer
+    # see. That is the one realistic way this guard dies, and it dies green.
+    hits = offending(%w[app/**/maker], /manifest_chunks|ChunkStore/, minimum: 50)
 
     assert_empty hits,
                  "expected ZERO chunk-internals references in the maker layer, got #{hits.size}:\n" \
@@ -377,6 +402,10 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # empirically, not merely argued: re-running with the narrower glob adds exactly the two
   # `application_cable/*.rb` files to `maker_layer_files` and produces zero new hits from either --
   # neither references `Sync::` or a bare engine association, so the narrowing is free.
+  # SINCE 2026-08-26 THAT LAST CLAUSE IS HISTORY: `app/channels/` is gone entirely (S09-1 -- no
+  # channel, no subscriber, and the device-token Connection had neither a caller nor a credential
+  # it could hold). Kept because the ARGUMENT for narrowing a glob rather than renaming it is the
+  # reusable part; `test/cable_absent_test.rb` is what keeps the directory from coming back.
   #
   # STAGE 3b PHASE A CLOSE-OUT. A close-out review found FIVE MORE bare top-level engine constants
   # Tasks 3 and 4 missed -- `RetentionJob`, `ChunkReaperJob`, `PendingCommitReaperJob`,
@@ -674,9 +703,22 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     # glob) and became meaningless when the 2026-08-20 extraction took that directory out of the
     # repository altogether. Subtracting an empty set is not a safety net; it is a line that makes
     # a future reader look for a boundary inside app/ and lib/ that has not existed for two stages.
-    maker_layer_files = Dir.glob(ROOT.join("app", "**", "*.rb")) +
-                        Dir.glob(ROOT.join("lib", "**", "*.rb")) +
-                        Dir.glob(ROOT.join("lib", "tasks", "*.rake"))
+    #
+    # NON-VACUITY, ASSERTED PER ARM RATHER THAN ON THE TOTAL (§14e). `assert_empty offending_files`
+    # over zero files passes forever, and the three arms are wildly different sizes — 169 / 3 / 5
+    # today — so a single floor on the combined 177 cannot see either small arm go empty, which is
+    # the only realistic degradation here. `refute_empty`, not a number: `lib/tasks/*.rake` legitimately
+    # shrinks (engine_schema.rake left with the engine), and a floor of "however many there are
+    # today" would go red for the wrong reason the next time a task file is deleted.
+    app_files  = Dir.glob(ROOT.join("app", "**", "*.rb"))
+    lib_files  = Dir.glob(ROOT.join("lib", "**", "*.rb"))
+    rake_files = Dir.glob(ROOT.join("lib", "tasks", "*.rake"))
+
+    refute_empty app_files,  "app/**/*.rb matched nothing — this scan is vacuous (CLAUDE.md §14e)"
+    refute_empty lib_files,  "lib/**/*.rb matched nothing — this scan is vacuous (CLAUDE.md §14e)"
+    refute_empty rake_files, "lib/tasks/*.rake matched nothing — this scan is vacuous (CLAUDE.md §14e)"
+
+    maker_layer_files = app_files + lib_files + rake_files
 
     hits = maker_layer_files.flat_map { |file| sync_references(file) }
     offending_files = hits.map { |hit| hit.split(":").first }.uniq.sort
@@ -823,7 +865,11 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     #      at FileLayer.build into a routine-looking response.
     #
     # So it stays un-rescued and loud, and the capability gates are what keep it unreachable.
-    hits = offending(%w[app lib], /rescue.*NotImplementedError/)
+    #
+    # 172 files today; the floor is a plausibility check, not a count (see `offending`). `app` and
+    # `lib` are Rails-fixed, so the realistic degradation here is the glob itself being edited
+    # rather than the tree moving — either way an empty scan is an `assert_empty` that passes.
+    hits = offending(%w[app lib], /rescue.*NotImplementedError/, minimum: 100)
 
     assert_empty hits,
                  "NotImplementedError must never be rescued (CLAUDE.md §14a), found:\n" \
