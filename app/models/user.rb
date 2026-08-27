@@ -54,6 +54,12 @@ class User < ApplicationRecord
   # The rows these point at cannot exist on share/s3 anyway: only Sync::Commit/Restore/Conflicts
   # ever create a version, and none of them runs there. So this drops associations to tables that
   # are empty by construction, not a feature.
+
+  # ADDING A USER-SCOPED TABLE? IT NEEDS A LINE HERE (or a parent that already has one).
+  # Tenant cleanup is these hand-written `dependent:`s and nothing else — no database foreign key
+  # backs them (tinkerex#152 weighed that and did not take it). What checks the set is COMPLETE is
+  # test/models/tenant_cleanup_test.rb, which derives the table list from the live schema, so a new
+  # user_id table fails the suite until its cleanup is decided rather than shipping unswept.
   has_many :maker_items, class_name: "Maker::Item", dependent: :destroy
   has_many :maker_tags, class_name: "Maker::Tag", dependent: :destroy
   has_many :maker_taggings, class_name: "Maker::Tagging", dependent: :destroy

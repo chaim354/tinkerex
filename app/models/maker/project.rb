@@ -14,6 +14,22 @@ module Maker
     has_many :boms, class_name: "Maker::Bom", foreign_key: :project_id, dependent: :destroy
     has_many :sheets, -> { order(:position, :id) },
              class_name: "Maker::Sheet", foreign_key: :project_id, dependent: :destroy
+    # `:nullify`, AND IT IS THE ONLY OPTION THAT WORKS — do not "normalise" it onto the
+    # `:destroy` lines above. The ledger outlives the project on purpose: a transaction records
+    # that stock actually moved, and `InventoryItem#quantity_cached` was computed from it, so
+    # destroying the rows would silently desynchronise every item the project ever consumed.
+    # `:destroy` is not merely wrong here, it RAISES — Maker::InventoryTransaction's unconditional
+    # `before_destroy` refuses any record-level delete, which would take the whole project
+    # deletion down with it (mutation-checked). `:nullify` writes through `update_all`, below the
+    # `before_update` guard, and touches only the provenance pointer; delta and reason are
+    # untouched.
+    #
+    # WITHOUT THIS LINE, DESTROYING A PROJECT LEFT ITS TRANSACTIONS POINTING AT NOTHING —
+    # tinkerex#152 part (b) predicted an orphan of exactly this shape and
+    # test/models/structural_orphan_test.rb found it. Neither side declared an association at all,
+    # which is why nothing anywhere went red for it.
+    has_many :inventory_transactions, class_name: "Maker::InventoryTransaction",
+             foreign_key: :project_id, dependent: :nullify
 
     before_validation :ensure_slug
 
