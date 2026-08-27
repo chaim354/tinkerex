@@ -655,6 +655,62 @@ module FileLayer
       stat(user, node_id: node.node_id)
     end
 
+    # THE REPO-DATA VERBS. See FileLayer::Share for the argument; the same rules hold here and the
+    # S3Observer is the half that drops these keys from the catalog.
+    #
+    # A DIFFERENT DOOR FROM #write, AND THAT IS WHY THEY DO NOT ASK #observable!. That guard
+    # refuses `.git/**` because an ordinary write there would leave a LIVE NODE at a key the
+    # observer deliberately never emits — an unpairable ghost whose tombstone trips the
+    # mass-deletion guard and refuses that scan and every scan after it, permanently (§14b's four
+    # wedges). These verbs create NO node at all, so the ghost is structurally unreachable from
+    # here, and routing them through observable! would refuse the one caller that is safe.
+    #
+    # NO TEMP-AND-RENAME, matching #write and for the identical reason: put_object is ATOMIC, so a
+    # temp key would add a second, unobservable ghost and buy nothing. A reader never sees a
+    # half-written object.
+    def write_repo_data(user, project:, rel:, io:)
+      @client.put_object(bucket: @bucket, key: repo_data_key(user, project, rel), body: io.read)
+      nil
+    rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
+      raise FetchError, "repo write failed for #{rel.inspect}: #{e.message}"
+    end
+
+    def read_repo_data(user, project:, rel:)
+      @client.get_object(bucket: @bucket, key: repo_data_key(user, project, rel)).body.read
+    rescue ::Aws::S3::Errors::NoSuchKey
+      # NotFound, not FetchError: this rel genuinely is not there and a retry cannot change it.
+      raise NotFound, "no repo data at #{rel.inspect}"
+    rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
+      # A blip, a throttle, an unreachable store: retryable, and NONE of them means "gone" (§14a).
+      raise FetchError, "repo read failed for #{rel.inspect}: #{e.message}"
+    end
+
+    def list_repo_data(user, project:, prefix: nil)
+      root = repo_data_root_key(user, project)
+      search = prefix.present? ? "#{root}#{prefix}/" : root
+      out = []
+      token = nil
+      loop do
+        resp = @client.list_objects_v2(bucket: @bucket, prefix: search, continuation_token: token)
+        resp.contents.each { |o| out << o.key.delete_prefix(root) }
+        # COMPLETE OR NOTHING. A truncated listing is a well-formed lie (§14b): the caller reads it
+        # as "these are all the packs" and hydrates an incomplete repository, which then fails
+        # later and elsewhere. Following the continuation token is the whole of the fix.
+        break unless resp.is_truncated
+        token = resp.next_continuation_token
+      end
+      out
+    rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
+      raise FetchError, "repo list failed: #{e.message}"
+    end
+
+    def delete_repo_data(user, project:, rel:)
+      @client.delete_object(bucket: @bucket, key: repo_data_key(user, project, rel))
+      nil
+    rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
+      raise FetchError, "repo delete failed for #{rel.inspect}: #{e.message}"
+    end
+
     # nil prefix means the whole bucket. The trailing slash is what keeps a prefix a DIRECTORY
     # boundary: without it, prefix "cad" would also match the sibling "cadence/..." keyspace.
     #
@@ -997,6 +1053,30 @@ module FileLayer
         raise NotFound, "storage_path escapes the library prefix: #{rel.inspect}"
       end
       [ @prefix, rel ].compact.join("/")
+    end
+
+    # The bucket key of one file inside a project's own `.git`. `data_rel!` REJECTS rather than
+    # normalizes, and `key_for_rel` refuses an escape a second time — one guard on the rel, one on
+    # the composed key, because this backend signs PATH-STYLE URLs and a `..` segment that reached
+    # one would be resolved out of our bucket by any normalizing proxy.
+    def repo_data_key(user, project, rel)
+      key_for_rel(Library::RepoMetadata.data_rel!(project_folder_rel(user, project), rel))
+    end
+
+    # The `.git/` prefix itself, WITH its trailing slash: `list_repo_data` both searches under it
+    # and strips it back off, and a missing slash would make `Projects/lamp.git-notes` match a
+    # search for `Projects/lamp/.git`.
+    def repo_data_root_key(user, project)
+      "#{key_for_rel("#{project_folder_rel(user, project)}/#{Library::RepoMetadata::DIR_NAME}")}/"
+    end
+
+    # The project's folder as a library-relative path. Raises rather than defaulting to the
+    # library ROOT if the folder has no storage_path — #key_for's own landmine.
+    def project_folder_rel(user, project)
+      node = live_node!(user, project.folder_node_id)
+      rel = node.storage_path.to_s
+      raise NotFound, "project #{project.id} folder has no storage_path" if rel.blank?
+      rel
     end
 
     # A leaf name is a leaf; the directory is parent_node_id's job. Mirrors Share#leaf!, including

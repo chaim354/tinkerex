@@ -2,6 +2,7 @@ require "test_helper"
 require_relative "adapter_contract"
 require_relative "adapter_write_contract"
 require_relative "adapter_mutation_contract"
+require_relative "adapter_repo_data_contract"
 require_relative "../../support/fake_s3"
 
 module FileLayer
@@ -21,6 +22,40 @@ module FileLayer
     # S3#write put_object straight over the user's file while Share, three feet away, refuses.
     include FileLayerWritableContract
     include FileLayerMutationContract
+    # The REPO-DATA verbs, satisfied UNMODIFIED here for the same reason the three above are.
+    include AdapterRepoDataContract
+
+    # The repo-data contract's two hooks. The folder node is minted THROUGH THE ADAPTER UNDER TEST
+    # — `adapter.mkdir`, twice — rather than through `Maker::Project#ensure_library_folder!`, and
+    # the difference is not stylistic. `ensure_library_folder!` goes through
+    # `Maker::LibraryFolder#ensure_segment` -> `FileLayer.current`, which is the AMBIENT backend:
+    # on the `test-s3` leg that is an S3 adapter built from config/ci.rb's stub knobs
+    # (`ci-not-a-real-bucket`, no injected client), so the mkdir would be a REAL network call to
+    # AWS — the exact thing that leg's own comment says must fail. Here it also would not be the
+    # backend under test, which is what the contract's hook doc actually asks for ("a project whose
+    # folder node exists on THIS backend"). Two mkdirs against `@fake` are hermetic on all three
+    # legs and put a real storage_path on the folder node, which is all `project_folder_rel` reads.
+    #
+    # TWO projects, because the scoping test's whole job is to catch an adapter that resolved the
+    # key from anything other than the project's own folder node.
+    def repo_project
+      @repo_project ||= make_repo_project("Repo Project")
+    end
+
+    def second_repo_project
+      @second_repo_project ||= make_repo_project("Other Repo Project")
+    end
+
+    # `mkdir` is idempotent on a live dir at the same rel, so the second project's `Projects` walk
+    # returns the first's node rather than colliding — the same property Maker::LibraryFolder leans
+    # on in production.
+    def make_repo_project(name)
+      project = @user.maker_projects.create!(name:)
+      root = adapter.mkdir(@user, parent_node_id: nil, name: Maker::ProjectFolders::ROOT)
+      folder = adapter.mkdir(@user, parent_node_id: root.node_id, name: project.slug)
+      project.update_column(:folder_node_id, folder.node_id)
+      project
+    end
 
     # The hooks FileLayerMutationContract requires. S3's real door for creating a file is the
     # port's own write, which is exactly what the four extracted tests used inline before they
@@ -42,6 +77,7 @@ module FileLayer
       @adapter ||= FileLayer::S3.new(bucket: "b", region: "us-east-1", access_key_id: "ak",
                                      secret_access_key: "sk", prefix: PREFIX, client: @fake.client)
     end
+
 
     # Seed the object as another tool would have, then index it with THE REAL OBSERVER. That is
     # the backend's actual premise: the bucket already has the user's files in it, and a scan is
@@ -1632,6 +1668,19 @@ module FileLayer
       scan!(max_delete_pct: 100)
       node = @user.nodes.find_by(node_id: info.node_id)
       assert node && !node.deleted, "the dir-marker keeps the empty folder alive"
+    end
+
+    # COMPLETE OR NOTHING. FakeS3 pages at two keys, so this is many pages: an adapter that stopped
+    # at the first would report a plausible, short, WRONG answer -- the failure §14b names a
+    # well-formed lie, and the caller would hydrate an incomplete repository from it.
+    test "list_repo_data follows the continuation token instead of returning a short listing" do
+      30.times do |i|
+        adapter.write_repo_data(@user, project: repo_project, rel: "objects/pack/p#{i}.pack",
+                                io: StringIO.new("x"))
+      end
+
+      assert_equal 30, adapter.list_repo_data(@user, project: repo_project,
+                                              prefix: "objects/pack").size
     end
   end
 end
