@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_27_181905) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_27_193308) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -379,6 +379,23 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_27_181905) do
     t.index ["user_id", "taskable_type", "taskable_id"], name: "index_maker_tasks_on_taskable"
   end
 
+  create_table "maker_version_previews", force: :cascade do |t|
+    t.string "content_token", null: false
+    t.datetime "created_at", null: false
+    t.text "error"
+    t.integer "height"
+    t.datetime "last_viewed_at"
+    t.string "node_id", null: false
+    t.integer "project_id", null: false
+    t.integer "renderer_revision"
+    t.string "source_filename", null: false
+    t.string "state", default: "pending", null: false
+    t.datetime "updated_at", null: false
+    t.integer "width"
+    t.index ["last_viewed_at"], name: "index_maker_version_previews_on_last_viewed_at"
+    t.index ["project_id", "node_id", "content_token", "source_filename"], name: "idx_maker_version_previews_unique", unique: true
+  end
+
   create_table "nodes", force: :cascade do |t|
     t.string "content_hash"
     t.datetime "created_at", null: false
@@ -463,6 +480,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_27_181905) do
   add_foreign_key "maker_addon_state_revisions", "maker_addon_states", column: "addon_state_id"
   add_foreign_key "maker_addon_states", "users"
   add_foreign_key "maker_git_repos", "maker_projects", column: "project_id", on_delete: :cascade
+  add_foreign_key "maker_version_previews", "maker_projects", column: "project_id", on_delete: :cascade
   add_foreign_key "nodes", "users"
   add_foreign_key "remote_manifest_chunks", "users"
   add_foreign_key "user_identities", "users"

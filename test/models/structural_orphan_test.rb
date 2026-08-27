@@ -93,7 +93,7 @@ class StructuralOrphanTest < ActiveSupport::TestCase
       m = u.maker_models.create!(title: "Benchy")
       [ m, m.print_runs.create!(user: u, outcome: "success", printed_on: Date.current) ]
     },
-    # THE THREE EDGES THAT ALREADY HAVE A REAL DATABASE FOREIGN KEY (the only maker_* ones that
+    # THE FOUR EDGES THAT ALREADY HAVE A REAL DATABASE FOREIGN KEY (the only maker_* ones that
     # do). They are covered here anyway: an FK and a `dependent:` are two mechanisms for one
     # property, and this test asserts the property, so it must not care which is doing the work.
     #
@@ -105,6 +105,18 @@ class StructuralOrphanTest < ActiveSupport::TestCase
     "maker_git_repos.project_id" => ->(u) {
       p = u.maker_projects.create!(name: "Lamp")
       [ p, Maker::GitRepo.create!(project: p) ]
+    },
+    # THE FOURTH IS THE SAME SHAPE AS maker_git_repos AND FOR THE SAME REASON: the historical
+    # render cache carries no `user_id` and `Maker::Project` declares no association to it, so this
+    # case passes ONLY because the constraint itself carries `on_delete: :cascade`. It is also the
+    # table's ONLY tenant cleanup -- destroying a USER reaches these rows through
+    # `User has_many :maker_projects, dependent: :destroy` and then this cascade, with no
+    # `dependent:` anywhere in between.
+    "maker_version_previews.project_id" => ->(u) {
+      p = u.maker_projects.create!(name: "Lamp")
+      [ p, Maker::VersionPreview.create!(project: p, node_id: SecureRandom.uuid,
+                                         content_token: "sha256:#{SecureRandom.hex(8)}",
+                                         source_filename: "bracket.svg") ]
     },
     "maker_addon_files.addon_state_id" => ->(u) {
       st = u.maker_addon_states.create!(addon_key: "boxes", name: "box-1", data: {})
