@@ -223,6 +223,49 @@ module Web
                               "files#index (addon origins)")
     end
 
+    # THE HISTORY PAGE HAS TWO AXES AND ONLY ONE OF THEM COSTS SQL. The commit list is a git walk
+    # that touches no table at all; the version strip has to resolve a CACHED RENDER for every
+    # version it draws, and written as a lookup per tile that is invisible on a two-commit fixture
+    # and linear on a real project's history — the exact shape this file exists for.
+    #
+    # SEEDED WITH POINTER VERSIONS WHOSE BYTES ARE GONE, deliberately. They render the `not_kept`
+    # tile, which mints no render row, so what is measured is the steady-state READ rather than a
+    # first-visit backfill. (A kept version's minting would be absorbed by `assert_constant_queries`'
+    # warm-up render anyway — the same absorption `node!` describes for thumbnails — but leaving it
+    # out of the fixture makes what is being counted unambiguous.)
+    #
+    # THE BACKEND IS PINNED HERE AND NOWHERE ELSE IN THIS CLASS, because this is the one page that
+    # builds a `Maker::Git::Repo`: that class resolves `FileLayer.current` itself, so on the
+    # `test-s3` leg an ambient adapter is a real S3 client aimed at config/ci.rb's stub bucket.
+    # `use_fresh_share_library!` owns the teardown of the directory it mints.
+    test "projects history does not grow with the number of commits" do
+      use_fresh_share_library!
+      project = @user.maker_projects.create!(name: "Historied", status: "active")
+      root = FileLayer.current.mkdir(@user, parent_node_id: nil, name: Maker::ProjectFolders::ROOT)
+      folder = FileLayer.current.mkdir(@user, parent_node_id: root.node_id, name: project.slug)
+      project.update_column(:folder_node_id, folder.node_id)
+      repo = Maker::Git::Repo.for(project.reload).tap(&:hydrate!)
+
+      seq = 0
+      # A DISTINCT OID PER COMMIT IS REQUIRED, not cosmetic: `Repo#commit!` returns nil without
+      # committing when the resulting tree matches HEAD's, so a repeated body would seed one commit
+      # however many times this ran and both measurements would be of the same page.
+      add = lambda do |count|
+        count.times do
+          seq += 1
+          repo.commit!(message: "v#{seq}", paths: {
+            "body.stl.ptr" => "version #{Maker::Git::Tracking::POINTER_VERSION}\n" \
+                              "oid sha256:#{seq.to_s.rjust(64, '0')}\nsize 12\n"
+          })
+        end
+      end
+
+      assert_constant_queries(project_history_path(project, path: "body.stl"),
+                              -> { add.call(SMALL) },
+                              -> { add.call(LARGE - SMALL) },
+                              "projects#history")
+    end
+
     test "trash#index does not grow with the number of tombstones" do
       add = lambda do |prefix, count|
         count.times do |i|

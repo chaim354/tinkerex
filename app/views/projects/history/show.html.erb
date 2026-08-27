@@ -1,0 +1,56 @@
+<% content_for :title, "History — #{@project.name} — Tinkerex" %>
+
+<nav class="breadcrumb" aria-label="Project path">
+  <%= link_to "Projects", projects_path %>
+  <span class="sep" aria-hidden="true">/</span>
+  <%= link_to @project.name, project_path(@project) %>
+  <span class="sep" aria-hidden="true">/</span>
+  <span aria-current="page">History</span>
+</nav>
+
+<div class="page-head">
+  <h1>History</h1>
+</div>
+
+<%# FOUR STATES, FOUR DIFFERENT SENTENCES. The controller header has the argument; the rule this
+    markup has to keep is that the retryable one and the permanent ones never read alike. %>
+<% case @state %>
+<% when :unreachable %>
+  <p class="history-unreachable notice">
+    The library is not reachable right now, so this project's history cannot be read.
+    Nothing is lost — check that the share is mounted, then reload.
+  </p>
+<% when :unavailable %>
+  <p class="history-unavailable notice">
+    This project's library folder is missing, so there is nowhere to read its history from.
+    Restore or re-create the folder and the next scan will pick it up.
+  </p>
+<% when :empty %>
+  <p class="history-empty muted">
+    No history recorded yet. Versions appear here once this project's files have been still long
+    enough for a scan to record them.
+  </p>
+<% else %>
+  <ol class="history-commits">
+    <% @commits.each do |commit| %>
+      <li class="history-commit">
+        <code class="commit-oid"><%= commit.short_oid %></code>
+        <span class="commit-message"><%= commit.message.strip %></span>
+        <span class="commit-author muted"><%= commit.author %></span>
+        <time class="commit-time muted"
+              datetime="<%= commit.time.utc.iso8601 %>"
+              title="<%= commit.time.strftime("%Y-%m-%d %H:%M") %>"><%= time_ago_in_words(commit.time) %> ago</time>
+        <% if commit.root? %>
+          <span class="commit-root muted">first commit</span>
+        <% end %>
+      </li>
+    <% end %>
+  </ol>
+<% end %>
+
+<%# RENDERED FOR THE TWO STATES WHERE THE REPOSITORY ANSWERED, INCLUDING THE EMPTY ONE. On an
+    unreachable or missing library the strip has nothing honest to say and would only repeat the
+    banner above; on an empty one it is the right place to explain where versions come from. %>
+<% if @state == :ok || @state == :empty %>
+  <%= render "version_strip", tiles: @tiles, path: @path %>
+<% end %>

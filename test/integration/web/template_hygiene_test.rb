@@ -152,6 +152,11 @@ module Web
         "file detail (text)" => file_path("n-src"),
         "projects index" => projects_path,
         "project detail" => project_path(@project),
+        # THE EMPTY STATE OF THE HISTORY PAGE, WHICH IS THE ONE THAT NEEDS NO GIT FIXTURE. It is
+        # also the state that renders BOTH of that page's templates: `show` draws the empty-history
+        # sentence and still renders `_version_strip`, which draws its own idle line. A fixture with
+        # real commits would render the same two templates and cost this sweep a repository.
+        "project history" => project_history_path(@project),
         "project new" => new_project_path,
         "project edit" => edit_project_path(@project),
         "project attachment new" => new_project_attachment_path(@project),
