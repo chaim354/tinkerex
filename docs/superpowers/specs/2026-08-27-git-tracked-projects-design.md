@@ -97,8 +97,24 @@ Three claims, each load-bearing:
 |---|---|
 | **Licence** | libgit2 is GPL-2.0 **with a linking exception**, written to permit linking from a program under any licence. §9's GPL concern does not bite — unlike shipping the `git` CLI, which would put a GPL binary in the image |
 | **Covers** | commits, trees, blobs, refs, index, diffs, revwalk — the entire hot path |
-| **Does NOT cover** | packbuilder, repack, gc are **absent from its documented API** (verified against the README, 2026-08-27) |
-| **Cost** | a native extension in the Docker build (cmake) |
+| **Does NOT cover** | **packbuilder, repack, gc — confirmed absent by introspecting rugged 1.9.6 / libgit2 1.9.6 itself**, not by reading the README. See below |
+| **Cost** | a native extension in the Docker build (needs `cmake`) |
+
+**Measured against the built gem, 2026-08-27:**
+
+- `Rugged::Repository` exposes **69 instance methods and not one** matches `pack`, `repack`, `gc` or
+  `prune`.
+- Object access is `exists?` / `lookup` / `read` / `read_header` / `write` — **loose objects only**.
+- `Rugged::Packbuilder`, `Rugged::Indexer`, `Rugged::Odb` and `Rugged::ObjectDatabase` are all
+  **undefined**. `Rugged::IndexerError` *is* defined — an error class for a facility that was never
+  bound, which is a good summary of how partial the binding is here.
+- `Rugged::Backend` exists with **zero class methods and zero instance methods**. So custom ODB
+  backends are not merely "C, not Ruby" as an earlier draft of this spec put it — they are not
+  reachable from rugged at all. That closes §2.1's door from a second direction, though §2.1 had
+  already closed it on merit.
+
+This is why §9.1's pack writer exists, and it is now a verified requirement rather than an inferred
+one.
 
 Rejected alternatives: the **`git` CLI** (GPL-2.0 in a shipped image; this repo's answer to GPL is an
 HTTP sidecar, which is heavy plumbing around something whose job is filesystem access) and **`gix`**
@@ -364,10 +380,9 @@ each other up, and weakening either one breaks the other.
 packing only, as a Rust helper binary alongside rugged. It buys real delta compression at the cost of
 two git implementations in one repo — which is why it is the fallback and not the plan.
 
-> **Not verified: whether rugged genuinely lacks a packbuilder.** §3.1's claim rests on its README,
-> because `rugged` could not be built on the spike machine (no `cmake`). Worth introspecting the real
-> gem during phase 2 — if libgit2's packbuilder *is* exposed, the writer above becomes unnecessary.
-> It is not blocking either way, which is the point of having built it.
+**The premise is verified, not inferred.** rugged 1.9.6 was built and introspected (§3.1): zero
+pack/repack/gc methods across `Rugged::Repository`'s 69, and `Packbuilder`, `Indexer` and `Odb`
+undefined. The writer is required, and there is no rugged-shaped shortcut to look for later.
 
 ### 9.2 Cold hydration cost — RESOLVED, see §4.1
 
