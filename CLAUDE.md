@@ -374,7 +374,7 @@ bin/secrets-preflight --all      # or: (omit) | s3 | share | ovh
 # it and never writes. Token via bin/secret (op://tinkerex/Forgejo/token); never `export`.
 bin/log setup                    # create the labels, idempotently (safe to re-run)
 bin/log arc --from-pr 261        # arc issue built from the merged PR body
-bin/log open "<t>" | deploy --image SHA | note N "<text>" | search "<q>" | show N | status
+bin/log open "<t>" | close N | deploy --image SHA | note N "<text>" | search "<q>" | show N | status
 # EXIT CODES ARE LOAD-BEARING. 3 = unreachable, and a WRITE was spooled to $LOG_SPOOL_DIR (default
 # tmp/log-pending/<branch>.md); a 502 counts as unreachable, there is NO auto-replay, and
 # `bin/log status` exits 4 until you file it. 5 = a BUG in bin/log -- NOT spooled, do not proceed.
@@ -1264,12 +1264,12 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
   "get it reviewed".
 - State plainly in the PR what was verified and what was not.
 - **THE ARC'S RECORD IS PART OF THE WORK, FILED AS THE PR OPENS — never a tidy-up afterwards.**
-  `bin/log arc --from-pr <n>` right after `gh pr create`; it closes when the PR merges. Deferred, it
-  does not happen: a single feature ran to eight merged PRs while its record went on describing the
-  algorithm the second PR had already deleted. It is also cheapest to write while the numbers are in
-  front of you, and those are exactly what a later pass reconstructs badly or omits. **The arc issue
-  IS the PR body**, so this costs one command rather than a second document. One arc is one issue —
-  a correction to a past arc is `bin/log note <issue>`, a COMMENT, never an edit of the body.
+  `bin/log arc --from-pr <n>` after `gh pr create`, then **`bin/log close <n>` at merge — an arc
+  NEVER closes itself**: the PRs are on GitHub, the record is a self-hosted Forgejo, nothing bridges
+  them (`tinkerex#154` merged and deployed with its arc still open). Deferred, it does not happen: a
+  feature ran to eight merged PRs while its record described the algorithm the second had deleted —
+  and it is cheapest written while the numbers are in front of you, which a later pass reconstructs
+  badly. **The arc IS the PR body**, one command. One arc is one issue; a correction is `note`.
 - **THE DEPLOY-RECORD EXCEPTION TO "never push to `main`" IS GONE, AND THAT IS A SIMPLIFICATION.**
   It existed because a deploy happens AFTER the merge, so its record could not live in the work's own
   PR, and a follow-up PR per deploy is the deferral this rule forbids. `bin/log deploy --image <sha>`
