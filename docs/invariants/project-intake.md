@@ -103,14 +103,32 @@
 
 ## Filing
 
-- **`:in_working_tree` IS UNSCOPED, UNLIKE `:attached_elsewhere` — DO NOT ADD A KWARG TO IT.** A
-  refusal from `#refusal_for` does not mean "refuse the attachment": `#call` returns
-  `relocation: (move(node) if refusal.nil?)`, so it means **attach the row, leave the bytes**,
-  which is the right answer at all four callers. `:attached_elsewhere` needed `within_own_folder:`
-  because its stated reason is positional and stopped applying to one caller; "do not move a file
-  out from under git" has no such exception. Detection memoizes per PARENT, not per node — a sweep
-  files N nodes under one parent and the ancestor walk is two queries per level (measured: 45
-  queries against 15 for ten files at depth four).
+- **`:in_working_tree` TAKES NO KWARG — AND SINCE THE GIT-TRACKED-PROJECTS WORK IT IS NO LONGER
+  UNCONDITIONAL.** A refusal from `#refusal_for` does not mean "refuse the attachment": `#call`
+  returns `relocation: (move(node) if refusal.nil?)`, so it means **attach the row, leave the
+  bytes**, which is the right answer at all four callers. `:attached_elsewhere` needed
+  `within_own_folder:` because its stated reason is positional and stopped applying to one caller;
+  "do not move a file out from under git" still has no such exception, so no kwarg was added.
+  Detection memoizes per PARENT, not per node — a sweep files N nodes under one parent and the
+  ancestor walk is two queries per level (measured: 45 queries against 15 for ten files at depth
+  four).
+
+- **THE ONE EXEMPTION: A WORKING TREE THIS APP MAINTAINS, IDENTIFIED BY LOCATION *AND* BY AN INDEX
+  ROW.** The refusal exists because moving a tracked file is a delete plus an untracked add — *when
+  nothing commits it afterwards*. Once this app performs the move AND the commit, git records a
+  rename and the objection evaporates. So `Maker::Git::ProjectCommit` making every project folder a
+  working tree would otherwise have switched this whole feature off for **every project, with
+  nothing going red**, because no test asserted that a project folder is not a repo.
+  **BOTH HALVES ARE LOAD-BEARING.** `walk_for_marker` returns WHICH directory holds the marker, and
+  the exemption applies only when that directory is the project's OWN folder and a `Maker::GitRepo`
+  row exists. Asking only "does this project have a repo row" — the shape the plan proposed — files
+  a maker's tracked file out of a repository they cloned into `Projects/<slug>/vendor/lib/`, because
+  the nearest marker going up is THEIRS, not ours. Mutation-checked: that weaker check is red on
+  exactly one test and nothing else in the suite catches it.
+  **THE INDEX MAY ONLY EVER GRANT PERMISSION, NEVER WITHHOLD IT.** `Maker::GitRepo` is explicitly an
+  index and may be stale or absent while the repo is fine, so a miss falls back to the existing
+  refusal — yesterday's behaviour, which was safe. There is no state where staleness here does
+  damage; the worst case is a project that keeps not being filed, which is visible and recoverable.
 
 - **ROOT = INBOX IS THE WHOLE SORT RULE, AND IT IS STATELESS.** Only files at a project
   folder's own root are ever filed; anything already in a subfolder — including one filed
