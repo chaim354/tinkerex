@@ -18,13 +18,16 @@ module Maker
     #
     # THE IN-PLACE PATH IS WHY THE MAKER GETS `git log` IN FINDER, which is the strongest single
     # argument for git over a bespoke version store -- and it is a real promise this class has to
-    # keep, not a side effect. Three things are needed for it and each was measured, not assumed:
+    # keep, not a side effect. FOUR things are needed for it and each was measured, not assumed:
     # HEAD must be repointed at the branch we actually commit to (libgit2's `init_at` writes
     # `refs/heads/master` while we use `main`, so without this `git log` answers "your current
     # branch 'master' does not have any commits yet" while the history sits there perfectly
     # intact); `core.bare` must be false so the project folder is the repository's work tree; and
     # the index must be written, or `git status` reports every tracked file as DELETED -- which to
-    # a maker looking at their own folder reads as "the app deleted my files".
+    # a maker looking at their own folder reads as "the app deleted my files". The fourth is that
+    # WRITING THE INDEX IS NOT SUFFICIENT: a POINTER is tracked at a path that deliberately has no
+    # file on disk, so git reported precisely that ` D` for all thirteen of them on the share box.
+    # See #commit!'s `absent_from_work_tree:` -- the other half of the same promise.
     class Repo
       # A REPOSITORY IS ALREADY HERE AND IT IS NOT OURS. Raised by #ensure_initialized! before it
       # writes anything at all, so every door into #hydrate! gets the refusal whether or not its
@@ -95,14 +98,56 @@ module Maker
       # NIL RATHER THAN AN EMPTY COMMIT IS REQUIRED, NOT TIDY. The caller is a sweep that runs every
       # 15 minutes forever; minting a commit per tick would fill the history with nothing and make
       # the version list useless within a week.
-      def commit!(paths:, message:)
+      #
+      # `absent_from_work_tree:` NAMES A FACT ABOUT THE FILES, NOT A GIT FLAG. These are paths this
+      # commit tracks that DELIBERATELY have no file in the work tree -- in this app, every POINTER
+      # (Maker::Git::Tracking): the blob committed at `core.stl.ptr` stands in for bytes that live
+      # at `core.stl`, and nothing ever writes a `.ptr` file to disk. This class cannot tell one
+      # from the other -- it is handed paths and bodies -- so Maker::Git::ProjectCommit, which is
+      # the thing that appends the suffix, says which.
+      #
+      # WHY IT HAS TO EXIST: in place the project folder IS the work tree, so git compares the
+      # written index against the folder and reports every tracked path with no file as DELETED.
+      # Measured on the share box (tinkerex#173): `Projects/laser-mount`, 60 tracked paths of which
+      # 13 pointers, and `git status --porcelain` answered with 13 ` D` lines -- every one a `.ptr`
+      # path whose REAL file was present right beside it. Nothing was lost (`git log` read, `git
+      # fsck --full` exited 0), but a maker opening their own folder sees thirteen deletions and
+      # concludes the app ate their binaries, which is the exact impression the class header says
+      # the written index exists to prevent. Fixing one half of that promise and leaving the other
+      # was the gap.
+      #
+      # THE MECHANISM IS git's ASSUME-VALID BIT BECAUSE SKIP-WORKTREE IS UNREACHABLE FROM RUGGED.
+      # Skip-worktree is what git itself sets for a tracked file it should not expect on disk, and
+      # it lives in `flags_extended`, which `Rugged::Index::Entry` does not expose -- probed on
+      # rugged 1.9.6, an entry's keys are exactly
+      # [:path, :oid, :dev, :ino, :mode, :gid, :uid, :file_size, :valid, :stage, :ctime, :mtime]
+      # and no extended flag round-trips. `valid: true` does the job: `git ls-files -v` reports `h`
+      # for that entry, `git status --porcelain` is empty, and `git log` is untouched.
+      #
+      # IT MUST NEVER LAND ON A CONTENT ENTRY, and that edge is sharper than the one being fixed. A
+      # content file really is in the work tree, and assume-valid tells git to stop consulting it --
+      # so the maker's own edit would report a CLEAN tree. The ` D` is alarming and false; that
+      # would be reassuring and false, which is worse. Hence the caller passes the set and this
+      # class guesses nothing, and #carry_forward asks the same set rather than inventing a second
+      # rule about which paths are pointers.
+      #
+      # ON A CACHE-BACKED BACKEND IT IS INERT BY CONSTRUCTION RATHER THAN MERELY HARMLESS. There is
+      # no work tree there, so the `index.write` below never runs and the bit never reaches a file;
+      # and a TREE records mode and oid only, so it cannot reach the library either -- probed, the
+      # tree oid is identical with the flag set and unset, which is also why introducing this does
+      # not make every existing repository mint one spurious commit on the next pass.
+      def commit!(paths:, message:, absent_from_work_tree: [])
         index = rugged.index
+        # READ BEFORE THE CLEAR. The index about to be thrown away is the record of what the LAST
+        # pass marked absent, and the caller's set cannot replace it -- see #already_absent.
+        absent = absent_from_work_tree.to_set | already_absent(index)
         index.clear
         parent = head_oid
-        carry_forward(index, parent) if parent
+        carry_forward(index, parent, absent) if parent
 
         paths.each do |path, content|
-          index.add(path:, oid: rugged.write(content.to_s, :blob), mode: 0o100644)
+          index.add(path:, oid: rugged.write(content.to_s, :blob), mode: 0o100644,
+                    valid: absent.include?(path))
         end
 
         tree = index.write_tree(rugged)
@@ -394,11 +439,45 @@ module Maker
         @cache_dir ||= Pathname.new(@cache_root).join(@user.id.to_s, @project.id.to_s).to_s
       end
 
+      # The paths THIS REPOSITORY'S INDEX already marks absent from the work tree -- read back
+      # before #commit! clears it, and unioned with what the caller passed.
+      #
+      # THE CALLER'S SET ALONE IS NOT ENOUGH, AND THE REASON IS EASY TO MISS BECAUSE IT LOOKS
+      # SUFFICIENT. Maker::Git::ProjectCommit derives its set from the paths it is committing, so
+      # every path in it is also being ADDED -- which means #carry_forward, whose whole subject is
+      # entries the pass did NOT name, could never find one of them in it. A pointer whose node is
+      # not in this pass (still being written, so not settled; or gone from the library) is carried
+      # forward from HEAD, and with the caller's set as the only source it silently loses its flag
+      # and reports ` D` again. The index is where the last pass recorded the answer, so the answer
+      # is read from there.
+      #
+      # `File.exist?` WOULD BE THE WRONG QUESTION EVEN THOUGH IT SOUNDS LIKE THE RIGHT ONE. "No
+      # file at this path" is true both for a pointer, which never had one, and for a file the
+      # maker just deleted -- and flagging the second tells git to stop reporting a REAL deletion.
+      # That is the reassuring-and-false direction #commit! refuses; a missing flag is recoverable
+      # by the next pass that names the path, a hidden deletion is not.
+      #
+      # NOTHING IS EVER UNFLAGGED HERE, and it is safe because a path's mode never changes: a
+      # pointer lives at `x.stl.ptr` and content at `x.stl`, and a file crossing the size ceiling
+      # MOVES between the two paths rather than changing what one path means (Maker::Git::Tracking).
+      def already_absent(index)
+        index.filter_map { |entry| entry[:path] if entry[:valid] }.to_set
+      end
+
       # Every blob HEAD already has, so a commit that names three paths does not delete the rest of
       # the tree. `:preorder` yields directories too; only blobs are index entries.
-      def carry_forward(index, parent)
+      #
+      # THE ASSUME-VALID BIT IS RE-DECIDED HERE, AND THIS IS THE HALF THAT GETS MISSED. The index is
+      # rebuilt from nothing every pass, so an entry brought forward from HEAD arrives carrying no
+      # flag at all: mark only the entries this commit ADDS and a pointer committed on Monday goes
+      # straight back to ` D` on Tuesday's pass -- a fix that works for exactly one commit and then
+      # silently stops, on a surface no test looks at unless it commits twice.
+      def carry_forward(index, parent, absent)
         rugged.lookup(parent).tree.walk(:preorder) do |root, entry|
-          index.add(path: root + entry[:name], oid: entry[:oid], mode: entry[:filemode]) if entry[:type] == :blob
+          if entry[:type] == :blob
+            path = root + entry[:name]
+            index.add(path:, oid: entry[:oid], mode: entry[:filemode], valid: absent.include?(path))
+          end
         end
       end
 

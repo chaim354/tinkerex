@@ -96,6 +96,37 @@ module Maker
         end
       end
 
+      # THE PASS TELLS THE REPOSITORY WHICH PATHS HAVE NO FILE, AND ONLY DRIVING IT SAYS SO. Repo's
+      # own suite proves the mark works when it is handed the set; nothing there can notice this
+      # class failing to hand it over, and that argument going missing is silent -- the commit is
+      # correct, the history is correct, and the only symptom is what the maker sees in their own
+      # folder. On the share box (tinkerex#173) that was 13 ` D` lines against 60 tracked paths.
+      #
+      # THE `??` LINE IS ASSERTED RATHER THAN FILTERED OUT, because it is TRUE and deliberately out
+      # of scope: `body.step` is the maker's real binary, we do not track binaries, and git saying
+      # so is correct. Hiding it (an ignore rule, `.git/info/exclude`) is a separate product
+      # decision -- see docs/invariants/git-tracked-projects.md. Asserting the WHOLE output is what
+      # makes this test notice if that ever changes in either direction.
+      test "a committed pointer does not read as a deletion in the maker's own folder" do
+        skip "needs the git binary" unless system("git --version > /dev/null 2>&1")
+        travel_to(3.days.ago) do
+          file_node("notes.md", content: "hello\n")
+          file_node("body.step", content: "SOLID\n")
+        end
+
+        assert pass.call!, "expected a commit"
+
+        work_tree = @root.join(@folder.storage_path)
+        assert_equal [ "?? body.step" ],
+                     `git -C #{work_tree} status --porcelain 2>&1`.lines.map(&:chomp),
+                     "a pointer's path has no file by design; reporting it as DELETED reads to a " \
+                     "maker as `the app ate my binaries`"
+        marks = `git -C #{work_tree} ls-files -v`.lines.map(&:strip)
+        assert_includes marks, "h body.step.ptr"
+        assert_includes marks, "H notes.md",
+                        "the mark must not reach content, or a real edit stops showing up"
+      end
+
       # THE SIZE CEILING IS CONSULTED AT THE COMMIT DOOR, NOT MERELY DEFINED.
       # `Tracking::MAX_CONTENT_BYTES` can exist, be documented and be fully unit-tested while
       # `paths_for` never passes a `size:` -- a knob wired to nothing, which is §15's own recorded
@@ -641,7 +672,11 @@ module Maker
         end
         kept = travel_to(3.days.ago) { file_node("kept.step", parent: @folder) }
 
-        assert_equal({ "kept.step.ptr" => Maker::Git::Tracking.pointer_for(kept) },
+        # A PAIR: the bodies by path, and the paths that have no file in the work tree. Both halves
+        # are asserted -- a pointer dropped from the second would leave `git status` reporting the
+        # maker's binaries as deleted, with the first half still perfectly correct.
+        assert_equal([ { "kept.step.ptr" => Maker::Git::Tracking.pointer_for(kept) },
+                       [ "kept.step.ptr" ] ],
                      pass.send(:paths_for, [ orphan, kept ]))
       end
 
