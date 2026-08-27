@@ -605,6 +605,37 @@ module FileLayer
       raise FetchError, "repo delete failed for #{rel.inspect}: #{e.message}"
     end
 
+    # WHERE THE REPOSITORY IS, so a local process can operate on it IN PLACE. Share is the backend
+    # where that is possible at all: the library IS a real filesystem, so libgit2 opens this
+    # directory directly and the maker gets `git log` in Finder for free — no hydration, no cache,
+    # one copy of the bytes. A backend with no local filesystem answers nil and its caller hydrates.
+    #
+    # IT IS A PATH-OR-NIL, NOT A CAPABILITY PLUS AN ACCESSOR. One question, one spelling: a
+    # `local_repo?` predicate beside a `repo_data_dir` accessor is two ways to ask the same thing,
+    # and this port already records twice what that costs — `scannable` exists because
+    # `is_a?(Share)` was encoded as a stand-in for one question and silently became wrong when the
+    # second backend arrived, and `port_writable` carries the same warning. Callers must not ask
+    # `is_a?(FileLayer::Share)` either; that is the exact class check §14b has the scar about.
+    #
+    # IT ANSWERS A PATH THAT MAY NOT EXIST YET, AND MUST NOT CREATE IT. Two reasons, and the second
+    # is the one that bites:
+    #
+    #   1. It is a WHERE question, asked of projects that have no repository at all. A query verb
+    #      that mkdir_p'd would mint an empty `.git` on the user's NAS for every project merely
+    #      asked about.
+    #   2. AN EMPTY `.git` DIRECTORY IS NOT INERT — IT IS THE MARKER. Library::Scanner observes and
+    #      indexes a real `.git` directory (that is the one skip that keeps its entry), so the next
+    #      scan would mint the marker NODE, and Maker::AttachToProject#in_working_tree? reads
+    #      exactly that node and asks nothing else. Creating the directory therefore switches off
+    #      §14f's intake filing for a project that has no repository — silently, at the next scan,
+    #      nowhere near this call. Creating a repository is git's job; this only says where.
+    #
+    # Consistent with `repo_data_root`, which it delegates to unchanged: that is pure resolution
+    # (`resolve_inside!` and nothing else), and #write_repo_data is the verb that does the mkdir_p.
+    def repo_data_dir(user, project:)
+      repo_data_root(user, project)
+    end
+
     # Resolve a node's path and refuse anything that escapes the root. Belt and braces: paths
     # come from our own scanner, but the audit that preceded this work found exactly this bug
     # class in client-supplied chunk hashes used as storage keys.

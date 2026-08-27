@@ -167,6 +167,12 @@ module FileLayer
         @second_repo_project ||= make_repo_project("Other Repo Project")
       end
 
+      # The contract's third hook. The repository's bytes live on the SYNC SERVER, reachable only
+      # over the v1 API, so there is no local directory for a process to open and this backend
+      # answers nil. Stated rather than defaulted: the contract deliberately gives this hook no
+      # default, because an unstated default is a claim made by whoever forgot to state one.
+      def expects_repo_data_dir? = false
+
       def make_repo_project(name)
         project = @user.maker_projects.create!(name:)
         project.ensure_library_folder!(@user)

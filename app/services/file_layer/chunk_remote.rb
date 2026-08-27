@@ -466,6 +466,27 @@ module FileLayer
       nil
     end
 
+    # NO LOCAL DIRECTORY EXISTS HERE, so the honest answer is nil and the caller hydrates into a
+    # cache of its own. The bytes live on the SYNC SERVER, reachable only over the v1 API — this
+    # process holds a mirrored `nodes` table and nothing else, so there is no path a local process
+    # can be pointed at and nothing for libgit2 to open in place.
+    #
+    # NIL RATHER THAN A CACHE PATH THIS ADAPTER PICKED, deliberately. Hydration is the CALLER's: it
+    # knows the lifetime of the checkout it wants and this adapter does not, and a directory handed
+    # out from here would be a second, unasked-for cache beside the caller's own. Answering some
+    # plausible-looking path is worse than answering nothing — the caller cannot tell a lie from a
+    # location, and it would commit into a directory nothing ever reads back.
+    #
+    # AND IT IS ANSWERED HERE RATHER THAN BY A CLASS CHECK AT THE CALL SITE. `is_a?(FileLayer::Share)`
+    # is the spelling §14b has the scar about; a backend stating a fact about itself is what
+    # `scannable` exists to make possible.
+    #
+    # NOT A CAPABILITY, EITHER: a `local_repo?` predicate beside a path accessor is two spellings of
+    # one question, and this port already records what that drift costs twice over.
+    def repo_data_dir(user, project:)
+      nil
+    end
+
     private
 
     # VALIDATE-ONLY, WITH THE MARKER PREFIXED. `Library::RepoMetadata.data_rel!` composes

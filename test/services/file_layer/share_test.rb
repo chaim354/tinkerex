@@ -42,6 +42,15 @@ module FileLayer
       @second_repo_project ||= make_repo_project("Other Repo Project")
     end
 
+    # The contract's third hook, and on THIS backend it is the interesting answer. A share library
+    # IS a real filesystem, so a repository under it can be operated on IN PLACE — which is the
+    # design's strongest single argument for git over a bespoke version store, since the maker then
+    # gets `git log` in Finder for free. Declared here rather than derived from
+    # `adapter.repo_data_dir`'s own return value: an arm chosen by the value under test is vacuous
+    # (see the contract), and derived from `is_a?(FileLayer::Share)` it would be the class check
+    # §14b has the scar about, restated in the one place that is supposed to prove it unnecessary.
+    def expects_repo_data_dir? = true
+
     # `mkdir` is idempotent on a live dir at the same rel, so the second project's `Projects` walk
     # returns the first's node rather than colliding — the same property Maker::LibraryFolder leans
     # on in production.
