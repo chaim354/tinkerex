@@ -325,20 +325,49 @@ that it degrades slowly and visibly. **§4.1 measured it and that is wrong.** Un
 is the exact access pattern §2.2 records every git host refusing to serve from object storage.
 
 **So consolidation is required from day one, which promotes rugged's missing packbuilder from a
-maintenance-phase gap to a blocking dependency.** Two ways out:
+maintenance-phase gap to a blocking dependency.** That dependency has now been spiked and resolved.
 
-1. **A minimal Ruby pack writer.** Header, per-object type+size varint, zlib data, trailing SHA, plus
-   a sorted idx. Deltas are *optional in the pack format*, so git reads an undeltified pack fine.
-   This is the easy half of the packfile problem — *reading* deltified packs is the hard half, and
-   we never need it because we only ever read packs we wrote.
+#### The minimal Ruby pack writer — BUILT AND VERIFIED (2026-08-27)
 
-   **§4.1 is what makes this viable rather than a compromise.** File count is the dominant term, and
-   an undeltified writer collapses 11,287 files into 1 just as well as a deltified one does. What it
-   gives up is the **4.4×** byte compression — real, but second-order against a 390× file-count win,
-   and recoverable later by swapping the writer without touching anything above it.
+`2026-08-27-git-tracked-projects-packwriter.rb`, committed beside this file. ~70 lines: a per-object
+type+size varint header, zlib data, trailing SHA-1, and a sorted idx v2. Deltas are **optional in the
+pack format**, so an undeltified pack is a valid pack. This is the easy half of the packfile problem —
+*reading* deltified packs is the hard half, and this design never needs it, because it only ever
+reads packs it wrote.
 
-2. **`gix` for packing only**, as a Rust helper binary alongside rugged. Gets real delta compression.
-   Costs two git implementations in one repo, which is the reason it is second and not first.
+**Verified by real git, not by inspection.** Objects were packed, then **every loose object deleted**,
+so git had nothing but the Ruby-written pack to read:
+
+| check | 254 objects | 11,214 objects |
+|---|---|---|
+| OIDs recomputed independently | 254/254 match git | — |
+| `git verify-pack -s` | non delta: 254 | non delta: 11,214 |
+| `git fsck --full --strict` | **clean** | **clean** |
+| history walkable | 40 commits | 1,501 commits |
+| content readable | blob + tree + annotated tag | blob from 900 commits back |
+| `git clone` | **succeeds** | — |
+
+**Performance is a non-issue.** 11,214 objects took **0.86 s** end to end (0.67 s reading loose,
+0.18 s writing the pack). A real consolidation window is ~150 objects, i.e. single-digit
+milliseconds.
+
+**The cost is 5× on bytes**, measured on the 1,500-commit repo: 3.9 MB undeltified against 784 KB
+from `git gc`. (On the small repo it was only 1.2× — deltas earn their keep as history deepens, so
+5× is the figure to plan with.)
+
+**That is acceptable here, and §5 is the reason.** Five times *small* is still small: 3.9 MB to
+hydrate across 3 files, against 11,287 requests unpacked. It is only tolerable because binaries are
+pointers — if meshes were tracked as content, a 5× penalty would be fatal. §5 and this section hold
+each other up, and weakening either one breaks the other.
+
+**Swappable later, and nothing above it changes.** If the 5× ever matters, the fallback is `gix` for
+packing only, as a Rust helper binary alongside rugged. It buys real delta compression at the cost of
+two git implementations in one repo — which is why it is the fallback and not the plan.
+
+> **Not verified: whether rugged genuinely lacks a packbuilder.** §3.1's claim rests on its README,
+> because `rugged` could not be built on the spike machine (no `cmake`). Worth introspecting the real
+> gem during phase 2 — if libgit2's packbuilder *is* exposed, the writer above becomes unnecessary.
+> It is not blocking either way, which is the point of having built it.
 
 ### 9.2 Cold hydration cost — RESOLVED, see §4.1
 
@@ -382,7 +411,7 @@ The design is one thing; the implementation is not. Suggested order, each indepe
 | phase | delivers |
 |---|---|
 | **1** | The port door (§6) + capability. No git at all. Testable as "write, read and list opaque bytes under the marker on three backends." |
-| **2** | Repo lifecycle (§4) + rugged + settle detection (§7.2) **+ the pack writer (§9.1)**. Commits happen; nothing shows them. The writer is in this phase, not deferred — §4.1 shows an unpacked repo is unhydratable on s3 and chunk_remote, so phase 2 without it only works on share. |
+| **2** | Repo lifecycle (§4) + rugged + settle detection (§7.2) **+ the pack writer (§9.1, already built and verified)**. Commits happen; nothing shows them. The writer is in this phase, not deferred — §4.1 shows an unpacked repo is unhydratable on s3 and chunk_remote, so phase 2 without it only works on share. |
 | **3** | Track-by-role and pointers (§5). |
 | **4** | The GUI — version list, on-demand historical thumbnails, visual A/B for meshes. |
 | **5** | `:in_working_tree` relaxation (§8.1), which is the riskiest change and wants the rest working first. |
