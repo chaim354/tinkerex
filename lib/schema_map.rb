@@ -75,7 +75,7 @@ module SchemaMap
                      maker_tags maker_tasks] },
     { "label" => "Models & projects", "group" => "maker",
       "tables" => %w[maker_models maker_print_runs maker_projects maker_build_log_entries
-                     maker_sheets maker_shelves] },
+                     maker_sheets maker_shelves maker_git_repos] },
     { "label" => "Inventory & BOM", "group" => "maker",
       "tables" => %w[maker_boms maker_bom_lines maker_inventory_items
                      maker_inventory_transactions maker_suppliers maker_locations] },
@@ -165,6 +165,11 @@ module SchemaMap
     [ "maker_locations.parent_id",                    "maker_locations.id",       "app", "inside" ],
     [ "maker_print_runs.model_id",                    "maker_models.id",          "app", "print of" ],
     [ "maker_taggings.tag_id",                        "maker_tags.id",            "app", "tag" ],
+    # A PROJECT'S REPOSITORY BOOKKEEPING, AND THE ARROW IS THE ONLY HONEST HALF OF IT: what the
+    # database holds is a pointer at the project, while the repository itself is a `.git` directory
+    # in the library that no column here names. The row is an index into it, never its truth
+    # (app/models/maker/git_repo.rb), which is why nothing on this table points at `nodes`.
+    [ "maker_git_repos.project_id",                   "maker_projects.id",        "fk",  "repo of" ],
     [ "maker_addon_files.addon_state_id",             "maker_addon_states.id",    "fk",  "saved by" ],
     [ "maker_addon_state_revisions.addon_state_id",   "maker_addon_states.id",    "fk",  "history of" ],
     # --- polymorphic: one edge per concrete target the pair can name ---------------

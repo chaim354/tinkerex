@@ -751,6 +751,22 @@ module FileLayer
       raise FetchError, "repo delete failed for #{rel.inspect}: #{e.message}"
     end
 
+    # NO LOCAL DIRECTORY EXISTS HERE, so the honest answer is nil and the caller hydrates into a
+    # cache of its own. A bucket is a flat keyspace over HTTP: there is no path a local process can
+    # be pointed at, and no `.git` for libgit2 to open in place. The four byte verbs above are the
+    # whole of what this backend can offer a git layer.
+    #
+    # NIL IS A STATEMENT, NOT A GAP. Answering some plausible-looking path — a tmpdir, the prefix —
+    # would be a lie the caller cannot detect: it would open a repository that is not this one and
+    # write commits nothing ever reads back. Refusing to answer is what makes the caller hydrate.
+    #
+    # AND THE QUESTION IS ANSWERED HERE RATHER THAN AT THE CALL SITE. A caller asking
+    # `is_a?(FileLayer::Share)` instead is the class check §14b has the scar about — the same
+    # spelling that made Library::ScanJob answer false for S3 and silently never index the library.
+    def repo_data_dir(user, project:)
+      nil
+    end
+
     # nil prefix means the whole bucket. The trailing slash is what keeps a prefix a DIRECTORY
     # boundary: without it, prefix "cad" would also match the sibling "cadence/..." keyspace.
     #

@@ -93,9 +93,19 @@ class StructuralOrphanTest < ActiveSupport::TestCase
       m = u.maker_models.create!(title: "Benchy")
       [ m, m.print_runs.create!(user: u, outcome: "success", printed_on: Date.current) ]
     },
-    # The two edges that ALREADY have a real database foreign key (the only maker_* ones that do).
-    # They are covered here anyway: an FK and a `dependent:` are two mechanisms for one property,
-    # and this test asserts the property, so it must not care which is doing the work.
+    # THE THREE EDGES THAT ALREADY HAVE A REAL DATABASE FOREIGN KEY (the only maker_* ones that
+    # do). They are covered here anyway: an FK and a `dependent:` are two mechanisms for one
+    # property, and this test asserts the property, so it must not care which is doing the work.
+    #
+    # THE THIRD IS THE ONE THAT PROVES THAT SENTENCE. `maker_git_repos` has no `dependent:`
+    # anywhere -- `Maker::Project` declares no association to it at all -- so this case passes
+    # ONLY because the constraint itself carries `on_delete: :cascade`. Mutation-check it by
+    # dropping the `on_delete:` from the migration: the destroy then raises InvalidForeignKey
+    # rather than leaving an orphan, which is a different failure and still a red test.
+    "maker_git_repos.project_id" => ->(u) {
+      p = u.maker_projects.create!(name: "Lamp")
+      [ p, Maker::GitRepo.create!(project: p) ]
+    },
     "maker_addon_files.addon_state_id" => ->(u) {
       st = u.maker_addon_states.create!(addon_key: "boxes", name: "box-1", data: {})
       [ st, st.files.create!(node_id: SecureRandom.uuid, role: "output") ]

@@ -47,6 +47,13 @@ module FileLayer
       @second_repo_project ||= make_repo_project("Other Repo Project")
     end
 
+    # The contract's third hook. A bucket is a flat keyspace over HTTP with no local directory for
+    # a process to open, so this backend answers nil and its caller hydrates. Stated here as a
+    # positive claim rather than left to a skip: "s3 answers nil" is exactly as much a rule as
+    # "share answers a path", and the contract's own header records that letting the verb pick its
+    # own arm hid a nil-returning Share behind a green run.
+    def expects_repo_data_dir? = false
+
     # `mkdir` is idempotent on a live dir at the same rel, so the second project's `Projects` walk
     # returns the first's node rather than colliding — the same property Maker::LibraryFolder leans
     # on in production.

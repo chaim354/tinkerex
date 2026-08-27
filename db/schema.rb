@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_26_180000) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_27_181905) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -164,6 +164,15 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_26_180000) do
     t.string "version_id"
     t.index ["user_id", "attachable_type", "attachable_id", "node_id"], name: "index_maker_file_attachments_uniqueness", unique: true
     t.index ["user_id", "node_id"], name: "index_maker_file_attachments_on_user_id_and_node_id"
+  end
+
+  create_table "maker_git_repos", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "head_oid"
+    t.datetime "last_commit_at"
+    t.integer "project_id", null: false
+    t.datetime "updated_at", null: false
+    t.index ["project_id"], name: "index_maker_git_repos_on_project_id", unique: true
   end
 
   create_table "maker_inventory_items", force: :cascade do |t|
@@ -453,6 +462,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_26_180000) do
   add_foreign_key "maker_addon_files", "maker_addon_states", column: "addon_state_id"
   add_foreign_key "maker_addon_state_revisions", "maker_addon_states", column: "addon_state_id"
   add_foreign_key "maker_addon_states", "users"
+  add_foreign_key "maker_git_repos", "maker_projects", column: "project_id", on_delete: :cascade
   add_foreign_key "nodes", "users"
   add_foreign_key "remote_manifest_chunks", "users"
   add_foreign_key "user_identities", "users"
