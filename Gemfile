@@ -69,6 +69,19 @@ gem "nokogiri", "~> 1.19"
 # Presign chunk PUT/GET against S3-compatible storage (R2, SeaweedFS). Pure Ruby.
 gem "aws-sdk-s3", require: false
 
+# libgit2 bindings, for git-tracked projects (Maker::Git::Repo).
+#
+# LICENCE NOTE, because §9 says avoid GPL and a future reader will otherwise flag this as a
+# violation: libgit2 is GPL-2.0 WITH A LINKING EXCEPTION, written expressly to permit linking from
+# a program under any licence. That is what makes it usable here where the `git` CLI is not --
+# shipping the binary would put a GPL executable in our image, which is why this repo's answer to
+# GPL everywhere else is an HTTP sidecar (§14c).
+#
+# IT DOES NOT COVER PACKING. Rugged::Repository exposes 69 instance methods and not one matches
+# pack/repack/gc/prune; Packbuilder, Indexer and Odb are undefined. Measured against the built gem,
+# not read off its README -- which is why Maker::Git::PackWriter exists and is not a stopgap.
+gem "rugged"
+
 # Ruby's own stdlib CSV writer, used by Maker::Sheet#to_csv. As of Ruby 3.4 this is a "bundled gem"
 # rather than a default gem, so it still ships with Ruby but Bundler no longer activates it for
 # free — `require "csv"` raises LoadError under Bundler.setup without this line even though the
