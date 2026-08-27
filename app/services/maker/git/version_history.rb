@@ -52,20 +52,27 @@ module Maker
         return [] if never_committed?
 
         @repo.hydrate!
-        mode = Tracking.mode_for(File.basename(path))
-        # THE `.ptr` SUFFIX IS A STORAGE DETAIL AND IS APPLIED HERE, ONCE. `Maker::Git::ProjectCommit`
-        # commits a pointer at `"#{rel}.ptr"`; a caller holding a filename must not have to know.
-        repo_path = mode == :pointer ? "#{path}.ptr" : path
 
-        rows = commits_touching(repo_path).map do |commit, blob|
-          [ commit, mode == :pointer ? blob[/^oid (\S+)$/, 1] : commit.oid ]
-        end
-        kept = mode == :pointer ? retained_tokens(rows.map(&:last)) : nil
+        # THE MODE IS RESOLVED PER COMMIT, NOT ONCE FROM THE NAME, AND THAT IS A CORRECTION.
+        # `Tracking.mode_for` answers for the file AS IT IS NOW, and a file can CROSS the size
+        # ceiling: a `.md` under it is committed as content at `notes.md`, and once it grows past
+        # it the same file is committed as a pointer at `notes.md.ptr`. Asking the name once
+        # therefore looks at exactly one of those two paths and finds only the half of the history
+        # that used it -- rendering a truncated history WITHOUT SAYING SO, which is precisely the
+        # shape "an unavailable version is rendered, never omitted" exists to refuse. It is worse
+        # than an unavailable version, because nothing on the page marks it at all.
+        #
+        # THE COST IS LOCAL, WHICH IS WHY THIS IS AFFORDABLE: it is a second tree lookup per commit
+        # against an ALREADY-HYDRATED repository -- CPU in the cache directory, never a request.
+        # The WAN-in-a-read-path rule (§14a) is untouched.
+        rows = versions_across_modes(path)
+        kept = retained_tokens(rows.filter_map { |r| r[:token] if r[:mode] == :pointer })
 
-        rows.map do |commit, token|
+        rows.map do |row|
+          commit = row[:commit]
           Version.new(oid: commit.oid, message: commit.message, time: commit.time,
-                      author: commit.author, mode:, content_token: token, path:,
-                      available: mode == :content || kept.include?(token))
+                      author: commit.author, mode: row[:mode], content_token: row[:token],
+                      path:, available: row[:mode] == :content || kept.include?(row[:token]))
         end
       end
 
@@ -148,6 +155,31 @@ module Maker
       # unobserved. That is the honest direction of the truncation: a real version is shown even
       # where we cannot prove it introduced the file, rather than a file's first version vanishing
       # off the end of the page.
+      # Every commit that changed this file, under EITHER spelling, newest first. A commit can only
+      # carry one of the two -- `ProjectCommit` writes a path per node per pass -- so there is no
+      # tie to break; the pointer arm is checked second and only where the content arm found
+      # nothing, which keeps the ordinary single-mode file at one lookup per commit for its own
+      # spelling plus one miss for the other.
+      #
+      # THE `.ptr` SUFFIX IS A STORAGE DETAIL AND IS APPLIED HERE, ONCE. `Maker::Git::ProjectCommit`
+      # commits a pointer at `"#{rel}.ptr"`; a caller holding a filename must not have to know.
+      def versions_across_modes(path)
+        content = commits_touching(path).to_h { |commit, blob| [ commit.oid, [ commit, :content, commit.oid ] ] }
+        pointer = commits_touching("#{path}.ptr").to_h do |commit, blob|
+          [ commit.oid, [ commit, :pointer, blob[/^oid (\S+)$/, 1] ] ]
+        end
+
+        # ORDERED BY THE LOG, not by concatenating the two lists -- appending one after the other
+        # would put every pointer version after every content version regardless of when it
+        # happened, which reads as a history that went backwards.
+        @repo.log(limit: LOG_LIMIT).filter_map do |commit|
+          found = content[commit.oid] || pointer[commit.oid]
+          next unless found
+
+          { commit: found[0], mode: found[1], token: found[2] }
+        end
+      end
+
       def commits_touching(repo_path)
         observed = @repo.log(limit: LOG_LIMIT).map { |commit| [ commit, blob_or_nil(commit, repo_path) ] }
 

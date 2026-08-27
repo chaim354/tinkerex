@@ -153,6 +153,28 @@ module Maker
 
       # Built through Tracking's own constant rather than a second copy of the wire format.
       def pointer(oid, size: 12) = "version #{Tracking::POINTER_VERSION}\noid #{oid}\nsize #{size}\n"
+
+      # A FILE THAT CROSSES THE SIZE CEILING CHANGES ITS REPOSITORY PATH -- committed as content at
+      # `notes.md` while it is small, and as a pointer at `notes.md.ptr` once it grows past it. A
+      # mode resolved ONCE from the name therefore looks at exactly one of those and reports only
+      # the half of the history that used it, with nothing on the page saying so. That is worse
+      # than an unavailable version: an unavailable one is rendered and marked, this one is simply
+      # missing. Both halves must appear, in log order, each with its own mode.
+      test "a file that crossed the size ceiling shows BOTH halves of its history" do
+        repo = Maker::Git::Repo.for(@project)
+        repo.hydrate!
+        repo.commit!(paths: { "notes.md" => "small\n" }, message: "as content")
+        repo.commit!(paths: { "notes.md.ptr" => "version tinkerex/v1\noid sha256:#{'c' * 64}\nsize 9000000\n" },
+                     message: "as a pointer once it grew")
+
+        versions = Maker::Git::VersionHistory.new(project: @project).for_path("notes.md")
+
+        assert_equal 2, versions.size,
+                     "both spellings are the same file's history and must both be listed"
+        assert_equal [ :pointer, :content ], versions.map(&:mode),
+                     "newest first, each carrying the mode that commit actually used"
+        assert_equal "as a pointer once it grew", versions.first.message.strip
+      end
     end
   end
 end
