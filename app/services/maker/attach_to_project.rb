@@ -29,13 +29,16 @@ module Maker
   #                         one a caller can opt out of, via `within_own_folder:` (see #refusal_for).
   #                         Maker::ProjectIntake#place does, because its move never leaves the folder
   #                         this project already owns. The other two are unconditional.
-  #   :in_working_tree    — the file lives inside a git working tree, so moving it is a delete plus
-  #                         an untracked add as far as git is concerned. UNCONDITIONAL, and
-  #                         deliberately NOT scoped by `within_own_folder:` even though it is also
+  #   :in_working_tree    — the file lives inside a git working tree THIS APP DOES NOT MAINTAIN, so
+  #                         moving it is a delete plus an untracked add as far as git is concerned.
+  #                         Still deliberately NOT scoped by `within_own_folder:` even though it is
   #                         positional: a refusal here means "attach the row, leave the bytes",
   #                         which is the right answer at all four callers, and §14f's root-is-inbox
   #                         sweep is the caller that was actively tearing repos apart. Detected by
-  #                         the `.git` marker node — see Library::RepoMetadata.
+  #                         the `.git` marker node — see Library::RepoMetadata. The one exemption is
+  #                         a marker WE put there and keep committing to; #app_managed_working_tree?
+  #                         holds the whole argument, including why it is a question about the
+  #                         MARKER'S LOCATION and not about the project's repo row.
   #
   # THE ATTACH IS THE DURABLE HALF AND THE MOVE IS BEST-EFFORT. A collision or an unmounted NAS
   # must never lose the attachment: it is a reference the user asked for, and it is exactly as true
@@ -189,7 +192,7 @@ module Maker
       return :not_a_file unless node.file?
       return :model_bundle if model_owning(node)
       return :attached_elsewhere if !within_own_folder && attached_elsewhere?(node)
-      return :in_working_tree if in_working_tree?(node)
+      return :in_working_tree if in_working_tree?(node) && !app_managed_working_tree?(node)
 
       nil
     end
@@ -219,17 +222,28 @@ module Maker
     MAX_ANCESTOR_WALK = 64
 
     # Is this node inside a git working tree — does any ancestor directory have a live child named
-    # `.git`?
+    # `.git`? The boolean question, for a caller that only needs it answered;
+    # #app_managed_working_tree? needs to know WHICH ancestor and asks #working_tree_marker.
+    def in_working_tree?(node) = !working_tree_marker(node).nil?
+
+    # The id of the NEAREST ancestor directory holding a `.git` marker, or nil.
+    #
+    # AN ID RATHER THAN A BOOLEAN BECAUSE THE LOCATION IS THE PERMISSION (see
+    # #app_managed_working_tree?): "there is a marker somewhere above" and "the marker above is
+    # OURS" are different facts, and only the second may relax the refusal.
     #
     # MEMOIZED ON THE PARENT, NOT ON THE NODE. Maker::ProjectIntake sweeps every file at one project
     # folder's root through #refusal_for, so without the memo the walk runs once per FILE and each
     # run costs two queries per level. With it, a sweep of N files pays for one walk. The memo lives
     # on the instance and the instance lives for one sweep or one request (ProjectIntake already
     # memoizes this object as `attach_policy`), so there is no staleness window worth naming.
+    # `key?` rather than `||=` is what keeps a computed nil — no marker anywhere above — memoized
+    # instead of re-walked per file, which is the whole cost the memo exists to avoid, and it is
+    # now the ORDINARY answer rather than the rare one.
     # Pinned by "the ancestor walk is cached per parent, so depth costs nothing per file".
-    def in_working_tree?(node)
+    def working_tree_marker(node)
       parent_id = node.parent_node_id
-      return false if parent_id.nil?
+      return nil if parent_id.nil?
 
       @working_tree ||= {}
       return @working_tree[parent_id] if @working_tree.key?(parent_id)
@@ -237,20 +251,65 @@ module Maker
       @working_tree[parent_id] = walk_for_marker(parent_id)
     end
 
+    # MAY THIS WORKING TREE'S FILES BE MOVED — i.e. is the marker above this node one WE put there
+    # and keep committing to?
+    #
+    # THE OBJECTION THE REFUSAL ENCODES IS "NOTHING COMMITS IT AFTERWARDS", NOT "GIT IS HERE". A
+    # move inside a working tree is a delete plus an untracked add only while nobody records the
+    # rename; once this app performs the move AND the commit, git records a rename and the
+    # objection evaporates. So the rule is not "working trees are fine now" — it is "working trees
+    # WE MAINTAIN are fine, because we finish the job."
+    #
+    # IT ASKS WHERE THE MARKER IS, NOT MERELY WHETHER THIS PROJECT HAS A REPO — and that ordering
+    # is the whole protection, not a refinement of it. #walk_for_marker returns on the FIRST marker
+    # going UP, so a repository the maker dropped INSIDE a managed project (a vendored dependency,
+    # a submodule checkout, anything cloned into Projects/<slug>/vendor/) answers with THEIR marker.
+    # A check that asked only "does @project have a Maker::GitRepo row" would answer true there and
+    # file the maker's tracked file out of their own repository — exactly the case this refusal
+    # exists to cover. Comparing against `folder_node_id` grants the exemption to the project's OWN
+    # folder-level marker and to nothing else; a file deeper inside the project still qualifies,
+    # because the nearest marker above IT is still that same one.
+    #
+    # THE INDEX CAN ONLY EVER GRANT PERMISSION, NEVER WITHHOLD IT, and that asymmetry is the safety
+    # argument. Maker::GitRepo is explicitly an index over the repo's own `tinkerex.managed` config
+    # key (see that model) and may be STALE or ABSENT while the repository is perfectly fine — so a
+    # miss falls back to the EXISTING refusal, which is what shipped yesterday and was safe
+    # yesterday. There is no state where staleness here does damage: the worst case is a project
+    # that keeps not being filed, which is visible in the sweep's skips and recoverable the moment
+    # the row appears. Reading it the other way round — an index that could FORBID — is what would
+    # make staleness dangerous.
+    #
+    # MEMOIZED FOR THE SAME REASON THE WALK IS: ProjectIntake sweeps every file at a project's root
+    # through #refusal_for, so this is one query for the whole sweep rather than one per file. It
+    # is only ever reached when the marker is the project's own folder, so the ordinary
+    # not-a-repo-at-all project pays nothing for it at all.
+    def app_managed_working_tree?(node)
+      marker = working_tree_marker(node)
+      return false unless marker && marker == @project.folder_node_id
+      return @app_managed_repo if defined?(@app_managed_repo)
+
+      @app_managed_repo = Maker::GitRepo.exists?(project_id: @project.id)
+    end
+
     # `present` and `kind: "dir"` are both load-bearing. A TOMBSTONED `.git` is not a working tree —
     # without the scope, deleting a repo would freeze its former folder against the sweep forever
     # with nothing visible saying why. And a `.git` FILE is not a marker either; see
     # Library::RepoMetadata for why that distinction is deliberate rather than incidental.
+    #
+    # RETURNS THE HOLDER'S ID, NOT `true` — the id of the directory the marker sits IN, which is
+    # what makes "is this marker ours?" answerable at all. Returning on the FIRST hit going up is
+    # not incidental either: the nearest enclosing repository is the one a move would actually
+    # disturb, so a nested repo shadows an outer one, which is also how git itself resolves it.
     def walk_for_marker(parent_id)
       id = parent_id
       MAX_ANCESTOR_WALK.times do
         break if id.nil?
-        return true if @user.nodes.present.exists?(parent_node_id: id, kind: "dir",
-                                                   name: Library::RepoMetadata::DIR_NAME)
+        return id if @user.nodes.present.exists?(parent_node_id: id, kind: "dir",
+                                                 name: Library::RepoMetadata::DIR_NAME)
 
         id = @user.nodes.where(node_id: id).pick(:parent_node_id)
       end
-      false
+      nil
     end
 
     def model_owning(node)
