@@ -2,6 +2,7 @@
 
 require "test_helper"
 require "support/chunk_remote_journey"
+require_relative "../adapter_repo_data_contract"
 
 module FileLayer
   class ChunkRemote
@@ -9,6 +10,8 @@ module FileLayer
     # what is under test here is a protocol the SERVER owns (which chunks it already has, when a
     # finalize is refused for missing bytes), and a fake would only confirm this adapter's guesses.
     class UploadTest < ActionDispatch::IntegrationTest
+      include AdapterRepoDataContract
+
       class LoopbackTransport
         def initialize(session, token) = (@s = session; @token = token)
 
@@ -116,6 +119,25 @@ module FileLayer
         # find_by(node_id: <Node>) misses and the failure reads `FileLayer::NotFound: node
         # #<Node id: 1, ...>` rather than anything about the shape of the return value.
         begun.node_id
+      end
+
+      # The repo-data contract's two hooks. `Maker::Project#ensure_library_folder!` mints
+      # `Projects/<slug>` through the port -- here that is a real `POST /v1/nodes` at the sync
+      # server, so the folder node exists on the SERVER and not merely in this app's mirror.
+      # TWO projects, because the scoping test's job is to catch an adapter that resolved the
+      # destination from anything other than the project's own folder node.
+      def repo_project
+        @repo_project ||= make_repo_project("Repo Project")
+      end
+
+      def second_repo_project
+        @second_repo_project ||= make_repo_project("Other Repo Project")
+      end
+
+      def make_repo_project(name)
+        project = @user.maker_projects.create!(name:)
+        project.ensure_library_folder!(@user)
+        project
       end
 
       def manifest_for(bytes)

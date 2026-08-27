@@ -88,6 +88,16 @@ module AdapterRepoDataContract
     end
   end
 
+  # DELETING WHAT IS ALREADY GONE IS SUCCESS, and all three backends agree today without anything
+  # saying so. A consolidation sweep that failed partway must be safe to re-run, and it cannot know
+  # which of its deletes landed -- so an adapter that raised here would turn a recoverable partial
+  # failure into a stuck one. Share answers it with a rescued ENOENT, s3 because DELETE on an
+  # absent key is a no-op, chunk_remote because it looks the node up first; three mechanisms, one
+  # promise, which is exactly the shape this file exists to hold still.
+  def test_repo_data_delete_is_idempotent
+    adapter.delete_repo_data(@user, project: repo_project, rel: "objects/pack/never-existed.pack")
+  end
+
   def test_repo_data_rejects_traversal
     assert_raises(ArgumentError) do
       adapter.write_repo_data(@user, project: repo_project, rel: "../../escape", io: StringIO.new("x"))
@@ -111,8 +121,15 @@ module AdapterRepoDataContract
   def test_repo_data_creates_no_catalog_entry_on_a_scannable_backend
     skip "chunk_remote mirrors the sync server; rows here are expected" unless adapter.capabilities.scannable?
 
+    # WARMED OUTSIDE THE COUNTED WINDOW, DELIBERATELY. `repo_project` mints `Projects/` and
+    # `Projects/<slug>` through Maker::LibraryFolder on its first call, and those are two ordinary
+    # DIRECTORY nodes this backend is supposed to have. Counting them here would fail the
+    # assertion for the fixture rather than for the write it exists to measure -- which is a
+    # guard failing for the wrong reason, one step from being "fixed" by loosening it.
+    project = repo_project
+
     assert_no_difference "Node.count" do
-      adapter.write_repo_data(@user, project: repo_project, rel: "objects/pack/a.pack", io: StringIO.new("a"))
+      adapter.write_repo_data(@user, project:, rel: "objects/pack/a.pack", io: StringIO.new("a"))
     end
     assert_empty @user.nodes.where("name LIKE ?", "%.pack"),
                  "a repo-data write must not enter the catalog on a scannable backend"
