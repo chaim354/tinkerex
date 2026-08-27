@@ -40,6 +40,11 @@ module Maker
     # pointer costs one indirection; an unknown format wrongly made content can put an unbounded
     # binary into history that cannot be removed.
     #
+    # NAME IS NOT THE ONLY AXIS -- SIZE OVERRIDES IT. A text NAME says nothing about how many bytes
+    # are behind it, and the whole hazard above is measured in bytes, so `MAX_CONTENT_BYTES` demotes
+    # anything past it whatever the name says. See that constant for where the number comes from and
+    # what would change it.
+    #
     # A POINTER TO A SUPERSEDED VERSION RESOLVES ONLY WHERE THE STORE KEPT THOSE BYTES, and the
     # commit does not record whether it did. On `chunk_remote` the sync server holds every version,
     # so old pointers resolve. On `s3` they resolve only where the bucket has versioning turned on
@@ -54,11 +59,77 @@ module Maker
       # -- a reader must never mistake one of these for something an LFS client can resolve.
       POINTER_VERSION = "tinkerex/v1".freeze
 
+      # THE SIZE CEILING FOR CONTENT TRACKING. Over this a file is a POINTER whatever its name says,
+      # because a 400 MB Markdown file is still a 400 MB blob: this pack writer stores every version
+      # of it WHOLE, forever, in a history git cannot prune without rewriting every commit id the
+      # maker has ever seen. Role alone cannot see that -- `notes.md` and a 400 MB `notes.md` are
+      # the same filename -- which is why the ceiling overrides the role rather than the other way
+      # round.
+      #
+      # THIS NUMBER IS REASONED, NOT MEASURED AGAINST A REAL LIBRARY, and saying so is the point.
+      # `rake git_tracking:size_distribution` exists to take that measurement and HAS NOT BEEN RUN
+      # against the maker's own share deployment -- this build box holds test data only. It was
+      # chosen instead from the two figures that ARE checkable inside this repo:
+      #
+      #   * `Maker::Git::TextDiff::MAX_BYTES` is 256 KiB PER SIDE. Past it the compare surface
+      #     REFUSES the diff outright, so a content-tracked version above the cap already renders
+      #     like a pointer one; the only thing content tracking still buys up there is that the
+      #     bytes survive on `share`, where the store keeps no history at all. 4 MiB is 16x that
+      #     cap, so nothing a maker can actually diff comes anywhere near being demoted.
+      #   * THE PACK WRITER IS UNDELTIFIED, so a file costs its full size in EVERY version it
+      #     appears in and there is no amortisation to lean on. The measured whole-project pack is
+      #     3.9 MB at 1,500 commits (docs/invariants/git-tracked-projects.md) -- so at 4 MiB a
+      #     SINGLE version of a SINGLE file already costs more than that entire history. That is
+      #     the line this constant draws: above it, one file stops being a rounding error, which is
+      #     precisely the condition that makes the 5x undeltified writer affordable.
+      #
+      # WHAT WOULD CHANGE IT: a p99 from a real library landing materially away from 4 MiB (raise
+      # it rather than demote ordinary source; lower it rather than let the common case dominate
+      # the pack), or a deltifying pack writer, which would void the second bullet's arithmetic
+      # entirely. Replace the number and this comment together.
+      MAX_CONTENT_BYTES = 4 * 1024 * 1024
+
+      # CROSSING THE CEILING IS A DELETE PLUS AN ADD, DECIDED RATHER THAN INHERITED. A text file
+      # that grows past it moves from `notes.md` to `notes.md.ptr`, and git records exactly that.
+      # Both alternatives are worse:
+      #
+      #   * Committing the pointer body AT `notes.md` keeps the path stable but makes "is this a
+      #     pointer" a question about the BLOB instead of the path -- ambiguous for a text file
+      #     whose content happens to look like a pointer body, and it silently reinterprets every
+      #     repository already committed under the `.ptr` convention.
+      #   * "Once content, always content" needs HEAD's tree to decide, which this module cannot
+      #     see, and it permanently exempts exactly the file the ceiling exists for: the `.md` that
+      #     reached 400 MB keeps being committed whole.
+      #
+      # NOTHING IS LOST FROM THE REPOSITORY -- both halves of that file's history are in it. What
+      # IS lost is that `Maker::Git::VersionHistory#for_path` derives the mode from the NAME alone
+      # and so renders only ONE half. That is a real gap and it is written down as a known
+      # limitation in docs/invariants/git-tracked-projects.md rather than papered over here.
+
       module_function
 
-      # :content or :pointer. Takes a NAME, not a node, so a caller deciding what to do with a file
-      # it has not read yet can ask.
-      def mode_for(name)
+      # :content or :pointer.
+      #
+      # `size:` IS OPTIONAL, AND AN ABSENT SIZE MEANS "I DO NOT KNOW" RATHER THAN "IT IS HUGE".
+      # Defaulting nil to :pointer would be the safe direction if this were the only door, and it
+      # is not: the READ paths (`VersionHistory#for_path`, `Projects::HistoryController`, and the
+      # measurement task) hold a filename and no row, so answering :pointer there would make every
+      # content-tracked source file's history unreadable at a stroke. The unbounded-binary risk is
+      # closed at the WRITE door instead -- `Maker::Git::ProjectCommit#paths_for` is the only
+      # caller that can put bytes into a commit, and it always passes `node.size`.
+      #
+      # `nodes.size` IS NULLABLE, so that one caller can still hand this nil. A row with no observed
+      # size then falls back to the name, which is what shipped before this ceiling existed rather
+      # than a new gap -- and the next scan that observes the file gives it a size.
+      #
+      # IT STILL TAKES A NAME RATHER THAN A NODE, and that is load-bearing twice over: a caller
+      # deciding what to do with a file it has not read yet can ask, and the measurement task can
+      # ask the ROLE-ONLY question -- which is the only question that can CHOOSE a threshold, since
+      # a report filtered by the threshold hides exactly the files it exists to find. `mode_for(node)`
+      # would have made that question unaskable.
+      def mode_for(name, size: nil)
+        return :pointer if size && size > MAX_CONTENT_BYTES
+
         Maker::FileAttachment.text?(name) ? :content : :pointer
       end
 

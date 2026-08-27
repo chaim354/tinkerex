@@ -96,6 +96,35 @@ module Maker
         end
       end
 
+      # THE SIZE CEILING IS CONSULTED AT THE COMMIT DOOR, NOT MERELY DEFINED.
+      # `Tracking::MAX_CONTENT_BYTES` can exist, be documented and be fully unit-tested while
+      # `paths_for` never passes a `size:` -- a knob wired to nothing, which is §15's own recorded
+      # shape ("16 green tests over an operator env knob that shipped inert"). No predicate test can
+      # see that argument go missing; only driving the real pass can.
+      #
+      # THE ROW'S SIZE IS STAMPED RATHER THAN WRITTEN, deliberately. The file on disk stays six
+      # bytes, so if the ceiling is NOT consulted the pass READS those bytes and commits them as
+      # content at `notes.md` -- a loud, specific failure -- where a genuine 4 MiB write would only
+      # have made the test slow. `update_column` also leaves `updated_at` alone, so the node stays
+      # settled and the pass still sees it.
+      test "a text file over the size ceiling is committed as a pointer, not as content" do
+        node = travel_to(3.days.ago) { file_node("notes.md", content: "hello\n") }
+        node.update_column(:size, Maker::Git::Tracking::MAX_CONTENT_BYTES + 1)
+
+        head = pass.call!
+        assert head, "expected a commit"
+
+        repo = read_back
+        pointer = repo.blob_at(oid: head, path: "notes.md.ptr")
+        assert_match(/^oid #{Regexp.escape(node.content_hash)}$/, pointer,
+                     "an over-ceiling file must be committed as a pointer naming the content hash")
+        assert_match(/^size #{Maker::Git::Tracking::MAX_CONTENT_BYTES + 1}$/, pointer)
+        assert_raises(FileLayer::NotFound,
+                      "an over-ceiling file's bytes must never enter the history") do
+          repo.blob_at(oid: head, path: "notes.md")
+        end
+      end
+
       # A `.git` DIRECTORY IS NOT INERT -- IT IS THE MARKER Maker::AttachToProject reads to decide
       # whether §14f's intake filing applies. Minting one for a project with nothing to commit
       # would silently switch that off, at the next scan, nowhere near this call.

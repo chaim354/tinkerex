@@ -103,6 +103,144 @@ module Maker
                      "consolidate! must collapse every loose object; an unpacked repo is unhydratable off share"
       end
 
+      # ---- repack: collapsing a year of commit windows ----------------------------------------
+      #
+      # #consolidate! writes one pack per commit WINDOW, which is right for the window and wrong for
+      # a year of them: 365 daily windows is 365 packs and a hydrate fetches all of them.
+
+      # ONE MORE THAN THE LIMIT, and driving the REAL constant rather than an injected one: a test
+      # that passed its own threshold in would prove the parameter works and say nothing about
+      # whether MAX_PACKS is consulted at all.
+      def pack_up_to_the_limit!(count = Maker::Git::Repo::MAX_PACKS + 1)
+        count.times do |i|
+          @repo.commit!(paths: { "f#{i}.txt" => "#{i}\n" }, message: "c#{i}")
+          @repo.consolidate!
+        end
+      end
+
+      # THE LOG IS ASSERTED, NOT THE PACK COUNT ALONE. A repack that wrote one EMPTY pack and
+      # deleted the other fifty-one passes any count-only test perfectly, and is total data loss.
+      def test_repack_collapses_many_packs_into_one_and_keeps_every_commit
+        @repo.hydrate!
+        pack_up_to_the_limit!
+        assert_equal Maker::Git::Repo::MAX_PACKS + 1, @repo.pack_idx_rels.size
+
+        name = @repo.repack_all!
+
+        assert_match(/\A[0-9a-f]{40}\z/, name)
+        assert_equal [ "pack-#{name}.idx" ], @repo.pack_idx_rels.map { |r| File.basename(r) }
+        assert_equal (0..Maker::Git::Repo::MAX_PACKS).map { |i| "c#{i}" }.reverse,
+                     @repo.log(limit: 200).map(&:message).map(&:strip),
+                     "the repack kept the pack count and lost the history"
+        assert_equal "0\n", @repo.blob_at(oid: @repo.head_oid, path: "f0.txt"),
+                     "the oldest blob must survive a repack, not merely the commits naming it"
+      end
+
+      # A repack reads and rewrites every object the repository has -- on a hydrated backend a full
+      # download and a full re-upload. THE THRESHOLD is what keeps that rare, so it is the threshold
+      # that is asserted.
+      def test_repack_is_a_no_op_below_the_limit
+        @repo.hydrate!
+        pack_up_to_the_limit!(3)
+
+        assert_nil @repo.repack_all!, "a repository with three packs has nothing to gain"
+        assert_equal 3, @repo.pack_idx_rels.size
+      end
+
+      # WHERE IT ACTUALLY MATTERS. A hydrate reads the LIBRARY, so a repack that collapses only the
+      # working directory leaves 365 fetches in place while the cache looks tidy. In place the
+      # library IS the working directory, so this holds on both shapes and for different reasons --
+      # which is why the mutation that proves it (drop the delete_repo_data call) goes red only on
+      # the hydrated one.
+      def test_repack_deletes_the_superseded_packs_from_the_library
+        @repo.hydrate!
+        pack_up_to_the_limit!
+        @repo.persist!
+        assert_equal Maker::Git::Repo::MAX_PACKS + 1, library_pack_rels.count { |r| r.end_with?(".idx") }
+
+        name = @repo.repack_all!
+
+        assert_equal [ "objects/pack/pack-#{name}.idx", "objects/pack/pack-#{name}.pack" ],
+                     library_pack_rels.sort,
+                     "the library kept the superseded packs; the repack tidied the cache and nothing else"
+      end
+
+      # THE ORDERING RULE, DRIVEN. Deleting first and writing second is §14a's copy-delete-tombstone
+      # landmine with the stakes at their highest: a failure between the two leaves the repository
+      # with no objects at all and nothing anywhere saying so.
+      def test_a_failure_in_the_writer_leaves_every_pack_and_the_whole_history_intact
+        @repo.hydrate!
+        pack_up_to_the_limit!
+        @repo.persist!
+        before = @repo.pack_idx_rels.sort
+
+        with_a_failing_pack_writer do
+          assert_raises(RuntimeError) { @repo.repack_all! }
+        end
+
+        assert_equal before, @repo.pack_idx_rels.sort, "packs were deleted before the new one existed"
+        assert_equal Maker::Git::Repo::MAX_PACKS + 1, library_pack_rels.count { |r| r.end_with?(".idx") }
+        assert_equal "0\n", build_repo(@project.reload).hydrate!.blob_at(oid: @repo.head_oid, path: "f0.txt"),
+                     "the repository must still hydrate out of the library after a failed repack"
+      end
+
+      # A multi-pack index NAMES the packs it covers, so deleting them behind it leaves git reading
+      # a repository it believes is corrupt -- in place, the maker's own. This app never writes one;
+      # a maker who ran `git multi-pack-index write` in their project folder does.
+      def test_repack_declines_rather_than_deleting_packs_a_multi_pack_index_names
+        @repo.hydrate!
+        pack_up_to_the_limit!
+        File.binwrite(File.join(@repo.git_dir, "objects/pack", "multi-pack-index"), "MIDX")
+
+        assert_nil @repo.repack_all!
+        assert_equal Maker::Git::Repo::MAX_PACKS + 1, @repo.pack_idx_rels.size
+      end
+
+      # WHAT REAL GIT SAYS ABOUT A REPACKED REPOSITORY, and it is the assertion with the most to
+      # lose: everything above reads back through the same libgit2 that answered the enumeration, and
+      # a repack is the one operation here that DELETES what it replaced. The rebuild is from LIBRARY
+      # BYTES ALONE, so this pins the collapsed library as a complete repository too, not just the
+      # working directory.
+      def test_a_repacked_repository_is_one_git_itself_still_accepts
+        skip "needs the git binary" unless system("git --version > /dev/null 2>&1")
+
+        @repo.hydrate!
+        pack_up_to_the_limit!
+        @repo.persist!
+        @repo.repack_all!
+
+        rebuilt = build_repo(@project.reload)
+        rebuilt.discard_cache!
+        rebuilt.hydrate!
+        dir = rebuilt.git_dir
+
+        assert system("git -C #{dir} fsck --full --strict > /dev/null 2>&1"),
+               "git rejected a repository this app repacked"
+        assert_equal (Maker::Git::Repo::MAX_PACKS + 1).to_s,
+                     `git -C #{dir} rev-list --count HEAD`.strip,
+                     "every commit must survive the repack, counted by git rather than by rugged"
+      ensure
+        rebuilt&.discard_cache!
+      end
+
+      # HAND-ROLLED, NOT Object#stub: minitest 6 dropped minitest/mock, so `stub` does not exist in
+      # this suite -- test_helper.rb says so in two places. The ensure-restore is load-bearing: a
+      # leaked override makes every later test in this worker see a broken pack writer, a whole
+      # debugging session away from here.
+      def with_a_failing_pack_writer
+        original = Maker::Git::PackWriter.method(:write)
+        Maker::Git::PackWriter.define_singleton_method(:write) { |*| raise "the pack write failed" }
+        yield
+      ensure
+        Maker::Git::PackWriter.define_singleton_method(:write, original)
+      end
+
+      # What the LIBRARY holds under objects/pack, asked through the port rather than off disk --
+      # in place that is the same directory, on a hydrated backend it is the bucket.
+      def library_pack_rels
+        adapter.list_repo_data(@user, project: @project).select { |r| r.start_with?("objects/pack/") }
+      end
+
       def test_log_returns_commits_newest_first
         @repo.hydrate!
         @repo.commit!(paths: { "a.txt" => "1\n" }, message: "older")
