@@ -114,12 +114,69 @@ explicitly marked unstable, and it buys nothing rugged lacks except packing, see
 | **hydrate** | copy `.git/**` from library → cache. Skipped on share | port read (§6) |
 | **commit** | build index from changed paths, write tree, write commit, update ref | rugged |
 | **persist** | copy new/changed objects and refs back → library | port write (§6) |
-| **consolidate** | collapse loose objects into a pack | **open, see §9.1** |
+| **consolidate** | collapse loose objects into a pack | **not in rugged — §9.1** |
+
+Consolidation is **part of the loop, not a background tidy-up**: §4.1 measures an unconsolidated repo
+as unhydratable on s3 and chunk_remote, so a window that commits without packing leaves the project
+unusable on two of three backends.
 
 **Locking.** Two workers must not operate one project's repo concurrently. `Library::ScanJob`
 already enforces one scan per user, which covers the scan-triggered path; any eager path added later
 must take the same lock. A ref update is compare-and-swap and a lost update is a lost commit, not
 corruption — but the cache directory is not concurrency-safe and must be.
+
+### 4.1 Measured: hydration and consolidation (2026-08-27)
+
+Spiked against a synthetic maker project built the way §5 routes one — 60 text files across
+src/include/docs/config/test, plus 30 LFS-style pointer files standing in for STL and STEP — with
+scan-shaped churn (1–5 files per commit, a pointer rewritten every sixth). Script:
+`2026-08-27-git-tracked-projects-spike.sh`, committed beside this file — `./spike.sh <dir> <commits>`.
+
+**Growth is linear at ~7.5 objects per commit.**
+
+| commits | loose objects | `.git` allocated |
+|---|---|---|
+| 100 | 835 | 3.4 MB |
+| 500 | 3,789 | 15.0 MB |
+| 1,500 | 11,287 | 44.6 MB |
+
+**Loose vs packed, at 1,500 commits:**
+
+| | loose | packed | ratio |
+|---|---|---|---|
+| files in `.git` | 11,310 | **29** | **390×** |
+| local copy time | 2.88 s | ~0.00 s | — |
+
+**The size numbers needed a second look, and the first reading was wrong.** `du` reports *allocated*
+blocks, and 3,807 loose objects averaging **318 bytes** each are almost entirely 4 KB-block padding:
+
+| 500 commits | |
+|---|---|
+| apparent bytes | 1,183 KB |
+| allocated on APFS | 15,228 KB — **12.9× inflation** |
+| packed, delta-compressed | 267 KB |
+| **true compression ratio** | **4.4×**, not the 27× the allocated figure implies |
+
+**Two consequences, and they point the same way.**
+
+*The problem with loose objects is FILE COUNT, not bytes.* Object storage has no block padding, so
+loose costs ~1.2 MB there either way. What costs is **11,287 requests instead of 2** — the same
+"small objects, random access" shape §2.2 records every git host refusing, and the same synchronous
+metadata round-trip §2/§14e is built around avoiding.
+
+| hydration at 1,500 commits | packed | loose |
+|---|---|---|
+| s3 | ~3–5 GETs, ~1.1 MB | **11,287 GETs**, billed, every time |
+| share over SMB | ~30 metadata round trips | **11,310** |
+| chunk_remote | a handful of mirror rows | 11,287 rows and reads |
+
+*Incremental packing works exactly as the design needs.* Twenty commits on top of an already-packed
+repo produced 161 loose objects; `git repack -d` collapsed them into **one 38 KB pack + 5.5 KB idx,
+leaving the existing pack untouched** and loose back at 2. So a consolidation window costs **2 new
+immutable files**, and old packs are never rewritten — precisely the JGit DFS shape (§2.4).
+
+Packs do accumulate, so a full repack is needed when the pack count grows; git's own
+`gc.autoPackLimit` default of 50 is a sane rule to borrow rather than invent.
 
 ---
 
@@ -257,30 +314,40 @@ render must never be able to claim it.
 
 Each names its fallback, so none of them blocks a start.
 
-### 9.1 Consolidation — the one real unknown
+### 9.1 Consolidation — BLOCKING, and §4.1 reversed the earlier answer
 
-rugged documents **no packbuilder, repack or gc**. Loose objects therefore accumulate: roughly 7
-objects per commit (blobs + trees + commit), ~20 commits/day/project, and nothing collapses them.
+rugged documents **no packbuilder, repack or gc** (verified against its README, 2026-08-27).
 
-Cost is not the issue — that is ~140 small PUTs/day/project on s3, fractions of a cent. The issue is
-that a repo with 100k loose objects is slow, and syncing it means 100k files.
+An earlier draft of this section ranked **"defer consolidation and measure"** first, on the reasoning
+that it degrades slowly and visibly. **§4.1 measured it and that is wrong.** Unconsolidated, a
+1,500-commit project needs **11,287 GETs to hydrate on s3** and 11,310 metadata round trips over SMB,
+*every time a container starts cold* — against 3–5 requests packed. That is not slow degradation, it
+is the exact access pattern §2.2 records every git host refusing to serve from object storage.
 
-Three ways out, in preference order:
+**So consolidation is required from day one, which promotes rugged's missing packbuilder from a
+maintenance-phase gap to a blocking dependency.** Two ways out:
 
-1. **Defer.** Ship without consolidation and measure real growth first. Viable precisely because it
-   degrades slowly and visibly rather than breaking.
-2. **A minimal Ruby pack writer.** Writing an *undeltified* pack is genuinely small — header,
-   per-object type+size varint, zlib data, trailing SHA — and git reads it fine, since deltas are
-   optional in the format. This is the easy half of the packfile problem; *reading* deltified packs
-   is the hard half and we never need it.
-3. **`gix` for packing only.** A Rust helper binary alongside rugged. Two implementations for one
-   repo is ugly and is the last resort.
+1. **A minimal Ruby pack writer.** Header, per-object type+size varint, zlib data, trailing SHA, plus
+   a sorted idx. Deltas are *optional in the pack format*, so git reads an undeltified pack fine.
+   This is the easy half of the packfile problem — *reading* deltified packs is the hard half, and
+   we never need it because we only ever read packs we wrote.
 
-### 9.2 Cold hydration cost
+   **§4.1 is what makes this viable rather than a compromise.** File count is the dominant term, and
+   an undeltified writer collapses 11,287 files into 1 just as well as a deltified one does. What it
+   gives up is the **4.4×** byte compression — real, but second-order against a 390× file-count win,
+   and recoverable later by swapping the writer without touching anything above it.
 
-Unmeasured. For a text-plus-pointers repo it should be small, which is precisely why §5 keeps
-binaries out. **Spike it before committing to the ephemeral-cache design** — if hydration is slow,
-share-in-place stops being an optimisation and becomes the only viable path.
+2. **`gix` for packing only**, as a Rust helper binary alongside rugged. Gets real delta compression.
+   Costs two git implementations in one repo, which is the reason it is second and not first.
+
+### 9.2 Cold hydration cost — RESOLVED, see §4.1
+
+Measured. **Packed, it is a non-issue**: ~1.1 MB across 3–5 files for a 1,500-commit project, copying
+in under a millisecond locally. The ephemeral-cache design holds and share-in-place stays an
+optimisation rather than the only viable path.
+
+The finding that matters is the one folded into §9.1: it is only a non-issue **because the repo is
+packed**, and nothing in rugged packs it.
 
 ### 9.3 Commit authorship and messages — decided, revisit if it reads badly
 
@@ -315,7 +382,7 @@ The design is one thing; the implementation is not. Suggested order, each indepe
 | phase | delivers |
 |---|---|
 | **1** | The port door (§6) + capability. No git at all. Testable as "write, read and list opaque bytes under the marker on three backends." |
-| **2** | Repo lifecycle (§4) + rugged + settle detection (§7.2). Commits happen; nothing shows them. |
+| **2** | Repo lifecycle (§4) + rugged + settle detection (§7.2) **+ the pack writer (§9.1)**. Commits happen; nothing shows them. The writer is in this phase, not deferred — §4.1 shows an unpacked repo is unhydratable on s3 and chunk_remote, so phase 2 without it only works on share. |
 | **3** | Track-by-role and pointers (§5). |
 | **4** | The GUI — version list, on-demand historical thumbnails, visual A/B for meshes. |
 | **5** | `:in_working_tree` relaxation (§8.1), which is the riskiest change and wants the rest working first. |
