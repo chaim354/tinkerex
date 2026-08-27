@@ -446,9 +446,6 @@ class LogCliTest < ActiveSupport::TestCase
   # that derives its expectation from the code under test can never disagree with it, and so
   # asserts nothing about that code being right. This is bin/log's LABELS as of this writing; a
   # deliberate change there must update this list BY HAND, which is the point.
-  LABEL_NAMES = %w[arc open-work deploy blocked deliberate
-                   filelayer library-scan addons previews maker-web ci].freeze
-
   # IDEMPOTENCY IS ASKING WHAT EXISTS, NOT TOLERATING A REFUSAL. Forgejo ALLOWS DUPLICATE LABEL
   # NAMES — measured against the live instance: a second `setup` run created a second copy of all
   # eleven and reported "11 labels present" both times, leaving 22. The test this replaces asserted
@@ -769,5 +766,103 @@ class LogCliTest < ActiveSupport::TestCase
       assert_equal 2, code
       assert_includes err, "no leading heading"
     end
+  end
+
+  # --- close -----------------------------------------------------------------------------------
+
+  test "close PATCHes state closed, and reads the issue first so it can tell you it was open" do
+    stub = StubForgejo.new(routes: {
+      "GET /issues/152" => [ 200, { "number" => 152, "title" => "Database foreign keys", "state" => "open" } ],
+      "PATCH /issues/152" => [ 200, { "number" => 152, "state" => "closed" } ]
+    })
+
+    out, err, code = run_log("close", "152", env: {
+      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+    })
+
+    assert_equal 0, code, "bin/log close failed: #{err}"
+    patch = stub.requests.find { |r| r.method == "PATCH" }
+    assert patch, "close never sent a PATCH — requests: #{stub.requests.map(&:method).inspect}"
+    assert_equal "/api/v1/repos/chaim354/tinkerex/issues/152", patch.path
+    assert_equal "closed", patch.json["state"]
+
+    # THE BODY MUST NOT RIDE ALONG. Forgejo's edit endpoint takes title/body on the same verb, so a
+    # close that sent either would silently rewrite the issue — and this record keeps corrections
+    # as COMMENTS precisely so a body is never edited (§15).
+    refute patch.json.key?("body"), "close sent a body — it is rewriting the issue, not closing it"
+    refute patch.json.key?("title"), "close sent a title — it is rewriting the issue, not closing it"
+    assert_match(/closed #152/, out)
+  ensure
+    stub&.shutdown
+  end
+
+  test "close reports an already-closed issue instead of sending a redundant write" do
+    stub = StubForgejo.new(routes: {
+      "GET /issues/99" => [ 200, { "number" => 99, "title" => "Done ages ago", "state" => "closed" } ]
+    })
+
+    out, err, code = run_log("close", "99", env: {
+      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+    })
+
+    assert_equal 0, code, "bin/log close failed: #{err}"
+    assert_match(/#99 was already closed/, out)
+    assert_nil stub.requests.find { |r| r.method == "PATCH" },
+      "close re-sent a write for an issue that was already closed"
+  ensure
+    stub&.shutdown
+  end
+
+  test "close takes several issues and closes each one" do
+    stub = StubForgejo.new(routes: {
+      "GET /issues/152" => [ 200, { "number" => 152, "title" => "FKs", "state" => "open" } ],
+      "GET /issues/153" => [ 200, { "number" => 153, "title" => "Item vs Model", "state" => "open" } ],
+      "PATCH /issues/152" => [ 200, { "number" => 152, "state" => "closed" } ],
+      "PATCH /issues/153" => [ 200, { "number" => 153, "state" => "closed" } ]
+    })
+
+    _out, err, code = run_log("close", "152", "153", env: {
+      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+    })
+
+    assert_equal 0, code, "bin/log close failed: #{err}"
+    patched = stub.requests.select { |r| r.method == "PATCH" }.map(&:path)
+    assert_equal [ "/api/v1/repos/chaim354/tinkerex/issues/152",
+                   "/api/v1/repos/chaim354/tinkerex/issues/153" ], patched
+  ensure
+    stub&.shutdown
+  end
+
+  test "close rejects a non-numeric issue and sends nothing" do
+    stub = StubForgejo.new
+
+    _out, err, code = run_log("close", "../../etc/passwd", env: {
+      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+    })
+
+    assert_equal 2, code, "expected a usage error, got #{code}"
+    assert_match(/not an issue number/, err)
+    assert_empty stub.requests, "close sent a request for a rejected issue number"
+  ensure
+    stub&.shutdown
+  end
+
+  test "close with no arguments is a usage error" do
+    _out, err, code = run_log("close")
+
+    assert_equal 2, code
+    assert_match(/close needs at least one issue number/, err)
+  end
+
+  # A CLOSE IS A WRITE, SO AN OUTAGE MUST SPOOL IT LIKE ANY OTHER. The default FORGEJO_URL in
+  # run_log points at a dead port, which is the outage.
+  test "close spools when Forgejo is unreachable, naming the issue it belongs to" do
+    _out, err, code = run_log("close", "152", env: { "FORGEJO_TOKEN" => "t0ken" })
+
+    assert_equal 3, code, "expected EXIT_UNREACHABLE, got #{code}: #{err}"
   end
 end
