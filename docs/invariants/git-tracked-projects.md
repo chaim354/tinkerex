@@ -59,6 +59,26 @@ what you put in it. Do not reopen object-level storage.
   of exactly those). **Pointer is the DEFAULT**: an unknown format wrongly made a pointer costs one
   indirection; wrongly made content it puts an unbounded binary into history that cannot be removed.
 
+- **SIZE OVERRIDES ROLE, AND `Maker::Git::ProjectCommit` MUST KEEP PASSING IT.**
+  `Tracking::MAX_CONTENT_BYTES` demotes anything past it to a pointer whatever the name says,
+  because a text NAME says nothing about the bytes behind it and a 400 MB `.md` committed as
+  content is stored whole in every version, forever. The commit path is the only door that can put
+  bytes into a history git cannot prune, so it is the only caller that must pass `size:` — drop
+  that one argument and the ceiling still exists, still has tests and never fires, which is §15's
+  recorded knob-shipped-inert shape. Pinned by `project_commit_test.rb`'s over-ceiling test, which
+  drives the real pass rather than the predicate. **The number is REASONED, NOT MEASURED** — the
+  constant says so in as many words and names the two checkable figures behind it (`TextDiff::MAX_BYTES`
+  and the 3.9 MB pack above); `rake git_tracking:size_distribution` is the read-only instrument for
+  replacing it with a real p99, and it deliberately asks the ROLE-ONLY question, because a report
+  filtered by the current ceiling hides exactly the files that would argue for a different one.
+
+- **CROSSING THE CEILING IS A DELETE PLUS AN ADD, AND IT IS DECIDED RATHER THAN INHERITED.** A text
+  file that grows past `MAX_CONTENT_BYTES` moves from `notes.md` to `notes.md.ptr` and git records
+  exactly that. Keeping the path stable would mean committing the pointer body AT `notes.md`, which
+  makes "is this a pointer" a question about the BLOB rather than the path — ambiguous, and it
+  reinterprets every repository already committed under the `.ptr` convention. "Once content, always
+  content" needs HEAD's tree to decide and permanently exempts the very file the ceiling exists for.
+
 - **A POINTER'S `oid` CARRIES `content_hash` VERBATIM, NAMESPACE AND ALL.** That value is §14a's
   identity-ladder output — `sha256:` on chunk_remote, `md5:` or `etag:` on s3. Stripping the prefix
   to look like an LFS `sha256` oid states an algorithm the bytes were never hashed with, and an
@@ -124,6 +144,24 @@ what you put in it. Do not reopen object-level storage.
   `TenantCleanupTest` edits), and `last_viewed_at` is the retention key rather than `created_at`,
   because a version nobody opens should age out even if rendered recently.
 
+- **THE RENDER CACHE IS SWEPT ON ITS OWN WINDOWS, NEVER ON `Maker::DeadNodes::GRACE`.**
+  `Maker::VersionPreviewReaperJob` (daily, `version_preview_retention`) destroys a row and purges
+  its blob, and that is safe for a reason the two 30-day reapers cannot claim: **the row is a cache
+  and losing it loses nothing** — the commit is in the repository, the version still names its
+  `content_token`, and `HistoryController#mint_missing` re-mints and re-renders on the next open. So
+  their 30 days is a **safety floor** (a tombstone is one undo from returning with the same
+  `node_id`, and reaping early destroys the user's own filing) that this sweep has no reason to
+  inherit; copying it would be copying a number whose justification is absent. **Two windows, split
+  on terminal vs non-terminal**, which is the line `VersionPreview::STATES` already draws:
+  `RETENTION` (90 days) ages out a finished answer, weighed as bytes on a Kamal volume
+  (tinkerex#160) against a re-render the maker watches — WAN-fetched on `chunk_remote`, so err long.
+  `PENDING_RETENTION` (1 day) is a **repair, not a reclaim**: `mint_missing` enqueues only
+  `if row.previously_new_record?`, so a render that never resolved is never restarted by any number
+  of page views and the tile spins forever — destroying the row is the only thing that fixes it, and
+  `RenderVersionPreviewJob`'s `discard_on ActiveRecord::RecordNotFound` exists so racing an
+  in-flight job is safe by construction. A weekly cadence would make that one-day window eight days
+  of spinner, which is a window written and then not honoured.
+
 - **OPENING HISTORY MUST NEVER MINT `.git`.** `hydrate!` creates the marker, and that marker is what
   `Maker::AttachToProject`'s `:in_working_tree` reads — so a read path that hydrates would switch
   off `docs/invariants/project-intake.md`'s filing for the project being *looked at*. Both doors
@@ -162,6 +200,19 @@ what you put in it. Do not reopen object-level storage.
 ---
 
 ## Known limitation, stated rather than implied
+
+**A file that has crossed the size ceiling shows only ONE half of its history.**
+`VersionHistory#for_path` derives the mode from the NAME alone, so it looks at `notes.md` or at
+`notes.md.ptr` but never both — while a file that crossed has real versions at each. Nothing is lost
+from the repository; what is lost is that the page renders half of it without saying so, which is
+the shape "AN UNAVAILABLE VERSION IS RENDERED, NEVER OMITTED" exists to refuse. It is stated here
+rather than fixed because the fix is not local to the ceiling: the mode of a historical version is a
+property of the COMMIT, not of the filename, so `for_path` has to resolve it per commit (two
+`blob_at` calls per commit against `LOG_LIMIT`), and `Projects::HistoryController#content_tracked?`
+then has to answer for a PAIR whose two sides can disagree. The exposure is bounded by the ceiling
+being 16x `TextDiff::MAX_BYTES`: any file that crosses it was already past the diff cap, so the half
+that goes missing was never diffable.
+
 
 `commit_all!` — the chunk_remote schedule, which has no scan to anchor to — passes no
 `scan_started_at`, so "settled" there means "not touched since this job started" rather than a full
