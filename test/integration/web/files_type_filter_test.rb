@@ -41,6 +41,16 @@ module Web
                                              .to_h { |o| [ o["value"], o.text[/\((.+)\)/, 1] ] }
     end
 
+    # The flat view's Folder column, keyed by file name. Third cell: Name, Type, Folder — see
+    # files/_list.html.erb, where the column is emitted only when @flat.
+    def folder_labels
+      css_select("table.files tbody tr").to_h do |row|
+        cells = row.css("td")
+        name = (cells[0].at_css(".file-name") || cells[0].at_css("a")).text.strip.delete_prefix("📁 ")
+        [ name, cells[2].text.strip ]
+      end
+    end
+
     # Same reader as files_sort_test.rb — a thumbnailable file's link contains the thumbnail cell
     # as well as the name, so read the .file-name span when there is one.
     def listed_names
@@ -257,13 +267,32 @@ module Web
       assert_equal few, many, "the flat view's query count grew with the number of rows"
     end
 
-    # A corrupt parent chain must not take the page down. `folder_paths_for` walks parents to build
-    # "cad/sub", and folder_crumbs already carries the same guard for the same reason.
+    # A corrupt parent chain must not take the page down. `folder_paths_for` asks
+    # Maker::LibraryTree, whose walk carries the cycle guard; folder_crumbs carries its own for the
+    # same reason.
+    #
+    # THE RENDERED CELL IS ASSERTED, NOT JUST THE STATUS. `assert_response :success` alone cannot
+    # see what the column says, and what it said before the shared index was "…/sub/tiny" — a
+    # literal ellipsis spliced into a path, offered to the user as where their file lives.
     test "a cycle in the parent chain does not blow the stack" do
       @user.nodes.find_by!(node_id: "dir-cad").update!(parent_node_id: "dir-sub")
       get files_path(ext: "stl")
       assert_response :success
       assert_includes listed_names, "tiny.stl"
+      assert_equal "Files", folder_labels["tiny.stl"],
+                   "an unresolvable chain must read as the root, not as a path with a hole in it"
+    end
+
+    # THE OTHER UNRESOLVABLE SHAPE, and the ordinary one: a live folder whose parent row has been
+    # tombstoned. The bare leaf this used to print ("sub") claims a top-level folder that is not
+    # there — the link still goes to the right folder either way, so only the label moves.
+    test "a file under a folder whose parent row is gone reads as the root" do
+      @user.nodes.find_by!(node_id: "dir-cad").update!(deleted: true)
+      get files_path(ext: "stl")
+      assert_response :success
+      assert_equal "Files", folder_labels["tiny.stl"]
+      # and the resolvable rows are untouched
+      assert_equal "Files", folder_labels["root.stl"]
     end
 
     # --- the type dropdown ------------------------------------------------------

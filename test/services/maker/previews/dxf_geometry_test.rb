@@ -131,6 +131,61 @@ module Maker
         end
       end
 
+      # THE FILE IS LEXED ONCE PER RENDER, AND THIS IS A GUARD ON WORK DONE rather than on
+      # output — the only kind that can see this regression, because lexing twice produces the
+      # identical picture and the identical payload at double the cost, so no assertion about the
+      # result can fail. `lbrn2_test.rb`'s "a VertList is parsed exactly once per document" is the
+      # same guard for the same reason. Measured before `each_geometry` took the pairs: TWO
+      # `tokenize` calls on each of the two legs. The 2026-08-19 audit timed one pass of this
+      # exact lexer at ~148 ms on a synthetic 4.4 MB drawing.
+      test "the file is lexed exactly once per render, on both legs" do
+        bytes = fixture("plate.dxf")
+
+        payload_lexes = counting(:tokenize) { DxfGeometry.render(bytes) }
+        thumbnail_lexes = counting(:tokenize) { Dxf.to_svg(bytes) }
+
+        # NON-VACUITY FIRST: a counter whose hook failed to install reads 0, and diagnosing that
+        # as "the lex count regressed" would be a guard reporting on nothing (§14e).
+        assert_operator payload_lexes, :>, 0, "the tokenize hook never fired — it did not install"
+        assert_operator thumbnail_lexes, :>, 0, "the tokenize hook never fired — it did not install"
+
+        assert_equal 1, payload_lexes, "the payload leg must lex the file once, got #{payload_lexes}"
+        assert_equal 1, thumbnail_lexes, "the thumbnail leg must lex the file once, got #{thumbnail_lexes}"
+      end
+
+      # THE BACKSTOP THAT LICENSES NOT BUMPING A REVISION. Handing `each_geometry` the pairs
+      # instead of the bytes changed the traversal's plumbing and not its output, and these
+      # digests are the evidence rather than the claim: they were taken from the pre-refactor code
+      # and compared across eight inputs (both fixtures, $INSUNITS present/absent/unknown, an off
+      # layer with a non-standard ACI, an empty ENTITIES section, and unparseable bytes) — all
+      # byte-identical, which is what made re-measuring the whole library unnecessary.
+      #
+      # SO A CHANGE HERE IS NEVER JUST A FAILING DIGEST. A stored artifact goes stale on the CODE
+      # axis as well as the CONTENT one (docs/invariants/measure-view.md, §14h): if the SVG moves,
+      # `Dxf::THUMBNAIL_REVISION` must move with it; if the payload moves,
+      # `DxfGeometry::FORMAT_REVISION` must. Update the digest only once the matching revision has
+      # been bumped, or every already-measured DXF serves the old bytes forever — a finished
+      # design's content never changes, so nothing else will ever invalidate it.
+      test "the traversal's two artifacts are byte-for-byte what they were before it took pairs" do
+        {
+          "sample.dxf" => %w[
+            f32daab0e0264cb27c3d1ae8f3a9f74cda65b56c4b3009062c202900f9232352
+            750dd2218392ab6cdbe9676a4cd15082a2290f80ad1a6ecfdb82f026594fe5f8
+          ],
+          "plate.dxf" => %w[
+            d8844eb6832b6d107fd1ad782ce34fc8a35d3b088b4609a6f0c8e6dba86e035d
+            012fcf62476d99b608c76ef40085154a4b3d6d4d9e00aaf32b079ffb7ce81e41
+          ]
+        }.each do |name, (svg_sha, payload_sha)|
+          bytes = fixture(name)
+
+          assert_equal svg_sha, Digest::SHA256.hexdigest(Dxf.to_svg(bytes)),
+                       "#{name}: the thumbnail SVG moved — bump Dxf::THUMBNAIL_REVISION"
+          assert_equal payload_sha, Digest::SHA256.hexdigest(DxfGeometry.render(bytes)[:bytes]),
+                       "#{name}: the measure payload moved — bump DxfGeometry::FORMAT_REVISION"
+        end
+      end
+
       # Arcs and circles are flattened for measuring but drawn as EXACT primitives, so the
       # thumbnail stays crisp at any zoom. A consumer that used the curve descriptor INSTEAD of
       # the points would be reading a different geometry from the one the bbox came from.
@@ -178,6 +233,27 @@ module Maker
       end
 
       private
+
+      # Counts calls to one of `Dxf`'s own module functions while the block runs, and returns the
+      # count. HAND-ROLLED, NOT Object#stub: minitest 6 dropped minitest/mock, so `stub` is a
+      # LoadError in this suite — the same reason `lbrn2_test.rb` and `test_helper.rb` count this
+      # way. `module_function` puts the real implementation on the singleton class, so redefining
+      # it there intercepts BOTH spellings: an external `Dxf.tokenize(...)` and the implicit-self
+      # `tokenize(...)` inside `to_svg`, which dispatches to the same singleton method.
+      def counting(name)
+        calls = 0
+        mod = Dxf.singleton_class
+        original = mod.instance_method(name)
+        mod.define_method(name) { |*args| calls += 1; original.bind(self).call(*args) }
+
+        begin
+          yield
+        ensure
+          mod.define_method(name, original)
+        end
+
+        calls
+      end
 
       def build(bytes) = JSON.parse(DxfGeometry.render(bytes)[:bytes])
 

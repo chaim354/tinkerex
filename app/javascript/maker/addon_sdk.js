@@ -406,8 +406,9 @@ class Host {
   }
 
   files = {
-    // Absorbs what every bundle copies today (save.js): POST, and if the host answers 409
-    // would_replace, ask `onReplace` and re-send with overwrite=1. A bundle passing no onReplace
+    // Absorbs what every bundle used to copy by hand (its own save.js, which the real bundles have
+    // since dropped for this call): POST, and if the host answers 409 would_replace, ask
+    // `onReplace` and re-send with overwrite=1. A bundle passing no onReplace
     // gets the WouldReplaceError thrown instead, which is the honest default — silently
     // overwriting is the one behaviour that must never be implicit.
     //

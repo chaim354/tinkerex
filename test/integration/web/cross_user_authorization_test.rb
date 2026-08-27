@@ -49,6 +49,14 @@ module Web
       @intruder.nodes.create!(node_id: "mine", name: "mine.stl", kind: "file", size: 1,
                              mtime: 1_700_000_000_000_000_000)
       post user_session_path, params: { user: { email: @intruder.email, password: PASSWORD } }
+      # NOT `assert_response :redirect` -- a FAILED sign-in redirects too (Devise's FailureApp and
+      # Users::SessionsController's per-IP rate-limit hook both `redirect_to`), so a bare 3xx
+      # cannot tell success from failure. Unasserted, an anonymous session makes EVERY case below
+      # pass for the wrong reason: `assert_denied`/`assert_unreadable` only ask that the response
+      # was not successful, which a redirect to the sign-in page satisfies while proving nothing
+      # about scoping. `files_path` is the real destination -- ApplicationController#after_sign_in_path_for.
+      assert_redirected_to files_path,
+                           "the intruder is not signed in — every case below asserts nothing about scoping"
     end
 
     # A request that must not succeed and must not change anything.

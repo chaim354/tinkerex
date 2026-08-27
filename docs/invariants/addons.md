@@ -53,7 +53,13 @@
   live bundle dropped the line, which is the worst possible failure for a compliance check.
 - **Addons are manifest-driven, not listed in this repo.** `Maker::Addons::Registry` builds
   `Addon`s from manifests fetched by `Maker::Addons::Source` and caches the index (`CACHE_KEY`,
-  5-minute `TTL`) — republishing a bundle *is* the deploy. Three refusals matter: a manifest
+  5-minute `TTL`) **when the source says it may — `Source#cacheable?`, the source's own answer and
+  not a class check, exactly as the two asset paths ask it.** Over HTTP that is true, so
+  republishing a bundle *is* the deploy and takes up to the TTL to be noticed; the dev/test
+  `Source::Local` answers false and is re-read every time, so an author's manifest edit is visible
+  immediately. Honouring it for assets only was the bug: bundle bytes went fresh against a manifest
+  five minutes old, which is worse than uniform staleness, because the half that updates makes you
+  believe the other half did. Three refusals matter: a manifest
   missing a `REQUIRED` key or declaring an `api_version` other than `Registry::API_VERSION` is
   **skipped, not raised on** — one bad addon must never take `/tools` down (the `api_version` arm
   is mutation-checked); and a source outage returns `[]` for **that request only**, because the
@@ -239,6 +245,19 @@
   `WouldReplaceError` and `NameTakenError` as distinct classes for exactly this, the same
   distinction §14f draws server-side. Collapse them and a bundle offers an Overwrite button for a
   save that can never succeed on retry.
+- **THE SHIPPED SAVE PATH IS THE SDK'S, AND ITS THREE 409 ANSWERS ARE PROVED BY
+  `test/system/addon_sdk_test.rb` ALONE.** Accepting, DECLINING and passing no callback at all are
+  three different outcomes — re-POST with `overwrite=1`, `{cancelled: true}`, throw
+  `WouldReplaceError` — so the `sdk-fixture` takes its `onReplace` answer from a `decline=` query
+  param, the way it already takes `parent` and `fname`, and a Ruby test drives each.
+  `test/fixtures/addons/fixture/save.js` LOOKS LIKE THE SAME PROOF AND IS NOT: it is a raw-ctx
+  duplicate of the helper the real bundles dropped when the SDK absorbed this dance, and it has
+  already drifted (it reads only the FLAT `{error: "would_replace"}` body, where `errorFrom` reads
+  the nested shape too). It stays because `fixture` deliberately holds the raw-ctx path so both
+  halves of the compatibility rule are covered by something that runs (`manifests.json`'s
+  `sdk-fixture` entry) — never as evidence about shipped code. **Neither file is the other's
+  guard:** a decline asserted through save.js left the SDK's own decline branch with zero assertions
+  anywhere, for the life of the SDK, while reading as covered.
 - **A SAVE CARRYING `state_id` REVISES, AND THE OWN-FILE EXEMPTION COVERS BOTH COLLISION CHECKS, NOT
   ONE.** `Tools::AddonsController#create` resolves the target through `#addon_states` (404 if it does
   not, never a silent fallback to creating — that would file a revision of an existing design as an

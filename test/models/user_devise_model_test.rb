@@ -32,6 +32,25 @@ class UserDeviseModelTest < ActiveSupport::TestCase
            "no usable password is set for an omniauth-only account"
   end
 
+  # An identity-linked account is passwordless, so `password_required?` is false for it — but
+  # "no password is REQUIRED" must never mean "a password being SET escapes validation". Devise's
+  # length/confirmation validators are all conditioned on `password_required?`, so a guard that
+  # returned false for identity-linked accounts silently accepted a mismatched confirmation on
+  # the one account shape the OmniAuth seam creates.
+  test "an identity-linked account still validates the password confirmation" do
+    user = User.create!(email: "linked@example.com", confirmed_at: Time.current)
+    user.identities.create!(provider: "openid_connect", uid: "conf-1")
+    # Reload: the transient `omniauth_signup` accessor must be nil, or this exercises the flag
+    # rather than the identity, and the precondition below keeps a silently-failing setup from
+    # turning the test into a restatement of the ordinary password-account case.
+    user = User.find(user.id)
+    assert user.identities.exists?
+    user.password              = PASSWORD
+    user.password_confirmation = "not the same at all"
+    assert_not user.valid?, "a mismatched confirmation must be rejected for identity-linked accounts too"
+    assert_includes user.errors.attribute_names, :password_confirmation
+  end
+
   test "next_seq! still works (sync hot path untouched)" do
     user = User.create!(email: "seq@example.com", password: PASSWORD, confirmed_at: Time.current)
     assert_equal 1, user.next_seq!

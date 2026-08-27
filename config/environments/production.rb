@@ -77,12 +77,6 @@ Rails.application.configure do
   # Prevent health checks from clogging up the logs.
   config.silence_healthcheck_path = "/up"
 
-  # The cable connection is authenticated by a per-device token in the query string
-  # (ApplicationCable::Connection), not cookies, so browser-CSRF origin checks don't
-  # apply — and native clients (the sync daemon) send no Origin. The device token is
-  # the auth; a malicious site can't read it, so there's nothing to forge.
-  config.action_cable.disable_request_forgery_protection = true
-
   # Don't log any deprecations.
   config.active_support.report_deprecations = false
 

@@ -54,12 +54,17 @@ class AddonBundleTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  # THE OVERWRITE CONFIRMATION, IN A REAL BROWSER — the only place this flow is observable.
-  # save.js's whole job is client-side: read a 409 from the host, ask window.confirm, re-POST the
-  # same body with overwrite=1. A request test can prove the host's half (it does, in
-  # addons_controller_test.rb) and can prove nothing about the browser's. The fixture imports a
-  # VERBATIM COPY of the helper all three real bundles import, so what passes here is the same code
-  # that ships.
+  # THE OVERWRITE CONFIRMATION ON THE RAW-CTX PATH, IN A REAL BROWSER. save.js's whole job is
+  # client-side: read a 409 from the host, ask window.confirm, re-POST the same body with
+  # overwrite=1. A request test can prove the host's half (it does, in addons_controller_test.rb)
+  # and can prove nothing about the browser's.
+  #
+  # NOT THE CODE THAT SHIPS, AND THIS COMMENT USED TO CLAIM IT WAS. save.js was a verbatim copy of
+  # the helper every real bundle imported; `@maker/addon-sdk` absorbed that dance and the bundles
+  # moved to it, so what runs here is a raw-ctx implementation `fixture` keeps on purpose
+  # (manifests.json's `sdk-fixture` entry) and which has already drifted on wire shape. THE SHIPPED
+  # BRANCH — `host.files.save({onReplace})` — is asserted by test/system/addon_sdk_test.rb, which
+  # owns both arms of its 409 dance plus the no-callback throw.
   #
   # THE SETUP IS THE BUG. Save once (the nudge files it into design/), then save the same name
   # again — which before this arc left a SECOND copy stranded at the project root forever, because

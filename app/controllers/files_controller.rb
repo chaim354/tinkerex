@@ -1114,23 +1114,17 @@ class FilesController < ApplicationController
   # many files), assembled in Ruby -- never a parent walk per row, which is the shape this page
   # can least afford: its row count is the size of the library, not the size of a folder.
   #
-  # The "…" written into `cache` before recursing is a CYCLE GUARD, and it is here for the same
-  # reason folder_crumbs carries its `visited` Set: a corrupt parent chain (a dir whose ancestry
-  # loops back to it) must stop rather than recurse until the stack gives out. Re-entering an id
-  # already in progress returns the marker instead of descending again.
+  # THE ANCESTRY WALK IS Maker::LibraryTree'S, NOT A THIRD COPY. This page used to carry its own
+  # cycle guard -- an "…" written into the cache before recursing -- and folder_crumbs still
+  # carries a `visited` Set for the same reason, but a marker is a GUARD, not an ANSWER: it
+  # terminated the recursion and then rendered a literal ellipsis into the middle of the path as
+  # where the user's file lives. `path_for` answers nil for any unresolvable chain (cycle,
+  # tombstoned or missing ancestor), and _list.html.erb already renders nil as "Files" while the
+  # folder link goes to node.parent_node_id either way, so navigation is untouched and the label
+  # stops claiming a folder that is not there. Same one query; only the flat view calls this.
   def folder_paths_for(nodes)
-    dirs = current_user.nodes.present.where(kind: "dir").pluck(:node_id, :parent_node_id, :name)
-    by_id = dirs.to_h { |id, parent, name| [ id, [ parent, name ] ] }
-    cache = {}
-    resolve = lambda do |id|
-      return "" if id.nil? || !by_id.key?(id)
-      return cache[id] if cache.key?(id)
-
-      cache[id] = "…" # cycle marker: re-entering this id returns it instead of recursing
-      parent, name = by_id[id]
-      cache[id] = [ resolve.call(parent), name ].reject(&:blank?).join("/")
-    end
-    nodes.to_h { |n| [ n.node_id, resolve.call(n.parent_node_id) ] }
+    tree = Maker::LibraryTree.new(current_user)
+    nodes.to_h { |n| [ n.node_id, tree.path_for(n.parent_node_id) ] }
   end
 
   # `params[:folder]` is USER INPUT in a URL. Accept it ONLY when it names a `dir` the

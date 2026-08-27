@@ -7,6 +7,9 @@ module Maker
     belongs_to :user
     belongs_to :location, class_name: "Maker::Location", optional: true
     belongs_to :supplier, class_name: "Maker::Supplier", optional: true
+    # `:delete_all` IS LOAD-BEARING, NOT A PERFORMANCE CHOICE. `Maker::InventoryTransaction`'s
+    # `before_destroy` raises unconditionally, so the ledger can only ever be removed row-level.
+    # Switch this to `:destroy` and every `item.destroy` raises ReadOnlyRecord instead.
     has_many :transactions, -> { order(created_at: :asc, id: :asc) },
              class_name: "Maker::InventoryTransaction", foreign_key: :inventory_item_id,
              dependent: :delete_all

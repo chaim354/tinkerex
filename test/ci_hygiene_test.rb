@@ -1,4 +1,5 @@
 require "test_helper"
+require "tmpdir"
 
 # Guards the CI invariants that live in .github/workflows/*.yml — files the Rails process never
 # loads, so no other test in the suite can see them. Modelled on test/deploy_hygiene_test.rb, which
@@ -52,8 +53,16 @@ class CiHygieneTest < ActiveSupport::TestCase
   # existed only to apply it) went with them. If a future workflow here reintroduces one, restore
   # the exemption rather than papering over a real "queues forever" gap.
 
-  # Every self-hosted family we may target. Anything else is either GitHub-hosted (billed) or a typo.
+  # Every self-hosted family we may target. Anything else is either GitHub-hosted (billed), a BOX
+  # label (`maker-linux`, `maker-mac`, `maker-windows` — every runner self-applies one, see
+  # ci/runners/setup-*.sh), or a typo. A box label is NOT a family label: see runner_labels and the
+  # preflight-gating check.
   FAMILIES = %w[macos linux windows].freeze
+
+  # What runner_labels returns when `runs-on` cannot be read as a label list. Every check that
+  # consumes it treats this as an OFFENDER; the argument for refusing rather than resolving is on
+  # runner_labels itself.
+  UNRESOLVABLE = :unresolvable
 
   test "no workflow targets a GitHub-hosted runner" do
     # §15: GitHub bills ONLY hosted runners; self-hosted is free. This USED to pattern-match hosted
@@ -79,23 +88,12 @@ class CiHygieneTest < ActiveSupport::TestCase
     # chaim354/tinkerex-client with the rest of client/maker-app; see the WORKFLOW_DIR comment above
     # for why the exemption that once covered them is gone rather than kept unused.)
     #
-    # KNOWN LIMIT, deliberately not closed: `runs-on` also has a MAP form,
-    # `{ group: ..., labels: [...] }`, and `Array(hash)` yields `[key, value]` PAIRS rather than a
-    # flat label list — so a map-form job can never match `"self-hosted"` and therefore always FAILS
-    # this check. Left alone for two reasons. It fails in the SAFE direction (loudly over-flagging,
-    # never silently passing a billed runner, which is the whole point of the file), and a correct
-    # reading is genuinely ambiguous: an org-level HOSTED larger-runner group and a self-hosted
-    # runner group use the identical YAML shape, so static inspection cannot tell them apart. No
-    # workflow here uses the map form today (verified: all 15 `runs-on` values are Array-shaped —
-    # down from 38 before the client/ extraction moved four workflow files to tinkerex-client).
-    # If this repo ever adopts runner groups, that ambiguity is the problem to solve first.
-    offenders = []
-    each_job do |file, name, job|
-      raw = Array(job["runs-on"])
-      next if raw.map { |l| l.to_s.downcase }.include?("self-hosted")
-      offenders << "#{file}: job `#{name}` runs-on `#{raw.join(', ')}` — add the literal " \
-                   "`self-hosted` label"
-    end
+    # The MAP form of `runs-on` is refused rather than resolved, and it always has been — that
+    # refusal moved onto runner_labels, which is now the one place any of these three checks parses
+    # a `runs-on`. The behaviour here is unchanged: a map-form job is still an offender.
+    assert_workflows_scanned
+
+    offenders = hosted_runner_offenders(WORKFLOW_DIR)
     assert_empty offenders,
                  "GitHub-hosted runners are the only BILLED kind (CLAUDE.md §15) — every job's " \
                  "runs-on must include the literal `self-hosted` label:\n  #{offenders.join("\n  ")}"
@@ -105,12 +103,11 @@ class CiHygieneTest < ActiveSupport::TestCase
     # The action assumes the GitHub-hosted /Users/runner layout the self-hosted Mac does not have.
     # The runner's own PATH already carries
     # mise ruby 3.4.7 — exactly .ruby-version — so `bundle install` is all a job needs.
-    offenders = []
-    each_job do |file, name, job|
-      next unless Array(job["runs-on"]).map { |l| l.to_s.downcase }.include?("macos")
-      used = Array(job["steps"]).filter_map { |s| s["uses"] }
-      offenders << "#{file}: job `#{name}`" if used.any? { |u| u.start_with?("ruby/setup-ruby") }
-    end
+    #
+    # THE EXEMPTION IS "PROVABLY NOT A MAC", NOT "does not say macos" — see setup_ruby_offenders.
+    assert_workflows_scanned
+
+    offenders = setup_ruby_offenders(WORKFLOW_DIR)
     assert_empty offenders,
                  "ruby/setup-ruby does not work on the self-hosted Mac; use the runner's own Ruby " \
                  "(`bundle install --quiet`) instead:\n  #{offenders.join("\n  ")}"
@@ -230,36 +227,104 @@ class CiHygieneTest < ActiveSupport::TestCase
     # macos jobs are exempt: the preflight job itself runs on macos, so if that family were absent
     # the gate could not start either and gating a macos job on it would be circular.
     #
+    # A BOX LABEL IS NOT A FAMILY LABEL, AND THAT WAS THE HOLE. `runs-on: [self-hosted, maker-linux]`
+    # routes to the Linux box exactly like `[self-hosted, linux]` does — every runner self-applies
+    # BOTH (ci/runners/setup-linux.sh: `LABELS="self-hosted,linux,maker-linux"`), and
+    # ci/runners/README.md sanctions the box name. But this check used to intersect the labels with
+    # FAMILIES and `next` on an empty result, so such a job named no family, was skipped, and shipped
+    # UNGATED with a fully green bin/ci — the exact "queues for 24h, UNSTABLE, merge needs --admin"
+    # shape this test exists to prevent. Measured against a planted fixture before the rule below
+    # existed. ci/preflight.sh's own `targeted()` happens to catch it (it greps the family name
+    # ANYWHERE in a runs-on line, so "maker-linux" contains "linux"), which is why the crude shell
+    # over-report is the safe direction there and an exact-match set intersection was not here.
+    #
+    # So a job that carries `self-hosted` and names NONE of FAMILIES is an offender: nothing static
+    # can tell which preflight output would gate it. All 7 real jobs are `[self-hosted, macos]`, so
+    # the rule is satisfiable and green today. A job with no `self-hosted` label at all is left to
+    # the hosted-runner check above rather than reported twice.
+    #
     # THE SCAN MUST BE NON-EMPTY, EVEN THOUGH THE SUBJECT SET MAY LEGITIMATELY BE EMPTY.
     # This repo has no linux/windows jobs since the sync<->client suites moved out
     # (docs/superpowers/specs/2026-08-25-cross-repo-ci-handoff.md), so `ungated` below is
     # expected to be empty and assert_empty alone would pass over NOTHING. §14e: a guard whose
     # subject is a path is silently retired by a move. Assert what was actually looked at.
-    scanned = []
-    each_job { |file, name, _job| scanned << "#{file}:#{name}" }
-    assert_operator scanned.size, :>=, 2,
-                    "this guard scanned #{scanned.size} job(s) — it can no longer fail for the " \
-                    "reason it exists. Point WORKFLOW_DIR at the real workflows."
+    assert_workflows_scanned
 
-    ungated = []
-    each_job do |file, name, job|
-      families = Array(job["runs-on"]).map { |l| l.to_s.downcase } & FAMILIES
-      gated_families = families - [ "macos" ]
-      next if gated_families.empty?
-
-      needs = Array(job["needs"]).map(&:to_s)
-      condition = job["if"].to_s
-      gated_families.each do |family|
-        unless needs.include?("preflight") &&
-               condition.include?("needs.preflight.outputs.#{family}")
-          ungated << "#{file}: job `#{name}` (#{family})"
-        end
-      end
-    end
+    ungated = ungated_offenders(WORKFLOW_DIR)
     assert_empty ungated,
-                 "these jobs would QUEUE FOREVER if their runner family is absent — add " \
+                 "these jobs would QUEUE FOREVER if their runner family is absent or unreadable — " \
+                 "name a family in `runs-on` (#{FAMILIES.join('/')}) beside any box label, and add " \
                  "`needs: preflight` and `if: needs.preflight.outputs.<family> == 'true'`:\n  " \
                  "#{ungated.join("\n  ")}"
+  end
+
+  # THE THREE RUNNER CHECKS ABOVE, DRIVEN AGAINST PLANTED WORKFLOWS RATHER THAN THE SEVEN THIS REPO
+  # HAPPENS TO SHIP.
+  #
+  # All 7 real jobs are `[self-hosted, macos]`, correctly gated, using no setup-ruby — so all three
+  # checks are green over a set containing no offender of any kind, and neither the rules they
+  # enforce nor the distinctions between them are exercised at all. That is the shape §15 warns
+  # about: green, and unable to fail for the reason it exists.
+  #
+  # THIS IS WHERE THE ASYMMETRY WAS MEASURED. Before the shared runner_labels parse, the same three
+  # fixtures produced: map-form flagged by the hosted-runner check ONLY (the other two `next`ed past
+  # it), and `[self-hosted, maker-linux]` flagged by NOTHING. The negative controls are as
+  # load-bearing as the offenders — a predicate that flags everything satisfies the positive
+  # assertions perfectly (the same negative-case requirement §14b records for the `.git` write
+  # guards).
+  #
+  # NOT the real .github/workflows/: a probe file dropped there is precisely what these checks
+  # forbid, and parallel test workers fork and share the tree (ci_preflight_test.rb:128-130).
+  test "the three runner checks read a planted map form, a bare box label, and setup-ruby" do
+    with_workflows(<<~YAML) do |dir|
+      jobs:
+        preflight:
+          runs-on: [self-hosted, macos]
+          steps:
+            - run: ci/preflight.sh
+        control-macos:
+          runs-on: [self-hosted, macos]
+          steps:
+            - run: bin/ci test
+        gated-linux:
+          runs-on: [self-hosted, linux]
+          needs: preflight
+          if: needs.preflight.outputs.linux == 'true'
+          steps:
+            - run: bin/ci test
+        map-form:
+          runs-on:
+            group: my-group
+            labels: [self-hosted, linux]
+          steps:
+            - uses: ruby/setup-ruby@v1
+        box-label-linux:
+          runs-on: [self-hosted, maker-linux]
+          steps:
+            - run: bin/ci test
+        box-label-mac:
+          runs-on: [self-hosted, maker-mac]
+          steps:
+            - uses: ruby/setup-ruby@v1
+        macos-setup-ruby:
+          runs-on: [self-hosted, macos]
+          steps:
+            - uses: ruby/setup-ruby@v1
+    YAML
+      # The offender strings carry their own location; the job name is what an assertion can compare.
+      named = ->(offenders) { offenders.map { |o| o[/job `([^`]+)`/, 1] }.uniq.sort }
+
+      assert_equal %w[map-form], named.call(hosted_runner_offenders(dir)),
+                   "only the map form is unreadable; every other fixture carries `self-hosted`"
+
+      assert_equal %w[box-label-mac macos-setup-ruby map-form], named.call(setup_ruby_offenders(dir)),
+                   "setup-ruby is an offender unless the labels PROVE the job is not on the Mac — " \
+                   "`macos` proves it is, a bare box label and the map form prove nothing"
+
+      assert_equal %w[box-label-linux box-label-mac map-form], named.call(ungated_offenders(dir)),
+                   "a job whose family cannot be read cannot be preflight-gated; `gated-linux` " \
+                   "and the two `macos` jobs are the negative controls"
+    end
   end
 
   # ---------------------------------------------------------------------------------------------
@@ -369,7 +434,192 @@ class CiHygieneTest < ActiveSupport::TestCase
            "run bin/build-codemirror"
   end
 
+  # ---------------------------------------------------------------------------------------------
+  # Active Storage variants stay OFF, and the two scaffold gems that fed them stay OUT.
+  #
+  # These two are a PAIR, and they replace a protection that was spent rather than adding a new
+  # one. While `image_processing` was still in the Gemfile, editing config/application.rb's
+  # `variant_processor = :disabled` back to `:vips` KILLED BOOT loudly — activestorage 8.1.3.1's
+  # eager `require "image_processing/vips"` raises a LoadError matching neither arm of the engine's
+  # own rescue. With the gem gone that same edit degrades to a logged warning and a NIL transformer:
+  # silent, and only at deploy time on someone's box. So the accidental tripwire is traded for a
+  # deliberate one that fires in `bin/ci`, on the PR.
+  #
+  # `rails app:update` offers both gem lines back, which is this file's established job (the
+  # brakeman binstub and the CodeMirror pin above are the same shape).
+
+  test "Active Storage resolves to the null transformer, so no variant pipeline is live" do
+    # NON-VACUOUS FIRST (§14e): a nil transformer is exactly what a `:vips`/`:mini_magick` setting
+    # now produces with the gem absent, so "nil" is the failure this guard exists to catch — it must
+    # never be mistaken for the pipeline simply not being there.
+    refute_nil ActiveStorage.variant_transformer,
+               "ActiveStorage.variant_transformer is nil — config/application.rb asks for a " \
+               "processor whose gem is not installed, and every variant call now fails at runtime."
+
+    # RESOLVED, NOT READ (§14e: resolve `Rails.application.config.cache_store` rather than reading
+    # the file). The knob is one line in config/application.rb; whether it took effect is not.
+    assert_equal ActiveStorage::Transformers::NullTransformer, ActiveStorage.variant_transformer,
+                 "the Active Storage variant pipeline is live again. It has no gem behind it here " \
+                 "and must not get one — CLAUDE.md §14e: ruby-vips reintroduces the in-process " \
+                 "libvips thread pool that deadlocks the fork-based parallel test runner. See " \
+                 "config/application.rb's variant_processor argument."
+  end
+
+  test "neither Active Storage variant gem is back in the Gemfile" do
+    gemfile = Rails.root.join("Gemfile").read
+    declared = gemfile.scan(/^\s*gem\s+"([^"]+)"/).flatten
+    assert_operator declared.size, :>, 10, "parsed #{declared.size} gems — the Gemfile parse is " \
+                                           "broken, so both assertions below are vacuous"
+
+    # Asserted SEPARATELY, not as one combined `refute` over both names (§15: assert the narrowest
+    # true thing, then mutate each arm). One re-added gem must not be able to hide behind the other.
+    refute_includes declared, "image_processing",
+                    "image_processing is back. Nothing calls it: thumbnails shell out to the " \
+                    "`vipsthumbnail` BINARY and variant_processor is :disabled (§14e). Adding it " \
+                    "re-opens CVE-2026-66066's code path and invites ruby-vips after it."
+    refute_includes declared, "jbuilder",
+                    "jbuilder is back. No .jbuilder view exists in this app — every v1 controller " \
+                    "renders `render json:` directly."
+  end
+
   private
+
+    # `runs-on` normalised to a downcased label list — THE ONE PARSE, consumed by all three runner
+    # checks above.
+    #
+    # It was pasted at each of them, and the copies had drifted into disagreeing about the safe
+    # direction. Measured against a planted map-form job: the hosted-runner check went RED (safe)
+    # while the setup-ruby and preflight-gating checks both PASSED over jobs that violate them. The
+    # failure mode of three copies is not "a bad job ships silently" — it is that the author fixes
+    # the one guard that went red and never learns the other two were also wrong.
+    #
+    # THE MAP FORM IS REFUSED, NOT RESOLVED, AND THE REFUSAL IS THE INVARIANT.
+    # `runs-on: { group: ..., labels: [...] }` is legal YAML for a runner GROUP, and `Array(hash)`
+    # yields `[key, value]` PAIRS rather than a flat label list. Flattening `labels` so a map-form
+    # job could satisfy the `self-hosted` check would convert the one guard that currently fails
+    # SAFE into one that fails OPEN — strictly worse than today — because an org-level HOSTED
+    # larger-runner group and a self-hosted runner group use the IDENTICAL YAML shape and static
+    # inspection cannot tell them apart. So it returns an explicit marker that every caller reports:
+    # loud everywhere, rather than safe in one place and silent in two.
+    #
+    # No workflow here uses the map form today. The count of `runs-on` values used to be written
+    # into this comment and had already drifted (it said 15 while the true answer was 7), so it is
+    # left to the checks to establish rather than restated here. If this repo ever adopts runner
+    # groups, that ambiguity is the problem to solve first.
+    def runner_labels(job)
+      raw = job["runs-on"]
+      return UNRESOLVABLE if raw.is_a?(Hash)
+      Array(raw).map { |l| l.to_s.downcase }
+    end
+
+    # Jobs whose `runs-on` does not name one of OUR boxes. Behaviour is what it has always been:
+    # the literal `self-hosted` label, or an offender — with the map form now saying WHY it was
+    # rejected instead of advising a label the job may well already carry.
+    def hosted_runner_offenders(dir)
+      offenders = []
+      each_job(dir) do |file, name, job|
+        labels = runner_labels(job)
+        if labels == UNRESOLVABLE
+          offenders << "#{file}: job `#{name}` uses the `runs-on` MAP form, which cannot be read " \
+                       "statically — a hosted larger-runner group looks identical (see runner_labels)"
+          next
+        end
+        next if labels.include?("self-hosted")
+        offenders << "#{file}: job `#{name}` runs-on `#{labels.join(', ')}` — add the literal " \
+                     "`self-hosted` label"
+      end
+      offenders
+    end
+
+    # Jobs using ruby/setup-ruby that this file cannot PROVE are off the self-hosted Mac.
+    #
+    # The exemption is deliberately the narrow direction. Asking `labels.include?("macos")` — what
+    # this check used to do — exempts `[self-hosted, maker-mac]`, which is the Mac, and the map form,
+    # which might be. A job is skipped only when its labels resolve AND name a family AND that
+    # family set excludes macos; anything else is reported, because the failure it prevents happens
+    # at step 2 of every job, on infrastructure rather than on code.
+    def setup_ruby_offenders(dir)
+      offenders = []
+      each_job(dir) do |file, name, job|
+        used = Array(job["steps"]).filter_map { |s| s["uses"] }
+        next unless used.any? { |u| u.start_with?("ruby/setup-ruby") }
+
+        labels = runner_labels(job)
+        families = labels == UNRESOLVABLE ? [] : labels & FAMILIES
+        next if families.any? && !families.include?("macos")
+
+        reason = if labels == UNRESOLVABLE
+          "`runs-on` uses the map form, so its family cannot be read"
+        elsif families.empty?
+          "runs-on `#{labels.join(', ')}` names no runner family"
+        else
+          "runs on macos"
+        end
+        offenders << "#{file}: job `#{name}` (#{reason})"
+      end
+      offenders
+    end
+
+    # Jobs that would QUEUE FOREVER against a missing runner — the core invariant. Three ways in:
+    # an unreadable `runs-on`, a `self-hosted` job naming no family at all, and a linux/windows job
+    # with no `needs: preflight` + `if:` pair. macos is exempt from the last of those only: the
+    # preflight job itself runs on macos, so gating a macos job on it would be circular.
+    def ungated_offenders(dir)
+      ungated = []
+      each_job(dir) do |file, name, job|
+        labels = runner_labels(job)
+        if labels == UNRESOLVABLE
+          ungated << "#{file}: job `#{name}` — `runs-on` uses the map form, so no preflight output " \
+                     "can be matched to it (see runner_labels)"
+          next
+        end
+
+        families = labels & FAMILIES
+        if families.empty?
+          next unless labels.include?("self-hosted")
+          ungated << "#{file}: job `#{name}` runs-on `#{labels.join(', ')}` — names none of " \
+                     "#{FAMILIES.join('/')}, so nothing static can say which runner it needs"
+          next
+        end
+
+        gated_families = families - [ "macos" ]
+        next if gated_families.empty?
+
+        needs = Array(job["needs"]).map(&:to_s)
+        condition = job["if"].to_s
+        gated_families.each do |family|
+          unless needs.include?("preflight") &&
+                 condition.include?("needs.preflight.outputs.#{family}")
+            ungated << "#{file}: job `#{name}` (#{family})"
+          end
+        end
+      end
+      ungated
+    end
+
+    # NON-VACUITY FOR EVERY SWEEP OVER THE REAL WORKFLOW DIR (CLAUDE.md §14e: "a guard that scans a
+    # directory dies silently when the directory leaves"). All three runner checks end in
+    # `assert_empty`, whose subject set may legitimately be empty, so each of them passes perfectly
+    # over ZERO jobs. Written once here rather than three times, and asserted against WORKFLOW_DIR
+    # specifically — the fixture test above deliberately scans a much smaller planted set.
+    def assert_workflows_scanned
+      scanned = []
+      each_job { |file, name, _job| scanned << "#{file}:#{name}" }
+      assert_operator scanned.size, :>=, 2,
+                      "this guard scanned #{scanned.size} job(s) — it can no longer fail for the " \
+                      "reason it exists. Point WORKFLOW_DIR at the real workflows."
+    end
+
+    # Runs the block against a THROWAWAY workflow dir holding one ci.yml, and yields its path.
+    # Mirrors ci_preflight_test.rb's helper of the same name, for the reason recorded there: a probe
+    # dropped in .github/workflows/ would trip the very checks it is probing and would race between
+    # parallel workers, which fork and share the tree.
+    def with_workflows(body)
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "ci.yml"), body)
+        yield Pathname.new(dir)
+      end
+    end
 
     # Source lines with blanks and whole-line comments removed. Both `#` (ruby, yaml) and the
     # shebang go; nothing here needs to read a trailing comment.
@@ -442,11 +692,15 @@ class CiHygieneTest < ActiveSupport::TestCase
     # Reads only the "jobs" key. NOTE for anyone extending this: Psych resolves YAML 1.1 booleans,
     # so a workflow's `on:` key parses as the BOOLEAN true, not the string "on" — ci.yml's top-level
     # keys come back as ["name", true, "concurrency", "jobs"]. Reach for `d[true]`, not `d["on"]`.
-    def each_job
+    #
+    # THE DIRECTORY IS AN ARGUMENT so the runner checks can be driven against planted fixtures
+    # instead of only the seven jobs this repo happens to ship — see the fixture test above. It
+    # defaults to WORKFLOW_DIR, which is what every real guard passes.
+    def each_job(dir = WORKFLOW_DIR)
       # GitHub Actions accepts both extensions; `*.yml` alone would leave a `*.yaml` workflow
       # invisible to every guard in this file — the same close-the-class reasoning as the
       # self-hosted-label check above, applied to file discovery instead of label shape.
-      WORKFLOW_DIR.glob("*.{yml,yaml}").sort.each do |path|
+      dir.glob("*.{yml,yaml}").sort.each do |path|
         jobs = YAML.load_file(path, aliases: true).fetch("jobs")
         jobs.each { |name, job| yield path.basename.to_s, name, job }
       end

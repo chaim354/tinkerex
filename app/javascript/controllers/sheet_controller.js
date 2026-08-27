@@ -57,10 +57,15 @@ export default class extends Controller {
     jss(this.gridTarget, {
       worksheets: [ {
         data: cells,
-        // The model's `columns` reader guards the OUTER shape only (is `data["columns"]` an Array
-        // at all) — it does not, and cannot, validate every element inside an otherwise-valid array.
-        // A blob written by a hostile or buggy client can still smuggle a null/non-object entry
-        // through, and `c.title` on that entry throws, breaking the whole page. Filter here too.
+        // DEFENCE IN DEPTH, NOT THE GUARD. `Maker::Sheet#columns` is now element-wise —
+        // `.grep(Hash)` — so a null/scalar/Array entry can no longer reach here through
+        // show.html.erb, which is `dataValue`'s only source. This filter is kept anyway because the
+        // failure it catches is the one this page already shipped once: `c.title` throwing left a
+        // blank page with the status still reading "Saved" (see show.html.erb).
+        //
+        // It is also STRICTLY WEAKER than the model's check and must not be mistaken for an equal
+        // one: `typeof [] === "object"`, so an Array entry passes this filter and yields a blank
+        // header, where `grep(Hash)` drops it. If these two ever disagree, the model is right.
         columns: columns
           .filter((c) => c && typeof c === "object")
           .map((c) => ({ title: c.title, width: c.width || 120 })),

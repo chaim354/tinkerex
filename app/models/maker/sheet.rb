@@ -50,19 +50,35 @@ module Maker
       }
     end
 
-    # Defensive readers: `data` is written by the browser, so a malformed or half-written blob must
-    # render an empty grid rather than 500 the page. The INNER shape is checked too — Array("x")
-    # wraps a bare String into a one-element array, so a "cells" key holding a scalar would
-    # otherwise become one garbage row rather than nothing.
-    def cells   = data.is_a?(Hash) && data["cells"].is_a?(Array) ? data["cells"] : []
-    def columns = data.is_a?(Hash) && data["columns"].is_a?(Array) ? data["columns"] : []
+    # Defensive readers, TOTAL over the ELEMENT shapes their consumers already assume. `data` is
+    # written by the browser and permitted whole (`sheet_params`), so a malformed or half-written
+    # blob must render an empty grid rather than 500 the page — and checking only the OUTER shape
+    # (is `data["columns"]` an Array at all) did not deliver that. `to_csv` calls `c["title"]` on
+    # every column entry, so an Integer or Array entry raises TypeError there and a Float or `true`
+    # raises NoMethodError. ALL FOUR SURVIVE A REAL OWNER PATCH — measured over HTTP, not reasoned
+    # about. (`nil` raises too but is NOT wire-reachable: Rails' deep_munge compacts nils out of
+    # every request array, JSON bodies included, so a PATCH sending `[null, {"title":"Z"}]` stores
+    # `[{"title":"Z"}]`. It arrives only via update_column/console/SQL, which is still a shape the
+    # readers have to survive.)
+    #
+    # A ROW OF THE WRONG SHAPE IS NORMALISED TO `[]`, NEVER DROPPED. `projects/_sheets.html.erb`
+    # renders `cells.size` as "N rows", so a `select` here would silently shrink the count the
+    # project page shows for a blob the user can still repair in the grid.
+    #
+    # `grep(Hash)` IS SAFE ONLY BECAUSE THIS READS THE CAST ATTRIBUTE. `permit(data: {})` yields
+    # nested `ActionController::Parameters`, and `Parameters.is_a?(Hash)` is FALSE;
+    # `ActiveRecord::Type::Json#cast` is what turns the assignment into a plain Hash, before and
+    # after reload alike. A future reader who reaches for `sheet_params[:data]` directly instead
+    # gets a silently EMPTY `columns` — the same outer check above already inherits that hazard.
+    def cells   = data.is_a?(Hash) && data["cells"].is_a?(Array) ? data["cells"].map { |r| r.is_a?(Array) ? r : [] } : []
+    def columns = data.is_a?(Hash) && data["columns"].is_a?(Array) ? data["columns"].grep(Hash) : []
 
     # Exports what is STORED, which means a formula exports as `=A1*B1`, not as its result. That is
     # the intent: the export is the sheet, not a snapshot of its output.
     def to_csv
       CSV.generate do |csv|
         csv << columns.map { |c| c["title"].to_s }
-        cells.each { |row| csv << Array(row).map(&:to_s) }
+        cells.each { |row| csv << row.map(&:to_s) }
       end
     end
 

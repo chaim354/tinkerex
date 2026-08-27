@@ -145,7 +145,11 @@ module Maker
     # AN UNKNOWN SIZE PROCEEDS. A missing node row or a null size means the catalog cannot answer,
     # and refusing on "I don't know" would silently stop previewing files whose row is merely
     # incomplete. FileLayer::MAX_BYTES still backstops the read, so the failure mode of proceeding
-    # is the old behaviour, not a new one.
+    # is the old behaviour, not a new one — and that backstop is now true on ALL THREE backends,
+    # which it was not when this sentence was written: share stats the file and s3 bounds a ranged
+    # GET, and chunk_remote refuses on the summed length of the manifest it has already mirrored.
+    # The shared adapter contract asks for it, so a fourth adapter cannot quietly omit it and leave
+    # this justification false again.
     def refuse_if_oversized!(node, ext)
       size = node&.size
       return if size.nil? || size <= MAX_PREVIEW_BYTES

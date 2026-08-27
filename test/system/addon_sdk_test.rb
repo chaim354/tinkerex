@@ -98,6 +98,81 @@ class AddonSdkTest < ApplicationSystemTestCase
     assert_no_console_errors ignoring: [ /status of 409 \(Conflict\)/ ]
   end
 
+  # THE OTHER ARM, AND UNTIL THIS TEST IT HAD NO ASSERTION ANYWHERE. `addon_bundle_test.rb` asserts
+  # a decline, which is what made this look covered — but it drives `fixture`'s hand-rolled save.js,
+  # a raw-ctx implementation no published bundle imports any more (that file's header records the
+  # drift). Every path that actually reaches the SDK's `return { cancelled: true }` swallowed it:
+  # this fixture hardcoded `true` before `decline=` existed; boxes' editor answers false only to
+  # JOIN, then re-saves as a revision and reassigns `saved`, discarding the value; and its plain
+  # decline is dismissed by no test in the repo. Declining is not failing, and only the SDK can say
+  # so here — `res.ok` is false for both.
+  #
+  # SEEDED THROUGH LibraryOutput RATHER THAN BY SAVING TWICE, so the surviving bytes are DIFFERENT
+  # from the ones the declined save would have written. Re-saving through the fixture writes the
+  # same `<svg>sdk</svg>` both times, which leaves "the original bytes survived" true whether or not
+  # the decline was honoured — the byte assertion is the second detector precisely because it can
+  # tell the two versions apart, and it can only do that if they differ.
+  test "files.save writes nothing when onReplace answers false" do
+    name = "sdk-decline.svg"
+    user = User.find_by!(email: "sdk@example.com")
+    project = user.maker_projects.create!(name: "SDK Decline")
+    folder = project.ensure_library_folder!(user)
+    state = user.maker_addon_states.create!(addon_key: "sdk-fixture", name: "seed", data: {})
+    Maker::Addons::LibraryOutput.write(
+      user:, state:, parent_node_id: folder.node_id,
+      files: [ { name:, bytes: "<svg>v1</svg>".b, content_type: "image/svg+xml", role: "output" } ]
+    )
+    Maker::ProjectIntake.for_user(user:)
+    filed = user.nodes.present.find_by!(name:)
+
+    visit "/tools/sdk-fixture?parent=#{folder.node_id}&fname=#{name}&decline=1"
+    click_button "Save"
+    # EXACT, NOT A SUBSTRING — "Saved." is itself a substring of "Not saved.", so the one pair this
+    # test exists to keep apart is precisely the pair a substring match cannot. Cheaper to hold the
+    # habit on both sides than to re-derive which direction happens to be safe.
+    assert_selector "[data-role=sdk-status]", exact_text: "Not saved."
+    # The callback still RAN and still saw the payload: this is an answer to a question that was
+    # asked, not a save that never reached the door.
+    assert_selector "[data-role=sdk-status][data-replaced='#{name}@design']"
+
+    assert_equal 1, user.nodes.present.where(name:).count
+    assert_equal "<svg>v1</svg>", FileLayer.current.read(user, node_id: filed.node_id),
+                 "declining must leave the original bytes untouched"
+    # THE 409 IS THE FLOW, NOT A DEFECT — the neighbouring test above records why this is ignored
+    # narrowly rather than dropped.
+    assert_no_console_errors ignoring: [ /status of 409 \(Conflict\)/ ]
+  end
+
+  # NO CALLBACK IS A THIRD ANSWER, AND IT MUST NOT BECOME EITHER OF THE OTHER TWO. A bundle that
+  # passed no `onReplace` gets the typed error thrown at it: silently overwriting is the one
+  # behaviour that may never be implicit, and silently CANCELLING would report a save that never
+  # happened as a user's own choice.
+  #
+  # DRIVEN THROUGH `Save and read back`, the fixture's only save with no callback — the shape a real
+  # bundle has when it writes something it does not expect to collide. Deleting
+  # `if (!onReplace) throw error` leaves the SDK awaiting `undefined(...)`, so the bundle catches a
+  # TypeError with no `code` at all: neither of the two refusals the host actually distinguishes
+  # (§14c — a 409 is a question, a 422 is not).
+  test "files.save throws the typed 409 when the bundle passed no onReplace" do
+    user = User.find_by!(email: "sdk@example.com")
+    project = user.maker_projects.create!(name: "SDK No Ask")
+    folder = project.ensure_library_folder!(user)
+    page_url = "/tools/sdk-fixture?parent=#{folder.node_id}&bname=noask-part.3mf&tname=noask-notes.txt"
+
+    visit page_url
+    click_button "Save and read back"
+    assert_selector "[data-role=sdk-roundtrip-result]", text: "bin=#{BINARY_HEX}"
+
+    # §14f's eager nudge has filed both outputs into category subfolders by now, so the PICKED
+    # folder is vacant and the second save clears #refuse_taken_names!'s terminal 422 and reaches
+    # the answerable 409 — the same setup the accept/decline pair above relies on.
+    visit page_url
+    click_button "Save and read back"
+    assert_selector "[data-role=sdk-roundtrip-result]",
+                    exact_text: "WouldReplaceError:would_replace"
+    assert_no_console_errors ignoring: [ /status of 409 \(Conflict\)/ ]
+  end
+
   # THE TRAVERSAL REFUSAL, IN THE ONE PLACE IT CAN BE OBSERVED. Both arguments of `service.get` land
   # in the same URL — the service NAME and then the PATH — and a `..` in either is normalized out by
   # the BROWSER'S OWN URL PARSER before the request is sent (`/tools/sdk-fixture/service/../../evil/x`

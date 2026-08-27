@@ -8,7 +8,8 @@ module Maker
     # layer is.
     #
     # THE SAME TRAVERSAL THE THUMBNAIL USES. See `Dxf.each_geometry`: a second parse here would be
-    # free to drift from the picture beside it, which is §14b's `LbrnMetadata` bug.
+    # free to drift from the picture beside it, which is §14b's `LbrnMetadata` bug. It takes the
+    # pairs THIS module already lexed, so the file is read once per render rather than twice.
     module DxfGeometry
       module_function
 
@@ -33,7 +34,7 @@ module Maker
         colors = Dxf.layer_colors(pairs)
 
         Geometry.build(colors: ->(layers) { layers.to_h { |l| [ l, colors[l] ] } }) do |out|
-          Dxf.each_geometry(dxf_bytes) do |layer, points, closed, _curve, object_id|
+          Dxf.each_geometry(pairs) do |layer, points, closed, _curve, object_id|
             out.add(layer:, points: to_client_space(points, scale), closed:, object_id:)
           end
         end

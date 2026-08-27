@@ -1,16 +1,25 @@
 # Kamal destination overlay for the OVH prod-like TEST box (deep-merged over deploy.yml).
 #   Deploy with:  kamal deploy -d ovh
 #
-# Same image (ghcr.io/chaim354/tinkerex), same Rails app as the Unraid deploy — this only
-# overrides the target server, its ssh user, and the chunk-storage backend (Cloudflare R2
-# instead of the Unraid SeaweedFS box). Bytes still move client <-> R2 via presigned URLs;
-# the Rails box only signs, so it needn't reach R2.
+# Same image (ghcr.io/chaim354/tinkerex), same Rails app as the Unraid deploys — this overrides
+# the target server, its ssh user, and the env vars naming services that run as accessories on
+# the Unraid host and therefore do not resolve from here.
 #
-# BOTH R2 credentials (Access Key ID + Secret) are kept OUT of git — resolved from 1Password by
-# .kamal/secrets.ovh, which is this destination's own secrets file. Only the non-secret
-# endpoint/bucket/region are in clear. No exports are needed any more; verify with
+# THIS OVERLAY DECLARES LIBRARY_BACKEND=s3, AND IT MUST KEEP DECLARING ONE. It used to name none,
+# which is not a neutral omission: kamal DEEP-MERGES env.clear, so silence inherited the base's
+# `chunk_remote` — with this overlay's own blanked CHUNK_REMOTE_URL and (env.secret being an array
+# kamal REPLACES) no SYNC_ADMIN_TOKEN — and LibraryBackendCheck refused that at boot, so
+# `kamal deploy -d ovh` could not bring a container up at all. Guarded now: test/deploy_hygiene_test.rb's
+# "every destination carries the knobs its resolved LIBRARY_BACKEND requires".
+#
+# It used to describe "the chunk-storage backend (Cloudflare R2 instead of the Unraid SeaweedFS
+# box)" — that axis is gone: Arc D Part 2 moved the chunk store to the `sync` accessory, and no
+# code in this repo reads STORAGE_BACKEND or any CHUNK_* storage knob any more (§7, §14a). The R2
+# ACCOUNT survives that retirement: the same bucket and credential now back this box's LIBRARY.
+#
+# Secrets are resolved from 1Password by .kamal/secrets.ovh, this destination's own secrets file
+# (kamal does not read .kamal/secrets under `-d`). No exports needed; verify with
 #   bin/secrets-preflight ovh
-# An exported value still wins if you want to point a one-off deploy at a different R2 token.
 
 servers:
   web:
@@ -29,26 +38,46 @@ env:
   # env.secret is an ARRAY, and kamal REPLACES arrays on merge (deep_merge unions hashes only).
   # So this list is the WHOLE list for this destination — RAILS_MASTER_KEY must be re-stated or
   # boot dies with "Missing secret_key_base". That is why the s3 and share overlays re-state it
-  # too. Values come from .kamal/secrets.ovh (R2), NOT from .kamal/secrets (SeaweedFS), which
-  # kamal does not read under `-d`.
+  # too. Values come from .kamal/secrets.ovh, which kamal does not read under `-d`.
+  #
+  # CHUNK_SECRET_ACCESS_KEY AND CHUNK_ACCESS_KEY_ID WERE HERE — the R2 token and key id for
+  # bucket maker-chunks-prod, from when the maker app resolved a chunk store of its own. Arc D
+  # Part 2 handed the chunk store to the `sync` accessory (a separate repo, its own env), and
+  # nothing in THIS app has read a CHUNK_* storage knob since. Dead here was not free: kamal runs
+  # every `$(…)` in a parsed secrets file EAGERLY, so each one was a 1Password read on every
+  # `-d ovh` deploy for a value no container consumed. Removed from .kamal/secrets.ovh too.
+  #
+  # ⚠️ REPLACING THIS ARRAY ALSO DROPS THE BASE'S SYNC_ADMIN_TOKEN, and that is correct as long as
+  # this destination's APP does not send it. The `sync` accessory still requires the key, but
+  # `accessories:` is never overlaid, so it reaches every destination through that path and must
+  # stay DEFINED in .kamal/secrets.ovh (docs/invariants/deploy-secrets.md, §14g). Re-list it here
+  # only if this box's app itself starts sending it — i.e. only under LIBRARY_BACKEND=chunk_remote.
   secret:
     - RAILS_MASTER_KEY
-    - CHUNK_SECRET_ACCESS_KEY
-    - CHUNK_ACCESS_KEY_ID
+    - LIBRARY_S3_ACCESS_KEY_ID
+    - LIBRARY_S3_SECRET_ACCESS_KEY
   clear:
-    STORAGE_BACKEND: s3
-    CHUNK_ENDPOINT: https://d1ea7ae1da7f90fb8edd168ab7928e7d.r2.cloudflarestorage.com
-    CHUNK_BUCKET: maker-chunks-prod
-    CHUNK_REGION: auto
-    # ⚠️ CHUNK_ACCESS_KEY_ID IS DELIBERATELY NOT HERE — it moved to env.secret above, and moving
-    # it back would re-break this destination. It was `<%= ENV["CHUNK_ACCESS_KEY_ID"] %>`, which
-    # cannot work from a secrets file: kamal secrets feed env.secret lookups and are never
-    # exported into the process ENV that ERB reads. Unset, the ERB rendered empty, YAML parsed
-    # nil, and the destination refused to load at all —
+    # STORAGE_BACKEND / CHUNK_ENDPOINT / CHUNK_BUCKET / CHUNK_REGION WERE HERE (R2: endpoint
+    # d1ea7ae1…r2.cloudflarestorage.com, bucket maker-chunks-prod, region auto). Same reason as
+    # the two secrets above — no code in this repo reads any of those names, so kamal was shipping
+    # four values into a container that ignored them. deploy.share.yml and deploy.s3.yml carry the
+    # same tombstone; this was the last overlay still declaring the axis.
+    #
+    # THE TRANSFERABLE LESSON FROM THE CHUNK_ACCESS_KEY_ID LINE THAT SAT HERE, WHICH OUTLIVES THE
+    # KEY ITSELF: a value defined in a .kamal/secrets* file is NEVER visible to ERB in env.clear.
+    # Kamal secrets feed env.secret lookups; they are not exported into the process ENV that an
+    # ERB output tag reading that name would see. Unset, the tag rendered empty, YAML parsed nil,
+    # and the whole destination refused to LOAD —
     #   Kamal::ConfigurationError: env/clear/CHUNK_ACCESS_KEY_ID: should be a string
-    # — so `-d ovh` was unusable without a manual export. An access key ID is an identifier
-    # rather than a credential (the Unraid one sits in deploy.yml in clear), so this is about
-    # making the destination loadable, not about secrecy.
+    # — so `-d ovh` was unusable without a manual export. If a secrets-file value must reach a
+    # container, it goes in env.secret; never into env.clear through ERB.
+    #
+    # ⚠️ AND DO NOT SPELL AN ERB TAG LITERALLY IN THIS COMMENT TO ILLUSTRATE THE POINT. Kamal runs
+    # every deploy*.yml through ERB before YAML, comments included — a `#` is a YAML comment, not
+    # an ERB one — so an example tag is EXECUTED. Writing one here while drafting this very
+    # tombstone made `-d ovh` fail to load with `(erb):64: syntax errors found`, which is the same
+    # class as CLAUDE.md §14d's rule about an ERB comment ending at its first terminator: describe
+    # the wrong spelling in words.
 
     # Sidecar accessories run on the UNRAID host (see `accessories:` in deploy.yml, whose `host:` is
     # 192.168.1.95), so `tinkerex-boxes` / `tinkerex-openscad` do not resolve on this box. Kamal
@@ -67,12 +96,52 @@ env:
     ADDON_SOURCE_URL: ""
 
     # The `sync` accessory (Arc D Task 2) runs on the Unraid host too, so `tinkerex-sync` does not
-    # resolve here either — same deep-merge trap, same fix. OVH never runs LIBRARY_BACKEND=chunk_remote
-    # (there is no `-d remote`-equivalent overlay for this box), so blank is also simply correct, not
-    # merely safe: nothing on OVH would ever read this URL even unblanked. Blanked anyway, on the same
-    # belt-and-braces argument as the three URLs above — a future `chunk_remote` leg on OVH would need
-    # its own real value here, not an inherited Unraid-only one.
+    # resolve here either — same deep-merge trap, same fix. A future `chunk_remote` leg on OVH
+    # would need its own real value here, never an inherited Unraid-only one.
+    #
+    # ⚠️ BLANKING IT WAS NOT SUFFICIENT, AND THE REASON IS WHY THIS FILE NOW NAMES A BACKEND.
+    # This comment used to say "OVH never runs LIBRARY_BACKEND=chunk_remote", which was true while
+    # the base was embedded `chunk` and a fourth `remote` destination carried chunk_remote. Arc D
+    # Part 2 made the BASE chunk_remote while this overlay still declared no LIBRARY_BACKEND of its
+    # own — so it silently INHERITED chunk_remote, with this key blank and (env.secret being an
+    # array kamal replaces) no SYNC_ADMIN_TOKEN. LibraryBackendCheck refused that at boot, naming
+    # both keys, so `kamal deploy -d ovh` could not bring a container up. Measured against the
+    # merged config, not reasoned. (Nobody inspected the container actually running on this box; it
+    # was very likely deployed from a pre-Arc-D image and unaffected until the next `-d ovh`.)
+    #
+    # RESOLVED 2026-08-26: THIS BOX DECLARES LIBRARY_BACKEND=s3 (below), SO THIS KEY STAYS BLANK
+    # AND MUST. The two rejected answers, recorded so the choice is not re-derived:
+    #   share        — needs LIBRARY_PATH and a directory that EXISTS (check_share! probes it), so
+    #                  it costs a second `volumes:` entry: this overlay declares none and inherits
+    #                  only tinkerex_storage:/rails/storage.
+    #   chunk_remote — needs a sync server ON OVH, a real URL here, SYNC_ADMIN_TOKEN back in
+    #                  env.secret above, AND a revision of the "the OVH overlay clears every
+    #                  Unraid-host-only service URL" guard, which requires this key BLANK precisely
+    #                  so an unreachable inherited hostname cannot report itself as configured.
+    # s3 won on cost: the R2 account was already here for the retired chunk store, so the change is
+    # two vault references under their real names rather than any new infrastructure.
     CHUNK_REMOTE_URL: ""
+
+    # THE LIBRARY, ON CLOUDFLARE R2. Same bucket the retired chunk store used, under a DISJOINT
+    # `library/` prefix — deploy.s3.yml:8-11 is the precedent and the argument: one bucket, two
+    # non-overlapping keyspaces, so neither can list or clobber the other. The bucket keeps its
+    # chunk-era name because renaming an R2 bucket means copying every object; the prefix is what
+    # carries the meaning.
+    #
+    # NOTE WHAT IS *NOT* HERE: no LIBRARY_S3_ACCESS_KEY_ID line. deploy.s3.yml carries its key id
+    # in clear (an access key ID is an identifier, not a credential), and that reasoning still
+    # holds — but this destination resolves BOTH halves of the pair from .kamal/secrets.ovh, and a
+    # secrets-file value is never visible to ERB in env.clear (see the tombstone above, which this
+    # very destination earned the hard way). Both live in env.secret instead.
+    #
+    # §14a: `presignable` is TRUE and `versioned` is FALSE on s3. This box gets bytes straight out
+    # of R2 by signed URL — §15 survives — and NO version history. That is the deliberate departure,
+    # not an oversight: restore stays chunk_remote-only.
+    LIBRARY_BACKEND: s3
+    LIBRARY_S3_ENDPOINT: https://d1ea7ae1da7f90fb8edd168ab7928e7d.r2.cloudflarestorage.com
+    LIBRARY_S3_BUCKET: maker-chunks-prod
+    LIBRARY_S3_PREFIX: library/
+    LIBRARY_S3_REGION: auto
 
     # THE ONE INTERNET-FACING BOX, SO THE ONE THAT NEEDS TLS ENFORCEMENT (2026-07-30).
     #

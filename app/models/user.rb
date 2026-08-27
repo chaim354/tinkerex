@@ -64,8 +64,15 @@ class User < ApplicationRecord
   has_many :maker_build_log_entries, class_name: "Maker::BuildLogEntry", dependent: :destroy
   has_many :maker_locations, class_name: "Maker::Location", dependent: :destroy
   has_many :maker_suppliers, class_name: "Maker::Supplier", dependent: :destroy
+  # THE ASYMMETRY BETWEEN THESE TWO LINES IS THE POINT; do not normalise either onto the other.
+  # Items stay `:destroy` because Maker::InventoryItem carries `before_destroy :release_bom_lines`,
+  # which must run per row (§14d). The ledger is `:delete_all` because Maker::InventoryTransaction
+  # raises ReadOnlyRecord on ANY record-level destroy — so `:destroy` here blows up the whole
+  # account deletion for anyone holding a posted row. It only ever "worked" because :items was
+  # declared first and swept the rows away before this line instantiated them; declaration order
+  # is not a safety mechanism. Pinned in test/models/maker/inventory_transaction_test.rb.
   has_many :maker_inventory_items, class_name: "Maker::InventoryItem", dependent: :destroy
-  has_many :maker_inventory_transactions, class_name: "Maker::InventoryTransaction", dependent: :destroy
+  has_many :maker_inventory_transactions, class_name: "Maker::InventoryTransaction", dependent: :delete_all
   has_many :maker_previews, class_name: "Maker::Preview", dependent: :destroy
   has_many :maker_boms, class_name: "Maker::Bom", dependent: :destroy
   has_many :maker_bom_lines, class_name: "Maker::BomLine", dependent: :destroy
@@ -89,8 +96,13 @@ class User < ApplicationRecord
          :validatable, :confirmable, :lockable, :trackable, :timeoutable,
          :omniauthable, omniauth_providers: %i[openid_connect]
 
-  # Set transiently by from_omniauth (and the v1 bootstrap) so a passwordless account
-  # validates on first save before its UserIdentity row is persisted. Not a DB column.
+  # VESTIGIAL, AND DELIBERATELY SO: nothing reads this. It existed so `from_omniauth` could save a
+  # brand-new passwordless account before its UserIdentity row was persisted, but
+  # `password_required?` answers that from the password itself, which covers the same case without
+  # asking how the account was created — see its comment for why the account-shape reading was a
+  # live auth defect. Kept because 24 test files still pass `omniauth_signup:` to `User.create!`;
+  # removing the accessor is a mechanical sweep of those call sites, not a behaviour change. Not a
+  # DB column.
   attr_accessor :omniauth_signup
 
   # Passwordless accounts are created by trusted server-side flows (the OmniAuth seam and the
@@ -164,22 +176,19 @@ class User < ApplicationRecord
   end
 
   # Devise :validatable requires a password by default. We preserve the prior model's
-  # `has_secure_password validations: false` semantic: a password is REQUIRED only when one
-  # is actually being set (web password signup / reset). Passwordless accounts stay valid —
-  # OmniAuth-only accounts (UserIdentity present) and the server-side device-token bootstrap
-  # (omniauth_signup flag). Devise still validates length + confirmation whenever a password
-  # IS provided (so web signup with a mismatched/short password is still rejected), and
-  # bcrypt never matches the empty digest, so a passwordless account cannot password-auth.
+  # `has_secure_password validations: false` semantic: a password is REQUIRED only when one is
+  # actually being set (web password signup / reset), so passwordless accounts stay valid — the
+  # OmniAuth seam's brand-new `new(email:)`, identity-backed accounts, and server-side creates
+  # alike. THE ONE QUESTION IT ASKS IS ABOUT THE PASSWORD, NEVER ABOUT THE ACCOUNT SHAPE, and that
+  # is the invariant: every Devise password validator — length AND confirmation — is conditioned on
+  # this predicate, so an "…or the account is identity-linked" arm does not merely make the
+  # password optional, it exempts a set password from being CHECKED. That arm shipped, and it
+  # silently accepted a mismatched confirmation for exactly the population the OmniAuth seam
+  # creates. Pinned in test/models/user_devise_model_test.rb. bcrypt never matches the empty
+  # digest, so a passwordless account still cannot password-auth.
   def password_required?
-    return false if omniauth_signup || omniauth_identity?
     return false if encrypted_password.blank? && password.blank?
     super
-  end
-
-  # An account backed by at least one external identity (built or persisted). Checks the
-  # in-memory association too so `User.new` + `identities.build` validates without a save.
-  def omniauth_identity?
-    identities.any? { |i| i.persisted? || i.new_record? }
   end
 
   # Read the IdP's email-verification signal. Standard OIDC exposes `email_verified`;

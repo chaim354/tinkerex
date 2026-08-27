@@ -10,10 +10,10 @@
 # addressed by two different containers with different backends, so nothing walks both. It
 # therefore reuses the chunk credentials (seaweednew) — no new bucket, no new secret to source.
 #
-# STORAGE_BACKEND=memory neutralizes the chunk-store env this overlay INHERITS from deploy.yml
-# (Kamal deep_merge has no delete, so the base's STORAGE_BACKEND=s3 + CHUNK_* cannot be removed,
-# only overridden). It is belt-and-braces: FileLayer::S3 reports syncable=false, so
-# V1::BaseController's syncable? gate never builds Sync::Storage::ChunkStore anyway.
+# THERE IS NO CHUNK-STORE ENV TO NEUTRALISE ANY MORE. This header used to explain a
+# STORAGE_BACKEND=memory line (the base declared STORAGE_BACKEND=s3 + CHUNK_*, and Kamal's
+# deep_merge has no delete, so an inherited key could only be overridden). Arc D Part 2 removed
+# that axis from the base and from this app entirely — see the tombstone in env.clear below.
 
 # Two names — see the `proxy:` comment in deploy.yml for why `.home` exists beside `.local`
 # (short version: `.local` is mDNS-reserved, so Apple devices never resolve it via DNS).
@@ -30,7 +30,10 @@ volumes:
 env:
   # env.secret is an ARRAY: Kamal REPLACES it wholesale (deep_merge unions hashes, replaces
   # arrays), so RAILS_MASTER_KEY must be re-listed or boot dies with "Missing secret_key_base".
-  # LIBRARY_S3_SECRET_ACCESS_KEY is added in .kamal/secrets-common (= the seaweednew secret).
+  # LIBRARY_S3_SECRET_ACCESS_KEY is defined in .kamal/secrets.s3 (= the seaweednew secret), NOT in
+  # secrets-common, and that placement is load-bearing: .kamal/secrets.ovh resolves the SAME NAME to
+  # the R2 credential for its own s3 library. One variable, two backends — a shared definition could
+  # not tell them apart, and the loser signs with InvalidAccessKeyId (§14g).
   secret:
     - RAILS_MASTER_KEY
     - LIBRARY_S3_SECRET_ACCESS_KEY

@@ -2,7 +2,7 @@
 # Install (or refresh) the nightly backup on the Unraid VM. Idempotent — run it again after any
 # change to ops/backup-db.sh and it re-pushes the script and rewrites the crontab entry.
 #
-#   bin/backup-cron-install                       # 03:30 nightly, chunk+share+s3, keep 14
+#   bin/backup-cron-install                       # 03:30 nightly, chunk+share+s3+sync, keep 14
 #   BACKUP_KEEP=30 bin/backup-cron-install        # keep 30
 #   BACKUP_AT="0 4" bin/backup-cron-install       # 04:00  (crontab "minute hour")
 #   bin/backup-cron-install --uninstall
@@ -183,7 +183,7 @@ ssh "$HOST" "chmod +x $OPS_DIR/backup-db.sh"
 
 # ---- Uptime Kuma push URLs -------------------------------------------------------------------
 # Supply as environment variables, once:
-#   PING_CHUNK=http://192.168.1.146:3001/api/push/aB1 PING_SHARE=... PING_S3=... bin/backup-cron-install
+#   PING_CHUNK=http://192.168.1.146:3001/api/push/aB1 PING_SHARE=... PING_S3=... PING_SYNC=... bin/backup-cron-install
 #
 # VALUES NOT SUPPLIED ARE PRESERVED, not cleared. This installer is the thing you re-run to push a
 # script change, so a merge that dropped unmentioned keys would quietly unwire every monitor the
@@ -191,12 +191,17 @@ ssh "$HOST" "chmod +x $OPS_DIR/backup-db.sh"
 # that is never pinged is indistinguishable from one that was never configured until its heartbeat
 # window lapses. Tokens live only on the box, chmod 600, never in git.
 echo "==> Uptime Kuma push URLs"
-# THE KEY LIST IS DERIVED FROM $DESTS, NOT ENUMERATED. ops/backup-db.sh's ping_kuma already builds
-# `PING_$(upper dest)` from the destination name, so the READING half generalizes to a new
-# destination for free — this WRITING half was the only place that still hard-coded
-# `PING_CHUNK PING_SHARE PING_S3`, which is exactly how `sync` arrived monitored by nothing while
-# the other three were watched. Deriving both ends from the same source is what stops the two
-# halves from disagreeing again the next time a destination is added.
+# THIS WRITING HALF IS DERIVED FROM $DESTS, NOT ENUMERATED — BUT THE READING HALF IS NOT, AND
+# CLAIMING OTHERWISE IS WHAT LET THE LAST BUG SIT. This comment used to say ping_kuma's generic
+# `PING_$(upper dest)` made ops/backup-db.sh generalize to a new destination for free. It does not:
+# that script reads ping.env through an ENUMERATED whitelist (ops/backup-db.sh's `case "$_k"`),
+# deliberately, so no value in that file is ever executable shell — and a destination with no arm
+# there simply never has its variable set, so `[ -n "$url" ] || return 0` skips it silently and for
+# ever. `sync` shipped like that: written into ping.env by the loop below, warned about by nothing,
+# and unreadable by the nightly, so its monitor could not be pinged in EITHER direction.
+# A NEW DESTINATION THEREFORE MOVES THREE THINGS BY HAND, and nothing in bin/ci can go red for any
+# of them (§14i): the `case` arm in ops/backup-db.sh, the `chunk|share|s3|sync` argument case above
+# it, and docs/DEPLOY.md §6's list of push monitors an operator must create in Uptime Kuma.
 UPDATES=""
 for d in $DESTS; do
   k="PING_$(printf '%s' "$d" | tr '[:lower:]' '[:upper:]')"

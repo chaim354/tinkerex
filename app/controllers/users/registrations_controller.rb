@@ -31,7 +31,8 @@ module Users
     end
 
     # Devise's #destroy is a bare `resource.destroy` with no confirmation of any kind. Account
-    # deletion here cascades through 31 `dependent: :destroy` associations — the whole library
+    # deletion here cascades through 24 `dependent:` associations (22 `:destroy`, plus 2
+    # `:delete_all` where the child model refuses record-level destruction) — the whole library
     # catalog, projects, build log, sheets, previews, paired devices — and there is no undo.
     # Measured before this guard: one request carrying only a session cookie took users=1
     # projects=1 nodes=1 tasks=1 to zero.

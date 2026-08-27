@@ -4,9 +4,14 @@ module Web
   class ProjectSheetsTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
-    # The project detail view reads file metadata + capabilities through FileLayer.current; pin a
-    # real backend so the share CI leg (no LIBRARY_PATH) doesn't fail on backend construction.
+    # The project detail view reads file metadata + capabilities through FileLayer.current, so this
+    # pins a real backend: without one, a bare `bin/rails test` (no LIBRARY_PATH) errors on backend
+    # construction in 4 tests. THE BLOCK WAS EMPTY until 2026-08-26 while this comment claimed the
+    # pin existed — the same shape as the parity-guard comment §14j records, and the reason the
+    # claim is now a line of code rather than a line of prose. `use_fresh_share_library!` owns its
+    # own teardown (test_helper.rb), so this leaks no tmpdir.
     setup do
+      use_fresh_share_library!
     end
 
     def sign_in(email = "maker@example.com")
@@ -90,6 +95,35 @@ module Web
       assert_response :success
       assert_equal "text/csv", response.media_type
       assert_equal "Part,Qty\nM3 bolt,12\n", response.body
+    end
+
+    # THE MALFORMED SHAPE IS WIRE-REACHABLE — the reason the readers had to become element-wise.
+    # `permit(data: {})` passes an Integer column entry and a Hash row through untouched, and
+    # `to_csv`'s `c["title"]` raised TypeError on the first: a 500 on the owner's OWN export, from
+    # a blob their own browser could store. DRIVEN THROUGH A REAL PATCH ON PURPOSE — an
+    # `update_column` blob would prove only that the row can be corrupted, never that a request can.
+    #
+    # AN INTEGER, NOT A STRING. `String#[]("title")` is a substring search, so a String column entry
+    # never raised; a test built on one would have passed before the fix and proved nothing.
+    test "csv export survives malformed elements a real PATCH can store" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      sheet = project.sheets.create!(user:, name: "Ragged", data: Maker::Sheet.blank_data)
+
+      patch sheet_path(sheet), as: :json, params: { sheet: { data: {
+        "columns" => [ 1, { "title" => "Z" } ], "cells" => [ { "a" => 1 } ]
+      } } }
+      assert_response :success
+      # Pins REACHABILITY, not just the export: if permit or deep_munge ever sanitised these the
+      # test below would go green for the wrong reason.
+      assert_equal [ 1, { "title" => "Z" } ], sheet.reload.data["columns"]
+      assert_equal [ { "a" => 1 } ],          sheet.data["cells"]
+
+      get sheet_path(sheet, format: :csv)
+      assert_response :success
+      # The bad row SURVIVES AS AN EMPTY ROW rather than being dropped — projects/_sheets.html.erb
+      # renders `cells.size` as "N rows", so a reader that dropped it would silently shrink that.
+      assert_equal "Z\n\n", response.body
     end
 
     test "destroy returns to the project" do
@@ -223,28 +257,40 @@ module Web
 
     # The controller permits `data: {}` wide open, so a malformed blob can be stored. The page must
     # still render — the model's defensive readers are the guard, and this is the page they exist for.
+    #
+    # `update_column` IS REQUIRED HERE, not merely convenient: a `nil` column entry CANNOT be
+    # PATCHed. Rails' deep_munge compacts nils out of every request array, JSON bodies included, so
+    # `[null, {"title":"Z"}]` on the wire stores `[{"title":"Z"}]` — console/update_column/SQL is
+    # the only way this exact blob exists. The shapes a real request CAN store are driven in "csv
+    # export survives malformed elements a real PATCH can store"; do not fold the two together, and
+    # do not read this test as evidence that a browser can smuggle a null in.
     test "a malformed data blob renders an empty grid rather than breaking the page" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
       sheet = project.sheets.create!(user:, name: "Odd", data: Maker::Sheet.blank_data)
 
-      # Bypasses validation the same way a hostile or buggy client PATCH would.
       sheet.update_column(:data, { "columns" => [ nil, { "title" => "Z" } ], "cells" => "nope" })
 
       get sheet_path(sheet)
       assert_response :success
       assert_select "[data-controller=sheet]"
-      # `cells` guards its OUTER shape (is data["cells"] an Array at all?) — "nope" is a String, so
-      # it flattens to []. `columns` passes the SAME outer check (data["columns"] IS an Array), so
-      # its malformed inner `nil` entry rides through unchanged: the model's readers are not an
-      # element-by-element sanitizer, only an outer-shape guard. (Verified directly — bin/rails
-      # runner against this exact hash returns `columns: [nil, {"title"=>"Z"}]`, `cells: []` — an
-      # earlier draft of this assertion wrongly expected both to flatten to [].) The inner-element
-      # case is what sheet_controller.js's own `.filter((c) => c && typeof c === "object")` guards;
-      # a plain request-spec test can't drive that JS, so the real proof that a null column entry
-      # can no longer crash the page is that this request still returns 200 at all.
+      # BOTH readers now flatten to the shape their consumers assume: "nope" is not an Array so
+      # `cells` is [], and the `nil` column entry is dropped by `grep(Hash)`. (An earlier draft of
+      # this assertion expected the nil to RIDE THROUGH, which was correct at the time — the
+      # readers guarded the outer shape only and handed the element-level job to
+      # sheet_controller.js's `.filter((c) => c && typeof c === "object")`. That filter is still
+      # there, but as defence in depth behind the model rather than as what makes this page safe.)
       assert_select "[data-sheet-data-value=?]",
-        { "columns" => [ nil, { "title" => "Z" } ], "cells" => [] }.to_json
+        { "columns" => [ { "title" => "Z" } ], "cells" => [] }.to_json
+      # Says the redundancy out loud, so a revert of the model reader turns THIS red too: nothing
+      # null reaches the embedded blob any more, so the browser filter no longer carries the page.
+      assert_no_match(/null/, css_select("[data-controller=sheet]").first["data-sheet-data-value"])
+
+      # to_csv is the reader's other consumer and raised NoMethodError on this blob before the
+      # readers were element-wise — the export 500'd for a page that rendered fine.
+      get sheet_path(sheet, format: :csv)
+      assert_response :success
+      assert_equal "Z\n", response.body
     end
   end
 end

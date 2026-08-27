@@ -134,7 +134,7 @@ module ActiveSupport
     #
     # NO-OPS WHEN THERE IS NO @root, deliberately, so a suite that has not opted into a real share
     # library keeps exactly its old behaviour rather than silently half-materialising. Pair it with
-    # `use_fresh_share_library!` in setup (and its FileLayer.reset! in teardown).
+    # `@root = use_fresh_share_library!` in setup; that helper cleans up after itself.
     def create_node!(user, **attrs)
       node = user.nodes.create!(**attrs)
       root = defined?(@root) ? @root : nil
@@ -165,11 +165,30 @@ module ActiveSupport
     # named them and Share's clobber refusal (§14a) rejects the second test to write a given name.
     # `FileLayer.current =` rather than pin_file_layer_backend for the reason share_delivery_test.rb
     # records: the pin rebuilds from ENV and would additionally need LIBRARY_PATH, which its
-    # teardown does not restore. A direct assignment sets no @file_layer_backend_pinned either, so
-    # the caller MUST pair this with `FileLayer.reset!` in teardown or the adapter leaks into the
-    # next test in this forked worker.
+    # teardown does not restore.
+    #
+    # THE HELPER OWNS THE TEARDOWN OF EVERY DIRECTORY IT MINTS, and it has to. A direct assignment
+    # sets no @file_layer_backend_pinned, so this used to be the CALLER's obligation -- and the
+    # obligation was silently unmeetable: rescan_test.rb REASSIGNS `@root` to a second tmpdir
+    # mid-test, so its (correct-looking) teardown removed the second directory and dropped the
+    # first, leaking five per run out of the eleven a full suite leaked. 2,817 stale
+    # `test-library*` directories on the build box when it was measured.
+    #
+    # RECORDED IN `@fresh_share_library_roots`, DELIBERATELY NOT IN `@root`: `@root` is the ivar 36
+    # callers assign this to and are free to reassign, which is exactly how the leak happened. An
+    # ARRAY rather than one ivar for the same reason one level down -- a second call in one test
+    # would otherwise drop the first directory on the floor. Callers keep `@root = ...` unchanged;
+    # create_node! above still reads @root.
+    #
+    # EXISTING PER-FILE TEARDOWNS STAY CORRECT AND BECOME REDUNDANT, not wrong: ActiveSupport
+    # registers `teardown` as an :after callback and :after callbacks run in reverse declaration
+    # order, so a subclass's block runs FIRST (probed, not assumed) and the shared one below finds
+    # the directory already gone -- `remove_entry` is guarded on `exist?` and `FileLayer.reset!` is
+    # idempotent. Do not sweep them out on a pattern match: fifteen of them own a `@root` this
+    # helper never minted, and deleting theirs converts a cleanup into a leak.
     def use_fresh_share_library!
       root = Pathname.new(Dir.mktmpdir("test-library"))
+      (@fresh_share_library_roots ||= []) << root
       FileLayer.current = FileLayer::Share.new(root: root.to_s)
       root
     end
@@ -188,6 +207,15 @@ module ActiveSupport
       if @file_layer_backend_pinned
         ENV["LIBRARY_BACKEND"] = @file_layer_backend_prior
         FileLayer.reset!
+      end
+      if @fresh_share_library_roots
+        # The reset is load-bearing, and NOT covered by the branch above: use_fresh_share_library!
+        # assigns FileLayer.current directly and sets no @file_layer_backend_pinned, so without it
+        # a Share adapter pointing at a directory this block is about to delete leaks into the next
+        # test in this forked worker -- where it surfaces as the KeyError previews_test.rb describes
+        # rather than as anything naming this helper.
+        FileLayer.reset!
+        @fresh_share_library_roots.each { |root| FileUtils.remove_entry(root) if root.exist? }
       end
     end
 

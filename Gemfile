@@ -28,8 +28,6 @@ gem "importmap-rails"
 gem "turbo-rails"
 # Hotwire's modest JavaScript framework [https://stimulus.hotwired.dev]
 gem "stimulus-rails"
-# Build JSON APIs with ease [https://github.com/rails/jbuilder]
-gem "jbuilder"
 
 # Use Active Model has_secure_password [https://guides.rubyonrails.org/active_model_basics.html#securepassword]
 # Powers the real web auth (User#password digest + Session model). bcrypt is MIT (CLAUDE.md §9).
@@ -59,9 +57,6 @@ gem "kamal", require: false
 
 # Add HTTP asset caching/compression and X-Sendfile acceleration to Puma [https://github.com/basecamp/thruster/]
 gem "thruster", require: false
-
-# Use Active Storage variants [https://guides.rubyonrails.org/active_storage_overview.html#transforming-images]
-gem "image_processing", "~> 2.0"
 
 # File-preview renderers (Maker::Previews::*, permissive only — CLAUDE.md §9):
 #   rubyzip (BSD-2) — extract the embedded thumbnail from a 3MF (OPC/zip container).

@@ -91,6 +91,53 @@ class DocsHygieneTest < ActiveSupport::TestCase
     MSG
   end
 
+  # THE SAME SHAPE AS THE TEST ABOVE, IN THE DIRECTION THAT ACTUALLY SHIPPED. A comment citing a
+  # dead path is a broken link; a comment citing a dead TEST is worse, because it does not READ as a
+  # broken link — it reads as a SAFETY CLAIM. app/controllers/concerns/v1/authentication.rb said in
+  # as many words that a parity test "compares the two implementations and fails when they stop
+  # agreeing", naming two files Arc D Part 2 had already deleted (eaa180b, 448ba3b), while
+  # CLAUDE.md §14j records that same cross-repo obligation as explicitly UNGUARDED. The comment and
+  # the invariant contradicted each other and NOTHING COULD GO RED: no gate reads a comment, and a
+  # guard that does not exist cannot fail. That is CLAUDE.md §15's "green suite over something that
+  # never worked", with the green supplied by a sentence rather than by a test.
+  #
+  # SCOPED TO app/ + lib/ ON PURPOSE, AND WIDENING IT IS NOT FREE. config/routes.rb:204 and :304
+  # cite two files that are gone — a mutation check "KEPT BECAUSE IT IS THE EVIDENCE AND IT IS NO
+  # LONGER REPRODUCIBLE HERE", and the gem's own dummy-app routes — and BOTH are correct as written,
+  # because both are past tense. Adding config/ therefore means adding an exemption list for them,
+  # which is the shape §14e says goes stale. A historical NAME is not a dead link (the test above
+  # makes the same carve-out for CLAUDE.md §11); what this catches is a citation written in the
+  # PRESENT TENSE, and app/ + lib/ is where those live.
+  CITATION_SCAN_DIRS = %w[app lib].freeze
+
+  test "no source file cites a test file that does not exist" do
+    files = CITATION_SCAN_DIRS.flat_map { |d| Dir.glob("#{d}/**/*.rb", base: Rails.root) }
+
+    # TWO non-vacuity assertions, and neither implies the other (§14e). The first catches app/ or
+    # lib/ moving away; the second catches the PATTERN being narrowed to nothing while every file is
+    # still sitting there — a failure the first one cannot see.
+    refute_empty files, "the scan found no source files at all — did the layout move? " \
+                        "This test cannot guard a set it cannot find."
+    assert_operator files.size, :>, 100, "only #{files.size} files scanned — the glob is too narrow"
+
+    cited = files.flat_map { |f| Rails.root.join(f).read.scan(%r{\btest/[A-Za-z0-9_/.-]+\.rb\b}) }
+                 .uniq.sort
+
+    refute_empty cited, "no source file cites any test file — the pattern matched nothing. " \
+                        "This test cannot guard a set it cannot find."
+
+    missing = cited.reject { |c| Rails.root.join(c).file? }
+
+    assert_empty missing, <<~MSG
+      Code comments cite test files that do not exist: #{missing.join(', ')}
+
+      A comment that names a test is read as a guarantee that something is CHECKED. Once the test is
+      gone the guarantee is not merely stale, it is false, and no other gate in this repo can see it.
+      Either restore the test, or rewrite the comment to say plainly that the thing is UNGUARDED —
+      CLAUDE.md §14j is the worked example of the second answer.
+    MSG
+  end
+
   test "every docs/invariants file is cited by CLAUDE.md" do
     # Dir.glob, not Dir.children: a MISSING directory makes children raise ENOENT, which is loud but
     # reports a Ruby error rather than the argument below. glob answers [] instead, so the

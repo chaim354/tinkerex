@@ -125,11 +125,19 @@ module Maker
         assert_empty Registry.all
       end
 
+      # BOTH DOUBLES BELOW MUST ANSWER `cacheable?`, AND MUST ANSWER **TRUE**. `Registry#manifests`
+      # asks the source whether to cache at all, so a double that does not answer raises
+      # NoMethodError into the very `rescue StandardError` these tests are about — they would stay
+      # green while asserting nothing, the §14e "precondition never established" shape. Answering
+      # FALSE is the same trap wearing a method: the cache is then never consulted, so "a failed
+      # fetch is NOT cached" is satisfied by there being no cache. True is the only value under
+      # which the guard bites.
       test "an unreachable source degrades to no addons rather than raising" do
         # THE FAILURE THAT MATTERS. /tools must render an empty gallery, never a 500, when the
         # addon host is down.
         failing = Object.new
         def failing.manifests = raise(Source::Error, "boom")
+        def failing.cacheable? = true
         Source.stub = failing
         Rails.cache.clear
         assert_empty Registry.all
@@ -138,11 +146,52 @@ module Maker
       test "a failed fetch is NOT cached, so recovery does not wait out the TTL" do
         failing = Object.new
         def failing.manifests = raise(Source::Error, "boom")
+        def failing.cacheable? = true
         Source.stub = failing
         assert_empty Registry.all
 
-        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST ])
+        # Cacheable for the same reason: a recovery source that bypassed the cache would return 1
+        # whether or not the failure had been written to it.
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST ], cacheable: true)
         assert_equal 1, Registry.all.size, "a transient outage must not grey addons out for the TTL"
+      end
+
+      # ---- the index honours Source#cacheable?, exactly as the two asset paths do ---------------
+      #
+      # A COUNTING DOUBLE, not FakeAddonSource, because `manifests` there is an attr_reader and
+      # there is nothing to count. Both tests need the MemoryStore installed in `setup` — under
+      # test.rb's `:null_store` every `#fetch` calls its block, so both counts read 2 regardless and
+      # neither test can fail.
+      def counting_source(cacheable:)
+        source = Object.new
+        source.instance_variable_set(:@fetches, 0)
+        source.instance_variable_set(:@cacheable, cacheable)
+        source.define_singleton_method(:fetches) { @fetches }
+        source.define_singleton_method(:cacheable?) { @cacheable }
+        source.define_singleton_method(:manifests) { @fetches += 1; [ MANIFEST ] }
+        source
+      end
+
+      test "an uncacheable source is asked every time, so a dev author's manifest edit is visible" do
+        # THE PAYOFF. Source::Local answers false precisely so an edit is not invisible for the TTL;
+        # honouring that for bundle bytes but not for the index served fresh assets against a stale
+        # manifest.
+        source = counting_source(cacheable: false)
+        Source.stub = source
+
+        assert_equal 1, Registry.all.size
+        assert_equal 1, Registry.all.size, "the second read must still see the addon, not a degraded []"
+        assert_equal 2, source.fetches, "an uncacheable source must be re-read, not served from CACHE_KEY"
+      end
+
+      test "a cacheable source is asked once, so production keeps the 5-minute index cache" do
+        # The assertion that stops the test above from being satisfiable by "never cache anything".
+        source = counting_source(cacheable: true)
+        Source.stub = source
+
+        assert_equal 1, Registry.all.size
+        assert_equal 1, Registry.all.size
+        assert_equal 1, source.fetches, "a cacheable source must be served from CACHE_KEY on the second call"
       end
 
       # The metadata keys are all OPTIONAL and all degrade. A manifest is fetched from a source this

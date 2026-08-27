@@ -272,53 +272,19 @@ Rails.application.routes.draw do
     post "v1/test/users", to: "v1/test_users#create"
   end
 
-  # --- Sync engine API (v1) ---
-  #
-  # STAGE 3b PHASE B TASK 7: the sync routes below now dispatch to Sync::V1::* -- the engine's
-  # controllers, in the tinkerex-sync gem's app/controllers/sync/v1/ -- but every URL, route name
-  # and HTTP verb here is BYTE-IDENTICAL to before this task (diffed against `bin/rails routes`
-  # captured before it, empty diff). That preservation is a hard requirement: real desktop
-  # clients are deployed against these URLs.
-  #
-  # EVERY SYNC `to:`/`controller:` BELOW NOW CARRIES A LEADING `/`, AND THE SLASH IS NOT
-  # DECORATION -- it is Rails' own escape hatch for "this controller path is absolute, ignore the
-  # enclosing scope's module", and without it every one of these would silently misroute. Both
-  # this `namespace :v1` and the sync engine's controllers happen to share the path segment "v1"
-  # for unrelated reasons (this block's is a URL/route-name prefix that must stay put; the
-  # engine's is its OWN v1-API-versioning choice, Sync::V1::), so an UNqualified `to: "commits#create"`
-  # here does not miss by nesting the module wrong -- Rails resolves it to `V1::CommitsController`,
-  # a controller not in this file's own namespace :maker block and not autoloadable anywhere in
-  # this app, so it would 404 the moment it dispatched, not merely at boot. Verified rather than
-  # assumed: a leading-slash `to: "/sync/v1/commits#create"` was proven with
-  # `Rails.application.routes.recognize_path("/v1/commit", method: :post)` returning
-  # `{controller: "sync/v1/commits", action: "create"}` before this rewrite touched every line.
+  # --- v1 API (device-token) ---
+  # THIS APP SERVES THE CLIENT HALF OF THE SYNC PROTOCOL ONLY (§6). /v1/changes, /v1/tree,
+  # /v1/commit, /v1/commit/:id/finalize, /v1/chunks/*, /v1/conflicts, /v1/locks, /v1/trash,
+  # /v1/nodes and /v1/share_links are NOT routed here — a device syncs against the standalone
+  # sync server (chaim354/tinkerex-sync). What remains under /v1 is this app's own: the maker
+  # layer, plus the device endpoints, which stay host-owned because a device token is the only
+  # credential the whole API accepts (§14j).
   namespace :v1 do
     # Device enrollment by login (the Dropbox model): email+password -> a device token.
     # Replaces the pairing-code flow. No Bearer auth — the credentials ARE the auth.
     post "devices/login", to: "devices#login"
     # Direct add-a-device for an already-authenticated device (keeps its Bearer-authed path).
     resources :devices, only: [ :create ]
-
-    # content commits (two-phase)
-    # EVERY SYNC ROUTE, FROM THE ENGINE'S OWN DEFINITION. They used to be written out here and
-    # hand-copied a second time into the gem's own test/dummy/config/routes.rb -- two
-    # descriptions of one thing, free to drift. See lib/tinkerex_sync/v1_routes.rb for why this is a
-    # drawer rather than `mount Sync::Engine`: these paths interleave with the host's own inside
-    # this very namespace, and a mount owns a whole prefix.
-    # DRAWN ONLY WHEN THE ENGINE IS LOADED. share/s3 do not load it (config/application.rb), so
-    # `Sync` is undefined here and naming it would fail at route-draw time -- and its endpoints
-    # would 501 on those backends anyway (every one gates on `syncable` or `versioned`). The
-    # difference is that a route that does not exist 404s, which is the honest answer for a
-    # deployment whose engine is not in the process at all.
-    # THE SYNC ENGINE'S v1 ROUTES ARE GONE, AND WITH THEM THIS APP'S DEVICE-SYNC API.
-    # `Sync.draw_v1_routes(self)` used to add /v1/changes, /v1/tree, /v1/commit,
-    # /v1/commit/:id/finalize, /v1/chunks/*, /v1/conflicts, /v1/locks, /v1/trash, /v1/nodes and
-    # /v1/share_links here. Since Arc D Part 2 this app does not load the engine at all, so a
-    # desktop client syncs against the STANDALONE sync server (chaim354/tinkerex-sync), never
-    # against the maker app. What remains under /v1 is this app's own: the maker layer and the
-    # device endpoints, which stay host-owned because a device token is the only credential the
-    # whole API accepts (§14j).
-
 
     namespace :maker do
       resources :items, only: %i[index show create update destroy] do
@@ -356,19 +322,5 @@ Rails.application.routes.draw do
         resources :bom_lines, only: %i[index create update destroy], shallow: true
       end
     end
-
-    # hydration
-
-    # Read-only share links. Owner side (authenticated): mint/revoke a link to one immutable
-    # version. Redeem side (anonymous — the link token is the auth, no device bearer): view
-    # the version's metadata + presign GETs for its chunks.
-
-    # The `local` (filesystem) chunk backend's storage tier — presigned, HMAC-authorized blob
-    # PUT/GET (no bearer token; the URL's signature is the auth). Only active under
-    # STORAGE_BACKEND=local; a 404/403 otherwise. The hash is hex (`[0-9a-f]+`), constrained so the
-    # route can't capture a path with slashes.
   end
-
-  # ActionCable mount (change notifications)
-  mount ActionCable.server => "/cable"
 end

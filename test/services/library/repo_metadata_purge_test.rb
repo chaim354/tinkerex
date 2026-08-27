@@ -21,8 +21,9 @@ module Library
       # `use_fresh_share_library!` (a direct FileLayer.current =) rather than
       # pin_file_layer_backend, for the reason rescan_test.rb states: pin rebuilds from ENV, and a
       # Share adapter needs a tmpdir ROOT that ENV does not supply on the other two legs. The
-      # teardown reset is load-bearing rather than decoration — a direct assignment does not set
-      # test_helper's @file_layer_backend_pinned, so its teardown will not clean up after this one.
+      # teardown reset below is redundant rather than load-bearing: a direct assignment sets no
+      # @file_layer_backend_pinned, but `use_fresh_share_library!` now records its own root, so
+      # test_helper's teardown resets FileLayer and removes it. Kept because it costs nothing.
       @root = use_fresh_share_library!
     end
 

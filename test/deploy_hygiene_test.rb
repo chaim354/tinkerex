@@ -496,4 +496,131 @@ class DeployHygieneTest < ActiveSupport::TestCase
       end
     end
   end
+
+  # ── LIBRARY_BACKEND vs the knobs each backend cannot boot without ──────────────────────────────
+  # THE CLASS OF BUG THIS CLOSES: a destination's MERGED config resolves a LIBRARY_BACKEND whose
+  # required knobs that config does not carry. `kamal deploy -d <dest>` then builds and pushes an
+  # image whose container refuses to start on LibraryBackendCheck — a failure that costs a full
+  # build to discover and is invisible from the tree, because every file involved looks locally
+  # reasonable and only the MERGE is wrong. Nothing checked it until now, which is how the ovh
+  # overlay came to inherit chunk_remote (Arc D Part 2 made the base the chunk-family destination)
+  # with CHUNK_REMOTE_URL deliberately blanked and — through env.secret's array REPLACEMENT, a
+  # second mechanism entirely — no SYNC_ADMIN_TOKEN either.
+  #
+  # STATIC AND VAULT-FREE like the .kamal tests above: it reads the merged config and resolves
+  # nothing, so it passes on a bare runner with no 1Password.
+
+  # THE SAME FOUR DESTINATIONS AS SECRETS_FILES, reused rather than restated — a third list of
+  # destinations in this file is a third thing to forget when one is added or folded away (as
+  # `remote` was). The set is asserted explicitly below so trimming it cannot retire this guard.
+  LIBRARY_DESTINATIONS = SECRETS_FILES.keys.freeze
+
+  # The knobs each backend cannot boot without. The chunk_remote and s3 lists are the PRODUCTION
+  # constants, not copies, so a knob added to lib/library_backend_check.rb is enforced here on the
+  # same commit. `share` has no such constant (check_share! takes the path as a plain argument), so
+  # LIBRARY_PATH is spelled out — the one line here that can drift, and also the whole of what
+  # check_share! can be asked statically: its real work is a File.exist? plus a write probe ON THE
+  # BOX, which no test in this process can perform.
+  #
+  # THE KEYS ALSO SERVE AS THE SET OF BACKENDS FileLayer.build ACCEPTS (its `case`, which has no
+  # constant to reuse). Deliberate: a destination resolving to anything else — unset, a typo, or
+  # the retired `chunk`, which build now REFUSES rather than aliases (§14a) — must fail HERE rather
+  # than depend on whatever it happens to inherit. Note check!'s own no-arg default is still
+  # "chunk", so an unset value is not self-correcting.
+  LIBRARY_BACKEND_REQUIRED = {
+    "chunk_remote" => LibraryBackendCheck::CHUNK_REMOTE_REQUIRED,
+    "s3"           => LibraryBackendCheck::S3_REQUIRED,
+    "share"        => %w[LIBRARY_PATH]
+  }.freeze
+
+  # ⚠️ AN EXPLICIT, NAMED EXEMPTION — NOT A SKIP, AND NOT PERMANENT. EMPTY IS THE HEALTHY STATE.
+  # `ovh` was the one entry: it declared no LIBRARY_BACKEND of its own, silently inherited the
+  # base's chunk_remote, and could not satisfy it — a destination that could not boot at all. That
+  # was a PRODUCT DECISION nobody could take from the tree, so it was recorded here rather than by
+  # dropping ovh from LIBRARY_DESTINATIONS, which would have retired the guard for that destination
+  # silently — the §14e failure this whole file keeps re-learning. Resolved 2026-08-26: ovh declares
+  # LIBRARY_BACKEND=s3 against R2, and the entry came out.
+  #
+  # THE MECHANISM STAYS FOR THE NEXT ONE, AND IT EXPIRED CORRECTLY FOR THIS ONE. The second loop
+  # below asserts every exemption is still NEEDED, so the moment a listed destination starts
+  # satisfying its backend the test goes RED naming it — observed, not assumed: with ovh fixed and
+  # still listed, it failed with "ovh is exempted ... but now satisfies LIBRARY_BACKEND=s3 — DELETE
+  # IT FROM THAT LIST". An exemption that cannot expire is how a guard quietly stops covering the
+  # thing it was written for.
+  UNDECIDED_LIBRARY_BACKEND = [].freeze
+
+  # What would stop this destination's container booting, read off the MERGED config for the same
+  # reason required_secret_keys does — array replacement and hash deep-merge are reflected rather
+  # than re-implemented. A knob counts as CARRIED if env.clear holds a non-blank value for it OR
+  # env.secret names it: kamal injects the latter at deploy from the destination's own secrets file,
+  # and the sibling guard above ("every secret a destination declares is defined in a file that
+  # destination actually reads") is what proves that file defines it. The two compose; neither
+  # alone would catch a knob that is declared secret but never defined.
+  def library_backend_shortfall(destination)
+    require "kamal"
+    raw = Kamal::Configuration.create_from(
+      config_file: ROOT.join("config/deploy.yml"), destination: destination
+    ).raw_config
+    clear   = at(raw, "env", "clear").to_h
+    secrets = Array(at(raw, "env", "secret")).map { |key| key.to_s.split(":", 2).last }
+    backend = clear["LIBRARY_BACKEND"].to_s
+
+    unless LIBRARY_BACKEND_REQUIRED.key?(backend)
+      return { backend: backend,
+               problems: [ "its LIBRARY_BACKEND is #{backend.presence.inspect}, which " \
+                           "FileLayer.build refuses — expected one of " \
+                           "#{LIBRARY_BACKEND_REQUIRED.keys.sort.join(', ')}" ] }
+    end
+
+    # blank?, not key? — "" is the same operator error as unset, and it is exactly what the OVH
+    # overlay's deliberate CHUNK_REMOTE_URL blanking produces. check_chunk_remote!/check_s3! both
+    # reject on `.present?` for the same reason; matching them is what keeps this guard's answer
+    # equal to the one the container will give.
+    missing = LIBRARY_BACKEND_REQUIRED.fetch(backend)
+      .reject { |knob| clear[knob].to_s.present? || secrets.include?(knob) }
+    return { backend: backend, problems: [] } if missing.empty?
+
+    # ONE sentence for the whole missing set, not one per knob — check_s3! names all of them in a
+    # single message for the same reason: a report that reveals one missing knob at a time makes
+    # the operator do N passes to learn N facts already in hand.
+    { backend: backend,
+      problems: [ "it resolves LIBRARY_BACKEND=#{backend} but carries no value for " \
+                  "#{missing.join(', ')}" ] }
+  end
+
+  test "every destination carries the knobs its resolved LIBRARY_BACKEND requires" do
+    shortfalls = LIBRARY_DESTINATIONS.to_h { |destination| [ destination, library_backend_shortfall(destination) ] }
+
+    # NON-VACUITY, both halves (§14e: a guard whose subject is a list is retired by emptying the
+    # list, and assert_empty over nothing passes perfectly). The explicit set pins against someone
+    # "fixing" a red destination by deleting it from LIBRARY_DESTINATIONS instead of from
+    # UNDECIDED_LIBRARY_BACKEND; the second assertion catches a raw_config shape change that made
+    # every lookup nil, which would otherwise report four clean destinations.
+    assert_equal [ nil, "ovh", "s3", "share" ], shortfalls.keys.sort_by(&:to_s),
+                 "this guard must cover every destination kamal can deploy"
+    assert shortfalls.each_value.any? { |result| result[:backend].present? },
+           "no destination resolved a LIBRARY_BACKEND at all — raw_config shape changed?"
+
+    shortfalls.each do |destination, result|
+      next if UNDECIDED_LIBRARY_BACKEND.include?(destination)
+
+      assert_empty result[:problems],
+                   "#{destination || 'base'} would not boot — #{result[:problems].join('; ')}. " \
+                   "LibraryBackendCheck refuses that at start, so " \
+                   "`kamal deploy#{" -d #{destination}" if destination}` would build and push an " \
+                   "image whose container never comes up. Put each knob in that destination's " \
+                   "env.clear, or in env.secret WITH a matching .kamal/#{SECRETS_FILES[destination]} line."
+    end
+
+    UNDECIDED_LIBRARY_BACKEND.each do |destination|
+      result = shortfalls.fetch(destination)
+
+      refute_empty result[:problems],
+                   "#{destination} is exempted by UNDECIDED_LIBRARY_BACKEND but now satisfies " \
+                   "LIBRARY_BACKEND=#{result[:backend]} — DELETE IT FROM THAT LIST. The exemption " \
+                   "only records an open product decision (see config/deploy.ovh.yml's " \
+                   "CHUNK_REMOTE_URL comment); left behind once the decision is made, it silently " \
+                   "stops guarding the destination it was written for."
+    end
+  end
 end

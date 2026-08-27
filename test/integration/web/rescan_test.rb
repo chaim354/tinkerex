@@ -13,8 +13,12 @@ module Web
   #
   # `FileLayer.current =` for the scannable leg rather than pin_file_layer_backend, following
   # share_delivery_test.rb: a Share adapter needs a tmpdir ROOT that pin (which rebuilds from ENV)
-  # does not supply. The teardown reset is load-bearing, not decoration -- a direct assignment
-  # does not set @file_layer_backend_pinned, so test_helper's teardown will not clean up after it.
+  # does not supply. The teardown below is load-bearing for `use_scannable_backend`, which
+  # hand-rolls its own tmpdir -- a direct assignment sets no @file_layer_backend_pinned, so nothing
+  # else removes that one. It is NOT what cleans up setup's root, and could not be:
+  # `use_scannable_backend` REASSIGNS `@root`, so this teardown saw only the second directory and
+  # leaked the first on every test that calls it. That is why `use_fresh_share_library!` records
+  # the directories it mints itself rather than trusting `@root` (test_helper.rb).
   class RescanTest < ActionDispatch::IntegrationTest
     include ActiveJob::TestHelper
 

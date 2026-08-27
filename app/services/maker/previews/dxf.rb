@@ -61,6 +61,15 @@ module Maker
 
       # ---- the one traversal -------------------------------------------------------------
 
+      # Takes the TOKENIZED PAIRS, not the raw bytes — the same shape as `Lbrn2.each_geometry`,
+      # which takes the parsed document. Both artifacts already need the pairs for their own
+      # reasons (`layer_colors` here, `mm_per_unit` too in `DxfGeometry`), so a traversal that
+      # lexed for ITSELF made every render lex the file twice — measured, both legs. The lex is
+      # the expensive half: the 2026-08-19 audit timed this exact `tokenize` body at ~148 ms per
+      # pass on a synthetic 4.4 MB drawing (300k pairs). `dxf_geometry_test.rb` guards the count
+      # by counting `tokenize` calls — a guard on WORK DONE, because lexing twice draws the
+      # identical picture and no assertion about the output can see it.
+      #
       # Yields every drawable entity as
       #   (layer_name, [[x, y], ...], closed?, curve_or_nil, object_id)
       # with points in DXF MODEL SPACE: native drawing units, Y-UP, exactly as the file records
@@ -81,8 +90,7 @@ module Maker
       # the emit; DXF has no Group/BackupPath structure forcing an id to be reserved ahead of the
       # decision to draw. Callers may rely on equality only, never on any relationship to the
       # entity's position in the file.
-      def each_geometry(dxf_bytes)
-        pairs = tokenize(dxf_bytes)
+      def each_geometry(pairs)
         off = layers_off(pairs)
         counter = 0
 
@@ -313,11 +321,12 @@ module Maker
       # ---- SVG (the thumbnail) -----------------------------------------------------------
 
       def to_svg(dxf_bytes, size: 512)
-        colors = layer_colors(tokenize(dxf_bytes))
+        pairs = tokenize(dxf_bytes)
+        colors = layer_colors(pairs)
         bbox = BBox.new
         els = []
 
-        each_geometry(dxf_bytes) do |layer, points, closed, curve, _object_id|
+        each_geometry(pairs) do |layer, points, closed, curve, _object_id|
           flipped = points.map { |(x, y)| flip(x, y) }
           flipped.each { |(x, y)| bbox.add(x, y) }
           els << element_svg(flipped, closed, curve, colors[layer] || STROKE)
