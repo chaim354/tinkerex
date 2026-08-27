@@ -326,7 +326,7 @@ slot. A closed item keeps its row for the same reason it always did: the citatio
 4. Selective sync needs an app surface → `tinkerex#121`
 5. Managed-Postgres at scale → `tinkerex#122`
 6. Linux and Windows CI coverage is skipped, not passing → `tinkerex#123`
-7. `SQLite3::BusyException` — REOPENED, it recurs → `tinkerex#124`
+7. `SQLite3::BusyException` — the write path it needed left with the engine → `tinkerex#124`
 8. `FilesController#index` render cost → `tinkerex#125`
 9. No web UI for inventory, BOM, suppliers, locations, collections, tags → `tinkerex#126`
 10. A device push DOES nudge project-folder filing → `tinkerex#127` *(closed)*
@@ -989,9 +989,9 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   `RAILS_MAX_THREADS: 16` on one Puma worker, so 16 requests can each sit here for the full wait and
   occupy every thread, the same head-of-line argument §14c makes for `ADDON_SERVICE_MAX_TIMEOUT`.
   15 s covers an fsync stall; if writes still time out the answer is fewer concurrent writers or a
-  faster disk. **`PRAGMA busy_timeout` reads 0 and that is EXPECTED** — Rails applies this through
-  the sqlite3 gem's Ruby-level `busy_handler_timeout`, so checking the pragma to see whether a
-  change took effect gives the wrong answer; measure the wait instead.
+  faster disk. **`PRAGMA busy_timeout` reads 0 and that is EXPECTED** — Rails applies it through
+  the gem's `busy_handler_timeout`, which has NO READER, so only behaviour proves the setting took
+  effect: `test/sqlite_concurrency_test.rb` times a blocked writer, and pins WAL + IMMEDIATE too.
 - **A FAKE THAT SHARES THE CODE'S MISUNDERSTANDING CONFIRMS IT.** `FakeS3` decoded
   `copy_source` with `CGI.unescape` while the adapter encoded with `CGI.escape` — exact
   inverses, so **79/80 tests were green** over **silent permanent data loss on any filename

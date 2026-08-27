@@ -11,8 +11,11 @@ default: &default
   # after CLAUDE.md §12.7's intermittent was diagnosed: it is an FSYNC problem, not a lock-logic
   # one. Under sustained disk I/O the holder's fsync outlasts the wait and the WAITER raises
   # `SQLite3::BusyException` — measured 3 of 8 suite runs with `dd`+`sync` loops running against
-  # 0 of 12 on a quiet box. `User#next_seq!` is where it lands, because every commit, mutation,
-  # restore and conflict serializes there.
+  # 0 of 12 on a quiet box. It landed in `User#next_seq!`, where every commit, mutation, restore
+  # and conflict serialized -- a path that LEFT THIS PROCESS with the sync engine on 2026-08-25,
+  # so `next_seq!` now has no caller here at all. Re-measured on the engine-free tree under the
+  # same disk pressure: 0 of 12 share-leg runs (tinkerex#124). The number below is kept as the
+  # SELF-HOST ceiling it always was, not because this suite still needs it.
   #
   # THIS IS A PRODUCTION SETTING, not a test knob — self-host SQLite inherits this anchor, so the
   # number is the concurrency ceiling for a self-host box under disk pressure.
@@ -26,7 +29,8 @@ default: &default
   #
   # NOTE `PRAGMA busy_timeout` READS 0 AND THAT IS EXPECTED — Rails applies this through the
   # sqlite3 gem's Ruby-level `busy_handler_timeout` (`sqlite3_adapter.rb:853-856`), not the pragma.
-  # Checking the pragma to see whether this took effect gives the wrong answer.
+  # That attribute is WRITE-ONLY, so neither the pragma nor the gem can tell you this value took
+  # effect; `test/sqlite_concurrency_test.rb` measures a real blocked writer instead.
   timeout: 15000
 
 # Postgres profile (managed/SaaS) — used when DATABASE_URL is set, e.g.
