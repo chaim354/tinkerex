@@ -1,3 +1,5 @@
+require "tmpdir"
+
 module Maker
   module Git
     # A project's git repository: hydrate from the library, commit, consolidate into a pack,
@@ -34,6 +36,13 @@ module Maker
       # WHERE THE EPHEMERAL CACHE LIVES. Under tmp/ because it is losable by design -- that is the
       # whole difference between a cache and the app volume this architecture rejects.
       CACHE_ROOT = "tmp/git-cache".freeze
+
+      # HOW MANY PACKS IS TOO MANY. Borrowed from git's own `gc.autoPackLimit` default rather than
+      # invented: git has spent twenty years deciding when a repository has too many packs, and a
+      # number with a source is one a later reader can go and check. The COMPARISON is borrowed
+      # too -- builtin/gc.c's `too_many_packs()` is `gc_auto_pack_limit < cnt`, so fifty packs is
+      # fine and fifty-one is not.
+      MAX_PACKS = 50
 
       def self.for(project, adapter: FileLayer.current, cache_root: nil)
         new(project, adapter:, cache_root:)
@@ -118,6 +127,58 @@ module Maker
         name
       end
 
+      # Collapse every PACK into one, and return its name -- or nil when there are not enough packs
+      # to be worth it. #consolidate! writes one pack per commit WINDOW and never collapses them,
+      # which is right for the window and wrong for a year of them: 365 daily windows is 365 packs,
+      # and a hydrate fetches all of them. The file-count term consolidation exists to keep small
+      # grows back one window at a time, and nothing else was ever going to notice.
+      #
+      # THE OLD PACKS ARE DELETED ONLY AFTER THE NEW ONE IS WRITTEN AND VERIFIED, IN THE CACHE AND
+      # IN THE LIBRARY. The reverse order is §14a's copy-delete-tombstone landmine with the stakes
+      # raised as far as they go: a failure between the two leaves the repository with NO OBJECTS AT
+      # ALL and nothing anywhere saying so. Every state this method can be interrupted in is a
+      # COMPLETE repository -- new pack written beside the old ones (duplicated objects), library
+      # collapsed and cache not (the next hydrate settles it), and so on down.
+      #
+      # OBJECTS ARE ENUMERATED FROM THE .idx FILES, NEVER FROM A REVWALK, and the difference is
+      # whether a repack silently drops objects. A revwalk reaches what is reachable FROM HEAD, and
+      # a pack holds more than that: a blob written by a `commit!` whose `Rugged::Commit.create`
+      # then raised is packed by the next #consolidate! and is reachable from nothing, and in place
+      # the repository is the MAKER'S OWN -- their branches, their tags, their stashes, none of
+      # which this app created and all of which a HEAD-only walk would drop. An idx is every object
+      # in its pack BY CONSTRUCTION, so this cannot: what the packs held, the new pack holds.
+      # Reading the objects is then rugged's job -- an idx gives oids, `Rugged::Repository#read`
+      # resolves each one through libgit2, which unlike this app's writer can also read a DELTIFIED
+      # pack that a maker's own `git gc` left in an in-place repository.
+      #
+      # LOOSE OBJECTS ARE LEFT WHERE THEY ARE. Collapsing those is #consolidate!'s job; folding
+      # them in here would be a second spelling of a method that already exists, and leaving them
+      # costs nothing -- the repository is complete either way.
+      def repack_all!
+        idx_rels = pack_idx_rels
+        return nil if idx_rels.size <= MAX_PACKS
+        # A MULTI-PACK INDEX NAMES THE PACKS IT COVERS, so deleting them behind it leaves git
+        # reading a repository it believes is corrupt -- and in place that is the maker's own
+        # folder. This app never writes one; a maker who ran `git multi-pack-index write` in their
+        # project does. Declining is recoverable (delete the index, the next run repacks); the
+        # alternative is not.
+        return nil if File.exist?(File.join(git_dir, "objects/pack", "multi-pack-index"))
+
+        objects = packed_objects(idx_rels)
+        name = write_verified_pack!(objects)
+        # SNAPSHOTTED FROM THE LISTING TAKEN BEFORE THE WRITE, and filtered by the new pack's name.
+        # A pack file is named for its own content hash, so the new one can only collide with an old
+        # one by being byte-identical to it -- but the cost of being wrong is deleting the pack we
+        # just wrote, which is the whole failure this method is ordered to avoid.
+        superseded = idx_rels.flat_map { |rel| pack_sidecars(rel) }.reject { |rel| rel.include?(name) }
+        persist_repack!(name, superseded)
+        # The ODB this instance opened has had its packs replaced underneath it; the next caller
+        # gets a repository that has read the directory as it now is. (#discard_cache! does the
+        # same, for the same reason.)
+        @rugged = nil
+        name
+      end
+
       # Push everything the library does not already have. A no-op in place.
       #
       # PACKS AND REFS, NEVER LOOSE OBJECTS. #consolidate! runs first; persisting loose objects
@@ -140,6 +201,11 @@ module Maker
       def head_oid = rugged.references[BRANCH]&.target_id
       def managed? = rugged.config[MANAGED_CONFIG_KEY].to_s == "true"
       def loose_object_rels = Dir.glob("objects/??/*", base: git_dir)
+      # ONE PER PACK, and it is the .idx that is counted rather than the .pack: a pack this code can
+      # do nothing with is a pack whose index it cannot read, and #repack_all! enumerates through
+      # the index. Public for the same reason #loose_object_rels is -- it is what a caller (and the
+      # suite) asks to find out whether a repack is due.
+      def pack_idx_rels = Dir.glob("objects/pack/*.idx", base: git_dir)
 
       # Throw the cache away. A no-op in place, where the "cache" is the user's own library and
       # deleting it would delete their repository.
@@ -189,6 +255,125 @@ module Maker
       def local_rels
         Dir.glob("**/*", base: git_dir, flags: File::FNM_DOTMATCH)
            .reject { |r| File.directory?(File.join(git_dir, r)) }
+      end
+
+      # [[oid_hex, type, payload], ...] for every object in the named packs, DEDUPLICATED BY OID.
+      # The same object can legitimately sit in more than one pack -- `rugged.write` re-writes an
+      # object a pack already holds as a fresh loose one, which the next #consolidate! then packs
+      # again -- and two entries carrying one oid would put that oid in the new index twice.
+      def packed_objects(idx_rels)
+        by_oid = {}
+        idx_rels.each do |rel|
+          idx_oids(File.join(git_dir, rel)).each do |oid|
+            next if by_oid.key?(oid)
+
+            object = rugged.read(oid)
+            by_oid[oid] = [ oid, object.type.to_s, object.data ]
+          end
+        end
+        by_oid.values
+      end
+
+      # THE OIDS IN ONE PACK, READ OFF ITS idx v2 -- the format PackWriter#build_idx writes and the
+      # one git has written by default since 2007. An 8-byte header, a 256-entry CUMULATIVE fanout
+      # whose last entry IS the object count, then that many 20-byte oids.
+      #
+      # AN INDEX THIS CANNOT PARSE RAISES RATHER THAN RETURNING WHAT IT MANAGED TO READ. A short
+      # list here is a new pack missing objects followed by the deletion of the packs that had them
+      # -- silent permanent loss wearing a tidy-up's clothes. Refusing leaves every pack in place,
+      # which is the recoverable direction §14a takes everywhere else.
+      def idx_oids(path)
+        data = File.binread(path)
+        raise "#{path}: not a v2 pack index; refusing to repack" \
+          unless data[0, 4] == "\xFFtOc".b && data[4, 4].unpack1("N") == 2
+
+        count = data[8 + (255 * 4), 4].unpack1("N")
+        base = 8 + (256 * 4)
+        raise "#{path}: index is truncated (#{count} objects, #{data.bytesize} bytes)" \
+          if data.bytesize < base + (count * 20)
+
+        Array.new(count) { |i| data[base + (i * 20), 20].unpack1("H*") }
+      end
+
+      # Write the new pack somewhere it can be read back BY SOMETHING THAT IS NOT THIS CODE, then
+      # move it into place. Returns its name.
+      #
+      # "VERIFIED" IS A MECHANISM HERE, NOT A WORD. The scratch directory is a real repository
+      # holding NOTHING BUT THE NEW PACK, so every object read back is answered by that pack alone
+      # -- verifying in `git_dir` would let the OLD packs answer, which is precisely the
+      # reassurance a repack must not accept. libgit2 then parses the index this app wrote and
+      # returns each object's type and bytes, both compared against what came out of the old packs.
+      # That is the independent reader §14e demands: a checker that shares the writer's
+      # misunderstanding confirms it, which is how FakeS3 kept 79 of 80 tests green over silent
+      # data loss. `git fsck` would be a second such reader and is deliberately NOT used here -- it
+      # needs a binary the container need not have, and a verification step that silently skips
+      # itself is worse than no verification at all. (The suite runs it anyway, where a skip is
+      # visible.)
+      def write_verified_pack!(objects)
+        Dir.mktmpdir("git-repack") do |scratch|
+          ::Rugged::Repository.init_at(scratch, true)
+          result = PackWriter.write(File.join(scratch, "objects/pack"), objects)
+          verify_pack!(scratch, objects)
+          Dir.glob(File.join(scratch, "objects/pack", "pack-#{result[:name]}.*")).each do |src|
+            FileUtils.mv(src, File.join(git_dir, "objects/pack", File.basename(src)))
+          end
+          result[:name]
+        end
+      end
+
+      def verify_pack!(scratch, objects)
+        reader = ::Rugged::Repository.new(scratch)
+        objects.each do |oid, type, payload|
+          object = begin
+            reader.read(oid)
+          rescue ::Rugged::OdbError
+            raise "repack refused: #{oid} is not readable from the pack just written"
+          end
+          next if object.type.to_s == type && object.data == payload
+
+          raise "repack refused: #{oid} reads back as #{object.type}/#{object.len} bytes"
+        end
+      end
+
+      # Every file belonging to one pack -- `.pack` and `.idx`, plus any sidecar git left beside
+      # them (`.rev`, `.mtimes`, `.keep`, `.promisor`) in an in-place repository the maker has run
+      # git in themselves. Globbing the STEM rather than naming two extensions is what keeps a
+      # sidecar from outliving the pack it describes.
+      def pack_sidecars(idx_rel)
+        Dir.glob("#{idx_rel.delete_suffix('.idx')}.*", base: git_dir)
+      end
+
+      # PUSH THE NEW PACK, THEN DROP THE OLD ONES -- in that order, in the library first and the
+      # working directory second. A library that lost its packs before gaining their replacement is
+      # a repository nothing can hydrate, and no error would say so: the next hydrate would simply
+      # build an empty repo out of an empty listing.
+      #
+      # THE LIBRARY DELETE IS THE POINT OF THE WHOLE METHOD. Without it the library keeps every pack
+      # forever and the repack accomplishes nothing where it matters -- a hydrate reads the LIBRARY,
+      # so 365 packs would still be 365 fetches while the cache looked tidy.
+      def persist_repack!(name, superseded)
+        push_pack!(name)
+        superseded.each do |rel|
+          @adapter.delete_repo_data(@user, project: @project, rel:)
+          # IN PLACE THE LIBRARY IS THE WORKING DIRECTORY, so the delete above already removed this
+          # file; on a hydrated backend the cache still holds its own copy.
+          path = File.join(git_dir, rel)
+          File.unlink(path) if File.exist?(path)
+        end
+      end
+
+      # Exactly the pack just written, rather than #persist!'s sweep of everything the library is
+      # missing. A repack changes one thing, and a sweep here would also push any LOOSE object the
+      # working directory happened to be holding -- the 11,287-request hydrate #consolidate! exists
+      # to prevent, reintroduced by the method that was cleaning up after it.
+      def push_pack!(name)
+        return if in_place?
+
+        Dir.glob("objects/pack/pack-#{name}.*", base: git_dir).each do |rel|
+          File.open(File.join(git_dir, rel), "rb") do |io|
+            @adapter.write_repo_data(@user, project: @project, rel:, io:)
+          end
+        end
       end
 
       # PER USER AND PER PROJECT. The rels inside two repositories are identical, so a shared
