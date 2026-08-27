@@ -261,6 +261,86 @@ module Maker
         assert_raises(FileLayer::NotFound) { @repo.blob_at(oid:, path: "absent.md") }
       end
 
+      # ---- a repository we did not create ------------------------------------------------------
+      #
+      # THE MARKER IS ONLY A MARKER IF IT IS READ BEFORE IT IS WRITTEN. `ensure_initialized!` wrote
+      # `tinkerex.managed` unconditionally, so the one question it exists to answer was destroyed at
+      # the moment of asking: a maker's own clone under `Projects/` was adopted on sight, and the
+      # same pass then cleared their index and committed onto their `refs/heads/main`.
+
+      # A REAL REPOSITORY WITH A REAL COMMIT AND NO MARKER -- what `git clone` leaves behind. It is
+      # planted at `git_dir` rather than through the port because no port verb mints one: on share
+      # git itself wrote it and the scan observed it, and on a hydrated backend it arrives as
+      # repo data. Returns the head oid, which is what "untouched" is measured against.
+      def plant_a_foreign_repository!
+        FileUtils.mkdir_p(@repo.git_dir)
+        their = ::Rugged::Repository.init_at(@repo.git_dir, true)
+        their.config["user.name"] = "The Maker"
+        index = their.index
+        index.add(path: "THEIRS.md", oid: their.write("their own work\n", :blob), mode: 0o100644)
+        signature = { name: "The Maker", email: "maker@example.com", time: Time.current.to_time }
+        oid = ::Rugged::Commit.create(their, tree: index.write_tree(their), message: "mine",
+                                             parents: [], author: signature, committer: signature,
+                                             update_ref: Maker::Git::Repo::BRANCH)
+        their.head = Maker::Git::Repo::BRANCH
+        oid
+      end
+
+      # EVERY FILE'S CONTENT, NOT A COUNT AND NOT A LIST OF NAMES. "We did not commit" is a weaker
+      # claim than "we wrote nothing at all": stamping the config key, clearing the index and
+      # writing it back are each a silent mutation of the maker's own repository that no
+      # commit-shaped assertion can see.
+      def repository_digest(dir)
+        Dir.glob("**/*", base: dir, flags: File::FNM_DOTMATCH)
+           .reject { |rel| File.basename(rel).match?(/\A\.\.?\z/) }
+           .reject { |rel| File.directory?(File.join(dir, rel)) }
+           .sort
+           .map { |rel| [ rel, Digest::SHA256.hexdigest(File.binread(File.join(dir, rel))) ] }
+      end
+
+      def test_hydrate_refuses_a_repository_this_app_did_not_create_and_writes_nothing
+        theirs = plant_a_foreign_repository!
+        before = repository_digest(@repo.git_dir)
+
+        assert_raises(Maker::Git::Repo::UnmanagedRepository) { @repo.hydrate! }
+
+        assert_equal before, repository_digest(@repo.git_dir),
+                     "the refusal still wrote into a repository this app did not create"
+        reopened = ::Rugged::Repository.new(@repo.git_dir)
+        assert_equal theirs, reopened.references[Maker::Git::Repo::BRANCH].target_id,
+                     "their branch was moved"
+        assert_nil reopened.config[Maker::Git::Repo::MANAGED_CONFIG_KEY],
+                   "we stamped our own marker into their config, which is how their repo becomes ours"
+        assert_equal "The Maker", reopened.config["user.name"], "their config was rewritten"
+        assert_nil Maker::GitRepo.find_by(project: @project)
+      end
+
+      # THE OVER-REFUSAL THAT WOULD BREAK EVERY ORDINARY PROJECT. A directory holding no repository
+      # is not a repository -- you cannot create one by creating the folder -- so it is ours to
+      # initialize. This is the ordinary FIRST-PASS state on the hydrated backends, whose #hydrate!
+      # runs `mkdir_p(cache_dir)` before anything else, and it is what an empty `.git` a maker made
+      # by hand looks like in place.
+      def test_hydrate_initializes_a_directory_that_exists_but_holds_no_repository
+        FileUtils.mkdir_p(@repo.git_dir)
+
+        @repo.hydrate!
+        oid = @repo.commit!(paths: { "a.txt" => "1\n" }, message: "c")
+
+        assert_equal oid, @repo.head_oid
+        assert @repo.managed?, "a repository we initialized must carry our marker"
+      end
+
+      # Fragments are not a repository either, and this is the corner where the init test and the
+      # refusal test are the SAME question -- "can libgit2 open this?" -- rather than two spellings
+      # that can disagree about a half-written directory.
+      def test_hydrate_initializes_a_directory_holding_fragments_but_no_repository
+        FileUtils.mkdir_p(File.join(@repo.git_dir, "objects"))
+
+        @repo.hydrate!
+
+        assert @repo.commit!(paths: { "a.txt" => "1\n" }, message: "c")
+      end
+
       # The managed marker is what tells OUR repo from one the maker made themselves, and it has to
       # survive the round trip or the distinction is worthless.
       def test_the_managed_marker_is_written_at_init_and_readable_after_a_rehydrate
@@ -370,6 +450,24 @@ module Maker
       def work_tree
         dir = adapter.repo_data_dir(@user, project: @project)
         dir && Pathname.new(dir).parent
+      end
+
+      # A `.git` that is a FILE is a `gitdir:` pointer -- what `git worktree add` and a submodule
+      # write -- so the project folder is somebody else's linked working tree. IN PLACE ONLY,
+      # because it is a property of the maker's own folder: on a hydrated backend `git_dir` is our
+      # cache, and #hydrate!'s own `mkdir_p` would meet the file first.
+      #
+      # THE POINTER'S TARGET IS DELIBERATELY MISSING, which is the corner the open cannot answer:
+      # libgit2 raises OSError trying to resolve it, which without a guard reads as "nothing here"
+      # and sends `mkdir_p` at an existing file. A pointer whose target resolves is refused by the
+      # marker check instead, since it opens the MAIN repository and that carries no marker.
+      def test_hydrate_refuses_a_gitdir_pointer_file_where_our_repository_would_go
+        File.write(@repo.git_dir, "gitdir: #{@root.join('nowhere/.git/worktrees/x')}\n")
+
+        assert_raises(Maker::Git::Repo::UnmanagedRepository) { @repo.hydrate! }
+
+        assert_equal "gitdir: #{@root.join('nowhere/.git/worktrees/x')}\n", File.read(@repo.git_dir),
+                     "the pointer file was overwritten"
       end
     end
 

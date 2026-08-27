@@ -30,6 +30,62 @@ what you put in it. Do not reopen object-level storage.
 
 ## What must not be undone
 
+- **THE MANAGED MARKER MUST BE READ BEFORE IT IS WRITTEN, AND A REPOSITORY WITHOUT IT IS REFUSED.**
+  `Repo#ensure_initialized!` wrote `tinkerex.managed` unconditionally, which destroyed the one
+  question it exists to answer at the exact moment of asking: a repository already at `git_dir` and
+  not carrying the marker is by definition not ours, and the app adopted it on sight. Found on the
+  share box, where `Projects/TheFlightWall_OSS` is a project folder holding the maker's own clone —
+  the next pass would have stamped our marker into their `.git/config`, run `index.clear` over their
+  staged work, put a bot commit of 2,305 files on their `refs/heads/main`, and rewritten their index
+  file. **"Already exists" is "libgit2 can open it", never "the directory is there"**: the hydrated
+  backends' own `hydrate!` runs `mkdir_p(cache_dir)` first, so a directory that exists is the normal
+  first-pass state, and an empty `.git` a maker made by hand is not a repository either — you cannot
+  create one by creating the folder. A failure to open is *not a repository*, not an error (measured
+  on rugged 1.9.6: absent path → `Rugged::OSError`, empty or fragmentary directory →
+  `Rugged::RepositoryError`), and the same open answers both the refusal and the "should I init"
+  question so the two cannot drift. **A `.git` that is a FILE is always foreign** — a `gitdir:`
+  pointer means somebody else's linked worktree, and it is checked first because a pointer whose
+  target is missing raises `OSError`, which otherwise reads as "nothing here" and sends `mkdir_p` at
+  an existing file. The refusal lives at the write, not in a predicate a caller must remember: every
+  door into `hydrate!` inherits it.
+
+- **THE REFUSAL IS A SKIP, NOT A FAILURE, AND IT IS SAID ONCE A DAY.** `ProjectCommit#call!` rescues
+  `Repo::UnmanagedRepository` and returns `nil` — its already-documented answer for "nothing to
+  record" — so the project is skipped and every other project's pass is untouched. It is *not* left
+  to `CommitJob`'s per-project `rescue StandardError`, which counts a project as FAILED and prints an
+  error line: that is right for a NAS that blinked and wrong for a standing, correct, permanent
+  state, and it would make "N FAILED" meaningless on any box where one maker keeps their own clone in
+  `Projects/`. A silent skip is not acceptable either — a maker whose project never gains history
+  deserves a line saying why — so the WARN is claimed through `Rails.cache` with `unless_exist:`,
+  once per project per `REFUSAL_LOG_INTERVAL`. A cache is the right store *because* losing it is
+  harmless: an expiry, a deploy or a store that keeps nothing costs one extra line and never silence.
+  (§14e's scar is this mechanism failing the other way — a rate limit backed by the test env's
+  NullStore fires never. Measured, not assumed: `NullStore#write` returns true every time, so the
+  test env logs on every pass.)
+
+- **A NESTED WORKING TREE IS PRUNED WHOLE — THE MARKER'S PARENT AND EVERYTHING BELOW IT.** The same
+  refusal one level down, and found on the same box:
+  `Projects/ESPHome-Projection-Clock/.claude/worktrees/<x>/` is a working tree inside a project whose
+  root has no repository at all. Skipping only the marker leaves every file *beside* it committed
+  into our history, which is the identical mistake with a smaller radius. It is the marker's PARENT
+  that is pruned, because `.git/**` contents are never indexed (`Library::RepoMetadata`'s asymmetry)
+  and so there is nothing under the marker to exclude. **A `.git` FILE counts here, where
+  `Maker::AttachToProject#walk_for_marker` deliberately requires a directory** — the two answer
+  different questions: a linked worktree and a submodule write a `gitdir:` pointer file, git treats
+  that folder as a working tree either way, and the pointer is also exactly what was being committed
+  as `.git.ptr`. Pruning its parent drops it with its siblings, so there is no separate "never commit
+  a file named `.git`" rule to keep in step. **The project's own root marker is exempt only when it
+  is a DIRECTORY**: that is the marker every managed project acquires on its first commit, so
+  pruning on it would stop the feature dead at the second pass, while whether *that* repository is
+  ours is the previous bullet's question. The exemption is not extended to a pointer file at the
+  project root — we only ever create a directory there. Detection stays at **one query per level**
+  (`kind: "dir"` OR a child named `.git`); this runs per project per scan over thousands of nodes, so
+  a query per node is not available. **This is not a build-artifact ignore list and must not grow
+  into one**: `.pio/libdeps` and `node_modules` are still committed, except where a dependency was
+  vendored as a clone and kept its own `.git` — which this prunes incidentally, as a working tree,
+  not because of its name. Whether build output belongs in a project's history is a separate product
+  decision; an extension list invented here is the drift §14d keeps recording.
+
 - **CONSOLIDATION IS IN THE COMMIT LOOP, NOT DEFERRED.** Measured: a 1,500-commit project
   unconsolidated needs **11,287 GETs to hydrate on s3** against ~3 packed, and 11,310 metadata
   round trips over SMB against ~30 — every cold container start. A window that commits without
