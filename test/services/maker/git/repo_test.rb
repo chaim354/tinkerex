@@ -492,6 +492,70 @@ module Maker
         assert_includes `git -C #{work_tree} ls-files -v`.lines.map(&:strip), "h core.stl.ptr"
       end
 
+      # A REPOSITORY WRITTEN BEFORE THE MARK EXISTED MUST BE CORRECTED WITHOUT WAITING FOR A
+      # CHANGE, and this is the case the fix originally missed on real hardware. Its pointers were
+      # committed unflagged, so `git status` reports them DELETED -- and a quiet project never
+      # commits again, so an index only rewritten alongside a commit would leave it lying
+      # indefinitely. Measured on the share box: after the fix shipped, laser-mount still showed
+      # 13 ` D` and zero assume-valid entries, because nothing in it had changed.
+      #
+      # THE FIRST PASS HERE NAMES NO ABSENT PATH, which is exactly what the old code did -- that is
+      # what makes this fixture an old repository rather than a contrived one.
+      def test_a_repository_committed_before_the_mark_is_corrected_without_a_new_commit
+        hydrate_or_skip_without_a_work_tree!
+
+        File.write(work_tree.join("notes.md"), "one\n")
+        @repo.commit!(paths: { "notes.md" => "one\n", "core.stl.ptr" => POINTER_BODY },
+                      message: "written before the mark existed")
+        # `.lines.map(&:chomp)`, never `.strip` -- porcelain's status column is LEADING WHITESPACE
+        # (" D" is not "D"), so stripping the line silently rewrites what is being asserted.
+        assert_equal [ " D core.stl.ptr" ],
+                     `git -C #{work_tree} status --porcelain 2>&1`.lines.map(&:chomp),
+                     "fixture is inverted: the old shape must actually report the deletion, or " \
+                     "this test passes without the migration doing anything"
+
+        # The tree is IDENTICAL, so this pass makes no commit -- only the index can change.
+        assert_nil @repo.commit!(paths: { "notes.md" => "one\n", "core.stl.ptr" => POINTER_BODY },
+                                 message: "same tree", absent_from_work_tree: [ "core.stl.ptr" ]),
+                   "fixture is inverted: this pass must NOT commit, or it rewrites the index for " \
+                   "the ordinary reason and the migration arm is never exercised"
+
+        assert_empty `git -C #{work_tree} status --porcelain 2>&1`.strip,
+                     "an already-committed pointer was never corrected, so it still reads as DELETED"
+        assert_includes `git -C #{work_tree} ls-files -v`.lines.map(&:strip), "h core.stl.ptr"
+      end
+
+      # ONCE THE INDEX IS RIGHT, A QUIET PASS MUST LEAVE IT ALONE. The migration arm above is
+      # conditional for this reason and not for tidiness: `index.clear` discards whatever the maker
+      # has staged, so rewriting the index on every quiet pass would throw their staged work away
+      # every fifteen minutes, forever, for no gain. Guarding only the correction leaves that cost
+      # payable exactly once per repository.
+      #
+      # Written because the mutation showed it was unguarded: making the write unconditional kept
+      # every other test in this file green.
+      def test_a_pass_that_corrects_nothing_leaves_the_makers_staged_work_alone
+        hydrate_or_skip_without_a_work_tree!
+
+        File.write(work_tree.join("notes.md"), "one\n")
+        @repo.commit!(paths: { "notes.md" => "one\n", "core.stl.ptr" => POINTER_BODY },
+                      message: "already correct", absent_from_work_tree: [ "core.stl.ptr" ])
+
+        # The maker stages something of their own.
+        File.write(work_tree.join("staged.txt"), "mine\n")
+        system("git -C #{work_tree} add staged.txt", out: File::NULL, err: File::NULL)
+        assert_includes `git -C #{work_tree} status --porcelain 2>&1`.lines.map(&:chomp),
+                        "A  staged.txt", "fixture is inverted: nothing was actually staged"
+
+        assert_nil @repo.commit!(paths: { "notes.md" => "one\n", "core.stl.ptr" => POINTER_BODY },
+                                 message: "same tree", absent_from_work_tree: [ "core.stl.ptr" ]),
+                   "fixture is inverted: this pass must not commit"
+
+        assert_includes `git -C #{work_tree} status --porcelain 2>&1`.lines.map(&:chomp),
+                        "A  staged.txt",
+                        "a pass that had nothing to correct rewrote the index and discarded the " \
+                        "maker's staged work"
+      end
+
       # THE OTHER DIRECTION, AND IT IS THE WORSE LIE OF THE TWO. Assume-valid tells git to stop
       # consulting the file, so on a CONTENT entry it would report a clean tree while the maker's
       # own edit sat unrecorded. The ` D` this fix removes was alarming and false; this would be
