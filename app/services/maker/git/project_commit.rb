@@ -122,7 +122,13 @@ module Maker
           # a later pass, because git keeps whatever it was told.
           next if rel.nil?
 
-          case Tracking.mode_for(node.name)
+          # THE SIZE IS PASSED, AND THIS IS THE CALL THAT MAKES `MAX_CONTENT_BYTES` REAL. Every
+          # other `mode_for` caller is a READ asking about a file already committed; this is the
+          # only door that can put BYTES into a history git cannot prune. Drop `size:` here and the
+          # ceiling still exists, still has tests, and never fires -- the shape §15 records as a
+          # knob that shipped inert. Pinned by project_commit_test's over-ceiling test, which goes
+          # red on exactly this argument going missing.
+          case Tracking.mode_for(node.name, size: node.size)
           when :content
             content = content_of(node)
             out[rel] = content unless content.nil?
