@@ -63,13 +63,32 @@ module FileLayer
   # answers -- which §14a forbids. IT IS NOT `syncable`, though the two agree on all three
   # backends today; that is three samples, not an identity, and encoding such a coincidence once
   # already (`is_a?(Share)`) is the whole reason `scannable` exists.
+  #
+  # REPO_STORABLE answers ONE question:
+  #
+  #     can this backend hold opaque bytes OUTSIDE the catalog?
+  #
+  # It is true on all three backends today, and per this file's own standing warning that is
+  # THREE SAMPLES, NOT AN IDENTITY. The distinction has to be argued, because it agrees with
+  # `scannable` on share and s3 and disagrees with nothing:
+  #
+  #   scannable      asks where the CATALOG comes from
+  #   port_writable  asks which door BYTES go in
+  #   repo_storable  asks whether bytes can be stored with NO catalog entry at all
+  #
+  # A read-only backend — an archive mount, a published bucket — would answer false here while
+  # still answering true to `scannable`, because it can be indexed and cannot be written to. That
+  # is the backend that splits them, and it is the reason this is not spelled `scannable`.
+  #
+  # WHAT IT DOES NOT MEAN: it is not "supports git". Nothing about git is visible at the port.
   Capabilities = Data.define(:versioned, :syncable, :presignable, :scannable, :port_writable,
-                             :dir_deletable) do
+                             :dir_deletable, :repo_storable) do
     def versioned? = versioned
     def syncable? = syncable
     def presignable? = presignable
     def scannable? = scannable
     def port_writable? = port_writable
     def dir_deletable? = dir_deletable
+    def repo_storable? = repo_storable
   end
 end

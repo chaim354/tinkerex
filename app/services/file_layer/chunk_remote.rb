@@ -48,9 +48,13 @@ module FileLayer
     # already draws when it notes `manifest#download` gates on `syncable`, NOT `presignable`. Nothing
     # in the app gates on this flag today (checked), so the cost is a stream where a redirect might
     # have served, which is stated in `#download` rather than hidden.
+    #
+    # repo_storable: true -- the sync server holds them as ordinary files. Here the data IS
+    # catalogued, and that is correct rather than a leak: `nodes` MIRRORS the server rather than
+    # a scan, so what the server holds is what the mirror must show.
     CAPABILITIES = Capabilities.new(
       versioned: true, syncable: true, presignable: false,
-      scannable: false, port_writable: false, dir_deletable: true
+      scannable: false, port_writable: false, dir_deletable: true, repo_storable: true
     ).freeze
 
     # `write` EXISTS IN ORDER TO REFUSE, and its absence was a real omission the contract caught.

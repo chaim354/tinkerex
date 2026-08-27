@@ -24,8 +24,11 @@ module FileLayer
       #
       # port_writable: true — there is no sync engine here, so the port IS the write path
       # (#write/#delete/#move/#undelete) and the UI POSTs bytes to it.
+      #
+      # repo_storable: true — a mounted directory holds any file we put there; the scan simply
+      # never looks under `.git`.
       Capabilities.new(versioned: false, syncable: false, presignable: false, scannable: true,
-                       port_writable: true, dir_deletable: false)
+                       port_writable: true, dir_deletable: false, repo_storable: true)
     end
 
     def stat(user, node_id:)

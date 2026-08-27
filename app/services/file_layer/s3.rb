@@ -81,8 +81,11 @@ module FileLayer
       # not: presignable is about handing the browser a URL to READ from, port_writable about
       # which door bytes come IN. A bucket could presign the upload too — spec §5.2 defers that —
       # so until it does, the UI POSTs to the port and #write puts the object.
+      #
+      # repo_storable: true — a bucket holds any key; the S3Observer drops these keys from the
+      # catalog.
       Capabilities.new(versioned: false, syncable: false, presignable: true, scannable: true,
-                       port_writable: true, dir_deletable: false)
+                       port_writable: true, dir_deletable: false, repo_storable: true)
     end
 
     # Mirrors Share#stat exactly: answered from the NODE, never from the bucket. A stat is what
