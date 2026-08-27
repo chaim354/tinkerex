@@ -85,6 +85,13 @@ module Library
     # or RAISES. Neither branch can silently do nothing, which is the property that matters:
     # `scan_all!` may decline to schedule, but `perform` always performs or says why.
     def perform(user_id:, root: nil)
+      # CAPTURED BEFORE THE OBSERVER RUNS, AND THE PLACEMENT IS THE WHOLE OF #commit_projects'
+      # CORRECTNESS. It is the settle anchor: a node counts as quiet only if it has not been
+      # touched since this scan STARTED. Every row the four steps below write — the reconcile's
+      # creates and content updates, the intake's moves — is written after this instant, so an
+      # anchor taken later (at the commit step, say) reads all of them as settled and commits a
+      # file that is still being written. See Maker::Git::ProjectCommit#eligible_nodes.
+      scan_started_at = Time.current
       user = User.find(user_id)
 
       # `new` + `call` rather than `.call`, which returns the instance only on success: holding
@@ -96,6 +103,7 @@ module Library
       discover_projects(user)
       intake_project_folders(user)
       intake_models(user)
+      commit_projects(user, scan_started_at)
     end
 
     # recurring.yml has no per-user fan-out pattern (every existing entry is an all-users sweep),
@@ -305,6 +313,47 @@ module Library
       # A catalog failure must not fail the SCAN, whose job was done before this ran — the same
       # argument, and the same narrow scoping, as the rescue above.
       Rails.logger.error("Library::ScanJob: the reconcile SUCCEEDED but the model catalog " \
+                         "failed for user #{user.id}: #{e.class}: #{e.message}")
+    end
+
+    # LAST, AND STRICTLY AFTER THE PROJECT INTAKE — the same kind of constraint #intake_models
+    # states one method up, with a worse failure if it is broken.
+    #
+    # THE INTAKE MOVES FILES, AND GIT KEEPS WHATEVER IT WAS TOLD. Commit before it and every loose
+    # file is recorded at the path this same job is about to abandon; the next tick records it
+    # again at its real path, so one change becomes TWO commits and the first describes a layout
+    # that no longer exists. Nothing later repairs that — history is only editable by rewriting
+    # every commit id the maker has ever seen. Where #intake_models' hazard is a wrong row nobody
+    # reaps, this one is a wrong row nobody CAN reap. Pinned by scan_job_test.rb's
+    # GitCommitOrderTest, which is RED on the swap.
+    #
+    # AFTER #intake_models TOO, though nothing there moves bytes: the catalog is a reader of the
+    # settled tree, so putting the commit ahead of it would only mean the two disagree about which
+    # pass is the last word on a scan. Last is the honest place for the step that records what the
+    # scan ended up with.
+    #
+    # `scan_started_at` IS THE SCAN'S OWN, CAPTURED AT THE TOP OF #perform — see the comment there.
+    # Passing Time.current here instead would make every row the four steps above just wrote read
+    # as settled, which is the whole mechanism defeated.
+    #
+    # CALLS THE JOB, NOT Maker::Git::ProjectCommit DIRECTLY, for the reason #intake_project_folders
+    # records as a finding rather than a preference: the SERVICE logs nothing and commits ONE
+    # project, so Maker::Git::CommitJob is both the loop and the only place a pass's commits and
+    # failures are written down. Calling the service here would give a share/s3 deployment less
+    # operator visibility than chunk_remote gets from its schedule — and would need this job to
+    # re-implement the per-project rescue that keeps one unreachable file from stalling every
+    # project after it. Concurrency controls apply at ENQUEUE, so CommitJob's own limit cannot
+    # discard this perform_now.
+    #
+    # RESCUED AND NARROWLY SCOPED, like its three siblings: the reconcile is already committed, so
+    # a failure here must not tell an operator reading the failed-jobs table that the library did
+    # not index. CommitJob already swallows per-PROJECT failures, so what reaches this rescue is
+    # the pass itself failing — a bad user row, a broken adapter — which is exactly what should be
+    # logged once rather than per project.
+    def commit_projects(user, scan_started_at)
+      Maker::Git::CommitJob.perform_now(user_id: user.id, scan_started_at:)
+    rescue StandardError => e
+      Rails.logger.error("Library::ScanJob: the reconcile SUCCEEDED but the git commit pass " \
                          "failed for user #{user.id}: #{e.class}: #{e.message}")
     end
   end

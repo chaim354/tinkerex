@@ -143,6 +143,38 @@ production:
     command: "Maker::ModelIntakeJob.sweep_all!"
     schedule: every 15 minutes
 
+  # Version history: commit each project's SETTLED files into that project's own git repository.
+  # CHUNK DEPLOYMENTS ONLY -- commit_all! declines when the backend is `scannable`.
+  #
+  # WHY THE ENTRY EXISTS AT ALL, since Library::ScanJob already calls this pass: that job no-ops off
+  # a scannable backend (scan_all! declines, and a rootless #perform raises), so on chunk_remote --
+  # the BASE deployment (§7) -- there is no scan and therefore no caller. This schedule IS the only
+  # caller there. On share/s3 it is the other way round: commit_all! declines because ScanJob calls
+  # the pass at the END of its own sequence, strictly AFTER the project intake, and a second caller
+  # there would commit files the intake is about to move -- git keeps whatever it was told, so that
+  # history is wrong PERMANENTLY rather than until the next pass. Every other gated entry above
+  # states the overlap cost as a stale row; here it is a commit nothing can retract.
+  #
+  # `command:` rather than `class:`, matching every other gated entry here, because the backend gate
+  # lives in a class method -- Solid Queue resolves a `class:` at load and reads ONE file with no
+  # merge mechanism, so a gate cannot live here.
+  #
+  # NO `scan_started_at:` ARGUMENT, AND THE CONSEQUENCE IS REAL RATHER THAN THEORETICAL. Settle
+  # detection compares a node's `updated_at` against the start of the caller's pass; ScanJob has a
+  # scan to anchor to and this schedule does not, so Maker::Git::CommitJob defaults to `Time.current`
+  # and "settled" degrades to "not touched since this job started". On chunk_remote the mirror is
+  # written by a changelog pull up to two minutes earlier (§14a), so a file written in that window
+  # can read as quiet. Smaller than it looks -- the pull writes the row only once the SERVER accepted
+  # the commit, so the bytes are already whole -- but it is not the full quiet interval share/s3 get,
+  # and it is the thing to fix first if a truncated version ever shows up here.
+  #
+  # EVERY 15 MINUTES, matching its three siblings, and arbitrary for the reason project_folder_intake
+  # states: there is no poll behind it on chunk_remote, so this interval is the only latency bound
+  # the history gets. A file saved now appears in `git log` within a tick.
+  git_project_commit:
+    command: "Maker::Git::CommitJob.commit_all!"
+    schedule: every 15 minutes
+
   # Arc B gap (a): FileLayer::ChunkRemote::ChangelogSync had exactly one caller, #refresh!, itself
   # reached only from THIS app's own writes (mkdir/move/delete/undelete/finalize_upload,
   # chunk_remote.rb). A node another device pushed straight to the sync server was invisible to the
