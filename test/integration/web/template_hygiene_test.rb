@@ -152,6 +152,18 @@ module Web
         "file detail (text)" => file_path("n-src"),
         "projects index" => projects_path,
         "project detail" => project_path(@project),
+        # THE EMPTY STATE OF THE HISTORY PAGE, WHICH IS THE ONE THAT NEEDS NO GIT FIXTURE. It is
+        # also the state that renders BOTH of that page's templates: `show` draws the empty-history
+        # sentence and still renders `_version_strip`, which draws its own idle line. A fixture with
+        # real commits would render the same two templates and cost this sweep a repository.
+        "project history" => project_history_path(@project),
+        # THE COMPARE PAGE, IN THE SAME NO-FIXTURE STATE and for the same reason: it renders its
+        # own template whole and needs no repository to do it. What it does NOT reach is that
+        # template's diff and slider branches — the balance check above still covers every comment
+        # in the file, and only a page with real commits could cover the rendered-output half.
+        # Stated rather than implied, because a reader would otherwise assume this line covers
+        # more than it does.
+        "project history compare" => project_history_compare_path(@project),
         "project new" => new_project_path,
         "project edit" => edit_project_path(@project),
         "project attachment new" => new_project_attachment_path(@project),

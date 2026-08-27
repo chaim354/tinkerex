@@ -112,6 +112,55 @@ what you put in it. Do not reopen object-level storage.
 
 ---
 
+## Showing it (phase 4)
+
+- **HISTORICAL RENDERS LIVE IN THEIR OWN TABLE AND ARE MINTED ONLY ON OPENING HISTORY.** §14b
+  collapsed `Maker::Preview` to one row per `(user, node, kind)` because one-row-per-version leaked
+  a row and a blob on every save — and the leak was **eager generation on save**, not the existence
+  of old thumbnails. So `maker_version_previews` is separate, `Maker::Preview` is untouched, and
+  `GeneratePreviewJob#commit_if_current` keeps its compare-and-set, which is what stops a historical
+  render ever claiming the current row. Break any of those three and the bug §14b records is back.
+  It keys on `project_id` (tenancy through a real FK — a `user_id` column additionally forces
+  `TenantCleanupTest` edits), and `last_viewed_at` is the retention key rather than `created_at`,
+  because a version nobody opens should age out even if rendered recently.
+
+- **OPENING HISTORY MUST NEVER MINT `.git`.** `hydrate!` creates the marker, and that marker is what
+  `Maker::AttachToProject`'s `:in_working_tree` reads — so a read path that hydrates would switch
+  off `docs/invariants/project-intake.md`'s filing for the project being *looked at*. Both doors
+  (`#show` and `#compare`) go through one `never_committed?` guard that returns before anything opens
+  the repo.
+
+- **FOUR PAGE STATES, AND THREE OF THEM LOOK LIKE "NO HISTORY".** `ok`; `empty` (the ordinary case
+  for a project older than the feature, or one whose files never settled — 500ing here is how a
+  feature gets switched off in production); `unreachable` (`FetchError`, an unmounted share,
+  RETRYABLE — rendering "you have no history" for a sleeping NAS is §14a broken in the UI); and
+  `unavailable` (`NotFound`, terminal, which must not wear the retryable wording). The same split
+  governs a tile: `not_kept` is terminal, a transient failure stays `pending` so the retry can
+  still succeed.
+
+- **AN UNAVAILABLE VERSION IS RENDERED, NEVER OMITTED.** Omitting it tells the maker their file has
+  less history than it does, quietly. A greyed "not kept" tile is the truth.
+
+- **A POINTER VERSION NEVER GETS A TEXT DIFF**, and the gate is `Tracking.mode_for`, never "do these
+  bytes look like text". Diffing two content hashes is noise; the visual A/B is what that case is
+  for. The diff is capped per side on BOTH lines and bytes — `Diff::LCS.sdiff` is near-free on
+  ordinary edits and **quadratic on ambiguity**, which is the shape g-code and CSV actually reach
+  (measured on the build box: 2,000 lines 0.18 s, 10,000 lines 5.4 s, 20,000 lines 23.9 s), and a
+  byte cap catches what a line cap cannot see, because minified JSON is one line and can be 10 MB.
+  **Refusal is WHOLE** — no rows at all, with the measured size named — because a truncated diff
+  that looks complete is the well-formed lie this file keeps recording. Bytes are re-tagged binary
+  BEFORE they are measured: `String#count` RAISES on a UTF-8-tagged string carrying an invalid
+  sequence, which turns the binary refusal into a 500 on exactly the input it exists for.
+
+- **`test/stimulus_hygiene_test.rb` IS DIRECTIONAL AND CANNOT CATCH A MISSING DECLARATION.** It
+  derives registered identifiers from filenames and flags a `data-controller` naming nothing; the
+  converse is deliberately not an error. So a rename of `version_compare_controller.js` IS caught,
+  but deleting the attribute from the view is not — that one is covered by asserting the declaration
+  in the integration tests, in two places, because a `data-controller` that resolves to nothing is a
+  silent no-op that once left a feature inert for nine days behind a green request test (§14d).
+
+---
+
 ## Known limitation, stated rather than implied
 
 `commit_all!` — the chunk_remote schedule, which has no scan to anchor to — passes no

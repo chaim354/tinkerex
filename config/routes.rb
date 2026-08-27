@@ -99,6 +99,22 @@ Rails.application.routes.draw do
     # Return an archived project to the live list. A member PATCH rather than an update to a
     # `status` field: the web form no longer exposes status at all (spec decision #1).
     patch :unarchive, on: :member
+    # The project's git history. A BARE `get` inside this block rather than `on: :member`, and the
+    # difference is the helper name: bare nests it as /projects/:project_id/history ->
+    # project_history_path, matching every other panel hanging off a project, where `on: :member`
+    # would give /projects/:id/history -> history_project_path and read backwards at every call
+    # site. Nothing else here needs the resource-y verbs, so `get` alone rather than a nested
+    # singular `resource`.
+    get "history", to: "projects/history#show"
+    # TWO VERSIONS OF ONE FILE, SIDE BY SIDE. `as:` is spelled out rather than left to Rails'
+    # path-derived default, because that default for a MULTI-SEGMENT bare `get` is not obvious
+    # enough to leave implicit at 30 call sites. Nested, so it reads project_history_compare_path —
+    # the same argument the bare `get` above makes against `on: :member`.
+    #
+    # DECLARED AFTER `history` AND THAT ORDER IS FREE, NOT LOAD-BEARING: routes are matched in
+    # declaration order but `get "history"` matches only the exact segment, so neither can shadow
+    # the other whichever way round they sit.
+    get "history/compare", to: "projects/history#compare", as: :history_compare
     resources :attachments, only: %i[new create destroy], module: :projects, shallow: true do
       # Finish an attach whose auto-move hit a name collision: move the file in under a new name.
       # DELIBERATELY SCOPED TO THE PROJECT rather than a general POST /files/:id/move — the
