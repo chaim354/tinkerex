@@ -24,8 +24,11 @@ module FileLayer
       #
       # port_writable: true — there is no sync engine here, so the port IS the write path
       # (#write/#delete/#move/#undelete) and the UI POSTs bytes to it.
+      #
+      # repo_storable: true — a mounted directory holds any file we put there; the scan simply
+      # never looks under `.git`.
       Capabilities.new(versioned: false, syncable: false, presignable: false, scannable: true,
-                       port_writable: true, dir_deletable: false)
+                       port_writable: true, dir_deletable: false, repo_storable: true)
     end
 
     def stat(user, node_id:)
@@ -510,6 +513,98 @@ module FileLayer
       stat(user, node_id: node.node_id)
     end
 
+    # THE REPO-DATA VERBS. Opaque bytes under a project's own `.git`, deliberately NOT catalogued.
+    #
+    # THEY DO NOT GO THROUGH #observable!, AND THAT IS THE POINT RATHER THAN AN OVERSIGHT.
+    # `observable!` refuses everything at or beneath the marker, precisely so the ordinary write
+    # path can never leave a live node at a path no scan can pair. These verbs create no node at
+    # all, so the ghost that guard exists to prevent is unreachable from here — and routing them
+    # through it would refuse the one caller that is safe.
+    #
+    # NO CLOBBER REFUSAL EITHER. `refs/heads/main` is rewritten on every commit; a refusal would
+    # make the second commit impossible. The ordinary #write keeps its refusal, for its own
+    # reasons, and these are a different door.
+    def write_repo_data(user, project:, rel:, io:)
+      path = repo_data_path(user, project, rel)
+      FileUtils.mkdir_p(path.dirname)
+      # Temp-then-rename so a reader never sees a half-written pack. Same argument #write makes,
+      # and the temp name uses the Scanner's own prefix constant rather than a second literal.
+      tmp = path.dirname.join("#{Library::Scanner::TEMP_PREFIX}#{SecureRandom.hex(8)}")
+      begin
+        File.open(tmp, "wb") { |f| IO.copy_stream(io, f) }
+        File.rename(tmp, path)
+      ensure
+        File.unlink(tmp) if File.exist?(tmp)
+      end
+      nil
+    rescue SystemCallError => e
+      raise FetchError, "repo write failed for #{rel.inspect}: #{e.message}"
+    end
+
+    # ENOENT IS ASKED A SECOND QUESTION, and skipping it is the mistake this method shipped with.
+    # An UNMOUNTED share raises ENOENT -- the mountpoint directory survives the unmount and is
+    # simply empty -- so the naive split sends "the whole NAS is gone" down the TERMINAL arm and
+    # tells the caller a pack is permanently lost. §14a states the rule outright, and #read and
+    # #download both already interpose exactly this probe; this was the third door and did not.
+    def read_repo_data(user, project:, rel:)
+      path = repo_data_path(user, project, rel)
+      File.binread(path)
+    rescue Errno::ENOENT
+      raise FetchError, "#{rel.inspect}: ENOENT and the library root looks unmounted" unless library_present?
+
+      # The library is there and this one rel is not. Genuinely gone: terminal.
+      raise NotFound, "no repo data at #{rel.inspect}"
+    rescue SystemCallError => e
+      # An unmounted share must never read as "permanently gone" (§14a).
+      raise FetchError, "repo read failed for #{rel.inspect}: #{e.message}"
+    end
+
+    def list_repo_data(user, project:, prefix: nil)
+      root = repo_data_root(user, project)
+      base = prefix.present? ? repo_data_path(user, project, prefix) : root
+      unless base.directory?
+        # AN EMPTY ANSWER AND A MISSING LIBRARY ARE NOT THE SAME FACT, and conflating them here
+        # would be the well-formed lie this method's own comment names four lines down: a caller
+        # reads [] as "this repository has no objects" and hydrates an empty repo. A project that
+        # has no `.git` yet legitimately answers []; an unmounted NAS must be retryable (§14a).
+        raise FetchError, "repo list failed: the library root looks unmounted" unless library_present?
+
+        return []
+      end
+
+      # FNM_DOTMATCH, AND IT IS LOAD-BEARING: a bare Dir.glob("**/*") SKIPS dotfiles, and a repo
+      # holds plenty of them. A hydration driven by a listing that silently omitted them is the
+      # "well-formed lie" §14b records for a truncated S3 page — the caller reads it as "these are
+      # all the objects" and rebuilds an incomplete repository. The directory reject below also
+      # drops the `.` entry FNM_DOTMATCH adds.
+      Dir.glob("**/*", base: base.to_s, flags: File::FNM_DOTMATCH)
+         .reject { |r| File.directory?(base.join(r)) }
+         # A CRASH BETWEEN open AND rename STRANDS A TEMP FILE IN HERE FOREVER. `ensure` does not
+         # run on SIGKILL, and nothing sweeps inside `.git` -- the Scanner never descends and the
+         # trash purge only touches `.trash`. Emitting it would feed it to a hydrating caller as
+         # though it were repository data, and a concurrent list during an in-flight write sees it
+         # too. The Scanner skips this prefix at any depth; so does this, sharing the constant
+         # rather than a second copy of the string.
+         .reject { |r| r.split("/").any? { |seg| seg.start_with?(Library::Scanner::TEMP_PREFIX) } }
+         .map { |r| prefix.present? ? "#{prefix}/#{r}" : r }
+    rescue SystemCallError => e
+      raise FetchError, "repo list failed: #{e.message}"
+    end
+
+    def delete_repo_data(user, project:, rel:)
+      File.unlink(repo_data_path(user, project, rel))
+      nil
+    rescue Errno::ENOENT
+      # "This rel is already gone" and "the whole library is gone" are the same errno and must not
+      # be the same answer: on an unmounted share every delete in a consolidation sweep would
+      # report success having removed nothing. Same probe #read_repo_data makes, same reason.
+      raise FetchError, "#{rel.inspect}: ENOENT and the library root looks unmounted" unless library_present?
+
+      nil # deleting what is already gone is success, not an error
+    rescue SystemCallError => e
+      raise FetchError, "repo delete failed for #{rel.inspect}: #{e.message}"
+    end
+
     # Resolve a node's path and refuse anything that escapes the root. Belt and braces: paths
     # come from our own scanner, but the audit that preceded this work found exactly this bug
     # class in client-supplied chunk hashes used as storage keys.
@@ -548,6 +643,24 @@ module FileLayer
     # copies of it is how the trash quietly starts getting indexed. (write's temp prefix makes
     # the identical argument, for the identical reason.)
     def trash_dir(node_id) = @root.join(Library::Scanner::TRASH_PREFIX, node_id)
+
+    def repo_data_root(user, project)
+      resolve_inside!("#{project_folder_rel(user, project)}/#{Library::RepoMetadata::DIR_NAME}")
+    end
+
+    def repo_data_path(user, project, rel)
+      resolve_inside!(Library::RepoMetadata.data_rel!(project_folder_rel(user, project), rel))
+    end
+
+    # The project's folder as a library-relative path. Raises rather than defaulting to the
+    # library ROOT if the folder has no storage_path — #absolute_path's own landmine, where a
+    # NULL storage_path once resolved to the root and handed a DIRECTORY to send_file.
+    def project_folder_rel(user, project)
+      node = live_node!(user, project.folder_node_id)
+      rel = node.storage_path.to_s
+      raise NotFound, "project #{project.id} folder has no storage_path" if rel.blank?
+      rel
+    end
 
     # Deleting a DIRECTORY is refused rather than cascaded. File.rename on a directory succeeds,
     # so without this check `delete` would move a whole subtree into .trash while leaving every
