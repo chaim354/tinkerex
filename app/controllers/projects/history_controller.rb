@@ -2,6 +2,12 @@ module Projects
   # ONE PROJECT'S GIT HISTORY, read-only: the commits the sweep recorded, and — for one file at a
   # time — the versions of that file with a rendered tile beside each.
   #
+  # TWO SURFACES, ONE SET OF STATES. `#show` is the panel above; `#compare` puts two versions of one
+  # file side by side, as a LINE DIFF where the file is tracked as content and as an A/B slider over
+  # two renders where it is a pointer (`Comparison`). Both resolve the four states below through
+  # `#resolve`, because they are the same four facts about the same repository — a second copy of
+  # that mapping is how two pages come to describe one failure differently.
+  #
   # FOUR STATES, AND THE POINT OF THE PAGE IS THAT THEY NEVER RENDER ALIKE (§14a):
   #
   #   :ok            there are commits, and they are listed.
@@ -51,21 +57,100 @@ module Projects
     # What one row of the version strip renders. A VALUE OBJECT rather than three parallel arrays,
     # and `state` is resolved HERE rather than in the partial because the resolution has a rule the
     # view must not be trusted to re-derive — see `#tile_state`.
-    Tile = Data.define(:version, :state, :preview)
+    Tile = Data.define(:version, :state, :preview) do
+      # THE SENTENCE FOR `state`, WRITTEN ONCE FOR BOTH SURFACES. The version strip and the compare
+      # panel describe the same five states, and §14a's rule is that two different facts never wear
+      # one sentence — "not kept" (the storage never retained these bytes) and "failed" (a bug)
+      # being the pair that matters most. A second copy in a second template is exactly how one of
+      # them quietly becomes the other, and neither template could tell.
+      #
+      # HERE RATHER THAN IN A HELPER for the same reason `#tile_state` resolves `state` here: the
+      # rule belongs beside the resolution, not beside the markup.
+      def label
+        case state
+        when "ready" then "Rendered"
+        when "pending" then "Rendering…"
+        when "not_kept" then "Not kept — this storage keeps no superseded copies"
+        when "text" then "Text, stored in full"
+        when "unsupported" then "No preview for this format"
+        else "Preview failed"
+        end
+      end
+
+      def ready? = state == "ready" && preview.present?
+    end
+
+    # WHAT #compare RESOLVED TO, and `kind` is the whole reason this feature is two surfaces rather
+    # than one. A line diff of a STEP file is worthless — the bytes are a CAD kernel's
+    # serialisation, and a diff of them says nothing a maker can act on — while two renders side
+    # by side say everything. So:
+    #
+    #   :text    the file is tracked as CONTENT, so both versions' bytes are in the repository and
+    #            `diff` holds a `Maker::Git::TextDiff::Result`.
+    #   :visual  the file is tracked as a POINTER. `diff` is nil and the two tiles' cached renders
+    #            are compared instead, behind the `version-compare` Stimulus controller.
+    #
+    # THE SPLIT IS `Maker::Git::Tracking.mode_for`, NEVER "do these bytes look like text". That is
+    # the same question the COMMIT path already answered for this file, and asking it twice with two
+    # rules is how the two surfaces come to disagree about one file — a pointer whose bytes happen
+    # to be ASCII (an ASCII STL, a G-code export the classifier calls a model) would get a text diff
+    # of two content HASHES, which is noise wearing a diff's clothes.
+    #
+    # `from`/`to` ARE TILES, NOT VERSIONS, because the visual half needs the cached render that
+    # `#load_strip` already resolved and a second lookup per side is the N+1 the strip's own single
+    # query exists to avoid.
+    Comparison = Data.define(:kind, :from, :to, :diff)
 
     def show
-      @project = current_user.maker_projects.find_by!(slug: params[:project_id])
-      @path = clean_path(params[:path])
+      set_project_and_path
       @commits = []
       @tiles = []
-      @state = load_history
+      @state = resolve { load_history }
+    end
+
+    # TWO VERSIONS OF ONE FILE, SIDE BY SIDE. A SEPARATE ACTION rather than a panel bolted onto
+    # #show: a comparison is a linkable thing (the two commits are in the query string), and two
+    # full-width renders under a 100-row commit list would be neither.
+    #
+    # IT SHARES #show'S FOUR PAGE STATES EXACTLY, through `#resolve` — an unmounted share must not
+    # read as "you have no history" on this page either, and writing the mapping out twice is how
+    # two pages come to disagree about one failure.
+    def compare
+      set_project_and_path
+      @tiles = []
+      @comparison = nil
+      @state = resolve { load_comparison }
     end
 
     private
 
-    def load_history
+    # BOTH ACTIONS TAKE THE SAME TWO PARAMETERS AND MUST TREAT THEM IDENTICALLY — the compare page
+    # hands `@path` to `Maker::Git::Repo#blob_at`, so a second, laxer reading of it here would put
+    # `#clean_path`'s refusal on one door and not the other.
+    def set_project_and_path
+      @project = current_user.maker_projects.find_by!(slug: params[:project_id])
+      @path = clean_path(params[:path])
+    end
+
+    # THE FOUR PAGE STATES, RESOLVED ONCE FOR BOTH ACTIONS. The controller header argues each; what
+    # this method adds is that there is ONE mapping from a port failure to a sentence.
+    #
+    # THE `never_committed?` GUARD IS HERE SO NEITHER ACTION CAN FORGET IT. `hydrate!` MINTS `.git`,
+    # and that directory is the marker `Maker::AttachToProject`'s `:in_working_tree` reads — so a
+    # READ that opens the repository switches §14f's intake filing off for that project, silently,
+    # at the next scan, nowhere near this request. A second door is exactly how such a guard gets
+    # lost, which is why the door is shared rather than copied.
+    def resolve
       return :empty if never_committed?
 
+      yield
+    rescue FileLayer::FetchError
+      :unreachable
+    rescue FileLayer::NotFound
+      :unavailable
+    end
+
+    def load_history
       @commits = Maker::Git::Repo.for(@project).hydrate!.log(limit: COMMIT_LIMIT)
       # THE INDEX CAN BE STALE OR AHEAD OF THE REPOSITORY — `Maker::GitRepo`'s own header says so —
       # so the walk gets the last word. A row naming a head the repository no longer has is the
@@ -74,10 +159,72 @@ module Projects
 
       load_strip if @path
       :ok
-    rescue FileLayer::FetchError
-      :unreachable
+    end
+
+    # THE COMPARE PAGE'S OWN LOAD. It needs the version strip and NOT the commit list: the strip is
+    # what the picker's options come from and what the visual half's renders hang off, where a
+    # hundred rows of unrelated commits are noise on a page about two of them.
+    #
+    # ONE REPO INSTANCE, REUSED FOR THE BLOB READS. `Maker::Git::VersionHistory` builds its own
+    # inside `#load_strip`, as #show's path already does; on `share` the repository is operated on
+    # in place, so hydrating twice re-reads nothing.
+    def load_comparison
+      repo = Maker::Git::Repo.for(@project).hydrate!
+      return :empty if repo.log(limit: 1).empty?
+
+      load_strip if @path
+      @comparison = build_comparison(repo)
+      :ok
+    end
+
+    # NIL IS THE IDLE PANEL, and it covers three ordinary situations rather than an error: no file
+    # chosen, a file with fewer than two recorded versions, and a path with nothing behind it.
+    def build_comparison(repo)
+      return nil if @path.blank? || @tiles.size < 2
+
+      from, to = selected_pair
+      return nil if from.nil? || to.nil?
+
+      return Comparison.new(kind: :visual, from:, to:, diff: nil) unless content_tracked?
+
+      Comparison.new(kind: :text, from:, to:, diff: diff_between(repo, from, to))
+    end
+
+    def content_tracked? = Maker::Git::Tracking.mode_for(File.basename(@path)) == :content
+
+    # WHICH TWO VERSIONS, AND A CALLER-SUPPLIED OID NEVER REACHES GIT. Each side is looked up in the
+    # version list this request just built; an oid that is not in it selects nothing and the default
+    # stands. That is what keeps `#diff_between`'s `blob_at` calls addressed only to commits we
+    # recorded — the same "reject, never resolve" direction `#clean_path` takes one method down,
+    # arrived at differently because this value is a SELECTION rather than a path.
+    #
+    # THE DEFAULT IS THE TWO NEWEST, so the page is useful on first open with no parameters at all.
+    # `@tiles` is newest-first, so the OLDER of the pair is `[1]` — getting that backwards renders
+    # every diff inside out, and reads as plausible.
+    #
+    # THE SAME VERSION ON BOTH SIDES IS ALLOWED. It is an empty diff and says so; silently
+    # substituting a different pair would answer a question the user did not ask.
+    def selected_pair
+      by_oid = @tiles.index_by { |tile| tile.version.oid }
+      picked = params[:compare].respond_to?(:permit) ? params[:compare].permit(:from, :to) : {}
+      [ by_oid[picked[:from].to_s] || @tiles[1], by_oid[picked[:to].to_s] || @tiles[0] ]
+    end
+
+    # NO `.ptr` SUFFIX HERE, AND ADDING ONE WOULD BREAK EVERY TEXT DIFF. That suffix is a POINTER
+    # storage detail `Maker::Git::VersionHistory#for_path` applies for the pointer mode only, and
+    # this method runs behind `#content_tracked?`, where the bytes are committed at the plain path.
+    #
+    # THE RESCUE IS NARROW AND MUST NOT BE LEFT TO `#resolve`. A `FileLayer::NotFound` reaching the
+    # outer handler renders "this project's library folder is missing", which would be false: the
+    # folder is fine and one blob is not in one commit. §14a's rule that two different states never
+    # wear one sentence binds inside a page as well as between pages.
+    def diff_between(repo, from, to)
+      Maker::Git::TextDiff.between(
+        before: repo.blob_at(oid: from.version.oid, path: @path),
+        after: repo.blob_at(oid: to.version.oid, path: @path)
+      )
     rescue FileLayer::NotFound
-      :unavailable
+      Maker::Git::TextDiff.missing
     end
 
     # `head_oid` BLANK, NOT "no row": a row is written by `Repo#commit!` and only ever with a head,

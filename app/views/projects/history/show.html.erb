@@ -52,5 +52,5 @@
     unreachable or missing library the strip has nothing honest to say and would only repeat the
     banner above; on an empty one it is the right place to explain where versions come from. %>
 <% if @state == :ok || @state == :empty %>
-  <%= render "version_strip", tiles: @tiles, path: @path %>
+  <%= render "version_strip", tiles: @tiles, path: @path, project: @project %>
 <% end %>

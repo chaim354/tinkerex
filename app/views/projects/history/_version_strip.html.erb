@@ -20,9 +20,22 @@
     </p>
   <% else %>
     <p class="version-strip-path muted">Versions of <code><%= path %></code></p>
+    <%# THE DOOR ONTO THE COMPARE SURFACE, and it is offered only where there are two versions to
+        compare — a link that leads to "there is nothing to compare" is a link that teaches people
+        not to click it. `project` is a LOCAL rather than the ivar the rest of this page uses,
+        because a partial that reads an ivar can only ever be rendered from one action. %>
+    <% if tiles.size > 1 %>
+      <p class="version-strip-compare">
+        <%= link_to "Compare two versions", project_history_compare_path(project, path: path) %>
+      </p>
+    <% end %>
     <ol class="version-tiles">
       <% tiles.each do |tile| %>
         <li class="version-tile is-<%= tile.state.dasherize %>">
+          <%# EVERY `when` TAG SITS ALONE ON ITS LINE, AND THAT IS A RUBY REQUIREMENT HERE, NOT
+              layout taste: text left on the same line as the tag leaves the indentation before it
+              as OUTPUT between `case` and its first `when`, which is a template that will not
+              compile at all. It fails loudly the first time the page renders. %>
           <div class="version-tile-art">
             <% case tile.state %>
             <% when "ready" %>
@@ -42,26 +55,10 @@
             <time class="version-time muted"
                   datetime="<%= tile.version.time.utc.iso8601 %>"
                   title="<%= tile.version.time.strftime("%Y-%m-%d %H:%M") %>"><%= time_ago_in_words(tile.version.time) %> ago</time>
-            <%# EVERY `when` TAG SITS ALONE ON ITS LINE, AND THAT IS A RUBY REQUIREMENT HERE, NOT
-                layout taste: text left on the same line as the tag leaves the indentation before it
-                as OUTPUT between `case` and its first `when`, which is a template that will not
-                compile at all. It fails loudly the first time the page renders. %>
-            <span class="version-state muted">
-              <% case tile.state %>
-              <% when "ready" %>
-                Rendered
-              <% when "pending" %>
-                Rendering…
-              <% when "not_kept" %>
-                Not kept — this storage keeps no superseded copies
-              <% when "text" %>
-                Text, stored in full
-              <% when "unsupported" %>
-                No preview for this format
-              <% else %>
-                Preview failed
-              <% end %>
-            </span>
+            <%# THE SENTENCE COMES FROM `Tile#label`, NOT FROM A `case` HERE. The compare panel
+                describes the same five states, and two copies of this vocabulary is how "not kept"
+                and "failed" — two different facts — come to wear one word (§14a). %>
+            <span class="version-state muted"><%= tile.label %></span>
           </div>
         </li>
       <% end %>
