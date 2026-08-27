@@ -1196,6 +1196,17 @@ Four rules survive on **this** side of the boundary:
   agreement now.** If you change device-token verification here, change it there in the same
   breath — that obligation has no guard behind it.
 
+### 14l. Git-tracked projects → **`docs/invariants/git-tracked-projects.md`**
+
+**Read that file before touching** `app/services/maker/git/`, `app/jobs/maker/git/`,
+`Library::ScanJob`'s commit step, or `config/recurring.yml`'s `git_project_commit` entry. Every
+project is a real git repository; git data is durable in the LIBRARY through §14a's non-cataloging
+repo-data verbs, never an app volume. It holds why consolidation is in the commit loop (an
+unpacked repo needs 11,287 GETs to hydrate on s3 against ~3), why the undeltified pack writer and
+the content-vs-pointer rule hold each other up, settle detection as a CORRECTNESS requirement, why
+the commit step runs after project intake, and why HEAD has to be repointed off libgit2's default.
+The intake exemption this feature needs lives in `docs/invariants/project-intake.md`, not here.
+
 ### 14k. The model catalog and shelves → **`docs/invariants/model-intake.md`**
 
 **Read that file before touching** `app/services/maker/model_intake.rb`, `app/models/maker/model.rb`,
