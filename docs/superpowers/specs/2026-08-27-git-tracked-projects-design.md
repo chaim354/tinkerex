@@ -421,15 +421,29 @@ not.
 
 ## 10. Phasing
 
-The design is one thing; the implementation is not. Suggested order, each independently shippable:
+The design is one thing; the implementation is not. Each phase produces working, testable software.
 
-| phase | delivers |
-|---|---|
-| **1** | The port door (§6) + capability. No git at all. Testable as "write, read and list opaque bytes under the marker on three backends." |
-| **2** | Repo lifecycle (§4) + rugged + settle detection (§7.2) **+ the pack writer (§9.1, already built and verified)**. Commits happen; nothing shows them. The writer is in this phase, not deferred — §4.1 shows an unpacked repo is unhydratable on s3 and chunk_remote, so phase 2 without it only works on share. |
-| **3** | Track-by-role and pointers (§5). |
-| **4** | The GUI — version list, on-demand historical thumbnails, visual A/B for meshes. |
-| **5** | `:in_working_tree` relaxation (§8.1), which is the riskiest change and wants the rest working first. |
+> **THE ORDERING WAS WRONG IN THE FIRST DRAFT, AND THE FIX IS THE MOST IMPORTANT LINE IN THIS
+> SECTION.** That draft put the `:in_working_tree` relaxation (§8.1) LAST, reasoning that the riskiest
+> change should wait for everything else to work. That is backwards. **Project intake breaks the
+> instant a project folder becomes a working tree**, which is the moment commits start — so a late
+> relaxation means phase 2 *creates* the breakage and phase 5 *repairs* it, with every project
+> silently unfiled in between and **nothing going red for it**, because no test today asserts that a
+> project folder is not a repo. The relaxation must land in the same phase as the switch-on.
+
+| phase | delivers | risk |
+|---|---|---|
+| **1 — the door** | The port verbs (§6) + `repo_storable`. **No git at all.** Testable as "write, read and list opaque bytes under the marker on three backends, and assert nothing enters the catalog" | low — ordinary adapter work, but it touches §14a/§14b, so the contract tests carry the weight |
+| **2 — the engine** | Repo lifecycle (§4), rugged, the pack writer (§9.1, built and verified). **Deliberately NOT wired into `ScanJob`** — driven by tests against a fixture | low — the three unknowns here were all measured out (§4.1, §9.1, §3.1) |
+| **3 — turning it on** | `ScanJob` wiring, settle detection (§7.2), repo init, the conservative tracking default (§5), **and the §8.1 relaxation with its managed-repo marker** | **HIGH — all of it lives here.** The only phase that changes behaviour for existing data |
+| **4 — seeing it** | The GUI — version list, on-demand historical thumbnails (§8.2), visual A/B for meshes | moderate — §14b's preview collapse is the invariant to respect |
+| **5 — refinement** | The §9.5 threshold measured against a real library, full-repack policy, thumbnail cache retention | low, and genuinely deferrable — phase 3's defaults are safe to sit on |
+
+**Track-by-role (§5) is in phase 3, not a phase of its own**, and that is deliberate: phase 3 without
+it would commit every STL and STEP as content, which is the storage explosion §5 exists to prevent.
+Shipping the switch-on and the tracking rule together is what makes phase 3 safe to enable at all.
+
+Implementation plans, one per phase: `docs/superpowers/plans/2026-08-27-git-tracked-projects-*.md`.
 
 ---
 
