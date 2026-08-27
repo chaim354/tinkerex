@@ -169,6 +169,39 @@ what you put in it. Do not reopen object-level storage.
   In place, `core.bare` is false and the index is WRITTEN, or `git status` reports every tracked
   file as DELETED — which to a maker looking at their own folder reads as "the app deleted my files".
 
+- **A POINTER'S PATH HAS NO FILE ON PURPOSE, SO ITS INDEX ENTRY IS MARKED ASSUME-VALID — AND THE
+  MARK MUST NEVER REACH A CONTENT ENTRY.** Writing the index (previous bullet) was necessary and
+  not sufficient: in place git compares the index against the folder, and a pointer is tracked at
+  `core.stl.ptr` while the bytes sit at `core.stl`, so every pointer read as DELETED. Measured on
+  the share box (tinkerex#173): `Projects/laser-mount`, 60 tracked paths of which 13 pointers, and
+  `git status --porcelain` answered 13 ` D` lines with the real file present beside each one —
+  nothing lost (`git log` read, `git fsck --full` exited 0) and the maker's own folder saying the
+  app ate their binaries. `Repo#commit!` takes `absent_from_work_tree:` — the FACT, not the git
+  flag — and `Maker::Git::ProjectCommit`, the class that appends `.ptr`, is what says which paths
+  those are; the port stays ignorant of the pointer convention. **git's skip-worktree bit is
+  unreachable from rugged** (probed on 1.9.6: `Rugged::Index::Entry` has no `flags_extended` and
+  none round-trips), so the mechanism is ASSUME-VALID (`valid:`), which gives `h` in `git ls-files
+  -v` and an empty `git status`. **On a content entry it is the worse bug**, and that is why the
+  caller passes a set instead of the port guessing: a content file really is in the work tree, and
+  assume-valid there reports a CLEAN tree over the maker's own unrecorded edit — the ` D` is
+  alarming and false, this is reassuring and false. **It is index state, never tree state** — the
+  tree oid is identical either way, which is why a cache-backed backend is unaffected BY
+  CONSTRUCTION (no work tree, so `index.write` never runs) and why shipping this did not make every
+  existing repository mint one meaningless commit.
+
+- **THE MARK HAS TO SURVIVE `carry_forward`, AND THE CALLER'S SET CANNOT DO IT ALONE.** The index is
+  rebuilt from nothing on every pass, so an entry brought back from HEAD arrives unmarked: mark only
+  what a pass ADDS and a pointer committed on Monday reports ` D` again on Tuesday — a fix that
+  works for exactly one commit. `ProjectCommit` derives its set from the paths it is committing, so
+  every path in it is also being added and `carry_forward` can never find one there; the answer for
+  a pointer this pass did not name (its node has not settled, or has left the library) is read from
+  the index the LAST pass wrote (`Repo#already_absent`, before `index.clear`). **`File.exist?` is
+  the wrong question even though it sounds like the right one** — "no file here" is equally true of
+  a pointer and of a file the maker just deleted, and marking the second hides a REAL deletion.
+  Nothing is ever unmarked, which is safe only because a path's mode never changes: crossing the
+  size ceiling MOVES a file between `notes.md` and `notes.md.ptr` rather than changing what one path
+  means.
+
 - **PATHS ARE DERIVED PER NODE, NEVER PER BACKEND.** `storage_path` where the node and the folder
   both carry one; otherwise `Maker::LibraryTree#path_for` (§14k's one definition) with the folder's
   own path subtracted. chunk_remote nodes have NO `storage_path`, and deriving only from it made the
@@ -269,6 +302,19 @@ then has to answer for a PAIR whose two sides can disagree. The exposure is boun
 being 16x `TextDiff::MAX_BYTES`: any file that crosses it was already past the diff cap, so the half
 that goes missing was never diffable.
 
+
+**THE MAKER'S OWN BINARIES SHOW AS UNTRACKED, AND THAT IS TRUE RATHER THAN A SECOND HALF OF THE
+` D` DEFECT.** The same `laser-mount` measurement carried 16 `??` lines beside the 13 ` D` ones,
+and only the ` D` half was a lie: a binary is deliberately not tracked, so git reporting it as
+untracked is the accurate answer. Nothing here writes `.gitignore` or `.git/info/exclude` — hiding a
+maker's own files from git in their own folder is a product decision, not a bug fix, and it is
+tracked separately. **The hazard it leaves is worth naming: an untracked binary invites `git add .`,
+and a maker who then commits it puts those bytes into the history permanently**, because
+`carry_forward` rebuilds every later index from HEAD's tree and will carry that blob forward for
+the life of the repository — the exact unbounded-binary cost `Maker::Git::Tracking` exists to avoid,
+arriving through a door this app does not control. Merely STAGING it never reaches our history —
+`index.clear` discards it, along with anything else the maker had staged, on the next pass — so it
+is the maker's own commit that makes it permanent.
 
 `commit_all!` — the chunk_remote schedule, which has no scan to anchor to — passes no
 `scan_started_at`, so "settled" there means "not touched since this job started" rather than a full

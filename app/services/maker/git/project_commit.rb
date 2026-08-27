@@ -79,12 +79,16 @@ module Maker
         nodes = eligible_nodes.to_a
         return nil if nodes.empty?
 
-        paths = paths_for(nodes)
+        # WHICH PATHS HAVE NO FILE IN THE WORK TREE IS DECIDED HERE AND NOWHERE ELSE, because this
+        # is the class that appends `.ptr`. Repo sees paths and bodies and cannot tell a pointer
+        # from content; asking it to look at the suffix would put the pointer convention in two
+        # places. See Repo#commit! for what the answer is used for and why it must not be guessed.
+        paths, absent = paths_for(nodes)
         return nil if paths.empty?
 
         repo = Repo.for(@project, cache_root: @cache_root)
         repo.hydrate!
-        oid = repo.commit!(paths:, message: commit_message(paths))
+        oid = repo.commit!(paths:, message: commit_message(paths), absent_from_work_tree: absent)
         # nil means the tree is identical to HEAD's -- the ordinary answer for a quiet project, and
         # there is then nothing loose to pack and nothing new to push.
         return nil unless oid
@@ -131,8 +135,14 @@ module Maker
                           "version history while that repository is there.")
       end
 
-      # `{ "cad/body.step.ptr" => "version tinkerex/v1\n..." }` -- repository-relative path to the
-      # blob body that goes in at it.
+      # `[{ "cad/body.step.ptr" => "version tinkerex/v1\n..." }, [ "cad/body.step.ptr" ]]` -- the
+      # blob body to commit at each repository-relative path, and the subset of those paths that
+      # deliberately have NO FILE in the work tree.
+      #
+      # THE SECOND HALF IS COLLECTED HERE RATHER THAN RE-DERIVED FROM THE SUFFIX, and it rides
+      # along on this pass rather than a second one for a reason with a cost attached: a content
+      # node is READ through the port (#content_of), so walking the nodes again to ask which were
+      # pointers would re-read every content file in the project over the WAN on chunk_remote.
       #
       # TWO ROUTES TO ONE REL, AND `storage_path` IS AUTHORITATIVE WHEREVER IT AND THE FOLDER'S
       # BOTH EXIST. It is what the SCAN OBSERVED and what a share/s3 read resolves against -- the
@@ -147,11 +157,12 @@ module Maker
       # or the node does not go in.
       def paths_for(nodes)
         folder = @user.nodes.find_by(node_id: @project.folder_node_id)
-        return {} if folder.nil?
+        return [ {}, [] ] if folder.nil?
 
         prefix = folder.storage_path.presence && "#{folder.storage_path}/"
+        absent = []
 
-        nodes.each_with_object({}) do |node, out|
+        paths = nodes.each_with_object({}) do |node, out|
           rel = relative_path(node, folder, prefix)
           # A ROW THAT CANNOT BE PLACED UNDER THE PROJECT FOLDER IS DROPPED, WHICHEVER ROUTE ASKED.
           # The descent found it beneath the project folder, but the path it claims is elsewhere;
@@ -172,9 +183,15 @@ module Maker
             content = content_of(node)
             out[rel] = content unless content.nil?
           when :pointer
-            out["#{rel}.ptr"] = Tracking.pointer_for(node)
+            # THE POINTER'S OWN PATH NEVER EXISTS ON DISK -- the bytes are at `rel`, and this blob
+            # stands in for them -- so it is recorded as absent as it is minted, in the one place
+            # that knows.
+            path = "#{rel}.ptr"
+            out[path] = Tracking.pointer_for(node)
+            absent << path
           end
         end
+        [ paths, absent ]
       end
 
       # THE OBSERVED PATH WINS WHERE THERE IS ONE, AND THE CHOICE IS PER NODE RATHER THAN PER

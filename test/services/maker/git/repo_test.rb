@@ -38,8 +38,22 @@ module Maker
         end
       end
 
+      # A pointer's blob body, shaped like Maker::Git::Tracking's but written out here: Repo does
+      # not know what a pointer is and these tests are about what it does with a path that has no
+      # file, not about the body's format (tracking_test.rb owns that).
+      POINTER_BODY = "version tinkerex/v1\noid sha256:#{'a' * 64}\nsize 42\n".freeze
+
       def build_repo(project = @project)
         Maker::Git::Repo.for(project, adapter:, cache_root: @cache_root)
+      end
+
+      # THE TWO SKIPS EVERY IN-PLACE TEST BELOW NEEDS, with the hydrate between them in that order
+      # -- `work_tree` asks the adapter, and the repository has to exist before there is anything
+      # for git to look at.
+      def hydrate_or_skip_without_a_work_tree!
+        skip "needs the git binary" unless system("git --version > /dev/null 2>&1")
+        @repo.hydrate!
+        skip "this backend has no work tree; the repo lives in an ephemeral cache" unless work_tree
       end
 
       def test_a_fresh_repo_has_no_head
@@ -402,19 +416,33 @@ module Maker
       # `main`, so a repo whose HEAD was left alone has its history intact and INVISIBLE: `git log`
       # answers "your current branch 'master' does not have any commits yet". Naming the branch
       # explicitly, as the plan's version did, passes either way and hides it.
+      # BOTH SHAPES OF TRACKED PATH, WHICH IS THE GAP THIS TEST HAD. It has always asserted the
+      # right thing -- `--porcelain` and EMPTY -- but its fixture committed CONTENT ONLY, and it
+      # writes a content file to disk first, so the tracked path always had a file behind it. A
+      # POINTER never does: `core.stl.ptr` stands in for bytes that live at `core.stl`, and nothing
+      # anywhere writes a `.ptr` file. So the assertion passed for content and was NEVER EXERCISED
+      # FOR POINTERS, which is exactly where the defect was -- measured on the share box
+      # (tinkerex#173): `Projects/laser-mount` reported 13 ` D` lines, every one a `.ptr` path whose
+      # real file was present right beside it.
+      #
+      # THE REAL BINARY IS DELIBERATELY NOT WRITTEN BESIDE THE POINTER HERE. On the box it is there
+      # and shows as `??`, which is TRUE -- binaries are deliberately not tracked -- and out of this
+      # fix's scope; writing one would make `--porcelain` non-empty for something that is not a
+      # defect and cost this assertion its strength. `project_commit_test.rb` drives the full
+      # fixture, untracked binary and all, and asserts the `??` line is the ONLY one.
       def test_git_log_in_the_project_folder_shows_the_history_on_a_backend_operated_in_place
-        skip "needs the git binary" unless system("git --version > /dev/null 2>&1")
-        @repo.hydrate!
-        skip "this backend has no work tree; the repo lives in an ephemeral cache" unless work_tree
+        hydrate_or_skip_without_a_work_tree!
 
-        # THE FILE IS PUT ON DISK FIRST, because that is the real shape: the sweep commits files
-        # that are ALREADY in the project folder, and in place that folder IS the work tree. A
-        # commit whose content exists only in git objects is honestly reported by `git status` as
-        # a deletion, so asserting a clean tree without writing the file would be asserting
-        # something production never does.
+        # THE CONTENT FILE IS PUT ON DISK FIRST, because that is the real shape: the sweep commits
+        # files that are ALREADY in the project folder, and in place that folder IS the work tree.
+        # A content commit whose bytes exist only in git objects is honestly reported by `git
+        # status` as a deletion, so asserting a clean tree without writing the file would be
+        # asserting something production never does.
         FileUtils.mkdir_p(work_tree.join("docs"))
         File.write(work_tree.join("docs/notes.md"), "one\n")
-        @repo.commit!(paths: { "docs/notes.md" => "one\n" }, message: "a commit the maker can see")
+        @repo.commit!(paths: { "docs/notes.md" => "one\n", "core.stl.ptr" => POINTER_BODY },
+                      message: "a commit the maker can see",
+                      absent_from_work_tree: [ "core.stl.ptr" ])
 
         log = `git -C #{work_tree} log --oneline 2>&1`
         assert_match(/a commit the maker can see/, log,
@@ -426,7 +454,80 @@ module Maker
         # every tracked file reported as DELETED in their own folder, which reads as "the app
         # deleted my files", so the thing to assert is that there is nothing to report at all.
         assert_empty `git -C #{work_tree} status --porcelain 2>&1`.strip,
-                     "an unwritten index makes `git status` report every tracked file as DELETED"
+                     "a tracked path with no file -- an unwritten index, or a pointer -- makes " \
+                     "`git status` report it as DELETED in the maker's own folder"
+        # THE MARK ITSELF, BOTH WAYS ROUND. `h` is assume-unchanged, `H` is an ordinary cached
+        # entry. Asserting only the clean status would pass with the flag on EVERY entry, which is
+        # the worse bug (see the next test but one); asserting both lines pins the split.
+        marks = `git -C #{work_tree} ls-files -v`.lines.map(&:strip)
+        assert_includes marks, "h core.stl.ptr",
+                        "a pointer's path has no file on purpose and must be marked as such"
+        assert_includes marks, "H docs/notes.md",
+                        "a content file IS in the work tree and must stay an ordinary entry"
+      end
+
+      # THE HALF THAT IS EASY TO MISS. `commit!` rebuilds the index from nothing every pass, so the
+      # entries `carry_forward` brings back from HEAD arrive with no flag -- a pointer committed on
+      # Monday reports ` D` again on Tuesday, and a fix that only marks the paths a pass NAMES
+      # works for exactly one commit before silently reverting.
+      #
+      # THE SECOND PASS DELIBERATELY DOES NOT NAME THE POINTER, in `paths:` or in
+      # `absent_from_work_tree:`, and that is the production case rather than a contrived one: a
+      # pass only names nodes that SETTLED, so a binary still being written -- or one since deleted
+      # from the library -- is carried forward without being mentioned at all.
+      def test_a_pointer_from_an_earlier_pass_is_still_clean_after_a_later_one
+        hydrate_or_skip_without_a_work_tree!
+
+        File.write(work_tree.join("notes.md"), "one\n")
+        @repo.commit!(paths: { "notes.md" => "one\n", "core.stl.ptr" => POINTER_BODY },
+                      message: "first pass", absent_from_work_tree: [ "core.stl.ptr" ])
+
+        File.write(work_tree.join("notes.md"), "two\n")
+        assert @repo.commit!(paths: { "notes.md" => "two\n" }, message: "second pass"),
+               "fixture is inverted: the second pass must actually commit, or it never rewrites " \
+               "the index and this test cannot fail"
+
+        assert_empty `git -C #{work_tree} status --porcelain 2>&1`.strip,
+                     "a pointer carried forward from HEAD lost its mark and reads as DELETED again"
+        assert_includes `git -C #{work_tree} ls-files -v`.lines.map(&:strip), "h core.stl.ptr"
+      end
+
+      # THE OTHER DIRECTION, AND IT IS THE WORSE LIE OF THE TWO. Assume-valid tells git to stop
+      # consulting the file, so on a CONTENT entry it would report a clean tree while the maker's
+      # own edit sat unrecorded. The ` D` this fix removes was alarming and false; this would be
+      # reassuring and false, and a maker would find out when a version went missing from the
+      # history rather than immediately.
+      def test_marking_pointers_does_not_stop_a_real_edit_showing_as_modified
+        hydrate_or_skip_without_a_work_tree!
+
+        File.write(work_tree.join("notes.md"), "one\n")
+        @repo.commit!(paths: { "notes.md" => "one\n", "core.stl.ptr" => POINTER_BODY },
+                      message: "first pass", absent_from_work_tree: [ "core.stl.ptr" ])
+        File.write(work_tree.join("notes.md"), "the maker changed this\n")
+
+        # `.lines` AND `chomp`, NEVER `strip`: porcelain's status is the FIRST TWO COLUMNS, so an
+        # unstaged modification is " M notes.md" with a leading space and stripping it away turns
+        # this into an assertion about a different thing.
+        assert_equal [ " M notes.md" ],
+                     `git -C #{work_tree} status --porcelain 2>&1`.lines.map(&:chomp),
+                     "a content file's edit must still be visible -- the mark is for paths that " \
+                     "have no file, and a content path has one"
+      end
+
+      # RUNS ON BOTH SHAPES, WHICH IS THE POINT: it is what says a cache-backed backend is
+      # UNAFFECTED rather than merely believed to be. The mark is index state and a TREE carries
+      # mode and oid only, so a repository whose pointers gained it must still answer nil to an
+      # otherwise identical pass -- if it did not, every existing repository would mint one
+      # meaningless commit the first time this shipped, and the sweep would do it forever.
+      def test_marking_a_path_absent_from_the_work_tree_is_not_part_of_the_tree
+        @repo.hydrate!
+        oid = @repo.commit!(paths: { "core.stl.ptr" => POINTER_BODY }, message: "first",
+                            absent_from_work_tree: [ "core.stl.ptr" ])
+
+        assert_equal POINTER_BODY, @repo.blob_at(oid:, path: "core.stl.ptr")
+        assert_nil @repo.commit!(paths: { "core.stl.ptr" => POINTER_BODY }, message: "second",
+                                 absent_from_work_tree: [ "core.stl.ptr" ]),
+                   "the mark must not reach the tree, or an unchanged pass mints a commit"
       end
     end
 
