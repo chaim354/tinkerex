@@ -21,13 +21,15 @@ module FileLayer
       assert_raises(NoMethodError) { info.name = "b.stl" }
     end
 
-    # The sixth, dir_deletable, is asserted separately below rather than here -- it is the only
-    # one with a per-adapter claim attached, so its test needs the real adapters and this one does
-    # not. It appears in the constructor call anyway because Data.define requires every member.
+    # dir_deletable and local_worktree are asserted separately below rather than here -- they are
+    # the two with a per-adapter claim attached, so their tests need the real adapters and this one
+    # does not. Both appear in the constructor call anyway because Data.define requires every
+    # member, which is also why adding a capability breaks every construction site at once rather
+    # than defaulting one silently.
     test "Capabilities answers the first five questions" do
       caps = FileLayer::Capabilities.new(versioned: true, syncable: true, presignable: false,
                                          scannable: false, port_writable: true,
-                                         dir_deletable: true)
+                                         dir_deletable: true, local_worktree: false)
       assert caps.versioned?
       assert caps.syncable?
       assert_not caps.presignable?
@@ -61,7 +63,7 @@ module FileLayer
     test "dir_deletable is part of the capability set and reads as a predicate" do
       caps = FileLayer::Capabilities.new(versioned: true, syncable: true, presignable: true,
                                          scannable: false, port_writable: false,
-                                         dir_deletable: true)
+                                         dir_deletable: true, local_worktree: false)
       assert_predicate caps, :dir_deletable?
     end
 
