@@ -63,13 +63,30 @@ module FileLayer
   # answers -- which §14a forbids. IT IS NOT `syncable`, though the two agree on all three
   # backends today; that is three samples, not an identity, and encoding such a coincidence once
   # already (`is_a?(Share)`) is the whole reason `scannable` exists.
+  #
+  # LOCAL_WORKTREE answers ONE question, for ONE caller — the git editing surface:
+  #
+  #   Is the library a real filesystem this process can hand to git IN PLACE?
+  #
+  # share true; s3 false (a flat keyspace has no directory to open); chunk_remote false (the
+  # `nodes` table is a mirror and the bytes are remote).
+  #
+  # IT IS NOT `scannable`, WHICH IS TRUE FOR S3. It is not `port_writable` either, which is also
+  # true for s3. It agrees with NO existing capability, so unlike scannable/port_writable/
+  # dir_deletable there is not even a coincidence here to mistake for an identity.
+  #
+  # NEVER SPELL THIS `is_a?(FileLayer::Share)`. That class check is what §14b records as having
+  # made Library::ScanJob answer false for S3 and silently never index the library. Widening
+  # commits to another backend must be a new ANSWER here, never a rewrite of the callers.
+  # Note the mutation this cannot catch, and what does catch it: spec part 12.
   Capabilities = Data.define(:versioned, :syncable, :presignable, :scannable, :port_writable,
-                             :dir_deletable) do
+                             :dir_deletable, :local_worktree) do
     def versioned? = versioned
     def syncable? = syncable
     def presignable? = presignable
     def scannable? = scannable
     def port_writable? = port_writable
     def dir_deletable? = dir_deletable
+    def local_worktree? = local_worktree
   end
 end

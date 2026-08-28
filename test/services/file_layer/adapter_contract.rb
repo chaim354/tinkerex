@@ -230,6 +230,18 @@ module FileLayerAdapterContract
     assert_includes [ true, false ], caps.port_writable?
   end
 
+  # EVERY adapter answers this, and only Share answers true. Asserted in the shared contract
+  # rather than per-adapter so a fourth backend cannot quietly omit it -- the omission would
+  # read as "commits are unavailable here", which is indistinguishable from a correct false.
+  def test_local_worktree_is_answered_and_only_share_says_yes
+    caps = adapter.capabilities
+
+    assert_includes [ true, false ], caps.local_worktree,
+                    "local_worktree must be a real boolean, not nil"
+    assert_equal adapter.is_a?(FileLayer::Share), caps.local_worktree?,
+                 "only a real local filesystem can be handed to git in place"
+  end
+
   # `port_writable` PINNED AGAINST WHAT write ACTUALLY DOES — Phase 4's Landmine 1.
   #
   # Capabilities are five hand-written booleans per adapter, and until Phase 3 NOTHING read them,

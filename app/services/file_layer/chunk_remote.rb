@@ -48,9 +48,12 @@ module FileLayer
     # already draws when it notes `manifest#download` gates on `syncable`, NOT `presignable`. Nothing
     # in the app gates on this flag today (checked), so the cost is a stream where a redirect might
     # have served, which is stated in `#download` rather than hidden.
+    # local_worktree: false — the `nodes` table is a MIRROR and the bytes are remote. The reason
+    # not to commit here is not cost, though: the maker's own machine has this repository checked
+    # out with real git, so a server-side commit would move refs under a live working copy.
     CAPABILITIES = Capabilities.new(
       versioned: true, syncable: true, presignable: false,
-      scannable: false, port_writable: false, dir_deletable: true
+      scannable: false, port_writable: false, dir_deletable: true, local_worktree: false
     ).freeze
 
     # `write` EXISTS IN ORDER TO REFUSE, and its absence was a real omission the contract caught.

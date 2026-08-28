@@ -24,8 +24,13 @@ module FileLayer
       #
       # port_writable: true — there is no sync engine here, so the port IS the write path
       # (#write/#delete/#move/#undelete) and the UI POSTs bytes to it.
+      #
+      # local_worktree: true — the library IS a mounted filesystem, so a repository inside it can
+      # be opened by rugged in place, with no hydration. This is the ONLY backend that can say so,
+      # and it is why committing is share-only (spec part 3c). It is a NETWORK filesystem though,
+      # which is a live hazard rather than a footnote — spec part 8.
       Capabilities.new(versioned: false, syncable: false, presignable: false, scannable: true,
-                       port_writable: true, dir_deletable: false)
+                       port_writable: true, dir_deletable: false, local_worktree: true)
     end
 
     def stat(user, node_id:)
