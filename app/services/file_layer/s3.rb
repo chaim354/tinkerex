@@ -81,11 +81,8 @@ module FileLayer
       # not: presignable is about handing the browser a URL to READ from, port_writable about
       # which door bytes come IN. A bucket could presign the upload too — spec §5.2 defers that —
       # so until it does, the UI POSTs to the port and #write puts the object.
-      #
-      # repo_storable: true — a bucket holds any key; the S3Observer drops these keys from the
-      # catalog.
       Capabilities.new(versioned: false, syncable: false, presignable: true, scannable: true,
-                       port_writable: true, dir_deletable: false, repo_storable: true)
+                       port_writable: true, dir_deletable: false)
     end
 
     # Mirrors Share#stat exactly: answered from the NODE, never from the bucket. A stat is what
@@ -655,118 +652,6 @@ module FileLayer
       stat(user, node_id: node.node_id)
     end
 
-    # THE REPO-DATA VERBS. See FileLayer::Share for the argument; the same rules hold here and the
-    # S3Observer is the half that drops these keys from the catalog.
-    #
-    # A DIFFERENT DOOR FROM #write, AND THAT IS WHY THEY DO NOT ASK #observable!. That guard
-    # refuses `.git/**` because an ordinary write there would leave a LIVE NODE at a key the
-    # observer deliberately never emits — an unpairable ghost whose tombstone trips the
-    # mass-deletion guard and refuses that scan and every scan after it, permanently (§14b's four
-    # wedges). These verbs create NO node at all, so the ghost is structurally unreachable from
-    # here, and routing them through observable! would refuse the one caller that is safe.
-    #
-    # NO TEMP-AND-RENAME, matching #write and for the identical reason: put_object is ATOMIC, so a
-    # temp key would add a second, unobservable ghost and buy nothing. A reader never sees a
-    # half-written object.
-    # `body: io`, NOT `io.read` -- the SDK streams an IO, and a pack is the one thing here that can
-    # be large. It deliberately does NOT go through `read_capped!` the way #write does: that cap is
-    # 256 MiB and answers NotFound, which for a legitimate pack would be a factually wrong TERMINAL
-    # answer to "your repository is too big". (A single PUT still tops out at 5 GiB -- the limit
-    # this adapter already knows as COPY_MAX_BYTES -- so a repo that large needs multipart.)
-    def write_repo_data(user, project:, rel:, io:)
-      @client.put_object(bucket: @bucket, key: repo_data_key(user, project, rel), body: io)
-      nil
-    rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
-      raise FetchError, "repo write failed for #{rel.inspect}: #{e.message}"
-    end
-
-    def read_repo_data(user, project:, rel:)
-      @client.get_object(bucket: @bucket, key: repo_data_key(user, project, rel)).body.read
-    rescue ::Aws::S3::Errors::NoSuchKey, ::Aws::S3::Errors::NotFound
-      # NotFound, not FetchError: this rel genuinely is not there and a retry cannot change it.
-      #
-      # BOTH CLASSES ARE NAMED, for the reason #read and #object_exists? already name both: an
-      # S3-COMPATIBLE store may pick either, and this backend points at whatever the user runs
-      # (SeaweedFS/MinIO/Ceph). Rescuing NoSuchKey alone makes an absent pack RETRYABLE on those
-      # stores -- and no CI leg can catch it, because FakeS3 always answers NoSuchKey.
-      raise NotFound, "no repo data at #{rel.inspect}"
-    rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
-      # A blip, a throttle, an unreachable store: retryable, and NONE of them means "gone" (§14a).
-      raise FetchError, "repo read failed for #{rel.inspect}: #{e.message}"
-    end
-
-    def list_repo_data(user, project:, prefix: nil)
-      root = repo_data_root_key(user, project)
-      search = prefix.present? ? "#{root}#{prefix}/" : root
-      out = []
-      token = nil
-      loop do
-        resp = @client.list_objects_v2(bucket: @bucket, prefix: search, continuation_token: token)
-        # DIRECTORY-MARKER OBJECTS ARE DROPPED. The S3 console mints a zero-byte `<prefix>/` object
-        # for a "folder", so a repo can carry `.git/` and `.git/objects/pack/` keys. Left in, the
-        # marker AT the root strips to "" and handing that back to #read_repo_data raises
-        # ArgumentError -- an unhandled class for a caller that is walking a listing. Share drops
-        # these with its `File.directory?` reject; this is the same filter in a flat keyspace.
-        resp.contents.each do |o|
-          key = o.key.delete_prefix(root)
-          out << key unless key.empty? || key.end_with?("/")
-        end
-        # COMPLETE OR NOTHING. A truncated listing is a well-formed lie (§14b): the caller reads it
-        # as "these are all the packs" and hydrates an incomplete repository, which then fails
-        # later and elsewhere. Following the continuation token is the whole of the fix.
-        break unless resp.is_truncated
-
-        previous, token = token, resp.next_continuation_token
-        # Truncated but the cursor did not ADVANCE: the store says there is more and has given us
-        # no way to ask for it. Library::S3Observer#paginate refuses the blank half of this for the
-        # identical reason -- real S3 cannot do it, an S3-COMPATIBLE store is not bound by that,
-        # and this backend points at whatever the user runs (SeaweedFS/MinIO/Ceph).
-        #
-        # WITHOUT THIS THE LOOP NEVER ENDS, which is worse here than in the observer: there a bad
-        # page refuses a scan, here it hangs a Puma thread while `out` grows without bound. BOTH
-        # shapes are checked, because both were driven and both hang -- a nil token re-requests
-        # page one forever, and a REPEATED token does the same thing while never being blank. The
-        # honest test is that the cursor moved, not that it exists.
-        if token.blank? || token == previous
-          raise FetchError, "the S3 listing reports more results but its continuation token did " \
-                            "not advance -- the repository listing is incomplete. Refusing."
-        end
-      end
-      out
-    rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
-      raise FetchError, "repo list failed: #{e.message}"
-    end
-
-    # DELETING WHAT IS ALREADY GONE IS SUCCESS. Real S3 makes a DELETE on an absent key a no-op, so
-    # this rescue is unreachable there -- it is here because the promise must not rest on an
-    # unasserted third-party property. Share earns it with a rescued ENOENT and chunk_remote by
-    # looking the node up first; on this backend alone it was resting on what SeaweedFS/MinIO/Ceph
-    # happen to do, which no CI leg exercises.
-    def delete_repo_data(user, project:, rel:)
-      @client.delete_object(bucket: @bucket, key: repo_data_key(user, project, rel))
-      nil
-    rescue ::Aws::S3::Errors::NoSuchKey, ::Aws::S3::Errors::NotFound
-      nil
-    rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
-      raise FetchError, "repo delete failed for #{rel.inspect}: #{e.message}"
-    end
-
-    # NO LOCAL DIRECTORY EXISTS HERE, so the honest answer is nil and the caller hydrates into a
-    # cache of its own. A bucket is a flat keyspace over HTTP: there is no path a local process can
-    # be pointed at, and no `.git` for libgit2 to open in place. The four byte verbs above are the
-    # whole of what this backend can offer a git layer.
-    #
-    # NIL IS A STATEMENT, NOT A GAP. Answering some plausible-looking path — a tmpdir, the prefix —
-    # would be a lie the caller cannot detect: it would open a repository that is not this one and
-    # write commits nothing ever reads back. Refusing to answer is what makes the caller hydrate.
-    #
-    # AND THE QUESTION IS ANSWERED HERE RATHER THAN AT THE CALL SITE. A caller asking
-    # `is_a?(FileLayer::Share)` instead is the class check §14b has the scar about — the same
-    # spelling that made Library::ScanJob answer false for S3 and silently never index the library.
-    def repo_data_dir(user, project:)
-      nil
-    end
-
     # nil prefix means the whole bucket. The trailing slash is what keeps a prefix a DIRECTORY
     # boundary: without it, prefix "cad" would also match the sibling "cadence/..." keyspace.
     #
@@ -1109,34 +994,6 @@ module FileLayer
         raise NotFound, "storage_path escapes the library prefix: #{rel.inspect}"
       end
       [ @prefix, rel ].compact.join("/")
-    end
-
-    # The bucket key of one file inside a project's own `.git`. `data_rel!` REJECTS rather than
-    # normalizes, and `key_for_rel` refuses an escape a second time — one guard on the rel, one on
-    # the composed key, because this backend signs PATH-STYLE URLs and a `..` segment that reached
-    # one would be resolved out of our bucket by any normalizing proxy.
-    def repo_data_key(user, project, rel)
-      key_for_rel(Library::RepoMetadata.data_rel!(project_folder_rel(user, project), rel))
-    end
-
-    # The `.git/` prefix itself, WITH its trailing slash: `list_repo_data` both searches under it
-    # and strips it back off. The slash is what keeps the prefix a DIRECTORY boundary in a flat
-    # keyspace -- without it, `Projects/lamp/.gitignore` and `Projects/lamp/.git-notes/n` both
-    # match a search for `Projects/lamp/.git` and get served as repository data. (An earlier
-    # version of this comment illustrated the hazard with `Projects/lamp.git-notes`, which is not
-    # an instance of it: that key does not start with `Projects/lamp/.git` either way. The rule is
-    # load-bearing; that example did not demonstrate it.)
-    def repo_data_root_key(user, project)
-      "#{key_for_rel("#{project_folder_rel(user, project)}/#{Library::RepoMetadata::DIR_NAME}")}/"
-    end
-
-    # The project's folder as a library-relative path. Raises rather than defaulting to the
-    # library ROOT if the folder has no storage_path — #key_for's own landmine.
-    def project_folder_rel(user, project)
-      node = live_node!(user, project.folder_node_id)
-      rel = node.storage_path.to_s
-      raise NotFound, "project #{project.id} folder has no storage_path" if rel.blank?
-      rel
     end
 
     # A leaf name is a leaf; the directory is parent_node_id's job. Mirrors Share#leaf!, including

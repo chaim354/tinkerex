@@ -71,32 +71,5 @@ module Library
       assert_nil RepoMetadata.marker_prefix(nil)
       assert_not RepoMetadata.internal?(nil)
     end
-
-    test "data_rel! composes a rel beneath the marker" do
-      assert_equal "Projects/lamp/.git/objects/pack/p.pack",
-                   Library::RepoMetadata.data_rel!("Projects/lamp", "objects/pack/p.pack")
-    end
-
-    test "data_rel! treats a blank folder rel as the library root" do
-      assert_equal ".git/HEAD", Library::RepoMetadata.data_rel!("", "HEAD")
-      assert_equal ".git/HEAD", Library::RepoMetadata.data_rel!(nil, "HEAD")
-    end
-
-    # REJECTS, never normalizes — see the header. Each of these would otherwise address
-    # a path outside the project's own .git.
-    test "data_rel! rejects traversal, absolute paths and empty rels" do
-      [ "../escape", "objects/../../escape", "/etc/passwd", "", "  ", "./HEAD" ].each do |bad|
-        assert_raises(ArgumentError, "expected #{bad.inspect} to be refused") do
-          Library::RepoMetadata.data_rel!("Projects/lamp", bad)
-        end
-      end
-    end
-
-    # A caller must not be able to smuggle a second marker in and address ANOTHER repo.
-    test "data_rel! rejects a rel that contains the marker itself" do
-      assert_raises(ArgumentError) do
-        Library::RepoMetadata.data_rel!("Projects/lamp", ".git/config")
-      end
-    end
   end
 end

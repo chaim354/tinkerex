@@ -117,33 +117,5 @@ module Library
       prefix = marker_prefix(rel)
       !prefix.nil? && prefix != rel
     end
-
-    # Compose the library-relative path of one file inside a project's own `.git`, given the
-    # project folder's rel and a path relative to the marker ("HEAD", "refs/heads/main",
-    # "objects/pack/pack-abc.pack").
-    #
-    # IT REJECTS, IT NEVER NORMALIZES, and that is the same rule FileLayer::S3#key_for carries for
-    # the same reason: `expand_path` would turn "objects/../../escape" into a VALID path, and the
-    # caller would then read or overwrite a file outside this project's repository with no error
-    # anywhere. A refusal is recoverable; a silent wrong address is not.
-    #
-    # A REL CONTAINING THE MARKER IS REFUSED TOO. Without that, ".git/config" composes to
-    # "<folder>/.git/.git/config" — harmless — but "../other/.git/config" style smuggling is not,
-    # and refusing the segment outright is one rule instead of two.
-    #
-    # BLANK FOLDER REL MEANS THE LIBRARY ROOT, matching the `parent_node_id: nil` convention the
-    # adapter contracts already use: a project folder at the top of the library composes to
-    # ".git/HEAD", not "/.git/HEAD".
-    def self.data_rel!(folder_rel, rel)
-      rel = rel.to_s
-      segments = rel.split("/")
-
-      if rel.strip.empty? || rel.start_with?("/") ||
-         segments.any? { |s| s.empty? || s == "." || s == ".." || s == DIR_NAME }
-        raise ArgumentError, "#{rel.inspect} is not a valid path inside a repository"
-      end
-
-      [ folder_rel.presence, DIR_NAME, rel ].compact.join("/")
-    end
   end
 end

@@ -1,9 +1,7 @@
-require "timeout"
 require "test_helper"
 require_relative "adapter_contract"
 require_relative "adapter_write_contract"
 require_relative "adapter_mutation_contract"
-require_relative "adapter_repo_data_contract"
 require_relative "../../support/fake_s3"
 
 module FileLayer
@@ -23,47 +21,6 @@ module FileLayer
     # S3#write put_object straight over the user's file while Share, three feet away, refuses.
     include FileLayerWritableContract
     include FileLayerMutationContract
-    # The REPO-DATA verbs, satisfied UNMODIFIED here for the same reason the three above are.
-    include AdapterRepoDataContract
-
-    # The repo-data contract's two hooks. The folder node is minted THROUGH THE ADAPTER UNDER TEST
-    # — `adapter.mkdir`, twice — rather than through `Maker::Project#ensure_library_folder!`, and
-    # the difference is not stylistic. `ensure_library_folder!` goes through
-    # `Maker::LibraryFolder#ensure_segment` -> `FileLayer.current`, which is the AMBIENT backend:
-    # on the `test-s3` leg that is an S3 adapter built from config/ci.rb's stub knobs
-    # (`ci-not-a-real-bucket`, no injected client), so the mkdir would be a REAL network call to
-    # AWS — the exact thing that leg's own comment says must fail. Here it also would not be the
-    # backend under test, which is what the contract's hook doc actually asks for ("a project whose
-    # folder node exists on THIS backend"). Two mkdirs against `@fake` are hermetic on all three
-    # legs and put a real storage_path on the folder node, which is all `project_folder_rel` reads.
-    #
-    # TWO projects, because the scoping test's whole job is to catch an adapter that resolved the
-    # key from anything other than the project's own folder node.
-    def repo_project
-      @repo_project ||= make_repo_project("Repo Project")
-    end
-
-    def second_repo_project
-      @second_repo_project ||= make_repo_project("Other Repo Project")
-    end
-
-    # The contract's third hook. A bucket is a flat keyspace over HTTP with no local directory for
-    # a process to open, so this backend answers nil and its caller hydrates. Stated here as a
-    # positive claim rather than left to a skip: "s3 answers nil" is exactly as much a rule as
-    # "share answers a path", and the contract's own header records that letting the verb pick its
-    # own arm hid a nil-returning Share behind a green run.
-    def expects_repo_data_dir? = false
-
-    # `mkdir` is idempotent on a live dir at the same rel, so the second project's `Projects` walk
-    # returns the first's node rather than colliding — the same property Maker::LibraryFolder leans
-    # on in production.
-    def make_repo_project(name)
-      project = @user.maker_projects.create!(name:)
-      root = adapter.mkdir(@user, parent_node_id: nil, name: Maker::ProjectFolders::ROOT)
-      folder = adapter.mkdir(@user, parent_node_id: root.node_id, name: project.slug)
-      project.update_column(:folder_node_id, folder.node_id)
-      project
-    end
 
     # The hooks FileLayerMutationContract requires. S3's real door for creating a file is the
     # port's own write, which is exactly what the four extracted tests used inline before they
@@ -85,7 +42,6 @@ module FileLayer
       @adapter ||= FileLayer::S3.new(bucket: "b", region: "us-east-1", access_key_id: "ak",
                                      secret_access_key: "sk", prefix: PREFIX, client: @fake.client)
     end
-
 
     # Seed the object as another tool would have, then index it with THE REAL OBSERVER. That is
     # the backend's actual premise: the bucket already has the user's files in it, and a scan is
@@ -1676,69 +1632,6 @@ module FileLayer
       scan!(max_delete_pct: 100)
       node = @user.nodes.find_by(node_id: info.node_id)
       assert node && !node.deleted, "the dir-marker keeps the empty folder alive"
-    end
-
-    # COMPLETE OR NOTHING. FakeS3 pages at two keys, so this is many pages: an adapter that stopped
-    # at the first would report a plausible, short, WRONG answer -- the failure §14b names a
-    # well-formed lie, and the caller would hydrate an incomplete repository from it.
-    test "list_repo_data follows the continuation token instead of returning a short listing" do
-      30.times do |i|
-        adapter.write_repo_data(@user, project: repo_project, rel: "objects/pack/p#{i}.pack",
-                                io: StringIO.new("x"))
-      end
-
-      assert_equal 30, adapter.list_repo_data(@user, project: repo_project,
-                                              prefix: "objects/pack").size
-    end
-
-    # A LISTING THAT NEVER TERMINATES IS WORSE THAN A SHORT ONE. Library::S3Observer refuses a
-    # truncated page with no continuation token because real S3 cannot produce one and an
-    # S3-COMPATIBLE store is not bound by that; here the same page would spin forever -- nil
-    # re-requests page one, `is_truncated` is true again -- hanging a Puma thread while the result
-    # array grows without bound. A REPEATED token is the same defect wearing a different shape,
-    # which is why the guard asks whether the cursor ADVANCED and not whether it exists.
-    class NonAdvancingPager
-      Page = Struct.new(:contents, :is_truncated, :next_continuation_token)
-      def initialize(token) = @token = token
-      def list_objects_v2(*) = Page.new([], true, @token)
-    end
-
-    test "list_repo_data refuses a listing whose continuation token never advances" do
-      project = repo_project # minted through the real fake, so the folder node exists
-
-      [ nil, "stuck" ].each do |token|
-        stuck = FileLayer::S3.new(bucket: "b", region: "us-east-1", access_key_id: "ak",
-                                  secret_access_key: "sk", prefix: PREFIX,
-                                  client: NonAdvancingPager.new(token))
-        assert_raises(FileLayer::FetchError, "a #{token.inspect} token must be refused, not looped") do
-          Timeout.timeout(5) { stuck.list_repo_data(@user, project:) }
-        end
-      end
-    end
-
-    # THE S3 CONSOLE MINTS ZERO-BYTE `<prefix>/` OBJECTS for folders, so a repo can carry a `.git/`
-    # key. Left in the listing, the marker AT the root strips to "" -- and feeding "" back to
-    # read_repo_data raises ArgumentError, an unhandled class for a caller walking a listing.
-    test "list_repo_data drops directory-marker objects" do
-      project = repo_project
-      root = adapter.send(:repo_data_root_key, @user, project)
-      @fake.seed!(root, "")
-      @fake.seed!("#{root}objects/pack/", "")
-      adapter.write_repo_data(@user, project:, rel: "HEAD", io: StringIO.new("h"))
-
-      assert_equal [ "HEAD" ], adapter.list_repo_data(@user, project:)
-    end
-
-    # AN S3-COMPATIBLE STORE MAY ANSWER EITHER CLASS for a missing key, which is why #read and
-    # #object_exists? both name both. Rescuing NoSuchKey alone makes an absent pack RETRYABLE on
-    # SeaweedFS/MinIO/Ceph -- and no CI leg can see it, because FakeS3 always says NoSuchKey.
-    test "a missing object reported as NotFound is terminal, not retryable" do
-      project = repo_project
-      @fake.fault!(:get_object, "NotFound")
-
-      assert_raises(FileLayer::NotFound) do
-        adapter.read_repo_data(@user, project:, rel: "objects/pack/absent.pack")
-      end
     end
   end
 end

@@ -67,19 +67,15 @@ module SchemaMap
     # that cannot be made.
     { "label" => "Remote sync mirror", "group" => "sync",
       "tables" => %w[remote_manifest_chunks] },
-    # `maker_version_previews` sits BESIDE `maker_previews` and not with the git bookkeeping in
-    # "Models & projects", even though its only real foreign key points at `maker_projects`. It is a
-    # rendered artifact about a FILE — the same question `maker_previews` answers, asked of a past
-    # version — and §14b is the invariant a reader needs both rows in front of them to check.
     { "label" => "Files ↔ maker", "group" => "maker",
-      "tables" => %w[maker_file_attachments maker_previews maker_version_previews maker_notes
-                     maker_addon_files maker_addon_states maker_addon_state_revisions] },
+      "tables" => %w[maker_file_attachments maker_previews maker_notes maker_addon_files
+                     maker_addon_states maker_addon_state_revisions] },
     { "label" => "Library", "group" => "maker",
       "tables" => %w[maker_items maker_collection_items maker_collections maker_taggings
                      maker_tags maker_tasks] },
     { "label" => "Models & projects", "group" => "maker",
       "tables" => %w[maker_models maker_print_runs maker_projects maker_build_log_entries
-                     maker_sheets maker_shelves maker_git_repos] },
+                     maker_sheets maker_shelves] },
     { "label" => "Inventory & BOM", "group" => "maker",
       "tables" => %w[maker_boms maker_bom_lines maker_inventory_items
                      maker_inventory_transactions maker_suppliers maker_locations] },
@@ -117,12 +113,6 @@ module SchemaMap
     # --- the maker layer's grip on the file layer: every one a bare string, §14a ---
     [ "maker_file_attachments.node_id",    "nodes.node_id",       "app", "attaches" ],
     [ "maker_previews.node_id",            "nodes.node_id",       "app", "depicts" ],
-    # THE HISTORICAL RENDER CACHE'S GRIP ON THE SAME FILE, and it is the same bare string for the
-    # same reason: a tombstone outliving its row is the design (§14a), so this must stay soft.
-    # `maker_version_previews.content_token` gets NO edge, for the reason spelled out immediately
-    # below about `maker_previews.version_id` -- it is the identical backend-polymorphic value under
-    # an honest name, and there is no `versions` table in this database to point at.
-    [ "maker_version_previews.node_id",    "nodes.node_id",       "app", "past version of" ],
     # `maker_file_attachments.version_id` and `maker_previews.version_id` are DELIBERATELY NOT
     # drawn as edges into `versions.version_id`. This map used to claim both — "pinned" and
     # "rendered from" — and that was wrong, not merely unenforced: the column is
@@ -175,16 +165,6 @@ module SchemaMap
     [ "maker_locations.parent_id",                    "maker_locations.id",       "app", "inside" ],
     [ "maker_print_runs.model_id",                    "maker_models.id",          "app", "print of" ],
     [ "maker_taggings.tag_id",                        "maker_tags.id",            "app", "tag" ],
-    # A PROJECT'S REPOSITORY BOOKKEEPING, AND THE ARROW IS THE ONLY HONEST HALF OF IT: what the
-    # database holds is a pointer at the project, while the repository itself is a `.git` directory
-    # in the library that no column here names. The row is an index into it, never its truth
-    # (app/models/maker/git_repo.rb), which is why nothing on this table points at `nodes`.
-    [ "maker_git_repos.project_id",                   "maker_projects.id",        "fk",  "repo of" ],
-    # WHERE THIS TABLE'S TENANCY COMES FROM, and the reason it carries no `user_id` at all: a
-    # version exists only because a PROJECT's repository recorded it, so the project is the parent
-    # and a second ownership column would be a second answer to "whose is this"
-    # (app/models/maker/version_preview.rb, and the migration for the count that decided it).
-    [ "maker_version_previews.project_id",            "maker_projects.id",        "fk",  "history for" ],
     [ "maker_addon_files.addon_state_id",             "maker_addon_states.id",    "fk",  "saved by" ],
     [ "maker_addon_state_revisions.addon_state_id",   "maker_addon_states.id",    "fk",  "history of" ],
     # --- polymorphic: one edge per concrete target the pair can name ---------------
@@ -197,14 +177,11 @@ module SchemaMap
     [ "maker_tasks.taskable_id",              "maker_projects.id",          "poly", "taskable" ],
     [ "maker_tasks.taskable_id",              "maker_items.id",             "poly", "taskable" ],
     # Rich text is TEXT-ONLY on the server (Maker::TextOnlyRichText, §15), so an ActionText body
-    # carries no Active Storage attachment: the two `*previews` tables are the only records an
-    # attachment ever names, each via has_one_attached :asset. That was ONE table until the
-    # historical render cache arrived; both arrows are drawn, because a polymorphic pair has no
-    # constraint and `problems` cannot notice a missing one (see this file's own warning).
+    # carries no Active Storage attachment: `maker_previews` is the only record an attachment
+    # ever names, via has_one_attached :asset.
     [ "action_text_rich_texts.record_id",     "maker_notes.id",             "poly", "body" ],
     [ "action_text_rich_texts.record_id",     "maker_build_log_entries.id", "poly", "body" ],
     [ "active_storage_attachments.record_id", "maker_previews.id",          "poly", "asset" ],
-    [ "active_storage_attachments.record_id", "maker_version_previews.id",  "poly", "asset" ],
     # --- Rails plumbing -----------------------------------------------------------
     [ "active_storage_attachments.blob_id",     "active_storage_blobs.id", "fk", "bytes" ],
     [ "active_storage_variant_records.blob_id", "active_storage_blobs.id", "fk", "variant of" ],

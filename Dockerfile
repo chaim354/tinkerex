@@ -30,25 +30,9 @@ ENV RAILS_ENV="production" \
 # Throw-away build stage to reduce size of final image
 FROM base AS build
 
-# `cmake` IS HERE FOR rugged, which compiles libgit2 from source at gem-install time.
-#
-# AND libgit2 IS BUILT WITHOUT HTTPS OR SSH, WHICH IS THE CORRECT MINIMAL BUILD RATHER THAN A
-# WORKAROUND -- nothing in this app talks to a git REMOTE. Maker::Git::Repo does local object, tree
-# and ref work against a directory; the only clone in the codebase is a test driving the git CLI.
-# Turning both off drops the OpenSSL dependency entirely: fewer packages, smaller attack surface,
-# and no libssl at runtime in the final image.
-#
-# IT IS ALSO WHAT MAKES THE BUILD WORK AT ALL, and finding that out needed a real image build --
-# no local `bundle install` reproduces it, because the Mac has OpenSSL and this slim Debian stage
-# does not. Two failures in sequence, both only visible here: first libgit2's cmake aborts with
-# "Unable to autodetect a usable HTTPS backend"; add libssl-dev and it configures, then mkmf fails
-# at `checking for -lgit2` because the static libgit2 now needs OpenSSL symbols that its test link
-# does not pull in. Removing the dependency fixes both at the root.
-ENV CMAKE_FLAGS="-DUSE_HTTPS=OFF -DUSE_SSH=OFF"
-
 # Install packages needed to build gems
 RUN apt-get update -qq && \
-    apt-get install --no-install-recommends -y build-essential cmake git libyaml-dev openssh-client pkg-config && \
+    apt-get install --no-install-recommends -y build-essential git libyaml-dev openssh-client pkg-config && \
     rm -rf /var/lib/apt/lists /var/cache/apt/archives
 
 # Install application gems
