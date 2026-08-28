@@ -24,6 +24,11 @@ Bare `§` below means **CLAUDE.md**; the spec's own sections are cited as **spec
 
 ## Before you start
 
+> **There is NO users fixture in this repo, and `users(:one)` appears nowhere in the suite.**
+> Unit tests build a user with `User.create!(email: "prefix-#{SecureRandom.hex(4)}@example.com")`
+> (see `test/services/file_layer/s3_test.rb`); web integration tests add a password and define
+> their own `sign_in_as`. Do not reach for a fixture.
+
 - [ ] Read the spec end to end. Parts 3 (two write doors), 6 (the flow) and 8 (network filesystem)
       are the ones that will bite if skipped.
 - [ ] Read `docs/invariants/project-intake.md` — Task 3 moves a method `Maker::ProjectIntake` depends on.
@@ -349,7 +354,7 @@ require "test_helper"
 
 class Library::WorkingTreeTest < ActiveSupport::TestCase
   setup do
-    @user = users(:one)
+    @user = User.create!(email: "rt-#{SecureRandom.hex(4)}@example.com")
     @tree = Library::WorkingTree.new(@user)
   end
 
@@ -603,7 +608,7 @@ No committing yet.
 require "test_helper"
 
 class Maker::RepoEditTest < ActiveSupport::TestCase
-  setup { @user = users(:one) }
+  setup { @user = User.create!(email: "rt-#{SecureRandom.hex(4)}@example.com") }
 
   test "one row per (user, node)" do
     Maker::RepoEdit.create!(user: @user, repo_root_node_id: "r1", node_id: "n1")
@@ -624,7 +629,7 @@ class Maker::RepoEditTest < ActiveSupport::TestCase
   end
 
   test "pending_for is scoped to one repository and one user" do
-    other = users(:two)
+    other = User.create!(email: "rt2-#{SecureRandom.hex(4)}@example.com")
     Maker::RepoEdit.create!(user: @user, repo_root_node_id: "r1", node_id: "n1")
     Maker::RepoEdit.create!(user: @user, repo_root_node_id: "r2", node_id: "n2")
     Maker::RepoEdit.create!(user: other, repo_root_node_id: "r1", node_id: "n3")
@@ -1350,7 +1355,7 @@ require "support/git_repo_fixture"
 class Maker::Git::LocalRepoTest < ActiveSupport::TestCase
   include GitRepoFixture
 
-  setup { @user = users(:one) }
+  setup { @user = User.create!(email: "rt-#{SecureRandom.hex(4)}@example.com") }
 
   test "opens a repository the maker brought" do
     root = make_repo!
@@ -1722,7 +1727,7 @@ require "support/git_repo_fixture"
 class Maker::Git::CommitPathsTest < ActiveSupport::TestCase
   include GitRepoFixture
 
-  setup { @user = users(:one) }
+  setup { @user = User.create!(email: "rt-#{SecureRandom.hex(4)}@example.com") }
 
   def local(root) = Maker::Git::LocalRepo.open(@user, root)
   def rugged_at   = Rugged::Repository.new(File.join(library_root, "demo"))
@@ -2535,7 +2540,7 @@ class RepoCommitWedgeTest < ActionDispatch::IntegrationTest
   include GitRepoFixture
 
   setup do
-    @user = users(:one)
+    @user = User.create!(email: "rt-#{SecureRandom.hex(4)}@example.com")
     sign_in_as @user
   end
 
