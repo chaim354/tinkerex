@@ -77,6 +77,40 @@ class Maker::Git::LocalRepoTest < ActiveSupport::TestCase
     assert_equal 1, row.additions
   end
 
+  # THE FIXTURE THAT WAS MISSING, and its absence is the whole story of tinkerex#185: every file in
+  # this suite had UNIQUE lines ("one", "two"), which is the one shape where `(b & a).size` happens
+  # to be right. Real files repeat lines constantly -- blank ones most of all -- so the shipped
+  # counts were wrong on essentially every file a maker would edit, and the suite could not see it.
+  #
+  # THE ASSERTION IS AGAINST GIT'S OWN ANSWER, not against a number I worked out by hand: a
+  # hand-computed expectation is just this bug written down a second time.
+  test "line counts are right for a file with repeated blank lines" do
+    body = "alpha\n\nbeta\n\ngamma\n\ndelta\n\n"
+    root = make_repo!(files: { "a.txt" => body })
+    File.write(File.join(library_root, "demo", "a.txt"), body + "epsilon\n\n")
+
+    row = Maker::Git::LocalRepo.open(@user, root).status_for([ "a.txt" ]).fetch("a.txt")
+
+    repo = Rugged::Repository.new(File.join(library_root, "demo"))
+    truth = Rugged::Patch.from_strings(body, body + "epsilon\n\n").stat
+
+    assert_equal :modified, row.state
+    assert_equal truth, [ row.additions, row.deletions ]
+    assert_equal [ 2, 0 ], [ row.additions, row.deletions ],
+                 "two lines appended is +2 -0; the old (b & a) collapsed the four blank lines"
+  end
+
+  test "line counts are right when lines are removed as well as added" do
+    body = "a\n\nb\n\nc\n\n"
+    root = make_repo!(files: { "a.txt" => body })
+    File.write(File.join(library_root, "demo", "a.txt"), "a\n\nz\n\n")
+
+    row = Maker::Git::LocalRepo.open(@user, root).status_for([ "a.txt" ]).fetch("a.txt")
+
+    assert_equal Rugged::Patch.from_strings(body, "a\n\nz\n\n").stat,
+                 [ row.additions, row.deletions ]
+  end
+
   test "an ignored path is listed and NOT committable" do
     root = make_repo!(files: { "a.txt" => "x\n" }, gitignore: "secret.txt\n")
     File.write(File.join(library_root, "demo", "secret.txt"), "shh\n")
