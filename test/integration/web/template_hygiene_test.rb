@@ -61,6 +61,23 @@ module Web
     # counted by the balance check above, which needs no request at all.
     UNSWEPT_DIRS = %w[users/ pwa/ active_storage/].freeze
 
+    # ONE TEMPLATE, NOT A DIRECTORY, AND FOR A REASON THIS SWEEP CANNOT ENGINEER AROUND. Every page
+    # in `pages` is reachable from bare `nodes.create!` rows on whatever backend is ambient. The
+    # commit box is not: RepoCommitsController#load_repo redirects unless the node is a real git
+    # working tree ON DISK and the backend answers `local_worktree?`, which is share alone. So on
+    # the s3 and chunk_remote legs the page cannot render at all, and on the share leg it would
+    # need a rugged fixture this backend-neutral class has no business owning.
+    #
+    # WHAT IS AND IS NOT GIVEN UP. The balance check above still counts this template on disk, so
+    # the two-snippet leak shape is covered; what is not is the one-snippet trailing-delimiter
+    # shape, which only a rendered page can catch. That was checked BY HAND when the template
+    # landed -- the real page was driven and its body contains no `%` + `>`, no section marks and
+    # no comment prose (tinkerex#178) -- and a hand check is exactly the thing that goes stale, so
+    # this is a debt, not a dismissal. The way to clear it is to give this class a real-repo
+    # fixture and add the page to `pages` under a `local_worktree?` guard, at which point this
+    # constant should go back to being empty.
+    UNSWEPT_TEMPLATES = %w[repo_commits/show.html.erb].freeze
+
     setup do
       # HERMETIC BY FIXTURE (§14c): the addon pages below read `test/fixtures/addons`, never the
       # sibling `tinkerex-addons` checkout a fresh clone does not have.
@@ -268,6 +285,8 @@ module Web
       end
     end
 
-    def excused?(rel) = UNSWEPT_DIRS.any? { |dir| rel.start_with?(dir) }
+    def excused?(rel)
+      UNSWEPT_DIRS.any? { |dir| rel.start_with?(dir) } || UNSWEPT_TEMPLATES.include?(rel)
+    end
   end
 end
