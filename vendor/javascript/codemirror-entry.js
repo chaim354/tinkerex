@@ -13,6 +13,7 @@
 // invalidate the size figure bin/build-codemirror prints.
 export { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view"
 export { EditorState, Compartment } from "@codemirror/state"
+export { unifiedMergeView, getChunks, rejectChunk } from "@codemirror/merge"
 export { basicSetup } from "codemirror"
 export { StreamLanguage } from "@codemirror/language"
 export { cpp } from "@codemirror/lang-cpp"
