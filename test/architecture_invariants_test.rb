@@ -215,6 +215,60 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
                  "that."
   end
 
+  # NO ADAPTER CLASS-CHECKS IN THE GIT SURFACE. `is_a?(FileLayer::Share)` and `local_worktree?`
+  # give the SAME answer on all three backends today — share true, s3 and chunk_remote false — so
+  # swapping one for the other changes no behaviour anywhere and NO behavioural test can go red for
+  # it. This is the only instrument that can see it. Same shape as the Sync:: seam guard below, and
+  # the same argument §14b makes about Library::ScanJob: that gate WAS `is_a?(FileLayer::Share)`,
+  # it answered false for S3, and the library was silently never indexed. Widening commits to
+  # another backend must be a new ANSWER in Capabilities, never a rewrite of the callers.
+  #
+  # SCOPED TO app/, DELIBERATELY. test/services/file_layer/adapter_contract.rb asserts WHICH
+  # adapter answers `local_worktree?` true and needs the class name to say it; a test naming the
+  # live adapter is the opposite of production code branching on one, so scanning test/ here would
+  # forbid the assertion that pins the capability's whole meaning.
+  #
+  # COMMENT LINES ARE SKIPPED, the same load-bearing choice `offending` documents above and for the
+  # identical reason: this repo writes the forbidden spelling INTO comments in order to forbid it
+  # (app/services/file_layer/capabilities.rb says "NEVER SPELL THIS `is_a?(FileLayer::Share)`" in
+  # as many words), so a whole-file `File.read.match?` would eventually go red for a paragraph
+  # explaining the rule. Scanned line by line here rather than through `offending` because that
+  # helper takes DIRECTORY globs and one of the three arms is a single file — pointing it at
+  # `app/services/library` instead would sweep the scanner, the reconciler and the trash purge into
+  # a rule nobody has argued for them.
+  #
+  # NON-VACUITY IS ASSERTED PER ARM, NOT ON THE TOTAL (§14e), and the arms are 2 / 53 / 1 files
+  # today. A single `refute_empty` over the union cannot fail: `app/controllers` alone keeps it
+  # green, so moving or renaming `app/services/maker/git/` — the realistic way this guard dies,
+  # since that directory is the youngest thing it watches — would retire the invariant with
+  # nothing going red. That is the exact degradation the Sync:: guard below spells out for its own
+  # three arms.
+  def test_the_git_surface_never_branches_on_an_adapter_class
+    git_files  = Dir.glob(ROOT.join("app", "services", "maker", "git", "**", "*.rb"))
+    ctrl_files = Dir.glob(ROOT.join("app", "controllers", "**", "*.rb"))
+    tree_files = Dir.glob(ROOT.join("app", "services", "library", "working_tree.rb"))
+
+    refute_empty git_files,  "app/services/maker/git/**/*.rb matched nothing — this scan is vacuous (CLAUDE.md §14e)"
+    refute_empty ctrl_files, "app/controllers/**/*.rb matched nothing — this scan is vacuous (CLAUDE.md §14e)"
+    refute_empty tree_files, "app/services/library/working_tree.rb matched nothing — this scan is vacuous (CLAUDE.md §14e)"
+
+    offenders = (git_files + ctrl_files + tree_files).sort.flat_map do |file|
+      File.readlines(file, chomp: true).each_with_index.filter_map do |line, idx|
+        next if line.lstrip.start_with?("#")
+        next unless line.match?(/is_a\?\(\s*FileLayer::/)
+        "#{Pathname.new(file).relative_path_from(ROOT)}:#{idx + 1}"
+      end
+    end
+
+    assert_empty offenders,
+                 "the git surface must ask a capability, never an adapter class — got:\n" \
+                 "  #{offenders.join("\n  ")}\n" \
+                 "`local_worktree?` and `is_a?(FileLayer::Share)` agree on all three backends " \
+                 "today, so nothing else in the suite can tell you this happened (CLAUDE.md §14b: " \
+                 "the ScanJob class check answered false for S3 and silently never indexed the " \
+                 "library)."
+  end
+
   # Paths that are NOT "the maker layer" for THIS guard, and so are never scanned by it: the sync
   # engine's own service objects (moving to a separate repo in Stage 3, CLAUDE.md §10), the
   # device-facing v1 API (sync-shaped, not maker-shaped -- a device talks to it directly, never
