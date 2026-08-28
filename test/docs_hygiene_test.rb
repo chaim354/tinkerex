@@ -39,7 +39,17 @@ class DocsHygieneTest < ActiveSupport::TestCase
   # docs/invariants/files-preview.md and CLAUDE.md fell to 1,342. Lowered rather than banked,
   # which is the whole point of calling it a ratchet: leaving the old number turns a real
   # reduction into eight lines of silent headroom for the next unrelated addition.
-  MAX_LINES = 1_345
+  #
+  # RAISED 1,345 -> 1,355 on 2026-08-28 for the §14l stub pointing at docs/invariants/git-editing.md
+  # (tinkerex#178) — the raise the paragraph above says to argue about in review, so here is the
+  # argument. A stub pointing at an area file is the sanctioned pattern this test exists to protect,
+  # not an exception to it: the 142 lines of git-editing invariants stayed OUT of CLAUDE.md, and what
+  # landed is the ten-line pointer that makes them findable by the same mechanism every other area
+  # file uses. The alternative — an invariants file with no §14 anchor — is one the two pointer tests
+  # below would refuse outright, and it would leave `§14l` citations resolving to nothing, which this
+  # file's own header calls worse than a long CLAUDE.md. Raised by EXACTLY what the stub cost:
+  # CLAUDE.md is 1,355 lines today, so this banks no headroom for the next unrelated addition.
+  MAX_LINES = 1_355
 
   test "CLAUDE.md stays under its line ceiling" do
     lines = CLAUDE_MD.readlines.size
