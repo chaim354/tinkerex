@@ -47,14 +47,34 @@ module Maker
       # (Maker::ProjectFolders), resolved by the door; this class is the backend-neutral WRITE
       # path and never inspects the bytes — it must not start inspecting the names either.
       def write(user:, state:, parent_node_id:, files:)
-        caps = FileLayer.current.capabilities
         files.each_with_index.map do |f, i|
           dest = f.fetch(:parent_node_id, parent_node_id)
           replace = f[:replace].present?
-          node_id = caps.port_writable? ? write_port(user, dest, f, replace) : write_chunk(user, dest, f, replace)
+          node_id = write_bytes!(user, parent_node_id: dest, name: f[:name], bytes: f[:bytes], replace:)
           enqueue_preview(user, node_id, f[:name])
           upsert_file!(state, node_id:, role: f[:role], content_type: f[:content_type], position: i)
         end
+      end
+
+      # THE ONE port_writable? BRANCH, callable by a non-addon door. §14d counts these; this
+      # extraction keeps the count at ONE rather than adding a sixth copy. An addon save and an
+      # editor save are the same operation seen twice — server-side bytes into a library file,
+      # replacing what is there, REUSING THE NODE — and the only difference is that an addon save
+      # additionally records a maker_addon_files row.
+      #
+      # NAMED `write_bytes!` RATHER THAN `write` because the sibling `write` above takes a whole
+      # addon save and returns rows. Two methods called `write` on one class, with different
+      # arities and different return types, is the drift this repo names services to end.
+      #
+      # THE EXTRACTION IS IN PLACE AND THE CLASS DID NOT MOVE. docs/invariants/addons.md says in as
+      # many words that this is the ONE output path; relocating it to suit a second caller would
+      # put that claim and §14d's count in question to save an awkward namespace. The second caller
+      # is recorded there instead — an invariant that silently acquires an exception is worse than
+      # one that names it.
+      def write_bytes!(user, parent_node_id:, name:, bytes:, replace: false)
+        f = { name:, bytes: }
+        caps = FileLayer.current.capabilities
+        caps.port_writable? ? write_port(user, parent_node_id, f, replace) : write_chunk(user, parent_node_id, f, replace)
       end
 
       # UPSERT, NOT CREATE, BECAUSE A REPLACE KEEPS THE NODE. `maker_addon_files` is unique on

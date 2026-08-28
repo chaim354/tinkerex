@@ -1,4 +1,9 @@
-# Server-rendered web UI for the file library: list, upload, download, view, delete.
+# Server-rendered web UI for the file library: list, upload, download, view, EDIT, delete.
+#
+# `#update` is the newest of those and the only one that writes bytes it was handed as a STRING
+# rather than as an upload — the editor's Save (tinkerex#178). It is working-tree-only on every
+# backend, which is a product rule rather than a capability one; its own header carries the
+# argument.
 #
 # Architectural invariants (CLAUDE.md §2/§8/§15) — bytes NEVER flow through Rails:
 #   - Upload: the BROWSER hashes the file (SHA-256, JS SubtleCrypto), asks us to begin a
@@ -442,6 +447,39 @@ class FilesController < ApplicationController
     # way so the view reads it identically; a file no addon produced is simply an absent key.
     @addon_origins = addon_origins_for([ @node.node_id ])
     @move_conflict = move_conflict_prompt
+  end
+
+  # PATCH /files/:id — the editor's Save.
+  #
+  # WORKING TREE ONLY, ON EVERY BACKEND. Share and s3 are current-state only (§14a), so outside a
+  # repository a save destroys the previous bytes with nothing to recover from — while on
+  # chunk_remote it would be an ordinary new version. One condition with two answers across
+  # backends is the shape §14a forbids, so the answer is the same everywhere: git is the undo, and
+  # no repository means no editing. Spec part 2 records what reverses this.
+  #
+  # THE TOKEN CHECK IS NOT OPTIMISTIC POLITENESS. `base_token` is the content_token the editor
+  # loaded with; if the file has moved on, the maker edited it in vim meanwhile and a
+  # last-write-wins save destroys that edit silently. 409, and nothing written.
+  def update
+    node = current_user.nodes.present.find_by!(node_id: params[:id])
+    root = Library::WorkingTree.new(current_user).root_for(node)
+    return render_save_error(:unprocessable_entity, "Only files inside a git repository can be edited.") if root.nil?
+    return render_save_error(:unprocessable_entity, "This file is too large to edit here.") unless editable?(node)
+
+    info = FileLayer.current.stat(current_user, node_id: node.node_id)
+    if info&.content_token.to_s != params[:base_token].to_s
+      return render_save_error(:conflict, "This file changed since you opened it. Reload to see the current version.")
+    end
+
+    Maker::Addons::LibraryOutput.write_bytes!(current_user, parent_node_id: node.parent_node_id,
+                                              name: node.name, bytes: params[:content].to_s.b,
+                                              replace: true)
+    Maker::RepoEdit.record!(user: current_user, repo_root_node_id: root.node_id, node_id: node.node_id) if
+      FileLayer.current.capabilities.local_worktree?
+
+    render json: { ok: true, content_token: FileLayer.current.stat(current_user, node_id: node.node_id)&.content_token }
+  rescue FileLayer::FetchError => e
+    render_save_error(:service_unavailable, e.message)
   end
 
   # POST /files — the share/s3 upload: bytes up in one multipart POST, straight to the port.
@@ -1155,6 +1193,24 @@ class FilesController < ApplicationController
              current_user.nodes.present.find_by(node_id: node.parent_node_id, kind: "dir")
     end
     crumbs
+  end
+
+  # A TRUNCATED BUFFER IS NEVER EDITABLE, and this is the reason the cap is duplicated on the
+  # server rather than trusted from the client. codeview_controller fetches at most MAX_BYTES and
+  # appends "… (truncated)"; saving that buffer would TRUNCATE THE FILE. The browser already
+  # refuses to mount an editor over the cap, but a refusal that only lives in JavaScript is a
+  # refusal an unmodified `curl` walks straight past.
+  EDITABLE_MAX_BYTES = 200_000
+
+  def editable?(node)
+    return false unless Maker::FileAttachment.text?(node.name)
+
+    size = FileLayer.current.stat(current_user, node_id: node.node_id)&.size
+    size.present? && size <= EDITABLE_MAX_BYTES
+  end
+
+  def render_save_error(status, message)
+    render json: { ok: false, error: message }, status:
   end
 
   # Extensions whose detail page offers the interactive Measure view (measure_controller.js).
