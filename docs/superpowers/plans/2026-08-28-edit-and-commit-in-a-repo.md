@@ -1313,7 +1313,7 @@ module GitRepoFixture
                             committer: { name: "Seed", email: "seed@example.com", time: Time.now })
     end
 
-    Library::ScanJob.new.perform(@user.id)
+    Library::ScanJob.new.perform(user_id: @user.id)
     @user.nodes.present.find_by!(name:, kind: "dir")
   end
 
@@ -1325,7 +1325,7 @@ module GitRepoFixture
   def seed_plain_file!(name, body)
     FileUtils.mkdir_p(File.join(library_root, "Loose"))
     File.write(File.join(library_root, "Loose", name), body)
-    Library::ScanJob.new.perform(@user.id)
+    Library::ScanJob.new.perform(user_id: @user.id)
     @user.nodes.present.find_by!(name:, kind: "file")
   end
 
@@ -2556,7 +2556,7 @@ class RepoCommitWedgeTest < ActionDispatch::IntegrationTest
     patch file_path(a.node_id), params: { content: "two\n", base_token: token_for(a) }
     post repo_commit_path(root.node_id), params: { paths: [ "a.txt" ], message: "m" }
 
-    Library::ScanJob.new.perform(@user.id) # must not raise Library::Scanner::UnsafeScan
+    Library::ScanJob.new.perform(user_id: @user.id) # must not raise Library::Scanner::UnsafeScan
 
     under_git = @user.nodes.where("storage_path LIKE ?", "%/.git/%").count
     assert_equal 0, under_git, "a cataloged write under .git is a permanent scan wedge (§14b)"
@@ -2630,12 +2630,12 @@ literal, because the counts differ per backend:
   test "the file page's query count does not grow with the repository" do
     small = seed_repo_file!("a.txt", "x\n")
     3.times { |i| File.write(File.join(library_root, "demo", "sib#{i}.txt"), "y\n") }
-    Library::ScanJob.new.perform(@user.id)
+    Library::ScanJob.new.perform(user_id: @user.id)
     get file_path(small.node_id) # warm anything memoised per process
     few = count_queries { get file_path(small.node_id) }
 
     30.times { |i| File.write(File.join(library_root, "demo", "more#{i}.txt"), "z\n") }
-    Library::ScanJob.new.perform(@user.id)
+    Library::ScanJob.new.perform(user_id: @user.id)
     many = count_queries { get file_path(small.node_id) }
 
     # CONSTANCY IN N, NEVER A LITERAL -- the counts differ per backend, so a literal pins one leg
