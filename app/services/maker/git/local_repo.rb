@@ -155,14 +155,25 @@ module Maker
         Row.new(path: rel, state: :modified, additions: added, deletions: removed)
       end
 
-      # A COUNT, NOT A DIFF. The real diff is rendered by @codemirror/merge in the browser from the
-      # two blobs; this is only the "+3 −1" on the row. Computing a proper diff here would rebuild
-      # the server-side text diff this design deletes (spec part 13).
+      # A COUNT, NOT A DIFF -- but it must be the count GIT would report, and for eight months of
+      # this file's life it was not.
+      #
+      # THIS WAS `(b & a).size` AND THAT IS WRONG ON ALMOST EVERY REAL FILE. `Array#&` returns
+      # UNIQUE elements, so every repeated line -- blank lines above all, but also `}`, `end`,
+      # `---` -- collapses to one, `common` is undercounted, and BOTH numbers are inflated.
+      # Measured on the live share deployment against a real repository: appending two lines to a
+      # 23-line README with 8 blank lines reported `+9 -7`, where git 2.50.1 said
+      # `1 file changed, 2 insertions(+)` (tinkerex#185).
+      #
+      # ITS OWN COMMENT IS WHY IT SURVIVED. "A count, not a diff" argued that a real diff would
+      # rebuild the server-side text diff this design deletes -- true, and irrelevant to whether the
+      # count is right. libgit2 is already in the process and will do it exactly, so the cheap
+      # approximation bought nothing.
+      #
+      # NO NEW DEPENDENCY: Rugged::Patch.from_strings is the same libgit2 diff the rest of this
+      # class uses, and `stat` returns [additions, deletions] directly.
       def line_delta(before, after)
-        b = before.lines
-        a = after.lines
-        common = (b & a).size
-        [ a.size - common, b.size - common ]
+        Rugged::Patch.from_strings(before, after).stat
       end
     end
   end
