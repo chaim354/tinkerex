@@ -25,7 +25,7 @@ edit, and commit it — without leaving the app.
 - An editable source view for text files **inside a working tree**.
 - **Save** — writes the file through the port, reusing the node.
 - **Commit** — a separate action, batching pending saves under one message, with an inline
-  diff and per-hunk revert.
+  diff. **Review-only — see part 6 step 5 for why per-hunk revert is not in this slice.**
 
 **Out of scope, deliberately**
 
@@ -207,8 +207,23 @@ and a row would be state nothing could ever clear.
      omitting a file the maker can see is the gap; git itself requires `-f`.
    - Other dirty paths are **counted, never listed** — "4 other changes in this repo, not included" —
      so the box never misrepresents the repository while staying out of staging-panel scope.
-   - The diff is `@codemirror/merge`'s `unifiedMergeView`: inline, still editable, one revert button per
-     hunk. A revert is another Save through the same door — there is no second write path.
+   - The diff is `@codemirror/merge`'s `unifiedMergeView`: inline, **read-only**, `mergeControls:
+     false`, pinned by `assert_no_selector ".commit-diff .cm-chunkButtons"`.
+
+   > **CORRECTED WHILE BUILDING IT — this said "one revert button per hunk. A revert is another Save
+   > through the same door", and that was wrong in a way that would have shipped a button that lies.**
+   > Measured against the vendored bundle: `rejectChunk` dispatches a **document** change and is **not**
+   > gated by `EditorState.readOnly`, so the control works on the *buffer* while nothing posts it — the
+   > maker clicks "Revert hunk", watches the lines come back, commits, and the change is still on disk.
+   > `acceptChunk` is worse: it edits HEAD's side of the diff, so "Accept" beside a Commit button would
+   > mean "stop showing me this difference". A revert really is another Save through the same door —
+   > that part was right — but **nothing wires the button to it**, so it is a feature and not a flag
+   > flip, and it is filed as its own open item rather than smuggled in here.
+   >
+   > This also weakens an argument this design leaned on when the slice was chosen: that per-hunk
+   > revert made the commit box "most of a staging UI for free". It is not free. The slice still holds
+   > on its own terms — the box shows exactly what changed and commits only selected paths — but the
+   > free-staging-UI claim was measured against a control that does not do what its name says.
 
 6. **Commit.**
    - Tree = **HEAD's tree with the selected paths replaced.** Read the existing tree, replace those
