@@ -70,6 +70,13 @@ class User < ApplicationRecord
   has_many :maker_build_log_entries, class_name: "Maker::BuildLogEntry", dependent: :destroy
   has_many :maker_locations, class_name: "Maker::Location", dependent: :destroy
   has_many :maker_suppliers, class_name: "Maker::Supplier", dependent: :destroy
+  # `:destroy`, not `:delete_all`, only because there is no reason to reach for the faster one:
+  # the row carries no callbacks and no dependents. What is NOT optional is that this line
+  # exists at all -- without it, TenantCleanupTest fails three ways at once, and the one that
+  # matters is that a user destroy leaves the FK unsatisfied. A pending edit is disposable
+  # state (the commit box reconciles against git on every open), so there is nothing here worth
+  # preserving past the account that owns it.
+  has_many :maker_repo_edits, class_name: "Maker::RepoEdit", dependent: :destroy
   # THE ASYMMETRY BETWEEN THESE TWO LINES IS THE POINT; do not normalise either onto the other.
   # Items stay `:destroy` because Maker::InventoryItem carries `before_destroy :release_bom_lines`,
   # which must run per row (§14d). The ledger is `:delete_all` because Maker::InventoryTransaction
