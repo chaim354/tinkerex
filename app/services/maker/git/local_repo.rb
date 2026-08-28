@@ -112,6 +112,10 @@ module Maker
         head_blob_for(rel).to_s
       end
 
+      # The account's address, for the commit-identity fallback. Exposed rather than reaching for
+      # `@user.email` from CommitPaths so that class needs no User at all.
+      def user_email = @user.email
+
       private
 
       def compute_refusal
