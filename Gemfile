@@ -63,7 +63,7 @@ gem "thruster", require: false
 #   nokogiri (MIT)  — parse LightBurn .lbrn2 XML → SVG. (Both are already transitive deps; pinned direct.)
 # (Image thumbnails shell out to the `vipsthumbnail` binary — NOT the ruby-vips FFI gem — so no
 #  in-process libvips thread pool to deadlock Rails' fork-based parallel test runner. See ImageThumb.)
-gem "rubyzip", "~> 3.4", require: "zip"
+gem "rubyzip", "~> 3.5", require: "zip"
 gem "nokogiri", "~> 1.19"
 
 # Presign chunk PUT/GET against S3-compatible storage (R2, SeaweedFS). Pure Ruby.
