@@ -445,10 +445,21 @@ Measured in a scratch tree on 2026-08-28, not assumed:
 |---|---|
 | version / licence | **6.12.2, MIT** — CLAUDE.md §9 clean |
 | duplicate `@codemirror/state` or `@lezer/*` | **none** — dedupes against the pinned 6.7.1 |
-| bundle | 933,768 → **962,174** bytes (+28,406, +3.0%) |
-| gzipped | 324,584 → **334,181** bytes (+9,597, +3.0%) |
+| bundle | 933,768 → **953,757** bytes (+19,989, +2.1%) |
+| gzipped | ≈324,586 → **331,716** bytes (+7,130, +2.2%) |
 
-The base rebuild reproduced the committed artifact's size exactly, so the delta is merge alone.
+The base rebuild reproduced the committed artifact **byte for byte** (sha256-identical), so the delta
+is merge alone, and the pinned tree is genuinely reproducible rather than aspirationally so.
+
+> **CORRECTED AFTER BUILDING IT.** This table first read +28,406 / +9,597, and that figure was
+> measured against a **different export surface than this design ships**: the probe exported
+> `MergeView` and `acceptChunk` as well, and the entry file exports only `unifiedMergeView`,
+> `getChunks` and `rejectChunk`. esbuild tree-shakes the two-pane `MergeView` out, which is ~8.4 KB
+> of the difference. Re-probed both ways against the same pinned tree: `export *` gives 963,132 and
+> the three named exports give 953,757. The rule was right and its evidence was measured against
+> the wrong thing — the failure this repo's own preamble records about its `§` reference counts.
+> Raw bytes are the number to trust: an ad-hoc `gzip -9 -c` embeds the input filename in its header,
+> so gzipped figures wobble by a byte or two between a scratch copy and the build script's own path.
 
 **It goes into the vendored bundle, never a per-package importmap pin.** Add the export to
 `vendor/javascript/codemirror-entry.js`, add the newly resolved versions to `bin/build-codemirror`'s
