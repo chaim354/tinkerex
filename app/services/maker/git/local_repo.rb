@@ -60,6 +60,58 @@ module Maker
       # no parents.
       def unborn? = rugged.head_unborn?
 
+      # What the commit box shows for one path. `state` is :modified, :added, :unchanged, :ignored
+      # or :missing; only :modified and :added can be committed.
+      Row = Data.define(:path, :state, :additions, :deletions) do
+        def committable? = state == :modified || state == :added
+      end
+
+      # CONTENT AGAINST HEAD'S BLOB, NEVER A STAT COMPARISON — §8 rule 1, and the reason is the
+      # backend rather than fussiness: `share` is a NAS over SMB/NFS, where attribute caching can
+      # make a stat-based "unchanged" answer wrong. git's own stat cache is an optimisation it can
+      # afford because it is talking to a local disk. We are not.
+      def status_for(paths)
+        paths.index_with { |rel| row_for(rel) }
+      end
+
+      # How many OTHER paths git sees as dirty. Counted, never listed: listing them is the staging
+      # panel, and hiding them entirely would let the box misrepresent the repository.
+      #
+      # `Rugged::Repository#status` TAKES A BLOCK AND RETURNS NO ENUMERATOR. Called without one it
+      # raises "A block was expected for iterating through the repository contents." (rugged
+      # 1.9.6), so `rugged.status.count { … }` — the obvious spelling, and the plan's — cannot
+      # work. Accumulate inside the block instead.
+      def other_dirty_count(known_paths)
+        known = known_paths.to_set
+        return 0 if unborn?
+
+        count = 0
+        rugged.status do |rel, flags|
+          next if known.include?(rel)
+
+          count += 1 if flags.any? { |f| f != :ignored }
+        end
+        count
+      end
+
+      # HEAD's bytes for one path, or nil when HEAD does not carry it (an untracked file). PUBLIC
+      # because the browser diffs against it: RepoCommitsController ships this blob and the working
+      # tree's, and diffs neither.
+      def head_blob_for(rel)
+        entry = rugged.head.target.tree.path(rel)
+        rugged.lookup(entry[:oid]).content
+      rescue Rugged::TreeError
+        nil # not in HEAD: an untracked file, which is :added
+      end
+
+      # The same, as text and never nil, for the endpoint that serves it. An unborn HEAD has no
+      # blob for anything, so every path diffs against the empty document.
+      def head_text_for(rel)
+        return "" if unborn?
+
+        head_blob_for(rel).to_s
+      end
+
       private
 
       def compute_refusal
@@ -83,6 +135,30 @@ module Maker
         "This folder could not be opened as a git repository (#{e.class})."
       rescue FileLayer::FetchError
         raise # an unmounted share is 503, not a refusal sentence (§14a)
+      end
+
+      def row_for(rel)
+        abs = File.join(workdir, rel)
+        return Row.new(path: rel, state: :missing, additions: 0, deletions: 0) unless File.file?(abs)
+        return Row.new(path: rel, state: :ignored, additions: 0, deletions: 0) if rugged.path_ignored?(rel)
+
+        head_blob = unborn? ? nil : head_blob_for(rel)
+        current   = File.binread(abs)
+        return Row.new(path: rel, state: :added, additions: current.lines.size, deletions: 0) if head_blob.nil?
+        return Row.new(path: rel, state: :unchanged, additions: 0, deletions: 0) if head_blob == current
+
+        added, removed = line_delta(head_blob, current)
+        Row.new(path: rel, state: :modified, additions: added, deletions: removed)
+      end
+
+      # A COUNT, NOT A DIFF. The real diff is rendered by @codemirror/merge in the browser from the
+      # two blobs; this is only the "+3 −1" on the row. Computing a proper diff here would rebuild
+      # the server-side text diff this design deletes (spec part 13).
+      def line_delta(before, after)
+        b = before.lines
+        a = after.lines
+        common = (b & a).size
+        [ a.size - common, b.size - common ]
       end
     end
   end
