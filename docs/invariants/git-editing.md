@@ -120,10 +120,21 @@ ephemeral cache and writes packs, for a `maker_git_repos` table this branch does
 **Nothing guards this**, and saying so is the point: no gate reads another branch, and a sentence
 that implied one would be worse than the gap (§14j is the worked example).
 
-`repo.rb` is **418 lines** on that branch tip, measured on 2026-08-28 with
-`git show claude/git-phase5-refinement:app/services/maker/git/repo.rb | wc -l`. The plan and two
-commit messages say 583; that figure does not reproduce. Recorded rather than repeated, because §15
-asks that a commit reference be verified the way a guard is.
+**BOTH LINE COUNTS YOU WILL SEE ARE RIGHT, ABOUT DIFFERENT COMMITS**, and the near-miss is worth
+keeping because §15 asks that a commit reference be verified the way a guard is — and then that the
+verification itself be checked:
+
+```sh
+git show claude/git-phase5-refinement:app/services/maker/git/repo.rb | wc -l   # 418, the branch tip
+git show c3b2430^:app/services/maker/git/repo.rb | wc -l                       # 583, main before the revert
+git merge-base --is-ancestor claude/git-phase5-refinement c3b2430^             # true: the branch is BEHIND main
+```
+
+The plan and two commit messages say 583, which is what the revert actually deleted. Measuring the
+branch instead gives 418 and reads as a contradiction; it is not, because more landed on main after
+that branch merged. Either file is the wrong thing to restore, which is all this rule needs — but a
+correction that had replaced one number with the other would have been confidently wrong, which is
+the failure this paragraph now exists to prevent.
 
 ## The inline diff is a REVIEW surface, not an editor
 
