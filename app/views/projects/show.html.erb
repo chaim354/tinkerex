@@ -24,7 +24,6 @@
       <%= button_to "Set as current", current_project_path, method: :patch,
                     params: { project_id: @project.id }, class: "linkbtn" %>
     <% end %>
-    <%= link_to "History", project_history_path(@project), class: "linkbtn" %>
     <%= link_to "Edit", edit_project_path(@project), class: "linkbtn" %>
     <% if @project.status == "archived" %>
       <%= button_to "Unarchive", unarchive_project_path(@project), method: :patch, class: "linkbtn" %>

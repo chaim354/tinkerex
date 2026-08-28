@@ -563,21 +563,6 @@ there too, with a stub here.
   anything resolves into. **The mutation-check is "put `@transport ||=` back", never "add a
   different kind of cache": anything keyed on less than the user is the shape of the bug.**
   Arc C in full, including lazy provisioning under concurrency: the Forgejo record (§11).
-- **THE FOUR REPO-DATA VERBS WRITE BYTES AND CATALOG NOTHING, AND THE SECOND HALF IS THE POINT.**
-  `write_repo_data`/`read_repo_data`/`list_repo_data`/`delete_repo_data` hold a project's own
-  `.git/**`, gated by the 7th capability **`repo_storable`** ("can this backend hold bytes OUTSIDE
-  the catalog" — not `scannable`, not `port_writable`; true on all three today, which is three
-  samples). **They deliberately do NOT ask `observable!`**, and that is not an oversight to tidy:
-  that guard refuses `.git/**` precisely because an ordinary CATALOGED write there leaves a live
-  node at a path no scan can pair — §14b's four wedges, each permanent. These create no node, so
-  the ghost is unreachable, and routing them through the guard would refuse the one caller that is
-  safe. **On `chunk_remote` they DO create rows, correctly**: that catalog mirrors the sync server,
-  not a scan — which is why the contract's no-node assertion is gated on `scannable?`, and why the
-  node_id is **derived from (parent, name)** there rather than random (a stale mirror otherwise
-  mints a SECOND node at one path, and a duplicated ref is unrecoverable where a lost commit is
-  not). `Library::RepoMetadata.data_rel!` composes and **REJECTS, never normalizes** — `key_for`'s
-  rule, same reason — and it validates only the caller's `rel`, so the FOLDER rel is guarded by
-  `resolve_inside!`/`key_for_rel` alone.
 - **`port_writable` IS NOT "accepts uploads"** — the single most-misread name here. It
   answers *which upload flow the UI drives*: true → POST bytes to the port (share, s3);
   false → drive the port's own `begin_upload`/`finalize_upload` presigned flow (chunk_remote).
@@ -1195,17 +1180,6 @@ Four rules survive on **this** side of the boundary:
   bodies while they shared a process; it went with the extraction, and **nothing checks that
   agreement now.** If you change device-token verification here, change it there in the same
   breath — that obligation has no guard behind it.
-
-### 14l. Git-tracked projects → **`docs/invariants/git-tracked-projects.md`**
-
-**Read that file before touching** `app/services/maker/git/`, `app/jobs/maker/git/`,
-`Library::ScanJob`'s commit step, or `config/recurring.yml`'s `git_project_commit` entry. Every
-project is a real git repository; git data is durable in the LIBRARY through §14a's non-cataloging
-repo-data verbs, never an app volume. It holds why consolidation is in the commit loop (an
-unpacked repo needs 11,287 GETs to hydrate on s3 against ~3), why the undeltified pack writer and
-the content-vs-pointer rule hold each other up, settle detection as a CORRECTNESS requirement, why
-the commit step runs after project intake, and why HEAD has to be repointed off libgit2's default.
-The intake exemption this feature needs lives in `docs/invariants/project-intake.md`, not here.
 
 ### 14k. The model catalog and shelves → **`docs/invariants/model-intake.md`**
 

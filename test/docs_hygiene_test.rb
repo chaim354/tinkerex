@@ -39,7 +39,7 @@ class DocsHygieneTest < ActiveSupport::TestCase
   # docs/invariants/files-preview.md and CLAUDE.md fell to 1,342. Lowered rather than banked,
   # which is the whole point of calling it a ratchet: leaving the old number turns a real
   # reduction into eight lines of silent headroom for the next unrelated addition.
-  MAX_LINES = 1_371
+  MAX_LINES = 1_345
 
   test "CLAUDE.md stays under its line ceiling" do
     lines = CLAUDE_MD.readlines.size
@@ -186,7 +186,7 @@ class DocsHygieneTest < ActiveSupport::TestCase
     # model catalog moved out, so its anchor was covered only by the two generic pointer tests and
     # not by this one. A list that is supposed to be exhaustive and silently is not is the same
     # shape as a guard scanning an empty set (§14e): it reports success over what it never checked.
-    moved = %w[14c 14f 14g 14h 14i 14k 14l]
+    moved = %w[14c 14f 14g 14h 14i 14k]
 
     moved.each do |anchor|
       assert_match(/^### #{anchor}\. /, claude,

@@ -27,7 +27,7 @@ module FileLayer
     test "Capabilities answers the first five questions" do
       caps = FileLayer::Capabilities.new(versioned: true, syncable: true, presignable: false,
                                          scannable: false, port_writable: true,
-                                         dir_deletable: true, repo_storable: true)
+                                         dir_deletable: true)
       assert caps.versioned?
       assert caps.syncable?
       assert_not caps.presignable?
@@ -61,7 +61,7 @@ module FileLayer
     test "dir_deletable is part of the capability set and reads as a predicate" do
       caps = FileLayer::Capabilities.new(versioned: true, syncable: true, presignable: true,
                                          scannable: false, port_writable: false,
-                                         dir_deletable: true, repo_storable: true)
+                                         dir_deletable: true)
       assert_predicate caps, :dir_deletable?
     end
 
@@ -84,22 +84,6 @@ module FileLayer
       expected.each do |klass, want|
         got = klass.allocate.capabilities.dir_deletable?
         assert_equal want, got, "#{klass} must declare dir_deletable: #{want}"
-      end
-    end
-
-    test "repo_storable is true on every backend we ship" do
-      caps = FileLayer::Capabilities.new(versioned: false, syncable: false, presignable: false,
-                                         scannable: true, port_writable: true, dir_deletable: false,
-                                         repo_storable: true)
-      assert caps.repo_storable?
-    end
-
-    # Asserted against the real adapters rather than three literals, so a backend added later
-    # cannot quietly skip declaring it. TRUE ON ALL THREE TODAY, AND THAT IS THREE SAMPLES, NOT
-    # AN IDENTITY — see FileLayer::Capabilities' own header for the backend that splits it.
-    test "every adapter declares repo_storable, and all three can hold data outside the catalog" do
-      [ FileLayer::ChunkRemote, FileLayer::Share, FileLayer::S3 ].each do |klass|
-        assert klass.allocate.capabilities.repo_storable?, "#{klass} must declare repo_storable: true"
       end
     end
 

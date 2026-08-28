@@ -2,7 +2,6 @@ require "test_helper"
 require_relative "adapter_contract"
 require_relative "adapter_write_contract"
 require_relative "adapter_mutation_contract"
-require_relative "adapter_repo_data_contract"
 
 module FileLayer
   # The Share adapter over a plain mounted directory: no chunks, no versions, no history —
@@ -14,53 +13,6 @@ module FileLayer
     # module: Phase 3's S3 adapter includes it, and so cannot answer these differently.
     include FileLayerWritableContract
     include FileLayerMutationContract
-    # The repo-data verbs: opaque bytes under a project's own `.git`, with the CATALOG UNTOUCHED
-    # (`.git/**` is never observed on a scannable backend, so a node there could never be paired).
-    include AdapterRepoDataContract
-
-    # The repo-data contract's two hooks. The folder node is minted THROUGH THE ADAPTER UNDER TEST
-    # — `adapter.mkdir`, twice — rather than through `Maker::Project#ensure_library_folder!`, and
-    # the difference is not stylistic. `ensure_library_folder!` goes through
-    # `Maker::LibraryFolder#ensure_segment` -> `FileLayer.current`, which is the AMBIENT backend:
-    # this file pins none, so on the `test-chunk-remote` leg that folder would be minted over the
-    # wire at the sync server while the adapter under test is a Share rooted at `@root`. A unit
-    # test whose fixture changes shape with `LIBRARY_BACKEND` is exactly the cross-leg dependency
-    # §15 calls a real bug, and it would show up as a run-count or timing difference rather than
-    # as anything naming the cause. Two mkdirs against `adapter` are hermetic on all three legs
-    # and put a real storage_path on the folder node, which is all `project_folder_rel` reads.
-    #
-    # `name:`, not `title:` — Maker::Project's column is `name`, and `slug` is derived from it,
-    # which is what makes the two projects resolve to two different `Projects/<slug>`.
-    #
-    # TWO projects, because the scoping test's whole job is to catch an adapter that resolved the
-    # path from anything other than the project's own folder node.
-    def repo_project
-      @repo_project ||= make_repo_project("Repo Project")
-    end
-
-    def second_repo_project
-      @second_repo_project ||= make_repo_project("Other Repo Project")
-    end
-
-    # The contract's third hook, and on THIS backend it is the interesting answer. A share library
-    # IS a real filesystem, so a repository under it can be operated on IN PLACE — which is the
-    # design's strongest single argument for git over a bespoke version store, since the maker then
-    # gets `git log` in Finder for free. Declared here rather than derived from
-    # `adapter.repo_data_dir`'s own return value: an arm chosen by the value under test is vacuous
-    # (see the contract), and derived from `is_a?(FileLayer::Share)` it would be the class check
-    # §14b has the scar about, restated in the one place that is supposed to prove it unnecessary.
-    def expects_repo_data_dir? = true
-
-    # `mkdir` is idempotent on a live dir at the same rel, so the second project's `Projects` walk
-    # returns the first's node rather than colliding — the same property Maker::LibraryFolder leans
-    # on in production.
-    def make_repo_project(name)
-      project = @user.maker_projects.create!(name:)
-      root = adapter.mkdir(@user, parent_node_id: nil, name: Maker::ProjectFolders::ROOT)
-      folder = adapter.mkdir(@user, parent_node_id: root.node_id, name: project.slug)
-      project.update_column(:folder_node_id, folder.node_id)
-      project
-    end
 
     # The hooks FileLayerMutationContract requires. Share's real door for creating a file is the
     # port's own write, which is exactly what the four extracted tests used inline before they
@@ -1147,90 +1099,6 @@ module FileLayer
       Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
       node = @user.nodes.find_by(node_id: info.node_id)
       assert node && !node.deleted, "the dir node must survive the scan (the real dir is on disk)"
-    end
-
-    # ---- repo data (the .git verbs) ------------------------------------------
-    # The cross-backend rules are AdapterRepoDataContract's. What is here is share-shaped: the
-    # listing is a Dir.glob, and Dir.glob has a default the contract cannot see.
-
-    # A REPO IS FULL OF DOT-NAMED FILES, and Dir.glob's default is to skip them. A listing that
-    # silently omits them hydrates an incomplete repository — the "well-formed lie" shape, on the
-    # filesystem instead of a paginated bucket.
-    test "list_repo_data includes dot-named entries" do
-      adapter.write_repo_data(@user, project: repo_project, rel: ".gitignore", io: StringIO.new("x"))
-      adapter.write_repo_data(@user, project: repo_project, rel: "objects/.keep", io: StringIO.new("y"))
-
-      assert_equal [ ".gitignore", "objects/.keep" ],
-                   adapter.list_repo_data(@user, project: repo_project).sort
-    end
-
-    # A CRASHED WRITE STRANDS ITS TEMP FILE INSIDE `.git` PERMANENTLY -- `ensure` does not run on
-    # SIGKILL, and nothing sweeps in there. Emitting it would hand a hydrating caller a file that
-    # is not repository data, so the listing skips the Scanner's own prefix at any depth.
-    test "list_repo_data skips a stranded temp file" do
-      adapter.write_repo_data(@user, project: repo_project, rel: "HEAD", io: StringIO.new("h"))
-      stranded = adapter.send(:repo_data_root, @user, repo_project)
-                        .join("#{Library::Scanner::TEMP_PREFIX}deadbeef")
-      File.binwrite(stranded, "torn")
-
-      assert_equal [ "HEAD" ], adapter.list_repo_data(@user, project: repo_project)
-    end
-
-    # ---- an unmounted share is RETRYABLE, never "permanently gone" (§14a) -----
-    #
-    # THE ERRNO IS THE SAME FOR BOTH FACTS, which is the whole trap: an unmounted share leaves the
-    # mountpoint directory in place and empty, so every one of these raises ENOENT exactly as a
-    # genuinely-absent rel does. #read and #download already interpose `library_present?`; these
-    # three verbs are the doors that were added without it. Emptying the root is how
-    # `library_present?` itself defines the condition, and it is what ShareTest's own
-    # "ENOENT with an EMPTY library root is TRANSIENT" test does for #read.
-    test "read_repo_data on an unmounted share is FetchError, not NotFound" do
-      adapter.write_repo_data(@user, project: repo_project, rel: "HEAD", io: StringIO.new("h"))
-      unmount!
-
-      assert_raises(FileLayer::FetchError) do
-        adapter.read_repo_data(@user, project: repo_project, rel: "HEAD")
-      end
-    end
-
-    test "delete_repo_data on an unmounted share raises rather than reporting success" do
-      adapter.write_repo_data(@user, project: repo_project, rel: "HEAD", io: StringIO.new("h"))
-      unmount!
-
-      # A consolidation sweep must not be told it deleted things it did not touch.
-      assert_raises(FileLayer::FetchError) do
-        adapter.delete_repo_data(@user, project: repo_project, rel: "objects/pack/a.pack")
-      end
-    end
-
-    test "list_repo_data on an unmounted share raises rather than answering empty" do
-      adapter.write_repo_data(@user, project: repo_project, rel: "HEAD", io: StringIO.new("h"))
-      unmount!
-
-      # [] would read as "this repository has no objects" and hydrate an empty repo.
-      assert_raises(FileLayer::FetchError) do
-        adapter.list_repo_data(@user, project: repo_project)
-      end
-    end
-
-    # THE FOLDER REL IS THE HALF `data_rel!` DOES NOT VALIDATE -- it checks the caller's `rel` and
-    # takes the folder's stored path on trust, so `resolve_inside!` is the ONLY guard on this
-    # input, not a second opinion about it. Reachable per #absolute_path's own header: a database
-    # flipped chunk->share carries nodes whose storage_path was never a share path.
-    test "a project folder whose storage_path escapes the root is refused" do
-      project = repo_project
-      @user.nodes.find_by!(node_id: project.folder_node_id).update_column(:storage_path, "../escape")
-
-      assert_raises(FileLayer::NotFound) do
-        adapter.write_repo_data(@user, project:, rel: "HEAD", io: StringIO.new("x"))
-      end
-      assert_raises(FileLayer::NotFound) { adapter.list_repo_data(@user, project:) }
-    end
-
-    # Simulate the share going away WITHOUT removing the mountpoint itself, which is what an
-    # unmount actually looks like and what `library_present?` asks about.
-    def unmount!
-      @root.children.each { |c| FileUtils.remove_entry(c) }
     end
   end
 end

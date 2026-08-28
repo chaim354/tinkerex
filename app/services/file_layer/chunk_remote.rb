@@ -48,13 +48,9 @@ module FileLayer
     # already draws when it notes `manifest#download` gates on `syncable`, NOT `presignable`. Nothing
     # in the app gates on this flag today (checked), so the cost is a stream where a redirect might
     # have served, which is stated in `#download` rather than hidden.
-    #
-    # repo_storable: true -- the sync server holds them as ordinary files. Here the data IS
-    # catalogued, and that is correct rather than a leak: `nodes` MIRRORS the server rather than
-    # a scan, so what the server holds is what the mirror must show.
     CAPABILITIES = Capabilities.new(
       versioned: true, syncable: true, presignable: false,
-      scannable: false, port_writable: false, dir_deletable: true, repo_storable: true
+      scannable: false, port_writable: false, dir_deletable: true
     ).freeze
 
     # `write` EXISTS IN ORDER TO REFUSE, and its absence was a real omission the contract caught.
@@ -64,11 +60,6 @@ module FileLayer
     # deliberate and must stay UN-RESCUED -- it is a ScriptError, so `rescue => e` does not catch it,
     # and a 501 here would be factually wrong: the caller used the wrong door (§14a).
     WRITE_MSG = "chunk_remote uploads go through begin_upload/finalize_upload, not write"
-
-    # The namespace `#derived_node_id` hashes into. A FIXED, ARBITRARY UUID: it only has to be
-    # stable forever and distinct from any other namespace, so it is written out rather than
-    # derived from anything that could change.
-    REPO_NODE_NAMESPACE = "6d1f2a54-7c3b-4f8e-9a10-2b7c4e5d8f31".freeze
 
     def write(_user, parent_node_id: nil, name: nil, io: nil, replace: false)
       raise NotImplementedError, WRITE_MSG
@@ -391,208 +382,7 @@ module FileLayer
     # catch (§14a). Undefined means an incomplete adapter fails loudly as exactly what it is -- and
     # it cannot be reached anyway: FileLayer.build has no arm for it.
 
-    # ── REPO DATA: A PROJECT'S OWN `.git`, AS ORDINARY NODES ─────────────────────────────────
-    #
-    # UNLIKE SHARE AND S3 THESE DO CREATE CATALOG ROWS, AND THAT IS CORRECT RATHER THAN A LEAK.
-    # The share/s3 refusal exists because their catalog comes from POLLING and `.git/**` is never
-    # observed, so a row there is a ghost the Reconciler can never pair and whose tombstone refuses
-    # that scan and every scan after it (§14b's four skip-list wedges). This backend's `nodes` table
-    # MIRRORS the sync server instead, so there is no scan to disagree with -- and §14b already
-    # records that the desktop client syncs `.git` rows here whether this app likes it or not. That
-    # is why adapter_repo_data_contract.rb gates its no-catalog-entry assertion on `scannable?`:
-    # asserting it unconditionally would fail this adapter for doing the right thing.
-    #
-    # THEY REUSE THE EXISTING VERBS RATHER THAN OPENING A SECOND WRITE PATH. A repo file is an
-    # ordinary file as far as the sync server is concerned, so this is `mkdir` plus the two-phase
-    # upload, exactly as Maker::Addons::LibraryOutput drives it -- no new endpoint, no new
-    # transport, and §15 still holds because `put_chunk` puts the bytes at storage directly.
-    #
-    # THE FOLDER IS RESOLVED BY NODE, NEVER BY PATH, which is why `Library::RepoMetadata.data_rel!`
-    # is called with a NIL folder_rel: chunk_remote nodes carry no `storage_path` at all, so there
-    # is no path to compose against. What is wanted from it here is the VALIDATION (traversal,
-    # absolute rels, marker smuggling) plus the `.git/`-prefixed rel to walk -- one rejection rule
-    # shared with the other two adapters instead of a third copy.
-    def write_repo_data(user, project:, rel:, io:)
-      safe = data_rel!(rel)
-      parent_node_id = ensure_repo_dirs(user, project, File.dirname(safe))
-      name = File.basename(safe)
-      bytes = io.read.b
-      existing = user.nodes.present.find_by(parent_node_id:, name:, kind: "file")
-
-      hash = Digest::SHA256.hexdigest(bytes)
-      begun = begin_upload(user, parent_node_id:, name:, size: bytes.bytesize,
-                           node_id: existing&.node_id || derived_node_id(parent_node_id, name),
-                           base_version_id: existing&.current_version_id,
-                           manifest: [ { hash:, offset: 0, length: bytes.bytesize } ])
-      begun.missing.each { |h| put_chunk(user, begun:, hash: h, bytes:) }
-
-      # `verify: false` IS ACCEPTED AND DISCARDED ON THIS BACKEND, and saying so is the point of
-      # this comment. The sync server reads `Rails.configuration.x.verify_finalize`, never
-      # `params[:verify]` -- docs/sync-protocol.md calls the finalize body `{}`, "nothing required"
-      # -- so the field goes on the wire and changes nothing, exactly like `device:` and
-      # `broadcast:`. It is passed anyway to state the caller's intent. An earlier version of this
-      # comment claimed it saved a storage round trip: that is true of FileLayer::Chunk, where the
-      # flag reached Sync::Commit.finalize in-process, and it was carried across the boundary where
-      # it stopped being true. Verifying a claim about the wire the way you would verify a guard
-      # (§15) is what caught it.
-      # `broadcast: false` -- repo bookkeeping is not a user-visible file change and must not nudge
-      # live devices (§14a). It is accepted-and-unused on this adapter, and passing it anyway is
-      # what keeps the INTENT true if that ever stops being so.
-      finalize_upload(user, commit_id: begun.commit_id, verify: false, broadcast: false)
-      nil
-    end
-
-    def read_repo_data(user, project:, rel:)
-      node = repo_data_node(user, project, rel) ||
-             raise(NotFound, "no repo data at #{rel.inspect}")
-
-      read(user, node_id: node.node_id)
-    end
-
-    # NO PREFIX MEANS THE WHOLE REPOSITORY, not "some convenient subtree" -- hydration calls it
-    # prefixless and reads the answer as complete, so a partial listing is the "well-formed lie"
-    # §14b records: it fails later and elsewhere, as a corrupt repo rather than a listing bug.
-    def list_repo_data(user, project:, prefix: nil)
-      root = repo_root_node(user, project) or return []
-      rels = walk_repo_tree(user, root, nil)
-      prefix.blank? ? rels : rels.select { |r| r.start_with?("#{prefix}/") }
-    end
-
-    # ABSENT IS NOT AN ERROR, matching what a caller sweeping stale pack files wants: it asks for a
-    # rel to be gone and gets that. `#delete` itself would raise NotFound on a missing node.
-    def delete_repo_data(user, project:, rel:)
-      node = repo_data_node(user, project, rel)
-      delete(user, node_id: node.node_id) if node
-      nil
-    end
-
-    # NO LOCAL DIRECTORY EXISTS HERE, so the honest answer is nil and the caller hydrates into a
-    # cache of its own. The bytes live on the SYNC SERVER, reachable only over the v1 API — this
-    # process holds a mirrored `nodes` table and nothing else, so there is no path a local process
-    # can be pointed at and nothing for libgit2 to open in place.
-    #
-    # NIL RATHER THAN A CACHE PATH THIS ADAPTER PICKED, deliberately. Hydration is the CALLER's: it
-    # knows the lifetime of the checkout it wants and this adapter does not, and a directory handed
-    # out from here would be a second, unasked-for cache beside the caller's own. Answering some
-    # plausible-looking path is worse than answering nothing — the caller cannot tell a lie from a
-    # location, and it would commit into a directory nothing ever reads back.
-    #
-    # AND IT IS ANSWERED HERE RATHER THAN BY A CLASS CHECK AT THE CALL SITE. `is_a?(FileLayer::Share)`
-    # is the spelling §14b has the scar about; a backend stating a fact about itself is what
-    # `scannable` exists to make possible.
-    #
-    # NOT A CAPABILITY, EITHER: a `local_repo?` predicate beside a path accessor is two spellings of
-    # one question, and this port already records what that drift costs twice over.
-    def repo_data_dir(user, project:)
-      nil
-    end
-
     private
-
-    # VALIDATE-ONLY, WITH THE MARKER PREFIXED. `Library::RepoMetadata.data_rel!` composes
-    # "<folder_rel>/.git/<rel>" and REJECTS traversal, absolute rels, empty segments and a rel that
-    # smuggles its own `.git` -- and a nil folder_rel is the documented "library root" spelling,
-    # which is exactly what this adapter wants: it needs the rejection and the `.git/` prefix, and
-    # has no folder PATH to prefix with, because chunk_remote nodes carry no `storage_path`.
-    def data_rel!(rel)
-      Library::RepoMetadata.data_rel!(nil, rel)
-    end
-
-    # A NODE ID DERIVED FROM (parent, name) RATHER THAN A FRESH SecureRandom.uuid, AND THIS IS A
-    # CORRECTNESS FIX, NOT A TIDY-UP. The `existing` lookup above reads the local MIRROR, and the
-    # mirror is deliberately stale between pulls (§14a) -- an overwrite takes no `refresh!`,
-    # because `mkdir` returns early when the directory already exists. So a writer that has not
-    # seen another writer's row finds `existing` nil, and with a random id `begin_upload` mints a
-    # SECOND node at the same (parent, name): `begin_upload` does not call `destination_vacant!`
-    # and there is no unique index on (user_id, parent_node_id, name), so nothing at either end
-    # refuses it. Confirmed against a live server's /v1/tree: two nodes named `main`.
-    #
-    # THE DUPLICATE IS UNRECOVERABLE AND THE ALTERNATIVE IS NOT. A fresh mirror sees both, and
-    # `repo_data_node`'s find_by then answers ARBITRARILY -- so `refs/heads/main` flips between two
-    # commits depending on row order, and `list_repo_data` returns it twice, which hydration writes
-    # twice with different bytes. Deriving the id makes the second writer generate the SAME id, so
-    # `Sync::Commit.finalize`'s find_or_initialize_by updates one node: an honest last-writer-wins,
-    # which is a lost commit rather than a corrupt ref. §14a's own rule about refusing an orphaned
-    # restore is the same trade -- recoverable beats silent-and-permanent.
-    #
-    # It does NOT collapse a duplicate the desktop client created with a random id; the `existing`
-    # lookup is what covers that, whenever the mirror is fresh enough to show it.
-    def derived_node_id(parent_node_id, name)
-      Digest::UUID.uuid_v5(REPO_NODE_NAMESPACE, "#{parent_node_id}/#{name}")
-    end
-
-    # Walks `.git/objects/pack` into dir nodes, creating whatever is missing, and answers the leaf
-    # directory's node_id. `#mkdir` is already idempotent (it returns the existing node) and is
-    # deliberately NOT deferred by `#batch`, so the mirror row it creates is readable immediately --
-    # which is the same property `Maker::LibraryFolder#ensure_segment` depends on, and the reason
-    # `#move` is the only verb that defers (§14a).
-    def ensure_repo_dirs(user, project, dir_rel)
-      parent_node_id = project_folder_node_id!(user, project)
-
-      dir_rel.split("/").each do |segment|
-        parent_node_id = mkdir(user, parent_node_id:, name: segment).node_id
-      end
-      parent_node_id
-    end
-
-    # THE MARKER DIRECTORY UNDER THIS PROJECT'S OWN FOLDER NODE. Scoping every repo-data lookup
-    # through `project.folder_node_id` is what makes one project's repo unable to address another's
-    # -- the rels are identical across projects, so anything resolved from less than the project's
-    # own node hands back the wrong repository's bytes with no error anywhere.
-    # THE FOLDER ID IS RESOLVED THROUGH `user.nodes`, NEVER TAKEN ON TRUST. Nothing asserts that
-    # `project` belongs to `user`, and an id taken on trust made a mismatched pair WRITE
-    # SUCCESSFULLY -- driven: it left a `.git` subtree in the caller's own library hanging off a
-    # parent that does not exist there, unreachable from the root, invisible in FilesController,
-    # permanent, and still addressable through `list_repo_data`. No cross-tenant leak (node_id is
-    # namespaced per user by the unique index on [user_id, node_id], so the two libraries stay
-    # disjoint), but an orphan subtree nothing can reach or clean. Resolving it turns the whole
-    # class into NotFound and costs a query the caller was about to make anyway.
-    def project_folder_node_id!(user, project)
-      id = project.folder_node_id
-      raise NotFound, "project #{project.id} has no library folder" if id.blank?
-
-      user.nodes.present.find_by(node_id: id, kind: "dir") ||
-        raise(NotFound, "project #{project.id}'s library folder is not this user's live directory")
-      id
-    end
-
-    def repo_root_node(user, project)
-      return nil if project.folder_node_id.blank?
-
-      user.nodes.present.find_by(parent_node_id: project.folder_node_id,
-                                 name: Library::RepoMetadata::DIR_NAME, kind: "dir")
-    end
-
-    # Resolve one rel to its FILE node, or nil. Walks segment by segment rather than trusting a
-    # composed path, because a chunk_remote node has no path to match on at all.
-    def repo_data_node(user, project, rel)
-      segments = data_rel!(rel).split("/")
-      leaf = segments.pop
-      parent_node_id = project.folder_node_id
-      return nil if parent_node_id.blank?
-
-      segments.each do |segment|
-        dir = user.nodes.present.find_by(parent_node_id:, name: segment, kind: "dir") or return nil
-        parent_node_id = dir.node_id
-      end
-      user.nodes.present.find_by(parent_node_id:, name: leaf, kind: "file")
-    end
-
-    # Every FILE beneath the marker, as a rel RELATIVE TO THE MARKER -- what the port promises and
-    # what `write_repo_data` accepts back. Directory nodes are structure, not repo data, so they are
-    # descended into and never emitted.
-    # `seen` IS A CYCLE GUARD, and Maker::LibraryTree carries one over this same table for the same
-    # reason: parent pointers arrive from a REMOTE changelog and nothing in this process enforces
-    # that they form a tree. Without it a cycle is SystemStackError inside a library listing rather
-    # than a wrong answer -- cheap to prevent, and the precedent is already in the repo.
-    def walk_repo_tree(user, dir_node, prefix, seen = Set.new)
-      return [] unless seen.add?(dir_node.node_id)
-
-      user.nodes.present.where(parent_node_id: dir_node.node_id).flat_map do |child|
-        rel = prefix ? "#{prefix}/#{child.name}" : child.name
-        child.kind == "dir" ? walk_repo_tree(user, child, rel, seen) : [ rel ]
-      end
-    end
 
     def manifest_for(user, version_id)
       return [] if version_id.blank?
