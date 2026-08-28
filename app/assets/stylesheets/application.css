@@ -91,7 +91,12 @@ dl.meta dd { margin: 0; }
 }
 .preview-fallback { text-align: center; padding: 24px; }
 
-/* --- Read-only source viewer (codeview_controller.js) — CodeMirror 6 --- */
+/* --- Source view, read-only AND editable — CodeMirror 6 --- */
+/* `.preview-code` IS BOTH MOUNTS, and the comment said "codeview_controller.js" alone until the
+   editable sibling shipped. files/show.html.erb picks between two controllers on one class:
+   `codeview` where the file is outside a working tree, `editor` where it is inside one and under
+   the size cap. Every rule here has to hold for both, which is why the class is the selector and
+   neither controller's name is. */
 /* The editor needs a bounded height of its own: .cm-scroller only scrolls inside a box with
    one, so without this the viewer grows to the length of the file and the PAGE scrolls, which
    is the one thing the 480px cap on .preview-text above was already avoiding. Matching that
@@ -99,6 +104,44 @@ dl.meta dd { margin: 0; }
 .preview-code .cm-editor { max-height: 480px; border-radius: 6px; }
 .preview-code .cm-editor.cm-focused { outline: none; }
 .preview-code .cm-scroller { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+
+/* The editor's Save bar (editor_controller.js builds it in #addSaveBar) and the commit box's
+   own footer share this class: both are "one action plus a word about what just happened",
+   and giving the commit page a second name for that would be two definitions of one thing. */
+.editor-bar {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
+}
+.editor-bar button, .editor-bar input[type=submit] {
+  font: inherit; padding: 5px 12px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); color: inherit; cursor: pointer;
+}
+.editor-bar button:hover:not(:disabled),
+.editor-bar input[type=submit]:hover { background: var(--soft); }
+.editor-bar button:disabled { opacity: .55; cursor: default; }
+/* Empty until a save reports back, so it must take no space when it says nothing — otherwise
+   the bar jumps a line the first time the editor answers. */
+.editor-status { color: var(--muted); font-size: 13px; }
+
+/* --- Review and commit (repo_commits/show.html.erb) --- */
+.commit-box { display: block; }
+.commit-rows { list-style: none; margin: 0 0 12px; padding: 0; }
+.commit-rows > li { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 10px; }
+.commit-row-head {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 10px; border-bottom: 1px solid var(--line);
+}
+.commit-row-head code { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+/* Tabular figures so a column of +12 / −3 lines up rather than shimmering row to row. */
+.commit-row-head .plus, .commit-row-head .minus { font-variant-numeric: tabular-nums; font-size: 12px; }
+/* --danger is the palette's red; there is no green token, so the addition colour is a literal
+   picked to sit at the same weight against --bg. Add a --success token before reusing it. */
+.commit-row-head .plus  { color: #1a7f37; }
+.commit-row-head .minus { color: var(--danger); }
+.commit-message {
+  width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--line);
+  border-radius: 6px; background: var(--bg); color: inherit; box-sizing: border-box;
+}
 
 /* --- Interactive 3D viewer (modelviewer_controller.js) — STL/3MF/OBJ --- */
 .model-viewer { position: relative; }

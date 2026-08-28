@@ -88,6 +88,16 @@ Rails.application.routes.draw do
     end
   end
 
+  # --- Review and commit, for a repository the maker brought (session-authed; never the v1 API,
+  # which is device-token only — §14d). Keyed by the repository ROOT node id, because eligibility
+  # is "inside a working tree" and has nothing to do with projects.
+  #
+  # `head_blob` ships HEAD's bytes for ONE path so the browser can diff them against the working
+  # tree it already fetches from /files/:id/blob. The server ships two blobs and diffs neither.
+  get  "repos/:root_id/commit",    to: "repo_commits#show",      as: :repo_commit
+  post "repos/:root_id/commit",    to: "repo_commits#create"
+  get  "repos/:root_id/head_blob", to: "repo_commits#head_blob", as: :repo_head_blob
+
   # --- Library browse (session-authed JSON; data source for the reusable folder/file chooser) ---
   get  "library/children", to: "library_browse#children",      as: :library_children
   post "library/folders",  to: "library_browse#create_folder", as: :library_folders
