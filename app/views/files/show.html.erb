@@ -138,6 +138,20 @@
         once). Measured: with the ternary inlined, the guard reported this view as declaring three
         controllers named after the pieces of the expression — the output tag, the ivar and the
         question mark. Do not collapse these two branches back into one. %>
+    <% if @repo_root %>
+      <div class="repo-banner">
+        <% if @committable_here %>
+          <%= link_to repo_commit_path(@repo_root.node_id), class: "repo-banner-link" do %>
+            <%= @pending_count.positive? ? pluralize(@pending_count, "pending change") : "No pending changes" %>
+            in <%= @repo_root.name %> — review &amp; commit
+          <% end %>
+        <% else %>
+          <span class="muted">Saved changes sync to the machine that holds
+          <%= @repo_root.name %>, where you can commit them with git.</span>
+        <% end %>
+      </div>
+    <% end %>
+
     <% if @editable %>
       <div class="preview-code"
            data-controller="editor"

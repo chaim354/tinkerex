@@ -82,6 +82,30 @@ class RepoEditFlowTest < ActionDispatch::IntegrationTest
   # because what is being asserted is that git is re-asked -- a test that read Maker::RepoEdit
   # would pass over a controller that trusted the rows blindly, which is the defect these exist
   # to catch.
+  # THE FEATURE IS UNREACHABLE WITHOUT THIS, and that is how it shipped on 2026-08-28: the commit
+  # box existed, answered correctly, and NOTHING IN THE APP LINKED TO IT. A person using the app
+  # found it; the suite could not, because every other case here navigates straight to
+  # repo_commit_path. A page that renders is not a page anyone can get to — assert the door, not
+  # just the room behind it.
+  test "the file page links to the commit box for a file in a working tree" do
+    node = seed_repo_file!("notes.md", "old\n")
+    root = @user.nodes.present.find_by!(name: "demo", kind: "dir")
+
+    get file_path(node.node_id)
+
+    assert_response :success
+    assert_select "a[href=?]", repo_commit_path(root.node_id)
+  end
+
+  test "the link reports how many changes are pending in that repository" do
+    node = seed_repo_file!("notes.md", "old\n")
+    patch file_path(node.node_id), params: { content: "new\n", base_token: token_for(node) }
+
+    get file_path(node.node_id)
+
+    assert_select "a", text: /1 pending change in demo/
+  end
+
   test "the review page lists pending edits and counts the rest" do
     root = make_repo!(files: { "a.txt" => "one\n", "b.txt" => "two\n" })
     a = @user.nodes.present.find_by!(name: "a.txt")
@@ -257,6 +281,29 @@ class RepoEditAmbientBackendTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_equal "new\n", FileLayer.current.read(@user, node_id: node.node_id)
+  end
+
+  # THE OTHER ARM, asserted rather than skipped (§14e). Where a backend cannot hold a working tree
+  # the page must still say what happens to the save, or the maker is left with an editor and no
+  # account of where their change went.
+  #
+  # `ensure_path!`, NEVER `nodes.create!`: a bare row has a NULL storage_path, which §14a says
+  # cannot exist on share or s3 — `Share#write` raises `parent has no storage_path`. A fixture built
+  # that way can only pass on chunk_remote, which is the one leg this case exists to reach.
+  test "a backend without local_worktree explains where the commit happens instead" do
+    repo = Maker::LibraryFolder.ensure_path!(@user, [ "rb-#{SecureRandom.hex(4)}" ])
+    @user.nodes.create!(node_id: SecureRandom.uuid, name: ".git", kind: "dir",
+                        parent_node_id: repo.node_id)
+    node = write_through_port!(parent: repo, name: "a.md", bytes: "old\n")
+
+    get file_path(node.node_id)
+
+    if FileLayer.current.capabilities.local_worktree?
+      assert_select "a[href=?]", repo_commit_path(repo.node_id)
+    else
+      assert_select "a[href=?]", repo_commit_path(repo.node_id), count: 0
+      assert_match(/sync to the machine that holds/, response.body)
+    end
   end
 
   # Uses the SAME door the editor does, so this test cannot pass by a route the product lacks.

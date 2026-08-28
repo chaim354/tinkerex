@@ -123,6 +123,16 @@ dl.meta dd { margin: 0; }
    the bar jumps a line the first time the editor answers. */
 .editor-status { color: var(--muted); font-size: 13px; }
 
+/* The way INTO the commit box, on a file page inside a working tree. It sits above the editor
+   rather than in the .editor-bar because it is a property of the REPOSITORY, not of this file's
+   unsaved state, and it must still show on a file with nothing pending. */
+.repo-banner {
+  margin: 0 0 8px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--soft); font-size: 13px;
+}
+.repo-banner-link { text-decoration: none; }
+.repo-banner-link:hover { text-decoration: underline; }
+
 /* --- Review and commit (repo_commits/show.html.erb) --- */
 .commit-box { display: block; }
 .commit-rows { list-style: none; margin: 0 0 12px; padding: 0; }

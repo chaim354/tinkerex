@@ -421,6 +421,14 @@ class FilesController < ApplicationController
     # sync between the two surfaces.
     @repo_root = Library::WorkingTree.new(current_user).root_for(@node)
     @editable  = @kind == :text && @repo_root.present? && editable?(@node)
+    # THE WAY INTO THE COMMIT BOX. Without these two the box is reachable only by typing its URL --
+    # which is exactly what shipped on 2026-08-28 and was found by a person using the app, not by
+    # the suite: every test navigates straight to repo_commit_path, so nothing was ever asked
+    # whether a page LINKS there. `committable_here` is the capability, not a repo check: on a
+    # backend without local_worktree the edit is still saved, it is just committed on the machine
+    # that holds the repository.
+    @committable_here = @repo_root.present? && FileLayer.current.capabilities.local_worktree?
+    @pending_count = @repo_root && Maker::RepoEdit.pending_for(current_user, @repo_root.node_id).count
     token = @info&.content_token
     @thumbnail = token && current_thumbnail(@node, token)
     # THE ATTACH CONTROL'S TWO HALVES. `@attached_projects` is what the file is already in — a
