@@ -1,6 +1,8 @@
-// ext -> CodeMirror LanguageSupport (or a StreamLanguage), for codeview_controller.
+// ext -> CodeMirror LanguageSupport (or a StreamLanguage), for the source viewers —
+// codeview_controller (read-only), editor_controller (editable) and diffview_controller (the
+// commit box's inline diff).
 //
-// A HOST module, imported by that controller alone and DYNAMICALLY, so nothing here loads on a
+// A HOST module, imported by those controllers alone and DYNAMICALLY, so nothing here loads on a
 // page with no text file. It takes the CodeMirror namespace as an ARGUMENT rather than importing
 // "codemirror" itself: one module graph, one bundle, loaded once by the controller — and a static
 // import here would pull 933 KB into every page that merely touches this file.
