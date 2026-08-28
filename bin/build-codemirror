@@ -44,7 +44,7 @@ ROOT="$PWD"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-# The 15 DIRECT packages first, then the 25 TRANSITIVE ones the first block pulls in. Blank line
+# The 16 DIRECT packages first, then the 25 TRANSITIVE ones the first block pulls in. Blank line
 # rather than a comment because JSON has none; the split is worth keeping visible, since bumping a
 # direct pin is a decision and the block below it is then re-derived rather than edited.
 cat > "$WORK/package.json" <<'JSON'
@@ -65,6 +65,7 @@ cat > "$WORK/package.json" <<'JSON'
     "@codemirror/lang-xml": "6.1.0",
     "@codemirror/lang-yaml": "6.1.3",
     "@codemirror/legacy-modes": "6.5.3",
+    "@codemirror/merge": "6.12.2",
     "codemirror": "6.0.2",
     "esbuild": "0.28.2",
 

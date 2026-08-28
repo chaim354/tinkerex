@@ -64,7 +64,7 @@ module Library
   # submodule's inner marker is itself beneath the outer one and goes), and false for the marker's
   # own path (so the marker survives).
   module RepoMetadataPurge
-    # A cap on the ancestor walk, for the same reason Maker::AttachToProject::MAX_ANCESTOR_WALK
+    # A cap on the ancestor walk, for the same reason Library::WorkingTree::MAX_ANCESTOR_WALK
     # exists: `parent_node_id` is a plain string column with no foreign key, so a cycle is
     # representable, and an uncapped walk is an infinite loop inside a deploy. 64 is far past any
     # real library depth.

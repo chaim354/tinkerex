@@ -60,11 +60,14 @@ Rails.application.routes.draw do
     member { post "restore" }
   end
 
-  # File library: list / view / upload / download / delete. TWO upload routes, because there are
+  # File library: list / view / upload / download / edit / delete. TWO upload routes, because there are
   # two flows and each deployment has exactly one: `create` takes the bytes for a share/s3
   # library (nothing to presign), begin+finalize is the chunk store's two-phase presigned flow.
   # FilesController gates each on a capability, so the wrong one for this deployment answers 501.
-  resources :files, only: %i[index create show destroy] do
+  # `update` is the editor's Save. PATCH rather than POST because it replaces the content of a
+  # file that already exists — and `replace: true` REUSES the node, which is what keeps every
+  # attachment, BOM link and tag pointing at it (§14a).
+  resources :files, only: %i[index create show update destroy] do
     collection do
       post "begin_upload"
       post "finalize_upload"
@@ -84,6 +87,16 @@ Rails.application.routes.draw do
       get "geometry"
     end
   end
+
+  # --- Review and commit, for a repository the maker brought (session-authed; never the v1 API,
+  # which is device-token only — §14d). Keyed by the repository ROOT node id, because eligibility
+  # is "inside a working tree" and has nothing to do with projects.
+  #
+  # `head_blob` ships HEAD's bytes for ONE path so the browser can diff them against the working
+  # tree it already fetches from /files/:id/blob. The server ships two blobs and diffs neither.
+  get  "repos/:root_id/commit",    to: "repo_commits#show",      as: :repo_commit
+  post "repos/:root_id/commit",    to: "repo_commits#create"
+  get  "repos/:root_id/head_blob", to: "repo_commits#head_blob", as: :repo_head_blob
 
   # --- Library browse (session-authed JSON; data source for the reusable folder/file chooser) ---
   get  "library/children", to: "library_browse#children",      as: :library_children

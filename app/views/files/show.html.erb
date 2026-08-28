@@ -116,19 +116,45 @@
     <%# Full PDF preview via the browser's own viewer (served inline from the blob endpoint). %>
     <iframe src="<%= blob_file_path(@node.node_id) %>" class="preview-pdf" title="<%= @node.name %> (PDF)"></iframe>
   <% elsif @kind == :text %>
-    <%# Read-only source viewer — CodeMirror 6, loaded dynamically by codeview_controller so the
-        bundle ships only on a page that actually has a text file on it. The inner preformatted
-        block is the FALLBACK and the resting state at once: the controller fetches the bytes
-        into it first and removes it only once the editor has mounted, so a failed bundle load
-        degrades to exactly the plain preview this branch used to be. Never write a
-        percent-greater-than sequence inside one of these comments — an ERB comment ends at the
-        first one and the rest of the prose prints into the page (§14d). %>
-    <div class="preview-code"
-         data-controller="codeview"
-         data-codeview-url-value="<%= blob_file_path(@node.node_id) %>"
-         data-codeview-ext-value="<%= File.extname(@node.name).downcase.delete(".") %>">
-      <pre class="preview-text" data-codeview-target="fallback">Loading…</pre>
-    </div>
+    <%# Source viewer — CodeMirror 6, loaded dynamically so the bundle ships only on a page that
+        actually has a text file on it. The inner preformatted block is the FALLBACK and the
+        resting state at once: the controller fetches the bytes into it first and removes it only
+        once the editor has mounted, so a failed bundle load degrades to exactly the plain preview
+        this branch used to be. Never write a percent-greater-than sequence inside one of these
+        comments — an ERB comment ends at the first one and the rest of the prose prints into the
+        page (§14d).
+
+        TWO CONTROLLERS, ONE BRANCH, AND THE READ-ONLY ONE IS STILL THE DEFAULT. `editor` mounts
+        only where FilesController#show found the file inside a working tree and under the size
+        cap; every other text file keeps `codeview`, which sets BOTH EditorState.readOnly and
+        EditorView.editable. Swapping the CONTROLLER rather than passing `codeview` a flag is the
+        point: a page that is sometimes editable needs a different mount, not a mutated one.
+
+        BOTH IDENTIFIERS ARE WRITTEN OUT LITERALLY, and the duplicated div is the price of that.
+        The obvious spelling interpolates one attribute — data-controller with a ternary inside —
+        and it is exactly what test/stimulus_hygiene_test.rb cannot read: that guard scans the
+        literal attribute, so an interpolated name resolves to nothing it can check, on the one
+        attribute whose failure mode is a SILENT no-op with no console warning (§14d, nine days
+        once). Measured: with the ternary inlined, the guard reported this view as declaring three
+        controllers named after the pieces of the expression — the output tag, the ivar and the
+        question mark. Do not collapse these two branches back into one. %>
+    <% if @editable %>
+      <div class="preview-code"
+           data-controller="editor"
+           data-editor-url-value="<%= blob_file_path(@node.node_id) %>"
+           data-editor-ext-value="<%= File.extname(@node.name).downcase.delete(".") %>"
+           data-editor-save-url-value="<%= file_path(@node.node_id) %>"
+           data-editor-base-token-value="<%= @info.content_token %>">
+        <pre class="preview-text" data-editor-target="fallback">Loading…</pre>
+      </div>
+    <% else %>
+      <div class="preview-code"
+           data-controller="codeview"
+           data-codeview-url-value="<%= blob_file_path(@node.node_id) %>"
+           data-codeview-ext-value="<%= File.extname(@node.name).downcase.delete(".") %>">
+        <pre class="preview-text" data-codeview-target="fallback">Loading…</pre>
+      </div>
+    <% end %>
   <% elsif @kind == :model3d %>
     <%# Interactive client-side 3D viewer (Three.js), see modelviewer_controller.js. `lazy` gates
         the byte fetch + Three.js download behind the "View in 3D" button, so nothing heavy loads

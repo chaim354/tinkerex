@@ -81,8 +81,12 @@ module FileLayer
       # not: presignable is about handing the browser a URL to READ from, port_writable about
       # which door bytes come IN. A bucket could presign the upload too — spec §5.2 defers that —
       # so until it does, the UI POSTs to the port and #write puts the object.
+      #
+      # local_worktree: false — a flat keyspace has no directory to hand to git. Making this true
+      # would mean materialising the repository first; measured at 11,287 GETs on a cold container
+      # for an unpacked repo (docs/roads-not-taken.md §9).
       Capabilities.new(versioned: false, syncable: false, presignable: true, scannable: true,
-                       port_writable: true, dir_deletable: false)
+                       port_writable: true, dir_deletable: false, local_worktree: false)
     end
 
     # Mirrors Share#stat exactly: answered from the NODE, never from the bucket. A stat is what

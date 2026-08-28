@@ -1,5 +1,6 @@
 require "test_helper"
 require_relative "../../support/fake_addon_source"
+require "support/git_repo_fixture"
 
 module Web
   # Every page here is rendered at two data sizes and must issue the SAME number of queries.
@@ -22,6 +23,8 @@ module Web
   # page went from flat to +1 query per build-log entry with the whole suite still green. Nothing
   # in the suite measured query counts on any web page, which is exactly why that was possible.
   class PageQueryBudgetTest < ActionDispatch::IntegrationTest
+    include GitRepoFixture
+
     PASSWORD = "correct horse battery staple".freeze
     SMALL = 3
     LARGE = 15
@@ -185,6 +188,53 @@ module Web
                               -> { add.call("fs", SMALL) },
                               -> { add.call("fl", LARGE - SMALL) },
                               "files#index (folder)")
+    end
+
+    # THE FILE PAGE INSIDE A GIT REPOSITORY, AND THE SUBJECT IS `Library::WorkingTree`. Every other
+    # case here grows the page's OWN rows; this one grows the repository AROUND one unchanged file.
+    # The walk that decides whether that file is editable is an ANCESTOR walk — a couple of queries
+    # per LEVEL, memoised on the parent — and the cheapest way to get it wrong is to answer the same
+    # question by looking through a folder's CHILDREN for `.git`. That reads identically on a
+    # three-file fixture and costs a query per sibling on a repository the maker actually brought.
+    #
+    # A REAL SHARE LIBRARY AND A REAL REPOSITORY, via GitRepoFixture#library_root: `.git` has to be
+    # a node the scan really indexed (Library::RepoMetadata keeps the marker) before the walk has
+    # anything to find, and rows minted by hand would not have one. The pin also makes this case
+    # measure the SAME thing on all three backend legs, which is what keeps their run counts equal
+    # (§15): nothing in this case varies with the ambient LIBRARY_BACKEND.
+    #
+    # CONSTANCY, NEVER A LITERAL, for this class's own reason: a literal pins whatever the page
+    # costs today and goes red on any unrelated query it gains, while the defect worth catching is
+    # growth with N.
+    #
+    # NOT WRITTEN THROUGH `assert_constant_queries`, and the deviation is small but deliberate: that
+    # helper takes the path BEFORE seeding, and here the path IS the seed's result. Its two warm-up
+    # renders are kept, because they are what stop a first-render backfill from landing inside a
+    # measurement; its failure message is not, because "add the missing eager load" is the wrong
+    # remedy for a walk that has started going sideways.
+    test "files#show inside a repository does not grow with the repository" do
+      file = seed_repo_file!("a.txt", "x\n")
+      path = file_path(file.node_id)
+      # KEYWORD ARGUMENT: Library::ScanJob#perform is `perform(user_id:, root: nil)`.
+      grow = lambda do |prefix, count|
+        count.times { |i| File.write(File.join(library_root, "demo", "#{prefix}#{i}.txt"), "y\n") }
+        Library::ScanJob.new.perform(user_id: @user.id)
+      end
+
+      grow.call("sib", 3)
+      get path
+      assert_response :success, "files#show must render before it can be budgeted"
+      few = count_queries { get path }
+
+      grow.call("more", 30)
+      get path
+      many = count_queries { get path }
+
+      assert_equal few, many,
+                   "files#show issued #{few} queries in a small repository and #{many} in a " \
+                   "larger one — it grows with the repository. Library::WorkingTree walks " \
+                   "ANCESTORS and memoises on the parent; if this grows it is walking siblings, " \
+                   "or the memo is gone."
     end
 
     # THE REVERSE LOOKUP MUST NOT BE PER ROW. `Maker::AddonOrigin.for` resolves a whole page at a

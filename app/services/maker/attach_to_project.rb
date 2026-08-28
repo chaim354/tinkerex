@@ -189,7 +189,7 @@ module Maker
       return :not_a_file unless node.file?
       return :model_bundle if model_owning(node)
       return :attached_elsewhere if !within_own_folder && attached_elsewhere?(node)
-      return :in_working_tree if in_working_tree?(node)
+      return :in_working_tree if working_tree.in_working_tree?(node)
 
       nil
     end
@@ -213,46 +213,6 @@ module Maker
     # row depends on the plan, so an unrelated UPDATE to either row could silently switch which
     # model a file belongs to between two requests. A sentence saying "the first row wins" has to
     # be enforced by the query, or it is a guess about a query plan.
-    # A cap on the ancestor walk. Not defensive dressing: `parent_node_id` is a plain string column
-    # with no foreign key, so a cycle is representable, and an uncapped `while` here is an infinite
-    # loop inside an unattended 15-minute sweep. 64 is far past any real library depth.
-    MAX_ANCESTOR_WALK = 64
-
-    # Is this node inside a git working tree — does any ancestor directory have a live child named
-    # `.git`?
-    #
-    # MEMOIZED ON THE PARENT, NOT ON THE NODE. Maker::ProjectIntake sweeps every file at one project
-    # folder's root through #refusal_for, so without the memo the walk runs once per FILE and each
-    # run costs two queries per level. With it, a sweep of N files pays for one walk. The memo lives
-    # on the instance and the instance lives for one sweep or one request (ProjectIntake already
-    # memoizes this object as `attach_policy`), so there is no staleness window worth naming.
-    # Pinned by "the ancestor walk is cached per parent, so depth costs nothing per file".
-    def in_working_tree?(node)
-      parent_id = node.parent_node_id
-      return false if parent_id.nil?
-
-      @working_tree ||= {}
-      return @working_tree[parent_id] if @working_tree.key?(parent_id)
-
-      @working_tree[parent_id] = walk_for_marker(parent_id)
-    end
-
-    # `present` and `kind: "dir"` are both load-bearing. A TOMBSTONED `.git` is not a working tree —
-    # without the scope, deleting a repo would freeze its former folder against the sweep forever
-    # with nothing visible saying why. And a `.git` FILE is not a marker either; see
-    # Library::RepoMetadata for why that distinction is deliberate rather than incidental.
-    def walk_for_marker(parent_id)
-      id = parent_id
-      MAX_ANCESTOR_WALK.times do
-        break if id.nil?
-        return true if @user.nodes.present.exists?(parent_node_id: id, kind: "dir",
-                                                   name: Library::RepoMetadata::DIR_NAME)
-
-        id = @user.nodes.where(node_id: id).pick(:parent_node_id)
-      end
-      false
-    end
-
     def model_owning(node)
       @user.maker_file_attachments
            .where(node_id: node.node_id, attachable_type: "Maker::Model")
@@ -260,6 +220,12 @@ module Maker
     end
 
     private
+
+    # ONE DEFINITION OF THE WALK, shared with the git editing surface (Library::WorkingTree's own
+    # header says why it moved). Memoised here because the memo INSIDE it is per-instance, and
+    # Maker::ProjectIntake sweeps every file at a project root through #refusal_for -- a fresh
+    # instance per call would throw the memo away once per file.
+    def working_tree = @working_tree ||= Library::WorkingTree.new(@user)
 
     def attached_elsewhere?(node)
       @user.maker_file_attachments

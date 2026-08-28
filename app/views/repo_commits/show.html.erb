@@ -1,0 +1,49 @@
+<h1>Commit — <%= @root.name %></h1>
+
+<% if @rows.empty? %>
+  <p class="muted">Nothing edited here yet.</p>
+<% else %>
+  <%= form_with url: repo_commit_path(@root.node_id), method: :post, scope: nil, class: "commit-box" do |f| %>
+    <%# `scope: nil` and no `model:` means a blank object_name, so every tag helper below emits a
+        FLAT name. Do not add fields_for here — on a blank object_name it emits "[thing][x]",
+        which Rack parses to the literal key "[thing]" and the controller's require rejects: a
+        hard 400 (§14d). Never write a percent-greater-than sequence inside one of these
+        comments; an ERB comment ends at the first one and the rest of this prose would print
+        into the page, where no assert_select can see it (§14d again). %>
+    <%= hidden_field_tag :expected_head, @head %>
+    <ul class="commit-rows">
+      <% @rows.each do |path, row| %>
+        <li data-path="<%= path %>">
+          <div class="commit-row-head">
+            <% if row.committable? %>
+              <%= check_box_tag "paths[]", path, true, id: "path_#{path.parameterize}" %>
+            <% else %>
+              <span class="muted">ignored by .gitignore</span>
+            <% end %>
+            <code><%= path %></code>
+            <span class="plus">+<%= row.additions %></span>
+            <span class="minus">−<%= row.deletions %></span>
+          </div>
+          <%# The diff is computed IN THE BROWSER from two blobs this page only points at: HEAD's
+              from repo_head_blob_path and the working tree's from the same blob endpoint the file
+              viewer reads. The server ships bytes and diffs neither. `data-controller` is a
+              LITERAL string here and must stay one — test/stimulus_hygiene_test.rb scans the
+              attribute text, so an interpolated name resolves to nothing it can check, on the one
+              attribute whose failure mode is a silent no-op (§14d). %>
+          <div class="commit-diff"
+               data-controller="diffview"
+               data-diffview-head-url-value="<%= repo_head_blob_path(@root.node_id, path: path) %>"
+               data-diffview-work-url-value="<%= blob_file_path(@node_id_by_path[path]) %>"
+               data-diffview-ext-value="<%= File.extname(path).downcase.delete(".") %>"></div>
+        </li>
+      <% end %>
+    </ul>
+    <%= text_area_tag :message, nil, rows: 3, placeholder: "What changed?", class: "commit-message" %>
+    <% if @other_dirty.positive? %>
+      <p class="muted"><%= pluralize(@other_dirty, "other change") %> in this repository — not included.</p>
+    <% end %>
+    <div class="editor-bar">
+      <%= submit_tag "Commit" %>
+    </div>
+  <% end %>
+<% end %>

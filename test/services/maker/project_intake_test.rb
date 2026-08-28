@@ -118,8 +118,9 @@ module Maker
     #
     # THREE TRIES NOW, and the third is worth recording because it is a different mistake from the
     # first two. `sql.include?("parent_node_id")` matched any query MENTIONING the column, including
-    # one that merely SELECTS it — and Maker::AttachToProject#walk_for_marker (the :in_working_tree
-    # rule) hops up the tree with exactly that shape: `SELECT parent_node_id WHERE node_id = ?`, no
+    # one that merely SELECTS it — and Library::WorkingTree's ancestor walk (what the
+    # :in_working_tree rule asks) hops up the tree with exactly that shape:
+    # `SELECT parent_node_id WHERE node_id = ?`, no
     # name term. It was swept in as if it were the walk and failed the columns assertion, which read
     # as this guard catching a regression when nothing had regressed. Matching the WHERE clause is
     # what the prose above always claimed the filter did.

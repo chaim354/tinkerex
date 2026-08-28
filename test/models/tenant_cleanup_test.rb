@@ -76,6 +76,10 @@ class TenantCleanupTest < ActiveSupport::TestCase
       u.maker_taggings.create!(tag: u.maker_tags.first, taggable: u.maker_items.first)
     },
 
+    "maker_repo_edits" => ->(u) {
+      u.maker_repo_edits.create!(repo_root_node_id: SecureRandom.uuid, node_id: SecureRandom.uuid)
+    },
+
     "maker_file_attachments" => ->(u) {
       u.maker_file_attachments.create!(attachable: u.maker_items.first,
                                        node_id: SecureRandom.uuid, role: "model")
@@ -116,7 +120,7 @@ class TenantCleanupTest < ActiveSupport::TestCase
     devices nodes remote_manifest_chunks user_identities
     maker_items maker_models maker_tags maker_projects maker_locations maker_suppliers
     maker_collections maker_shelves maker_notes maker_tasks maker_previews maker_addon_states
-    maker_print_runs maker_taggings maker_file_attachments maker_collection_items
+    maker_print_runs maker_taggings maker_file_attachments maker_collection_items maker_repo_edits
     maker_build_log_entries maker_sheets maker_boms maker_inventory_items
     maker_inventory_transactions maker_bom_lines
   ].freeze
@@ -186,6 +190,18 @@ class TenantCleanupTest < ActiveSupport::TestCase
     doomed.destroy!
 
     kept = TABLES.reject { |t| rows_for(keeper, t) >= 1 }
-    assert_empty kept, "destroying one user removed another user's rows from: #{kept.join(', ')}"
+    # THE MESSAGE DISTINGUISHES THE TWO CAUSES, because for one of them the obvious reading is
+    # WRONG and expensive. A table with no builder never had a keeper row to lose, so it lands here
+    # looking exactly like cross-tenant data loss -- observed on maker_repo_edits (tinkerex#178),
+    # where it read as a live tenancy bug and was in fact one missing `has_many`. The builder gap
+    # has its own test above; this one is about destruction crossing a tenant boundary, and saying
+    # so keeps the next reader from hunting a bug that is not there.
+    unbuilt = kept & (TABLES - BUILDERS.keys)
+    assert_empty kept, <<~MSG
+      destroying one user removed another user's rows from: #{kept.join(', ')}
+      #{"\nNOT NECESSARILY A TENANCY BUG: #{unbuilt.join(', ')} #{unbuilt.one? ? 'has' : 'have'} " \
+        "no BUILDERS entry, so the keeper never had a row here. Add the builder (and the User " \
+        "association it implies) first, then re-read this failure." if unbuilt.any?}
+    MSG
   end
 end

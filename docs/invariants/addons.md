@@ -148,6 +148,20 @@
   `app/<x>/maker/` is covered the day it is created. Change the code and the test tells you; if a
   new direct exception ever becomes genuinely unavoidable, update the test and this bullet
   together, deliberately.
+- **IT NOW HAS ONE CALLER OUTSIDE THE ADDON SYSTEM, NAMED HERE RATHER THAN LEFT SILENT** — the
+  editor's Save (`FilesController#update`, `tinkerex#178`) calls `LibraryOutput.write_bytes!`, the
+  `port_writable?` branch extracted out of `#write` **in place**. It is still the ONE output path
+  and §14d's count of that branch is still **exactly one**: `#write` calls `write_bytes!` too, so
+  there is genuinely one copy, and an addon save and an editor save are the same operation seen
+  twice — server-side bytes into a library file, replacing what is there, **reusing the node**. The
+  only difference is that an addon save additionally records a `maker_addon_files` row, which is
+  why `write_bytes!` takes no `state:` and returns a bare `node_id`. **A second copy of the branch
+  was refused, and so was moving the class**: relocating it to suit a non-addon caller would put
+  both this bullet's claim and §14d's count in question to save an awkward namespace. **An
+  invariant that silently acquires an exception is worse than one that names it** — which is what
+  this bullet is. `write_bytes!` is deliberately not called `write`: two methods of that name on
+  one module, with different arities and different return types, is the drift this repo names
+  services to end.
 - **Addon bundles are served by the `addons` Kamal accessory** (`chaim354/tinkerex-addons`), not
   shipped inside the Rails image — **publishing the bundle image IS the addon deploy; Rails is
   never rebuilt.** `deploy.yml` sets `ADDON_SOURCE_URL: http://tinkerex-addons`. Read the

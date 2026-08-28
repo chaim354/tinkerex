@@ -431,12 +431,12 @@ Each line below cost a real bug **in this repo**. the Forgejo record (§11) has 
 them. Invariants belonging to the sync engine or the desktop client live in those repos'
 own CLAUDE.md — see §3 and §14j.
 
-**Six subsections live in `docs/invariants/` and are stubs here** — 14c (addons), 14f (project
-intake), 14g (deploy secrets), 14h (Measure), 14i (backup), 14k (the model catalog). They are §14
-material, not an appendix: each binds hard inside its own subsystem and not at all outside it, so
-it is loaded when it applies rather than skimmed on every unrelated session. **Read the file
-before touching the paths its stub names.** Anything below that binds on only one area belongs
-there too, with a stub here.
+**Seven subsections live in `docs/invariants/` and are stubs here** — 14c (addons), 14f (project
+intake), 14g (deploy secrets), 14h (Measure), 14i (backup), 14k (the model catalog), 14l (git
+editing). They are §14 material, not an appendix: each binds hard inside its own subsystem and not
+at all outside it, so it is loaded when it applies rather than skimmed on every unrelated session.
+**Read the file before touching the paths its stub names.** Anything below that binds on only one
+area belongs there too, with a stub here.
 
 ### 14a. The FileLayer port
 
@@ -1189,6 +1189,16 @@ Four rules survive on **this** side of the boundary:
 `origin`/`auto_node_id`/`dismissed_at` columns on `maker_models`. Nearest-shelf; a shelf is a PATH and a
 model a NODE ID; dismissing is not deleting; ScanJob ordering; `LibraryTree#path_for` cycle-guard/memo
 rules (now binding `FilesController`/`Tools::LibraryFolders`); and why Model and Item are TWO catalogs.
+
+### 14l. Editing and committing in a repository → **`docs/invariants/git-editing.md`**
+
+**Read that file before touching** `app/services/maker/git/`, `app/services/library/working_tree.rb`,
+`app/controllers/repo_commits_controller.rb`, `FilesController#update`, `editor_controller.js` or
+`diffview_controller.js`. Bytes the catalog tracks go through the port and bytes git owns never do;
+ask `local_worktree?`, never an adapter class; `index.clear` is never written and the index is never
+left untouched; content against HEAD's blob, never a stat; a `.lock` is refused, never deleted; the
+truncation refusal is the SERVER's; ONE ancestor walk; the inline diff is a review surface with no
+controls; and no file there reuses a name `tinkerex#161` used.
 
 ## 15. Working agreements for the coding agent
 

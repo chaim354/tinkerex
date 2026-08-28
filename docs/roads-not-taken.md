@@ -148,6 +148,44 @@ named below. Trimmed long-form notes used to live in `docs/plan-direct-client.md
 
 ---
 
+## 9. Git on `s3` / `chunk_remote` without a local filesystem — DEFERRED, with the blocker named
+
+- **Considered:** let the maker commit from inside tinkerex on every backend, not just `share`.
+  Two shapes: (a) `tinkerex#161`'s hydrate-to-an-ephemeral-cache, and (b) a write-ahead log in
+  object storage, prompted by Cursor's "Git at any scale" (their Continuity platform).
+- **Why we rejected (a):** `s3` and `chunk_remote` have no filesystem to hand to git, so rugged can
+  only run against a materialised copy. Measured in `tinkerex#161`: **11,287 GETs on a cold
+  container** for an unpacked repository.
+- **Why (b) does not rescue it:** Continuity's WAL is a **durability and replication layer *under*
+  a normal git repository on fast local NVMe**, which serves every read. A replica with no local
+  copy *materialises it from the WAL* — our hydration step by another name. Their answer to
+  hydration cost is not the WAL: it is that the WAL carries **packfiles**, and only the primary
+  repacks. `tinkerex#161` had already reached that same conclusion independently (packed ~1.1 MB
+  across 3 files, sub-millisecond; unpacked 11,287 GETs), which is why it put consolidation in the
+  commit loop. **Its storage thinking was right; its product model — app-created repos, a
+  15-minute sweep, foreign repos refused — was what got reverted.**
+- **Worth taking if this is revived:** S3 **conditional GET / CAS** (metadata-only conditional GET
+  under 10 ms; compare-and-swap on an index object gives linearizable updates with no lock and no
+  lease — plausibly newer than `tinkerex#161`'s design work); **packs are the unit, never loose
+  objects**; and the **warm-cache / source-of-truth** split as a sharper framing of "ephemeral
+  container cache".
+- **The smaller idea, which needs no WAL:** a commit is a *partial* read of the DAG — the ref, the
+  HEAD commit, and the trees along the path to each changed file. Two files at depth three in a
+  2,305-file repository is roughly **8 objects read and 8 written**, not 11,287.
+- **The blocker, and it is why this is deferred rather than planned:** in a real repository those
+  objects live inside a packfile, delta-compressed, so an individual object cannot be fetched — it
+  needs the `.idx`, range requests into the pack, and delta-chain reconstruction. And **rugged
+  cannot help**: `tinkerex#161` verified `Rugged::Backend` exposes zero methods, and `Odb`,
+  `Indexer` and `Packbuilder` are undefined, so there is no custom object database to plug in.
+- **Does NOT apply to `chunk_remote` for a different reason entirely:** the objection there was
+  never cost. The maker's own machine has that repository checked out with real git, so a
+  server-side commit moves refs under a live working copy. A WAL does not fix a racing checkout.
+- **Current approach:** commits are gated on the `local_worktree` capability — true on `share`
+  only — and **Save works on all three backends**. `docs/superpowers/specs/2026-08-28-edit-and-commit-in-a-repo-design.md`,
+  `tinkerex#178`. Widening this is a new *answer* to `local_worktree`, never a rewrite.
+
+---
+
 ## Active decisions (do NOT confuse with the above — these are CURRENT, not abandoned)
 
 For clarity, these settled choices are **adopted**, not roads-not-taken:

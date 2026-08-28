@@ -67,9 +67,11 @@ module SchemaMap
     # that cannot be made.
     { "label" => "Remote sync mirror", "group" => "sync",
       "tables" => %w[remote_manifest_chunks] },
+    # `maker_repo_edits` sits here rather than with the projects: it is a row ABOUT A FILE, keyed
+    # on `nodes.node_id` like every other table in this column, and it names no project at all.
     { "label" => "Files ↔ maker", "group" => "maker",
       "tables" => %w[maker_file_attachments maker_previews maker_notes maker_addon_files
-                     maker_addon_states maker_addon_state_revisions] },
+                     maker_addon_states maker_addon_state_revisions maker_repo_edits] },
     { "label" => "Library", "group" => "maker",
       "tables" => %w[maker_items maker_collection_items maker_collections maker_taggings
                      maker_tags maker_tasks] },
@@ -149,6 +151,12 @@ module SchemaMap
     [ "maker_projects.folder_node_id",     "nodes.node_id",       "app", "Projects/<slug>" ],
     [ "maker_bom_lines.node_id",           "nodes.node_id",       "app", "part file" ],
     [ "maker_addon_files.node_id",         "nodes.node_id",       "app", "output" ],
+    # A PENDING EDIT NAMES TWO NODES AND NEITHER IS A CONSTRAINT — the file that was written, and
+    # the repository root the ancestor walk landed on. Both stay bare strings for the reason every
+    # arrow into `nodes` above is: a tombstone outliving its row is the design (§14a). The row is a
+    # HINT, never an authority — the commit box asks git (app/models/maker/repo_edit.rb).
+    [ "maker_repo_edits.node_id",           "nodes.node_id",      "app", "edited" ],
+    [ "maker_repo_edits.repo_root_node_id", "nodes.node_id",      "app", "pending in" ],
     # --- maker layer internals ----------------------------------------------------
     [ "maker_boms.project_id",                        "maker_projects.id",        "app", "BOM for" ],
     [ "maker_bom_lines.bom_id",                       "maker_boms.id",            "app", "line of" ],

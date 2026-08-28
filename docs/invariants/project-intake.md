@@ -108,9 +108,13 @@
   `relocation: (move(node) if refusal.nil?)`, so it means **attach the row, leave the bytes**,
   which is the right answer at all four callers. `:attached_elsewhere` needed `within_own_folder:`
   because its stated reason is positional and stopped applying to one caller; "do not move a file
-  out from under git" has no such exception. Detection memoizes per PARENT, not per node — a sweep
-  files N nodes under one parent and the ancestor walk is two queries per level (measured: 45
-  queries against 15 for ten files at depth four).
+  out from under git" has no such exception. **The detection itself is NOT here** — the ancestor
+  walk lives in `Library::WorkingTree`, which the git editing surface asks for the repository ROOT
+  node while this asks only whether one exists; keeping a boolean copy here would be one question
+  with two implementations, the drift §14d names a service to end. `#refusal_for` memoizes that
+  service per instance, because ITS memo is per PARENT, not per node — a sweep files N nodes under
+  one parent and the ancestor walk is two queries per level (measured: 45 queries against 15 for
+  ten files at depth four), so a fresh instance per call would throw the memo away once per file.
 
 - **ROOT = INBOX IS THE WHOLE SORT RULE, AND IT IS STATELESS.** Only files at a project
   folder's own root are ever filed; anything already in a subfolder — including one filed
