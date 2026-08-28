@@ -142,6 +142,12 @@ dl.meta dd { margin: 0; }
   width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--line);
   border-radius: 6px; background: var(--bg); color: inherit; box-sizing: border-box;
 }
+/* The inline diff (diffview_controller.js). Bounded for .preview-code's reason — a repository
+   with six edited files must not make the commit page six file-lengths tall. */
+.commit-diff .cm-editor { max-height: 320px; }
+.commit-diff .cm-editor.cm-focused { outline: none; }
+.commit-diff .cm-scroller { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+.commit-diff:empty { display: none; }
 
 /* --- Interactive 3D viewer (modelviewer_controller.js) — STL/3MF/OBJ --- */
 .model-viewer { position: relative; }

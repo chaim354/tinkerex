@@ -24,6 +24,17 @@
             <span class="plus">+<%= row.additions %></span>
             <span class="minus">−<%= row.deletions %></span>
           </div>
+          <%# The diff is computed IN THE BROWSER from two blobs this page only points at: HEAD's
+              from repo_head_blob_path and the working tree's from the same blob endpoint the file
+              viewer reads. The server ships bytes and diffs neither. `data-controller` is a
+              LITERAL string here and must stay one — test/stimulus_hygiene_test.rb scans the
+              attribute text, so an interpolated name resolves to nothing it can check, on the one
+              attribute whose failure mode is a silent no-op (§14d). %>
+          <div class="commit-diff"
+               data-controller="diffview"
+               data-diffview-head-url-value="<%= repo_head_blob_path(@root.node_id, path: path) %>"
+               data-diffview-work-url-value="<%= blob_file_path(@node_id_by_path[path]) %>"
+               data-diffview-ext-value="<%= File.extname(path).downcase.delete(".") %>"></div>
         </li>
       <% end %>
     </ul>

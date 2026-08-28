@@ -99,6 +99,45 @@ class RepoEditorTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # THE COMMIT BOX'S DIFF, AND NO REQUEST TEST CAN SEE IT. @codemirror/merge renders through
+  # extensions, and CM6's answer to a DUPLICATE @codemirror/state is to IGNORE an extension
+  # SILENTLY — no error, no console warning, the editor mounts and the feature is simply absent
+  # (CLAUDE.md §14d). The integration suite asserts the page ships the two blob URLs; only a
+  # browser can say the diff was built from them.
+  #
+  # ASSERTS THE CHANGED LINE IS MARKED, NOT MERELY THAT AN EDITOR APPEARED. `.cm-editor` alone
+  # would be satisfied by basicSetup with unifiedMergeView dropped on the floor, which is exactly
+  # the defect above. `.cm-deletedChunk` is the merge extension's own decoration for HEAD's side
+  # of a hunk, so it exists only if the extension ran.
+  test "the commit box diffs the working tree against HEAD, in the browser" do
+    visit file_path(@node.node_id)
+    assert_selector ".cm-editor", wait: 10
+    type_and_save("CHANGED")
+    assert_selector ".editor-status", text: "Saved"
+
+    root = @user.nodes.present.find_by!(name: "demo", kind: "dir")
+    visit repo_commit_path(root.node_id)
+
+    assert_selector "[data-path='notes.md']"
+    assert_selector ".commit-diff .cm-editor", wait: 10
+    assert_selector ".commit-diff .cm-deletedChunk", wait: 10
+
+    # NO MERGE CONTROLS, and this is the assertion that keeps the box honest rather than a
+    # stylistic preference. diffview_controller records the measurement: rejectChunk dispatches a
+    # DOCUMENT change that readOnly does not gate, so an enabled control would revert the BUFFER
+    # and never the working tree — the maker would watch a change vanish, commit, and find it
+    # still on disk. If someone turns mergeControls on, this line is what makes them come back and
+    # read why, and the label they will need is "Revert hunk" (never "Reject": `original` is HEAD
+    # here, so rejecting a chunk REVERTS the maker's own edit).
+    assert_no_selector ".commit-diff .cm-chunkButtons"
+    assert_no_button "Reject"
+
+    # THE DIFF IS READ-ONLY, both facets, for the reason the file-page cases give.
+    assert_no_selector ".commit-diff .cm-content[contenteditable=true]"
+
+    assert_no_console_errors
+  end
+
   # THE NEGATIVE CASE, AND WITHOUT IT THE TEST ABOVE PROVES ONLY "CodeMirror MOUNTS". A file
   # outside a working tree must keep the READ-ONLY controller — that is what makes "editing appears
   # exactly where committing could" an observable property of the page rather than a claim in
