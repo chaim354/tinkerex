@@ -417,6 +417,10 @@ class FilesController < ApplicationController
     @node = current_user.nodes.present.find_by!(node_id: params[:id])
     @info = FileLayer.current.stat(current_user, node_id: @node.node_id)
     @kind = preview_kind(@node.name)
+    # Editing appears exactly where committing could — one walk, one answer, nothing to keep in
+    # sync between the two surfaces.
+    @repo_root = Library::WorkingTree.new(current_user).root_for(@node)
+    @editable  = @kind == :text && @repo_root.present? && editable?(@node)
     token = @info&.content_token
     @thumbnail = token && current_thumbnail(@node, token)
     # THE ATTACH CONTROL'S TWO HALVES. `@attached_projects` is what the file is already in — a
