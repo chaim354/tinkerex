@@ -4,7 +4,8 @@
 library. Written with `tinkerex#178` and kept out of CLAUDE.md because it binds inside one
 subsystem: the rules are here, the story is in the spec and in Forgejo (§11). Read this before
 touching `app/services/maker/git/`, `app/services/library/working_tree.rb`,
-`app/controllers/repo_commits_controller.rb`, `app/controllers/repo_histories_controller.rb`,
+`app/controllers/repo_commits_controller.rb`, `app/views/repo_commits/show.html.erb`,
+`app/controllers/repo_histories_controller.rb`,
 `FilesController#update`/`#history`/`#history_blob`/`#restore`, `test/support/git_repo_fixture.rb`,
 or `app/javascript/controllers/{editor,diffview,history}_controller.js`.
 
@@ -15,6 +16,14 @@ from history and restore
 it — each a fact about git or rugged that reads as tidiable and is not. **None of the nine was
 derived by reading the code**, which is why each states what breaks when it is undone rather than
 what the code does.
+
+The ten after THOSE came from the staging panel
+(`docs/superpowers/specs/2026-08-30-staging-panel-design.md`): five are that spec's part 7, and five
+are findings from building it — three of them facts about rugged or a shared predicate that a
+plausible tidy-up gets wrong, one a vocabulary that must not be reused, and one that is **not a rule
+at all**. The last is a recorded IMPRECISION: the panel's `:ignored` label is slightly wrong about
+git, inherited rather than introduced, and it is written down so the next reader recognises it
+instead of half-fixing it.
 
 ## Bytes the catalog tracks go through the port; bytes git owns never do
 
@@ -316,3 +325,220 @@ above the construction. A third must keep that order. The failure appears only o
 chunk_remote legs, which is why `repo_history_flow_test.rb`'s backend cases assert those legs'
 answers rather than skipping (§14e) — a skip here would report success over the only two backends
 that can reach the bug.
+
+## Only the tinkerex-edited group is checked on load
+
+**THIS IS A SAFETY PROPERTY DELIBERATELY REDUCED, AND THE CHECKBOX IS WHAT IS LEFT OF IT.** The
+commit box was not merely careful about the maker's other uncommitted work — it was *structurally
+incapable* of touching it, because unedited paths were never offered. The staging panel offers them,
+so the protection is now **not by default, one deliberate click away**. That reduction was taken
+knowingly (spec part 1) and is not the thing to relitigate; which group arrives CHECKED is.
+
+`RepoCommitsController#show` builds three groups and only the first is checked: the reconciled
+`maker_repo_edits` rows, what tinkerex itself wrote. "Other changes" is unchecked and collapsed;
+"OS clutter" is unchecked and labelled.
+
+Pre-check either wider group and **the safe thing stops being what happens when a maker presses
+Commit without reading**: one click commits `.DS_Store`, a half-finished experiment three folders
+over, and whatever their editor left behind. The commit succeeds. Nothing errors. It is simply not
+the commit anyone asked for — and on `catan`, the repository this feature exists for, that is 58
+paths arriving pre-checked, `.DS_Store` among them.
+
+**Exactly one case in the request suite can see it**, `repo_edit_flow_test.rb`'s "only the
+tinkerex-edited group is checked on load" — and that it is the only one there is verified rather
+than assumed: an assertion about a checked `paths[]` control appears **twice in that file and
+nowhere else in it**. Its two `assert_operator … :>=` lines are the non-vacuity half (§14e), because
+with nothing offered in the other groups "none of them is checked" would be true for the wrong
+reason. A "Select all" control is per-GROUP for the same reason and must never be global: a global
+one commits clutter by accident, which is this rule undone through a different door.
+
+## An unselected deleted path survives in the new tree, with HEAD's bytes
+
+`CommitPaths#stage` answers a selected path that is gone from the working tree with `#remove`
+instead of reading bytes — "replaced with nothing" is what a maker who deleted the file in Finder is
+asking for, and the class rule does not move. **The danger is not dropping the entry you selected;
+it is dropping one you did not.**
+
+That is `index.clear`'s shape one level down: a change right about the file it was asked about and
+wrong about the one it wasn't, green on every bytes-oriented assertion, because the bytes of the
+selected files really are correct. The tidier-looking spelling — walk HEAD's tree once and remove
+everything absent from the workdir — silently deletes every path the maker has moved, renamed or
+carried off somewhere else and did not select.
+
+Measured, with the file restored byte-exactly from a `cp` snapshot afterwards: replacing the
+per-path branch with a `walk_blobs` sweep over HEAD's tree turns **exactly one of the sixteen tests
+in `commit_paths_test.rb` red** — "an UNSELECTED deleted path survives in the new tree with HEAD's
+bytes", failing `Rugged::TreeError: the path 'a.txt' does not exist in the given tree` — and leaves
+the other **fifteen green**. `repo_edit_flow_test.rb`'s "a path from Other changes commits, and only
+it" asserts the same property through the real request. Delete either and the mutation is invisible.
+
+## `:deleted` and `:missing` are distinct, and conflating them is silent in both directions
+
+| state | on disk | in HEAD | what it is | committable |
+|---|---|---|---|---|
+| `:deleted` | no | yes | a real deletion the maker may want to record | **yes** |
+| `:missing` | no | no | a stale `maker_repo_edits` row the box already drops | no |
+
+`LocalRepo#row_for` asks `head_blob_for` before it labels; `Row#committable?` accepts `:deleted`;
+`RepoCommitsController#reconcile` still drops `:missing`.
+
+One `:missing` for both fails in whichever direction the collapse chose, and **neither direction
+errors**: everything absent becomes `:missing` → a real deletion is never offered and cannot be
+committed from the app at all; everything absent becomes `:deleted` → every stale row becomes a
+committable deletion of a file that was never there, and a maker who selects the lot commits
+removals of paths HEAD does carry.
+
+Two tests, because either alone passes one arm of the collapse: `local_repo_test.rb`'s "a path in
+HEAD and gone from the worktree is deleted, and committable" and "a path in neither HEAD nor the
+worktree is missing, and NOT committable".
+
+## `.gitignore`d paths are never listed; OS clutter IS listed, unchecked and labelled
+
+The two look like one rule about noise and are opposites.
+
+**`.gitignore`d is dropped in `LocalRepo#full_status`, not in the view.** git will not carry such a
+path without `-f`, so offering it is offering something that cannot happen — the row would be a
+checkbox whose only possible outcome is a refusal the maker cannot see coming.
+
+**OS clutter goes the other way, and the browse-surface reasoning does not transfer.** This app
+refuses to CREATE `.DS_Store` at every door (`Library::ReservedNames`) and drops it from the catalog
+(`Library::OsClutter`), so offering to commit one *without comment* would be the app contradicting
+itself. But hiding it from a **staging** surface is a different and worse thing than hiding it from
+a browse surface: `git status` in the terminal still shows it, and a panel that disagrees with
+`git status` is a lie about the repository — the same lie this file already refuses twice, in the
+capped walk's `stopped` and in `truncated_count` below. It is shown, unchecked, and labelled with
+the app's own opinion ("tinkerex never creates these"), which informs without overriding.
+
+Hide it and the maker's terminal reports a dirty tree the panel calls clean, with no way to act on
+it from the app. Offer it checked and rule 1 above is gone. Guarded by "the box shows three groups
+with the right membership", which asserts both directions in one pass — `.DS_Store` present under
+`clutter` and absent from `other`, `secret.log` present in **no** group.
+
+## `#full_status` is capped, sorted before the cap, and `truncated_count` reaches the view
+
+The history walk's argument, one object at a time: every row costs a content comparison against
+HEAD's blob — "Compare content against HEAD's blob, never a stat", above — which over CIFS is the
+~15 ms per object the history table measured. `catan` already carries 58 dirty paths and a repository can carry thousands, so
+`DEFAULT_STATUS_LIMIT` is 500 and both halves of the cap are load-bearing:
+
+- **`truncated_count` reaches the view.** A truncated list that does not say so is the same lie as a
+  capped walk reporting "no history", and it is worse here, because the maker's conclusion is not
+  "there is more to see" but "the app has seen everything, so the rest of my tree must be clean."
+- **`paths.sort!` runs BEFORE `first(limit)`.** `Rugged::Repository#status` promises no order, so an
+  unsorted cap keeps an arbitrary subset and two renders of one repository can offer different
+  files — a difference nothing reports and no test asserting a COUNT can see.
+
+Pinned by `local_repo_test.rb`'s "full_status is capped and says how many it did not list" and the
+flow test's "a truncated list says how many paths it did not show", whose fixture writes
+`DEFAULT_STATUS_LIMIT + 1` files. A fixture at or below the cap makes both vacuous — the shape that
+kept `tinkerex#185` invisible.
+
+**A loose end, recorded rather than left to be tripped over: `LocalRepo#other_dirty_count` now has
+no production caller.** The panel lists those paths instead of counting them, and `truncated_count`
+answers the "how many more" question it was built for. It is still exercised by "other dirty paths
+are counted, not returned", and `local_repo.rb:92` cites it BY NAME for the fact that
+`Rugged::Repository#status` takes a block and returns no enumerator. Removing the method is fine;
+removing it and leaving that citation is a comment naming something that no longer exists — a
+sentence read as a guarantee, which is exactly what `test/docs_hygiene_test.rb`'s citation guard
+exists for one directory over. **Move the citation in the same commit, or keep the method.**
+
+## `Library::OsClutter` is macOS-only on purpose, so `Thumbs.db` is the WRONG probe
+
+The clutter group partitions on `Library::OsClutter.ignore?` and never on a list of names (§14b:
+that predicate is composed once and copied nowhere, because the observers and the write guards must
+not drift). A test that means to prove WHICH of the two is in use needs a name the literal misses
+and the predicate catches — and the obvious pick is not one. Probed:
+
+```ruby
+Library::OsClutter.ignore?("Thumbs.db")      # => false
+Library::OsClutter.ignore?("desktop.ini")    # => false
+Library::OsClutter.ignore?("._sidecar.txt")  # => true
+Library::OsClutter.ignore?("__MACOSX/a.stl") # => true
+```
+
+`NAMES` is macOS clutter and the constant says so in as many words: Windows clutter is deliberately
+absent, because adding a name there is a real indexing-behaviour change AND a new write refusal, so
+it is a decision to take explicitly rather than a net to widen. **The plan proposed `Thumbs.db` for
+exactly this test.** It fails against CORRECT code, which is the worst kind of probe — a red that
+reads as the guard having found a bug.
+
+Use `._sidecar.txt` (the `APPLE_DOUBLE_PREFIX` rule, which no `%w[.DS_Store]` literal covers) or a
+nested `__MACOSX` segment (`ignore?` matches **any path segment**, not just the leaf, which is what
+lets one predicate serve the observers and the write guards). "OS clutter is partitioned by the
+shared predicate, not by a list of names" uses the first.
+
+## Binary is decided by CONTENT, never by `Maker::FileAttachment.text?`
+
+git's own rule, and the panel takes it: a NUL byte within the first 8 kB
+(`RepoCommitsController::BINARY_SNIFF_BYTES`).
+
+**This is not the second-vocabulary mistake §14d warns about; it is a second AXIS.**
+`Maker::FileAttachment.text?` answers a NAME question — "should the file page offer a source
+viewer" — off an extension allowlist, and it **answers false for `.svg`** (probed). `catan`, the
+58-dirty-path repository this whole feature exists for, is full of `.svg` design files, so the
+name-based answer prints "binary — no diff" over every one of them: the panel refusing to diff the
+exact files it was built to let a maker commit, while looking like it is working.
+
+Adding `.svg` to `ROLE_BY_EXT` is still the fix for the FILE page (`files-preview.md`); it is not the
+fix for this, and routing this question through that predicate re-couples two questions that merely
+agree about most files. Guarded by "a binary path is committable and says so instead of mounting a
+diff" — and **committable is half that assertion**: git commits a binary fine, so a change that
+refuses one has broken more than the diff.
+
+## `Rugged::Index#remove` raises, so `refresh_index` asks `index[rel]` first
+
+Probed on rugged 1.9.6:
+
+```ruby
+index["ghost.txt"]        # => nil
+index.remove("ghost.txt") # => Rugged::IndexError: index does not contain ghost.txt at stage 0
+```
+
+`CommitPaths#refresh_index` therefore branches three ways — `File.exist?` → `add`, `elsif index[rel]`
+→ `remove`, else nothing. Drop the guard and a selected path in neither the working tree nor HEAD
+(`:missing`, a stale row, harmless everywhere else in this class) raises **after
+`Rugged::Commit.create` has written the commit and moved the ref**. The maker sees a 500, the commit
+landed anyway, and the index was never written — the worst position in the whole write path, reached
+by a path that had nothing to contribute in the first place.
+
+The TREE half of that same case is safe with no guard, for an unrelated reason
+(`Tree::Builder#remove` answers false for a name it does not hold), so the index half has to be
+argued separately rather than assumed to follow from it. "a selected path in neither the worktree
+nor HEAD is a no-op, not an error" covers both.
+
+## `Rugged::Tree::Builder` has no `#size`, so emptiness is read off the WRITTEN tree
+
+Its instance methods in rugged 1.9.6 are exactly `<<`, `[]`, `clear`, `insert`, `reject!`, `remove`,
+`write` (probed). Asking a builder how many entries it now holds is a `NoMethodError`, so
+`CommitPaths#remove` writes the sub-tree and asks the RESULT — `written.count.zero?` — then either
+prunes the directory from its parent or re-inserts `written.oid`. The same `write` supplies the
+decision and the oid, so nothing is written twice.
+
+**A directory that lost its last entry is pruned, never re-inserted empty.** git has no empty
+directories: re-inserting the emptied builder writes the empty-tree oid
+(`4b825dc642cb6eb9a060e54bf8d69288fbee4904`, probed) where a directory used to be — a commit git
+accepts and no client can explain. Pinned by "a directory emptied by a deletion is pruned from its
+parent" and "a nested deletion prunes only its own entry".
+
+## Known imprecision: the `:ignored` label is inherited, and it is slightly wrong about git
+
+**Not a rule — a recorded inaccuracy**, written down so the next reader recognises it instead of
+half-fixing it in the one place it is most visible.
+
+A TRACKED file that `.gitignore` also matches is a real state, not a hypothetical. git reports it
+modified (an ignore rule has no say over a file already in the index), so it survives
+`full_status`'s `:ignored` filter; `LocalRepo#row_for` then asks `path_ignored?` before it compares
+content and labels the row `:ignored`, and the panel lists it disabled, "ignored by .gitignore".
+
+**git disagrees.** Probed on git 2.50.1: `git status --short` reports ` M build.log`, and
+`git commit build.log -m …` commits it, exit 0. The panel refuses something git would do.
+
+Listing it at all is deliberate — the terminal shows it, and the pending group has listed a
+`.gitignore`d path this way since the commit box shipped, so dropping it here would give one
+condition two answers depending on which group it landed in (§14a). The imprecision belongs to
+`#row_for`, is inherited by the panel rather than introduced by it, and errs toward REFUSING, which
+is the safe direction. Correcting it means asking whether the path is TRACKED — a new question for
+`#row_for`, changing the pending group too. Do that deliberately, in that one place, or leave it
+alone; **do not fix it in the panel only**, which is how one condition acquires two answers.
+`repo_edit_flow_test.rb`'s "a tracked path .gitignore also covers is listed disabled rather than
+dropped" pins the behaviour, not its correctness.
