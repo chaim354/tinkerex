@@ -494,6 +494,107 @@ class FilesController < ApplicationController
     render_save_error(:service_unavailable, e.message)
   end
 
+  # GET /files/:id/history — JSON, fetched by history_controller.js AFTER the page renders. The
+  # file page must not wait on a git walk: measured on the live share deployment against a
+  # 333-commit repository over its real CIFS mount, a capped walk is ~104 ms cold and a full one is
+  # 4,917 ms (tinkerex#178, spec part 3 rule 2).
+  #
+  # `stopped` REACHES THE WIRE VERBATIM, AND THAT IS THIS ENDPOINT'S WHOLE HONESTY. Path filtering
+  # is sparse -- 1 of the last 50 commits touched README.md in the measured repository, against 28
+  # of all 333 -- so an empty `entries` usually means "we stopped looking", not "nothing happened".
+  # Only "exhausted" licenses the panel to say a file has no earlier history. Report a constant
+  # here, or collapse this to a boolean, and the UI starts lying quietly with nothing going red.
+  def history
+    node, root = repo_context!
+    walker, code, reason = open_history(root)
+    return render json: no_history(code, reason) if walker.nil?
+
+    rel = repo_relative_path(node, root)
+    return render json: no_history("no_repo", "This file's folder is no longer in the library.") if rel.nil?
+
+    result = walker.for_path(rel, walk_limit: history_walk_limit)
+    render json: {
+      stopped: result.stopped.to_s,
+      walked: result.walked,
+      # STRUCTURALLY TRUE HERE -- open_history refuses "no_worktree" above -- and asked of the
+      # capability anyway rather than written as a literal, so it cannot become a lie if that gate
+      # is ever loosened. The panel reads this one key in every response shape.
+      restorable: FileLayer.current.capabilities.local_worktree?,
+      entries: result.entries.map { |e|
+        { oid: e.oid, short_oid: e.short_oid, subject: e.subject,
+          author: e.author_name, time: e.time.iso8601 }
+      }
+    }
+  end
+
+  # GET /files/:id/history/:oid — this file's bytes at that commit, as text, for the diff view. The
+  # server ships two blobs and diffs neither, exactly as RepoCommitsController#head_blob does.
+  #
+  # 404 COVERS ALL THREE WAYS TO MISS -- an absent path at that commit, an oid this repository does
+  # not contain, and an oid belonging to some other repository -- because every one of them is a
+  # URL parameter naming something that is not there, and the caller cannot act on the difference.
+  def history_blob
+    node, root = repo_context!
+    walker, = open_history(root)
+    rel = walker && repo_relative_path(node, root)
+    content = rel && walker.blob_at(params[:oid], rel)
+    return head :not_found if content.nil?
+
+    render plain: content, content_type: "text/plain"
+  end
+
+  # POST /files/:id/restore/:oid — put an old version back as a PENDING EDIT. It does not commit;
+  # the maker reviews it in the commit box like any other change (spec part 6), which is what makes
+  # an accidental restore one click from undone rather than a second commit to write.
+  def restore
+    node, root = repo_context!
+    return render_save_error(:unprocessable_entity, "Only files inside a git repository can be restored.") if root.nil?
+
+    # GATED ON local_worktree? EVEN THOUGH THE PORT WRITES ON EVERY BACKEND. A restore is undone by
+    # committing or reverting it, and neither is possible where the repository is not on this box --
+    # so a restore the maker cannot then commit is a trap, not a feature. chunk_remote MIRRORS a
+    # repository's `.git` directory into the catalog (§14b), so this is a state a real deployment
+    # reaches, not a hypothetical.
+    #
+    # IT IS NOT THE LINE THAT KEEPS THIS OFF `FileLayer::Share#absolute_path` -- probed, not
+    # assumed: `LocalRepo#refusal` below asks the same capability FIRST and returns before touching
+    # `workdir`, so deleting this block answers 422 either way, in the COMMIT box's words. What
+    # this states is the product rule, at the door it belongs to, naming the verb the maker used.
+    # (The line that genuinely must not move is `Maker::Git::History.new`, which dereferences
+    # `local.rugged` in its constructor -- hence the refusal check strictly before it.)
+    unless FileLayer.current.capabilities.local_worktree?
+      return render_save_error(:unprocessable_entity, "Restoring needs a library on a local filesystem.")
+    end
+
+    local = Maker::Git::LocalRepo.open(current_user, root)
+    return render_save_error(:unprocessable_entity, local.refusal) if local.refusal
+
+    rel = repo_relative_path(node, root)
+    content = rel && Maker::Git::History.new(local).blob_at(params[:oid], rel)
+    return head :not_found if content.nil?
+
+    if content.bytesize > EDITABLE_MAX_BYTES
+      return render_save_error(:unprocessable_entity, "That version is too large to restore here.")
+    end
+    # A NO-OP RESTORE IS REFUSED RATHER THAN PERFORMED. Writing identical bytes creates a pending
+    # edit that RepoCommitsController#reconcile immediately drops as :unchanged -- so the button
+    # appears to do nothing, which is indistinguishable from the feature being broken. Refusing
+    # says what happened.
+    if content == FileLayer.current.read(current_user, node_id: node.node_id)
+      return render_save_error(:unprocessable_entity, "That version is already what is on disk.")
+    end
+
+    # THE SAME DOOR THE EDITOR'S SAVE USES, with `replace: true`, which REUSES the node -- a
+    # delete-then-create passes any bytes-oriented test while orphaning every attachment, BOM line
+    # and tag pointing at it (§14a).
+    Maker::Addons::LibraryOutput.write_bytes!(current_user, parent_node_id: node.parent_node_id,
+                                              name: node.name, bytes: content, replace: true)
+    Maker::RepoEdit.record!(user: current_user, repo_root_node_id: root.node_id, node_id: node.node_id)
+    redirect_to file_path(node.node_id), notice: "Restored. Review it in the commit box."
+  rescue FileLayer::FetchError => e
+    render_save_error(:service_unavailable, e.message)
+  end
+
   # POST /files — the share/s3 upload: bytes up in one multipart POST, straight to the port.
   #
   # This is the flow §15 does not describe, on the deployments §15 was not aimed at: a mounted
@@ -1223,6 +1324,87 @@ class FilesController < ApplicationController
 
   def render_save_error(status, message)
     render json: { ok: false, error: message }, status:
+  end
+
+  # --- History and restore (tinkerex#178) -----------------------------------------------------
+
+  def repo_context!
+    node = current_user.nodes.present.find_by!(node_id: params[:id])
+    [ node, Library::WorkingTree.new(current_user).root_for(node) ]
+  end
+
+  # [Maker::Git::History, nil, nil] for a repository this deployment can read, or
+  # [nil, code, sentence] saying why not. The code is what the panel branches on; the sentence is
+  # what it shows.
+  #
+  # THE CAPABILITY IS ASKED FOR ITS OWN CODE, not for safety: `LocalRepo#refusal` below asks it
+  # first too and would answer anyway. The panel needs to tell "this deployment holds no working
+  # tree" (nothing to offer, ever) from "this repository is busy right now" (come back), and one
+  # sentence cannot say both. chunk_remote MIRRORS a repository's `.git` directory into the catalog
+  # (§14b), so `root` is non-nil there and this is a live path rather than a hypothetical.
+  #
+  # THE ORDER OF THE LAST TWO LINES IS THE ONE THAT MATTERS. `Maker::Git::History.new` dereferences
+  # `local.rugged` in its constructor, which resolves the port's `absolute_path` -- and
+  # FileLayer::Share is the only adapter that has one, so constructing it before the refusal check
+  # is a NoMethodError 500 rather than a refusal.
+  #
+  # THE REFUSAL IS THE COMMIT BOX'S OWN rather than a second opinion about one repository (§14a:
+  # one condition, one answer). It is also what turns a `.git` row over a directory git cannot open
+  # into a sentence instead of an unrescued Rugged error -- and it is deliberately the WHOLE
+  # refusal, lock files and half-finished merges included: a page whose first affordance overwrites
+  # a working tree mid-rebase is not one this app should render, however readable the history
+  # behind it happens to be.
+  def open_history(root)
+    return [ nil, "no_repo", "This file is not inside a git repository." ] if root.nil?
+
+    unless FileLayer.current.capabilities.local_worktree?
+      return [ nil, "no_worktree", "History needs a library on a local filesystem." ]
+    end
+
+    local = Maker::Git::LocalRepo.open(current_user, root)
+    return [ nil, "unavailable", local.refusal ] if local.refusal
+
+    [ Maker::Git::History.new(local), nil, nil ]
+  end
+
+  # The SAME KEYS as a successful walk, so the panel reads one shape whatever happened. `stopped`
+  # is never "exhausted" here: that value alone licenses "this file has no earlier history", and
+  # none of these conditions has established anything of the kind.
+  def no_history(code, reason)
+    { stopped: code, reason:, walked: 0, restorable: false, entries: [] }
+  end
+
+  # The path git knows this file by. DERIVED FROM THE CATALOG, never rebuilt from names: it is the
+  # same source RepoCommitsController#reconcile resolves against, so the history panel and the
+  # commit box cannot disagree about what a file is called.
+  #
+  # `Maker::LibraryTree` INDEXES DIRECTORIES ONLY, so the tree is asked about the PARENT and the
+  # file's own name is appended -- asking it about the file's own node_id answers nil for every
+  # file in the library.
+  #
+  # NIL IS AN ANSWER, NOT A CRASH. `path_for` answers nil for a broken ancestor chain (a tombstoned
+  # intermediate directory), which Library::WorkingTree's own walk does not refuse; without the
+  # guard the interpolation below builds "/name", `delete_prefix("/")` turns it into a
+  # plausible-looking path at the repository ROOT, and git answers about a different file.
+  def repo_relative_path(node, root)
+    tree = Maker::LibraryTree.new(current_user)
+    parent = tree.path_for(node.parent_node_id)
+    root_path = tree.path_for(root.node_id)
+    return nil if parent.nil? || root_path.nil?
+
+    full = "#{parent}/#{node.name}"
+    full.start_with?("#{root_path}/") ? full.delete_prefix("#{root_path}/") : nil
+  end
+
+  # Bounded by the service's own ceiling, so a caller cannot ask for an unbounded walk however they
+  # spell the parameter -- the cap is a correctness rule, not an optimisation (spec part 3). A
+  # missing, zero, negative or junk value is the DEFAULT rather than an error: this is a query
+  # string, and the honest response to junk is the ordinary page.
+  def history_walk_limit
+    requested = params[:walk_limit].to_i
+    return Maker::Git::History::DEFAULT_WALK_LIMIT if requested <= 0
+
+    requested.clamp(1, Maker::Git::History::MAX_WALK_LIMIT)
   end
 
   # Extensions whose detail page offers the interactive Measure view (measure_controller.js).
