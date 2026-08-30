@@ -1,7 +1,23 @@
 <h1>Commit — <%= @root.name %></h1>
 
-<% if @rows.empty? %>
-  <p class="muted">Nothing edited here yet.</p>
+<%# THREE GROUPS BUILT HERE, ONE MARKUP PATH BELOW. The pending group renders inside an OPEN
+    details and the other two inside CLOSED ones, so the row markup exists once rather than
+    three times — three copies is how a change reclassifies clutter as an ordinary add and
+    still passes two thirds of the assertions. `checked` is the whole safety story: it is true
+    for the tinkerex-edited group and false for the other two, deliberately (spec part 1), and
+    the mutation that flips either of the false ones is what test/integration/web has a case for. %>
+<% groups = [
+     { key: "pending", title: "Edited in tinkerex", rows: @rows.values, checked: true, open: true,
+       note: nil },
+     { key: "other", title: "Other changes", rows: @other_rows, checked: false, open: false,
+       note: "Changed outside tinkerex. Nothing here is committed unless you tick it." },
+     { key: "clutter", title: "OS clutter", rows: @clutter_rows, checked: false, open: false,
+       note: "tinkerex never creates these." }
+   ].reject { |group| group[:rows].empty? } %>
+<% listed = groups.flat_map { |group| group[:rows] } %>
+
+<% if listed.empty? %>
+  <p class="muted">Nothing to commit here — git reports no changes in this repository.</p>
 <% else %>
   <%= form_with url: repo_commit_path(@root.node_id), method: :post, scope: nil, class: "commit-box" do |f| %>
     <%# `scope: nil` and no `model:` means a blank object_name, so every tag helper below emits a
@@ -11,37 +27,92 @@
         comments; an ERB comment ends at the first one and the rest of this prose would print
         into the page, where no assert_select can see it (§14d again). %>
     <%= hidden_field_tag :expected_head, @head %>
-    <ul class="commit-rows">
-      <% @rows.each do |path, row| %>
-        <li data-path="<%= path %>">
-          <div class="commit-row-head">
-            <% if row.committable? %>
-              <%= check_box_tag "paths[]", path, true, id: "path_#{path.parameterize}" %>
-            <% else %>
-              <span class="muted">ignored by .gitignore</span>
-            <% end %>
-            <code><%= path %></code>
-            <span class="plus">+<%= row.additions %></span>
-            <span class="minus">−<%= row.deletions %></span>
-          </div>
-          <%# The diff is computed IN THE BROWSER from two blobs this page only points at: HEAD's
-              from repo_head_blob_path and the working tree's from the same blob endpoint the file
-              viewer reads. The server ships bytes and diffs neither. `data-controller` is a
-              LITERAL string here and must stay one — test/stimulus_hygiene_test.rb scans the
-              attribute text, so an interpolated name resolves to nothing it can check, on the one
-              attribute whose failure mode is a silent no-op (§14d). %>
-          <div class="commit-diff"
-               data-controller="diffview"
-               data-diffview-head-url-value="<%= repo_head_blob_path(@root.node_id, path: path) %>"
-               data-diffview-work-url-value="<%= blob_file_path(@node_id_by_path[path]) %>"
-               data-diffview-ext-value="<%= File.extname(path).downcase.delete(".") %>"></div>
-        </li>
-      <% end %>
-    </ul>
-    <%= text_area_tag :message, nil, rows: 3, placeholder: "What changed?", class: "commit-message" %>
-    <% if @other_dirty.positive? %>
-      <p class="muted"><%= pluralize(@other_dirty, "other change") %> in this repository — not included.</p>
+
+    <%# RENAMES ARE NOT DETECTED, one layer down from the history panel's --follow limitation
+        (spec part 2). git reports a rename as a delete plus an add and nothing here pairs them,
+        so a maker who sees both halves and is told why can act; one who sees them unexplained
+        files a bug. Shown only when both halves are actually on the page. %>
+    <% if listed.any? { |row| row.state == :deleted } && listed.any? { |row| row.state == :added } %>
+      <p class="muted commit-rename-note">
+        Renames are not detected: a renamed file appears twice, once as a deletion and once
+        as an addition. Tick both halves to record one.
+      </p>
     <% end %>
+
+    <% groups.each do |group| %>
+      <section class="commit-group" data-group="<%= group[:key] %>">
+        <details class="commit-group-body" <%= "open" if group[:open] %>>
+          <summary><%= group[:title] %> <span class="muted">(<%= group[:rows].size %>)</span></summary>
+          <% if group[:note] %>
+            <p class="muted commit-group-note"><%= group[:note] %></p>
+          <% end %>
+          <ul class="commit-rows">
+            <% group[:rows].each do |row| %>
+              <% path = row.path %>
+              <li data-path="<%= path %>" data-state="<%= row.state %>">
+                <div class="commit-row-head">
+                  <% if row.committable? %>
+                    <%= check_box_tag "paths[]", path, group[:checked],
+                                      id: "path_#{group[:key]}_#{path.parameterize}" %>
+                  <% else %>
+                    <%# THE ONLY NON-COMMITTABLE STATE THAT REACHES THIS PAGE IS :ignored, and the
+                        interesting instance is a path that is TRACKED and ALSO matched by
+                        .gitignore. git does not report that one as ignored (an ignore rule has no
+                        say over a tracked file), so it survives full_status's filter, and
+                        LocalRepo#row_for then labels it :ignored from path_ignored?. IT IS LISTED
+                        DISABLED, NOT DROPPED, for two reasons: git status shows it, and a staging
+                        panel that disagrees with the terminal is the lie this arc has avoided
+                        three times; and the pending group has always listed a .gitignore'd path
+                        exactly this way, so dropping it here would give ONE condition TWO answers
+                        depending on which group the path landed in (§14a). It carries no checkbox
+                        because #create's intersection would drop it anyway — a tick that commits
+                        nothing is worse than no tick. %>
+                    <span class="muted">ignored by .gitignore</span>
+                  <% end %>
+                  <code><%= path %></code>
+                  <span class="commit-row-state muted"><%= row.state %></span>
+                  <span class="plus">+<%= row.additions %></span>
+                  <span class="minus">−<%= row.deletions %></span>
+                </div>
+                <% if row.state == :deleted %>
+                  <p class="commit-nodiff muted">deleted — nothing to diff</p>
+                <% elsif @binary_paths.include?(path) %>
+                  <p class="commit-nodiff muted">binary — no diff</p>
+                <% elsif @node_id_by_path[path] %>
+                  <%# The diff is computed IN THE BROWSER from two blobs this page only points at:
+                      HEAD's from repo_head_blob_path and the working tree's from the same blob
+                      endpoint the file viewer reads. The server ships bytes and diffs neither.
+                      `data-controller` is a LITERAL string here and must stay one —
+                      test/stimulus_hygiene_test.rb scans the attribute text, so an interpolated
+                      name resolves to nothing it can check, on the one attribute whose failure
+                      mode is a silent no-op (§14d). A row with no catalog node — OS clutter the
+                      scan skips, or anything under a directory it does not index — has no working
+                      tree URL to point at and simply mounts nothing. %>
+                  <div class="commit-diff"
+                       data-controller="diffview"
+                       data-diffview-head-url-value="<%= repo_head_blob_path(@root.node_id, path: path) %>"
+                       data-diffview-work-url-value="<%= blob_file_path(@node_id_by_path[path]) %>"
+                       data-diffview-ext-value="<%= File.extname(path).downcase.delete(".") %>"></div>
+                <% end %>
+              </li>
+            <% end %>
+          </ul>
+        </details>
+      </section>
+    <% end %>
+
+    <%# A CAPPED LIST THAT DOES NOT SAY SO IS THE SAME LIE AS A CAPPED WALK REPORTING "no history".
+        LocalRepo#full_status stops at DEFAULT_STATUS_LIMIT because every row costs a content
+        comparison against HEAD's blob (~15 ms per object over CIFS), and the remainder is counted
+        rather than dropped silently. %>
+    <% if @truncated_count.positive? %>
+      <p class="muted commit-truncated">
+        <%= pluralize(@truncated_count, "further changed path") %> not listed — this repository has
+        more changes than the box shows at once.
+      </p>
+    <% end %>
+
+    <%= text_area_tag :message, nil, rows: 3, placeholder: "What changed?", class: "commit-message" %>
     <div class="editor-bar">
       <%= submit_tag "Commit" %>
     </div>
