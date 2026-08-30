@@ -40,7 +40,9 @@
     <% end %>
 
     <% groups.each do |group| %>
-      <section class="commit-group" data-group="<%= group[:key] %>">
+      <section class="commit-group" data-group="<%= group[:key] %>"
+               data-controller="commitgroup"
+               data-commitgroup-label-value="<%= group[:title] %>">
         <details class="commit-group-body" <%= "open" if group[:open] %>>
           <summary><%= group[:title] %> <span class="muted">(<%= group[:rows].size %>)</span></summary>
           <% if group[:note] %>
