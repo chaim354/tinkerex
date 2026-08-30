@@ -134,4 +134,45 @@ class Maker::Git::LocalRepoTest < ActiveSupport::TestCase
     assert_equal [ "a.txt" ], rows.keys
     assert_equal 1, local.other_dirty_count([ "a.txt" ])
   end
+
+  test "full_status reports every non-ignored path with its state" do
+    root = make_repo_with_every_state!
+    rows = Maker::Git::LocalRepo.open(@user, root).full_status.rows.to_h { |r| [ r.path, r.state ] }
+
+    assert_equal :modified, rows["edited.txt"]
+    assert_equal :added,    rows["fresh.txt"]
+    assert_equal :deleted,  rows["doomed.txt"]
+    assert_equal :added,    rows[".DS_Store"]      # clutter is a state-less fact; grouping is the VIEW's job
+    assert_nil              rows["secret.log"]      # .gitignore'd paths never appear
+    assert_nil              rows["kept.txt"]        # unchanged paths are not "changes"
+  end
+
+  # THE SPLIT. Conflated, either every stale RepoEdit row becomes a committable deletion or every
+  # real deletion is silently dropped — and both are silent.
+  test "a path in HEAD and gone from the worktree is deleted, and committable" do
+    root = make_repo_with_every_state!
+    row = Maker::Git::LocalRepo.open(@user, root).full_status.rows.find { |r| r.path == "doomed.txt" }
+
+    assert_equal :deleted, row.state
+    assert row.committable?
+  end
+
+  test "a path in neither HEAD nor the worktree is missing, and NOT committable" do
+    root = make_repo_with_every_state!
+    row = Maker::Git::LocalRepo.open(@user, root).status_for([ "never-existed.txt" ]).fetch("never-existed.txt")
+
+    assert_equal :missing, row.state
+    refute row.committable?
+  end
+
+  test "full_status is capped and says how many it did not list" do
+    root = make_repo!(files: { "a.txt" => "x\n" })
+    12.times { |i| File.write(File.join(library_root, "demo", "f#{i}.txt"), "y\n") }
+    Library::ScanJob.new.perform(user_id: @user.id)
+
+    s = Maker::Git::LocalRepo.open(@user, root).full_status(limit: 5)
+
+    assert_equal 5, s.rows.size
+    assert_operator s.truncated_count, :>=, 1
+  end
 end
