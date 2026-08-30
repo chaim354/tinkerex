@@ -230,6 +230,45 @@
   <% end %>
 </div>
 
+<%# THE HISTORY PANEL, FOR ANY FILE INSIDE A REPOSITORY THIS BOX CAN READ -- not only a text one.
+    Its rows arrive by fetch AFTER this page renders (history_controller.js): a cold capped walk is
+    ~104 ms and a full one measured 4,917 ms over the live CIFS mount, and the file page must not
+    wait on either (tinkerex#178, spec part 3 rule 2). So there is nothing to server-render here
+    beyond the mount and the URLs it needs.
+
+    GATED ON @committable_here, WHICH IS THE CAPABILITY AND NOT A SECOND REPOSITORY CHECK. It reads
+    "this repository is on a local filesystem this server can open", which is the same precondition
+    reading history has -- FilesController#history answers "no_worktree" without it, and the
+    repository-wide page redirects. One question, one answer (§14a); the banner above already says
+    what happens to a save on a deployment that has no working tree.
+
+    data-controller IS A LITERAL STRING AND MUST STAY ONE. test/stimulus_hygiene_test.rb scans the
+    literal attribute, so an interpolated name resolves to nothing it can check -- on the one
+    attribute whose failure mode is a SILENT no-op with no console warning (§14d, nine days once).
+    Never write a percent followed by a greater-than inside one of these comments either: an ERB
+    comment ends at the first one and the rest of this prose prints into the page.
+
+    THE OID IN THE TWO TEMPLATED URLS IS A HEX PLACEHOLDER, NOT A WORD. Both routes constrain :oid
+    to hex, and a route constraint binds URL GENERATION as well as recognition, so a readable
+    placeholder raises ActionController::UrlGenerationError at render time. The controller
+    substitutes the real oid. %>
+<% if @repo_root && @committable_here %>
+  <section class="history-panel"
+           data-controller="history"
+           data-history-url-value="<%= history_file_path(@node.node_id) %>"
+           data-history-blob-url-value="<%= history_blob_file_path(@node.node_id, oid: "0" * 40) %>"
+           data-history-restore-url-value="<%= restore_file_path(@node.node_id, oid: "0" * 40) %>"
+           data-history-work-url-value="<%= blob_file_path(@node.node_id) %>">
+    <h2>History
+      <%= link_to "All history in #{@repo_root.name}", repo_history_path(@repo_root.node_id),
+                  class: "muted history-repo-link" %>
+    </h2>
+    <div class="history-rows" data-history-target="rows">
+      <p class="muted">Loading history…</p>
+    </div>
+  </section>
+<% end %>
+
 <section class="notes-panel">
   <h2>Notes <span class="muted">(<%= @notes.size %>)</span></h2>
 

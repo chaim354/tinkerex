@@ -1,14 +1,25 @@
 import { Controller } from "@hotwired/stimulus"
 
-// Inline diff for one pending path, in the commit box.
+// Inline diff of one file's working-tree bytes against an OLDER version of the same file. Two
+// surfaces mount it: the commit box, where the older side is HEAD's blob, and the file page's
+// history panel, where it is that file's bytes at some commit further back.
+//
+// NEITHER SIDE IS FIXED, AND `head-url` IS THIS CONTROLLER'S NAME FOR "THE OLDER ONE" RATHER THAN
+// FOR HEAD. It was named when the commit box was its only caller. The value is a URL and this
+// controller never builds one, so generalising it took no code — but the NAME is the part a reader
+// trips on, hence this paragraph: read `headUrlValue` as "the original side". Do not add an
+// `original-url` value beside it, which would be one input with two spellings and a branch to pick
+// between them; renaming it outright means editing every view that sets the attribute, which is a
+// change to make in one go or not at all.
 //
 // THE VOCABULARY IS INVERTED HERE AND IT IS EASY TO SHIP BACKWARDS. CM6's merge extension is
 // worded for merging a change IN: `original` is what you had, the document is what is proposed.
-// Here `original` is HEAD's blob and the document is the maker's working tree, so REJECTING a
-// chunk means REVERTING it — CM6's own `rejectChunk` tags its transaction `userEvent: "revert"`,
-// which is the library agreeing. Anything this view ever labels for that control must therefore
-// say "Revert hunk" and never "Reject"; a screenshot cannot show the difference, because both
-// spellings render an identical diff and only the word says which way the file moves.
+// Here `original` is the OLDER, already-committed side and the document is the maker's working
+// tree, so REJECTING a chunk means REVERTING it — CM6's own `rejectChunk` tags its transaction
+// `userEvent: "revert"`, which is the library agreeing. Anything this view ever labels for that
+// control must therefore say "Revert hunk" and never "Reject"; a screenshot cannot show the
+// difference, because both spellings render an identical diff and only the word says which way the
+// file moves.
 //
 // WHICH IS WHY `mergeControls` IS FALSE, AND THAT IS A DEPARTURE FROM THE PLAN WITH A MEASUREMENT
 // BEHIND IT. Read @codemirror/merge's two handlers before turning it on:
@@ -33,10 +44,12 @@ import { Controller } from "@hotwired/stimulus"
 // renders those buttons through `state.phrase()` and re-renders them whenever the chunks change —
 // so rewriting their textContent after the mount goes stale on the first edit.
 //
-// TWO BLOBS OVER THE WIRE, AND THE SERVER DIFFS NEITHER. HEAD's bytes come from
-// /repos/:root_id/head_blob and the working tree's from the same /files/:id/blob the viewer uses,
-// so the diff is computed in the browser. That is what deletes the server-side text diff
-// tinkerex#161 built (spec part 13).
+// TWO BLOBS OVER THE WIRE, AND THE SERVER DIFFS NEITHER. The older side comes from
+// /repos/:root_id/head_blob or /files/:id/history/:oid depending on the caller, and the working
+// tree's from the same /files/:id/blob the viewer uses, so the diff is computed in the browser.
+// That is what deletes the server-side text diff tinkerex#161 built (spec part 13). Both callers
+// point the working side at that ONE endpoint on purpose: two surfaces disagreeing about what is
+// currently on disk would be worse than either of them being absent.
 //
 // DYNAMIC import(), like codeview and editor: Stimulus eager-imports controller MODULES at
 // startup, so a top-level import would ship the CodeMirror bundle site-wide.
@@ -47,9 +60,9 @@ export default class extends Controller {
     this.disconnected = false
     this.abort = new AbortController()
 
-    let head, work
+    let original, work
     try {
-      ;[head, work] = await Promise.all([
+      ;[original, work] = await Promise.all([
         this.fetchText(this.headUrlValue),
         this.fetchText(this.workUrlValue)
       ])
@@ -74,14 +87,14 @@ export default class extends Controller {
     }
     if (this.disconnected) return
 
-    this.mount(cm, languages, head, work)
+    this.mount(cm, languages, original, work)
   }
 
-  mount(cm, languages, head, work) {
+  mount(cm, languages, original, work) {
     const language = languages.languageFor(this.extValue, cm)
     const extensions = [
       cm.basicSetup,
-      cm.unifiedMergeView({ original: head, mergeControls: false }),
+      cm.unifiedMergeView({ original, mergeControls: false }),
       // BOTH FACETS, and neither is redundant — codeview_controller's rule, for its reason:
       // readOnly refuses a document change and editable removes the caret and IME. A
       // contenteditable that merely looks disabled still takes focus.

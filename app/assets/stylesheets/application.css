@@ -159,6 +159,47 @@ dl.meta dd { margin: 0; }
 .commit-diff .cm-scroller { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
 .commit-diff:empty { display: none; }
 
+/* --- File history (history_controller.js, mounted by files/show.html.erb) ---
+
+   EVERY ROW IN HERE IS BUILT IN JS, so this block is the only description of the panel's shape
+   that a reader can find by looking at the page. The controller writes no styles of its own and
+   must not start: a rule that lives in a JS string is one no stylesheet search will ever turn up.
+
+   .history-note IS THE HONEST-EMPTINESS SENTENCE and shares .muted with every other aside on the
+   page ON PURPOSE. "No changes to this file in the last 250 commits" is not a warning and must not
+   be dressed as one — it is the ordinary answer for a file in a busy repository, and styling it as
+   an error would teach makers to read a normal result as a fault. */
+.history-panel { margin-top: 28px; }
+.history-panel h2 { margin-bottom: 8px; }
+/* The way to the repository-wide list, beside the heading rather than under the rows: it is about
+   the repository, not about what this walk happened to find, so it must not move or disappear with
+   the rows below it. */
+.history-repo-link { font-size: 13px; font-weight: 400; margin-left: 10px; }
+.history-list { list-style: none; margin: 0; padding: 0; }
+.history-list > li { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; }
+.history-row-head {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 8px 10px;
+}
+.history-oid { color: var(--muted); }
+/* The subject takes the slack so the actions stay hard right on a wide row and wrap as a group on
+   a narrow one; min-width:0 is what lets a long one-line commit message ellipsise instead of
+   pushing the actions off the card. */
+.history-subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-meta { font-size: 12px; }
+.history-actions { display: inline-flex; gap: 10px; font-size: 13px; }
+/* Empty until View or Diff opens one, so it must take no space when it holds nothing — otherwise
+   every row carries a blank strip and the list reads as loading forever. */
+.history-detail:empty { display: none; }
+.history-detail { border-top: 1px solid var(--line); padding: 8px 10px; }
+.history-blob {
+  margin: 0; max-height: 320px; overflow: auto; background: var(--soft); border-radius: 6px;
+  padding: 8px 10px; font-family: ui-monospace, Menlo, monospace; font-size: 13px;
+}
+/* Bounded for .commit-diff's reason — a row's diff must not make the file page ten screens tall. */
+.history-diff .cm-editor { max-height: 320px; }
+.history-diff .cm-editor.cm-focused { outline: none; }
+.history-diff .cm-scroller { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+
 /* --- Interactive 3D viewer (modelviewer_controller.js) — STL/3MF/OBJ --- */
 .model-viewer { position: relative; }
 .model-viewer-stage {

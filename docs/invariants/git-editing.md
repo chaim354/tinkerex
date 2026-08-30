@@ -4,9 +4,17 @@
 library. Written with `tinkerex#178` and kept out of CLAUDE.md because it binds inside one
 subsystem: the rules are here, the story is in the spec and in Forgejo (§11). Read this before
 touching `app/services/maker/git/`, `app/services/library/working_tree.rb`,
-`app/controllers/repo_commits_controller.rb`, `FilesController#update`,
-`app/javascript/controllers/editor_controller.js`, or
-`app/javascript/controllers/diffview_controller.js`.
+`app/controllers/repo_commits_controller.rb`, `app/controllers/repo_histories_controller.rb`,
+`FilesController#update`/`#history`/`#history_blob`/`#restore`, `test/support/git_repo_fixture.rb`,
+or `app/javascript/controllers/{editor,diffview,history}_controller.js`.
+
+The first nine rules came from the edit/save/commit slice (PRs #281-#283). The nine after them came
+from history and restore
+(`docs/superpowers/specs/2026-08-30-git-history-and-restore-design.md`): six are that spec's part
+10, two of them carrying the measurement that produced them, and three are findings from building
+it — each a fact about git or rugged that reads as tidiable and is not. **None of the nine was
+derived by reading the code**, which is why each states what breaks when it is undone rather than
+what the code does.
 
 ## Bytes the catalog tracks go through the port; bytes git owns never do
 
@@ -151,3 +159,160 @@ document is the working tree, so a control for that direction says **"Revert hun
 "Reject". A screenshot cannot show the difference — both spellings render an identical diff, and only
 the word says which way the file moves. CM6's supported way to relabel is the phrase facet, because
 the extension re-renders those buttons whenever the chunks change.
+
+## The history walk is always capped, and the cap is correctness rather than tuning
+
+Measured on the live share deployment against `TheFlightWall_OSS` (333 commits) over its real CIFS
+mount — the only repository on that box with history deep enough to measure:
+
+| walk | cold | warm |
+|---|---|---|
+| full, all 333 commits | **4,917 ms** | — |
+| path-filtered over all 333 | 3,388 ms | — |
+| capped at 25 | **104 ms** | **1 ms** |
+| capped at 50 | 89 ms | 5 ms |
+
+~15 ms per commit cold is a network round trip per object — the repository is one packfile plus 256
+loose-object directories — and 333 commits is a *small* repository. So `Maker::Git::History` has no
+"all history" call and must never grow one: both entry points take `walk_limit`, `MAX_WALK_LIMIT`
+(2,000) is the ceiling "look deeper" cannot pass, and `FilesController#history_walk_limit` clamps
+whatever the query string asks for, so a caller cannot spell an unbounded walk however it tries.
+
+Two things keep the guard from going vacuous, and both are easy to undo while the tests stay green:
+
+- **Assert `walked`, never `entries.size`.** Returning few entries is not the same as looking at few
+  commits, and only the second is what costs the seconds. `test/services/maker/git/history_test.rb`
+  asserts `result.walked` in both cap tests for exactly this reason.
+- **The fixture must hold more commits than the cap** (`make_repo_with_commits!`). A walk that never
+  reaches its limit proves nothing about the limit — the shape that kept `tinkerex#185` invisible.
+
+## History arrives by fetch after the render, and nothing waits on it
+
+`files#show` renders the panel's mount point and no rows; the rows come from
+`GET /files/:id/history` as JSON, driven by `history_controller.js` — the same shape
+`codeview_controller` already uses for file bytes.
+
+The table above is the argument. A cold capped walk is ~100 ms and a "look deeper" walk at the
+ceiling is ~30 s, so computing the list inside the render puts that in front of **every** file page
+in a repository, including the ones where nobody opens the panel, and makes the ceiling unusable:
+the deep walk is affordable only because no page is waiting behind it.
+
+Moving it back into the render errors nothing and logs nothing — the JSON is identical, the panel
+looks identical, and a request test cannot tell the difference because the rows were never in the
+HTML to begin with. Only a clock sees it. The same asynchrony is why the panel's own coverage has to
+be a system test: a request test can assert the MOUNT exists
+(`test/integration/web/repo_history_flow_test.rb`, "the file page mounts the history panel"), and a
+`data-controller` name that resolves to nothing is a silent no-op (§14d).
+
+## `stopped` reaches the view, and only `:exhausted` licenses the word "none"
+
+Path filtering is sparse. In the measured repository **1** of the last 50 commits touched
+`README.md`, against **28** of all 333 — roughly one in twelve — so a capped walk can legitimately
+find nothing about a file with a long history sitting just behind the cap. An empty `entries`
+therefore usually means *we stopped looking*, and the panel must say "no changes to this file in the
+last N commits" and offer to look further.
+
+`Result#stopped` is `:exhausted | :limit | :walk_limit`, it crosses the wire verbatim in
+`FilesController#history`, and `#no_history` deliberately reports the refusal code instead —
+"no_repo", "no_worktree", "unavailable" — because none of those conditions established that a file
+has no history either.
+
+Tidy it away — drop the "redundant" member, collapse it to a boolean, or report a constant — and the
+panel says "no history" about a file with 28 changes. Nothing goes red: `entries` really is empty,
+so every bytes-oriented assertion still passes. What catches it is `history_test.rb`'s "a capped
+path walk can find nothing and reports walk_limit, not exhausted" and its flow-test twin, and both
+depend on `make_repo_with_commits!`'s `touch_every` to make filtering sparse enough for that state
+to be reachable at all.
+
+## Path filtering compares against the FIRST parent only
+
+A commit touches a path when the blob oid at that path differs from the oid at the same path in its
+**first** parent. Absent in both is not a change, and `Rugged::TreeError` for a path a commit does
+not contain is an ordinary absence rather than an error. A change that arrived through a merge is
+therefore attributed once, to the commit that made it — which is what `git log` does by default.
+
+Comparing against every parent looks more thorough and is wrong twice over: it lists the same change
+again at the merge, and it **drops the root commit**, whose `parents` is empty so `any?` is false.
+
+That mutation is invisible without a merge whose two spellings disagree, which is the whole reason
+`make_repo_with_merge!` exists: the merge takes the MAINLINE version of `tracked.txt`, so it is
+treesame to its first parent and not to its second. First-parent gives `[c1, c0]`; every-parent
+gives `[m, c1]` (probed). A merge fixture without that asymmetry makes the check unfalsifiable.
+
+## Restore writes a pending edit and never commits
+
+`POST /files/:id/restore/:oid` reads the old bytes with `blob_at`, writes them through
+`Maker::Addons::LibraryOutput.write_bytes!(..., replace: true)` — the same door the editor's Save
+uses, the one surviving `port_writable?` branch (§14d), and `replace: true` because reusing the node
+is what keeps every attachment, BOM line and tag pointing at it (§14a) — and records a
+`Maker::RepoEdit`. The maker then reviews it in the commit box like any other change.
+
+A restore that committed directly would need its own message, its own refusals and its own undo, and
+would put a version into history before anyone had looked at it. As a pending edit it is one click
+from undone and rides a path that is already built, already tested, and already has a review step.
+
+It is gated on `local_worktree?` even though the port writes on every backend, because a restore the
+maker cannot then commit is a trap rather than a feature — and `chunk_remote` mirrors a repository's
+`.git` into the catalog (§14b), so that is a state a real deployment reaches.
+
+## A no-op restore is refused rather than performed
+
+Restoring the bytes already on disk creates a pending edit that `RepoCommitsController#reconcile`
+immediately drops as `:unchanged` — correctly, since it compares content against HEAD's blob. So the
+maker clicks Restore, the page reloads, and the commit box shows nothing. That is indistinguishable
+from the feature being broken, and it is the failure this repo names as its dominant one (§15): no
+error, no log, a green suite over something that visibly did not work.
+
+`FilesController#restore` compares the blob against `FileLayer.current.read` before writing anything
+and answers "That version is already what is on disk." Removing the check does not break a test that
+looks at bytes; it produces a button that appears to do nothing.
+
+## Two identically-built repositories share commit oids
+
+git content-addresses a commit: the oid is a hash of the tree, the parents, the message and both
+identities, timestamps included. Two fixture repositories built the same way therefore have
+**byte-identical commit oids** — probed, true — so "an oid from another repository" is an oid this
+repository also contains, `blob_at` answers from the repository it was handed, and the test that
+exists to stop a cross-repository oid resolving passes while exercising nothing at all.
+
+`GitRepoFixture#fixture_commit_time` derives its base from the repository's NAME for this reason and
+no other; it reads like arbitrary fixture noise and is the only thing making those repositories
+distinct. `history_test.rb`'s "an oid from another repository is refused" asserts the two head oids
+DIFFER before asserting the refusal — the non-vacuity assertion §14e asks for, at the one place the
+vacuity would be silent.
+
+## `Rugged::SORT_DATE` does not order commits within one second
+
+git stores a commit time to whole seconds. A builder stamping `Time.now` on every commit gives them
+all the same second, and libgit2 breaks that tie in an order it does not specify — probed on rugged
+1.9.6: four same-second commits walked as **c3, c0, c1, c2**. Any "newest first" assertion over such
+a fixture is luck rather than a test, and it can flip on a library upgrade with no code change.
+
+`fixture_commit_time` gives a fixed, DISTINCT second per commit. This is §15's `.to_i` trap seen
+from the other side: there a guard cannot fail because the two events it compares share a second;
+here an ordering is unspecified for the same reason. Both are the same mistake — treating a
+whole-second timestamp as though it distinguished things.
+
+It is a separate rule from the walker's explicit `walker.sorting(Rugged::SORT_DATE)`, and both are
+needed: the sorting call fixes what libgit2 leaves unspecified BETWEEN seconds, and the fixture
+fixes what remains unspecified WITHIN one.
+
+## `Maker::Git::History.new` dereferences the port, so `refusal` is checked strictly before it
+
+The constructor reads `local_repo.rugged`, which resolves `workdir` through the port's
+`absolute_path` — and `FileLayer::Share` is the ONLY adapter that defines one. Constructing the
+walker before asking `LocalRepo#refusal` is therefore a `NoMethodError` **500** on s3 and
+chunk_remote, where the intended answer is a refusal sentence.
+
+Live rather than hypothetical: `chunk_remote` mirrors a repository's `.git` directory into the
+catalog (§14b), so `Library::WorkingTree#root_for` answers a non-nil root there, the file page asks
+for history, and the naive order runs. `LocalRepo#refusal` asks `local_worktree?` FIRST and returns
+before touching `workdir` (probed), which is what makes it safe as the first line — and is also why
+the extra capability check in `FilesController#restore` is about the SENTENCE the maker reads and
+not about safety.
+
+Both callers today are `FilesController#open_history` and `#restore`, and each has the check strictly
+above the construction. A third must keep that order. The failure appears only on the s3 and
+chunk_remote legs, which is why `repo_history_flow_test.rb`'s backend cases assert those legs'
+answers rather than skipping (§14e) — a skip here would report success over the only two backends
+that can reach the bug.

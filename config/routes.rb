@@ -85,6 +85,19 @@ Rails.application.routes.draw do
       # (kind: "geometry"), so this neither replaces nor disturbs the thumbnail. The payload
       # itself leaves via the blob URL, off Rails — this action only reports where it is.
       get "geometry"
+      # History is FETCHED, not rendered inline: a cold capped walk is ~100ms and a deep one is
+      # seconds, and the file page must not wait on either (tinkerex#178, spec part 3 rule 2).
+      # JSON, for history_controller.js.
+      get "history"
+      # One commit's bytes for this file, and a restore of them. THE `oid` CONSTRAINT IS PART OF
+      # THE SURFACE, not decoration: it keeps `/files/:id/history/:oid` from swallowing any other
+      # two-segment path under `history/`, and it means a junk oid is a 404 from the router rather
+      # than a lookup this app has to describe. Note it also binds URL GENERATION — a view building
+      # one of these with a placeholder must use a hex-shaped placeholder or `url_for` raises.
+      get  "history/:oid", to: "files#history_blob", as: :history_blob,
+           constraints: { oid: /[0-9a-f]{7,40}/ }
+      post "restore/:oid",  to: "files#restore",      as: :restore,
+           constraints: { oid: /[0-9a-f]{7,40}/ }
     end
   end
 
@@ -97,6 +110,11 @@ Rails.application.routes.draw do
   get  "repos/:root_id/commit",    to: "repo_commits#show",      as: :repo_commit
   post "repos/:root_id/commit",    to: "repo_commits#create"
   get  "repos/:root_id/head_blob", to: "repo_commits#head_blob", as: :repo_head_blob
+
+  # The repository-wide history list. Reached from the file page's own repository panel — a new
+  # page with no door is the defect PR #282 fixed (the commit box shipped linked from nowhere and
+  # a person found it, not the suite), and it is too recent to repeat.
+  get  "repos/:root_id/history",   to: "repo_histories#show",     as: :repo_history
 
   # --- Library browse (session-authed JSON; data source for the reusable folder/file chooser) ---
   get  "library/children", to: "library_browse#children",      as: :library_children

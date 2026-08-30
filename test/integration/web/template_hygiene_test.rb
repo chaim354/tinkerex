@@ -76,7 +76,17 @@ module Web
     # this is a debt, not a dismissal. The way to clear it is to give this class a real-repo
     # fixture and add the page to `pages` under a `local_worktree?` guard, at which point this
     # constant should go back to being empty.
-    UNSWEPT_TEMPLATES = %w[repo_commits/show.html.erb].freeze
+    #
+    # `repo_histories/show.html.erb` IS HERE FOR THE IDENTICAL REASON AND ITS DEBT IS ALREADY PAID.
+    # RepoHistoriesController#load_repo is RepoCommitsController#load_repo, so the repository-wide
+    # history page is unreachable on the s3 and chunk_remote legs and needs a rugged fixture on the
+    # share one. What is different is that its rendered output IS swept, by a test that already has
+    # that fixture: RepoHistoryFlowTest#"the repository page lists commits and is reachable from the
+    # file page" drives the real page and asserts its body carries neither ERB delimiter. That is
+    # the standing check the paragraph above calls for and repo_commits still owes — TWO ENTRIES,
+    # NOT A `repo_` PREFIX or a directory: an escape hatch wide enough to cover a template nobody
+    # checked is the vacuous shape this file exists to refuse.
+    UNSWEPT_TEMPLATES = %w[repo_commits/show.html.erb repo_histories/show.html.erb].freeze
 
     setup do
       # HERMETIC BY FIXTURE (§14c): the addon pages below read `test/fixtures/addons`, never the
