@@ -1190,15 +1190,15 @@ Four rules survive on **this** side of the boundary:
 model a NODE ID; dismissing is not deleting; ScanJob ordering; `LibraryTree#path_for` cycle-guard/memo
 rules (now binding `FilesController`/`Tools::LibraryFolders`); and why Model and Item are TWO catalogs.
 
-### 14l. Editing and committing in a repository → **`docs/invariants/git-editing.md`**
+### 14l. Editing, committing and history in a repository → **`docs/invariants/git-editing.md`**
 
 **Read that file before touching** `app/services/maker/git/`, `app/services/library/working_tree.rb`,
-`app/controllers/repo_commits_controller.rb`, `FilesController#update`, `editor_controller.js` or
-`diffview_controller.js`. Bytes the catalog tracks go through the port and bytes git owns never do;
-ask `local_worktree?`, never an adapter class; `index.clear` is never written and the index is never
-left untouched; content against HEAD's blob, never a stat; a `.lock` is refused, never deleted; the
-truncation refusal is the SERVER's; ONE ancestor walk; the inline diff is a review surface with no
-controls; and no file there reuses a name `tinkerex#161` used.
+`app/controllers/repo_{commits,histories}_controller.rb`, `FilesController#update`/`#history`/
+`#restore`, the `editor`/`diffview`/`history` Stimulus controllers, or `test/support/git_repo_fixture.rb`.
+Eighteen rules there; the ones most often undone: bytes the catalog tracks go through the port and
+bytes git owns never do; ask `local_worktree?`, never an adapter class; `index.clear` is never
+written; content against HEAD's blob, never a stat; a `.lock` is refused, never deleted; the history
+walk is ALWAYS capped and `stopped` reaches the view; restore writes a pending edit, never a commit.
 
 ## 15. Working agreements for the coding agent
 

@@ -192,11 +192,14 @@ class DocsHygieneTest < ActiveSupport::TestCase
 
   test "the moved sections keep their anchors, because code cites them by number" do
     claude = CLAUDE_MD.read
-    # EVERY SECTION THAT MOVED TO docs/invariants/, INCLUDING 14k — it was omitted here when the
-    # model catalog moved out, so its anchor was covered only by the two generic pointer tests and
-    # not by this one. A list that is supposed to be exhaustive and silently is not is the same
-    # shape as a guard scanning an empty set (§14e): it reports success over what it never checked.
-    moved = %w[14c 14f 14g 14h 14i 14k]
+    # EVERY SECTION THAT MOVED TO docs/invariants/, INCLUDING 14k AND 14l — 14k was omitted here
+    # when the model catalog moved out, and 14l repeated the omission when git editing did, each
+    # time leaving the anchor covered only by the two generic pointer tests and not by this one.
+    # A list that is supposed to be exhaustive and silently is not is the same shape as a guard
+    # scanning an empty set (§14e): it reports success over what it never checked. TWICE IS A
+    # PATTERN, so the rule is now written down rather than left to be noticed a third time —
+    # ADD THE ANCHOR HERE IN THE SAME COMMIT THAT CREATES THE STUB.
+    moved = %w[14c 14f 14g 14h 14i 14k 14l]
 
     moved.each do |anchor|
       assert_match(/^### #{anchor}\. /, claude,
