@@ -141,4 +141,86 @@ class Maker::Git::CommitPathsTest < ActiveSupport::TestCase
       Maker::Git::CommitPaths.new(l).call(paths: [ "a.txt" ], message: "mine", expected_head: expected)
     end
   end
+
+  # ---- deletions -------------------------------------------------------------------------------
+
+  test "a selected deleted path is removed from the new tree" do
+    root = make_repo!(files: { "a.txt" => "one\n", "b.txt" => "two\n" })
+    File.delete(File.join(library_root, "demo", "a.txt"))
+
+    Maker::Git::CommitPaths.new(local(root)).call(paths: [ "a.txt" ], message: "drop a")
+
+    tree = rugged_at.head.target.tree
+    assert_raises(Rugged::TreeError) { tree.path("a.txt") }
+    assert_equal "two\n", rugged_at.lookup(tree.path("b.txt")[:oid]).content
+  end
+
+  # THE ONE THAT MATTERS. The danger is not dropping the entry you selected -- it is dropping one
+  # you did not. Same shape as index.clear: right about the files it was asked about, wrong about
+  # everything else, and green on every bytes-oriented assertion.
+  #
+  # b.txt is dirty AND selected on purpose: without a selected path the commit could be a no-op and
+  # still pass, so the assertion would not be about carrying HEAD through at all.
+  test "an UNSELECTED deleted path survives in the new tree with HEAD's bytes" do
+    root = make_repo!(files: { "a.txt" => "one\n", "b.txt" => "two\n" })
+    File.delete(File.join(library_root, "demo", "a.txt"))
+    File.write(File.join(library_root, "demo", "b.txt"), "two changed\n")
+
+    Maker::Git::CommitPaths.new(local(root)).call(paths: [ "b.txt" ], message: "only b")
+
+    tree = rugged_at.head.target.tree
+    assert_equal "one\n", rugged_at.lookup(tree.path("a.txt")[:oid]).content,
+                 "a.txt was deleted on disk but NOT selected; the commit must keep HEAD's copy"
+    assert_equal "two changed\n", rugged_at.lookup(tree.path("b.txt")[:oid]).content
+  end
+
+  test "a nested deletion prunes only its own entry" do
+    root = make_repo!(files: { "src/a.txt" => "one\n", "src/b.txt" => "two\n" })
+    File.delete(File.join(library_root, "demo", "src", "a.txt"))
+
+    Maker::Git::CommitPaths.new(local(root)).call(paths: [ "src/a.txt" ], message: "drop nested")
+
+    tree = rugged_at.head.target.tree
+    assert_raises(Rugged::TreeError) { tree.path("src/a.txt") }
+    assert_equal "two\n", rugged_at.lookup(tree.path("src/b.txt")[:oid]).content
+  end
+
+  # A DIRECTORY THAT LOSES ITS LAST ENTRY IS PRUNED, not written as an empty tree. git has no empty
+  # directories: inserting one puts the empty-tree oid (4b825dc..., probed) where a directory used
+  # to be, which `git status` then reports as an untracked-and-deleted phantom forever.
+  test "a directory emptied by a deletion is pruned from its parent" do
+    root = make_repo!(files: { "src/a.txt" => "one\n", "top.txt" => "t\n" })
+    File.delete(File.join(library_root, "demo", "src", "a.txt"))
+
+    Maker::Git::CommitPaths.new(local(root)).call(paths: [ "src/a.txt" ], message: "drop the last one")
+
+    tree = rugged_at.head.target.tree
+    assert_raises(Rugged::TreeError) { tree.path("src") }
+    assert_equal "t\n", rugged_at.lookup(tree.path("top.txt")[:oid]).content
+  end
+
+  test "the committed deletion reports clean to git afterwards" do
+    root = make_repo!(files: { "a.txt" => "one\n" })
+    File.delete(File.join(library_root, "demo", "a.txt"))
+
+    Maker::Git::CommitPaths.new(local(root)).call(paths: [ "a.txt" ], message: "drop a")
+
+    assert_empty git_statuses(rugged_at).select { |rel, _| rel == "a.txt" }
+  end
+
+  # A path in NEITHER the working tree nor HEAD -- a stale maker_repo_edits row, LocalRepo's
+  # :missing -- is nothing to record rather than an error. The tree half is safe on its own
+  # (`Tree::Builder#remove` answers false for a name it does not hold), but the INDEX half is not:
+  # `Rugged::Index#remove` raises "index does not contain ghost.txt at stage 0" (rugged 1.9.6,
+  # probed), so dropping its guard turns a harmless stale row into a 500 after the commit landed.
+  test "a selected path in neither the worktree nor HEAD is a no-op, not an error" do
+    root = make_repo!(files: { "a.txt" => "one\n" })
+    File.write(File.join(library_root, "demo", "a.txt"), "one changed\n")
+
+    Maker::Git::CommitPaths.new(local(root)).call(paths: [ "a.txt", "ghost.txt" ], message: "with a ghost")
+
+    tree = rugged_at.head.target.tree
+    assert_equal "one changed\n", rugged_at.lookup(tree.path("a.txt")[:oid]).content
+    assert_raises(Rugged::TreeError) { tree.path("ghost.txt") }
+  end
 end
