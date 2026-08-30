@@ -14,6 +14,11 @@ module Maker
     # reports it as staged-and-different — reading as "the app half-did something". Read the index,
     # update the committed entries, write it back.
     #
+    # "REPLACED" INCLUDES "REPLACED WITH NOTHING". A selected path the maker deleted in Finder or
+    # their editor has its entry REMOVED rather than its bytes read. The rule above does not move:
+    # the tree is still HEAD's with the selected paths replaced, and the danger a deletion adds is
+    # not the entry you selected but the one you did not — see #remove.
+    #
     # THE WRITE WINDOW IS TWO OPERATIONS WIDE (§8 rule 3). Objects are content-addressed and safe
     # to write early, so blobs and trees go in first; only the ref update and the index write need
     # a lock, and share is a NETWORK filesystem where a lock is the risky part.
@@ -69,6 +74,19 @@ module Maker
       # the wrong path even if it did not. `rel` therefore stays the workdir-relative path the
       # whole way down and only `segments` shortens.
       def stage(builder, rel, segments = rel.split("/"))
+        # A SELECTED PATH THAT IS GONE FROM THE WORKING TREE IS A DELETION, not an error. "Replaced
+        # with nothing" is what a maker who deleted the file is asking for, and it leaves the class
+        # rule exactly as it was.
+        #
+        # ONLY THE SELECTED PATH, which is the half a deletion is most likely to break: a version
+        # that sweeps up every absent path is right about the files it was asked about and wrong
+        # about all the others, passing every bytes-oriented assertion — index.clear's shape, one
+        # level down. The unselected-deletion test is the one that can see it.
+        #
+        # ASKED ONCE, AT THE TOP OF THE FIRST CALL. #remove owns the whole descent from here, so
+        # the recursion below is never re-entered holding a path that is not there.
+        return remove(builder, segments) unless File.exist?(File.join(@local.workdir, rel))
+
         if segments.size == 1
           builder.insert(name: segments.first, oid: Rugged::Blob.from_workdir(@repo, rel),
                          filemode: filemode_for(rel))
@@ -80,6 +98,38 @@ module Maker
         sub = sub_oid ? Rugged::Tree::Builder.new(@repo, @repo.lookup(sub_oid)) : Rugged::Tree::Builder.new(@repo)
         stage(sub, rel, segments.drop(1))
         builder.insert(name: head, oid: sub.write, filemode: 0o040000)
+      end
+
+      # #stage's mirror: the entry goes away instead of being replaced, and every parent tree is
+      # rebuilt on the way back up.
+      #
+      # NO `rel` PARAMETER, AND THE ASYMMETRY WITH #stage IS DELIBERATE. #stage carries the workdir
+      # path all the way down because it reads BYTES from there; a removal reads nothing, so the
+      # only question left is where the entry sits in HEAD's tree, which `segments` alone answers.
+      #
+      # A PATH IN NEITHER THE WORKING TREE NOR HEAD IS A NO-OP, NOT AN ERROR — LocalRepo's
+      # `:missing`, a stale maker_repo_edits row. `Tree::Builder#remove` answers false for a name it
+      # does not hold (probed, rugged 1.9.6), and a missing intermediate tree returns before
+      # anything is built, so no empty directory is invented on the way down.
+      #
+      # A DIRECTORY THAT LOSES ITS LAST ENTRY IS PRUNED, never written back empty: git has no empty
+      # directories, so re-inserting the emptied builder puts the empty-tree oid
+      # (4b825dc642cb6eb9a060e54bf8d69288fbee4904, probed) where a directory used to be. Emptiness
+      # is read off the WRITTEN tree rather than the builder, which has no #size in rugged 1.9.6 —
+      # and that same oid is what gets inserted, so nothing is written twice.
+      def remove(builder, segments)
+        return builder.remove(segments.first) if segments.size == 1
+
+        head = segments.first
+        sub_oid = builder[head]&.fetch(:oid, nil)
+        return false unless sub_oid
+
+        sub = Rugged::Tree::Builder.new(@repo, @repo.lookup(sub_oid))
+        remove(sub, segments.drop(1))
+        written = @repo.lookup(sub.write)
+        return builder.remove(head) if written.count.zero?
+
+        builder.insert(name: head, oid: written.oid, filemode: 0o040000)
       end
 
       # Preserve the executable bit a file already has. Dropping it silently un-chmods scripts.
@@ -94,10 +144,24 @@ module Maker
       end
 
       # ONLY THE COMMITTED PATHS. Anything wider is index.clear with extra steps.
+      #
+      # A DELETED PATH TAKES `index.remove`, NEVER `index.add`. `Blob.from_workdir` cannot read a
+      # file that is not there, and leaving the old entry behind makes the maker's own `git status`
+      # report the deletion this commit just recorded as STILL PENDING — the class comment's
+      # "the app half-did something", one state along.
+      #
+      # `index[rel]` IS ASKED FIRST BECAUSE `Rugged::Index#remove` RAISES on a path the index does
+      # not hold: "index does not contain ghost.txt at stage 0" (rugged 1.9.6, probed). Without
+      # that guard a selected path in neither the worktree nor HEAD — nothing to commit, and
+      # harmless everywhere else — raises AFTER the commit landed and the ref already moved.
       def refresh_index(paths)
         index = @repo.index
         paths.each do |rel|
-          index.add(path: rel, oid: Rugged::Blob.from_workdir(@repo, rel), mode: filemode_for(rel))
+          if File.exist?(File.join(@local.workdir, rel))
+            index.add(path: rel, oid: Rugged::Blob.from_workdir(@repo, rel), mode: filemode_for(rel))
+          elsif index[rel]
+            index.remove(rel)
+          end
         end
         index.write
       end

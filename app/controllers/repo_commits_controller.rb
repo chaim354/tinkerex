@@ -7,18 +7,50 @@
 # recomputed from the catalog, the row is dropped if the node is gone or has moved out of this
 # repository or now matches HEAD, and it is listed-but-not-committable when .gitignore covers it.
 class RepoCommitsController < ApplicationController
+  # git's own binary test: a NUL byte within the first 8 kB of the file (see #binary_paths).
+  BINARY_SNIFF_BYTES = 8_000
+
   before_action :load_repo
 
+  # THREE GROUPS, AND ONLY THE FIRST IS CHECKED. The reconciled `maker_repo_edits` rows are what
+  # tinkerex itself wrote and stay pre-checked exactly as they were; everything else git sees is
+  # offered UNCHECKED, which is the whole of the safety property this feature deliberately reduced
+  # (spec part 1). The box used to be structurally incapable of touching the maker's other work
+  # because unedited paths were never listed; now the protection is "not by default, one click
+  # away". Pre-checking either of the wider groups removes the reduction while every other test
+  # here stays green, which is why the mutation is named in git-editing.md.
+  #
+  # `Library::OsClutter.ignore?` PARTITIONS, NEVER A SECOND LIST OF NAMES (§14b). That predicate is
+  # composed once and consulted from both the observers and the write guards; a `%w[.DS_Store]`
+  # here would be a third copy, free to disagree, and it would miss `._`-prefixed AppleDouble
+  # sidecars entirely — the population a share library over SMB actually accumulates.
   def show
     @rows, @dropped = reconcile
     Maker::RepoEdit.where(user: current_user, node_id: @dropped).delete_all if @dropped.any?
-    @other_dirty = @local.other_dirty_count(@rows.keys)
+
+    full = @local.full_status
+    @truncated_count = full.truncated_count
+    rest = full.rows.reject { |r| @rows.key?(r.path) }
+    @clutter_rows, @other_rows = rest.partition { |r| Library::OsClutter.ignore?(r.path) }
+
+    @node_id_by_path.merge!(catalog_node_ids(rest.map(&:path)))
+    @binary_paths = binary_paths(@rows.values + rest)
     @head = @local.unborn? ? nil : @local.rugged.head.target_id
   end
 
+  # THE INTERSECTION IS THE AUTHORITY, AND IT HAD TO WIDEN WITH THE BOX. `params[:paths]` is
+  # whatever a browser posted; what may be committed is what the page could legitimately have
+  # offered, so the submitted list is intersected with the committable rows of ALL THREE groups.
+  #
+  # THE PLAN SAID THIS METHOD NEEDED NO CHANGE. It did: the intersection was against `reconcile`
+  # alone, which only ever knows the `maker_repo_edits` rows, so every path in "Other changes" and
+  # "OS clutter" fell out of it and the commit answered "Nothing selected." — the new capability
+  # silently doing nothing, on a redirect that looks exactly like the refusal path. That is why
+  # step 3 says to verify by test rather than assume; "a path from Other changes commits, and only
+  # it" is the case that found it.
   def create
     rows, = reconcile
-    paths = Array(params[:paths]) & rows.select { |_, r| r.committable? }.keys
+    paths = Array(params[:paths]) & committable_paths(rows)
 
     Maker::Git::CommitPaths.new(@local).call(paths:, message: params[:message].to_s,
                                              expected_head: params[:expected_head].presence)
@@ -73,14 +105,13 @@ class RepoCommitsController < ApplicationController
   # whose node is gone or tombstoned has no Node here at all and is dropped, which is the same
   # answer by a shorter route.
   def reconcile
-    tree = Maker::LibraryTree.new(current_user)
-    root_path = tree.path_for(@root.node_id)
+    root_path = repo_root_path
     pending = Maker::RepoEdit.pending_for(current_user, @root.node_id).to_a
     nodes = current_user.nodes.present.where(node_id: pending.map(&:node_id)).index_by(&:node_id)
 
     by_path, dropped = {}, []
     pending.each do |row|
-      full = full_path_for(tree, nodes[row.node_id])
+      full = full_path_for(nodes[row.node_id])
       rel  = full && root_path && full.start_with?("#{root_path}/") ? full.delete_prefix("#{root_path}/") : nil
       next dropped << row.node_id if rel.nil?
 
@@ -100,11 +131,83 @@ class RepoCommitsController < ApplicationController
     [ keep, dropped ]
   end
 
-  def full_path_for(tree, node)
+  def full_path_for(node)
     return nil if node.nil?
 
     parent = tree.path_for(node.parent_node_id)
     parent.blank? ? nil : "#{parent}/#{node.name}"
+  end
+
+  # ONE tree and one root path per request. `Maker::LibraryTree` costs a pluck of every live dir,
+  # and #show asks it twice now — once to place the pending rows, once to resolve the wider list's
+  # nodes — so building it twice would double that pluck for one unchanged answer.
+  def tree = @tree ||= Maker::LibraryTree.new(current_user)
+
+  def repo_root_path = @repo_root_path ||= tree.path_for(@root.node_id)
+
+  # Every path the box would have rendered a CHECKED-ABLE control for. Deliberately recomputed
+  # rather than trusted from the form: a hidden field listing them would be the client telling the
+  # server what it is allowed to commit.
+  def committable_paths(rows)
+    rows.select { |_, r| r.committable? }.keys | @local.full_status.rows.select(&:committable?).map(&:path)
+  end
+
+  # The live catalog node for each repo-relative path, so the browser can fetch the WORKING TREE
+  # side of the diff (the other side is HEAD's blob, which needs no node). ONE query for the whole
+  # page: the parent directory ids come from the tree already built for `reconcile`, so this does
+  # not grow with the number of rows.
+  #
+  # A PATH WITH NO NODE IS NORMAL, NOT AN ERROR — `Library::Scanner` skips OS clutter and the
+  # `.git` interior, and a `:deleted` path's node is tombstoned. Those rows are still listed and
+  # still committable; they simply mount no diff, which the view decides.
+  def catalog_node_ids(rels)
+    return {} if rels.empty? || repo_root_path.blank?
+
+    dir_ids = tree.dir_ids.each_with_object({}) do |id, out|
+      path = tree.path_for(id)
+      out[path] = id if path
+    end
+    wanted = rels.to_h do |rel|
+      dir = File.dirname(rel)
+      [ rel, [ dir_ids[dir == "." ? repo_root_path : "#{repo_root_path}/#{dir}"], File.basename(rel) ] ]
+    end
+    lookup_nodes(wanted)
+  end
+
+  def lookup_nodes(wanted)
+    keys = wanted.values.reject { |parent_id, _| parent_id.nil? }
+    return {} if keys.empty?
+
+    found = current_user.nodes.present
+                        .where(kind: "file", parent_node_id: keys.map(&:first).uniq,
+                               name: keys.map(&:last).uniq)
+                        .pluck(:parent_node_id, :name, :node_id)
+                        .to_h { |parent_id, name, id| [ [ parent_id, name ], id ] }
+    wanted.filter_map { |rel, key| [ rel, found[key] ] if found[key] }.to_h
+  end
+
+  # Which listed paths cannot be diffed, by CONTENT — git's own rule, a NUL byte in the first 8 kB.
+  #
+  # DELIBERATELY NOT `Maker::FileAttachment.text?`, AND THIS IS NOT THE SECOND-VOCABULARY MISTAKE
+  # §14d warns about. That predicate answers a NAME question — "should the file page offer a source
+  # viewer" — off an extension allowlist, and it answers FALSE for `.svg`. The measured repository
+  # this whole feature exists for (`catan`, spec part 1) is 58 dirty paths of which the design files
+  # are `.svg`, so the name-based answer would print "binary — no diff" over every one of them. The
+  # question here is whether CodeMirror can be handed these bytes, which is a CONTENT axis —
+  # files-preview.md's own distinction — and answering it the way git does keeps the panel and the
+  # terminal saying the same thing. Adding `.svg` to `ROLE_BY_EXT` is still the fix for the file
+  # page; it is not the fix for this.
+  def binary_paths(rows)
+    rows.each_with_object(Set.new) do |row, out|
+      next unless row.state == :modified || row.state == :added || row.state == :ignored
+
+      begin
+        sniff = File.binread(File.join(@local.workdir, row.path), BINARY_SNIFF_BYTES)
+      rescue SystemCallError
+        next
+      end
+      out << row.path if sniff&.include?("\x00".b)
+    end
   end
 
   def node_ids_for(paths) = paths.filter_map { |p| @node_id_by_path[p] }

@@ -159,6 +159,44 @@ dl.meta dd { margin: 0; }
 .commit-diff .cm-scroller { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
 .commit-diff:empty { display: none; }
 
+/* --- The staging panel's three groups (repo_commits/show.html.erb) ---
+
+   STYLED OFF `data-group` AND `data-state`, NEVER OFF CLASSES OF THEIR OWN. Those attributes are
+   already there for the tests to select on, so a parallel set of class names would be a second
+   vocabulary for one fact, free to disagree with the first (§14d's own warning about naming). */
+.commit-group + .commit-group { margin-top: 20px; }
+.commit-group-body > summary { cursor: pointer; padding: 6px 0; font-weight: 600; }
+/* The count beside a title is the ONLY thing a closed group says about how much is hiding inside
+   it, so it keeps .muted's colour but not its weight — dimmed AND small reads as decoration. */
+.commit-group-body > summary .muted { font-weight: 400; }
+.commit-group-note { margin: 2px 0 10px; font-size: 13px; }
+
+/* "tinkerex never creates these." IS AN EXPLANATION, NOT A WARNING, and shares .muted with every
+   other aside on the page on purpose — .history-note's rule, for its reason. OS clutter is the
+   ordinary contents of a folder on a NAS; painting it in --danger would teach makers to read a
+   normal library as a fault. The actual protection is that the group arrives UNCHECKED, which is
+   a property of the markup and of commitgroup_controller's scope, never of a colour. */
+
+/* BUILT BY commitgroup_controller.js, so this is the only description of the control's shape a
+   reader can find by looking at the page. It sits INSIDE the <details> and above the rows, which
+   is what stops a collapsed group being bulk-selected unseen. */
+.commit-group-all {
+  display: inline-flex; align-items: center; gap: 6px; margin: 0 0 10px;
+  font-size: 13px; color: var(--muted); cursor: pointer;
+}
+
+/* A ROW GIT WILL NOT COMMIT. The only non-committable state that reaches this page is `ignored` —
+   a TRACKED path that .gitignore also covers — and it is listed rather than dropped so the panel
+   and `git status` cannot disagree. It therefore has to READ as inert, or an unticked row with no
+   checkbox looks like one the maker simply forgot. */
+.commit-rows > li[data-state="ignored"] { background: var(--soft); }
+.commit-rows > li[data-state="ignored"] code { color: var(--muted); }
+
+/* A row with nothing under its head — an `ignored` row mounts neither a diff nor a "no diff" note
+   — would otherwise carry .commit-row-head's separator with empty space beneath it: a rule drawn
+   across the bottom of the card for no reason. */
+.commit-row-head:only-child { border-bottom: none; }
+
 /* --- File history (history_controller.js, mounted by files/show.html.erb) ---
 
    EVERY ROW IN HERE IS BUILT IN JS, so this block is the only description of the panel's shape

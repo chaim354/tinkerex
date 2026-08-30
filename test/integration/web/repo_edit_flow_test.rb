@@ -106,7 +106,11 @@ class RepoEditFlowTest < ActionDispatch::IntegrationTest
     assert_select "a", text: /1 pending change in demo/
   end
 
-  test "the review page lists pending edits and counts the rest" do
+  # THE BOX NO LONGER COUNTS WHAT IT WILL NOT SHOW. Until the staging panel this asserted
+  # `[data-path='b.txt']` was ABSENT and a "1 other change ... not included" line took its place;
+  # both are now wrong, because listing the maker's other work IS the feature. What survives from
+  # the old case is the half that still matters: which GROUP each path lands in.
+  test "the review page lists pending edits in one group and everything else in another" do
     root = make_repo!(files: { "a.txt" => "one\n", "b.txt" => "two\n" })
     a = @user.nodes.present.find_by!(name: "a.txt")
     patch file_path(a.node_id), params: { content: "one changed\n", base_token: token_for(a) }
@@ -115,9 +119,9 @@ class RepoEditFlowTest < ActionDispatch::IntegrationTest
     get repo_commit_path(root.node_id)
 
     assert_response :success
-    assert_select "[data-path='a.txt']", 1
-    assert_select "[data-path='b.txt']", 0
-    assert_match(/1 other change/, response.body)
+    assert_select "[data-group='pending'] [data-path='a.txt']", 1
+    assert_select "[data-group='other'] [data-path='b.txt']", 1
+    assert_select "[data-group='pending'] [data-path='b.txt']", 0
   end
 
   # THE HIDDEN FIELD IS ASSERTED BY NAME, not merely "the form posts". `expected_head` is the
@@ -194,6 +198,177 @@ class RepoEditFlowTest < ActionDispatch::IntegrationTest
     assert_select "[data-path='build.log']", 1
     assert_select "[data-path='build.log'] input[type=checkbox]", 0
     assert_match(/ignored by \.gitignore/, response.body)
+  end
+
+  # --- The staging panel: three groups, one of them checked ---------------------------------
+
+  # THE MEMBERSHIP OF ALL THREE GROUPS IN ONE PASS, off the one fixture that carries every state.
+  # Five separate fixtures would let the groups drift: a change that quietly reclassifies clutter
+  # as an ordinary add passes four of them.
+  test "the box shows three groups with the right membership" do
+    root = make_repo_with_every_state!
+    kept = @user.nodes.present.find_by!(name: "kept.txt")
+    patch file_path(kept.node_id), params: { content: "via tinkerex\n", base_token: token_for(kept) }
+
+    get repo_commit_path(root.node_id)
+
+    assert_response :success
+    assert_select "[data-group='pending'] [data-path='kept.txt']", 1
+    assert_select "[data-group='other'] [data-path='edited.txt']", 1
+    assert_select "[data-group='other'] [data-path='fresh.txt']", 1
+    assert_select "[data-group='other'] [data-path='doomed.txt'][data-state='deleted']", 1
+    assert_select "[data-group='clutter'] [data-path='.DS_Store']", 1
+    assert_select "[data-group='other'] [data-path='.DS_Store']", 0
+    assert_match(/tinkerex never creates these/, response.body)
+
+    # `.gitignore`d NEVER APPEARS, IN ANY GROUP. git will not carry it without -f, so offering it
+    # would be offering something that cannot happen.
+    assert_select "[data-path='secret.log']", 0
+  end
+
+  # THE PROPERTY PART 1 KNOWINGLY GAVE UP, AND THE ONLY TEST THAT CAN SEE IT. The box used to be
+  # structurally incapable of touching the maker's other work because unedited paths were never
+  # listed; now the protection is "unchecked by default, one click away". Pre-check the wider
+  # group and every other case in this file stays green — this one counts the checked boxes on the
+  # whole page and finds more than the single tinkerex-edited row.
+  test "only the tinkerex-edited group is checked on load" do
+    root = make_repo_with_every_state!
+    kept = @user.nodes.present.find_by!(name: "kept.txt")
+    patch file_path(kept.node_id), params: { content: "via tinkerex\n", base_token: token_for(kept) }
+
+    get repo_commit_path(root.node_id)
+
+    assert_select "input[name='paths[]'][checked='checked']", 1
+    assert_select "[data-group='pending'] input[name='paths[]'][checked='checked']", 1
+    # NON-VACUITY: the other groups must really be offering checkboxes, or "none of them is
+    # checked" is true because there is nothing there to check (§14e).
+    assert_operator css_select("[data-group='other'] input[name='paths[]']").size, :>=, 3
+    assert_operator css_select("[data-group='clutter'] input[name='paths[]']").size, :>=, 1
+  end
+
+  # PARTITIONED BY `Library::OsClutter.ignore?`, NEVER BY A LIST OF NAMES (§14b: that predicate is
+  # composed once and copied nowhere). `._sidecar.txt` is the case that proves which one is used:
+  # it is clutter by the APPLE_DOUBLE_PREFIX rule and a `%w[.DS_Store]` literal misses it entirely.
+  #
+  # `Thumbs.db` WOULD BE THE WRONG PROBE and the constant says why in as many words — OsClutter is
+  # macOS-only ON PURPOSE, so Windows clutter is NOT covered and a test using it would fail against
+  # the correct code.
+  test "OS clutter is partitioned by the shared predicate, not by a list of names" do
+    root = make_repo!(files: { "a.txt" => "one\n" })
+    File.write(File.join(library_root, "demo", "._sidecar.txt"), "resource fork\n")
+
+    get repo_commit_path(root.node_id)
+
+    assert_select "[data-group='clutter'] [data-path='._sidecar.txt']", 1
+    assert_select "[data-group='other'] [data-path='._sidecar.txt']", 0
+  end
+
+  # A TRACKED PATH THAT `.gitignore` ALSO COVERS is a real state, not a hypothetical: git reports
+  # it `:worktree_modified` (an ignore rule has no say over a tracked file), so it survives
+  # full_status's filter and LocalRepo#row_for labels it `:ignored` from path_ignored?. It is
+  # LISTED DISABLED rather than dropped — git status shows it, and the pending group has always
+  # listed a .gitignore'd path exactly this way, so dropping it here would give one condition two
+  # answers depending on which group it landed in.
+  test "a tracked path .gitignore also covers is listed disabled rather than dropped" do
+    root = make_repo!(files: { "a.txt" => "one\n", "build.log" => "noise\n" }, gitignore: "*.log\n")
+    File.write(File.join(library_root, "demo", "build.log"), "more noise\n")
+
+    get repo_commit_path(root.node_id)
+
+    assert_select "[data-group='other'] [data-path='build.log']", 1
+    assert_select "[data-path='build.log'] input[type=checkbox]", 0
+    assert_match(/ignored by \.gitignore/, response.body)
+  end
+
+  # LISTED AND COMMITTABLE, WITH NO DIFF MOUNT. git commits a binary file fine; only the diff view
+  # cannot help, and a CodeMirror merge view handed NUL bytes renders nonsense rather than failing.
+  test "a binary path is committable and says so instead of mounting a diff" do
+    root = make_repo!(files: { "a.txt" => "one\n" })
+    File.write(File.join(library_root, "demo", "blob.bin"), "\x00\x01\x02binary".b)
+
+    get repo_commit_path(root.node_id)
+
+    assert_select "[data-path='blob.bin'] input[type=checkbox]", 1
+    assert_select "[data-path='blob.bin'] .commit-diff", 0
+    assert_match(/binary — no diff/, response.body)
+  end
+
+  # RENAMES ARE NOT DETECTED (spec part 2), so a rename arrives as both halves and the panel says
+  # so. The negative case is what keeps the note from becoming decoration on every page.
+  test "the box explains both halves of a rename only when both are present" do
+    root = make_repo_with_every_state!
+
+    get repo_commit_path(root.node_id)
+    assert_match(/Renames are not detected/, response.body)
+
+    plain = make_repo!(name: "plain", files: { "a.txt" => "one\n" })
+    File.write(File.join(library_root, "plain", "a.txt"), "two\n")
+
+    get repo_commit_path(plain.node_id)
+    assert_no_match(/Renames are not detected/, response.body)
+  end
+
+  # A CAPPED LIST THAT DOES NOT SAY SO IS THE SAME LIE AS A CAPPED WALK REPORTING "no history".
+  # The fixture must hold MORE than the cap or the assertion is vacuous — the shape that kept
+  # tinkerex#185 invisible.
+  test "a truncated list says how many paths it did not show" do
+    root = make_repo!(files: { "a.txt" => "one\n" })
+    dir = File.join(library_root, "demo")
+    (Maker::Git::LocalRepo::DEFAULT_STATUS_LIMIT + 1).times { |i| File.write(File.join(dir, "f#{i}.txt"), "y\n") }
+
+    get repo_commit_path(root.node_id)
+
+    assert_select "li[data-path]", Maker::Git::LocalRepo::DEFAULT_STATUS_LIMIT
+    assert_match(/1 further changed path not listed/, response.body)
+  end
+
+  # --- Committing from the wider groups ------------------------------------------------------
+  #
+  # `#create` INTERSECTS THE SUBMITTED PATHS WITH WHAT THE BOX COULD HAVE OFFERED, and the plan
+  # said this method needed no change. It did: the intersection was against the reconciled
+  # `maker_repo_edits` rows alone, so every path in the two new groups fell out of it and the
+  # commit answered "Nothing selected." — the new capability silently doing nothing, on a redirect
+  # indistinguishable from the refusal path.
+  test "a path from Other changes commits, and only it" do
+    root = make_repo_with_every_state!
+
+    post repo_commit_path(root.node_id), params: { paths: [ "fresh.txt" ], message: "just fresh" }
+
+    repo = Rugged::Repository.new(File.join(library_root, "mixed"))
+    tree = repo.head.target.tree
+    assert_equal "just fresh", repo.head.target.message
+    assert_equal "new\n", repo.lookup(tree.path("fresh.txt")[:oid]).content
+    assert_equal "before\n", repo.lookup(tree.path("edited.txt")[:oid]).content,
+                 "edited.txt was dirty and NOT selected; the commit must keep HEAD's copy"
+    assert_equal "bye\n", repo.lookup(tree.path("doomed.txt")[:oid]).content,
+                 "an unselected DELETION must survive with HEAD's bytes"
+    assert_raises(Rugged::TreeError) { tree.path(".DS_Store") }
+  end
+
+  test "a deletion from Other changes can be committed" do
+    root = make_repo_with_every_state!
+
+    post repo_commit_path(root.node_id), params: { paths: [ "doomed.txt" ], message: "drop it" }
+
+    tree = Rugged::Repository.new(File.join(library_root, "mixed")).head.target.tree
+    assert_raises(Rugged::TreeError) { tree.path("doomed.txt") }
+    assert tree.path("kept.txt"), "only the selected path may leave the tree"
+  end
+
+  # THE PATH IN NO GROUP AT ALL. `secret.log` sits in the working tree, is `.gitignore`d, and
+  # therefore appears in NO group — so a POST naming it must be dropped rather than committed.
+  # Without the intersection CommitPaths would take it happily: it reads bytes from the working
+  # tree and knows nothing about which paths the page offered.
+  test "a submitted path in no group is ignored rather than committed" do
+    root = make_repo_with_every_state!
+
+    post repo_commit_path(root.node_id), params: { paths: [ "fresh.txt", "secret.log" ], message: "two" }
+
+    repo = Rugged::Repository.new(File.join(library_root, "mixed"))
+    tree = repo.head.target.tree
+    assert_equal "new\n", repo.lookup(tree.path("fresh.txt")[:oid]).content,
+                 "the legitimate half must still commit, or this asserts nothing about filtering"
+    assert_raises(Rugged::TreeError) { tree.path("secret.log") }
   end
 
   # HEAD'S BLOB LEAVES THE SERVER AS BYTES, and the server diffs neither side -- @codemirror/merge

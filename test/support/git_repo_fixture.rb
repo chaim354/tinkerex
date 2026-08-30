@@ -38,6 +38,32 @@ module GitRepoFixture
     @user.nodes.present.find_by!(name: File.basename(rel), kind: "file")
   end
 
+  # ALL FIVE STATES IN ONE REPOSITORY. Five separate fixtures would let the groups drift: a change
+  # that quietly reclassifies clutter as an ordinary add passes four of them.
+  #
+  # THE THREE `filler` FILES ARE NOT PADDING, THEY ARE WHAT LETS THE DELETION HAPPEN AT ALL. The
+  # rescan below tombstones `doomed.txt`, and Library::Reconciler's mass-deletion guard is a
+  # PERCENTAGE WITH NO FLOOR whose denominator is `observable_live_paths` -- the files the PREVIOUS
+  # scan indexed, not the ones this one observes. The plan's four-file version is 1/4 = 25% against
+  # a 20% default and raises `Library::Scanner::UnsafeScan` inside the fixture, before a single
+  # assertion runs. Seven live files make it 14.3%. The reconciler names this trade in as many
+  # words ("a 3-file library loses a file at 33% and the scan refuses"); a fixture holding a real
+  # deletion has to be big enough to be allowed one.
+  def make_repo_with_every_state!(name: "mixed")
+    root = make_repo!(name:, files: { "kept.txt" => "same\n", "edited.txt" => "before\n",
+                                      "doomed.txt" => "bye\n", "filler1.txt" => "1\n",
+                                      "filler2.txt" => "2\n", "filler3.txt" => "3\n" },
+                      gitignore: "secret.log\n")
+    dir = File.join(library_root, name)
+    File.write(File.join(dir, "edited.txt"), "after\n")   # modified
+    File.write(File.join(dir, "fresh.txt"), "new\n")      # added
+    File.delete(File.join(dir, "doomed.txt"))             # deleted
+    File.write(File.join(dir, ".DS_Store"), "\x00clutter") # OS clutter
+    File.write(File.join(dir, "secret.log"), "hidden\n")  # ignored
+    Library::ScanJob.new.perform(user_id: @user.id)
+    root
+  end
+
   # A FIXED, DISTINCT SECOND PER COMMIT, with a base that depends on the repository's NAME. Both
   # halves are load-bearing and neither is tidiness.
   #

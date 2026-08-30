@@ -60,11 +60,15 @@ module Maker
       # no parents.
       def unborn? = rugged.head_unborn?
 
-      # What the commit box shows for one path. `state` is :modified, :added, :unchanged, :ignored
-      # or :missing; only :modified and :added can be committed.
+      # What the commit box shows for one path. `state` is :modified, :added, :deleted, :unchanged,
+      # :ignored or :missing; only the first three can be committed.
       Row = Data.define(:path, :state, :additions, :deletions) do
-        def committable? = state == :modified || state == :added
+        def committable? = state == :modified || state == :added || state == :deleted
       end
+
+      FullStatus = Data.define(:rows, :truncated_count)
+
+      DEFAULT_STATUS_LIMIT = 500
 
       # CONTENT AGAINST HEAD'S BLOB, NEVER A STAT COMPARISON — §8 rule 1, and the reason is the
       # backend rather than fussiness: `share` is a NAS over SMB/NFS, where attribute caching can
@@ -72,6 +76,32 @@ module Maker
       # afford because it is talking to a local disk. We are not.
       def status_for(paths)
         paths.index_with { |rel| row_for(rel) }
+      end
+
+      # Everything git sees as changed, capped. The counterpart to #status_for, which answers about
+      # paths a caller names; this one ENUMERATES.
+      #
+      # CAPPED FOR THE SAME REASON THE HISTORY WALK IS, and the number is not decoration: every row
+      # costs a content comparison against HEAD's blob, and over CIFS that is ~15 ms per object
+      # (the history spec's measurement). `truncated_count` reaches the view — a truncated list that
+      # does not say so is the same lie as a capped walk reporting "no history".
+      #
+      # `.gitignore`d PATHS ARE DROPPED HERE, NOT IN THE VIEW. git will not commit them without
+      # `-f`, so offering them is offering something that cannot happen.
+      #
+      # `Rugged::Repository#status` TAKES A BLOCK, as #other_dirty_count already records, so the
+      # paths are accumulated rather than filtered off an enumerator. Probed on rugged 1.9.6: an
+      # ignored path arrives as exactly `[:ignored]` and never alongside another flag, so one
+      # `include?` is the whole filter.
+      def full_status(limit: DEFAULT_STATUS_LIMIT)
+        return FullStatus.new(rows: [], truncated_count: 0) unless committable?
+
+        paths = []
+        rugged.status { |path, flags| paths << path unless flags.include?(:ignored) }
+        paths.sort!
+
+        rows = paths.first(limit).map { |rel| row_for(rel) }.reject { |r| r.state == :unchanged }
+        FullStatus.new(rows:, truncated_count: [ paths.size - limit, 0 ].max)
       end
 
       # How many OTHER paths git sees as dirty. Counted, never listed: listing them is the staging
@@ -143,7 +173,16 @@ module Maker
 
       def row_for(rel)
         abs = File.join(workdir, rel)
-        return Row.new(path: rel, state: :missing, additions: 0, deletions: 0) unless File.file?(abs)
+
+        # TWO SITUATIONS, NOT ONE, AND CONFLATING THEM IS SILENT EITHER WAY. In HEAD and gone from
+        # the worktree is a real DELETION the maker may want to commit; in neither is a stale
+        # maker_repo_edits row the commit box already drops. One `:missing` for both means either
+        # every stale row becomes a committable deletion, or every real deletion vanishes.
+        unless File.file?(abs)
+          in_head = !unborn? && !head_blob_for(rel).nil?
+          return Row.new(path: rel, state: in_head ? :deleted : :missing, additions: 0, deletions: 0)
+        end
+
         return Row.new(path: rel, state: :ignored, additions: 0, deletions: 0) if rugged.path_ignored?(rel)
 
         head_blob = unborn? ? nil : head_blob_for(rel)
