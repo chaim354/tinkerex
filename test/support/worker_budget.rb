@@ -79,9 +79,16 @@ module WorkerBudget
     # either alone produces zero. The box swaps and every Capybara wait becomes the coin flip this
     # header already warned about. That reached CI in milder form as BoxSectionsTest failing on two
     # consecutive PRs and passing on every re-run, back when the CI runner WAS this Mac and a local
-    # `bin/ci` genuinely collided with a CI job. CI moved to dedicated containers on 2026-08-31; the
-    # detector stays because four runners still share one host, and because a developer's local
-    # suite still collides with itself.
+    # `bin/ci` genuinely collided with a CI job. CI moved to dedicated containers on 2026-08-31, and
+    # the detector stays for ONE reason only: a developer's local suite still collides with itself.
+    #
+    # IT IS NOT WHAT KEEPS THE FOUR CI RUNNERS APART, AND SAYING SO WOULD BE THE EXACT MISTAKE THIS
+    # PARAGRAPH WAS JUST REWRITTEN TO REMOVE. The detector reads pidfiles under PIDFILE_DIR, which
+    # is `<checkout>/tmp/browser-suites` — and each runner binds its OWN checkout
+    # (`/mnt/user/appdata/tinkerex-ci/runner-N/_work`, ops/ci-runner-stack.yml), so runner-1 can
+    # never see runner-2's pidfile; `process_alive?`'s `Process.kill(0, pid)` is confined to its own
+    # container's PID namespace besides. What actually stops four runners each planning for an empty
+    # box is the CGROUP LIMIT the readers below consult, paired with `mem_limit` on each service.
     #
     # NO FLOOR ABOVE 1, DELIBERATELY, AND THAT IS THIS FILE'S EXISTING CONTRACT RATHER THAN A NEW
     # CHOICE. A first draft floored this at 4 to protect local wall time, and

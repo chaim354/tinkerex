@@ -16,7 +16,31 @@
 # PINNED, NOT :latest — the same rule ops/kaneo-stack.yml states as its first deliberate departure
 # from upstream. A floating base tag upgrades CI without anyone deciding to, and the first anyone
 # would know is a green run that means something different.
-FROM myoung34/github-runner:2.336.0
+#
+# THE `-ubuntu-noble` SUFFIX IS LOAD-BEARING: THE BARE `2.336.0` TAG IS UBUNTU 20.04 FOCAL, GLIBC
+# 2.31, AND TWO OF THE FOUR PREVIEW BINARIES WILL NOT RUN ON IT. Measured on the box, 2026-08-31,
+# on the first two real builds — both failed, each naming the same cause:
+#
+#     resvg:  /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.32' not found  (also 2.33, 2.34)
+#     pdfium: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.34' not found  (also 2.32)
+#
+# That is a CLASS, not two incidents: modern Go and Rust release binaries are increasingly built
+# against a newer glibc than Focal's, and Focal is EOL for standard support besides. So the base
+# moves rather than each binary being patched around one at a time — the same
+# close-the-class-instead-of-enumerating-instances reasoning ci.yml's paths filter and
+# ci_hygiene_test's self-hosted-label check both record.
+#
+#   base                             ubuntu   glibc   runner uid:gid
+#   2.336.0        (was)             20.04    2.31    1001:121
+#   2.336.0-ubuntu-jammy             22.04    2.35    1001:121
+#   2.336.0-ubuntu-noble  (this)     24.04    2.39    1001:121
+#
+# ANY REPLACEMENT BASE MUST CARRY GLIBC >= 2.34 for the pdfium prebuilt below. The runner uid:gid is
+# 1001:121 on all three — NOT the 1000:1000 the usual first-user convention suggests — and
+# ops/ci-runner-stack.yml chowns the bind-mounted work dirs to it, so **re-measure it if this tag
+# ever moves** (`docker run --rm --entrypoint sh <image> -c 'id runner'`). A mismatch there leaves
+# the non-root runner unable to write its own work dir, which reads as a broken image.
+FROM myoung34/github-runner:2.336.0-ubuntu-noble
 
 # The runner image is Ubuntu-based and runs jobs as the `runner` user. Everything below installs to
 # a system path so that user can reach it without a login shell.
