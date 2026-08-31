@@ -1,0 +1,79 @@
+# The Kaneo stack, deployed through Portainer (portainer.home, 2.39.6) on the Unraid box.
+# Kaneo holds the canonical work record — CLAUDE.md §11.
+#
+# THIS FILE IS NOT EXECUTED BY ANYTHING IN THIS REPO. Portainer holds the running copy; this is the
+# reviewable one. Edit here, then paste into the stack editor — and when you change the running
+# stack, change this file in the same breath. A committed file that has silently diverged from what
+# runs is §15's "a doc row that names a commit is a claim" problem one layer down: it reads as the
+# truth and nothing can go red for it.
+#
+# THE TWO SECRETS ARE PORTAINER STACK ENVIRONMENT VARIABLES, not values in this file — POSTGRES_PASSWORD
+# and AUTH_SECRET. They also live in 1Password (§14g); nothing here is `export`ed.
+#
+# FOUR DELIBERATE DEPARTURES FROM UPSTREAM'S compose.yml — do not "restore" them:
+#
+#   1. THE IMAGE IS PINNED. Upstream uses `:latest`. A floating tag on the box holding the canonical
+#      record upgrades it without anyone deciding to, and the first anyone would know is a changed
+#      API shape under bin/log.
+#   2. POSTGRES PUBLISHES NO PORT. Upstream publishes 5432. Nothing off-box needs it; the kaneo
+#      container reaches it on the stack network by service name.
+#   3. NO MINIO. Object storage is optional upstream and powers only image uploads inside task
+#      descriptions and comments. The record is ~1 MB of markdown with no images, so the service is
+#      omitted rather than configured.
+#   4. POSTGRES CARRIES NO env_file. Upstream shares one .env across both services; naming the three
+#      POSTGRES_* values explicitly is what stops a later edit from handing the database a variable
+#      it silently ignores while the app keeps using the old one.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: kaneo
+      POSTGRES_USER: kaneo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - kaneo_postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kaneo -d kaneo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kaneo:
+    image: ghcr.io/usekaneo/kaneo:2.18.0
+    ports:
+      - "5173:5173"
+    environment:
+      KANEO_CLIENT_URL: http://kaneo.home
+      DATABASE_URL: postgresql://kaneo:${POSTGRES_PASSWORD}@postgres:5432/kaneo
+      POSTGRES_DB: kaneo
+      POSTGRES_USER: kaneo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      AUTH_SECRET: ${AUTH_SECRET}
+      # BOTH ARE FLIPPED TO "true" IMMEDIATELY AFTER THE FIRST SIGNUP, NOT BEFORE IT. The instance
+      # admin is whoever signs up FIRST — GET /api/instance/status reports hasUsers:false until then
+      # — so registration must be open for exactly one signup and closed the moment it lands.
+      # Setting these to "true" before claiming the account locks you out of your own instance.
+      DISABLE_REGISTRATION: "false"
+      DISABLE_GUEST_ACCESS: "false"
+      # KANEO_API_URL IS DELIBERATELY UNSET. It defaults to KANEO_CLIENT_URL/api, which is what this
+      # deployment wants: NPM proxies kaneo.home to this container whole, path included, so the
+      # browser stays on one origin and the container proxies /api internally. Setting it explicitly
+      # is only for a proxy that rewrites the path, which this one does not.
+      #
+      # TRUSTED_PROXIES IS ALSO UNSET, AND THAT IS CORRECT RATHER THAN FORGOTTEN. Its default already
+      # covers 192.168.0.0/16, which is where NPM sits. Listing a range clients can reach Kaneo from
+      # directly would let them forge X-Forwarded-For, which feeds rate limiting and session records.
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:5173/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  kaneo_postgres_data:
