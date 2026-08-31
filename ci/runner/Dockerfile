@@ -6,6 +6,16 @@
 # Build:  ssh root@192.168.1.146 'docker build -t tinkerex-ci-runner:<tag> -f ci/runner/Dockerfile .'
 # Deploy: ops/ci-runner-stack.yml, through Portainer.
 #
+# PRUNE THE BUILD CACHE AFTERWARDS — `docker builder prune -af` ON THE BOX. This is not tidiness.
+# Docker's storage there is a **50 GB loop device** (`/dev/loop2` on /var/lib/docker), and on Unraid
+# a full docker.img takes down EVERY container on the box, not just CI. Measured 2026-08-31: the box
+# sat at 30 G used / 20 G free before this image existed; five builds took it to 41 G / 9.0 G free
+# (82%), of which **3.765 GB was build cache alone**. Pruning returned it to 39 G / 12 G. The image
+# itself is 4.39 GB and is the part you keep.
+#
+# The runner WORK DIRS deliberately do not land here at all — they are bind-mounted to the array
+# (ops/ci-runner-stack.yml), which is what keeps a CI checkout from competing with this loop.
+#
 # LICENSING (CLAUDE.md §9). myoung34/github-runner and actions/runner are MIT; resvg is MPL-2.0
 # (already sanctioned in ci/ensure-resvg.sh); pdfium-cli is MIT wrapping BSD-3 pdfium;
 # stl-thumbnailer is our own Apache-2.0. libvips is LGPL and Chrome is proprietary — NEITHER IS

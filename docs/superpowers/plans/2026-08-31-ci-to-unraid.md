@@ -1481,6 +1481,30 @@ would have reached the box.
 7. Task 12 Step 3's replacement text begins mid-line in the source, so applying it verbatim orphans
    `# header already warned about.`; the paragraph needs re-wrapping, keeping the wording.
 
+### Task 6 took FIVE builds, and every failure was a defect in the plan's Dockerfile
+
+None was findable statically: `docker build --check` passed every time and every pinned URL returned
+200. Only running it on the real box surfaced any of them. Listed because the pattern is the lesson
+— §14e's "checking beats reasoning", with the contribution being *probing* rather than thinking.
+
+| # | failure | fix |
+|---|---|---|
+| 1 | `resvg: version 'GLIBC_2.32' not found` — the prebuilt needs 2.32/2.33/2.34 | build resvg from source, as `ci/ensure-resvg.sh` already falls back to |
+| 2 | `pdfium: version 'GLIBC_2.34' not found` — **same cause, second binary** | the base was the bare `2.336.0` tag = **Ubuntu 20.04 Focal, glibc 2.31, EOL**. Moved to `2.336.0-ubuntu-noble` (24.04, glibc 2.39). Closing the class beat patching instances |
+| 3 | `stl-thumbnailer --version` exit 1 — **the build was fine, the check was wrong**; the tool takes positional args only | render a generated tetrahedron, assert a non-empty PNG |
+| 4 | `COPY test/fixtures/files/tetra.stl` not found — `.dockerignore` excludes `/test/` | generate the STL inline. **Do not add a `.dockerignore` exception**: that file is a §14c licensing guard |
+| 5 | — | `cargo install` was **ignoring the committed `Cargo.lock`** ("Locking 37 packages to latest compatible versions"). Added `--locked`; `Maker::Previews::Stl` bumps `PAYLOAD_REVISION` *because the picture changed*, so a drifting renderer would change stored previews silently |
+
+**A methodology error of mine is in there too:** the first build reported `BUILD_EXIT=0` while failing.
+`docker build ... | tail -40` ran on the *remote* shell, which has no `pipefail`, so the status was
+`tail`'s. That is exactly the trap `config/ci.rb` documents about `tee` and `${PIPESTATUS[0]}` in the
+`test-chunk-remote` gate. Later builds propagate the real status explicitly.
+
+**Disk, measured, and the reason the bind-mount correction mattered:** the box was 30 G used / 20 G
+free; five builds took it to 41 G / 9.0 G (82%), 3.765 GB of that build cache. `docker builder prune
+-af` returned it to 39 G / 12 G. The finished image is 4.39 GB. The rebuild recipe in
+`ci/runner/Dockerfile` now carries the prune step and these figures.
+
 ### Verified during execution, not assumed
 
 - Containers on the box reach `github.com`, `api.github.com`, `objects.githubusercontent.com`,
