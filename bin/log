@@ -321,7 +321,12 @@ module Log
   # bare `#` starts a fragment, so either one silently searches for something else.
   def search(argv)
     query = argv.shift or raise UsageError, "search needs a query"
-    path = "/api/search?q=#{URI.encode_www_form_component(query)}&workspaceId=#{workspace_id}&limit=100"
+    # THE SEARCH LIMIT IS 50 AND THE BOARD LIMIT IS 100 — TWO CAPS, MEASURED, AND NOT INTERCHANGEABLE.
+    # /api/search REFUSES limit=100 outright: 400, `{"kind":"validation","expected":"<=50"}`. The board
+    # endpoint task_index walks accepts 100 happily. Neither cap is in Kaneo's OpenAPI, and NO STUB
+    # TEST CAN FIND EITHER — the stub records what we send and validates nothing, so a green suite
+    # said this verb worked right up until it was pointed at the real server.
+    path = "/api/search?q=#{URI.encode_www_form_component(query)}&workspaceId=#{workspace_id}&limit=50"
     body = parse(api(:get, path), path)
     tasks = body.fetch("results", [])
                 .select { |r| r["type"] == "task" && r["projectId"] == project_id }

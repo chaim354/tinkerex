@@ -825,6 +825,12 @@ class LogCliTest < ActiveSupport::TestCase
     search = stub.requests.find { |r| r.path.include?("/search") }
     assert_includes search.path, "q=a+%26+b"
     assert_includes search.path, "workspaceId=w1"
+    # THE CAP IS 50 HERE AND 100 ON THE BOARD, AND THIS ASSERTION CANNOT PROVE IT — the stub takes
+    # whatever it is sent. It is here so the value is not "tidied" to match task_index's 100, which
+    # /api/search refuses outright with `400 {"expected":"<=50"}`. Found by pointing bin/log at the
+    # real server after a fully green suite; §15's rule that a probe beats an argument, in the one
+    # direction a stub structurally cannot cover.
+    assert_includes search.path, "limit=50"
     assert_match(/#12 \[done\] a & b/, out)
     refute_match(/noise/, out, "a matching comment must not print as though it were an issue")
     refute_match(/#99/, out, "projectId does not filter server-side; this verb must filter itself")
