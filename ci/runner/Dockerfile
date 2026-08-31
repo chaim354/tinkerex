@@ -61,8 +61,24 @@ USER root
 # `lsof -ti tcp:$PORT` as its leftover-process guard, two curl probes (/up and whoami) and
 # ${PIPESTATUS[0]}, which is a bashism the gate deliberately depends on.
 # ---------------------------------------------------------------------------------------------
+# `cmake` AND `pkg-config` ARE FOR ONE GEM, AND `build-essential` DOES NOT COVER THEM. `rugged`
+# (libgit2 bindings — the git-editing stack, §14l) vendors libgit2 and builds it with CMake, so
+# without these `bundle install` dies at
+#
+#     ERROR: CMake is required to build Rugged.
+#     An error occurred while installing rugged (1.9.6), and Bundler cannot continue.
+#
+# and every gate fails identically at step 2 — on infrastructure rather than on code, which is the
+# least legible kind of red. Measured on CI run 33440087622. It does not reproduce on the Mac
+# runner, where Homebrew had already put cmake on PATH for unrelated reasons.
+#
+# THE REAL LESSON IS THE VERIFICATION, NOT THE PACKAGE: this list was assembled by reading the
+# Gemfile rather than by running `bundle install`, so it was right about every pure-Ruby gem and
+# wrong about the one with a native extension. Any change here should be checked by actually
+# installing the bundle in the built image, not by inspection.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential git openssh-client curl ca-certificates lsof bash \
+      build-essential cmake pkg-config \
+      git openssh-client curl ca-certificates lsof bash \
       libssl-dev zlib1g-dev libyaml-dev libffi-dev libreadline-dev \
       sqlite3 libsqlite3-dev \
       libvips-tools \
