@@ -57,12 +57,18 @@ services:
       POSTGRES_USER: kaneo
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       AUTH_SECRET: ${AUTH_SECRET}
-      # BOTH ARE FLIPPED TO "true" IMMEDIATELY AFTER THE FIRST SIGNUP, NOT BEFORE IT. The instance
-      # admin is whoever signs up FIRST — GET /api/instance/status reports hasUsers:false until then
-      # — so registration must be open for exactly one signup and closed the moment it lands.
-      # Setting these to "true" before claiming the account locks you out of your own instance.
-      DISABLE_REGISTRATION: "false"
-      DISABLE_GUEST_ACCESS: "false"
+      # BOTH ARE "true" NOW AND MUST STAY THAT WAY. They were "false" for exactly one signup, because
+      # the instance admin is whoever signs up FIRST — GET /api/instance/status reports
+      # hasUsers:false until then. Setting them to "true" BEFORE claiming the account locks you out
+      # of your own instance; leaving them "false" AFTER lets anyone on the LAN create an account on
+      # the box holding the canonical record (CLAUDE.md §11).
+      #
+      # A REBUILD FROM AN EMPTY VOLUME NEEDS THEM "false" AGAIN, briefly. That is the only reason to
+      # touch these, and the account must be claimed before the same edit is undone. Verify with
+      # GET /api/config, which reports disableRegistration and hasGuestAccess — read it rather than
+      # assuming the redeploy took the env change.
+      DISABLE_REGISTRATION: "true"
+      DISABLE_GUEST_ACCESS: "true"
       # KANEO_API_URL IS DELIBERATELY UNSET. It defaults to KANEO_CLIENT_URL/api, which is what this
       # deployment wants: NPM proxies kaneo.home to this container whole, path included, so the
       # browser stays on one origin and the container proxies /api internally. Setting it explicitly
