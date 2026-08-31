@@ -2,16 +2,16 @@ require "test_helper"
 require "open3"
 require "tmpdir"
 require "fileutils"
-require "support/stub_forgejo"
+require "support/stub_kaneo"
 
-# Guards bin/log — the SINGLE write door onto the Forgejo that replaced STATUS.md.
+# Guards bin/log — the SINGLE write door onto the record (CLAUDE.md §11).
 #
 # WHY A TEST FILE FOR A bin/ SCRIPT. bin/log is the only thing that records an arc, so a silent
 # failure here loses the record with nothing going red — this repo's dominant failure shape
 # (CLAUDE.md §15, "a green suite over something that never worked").
 #
-# THESE TESTS NEVER REACH forgejo.home, and that is enforced rather than asserted: run_log
-# defaults FORGEJO_URL to an unroutable address, so touching the network is opt-in. Left at
+# THESE TESTS NEVER REACH kaneo.home, and that is enforced rather than asserted: run_log
+# defaults KANEO_URL to an unroutable address, so touching the network is opt-in. Left at
 # bin/log's own default a test that merely forgot to override it would POST a real issue into the
 # live instance from anywhere on the LAN.
 #
@@ -22,13 +22,20 @@ require "support/stub_forgejo"
 class LogCliTest < ActiveSupport::TestCase
   BIN_LOG = Rails.root.join("bin/log").to_s
 
-  # WHAT THE LIVE INSTANCE ACTUALLY RETURNS. Issue-create takes int64 label IDs and REFUSES names
-  # (measured: 422 "cannot unmarshal string into ... type int64"), so every wire assertion below is
-  # written against ids. The earlier tests asserted names and passed, because the stub records what
-  # we send and validates nothing — a contract invented rather than observed.
+  # WHAT THE LIVE INSTANCE ACTUALLY RETURNS, measured 2026-08-31 — not what the OpenAPI implies.
+  # Kaneo keeps label DEFINITIONS and label ATTACHMENTS in one table: a row with `taskId` null is
+  # vocabulary, a row with a taskId is an attachment, and GET /label/workspace/:id returns BOTH. So a
+  # fixture has to carry the null explicitly, or a test cannot tell the two apart and the filter that
+  # separates them looks unnecessary.
+  #
+  # THE IDS ARE STRINGS. Forgejo took int64 label ids and REFUSED names on issue-create; Kaneo takes
+  # the name directly on POST /label and attaches in that same call, so nothing here is ever sent
+  # back in a task-create payload.
   LABEL_NAMES = %w[arc open-work deploy blocked deliberate
                    filelayer library-scan addons previews maker-web ci].freeze
-  LABEL_FIXTURE = LABEL_NAMES.each_with_index.map { |n, i| { "id" => i + 1, "name" => n } }.freeze
+  LABEL_FIXTURE = LABEL_NAMES.each_with_index.map do |n, i|
+    { "id" => "lbl#{i + 1}", "name" => n, "taskId" => nil }
+  end.freeze
 
   # The seven names bin/sync-server's unset_inherited_bundler_env already clears. §14j: a bundled
   # parent exports these process-wide and every child inherits them, so a harness that MERGES its
@@ -39,7 +46,7 @@ class LogCliTest < ActiveSupport::TestCase
                    BUNDLER_SETUP RUBYOPT RUBYLIB].freeze
 
   # LOG_SPOOL_DIR DEFAULTS TO A THROWAWAY, so reaching the developer's REAL spool is opt-in — the
-  # same shape as FORGEJO_URL defaulting to an unroutable address. Two write-verb tests were
+  # same shape as KANEO_URL defaulting to an unroutable address. Two write-verb tests were
   # unguarded and passed only because their stubs happened to succeed; the moment one failed it
   # appended to tmp/log-pending/<branch>.md, which `bin/log status` then reports as unfiled work
   # forever. tmp/ is gitignored, so git status never shows it. Observed once, during a mutation
@@ -52,7 +59,7 @@ class LogCliTest < ActiveSupport::TestCase
   # on the first fragment — and the zero-argument call is exactly what the usage test makes.
   def run_log(*args, env: {})
     cleared = BUNDLER_ENV.to_h { |name| [ name, nil ] }
-    base = cleared.merge("FORGEJO_URL" => "http://127.0.0.1:1", "LOG_SPOOL_DIR" => @spool)
+    base = cleared.merge("KANEO_URL" => "http://127.0.0.1:1", "LOG_SPOOL_DIR" => @spool)
 
     out, err, status = Open3.capture3(base.merge(env), [ BIN_LOG, BIN_LOG ], *args,
                                       chdir: Rails.root.to_s)
@@ -107,7 +114,7 @@ class LogCliTest < ActiveSupport::TestCase
   # transcript on 2026-07-29 and the token had to be rotated. Open3.capture3 keeps the streams
   # apart, which is why bin/log must use it rather than a backtick or a merging redirect.
   test "a resolved token never appears on either stream" do
-    out, err, _code = run_log("show", "1", env: { "FORGEJO_TOKEN" => "sentinel-token-value" })
+    out, err, _code = run_log("show", "1", env: { "KANEO_TOKEN" => "sentinel-token-value" })
 
     refute_includes err, "sentinel-token-value", "the token reached stderr"
     refute_includes out, "sentinel-token-value", "the token reached stdout"
@@ -127,7 +134,7 @@ class LogCliTest < ActiveSupport::TestCase
       File.chmod(0o755, File.join(dir, "op"))
 
       _out, err, code = run_log("show", "1", env: {
-        "FORGEJO_TOKEN" => "exported-wins",
+        "KANEO_TOKEN" => "exported-wins",
         "PATH"          => "#{dir}:#{ENV['PATH']}"
       })
 
@@ -165,7 +172,7 @@ class LogCliTest < ActiveSupport::TestCase
         # whichever of the three is set, so clearing two of them leaves the guard vacuous on any
         # machine that sets the third — measured: this mutation went GREEN in one environment and
         # RED in another, for no reason but an ambient LC_CTYPE.
-        "PATH" => "#{dir}:#{ENV['PATH']}", "FORGEJO_TOKEN" => nil,
+        "PATH" => "#{dir}:#{ENV['PATH']}", "KANEO_TOKEN" => nil,
         "LANG" => nil, "LC_ALL" => nil, "LC_CTYPE" => nil
       })
 
@@ -183,10 +190,10 @@ class LogCliTest < ActiveSupport::TestCase
   # nowhere: the mutation sweep found removing the catch-all, and changing its return code, BOTH
   # green.
   test "an unexpected error is EXIT_BUG and says plainly that nothing was spooled" do
-    stub = StubForgejo.new(status: 200, response: { "message" => "repository not found" })
+    stub = StubKaneo.new(status: 200, response: { "message" => "repository not found" })
 
     _out, err, code = run_log("search", "anything", env: {
-      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url
+      "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url
     })
 
     assert_equal 5, code, "a bug in bin/log reported itself as a recoverable outage"
@@ -200,7 +207,7 @@ class LogCliTest < ActiveSupport::TestCase
   # THE WIRE FORMAT IS THE ASSERTION. Not "the issue came back with our title" — that passes even
   # when both sides share a bug. Path, auth header and JSON body, each checked literally.
   test "open POSTs the documented issue payload to the documented path" do
-    stub = StubForgejo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
+    stub = StubKaneo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
 
     # THE TRAILING NEWLINE IS DELIBERATE, NOT A TYPO. `bin/secret` returns an EXPORTED override
     # verbatim (`printf '%s'`, no stripping — only the 1Password path is `--no-newline`), so this
@@ -209,8 +216,8 @@ class LogCliTest < ActiveSupport::TestCase
     # own Net::HTTP raises `ArgumentError: header field value cannot include CR/LF` for that, so a
     # dropped `.chomp` doesn't corrupt the request, it crashes it outright.
     out, err, code = run_log("open", "The scan tombstones a live node", env: {
-      "FORGEJO_TOKEN" => "t0ken\n", "FORGEJO_URL" => stub.url,
-      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+      "KANEO_TOKEN" => "t0ken\n", "KANEO_URL" => stub.url,
+      "KANEO_WORKSPACE" => "tinkerex", "KANEO_PROJECT" => "tinkerex"
     })
 
     assert_equal 0, code, "bin/log open failed: #{err}"
@@ -239,10 +246,10 @@ class LogCliTest < ActiveSupport::TestCase
   # escaped to Ruby's default handler and exited 1 — which was EXIT_UNFILED, so a broken proxy
   # reported a backlog.
   test "a 2xx with a non-JSON body is unreachable, not a stack trace" do
-    stub = StubForgejo.new(status: 200, response: "<html>502 Bad Gateway</html>")
+    stub = StubKaneo.new(status: 200, response: "<html>502 Bad Gateway</html>")
 
     _out, err, code = run_log("show", "1", env: {
-      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url
+      "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url
     })
 
     assert_equal 3, code, "a non-JSON 2xx did not reach the clean unreachable exit"
@@ -259,11 +266,11 @@ class LogCliTest < ActiveSupport::TestCase
   # read-side guard cannot see a write-side regression. Unwrapped, that error is neither
   # `Unreachable` nor spooled, and used to exit 1 outright.
   test "a write receiving a non-JSON 2xx is unreachable and spools" do
-    stub = StubForgejo.new(status: 200, response: "<html>proxy</html>")
+    stub = StubKaneo.new(status: 200, response: "<html>proxy</html>")
 
     Dir.mktmpdir do |spool|
       _out, err, code = run_log("open", "filed through a broken proxy", env: {
-        "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+        "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url,
         "LOG_SPOOL_DIR" => spool, "LOG_BRANCH" => "claude/example"
       })
 
@@ -280,7 +287,7 @@ class LogCliTest < ActiveSupport::TestCase
   # hand is exactly the per-PR tax that made STATUS.md unworkable, so bin/log reads it back
   # out of the PR. GH_BIN stubs `gh`; Task 8 mutation-checks that the stub is actually consulted.
   test "arc --from-pr builds the issue from the PR body and links back to it" do
-    stub = StubForgejo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
+    stub = StubKaneo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
 
     Dir.mktmpdir do |dir|
       gh = File.join(dir, "gh")
@@ -293,8 +300,8 @@ class LogCliTest < ActiveSupport::TestCase
       File.chmod(0o755, gh)
 
       _out, err, code = run_log("arc", "--from-pr", "261", env: {
-        "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
-        "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex", "GH_BIN" => gh
+        "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url,
+        "KANEO_WORKSPACE" => "tinkerex", "KANEO_PROJECT" => "tinkerex", "GH_BIN" => gh
       })
 
       assert_equal 0, code, "bin/log arc failed: #{err}"
@@ -321,7 +328,7 @@ class LogCliTest < ActiveSupport::TestCase
   test "an unreachable Forgejo spools the write, says so, and exits 3" do
     Dir.mktmpdir do |spool|
       _out, err, code = run_log("open", "Something worth keeping", env: {
-        "FORGEJO_TOKEN" => "t0ken", "LOG_SPOOL_DIR" => spool, "LOG_BRANCH" => "claude/example"
+        "KANEO_TOKEN" => "t0ken", "LOG_SPOOL_DIR" => spool, "LOG_BRANCH" => "claude/example"
       })
 
       assert_equal 3, code, "unreachable must be its own code, distinguishable from a usage error"
@@ -338,11 +345,11 @@ class LogCliTest < ActiveSupport::TestCase
   # the docs promised a spool file. This is the case the whole raise-don't-exit restructure exists
   # for; it is asserted, not argued.
   test "an HTTP error response spools too, not just a refused connection" do
-    stub = StubForgejo.new(status: 502, response: { "message" => "bad gateway" })
+    stub = StubKaneo.new(status: 502, response: { "message" => "bad gateway" })
 
     Dir.mktmpdir do |spool|
       _out, err, code = run_log("open", "Filed during an outage", env: {
-        "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+        "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url,
         "LOG_SPOOL_DIR" => spool, "LOG_BRANCH" => "claude/example"
       })
 
@@ -368,7 +375,7 @@ class LogCliTest < ActiveSupport::TestCase
       File.chmod(0o500, blocked)
 
       _out, err, code = run_log("open", "an arc worth keeping", env: {
-        "FORGEJO_TOKEN" => "t0ken", "LOG_SPOOL_DIR" => File.join(blocked, "spool"),
+        "KANEO_TOKEN" => "t0ken", "LOG_SPOOL_DIR" => File.join(blocked, "spool"),
         "LOG_BRANCH" => "claude/example"
       })
 
@@ -387,7 +394,7 @@ class LogCliTest < ActiveSupport::TestCase
   test "a failed read spools nothing" do
     Dir.mktmpdir do |spool|
       _out, _err, code = run_log("show", "1", env: {
-        "FORGEJO_TOKEN" => "t0ken", "LOG_SPOOL_DIR" => spool
+        "KANEO_TOKEN" => "t0ken", "LOG_SPOOL_DIR" => spool
       })
 
       assert_equal 3, code
@@ -406,7 +413,7 @@ class LogCliTest < ActiveSupport::TestCase
     real = Rails.root.join("tmp/log-pending", "#{branch}.md")
     before = File.exist?(real) ? File.read(real) : nil
 
-    _out, _err, code = run_log("open", "must not reach the real spool", env: { "FORGEJO_TOKEN" => "t0ken" })
+    _out, _err, code = run_log("open", "must not reach the real spool", env: { "KANEO_TOKEN" => "t0ken" })
 
     assert_equal 3, code
     after = File.exist?(real) ? File.read(real) : nil
@@ -451,11 +458,11 @@ class LogCliTest < ActiveSupport::TestCase
   # eleven and reported "11 labels present" both times, leaving 22. The test this replaces asserted
   # a 422 the server never sends, and passed because the stub answered 422 because the test said to.
   test "setup creates nothing when every label already exists" do
-    stub = StubForgejo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
+    stub = StubKaneo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
 
     out, err, code = run_log("setup", env: {
-      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
-      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+      "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url,
+      "KANEO_WORKSPACE" => "tinkerex", "KANEO_PROJECT" => "tinkerex"
     })
 
     assert_equal 0, code, "bin/log setup failed: #{err}"
@@ -471,12 +478,12 @@ class LogCliTest < ActiveSupport::TestCase
   # POST, has it.
   test "setup creates only what is missing, then confirms the whole set" do
     partial = LABEL_FIXTURE.reject { |l| l["name"] == "ci" }
-    stub = StubForgejo.new(routes: {
+    stub = StubKaneo.new(routes: {
       "GET /labels" => [ [ 200, partial ], [ 200, LABEL_FIXTURE ] ],
       "POST /labels" => [ 201, { "id" => 11, "name" => "ci" } ]
     })
 
-    out, err, code = run_log("setup", env: { "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url })
+    out, err, code = run_log("setup", env: { "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url })
 
     assert_equal 0, code, "bin/log setup failed: #{err}"
     assert_equal [ "ci" ], stub.requests.select { |r| r.method == "POST" }.map { |r| r.json["name"] },
@@ -493,7 +500,7 @@ class LogCliTest < ActiveSupport::TestCase
   test "a write whose label lookup fails still spools what it was going to send" do
     Dir.mktmpdir do |spool|
       _out, err, code = run_log("open", "must survive a failed label resolve", env: {
-        "FORGEJO_TOKEN" => "t0ken", "LOG_SPOOL_DIR" => spool, "LOG_BRANCH" => "claude/example"
+        "KANEO_TOKEN" => "t0ken", "LOG_SPOOL_DIR" => spool, "LOG_BRANCH" => "claude/example"
       })
 
       assert_equal 3, code
@@ -508,10 +515,10 @@ class LogCliTest < ActiveSupport::TestCase
   # today and RAISES in json 3.0. This repo's titles use em dashes constantly, so it is not an edge
   # case — and none of the thirty mutations found it. The live smoke test did, on its first run.
   test "a non-ASCII title survives a locale-less environment" do
-    stub = StubForgejo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
+    stub = StubKaneo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
 
     _out, err, code = run_log("open", "an arc — with an em dash", env: {
-      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
+      "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url,
       "LANG" => nil, "LC_ALL" => nil, "LC_CTYPE" => nil
     })
 
@@ -526,11 +533,11 @@ class LogCliTest < ActiveSupport::TestCase
   # A LABEL THE REPO DOES NOT HAVE NAMES ITSELF AND SAYS WHAT TO RUN, rather than surfacing Forgejo's
   # "cannot unmarshal string into ... int64", which describes our bug and not the user's.
   test "a missing label names itself and points at setup" do
-    stub = StubForgejo.new(routes: {
+    stub = StubKaneo.new(routes: {
       "GET /labels" => [ 200, LABEL_FIXTURE.reject { |l| l["name"] == "open-work" } ]
     })
 
-    _out, err, code = run_log("open", "x", env: { "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url })
+    _out, err, code = run_log("open", "x", env: { "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url })
 
     assert_equal 3, code
     assert_includes err, "open-work"
@@ -540,11 +547,11 @@ class LogCliTest < ActiveSupport::TestCase
   end
 
   test "deploy --dest share files a record naming only share, not the other two backends" do
-    stub = StubForgejo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
+    stub = StubKaneo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
 
     _out, err, code = run_log("deploy", "--image", "e079d433", "--dest", "share", env: {
-      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
-      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+      "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url,
+      "KANEO_WORKSPACE" => "tinkerex", "KANEO_PROJECT" => "tinkerex"
     })
 
     assert_equal 0, code, "bin/log deploy failed: #{err}"
@@ -566,7 +573,7 @@ class LogCliTest < ActiveSupport::TestCase
   # stale, and it fails silently: the command exits 0.
   test "an unrecognised deploy flag is refused, never silently defaulted" do
     _out, err, code = run_log("deploy", "--image", "abc123", "--destination", "only-share",
-                              env: { "FORGEJO_TOKEN" => "t0ken" })
+                              env: { "KANEO_TOKEN" => "t0ken" })
 
     assert_equal 2, code, "a typo'd flag filed a record instead of being refused"
     assert_includes err, "unrecognised argument"
@@ -574,7 +581,7 @@ class LogCliTest < ActiveSupport::TestCase
 
   test "deploy --dest with no value is a usage error, not a crash" do
     _out, _err, code = run_log("deploy", "--image", "abc123", "--dest",
-                               env: { "FORGEJO_TOKEN" => "t0ken" })
+                               env: { "KANEO_TOKEN" => "t0ken" })
 
     assert_equal 2, code
   end
@@ -584,11 +591,11 @@ class LogCliTest < ActiveSupport::TestCase
   # voice ("this bullet went on asserting a single even bound for months"). A dated comment appends
   # visibly; finding and rewriting a paragraph at line 4,700 does not happen.
   test "note posts to the comments endpoint and never rewrites the issue body" do
-    stub = StubForgejo.new(status: 201, response: { "id" => 7 })
+    stub = StubKaneo.new(status: 201, response: { "id" => 7 })
 
     _out, err, code = run_log("note", "128", "The measured figure was 7.8 ms, not 5.", env: {
-      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
-      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+      "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url,
+      "KANEO_WORKSPACE" => "tinkerex", "KANEO_PROJECT" => "tinkerex"
     })
 
     assert_equal 0, code, "bin/log note failed: #{err}"
@@ -608,7 +615,7 @@ class LogCliTest < ActiveSupport::TestCase
   test "a note spooled during an outage records which issue it belongs to" do
     Dir.mktmpdir do |spool|
       run_log("note", "128", "The measured figure was 7.8 ms.", env: {
-        "FORGEJO_TOKEN" => "t0ken", "LOG_SPOOL_DIR" => spool, "LOG_BRANCH" => "claude/example"
+        "KANEO_TOKEN" => "t0ken", "LOG_SPOOL_DIR" => spool, "LOG_BRANCH" => "claude/example"
       })
 
       spooled = File.read(File.join(spool, "claude-example.md"))
@@ -621,7 +628,7 @@ class LogCliTest < ActiveSupport::TestCase
   # Net::HTTP does not normalise a `..` segment, so it reaches the wire verbatim and a normalising
   # reverse proxy in front of Forgejo can resolve it outside the repo scope.
   test "an issue number containing path traversal is refused before it reaches the wire" do
-    _out, err, code = run_log("show", "../../../../admin/users", env: { "FORGEJO_TOKEN" => "t0ken" })
+    _out, err, code = run_log("show", "../../../../admin/users", env: { "KANEO_TOKEN" => "t0ken" })
 
     assert_equal 2, code, "a traversal segment was sent to the server"
     assert_includes err, "not an issue number"
@@ -637,11 +644,11 @@ class LogCliTest < ActiveSupport::TestCase
   # characters — a bare `&` starts a new query param and a bare `#` starts a fragment — so a query
   # containing either breaks the request unless encoded.
   test "search asks for both states and percent-encodes the query" do
-    stub = StubForgejo.new(status: 200, response: [])
+    stub = StubKaneo.new(status: 200, response: [])
 
     _out, err, code = run_log("search", "502 & the proxy #2", env: {
-      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
-      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+      "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url,
+      "KANEO_WORKSPACE" => "tinkerex", "KANEO_PROJECT" => "tinkerex"
     })
 
     assert_equal 0, code, "bin/log search failed: #{err}"
@@ -663,7 +670,7 @@ class LogCliTest < ActiveSupport::TestCase
   # "connection refused for nil port 80" — a confident, wrong answer to a malformed env var.
   test "a FORGEJO_URL with no scheme is a usage error, not a phantom connection refusal" do
     _out, err, code = run_log("show", "1", env: {
-      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => "forgejo.home"
+      "KANEO_TOKEN" => "t0ken", "KANEO_URL" => "forgejo.home"
     })
 
     assert_equal 2, code, "a malformed FORGEJO_URL was reported as a network failure"
@@ -679,7 +686,7 @@ class LogCliTest < ActiveSupport::TestCase
       File.chmod(0o755, gh)
 
       _out, err, code = run_log("arc", "--from-pr", "261", env: {
-        "FORGEJO_TOKEN" => "t0ken", "GH_BIN" => gh
+        "KANEO_TOKEN" => "t0ken", "GH_BIN" => gh
       })
 
       assert_equal 3, code, "a non-JSON gh reply did not become a clean unreachable exit"
@@ -691,15 +698,15 @@ class LogCliTest < ActiveSupport::TestCase
   # HISTORICAL ARCS ARRIVE ALREADY FINISHED, so they must be created CLOSED. Probed against the
   # live instance: CreateIssueOption accepts `closed: true` and returns state "closed".
   test "arc --from-file imports a section, closed, with its first heading as the title" do
-    stub = StubForgejo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
+    stub = StubKaneo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
 
     Dir.mktmpdir do |dir|
       path = File.join(dir, "entry.md")
       File.write(path, "## 2026-07-29: the audit-fix arc\n\nTwo security gates ran zero.\n")
 
       _out, err, code = run_log("arc", "--from-file", path, "--closed", env: {
-        "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
-        "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+        "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url,
+        "KANEO_WORKSPACE" => "tinkerex", "KANEO_PROJECT" => "tinkerex"
       })
 
       assert_equal 0, code, "import failed: #{err}"
@@ -719,12 +726,12 @@ class LogCliTest < ActiveSupport::TestCase
   # merge) and a historical import, so the default must be the live case — an import that forgets
   # the flag leaves a visible open issue, while the reverse silently closes live work.
   test "arc --from-file without --closed does not send closed" do
-    stub = StubForgejo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
+    stub = StubKaneo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
 
     Dir.mktmpdir do |dir|
       path = File.join(dir, "entry.md")
       File.write(path, "## live arc\n\nbody\n")
-      run_log("arc", "--from-file", path, env: { "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url })
+      run_log("arc", "--from-file", path, env: { "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url })
 
       post = stub.requests.find { |r| r.method == "POST" }
       refute post.json.key?("closed"), "an import default of closed would silently close live work"
@@ -739,10 +746,10 @@ class LogCliTest < ActiveSupport::TestCase
   # is the test that makes the default real: an ordinary open item or deploy record must never
   # arrive already closed.
   test "open and deploy never send closed" do
-    stub = StubForgejo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
+    stub = StubKaneo.new(routes: { "GET /labels" => [ 200, LABEL_FIXTURE ] })
 
-    run_log("open", "an ordinary item", env: { "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url })
-    run_log("deploy", "--image", "abc123", env: { "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url })
+    run_log("open", "an ordinary item", env: { "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url })
+    run_log("deploy", "--image", "abc123", env: { "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url })
 
     posts = stub.requests.select { |r| r.method == "POST" }
     assert_equal 2, posts.size, "expected one POST each from open and deploy"
@@ -761,7 +768,7 @@ class LogCliTest < ActiveSupport::TestCase
       path = File.join(dir, "bad.md")
       File.write(path, "no heading here\n")
 
-      _out, err, code = run_log("arc", "--from-file", path, env: { "FORGEJO_TOKEN" => "t0ken" })
+      _out, err, code = run_log("arc", "--from-file", path, env: { "KANEO_TOKEN" => "t0ken" })
 
       assert_equal 2, code
       assert_includes err, "no leading heading"
@@ -771,14 +778,14 @@ class LogCliTest < ActiveSupport::TestCase
   # --- close -----------------------------------------------------------------------------------
 
   test "close PATCHes state closed, and reads the issue first so it can tell you it was open" do
-    stub = StubForgejo.new(routes: {
+    stub = StubKaneo.new(routes: {
       "GET /issues/152" => [ 200, { "number" => 152, "title" => "Database foreign keys", "state" => "open" } ],
       "PATCH /issues/152" => [ 200, { "number" => 152, "state" => "closed" } ]
     })
 
     out, err, code = run_log("close", "152", env: {
-      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
-      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+      "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url,
+      "KANEO_WORKSPACE" => "tinkerex", "KANEO_PROJECT" => "tinkerex"
     })
 
     assert_equal 0, code, "bin/log close failed: #{err}"
@@ -798,13 +805,13 @@ class LogCliTest < ActiveSupport::TestCase
   end
 
   test "close reports an already-closed issue instead of sending a redundant write" do
-    stub = StubForgejo.new(routes: {
+    stub = StubKaneo.new(routes: {
       "GET /issues/99" => [ 200, { "number" => 99, "title" => "Done ages ago", "state" => "closed" } ]
     })
 
     out, err, code = run_log("close", "99", env: {
-      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
-      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+      "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url,
+      "KANEO_WORKSPACE" => "tinkerex", "KANEO_PROJECT" => "tinkerex"
     })
 
     assert_equal 0, code, "bin/log close failed: #{err}"
@@ -816,7 +823,7 @@ class LogCliTest < ActiveSupport::TestCase
   end
 
   test "close takes several issues and closes each one" do
-    stub = StubForgejo.new(routes: {
+    stub = StubKaneo.new(routes: {
       "GET /issues/152" => [ 200, { "number" => 152, "title" => "FKs", "state" => "open" } ],
       "GET /issues/153" => [ 200, { "number" => 153, "title" => "Item vs Model", "state" => "open" } ],
       "PATCH /issues/152" => [ 200, { "number" => 152, "state" => "closed" } ],
@@ -824,8 +831,8 @@ class LogCliTest < ActiveSupport::TestCase
     })
 
     _out, err, code = run_log("close", "152", "153", env: {
-      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
-      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+      "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url,
+      "KANEO_WORKSPACE" => "tinkerex", "KANEO_PROJECT" => "tinkerex"
     })
 
     assert_equal 0, code, "bin/log close failed: #{err}"
@@ -837,11 +844,11 @@ class LogCliTest < ActiveSupport::TestCase
   end
 
   test "close rejects a non-numeric issue and sends nothing" do
-    stub = StubForgejo.new
+    stub = StubKaneo.new
 
     _out, err, code = run_log("close", "../../etc/passwd", env: {
-      "FORGEJO_TOKEN" => "t0ken", "FORGEJO_URL" => stub.url,
-      "FORGEJO_OWNER" => "chaim354", "FORGEJO_REPO" => "tinkerex"
+      "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url,
+      "KANEO_WORKSPACE" => "tinkerex", "KANEO_PROJECT" => "tinkerex"
     })
 
     assert_equal 2, code, "expected a usage error, got #{code}"
@@ -861,7 +868,7 @@ class LogCliTest < ActiveSupport::TestCase
   # A CLOSE IS A WRITE, SO AN OUTAGE MUST SPOOL IT LIKE ANY OTHER. The default FORGEJO_URL in
   # run_log points at a dead port, which is the outage.
   test "close spools when Forgejo is unreachable, naming the issue it belongs to" do
-    _out, err, code = run_log("close", "152", env: { "FORGEJO_TOKEN" => "t0ken" })
+    _out, err, code = run_log("close", "152", env: { "KANEO_TOKEN" => "t0ken" })
 
     assert_equal 3, code, "expected EXIT_UNREACHABLE, got #{code}: #{err}"
   end

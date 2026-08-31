@@ -1,9 +1,9 @@
 require "socket"
 require "json"
 
-# A localhost stand-in for Forgejo that RECORDS REQUESTS VERBATIM.
+# A localhost stand-in for Kaneo that RECORDS REQUESTS VERBATIM.
 #
-# It deliberately does NOT model Forgejo. It captures method, path, headers and raw body, and
+# It deliberately does NOT model Kaneo. It captures method, path, headers and raw body, and
 # replays whatever the test told it to. §14e records why that distinction matters: FakeS3 decoded
 # with CGI.unescape while the adapter encoded with CGI.escape — exact inverses — so 79 of 80 tests
 # were green over silent permanent data loss on any filename containing a space. A fake that
@@ -25,7 +25,7 @@ require "json"
 #      inside an ensure and fails an otherwise-passing test, masking the real assertion.
 #   5. PORT 0 binds and listens before `new` returns, so `url` is valid immediately — no
 #      did-it-start race — and forked workers can never collide on a port.
-class StubForgejo
+class StubKaneo
   Request = Struct.new(:method, :path, :headers, :body, keyword_init: true) do
     def json = JSON.parse(body)
   end
@@ -34,17 +34,22 @@ class StubForgejo
 
   # `routes` maps "METHOD /path-fragment" to a reply, so one stub can serve a GET /labels list and a
   # POST /issues result in the same test — which the real flow needs, because an issue create must
-  # first resolve label NAMES to the int64 IDs Forgejo demands. A value may be a single
+  # first resolve label NAMES to the int64 IDs Kaneo demands. A value may be a single
   # [status, body] pair, or an ARRAY of them consumed in order (last one repeats), for flows whose
   # second call must see the effect of the first.
-  def initialize(status: 201, response: { "number" => 42, "title" => "stub", "state" => "open", "body" => "" },
+  # THE DEFAULT IS A KANEO TASK, NOT A FORGEJO ISSUE. `state`/`body` became `status`/`description`,
+  # `status` is kebab-case (a POST carrying "Open" is refused with a 400 naming the valid set), and a
+  # task carries an opaque `id` beside its citable `number` — every Kaneo path addresses the id.
+  def initialize(status: 201,
+                 response: { "id" => "task_stub", "number" => 42, "title" => "stub",
+                             "status" => "to-do", "description" => "" },
                  routes: {})
     @requests = []
     @errors = []
     @routes = routes.transform_values { |v| v.first.is_a?(Array) ? v.dup : [ v ] }
     @server = TCPServer.new("127.0.0.1", 0)
     # A String response is sent RAW — that is how a test drives the non-JSON-2xx path, which is
-    # what a proxy error page and Forgejo's own login page both look like on the wire.
+    # what a proxy error page and Kaneo's own login page both look like on the wire.
     @payload = response.is_a?(String) ? response : JSON.generate(response)
     @status = status
 
@@ -76,7 +81,7 @@ class StubForgejo
 
   # HANDLE RESCUES EVERYTHING, AND THAT CLOSES TWO FAILURES AT ONCE. Measured: if `handle` raises,
   # the `ensure socket.close` fires with no response written and the client sits on its 15 s read
-  # timeout, after which bin/log reports "Forgejo is unreachable - Net::ReadTimeout" - so a STUB
+  # timeout, after which bin/log reports "Kaneo is unreachable - Net::ReadTimeout" - so a STUB
   # BUG presents as a transport failure, costs 15 s per affected test, and multiplies by three
   # backend legs. Separately, a non-IO exception kills the accept thread, and `Thread#join`
   # RE-RAISES it from inside the test's `ensure`, masking the assertion that actually failed.
