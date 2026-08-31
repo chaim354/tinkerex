@@ -817,19 +817,28 @@ class FilesController < ApplicationController
   # for the 15-minute recurring Library::ScanJob.
   #
   # ENQUEUE, NOT INLINE. A scan walks the whole NAS or lists the whole bucket; running it in the
-  # request would block Puma and could time out on a large library. perform_later hands it to
-  # Solid Queue (which runs in Puma via SOLID_QUEUE_IN_PUMA -- the same worker the recurring sweep
-  # already relies on), and the user refreshes in a moment. This is a COMMAND for one user, so it
-  # calls #perform with `user_id:` directly -- ScanJob.scan_all! is the all-users schedule gate,
-  # not the per-user door. The gate above (require_scannable!) is what keeps this off chunk mode,
-  # where #perform would raise ArgumentError for want of an observer.
+  # request would block Puma and could time out on a large library. The enqueue hands it to Solid
+  # Queue (which runs in Puma via SOLID_QUEUE_IN_PUMA -- the same worker the recurring sweep
+  # already relies on), and the user refreshes in a moment. The gate above (require_scannable!) is
+  # what keeps this off chunk mode, where #perform would raise ArgumentError for want of an
+  # observer.
+  #
+  # THROUGH .enqueue_for, WHICH IS THE PER-USER DOOR -- ScanJob.scan_all! is the all-users SCHEDULE
+  # gate, and a bare perform_later here is not a shortcut past either one, it is a DIFFERENT
+  # ENQUEUE. `.enqueue_for` is the one place that decides what may be serialized into the queue's
+  # database, and it decides two things this action would otherwise get wrong in opposite
+  # directions: a share scan must carry its `root:`, because that is the only thing telling an
+  # operator reading the failed-jobs table WHICH root refused; an s3 scan must carry none, because
+  # an s3 library's target is a bucket plus the credentials to reach it and those must never be
+  # written there. This button was a third enqueuer naming neither, so a failed rescan from the
+  # Files page was anonymous on exactly the deployment where the root is the useful half.
   #
   # The redirect returns the user to WHAT THEY WERE LOOKING AT, folder or type filter, because the
   # button carries files_query_base and landing at the unfiltered root after a rescan is a lost
   # place. `ext` goes back through resolve_exts rather than being echoed from params: the same
   # whitelist that guards #index guards this, so a hand-edited value cannot ride a redirect.
   def rescan
-    Library::ScanJob.perform_later(user_id: current_user.id)
+    Library::ScanJob.enqueue_for(current_user)
     where = { folder: params[:folder].presence, ext: resolve_exts.presence&.join(",") }.compact
     redirect_to files_path(where), notice: "Rescan started — refresh in a moment."
   end

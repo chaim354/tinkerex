@@ -56,17 +56,37 @@ module Web
       assert_select "form[action=?] button", rescan_files_path, text: /rescan/i
     end
 
-    # The one that matters: the POST enqueues -- it does NOT run the scan inline -- and it names
-    # exactly the current user, the same shape the recurring s3 fan-out uses
-    # (scan_job_test.rb: args: [{ user_id: user.id }]). assert_enqueued_with proves it went to the
-    # queue, not that a scan happened, which is the whole point of enqueuing.
+    # The one that matters: the POST enqueues -- it does NOT run the scan inline. Exactly one job,
+    # which is what proves the response came from a queue write rather than from a scan having
+    # happened. WHAT the job carries is the next test's subject, deliberately split out: these are
+    # two different claims about the same call and only one of them is about this action.
     test "POST /files/rescan enqueues a Library::ScanJob for the current user, then redirects" do
       use_scannable_backend
-      assert_enqueued_with(job: Library::ScanJob, args: [ { user_id: @user.id } ]) do
+      assert_enqueued_jobs 1, only: Library::ScanJob do
         post rescan_files_path
       end
       assert_redirected_to files_path
       assert_match(/rescan started/i, flash[:notice])
+    end
+
+    # THE ROOT REACHES THE QUEUE, AND THAT IS OPERATOR VISIBILITY, NOT DECORATION. ActiveJob
+    # serializes these arguments into the queue's database, where they outlive the run: a share
+    # scan that REFUSES (Library::Scanner::UnsafeScan -- an unmounted NAS, a typo'd LIBRARY_PATH)
+    # leaves one failed-jobs row, and `root:` is the only thing in it that says WHICH root refused.
+    # ScanJob deliberately has no retry_on for that refusal precisely because the row IS the report.
+    #
+    # THE REGRESSION GUARD FOR THIS DOOR GOING THROUGH .enqueue_for. It used to call
+    # `perform_later(user_id:)` itself -- a third enqueuer beside .enqueue_for and .scan_all!,
+    # naming no root -- so a rescan started from this button was anonymous in that table on the one
+    # deployment where the root is the useful half. The other half of .enqueue_for's rule (an s3
+    # library enqueues with NO root, because its target is a bucket plus the credentials to reach
+    # it) is pinned where that decision lives, in scan_job_test.rb's ScanJobEnqueueForTest.
+    test "on a share library the enqueued scan carries the root, so a failure names it" do
+      use_scannable_backend
+      assert_enqueued_with(job: Library::ScanJob,
+                           args: [ { user_id: @user.id, root: @root.to_s } ]) do
+        post rescan_files_path
+      end
     end
 
     # Preserving the folder is a nice-to-have, pinned so it does not silently regress: a user who
