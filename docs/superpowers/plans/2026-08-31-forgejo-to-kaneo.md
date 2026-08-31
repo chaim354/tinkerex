@@ -378,10 +378,11 @@ chmod +x bin/migrate-record
 Append a temporary `main` that pings both, run it, then remove it — or verify inline:
 
 ```bash
-ruby -e 'require "./bin/migrate-record"' 2>/dev/null; echo "loads: $?"
+ruby -c bin/migrate-record && ruby -E UTF-8:UTF-8 -e 'load "./bin/migrate-record"; puts Migrate.workspace_id'
 ```
 
-Expected: `loads: 0` (the file defines a module and does nothing on load).
+Expected: `Syntax OK` then the workspace id. **`load`, not `require`** — `require` appends `.rb` to a
+path that has no extension and fails with a LoadError that reads like a missing file.
 
 - [ ] **Step 3: Commit**
 
@@ -419,7 +420,7 @@ The workspace is a better-auth organization (`/auth/organization/list`), and `PO
 - [ ] **Step 2: Run it and record what came back**
 
 ```bash
-ruby -r./bin/migrate-record -e 'Migrate.probe_context' 2>&1 | head -60
+ruby -E UTF-8:UTF-8 -e \'load "./bin/migrate-record"; Migrate.probe_context\' 2>&1 | head -60
 ```
 
 Expected: two JSON blobs. **Write down the field that holds the organization id and the shape of the
@@ -471,10 +472,10 @@ but doing it in the UI once is cheaper than probing that too.
 - [ ] **Step 4: Run the probe**
 
 ```bash
-ruby -r./bin/migrate-record -e 'Migrate.probe_counter(ENV.fetch("WS"))' WS=<workspace-id-from-step-2>
+ruby -E UTF-8:UTF-8 -e \'load "./bin/migrate-record"; Migrate.probe_counter(ENV.fetch("WS"))\' WS=<workspace-id-from-step-2>
 ```
 
-(Set `WS` as an environment variable: `WS=<id> ruby -r./bin/migrate-record -e 'Migrate.probe_counter(ENV.fetch("WS"))'`)
+(Set `WS` as an environment variable: `WS=<id> ruby -E UTF-8:UTF-8 -e \'load "./bin/migrate-record"; Migrate.probe_counter(ENV.fetch("WS"))\'`)
 
 Expected: `VERDICT: numbers were [1, 2, 3] then 4`.
 
@@ -561,7 +562,7 @@ resolver depends on.
 
 ```bash
 mkdir -p tmp/kaneo-probe
-WS=<workspace-id> ruby -r./bin/migrate-record -e 'Migrate.probe_verbs(ENV.fetch("WS"))' 2>tmp/kaneo-probe/verbs.txt
+WS=<workspace-id> ruby -E UTF-8:UTF-8 -e \'load "./bin/migrate-record"; Migrate.probe_verbs(ENV.fetch("WS"))\' 2>tmp/kaneo-probe/verbs.txt
 wc -l tmp/kaneo-probe/verbs.txt
 ```
 
@@ -645,7 +646,7 @@ git commit -m "Probe: the six wire contracts bin/log will depend on"
 - [ ] **Step 2: Run the export**
 
 ```bash
-mkdir -p tmp && ruby -r./bin/migrate-record -e 'Migrate.export'
+mkdir -p tmp && ruby -E UTF-8:UTF-8 -e \'load "./bin/migrate-record"; Migrate.export\'
 ```
 
 Expected: `wrote tmp/forgejo-export.json: 186 issues, 30 comments`.
@@ -689,7 +690,7 @@ Expected: `wrote tmp/forgejo-export.json: 186 issues, 30 comments`.
 - [ ] **Step 4: Run the verification**
 
 ```bash
-ruby -r./bin/migrate-record -e 'Migrate.verify_export'
+ruby -E UTF-8:UTF-8 -e \'load "./bin/migrate-record"; Migrate.verify_export\'
 ```
 
 Expected: `export verified: 186 issues, numbers 6-193, gaps [116, 117]`.
@@ -746,7 +747,7 @@ task; if labels are reusable, it creates them once and the import references the
 - [ ] **Step 2: Run it**
 
 ```bash
-WS=<workspace-id> ruby -r./bin/migrate-record -e 'p Migrate.create_project(ENV.fetch("WS")); Migrate.create_labels(ENV.fetch("WS"))'
+WS=<workspace-id> ruby -E UTF-8:UTF-8 -e \'load "./bin/migrate-record"; p Migrate.create_project(ENV.fetch("WS")); Migrate.create_labels(ENV.fetch("WS"))\'
 ```
 
 Expected: the project id printed, and all eleven label names listed. **Record the project id** — Task 8
@@ -829,7 +830,7 @@ git commit -m "Create the tinkerex project and its eleven labels"
 - [ ] **Step 2: Run the import**
 
 ```bash
-PID=<project-id> ruby -r./bin/migrate-record -e 'Migrate.import(ENV.fetch("PID"))'
+PID=<project-id> ruby -E UTF-8:UTF-8 -e \'load "./bin/migrate-record"; Migrate.import(ENV.fetch("PID"))\'
 ```
 
 Expected: `imported 193 tasks (186 real, 7 placeholders)` — 193 numbers, 186 issues, placeholders at
@@ -871,7 +872,7 @@ and it is the designed recovery, not a failure state.
 - [ ] **Step 5: Run it**
 
 ```bash
-WS=<workspace-id> ruby -r./bin/migrate-record -e 'Migrate.attach_labels(ENV.fetch("WS"))'
+WS=<workspace-id> ruby -E UTF-8:UTF-8 -e \'load "./bin/migrate-record"; Migrate.attach_labels(ENV.fetch("WS"))\'
 ```
 
 Expected: `attached labels to 186 tasks`.
@@ -923,7 +924,7 @@ git commit -m "Import 186 issues at their original numbers, 7 placeholders for t
 - [ ] **Step 2: Run it**
 
 ```bash
-PID=<project-id> ruby -r./bin/migrate-record -e 'Migrate.verify_import(ENV.fetch("PID"))'
+PID=<project-id> ruby -E UTF-8:UTF-8 -e \'load "./bin/migrate-record"; Migrate.verify_import(ENV.fetch("PID"))\'
 ```
 
 Expected: `verified 186 issues present at their original numbers`.
@@ -952,7 +953,7 @@ Expected: `verified 186 issues present at their original numbers`.
 - [ ] **Step 4: Run it**
 
 ```bash
-ruby -r./bin/migrate-record -e 'Migrate.import_comments'
+ruby -E UTF-8:UTF-8 -e \'load "./bin/migrate-record"; Migrate.import_comments\'
 ```
 
 Expected: `imported 30 comments`.

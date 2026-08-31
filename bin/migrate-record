@@ -1,0 +1,188 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# ONE-TIME MIGRATION TOOL: Forgejo -> Kaneo. Deleted once the cutover is verified; it is committed
+# in between so the import is reviewable and, if a step has to be redone, re-runnable.
+# Plan: docs/superpowers/plans/2026-08-31-forgejo-to-kaneo.md
+#
+# NO BUNDLER, NO RAILS, STDLIB ONLY — the rule bin/log carries, for the same reason (CLAUDE.md
+# §14j): a bundled parent exports BUNDLE_GEMFILE and a RUBYOPT force-requiring bundler/setup
+# process-wide, and every child inherits both. Loading no gem means a fresh clone, a worktree and a
+# cloud session all run this.
+#
+# NOTHING HERE CALLS `exit`. Helpers raise; the caller decides. Same shape as bin/log, and for the
+# same reason — a helper that exited raised SystemExit, which is not a StandardError and sails past
+# any rescue meant to catch it.
+require "json"
+require "net/http"
+require "open3"
+require "uri"
+
+# Captured subprocess output is tagged with the default external encoding, which is US-ASCII
+# whenever LANG/LC_ALL is unset — cron, Docker, a bare CI runner. bin/secret's diagnostics carry a
+# UTF-8 ellipsis and this record's titles are full of em dashes, so without this a perfectly good
+# credential read raises Encoding::CompatibilityError. Measured in bin/log before this file existed.
+Encoding.default_external = Encoding::UTF_8
+
+module Migrate
+  module_function
+
+  FORGEJO_URL   = ENV.fetch("FORGEJO_URL", "http://forgejo.home")
+  FORGEJO_OWNER = ENV.fetch("FORGEJO_OWNER", "chaim354")
+  FORGEJO_REPO  = ENV.fetch("FORGEJO_REPO", "tinkerex")
+  KANEO_URL     = ENV.fetch("KANEO_URL", "http://kaneo.home")
+
+  FORGEJO_TOKEN_REF = "op://tinkerex/forgejo key/credential"
+
+  # THE ITEM IS "kaneo", NOT "kaneo key" — it does not match the forgejo item's convention and that
+  # is fine; what matters is that the title carries no trailing space. It was created as "kaneo "
+  # and renamed on 2026-08-31, because an invisible character in this reference would have been
+  # copied into bin/log's TOKEN_REF *and* into CLAUDE.md §13, where no reviewer could see it. This
+  # repo already carries one doc/code mismatch on exactly this reference under Forgejo.
+  # bin/log must name this same string when Phase D lands.
+  KANEO_TOKEN_REF = "op://tinkerex/kaneo/credential"
+
+  class Failed < StandardError; end
+
+  # THROUGH bin/secret, NEVER `op read` DIRECTLY — that file is this repo's single definition of
+  # where a credential comes from, and it is what makes an exported value win over the vault.
+  # capture3 keeps the streams apart: bin/secret sends the value only on fd1 and its diagnostics only
+  # on fd2, so forwarding `err` cannot leak the value. Any rewrite that merges them re-opens the
+  # 2026-07-29 leak.
+  def secret(name, ref)
+    out, err, status = Open3.capture3(File.expand_path("secret", __dir__), name, ref)
+    raise Failed, "could not resolve #{name} from #{ref}: #{err.strip}" if !status.success? || out.empty?
+
+    out.chomp
+  end
+
+  def forgejo_token = @forgejo_token ||= secret("FORGEJO_TOKEN", FORGEJO_TOKEN_REF)
+
+  def kaneo_token = @kaneo_token ||= secret("KANEO_TOKEN", KANEO_TOKEN_REF)
+
+  # ONE REQUEST METHOD FOR BOTH SERVERS, differing only in the Authorization header — Forgejo takes
+  # `token <t>`, Kaneo takes `Bearer <t>`. Keeping them in one place is what stops a later edit from
+  # sending a Forgejo-shaped header to Kaneo and reading the resulting 401 as a bad key.
+  #
+  # A NON-2xx RAISES. This tool's failure mode is a half-finished import, so every call has to fail
+  # loudly at the point it goes wrong rather than return nil and let the loop carry on.
+  def request(base, auth, method, path, body = nil)
+    uri = URI.parse("#{base.chomp('/')}#{path}")
+    klass = { get: Net::HTTP::Get, post: Net::HTTP::Post, put: Net::HTTP::Put,
+              patch: Net::HTTP::Patch, delete: Net::HTTP::Delete }.fetch(method)
+    req = klass.new(uri)
+    req["Authorization"] = auth
+    req["Content-Type"] = "application/json"
+    req.body = JSON.generate(body) if body
+
+    res = Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https",
+                                              open_timeout: 5, read_timeout: 30) { |h| h.request(req) }
+    code = res.code.to_i
+    unless code.between?(200, 299)
+      raise Failed, "HTTP #{res.code} from #{method.to_s.upcase} #{path}: #{res.body.to_s[0, 300]}"
+    end
+
+    res.body.to_s.empty? ? nil : JSON.parse(res.body)
+  end
+
+  def forgejo(method, path, body = nil)
+    request(FORGEJO_URL, "token #{forgejo_token}", method,
+            "/api/v1/repos/#{FORGEJO_OWNER}/#{FORGEJO_REPO}#{path}", body)
+  end
+
+  def kaneo(method, path, body = nil)
+    request(KANEO_URL, "Bearer #{kaneo_token}", method, "/api#{path}", body)
+  end
+
+  # The workspace, measured 2026-08-31: a Kaneo workspace IS a better-auth organization, and there is
+  # no /api/workspace collection to list. GET /api/project REFUSES to answer without a workspaceId
+  # query param (400), so this must resolve first — the project list cannot be what tells you the
+  # workspace.
+  def workspace_id(slug = "tinkerex")
+    @workspace_id ||= begin
+      orgs = kaneo(:get, "/auth/organization/list")
+      found = orgs.find { |o| o["slug"] == slug }
+      raise Failed, "no workspace with slug #{slug.inspect}: saw #{orgs.map { |o| o['slug'] }.inspect}" unless found
+
+      found.fetch("id")
+    end
+  end
+
+  # ---------------------------------------------------------------------------------------------
+  # PROBES. These write nothing that survives: each makes a throwaway project, and the whole point
+  # is to measure the server rather than reason about it. bin/log carries a shipped bug where a wire
+  # format was ASSERTED and the stub agreed with the assertion — §14e's FakeS3 rule guards the code
+  # and the fake sharing a misunderstanding of EACH OTHER, not both misunderstanding the SERVER.
+  # ---------------------------------------------------------------------------------------------
+
+  def throwaway_project(name, stamp)
+    kaneo(:post, "/project", { name: name, workspaceId: workspace_id,
+                               icon: "Beaker", slug: "#{name.tr(' ', '-')}-#{stamp}" })
+  end
+
+  # THE ASSUMPTION UNDER THE WHOLE MIGRATION, MEASURED RATHER THAN ARGUED. Creates a throwaway
+  # project, makes three tasks, deletes the middle one, makes a fourth. The number-preserving import
+  # is only safe if this reports 1, 2, 3 and then 4: a reused number means a placeholder could be
+  # silently consumed and every issue after it shifted by one, which would break all 129 tinkerex#N
+  # citations in the tree while looking like it worked.
+  def probe_counter(stamp)
+    project = throwaway_project("counter probe", stamp)
+    pid = project.fetch("id")
+    warn "probe project: #{project['slug']} (#{pid})"
+
+    made = (1..3).map do |i|
+      t = kaneo(:post, "/task/#{pid}", { title: "probe #{i}", description: "",
+                                         priority: "no-priority", status: "To Do" })
+      warn "  created #{t['title']}: number=#{t['number'].inspect} id=#{t['id']}"
+      t
+    end
+
+    kaneo(:delete, "/task/#{made[1].fetch('id')}")
+    warn "  deleted the second task (number #{made[1]['number'].inspect})"
+
+    fourth = kaneo(:post, "/task/#{pid}", { title: "probe 4", description: "",
+                                            priority: "no-priority", status: "To Do" })
+    warn "  created #{fourth['title']}: number=#{fourth['number'].inspect} id=#{fourth['id']}"
+
+    numbers = made.map { |t| t["number"] }
+    pass = numbers == [ 1, 2, 3 ] && fourth["number"] == 4
+    warn ""
+    warn "VERDICT: first three #{numbers.inspect}, fourth #{fourth['number'].inspect} -> #{pass ? 'PASS' : 'FAIL'}"
+    warn pass ? "The number-preserving import is viable." : "STOP. Do not import; fall back to renumbering."
+    { pass: pass, project_id: pid, numbers: numbers, fourth: fourth["number"] }
+  end
+
+  # SIX CONTRACTS, OBSERVED. Each block below is the evidence a Phase D implementation is written
+  # against. The list endpoint matters most: its OpenAPI response type is a bare {"type":"object"}
+  # with no properties, so its envelope is genuinely unknown until seen.
+  def probe_verbs(stamp)
+    project = throwaway_project("verb probe", stamp)
+    pid = project.fetch("id")
+    ws = workspace_id
+    warn "probe project: #{project['slug']} (#{pid})"
+
+    show = ->(label, value) { warn "\n== #{label}\n#{JSON.pretty_generate(value)}" }
+
+    show.call("columns — what `status` strings does a fresh project have?", kaneo(:get, "/column/#{pid}"))
+
+    task = kaneo(:post, "/task/#{pid}", { title: "verb probe", description: "body text",
+                                          priority: "no-priority", status: "To Do" })
+    tid = task.fetch("id")
+    show.call("create task", task)
+    show.call("LIST TASKS — the untyped one. What is the envelope?",
+              kaneo(:get, "/task/tasks/#{pid}?limit=200"))
+    show.call("label create with taskId — does it attach in one call?",
+              kaneo(:post, "/label", { name: "arc", color: "#666666", workspaceId: ws, taskId: tid }))
+    show.call("labels on the task", kaneo(:get, "/label/task/#{tid}"))
+    show.call("labels in the workspace — reusable, or one row per task?",
+              kaneo(:get, "/label/workspace/#{ws}"))
+    show.call("comment", kaneo(:post, "/comment/#{tid}", { content: "a correction" }))
+    show.call("status change (this is what `close` will do)",
+              kaneo(:put, "/task/status/#{tid}", { status: "Done" }))
+    show.call("search", kaneo(:get, "/search?q=verb+probe&projectId=#{pid}"))
+
+    pid
+  end
+
+  def delete_project(project_id) = kaneo(:delete, "/project/#{project_id}")
+end
