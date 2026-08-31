@@ -22,7 +22,9 @@ module Maker
     # NOTHING.
     #
     # WHAT PROTECTS THAT PATH IS `Library::ScanJob`'S OWN `limits_concurrency` — it is enqueued
-    # exclusively via `perform_later` (`scan_all!` and `FilesController#rescan`; grep-verified), so
+    # exclusively via `perform_later`, and by now exclusively through `Library::ScanJob.enqueue_for`,
+    # whose three callers are `scan_all!`, `FilesController#rescan` and
+    # `Projects::ScansController#create` (the per-project "Scan folder" button); grep-verified. So
     # its per-user limit is what serializes the share/s3 sweep. DO NOT DELETE IT AS REDUNDANT WITH
     # THIS ONE: they cover disjoint paths, and removing ScanJob's reopens the duplicate-adoption
     # race above on the two backends this line cannot reach.
