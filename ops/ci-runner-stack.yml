@@ -18,10 +18,19 @@
 # runner cannot write its own work dir — a first-boot failure that reads as a broken image:
 #
 #   ssh root@192.168.1.146 'mkdir -p /mnt/user/appdata/tinkerex-ci/runner-{1,2,3,4}/_work'
-#   ssh root@192.168.1.146 'chown -R 1000:1000 /mnt/user/appdata/tinkerex-ci'
+#   ssh root@192.168.1.146 'chown -R 1001:121 /mnt/user/appdata/tinkerex-ci'
 #
-# 1000 is the `runner` user in myoung34/github-runner; confirm rather than assume, since the image
-# is built on that same box anyway — `docker run --rm tinkerex-ci-runner:2026-08-31 id -u`.
+# 1001:121 IS MEASURED, NOT ASSUMED, AND THE OBVIOUS GUESS IS WRONG. In
+# myoung34/github-runner:2.336.0 the runner user is `uid=1001(runner) gid=121(runner)` —
+# `runner:x:1001:121::/home/runner:/bin/sh` — not the 1000:1000 a reader would expect from the usual
+# first-user convention. An earlier draft of this file said 1000:1000, which would have left the
+# work dir unwritable on first boot in exactly the way described above. Re-measure if the base image
+# tag ever moves:
+#
+#   docker run --rm --entrypoint sh myoung34/github-runner:2.336.0 -c 'id runner'
+#
+# And if `RUNNER_UID`/`RUNNER_GID` are ever set on the stack, this chown goes stale SILENTLY and
+# reproduces the same first-boot failure — they are deliberately not set below.
 #
 # THE ONE SECRET IS A PORTAINER STACK ENVIRONMENT VARIABLE, not a value in this file:
 # RUNNER_ACCESS_TOKEN, a fine-grained PAT with repo administration:write on chaim354/tinkerex. It
