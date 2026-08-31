@@ -182,5 +182,40 @@ module Web
     test "the store backing this throttle is real, not a null store" do
       assert_not_kind_of ActiveSupport::Cache::NullStore, ActionController::Base.cache_store
     end
+
+    # ASSERT THE RENDERED MARKUP, not a Ruby hash. §14d records two shipped bugs invisible to a
+    # green suite because the tests POSTed `params: { x: {...} }` and bypassed the form entirely.
+    test "the project page renders a scan button pointing at this project's scan path" do
+      use_share!
+      get project_path(@project)
+      assert_response :success
+      assert_select "form[action=?]", project_scan_path(@project) do
+        assert_select "button", text: /scan folder/i
+      end
+    ensure
+      FileUtils.remove_entry(@root) if @root&.exist?
+    end
+
+    test "the reload element appears only after a scan started, never on a plain view" do
+      use_share!
+      get project_path(@project)
+      assert_select "[data-controller~=?]", "scanreload", false,
+                    "a plain project view must not schedule a reload"
+
+      get project_path(@project, scanning: 1)
+      assert_select "[data-controller~=?]", "scanreload", 1
+      # The reload target is the param-FREE url. That is what stops it looping: the reloaded page
+      # carries no ?scanning=1, renders no scanreload element, and schedules nothing.
+      assert_select "[data-scanreload-url-value=?]", project_path(@project)
+    ensure
+      FileUtils.remove_entry(@root) if @root&.exist?
+    end
+
+    # chunk_remote finishes its work inside the request, so there is nothing to wait for.
+    test "chunk_remote never renders the reload element" do
+      FileLayer.current = FileLayer::ChunkRemote.new
+      get project_path(@project, scanning: 1)
+      assert_select "[data-controller~=?]", "scanreload", false
+    end
   end
 end

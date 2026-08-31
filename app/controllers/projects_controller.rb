@@ -108,6 +108,11 @@ class ProjectsController < ApplicationController
       nil
     end
     @move_conflict = move_conflict_prompt
+    # `== "1"`, not `.present?` — the same reading #index applies to `archived`. Set by
+    # Projects::ScansController's async branch; it is a one-shot render hint, not state, which is
+    # why it rides in the url rather than in the session: the reload navigates to the param-free
+    # url and the hint is gone by construction.
+    @scan_started = params[:scanning] == "1"
   end
 
   def new
