@@ -180,7 +180,30 @@ RUN printf '%b\n' \
  && rm -rf /tmp/stl-thumbnailer /tmp/smoke.stl /tmp/stl-smoke.png
 
 # ---------------------------------------------------------------------------------------------
-# BACK TO THE NON-ROOT RUNNER USER. Headless Chrome refuses to start as root without --no-sandbox,
-# and dropping the sandbox is the wrong fix — running as an ordinary user keeps it.
+# JOBS RUN AS THE NON-ROOT `runner` USER — VIA THE ENTRYPOINT'S OWN KNOB, NOT VIA `USER runner`.
+#
+# Headless Chrome refuses to start as root without --no-sandbox, and dropping the sandbox is the
+# wrong fix, so jobs must not be root. The obvious way to say that is a final `USER runner`, and it
+# is WRONG FOR THIS BASE IMAGE. Measured on the box, 2026-08-31 — all four containers registered and
+# then immediately tore themselves down in a restart loop:
+#
+#     √ Connected to GitHub
+#     √ Runner successfully added
+#     ERROR: RUN_AS_ROOT env var is set to true but the user has been overridden
+#            and is not running as root, but UID '1001'
+#     Caught EXIT - Deregistering runner
+#
+# Note WHERE it failed: authentication and registration both SUCCEEDED. A `USER` line here reads as
+# a container-security tweak and presents as a credential problem, which is the wrong place to look.
+#
+# `RUN_AS_ROOT=false` is the mechanism the image actually provides, and it needs the entrypoint to
+# START as root: /entrypoint.sh then chowns /actions-runner, ${RUNNER_WORKDIR} and
+# /opt/hostedtoolcache to `runner` — repairing the root-owned files `config.sh` just wrote — and only
+# then execs `gosu runner "$@"`. Starting as `runner` skips every one of those chowns; the entrypoint
+# has a branch for it and takes it silently, so the failure would surface later and further away.
+#
+# NET EFFECT IS WHAT `USER runner` WAS REACHING FOR: the runner process and every job it spawns run
+# as uid 1001, so Chrome keeps its sandbox. Do not add `USER runner` back, and do not "fix" a
+# Chrome-as-root error by adding --no-sandbox.
 # ---------------------------------------------------------------------------------------------
-USER runner
+ENV RUN_AS_ROOT=false
