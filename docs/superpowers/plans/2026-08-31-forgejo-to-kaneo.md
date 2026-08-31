@@ -521,6 +521,8 @@ resolver depends on.
                                          icon: "Beaker", slug: "verb-probe-#{Time.now.to_i}" })
     pid = project.fetch("id")
 
+    # THE WORKSPACE IS ALREADY KNOWN: `tinkerex`, id lIN1YZezsLM0qqD9UncNSoWhznwliar7, measured
+    # 2026-08-31 via GET /api/auth/organization/list. It is passed in rather than discovered.
     warn "== columns (what `status` strings does a new project have?)"
     warn JSON.pretty_generate(kaneo(:get, "/column/#{pid}"))
 
@@ -1052,6 +1054,7 @@ git commit -m "Rename the stub: it modelled no server, so this is a rename"
 ```ruby
   test "every request carries a Bearer token and reaches the /api prefix" do
     stub = StubKaneo.new(routes: {
+      "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
       "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
       "GET /task/tasks" => [ 200, [ { "id" => "t1", "number" => 7, "title" => "x", "status" => "Open" } ] ]
     })
@@ -1081,28 +1084,43 @@ Expected: FAIL — `bin/log` still sends `token ...` and builds Forgejo paths.
   # credential) and only one of them could ever have been right.
   TOKEN_REF = "op://tinkerex/kaneo key/credential"
 
-  def kaneo_url    = ENV.fetch("KANEO_URL", "http://kaneo.home")
-  def project_slug = ENV.fetch("KANEO_PROJECT", "tinkerex")
+  def kaneo_url      = ENV.fetch("KANEO_URL", "http://kaneo.home")
+  def workspace_slug = ENV.fetch("KANEO_WORKSPACE", "tinkerex")
+  def project_slug   = ENV.fetch("KANEO_PROJECT", "tinkerex")
 
-  # THE SLUG IS CONFIG; THE ID IS RESOLVED. Every Kaneo path takes an opaque project id, but putting
-  # a uuid in an env default would mean a fresh clone cannot run bin/log at all — which is exactly
-  # what FORGEJO_OWNER/FORGEJO_REPO's human-readable defaults bought. One GET, memoized for the
+  # THE SLUGS ARE CONFIG; THE IDS ARE RESOLVED. Every Kaneo path takes an opaque id, but putting one
+  # in an env default would mean a fresh clone cannot run bin/log at all — which is exactly what
+  # FORGEJO_OWNER/FORGEJO_REPO's human-readable defaults bought. Both lookups are memoized for the
   # process, mirroring label_index's existing shape.
   #
-  # ONE LOOKUP SERVES BOTH IDS. The project record carries workspaceId, and POST /label needs it —
-  # so resolving them separately would mean two identical GETs per write and, worse, two places that
-  # could come to disagree about which project is "the record". §14a's one-condition-two-answers.
-  def project
-    @project ||= begin
-      body = parse(api(:get, "/api/project"), "/api/project")
-      list = body.is_a?(Array) ? body : body.fetch("projects", [])
-      list.find { |p| p["slug"] == project_slug } or
-        raise Unreachable, "no project with slug #{project_slug.inspect} (set KANEO_PROJECT)"
+  # TWO LOOKUPS, NOT ONE, AND THE ORDER IS FORCED. The obvious design reads GET /api/project once and
+  # takes `workspaceId` off the project record — but **GET /api/project REFUSES to answer without a
+  # workspaceId query param** (measured: 400, "Invalid key: Expected \"workspaceId\" but received
+  # undefined"). So the project list cannot be the thing that tells you the workspace; the workspace
+  # must be resolved first, from better-auth's own organization list. A workspace in Kaneo IS a
+  # better-auth organization — there is no /api/workspace collection to list.
+  def workspace_id
+    @workspace_id ||= begin
+      path = "/api/auth/organization/list"
+      orgs = parse(api(:get, path), path)
+      found = orgs.find { |o| o["slug"] == workspace_slug }
+      raise Unreachable, "no workspace with slug #{workspace_slug.inspect} (set KANEO_WORKSPACE)" unless found
+
+      found.fetch("id")
     end
   end
 
-  def project_id   = project.fetch("id")
-  def workspace_id = project.fetch("workspaceId")
+  def project_id
+    @project_id ||= begin
+      path = "/api/project?workspaceId=#{workspace_id}"
+      body = parse(api(:get, path), path)
+      list = body.is_a?(Array) ? body : body.fetch("projects", [])
+      found = list.find { |p| p["slug"] == project_slug }
+      raise Unreachable, "no project with slug #{project_slug.inspect} (set KANEO_PROJECT)" unless found
+
+      found.fetch("id")
+    end
+  end
 ```
 
 - [ ] **Step 4: Swap the header and the URL builder in `perform`**
@@ -1157,6 +1175,7 @@ Kaneo addresses tasks by an opaque `id`; the citable `number` is not addressable
 ```ruby
   test "a number resolves to the task id before any addressed call is made" do
     stub = StubKaneo.new(routes: {
+      "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
       "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
       "GET /task/tasks" => [ 200, [ { "id" => "abc", "number" => 178, "title" => "Staging panel", "status" => "Done" } ] ]
     })
@@ -1170,6 +1189,7 @@ Kaneo addresses tasks by an opaque `id`; the citable `number` is not addressable
 
   test "a number that no task carries is a clear refusal, not a crash" do
     stub = StubKaneo.new(routes: {
+      "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
       "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
       "GET /task/tasks" => [ 200, [] ]
     })
@@ -1244,6 +1264,7 @@ git commit -m "Resolve a citable number to Kaneo's opaque task id"
 ```ruby
   test "search asks Kaneo's search endpoint, scoped to the project, and percent-encodes the query" do
     stub = StubKaneo.new(routes: {
+      "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
       "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
       "GET /search" => [ 200, { "tasks" => [ { "number" => 12, "title" => "a & b", "status" => "Done" } ] } ]
     })
@@ -1320,6 +1341,7 @@ git commit -m "show and search read from Kaneo, scoped to the project"
 ```ruby
   test "creating an arc posts the task, then attaches the label, and reports the number" do
     stub = StubKaneo.new(routes: {
+      "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
       "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
       "POST /task/p1" => [ 201, { "id" => "t9", "number" => 194, "title" => "An arc", "status" => "Open" } ],
       "POST /label" => [ 201, { "id" => "l1", "name" => "arc" } ]
@@ -1346,6 +1368,7 @@ git commit -m "show and search read from Kaneo, scoped to the project"
 
   test "a task created but left unlabelled is reported, never reported as success" do
     stub = StubKaneo.new(routes: {
+      "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
       "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
       "POST /task/p1" => [ 201, { "id" => "t9", "number" => 194, "title" => "An arc", "status" => "Open" } ],
       "POST /label" => [ 500, { "message" => "boom" } ]
@@ -1478,6 +1501,7 @@ git commit -m "Create tasks and attach labels; an unlabelled task is reported, n
 ```ruby
   test "note posts a comment against the resolved task id and never rewrites the description" do
     stub = StubKaneo.new(routes: {
+      "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
       "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
       "GET /task/tasks" => [ 200, [ { "id" => "abc", "number" => 178, "title" => "x", "status" => "Done" } ] ],
       "POST /comment" => [ 201, { "id" => "c1" } ]
@@ -1496,6 +1520,7 @@ git commit -m "Create tasks and attach labels; an unlabelled task is reported, n
 
   test "close moves the task to Done and reports an already-closed one instead of re-sending" do
     stub = StubKaneo.new(routes: {
+      "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
       "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
       "GET /task/tasks" => [ 200, [
         { "id" => "a", "number" => 10, "title" => "open one", "status" => "Open" },
@@ -1596,7 +1621,8 @@ git commit -m "note comments, close moves the column; already-closed still repor
 ```ruby
     ([ "bin/log — record work in Kaneo. The single write door.", "" ] + rows + [
       "",
-      "Env: KANEO_URL (default http://kaneo.home), KANEO_PROJECT (default tinkerex), " \
+      "Env: KANEO_URL (default http://kaneo.home), KANEO_WORKSPACE and KANEO_PROJECT " \
+      "(both default tinkerex), " \
       "LOG_SPOOL_DIR (default tmp/log-pending), LOG_BRANCH"
     ]).join("\n")
 ```
