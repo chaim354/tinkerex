@@ -132,7 +132,7 @@ module Migrate
 
     made = (1..3).map do |i|
       t = kaneo(:post, "/task/#{pid}", { title: "probe #{i}", description: "",
-                                         priority: "no-priority", status: "To Do" })
+                                         priority: "no-priority", status: OPEN_STATUS })
       warn "  created #{t['title']}: number=#{t['number'].inspect} id=#{t['id']}"
       t
     end
@@ -141,7 +141,7 @@ module Migrate
     warn "  deleted the second task (number #{made[1]['number'].inspect})"
 
     fourth = kaneo(:post, "/task/#{pid}", { title: "probe 4", description: "",
-                                            priority: "no-priority", status: "To Do" })
+                                            priority: "no-priority", status: OPEN_STATUS })
     warn "  created #{fourth['title']}: number=#{fourth['number'].inspect} id=#{fourth['id']}"
 
     numbers = made.map { |t| t["number"] }
@@ -166,7 +166,7 @@ module Migrate
     show.call("columns — what `status` strings does a fresh project have?", kaneo(:get, "/column/#{pid}"))
 
     task = kaneo(:post, "/task/#{pid}", { title: "verb probe", description: "body text",
-                                          priority: "no-priority", status: "To Do" })
+                                          priority: "no-priority", status: OPEN_STATUS })
     tid = task.fetch("id")
     show.call("create task", task)
     show.call("LIST TASKS — the untyped one. What is the envelope?",
@@ -178,10 +178,42 @@ module Migrate
               kaneo(:get, "/label/workspace/#{ws}"))
     show.call("comment", kaneo(:post, "/comment/#{tid}", { content: "a correction" }))
     show.call("status change (this is what `close` will do)",
-              kaneo(:put, "/task/status/#{tid}", { status: "Done" }))
+              kaneo(:put, "/task/status/#{tid}", { status: CLOSED_STATUS }))
     show.call("search", kaneo(:get, "/search?q=verb+probe&projectId=#{pid}"))
 
     pid
+  end
+
+  # THE STATUS VOCABULARY IS KEBAB-CASE AND FIXED PER PROJECT, measured 2026-08-31: a POST carrying
+  # "To Do" is refused with a 400 naming the whole set. So a fresh Kaneo project ships six columns,
+  # not the two this migration needs — the record maps onto `to-do` and `done` and leaves the other
+  # four unused rather than inventing columns Kaneo would not accept.
+  OPEN_STATUS   = "to-do"
+  CLOSED_STATUS = "done"
+  STATUSES = %w[to-do in-progress in-review done planned archived].freeze
+
+  # ONE WALK OF THE BOARD, SHARED BY EVERY READER HERE. GET /task/tasks/:projectId returns a BOARD,
+  # not a list: tasks sit in `data.columns[].tasks`, with `archivedTasks` and `plannedTasks` as two
+  # off-board buckets beside them. Its OpenAPI response type is a bare {"type":"object"} with no
+  # properties, so this shape was observed, never read.
+  #
+  # THE PAGE SIZE IS CAPPED AT 100 HOWEVER LARGE A `limit` YOU ASK FOR — measured: limit=200 answered
+  # pageSize=100. With 193 tasks a single un-paginated call sees roughly half and reports no error,
+  # which is the same well-formed lie Forgejo's 50-cap tells the export.
+  def all_tasks(project_id)
+    tasks = []
+    page = 1
+    loop do
+      body = kaneo(:get, "/task/tasks/#{project_id}?page=#{page}&limit=100")
+      data = body.fetch("data", {})
+      tasks.concat(data.fetch("columns", []).flat_map { |c| c["tasks"] || [] })
+      tasks.concat(data["archivedTasks"] || [])
+      tasks.concat(data["plannedTasks"] || [])
+      break if page >= body.dig("pagination", "totalPages").to_i
+
+      page += 1
+    end
+    tasks
   end
 
   def delete_project(project_id) = kaneo(:delete, "/project/#{project_id}")

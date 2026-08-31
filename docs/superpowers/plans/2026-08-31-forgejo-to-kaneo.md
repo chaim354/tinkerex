@@ -548,7 +548,7 @@ resolver depends on.
     warn JSON.pretty_generate(kaneo(:post, "/comment/#{tid}", { content: "a correction" }))
 
     warn "== status change (close)"
-    warn JSON.pretty_generate(kaneo(:put, "/task/status/#{tid}", { status: "Done" }))
+    warn JSON.pretty_generate(kaneo(:put, "/task/status/#{tid}", { status: CLOSED_STATUS }))
 
     warn "== search"
     warn JSON.pretty_generate(kaneo(:get, "/search?q=verb+probe&projectId=#{pid}"))
@@ -571,7 +571,7 @@ before Phase D, and each has a concrete consequence:
 
 1. **What envelope does `GET /task/tasks/{projectId}` return?** Determines the number→id resolver.
 2. **What `status` strings does a fresh project's board use?** `bin/log close` must send one that
-   exists. `"Done"` is a guess until this says otherwise.
+   exists.
 3. **Does `POST /label` with `taskId` attach in one call, or is `PUT /label/{id}/task` also needed?**
    Determines whether task creation is one wire call or two, and therefore whether a task can exist
    unlabelled after a partial failure.
@@ -581,8 +581,38 @@ before Phase D, and each has a concrete consequence:
 
 - [ ] **Step 3: Record the answers in the plan**
 
-Write the four answers into this task as a comment block before continuing, so Phase D is not written
-from memory of a terminal that has since scrolled.
+**MEASURED 2026-08-31 against the live instance. Every one of these contradicted the plan as written,
+and none of them would have failed loudly — this is the task earning its place.**
+
+1. **`GET /task/tasks/{projectId}` is a BOARD, not a task list.**
+   `{"data": {"columns": [{"slug": "to-do", "tasks": [...]}, ...], "archivedTasks": [], "plannedTasks": []},
+   "pagination": {"total", "page", "pageSize", "totalPages"}}`.
+   Tasks are nested per column **plus two off-board buckets**. The plan's
+   `body.is_a?(Array) ? body : body.fetch("tasks", [])` finds neither and yields an EMPTY index —
+   silently, so every `show`/`note`/`close` would report "no issue #N" for a record that is all there.
+   **`pageSize` came back 100 for a request that asked `limit=200`**, so the limit is capped and the
+   walk must paginate — the same trap Forgejo's 50-cap sets in Task 6.
+
+2. **Statuses are kebab-case and fixed per project**: `to-do`, `in-progress`, `in-review`, `done`,
+   `planned`, `archived`. A POST carrying `"To Do"` is refused with a 400 that names the whole set.
+   The board shows four columns; `planned` and `archived` are off-board buckets. **Open → `to-do`,
+   closed → `done`.**
+
+3. **`POST /label` attaches in ONE call** when given `taskId` — no second `PUT /label/{id}/task`.
+
+4. **A label row is per-attachment, and a vocabulary row is the same table with `taskId` null.**
+   `POST /label` without `taskId` succeeds and stores `taskId: nil`. `GET /label/workspace/{ws}`
+   returns **both kinds**, so an index of the vocabulary must filter `taskId.nil?` or it counts every
+   attachment as a duplicate name.
+
+5. **`GET /search` requires `workspaceId`** (400: "Workspace ID could not be determined") and
+   **`projectId` does NOT filter** — passing it changed nothing, `totalCount` stayed 6. The envelope is
+   `{"results": [...], "totalCount", "searchQuery"}`, not `{"tasks": [...]}`. Results are mixed
+   `type`: `task`, `project`, `activity`, `comment` — and a task row carries **`taskNumber`**, not
+   `number`. So `search` must pass the workspace, filter `type == "task"` AND `projectId` itself, and
+   read `taskNumber`. Four separate corrections in one verb.
+
+6. **`PUT /task/status/{id}` returns the whole updated task**, with the new `status` and `columnId`.
 
 - [ ] **Step 4: Delete the verb-probe project (human, browser), then commit**
 
@@ -796,7 +826,7 @@ git commit -m "Create the tinkerex project and its eleven labels"
           title: issue["title"],
           description: issue["body"].to_s,
           priority: "no-priority",
-          status: issue["state"] == "closed" ? "Done" : "Open"
+          status: issue["state"] == "closed" ? CLOSED_STATUS : OPEN_STATUS
         })
       else
         kaneo(:post, "/task/#{project_id}", {
@@ -804,7 +834,7 @@ git commit -m "Create the tinkerex project and its eleven labels"
           description: "Placeholder. Forgejo had no issue ##{n}; this task exists so every later " \
                        "issue keeps its original number. Do not delete.",
           priority: "no-priority",
-          status: "Done"
+          status: CLOSED_STATUS
         })
       end
 
@@ -824,8 +854,8 @@ git commit -m "Create the tinkerex project and its eleven labels"
   end
 ```
 
-**Adjust the two `status:` values** to whatever column names Task 5 step 3 recorded. `"Open"` and
-`"Done"` are the intent; the strings must be ones the board actually has.
+`OPEN_STATUS` is `"to-do"` and `CLOSED_STATUS` is `"done"` — kebab-case, measured in Task 5. A POST
+carrying `"Open"` or `"Done"` is refused with a 400.
 
 - [ ] **Step 2: Run the import**
 
@@ -894,14 +924,33 @@ git commit -m "Import 186 issues at their original numbers, 7 placeholders for t
 - [ ] **Step 1: Write the verification**
 
 ```ruby
+  # ONE WALK OF THE BOARD, SHARED BY EVERY READER HERE. GET /task/tasks/:projectId returns a BOARD:
+  # tasks sit in `data.columns[].tasks`, with `archivedTasks` and `plannedTasks` as two off-board
+  # buckets beside them — and the page size is capped at 100 however large a `limit` you ask for
+  # (measured: limit=200 answered pageSize=100). With 193 tasks, a single un-paginated call sees
+  # roughly half and reports no error at all.
+  def all_tasks(project_id)
+    tasks = []
+    page = 1
+    loop do
+      body = kaneo(:get, "/task/tasks/#{project_id}?page=#{page}&limit=100")
+      data = body.fetch("data", {})
+      tasks.concat(data.fetch("columns", []).flat_map { |c| c["tasks"] || [] })
+      tasks.concat(data["archivedTasks"] || [])
+      tasks.concat(data["plannedTasks"] || [])
+      break if page >= body.dig("pagination", "totalPages").to_i
+
+      page += 1
+    end
+    tasks
+  end
+
   # READ-BACK VERIFICATION, NOT A REPORT ON WHAT WE SENT. The import already checked each number as
   # it went; this asks the server, independently, what it now holds. The two can disagree — a task
   # created and then altered, a partial run resumed by hand — and only this one would notice.
   def verify_import(project_id, path = "tmp/forgejo-export.json")
     issues = JSON.parse(File.read(path))
-    listed = kaneo(:get, "/task/tasks/#{project_id}?limit=500")
-    tasks = listed.is_a?(Array) ? listed : listed.fetch("tasks")
-    by_number = tasks.to_h { |t| [ t["number"], t ] }
+    by_number = all_tasks(project_id).to_h { |t| [ t["number"], t ] }
 
     problems = []
     issues.each do |issue|
@@ -1003,7 +1052,7 @@ The stub's default `response:` is an issue (`number`/`title`/`state`/`body`). Ka
 
 ```ruby
   def initialize(status: 201, response: { "id" => "task_stub", "number" => 42, "title" => "stub",
-                                          "status" => "Open", "description" => "" },
+                                          "status" => "to-do", "description" => "" },
                  routes: {})
 ```
 
@@ -1057,7 +1106,9 @@ git commit -m "Rename the stub: it modelled no server, so this is a rename"
     stub = StubKaneo.new(routes: {
       "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
       "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
-      "GET /task/tasks" => [ 200, [ { "id" => "t1", "number" => 7, "title" => "x", "status" => "Open" } ] ]
+      "GET /task/tasks" => [ 200, { "data" => { "columns" => [
+        { "slug" => "to-do", "tasks" => [ { "id" => "t1", "number" => 7, "title" => "x", "status" => "to-do" } ] }
+      ] }, "pagination" => { "totalPages" => 1 } } ]
     })
     out, err, code = run_log("show", "7", env: { "KANEO_URL" => stub.url, "KANEO_TOKEN" => "secret-key" })
 
@@ -1178,7 +1229,9 @@ Kaneo addresses tasks by an opaque `id`; the citable `number` is not addressable
     stub = StubKaneo.new(routes: {
       "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
       "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
-      "GET /task/tasks" => [ 200, [ { "id" => "abc", "number" => 178, "title" => "Staging panel", "status" => "Done" } ] ]
+      "GET /task/tasks" => [ 200, { "data" => { "columns" => [
+        { "slug" => "done", "tasks" => [ { "id" => "abc", "number" => 178, "title" => "Staging panel", "status" => "done" } ] }
+      ] }, "pagination" => { "totalPages" => 1 } } ]
     })
     out, err, code = run_log("show", "178", env: { "KANEO_URL" => stub.url, "KANEO_TOKEN" => "k" })
 
@@ -1192,7 +1245,7 @@ Kaneo addresses tasks by an opaque `id`; the citable `number` is not addressable
     stub = StubKaneo.new(routes: {
       "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
       "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
-      "GET /task/tasks" => [ 200, [] ]
+      "GET /task/tasks" => [ 200, { "data" => { "columns" => [] }, "pagination" => { "totalPages" => 1 } } ]
     })
     _out, err, code = run_log("show", "999", env: { "KANEO_URL" => stub.url, "KANEO_TOKEN" => "k" })
 
@@ -1214,16 +1267,31 @@ Expected: FAIL.
   # THE MAP IS FETCHED ONCE PER PROCESS, not once per lookup — `close` takes several numbers and the
   # unit of work is "this branch is done", so a per-number GET would be one full list per issue.
   #
-  # THE ENVELOPE IS ACCEPTED IN BOTH SHAPES DELIBERATELY. GET /task/tasks/:projectId is declared in
-  # Kaneo's OpenAPI as a bare `{"type":"object"}` — no properties at all — so the response was
-  # OBSERVED rather than read (see the plan's Task 5). Tolerating an array or a {tasks:[...]} wrapper
-  # costs one line and removes the one place a version bump could silently return nothing.
+  # THIS ENDPOINT RETURNS A BOARD, NOT A LIST, and its OpenAPI response type is a bare
+  # `{"type":"object"}` with no properties — so the shape below was OBSERVED (Task 5), never read.
+  # Tasks live in `data.columns[].tasks`, and TWO MORE BUCKETS SIT BESIDE THEM: `archivedTasks` and
+  # `plannedTasks` are off-board and appear in neither column. Miss them and the affected issues
+  # resolve to "no issue #N" while sitting in the record perfectly intact.
+  #
+  # IT ALSO PAGINATES, AND THE LIMIT IS CAPPED. A request for `limit=200` came back with
+  # `pageSize: 100` — the same well-formed lie Forgejo's 50-cap tells in Task 6, and the reason that
+  # export loops instead of trusting one page. With 193 tasks a single call sees roughly half.
   def task_index
     @task_index ||= begin
-      path = "/api/task/tasks/#{project_id}?limit=500"
-      body = parse(api(:get, path), path)
-      list = body.is_a?(Array) ? body : body.fetch("tasks", [])
-      list.to_h { |t| [ t["number"], t ] }
+      tasks = []
+      page = 1
+      loop do
+        path = "/api/task/tasks/#{project_id}?page=#{page}&limit=100"
+        body = parse(api(:get, path), path)
+        data = body.fetch("data", {})
+        tasks.concat(data.fetch("columns", []).flat_map { |c| c["tasks"] || [] })
+        tasks.concat(data["archivedTasks"] || [])
+        tasks.concat(data["plannedTasks"] || [])
+        break if page >= body.dig("pagination", "totalPages").to_i
+
+        page += 1
+      end
+      tasks.to_h { |t| [ t["number"], t ] }
     end
   end
 
@@ -1240,10 +1308,16 @@ Expected: FAIL.
 Run: `bin/rails test test/log_cli_test.rb -n "/resolves to the task id|no task carries/"`
 Expected: PASS.
 
-- [ ] **Step 5: Mutation-check the resolver**
+- [ ] **Step 5: Mutation-check the resolver, twice**
 
-§15 requires it. Change `list.to_h { |t| [ t["number"], t ] }` to key on `t["id"]` and re-run.
+§15 requires it, and this method has two independent things to break.
+
+Change `tasks.to_h { |t| [ t["number"], t ] }` to key on `t["id"]` and re-run.
 Expected: the first test goes RED (no task found for 178). Restore.
+
+Then delete the two `archivedTasks`/`plannedTasks` lines and re-run. **If nothing goes red, the test
+fixture only has tasks in columns and the guard is vacuous** — add a fixture task in `archivedTasks`
+so the assertion carries weight. §14e: a guard that scans a set must be shown to scan a non-empty one.
 
 - [ ] **Step 6: Commit**
 
@@ -1267,15 +1341,24 @@ git commit -m "Resolve a citable number to Kaneo's opaque task id"
     stub = StubKaneo.new(routes: {
       "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
       "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
-      "GET /search" => [ 200, { "tasks" => [ { "number" => 12, "title" => "a & b", "status" => "Done" } ] } ]
+      "GET /search" => [ 200, { "results" => [
+        { "type" => "task", "projectId" => "p1", "taskNumber" => 12, "title" => "a & b", "status" => "done" },
+        { "type" => "comment", "projectId" => "p1", "taskNumber" => 12, "title" => "a & b noise" },
+        { "type" => "task", "projectId" => "OTHER", "taskNumber" => 99, "title" => "a & b elsewhere" }
+      ], "totalCount" => 3 } ]
     })
     out, err, code = run_log("search", "a & b", env: { "KANEO_URL" => stub.url, "KANEO_TOKEN" => "k" })
 
     assert_equal 0, code, err
     search = stub.requests.find { |r| r.path.include?("/search") }
     assert_includes search.path, "q=a+%26+b"
-    assert_includes search.path, "projectId=p1"
-    assert_match(/#12 \[Done\] a & b/, out)
+    assert_includes search.path, "workspaceId=w1"
+    assert_match(/#12 \[done\] a & b/, out)
+    # THE TWO NEGATIVE ASSERTIONS ARE THE POINT. Kaneo's search returns comments and activities
+    # alongside tasks, and ignores projectId entirely — so a verb that only filtered one of the two
+    # would still pass a test that asserted the happy line alone.
+    refute_match(/noise/, out, "a matching comment must not print as though it were an issue")
+    refute_match(/#99/, out, "projectId does not filter server-side; this verb must filter itself")
   ensure
     stub&.shutdown
   end
@@ -1299,19 +1382,28 @@ Expected: FAIL.
     EXIT_OK
   end
 
-  # SCOPED TO THE PROJECT. Kaneo's search is global across every workspace the key can see; without
-  # projectId a query would return tasks from any other project on the instance as though they were
-  # part of the record. Forgejo's equivalent was scoped by construction — the path named the repo.
+  # FOUR CORRECTIONS IN ONE VERB, ALL MEASURED (Task 5) — Forgejo's search needed none of them,
+  # because its path named the repo and its response was a list of issues.
+  #
+  #   1. workspaceId IS REQUIRED. Without it: 400, "Workspace ID could not be determined".
+  #   2. projectId DOES NOT FILTER. Passing it changed nothing — totalCount stayed identical — so the
+  #      scoping this verb needs has to happen HERE. Unfiltered, a query returns tasks from every
+  #      other project in the workspace as though they were part of the record.
+  #   3. THE ENVELOPE IS `results`, NOT `tasks`, and results are mixed `type`: task, project,
+  #      activity, comment. A comment matching the query would print as though it were an issue.
+  #   4. A TASK ROW CARRIES `taskNumber`, NOT `number`. Reading `number` yields nil, so every line
+  #      would print `#` and nothing else — for results that are otherwise correct.
   def search(argv)
     query = argv.shift or raise UsageError, "search needs a query"
-    path = "/api/search?q=#{URI.encode_www_form_component(query)}&projectId=#{project_id}&limit=100"
+    path = "/api/search?q=#{URI.encode_www_form_component(query)}&workspaceId=#{workspace_id}&limit=100"
     body = parse(api(:get, path), path)
-    tasks = body.is_a?(Array) ? body : body.fetch("tasks", [])
+    tasks = body.fetch("results", [])
+                .select { |r| r["type"] == "task" && r["projectId"] == project_id }
 
     if tasks.empty?
       puts "bin/log: no issues matching #{query.inspect}."
     else
-      tasks.each { |t| puts "##{t['number']} [#{t['status']}] #{t['title']}" }
+      tasks.each { |t| puts "##{t['taskNumber']} [#{t['status']}] #{t['title']}" }
     end
     EXIT_OK
   end
@@ -1344,7 +1436,7 @@ git commit -m "show and search read from Kaneo, scoped to the project"
     stub = StubKaneo.new(routes: {
       "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
       "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
-      "POST /task/p1" => [ 201, { "id" => "t9", "number" => 194, "title" => "An arc", "status" => "Open" } ],
+      "POST /task/p1" => [ 201, { "id" => "t9", "number" => 194, "title" => "An arc", "status" => "to-do" } ],
       "POST /label" => [ 201, { "id" => "l1", "name" => "arc" } ]
     })
     Dir.mktmpdir do |dir|
@@ -1371,7 +1463,7 @@ git commit -m "show and search read from Kaneo, scoped to the project"
     stub = StubKaneo.new(routes: {
       "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
       "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
-      "POST /task/p1" => [ 201, { "id" => "t9", "number" => 194, "title" => "An arc", "status" => "Open" } ],
+      "POST /task/p1" => [ 201, { "id" => "t9", "number" => 194, "title" => "An arc", "status" => "to-do" } ],
       "POST /label" => [ 500, { "message" => "boom" } ]
     })
     Dir.mktmpdir do |dir|
@@ -1412,7 +1504,7 @@ Expected: FAIL.
       title: title,
       description: body,
       priority: "no-priority",
-      status: closed ? "Done" : "Open"
+      status: closed ? CLOSED_STATUS : OPEN_STATUS
     }
     task = parse(api(:post, "/api/task/#{project_id}", payload), "/api/task")
 
@@ -1447,12 +1539,17 @@ Update the three callers to use `create_task`: `arc` (label `arc`), `open_item` 
   # unchanged. Forgejo allowed duplicate label names and a second run left 22 of 11; nothing
   # observed says Kaneo refuses them either, so `setup` still asks first and VERIFIES afterwards.
   # "I sent eleven requests" is not the claim this command makes; "eleven labels exist" is.
+  # THE VOCABULARY IS `taskId.nil?`, AND THE FILTER IS LOAD-BEARING. Kaneo keeps label ATTACHMENTS in
+  # the same table as label DEFINITIONS: `POST /label` with a taskId stores an attached row, without
+  # one stores a free row, and `GET /label/workspace/:id` returns both. Measured in Task 5. Unfiltered,
+  # every arc in the record contributes an `arc` row, so `setup` would report the vocabulary complete
+  # purely because 135 tasks are labelled — and would keep reporting it after someone deleted the
+  # definition, which is the one thing it exists to notice.
   def label_index
     @label_index ||= begin
       path = "/api/label/workspace/#{workspace_id}"
-      body = parse(api(:get, path), path)
-      list = body.is_a?(Array) ? body : body.fetch("labels", [])
-      list.to_h { |l| [ l["name"], l["id"] ] }
+      rows = parse(api(:get, path), path)
+      rows.select { |l| l["taskId"].nil? }.to_h { |l| [ l["name"], l["id"] ] }
     end
   end
 
@@ -1504,7 +1601,9 @@ git commit -m "Create tasks and attach labels; an unlabelled task is reported, n
     stub = StubKaneo.new(routes: {
       "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
       "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
-      "GET /task/tasks" => [ 200, [ { "id" => "abc", "number" => 178, "title" => "x", "status" => "Done" } ] ],
+      "GET /task/tasks" => [ 200, { "data" => { "columns" => [
+        { "slug" => "done", "tasks" => [ { "id" => "abc", "number" => 178, "title" => "x", "status" => "done" } ] }
+      ] }, "pagination" => { "totalPages" => 1 } } ],
       "POST /comment" => [ 201, { "id" => "c1" } ]
     })
     out, err, code = run_log("note", "178", "a correction",
@@ -1523,11 +1622,11 @@ git commit -m "Create tasks and attach labels; an unlabelled task is reported, n
     stub = StubKaneo.new(routes: {
       "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
       "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
-      "GET /task/tasks" => [ 200, [
-        { "id" => "a", "number" => 10, "title" => "open one", "status" => "Open" },
-        { "id" => "b", "number" => 11, "title" => "done one", "status" => "Done" }
-      ] ],
-      "PUT /task/status" => [ 200, { "id" => "a", "status" => "Done" } ]
+      "GET /task/tasks" => [ 200, { "data" => { "columns" => [
+        { "slug" => "to-do", "tasks" => [ { "id" => "a", "number" => 10, "title" => "open one", "status" => "to-do" } ] },
+        { "slug" => "done",  "tasks" => [ { "id" => "b", "number" => 11, "title" => "done one", "status" => "done" } ] }
+      ] }, "pagination" => { "totalPages" => 1 } } ],
+      "PUT /task/status" => [ 200, { "id" => "a", "status" => "done" } ]
     })
     out, err, code = run_log("close", "10", "11", env: { "KANEO_URL" => stub.url, "KANEO_TOKEN" => "k" })
 
@@ -1562,7 +1661,8 @@ Expected: FAIL.
     EXIT_OK
   end
 
-  CLOSED_STATUS = "Done"
+  OPEN_STATUS   = "to-do"
+  CLOSED_STATUS = "done"
 
   # CLOSING IS A COLUMN MOVE NOW, not a state change — Kaneo has no open/closed flag, only the board
   # column. Everything else about this verb survives the move: several numbers in one call because
@@ -1589,8 +1689,8 @@ Expected: FAIL.
   end
 ```
 
-**`CLOSED_STATUS` must be a column the board actually has** — set it to whatever Task 5 step 3
-recorded, not to `"Done"` on faith.
+Both constants are measured, not guessed: Kaneo's statuses are kebab-case and a POST carrying `"Done"`
+is refused with a 400 naming the valid set.
 
 - [ ] **Step 4: Run the tests**
 
