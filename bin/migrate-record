@@ -186,6 +186,161 @@ module Migrate
   end
 
   # ---------------------------------------------------------------------------------------------
+  # IMPORT. Everything below writes to the real project and is redoable from the export: the
+  # recovery for any failure is "delete the project, re-run from Task 7", which is why the export
+  # comes first and why nothing here tries to resume a half-finished run.
+  # ---------------------------------------------------------------------------------------------
+
+  IDS_PATH = "tmp/kaneo-ids.json"
+
+  LABELS = %w[arc open-work deploy blocked deliberate
+              filelayer library-scan addons previews maker-web ci].freeze
+
+  # ONE PROJECT, AND THAT IS FORCED RATHER THAN CHOSEN. Kaneo's task counter is PER PROJECT
+  # (measured: it starts at 1, increments by one, and does not reuse a deleted number), so splitting
+  # arcs / open-work / deploys into three projects would shatter tinkerex#N into three sequences and
+  # break all 129 citations in the tree. The slug is what bin/log will resolve by.
+  def create_project(slug: "tinkerex")
+    project = kaneo(:post, "/project", { name: "tinkerex", workspaceId: workspace_id,
+                                         icon: "Wrench", slug: slug })
+    warn "project #{project['slug']} id=#{project['id']}"
+    project
+  end
+
+  # THE VOCABULARY IS A LABEL ROW WITH A NULL taskId. Kaneo keeps label DEFINITIONS and label
+  # ATTACHMENTS in the same table: POST /label with a taskId stores an attached row, without one
+  # stores a free row, and GET /label/workspace/:id returns BOTH. So the index has to filter
+  # taskId.nil? — unfiltered, 135 attached `arc` rows would read as "the vocabulary is complete"
+  # even after someone deleted the definition.
+  def vocabulary = kaneo(:get, "/label/workspace/#{workspace_id}").select { |l| l["taskId"].nil? }
+
+  def create_labels
+    already = vocabulary.map { |l| l["name"] }
+    (LABELS - already).each { |name| kaneo(:post, "/label", { name: name, color: "#666666", workspaceId: workspace_id }) }
+
+    missing = LABELS - vocabulary.map { |l| l["name"] }
+    raise Failed, "labels missing after setup: #{missing.join(', ')}" if missing.any?
+
+    warn "vocabulary: #{LABELS.size} labels present (#{(LABELS - already).size} created)"
+  end
+
+  # THE PLACEHOLDERS ARE THE WHOLE TRICK. Forgejo numbers 6-193 with holes at 116 and 117; Kaneo
+  # counts from 1. Creating a throwaway task for each number the record does not use lands every real
+  # issue on its own number, so all 129 tinkerex#N citations in the tree and the 50 inside issue
+  # bodies keep resolving with no rewrite at all.
+  #
+  # PLACEHOLDERS ARE NEVER DELETED. The counter probe measured that a deleted number is NOT reused,
+  # so deleting them would leave a hole rather than a shift — but it would also turn a visible,
+  # explained gap into an invisible one, and the next reader who "tidies up" a junk task has no way
+  # to know that was ever load-bearing. A hole you can see is safer than one you cannot.
+  #
+  # STRICTLY SEQUENTIAL, NEVER CONCURRENT. The counter is atomic but the ORDER of concurrent creates
+  # is not, and this loop's entire correctness is "the Nth create gets number N".
+  def import(project_id, path = EXPORT_PATH)
+    issues = JSON.parse(File.read(path, encoding: Encoding::UTF_8)).sort_by { |i| i["number"] }
+    by_number = issues.to_h { |i| [ i["number"], i ] }
+    last = issues.last["number"]
+    created = {}
+
+    (1..last).each do |n|
+      issue = by_number[n]
+      payload = if issue
+        { title: issue["title"], description: issue["body"].to_s, priority: "no-priority",
+          status: issue["state"] == "closed" ? CLOSED_STATUS : OPEN_STATUS }
+      else
+        { title: "(reserved ##{n})", priority: "no-priority", status: CLOSED_STATUS,
+          description: "Placeholder. Forgejo had no issue ##{n}; this task exists so every later " \
+                       "issue keeps its original number. Do not delete." }
+      end
+
+      task = kaneo(:post, "/task/#{project_id}", payload)
+
+      # FAIL AT THE FIRST DRIFT, NOT AT THE END. If number N did not come back as N, every task after
+      # it is wrong too — carrying on would produce 193 wrong rows and one confusing report. Stopping
+      # here costs a delete-and-retry, which the export makes cheap.
+      got = task["number"]
+      raise Failed, "drift at #{n}: Kaneo assigned #{got.inspect} (delete the project and re-run)" unless got == n
+
+      created[n] = task["id"]
+      warn "  #{n}/#{last}" if (n % 25).zero?
+    end
+
+    FileUtils.mkdir_p(File.dirname(IDS_PATH))
+    File.write(IDS_PATH, JSON.pretty_generate(created))
+    warn "imported #{created.size} tasks (#{issues.size} real, #{created.size - issues.size} placeholders)"
+    created
+  end
+
+  # LABELS ARE A SEPARATE PASS, not folded into the import loop. The import's correctness is that the
+  # Nth create gets number N; interleaving a second kind of write into that loop adds a failure mode
+  # in the middle of the one sequence that must not be interrupted. Every issue in this record
+  # carries exactly one label (measured: 0 issues with more than one), but the loop does not assume it.
+  def attach_labels(path = EXPORT_PATH, ids = IDS_PATH)
+    issues = JSON.parse(File.read(path, encoding: Encoding::UTF_8))
+    created = JSON.parse(File.read(ids, encoding: Encoding::UTF_8))
+    failures = []
+    count = 0
+
+    issues.each do |issue|
+      task_id = created.fetch(issue["number"].to_s)
+      issue["labels"].each do |label|
+        kaneo(:post, "/label", { name: label["name"], color: "#666666",
+                                 workspaceId: workspace_id, taskId: task_id })
+        count += 1
+      rescue Failed => e
+        failures << "##{issue['number']} #{label['name']}: #{e.message[0, 120]}"
+      end
+    end
+
+    failures.each { |f| warn "!! #{f}" }
+    raise Failed, "#{failures.size} label attachments failed" if failures.any?
+
+    warn "attached #{count} labels across #{issues.size} tasks"
+  end
+
+  # READ-BACK VERIFICATION, NOT A REPORT ON WHAT WE SENT. The import already checked each number as it
+  # went; this asks the server, independently, what it now holds. The two can disagree — a task
+  # altered afterwards, a partial run resumed by hand — and only this would notice.
+  def verify_import(project_id, path = EXPORT_PATH)
+    issues = JSON.parse(File.read(path, encoding: Encoding::UTF_8))
+    by_number = all_tasks(project_id).to_h { |t| [ t["number"], t ] }
+
+    problems = []
+    issues.each do |issue|
+      task = by_number[issue["number"]]
+      next problems << "##{issue['number']} missing from Kaneo" if task.nil?
+
+      problems << "##{issue['number']} title differs" unless task["title"] == issue["title"]
+      want = issue["state"] == "closed" ? CLOSED_STATUS : OPEN_STATUS
+      problems << "##{issue['number']} status #{task['status'].inspect} != #{want.inspect}" unless task["status"] == want
+    end
+
+    if problems.any?
+      problems.first(20).each { |p| warn "!! #{p}" }
+      raise Failed, "#{problems.size} problems"
+    end
+
+    warn "verified #{issues.size} issues present at their original numbers, with matching titles and states"
+  end
+
+  # COMMENTS LAST, because they need the task ids the import produced. A correction is a comment and
+  # never an edit (bin/log's own rule), so the record's corrections only survive if this runs.
+  def import_comments(path = EXPORT_PATH, ids = IDS_PATH)
+    issues = JSON.parse(File.read(path, encoding: Encoding::UTF_8))
+    created = JSON.parse(File.read(ids, encoding: Encoding::UTF_8))
+    count = 0
+
+    issues.each do |issue|
+      issue["_comments"].to_a.each do |comment|
+        kaneo(:post, "/comment/#{created.fetch(issue['number'].to_s)}", { content: comment["body"].to_s })
+        count += 1
+      end
+    end
+    warn "imported #{count} comments"
+    count
+  end
+
+  # ---------------------------------------------------------------------------------------------
   # PROBES. These write nothing that survives: each makes a throwaway project, and the whole point
   # is to measure the server rather than reason about it. bin/log carries a shipped bug where a wire
   # format was ASSERTED and the stub agreed with the assertion — §14e's FakeS3 rule guards the code
