@@ -1434,3 +1434,60 @@ PAT expiry → Task 11 Step 2's two-causes section; §14e vacuity → Task 2's f
 
 **Known gap, stated rather than hidden.** The spec's btrfs small-file concern has no task: it is a
 performance observation with no action until measured. Task 13 Step 3 is where it would show up.
+
+---
+
+## Corrections found during execution (2026-08-31)
+
+**Recorded rather than edited into the tasks above.** Silently rewriting a task to look correct
+would hide that the plan was wrong, which is the failure §15 names. Two of these were defects that
+would have reached the box.
+
+### Two real defects
+
+1. **Task 5 specified Docker NAMED VOLUMES; they must be BIND MOUNTS onto the array.** Measured on
+   192.168.1.146 after dispatch: `/var/lib/docker` is a **50 GB loop device with 20 GB free** (30 G
+   used, 61%), holding 24 images / 19.74 GB and 74 volumes / 7.7 GB. Named volumes live inside that
+   loop. Four runner work dirs — each a Rails checkout plus bundle plus a `tinkerex-sync` sibling —
+   plus the ~5 GB image would crowd it, and **a full `docker.img` on Unraid takes down every
+   container on the box, not just CI.** `/mnt/user` has 5.8 TB free and
+   `/mnt/user/appdata` resolves to `/mnt/cache`, an NVMe pool with 365 GB free — faster as well as
+   roomier. `ci/runners/README.md` had already said "with the runner's work dir on a persistent
+   share"; the plan lost it. Corrected in `ops/ci-runner-stack.yml` with the figures in its header.
+
+2. **The `chown` UID was wrong.** The correction above specified `1000:1000` from the usual
+   first-user convention. Measured: `myoung34/github-runner:2.336.0` has
+   `runner:x:1001:121::/home/runner:/bin/sh` — **uid 1001, gid 121**. A bind mount chowned to 1000
+   leaves the non-root runner unable to write its own work dir, a first-boot failure that reads as a
+   broken image. The Task 5 implementer wrote it as given but flagged it as confirm-don't-assume
+   rather than asserting it, which is why it was caught before the deploy.
+
+### One gap in coverage
+
+3. **No task swept the guard's own body comment.** `test/ci_hygiene_test.rb` line ~227 read *"macos
+   jobs are exempt: the preflight job itself runs on macos"* — the consequence stated as the rule,
+   true only while preflight ran there. Task 2 changed the code; nothing was scheduled to change
+   this sentence. Fixed in `c35cec2`. §14e's lesson generalises: when a change makes a rule
+   derived rather than named, **grep for the prose that still names it**.
+
+### Four inaccuracies with no consequence
+
+4. Task 3 Step 1 says "both occurrences of the expected string"; that test has **one** assertion
+   inside a two-element loop.
+5. Task 2 Step 2's predicted failure output was short by one element — actual is
+   `["preflight", "ungated-linux"]`, because the fixture's own preflight job is itself an ungated
+   linux job under the literal.
+6. Task 1 Step 5 says "the eight pre-existing" tests; there were **13** before the change, 20 after.
+7. Task 12 Step 3's replacement text begins mid-line in the source, so applying it verbatim orphans
+   `# header already warned about.`; the paragraph needs re-wrapping, keeping the wording.
+
+### Verified during execution, not assumed
+
+- Containers on the box reach `github.com`, `api.github.com`, `objects.githubusercontent.com`,
+  `rubygems.org` and `dl.google.com` on 443.
+- Every Dockerfile pin resolves live, and `myoung34/github-runner:2.336.0` publishes a
+  **linux/amd64** manifest — the right architecture for this host.
+- The `with_cgroup` test helper nests correctly. Worth noting *how* that was established: the
+  passing tests would **not** have proved it, because a helper that restored the real
+  `/sys/fs/cgroup` path instead of the outer tmp path still falls through to the platform reader on
+  macOS and still passes. It was driven directly instead.
