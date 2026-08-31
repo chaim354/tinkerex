@@ -196,6 +196,31 @@ RUN printf '%b\n' \
  && rm -rf /tmp/stl-thumbnailer /tmp/smoke.stl /tmp/stl-smoke.png
 
 # ---------------------------------------------------------------------------------------------
+# A SYSTEM-WIDE GIT IDENTITY, BECAUSE PART OF THE SUITE SHELLS OUT TO `git commit`.
+#
+# `test/integration/web/repo_edit_flow_test.rb` drives the §14l git-editing stack by making a
+# commit the way a maker would — `system("git -C ... commit -am theirs")` — and git REFUSES to
+# commit without an author:
+#
+#     Author identity unknown
+#     *** Please tell me who you are.
+#
+# The commit then silently does not happen, the row it should have dropped is still offered, and the
+# test fails as `Expected exactly 0 elements matching "[data-path='a.txt']", found 1` — which reads
+# as a bug in the diff logic rather than as missing config. Measured on CI run 33440087622 and
+# reproduced directly in this image.
+#
+# IT PASSES ON THE MAC BY ACCIDENT: a developer's box has a global git identity for unrelated
+# reasons, so the suite has been leaning on ambient config nobody declared. `--system` rather than
+# `--global` because it is written at build time as root and must apply to the `runner` user the
+# jobs actually run as.
+#
+# The test's dependence on ambient git config is a real fragility this move exposed, and fixing the
+# test is the better long-term answer — that belongs to §14l and its own change, not to this one.
+RUN git config --system user.email "ci@tinkerex.local" \
+ && git config --system user.name "tinkerex CI"
+
+# ---------------------------------------------------------------------------------------------
 # EVERYTHING INSTALLED ABOVE WAS WRITTEN BY ROOT, AND THE JOBS ARE NOT ROOT — SO HAND mise TO THE
 # RUNNER. `bundle install` writes into the Ruby installation's own gem directory, which lives under
 # /opt/mise, so without this every job dies at step 2 with:
