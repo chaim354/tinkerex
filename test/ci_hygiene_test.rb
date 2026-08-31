@@ -327,6 +327,87 @@ class CiHygieneTest < ActiveSupport::TestCase
     end
   end
 
+  # THE EXEMPTION FOLLOWS PREFLIGHT, RATHER THAN NAMING macos. The rule has always been "the family
+  # preflight itself runs on cannot be gated on preflight, because it could not start either"; it
+  # was WRITTEN as the literal `macos`, which was the same thing only for as long as preflight ran
+  # there. With CI on the Unraid box preflight runs on linux, and the literal would exempt the wrong
+  # family in both directions at once: six linux jobs carrying gates that protect nothing, and a
+  # future macos job silently exempt from a gate it genuinely needs.
+  test "the ungated check exempts whichever family preflight itself runs on" do
+    with_workflows(<<~YAML) do |dir|
+      jobs:
+        preflight:
+          runs-on: [self-hosted, linux]
+          steps:
+            - run: ci/preflight.sh
+        ungated-linux:
+          runs-on: [self-hosted, linux]
+          steps:
+            - run: bin/ci test
+        ungated-macos:
+          runs-on: [self-hosted, macos]
+          steps:
+            - run: bin/ci test
+        gated-macos:
+          runs-on: [self-hosted, macos]
+          needs: preflight
+          if: needs.preflight.outputs.macos == 'true'
+          steps:
+            - run: bin/ci test
+    YAML
+      named = ->(offenders) { offenders.map { |o| o[/job `([^`]+)`/, 1] }.uniq.sort }
+
+      assert_equal %w[ungated-macos], named.call(ungated_offenders(dir)),
+                   "with preflight on linux, linux jobs are the circular case and macos jobs are " \
+                   "the ones that must carry a gate"
+    end
+  end
+
+  # AND THE ORIGINAL DIRECTION STILL HOLDS, which is what proves the change is a generalisation
+  # rather than a swap. Same fixture shape, preflight back on macos.
+  test "the ungated check still exempts macos when preflight runs there" do
+    with_workflows(<<~YAML) do |dir|
+      jobs:
+        preflight:
+          runs-on: [self-hosted, macos]
+          steps:
+            - run: ci/preflight.sh
+        ungated-macos:
+          runs-on: [self-hosted, macos]
+          steps:
+            - run: bin/ci test
+        ungated-linux:
+          runs-on: [self-hosted, linux]
+          steps:
+            - run: bin/ci test
+    YAML
+      named = ->(offenders) { offenders.map { |o| o[/job `([^`]+)`/, 1] }.uniq.sort }
+
+      assert_equal %w[ungated-linux], named.call(ungated_offenders(dir))
+    end
+  end
+
+  # NO PREFLIGHT JOB AT ALL EXEMPTS NOTHING. The conservative direction: with nothing to be circular
+  # about, every self-hosted job must carry its gate. A workflow that loses its preflight job must
+  # not silently lose the protection along with it.
+  test "a workflow with no preflight job exempts no family" do
+    with_workflows(<<~YAML) do |dir|
+      jobs:
+        lonely-macos:
+          runs-on: [self-hosted, macos]
+          steps:
+            - run: bin/ci test
+        lonely-linux:
+          runs-on: [self-hosted, linux]
+          steps:
+            - run: bin/ci test
+    YAML
+      named = ->(offenders) { offenders.map { |o| o[/job `([^`]+)`/, 1] }.uniq.sort }
+
+      assert_equal %w[lonely-linux lonely-macos], named.call(ungated_offenders(dir))
+    end
+  end
+
   # ---------------------------------------------------------------------------------------------
   # The scan gate reports on the CODE, never on how current the scanner itself is.
   #
@@ -560,11 +641,34 @@ class CiHygieneTest < ActiveSupport::TestCase
       offenders
     end
 
+    # The family the `preflight` job itself runs on — the one family that CANNOT be gated on
+    # preflight, because a missing runner there stops preflight from starting too and the gate would
+    # be circular. nil when there is no readable preflight job, which exempts nothing: with nothing
+    # to be circular about, every job must carry its gate.
+    #
+    # DERIVED RATHER THAN NAMED. This was the literal `macos` for as long as preflight ran there,
+    # and CLAUDE.md §15 records what a hand-maintained list costs every other place this repo kept
+    # one.
+    def preflight_family(dir)
+      each_job(dir) do |_file, name, job|
+        next unless name == "preflight"
+        labels = runner_labels(job)
+        return nil if labels == UNRESOLVABLE
+        return (labels & FAMILIES).first
+      end
+      nil
+    end
+
     # Jobs that would QUEUE FOREVER against a missing runner — the core invariant. Three ways in:
     # an unreadable `runs-on`, a `self-hosted` job naming no family at all, and a linux/windows job
-    # with no `needs: preflight` + `if:` pair. macos is exempt from the last of those only: the
-    # preflight job itself runs on macos, so gating a macos job on it would be circular.
+    # with no `needs: preflight` + `if:` pair.
+    #
+    # WHICHEVER FAMILY PREFLIGHT ITSELF RUNS ON is exempt from the last of those, because a missing
+    # runner in that family stops preflight from starting too and the gate would be circular. Read
+    # from the preflight job rather than named, so it stays true when CI changes boxes — see
+    # preflight_family.
     def ungated_offenders(dir)
+      exempt = preflight_family(dir)
       ungated = []
       each_job(dir) do |file, name, job|
         labels = runner_labels(job)
@@ -582,7 +686,7 @@ class CiHygieneTest < ActiveSupport::TestCase
           next
         end
 
-        gated_families = families - [ "macos" ]
+        gated_families = families - [ exempt ].compact
         next if gated_families.empty?
 
         needs = Array(job["needs"]).map(&:to_s)
