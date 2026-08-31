@@ -1505,6 +1505,28 @@ free; five builds took it to 41 G / 9.0 G (82%), 3.765 GB of that build cache. `
 -af` returned it to 39 G / 12 G. The finished image is 4.39 GB. The rebuild recipe in
 `ci/runner/Dockerfile` now carries the prune step and these figures.
 
+### §7's success criterion for the WorkerBudget fix was itself wrong
+
+The plan says: *"On a dedicated container with a correct cgroup reading it should return more than 1
+and the gate should be materially faster. If it is not, §5's fix is not working."* **Measured: the
+gate is SLOWER — 2m20.87s on the fleet against ~40s on the Mac — and the fix is working correctly.**
+
+The arithmetic. `mem_limit: 8g` ÷ `BYTES_PER_BROWSER_WORKER` (4 GB) = **2 browser workers**, capped
+by `cpus: 8.0`. The Mac has 24 GB and no cgroup, so it budgets 24 ÷ 4 = **6**. Two workers are
+slower than six; that is the memory limit doing exactly what it was set to do.
+
+**Where the criterion came from, and why it was stale.** It read the 83–97 s / median 84 s figure in
+`worker_budget.rb` as the Mac's baseline. That figure is from *before* the 2026-08-25 pidfile fix,
+when macOS `available` memory made the budget return **1 worker permanently**. After that fix the
+Mac returns 6 and runs the gate in ~40 s. So the plan compared the container against a number the
+Mac had not produced in a week — the same "a doc row that names a figure is a claim" problem §15
+records, in a plan rather than a doc.
+
+**Not treated as a defect, and the wall clock is why:** the whole run is ~3m30s across four runners
+in parallel, against seven jobs serialized on one Mac before. If the browser gate alone ever needs
+to be faster, the lever is `mem_limit` — but 4 × 8 GB already commits 32 of the box's 33 GB, so
+raising it oversubscribes, and that is a deliberate decision rather than a tweak.
+
 ### Verified during execution, not assumed
 
 - Containers on the box reach `github.com`, `api.github.com`, `objects.githubusercontent.com`,
