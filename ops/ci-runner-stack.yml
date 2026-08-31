@@ -1,0 +1,176 @@
+# The CI runner stack, deployed through Portainer (portainer.home, 2.39.6) on the Unraid box.
+# Four self-hosted GitHub Actions runners for chaim354/tinkerex — CLAUDE.md §15.
+#
+# TWO HOSTS, AND CONFUSING THEM COSTS AN AFTERNOON — the same trap ops/kaneo-stack.yml records.
+# Nginx Proxy Manager is 192.168.1.7, where the `*.home` wildcard resolves, INCLUDING
+# portainer.home. Docker runs on 192.168.1.146 ("Tower", the Unraid host itself), so these
+# containers live on .146. A THIRD address is in play here and is NOT this one: 192.168.1.95 is the
+# Kamal VM (chunk/share/s3.tinkerex.local). ci/runners/README.md named .95 as the intended runner
+# home until 2026-08-31; that was wrong, and it is the Kamal target, not the Docker host.
+#
+# THIS FILE IS NOT EXECUTED BY ANYTHING IN THIS REPO. Portainer holds the running copy; this is the
+# reviewable one. Edit here, then paste into the stack editor — and when you change the running
+# stack, change this file in the same breath. A committed file that has silently diverged from what
+# runs reads as the truth and nothing can go red for it.
+#
+# BEFORE THE FIRST DEPLOY, THE OPERATOR CREATES THE FOUR WORK DIRECTORIES ON THE BOX. Docker creates
+# a missing bind-mount path ROOT-OWNED, and these containers run jobs as a non-root user, so the
+# runner cannot write its own work dir — a first-boot failure that reads as a broken image:
+#
+#   ssh root@192.168.1.146 'mkdir -p /mnt/user/appdata/tinkerex-ci/runner-{1,2,3,4}/_work'
+#   ssh root@192.168.1.146 'chown -R 1001:121 /mnt/user/appdata/tinkerex-ci'
+#
+# 1001:121 IS MEASURED, NOT ASSUMED, AND THE OBVIOUS GUESS IS WRONG. In
+# myoung34/github-runner:2.336.0 the runner user is `uid=1001(runner) gid=121(runner)` —
+# `runner:x:1001:121::/home/runner:/bin/sh` — not the 1000:1000 a reader would expect from the usual
+# first-user convention. An earlier draft of this file said 1000:1000, which would have left the
+# work dir unwritable on first boot in exactly the way described above. Re-measure if the base image
+# tag ever moves:
+#
+#   docker run --rm --entrypoint sh myoung34/github-runner:2.336.0 -c 'id runner'
+#
+# And if `RUNNER_UID`/`RUNNER_GID` are ever set on the stack, this chown goes stale SILENTLY and
+# reproduces the same first-boot failure — they are deliberately not set below.
+#
+# THE ONE SECRET IS A PORTAINER STACK ENVIRONMENT VARIABLE, not a value in this file:
+# RUNNER_ACCESS_TOKEN — a FINE-GRAINED PAT scoped to chaim354/tinkerex alone, Administration:
+# read & write, and nothing else. It lives at **`op://tinkerex/github runners/credential`** (§14g),
+# named here the way .kamal/secrets-common names the ghcr.io token so the next person does not have
+# to hunt for it. Nothing is `export`ed and the value never enters this repo.
+#
+# DELIBERATELY NOT THE ghcr.io TOKEN, ALTHOUGH THAT ONE WORKS — measured 2026-08-31, it mints a
+# runner registration token fine (HTTP 201). It is a CLASSIC PAT carrying `admin:enterprise`,
+# `admin:org`, `admin:repo_hook`, `repo` and `write:packages`. RUNNER_ACCESS_TOKEN sits in four
+# container environments where any job can read it straight out of `env`, and CI executes branch
+# code — so reusing it would put an org- and enterprise-admin credential one hostile PR away from
+# exfiltration. The scoped token's blast radius is four CI runners on one repository. Its scoping
+# was verified rather than assumed, the same way the tinkerex-sync deploy key's was:
+# `POST /repos/chaim354/tinkerex/actions/runners/registration-token` -> 201, and GitHub reports no
+# `x-oauth-scopes` header for it at all, which is what distinguishes a fine-grained token from the
+# classic one above.
+#
+# WHEN IT EXPIRES, ALL FOUR CONTAINERS KEEP RUNNING AND REGISTER NOWHERE. Fine-grained PATs cannot
+# be renewed in place. The symptom is every job queueing at 0 elapsed, which is indistinguishable
+# from the box being down and is fixed completely differently — `docker logs tinkerex-runner-1`
+# tells them apart in one command. See ci/runners/README.md.
+#
+# WHY A PAT AND NOT A REGISTRATION TOKEN. A registration token is single-use and expires in ~1h
+# (ci/runners/README.md), which is the wrong shape for four containers that must re-register
+# themselves across a host reboot. When the PAT expires, all four fail to register and every job
+# queues — which looks exactly like "the box is down" and is fixed differently. See the README.
+#
+# FOUR SERVICES, NOT ONE WITH `replicas: 4`. Compose replicas share a volume definition, so four
+# replicas would contend over one work directory and corrupt each other's checkouts. Four because
+# ci.yml has seven jobs and the four heavy legs — test, test-s3, test-chunk-remote, system — then
+# overlap instead of running serially. Eight was rejected: the Rails parallel runner forks per-core
+# INSIDE each job, and eight concurrent suites oversubscribe a 36-core box in exactly the way
+# test/sqlite_concurrency_test.rb is sensitive to.
+#
+# THE WORK DIRS ARE BIND MOUNTS ONTO THE ARRAY, NOT DOCKER NAMED VOLUMES — DO NOT "SIMPLIFY" THEM
+# BACK. A named volume lives in /var/lib/docker/volumes/, which on this host is a 50 GB LOOP DEVICE:
+# measured 2026-08-31, 30G used and 20G AVAIL (61%), already holding 24 images / 19.74 GB and 74
+# local volumes / 7.7 GB. Four runner work dirs — each a full Rails checkout plus its bundle plus
+# the sibling tinkerex-sync checkout the chunk_remote leg needs — plus this stack's own ~5 GB image
+# and its build cache crowd that 20 GB hard. ON UNRAID A FULL docker.img TAKES DOWN EVERY CONTAINER
+# ON THE BOX, not just CI, and it would be us that caused it. /mnt/user is 6.4T with 5.8T avail, so
+# the array simply does not have the problem. ci/runners/README.md's Unraid option said this from
+# the start — "with the runner's work dir on a persistent share"; the plan lost it and this restores
+# it. Consequence to keep in mind: nothing here is `docker volume rm`-able, so clearing a poisoned
+# checkout means deleting the directory on the box.
+#
+# MEM_LIMIT IS LOAD-BEARING AND IS WHY test/support/worker_budget.rb READS THE CGROUP. Without that
+# reader, /proc/meminfo inside these containers reports the HOST's 33.35 GB and the system gate
+# plans for 8 browser workers (~17 GB) inside an 8 GB container. Change this number and that budget
+# follows it; delete it and the suite plans for a box it does not have.
+
+# THE ANCHOR CARRIES NO `environment:`, AND THAT IS DELIBERATE — DO NOT "TIDY" IT BACK.
+# A YAML merge key does NOT deep-merge: a service's own `environment:` block REPLACES the anchor's
+# entirely. Put the five shared values here and give each service only its `RUNNER_NAME`, and three
+# of the four runners silently lose REPO_URL, ACCESS_TOKEN, RUNNER_SCOPE and LABELS — they never
+# register, every job queues, and nothing in this repo can go red for it. So every service below
+# repeats all six. The check that proves it, and its mutation-check (§15) — the anchor form scores 1:
+#   docker compose -f ops/ci-runner-stack.yml config | grep -c "REPO_URL"   # must print 4
+# Scalars and lists (image, restart, mem_limit, cpus, cap_add, security_opt) the merge key handles
+# correctly, so they stay here.
+x-runner: &runner
+  image: tinkerex-ci-runner:2026-08-31
+  restart: unless-stopped
+  mem_limit: 8g
+  cpus: 8.0
+  # SHM_SIZE IS FOR CHROME, AND WITHOUT IT EVERY SYSTEM TEST ERRORS. Docker defaults /dev/shm to
+  # 64 MB; Chrome needs far more and simply exits at startup, which surfaces as
+  # `Selenium::WebDriver::Error::SessionNotCreatedError: session not created: Chrome instance
+  # exited` on all 199 tests at once — a browser-config error rather than anything about the app.
+  # Measured 2026-08-31 in the built image: 199 errors at the 64 MB default, `199 runs, 1689
+  # assertions, 0 failures` at 2 GB. THE POINT OF FIXING IT HERE rather than adding
+  # `--disable-dev-shm-usage` to the driver is that the driver flag would change how Chrome runs on
+  # every machine — including a developer's Mac, which has no such limit — to work around a
+  # constraint that exists only in a container. Fix it where it is broken.
+  shm_size: 2gb
+  # SYS_PTRACE lets Chrome's own crash handling work; the sandbox itself is kept by running as the
+  # non-root `runner` user — via the image's `ENV RUN_AS_ROOT=false`, NOT a `USER` line and NOT
+  # --no-sandbox. A `USER runner` line was tried and makes every container register and then
+  # immediately deregister; ci/runner/Dockerfile records why at length.
+  cap_add:
+    - SYS_PTRACE
+  security_opt:
+    - seccomp:unconfined
+
+services:
+  runner-1:
+    <<: *runner
+    container_name: tinkerex-runner-1
+    environment:
+      REPO_URL: https://github.com/chaim354/tinkerex
+      ACCESS_TOKEN: ${RUNNER_ACCESS_TOKEN}
+      RUNNER_SCOPE: repo
+      # `linux` is the FAMILY label ci.yml's runs-on matches and ci/preflight.sh greps for;
+      # `maker-unraid` is the BOX label. test/ci_hygiene_test.rb treats those as different things on
+      # purpose — a job carrying only a box label names no family and is an offender.
+      LABELS: self-hosted,linux,X64,maker-unraid
+      DISABLE_AUTO_UPDATE: "true"
+      RUNNER_NAME: tinkerex-unraid-1
+    # A BIND MOUNT ONTO THE ARRAY, NOT A NAMED VOLUME — see the header. A named volume would sit on
+    # the 50 GB /var/lib/docker loop that had 20 GB free on 2026-08-31, and filling it takes down
+    # every container on this box. The path must exist and be runner-writable before first boot.
+    volumes:
+      - /mnt/user/appdata/tinkerex-ci/runner-1/_work:/_work
+
+  runner-2:
+    <<: *runner
+    container_name: tinkerex-runner-2
+    environment:
+      REPO_URL: https://github.com/chaim354/tinkerex
+      ACCESS_TOKEN: ${RUNNER_ACCESS_TOKEN}
+      RUNNER_SCOPE: repo
+      LABELS: self-hosted,linux,X64,maker-unraid
+      DISABLE_AUTO_UPDATE: "true"
+      RUNNER_NAME: tinkerex-unraid-2
+    volumes:
+      - /mnt/user/appdata/tinkerex-ci/runner-2/_work:/_work
+
+  runner-3:
+    <<: *runner
+    container_name: tinkerex-runner-3
+    environment:
+      REPO_URL: https://github.com/chaim354/tinkerex
+      ACCESS_TOKEN: ${RUNNER_ACCESS_TOKEN}
+      RUNNER_SCOPE: repo
+      LABELS: self-hosted,linux,X64,maker-unraid
+      DISABLE_AUTO_UPDATE: "true"
+      RUNNER_NAME: tinkerex-unraid-3
+    volumes:
+      - /mnt/user/appdata/tinkerex-ci/runner-3/_work:/_work
+
+  runner-4:
+    <<: *runner
+    container_name: tinkerex-runner-4
+    environment:
+      REPO_URL: https://github.com/chaim354/tinkerex
+      ACCESS_TOKEN: ${RUNNER_ACCESS_TOKEN}
+      RUNNER_SCOPE: repo
+      LABELS: self-hosted,linux,X64,maker-unraid
+      DISABLE_AUTO_UPDATE: "true"
+      RUNNER_NAME: tinkerex-unraid-4
+    volumes:
+      - /mnt/user/appdata/tinkerex-ci/runner-4/_work:/_work

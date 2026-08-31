@@ -77,26 +77,41 @@ on:
   # workflow_dispatch stays so a run can still be forced by hand without a PR.
   workflow_dispatch: {}
 
-# Serialize runs on the single self-hosted runner (a newer run cancels the older for the ref).
+# One run per ref at a time (a newer run cancels the older). The fleet is FOUR runners since CI
+# moved to the Unraid box, so the jobs WITHIN a run are 4-wide; this only stops two runs of the same
+# ref overlapping. It said "the single self-hosted runner" while that was true.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# EVERY JOB HERE RUNS ON macos, and that is a measurement rather than a preference. Verified on the
-# maker-mac box (2026-07-29): the suite is green with 0 failures and 0 errors on all THREE
-# LIBRARY_BACKEND values, test:system is green with headless Chrome, rubocop is clean, and all three
-# scanners exit 0. The serialisation worry that kept these on `linux` is measured away — the whole
-# job set is well under a minute of actual work, and wall-clock is dominated by checkout and bundle.
+# EVERY JOB HERE RUNS ON linux — four container runners on the Unraid Docker host (192.168.1.146),
+# built from ci/runner/Dockerfile and deployed as the Portainer stack ops/ci-runner-stack.yml.
+# Verified 2026-08-31: `tinkerex-unraid-1..4` online, labels `self-hosted,linux,X64,maker-unraid`.
+#
+# UNTIL THEN CI RAN ON A DEVELOPER'S OWN MacBook, ONE JOB AT A TIME. That is why the seven jobs below
+# used to be serial and are now 4-wide, and it is also why two long comments in test/ — on
+# Capybara's wait budget and on WorkerBudget — were written around a CI job colliding with a local
+# `bin/ci` on one machine. Read those with the move in mind.
+#
+# THE MOVE RAISED COVERAGE RATHER THAN LOWERING IT, which is the opposite of what changing OS
+# usually does: `stl-thumbnailer` was ABSENT on the Mac runner, so Maker::Previews::Stl rendered
+# `unsupported` and the STL preview path had never once run in CI — ci/ensure-resvg.sh's "green
+# about less than you think", silently, for a different binary than that script watches. The image
+# bakes it in alongside vipsthumbnail, resvg and pdfium, all four verified on PATH as the non-root
+# runner user. **Suite counts therefore differ from the Mac's history by design**; what must still
+# match is the three backend legs against EACH OTHER (CLAUDE.md §15).
 #
 # Deliberately NO test/file counts here. This file cannot be the place a count lives: the numbers
 # move every time a test lands, and docs/STATUS.md is where per-suite figures are recorded. A count
 # written in two places is a count that will be wrong in one of them — the same reason a stale
 # `fs-provider` figure was deleted from CLAUDE.md rather than updated.
 #
-# NO `ruby/setup-ruby` ANYWHERE BELOW, deliberately: it assumes the GitHub-hosted /Users/runner
-# layout this self-hosted Mac does not have. The
-# runner's service PATH carries mise ruby 3.4.7 — exactly .ruby-version — so `bundle install` is
-# all a job needs. test/ci_hygiene_test.rb fails if the action reappears in a macos job.
+# NO `ruby/setup-ruby` ANYWHERE BELOW, AND IT IS NOW A CHOICE RATHER THAN A CONSTRAINT. It assumed
+# the GitHub-hosted /Users/runner layout the self-hosted Mac did not have, and test/ci_hygiene_test.rb
+# still forbids it on any job it cannot prove is off that Mac — but a `linux` job satisfies that
+# exemption, so the guard would PERMIT it here. It stays out because ci/runner/Dockerfile bakes mise
+# ruby 3.4.7, exactly .ruby-version, so `bundle install --quiet` is all a job needs and no job spends
+# time re-fetching a Ruby it already has.
 #
 # EVERY JOB INVOKES `bin/ci <gate>` and never a bare command. config/ci.rb is the single definition
 # of what each gate does; ci_hygiene_test asserts both directions of that contract.
@@ -104,15 +119,18 @@ jobs:
   # Which runner families exist for this run — see ci/preflight.sh for why this is a DECLARATION
   # (the repo variable CI_RUNNERS) and not an API call.
   #
-  # The jobs in THIS workflow are not gated on it: they all run on macos, and if the mac runner were
-  # absent this job could not start either, so gating them on it would be circular. Since the
-  # cross-repo suites left (2026-08-25) there is no linux/windows job here to gate AT ALL, so what
-  # this job buys is entirely the SUMMARY — a run that states, on its own page, that this repo's
-  # coverage stops at macos and where the rest went. Keep it: the moment a linux job returns it
-  # MUST be gated, and test/ci_hygiene_test.rb enforces that. The siblings carry their own copies
-  # of this job (a workflow file's job outputs don't cross files) and gate real jobs on it.
+  # The jobs in THIS workflow are not gated on it: they all run on LINUX, which is the family this
+  # job itself runs on, so if the Unraid fleet were absent this job could not start either and
+  # gating them on it would be circular. test/ci_hygiene_test.rb DERIVES that exemption from this
+  # job's own `runs-on` rather than naming a family — it read the literal `macos` for as long as
+  # preflight ran there, which was the consequence rather than the rule.
+  #
+  # So what this job buys here is entirely the SUMMARY — a run that states, on its own page, that
+  # this repo's coverage stops at linux and where the rest went. Keep it: the moment a macos or
+  # windows job returns it MUST be gated, and the guard enforces that. The siblings carry their own
+  # copies (a workflow file's job outputs don't cross files) and gate real jobs on it.
   preflight:
-    runs-on: [self-hosted, macos]
+    runs-on: [self-hosted, linux]
     outputs:
       macos:   ${{ steps.p.outputs.macos }}
       linux:   ${{ steps.p.outputs.linux }}
@@ -134,7 +152,7 @@ jobs:
   # at step 1 and the audit gate NEVER RAN. `bin/ci scan` uses CI.step, which records a result and
   # continues, so all three report whatever any one of them does.
   scan:
-    runs-on: [self-hosted, macos]
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v7
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
@@ -143,7 +161,7 @@ jobs:
         run: bin/ci scan
 
   lint:
-    runs-on: [self-hosted, macos]
+    runs-on: [self-hosted, linux]
     env:
       RUBOCOP_CACHE_ROOT: tmp/rubocop
     steps:
@@ -163,7 +181,7 @@ jobs:
         run: bin/ci style
 
   test:
-    runs-on: [self-hosted, macos]
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v7
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
@@ -175,7 +193,7 @@ jobs:
           RAILS_ENV: test
         run: bin/ci test
   test-s3-backend:
-    runs-on: [self-hosted, macos]
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v7
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
@@ -187,7 +205,7 @@ jobs:
           RAILS_ENV: test
         run: bin/ci test-s3
   test-chunk-remote:
-    runs-on: [self-hosted, macos]
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v7
       - name: Check out tinkerex-sync
@@ -206,7 +224,7 @@ jobs:
         run: bin/ci test-chunk-remote
 
   system-test:
-    runs-on: [self-hosted, macos]
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v7
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)

@@ -92,6 +92,68 @@ class WorkerBudgetTest < ActiveSupport::TestCase
     end
   end
 
+  # --- the cgroup limit, which is the only honest answer inside a container -------------------
+
+  # /proc/meminfo's MemTotal reports the HOST's memory inside a container, whatever limit the
+  # container carries. Measured on the CI box: 33.35 GB host, so browser_workers planned for 8
+  # Chromes (~17 GB by this file's own figures) in a container sized far smaller.
+  test "a cgroup limit below MemTotal is what total_memory_bytes reports" do
+    with_cgroup(max: 8 * (1024**3)) do
+      assert_equal 8 * (1024**3), WorkerBudget.total_memory_bytes
+    end
+  end
+
+  # A container with no memory limit set writes the literal string "max". That is not a number and
+  # must not be read as one — fall back to the platform figure, which is then correct.
+  test "memory.max reading `max` falls back to the platform figure" do
+    with_cgroup(max: "max") do
+      assert_equal platform_total, WorkerBudget.total_memory_bytes
+    end
+  end
+
+  # Bare metal, cgroup v1, or macOS: the file is simply not there.
+  test "an absent memory.max falls back to the platform figure" do
+    with_cgroup(max: :absent) do
+      assert_equal platform_total, WorkerBudget.total_memory_bytes
+    end
+  end
+
+  test "available is the limit minus what the cgroup is currently using" do
+    with_cgroup(max: 8 * (1024**3), current: 3 * (1024**3)) do
+      assert_equal 5 * (1024**3), WorkerBudget.available_memory_bytes
+    end
+  end
+
+  # Never negative: memory.current can exceed memory.max transiently under reclaim.
+  test "available floors at zero when current exceeds the limit" do
+    with_cgroup(max: 8 * (1024**3), current: 9 * (1024**3)) do
+      assert_equal 0, WorkerBudget.available_memory_bytes
+    end
+  end
+
+  test "an unreadable memory.current leaves available at the whole limit" do
+    with_cgroup(max: 8 * (1024**3), current: :absent) do
+      assert_equal 8 * (1024**3), WorkerBudget.available_memory_bytes
+    end
+  end
+
+  # THE BEHAVIOURAL ASSERTION, and the reason the four above are worth having. This is the number
+  # that decides how many Chromes start.
+  test "the worker count follows the container limit, not the host's memory" do
+    with_cgroup(max: 8 * (1024**3)) do
+      WorkerBudget.singleton_class.alias_method :__real_cores2, :processor_count
+      WorkerBudget.define_singleton_method(:processor_count) { 36 }
+      begin
+        with_concurrent_suite(false) do
+          assert_equal 2, WorkerBudget.browser_workers,
+                       "8 GB of container budget at 4 GB per worker is 2, not the host's 8"
+        end
+      ensure
+        WorkerBudget.singleton_class.alias_method :processor_count, :__real_cores2
+      end
+    end
+  end
+
   # --- the detector itself ------------------------------------------------------------------
 
   test "our own pidfile never counts as a concurrent suite" do
@@ -183,6 +245,48 @@ class WorkerBudgetTest < ActiveSupport::TestCase
       owner = WorkerBudget.singleton_class.const_defined?(:PIDFILE_DIR, false) ? WorkerBudget.singleton_class : WorkerBudget
       owner.send(:remove_const, :PIDFILE_DIR)
       owner.const_set(:PIDFILE_DIR, dir)
+    end
+
+    # REAL FILES AT SWAPPED CONSTANTS, matching with_pidfiles above rather than stubbing the reader.
+    # The methods under test parse file contents, so stubbing the read away would assert nothing
+    # about the parsing — which is where "max" and a trailing newline live.
+    #
+    # `:absent` points the constant at a path inside the tmpdir that is never created, which is the
+    # honest way to model "not a container" — Errno::ENOENT through the real rescue.
+    def with_cgroup(max:, current: nil)
+      require "fileutils"
+      require "tmpdir"
+      dir = Dir.mktmpdir("worker-budget-cgroup")
+      real_max, real_current = WorkerBudget::CGROUP_MEMORY_MAX, WorkerBudget::CGROUP_MEMORY_CURRENT
+
+      max_path = File.join(dir, "memory.max")
+      File.write(max_path, "#{max}\n") unless max == :absent
+      swap_const(:CGROUP_MEMORY_MAX, max_path)
+
+      current_path = File.join(dir, "memory.current")
+      File.write(current_path, "#{current}\n") unless current.nil? || current == :absent
+      swap_const(:CGROUP_MEMORY_CURRENT, current_path)
+
+      yield
+    ensure
+      FileUtils.remove_entry(dir) rescue nil
+      real_max && swap_const(:CGROUP_MEMORY_MAX, real_max)
+      real_current && swap_const(:CGROUP_MEMORY_CURRENT, real_current)
+    end
+
+    # What this box would report with no cgroup limit in play — the fallback the two tests above
+    # assert against. Read through the real reader with the constant pointed at nothing.
+    def platform_total
+      with_cgroup(max: :absent) { WorkerBudget.send(:platform_total_memory_bytes) }
+    end
+
+    # Generalised from swap_pidfile_dir, and for the same recorded reason: a constant assigned in a
+    # `class << self` body belongs to the SINGLETON, so the remove_const must be sent to whichever
+    # object actually owns it.
+    def swap_const(name, value)
+      owner = WorkerBudget.singleton_class.const_defined?(name, false) ? WorkerBudget.singleton_class : WorkerBudget
+      owner.send(:remove_const, name)
+      owner.const_set(name, value)
     end
 
     def spawn_sleeper
