@@ -106,5 +106,59 @@ module Web
     ensure
       FileUtils.remove_entry(@root) if @root&.exist?
     end
+
+    # ORDER IS THE ASSERTION, not merely that both ran: filing before the pull would report on a
+    # stale mirror, which is the whole failure this button exists to end.
+    test "on chunk_remote the pull runs first and the intake second" do
+      FileLayer.current = FileLayer::ChunkRemote.new
+      order = []
+      pull = ->(**) { order << :pull }
+      file = lambda do |**|
+        order << :file
+        Maker::ProjectIntake::Result.new(attached: 2, moved: 1, skipped: 0,
+                                         skips: [], plan: [], status: :ok)
+      end
+      replacing(FileLayer::RemoteChangelogPullJob, :perform_now, pull) do
+        replacing(Maker::ProjectIntake, :for_project, file) do
+          post project_scan_path(@project)
+        end
+      end
+      assert_equal %i[pull file], order
+      assert_redirected_to project_path(@project)
+      assert_match(/attached 2/i, flash[:notice].to_s)
+      assert_match(/filed 1/i, flash[:notice].to_s)
+    end
+
+    test "on chunk_remote a project with no folder is told so, and no folder is created" do
+      FileLayer.current = FileLayer::ChunkRemote.new
+      none = Maker::ProjectIntake::Result.new(attached: 0, moved: 0, skipped: 0, skips: [],
+                                              plan: [], status: :no_folder)
+      replacing(FileLayer::RemoteChangelogPullJob, :perform_now, ->(**) { }) do
+        replacing(Maker::ProjectIntake, :for_project, ->(**) { none }) do
+          post project_scan_path(@project)
+        end
+      end
+      assert_match(/no folder yet/i, flash[:notice].to_s)
+      assert_nil @project.reload.folder_node_id,
+                 "the scan door must never call ensure_library_folder! — a folder minted as a " \
+                 "side effect of merely looking is the bug #relocate shipped"
+    end
+
+    # The conflict clause has ONE home (ProjectFolderIntake#project_intake_sentence). This door is
+    # its fourth caller and must not paraphrase it.
+    test "a collision left at the project root is named in the same words every other door uses" do
+      FileLayer.current = FileLayer::ChunkRemote.new
+      clash = Maker::ProjectIntake::Result.new(attached: 1, moved: 0, skipped: 1,
+                                               skips: [ [ "panel.stl", :conflict ] ],
+                                               plan: [], status: :ok)
+      replacing(FileLayer::RemoteChangelogPullJob, :perform_now, ->(**) { }) do
+        replacing(Maker::ProjectIntake, :for_project, ->(**) { clash }) do
+          post project_scan_path(@project)
+        end
+      end
+      assert_match(/already in #{Maker::ProjectFolders.folder_for('panel.stl')}\//,
+                   flash[:notice].to_s)
+      assert_match(/stayed at the project root/i, flash[:notice].to_s)
+    end
   end
 end
