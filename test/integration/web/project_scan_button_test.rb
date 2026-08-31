@@ -177,6 +177,30 @@ module Web
       FileUtils.remove_entry(@root) if @root&.exist?
     end
 
+    # THE KEY IS THE USER, NOT THE ADDRESS. `by:` overrides rate_limit's default
+    # `request.remote_ip`, which is 127.0.0.1 for EVERY integration test (§14e) and, on a
+    # self-hosted box behind one NAT address, for every member of a household. Left at the
+    # default, one person exhausting the budget would refuse everyone else's scan — and no
+    # assertion above would notice, because each test signs in as one user.
+    test "one user exhausting the budget does not refuse another user's scan" do
+      use_share!
+      4.times { post project_scan_path(@project) }
+      assert_match(/give it a moment/i, flash[:alert].to_s, "the first user is now throttled")
+
+      other = User.create!(email: "other-#{SecureRandom.hex(4)}@example.com",
+                           password: PASSWORD, confirmed_at: Time.current)
+      theirs = other.maker_projects.create!(name: "Their Lamp")
+      delete destroy_user_session_path
+      post user_session_path, params: { user: { email: other.email, password: PASSWORD } }
+
+      assert_enqueued_jobs 1, only: Library::ScanJob do
+        post project_scan_path(theirs)
+      end
+      assert_redirected_to project_path(theirs, scanning: 1)
+    ensure
+      FileUtils.remove_entry(@root) if @root&.exist?
+    end
+
     # Guards the counter itself. With a NullStore, increment returns nil and ActionController's
     # `count && count > to` makes every throttle here a no-op that no other assertion would notice.
     test "the store backing this throttle is real, not a null store" do
