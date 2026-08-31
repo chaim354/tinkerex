@@ -243,7 +243,7 @@ module Library
 
       # Share names its root (a path is safe in the queue's database and useful in a failed-jobs
       # row; .to_s because ActiveJob cannot serialize a Pathname). S3 names nothing — its target is
-      # a bucket plus credentials. Same split as ScanJob.scan_all!, same reason.
+      # a bucket plus credentials. Same split as ScanJob.enqueue_for, same reason.
       #
       # NOT fanned out per user, on either backend: `.trash` is ONE region per library and its
       # entries are keyed by node_id, so one job purges the whole thing. (S3 does not change this —

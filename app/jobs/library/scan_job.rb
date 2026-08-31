@@ -98,6 +98,22 @@ module Library
       intake_models(user)
     end
 
+    # THE ONE PLACE THAT DECIDES WHAT MAY BE SERIALIZED INTO THE QUEUE. #perform's header states
+    # the rule: a Share root is a PATH, safe to persist in the queue's database and genuinely
+    # useful in a failed-jobs row (an operator sees WHICH root refused); an s3 library's target is
+    # a bucket PLUS THE CREDENTIALS to reach it, which must never be written there, so the s3
+    # fan-out names only the user and #perform re-resolves FileLayer.current.
+    #
+    # EXTRACTED WHEN Projects::ScansController BECAME A SECOND CALLER. A second copy of this branch
+    # is the drift CLAUDE.md's §14d names a service to end — and the failure mode of getting it
+    # wrong is a bucket's secret access key sitting in solid_queue_jobs.arguments forever.
+    def self.enqueue_for(user)
+      adapter = FileLayer.current
+      # .to_s because ActiveJob cannot serialize a Pathname (SerializationError at enqueue).
+      args = adapter.is_a?(FileLayer::Share) ? { root: adapter.root.to_s } : {}
+      perform_later(user_id: user.id, **args)
+    end
+
     # recurring.yml has no per-user fan-out pattern (every existing entry is an all-users sweep),
     # so the schedule calls this and it fans out internally. Tenant = user, and a share-backed
     # deployment is single-user in practice, so this stays small.
@@ -105,8 +121,8 @@ module Library
     # The gate asks the FACTORY, not ENV. Task 8 established ENV.fetch("LIBRARY_BACKEND", "chunk")
     # as the reader and had LibraryBackendCheck mirror its defaults deliberately rather than invent
     # a second one; a literal third copy here would be the one that drifts. Asking FileLayer.current
-    # also hands us a root that check! has already validated (exists, is a directory, is readable)
-    # instead of a raw ENV string — one fewer way for the two to disagree.
+    # also hands .enqueue_for a root that check! has already validated (exists, is a directory, is
+    # readable) instead of a raw ENV string — one fewer way for the two to disagree.
     #
     # THE PHASE 3 TRAP, DISARMED (2026-07-17, Task 8). This gate WAS `is_a?(FileLayer::Share)`.
     # That was correct — Share was the only scanned backend — and it went silently wrong the day
@@ -121,15 +137,9 @@ module Library
     # requires every member), and whichever it states, this gate obeys it. The default is not
     # "false", it is "you must say".
     def self.scan_all!
-      adapter = FileLayer.current
-      return unless adapter.capabilities.scannable?
+      return unless FileLayer.current.capabilities.scannable?
 
-      # The s3 fan-out names NO target: a bucket + credentials must not be serialized into the
-      # queue's database (see #perform). Share's root is a path, which is safe there and useful in
-      # a failed-jobs row — and .to_s because ActiveJob cannot serialize a Pathname (it raises
-      # SerializationError at enqueue).
-      args = adapter.is_a?(FileLayer::Share) ? { root: adapter.root.to_s } : {}
-      User.find_each { |user| perform_later(user_id: user.id, **args) }
+      User.find_each { |user| enqueue_for(user) }
     end
 
     # THE DISPATCH — deliberately NOT the gate, and the difference is why an is_a? is honest here

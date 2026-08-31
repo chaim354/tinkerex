@@ -647,4 +647,34 @@ module Library
       assert_equal [ "bracket" ], @user.maker_models.pluck(:title)
     end
   end
+
+  # .enqueue_for is the ONE place that decides which args may be serialized into the queue's
+  # database. Extracted from .scan_all! when Projects::ScansController became a second caller:
+  # an S3 library's target is a bucket plus credentials and must never be written there, so a
+  # second copy of that branch is exactly the drift CLAUDE.md warns about.
+  class ScanJobEnqueueForTest < ActiveJob::TestCase
+    setup { @user = User.create!(email: "ef-#{SecureRandom.hex(4)}@example.com",
+                                 password: "correct horse battery staple", confirmed_at: Time.current) }
+    teardown { FileLayer.reset! }
+
+    test "a share library enqueues WITH its root, which is a path and safe to serialize" do
+      root = Dir.mktmpdir("enqueue-for")
+      FileLayer.current = FileLayer::Share.new(root:)
+      assert_enqueued_with(job: Library::ScanJob,
+                           args: [ { user_id: @user.id, root: root } ]) do
+        Library::ScanJob.enqueue_for(@user)
+      end
+    ensure
+      FileUtils.remove_entry(root) if root && File.exist?(root)
+    end
+
+    test "an s3 library enqueues with NO root — a bucket plus credentials must not reach the queue" do
+      require_relative "../../support/fake_s3"
+      FileLayer.current = FileLayer::S3.new(bucket: "b", region: "us-east-1", access_key_id: "ak",
+                                            secret_access_key: "sk", client: FakeS3.new.client)
+      assert_enqueued_with(job: Library::ScanJob, args: [ { user_id: @user.id } ]) do
+        Library::ScanJob.enqueue_for(@user)
+      end
+    end
+  end
 end
