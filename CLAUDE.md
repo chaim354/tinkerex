@@ -6,7 +6,7 @@ developers. Working name: **Maker Server** (rename freely).
 > **How this file is scoped.** It holds what is *permanently* true about **this repo — the maker
 > app**: architecture, the data model, and the **invariants a future editor must not undo** (§14).
 > It does **not** narrate finished work — every arc (dates, branches, suite counts, per-phase
-> detail) lives in **the Forgejo record (§11)**, which is canonical. Keep it that way: this
+> detail) lives in **the record (§11)**, which is canonical. Keep it that way: this
 > file is loaded into an agent's context on *every* session, so length here is a tax on every
 > future task, and a rule buried in 600 lines of history is a rule nobody reads.
 >
@@ -294,7 +294,7 @@ already-migrated databases fail with "table already exists," fixable only by han
 
 ## 11. Status
 
-**The canonical record is the self-hosted Forgejo at `http://forgejo.home`, repo `chaim354/tinkerex`**
+**The canonical record is the self-hosted Kaneo at `http://kaneo.home`, project `tinkerex`**
 — every completed arc as a closed `arc` issue, open work as open `open-work` issues, deploys as
 `deploy` issues, and corrections as COMMENTS on the arc they correct. Read it with `bin/log search
 "<query>"` / `bin/log show N`; write it with `bin/log` and nothing else (§13). Do not re-narrate it
@@ -315,7 +315,7 @@ on all three OSes against the sync server — that half's status lives in `tinke
 
 ## 12. What's open
 
-**A FROZEN POINTER TABLE. The state lives in Forgejo (§11); only the NUMBERS live here**, because
+**A FROZEN POINTER TABLE. The state lives in the record (§11); only the NUMBERS live here**, because
 code cites `§12.7` and `§12 item 11` by number — 21 such citations in `app/ lib/ test/ config/`.
 **Never renumber, and never add an item here** — new open work is `bin/log open`, which needs no
 slot. A closed item keeps its row for the same reason it always did: the citation must resolve.
@@ -370,8 +370,8 @@ bin/sync-server prepare && bin/sync-server start
 # status, so an unreadable secret becomes an EMPTY one that deploys silently (§14g):
 bin/secrets-preflight --all      # or: (omit) | s3 | share | ovh
 
-# RECORDING WORK -- bin/log is the SINGLE write door onto the Forgejo at forgejo.home. MCP may READ
-# it and never writes. Token via bin/secret (op://tinkerex/Forgejo/token); never `export`.
+# RECORDING WORK -- bin/log is the SINGLE write door onto the Kaneo at kaneo.home. MCP may READ
+# it and never writes. Token via bin/secret (op://tinkerex/kaneo/credential); never `export`.
 bin/log setup                    # create the labels, idempotently (safe to re-run)
 bin/log arc --from-pr 261        # arc issue built from the merged PR body
 bin/log open "<t>" | close N | deploy --image SHA | note N "<text>" | search "<q>" | show N | status
@@ -427,7 +427,7 @@ they broke a build once; `find . -name '* 2.*' -delete` to sweep.
 > — *what was considered → why rejected → current approach* — live in
 > **`docs/roads-not-taken.md`**. Read it before reviving any of them.
 
-Each line below cost a real bug **in this repo**. the Forgejo record (§11) has the full story for any of
+Each line below cost a real bug **in this repo**. the record (§11) has the full story for any of
 them. Invariants belonging to the sync engine or the desktop client live in those repos'
 own CLAUDE.md — see §3 and §14j.
 
@@ -498,7 +498,7 @@ area belongs there too, with a stub here.
   chunk-internals references (§14c).
 - **`finalize_upload` broadcasts by DEFAULT, with exactly one explicit opt-out** —
   `Maker::Addons::LibraryOutput` passes `broadcast: false`, preserving what addon saves have
-  always done (never nudged live devices; open item, the Forgejo record (§11)). `mkdir`/`move`/
+  always done (never nudged live devices; open item, the record (§11)). `mkdir`/`move`/
   `delete`/`undelete` broadcast unconditionally, so a caller cannot forget; this verb has two
   callers wanting different behaviour for one fact, so it defaults to the safe answer (notify)
   rather than delegating the choice — an unwritten third caller that forgets to opt out gets a
@@ -562,7 +562,7 @@ area belongs there too, with a stub here.
   first, returned unconditionally) — a test's explicit "give every caller this object", not a cache
   anything resolves into. **The mutation-check is "put `@transport ||=` back", never "add a
   different kind of cache": anything keyed on less than the user is the shape of the bug.**
-  Arc C in full, including lazy provisioning under concurrency: the Forgejo record (§11).
+  Arc C in full, including lazy provisioning under concurrency: the record (§11).
 - **`port_writable` IS NOT "accepts uploads"** — the single most-misread name here. It
   answers *which upload flow the UI drives*: true → POST bytes to the port (share, s3);
   false → drive the port's own `begin_upload`/`finalize_upload` presigned flow (chunk_remote).
@@ -857,7 +857,7 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   allowlist went with it and the assertion is now unconditional — **stronger than what it
   replaced, and it must stay that way.** Before Stage 2 the controllers reached into `Sync::`
   wherever the port refused an operation (`FilesController#destroy`, `TrashController#restore`,
-  `FilesController`'s own upload flow); the arc that closed it is in the Forgejo record (§11). The tripwire
+  `FilesController`'s own upload flow); the arc that closed it is in the record (§11). The tripwire
   is about **new** work: **if a maker-layer change needs to touch sync, the changelog, conflicts,
   locks, or the mounts, the boundary is wrong — stop** (§14j). A violation fails `bin/ci`.
 - **CODEMIRROR IS ONE VENDORED BUNDLE AND EXACTLY ONE IMPORTMAP PIN. Never
@@ -1275,7 +1275,7 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
 - State plainly in the PR what was verified and what was not.
 - **THE ARC'S RECORD IS PART OF THE WORK, FILED AS THE PR OPENS — never a tidy-up afterwards.**
   `bin/log arc --from-pr <n>` after `gh pr create`, then **`bin/log close <n>` at merge — an arc
-  NEVER closes itself**: the PRs are on GitHub, the record is a self-hosted Forgejo, nothing bridges
+  NEVER closes itself**: the PRs are on GitHub, the record is a self-hosted Kaneo, nothing bridges
   them (`tinkerex#154` merged and deployed with its arc still open). Deferred, it does not happen: a
   feature ran to eight merged PRs while its record described the algorithm the second had deleted —
   and it is cheapest written while the numbers are in front of you, which a later pass reconstructs
@@ -1319,7 +1319,7 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
 
 ### Keeping the docs honest
 
-- **THE FORGEJO RECORD (§11) is where an arc gets narrated. This file is not.** Add dates, branch
+- **THE RECORD (§11) is where an arc gets narrated. This file is not.** Add dates, branch
   names, suite counts and per-phase detail there.
 - **What belongs HERE is an invariant** — something a future editor could undo by accident.
   Put it in §14, one line, with the consequence named. If it needs a paragraph of story to

@@ -47,7 +47,7 @@ module Maker
     # `perform_later`, which is what this sweep relies on — do not reintroduce a caller that goes
     # straight to `GeneratePreviewJob.perform_later`.
     #
-    # NOT the `unsupported`-row sweep the Forgejo record (CLAUDE.md §11) still leaves open. A row saying `unsupported`
+    # NOT the `unsupported`-row sweep the record (CLAUDE.md §11) still leaves open. A row saying `unsupported`
     # for the current content is present and terminal; this only ever looks for content with NO
     # row, so the two migrations stay separable and keep their own correctness arguments.
     #

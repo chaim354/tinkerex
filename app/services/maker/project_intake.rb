@@ -70,7 +70,7 @@ module Maker
     #   - S3: FileLayer::S3#move is THREE SEQUENTIAL, UNBATCHED NETWORK CALLS per file —
     #     object_exists? (a HEAD), copy! (a COPY), then delete_object (a DELETE); verified by
     #     reading the method, not assumed. At this cap's default that is 25 * 3 = 75 sequential S3
-    #     API calls inside one browser-facing request. docs/r2-migration.md / the Forgejo record (CLAUDE.md §11)
+    #     API calls inside one browser-facing request. docs/r2-migration.md / the record (CLAUDE.md §11)
     #     measured ~85–205 ms per comparable call against a real R2 bucket, so at the low end alone
     #     that is several seconds an upload's response would sit waiting on.
     #   - Chunk: filing N files fires N synchronous Sync::LibraryChannel.broadcast_change calls (one per

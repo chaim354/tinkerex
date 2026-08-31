@@ -22,7 +22,7 @@ require_relative "../support/chunk_remote_journey"
 # asserts set equality between `bin/ci --list-ci` and ci.yml's gate jobs, so a red gate is a red
 # main, and this suite was expected to be red until Arc B closed what it measured.
 # .github/workflows/sync-contract.yml carried the signal instead, on the client-contract.yml
-# precedent. Arc B closed all four gaps (CLAUDE.md §14a, and the Forgejo record); the suite is 10/10
+# precedent. Arc B closed all four gaps (CLAUDE.md §14a, and the record); the suite is 10/10
 # against a real server, so it is now `config/ci.rb`'s `test-chunk-remote` gate and
 # sync-contract.yml is gone -- one definition, same as every other gate.
 class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest

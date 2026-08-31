@@ -95,7 +95,7 @@ class DocsHygieneTest < ActiveSupport::TestCase
     assert_empty offenders, <<~MSG
       These cite a file that no longer exists: #{offenders.join(', ')}
 
-      The record lives in Forgejo now. Cite a specific issue as `tinkerex#N`, or point at
+      The record lives in Kaneo now. Cite a specific issue as `tinkerex#N`, or point at
       CLAUDE.md §11 for a generic reference. §11 holds the base URL so the instance can move
       without touching any of these.
     MSG

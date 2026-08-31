@@ -149,7 +149,7 @@ bin/log deploy --image <sha> --dest <destinations actually rolled>
 
 This used to read "optionally offer", which quietly guaranteed the opposite of what CLAUDE.md §15
 wants. It then said to commit the record straight to `main`, because a deploy happens AFTER the
-merge and its record could never live in the work's own PR. **As a Forgejo issue that whole
+merge and its record could never live in the work's own PR. **As an issue in the record that whole
 exception evaporates** — there is no file to commit, so there is nothing to push to `main`. §15's
 named exception is gone with it.
 

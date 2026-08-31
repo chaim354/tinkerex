@@ -349,7 +349,7 @@ class CiHygieneTest < ActiveSupport::TestCase
   # brakeman currently latest, `bin/brakeman` exits 0 — identical to the flag being absent — so a
   # run-based guard is green either way and only goes red once upstream releases: a test that
   # cannot fail for the reason it exists, which is this repo's dominant failure shape. That is
-  # exactly how the first green in this branch was worthless (see the Forgejo record, CLAUDE.md §11).
+  # exactly how the first green in this branch was worthless (see the record, CLAUDE.md §11).
   #
   # THREE ASSERTIONS, each mutation-checked, because no one of them carries the invariant alone:
   # re-adding the unshift is caught only by the first, gutting the binstub only by the second, and
