@@ -103,13 +103,28 @@ class CiPreflightTest < ActiveSupport::TestCase
     refute_match(/⛔/, out)
   end
 
-  test "the real workflow dir has no linux or windows job, so the summary reports neither as skipped" do
-    # Guards the CLAIM CLAUDE.md §12.6 now makes about this repo. If a linux job returns here
-    # WITHOUT its runner being registered, this goes red and the §12.6 wording needs revisiting —
-    # which is the conversation worth having, rather than a summary quietly warning again.
-    out, _ = preflight("macos", "--summary")
-    refute_match(/⛔/, out,
-                 "a workflow in this repo now targets an unregistered runner family; see CLAUDE.md §12.6")
+  test "the real workflow dir targets linux, and the summary tracks whether linux is declared" do
+    # THE PREMISE FLIPPED ON 2026-08-31, EXACTLY AS THIS TEST PREDICTED IT MIGHT. It used to read
+    # "the real workflow dir has no linux or windows job", and its own comment said that if a linux
+    # job ever returned, this would go red and CLAUDE.md §12.6's wording would need revisiting —
+    # "the conversation worth having, rather than a summary quietly warning again". CI moved to four
+    # Linux container runners on the Unraid box (ops/ci-runner-stack.yml), every job here is `linux`,
+    # and §12.6 was rewritten in the same change.
+    #
+    # ASSERTED IN BOTH DIRECTIONS NOW, which the single-direction original could not do. With linux
+    # declared there must be no warning; with it UNDECLARED there must be one — and that second half
+    # is what keeps the ⛔ branch reachable for the REAL workflow dir rather than only for the
+    # planted fixtures above. Without it this would pass just as well over a script that had stopped
+    # warning at all.
+    available, _ = preflight("linux", "--summary")
+    refute_match(/⛔/, available,
+                 "linux is declared and every job in this repo targets it, so nothing is skipped")
+    assert_match(/`macos` \| — no job in this repo targets it/, available)
+    assert_match(/`windows` \| — no job in this repo targets it/, available)
+
+    absent, _ = preflight("macos", "--summary")
+    assert_match(/`linux` \| ⛔/, absent,
+                 "with linux undeclared, the summary must still report this repo's jobs as skipped")
   end
 
   private
