@@ -180,6 +180,23 @@ RUN printf '%b\n' \
  && rm -rf /tmp/stl-thumbnailer /tmp/smoke.stl /tmp/stl-smoke.png
 
 # ---------------------------------------------------------------------------------------------
+# EVERYTHING INSTALLED ABOVE WAS WRITTEN BY ROOT, AND THE JOBS ARE NOT ROOT — SO HAND mise TO THE
+# RUNNER. `bundle install` writes into the Ruby installation's own gem directory, which lives under
+# /opt/mise, so without this every job dies at step 2 with:
+#
+#     Bundler::PermissionError There was an error while trying to write to
+#     `/opt/mise/installs/ruby/3.4.7/lib/ruby/gems/3.4.0/cache/bundler-4.0.3.gem`.
+#
+# Measured on the first real CI run (2026-08-31, run 33440087622): all six gate jobs failed this way
+# in 13-20s while `preflight` — which runs no Ruby — passed. It was HIDDEN behind the `USER runner`
+# bug below: with that line present the container never survived long enough to reach `bundle
+# install` at all, so fixing one defect is what exposed this one.
+#
+# Per-container, so four runners cannot contend: /opt/mise is in each container's own writable
+# layer, and only /_work is shared with the host.
+RUN chown -R runner:runner /opt/mise
+
+# ---------------------------------------------------------------------------------------------
 # JOBS RUN AS THE NON-ROOT `runner` USER — VIA THE ENTRYPOINT'S OWN KNOB, NOT VIA `USER runner`.
 #
 # Headless Chrome refuses to start as root without --no-sandbox, and dropping the sandbox is the
