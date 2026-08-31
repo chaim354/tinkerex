@@ -163,10 +163,22 @@ OP_SERVICE_ACCOUNT_TOKEN=… bin/secrets-preflight --all   # prints which auth p
 writes the credential to `~/.zsh_history` in plaintext. Use `read -rs OP_SERVICE_ACCOUNT_TOKEN &&
 export OP_SERVICE_ACCOUNT_TOKEN`, or scope it to the single command as above.
 
-**There is no CI consumer today.** All six workflows in `.github/workflows/` reference zero
-GitHub secrets (`grep -c '${{ secrets\.'` → 0 in each): the test gates run on SQLite with stub
-env, and `cross-os-e2e.yml` uses a fixed test account. So a service account is currently only
-worth minting for unattended *deploys* — wire it into CI when a job first needs a real credential.
+**CI STILL NEEDS NO 1PASSWORD SERVICE ACCOUNT, though it is no longer true that it uses no secrets
+at all.** Re-measured 2026-08-31: `.github/workflows/` holds exactly **one** workflow, `ci.yml`
+(`nightly.yml` and `client-contract.yml` were deleted on 2026-08-25 and the rest moved to
+`chaim354/tinkerex-client`), and it references exactly **one** GitHub secret —
+`secrets.TINKEREX_SYNC_DEPLOY_KEY`, the read-only deploy key `test-chunk-remote` uses to check out
+the sibling `tinkerex-sync` repo. The test gates themselves still run on SQLite with stub env and
+reach no real service.
+
+A repo deploy key is not an `OP_SERVICE_ACCOUNT_TOKEN`, so the conclusion is unchanged: a 1Password
+service account is worth minting for unattended **deploys** only, and CI wants one the day a job
+first needs a credential 1Password holds. Verify rather than trust this paragraph —
+`grep -c 'secrets\.' .github/workflows/*.yml` and `ls .github/workflows/` answer both halves.
+
+*(This read "all six workflows … reference zero GitHub secrets" until 2026-08-31, by which point
+there was one workflow and it referenced one secret. The count went stale when the cross-repo
+suites left; the zero went stale when the chunk_remote gate started checking out its sibling.)*
 
 ### Active Record encryption keys (config/credentials.yml.enc)
 
