@@ -27,9 +27,11 @@
 # red and taxes every genuine failure with the new timeout.
 #
 # DERIVED, NOT A LITERAL. A flat `6` would be right for this laptop and wrong for the next machine —
-# and `docs/DEPLOY.md`'s CI runner is a developer's own laptop today but need not stay one. The
-# budget below adapts; the cap by processor count keeps a huge-RAM box from spawning more browsers
-# than it has cores to drive them with.
+# and this repo's CI runner WAS a developer's own laptop until 2026-08-31 and is now a container
+# with a cgroup memory limit — which is exactly the "next machine" that sentence anticipated, and
+# why the readers below consult the cgroup before /proc. The budget below adapts; the cap by
+# processor count keeps a huge-RAM box from spawning more browsers than it has cores to drive them
+# with.
 module WorkerBudget
   # Bytes of RAM to reserve per browser worker. The marginal cost measured above is ~1.3 GB per
   # worker over a ~6.7 GB baseline; 4 GB is deliberately generous, because the budget has to hold
@@ -76,8 +78,10 @@ module WorkerBudget
     # 10-core box each took 6 workers — twelve Chromes — and produced **152 and 166 errors** where
     # either alone produces zero. The box swaps and every Capybara wait becomes the coin flip this
     # header already warned about. That reached CI in milder form as BoxSectionsTest failing on two
-    # consecutive PRs and passing on every re-run — the CI runner IS this Mac (§15), so a local
-    # `bin/ci` and a CI job genuinely collide.
+    # consecutive PRs and passing on every re-run, back when the CI runner WAS this Mac and a local
+    # `bin/ci` genuinely collided with a CI job. CI moved to dedicated containers on 2026-08-31; the
+    # detector stays because four runners still share one host, and because a developer's local
+    # suite still collides with itself.
     #
     # NO FLOOR ABOVE 1, DELIBERATELY, AND THAT IS THIS FILE'S EXISTING CONTRACT RATHER THAN A NEW
     # CHOICE. A first draft floored this at 4 to protect local wall time, and
@@ -94,13 +98,13 @@ module WorkerBudget
     # DETECTS THE CONDITION DIRECTLY NOW, INSTEAD OF PROXYING IT THROUGH FREE MEMORY.
     #
     # The available-memory check above was a PROXY for "another browser suite is already running",
-    # and on the box this repo actually runs on it is tripped permanently. Measured 2026-08-25:
-    # `system-test` took 83-97s on NINE consecutive CI runs, median 84s, never once fast — because
-    # the CI runner IS a developer's own Mac (§15) and macOS `available` (free + inactive) on a
-    # machine with apps open never looks idle. So the budget returned **1** every time, the
-    # protection sat at maximum permanently, and the cost was paid on every run including the vast
-    # majority with no second suite anywhere. Local comparison on the same box, same free memory:
-    # **1 worker 75.3s, 4 workers 33.6s, zero failures either way.**
+    # and on the Mac runner it was tripped permanently. Measured 2026-08-25: `system-test` took
+    # 83-97s on NINE consecutive CI runs, median 84s, never once fast — because the CI runner was a
+    # developer's own Mac and macOS `available` (free + inactive) on a machine with apps open never
+    # looks idle. So the budget returned **1** every time, the protection sat at maximum
+    # permanently, and the cost was paid on every run including the vast majority with no second
+    # suite anywhere. Local comparison on the same box, same free memory: **1 worker 75.3s, 4
+    # workers 33.6s, zero failures either way.**
     #
     # WHY NOT COUNT CHROME PROCESSES, which is the obvious direct check: it cannot work here.
     # Sampled during a real system run, the process table showed **44 `Google Chrome Helper
