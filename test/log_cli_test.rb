@@ -641,6 +641,22 @@ class LogCliTest < ActiveSupport::TestCase
       assert_match(/label/, err)
       assert_includes err, '"arc" label',
                       "the failure must name the label, not just say one failed"
+
+      # WHAT IS SPOOLED MUST BE THE LABEL ATTACHMENT, NEVER THE CREATE. This is the assertion the
+      # test was missing, and its absence was a live trap: `create_task`'s rescue passes
+      # `payload: e.payload, path: e.path` forward specifically so the outer rescue cannot
+      # substitute the CREATE payload, and collapsing those three lines to a bare
+      # `raise Unreachable, "..."` reads like noise-removal and keeps every other assertion here
+      # green. With the create payload spooled instead, refiling that entry files a SECOND arc at a
+      # new number -- one that no tinkerex#N citation points at -- while the original stays
+      # unlabelled and invisible to every search that filters by kind.
+      spooled = File.read(Dir.glob(File.join(@spool, "*.md")).first)
+      assert_includes spooled, "/api/label",
+                      "the spooled endpoint must be the attachment that failed"
+      assert_includes spooled, '"taskId": "t9"',
+                      "the spooled payload must name the task the label belongs to"
+      refute_includes spooled, '"description"',
+                      "spooling the CREATE payload invites a duplicate arc at a new number on refile"
     end
   ensure
     stub&.shutdown

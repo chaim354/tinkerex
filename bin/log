@@ -140,8 +140,18 @@ module Log
     end
   end
 
-  # REJECT, NEVER NORMALIZE — §14a's key_for rule. Net::HTTP does not normalise, so a `..` segment
-  # reaches the wire and any normalising reverse proxy resolves it out of the repo scope.
+  # REJECT, NEVER NORMALIZE — §14a's key_for rule. **THE ORIGINAL REASON NO LONGER HOLDS AND THE
+  # GUARD STILL MUST STAY.** Under the previous record a number was interpolated straight into the
+  # request path, so a `..` segment reached the wire verbatim and a normalising proxy could resolve
+  # it outside the repo scope. Kaneo addresses every task by an opaque id: a validated number now
+  # dead-ends in `task_index[number.to_i]`, a Hash lookup, and every path is built from
+  # `task.fetch("id")` — so traversal has no route to the wire at all, and a reader who checks that
+  # claim finds it false and deletes this as dead weight.
+  #
+  # WHAT IT PROTECTS NOW IS THE EXIT CODE. Without it `bin/log show <garbage>` resolves to
+  # `task_index[0]`, misses, and raises Unreachable — exit 3, "unreachable, and a write was
+  # spooled". /finish-branch reads these codes and would treat a typo as an outage it can wait out.
+  # A malformed argument is a usage error: exit 2, said by this method and nowhere else.
   def issue_number!(value)
     raise UsageError, "not an issue number: #{value.inspect}" unless value.to_s.match?(/\A\d+\z/)
 
@@ -168,8 +178,10 @@ module Log
   rescue Unreachable => e
     # Attach what was being sent, and to what path, at the one place that knows all three. A
     # failure raised from `token` carries neither payload nor path of its own, and a WRITE must
-    # still be spooled with enough context to refile it — `note`'s target lives in the PATH, not
-    # the payload, so losing it here makes a spooled correction unrecoverable (see spool!).
+    # still be spooled with enough context to refile it. `note` used to depend on this entirely —
+    # its target lived in the PATH (/issues/128/comments) and nowhere else. It no longer does: Kaneo
+    # addresses a comment by an opaque id, so `note` carries its own rescue that puts the number in
+    # the message. This line still matters for every OTHER write, whose payload is the whole record.
     raise Unreachable.new(e.message, payload: e.payload || body, path: e.path || path)
   rescue SystemCallError, SocketError, EOFError, IOError, Timeout::Error,
          Net::OpenTimeout, Net::ReadTimeout, Net::ProtocolError,
@@ -586,8 +598,11 @@ module Log
     file = File.join(spool_dir, "#{current_branch.tr('/', '-')}.md")
     File.open(file, "a") do |f|
       f.puts("# unfiled: #{command}")
-      # note's TARGET lives in the URL, not the payload. Without this line a correction spooled
-      # during an outage has the text and no way to know which issue it belongs to.
+      # THE ENDPOINT IS RECORDED BECAUSE A PAYLOAD ALONE IS OFTEN NOT ENOUGH TO REFILE. It used to
+      # be `note`'s only link to its issue (/issues/128/comments); under Kaneo `note` names the
+      # number in its own message instead, because the id is opaque and resolving it is the verb's
+      # first wire call. Keep this line: it is what tells a label attachment from a task create when
+      # both are sitting in the same spool file.
       f.puts("# endpoint: #{path}") if path
       f.puts("", JSON.pretty_generate(payload), "")
     end
