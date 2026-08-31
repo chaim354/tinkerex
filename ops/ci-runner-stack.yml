@@ -98,7 +98,9 @@ x-runner: &runner
   mem_limit: 8g
   cpus: 8.0
   # SYS_PTRACE lets Chrome's own crash handling work; the sandbox itself is kept by running as the
-  # non-root `runner` user (see the Dockerfile's final USER line), NOT by --no-sandbox.
+  # non-root `runner` user — via the image's `ENV RUN_AS_ROOT=false`, NOT a `USER` line and NOT
+  # --no-sandbox. A `USER runner` line was tried and makes every container register and then
+  # immediately deregister; ci/runner/Dockerfile records why at length.
   cap_add:
     - SYS_PTRACE
   security_opt:

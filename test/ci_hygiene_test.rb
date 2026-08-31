@@ -242,7 +242,7 @@ class CiHygieneTest < ActiveSupport::TestCase
     # over-report is the safe direction there and an exact-match set intersection was not here.
     #
     # So a job that carries `self-hosted` and names NONE of FAMILIES is an offender: nothing static
-    # can tell which preflight output would gate it. All 7 real jobs are `[self-hosted, macos]`, so
+    # can tell which preflight output would gate it. All 7 real jobs are `[self-hosted, linux]`, so
     # the rule is satisfiable and green today. A job with no `self-hosted` label at all is left to
     # the hosted-runner check above rather than reported twice.
     #
@@ -264,7 +264,8 @@ class CiHygieneTest < ActiveSupport::TestCase
   # THE THREE RUNNER CHECKS ABOVE, DRIVEN AGAINST PLANTED WORKFLOWS RATHER THAN THE SEVEN THIS REPO
   # HAPPENS TO SHIP.
   #
-  # All 7 real jobs are `[self-hosted, macos]`, correctly gated, using no setup-ruby — so all three
+  # All 7 real jobs are `[self-hosted, linux]` — the family preflight itself runs on, so exempt by
+  # derivation rather than ungated — using no setup-ruby — so all three
   # checks are green over a set containing no offender of any kind, and neither the rules they
   # enforce nor the distinctions between them are exercised at all. That is the shape §15 warns
   # about: green, and unable to fail for the reason it exists.

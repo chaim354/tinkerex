@@ -119,13 +119,16 @@ jobs:
   # Which runner families exist for this run — see ci/preflight.sh for why this is a DECLARATION
   # (the repo variable CI_RUNNERS) and not an API call.
   #
-  # The jobs in THIS workflow are not gated on it: they all run on macos, and if the mac runner were
-  # absent this job could not start either, so gating them on it would be circular. Since the
-  # cross-repo suites left (2026-08-25) there is no linux/windows job here to gate AT ALL, so what
-  # this job buys is entirely the SUMMARY — a run that states, on its own page, that this repo's
-  # coverage stops at macos and where the rest went. Keep it: the moment a linux job returns it
-  # MUST be gated, and test/ci_hygiene_test.rb enforces that. The siblings carry their own copies
-  # of this job (a workflow file's job outputs don't cross files) and gate real jobs on it.
+  # The jobs in THIS workflow are not gated on it: they all run on LINUX, which is the family this
+  # job itself runs on, so if the Unraid fleet were absent this job could not start either and
+  # gating them on it would be circular. test/ci_hygiene_test.rb DERIVES that exemption from this
+  # job's own `runs-on` rather than naming a family — it read the literal `macos` for as long as
+  # preflight ran there, which was the consequence rather than the rule.
+  #
+  # So what this job buys here is entirely the SUMMARY — a run that states, on its own page, that
+  # this repo's coverage stops at linux and where the rest went. Keep it: the moment a macos or
+  # windows job returns it MUST be gated, and the guard enforces that. The siblings carry their own
+  # copies (a workflow file's job outputs don't cross files) and gate real jobs on it.
   preflight:
     runs-on: [self-hosted, linux]
     outputs:
