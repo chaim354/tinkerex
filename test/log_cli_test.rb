@@ -461,6 +461,39 @@ class LogCliTest < ActiveSupport::TestCase
   # STATUS FAILS LOUD ON A BACKLOG. bin/backup-status exists for the same reason and says so in its
   # header: a nightly that stops is silent, and the failure looks exactly like success right up
   # until the restore. An unfiled arc is the same shape.
+  # A DETACHED HEAD IS THE ENVIRONMENT THIS SCRIPT IS PROMISED TO WORK IN. §13 names CI, cloud
+  # sessions, subagents and worktrees; GitHub Actions checks out a SHA, so `git branch
+  # --show-current` prints "" there and `git bisect` does the same locally.
+  #
+  # THE BUG THIS PINS WAS SILENT IN THE WORST DIRECTION. An empty branch made the spool file
+  # `<spool>/.md`, and `Dir.glob("<spool>/*.md")` does not match a leading dot — so `status` reported
+  # "nothing unfiled" over a record that was sitting right there, and EXIT_UNFILED could never fire.
+  # /finish-branch reads that exit code to decide whether there is unrecorded work.
+  #
+  # DRIVEN THROUGH BOTH VERBS, because either alone is only half the claim: a write must produce a
+  # findable file, and `status` must find it. Found by CI, not by this suite — the suite ran on a
+  # named branch, where the name is never empty.
+  test "a detached HEAD spools to a findable file, not an invisible dotfile" do
+    stub = StubKaneo.new(status: 503, response: { "message" => "down" })
+
+    _out, _err, code = run_log("open", "work done while detached",
+                               env: { "KANEO_URL" => stub.url, "KANEO_TOKEN" => "k", "LOG_BRANCH" => "" })
+
+    assert_equal 3, code, "an unreachable write must spool and exit 3"
+
+    written = Dir.children(@spool)
+    assert_equal 1, written.size, "exactly one spool file: #{written.inspect}"
+    refute written.first.start_with?("."),
+           "a dotfile is invisible to status's glob — got #{written.first.inspect}"
+
+    out, _err, status_code = run_log("status")
+
+    assert_equal 4, status_code, "status must report the backlog it can now see"
+    assert_match(/1 unfiled record/, out)
+  ensure
+    stub&.shutdown
+  end
+
   test "status names every spooled entry and exits EXIT_UNFILED" do
     Dir.mktmpdir do |spool|
       File.write(File.join(spool, "claude-example.md"), "# unfiled: open

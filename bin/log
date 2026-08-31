@@ -594,8 +594,23 @@ module Log
   def spool_dir = ENV.fetch("LOG_SPOOL_DIR", File.expand_path("../tmp/log-pending", __dir__))
 
   # THE BRANCH NAMES THE SPOOL FILE, so two branches cannot overwrite each other's unfiled record.
+  #
+  # A DETACHED HEAD REPORTS AN EMPTY BRANCH, AND AN EMPTY NAME MADE THE SPOOL FILE A DOTFILE — which
+  # `status` then could not see. `git branch --show-current` prints "" when HEAD is detached, so the
+  # file became `<spool>/.md`, and `Dir.glob("<spool>/*.md")` does NOT match a leading dot. The record
+  # was written, `status` answered "nothing unfiled", and exit 4 — which exists to make a backlog
+  # loud — could never fire. Silent, and in exactly the environments §13 says this script must work
+  # in: GitHub Actions checks out a SHA, and so does `git bisect`.
+  #
+  # THE SHA IS THE FALLBACK RATHER THAN A LITERAL, because a spooled record you cannot attribute is
+  # most of the way to a lost one — "detached" alone would collide across every such run. Two
+  # detached checkouts of the SAME commit sharing one file is correct: it is the same work.
   def current_branch
-    ENV["LOG_BRANCH"] || Open3.capture2("git", "branch", "--show-current").first.strip
+    name = ENV["LOG_BRANCH"] || Open3.capture2("git", "branch", "--show-current").first.strip
+    return name unless name.empty?
+
+    sha = Open3.capture2("git", "rev-parse", "--short", "HEAD").first.strip
+    sha.empty? ? "detached" : "detached-#{sha}"
   end
 
   def spool!(command, payload, path = nil)
