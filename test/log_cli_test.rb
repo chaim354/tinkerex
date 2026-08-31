@@ -775,6 +775,147 @@ class LogCliTest < ActiveSupport::TestCase
     end
   end
 
+  # --- the transport, and the number that is not an address ------------------------------------
+
+  # THE TWO THINGS EVERY REQUEST MUST CARRY, ASSERTED ACROSS ALL OF THEM RATHER THAN THE LAST ONE.
+  # A `show` is now three wire calls — the workspace, the project, then the board — and a header set
+  # on the first but dropped on a later one is exactly the shape a single-request assertion misses.
+  test "every request carries a Bearer token and reaches the /api prefix" do
+    stub = StubKaneo.new(routes: {
+      "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
+      "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
+      "GET /task/tasks" => [ 200, { "data" => { "columns" => [
+        { "slug" => "to-do", "tasks" => [ { "id" => "t1", "number" => 7, "title" => "x", "status" => "to-do" } ] }
+      ] }, "pagination" => { "totalPages" => 1 } } ]
+    })
+    _out, err, code = run_log("show", "7", env: { "KANEO_URL" => stub.url, "KANEO_TOKEN" => "secret-key" })
+
+    assert_equal 0, code, err
+    refute_empty stub.requests, "nothing reached the wire, so this guard asserted nothing"
+    stub.requests.each do |request|
+      assert_equal "Bearer secret-key", request.headers["authorization"]
+      assert request.path.start_with?("/api/"), "#{request.path} is not under /api"
+    end
+  ensure
+    stub&.shutdown
+  end
+
+  # THE WORKSPACE IS RESOLVED BEFORE THE PROJECT, AND THE ORDER IS FORCED BY THE SERVER: GET
+  # /api/project answers 400 without a workspaceId, so the project list cannot be the thing that
+  # tells you the workspace. Reversing the two reads as a harmless refactor and is a hard 400.
+  test "the workspace is resolved first, and the project list is asked with its id" do
+    stub = StubKaneo.new(routes: {
+      "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "other" },
+                                                { "id" => "w2", "slug" => "tinkerex" } ] ],
+      "GET /project" => [ 200, [ { "id" => "p9", "slug" => "tinkerex" } ] ],
+      "GET /task/tasks" => [ 200, { "data" => { "columns" => [
+        { "slug" => "to-do", "tasks" => [ { "id" => "t1", "number" => 7, "title" => "x", "status" => "to-do" } ] }
+      ] }, "pagination" => { "totalPages" => 1 } } ]
+    })
+    _out, err, code = run_log("show", "7", env: { "KANEO_URL" => stub.url, "KANEO_TOKEN" => "k" })
+
+    assert_equal 0, code, err
+    paths = stub.requests.map(&:path)
+    assert_equal "/api/auth/organization/list", paths.first,
+                 "the workspace must be resolved before anything asks for a project"
+    assert_includes paths[1], "workspaceId=w2",
+                    "the project list was asked without the workspace id, or with the wrong slug's"
+    assert_includes paths[2], "/api/task/tasks/p9",
+                    "the board was fetched for something other than the resolved project"
+  ensure
+    stub&.shutdown
+  end
+
+  # KANEO ADDRESSES A TASK BY AN OPAQUE id; the citable `number` is not addressable at all, so every
+  # verb naming an issue has to walk the board first. Forgejo needed nothing like this.
+  test "a number resolves to the task id before any addressed call is made" do
+    stub = StubKaneo.new(routes: {
+      "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
+      "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
+      "GET /task/tasks" => [ 200, { "data" => { "columns" => [
+        { "slug" => "done", "tasks" => [ { "id" => "abc", "number" => 178, "title" => "Staging panel", "status" => "done" } ] }
+      ] }, "pagination" => { "totalPages" => 1 } } ]
+    })
+    out, err, code = run_log("show", "178", env: { "KANEO_URL" => stub.url, "KANEO_TOKEN" => "k" })
+
+    assert_equal 0, code, err
+    assert_match(/#178 Staging panel/, out)
+  ensure
+    stub&.shutdown
+  end
+
+  test "a number that no task carries is a clear refusal, not a crash" do
+    stub = StubKaneo.new(routes: {
+      "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
+      "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
+      "GET /task/tasks" => [ 200, { "data" => { "columns" => [] }, "pagination" => { "totalPages" => 1 } } ]
+    })
+    _out, err, code = run_log("show", "999", env: { "KANEO_URL" => stub.url, "KANEO_TOKEN" => "k" })
+
+    assert_equal 3, code
+    assert_match(/no issue #999/, err)
+  ensure
+    stub&.shutdown
+  end
+
+  # THE TWO OFF-BOARD BUCKETS ARE NOT DECORATION, AND WITHOUT THIS FIXTURE THE GUARD IS VACUOUS.
+  # `archivedTasks` and `plannedTasks` sit BESIDE `columns` in the board envelope and appear in no
+  # column, so a resolver that walks only the columns answers "no issue #N" for a record that is
+  # present and intact. Measured 2026-08-31: both keys come back at the top level of `data`.
+  # Deleting those two lines from task_index goes green against a fixture whose tasks all sit in
+  # columns — §14e's rule that a guard must be shown to scan a NON-EMPTY set, in miniature.
+  test "a task in an off-board bucket resolves like any other" do
+    stub = StubKaneo.new(routes: {
+      "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
+      "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
+      "GET /task/tasks" => [ 200, { "data" => {
+        "columns" => [ { "slug" => "to-do", "tasks" => [] } ],
+        "archivedTasks" => [ { "id" => "arch", "number" => 41, "title" => "Retired scan guard", "status" => "archived" } ],
+        "plannedTasks" => [ { "id" => "plan", "number" => 42, "title" => "Selective sync", "status" => "planned" } ]
+      }, "pagination" => { "totalPages" => 1 } } ]
+    })
+    env = { "KANEO_URL" => stub.url, "KANEO_TOKEN" => "k" }
+
+    archived, err, code = run_log("show", "41", env: env)
+    assert_equal 0, code, err
+    assert_match(/#41 Retired scan guard/, archived, "an archived task is off-board, not absent")
+
+    planned, err, code = run_log("show", "42", env: env)
+    assert_equal 0, code, err
+    assert_match(/#42 Selective sync/, planned, "a planned task is off-board, not absent")
+  ensure
+    stub&.shutdown
+  end
+
+  # THE LIMIT IS CAPPED SERVER-SIDE, SO ONE PAGE IS A WELL-FORMED LIE. A request for limit=200 came
+  # back with pageSize 100 (measured), and the record holds 193 tasks — so a resolver that trusts
+  # the first page cannot see roughly half of them, and reports "no issue #N" for every one. The
+  # answer is not a bigger limit; it is reading `pagination.totalPages` and walking.
+  test "the task index walks every page rather than trusting the first" do
+    page = lambda do |task, total|
+      [ 200, { "data" => { "columns" => [ { "slug" => "to-do", "tasks" => [ task ] } ] },
+               "pagination" => { "totalPages" => total } } ]
+    end
+    stub = StubKaneo.new(routes: {
+      "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
+      "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ],
+      "GET /task/tasks" => [
+        page.call({ "id" => "a", "number" => 1, "title" => "first page", "status" => "to-do" }, 2),
+        page.call({ "id" => "b", "number" => 193, "title" => "second page", "status" => "to-do" }, 2)
+      ]
+    })
+    out, err, code = run_log("show", "193", env: { "KANEO_URL" => stub.url, "KANEO_TOKEN" => "k" })
+
+    assert_equal 0, code, err
+    assert_match(/#193 second page/, out, "the walk stopped at page 1 — half the record is invisible")
+
+    pages = stub.requests.map(&:path).select { |p| p.include?("/task/tasks") }
+    assert_equal 2, pages.size, "expected one request per page, got #{pages.inspect}"
+    assert_includes pages[1], "page=2"
+  ensure
+    stub&.shutdown
+  end
+
   # --- close -----------------------------------------------------------------------------------
 
   test "close PATCHes state closed, and reads the issue first so it can tell you it was open" do
