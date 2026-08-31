@@ -217,8 +217,10 @@
   reason `Maker::ProjectIntakeJob`'s own schedule declines on scannable backends (next
   bullet).
 - **AN INTERACTIVE SCAN DOOR MUST NOT FILE ON A SCANNABLE BACKEND — IT ENQUEUES AND STOPS.**
-  `Projects::ScansController` (the per-project "Scan folder" button) is the first door that
-  refreshes the store on a user's command. On share/s3 it calls `Library::ScanJob.enqueue_for` and
+  `Projects::ScansController` (the per-project "Scan folder" button) is the SECOND door that
+  refreshes the store on a user's command — `FilesController#rescan`, the Files page's "Rescan
+  library" button, predates it and is `require_scannable!`-gated, so it never reaches this rule's
+  chunk_remote half. On share/s3 this one calls `Library::ScanJob.enqueue_for` and
   files NOTHING itself: a move started from the request races the Scanner's own observations, and
   the bullet above is what that costs — a terminal 404 for a file that is not gone. The filing is
   already inside `ScanJob#perform`, after `observer.call`, and that is the only place it may be.
