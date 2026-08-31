@@ -224,8 +224,11 @@ class CiHygieneTest < ActiveSupport::TestCase
     # 24h at 0 elapsed and is then auto-cancelled, leaving mergeStateStatus UNSTABLE and the merge
     # needing --admin. That is how CI went dark on 2026-06-24 and stayed dark for five weeks.
     #
-    # macos jobs are exempt: the preflight job itself runs on macos, so if that family were absent
-    # the gate could not start either and gating a macos job on it would be circular.
+    # WHICHEVER FAMILY PREFLIGHT ITSELF RUNS ON is exempt: if that family were absent the gate could
+    # not start either, so gating one of its own jobs on it would be circular. DERIVED from the
+    # preflight job's `runs-on` (see preflight_family), never named — this sentence read "macos jobs
+    # are exempt" for as long as preflight ran there, which states the consequence rather than the
+    # rule and goes silently false the moment CI changes boxes.
     #
     # A BOX LABEL IS NOT A FAMILY LABEL, AND THAT WAS THE HOLE. `runs-on: [self-hosted, maker-linux]`
     # routes to the Linux box exactly like `[self-hosted, linux]` does — every runner self-applies
