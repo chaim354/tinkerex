@@ -97,6 +97,16 @@ x-runner: &runner
   restart: unless-stopped
   mem_limit: 8g
   cpus: 8.0
+  # SHM_SIZE IS FOR CHROME, AND WITHOUT IT EVERY SYSTEM TEST ERRORS. Docker defaults /dev/shm to
+  # 64 MB; Chrome needs far more and simply exits at startup, which surfaces as
+  # `Selenium::WebDriver::Error::SessionNotCreatedError: session not created: Chrome instance
+  # exited` on all 199 tests at once — a browser-config error rather than anything about the app.
+  # Measured 2026-08-31 in the built image: 199 errors at the 64 MB default, `199 runs, 1689
+  # assertions, 0 failures` at 2 GB. THE POINT OF FIXING IT HERE rather than adding
+  # `--disable-dev-shm-usage` to the driver is that the driver flag would change how Chrome runs on
+  # every machine — including a developer's Mac, which has no such limit — to work around a
+  # constraint that exists only in a container. Fix it where it is broken.
+  shm_size: 2gb
   # SYS_PTRACE lets Chrome's own crash handling work; the sandbox itself is kept by running as the
   # non-root `runner` user — via the image's `ENV RUN_AS_ROOT=false`, NOT a `USER` line and NOT
   # --no-sandbox. A `USER runner` line was tried and makes every container register and then
