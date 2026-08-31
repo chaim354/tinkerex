@@ -47,6 +47,18 @@ module WorkerBudget
   # first five minutes, and the test that names the constant is what caught it.
   PIDFILE_DIR = File.expand_path("../../tmp/browser-suites", __dir__)
 
+  # WHERE A CONTAINER'S REAL MEMORY LIMIT LIVES (cgroup v2), READ BEFORE /proc/meminfo.
+  #
+  # MemTotal reports the HOST's memory inside a container, whatever limit the container carries. On
+  # the CI box that is 33.35 GB, so the budget below planned for 8 browser workers — roughly 17 GB
+  # by this file's own measured figures (~6.7 GB baseline + ~1.3 GB marginal) — inside a container
+  # sized far smaller, and the suite is OOM-killed rather than merely slow.
+  #
+  # These are the questions the two readers already CLAIM to answer: how much memory may THIS
+  # PROCESS use, and how much of it is left. On bare metal and on macOS the files are absent or read
+  # `max`, so both fall through to exactly the behaviour they had before this existed.
+  CGROUP_MEMORY_MAX     = "/sys/fs/cgroup/memory.max"
+  CGROUP_MEMORY_CURRENT = "/sys/fs/cgroup/memory.current"
 
   class << self
     # Never returns less than 1, never more than the processor count, and never raises: an
@@ -168,6 +180,39 @@ module WorkerBudget
       1
     end
 
+    # The cgroup v2 memory limit in bytes, or nil when there is no limit to read: the file is absent
+    # (bare metal, cgroup v1, macOS) or holds the literal "max" (a container with no limit set).
+    # nil means "ask the platform", which is the pre-existing behaviour.
+    def cgroup_limit_bytes
+      raw = File.read(CGROUP_MEMORY_MAX).strip
+      return nil if raw == "max"
+      limit = Integer(raw, exception: false)
+      limit if limit&.positive?
+    rescue StandardError
+      nil
+    end
+
+    # What the cgroup is using right now. nil when unreadable, which leaves `available` at the whole
+    # limit — the same "a machine we cannot measure keeps the number it had" rule as everywhere else
+    # in this file.
+    def cgroup_used_bytes
+      Integer(File.read(CGROUP_MEMORY_CURRENT).strip, exception: false)
+    rescue StandardError
+      nil
+    end
+
+    def total_memory_bytes
+      cgroup_limit_bytes || platform_total_memory_bytes
+    end
+
+    def available_memory_bytes
+      limit = cgroup_limit_bytes
+      return platform_available_memory_bytes if limit.nil?
+
+      used = cgroup_used_bytes
+      used ? [ limit - used, 0 ].max : limit
+    end
+
     # WHAT IS ACTUALLY FREE, as distinct from installed. nil on an unrecognised platform or an
     # unreadable source, and `browser_workers` then falls back to TOTAL — i.e. exactly the old
     # behaviour, so a machine we cannot measure keeps the number it had before this existed.
@@ -176,7 +221,7 @@ module WorkerBudget
     # separately, and inactive memory is reclaimable on demand — counting only `free` would read a
     # perfectly healthy box as starved, because macOS deliberately keeps free near zero. Linux
     # publishes MemAvailable, which already means this.
-    def available_memory_bytes
+    def platform_available_memory_bytes
       case RbConfig::CONFIG["host_os"]
       when /darwin/i
         out = `vm_stat 2>/dev/null`
@@ -194,7 +239,7 @@ module WorkerBudget
 
     # macOS and Linux only, which is every machine this suite runs on. Anything else answers nil
     # and takes the fallback above.
-    def total_memory_bytes
+    def platform_total_memory_bytes
       case RbConfig::CONFIG["host_os"]
       when /darwin/i
         out = `sysctl -n hw.memsize 2>/dev/null`
