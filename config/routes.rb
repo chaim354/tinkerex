@@ -146,6 +146,11 @@ Rails.application.routes.draw do
     # Inline upload-and-attach (share/s3 multipart write). Chunk mode uploads via
     # /files/{begin,finalize}_upload then POSTs the node_id to the attachments endpoint.
     resources :uploads, only: :create, module: :projects
+    # "Look at my library NOW" — the per-project scan button. SINGULAR: there is no scan record
+    # and nothing to identify, only a verb. It is nested rather than shallow because the project is
+    # what the redirect and the flash are about, and the door files nothing on a scannable backend
+    # (docs/invariants/project-intake.md), so the project is context, not a target.
+    resource :scan, only: :create, module: :projects
   end
 
   # NON-NESTED ATTACH. The file page attaches via a <select> of projects, and a <select> cannot

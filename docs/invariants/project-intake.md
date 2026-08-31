@@ -216,6 +216,22 @@
   after `observer.call`, makes the overlap impossible instead of merely unlikely — the
   reason `Maker::ProjectIntakeJob`'s own schedule declines on scannable backends (next
   bullet).
+- **AN INTERACTIVE SCAN DOOR MUST NOT FILE ON A SCANNABLE BACKEND — IT ENQUEUES AND STOPS.**
+  `Projects::ScansController` (the per-project "Scan folder" button) is the SECOND door that
+  refreshes the store on a user's command — `FilesController#rescan`, the Files page's "Rescan
+  library" button, predates it and is `require_scannable!`-gated, so it never reaches this rule's
+  chunk_remote half. On share/s3 this one calls `Library::ScanJob.enqueue_for` and
+  files NOTHING itself: a move started from the request races the Scanner's own observations, and
+  the bullet above is what that costs — a terminal 404 for a file that is not gone. The filing is
+  already inside `ScanJob#perform`, after `observer.call`, and that is the only place it may be.
+  Pinned by `project_scan_button_test.rb`'s "a scannable backend does NOT file synchronously",
+  mutation-checked by adding the forbidden call.
+  **On `chunk_remote` the same door DOES file synchronously, and the asymmetry is the rule, not an
+  inconsistency**: there is no scan there, so there is no race, and the pull's own nudge
+  (`ChangelogSync#nudge_project_intake`) covers LIVE ARRIVALS ONLY — a file already in the mirror
+  but unfiled gets no nudge, so a pull-only button would find nothing to do and read as broken.
+  The synchronous pull is **not** the one §14a forbids: that bars a pull in a READ path, and this
+  is a POST.
 - **TWO CAPS, DELIBERATELY NOT ONE.** `MAX_MOVES` (500) bounds an unattended run's CHURN
   and is absolute, not a percentage — the only honest denominator is "files currently at
   project roots," of which the intended first run files 100%, so a percentage would be

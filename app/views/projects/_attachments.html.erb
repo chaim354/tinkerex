@@ -27,12 +27,28 @@
   <div class="panel-head">
     <h2>Files</h2>
     <div class="panel-actions">
+      <%# "Look at my library NOW", instead of waiting on library_scan's 15 minutes (share/s3) or
+          remote_changelog_pull's 2 (chunk_remote). It scans the LIBRARY, not this folder — a scan
+          cannot be aimed at a subfolder (Library::Reconciler compares against the whole catalog), so
+          the door refreshes the store and the existing chains do the per-project filing. %>
+      <%= button_to "Scan folder", project_scan_path(@project), method: :post, class: "linkbtn" %>
       <%= link_to "Attach existing", new_project_attachment_path(@project), class: "linkbtn" %>
       <%= render "upload_control", upload_url: project_uploads_path(@project),
                  attach_url: project_attachments_path(@project), redirect_url: project_path(@project),
                  parent_node_id: @upload_parent_node_id %>
     </div>
   </div>
+
+  <%# A share/s3 scan is a BACKGROUND job — an unbounded NAS walk or bucket listing — so the page
+      that started it cannot show the result. One reload, to the param-free url, which is what
+      stops it looping. Rendered only on the async path: chunk_remote finished inside the request.
+      §14d — a data-controller name that resolves to nothing is a SILENT no-op, which is why
+      app/javascript/controllers/scanreload_controller.js must exist and stimulus_hygiene_test
+      guards that it does. %>
+  <% if @scan_started && capabilities.scannable? %>
+    <span data-controller="scanreload"
+          data-scanreload-url-value="<%= project_path(@project) %>"></span>
+  <% end %>
 
   <% if @attachments.empty? && @missing_attachment_count.zero? %>
     <p class="muted">No files attached yet.</p>
