@@ -141,19 +141,33 @@ RUN curl -fsSL -o /usr/local/bin/pdfium \
 # changed*, so a renderer whose dependencies drift silently between image rebuilds would change
 # stored previews with nothing recording that it happened.
 #
-# THE SMOKE TEST RENDERS A REAL STL RATHER THAN PROBING A FLAG. `stl-thumbnailer --version` was the
+# THE SMOKE TEST RENDERS AN STL RATHER THAN PROBING A FLAG. `stl-thumbnailer --version` was the
 # obvious check and it is WRONG — this tool takes positional arguments only and answers
 # `usage: stl-thumbnailer <in.stl> <out.png> [w] [h]` on stderr with exit 1, which failed the build
-# on an image that had in fact built the binary correctly. Rendering `tetra.stl` and asserting a
-# non-empty PNG comes back proves what the layer is actually for: the binary loads (the glibc class
-# of failure above shows up here too), parses an STL, and writes an image.
+# on an image that had in fact built the binary correctly. Rendering and asserting a non-empty PNG
+# proves what the layer is actually for: the binary loads (the glibc class of failure above shows up
+# here too), parses an STL, and writes an image.
+#
+# THE TETRAHEDRON IS GENERATED INLINE, NOT COPIED FROM test/fixtures/files/tetra.stl — WHICH EXISTS
+# AND WOULD BE THE OBVIOUS SOURCE. `.dockerignore` excludes `/test/` (and `/ci/`), so that COPY
+# fails with `"/test/fixtures/files/tetra.stl": not found`. **Do not add an exception for it.** That
+# file is a §14c licensing guard — `test/deploy_hygiene_test.rb` reads it to prove `COPY . .` cannot
+# ship the GPL sidecar trees into the permissive Rails image — and loosening an exclusion list to
+# borrow one fixture trades a real guarantee for a convenience. Four facets rather than one triangle
+# so the mesh has volume for `auto_frame` to frame.
 COPY tools/stl-thumbnailer /tmp/stl-thumbnailer
-COPY test/fixtures/files/tetra.stl /tmp/tetra.stl
-RUN cargo install --path /tmp/stl-thumbnailer --root /usr/local --locked \
- && stl-thumbnailer /tmp/tetra.stl /tmp/stl-smoke.png 64 64 \
+RUN printf '%b\n' \
+      'solid smoke' \
+      'facet normal 0 0 -1\nouter loop\nvertex 0 0 0\nvertex 0 1 0\nvertex 1 0 0\nendloop\nendfacet' \
+      'facet normal 0 -1 0\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 0 1\nendloop\nendfacet' \
+      'facet normal -1 0 0\nouter loop\nvertex 0 0 0\nvertex 0 0 1\nvertex 0 1 0\nendloop\nendfacet' \
+      'facet normal 1 1 1\nouter loop\nvertex 1 0 0\nvertex 0 1 0\nvertex 0 0 1\nendloop\nendfacet' \
+      'endsolid smoke' > /tmp/smoke.stl \
+ && cargo install --path /tmp/stl-thumbnailer --root /usr/local --locked \
+ && stl-thumbnailer /tmp/smoke.stl /tmp/stl-smoke.png 64 64 \
  && test -s /tmp/stl-smoke.png \
  && head -c 4 /tmp/stl-smoke.png | grep -qa PNG \
- && rm -rf /tmp/stl-thumbnailer /tmp/tetra.stl /tmp/stl-smoke.png
+ && rm -rf /tmp/stl-thumbnailer /tmp/smoke.stl /tmp/stl-smoke.png
 
 # ---------------------------------------------------------------------------------------------
 # BACK TO THE NON-ROOT RUNNER USER. Headless Chrome refuses to start as root without --no-sandbox,
