@@ -160,5 +160,27 @@ module Web
                    flash[:notice].to_s)
       assert_match(/stayed at the project root/i, flash[:notice].to_s)
     end
+
+    # NOT ONLY ABUSE CONTROL. Library::ScanJob's `on_conflict: :discard` silently DROPS a second
+    # enqueue while one is running, so without this the user gets "Scanning…" and nothing happens.
+    # The throttle is what turns that silence into a sentence.
+    test "a fourth scan in a minute is refused with a message rather than silently discarded" do
+      use_share!
+      3.times do
+        post project_scan_path(@project)
+        assert_redirected_to project_path(@project, scanning: 1), "under the limit"
+      end
+      post project_scan_path(@project)
+      assert_redirected_to project_path(@project)
+      assert_match(/give it a moment/i, flash[:alert].to_s)
+    ensure
+      FileUtils.remove_entry(@root) if @root&.exist?
+    end
+
+    # Guards the counter itself. With a NullStore, increment returns nil and ActionController's
+    # `count && count > to` makes every throttle here a no-op that no other assertion would notice.
+    test "the store backing this throttle is real, not a null store" do
+      assert_not_kind_of ActiveSupport::Cache::NullStore, ActionController::Base.cache_store
+    end
   end
 end
