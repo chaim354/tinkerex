@@ -155,7 +155,7 @@ Deploy.
 Run:
 
 ```bash
-curl -s -o /dev/null -w "kaneo health: %{http_code}\n" --max-time 10 http://192.168.1.7:5173/api/health
+curl -s -o /dev/null -w "kaneo health: %{http_code}\n" --max-time 10 http://192.168.1.146:5173/api/health
 ```
 
 Expected: `kaneo health: 200`. If it is `000`, the container is still starting — the healthcheck
@@ -180,68 +180,74 @@ git commit -m "The Kaneo stack: pinned image, no published Postgres port, no Min
 Run:
 
 ```bash
-curl -s --max-time 10 http://192.168.1.7:5173/api/instance/status
+curl -s --max-time 10 http://192.168.1.146:5173/api/instance/status
 ```
 
 Expected: JSON containing `"hasUsers":false`. **If it reports `true`, stop** — someone or something
 has already claimed the admin account, and continuing would leave you a non-admin on your own
 instance. Tear the stack down (keeping the volume) and investigate.
 
-- [ ] **Step 2: Claim the admin account (human, browser)**
+- [ ] **Step 2: Add the NPM proxy host FIRST — before the signup**
 
-Open `http://192.168.1.7:5173`, sign up. **The first signup becomes instance admin** — this is the
-one moment that matters and it is not reversible through the UI.
+**This step moved ahead of the signup once the deploy landed, and the reason is not cosmetic.**
+`KANEO_CLIENT_URL` is `http://kaneo.home`, and better-auth issues session cookies and redirects
+against that configured origin. Signing up at `http://192.168.1.146:5173` means the browser's origin
+and the server's configured origin disagree — which surfaces as a session that will not stick, or a
+redirect straight back to the sign-in page. **The first signup claims instance admin and is not
+reversible through the UI**, so it is the one action in this plan that must not need a retry. Do it
+on the origin the server already believes it is serving.
 
-- [ ] **Step 3: Verify the account took**
+At `http://192.168.1.7:81` → Hosts → Proxy Hosts → Add: domain `kaneo.home`, scheme `http`, forward
+host **`192.168.1.146`**, forward port `5173`, websockets enabled.
+
+**TWO HOSTS, and confusing them costs an afternoon.** NPM is **192.168.1.7**, where the `*.home`
+wildcard resolves — every `.home` name answers from there, including `portainer.home`. Docker runs on
+**192.168.1.146** ("Tower", the Unraid host). Probing `.7:5173` after a deploy looks exactly like a
+stack that failed to start; it is just the wrong box.
+
+- [ ] **Step 3: Verify the proxy before trusting it with the signup**
+
+```bash
+curl -s --max-time 10 http://kaneo.home/api/health; echo
+curl -s --max-time 10 http://kaneo.home/ | grep -c "Default Site"
+```
+
+Expected: a health response, then `0`. NPM's default site is what `kaneo.home` served before this
+step, so a `1` means the proxy host did not take.
+
+- [ ] **Step 4: Claim the admin account (human, browser)**
+
+Open **`http://kaneo.home`** — not the IP — and sign up. **The first signup becomes instance admin**;
+this is the one moment that matters and it is not reversible through the UI.
+
+- [ ] **Step 5: Verify the account took**
 
 Run:
 
 ```bash
-curl -s --max-time 10 http://192.168.1.7:5173/api/instance/status
+curl -s --max-time 10 http://192.168.1.146:5173/api/instance/status
 ```
 
 Expected: `"hasUsers":true`.
 
-- [ ] **Step 4: Close registration (human, Portainer)**
+- [ ] **Step 6: Close registration (human, Portainer)**
 
 Edit the `kaneo` stack: set `DISABLE_REGISTRATION: "true"` and `DISABLE_GUEST_ACCESS: "true"`.
 Redeploy. Update `ops/kaneo-stack.yml` to match, so the committed file and the running stack agree —
 a committed file that has silently diverged from what runs is the "doc row that names a commit is a
 claim" problem in §15, one layer down.
 
-- [ ] **Step 5: Verify registration is actually closed**
+- [ ] **Step 7: Verify registration is actually closed**
 
 Run:
 
 ```bash
-curl -s --max-time 10 http://192.168.1.7:5173/api/config
+curl -s --max-time 10 http://192.168.1.146:5173/api/config
 ```
 
 Expected: the JSON reports registration disabled. **Read the actual field rather than assuming the
 env var took** — this is the whole point of the step. If registration still reads as enabled, the
 redeploy did not pick up the change.
-
-- [ ] **Step 6: Add the NPM proxy host (human, browser)**
-
-At `http://192.168.1.7:81` → Hosts → Proxy Hosts → Add: domain `kaneo.home`, scheme `http`, forward
-host `192.168.1.7`, forward port `5173`, websockets enabled.
-
-- [ ] **Step 7: Verify the proxy**
-
-Run:
-
-```bash
-curl -s --max-time 10 http://kaneo.home/api/health; echo; curl -s -o /dev/null -w "%{http_code}\n" --max-time 10 http://kaneo.home/
-```
-
-Expected: a health response and `200` — **and not NPM's "Default Site" page**, which is what
-`kaneo.home` served before this task. Grep the body for `Default Site` to be sure:
-
-```bash
-curl -s --max-time 10 http://kaneo.home/ | grep -c "Default Site"
-```
-
-Expected: `0`.
 
 - [ ] **Step 8: Mint the API key (human, browser)**
 

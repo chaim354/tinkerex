@@ -1,6 +1,13 @@
 # The Kaneo stack, deployed through Portainer (portainer.home, 2.39.6) on the Unraid box.
 # Kaneo holds the canonical work record — CLAUDE.md §11.
 #
+# TWO HOSTS, AND CONFUSING THEM COSTS AN AFTERNOON. Nginx Proxy Manager is 192.168.1.7, where the
+# `*.home` wildcard resolves — every .home name on this LAN answers from there, INCLUDING
+# portainer.home. Docker runs on 192.168.1.146 ("Tower", the Unraid host itself). So this stack's
+# containers listen on .146, and NPM's proxy host for kaneo.home forwards to 192.168.1.146:5173.
+# Probing .7:5173 after a deploy looks exactly like a stack that failed to start; it is just the
+# wrong box.
+#
 # THIS FILE IS NOT EXECUTED BY ANYTHING IN THIS REPO. Portainer holds the running copy; this is the
 # reviewable one. Edit here, then paste into the stack editor — and when you change the running
 # stack, change this file in the same breath. A committed file that has silently diverged from what
