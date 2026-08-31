@@ -77,12 +77,26 @@ RUN CHROME_VER="$(google-chrome-stable --version | grep -oE '[0-9]+(\.[0-9]+){3}
 #
 # resvg is pinned to 0.47.0, matching ci/ensure-resvg.sh's own cargo fallback, so the two cannot
 # disagree about which version this repo means.
+#
+# RUST COMES FIRST BECAUSE resvg IS BUILT FROM SOURCE, AND THE PREBUILT BINARY IS NOT AN OPTION HERE.
+# MEASURED, 2026-08-31, on the first real build on the box: the upstream
+# `resvg-linux-x86_64.tar.gz` is linked against a newer glibc than this base image has, and the
+# layer fails with
+#
+#     resvg: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.32' not found (required by resvg)
+#     ...also GLIBC_2.33 and GLIBC_2.34
+#
+# because myoung34/github-runner:2.336.0 is **Ubuntu 20.04 Focal, glibc 2.31**
+# (`ldd (Ubuntu GLIBC 2.31-0ubuntu9.18) 2.31`). Building from source removes the coupling to the
+# base image's glibc entirely, and it is exactly what `ci/ensure-resvg.sh` already falls back to at
+# this same pinned version — so this is the repo's own documented path, not an improvisation.
+# The download form is left here in the comment so nobody "optimises" the build back into it:
+# it FAILS LOUDLY at build time rather than silently, which is the good direction, but it fails.
 # ---------------------------------------------------------------------------------------------
-RUN curl -fsSL -o /tmp/resvg.tar.gz \
-      "https://github.com/linebender/resvg/releases/download/v0.47.0/resvg-linux-x86_64.tar.gz" \
- && tar -xzf /tmp/resvg.tar.gz -C /usr/local/bin resvg \
- && rm /tmp/resvg.tar.gz \
- && chmod +x /usr/local/bin/resvg \
+ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
+RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal
+
+RUN cargo install resvg --version 0.47.0 --root /usr/local \
  && resvg --version
 
 RUN curl -fsSL -o /usr/local/bin/pdfium \
@@ -92,10 +106,8 @@ RUN curl -fsSL -o /usr/local/bin/pdfium \
 
 # stl-thumbnailer is OUR crate (tools/stl-thumbnailer, Apache-2.0) and is ABSENT ON THE MAC RUNNER,
 # so the STL preview path has never once run in CI. Building it here is the single largest coverage
-# change in this move. Rust is installed for this build and kept, since rebuilding the crate is the
-# only reason a future image change would need it.
-ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
-RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal
+# change in this move. The Rust toolchain installed above is kept, since rebuilding these two crates
+# is the only reason a future image change would need it.
 
 COPY tools/stl-thumbnailer /tmp/stl-thumbnailer
 RUN cargo install --path /tmp/stl-thumbnailer --root /usr/local \
