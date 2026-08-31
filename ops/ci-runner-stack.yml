@@ -33,8 +33,26 @@
 # reproduces the same first-boot failure — they are deliberately not set below.
 #
 # THE ONE SECRET IS A PORTAINER STACK ENVIRONMENT VARIABLE, not a value in this file:
-# RUNNER_ACCESS_TOKEN, a fine-grained PAT with repo administration:write on chaim354/tinkerex. It
-# also lives in 1Password (§14g); nothing here is `export`ed.
+# RUNNER_ACCESS_TOKEN — a FINE-GRAINED PAT scoped to chaim354/tinkerex alone, Administration:
+# read & write, and nothing else. It lives at **`op://tinkerex/github runners/credential`** (§14g),
+# named here the way .kamal/secrets-common names the ghcr.io token so the next person does not have
+# to hunt for it. Nothing is `export`ed and the value never enters this repo.
+#
+# DELIBERATELY NOT THE ghcr.io TOKEN, ALTHOUGH THAT ONE WORKS — measured 2026-08-31, it mints a
+# runner registration token fine (HTTP 201). It is a CLASSIC PAT carrying `admin:enterprise`,
+# `admin:org`, `admin:repo_hook`, `repo` and `write:packages`. RUNNER_ACCESS_TOKEN sits in four
+# container environments where any job can read it straight out of `env`, and CI executes branch
+# code — so reusing it would put an org- and enterprise-admin credential one hostile PR away from
+# exfiltration. The scoped token's blast radius is four CI runners on one repository. Its scoping
+# was verified rather than assumed, the same way the tinkerex-sync deploy key's was:
+# `POST /repos/chaim354/tinkerex/actions/runners/registration-token` -> 201, and GitHub reports no
+# `x-oauth-scopes` header for it at all, which is what distinguishes a fine-grained token from the
+# classic one above.
+#
+# WHEN IT EXPIRES, ALL FOUR CONTAINERS KEEP RUNNING AND REGISTER NOWHERE. Fine-grained PATs cannot
+# be renewed in place. The symptom is every job queueing at 0 elapsed, which is indistinguishable
+# from the box being down and is fixed completely differently — `docker logs tinkerex-runner-1`
+# tells them apart in one command. See ci/runners/README.md.
 #
 # WHY A PAT AND NOT A REGISTRATION TOKEN. A registration token is single-use and expires in ~1h
 # (ci/runners/README.md), which is the wrong shape for four containers that must re-register
