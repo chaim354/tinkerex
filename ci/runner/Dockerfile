@@ -133,10 +133,27 @@ RUN curl -fsSL -o /usr/local/bin/pdfium \
 # change in this move. The Rust toolchain installed above is kept, since rebuilding these two crates
 # is the only reason a future image change would need it.
 
+# `--locked` IS NOT OPTIONAL, AND THE FIRST BUILD PROVED IT. `cargo install` IGNORES a committed
+# Cargo.lock unless told otherwise: the build log read `Locking 37 packages to latest compatible
+# versions` / `Adding stl_io v0.8.6 (available: v0.11.0)` — it re-resolved every dependency inside
+# the semver ranges instead of using the lockfile this repo commits. That matters more here than
+# usual: Maker::Previews::Stl carries a PAYLOAD_REVISION that is bumped *because the picture
+# changed*, so a renderer whose dependencies drift silently between image rebuilds would change
+# stored previews with nothing recording that it happened.
+#
+# THE SMOKE TEST RENDERS A REAL STL RATHER THAN PROBING A FLAG. `stl-thumbnailer --version` was the
+# obvious check and it is WRONG — this tool takes positional arguments only and answers
+# `usage: stl-thumbnailer <in.stl> <out.png> [w] [h]` on stderr with exit 1, which failed the build
+# on an image that had in fact built the binary correctly. Rendering `tetra.stl` and asserting a
+# non-empty PNG comes back proves what the layer is actually for: the binary loads (the glibc class
+# of failure above shows up here too), parses an STL, and writes an image.
 COPY tools/stl-thumbnailer /tmp/stl-thumbnailer
-RUN cargo install --path /tmp/stl-thumbnailer --root /usr/local \
- && rm -rf /tmp/stl-thumbnailer \
- && stl-thumbnailer --version
+COPY test/fixtures/files/tetra.stl /tmp/tetra.stl
+RUN cargo install --path /tmp/stl-thumbnailer --root /usr/local --locked \
+ && stl-thumbnailer /tmp/tetra.stl /tmp/stl-smoke.png 64 64 \
+ && test -s /tmp/stl-smoke.png \
+ && head -c 4 /tmp/stl-smoke.png | grep -qa PNG \
+ && rm -rf /tmp/stl-thumbnailer /tmp/tetra.stl /tmp/stl-smoke.png
 
 # ---------------------------------------------------------------------------------------------
 # BACK TO THE NON-ROOT RUNNER USER. Headless Chrome refuses to start as root without --no-sandbox,
