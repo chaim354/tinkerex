@@ -12,20 +12,21 @@ require "tmpdir"
 class CiPreflightTest < ActiveSupport::TestCase
   SCRIPT = Rails.root.join("ci/preflight.sh").to_s
 
-  test "an unset CI_RUNNERS declares macos ONLY — never everything" do
+  test "an unset CI_RUNNERS declares linux ONLY — never everything" do
     # The most important test in the file. A default of "assume everything is available" reproduces
     # the original bug exactly: jobs scheduled against runners that do not exist. The conservative
-    # default is what makes a forgotten variable safe.
+    # default is what makes a forgotten variable safe. It names LINUX because that is where this
+    # repo's runners are (2026-08-31); the property under test is "one family, not all three".
     out, status = preflight(nil)
     assert_equal 0, status, out
-    assert_equal "macos=true\nlinux=false\nwindows=false\n", out
+    assert_equal "macos=false\nlinux=true\nwindows=false\n", out
   end
 
   test "an empty or whitespace CI_RUNNERS falls back to the same conservative default" do
     [ "", "   " ].each do |value|
       out, status = preflight(value)
       assert_equal 0, status, out
-      assert_equal "macos=true\nlinux=false\nwindows=false\n", out,
+      assert_equal "macos=false\nlinux=true\nwindows=false\n", out,
                    "CI_RUNNERS=#{value.inspect} must behave as unset"
     end
   end
