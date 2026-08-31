@@ -13,6 +13,7 @@
 # NOTHING HERE CALLS `exit`. Helpers raise; the caller decides. Same shape as bin/log, and for the
 # same reason — a helper that exited raised SystemExit, which is not a StandardError and sails past
 # any rescue meant to catch it.
+require "fileutils"
 require "json"
 require "net/http"
 require "open3"
@@ -106,6 +107,82 @@ module Migrate
 
       found.fetch("id")
     end
+  end
+
+  # ---------------------------------------------------------------------------------------------
+  # EXPORT. Runs before anything is created and is the only safety net this migration has: Forgejo
+  # was never covered by ops/backup-db.sh, which knows only chunk|share|s3|sync, so until this file
+  # exists the live instance is the sole copy of the record. Everything downstream is redoable from
+  # it, which is what makes "delete the project and re-run the import" a cheap recovery.
+  # ---------------------------------------------------------------------------------------------
+
+  EXPORT_PATH = "tmp/forgejo-export.json"
+
+  # PAGINATED AT 50, NOT 200. Forgejo CLAMPS `limit` to 50 and returns a full-looking page —
+  # measured: limit=200 answered with exactly 50 of 186 and nothing indicating it had truncated. A
+  # loop that trusts one page exports 27% of the record and reports success.
+  def export(path = EXPORT_PATH)
+    issues = []
+    page = 1
+    loop do
+      batch = forgejo(:get, "/issues?state=all&type=issues&limit=50&page=#{page}")
+      break if batch.nil? || batch.empty?
+
+      issues.concat(batch)
+      page += 1
+    end
+    issues.uniq! { |i| i["number"] }
+
+    # COMMENTS ONLY WHERE THE ISSUE SAYS IT HAS SOME. `comments` is a COUNT on the issue object, so
+    # this costs 21 round trips rather than 186.
+    wanted = issues.count { |i| i["comments"].to_i.positive? }
+    warn "fetching comments for #{wanted} issues that report having any"
+    issues.each do |issue|
+      issue["_comments"] = issue["comments"].to_i.zero? ? [] : forgejo(:get, "/issues/#{issue['number']}/comments")
+    end
+
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, JSON.pretty_generate(issues))
+    warn "wrote #{path}: #{issues.size} issues, #{issues.sum { |i| i['_comments'].size }} comments"
+    issues
+  end
+
+  # X-Total-Count IS A HEADER, so it cannot come through `request`, which returns parsed JSON and
+  # throws the response away. A raw call is the honest way to read it rather than bending the shared
+  # helper into returning two different things.
+  def forgejo_issue_count
+    uri = URI.parse(FORGEJO_URL)
+    Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https") do |http|
+      req = Net::HTTP::Get.new("/api/v1/repos/#{FORGEJO_OWNER}/#{FORGEJO_REPO}/issues?state=all&type=issues&limit=1")
+      req["Authorization"] = "token #{forgejo_token}"
+      http.request(req)["x-total-count"].to_i
+    end
+  end
+
+  # VERIFIES AGAINST THE SERVER, NOT AGAINST THE FILE'S OWN CONTENTS. "The file holds 186 entries" is
+  # a claim the file makes about itself and cannot fail; "the server says 186 and the file has those
+  # same 186 numbers" is a fact. §15: a guard that cannot fail has not been shown to work.
+  def verify_export(path = EXPORT_PATH)
+    issues = JSON.parse(File.read(path, encoding: Encoding::UTF_8))
+    numbers = issues.map { |i| i["number"] }.sort
+    live = forgejo_issue_count
+
+    problems = []
+    problems << "count: file has #{issues.size}, server reports #{live}" unless issues.size == live
+    problems << "duplicate issue numbers in the file" unless numbers.uniq.size == numbers.size
+    blank = issues.select { |i| i["title"].to_s.strip.empty? }
+    problems << "#{blank.size} issues with an empty title" if blank.any?
+    # A COMMENT COUNT THAT DISAGREES WITH ITS OWN ISSUE means a fetch silently returned short, and
+    # corrections are the one thing in this record with no other copy.
+    short = issues.select { |i| i["_comments"].to_a.size != i["comments"].to_i }
+    problems << "#{short.size} issues whose fetched comments != their reported count" if short.any?
+
+    raise Failed, problems.join("; ") if problems.any?
+
+    warn "export verified against the server: #{issues.size} issues, numbers #{numbers.first}-#{numbers.last}, " \
+         "gaps #{((numbers.first..numbers.last).to_a - numbers).inspect}, " \
+         "#{issues.sum { |i| i['_comments'].size }} comments"
+    issues
   end
 
   # ---------------------------------------------------------------------------------------------
