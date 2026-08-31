@@ -51,7 +51,7 @@ SCAD
 
   # BIG ENOUGH THAT THE CAP IS OBSERVABLE ON LOOPBACK. A 300 KB file arrives in one burst before
   # any client could cancel, so it would prove nothing; 5 MB is a sliced print's order of
-  # magnitude (the Forgejo record (CLAUDE.md §11) records 2.1 MB for a modest .nc and notes nobody had measured a real
+  # magnitude (the record (CLAUDE.md §11) records 2.1 MB for a modest .nc and notes nobody had measured a real
   # one) and leaves the difference between capped and uncapped far outside any buffering noise.
   BIG_BYTES = 5 * 1024 * 1024
 
@@ -199,7 +199,7 @@ SCAD
     assert_empty log.select { |l| l.level == "SEVERE" }.map(&:message)
   end
 
-  # THE CAP IS A TRANSFER CAP NOW, NOT JUST A STRING SLICE — the fix the Forgejo record's task-7 entry
+  # THE CAP IS A TRANSFER CAP NOW, NOT JUST A STRING SLICE — the fix the record's task-7 entry
   # asked for. The predecessor read `res.text()` in full and sliced afterwards, so a 20 MB sliced
   # print crossed the wire in its entirety to display 200 KB of it, and on chunk_remote those bytes
   # stream through Puma (§14a) and hold a request thread for the whole transfer.

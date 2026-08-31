@@ -108,7 +108,7 @@ GATES = {
   # that boots a real server and never calls bin/ci. (That workflow was deleted on 2026-08-25 --
   # it had never run once -- so the precedent is history, not a live example; the argument for
   # folding this gate INTO bin/ci is what survives.) Arc B closed all four gaps -- the suite is
-  # 10/10 against a real server (the Forgejo record) -- so it moves in here now: ONE definition, same
+  # 10/10 against a real server (the record)  -- so it moves in here now: ONE definition, same
   # as every other gate, and the workflow file is deleted rather than left running the same suite
   # a second way.
   #

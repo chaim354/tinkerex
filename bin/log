@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# THE SINGLE WRITE DOOR onto the Forgejo that replaces docs/STATUS.md.
+# THE SINGLE WRITE DOOR onto the Kaneo that replaces docs/STATUS.md.
 # `bin/log --help` lists the subcommands; they are defined once, in SUBCOMMANDS.
 #
 # WHY ONE DOOR. An MCP write path plus a CLI write path is one verb with two answers — the shape
@@ -39,7 +39,7 @@ module Log
 
   EXIT_OK          = 0
   EXIT_USAGE       = 2   # the caller spelled the command wrong
-  EXIT_UNREACHABLE = 3   # Forgejo or the vault could not be reached; any write is spooled
+  EXIT_UNREACHABLE = 3   # Kaneo or the vault could not be reached; any write is spooled
   # DELIBERATELY NOT 1. Ruby's own uncaught-exception status IS 1 — measured — so a crash that no
   # rescue can reach (SyntaxError from a bad edit, LoadError, NoMemoryError) would be
   # indistinguishable from "there is unfiled work" to /finish-branch, which reads this code.
@@ -67,13 +67,22 @@ module Log
     "status" => [ "",               "Report anything unfiled" ]
   }.freeze
 
-  # The vault item is titled "forgejo key" and is an API_CREDENTIAL, so the token lives in its
-  # `credential` field — not a field named "token". Verified by reading the item's field
-  # LABELS; the reference resolves to 40 bytes through bin/secret.
-  TOKEN_REF = "op://tinkerex/forgejo key/credential"
+  # THE VAULT ITEM IS TITLED "kaneo" AND THE TOKEN LIVES IN ITS `credential` FIELD, because the item
+  # is an API_CREDENTIAL and that is where such an item keeps its key — not a field named "token".
+  # CLAUDE.md §13 must name THIS reference and no other: under the previous record the doc named an
+  # item and a field the code did not read, and only one of the two could ever have been right.
+  TOKEN_REF = "op://tinkerex/kaneo/credential"
 
   LABELS = %w[arc open-work deploy blocked deliberate
               filelayer library-scan addons previews maker-web ci].freeze
+
+  # STATUSES ARE KEBAB-CASE, FIXED PER PROJECT, AND MEASURED — to-do, in-progress, in-review, done,
+  # planned, archived. A POST carrying "To Do" is refused with a 400 that names the whole set, so
+  # these are not a spelling choice. There is no open/closed flag anywhere in Kaneo: the board
+  # COLUMN is the state, which is why `close` moves a column and why every created task must name
+  # one of the six.
+  OPEN_STATUS   = "to-do"
+  CLOSED_STATUS = "done"
 
   # THE PAYLOAD RIDES ON THE EXCEPTION, never on a module-level accumulator. `api` knows both what
   # failed and what was being sent, so it attaches the payload at the ONE raise site. Two things
@@ -93,14 +102,56 @@ module Log
 
   class UsageError < StandardError; end
 
-  def forgejo_url = ENV.fetch("FORGEJO_URL", "http://forgejo.home")
-  def owner       = ENV.fetch("FORGEJO_OWNER", "chaim354")
-  def repo        = ENV.fetch("FORGEJO_REPO", "tinkerex")
+  def kaneo_url      = ENV.fetch("KANEO_URL", "http://kaneo.home")
+  def workspace_slug = ENV.fetch("KANEO_WORKSPACE", "tinkerex")
+  def project_slug   = ENV.fetch("KANEO_PROJECT", "tinkerex")
 
-  def repo_path(suffix) = "/api/v1/repos/#{owner}/#{repo}#{suffix}"
+  # THE SLUGS ARE CONFIG; THE IDS ARE RESOLVED. Every Kaneo path takes an opaque id, but putting one
+  # in an env default would mean a fresh clone cannot run bin/log at all — which is exactly what the
+  # old human-readable owner/repo defaults bought. Both lookups are memoized for the process,
+  # mirroring label_index's existing shape.
+  #
+  # TWO LOOKUPS, NOT ONE, AND THE ORDER IS FORCED. The obvious design reads GET /api/project once
+  # and takes `workspaceId` off the project record — but GET /api/project REFUSES TO ANSWER WITHOUT
+  # A workspaceId QUERY PARAM (measured: 400, "Invalid key: Expected \"workspaceId\" but received
+  # undefined"). So the project list cannot be the thing that tells you the workspace; the workspace
+  # must be resolved first, from better-auth's own organization list. A workspace in Kaneo IS a
+  # better-auth organization — there is no /api/workspace collection to list.
+  def workspace_id
+    @workspace_id ||= begin
+      path = "/api/auth/organization/list"
+      orgs = parse(api(:get, path), path)
+      found = orgs.find { |o| o["slug"] == workspace_slug }
+      raise Unreachable, "no workspace with slug #{workspace_slug.inspect} (set KANEO_WORKSPACE)" unless found
 
-  # REJECT, NEVER NORMALIZE — §14a's key_for rule. Net::HTTP does not normalise, so a `..` segment
-  # reaches the wire and any normalising reverse proxy resolves it out of the repo scope.
+      found.fetch("id")
+    end
+  end
+
+  def project_id
+    @project_id ||= begin
+      path = "/api/project?workspaceId=#{workspace_id}"
+      body = parse(api(:get, path), path)
+      list = body.is_a?(Array) ? body : body.fetch("projects", [])
+      found = list.find { |p| p["slug"] == project_slug }
+      raise Unreachable, "no project with slug #{project_slug.inspect} (set KANEO_PROJECT)" unless found
+
+      found.fetch("id")
+    end
+  end
+
+  # REJECT, NEVER NORMALIZE — §14a's key_for rule. **THE ORIGINAL REASON NO LONGER HOLDS AND THE
+  # GUARD STILL MUST STAY.** Under the previous record a number was interpolated straight into the
+  # request path, so a `..` segment reached the wire verbatim and a normalising proxy could resolve
+  # it outside the repo scope. Kaneo addresses every task by an opaque id: a validated number now
+  # dead-ends in `task_index[number.to_i]`, a Hash lookup, and every path is built from
+  # `task.fetch("id")` — so traversal has no route to the wire at all, and a reader who checks that
+  # claim finds it false and deletes this as dead weight.
+  #
+  # WHAT IT PROTECTS NOW IS THE EXIT CODE. Without it `bin/log show <garbage>` resolves to
+  # `task_index[0]`, misses, and raises Unreachable — exit 3, "unreachable, and a write was
+  # spooled". /finish-branch reads these codes and would treat a typo as an outage it can wait out.
+  # A malformed argument is a usage error: exit 2, said by this method and nowhere else.
   def issue_number!(value)
     raise UsageError, "not an issue number: #{value.inspect}" unless value.to_s.match?(/\A\d+\z/)
 
@@ -115,8 +166,8 @@ module Log
   # a trailing newline is an ArgumentError inside the header assignment.
   def token
     @token ||= begin
-      out, err, status = Open3.capture3(File.expand_path("secret", __dir__), "FORGEJO_TOKEN", TOKEN_REF)
-      raise Unreachable, "could not resolve FORGEJO_TOKEN from #{TOKEN_REF}: #{err.strip}" if !status.success? || out.empty?
+      out, err, status = Open3.capture3(File.expand_path("secret", __dir__), "KANEO_TOKEN", TOKEN_REF)
+      raise Unreachable, "could not resolve KANEO_TOKEN from #{TOKEN_REF}: #{err.strip}" if !status.success? || out.empty?
 
       out.chomp
     end
@@ -127,36 +178,41 @@ module Log
   rescue Unreachable => e
     # Attach what was being sent, and to what path, at the one place that knows all three. A
     # failure raised from `token` carries neither payload nor path of its own, and a WRITE must
-    # still be spooled with enough context to refile it — `note`'s target lives in the PATH, not
-    # the payload, so losing it here makes a spooled correction unrecoverable (see spool!).
+    # still be spooled with enough context to refile it. `note` used to depend on this entirely —
+    # its target lived in the PATH (/issues/128/comments) and nowhere else. It no longer does: Kaneo
+    # addresses a comment by an opaque id, so `note` carries its own rescue that puts the number in
+    # the message. This line still matters for every OTHER write, whose payload is the whole record.
     raise Unreachable.new(e.message, payload: e.payload || body, path: e.path || path)
   rescue SystemCallError, SocketError, EOFError, IOError, Timeout::Error,
          Net::OpenTimeout, Net::ReadTimeout, Net::ProtocolError,
          OpenSSL::SSL::SSLError => e
-    raise Unreachable.new("#{forgejo_url}: #{e.class}: #{e.message}", payload: body, path: path)
+    raise Unreachable.new("#{kaneo_url}: #{e.class}: #{e.message}", payload: body, path: path)
   end
 
-  # URI.join DROPS A PATH PREFIX — URI.join("http://host/git", "/api/v1/x") is
-  # "http://host/api/v1/x". Forgejo behind a subpath is an ordinary self-host shape, so the URL is
-  # built by concatenation instead.
+  # URI.join DROPS A PATH PREFIX — URI.join("http://host/git", "/api/x") is "http://host/api/x".
+  # Kaneo behind a subpath is an ordinary self-host shape, so the URL is built by concatenation
+  # instead.
   def perform(method, path, body)
-    uri = URI.parse("#{forgejo_url.chomp('/')}#{path}")
-    # A scheme-less FORGEJO_URL parses to host=nil, and Net::HTTP.start(nil, nil) then reports
+    uri = URI.parse("#{kaneo_url.chomp('/')}#{path}")
+    # A scheme-less KANEO_URL parses to host=nil, and Net::HTTP.start(nil, nil) then reports
     # "connection refused for nil port 80" — a misleading answer to a malformed env var.
-    raise UsageError, "FORGEJO_URL has no scheme or host: #{forgejo_url.inspect}" unless uri.host
+    raise UsageError, "KANEO_URL has no scheme or host: #{kaneo_url.inspect}" unless uri.host
 
     request = case method
     when :get   then Net::HTTP::Get.new(uri)
     when :post  then Net::HTTP::Post.new(uri)
-    # PATCH is what Forgejo's "edit issue" endpoint takes, and closing IS an edit there — there is
-    # no POST /issues/:n/close. Adding the verb here rather than in `close` keeps every request in
-    # this one method, which is what makes the Authorization header, the timeouts and the
-    # Unreachable mapping impossible to bypass by adding a subcommand.
-    when :patch then Net::HTTP::Patch.new(uri)
+    # PUT, NOT PATCH. The old instance closed an issue by PATCHing its state; Kaneo has no issue to
+    # edit — it moves a task to a column with PUT /task/status/:id. Keeping the verb here rather
+    # than in `close` keeps every request in this one method, which is what makes the Authorization
+    # header, the timeouts and the Unreachable mapping impossible to bypass by adding a subcommand.
+    when :put   then Net::HTTP::Put.new(uri)
     else raise ArgumentError, "unsupported method #{method.inspect}"
     end
 
-    request["Authorization"] = "token #{token}"
+    # BEARER, NOT `token <t>`. Kaneo takes an ordinary Bearer credential; the old instance's own
+    # scheme was `token <t>`, which Kaneo answers 401 to — and a 401 is a non-2xx, so it arrives as
+    # Unreachable and SPOOLS every write rather than failing loudly.
+    request["Authorization"] = "Bearer #{token}"
     request["Content-Type"]  = "application/json"
     request.body = JSON.generate(body) if body
 
@@ -177,7 +233,7 @@ module Log
     response
   end
 
-  # A 2xx WHOSE BODY IS NOT JSON IS AN OUTAGE, NOT A CRASH. A proxy error page and Forgejo's own
+  # A 2xx WHOSE BODY IS NOT JSON IS AN OUTAGE, NOT A CRASH. A proxy error page and Kaneo's own
   # login page on a session redirect both arrive as 200 text/html. Unwrapped, JSON::ParserError
   # escaped to Ruby's default handler and exited 1.
   def parse(response, path)
@@ -186,85 +242,182 @@ module Log
     raise Unreachable, "#{path} returned #{response.code} with a non-JSON body: #{e.message}"
   end
 
+  # THE MAP IS FETCHED ONCE PER PROCESS, not once per lookup — `close` takes several numbers and the
+  # unit of work is "this branch is done", so a per-number GET would be one full board per issue.
+  #
+  # THIS ENDPOINT RETURNS A BOARD, NOT A LIST, and its OpenAPI response type is a bare
+  # `{"type":"object"}` with no properties — so the shape below was OBSERVED against the live
+  # instance on 2026-08-31, never read. Tasks live in `data.columns[].tasks`, and TWO MORE BUCKETS
+  # SIT BESIDE THEM: `archivedTasks` and `plannedTasks` are off-board and appear in neither column.
+  # Miss them and the affected issues resolve to "no issue #N" while sitting in the record perfectly
+  # intact. A resolver reading a flat array, or `body.fetch("tasks", [])`, builds an EMPTY index in
+  # SILENCE — and every stub test still passes, because the stub models nothing.
+  #
+  # IT ALSO PAGINATES, AND THE LIMIT IS CAPPED. A request for `limit=200` came back with
+  # `pageSize: 100`, so one call sees roughly half of the 193 imported tasks — a well-formed lie,
+  # the same shape as a 50-capped list endpoint answering an exporter that trusts one page.
+  def task_index
+    @task_index ||= begin
+      tasks = []
+      page = 1
+      loop do
+        path = "/api/task/tasks/#{project_id}?page=#{page}&limit=100"
+        body = parse(api(:get, path), path)
+        data = body.fetch("data", {})
+        tasks.concat(data.fetch("columns", []).flat_map { |c| c["tasks"] || [] })
+        tasks.concat(data["archivedTasks"] || [])
+        tasks.concat(data["plannedTasks"] || [])
+        break if page >= body.dig("pagination", "totalPages").to_i
+
+        page += 1
+      end
+      tasks.to_h { |t| [ t["number"], t ] }
+    end
+  end
+
+  # THE CITABLE NUMBER IS NOT ADDRESSABLE. Every Kaneo path takes the opaque `id`, so a number the
+  # record cites — `tinkerex#178`, and 21 such citations in app/ lib/ test/ config/ — has to be
+  # resolved through the board before any addressed call can be made.
+  #
+  # RAISES Unreachable, NOT UsageError. The number is well-formed — issue_number! already rejected a
+  # traversal attempt — so this is "the record does not have that", which is the same class of
+  # answer as a 404 from an issue endpoint and must spool nothing on a read.
+  def task_for(number)
+    task_index[number.to_i] or raise Unreachable, "no issue ##{number} in #{project_slug}"
+  end
+
   def show(argv)
     number = argv.shift or raise UsageError, "show needs an issue number"
     number = issue_number!(number)
-    issue = parse(api(:get, repo_path("/issues/#{number}")), "/issues/#{number}")
+    task = task_for(number)
 
-    puts "##{issue['number']} #{issue['title']} [#{issue['state']}]"
+    puts "##{task['number']} #{task['title']} [#{task['status']}]"
     puts
-    puts issue["body"]
+    puts task["description"]
     EXIT_OK
   end
 
-  # state=all is load-bearing: an arc closes when its PR merges, so the default would hide every
-  # finished piece of work — which is most of the record.
+  # FOUR CORRECTIONS IN ONE VERB, ALL MEASURED against the live instance on 2026-08-31. The record
+  # this replaced needed none of them: its search path named the repo, and its response was a list
+  # of issues.
+  #
+  #   1. workspaceId IS REQUIRED. Without it: 400, "Workspace ID could not be determined".
+  #   2. projectId DOES NOT FILTER. Passing it changed nothing — totalCount stayed identical — so
+  #      the scoping this verb needs has to happen HERE. Unfiltered, a query returns tasks from
+  #      every other project in the workspace as though they were part of the record.
+  #   3. THE ENVELOPE IS `results`, NOT `tasks`, and results are mixed `type`: task, project,
+  #      activity, comment. A comment matching the query would print as though it were an issue.
+  #   4. A TASK ROW CARRIES `taskNumber`, NOT `number`. Reading `number` yields nil, so every line
+  #      would print `#` and nothing else — for results that are otherwise correct.
+  #
+  # The two client-side filters look redundant against a server that takes a projectId. They are
+  # not: it takes it and ignores it. Both were probed, not reasoned about.
+  #
+  # NOTHING HERE ASKS FOR A STATE, and that is not an omission. Kaneo's search spans every column,
+  # so a finished arc is found by default — the previous record needed an explicit state=all to get
+  # the same answer, and hid every closed arc without it.
+  #
+  # THE QUERY IS PERCENT-ENCODED, NOT INTERPOLATED. A bare `&` starts a new query parameter and a
+  # bare `#` starts a fragment, so either one silently searches for something else.
   def search(argv)
     query = argv.shift or raise UsageError, "search needs a query"
-    path = repo_path("/issues?state=all&q=#{URI.encode_www_form_component(query)}")
-    issues = parse(api(:get, path), path)
+    # THE SEARCH LIMIT IS 50 AND THE BOARD LIMIT IS 100 — TWO CAPS, MEASURED, AND NOT INTERCHANGEABLE.
+    # /api/search REFUSES limit=100 outright: 400, `{"kind":"validation","expected":"<=50"}`. The board
+    # endpoint task_index walks accepts 100 happily. Neither cap is in Kaneo's OpenAPI, and NO STUB
+    # TEST CAN FIND EITHER — the stub records what we send and validates nothing, so a green suite
+    # said this verb worked right up until it was pointed at the real server.
+    path = "/api/search?q=#{URI.encode_www_form_component(query)}&workspaceId=#{workspace_id}&limit=50"
+    body = parse(api(:get, path), path)
+    tasks = body.fetch("results", [])
+                .select { |r| r["type"] == "task" && r["projectId"] == project_id }
 
-    if issues.empty?
+    if tasks.empty?
       puts "bin/log: no issues matching #{query.inspect}."
     else
-      issues.each { |i| puts "##{i['number']} [#{i['state']}] #{i['title']}" }
+      tasks.each { |t| puts "##{t['taskNumber']} [#{t['status']}] #{t['title']}" }
     end
     EXIT_OK
   end
 
-  # LABELS ARE RESOLVED TO IDS, BECAUSE FORGEJO REFUSES NAMES. Measured against the live instance:
-  #   422 "cannot unmarshal string into Go struct field CreateIssueOption.labels of type int64"
-  # This file asserted the opposite, and no test could catch it — StubForgejo records what we send
-  # and models nothing, so the wire-format test pinned a contract that was INVENTED rather than
-  # observed. §14e's FakeS3 rule guards the code and the fake sharing a misunderstanding OF EACH
-  # OTHER; it does not guard both of them misunderstanding the SERVER. Only the live probe did.
+  # THE VOCABULARY IS THE ROWS WITH `taskId` NULL, AND THAT FILTER IS LOAD-BEARING. Kaneo keeps
+  # label DEFINITIONS and label ATTACHMENTS in ONE table: `POST /label` with a taskId stores an
+  # attached row, without one stores a free row, and `GET /label/workspace/:id` returns BOTH.
+  # Measured. Unfiltered, every labelled arc in the record contributes an `arc` row, so `setup`
+  # would report the vocabulary complete purely because 135 tasks carry attachments — and would keep
+  # reporting it after someone deleted the definition, which is the one thing it exists to notice.
+  #
+  # NOTHING RESOLVES A NAME TO AN ID ANY MORE. The record this replaced refused label NAMES on
+  # issue-create and demanded int64 ids; Kaneo takes the name on `POST /label` and attaches in that
+  # same call, so this index exists only for `setup`, and a create never consults it.
   def label_index
-    @label_index ||= parse(api(:get, repo_path("/labels?limit=100")), "/labels")
-                     .to_h { |l| [ l["name"], l["id"] ] }
+    @label_index ||= begin
+      path = "/api/label/workspace/#{workspace_id}"
+      rows = parse(api(:get, path), path)
+      rows.select { |l| l["taskId"].nil? }.to_h { |l| [ l["name"], l["id"] ] }
+    end
   end
 
-  def label_ids(names)
-    missing = names - label_index.keys
-    raise Unreachable, "labels absent from #{repo} (run `bin/log setup`): #{missing.join(', ')}" if missing.any?
-
-    names.map { |name| label_index.fetch(name) }
-  end
-
-  def create_issue(title, body:, labels:, closed: false)
-    # THE PAYLOAD IS BUILT WITH NAMES BEFORE THE IDS ARE RESOLVED, and that ordering is the whole
-    # point. Resolving labels makes a GET the FIRST wire call of every write verb, so if the payload
-    # were built in one expression it would still be nil when that GET failed — and the rescue below
-    # would report "nothing to file" for what is unambiguously a write. An `open` against a dead
-    # server would silently become a no-record. Measured as a regression the moment id resolution
-    # landed.
-    payload = { title: title, body: body, labels: labels }
-    # CLOSED DEFAULTS FALSE AND IS OMITTED ENTIRELY WHEN FALSE, never sent as `closed: false`. The
-    # same verb serves a live arc (opened at PR time, closed later at merge) and a historical import
-    # that arrives already finished — a caller who forgets the flag must get the live behaviour, not
-    # silently closed work.
-    payload[:closed] = true if closed
-    resolved = payload.merge(labels: label_ids(labels))
+  # TWO CALLS, AND THE SECOND ONE CAN FAIL ON ITS OWN. `POST /task/:projectId` has no labels field,
+  # so creation is not atomic the way a single issue POST was: the task can exist with no label.
+  #
+  # THE PAYLOAD IS BUILT BEFORE ANY WIRE CALL, and that ordering is load-bearing. Resolving the
+  # project makes a GET the FIRST wire call of every write verb, so a payload built after it would
+  # still be nil when that GET failed — and the rescue below would report "nothing to file" for what
+  # is unambiguously a write. An `open` against a dead server would silently become a no-record.
+  # Measured as a regression the moment id resolution landed, and true again for a different reason
+  # now that the resolution is the workspace and the project rather than the labels.
+  #
+  # THE STATUS IS ALWAYS SENT, AND THE DEFAULT IS THE LIVE ONE. There is no "omit it when false"
+  # option here the way there was for a `closed:` flag — a task must name a column — so the same
+  # verb serving a live arc and a historical import turns entirely on this default being OPEN.
+  def create_task(title, body:, labels:, closed: false)
+    payload = {
+      title: title,
+      description: body,
+      priority: "no-priority",
+      status: closed ? CLOSED_STATUS : OPEN_STATUS
+    }
     # Through `parse`, not JSON.parse — a WRITE against a broken proxy answers 200 text/html just
     # as readily as a read does, and an unwrapped JSON::ParserError exits 1 instead of spooling.
-    parse(api(:post, repo_path("/issues"), resolved), "/issues")
+    task = parse(api(:post, "/api/task/#{project_id}", payload), "/api/task")
+
+    labels.each do |name|
+      api(:post, "/api/label", { name: name, color: "#666666",
+                                 workspaceId: workspace_id, taskId: task.fetch("id") })
+    rescue Unreachable => e
+      # REPORTED, NAMING THE TASK THAT DID GET CREATED — never swallowed. An arc with no `arc` label
+      # is invisible to every search that filters by kind, and silently so.
+      #
+      # IT CARRIES THE LABEL PAYLOAD FORWARD, NOT THE CREATE'S. What is unfiled at this point is the
+      # ATTACHMENT; the task exists, at the number named in this message. Letting the create payload
+      # reach the spool instead — which the rescue below does for anything arriving with no payload
+      # of its own — invites a refile that files a SECOND arc at a new number, which no citation
+      # points at and nothing would flag.
+      raise Unreachable.new(
+        "##{task['number']} was created but the #{name.inspect} label failed: #{e.message}",
+        payload: e.payload, path: e.path
+      )
+    end
+
+    task
   rescue Unreachable => e
     # `parse` RAISES WITH NO PAYLOAD OF ITS OWN — it only ever sees the response, never what was
-    # sent. That is fine for a GET (show, search), which has no payload to lose, but `create_issue`
+    # sent. That is fine for a GET (show, search), which has no payload to lose, but `create_task`
     # calls `parse` AFTER `api` has already returned successfully — outside api's own rescue, which
     # only wraps the `perform` call inside IT. A 2xx with a garbled body (the exact shape a broken
     # proxy produces) therefore failed here with payload: nil, was reported as "nothing to file",
-    # and the issue being created was silently lost. `e.payload || payload` only fills the gap;
+    # and the task being created was silently lost. `e.payload || payload` only fills the gap;
     # a failure `api` already payloaded (a connection error, a non-2xx) passes through unchanged.
-    raise Unreachable.new(e.message, payload: e.payload || payload, path: e.path || "/issues")
+    raise Unreachable.new(e.message, payload: e.payload || payload, path: e.path || "/api/task")
   end
 
   # NOT `open` — inside this module that name would resolve ahead of Kernel#open for every other
   # method here, and File.open is one edit away from being needed.
   def open_item(argv)
     title = argv.shift or raise UsageError, "open needs a title"
-    issue = create_issue(title, body: argv.shift.to_s, labels: [ "open-work" ])
+    task = create_task(title, body: argv.shift.to_s, labels: [ "open-work" ])
 
-    puts "##{issue['number']} #{issue['title']}"
+    puts "##{task['number']} #{task['title']}"
     EXIT_OK
   end
 
@@ -275,7 +428,7 @@ module Log
                                       "--json", "title,body,url")
     raise Unreachable, "could not read PR #{number}: #{err.strip}" unless status.success?
 
-    # Not `parse` — that takes a Forgejo response. gh answering non-JSON (an auth prompt, a
+    # Not `parse` — that takes a Kaneo response. gh answering non-JSON (an auth prompt, a
     # rate-limit notice) would otherwise surface through the catch-all as "unexpected failure",
     # which names neither gh nor the PR.
     JSON.parse(out)
@@ -300,9 +453,9 @@ module Log
       raise UsageError, "arc needs --from-pr N or --from-file PATH"
     end
 
-    issue = create_issue(title, body: body, labels: [ "arc" ], closed: argv.include?("--closed"))
+    task = create_task(title, body: body, labels: [ "arc" ], closed: argv.include?("--closed"))
 
-    puts "##{issue['number']} #{issue['title']}"
+    puts "##{task['number']} #{task['title']}"
     EXIT_OK
   end
 
@@ -316,18 +469,23 @@ module Log
     [ heading.strip, text.sub(/\A\s*#+\s*.+$\n?/, "").strip ]
   end
 
-  # IDEMPOTENT BY ASKING WHAT EXISTS, NOT BY TOLERATING A REFUSAL. Forgejo ALLOWS DUPLICATE LABEL
-  # NAMES — measured: a second `setup` run created a second copy of all eleven and reported
-  # "11 labels present" both times, leaving 22. The previous design tolerated a 422 that Forgejo
-  # never sends, and a test could not have caught it: the stub answered 422 because the test said to.
+  # IDEMPOTENT BY ASKING WHAT EXISTS, NOT BY TOLERATING A REFUSAL — the rule survives the move
+  # unchanged, and so does what it cost. The record this replaced ALLOWED DUPLICATE LABEL NAMES:
+  # measured, a second `setup` run created a second copy of all eleven and reported "11 labels
+  # present" both times, leaving 22. The design before that tolerated a 422 the server never sent,
+  # and a test could not have caught it — the stub answered 422 because the test said to. Nothing
+  # observed says Kaneo refuses a duplicate name either, so `setup` still asks first.
   #
   # It VERIFIES rather than assuming its POSTs worked. "I sent eleven requests" is not the claim
   # this command makes; "eleven labels exist" is.
+  #
+  # A LABEL POSTED WITH NO taskId IS A DEFINITION, and that is the whole difference between this
+  # call and the one `create_task` makes — see label_index.
   def setup
     already = LABELS & label_index.keys
 
     (LABELS - already).each do |name|
-      api(:post, repo_path("/labels"), { name: name, color: "#666666" })
+      api(:post, "/api/label", { name: name, color: "#666666", workspaceId: workspace_id })
     end
 
     @label_index = nil
@@ -361,54 +519,74 @@ module Log
     raise UsageError, "deploy needs --image SHA" if image.nil?
 
     body = "Image: `#{image}`\n\nDestinations:\n#{dests.map { |d| "- #{d}" }.join("\n")}\n"
-    issue = create_issue("Deploy #{image}", body: body, labels: [ "deploy" ])
+    task = create_task("Deploy #{image}", body: body, labels: [ "deploy" ])
 
-    puts "##{issue['number']} #{issue['title']}"
+    puts "##{task['number']} #{task['title']}"
     EXIT_OK
   end
 
-  # A CORRECTION IS A COMMENT, NOT AN EDIT — never rewrite the issue body.
+  # A CORRECTION IS A COMMENT, NOT AN EDIT — never rewrite the task description. Unchanged in intent
+  # from the previous record; only the endpoint and the payload key moved (`body` became `content`).
+  #
+  # THE PAYLOAD IS BUILT BEFORE THE RESOLUTION, for the same reason `create_task`'s is.
   def note(argv)
+    # TWO LINES, NOT `issue_number!(argv.shift or raise ...)`. `or` binds looser than an argument
+    # list, so the one-line form is a SyntaxError, not a style choice — `show` reads this way for
+    # the same reason.
     number = argv.shift or raise UsageError, "note needs an issue number"
     number = issue_number!(number)
     text = argv.shift or raise UsageError, "note needs text"
-    api(:post, repo_path("/issues/#{number}/comments"), { body: text })
+    payload = { content: text }
+    task = task_for(number)
+    api(:post, "/api/comment/#{task.fetch('id')}", payload)
 
     puts "noted on ##{number}"
     EXIT_OK
+  rescue Unreachable => e
+    # THE ISSUE NUMBER IS NOW IN NEITHER THE PAYLOAD NOR THE PATH, WHICH IS WHY THIS RESCUE EXISTS.
+    # The previous record's path carried it (/issues/128/comments), so spooling path + payload was
+    # enough. Kaneo addresses a comment by the task's opaque id, and resolving that id is this
+    # verb's FIRST wire call — so an outage fails inside task_for, whose path names the board and
+    # not the issue. A correction spooled without the number is unrefilable: the text says what was
+    # wrong, and nothing says about what.
+    raise Unreachable.new(e.message, payload: e.payload || payload,
+                                     path: "#{e.path || '/api/comment'} (issue ##{number})")
   end
 
-  # CLOSING IS A WRITE, SO IT COMES THROUGH THIS DOOR TOO. It exists because nothing else closes
-  # an issue here: the arc header's "it closes when the PR merges" describes a linkage that does
-  # not exist in this setup — the PRs are on GitHub and the record is a self-hosted Forgejo, and
-  # nothing bridges them. tinkerex#154 merged and deployed with its arc, its deploy record and
-  # both issues it resolved still showing [open]. Before this, the only ways to close one were the
-  # web UI (fine for a person, unavailable to CI, a cloud session or a subagent) or a raw curl,
-  # which is precisely the SECOND write path the single-door rule exists to forbid.
+  # CLOSING IS A WRITE, SO IT COMES THROUGH THIS DOOR TOO. It exists because nothing else closes an
+  # issue here: the arc header's "it closes when the PR merges" describes a linkage that does not
+  # exist in this setup — the PRs are on GitHub and the record is self-hosted, and nothing bridges
+  # them. tinkerex#154 merged and deployed with its arc, its deploy record and both issues it
+  # resolved still showing open. Before this, the only ways to close one were the web UI (fine for a
+  # person, unavailable to CI, a cloud session or a subagent) or a raw curl, which is precisely the
+  # SECOND write path the single-door rule exists to forbid.
+  #
+  # CLOSING IS A COLUMN MOVE NOW, not a state change — Kaneo has no open/closed flag, only the
+  # board column, so this is `PUT /task/status/:id` carrying the Done slug. Three properties of
+  # the verb survive that move unchanged:
   #
   # SEVERAL NUMBERS IN ONE CALL, BECAUSE THE UNIT OF WORK IS "this branch is done" and that
   # routinely resolves an arc plus the issues it answers. Each is its own request; a failure part
   # way through leaves the earlier ones closed and says which, rather than pretending the batch
   # was atomic.
   #
-  # ALREADY-CLOSED IS REPORTED, NOT RE-SENT. Forgejo accepts a redundant close happily, so the
+  # ALREADY-CLOSED IS REPORTED, NOT RE-SENT. A redundant status write is accepted happily, so the
   # naive version is silently idempotent — which reads as "I closed it" for an issue somebody else
-  # closed for a different reason. The GET costs one round trip and turns that into a fact.
+  # closed for a different reason. The board this reads is already fetched, so the check is free.
   def close(argv)
     numbers = argv.map { |a| issue_number!(a) }
     raise UsageError, "close needs at least one issue number" if numbers.empty?
 
     numbers.each do |number|
-      path = repo_path("/issues/#{number}")
-      issue = parse(api(:get, path), path)
+      task = task_for(number)
 
-      if issue["state"] == "closed"
+      if task["status"] == CLOSED_STATUS
         puts "##{number} was already closed"
         next
       end
 
-      api(:patch, path, { state: "closed" })
-      puts "closed ##{number} #{issue['title']}"
+      api(:put, "/api/task/status/#{task.fetch('id')}", { status: CLOSED_STATUS })
+      puts "closed ##{number} #{task['title']}"
     end
     EXIT_OK
   end
@@ -416,8 +594,23 @@ module Log
   def spool_dir = ENV.fetch("LOG_SPOOL_DIR", File.expand_path("../tmp/log-pending", __dir__))
 
   # THE BRANCH NAMES THE SPOOL FILE, so two branches cannot overwrite each other's unfiled record.
+  #
+  # A DETACHED HEAD REPORTS AN EMPTY BRANCH, AND AN EMPTY NAME MADE THE SPOOL FILE A DOTFILE — which
+  # `status` then could not see. `git branch --show-current` prints "" when HEAD is detached, so the
+  # file became `<spool>/.md`, and `Dir.glob("<spool>/*.md")` does NOT match a leading dot. The record
+  # was written, `status` answered "nothing unfiled", and exit 4 — which exists to make a backlog
+  # loud — could never fire. Silent, and in exactly the environments §13 says this script must work
+  # in: GitHub Actions checks out a SHA, and so does `git bisect`.
+  #
+  # THE SHA IS THE FALLBACK RATHER THAN A LITERAL, because a spooled record you cannot attribute is
+  # most of the way to a lost one — "detached" alone would collide across every such run. Two
+  # detached checkouts of the SAME commit sharing one file is correct: it is the same work.
   def current_branch
-    ENV["LOG_BRANCH"] || Open3.capture2("git", "branch", "--show-current").first.strip
+    name = ENV["LOG_BRANCH"] || Open3.capture2("git", "branch", "--show-current").first.strip
+    return name unless name.empty?
+
+    sha = Open3.capture2("git", "rev-parse", "--short", "HEAD").first.strip
+    sha.empty? ? "detached" : "detached-#{sha}"
   end
 
   def spool!(command, payload, path = nil)
@@ -425,8 +618,11 @@ module Log
     file = File.join(spool_dir, "#{current_branch.tr('/', '-')}.md")
     File.open(file, "a") do |f|
       f.puts("# unfiled: #{command}")
-      # note's TARGET lives in the URL, not the payload. Without this line a correction spooled
-      # during an outage has the text and no way to know which issue it belongs to.
+      # THE ENDPOINT IS RECORDED BECAUSE A PAYLOAD ALONE IS OFTEN NOT ENOUGH TO REFILE. It used to
+      # be `note`'s only link to its issue (/issues/128/comments); under Kaneo `note` names the
+      # number in its own message instead, because the id is opaque and resolving it is the verb's
+      # first wire call. Keep this line: it is what tells a label attachment from a task create when
+      # both are sitting in the same spool file.
       f.puts("# endpoint: #{path}") if path
       f.puts("", JSON.pretty_generate(payload), "")
     end
@@ -441,7 +637,7 @@ module Log
       return EXIT_OK
     end
 
-    puts "bin/log: #{pending.size} unfiled record(s) — these are NOT in Forgejo:"
+    puts "bin/log: #{pending.size} unfiled record(s) — these are NOT in Kaneo:"
     pending.each { |path| puts "    #{path}" }
     EXIT_UNFILED
   end
@@ -451,9 +647,10 @@ module Log
       "    " + "bin/log #{name} #{args}".rstrip.ljust(34) + description
     end
 
-    ([ "bin/log — record work in Forgejo. The single write door.", "" ] + rows + [
+    ([ "bin/log — record work in Kaneo. The single write door.", "" ] + rows + [
       "",
-      "Env: FORGEJO_URL (default http://forgejo.home), FORGEJO_OWNER, FORGEJO_REPO, " \
+      "Env: KANEO_URL (default http://kaneo.home), KANEO_WORKSPACE and KANEO_PROJECT " \
+      "(both default tinkerex), " \
       "LOG_SPOOL_DIR (default tmp/log-pending), LOG_BRANCH"
     ]).join("\n")
   end
@@ -485,7 +682,7 @@ module Log
     warn usage_text
     EXIT_USAGE
   rescue Unreachable => e
-    warn "bin/log: Forgejo is unreachable — #{e.message}"
+    warn "bin/log: Kaneo is unreachable — #{e.message}"
 
     if e.payload.nil?
       warn "bin/log: nothing to file (#{command} sends no payload)."
