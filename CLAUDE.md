@@ -326,7 +326,7 @@ slot. A closed item keeps its row for the same reason it always did: the citatio
 4. Selective sync needs an app surface → `tinkerex#121`
 5. Managed-Postgres at scale → `tinkerex#122`
 6. Windows CI coverage is skipped, not passing (Linux landed 2026-08-31) → `tinkerex#123`
-7. `SQLite3::BusyException` — the write path it needed left with the engine → `tinkerex#124`
+7. `SQLite3::BusyException` — the write path it needed left with the engine → `tinkerex#124` *(closed)*
 8. `FilesController#index` render cost → `tinkerex#125`
 9. No web UI for inventory, BOM, suppliers, locations, collections, tags → `tinkerex#126`
 10. A device push DOES nudge project-folder filing → `tinkerex#127` *(closed)*
