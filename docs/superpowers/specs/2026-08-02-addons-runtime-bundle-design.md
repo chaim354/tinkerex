@@ -7,9 +7,11 @@
 > **Prior attempt, abandoned.** Delivering addons as a **Rails engine gem** was designed and
 > partially built before this. It cannot give the addon UI independent deploy — an engine ships
 > *inside* the Rails image — which turned out to be the goal that actually mattered. Summary in
-> `docs/roads-not-taken.md` §8; the built-and-abandoned host-side prep is PR #115, left open
-> unmerged as reference, with its own spec and plan on branch
-> `claude/tools-addons-separate-repo-d44dc8`. **Do not revive it without reading §8 first.**
+> `docs/roads-not-taken.md` §8; the built-and-abandoned host-side prep is PR #115, kept as
+> reference rather than merged. It is CLOSED, and its branch `claude/tools-addons-separate-repo-d44dc8`
+> was deleted on 2026-09-01 — its spec and plan were rescued first, to
+> `2026-08-02-tools-addons-separate-repo-design.md` beside this file and
+> `../plans/2026-08-02-addon-sdk-host-prep.md`. **Do not revive it without reading §8 first.**
 
 ---
 
