@@ -54,6 +54,18 @@ on:
       - '!docs/**'
       - '!client/**'
       - '!**.md'
+      # RE-INCLUDED AFTER THE NEGATIONS, WHICH IS THE ONLY PLACE THEY WORK — last match wins, so
+      # moving either line above `!**.md` (or above `!docs/**`, for the second) silently stops
+      # them triggering again. That is the ordering rule the block above already states.
+      #
+      # THESE TWO ARE PROSE THAT A GATE READS, WHICH IS WHY THEY ARE NOT PROSE FOR THIS FILTER'S
+      # PURPOSES. `test/docs_hygiene_test.rb` opens CLAUDE.md for its line ceiling and globs
+      # docs/invariants for the stub<->file pairing, so a PR touching ONLY those files was the one
+      # PR that gate could never run on — it could not fire on the change it exists to police.
+      # tinkerex#164. The skip list in test/ci_hygiene_test.rb calls itself "prose no gate
+      # executes"; by its own criterion these never belonged in it.
+      - 'CLAUDE.md'
+      - 'docs/invariants/**'
   # NO `push:` TRIGGER, AND THE ARGUMENT IS A PROBE RATHER THAN AN ASSUMPTION.
   #
   # A `pull_request` run does NOT test the branch tip — `actions/checkout` resolves
