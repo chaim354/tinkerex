@@ -207,6 +207,16 @@ class ModelsController < ApplicationController
     @attachments.map { |a| { file: @page_nodes[a.node_id] } }
   end
 
+  # THE FOLDER'S SHAPE, THE MODEL'S FILES. Walking the subtree gives the nesting an imported zip
+  # had; `@attachments` says which of those files the model actually claims, and since 2026-09-02
+  # those are NOT the same set — Maker::ModelIntake stopped giving a folder model every file
+  # beneath it (§14k), so the unfiltered walk went on listing the .dxf drawings the catalog had
+  # just let go, under a heading counting them.
+  #
+  # IT READS `@attachments`, ALREADY PARTITIONED AGAINST THE LIVE-NODE INDEX, so this adds no query
+  # (the page's budget is asserted constant in N — §14e) and inherits PageNodes' tombstone rule for
+  # free rather than re-deriving it. Its own walk is `.present`, so a tombstone is absent from both
+  # sides and cannot come back through this door.
   def build_file_tree(root_node_id)
     collected = []
     frontier  = [ root_node_id ]
@@ -215,13 +225,23 @@ class ModelsController < ApplicationController
       collected.concat(kids)
       frontier = kids.reject(&:file?).map(&:node_id)
     end
-    nest_tree(root_node_id, collected.group_by(&:parent_node_id))
+    nest_tree(root_node_id, collected.group_by(&:parent_node_id), @attachments.map(&:node_id).to_set)
   end
 
-  def nest_tree(parent_node_id, by_parent)
+  # A DIRECTORY WITH NOTHING SURVIVING UNDER IT GOES TOO. Keeping it renders a folder that opens
+  # onto nothing — and `docs/` holding one unclaimed `names.txt` is the ordinary case, not an edge.
+  # The recursion is what makes that hold at depth: an empty branch collapses from the leaves up.
+  def nest_tree(parent_node_id, by_parent, claimed)
     (by_parent[parent_node_id] || [])
       .sort_by { |n| [ n.file? ? 1 : 0, n.name.to_s.downcase ] }
-      .map { |n| n.file? ? { file: n } : { dir: n, children: nest_tree(n.node_id, by_parent) } }
+      .filter_map do |n|
+        if n.file?
+          { file: n } if claimed.include?(n.node_id)
+        else
+          children = nest_tree(n.node_id, by_parent, claimed)
+          { dir: n, children: } if children.any?
+        end
+      end
   end
 
   def count_files(tree)

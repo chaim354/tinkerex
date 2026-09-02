@@ -83,6 +83,31 @@ module Web
       assert_select "a[href=?]", "https://printables.com/model/1"
     end
 
+    # THE PANEL SHOWS THE MODEL'S FILES, NOT THE FOLDER'S CONTENTS (2026-09-02). It walked
+    # folder_node_id's subtree, which was the same set back when a folder model claimed everything
+    # under it -- so when Maker::ModelIntake stopped claiming the whole subtree, this panel went on
+    # listing the .dxf drawings the catalog had just let go, under a heading counting them. An empty
+    # folder is dropped with its files, or the page grows a `docs/` that opens onto nothing.
+    test "the file tree omits folder files the model does not claim" do
+      user = sign_in
+      m = user.maker_models.create!(title: "Dragon")
+      folder = m.ensure_library_folder!(user)
+      user.nodes.create!(node_id: "mdl1", name: "body.stl", kind: "file", parent_node_id: folder.node_id)
+      user.nodes.create!(node_id: "dxf1", name: "drawing.dxf", kind: "file", parent_node_id: folder.node_id)
+      docs = user.nodes.create!(node_id: "docs1", name: "docs", kind: "dir", parent_node_id: folder.node_id)
+      user.nodes.create!(node_id: "txt1", name: "names.txt", kind: "file", parent_node_id: docs.node_id)
+      m.file_attachments.create!(user:, node_id: "mdl1", role: "model")
+
+      get model_path(m)
+
+      assert_select ".file-tree-box .tree-fname", text: "body.stl"
+      assert_select ".file-tree-box .tree-fname", text: "drawing.dxf", count: 0
+      assert_select ".file-tree-box .tree-folder", text: "docs", count: 0
+      # THE COUNT IN THE HEADING READS THE SAME SET -- it is built from the tree, so a panel that
+      # filtered while the heading did not would be the same contradiction one line higher up.
+      assert_select "h2", text: /Files\s*\(1\)/
+    end
+
     test "show renders a 3D switcher over STL/3MF/OBJ only, excluding STEP" do
       user = sign_in
       m = user.maker_models.create!(title: "Multi")

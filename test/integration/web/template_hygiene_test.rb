@@ -119,6 +119,12 @@ module Web
       @model = @user.maker_models.create!(title: "Bracket", slug: "bracket",
                                           cover_node_id: "n-stl", folder_node_id: "d-laser")
       @model.file_attachments.create!(user: @user, node_id: "n-stl", role: "model", position: 0)
+      # ONE ATTACHMENT INSIDE `d-laser`, OR `models/_file_tree` IS NEVER RENDERED. Since 2026-09-02
+      # the Files panel intersects the folder walk with the model's attachments (§14k), and `n-stl`
+      # sits at the library root, not in the model's folder -- so with only that row the tree is
+      # empty, the partial never renders, and the coverage assertion below reports it. That is the
+      # guard working: it went red on exactly the commit that changed the panel.
+      @model.file_attachments.create!(user: @user, node_id: "n-bak", role: "laser", position: 1)
       # THE RECIPE PANELS ARE ONLY REACHABLE THROUGH A THUMBNAIL ROW CARRYING METADATA, and they
       # branch on the KEY, not the extension (`operations` → MillMage, else LightBurn). Without
       # both rows, `files/_lbrn_settings` and `files/_mage_settings` are unreachable from any

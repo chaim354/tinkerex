@@ -95,6 +95,50 @@ module Maker
       assert_not_includes model.file_attachments.reload.pluck(:node_id), "f-late"
     end
 
+    # A FOLDER A PROJECT CLAIMS IS THE PROJECT'S, NOT THE CATALOG'S (2026-09-02). `*` makes
+    # `Projects` a shelf, so before this a folder directly under it became a MODEL holding its whole
+    # tree: measured on a real share library, `Projects/TheFlightWall_OSS` -- a firmware repo --
+    # became a "3D model" with 2305 attachments, 1273 of them source files. Maker::ProjectDiscovery
+    # adopts every folder under `Projects/` and Library::ScanJob runs it BEFORE this sweep (§14k),
+    # so asking who claims the folder is what expresses the rule without a second copy of
+    # ProjectDiscovery's policy living here.
+    test "a folder a project claims is not catalogued" do
+      @user.maker_projects.create!(name: "Enclosure", slug: "enclosure", folder_node_id: "d-enc")
+
+      Maker::ModelIntake.for_user(user: @user)
+
+      assert_nil @user.maker_models.find_by(auto_node_id: "d-enc")
+      # AND ITS FILES ARE LEFT ALONE, which is the half nothing else would notice -- the same
+      # both-halves reading the imported-model rule below is pinned on.
+      assert_empty Maker::FileAttachment.where(user: @user, node_id: %w[f-body f-manual])
+    end
+
+    # UNSCOPED, FOR THE REASON Maker::ProjectDiscovery#adoptable STATES ABOUT ITS OWN `claimed` SET:
+    # archiving a project leaves folder_node_id intact, so it still claims its folder. Filtering
+    # archived rows out here is how an archived project's folder silently reappears as a model.
+    test "an archived project still claims its folder" do
+      @user.maker_projects.create!(name: "Enclosure", slug: "enclosure", folder_node_id: "d-enc",
+                                   status: "archived", archived_at: Time.current)
+
+      Maker::ModelIntake.for_user(user: @user)
+
+      assert_nil @user.maker_models.find_by(auto_node_id: "d-enc")
+    end
+
+    # THE ROW THE OLD RULE ALREADY WROTE STOPS GROWING. A claimed key is dropped before `existing`
+    # is even looked up, so an auto model that predates this rule attaches nothing further; clearing
+    # it out is Maker::ModelIntake::Prune's job, not a sweep that only ever inserts.
+    test "an auto model on a folder a project claims stops attaching" do
+      Maker::ModelIntake.for_user(user: @user)
+      model = @user.maker_models.find_by!(auto_node_id: "d-enc")
+      @user.maker_projects.create!(name: "Enclosure", slug: "enclosure", folder_node_id: "d-enc")
+      file("f-late", "late.stl", "d-enc")
+
+      Maker::ModelIntake.for_user(user: @user)
+
+      assert_not_includes model.file_attachments.reload.pluck(:node_id), "f-late"
+    end
+
     test "a folder an imported model already claims is skipped" do
       @user.maker_models.create!(title: "Hand imported", folder_node_id: "d-enc")
 
