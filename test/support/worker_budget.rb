@@ -27,9 +27,11 @@
 # red and taxes every genuine failure with the new timeout.
 #
 # DERIVED, NOT A LITERAL. A flat `6` would be right for this laptop and wrong for the next machine —
-# and `docs/DEPLOY.md`'s CI runner is a developer's own laptop today but need not stay one. The
-# budget below adapts; the cap by processor count keeps a huge-RAM box from spawning more browsers
-# than it has cores to drive them with.
+# and this repo's CI runner WAS a developer's own laptop until 2026-08-31 and is now a container
+# with a cgroup memory limit — which is exactly the "next machine" that sentence anticipated, and
+# why the readers below consult the cgroup before /proc. The budget below adapts; the cap by
+# processor count keeps a huge-RAM box from spawning more browsers than it has cores to drive them
+# with.
 module WorkerBudget
   # Bytes of RAM to reserve per browser worker. The marginal cost measured above is ~1.3 GB per
   # worker over a ~6.7 GB baseline; 4 GB is deliberately generous, because the budget has to hold
@@ -47,6 +49,18 @@ module WorkerBudget
   # first five minutes, and the test that names the constant is what caught it.
   PIDFILE_DIR = File.expand_path("../../tmp/browser-suites", __dir__)
 
+  # WHERE A CONTAINER'S REAL MEMORY LIMIT LIVES (cgroup v2), READ BEFORE /proc/meminfo.
+  #
+  # MemTotal reports the HOST's memory inside a container, whatever limit the container carries. On
+  # the CI box that is 33.35 GB, so the budget below planned for 8 browser workers — roughly 17 GB
+  # by this file's own measured figures (~6.7 GB baseline + ~1.3 GB marginal) — inside a container
+  # sized far smaller, and the suite is OOM-killed rather than merely slow.
+  #
+  # These are the questions the two readers already CLAIM to answer: how much memory may THIS
+  # PROCESS use, and how much of it is left. On bare metal and on macOS the files are absent or read
+  # `max`, so both fall through to exactly the behaviour they had before this existed.
+  CGROUP_MEMORY_MAX     = "/sys/fs/cgroup/memory.max"
+  CGROUP_MEMORY_CURRENT = "/sys/fs/cgroup/memory.current"
 
   class << self
     # Never returns less than 1, never more than the processor count, and never raises: an
@@ -64,8 +78,17 @@ module WorkerBudget
     # 10-core box each took 6 workers — twelve Chromes — and produced **152 and 166 errors** where
     # either alone produces zero. The box swaps and every Capybara wait becomes the coin flip this
     # header already warned about. That reached CI in milder form as BoxSectionsTest failing on two
-    # consecutive PRs and passing on every re-run — the CI runner IS this Mac (§15), so a local
-    # `bin/ci` and a CI job genuinely collide.
+    # consecutive PRs and passing on every re-run, back when the CI runner WAS this Mac and a local
+    # `bin/ci` genuinely collided with a CI job. CI moved to dedicated containers on 2026-08-31, and
+    # the detector stays for ONE reason only: a developer's local suite still collides with itself.
+    #
+    # IT IS NOT WHAT KEEPS THE FOUR CI RUNNERS APART, AND SAYING SO WOULD BE THE EXACT MISTAKE THIS
+    # PARAGRAPH WAS JUST REWRITTEN TO REMOVE. The detector reads pidfiles under PIDFILE_DIR, which
+    # is `<checkout>/tmp/browser-suites` — and each runner binds its OWN checkout
+    # (`/mnt/user/appdata/tinkerex-ci/runner-N/_work`, ops/ci-runner-stack.yml), so runner-1 can
+    # never see runner-2's pidfile; `process_alive?`'s `Process.kill(0, pid)` is confined to its own
+    # container's PID namespace besides. What actually stops four runners each planning for an empty
+    # box is the CGROUP LIMIT the readers below consult, paired with `mem_limit` on each service.
     #
     # NO FLOOR ABOVE 1, DELIBERATELY, AND THAT IS THIS FILE'S EXISTING CONTRACT RATHER THAN A NEW
     # CHOICE. A first draft floored this at 4 to protect local wall time, and
@@ -82,13 +105,13 @@ module WorkerBudget
     # DETECTS THE CONDITION DIRECTLY NOW, INSTEAD OF PROXYING IT THROUGH FREE MEMORY.
     #
     # The available-memory check above was a PROXY for "another browser suite is already running",
-    # and on the box this repo actually runs on it is tripped permanently. Measured 2026-08-25:
-    # `system-test` took 83-97s on NINE consecutive CI runs, median 84s, never once fast — because
-    # the CI runner IS a developer's own Mac (§15) and macOS `available` (free + inactive) on a
-    # machine with apps open never looks idle. So the budget returned **1** every time, the
-    # protection sat at maximum permanently, and the cost was paid on every run including the vast
-    # majority with no second suite anywhere. Local comparison on the same box, same free memory:
-    # **1 worker 75.3s, 4 workers 33.6s, zero failures either way.**
+    # and on the Mac runner it was tripped permanently. Measured 2026-08-25: `system-test` took
+    # 83-97s on NINE consecutive CI runs, median 84s, never once fast — because the CI runner was a
+    # developer's own Mac and macOS `available` (free + inactive) on a machine with apps open never
+    # looks idle. So the budget returned **1** every time, the protection sat at maximum
+    # permanently, and the cost was paid on every run including the vast majority with no second
+    # suite anywhere. Local comparison on the same box, same free memory: **1 worker 75.3s, 4
+    # workers 33.6s, zero failures either way.**
     #
     # WHY NOT COUNT CHROME PROCESSES, which is the obvious direct check: it cannot work here.
     # Sampled during a real system run, the process table showed **44 `Google Chrome Helper
@@ -168,6 +191,39 @@ module WorkerBudget
       1
     end
 
+    # The cgroup v2 memory limit in bytes, or nil when there is no limit to read: the file is absent
+    # (bare metal, cgroup v1, macOS) or holds the literal "max" (a container with no limit set).
+    # nil means "ask the platform", which is the pre-existing behaviour.
+    def cgroup_limit_bytes
+      raw = File.read(CGROUP_MEMORY_MAX).strip
+      return nil if raw == "max"
+      limit = Integer(raw, exception: false)
+      limit if limit&.positive?
+    rescue StandardError
+      nil
+    end
+
+    # What the cgroup is using right now. nil when unreadable, which leaves `available` at the whole
+    # limit — the same "a machine we cannot measure keeps the number it had" rule as everywhere else
+    # in this file.
+    def cgroup_used_bytes
+      Integer(File.read(CGROUP_MEMORY_CURRENT).strip, exception: false)
+    rescue StandardError
+      nil
+    end
+
+    def total_memory_bytes
+      cgroup_limit_bytes || platform_total_memory_bytes
+    end
+
+    def available_memory_bytes
+      limit = cgroup_limit_bytes
+      return platform_available_memory_bytes if limit.nil?
+
+      used = cgroup_used_bytes
+      used ? [ limit - used, 0 ].max : limit
+    end
+
     # WHAT IS ACTUALLY FREE, as distinct from installed. nil on an unrecognised platform or an
     # unreadable source, and `browser_workers` then falls back to TOTAL — i.e. exactly the old
     # behaviour, so a machine we cannot measure keeps the number it had before this existed.
@@ -176,7 +232,7 @@ module WorkerBudget
     # separately, and inactive memory is reclaimable on demand — counting only `free` would read a
     # perfectly healthy box as starved, because macOS deliberately keeps free near zero. Linux
     # publishes MemAvailable, which already means this.
-    def available_memory_bytes
+    def platform_available_memory_bytes
       case RbConfig::CONFIG["host_os"]
       when /darwin/i
         out = `vm_stat 2>/dev/null`
@@ -194,7 +250,7 @@ module WorkerBudget
 
     # macOS and Linux only, which is every machine this suite runs on. Anything else answers nil
     # and takes the fallback above.
-    def total_memory_bytes
+    def platform_total_memory_bytes
       case RbConfig::CONFIG["host_os"]
       when /darwin/i
         out = `sysctl -n hw.memsize 2>/dev/null`

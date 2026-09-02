@@ -959,26 +959,51 @@ class LogCliTest < ActiveSupport::TestCase
     stub&.shutdown
   end
 
-  # `closed:` DEFAULTS TO FALSE, AND ONLY open/deploy EXERCISE THAT DEFAULT. `arc` always passes an
-  # explicit boolean, so Ruby's keyword default is dead code from its call site — which means the
-  # mutation "default closed: to true" stayed GREEN when it was run. Observed, not predicted. This
-  # is the test that makes the default real: an ordinary open item or deploy record must never
-  # arrive already in the done column.
-  test "open and deploy never arrive closed" do
+  # `closed:` DEFAULTS TO FALSE, AND SINCE 2026-09-01 `open` IS ITS ONLY EXERCISER. **Do not delete
+  # this test on the grounds that `deploy` covers the same ground — it no longer does.** `arc` has
+  # always passed an explicit boolean and `deploy` now passes one too, so from every OTHER call site
+  # Ruby's keyword default is dead code: the mutation "default `closed:` to true" stayed GREEN when
+  # it was run against those call sites. Observed, not predicted. This is the one test left that
+  # makes the default real, which is exactly why it is now a test of its own.
+  test "an ordinary open item never arrives closed" do
     stub = StubKaneo.new(routes: {
       "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
       "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ]
     })
 
     run_log("open", "an ordinary item", env: { "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url })
+
+    posts = stub.requests.select { |r| r.method == "POST" && r.path.include?("/task/") }
+    assert_equal 1, posts.size, "expected one task POST from open"
+    assert_equal "to-do", posts.first.json["status"],
+                 "an open item arrived already closed — it is live work, not history"
+  ensure
+    stub&.shutdown
+  end
+
+  # A DEPLOY RECORD IS HISTORY AND ARRIVES CLOSED — the opposite of the item above, and the reason
+  # is the WORKFLOW rather than anything about the payload. `bin/log deploy` runs as the LAST step
+  # of a deploy that has already rolled and been verified (`.claude/commands/deploy.md` §4). An arc
+  # is filed open because its open→closed transition tracks a real later event, the merge. **A
+  # deploy has no later event to wait for**, which is why nothing in this repo has ever closed one.
+  #
+  # MEASURED, NOT ASSUMED. On 2026-09-01 the record held six OPEN deploy issues and twelve closed
+  # ones — and all twelve were Forgejo-migration imports carrying their state across, not closures
+  # anyone performed. The open state had never meant anything; it just added one false entry to the
+  # record's open list per deploy, which is the stale-open-list failure CLAUDE.md §14e calls worse
+  # than no list at all.
+  test "a deploy record arrives closed, because the deploy already happened" do
+    stub = StubKaneo.new(routes: {
+      "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
+      "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ]
+    })
+
     run_log("deploy", "--image", "abc123", env: { "KANEO_TOKEN" => "t0ken", "KANEO_URL" => stub.url })
 
     posts = stub.requests.select { |r| r.method == "POST" && r.path.include?("/task/") }
-    assert_equal 2, posts.size, "expected one task POST each from open and deploy"
-    posts.each do |post|
-      assert_equal "to-do", post.json["status"],
-                   "#{post.json['title'].inspect} arrived already closed — it is live work, not history"
-    end
+    assert_equal 1, posts.size, "expected one task POST from deploy"
+    assert_equal "done", posts.first.json["status"],
+                 "a deploy record arrived open — nothing ever closes one, so it would sit there forever"
   ensure
     stub&.shutdown
   end

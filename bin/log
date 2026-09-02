@@ -499,6 +499,14 @@ module Log
   # A DEPLOY IS AN ISSUE, WHICH IS WHAT DELETES CLAUDE.md §15's PUSH-TO-MAIN EXCEPTION. Today a
   # deploy record is the one sanctioned direct commit to main, because a deploy happens after the
   # merge and its record cannot live in the work's own PR. As an issue that reasoning evaporates.
+  #
+  # AND IT IS FILED CLOSED, unlike every other thing this script creates. A deploy record is
+  # HISTORY: `bin/log deploy` is the last step of a deploy that has already rolled and been
+  # verified, so there is no later event for an open state to be waiting on. An arc is filed open
+  # because its close tracks the merge; a deploy has no merge. Left open it simply accumulated —
+  # measured 2026-09-01, six open deploy records, while all twelve closed ones turned out to be
+  # Forgejo-migration imports rather than closures anyone made. One false entry in the record's
+  # open list per deploy is the stale-open-list failure §14e calls worse than no list at all.
   DEFAULT_DESTS = %w[chunk_remote share s3].freeze
 
   def deploy(argv)
@@ -519,7 +527,10 @@ module Log
     raise UsageError, "deploy needs --image SHA" if image.nil?
 
     body = "Image: `#{image}`\n\nDestinations:\n#{dests.map { |d| "- #{d}" }.join("\n")}\n"
-    task = create_task("Deploy #{image}", body: body, labels: [ "deploy" ])
+    # FILED CLOSED, AND THE `closed: true` IS EXPLICIT FOR THE SAME REASON `arc` PASSES A BOOLEAN:
+    # it leaves `open` as the ONLY caller riding the keyword default, which is what keeps that
+    # default's guard honest. See the two tests in test/log_cli_test.rb.
+    task = create_task("Deploy #{image}", body: body, labels: [ "deploy" ], closed: true)
 
     puts "##{task['number']} #{task['title']}"
     EXIT_OK

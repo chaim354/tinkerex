@@ -325,8 +325,8 @@ slot. A closed item keeps its row for the same reason it always did: the citatio
 3. Sharing → `tinkerex#120`
 4. Selective sync needs an app surface → `tinkerex#121`
 5. Managed-Postgres at scale → `tinkerex#122`
-6. Linux and Windows CI coverage is skipped, not passing → `tinkerex#123`
-7. `SQLite3::BusyException` — the write path it needed left with the engine → `tinkerex#124`
+6. Windows CI coverage is skipped, not passing (Linux landed 2026-08-31) → `tinkerex#123`
+7. `SQLite3::BusyException` — the write path it needed left with the engine → `tinkerex#124` *(closed)*
 8. `FilesController#index` render cost → `tinkerex#125`
 9. No web UI for inventory, BOM, suppliers, locations, collections, tags → `tinkerex#126`
 10. A device push DOES nudge project-folder filing → `tinkerex#127` *(closed)*
@@ -1292,30 +1292,29 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
   `runs-on: [self-hosted, linux|macos|windows]`. GitHub bills *only* hosted runners
   (`ubuntu/macos/windows-latest`; macOS 10×, Windows 2×); self-hosted are **free**. So
   **never add `*-latest`** to a workflow.
-- **RUNNERS ARE REGISTERED PER REPOSITORY, AND ALL THREE REPOS NOW HAVE ONE — macOS ONLY.**
-  Measured 2026-08-24 via `gh api repos/:owner/:repo/actions/runners`: `tinkerex`, `tinkerex-sync`
-  and `tinkerex-client` each have one online runner, all
-  `labels=[self-hosted, macOS, ARM64, maker-mac]`. **`flasher-maker-linux` and
-  `CHAIMDESK-maker-windows` are registered NOWHERE**, so the linux/windows conclusion below stands.
-  **Re-measure rather than trusting this paragraph** — that is why it names a date. It needs an
-  **admin-scoped** token: `administration` is not a permission a workflow `GITHUB_TOKEN` can be
-  granted, so it **403s from inside Actions** and works only from a developer shell.
-- **`ci.yml`'s jobs target `macos`, and it is the ONLY workflow here** since the cross-repo
-  suites left (2026-08-25). The `if:`-gate on the repo variable **`CI_RUNNERS`** via
-  `ci/preflight.sh` therefore has nothing left to gate *in this repo* — **keep the mechanism
-  anyway**: it fixed a five-week outage, and the failure it prevents is silent. A job matching no
-  online runner does **not** fail — it queues 24 h at 0 elapsed and is auto-cancelled, which is
-  why a PR sat UNSTABLE and merging needed `--admin`. Any future linux/windows job here MUST be
-  `needs: preflight` + `if:`-gated; `test/ci_hygiene_test.rb` enforces it, and asserts it actually
-  scanned some jobs so the guard cannot go vacuous the way it nearly did. The siblings still gate
-  real jobs this way. **Linux and Windows coverage is skipped, not passing.**
-- **`ruby/setup-ruby` must NOT appear in a `macos` job** — it assumes a hosted
-  `/Users/runner` layout this box lacks; the runner's PATH has mise ruby 3.4.7 matching
-  `.ruby-version`, so `bundle install --quiet` suffices. `test/ci_hygiene_test.rb` fails if it
-  reappears, and guards four other workflow invariants besides.
-- Self-hosted machines are persistent: make dep-install steps idempotent and don't assume the
-  clean toolchain of a hosted image. (`config/ci.rb`'s own review found **334 accumulated
-  `tmp.*` directories** on the mac runner — a gate that makes a tmpdir must clean it up.)
+- **RUNNERS ARE REGISTERED PER REPOSITORY. THIS REPO'S ARE FOUR LINUX CONTAINERS ON THE UNRAID
+  BOX** — `ci/runner/Dockerfile` + `ops/ci-runner-stack.yml`, on Docker host **192.168.1.146**
+  (not .7 = NPM, not .95 = the Kamal VM). Measured 2026-08-31 via
+  `gh api repos/:owner/:repo/actions/runners`: `tinkerex-unraid-1..4` online, labels
+  `[self-hosted, Linux, X64, maker-unraid]`. CI was a developer's own MacBook, one job at a time,
+  until then, and the siblings still are. **Re-measure rather than trusting this** — hence the date.
+  Needs an **admin-scoped** token; `administration` is not grantable to a workflow `GITHUB_TOKEN`,
+  so it **403s from inside Actions**.
+- **`ci.yml`'s jobs target `linux`, and it is the ONLY workflow here** since the cross-repo suites
+  left (2026-08-25). `linux` is the family `preflight` itself runs on, so it is the circular case
+  `test/ci_hygiene_test.rb` exempts — **keep the `CI_RUNNERS`/`ci/preflight.sh` mechanism anyway**:
+  it fixed a five-week outage and the failure it prevents is silent. A job matching no online runner
+  does **not** fail — it queues 24 h at 0 elapsed, is auto-cancelled, and the PR sits UNSTABLE. Any
+  future macos/windows job MUST be `needs: preflight` + `if:`-gated; the guard **derives** the
+  exempt family from preflight's own `runs-on` rather than naming one. **Windows coverage is
+  skipped, not passing.**
+- **`ruby/setup-ruby` must NOT appear in a job that could be the Mac** — it assumes a hosted
+  `/Users/runner` layout. The guard exempts a job whose labels prove otherwise, so a `linux` job may
+  use it; none does, because the image bakes mise ruby 3.4.7 matching `.ruby-version`.
+- Self-hosted machines are persistent: make dep-install steps idempotent (`config/ci.rb`'s review
+  found **334 accumulated `tmp.*` directories** on the mac runner). On Unraid it binds on DISK too:
+  `/var/lib/docker` is a **50 GB loop** whose exhaustion takes down every container on the box, so
+  work dirs are bind-mounted to the array and an image rebuild must `docker builder prune -af`.
 
 ### Keeping the docs honest
 

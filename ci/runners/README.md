@@ -1,24 +1,112 @@
 # Self-hosted GitHub Actions runners
 
-We run CI on our own three machines (macOS, Linux, Windows) — native, no VMs — instead
-of GitHub-hosted runners. This keeps GitHub Actions as the orchestrator (all workflow
-YAML is unchanged except `runs-on:`) while letting us run the jobs that only real
-hardware can: the live Windows CfAPI smoke and the macOS cross-compile check.
+We run CI on our own hardware instead of GitHub-hosted runners — GitHub bills only the hosted ones
+(CLAUDE.md §15) — while GitHub Actions stays the orchestrator: every workflow YAML is unchanged
+except `runs-on:`.
+
+**Since 2026-08-31 that hardware is four Linux CONTAINERS on the Unraid Docker host, not the
+developer's MacBook.** "The live runners" below is the section to read first. The bare-metal Linux
+and Windows boxes and their `setup-*` scripts are still documented here and neither is registered;
+the jobs that genuinely need real hardware — the live Windows CfAPI smoke, the two-device
+real-mount e2e — moved to `chaim354/tinkerex-client` on 2026-08-25 and are not this repo's CI any
+more.
 
 ## Labels
 
-Each runner self-applies `self-hosted` + its OS + arch, and these scripts add a stable
-custom label so workflows can target a specific box:
-
 | Box | Labels |
 |---|---|
-| Linux | `self-hosted, linux, maker-linux` |
-| macOS | `self-hosted, macos, maker-mac` |
-| Windows | `self-hosted, windows, maker-windows` |
+| **Unraid containers ×4 (live)** | `self-hosted, linux, X64, maker-unraid` |
+| Linux (bare metal, unregistered) | `self-hosted, linux, maker-linux` |
+| macOS (still registered; deregistered as the fleet narrows to `linux`) | `self-hosted, macos, maker-mac` |
+| Windows (unregistered) | `self-hosted, windows, maker-windows` |
 
-Workflows then use e.g. `runs-on: [self-hosted, linux]`.
+Workflows target the **family** label — `runs-on: [self-hosted, linux]` — never the box label.
+`maker-unraid` routes to the same containers, but `test/ci_hygiene_test.rb` treats a job that names
+only a box label as an offender: nothing static can then tell which preflight output gates it, so it
+ships ungated and queues for 24 h with nothing red anywhere.
 
-## Two repos now share these boxes (since the client/ extraction, 2026-08-20)
+The four containers take their labels from `LABELS:` in `ops/ci-runner-stack.yml`, not from a
+`setup-*` script. GitHub echoes the family back capitalised (`Linux`) in the API listing; the value
+the stack sets is lowercase.
+
+## The live runners: four containers on Unraid (since 2026-08-31)
+
+CI runs on **four container runners on the Unraid Docker host, `192.168.1.146`** ("Tower", the
+Unraid box itself). **Three addresses are in play and confusing them costs an afternoon:**
+`192.168.1.7` is Nginx Proxy Manager, where the `*.home` wildcard resolves — including
+`portainer.home`; `192.168.1.95` is the Kamal VM the app deploys to. **This README named .95 as the
+intended runner home until 2026-08-31; that was wrong.**
+
+- **Image:** `ci/runner/Dockerfile` — Ruby 3.4.7 via mise, Chrome + chromedriver, and all four
+  preview binaries (`vipsthumbnail`, `resvg`, `pdfium`, `stl-thumbnailer`). Built **natively on the
+  box**, never cross-built on the ARM64 Mac. The base is `myoung34/github-runner:2.336.0-ubuntu-noble`
+  and the suffix is load-bearing: the bare `2.336.0` tag is Ubuntu 20.04 Focal with glibc 2.31, on
+  which **two of the four binaries will not run**. Any replacement base needs **glibc >= 2.34**.
+- **Stack:** `ops/ci-runner-stack.yml`, deployed through Portainer as stack `ci-runners`. Portainer
+  holds the running copy; the file is the reviewable one, and the two change in the same breath.
+- **Credential:** a fine-grained PAT scoped to `chaim354/tinkerex` with **Administration: read &
+  write and nothing else**, supplied as the Portainer stack variable `RUNNER_ACCESS_TOKEN`. It lives
+  at `op://tinkerex/github runners/credential` (§14g); nothing is `export`ed and the value never
+  enters this repo.
+- **Work dirs:** bind-mounted to `/mnt/user/appdata/tinkerex-ci/runner-N/_work` on the array, never
+  Docker named volumes — those live in the same loop device the prune step below is about. They must
+  exist and be **`chown`ed to `1001:121`** before first boot. That uid:gid is measured, not the
+  1000:1000 the usual first-user convention suggests, and a work dir the non-root runner cannot write
+  is a first-boot failure that reads as a broken image.
+- **`RUN_AS_ROOT=false` is baked into the image and `USER runner` must NOT be added back.** The
+  entrypoint has to START as root so it can chown `/actions-runner`, the work dir and the toolcache
+  before it `gosu runner`s. With a `USER` line, all four containers registered and then immediately
+  deregistered in a restart loop — and the error names the user, so it reads as a credential problem
+  when it is not. `ci/runner/Dockerfile` carries the log.
+
+### Rebuilding the image
+
+```sh
+# 1. Ship HEAD to the box. There is no checkout there to drift, on purpose.
+git archive --format=tar HEAD | ssh root@192.168.1.146 \
+  'rm -rf /tmp/tinkerex-ci && mkdir -p /tmp/tinkerex-ci && tar -x -C /tmp/tinkerex-ci'
+
+# 2. Build natively, and propagate the REAL status — see the caveat below.
+ssh root@192.168.1.146 'cd /tmp/tinkerex-ci && \
+  docker build -t tinkerex-ci-runner:<new-tag> -f ci/runner/Dockerfile . > /tmp/build.log 2>&1; \
+  ec=$?; tail -30 /tmp/build.log; exit $ec'
+
+# 3. Reclaim the build cache. Not tidiness — see below.
+ssh root@192.168.1.146 'docker builder prune -af'
+```
+
+Then bump `image:` in `ops/ci-runner-stack.yml`, paste it into the Portainer stack editor, and
+redeploy.
+
+**Piping the build into `tail` over ssh reports `tail`'s exit status, not the build's.** The remote
+shell has no `pipefail`, so a pipeline's status is its LAST command's — probed on the box,
+2026-08-31: `(exit 7) | tail -1; echo $?` prints `0`. The first build of this image reported success
+over a hard failure exactly that way. Capture the status explicitly, as step 2 does. It is the same
+trap `config/ci.rb` records about `tee` and `${PIPESTATUS[0]}` in the `test-chunk-remote` gate.
+
+**Prune the build cache every time.** `/var/lib/docker` on that box is a **50 GB loop device**, and
+**on Unraid a full `docker.img` takes down every container on the box, not just CI** — and it would
+be CI that caused it. Measured 2026-08-31: five builds took the loop from 20 GB free to 9.0 GB
+(82% used), of which **3.765 GB was build cache alone**; `docker builder prune -af` returned it to
+12 GB free. The finished image is 4.39 GB and is the part you keep.
+
+### When every job suddenly queues
+
+Two causes look identical in the run list — every job sitting at 0 elapsed — and are fixed
+completely differently:
+
+1. **The PAT expired.** The containers are `running` and registered NOWHERE:
+   `gh api repos/chaim354/tinkerex/actions/runners` lists none of them. Fine-grained PATs cannot be
+   renewed in place, so mint a new one with the same scoping, update the Portainer stack variable
+   `RUNNER_ACCESS_TOKEN`, and redeploy the stack.
+2. **The box or the stack is down.** The containers are not running at all. Check Portainer, or
+   `ssh root@192.168.1.146 'docker ps'`.
+
+**`docker logs tinkerex-runner-1` distinguishes them in one command** — a rejected credential says so
+explicitly, and a healthy runner's last line is `Listening for Jobs` (observed on runner-1,
+2026-08-31).
+
+## The sibling repos need their own registrations (since the client/ extraction, 2026-08-20)
 
 `client/` — the Rust crates and the Tauri desktop app — moved to its own repo,
 **`chaim354/tinkerex-client`** (`docs/superpowers/plans/2026-08-20-stage-1-extract-client.md`).
@@ -26,8 +114,8 @@ Most of the CI that used to run here moved with it: `build-app.yml`, `install-ap
 `cross-os-e2e.yml`, and `rust-client.yml` now live in `tinkerex-client`'s own workflows. The
 handful that stayed behind went too on 2026-08-25, when `nightly.yml` and `client-contract.yml`
 were deleted (`docs/superpowers/specs/2026-08-25-cross-repo-ci-handoff.md`). **`ci.yml` is the
-only workflow left in this repo** — `preflight` plus one job per `bin/ci` gate — and every one
-of its jobs runs on `macos`.
+only workflow left in this repo** — `preflight` plus one job per `bin/ci` gate — and since
+2026-08-31 every one of its seven jobs runs on `linux`, i.e. on the containers above.
 
 **Self-hosted runners register PER REPOSITORY, not per org** — a runner registered against
 `chaim354/tinkerex` is invisible to `chaim354/tinkerex-client` and vice versa. So each physical box
@@ -47,11 +135,17 @@ second service a service/directory name that does not collide with the first (bo
 scripts default to a fixed install path per OS) and remember to `gh variable set CI_RUNNERS` in
 **both** repos — the declared fleet is also per-repository.
 
-**As of this writing, only the macOS box has EITHER registration** (see "Verify the runners are
-online" below) — the Linux and Windows physical boxes are not registered against `tinkerex` today,
-so the equivalent statement for `tinkerex-client` is stronger: it has **no runners registered on
-any OS**, including macOS, until this is done at least once. Every workflow that moved to
-`tinkerex-client` is *skipped, not passing* until then.
+**Measured 2026-08-31** (`gh api repos/chaim354/<repo>/actions/runners`): the Mac's second
+registration exists — `tinkerex-client` and `tinkerex-sync` each have **one online macOS runner**,
+`charless-MBP-maker-mac`. **Neither sibling has a Linux or Windows runner**, and the four Unraid
+containers are registered against `tinkerex` alone, so anything in `tinkerex-client` targeting those
+families still has no runner to land on. Until 2026-08-31 this paragraph said only the macOS box had
+either registration and that `tinkerex-client` had no runners on any OS; both were stale.
+
+> **`setup-*.sh` is not how this repo's CI runs any more.** The live runners are the Unraid
+> containers described above. These scripts remain for a bare-metal or VM runner — `setup-linux.sh`
+> is Debian/apt-shaped and will **not** run on Unraid itself, which is Slackware-based with a
+> non-persistent root filesystem.
 
 ## One-time setup (run ONCE per box, per repo — see above)
 
@@ -63,6 +157,10 @@ running the setup script on a given box:
 ```sh
 gh api -X POST repos/chaim354/tinkerex/actions/runners/registration-token --jq .token
 ```
+
+(The containers use a long-lived PAT instead, for exactly this reason: a single-use token is the
+wrong shape for four containers that must re-register themselves across a host reboot. The trade is
+the expiry failure mode documented above.)
 
 ### 2. Run the matching script on the box, passing the token
 
@@ -88,7 +186,12 @@ duplicating.
 gh api repos/chaim354/tinkerex/actions/runners --jq '.runners[] | "\(.name)\t\(.status)\t\(.labels | map(.name) | join(","))"'
 ```
 
-**As of 2026-07-29 only `charless-MacBook-Pro-maker-mac` is registered** — not all three.
+**As of 2026-08-31 five runners are registered and online:** the four containers
+`tinkerex-unraid-1` … `-4` (ids 68–71, `self-hosted,Linux,X64,maker-unraid`) and
+`charless-MacBook-Pro-maker-mac` (id 21, `self-hosted,macOS,ARM64,maker-mac`). **The Mac is still
+registered** — it is deregistered ("Removing a runner" below) as the fleet narrows to `linux`. The
+bare-metal Linux and Windows boxes are not registered at all: this repo's Linux coverage comes from
+the containers, not from `setup-linux.sh`.
 
 > ⚠️ **This command works ONLY from a developer shell, never from inside a workflow.** Listing
 > self-hosted runners requires the `administration` permission, which is **not among the permissions a
@@ -99,31 +202,34 @@ gh api repos/chaim354/tinkerex/actions/runners --jq '.runners[] | "\(.name)\t\(.
 
 ## Registering a runner is only HALF the job
 
-CI gates every linux/windows job on the declared fleet, so a newly registered runner does **nothing**
-until it is declared:
+`test/ci_hygiene_test.rb` requires every job on a family OTHER than preflight's own to be
+`needs: preflight` and `if:`-gated on the declared fleet, so a runner in a NEW family does
+**nothing** until it is declared:
 
 ```sh
-gh variable set CI_RUNNERS --body "macos,linux"     # comma-separated; families are macos|linux|windows
+gh variable set CI_RUNNERS --body "linux"     # comma-separated; families are macos|linux|windows
 ```
 
-Omit this and the jobs stay skipped with a green run — the step summary on every run says which
-families are absent, so check there first if a runner "isn't picking up work".
+**It reads `macos,linux` as of 2026-08-31** — both families while the Mac is still registered — and
+narrows to `linux` when the Mac goes. When the variable is unset or blank, `ci/preflight.sh` defaults
+to **`linux` alone**, never all three: a default of everything-available reproduces the exact bug the
+gate exists to prevent.
 
-## Adding a Linux runner on Unraid
+Nothing in `ci.yml` is gated today, because all seven jobs are on preflight's own family and gating a
+job on the family its own gate runs on is circular. So what the declaration buys this repo right now
+is the step summary, which states on the run's own page which families are absent — check there first
+if a runner "isn't picking up work". **The moment a macos or windows job returns here it must be
+gated**, and `ci_hygiene_test` fails the build if it is not: an ungated job against an absent family
+does not go red, it queues at 0 elapsed for 24 h and is auto-cancelled. Five weeks of dark CI came
+from that.
 
-`192.168.1.95` is the intended home: up, SSH open, already a Docker host, deploy user `kamal1`.
+## The bare-metal Linux and Windows boxes
 
-**`setup-linux.sh` will not run there as-is** — it is Debian/apt-shaped and Unraid is Slackware-based
-with a non-persistent root filesystem. Two workable paths:
-
-1. **A container** on the Unraid Docker host (`myoung34/github-runner` or a hand-rolled image),
-   with the runner's work dir on a persistent share. Needs `/dev/fuse` + `--cap-add SYS_ADMIN` if the
-   FUSE mount jobs are to work, since those are most of what a Linux runner buys.
-2. **An Unraid VM** running Debian, where `setup-linux.sh` applies unchanged.
-
-Either way, finish with the `gh variable set` above, then confirm a previously-skipped job actually
-runs — a registered-but-undeclared runner and a declared-but-offline runner look identical in the run
-list (everything skipped) and are fixed differently.
+Neither is registered. A bare-metal or VM **Linux** runner is still a supported shape —
+`setup-linux.sh` applies unchanged on a Debian VM — it is simply not what runs CI today. Whichever
+shape you use, finish with the `gh variable set` above, then confirm a previously-skipped job
+actually runs: a registered-but-undeclared runner and a declared-but-offline runner look identical in
+the run list (everything skipped) and are fixed differently.
 
 **CHAIMDESK (Windows) is reachable on the LAN but unregistered.** Same two steps: `setup-windows.ps1`
 with a fresh token, then add `windows` to `CI_RUNNERS`. Note the CfAPI jobs additionally need an
@@ -143,6 +249,12 @@ On the box, remove the service + deregister first:
   `./config.cmd remove --token <removal-token>`.
 
 Get a removal token with `gh api -X POST repos/chaim354/tinkerex/actions/runners/remove-token --jq .token`.
+
+A **container** runner mostly does this itself: the entrypoint deregisters when the container stops
+(`Caught EXIT - Deregistering runner`, the line `ci/runner/Dockerfile` quotes from the `USER runner`
+restart loop), so removing a service from `ops/ci-runner-stack.yml` and redeploying the stack is the
+procedure. A container that is *killed* rather than stopped never reaches that trap and leaves an
+offline registration behind — clear it with the `gh api -X DELETE` above.
 
 ## The live CfAPI smoke needs an INTERACTIVE Windows session
 
@@ -194,6 +306,10 @@ cd ~/actions-runner-tinkerex && sudo ./svc.sh stop && sudo ./svc.sh start
 
 If the runner runs inside a **container**, give the container the device + capability instead:
 `--device /dev/fuse --cap-add SYS_ADMIN` (and `--security-opt apparmor:unconfined` on some hosts).
+**The four live containers carry neither** — `ops/ci-runner-stack.yml` grants `SYS_PTRACE` only, for
+Chrome's crash handling — because these mount jobs run in `tinkerex-client`, not here. Adding
+`/dev/fuse` + `SYS_ADMIN` to that stack is a real decision about what branch code can do on the
+Unraid box, not a formality.
 
 Verify (from a `tinkerex-client` checkout): `gh workflow run rust-client.yml -f target=two-device`,
 then check the `two-device-fuse-linux` job logs say `mounted` + the A↔B checks, not `BLOCKED`.
@@ -226,4 +342,7 @@ real `mount_webdav` mounts and passes files A↔B; otherwise it reports `BLOCKED
 A self-hosted runner executes whatever a workflow tells it to. Because this repo is
 private and runners only run our own workflows, that's acceptable. **Do not** enable
 these runners for `pull_request` from forks — keep fork PRs on GitHub-hosted runners or
-require approval. (Our `rust-client.yml`/`ci.yml` are trusted-author only.)
+require approval. (`ci.yml`, the only workflow here, is trusted-author only.) That acceptance is
+what makes the PAT's scoping load-bearing: `RUNNER_ACCESS_TOKEN` sits in four container environments
+where any job can read it out of `env`, so it is a fine-grained token for this repo alone and
+deliberately **not** the classic ghcr.io token — `ops/ci-runner-stack.yml` records the argument.

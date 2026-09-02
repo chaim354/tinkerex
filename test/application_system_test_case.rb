@@ -20,13 +20,14 @@ class ApplicationSystemTestCase < ActionDispatch::SystemTestCase
   # time, ~3 seconds into the run, passing on re-run every time and never once reproducing in
   # isolation locally (6 consecutive clean runs). That profile is contention, not a broken selector.
   #
-  # THE CONTENTION IS THIS REPO'S ORDINARY CONFIGURATION, which is why raising the budget is the
-  # right response rather than a shrug: the CI runner IS a developer's own Mac (§15 — the mac
-  # runner is registered on this machine), so a local `bin/ci` and a CI job share one box. The
-  # worker budget beside this already exists for exactly that condition, and its own comment says
-  # memory pressure makes "every Capybara wait a coin flip". Reproduced deliberately here by
-  # running two browser suites at once: **152 and 166 errors** across the pair, against 0 when
-  # either runs alone.
+  # THE CONTENTION WAS THIS REPO'S ORDINARY CONFIGURATION WHEN THIS WAS WRITTEN, and the headroom is
+  # still right now that it is not. Until 2026-08-31 the CI runner WAS a developer's own Mac, so a
+  # local `bin/ci` and a CI job shared one box; reproduced deliberately by running two browser
+  # suites at once: **152 and 166 errors** across the pair, against 0 when either runs alone. CI now
+  # runs on dedicated Unraid containers (ops/ci-runner-stack.yml), which removes that particular
+  # collision — but four runners share one 36-core host, and the worker budget beside this is what
+  # keeps them from each planning for an empty box. The 2 s default still has no headroom for a
+  # five-step async chain, which is the reason that survives the move.
   #
   # RAISING THIS IS FREE ON A GREEN RUN. A Capybara wait returns the instant its element appears,
   # so a passing suite is not slowed by one millisecond — the only thing that grows is how long a

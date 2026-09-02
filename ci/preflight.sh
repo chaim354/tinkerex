@@ -12,10 +12,12 @@
 #   ci/preflight.sh              # `family=true|false` lines, one per family, for $GITHUB_OUTPUT
 #   ci/preflight.sh --summary    # a markdown report, for $GITHUB_STEP_SUMMARY
 #
-# THE DEFAULT IS DELIBERATELY CONSERVATIVE. An unset or blank CI_RUNNERS means "macos only", never
-# "everything". A default of everything-available reproduces the exact bug this script exists to
-# prevent: jobs scheduled against runners that do not exist, queueing for 24h before GitHub cancels
-# them, at 0 elapsed, with no red signal anywhere. Five weeks of dark CI came from that.
+# THE DEFAULT IS DELIBERATELY CONSERVATIVE: ONE FAMILY, NEVER ALL THREE. An unset or blank
+# CI_RUNNERS means "linux only" — linux because that is where this repo's runners live since CI
+# moved to the Unraid box (2026-08-31). A default of everything-available reproduces the exact bug
+# this script exists to prevent: jobs scheduled against runners that do not exist, queueing for 24h
+# before GitHub cancels them, at 0 elapsed, with no red signal anywhere. Five weeks of dark CI came
+# from that.
 #
 # The summary deliberately does NOT enumerate the skipped JOBS. GitHub already lists them by name in
 # the run, and a hand-maintained job list here would be a fourth thing to drift. What the summary
@@ -24,7 +26,7 @@
 set -euo pipefail
 
 FAMILIES="macos linux windows"
-DEFAULT="macos"
+DEFAULT="linux"
 
 declared="${CI_RUNNERS:-}"
 if [ -z "${declared//[[:space:]]/}" ]; then

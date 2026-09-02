@@ -47,9 +47,14 @@ class DocsHygieneTest < ActiveSupport::TestCase
   # landed is the ten-line pointer that makes them findable by the same mechanism every other area
   # file uses. The alternative — an invariants file with no §14 anchor — is one the two pointer tests
   # below would refuse outright, and it would leave `§14l` citations resolving to nothing, which this
-  # file's own header calls worse than a long CLAUDE.md. Raised by EXACTLY what the stub cost:
-  # CLAUDE.md is 1,355 lines today, so this banks no headroom for the next unrelated addition.
-  MAX_LINES = 1_355
+  # file's own header calls worse than a long CLAUDE.md. Raised by EXACTLY what the stub cost.
+  #
+  # LOWERED 1,355 -> 1,354 ON 2026-08-31, WHICH IS THE RATCHET WORKING RATHER THAN A NEW RULE. The
+  # CI-to-Unraid arc rewrote §15's four CI bullets and §12.6; the first draft came in FOUR LINES
+  # OVER and the answer was to tighten that prose, not to raise this number. It landed one line
+  # under, and banking that line for the next unrelated addition is exactly what a ratchet exists to
+  # prevent. CLAUDE.md is 1,354 lines today.
+  MAX_LINES = 1_354
 
   test "CLAUDE.md stays under its line ceiling" do
     lines = CLAUDE_MD.readlines.size

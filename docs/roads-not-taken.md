@@ -129,8 +129,11 @@ named below. Trimmed long-form notes used to live in `docs/plan-direct-client.md
 - **What was actually built, then abandoned:** `Tools::` namespacing of the three addon clients,
   `Maker::Addons::SDK_VERSION` + `require_sdk!` (a boot-time gem/host skew gate),
   `Registry.register` with per-addon `path:` procs, and the gallery rendering `addon.path_for`.
-  **PR #115** — green on all gates, deliberately left **open and unmerged** as reference. Its spec
-  and plan are on branch `claude/tools-addons-separate-repo-d44dc8`.
+  **PR #115** — green on all gates, kept as reference rather than merged. It is **CLOSED**, not
+  "left open" as this line claimed until 2026-09-01, and its branch
+  `claude/tools-addons-separate-repo-d44dc8` was DELETED that day. Its spec and plan were rescued
+  into this repo first and are now `docs/superpowers/specs/2026-08-02-tools-addons-separate-repo-design.md`
+  and `docs/superpowers/plans/2026-08-02-addon-sdk-host-prep.md`.
 - **What survived the pivot:** almost none of the above. The `path:` procs in particular solved
   per-addon route-helper variation, which the current approach removes entirely by collapsing to
   one generic route. Two *unrelated* findings from that work were worth keeping and are now §14e

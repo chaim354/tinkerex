@@ -176,7 +176,7 @@ class RepoEditFlowTest < ActionDispatch::IntegrationTest
     patch file_path(a.node_id), params: { content: "one changed\n", base_token: token_for(a) }
     # the maker commits it themselves, at the terminal
     File.write(File.join(library_root, "demo", "a.txt"), "one changed\n")
-    system("git -C #{File.join(library_root, 'demo')} commit -am theirs", out: File::NULL, err: File::NULL)
+    commit_at_the_terminal!(File.join(library_root, "demo"), "theirs")
 
     get repo_commit_path(root.node_id)
 
@@ -388,6 +388,40 @@ class RepoEditFlowTest < ActionDispatch::IntegrationTest
     get repo_head_blob_path(root.node_id, path: "never-existed.txt")
     assert_equal "", response.body
   end
+
+  private
+    # A COMMIT MADE THE WAY A MAKER WOULD MAKE ONE — at the terminal, outside the app. Two things
+    # here are deliberate, both learned on 2026-08-31 when CI moved to Linux containers and this was
+    # the only test in the whole suite that failed.
+    #
+    # THE IDENTITY IS PASSED EXPLICITLY, because git REFUSES to commit without one:
+    #
+    #     Author identity unknown
+    #     *** Please tell me who you are.
+    #
+    # This used to rely on whatever `user.name`/`user.email` the machine happened to carry. It
+    # passed for months on a developer's Mac, which has a global identity set for unrelated reasons,
+    # and failed the moment it ran anywhere that does not. `test/support/git_repo_fixture.rb` had
+    # this right all along — its `Rugged::Commit.create` takes explicit author and committer
+    # signatures — so this was the one call in the suite leaning on ambient config.
+    #
+    # AND THE EXIT STATUS IS ASSERTED, which matters more than the identity does. `err: File::NULL`
+    # swallowed git's perfectly clear complaint, the commit silently did not happen, and the failure
+    # surfaced one assertion later as `Expected exactly 0 elements matching "[data-path='a.txt']",
+    # found 1` — which reads as a bug in the diff logic rather than as missing configuration.
+    # Keeping the output quiet on a PASSING run is right; letting a FAILING one be silent was not.
+    #
+    # The ARRAY form of `system`, never the string form: it does not reach a shell, so a library
+    # path containing a space cannot re-split into two arguments.
+    def commit_at_the_terminal!(dir, message)
+      ok = system("git", "-C", dir,
+                  "-c", "user.name=Terminal", "-c", "user.email=terminal@example.com",
+                  "commit", "-am", message,
+                  out: File::NULL, err: File::NULL)
+      assert ok, "the terminal-side `git commit` did not happen, so this test would be asserting " \
+                 "about a working tree that was never committed. Drop `err: File::NULL` to see " \
+                 "git's own reason."
+    end
 end
 
 # SAVE ON WHATEVER BACKEND IS LIVE. The cases above pin a share library so they run identically on
