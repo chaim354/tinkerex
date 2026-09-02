@@ -24,6 +24,32 @@ module Maker
       dir("d-parts", "parts", "d-enc")
       file("f-clip", "clip.stl", "d-parts")
 
+      #     Plans/                   -> one model, the shape that shipped the bug
+      #       part-a.obj, part-b.obj -> the model files
+      #       part-a.mtl             -> the .obj's material sidecar
+      #       part-a_tex.jpeg        -> its texture map
+      #       drawing.dxf            -> a 2D drawing that has nothing to do with the mesh
+      #       docs/readme.pdf        -> supporting, but nothing model-role sits beside it
+      dir("d-plans", "Plans", "d-shelf")
+      file("f-obj-a", "part-a.obj", "d-plans")
+      file("f-obj-b", "part-b.obj", "d-plans")
+      file("f-mtl", "part-a.mtl", "d-plans")
+      file("f-tex", "part-a_tex.jpeg", "d-plans")
+      file("f-dxf", "drawing.dxf", "d-plans")
+      dir("d-plandocs", "docs", "d-plans")
+      file("f-plandoc", "readme.pdf", "d-plandocs")
+
+      #     Kit/                     -> a model whose OWN folder holds no model file
+      #       notes.pdf              -> joins anyway: it is the model's own folder
+      #       stl/part.stl           -> the model file, one level down
+      #       photos/shot.jpg        -> does NOT join: no model file sits beside it
+      dir("d-kit", "Kit", "d-shelf")
+      file("f-kitnotes", "notes.pdf", "d-kit")
+      dir("d-kitstl", "stl", "d-kit")
+      file("f-kitpart", "part.stl", "d-kitstl")
+      dir("d-kitphotos", "photos", "d-kit")
+      file("f-kitshot", "shot.jpg", "d-kitphotos")
+
       @user.maker_shelves.create!(path: "3D Models")
     end
 
@@ -95,6 +121,48 @@ module Maker
       plan = classify
       assert_not_includes plan.model_keys, "f-orphan"
       assert_includes plan.skips.map(&:last), :no_shelf
+    end
+
+    # THE REPORTED BUG (tinkerex, `warso main/plans 1`): a folder holding three .obj files became
+    # one model that also swallowed the .dxf drawings sitting beside them. A model claims the
+    # meshes and what SUPPORTS them, not every file that shares their folder.
+    test "a 2D drawing beside the model files does not join the model" do
+      assert_not_includes classify.files_for("d-plans"), "f-dxf"
+    end
+
+    # THE OTHER HALF, AND THE ONE A ROLE FILTER IS MOST LIKELY TO BREAK. An .obj is not one file:
+    # it loads its material from the .mtl and its texture from the image beside it, so filtering
+    # to role "model" alone ships a mesh that renders untextured. `other` and `image` stay.
+    test "an obj's material and texture sidecars join it" do
+      files = classify.files_for("d-plans")
+      assert_includes files, "f-mtl"
+      assert_includes files, "f-tex"
+      assert_equal %w[f-mtl f-obj-a f-obj-b f-tex], files.sort
+    end
+
+    # A SUBFOLDER WITH NO MODEL FILE IS NOT PART OF THE MODEL. This is what stops a firmware tree
+    # or a build-artifact directory joining a model because one .stl sits somewhere in the repo:
+    # measured on a real share library, `Projects/TheFlightWall_OSS` attached 2305 files, of which
+    # 2 were meshes.
+    test "a supporting file in a folder with no model file does not join" do
+      assert_not_includes classify.files_for("d-plans"), "f-plandoc"
+      assert_not_includes classify.files_for("d-kit"), "f-kitshot"
+    end
+
+    # THE MODEL'S OWN FOLDER IS ALWAYS PART OF IT, EVEN WITH NO MESH DIRECTLY IN IT -- the clause
+    # the rule above would otherwise eat. `Kit/notes.pdf` beside `Kit/stl/part.stl` is an ordinary
+    # download layout, and dropping the PDF there is the over-filter this pins against.
+    test "a supporting file in the model's own folder joins even when the meshes are one level down" do
+      assert_equal %w[f-kitnotes f-kitpart], classify.files_for("d-kit").sort
+    end
+
+    # THE DENYLIST NAMES REAL ROLES. A typo -- "vectors", "documents" -- excludes nothing and every
+    # test above still passes for the wrong reason, since each asserts about a role spelled
+    # correctly elsewhere. Maker::FileAttachment owns the vocabulary (§14d); this only pins that
+    # ModelIntake's policy is stated in it.
+    test "every excluded role is a real role" do
+      assert_empty Maker::ModelIntake::EXCLUDED_ROLES - Maker::FileAttachment::ROLES
+      assert_not_includes Maker::ModelIntake::EXCLUDED_ROLES, Maker::ModelIntake::MODEL_ROLE
     end
 
     test "a tombstoned file is invisible" do

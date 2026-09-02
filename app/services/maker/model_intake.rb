@@ -16,15 +16,32 @@ module Maker
     # The classification, before anything is written. `owners` maps a file node_id to the KEY of
     # the model that claims it; a key is either a DIR node_id (a folder model) or a FILE node_id (a
     # loose one-file model). `model_keys` is the subset of keys that at least one MODEL-ROLE file
-    # maps to -- which is what stops a stray PDF loose on a shelf from becoming a model while still
-    # letting the PDF inside a model folder attach to it. `dir_keys` remembers which keys are
-    # folders, so the sweep can set folder_node_id without asking the database again per model.
+    # maps to -- which is what stops a stray PDF loose on a shelf from becoming a model, while a PDF
+    # sitting IN a model folder still attaches to it. (`owners` is NOT the whole subtree: the three
+    # filters in .classify decide which of a model folder's files actually join it.) `dir_keys`
+    # remembers which keys are folders, so the sweep can set folder_node_id without asking the
+    # database again per model.
     # `names` carries every file's name so the sweep derives roles without a second query.
     Plan = Data.define(:owners, :model_keys, :dir_keys, :titles, :names, :skips) do
       def files_for(key) = owners.select { |_file, owner| owner == key }.keys
     end
 
     MODEL_ROLE = "model".freeze
+
+    # ROLES A MODEL DOES NOT CLAIM, even inside its own folder. A DENYLIST, NOT AN ALLOWLIST, and
+    # the direction is the safe one: a role added to Maker::FileAttachment::ROLE_LABELS later joins
+    # models by default, where an allowlist would drop it silently and nothing would go red.
+    # Membership is pinned against ROLES (model_intake_classify_test.rb) so a typo here cannot
+    # quietly filter nothing.
+    #
+    # THE LINE IS "IS THIS THE MODEL, OR ITS OWN ARTEFACT". `vector` (dxf/svg) and `laser` (lbrn2)
+    # are 2D cut jobs that merely share a folder -- the reported bug, where `warso main/plans 1`
+    # gave three .obj files a model that also held three .dxf drawings. `code` is a firmware or
+    # script tree, `gcode` is sliced OUTPUT, `document` is READMEs and name lists. What stays is
+    # everything a mesh needs or came from: `image` (renders AND texture maps), `instructions`,
+    # `cad_source`, `source_archive`, and `other` -- which is where an .obj's .mtl lands, so
+    # narrowing this to MODEL_ROLE alone ships a mesh that renders untextured.
+    EXCLUDED_ROLES = %w[code document gcode laser vector].freeze
 
     # What one run did. `status` is :ok or :capped -- a caller has to be able to tell "your library
     # is catalogued" from "there is more of it than one run will do".
@@ -62,15 +79,18 @@ module Maker
       cap ||= max_models
       plan = classify(user)
 
-      existing = user.maker_models.where(auto_node_id: plan.model_keys).index_by(&:auto_node_id)
-      # A folder an IMPORT-origin model already claims is that model's, not ours (§14f's "reads
-      # folder_node_id, never calls ensure_library_folder!" has the same shape: look, do not take).
-      claimed = user.maker_models.where(origin: "import")
-                    .where(folder_node_id: plan.model_keys).pluck(:folder_node_id).to_set
+      claimed = claimed_folders(user, plan.model_keys)
+      # DROPPED BEFORE `existing` IS EVEN LOOKED UP, so a claimed key has no model in the index and
+      # attach_all's `next unless model` leaves its files alone too -- both halves, which is the
+      # reading the imported-model rule has always had (§14k). It also means an auto model written
+      # by the OLD rule stops accreting the moment a project claims its folder; clearing that row
+      # out is Maker::ModelIntake::Prune's job, not a sweep that only ever inserts.
+      keys = plan.model_keys.reject { |k| claimed.include?(k) }
+      existing = user.maker_models.where(auto_node_id: keys).index_by(&:auto_node_id)
 
       # DETERMINISTIC ORDER so a capped run is reproducible and a second run continues where the
       # first stopped instead of re-rolling the dice.
-      todo = plan.model_keys.reject { |k| existing.key?(k) || claimed.include?(k) }.sort
+      todo = keys.reject { |k| existing.key?(k) }.sort
       capped = todo.size > cap
       todo = todo.first(cap)
 
@@ -96,6 +116,31 @@ module Maker
       attached = attach_all(user, plan, existing)
       RunResult.new(created:, attached:, skipped: plan.skips.size,
                     status: capped ? :capped : :ok, cap:)
+    end
+
+    # PUBLIC because Maker::ModelIntake::Prune is its second caller and must ask the same
+    # question this sweep asks, not a second spelling of it.
+    #
+    # FOLDERS THAT ARE SOMEONE ELSE'S ALREADY -- look, do not take (§14f's "reads folder_node_id,
+    # never calls ensure_library_folder!" has the same shape). TWO CLAIMANTS:
+    #
+    #   an IMPORT-origin model -- a folder the user imported into is that model's;
+    #   a PROJECT -- a folder under `Projects/` is a build, not a print. `*` makes `Projects` a
+    #     shelf, so without this a project folder became one model holding its whole tree: measured,
+    #     `Projects/TheFlightWall_OSS` had 2305 attachments of which 2 were meshes. Asking WHO
+    #     CLAIMS THE FOLDER rather than re-testing the path keeps ProjectDiscovery's policy in one
+    #     place, and Library::ScanJob already runs discovery before this sweep (§14k). A user who
+    #     deletes the project releases the folder, which is the same "the row is the memory" rule
+    #     dismissal runs on.
+    #
+    # BOTH QUERIES ARE UNSCOPED ON STATUS. An ARCHIVED project keeps folder_node_id and still claims
+    # its folder; filtering archived rows out here is exactly how a dismissed thing comes back, the
+    # mistake Maker::ProjectDiscovery#adoptable and the `catalogued` scope both record.
+    def self.claimed_folders(user, model_keys)
+      user.maker_models.where(origin: "import").where(folder_node_id: model_keys)
+          .pluck(:folder_node_id)
+          .concat(user.maker_projects.where(folder_node_id: model_keys).pluck(:folder_node_id))
+          .to_set
     end
 
     # ONE STATEMENT, NOT ONE QUERY PER FILE. `unique_by` names the existing uniqueness index, so a
@@ -127,15 +172,22 @@ module Maker
       patterns = user.maker_shelves.pluck(:path)
       shelves  = shelf_dir_ids(tree, patterns, user)
 
-      owners = {}
-      titles = {}
-      names  = {}
-      skips  = []
+      owners  = {}
+      titles  = {}
+      names   = {}
+      parents = {}
+      skips   = []
       model_keys = Set.new
       dir_keys   = Set.new
+      # DIRS THAT DIRECTLY HOLD A MODEL-ROLE FILE. Collected in this same pass rather than by a
+      # second query, so the sweep stays constant in query count (§14k).
+      model_dirs = Set.new
 
       user.nodes.present.where(kind: "file")
           .pluck(:node_id, :name, :parent_node_id).each do |node_id, name, parent_id|
+        model_role = Maker::FileAttachment.role_for(name) == MODEL_ROLE
+        model_dirs << parent_id if model_role
+
         key, title = owner_key(tree, shelves, node_id:, name:, parent_id:)
         if key.nil?
           skips << [ node_id, :no_shelf ]
@@ -145,13 +197,35 @@ module Maker
         owners[node_id] = key
         titles[key] = title
         names[node_id] = name
+        parents[node_id] = parent_id
         dir_keys << key if tree.dir?(key)
-        model_keys << key if Maker::FileAttachment.role_for(name) == MODEL_ROLE
+        model_keys << key if model_role
       end
 
-      # A key nothing model-role claims is not a model, so neither it nor the files under it are in
-      # the plan at all -- that is how `notes.pdf` loose on a shelf becomes nothing.
-      owners.select! { |_file, key| model_keys.include?(key) }
+      # THREE FILTERS, AND THE SECOND TWO ARE THE 2026-09-02 FIX. Until then a folder model claimed
+      # its ENTIRE subtree with every role, which on a real share library gave
+      # `Projects/TheFlightWall_OSS` 2305 attachments of which 2 were meshes, and gave
+      # `warso main/plans 1` three .obj files plus the three .dxf drawings beside them -- the
+      # reported bug. Measured across that library: 2441 attachments on 6 folder models, 32 of them
+      # model-role.
+      #
+      # 1. A key nothing model-role claims is not a model, so neither it nor the files under it are
+      #    in the plan at all -- that is how `notes.pdf` loose on a shelf becomes nothing.
+      # 2. A file joins only from a folder that is PART OF THE MODEL: the model's own folder, or one
+      #    that itself holds one of the model's meshes. `parent == key` IS LOAD-BEARING AND IS NOT
+      #    IMPLIED BY THE OTHER ARM -- an ordinary download is `Kit/notes.pdf` beside
+      #    `Kit/stl/part.stl`, whose root folder holds no mesh at all, and without it that PDF is
+      #    dropped. (A one-file model's key is the FILE, so `parent == key` is never true there and
+      #    the model_dirs arm is what covers it.)
+      # 3. EXCLUDED_ROLES -- see the constant.
+      owners.select! do |file_id, key|
+        next false unless model_keys.include?(key)
+
+        parent = parents[file_id]
+        next false unless parent == key || model_dirs.include?(parent)
+
+        !EXCLUDED_ROLES.include?(Maker::FileAttachment.role_for(names[file_id]))
+      end
       Plan.new(owners:, model_keys: model_keys.to_a, dir_keys:, titles:, names:, skips:)
     end
 

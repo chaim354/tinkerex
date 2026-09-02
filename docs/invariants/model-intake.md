@@ -2,7 +2,8 @@
 
 > CLAUDE.md §14k's area file. Read before touching `app/services/maker/model_intake.rb`,
 > `app/services/maker/library_tree.rb`, `app/models/maker/shelf.rb`,
-> `app/controllers/shelves_controller.rb`, `app/jobs/maker/model_intake_job.rb`, or the
+> `app/controllers/shelves_controller.rb`, `app/jobs/maker/model_intake_job.rb`,
+> `app/services/maker/model_intake/prune.rb`, `ModelsController`'s file-tree helpers, or the
 > `origin` / `auto_node_id` / `dismissed_at` columns on `maker_models`. The arc that produced it —
 > measurements, what each guard caught, what was deliberately left out — is in `docs/STATUS.md`.
 
@@ -48,6 +49,73 @@
   out through `Maker::AttachmentReaper` on the ordinary grace window. Do not add a second reaper,
   and do not reach for `where.missing` — it is a second query that can disagree with what the cards
   render.
+- **A MODEL CLAIMS ITS FOLDER, NOT EVERY FILE UNDER IT — THREE FILTERS, AND ALL THREE ARE
+  LOAD-BEARING (2026-09-02).** Until then a folder model attached its ENTIRE subtree with every
+  role, which is the rule this file used to state as a feature ("still letting the PDF inside a
+  model folder attach to it"). Measured on the real share library the day it changed: **6 folder
+  models held 2,441 attachments, 32 of them meshes** — `Projects/TheFlightWall_OSS`, a firmware
+  repo, was one "3D model" with 2,305 files including 1,273 sources under `.pio/build/**`, and
+  `warso main/plans 1` gave three `.obj` files a model that also held the three `.dxf` drawings
+  beside them, which is the report that opened it. The filters, in `classify`:
+  **(1)** a key nothing model-role claims is not a model — unchanged, and how `notes.pdf` loose on
+  a shelf becomes nothing; **(2)** a file joins only from a folder that is *part of the model* —
+  the model's own folder, **or** one that itself holds one of the model's meshes; **(3)**
+  `EXCLUDED_ROLES`.
+- **`parent == key` IS NOT IMPLIED BY THE `model_dirs` ARM AND DELETING IT SILENTLY EATS THE
+  ORDINARY DOWNLOAD LAYOUT.** `Kit/notes.pdf` beside `Kit/stl/part.stl` has no mesh in the model's
+  own folder at all, so without that clause the PDF is dropped. In the other direction a one-file
+  model's key is the FILE, so `parent == key` is never true there and the `model_dirs` arm is the
+  one that covers it. Both arms are mutation-checked; each alone goes red.
+- **`EXCLUDED_ROLES` IS A DENYLIST, AND THE DIRECTION IS THE SAFE ONE.** A role added to
+  `Maker::FileAttachment::ROLE_LABELS` later joins models by default; an allowlist would drop it
+  with nothing going red. The line it draws is *is this the model, or its own artefact* —
+  `vector` (dxf/svg) and `laser` (lbrn2) are 2D cut jobs that merely share a folder, `code` is a
+  firmware tree, `gcode` is sliced OUTPUT, `document` is READMEs and name lists. **`other` and
+  `image` STAY, and narrowing this to `model` alone is the tempting wrong fix**: an `.obj` loads
+  its material from the `.mtl` (role `other`) and its texture from the image beside it, so a
+  model-role-only filter ships a mesh that renders untextured. Membership is pinned against
+  `ROLES` — a typo excludes nothing and every other test still passes for the wrong reason.
+- **A FOLDER A PROJECT CLAIMS IS THE PROJECT'S, NOT THE CATALOG'S**, on exactly the terms an
+  IMPORT-origin model's folder already was — look, do not take. `*` makes `Projects` a shelf, so
+  without this a folder directly under it became one model holding its whole tree. It asks **who
+  claims the folder**, never "does this path start with `Projects/`": `Maker::ProjectDiscovery`
+  adopts every folder under `Projects/` and `Library::ScanJob` runs it BEFORE this sweep, so the
+  ordering invariant below is what lets the rule be stated once instead of copied. **Both queries
+  are unscoped on status** — an ARCHIVED project keeps `folder_node_id` and still claims its
+  folder, the same reading `adoptable`'s own `claimed` set and the `catalogued` scope run on. A
+  user who DELETES the project releases the folder, which is the row-is-the-memory rule again.
+  **The claim is applied BEFORE `existing` is looked up**, so a row the old rule already wrote
+  stops accreting too rather than only new folders being spared.
+- **`models/show`'S FILES PANEL SHOWS THE MODEL'S FILES WITH THE FOLDER'S SHAPE — IT IS NOT A
+  FOLDER BROWSER.** `build_file_tree` walks `folder_node_id`'s subtree for the NESTING an imported
+  zip had, then keeps only what `@attachments` claims. The two were the same set while a folder
+  model claimed everything under it, which is exactly why the panel was written unfiltered and why
+  tightening the attach rule left it listing the `.dxf` files the catalog had just let go, under a
+  heading counting them — the fix would have been invisible on the page that reports the bug.
+  Measured before changing it: on all three IMPORT models in the live library the two sets are
+  identical (68/68, 42/42, 1/1), so filtering only ever moves an auto model. **A directory with
+  nothing surviving beneath it is dropped with its files**, or a `docs/` holding one unclaimed
+  `names.txt` opens onto nothing; the recursion collapses an empty branch from the leaves up. It
+  reads `@attachments`, ALREADY partitioned against the live-node index, so it adds no query (the
+  page budget is asserted constant in N) and inherits `PageNodes`' tombstone rule instead of
+  re-deriving it. **The count in the heading is derived from the same tree** — a panel that
+  filtered while `@file_count` did not is the same contradiction one line higher up.
+- **`Maker::ModelIntake::Prune` IS THE REPAIR HALF, AND IT IS NOT IN THE SWEEP ON PURPOSE.**
+  `attach_all` is one `insert_all … unique_by`, so tightening the rule fixes what is written NEXT
+  and leaves every row the loose rule wrote in place — a rule change here is not self-applying.
+  A sweep that deleted what its plan no longer claims would also delete what a user attached BY
+  HAND through `Models::AttachmentsController#create`, unattended, every fifteen minutes:
+  `maker_file_attachments` has **no column saying which door wrote a row**. So the repair is
+  `rake models:prune`, **dry by default** (`APPLY=1` writes). Four guards, each mutation-checked
+  independently: it touches **folder models only** (a one-file model's key is its file, so the
+  sweep never gave it a second row — and `folder_node_id` nil would make `inside?` compare against
+  the library root, which every node's ancestry reaches, making every hand-attached row prunable at
+  once); it leaves **a tombstoned node** to `Maker::AttachmentReaper`'s grace window, since
+  `classify` reads `.present` and a tombstone otherwise looks exactly like a file the rule no
+  longer claims; it leaves **a node outside the model's own folder** alone, because the sweep could
+  not have written that row; and an **unresolvable ancestry answers "not inside"**, keeping the row.
+  Its liveness query is deliberately NOT `.present` — with `.present` a tombstone has no parent, so
+  `inside?` protects it by accident and the liveness clause can be deleted green.
 - **THE SWEEP NEVER CALLS THE PORT AND NEVER CALLS `ensure_library_folder!`.** It writes database
   rows only, which is what makes it identical on all three backends and testable without a library
   on disk. `folder_node_id` is set from the dir key the classifier already resolved; calling the
