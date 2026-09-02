@@ -107,21 +107,50 @@ production:
   # not — the same "two things that happen to share a value today" trap FileLayer::Capabilities'
   # scannable/port_writable commentary warns against, made here instead of merely described. On
   # share/s3, 15 minutes is a genuine FLOOR: Library::ScanJob cannot discover a change any faster
-  # than its own poll, so this job riding the same interval costs nothing extra. On chunk there is
-  # no floor behind it — Sync::Commit#finalize is synchronous — so 15 minutes here is an arbitrary
-  # choice, not an inherited limit.
+  # than its own poll, so this job riding the same interval costs nothing extra. On chunk_remote
+  # there is no such floor — the mirror's own freshness is remote_changelog_pull's 2 minutes, well
+  # inside this — so 15 minutes here is an arbitrary choice, not an inherited limit.
   #
-  # THE REAL CONSEQUENCE, worth stating rather than leaving to be discovered: the eager nudge
-  # (ProjectFolderIntake) covers only the three WEB upload doors — FilesController#create,
-  # FilesController#finalize_upload, and Projects::UploadsController#create. It is never
-  # wired into Sync::Commit#finalize, so a DEVICE PUSH THROUGH THE MOUNT — arguably chunk's defining
-  # path per this repo's architecture — has NO fast path at all. This job's interval is the ONLY
-  # latency bound it gets. That omission is deliberate, not an oversight: #finalize runs once PER
-  # FILE, so a device syncing 500 files would trigger 500 synchronous full-project sweeps — the same
-  # cost problem measured on .for_node (2,425 queries / ~390ms for a 200-file backlog), multiplied
-  # by every file in the batch. The periodic sweep is the right mechanism for that path, and 15
-  # minutes is the accepted latency for it — not a floor borrowed from a job that merely happens to
-  # share the number.
+  # WHAT THIS SCHEDULE IS: THE CORRECTNESS BACKSTOP, NOT THE ONLY LATENCY BOUND. Three fast paths
+  # now sit in front of it, and they are different mechanisms rather than one repeated:
+  #
+  #   - THE EAGER PER-UPLOAD NUDGE calls Maker::ProjectIntake.for_node INLINE, through
+  #     ProjectFolderIntake#intake_project_folder. Four call sites: the three web upload doors
+  #     (FilesController#create, FilesController#finalize_upload, Projects::UploadsController#
+  #     create) and the addon save (Tools::AddonsController, via Tools::BaseController's include),
+  #     which writes into the current project's folder and needed the same treatment.
+  #
+  #   - A DEVICE PUSH is covered by FileLayer::ChunkRemote::ChangelogSync#nudge_project_intake,
+  #     which runs after that pull's apply loop and hands the parents of the live files it just
+  #     applied to Maker::ProjectIntakeJob.nudge_parents. The bound is remote_changelog_pull's
+  #     2-minute interval plus ProjectIntakeJob::NUDGE_DELAY (30s) — about two and a half minutes,
+  #     not fifteen. THIS PARAGRAPH USED TO SAY A DEVICE PUSH HAD "NO FAST PATH AT ALL" and blamed
+  #     the absence on Sync::Commit#finalize. That engine left this repo in Arc D Part 2 (§12.12)
+  #     and `Sync::` has been undefined in this process since, so the text outlived both halves of
+  #     its own premise: the door it named no longer exists, and the gap it described is closed
+  #     (CLAUDE.md §12 item 10, CLOSED).
+  #
+  #   - THE INTERACTIVE SCAN DOORS, on a user's command. Projects::ScansController#create (the
+  #     per-project button) files SYNCHRONOUSLY via Maker::ProjectIntake.for_project on
+  #     chunk_remote and, on share/s3, enqueues Library::ScanJob and files nothing itself — the
+  #     asymmetry is a rule, not an inconsistency (docs/invariants/project-intake.md). The Files
+  #     page's FilesController#rescan is require_scannable!-gated, so it reaches only the second
+  #     half, where ScanJob#perform runs the intake inline after the reconcile.
+  #
+  # NONE OF THAT RETIRES THIS SWEEP, AND THE NUDGE'S OWN NARROWNESS IS WHY. It fires for LIVE FILE
+  # ARRIVALS ONLY, so a file already in the mirror but still unfiled — left by an earlier
+  # collision, or sitting in a folder discovery has just adopted — gets no nudge at all. That is
+  # the case the scan button's chunk_remote branch exists for, and the case this schedule catches
+  # unattended.
+  #
+  # THE NUDGE IS STILL NOT PER-COMMIT, AND THAT COST ARGUMENT IS WHY THE FAST PATH SITS WHERE IT
+  # DOES rather than at the write. A per-file trigger would turn a device syncing 500 files into
+  # 500 synchronous full-project sweeps — the cost measured on .for_node (2,425 queries / ~390ms
+  # for a 200-file backlog), multiplied by every file in the batch. ChangelogSync therefore asks
+  # ONCE for a whole catch-up, after the loop rather than inside it, and `full_resync` DELIBERATELY
+  # does not feed it at all: a resync re-applies the entire tree, so every file in the library
+  # would read as an arrival. What those exclusions leave behind — a resynced tree, a nudge that
+  # failed to enqueue (nudge_parents is best-effort and swallows) — is this sweep's job.
   project_folder_intake:
     command: "Maker::ProjectIntakeJob.sweep_all!"
     schedule: every 15 minutes
@@ -135,10 +164,27 @@ production:
   # `command:` rather than `class:`, matching every other gated entry here, because the backend gate
   # lives in a class method rather than in #perform.
   #
-  # EVERY 15 MINUTES, matching project_folder_intake -- and for the same reason it is arbitrary
-  # there: nothing in a web request sweeps, so this interval is the ONLY latency bound the catalog
-  # gets. An upload's model appears within a tick. That is the accepted trade; see
-  # docs/invariants/model-intake.md for why there is no eager nudge.
+  # EVERY 15 MINUTES, matching project_folder_intake -- and arbitrary for the same reason it is
+  # arbitrary there: no poll sits behind it on chunk_remote. THE TWO ENTRIES DIVERGE PAST THAT
+  # POINT, so this one states its own answer rather than inheriting the neighbour's. Here the
+  # interval really IS the only latency bound the catalog gets, and that survived a check: there is
+  # no eager model-intake nudge at any web door (Maker::ModelIntake::MAX_MODELS' "nothing in a web
+  # request sweeps" is exactly why it carries ONE cap where Maker::ProjectIntake carries two);
+  # ChangelogSync#nudge_project_intake nudges the PROJECT intake only; and
+  # Projects::ScansController's chunk_remote branch (#pull_and_file) calls
+  # Maker::ProjectIntake.for_project and stops there. A device push and a scan button both
+  # accelerate FILING on this backend, neither accelerates CATALOGUING. So an upload's model still
+  # appears within a tick -- the accepted trade; see docs/invariants/model-intake.md for why there
+  # is no eager nudge.
+  #
+  # ON SHARE/S3 -- WHERE THIS SCHEDULE DECLINES -- THE CATALOG HAS TWO ON-DEMAND TRIGGERS, named
+  # here so "nothing in a web request sweeps" is not read as a repo-wide claim it no longer
+  # supports. FilesController#rescan (require_scannable!-gated, so it refuses on chunk_remote) and
+  # Projects::ScansController#create both reach Library::ScanJob.enqueue_for, and #perform runs
+  # intake_models inline at the end of its sequence -- a user can catalogue on demand there instead
+  # of waiting out library_scan. Both ENQUEUE rather than sweeping in-request, so MAX_MODELS'
+  # one-cap argument is untouched; what changes is the LATENCY claim alone, and only on the
+  # backends this entry has already declined.
   model_catalog_intake:
     command: "Maker::ModelIntakeJob.sweep_all!"
     schedule: every 15 minutes
@@ -164,10 +210,18 @@ production:
   # argument for spacing it out further — 2 minutes gives a meaningfully fresher mirror than
   # share/s3 get from their own poll, at negligible cost.
   #
-  # THIS IS STILL A POLL, NOT THE LATENCY FIX. The real answer is a sync -> maker webhook, or an
-  # ActionCable subscription to the remote host's own broadcast (matching what LibraryChannel
-  # already gives the embedded `chunk` backend today) — out of scope for this arc. This job trades
-  # unbounded staleness for staleness bounded at ~2 minutes, the same kind of trade
+  # THIS IS STILL A POLL, NOT THE LATENCY FIX. The real answer is a sync -> maker webhook, or a
+  # subscription to the SYNC SERVER's own broadcast — out of scope for this arc.
+  #
+  # THAT SENTENCE USED TO NAME A PRECEDENT THAT NO LONGER EXISTS, and it is corrected rather than
+  # deleted because the dead half is the part a reader would act on: it said an ActionCable
+  # subscription would match "what LibraryChannel already gives the embedded `chunk` backend
+  # today". Embedded chunk was retired 2026-08-25 (§12.12) and THIS APP HAS NO CHANNEL AT ALL —
+  # no `app/channels/`, no `LibraryChannel` constant, §14e says it outright, and
+  # test/cable_absent_test.rb pins it. So there is no in-repo precedent to match; the broadcast a
+  # device already gets belongs to tinkerex-sync, which is where that work would land.
+  #
+  # This job trades unbounded staleness for staleness bounded at ~2 minutes, the same kind of trade
   # Library::ScanJob already makes for share/s3.
   remote_changelog_pull:
     command: "FileLayer::RemoteChangelogPullJob.pull_all!"

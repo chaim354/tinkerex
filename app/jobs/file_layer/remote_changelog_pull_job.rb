@@ -12,8 +12,10 @@ module FileLayer
   # cursor, whether or not this app was the one that changed it.
   #
   # THIS IS A POLL, NOT THE FIX FOR LATENCY. The honest longer-term answer is a sync -> maker
-  # webhook, or an ActionCable subscription to the remote host's own broadcast (matching what
-  # LibraryChannel already gives the embedded `chunk` backend today) -- out of scope here. What this
+  # webhook, or a subscription to the SYNC SERVER's own broadcast -- out of scope here. It used to
+  # say such a subscription would match "what LibraryChannel already gives the embedded `chunk`
+  # backend today"; that backend was retired 2026-08-25 and this app has NO channel of its own
+  # (§14e; test/cable_absent_test.rb pins it), so the broadcast is tinkerex-sync's. What this
   # buys is BOUNDED staleness instead of UNBOUNDED staleness, the same trade Library::ScanJob already
   # makes for share/s3 (§14b's own scanned-backend argument).
   #
