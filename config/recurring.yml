@@ -210,10 +210,18 @@ production:
   # argument for spacing it out further — 2 minutes gives a meaningfully fresher mirror than
   # share/s3 get from their own poll, at negligible cost.
   #
-  # THIS IS STILL A POLL, NOT THE LATENCY FIX. The real answer is a sync -> maker webhook, or an
-  # ActionCable subscription to the remote host's own broadcast (matching what LibraryChannel
-  # already gives the embedded `chunk` backend today) — out of scope for this arc. This job trades
-  # unbounded staleness for staleness bounded at ~2 minutes, the same kind of trade
+  # THIS IS STILL A POLL, NOT THE LATENCY FIX. The real answer is a sync -> maker webhook, or a
+  # subscription to the SYNC SERVER's own broadcast — out of scope for this arc.
+  #
+  # THAT SENTENCE USED TO NAME A PRECEDENT THAT NO LONGER EXISTS, and it is corrected rather than
+  # deleted because the dead half is the part a reader would act on: it said an ActionCable
+  # subscription would match "what LibraryChannel already gives the embedded `chunk` backend
+  # today". Embedded chunk was retired 2026-08-25 (§12.12) and THIS APP HAS NO CHANNEL AT ALL —
+  # no `app/channels/`, no `LibraryChannel` constant, §14e says it outright, and
+  # test/cable_absent_test.rb pins it. So there is no in-repo precedent to match; the broadcast a
+  # device already gets belongs to tinkerex-sync, which is where that work would land.
+  #
+  # This job trades unbounded staleness for staleness bounded at ~2 minutes, the same kind of trade
   # Library::ScanJob already makes for share/s3.
   remote_changelog_pull:
     command: "FileLayer::RemoteChangelogPullJob.pull_all!"
