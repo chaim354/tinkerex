@@ -187,7 +187,13 @@ class CiHygieneTest < ActiveSupport::TestCase
     ".kamal/secrets.share",                 # deploy_hygiene_test: per-destination secrets
     ".github/workflows/ci.yml",             # ci_hygiene_test parses this file; a PR editing it must run it
     "sidecar/openscad/catalog/catalog.json", # deploy_hygiene_test: the bundled-.scad licence sweep
-    "app/models/user.rb"                    # the ordinary case, and the old allowlist's first entry
+    "app/models/user.rb",                   # the ordinary case, and the old allowlist's first entry
+    # PROSE THAT A GATE READS, so it belongs here and not in the skip list — tinkerex#164.
+    # docs_hygiene_test opens CLAUDE.md for its line ceiling and globs docs/invariants for the
+    # stub<->file pairing. Until 2026-09-02 both sat in PATHS_THAT_MUST_SKIP_CI, so the one PR
+    # that gate could never run on was a PR changing only what it guards.
+    "CLAUDE.md",
+    "docs/invariants/addons.md"
   ].freeze
 
   # client/maker-app/package.json, client/maker-app/test/session.test.js (RUN), and
@@ -196,9 +202,13 @@ class CiHygieneTest < ActiveSupport::TestCase
   # exists in this repo at all, so none of the four can stand as an example either way. The
   # `!client/**` line in ci.yml's filter (kept deliberately — see that file) has no representative
   # path left to assert on.
+  #
+  # CLAUDE.md LEFT THIS LIST ON 2026-09-02 (tinkerex#164) and moved to the RUN list above. It was
+  # here to demonstrate that `**.md` catches root-level markdown, not just docs/ — true, and still
+  # demonstrated by docs/DEPLOY.md, which no gate reads. What made CLAUDE.md different is that a
+  # gate DOES read it, which is this list's own disqualifying criterion.
   PATHS_THAT_MUST_SKIP_CI = [
-    "docs/DEPLOY.md",
-    "CLAUDE.md"                    # root-level markdown: `**.md`, not `**/*.md`
+    "docs/DEPLOY.md"
   ].freeze
 
   test "ci.yml's paths filter runs CI for every file a bin/ci gate reads" do
