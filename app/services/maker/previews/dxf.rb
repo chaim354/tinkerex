@@ -351,11 +351,14 @@ module Maker
       # draws the descriptor INSTEAD of the points, so a stale one is a wrong picture rather than a
       # coarse one.
       #
-      # ONLY A SIMILARITY KEEPS A CIRCLE A CIRCLE. Under a non-uniform scale it is an ellipse whose
-      # axes are turned by the rotation, and the wire's `e` form carries rx and ry with NO rotation
-      # term — there is no honest descriptor to emit, so none is. Dropping is always safe: the
-      # flattened points still carry the true shape, `b`/`d`/the job box are computed from them,
-      # and the thumbnail falls back to a polyline.
+      # ONLY A SIMILARITY KEEPS A CIRCLE A CIRCLE — WHICH IS A RULE ABOUT THE `e` AND `a` FORMS AND
+      # NOT ABOUT THIS METHOD. Under a non-uniform scale a circle is an ellipse whose axes are
+      # turned by the rotation, and the wire's `e` form carries rx and ry with NO rotation term —
+      # there is no honest descriptor to emit, so none is. Dropping is always safe: the flattened
+      # points still carry the true shape, `b`/`d`/the job box are computed from them, and the
+      # thumbnail falls back to a polyline. **The `:path` arm below is the exception and answers
+      # first**, because a cubic survives ANY affine; read it before generalising this paragraph
+      # into "a descriptor is dropped under a non-similarity" (§14h).
       #
       # A MIRROR REVERSES AN ARC'S DIRECTION, WHICH IS WHY THE ENDPOINTS SWAP. DXF arcs always
       # sweep counter-clockwise from a0 to a1; a negative determinant flips that, so the placed
