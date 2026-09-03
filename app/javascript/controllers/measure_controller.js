@@ -1,5 +1,6 @@
 import { Controller } from "@hotwired/stimulus"
 import { PAPERS, printSheets } from "lib/print_sheet"
+import { exportSvg } from "lib/export_svg"
 import { SVG_NS, shapeElement, unionBox } from "lib/shape_svg"
 
 // Measure view: click a contour, read its size in mm.
@@ -58,7 +59,7 @@ export default class extends Controller {
   // controller does not declare, so `this.nameValue` is `undefined` until it appears here — no
   // error, no warning, just an empty filename on every printed sheet.
   static values = { url: String, name: String }
-  static targets = ["stage", "dims", "fallback", "selectToggle", "paper", "printButton"]
+  static targets = ["stage", "dims", "fallback", "selectToggle", "paper", "printButton", "svgButton"]
 
   connect() {
     this.aborted = false
@@ -277,6 +278,43 @@ export default class extends Controller {
       // twenty lines up warns for exactly this reason before setting its own status.
       console.warn("[measure] print refused:", e)
       this.setStatus(e.message)
+    }
+  }
+
+  // THE SAME TARGET SET print() USES, resolved by the same method — so the two buttons beside each
+  // other can never act on different shapes.
+  //
+  // THE BLOB IS BUILT AND RELEASED HERE; lib/export_svg builds the DOCUMENT and knows nothing about
+  // downloads. That is the split print_sheet.js draws between renderSheet and buildPrintFrame, and
+  // it is what lets the export be asserted as a string in a test rather than as a file on disk.
+  downloadSvg() {
+    const shapes = this.targetShapes()
+    // The same guard, and the same window, as print()'s: `allShapes` is undefined between
+    // connect() and the first successful draw(), and the button is display:none throughout it.
+    if (!shapes || !shapes.length) return
+
+    let url
+    try {
+      const blob = new Blob([ exportSvg(shapes, { colors: this.colors }) ], { type: "image/svg+xml" })
+      url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      // The SOURCE file's base name plus a suffix, never the source name itself: exporting a
+      // subset of `plate.svg` to a file also called `plate.svg` is a download that silently
+      // shadows the original in the browser's download folder.
+      a.download = `${this.nameValue.replace(/\.[^.]+$/, "")}-parts.svg`
+      a.click()
+    } catch (e) {
+      // REACHES THE READOUT, not just the console — exportSvg throws before any file exists, so a
+      // swallowed message is a button that does nothing whatsoever. AND IT LOGS, because this
+      // catch cannot tell a refusal from a bug: print()'s own catch carries the same pair for the
+      // same reason.
+      console.warn("[measure] export refused:", e)
+      this.setStatus(e.message)
+    } finally {
+      // RELEASED EVEN WHEN THE CLICK THREW. An object URL pins its Blob for the lifetime of the
+      // document, and this view is reachable repeatedly through the ✕ Image -> Measure round trip.
+      if (url) URL.revokeObjectURL(url)
     }
   }
 
@@ -525,7 +563,17 @@ export default class extends Controller {
   // of the claim are one definition rather than two spellings kept in step by a comment. The
   // wording is unchanged — "Print all", "Print selected", "Print 3 parts".
   refreshPrintBar() {
-    this.printButtonTarget.textContent = `Print ${this.targetNoun()}`
+    const noun = this.targetNoun()
+    this.printButtonTarget.textContent = `Print ${noun}`
+    // THE SVG BUTTON'S TEXT DOES NOT MOVE, SO ITS ACCESSIBLE NAME MUST. Both are written here,
+    // from one targetNoun(), so the two buttons cannot come to describe different sets. NO
+    // `hasSvgButtonTarget` GUARD, for the reason the comment above gives about the Print button:
+    // it is the sixth control in the same always-rendered span, so it exists whenever this
+    // controller is connected, and a guard that cannot fail asserts a condition that does not
+    // exist. The at-rest literals in _measure.html.erb are this same string with `noun` = "all".
+    const label = `Download ${noun} as SVG`
+    this.svgButtonTarget.setAttribute("aria-label", label)
+    this.svgButtonTarget.setAttribute("title", label)
   }
 
   contourLabel(shape, siblings) {

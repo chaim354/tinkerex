@@ -42,7 +42,15 @@ class MeasureExportTest < ApplicationSystemTestCase
     render_geometry!(@sample_id, SAMPLE)
   end
 
-  teardown { FileLayer.reset! }
+  # THE TMPDIR GOES WITH THE BACKEND. `FileLayer.reset!` alone leaks one `measure-export*`
+  # directory per test into the system temp dir on every run, and CLAUDE.md's CI section records
+  # exactly that cost accumulating on a persistent self-hosted runner (334 stray `tmp.*`
+  # directories on the mac runner). The guard is what makes this safe to run after a setup that
+  # raised before `@root` was assigned.
+  teardown do
+    FileLayer.reset!
+    FileUtils.remove_entry(@root) if @root&.exist?
+  end
 
   # ---- lib/export_svg.js: the document ---------------------------------------------------
 
@@ -163,6 +171,87 @@ class MeasureExportTest < ApplicationSystemTestCase
     assert_match(/nothing selected/i, err)
   end
 
+  # ---- the button ------------------------------------------------------------------------
+
+  # DRIVES THE REAL CLICK, because the builder being right about synthetic input proves nothing
+  # about whether the SELECTION ever reaches it. The anchor's click is stubbed rather than allowed
+  # to download: headless Chrome here has no configured download directory, and capturing the Blob
+  # is both hermetic and a stronger assertion than a file appearing somewhere on disk.
+  #
+  # THE NUMBERS COME FROM sample.lbrn2 AND ARE ALL LITERALS. Its Ellipse is Rx = Ry = 10 at
+  # XForm 1 0 0 1 50 30, so after the Y-flip it is a ⌀20 circle centred (50, -30) with a 20 x 20 mm
+  # bbox — and its 40 x 20 Rect (bbox 30..70, -40..-20) ENCLOSES that bbox, which is what makes the
+  # click a paint-order test: contours are appended in descending bbox area (Rect 800, circle 400),
+  # so the circle is on top and a click at its own centre selects it rather than the Rect.
+  test "the SVG button exports exactly the marked parts" do
+    visit file_path(@sample_id)
+    click_on "Measure"
+    assert_selector ".measure-view--ready", wait: 10
+
+    page.execute_script(<<~JS)
+      window.__blob = null
+      window.__downloads = []
+      const realCreate = URL.createObjectURL
+      URL.createObjectURL = (blob) => { window.__blob = blob; return realCreate.call(URL, blob) }
+      HTMLAnchorElement.prototype.click = function () { window.__downloads.push(this.download) }
+    JS
+
+    click_on "Select parts"
+    find(".measure-stage circle.measure-contour").click
+    assert_text "1 part"
+
+    find("[data-measure-target='svgButton']").click
+
+    svg = page.evaluate_async_script(<<~JS)
+      const done = arguments[arguments.length - 1];
+      window.__blob ? window.__blob.text().then(done) : done("NO BLOB");
+    JS
+
+    # THE CIRCLE ALONE — not the 40 x 20 Rect around it and not the 100 mm Line. A width of 100mm
+    # would mean the whole file was exported; 40mm would mean the Rect came too.
+    assert_includes svg, 'width="20mm"'
+    assert_includes svg, 'height="20mm"'
+    assert_includes svg, "<circle "
+    assert_includes svg, 'r="10"'
+    # Normalized to the origin: the circle's own bbox starts at (40, -40).
+    assert_includes svg, 'transform="translate(-40 40)"'
+    # The SOURCE base name plus a suffix, never the source name itself.
+    assert_equal [ "sample-parts.svg" ], page.evaluate_script("window.__downloads")
+  end
+
+  # THE BUTTON MUST NOT LIE ABOUT WHAT IT DOES. Its visible text is constant because the bar
+  # already carries five other controls, so the accessible name is what tracks the target — written
+  # by the same refreshPrintBar() that writes the Print label, from the same targetNoun(). The
+  # at-rest literal is also in the ERB, so this catches the two drifting apart.
+  test "the button's accessible name names the set it will export" do
+    visit file_path(@sample_id)
+    click_on "Measure"
+    assert_selector ".measure-view--ready", wait: 10
+
+    assert_selector "[data-measure-target='svgButton'][aria-label='Download all as SVG']"
+
+    click_on "Select parts"
+    find(".measure-stage circle.measure-contour").click
+    assert_selector "[data-measure-target='svgButton'][aria-label='Download 1 part as SVG']"
+  end
+
+  test "the exported blob is typed as an SVG image" do
+    visit file_path(@sample_id)
+    click_on "Measure"
+    assert_selector ".measure-view--ready", wait: 10
+
+    page.execute_script(<<~JS)
+      window.__blob = null
+      const realCreate = URL.createObjectURL
+      URL.createObjectURL = (blob) => { window.__blob = blob; return realCreate.call(URL, blob) }
+      HTMLAnchorElement.prototype.click = function () {}
+    JS
+
+    find("[data-measure-target='svgButton']").click
+
+    assert_equal "image/svg+xml", page.evaluate_script("window.__blob.type")
+  end
+
   private
 
     # Import the exporter and evaluate `body` against it (the module object is bound to `m`). The
@@ -193,5 +282,10 @@ class MeasureExportTest < ApplicationSystemTestCase
       preview = Maker::Previews::Enqueue.call(user: @user, node_id: node_id, name: filename,
                                               version_id: token, kind: "geometry")
       Maker::GeneratePreviewJob.perform_now(preview.id, filename: filename)
+      # THE READINESS ASSERTION IS THE POINT OF DOING THIS IN-PROCESS. Without it a render that
+      # failed surfaces later as "no circle on the page" — a browser-tier failure naming a symptom
+      # three layers from its cause. The tests below are the first here that read the RENDERED
+      # payload rather than synthetic shapes, so this is the line that tells them apart.
+      assert_equal "ready", preview.reload.status, "the geometry payload must be ready to measure"
     end
 end
