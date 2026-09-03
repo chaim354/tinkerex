@@ -89,6 +89,22 @@ module Maker
         end
       end
 
+      # AND THE TABLE ITSELF IS ENUMERATED, so a sixth measurable format cannot slip in unpinned.
+      # The relationship test above derives its subjects from `REVISIONED_BY` and the fixture test
+      # from the controller's own `MEASURABLE_EXTS`, but until 2026-09-03 nothing tied THIS table to
+      # either — a new format would be forced into both of those and could still reach Measure with
+      # its absolute revision unpinned, free to drift. That is precisely the hole tinkerex#220
+      # closed for the `thumbnail` kind (`thumbnail_revision_test.rb`), found there by mutation:
+      # a relationship pin is satisfied by any value, so only an enumerated absolute table notices.
+      test "every measurable extension is pinned in GEOMETRY_REVISIONS" do
+        pinned = GEOMETRY_REVISIONS.keys.map { |name| File.extname(name).delete(".") }.sort
+
+        assert_equal MEASURABLE_FIXTURES.keys.sort, pinned,
+                     "a format the UI offers Measure for has no row in GEOMETRY_REVISIONS (or vice " \
+                     "versa) — without one, forgetting to bump its payload revision is green, and " \
+                     "every stored payload of that format serves an older build's bytes forever"
+      end
+
       test "each measurable renderer versions its geometry independently of its thumbnail" do
         MEASURABLE_FIXTURES.each_key do |ext|
           renderer = Registry.for(ext)
