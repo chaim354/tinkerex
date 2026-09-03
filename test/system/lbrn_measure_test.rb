@@ -38,12 +38,18 @@ class LbrnMeasureTest < ApplicationSystemTestCase
   CIRCLE_READOUT = "⌀20 mm".freeze
   SQUARE_READOUT = "20 × 20 mm".freeze
 
+  # THE ONLY FIXTURE HERE WITH A <Shape Type="Ellipse">, which is the only shape kind that reaches
+  # the curve-descriptor path on this leg — bezier-circle's and nested-plate's circles are Paths of
+  # cubic segments and stay polygons by design. Rx = Ry = 10 at XForm 1 0 0 1 50 30, so it draws as
+  # <circle cx="50" cy="-30" r="10"> once the Y-flip is applied.
+  SAMPLE = "sample.lbrn2".freeze
+
   setup do
     @root = Pathname.new(Dir.mktmpdir("measure-view"))
     # The fixture lands BEFORE the first page render on purpose: FileLayer::Share reads an EMPTY
     # root as an unmounted mount point, and sign_in_as ends on /files, which renders through the
     # port. Indexing later is fine; an empty library at that moment is not.
-    [ FIXTURE, NESTED ].each do |f|
+    [ FIXTURE, NESTED, SAMPLE ].each do |f|
       File.binwrite(@root.join(f), File.binread(Rails.root.join("test/fixtures/files", f)))
     end
     FileLayer.current = FileLayer::Share.new(root: @root.to_s)
@@ -52,8 +58,10 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
     @node_id   = @user.nodes.find_by!(storage_path: FIXTURE).node_id
     @nested_id = @user.nodes.find_by!(storage_path: NESTED).node_id
+    @sample_id = @user.nodes.find_by!(storage_path: SAMPLE).node_id
     render_geometry!(@node_id, FIXTURE)
     render_geometry!(@nested_id, NESTED)
+    render_geometry!(@sample_id, SAMPLE)
   end
 
   teardown do
@@ -167,6 +175,36 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     assert_selector ".measure-dims", text: PLATE_READOUT
   end
 
+
+  # THE VIEW AND THE THUMBNAIL BESIDE IT NOW DRAW THE SAME PRIMITIVE. Until the payload carried
+  # `g`, this drew a 32-gon while Lbrn2.to_svg drew a real <ellipse> from the very same descriptor
+  # the traversal handed both of them.
+  test "an Ellipse draws as a real circle rather than a polygon" do
+    visit file_path(@sample_id)
+    click_on "Measure"
+    assert_selector ".measure-view--ready", wait: 10
+
+    assert_selector ".measure-stage circle.measure-contour"
+    assert_equal "10", find(".measure-stage circle.measure-contour")["r"]
+  end
+
+  # THE HIGHLIGHT MECHANISM MUST SURVIVE THE ELEMENT CHANGE. The layer colour is a PRESENTATION
+  # attribute so that .measure-contour--selected can outrank it, and `.measure-contour { fill:
+  # transparent }` is what makes a closed contour's interior clickable — a <circle> gets both from
+  # the same code path a <polygon> did, but only a driven click proves it. Reading the stroke
+  # ATTRIBUTE back would report what we wrote even when a rule outranks it, so assert the COMPUTED
+  # style (#d40 = rgb(221, 68, 0)).
+  test "a curve contour is clickable and still recolours on selection" do
+    visit file_path(@sample_id)
+    click_on "Measure"
+    assert_selector ".measure-view--ready", wait: 10
+
+    find(".measure-stage circle.measure-contour").click
+    assert_text "⌀20 mm"
+    assert_equal "rgb(221, 68, 0)", page.evaluate_script(<<~JS)
+      getComputedStyle(document.querySelector(".measure-contour--selected")).stroke
+    JS
+  end
 
   test "✕ Image dismisses the Measure view and returns to the poster" do
     open_measure_view

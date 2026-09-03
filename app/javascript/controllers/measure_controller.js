@@ -1,5 +1,6 @@
 import { Controller } from "@hotwired/stimulus"
 import { PAPERS, printSheets } from "lib/print_sheet"
+import { SVG_NS, shapeElement, unionBox } from "lib/shape_svg"
 
 // Measure view: click a contour, read its size in mm.
 //
@@ -20,10 +21,12 @@ import { PAPERS, printSheets } from "lib/print_sheet"
 // coordinates sidesteps that rule instead of carving an exception into it. That reasoning binds
 // hardest on the .svg leg, where the bytes we are measuring ARE an SVG the layer refuses to
 // inline — the payload is parsed coordinates, so nothing of the user's markup reaches the DOM.
+// The contour elements themselves come from lib/shape_svg, which builds them the same way and is
+// the ONE definition shared with the print sheet and the exporter; SVG_NS is imported from there
+// too, so the namespace string is not spelled twice.
 //
 // Lazy by design: nothing is fetched until Measure is clicked. The payload reaches 281 KB gzipped
 // on the densest real files, and most pages are never measured.
-const SVG_NS = "http://www.w3.org/2000/svg"
 
 // Must match Maker::Previews::Geometry::SCHEMA_VERSION — ONE number for all four formats, since
 // this parser is one parser.
@@ -289,10 +292,12 @@ export default class extends Controller {
   // A bitmap draws as a dashed placeholder: its base64 is excluded from the payload on purpose
   // (one real file is 1.45 MB as SVG and 0.1 KB as geometry), and a measuring view has no use
   // for the photo — only for the rectangle it occupies.
+  //
+  // THE ELEMENT COMES FROM lib/shape_svg, shared with the print sheet and the exporter — so a
+  // LightBurn <Ellipse>, a DXF CIRCLE/ARC and an SVG <circle> draw as the primitive the FILE
+  // described, the same one the thumbnail beside this view has always drawn.
   contourNode(shape) {
-    const node = document.createElementNS(SVG_NS, shape.k ? "polygon" : "polyline")
-    const points = shape.p.map(([x, y]) => `${x},${y}`).join(" ")
-    node.setAttribute("points", points)
+    const node = shapeElement(document, shape)
     node.setAttribute("class", shape.i ? "measure-bitmap" : (shape.k ? "measure-contour" : "measure-contour measure-contour--open"))
     // LightBurn's own layer colour, sent by the server so the palette has ONE definition (see
     // LbrnGeometry#layer_colors).
@@ -308,11 +313,16 @@ export default class extends Controller {
     node.__shape = shape
     if (shape.k || shape.i) return node
 
-    // An open polyline has no interior to click and a hairline stroke to aim at. Group it with a
+    // An open contour has no interior to click and a hairline stroke to aim at. Group it with a
     // transparent fat twin so the hit area is finger-sized while the drawn line stays 1px.
+    //
+    // THE TWIN IS ALWAYS A POLYLINE FROM shape.p, EVEN WHEN THE DRAWN NODE IS AN ARC. It is an
+    // invisible 8px target, so approximating the arc costs nothing visible and keeps the twin one
+    // element — and it must be built from the points here rather than reusing a `points` string,
+    // because the visible node no longer necessarily has one.
     const group = document.createElementNS(SVG_NS, "g")
     const hit = document.createElementNS(SVG_NS, "polyline")
-    hit.setAttribute("points", points)
+    hit.setAttribute("points", shape.p.map(([ x, y ]) => `${x},${y}`).join(" "))
     hit.setAttribute("class", "measure-contour--hit")
     hit.__shape = shape
     hit.__visible = node // so hover/selection colours the drawn line, not the invisible twin
@@ -403,7 +413,7 @@ export default class extends Controller {
       this.toggleMarks(useObject ? siblings : [shape])
       // BOTH HALVES, because picking parts and learning their sizes are one gesture: a mode that
       // silenced the measurement would make you leave it to check a size.
-      const size = useObject ? this.dims(this.unionOf(siblings)) : this.sizeLabel(shape)
+      const size = useObject ? this.dims(unionBox(siblings)) : this.sizeLabel(shape)
       this.setStatus(`${size} · ${this.selectionStatus()}`)
       return
     }
@@ -476,7 +486,7 @@ export default class extends Controller {
   selectionStatus() {
     const n = this.marked.size
     if (!n) return "nothing selected · Print all prints the whole file"
-    return `${n} part${n === 1 ? "" : "s"} · ${this.dims(this.unionOf([...this.marked]))}`
+    return `${n} part${n === 1 ? "" : "s"} · ${this.dims(unionBox([...this.marked]))}`
   }
 
   // NO `hasPrintButtonTarget` GUARD, DELIBERATELY, and the plan's draft had one. All six controls
@@ -510,13 +520,13 @@ export default class extends Controller {
   contourLabel(shape, siblings) {
     let label = this.sizeLabel(shape)
     if (siblings.length > 1) {
-      label += ` · part of a ${siblings.length}-contour object (⌥ for ${this.dims(this.unionOf(siblings))})`
+      label += ` · part of a ${siblings.length}-contour object (⌥ for ${this.dims(unionBox(siblings))})`
     }
     return label
   }
 
   objectLabel(siblings) {
-    return `${this.dims(this.unionOf(siblings))} · whole object, ${siblings.length} contours`
+    return `${this.dims(unionBox(siblings))} · whole object, ${siblings.length} contours`
   }
 
   // ⌀ only when the server said so. Circularity is decided server-side, from full-resolution
@@ -529,12 +539,8 @@ export default class extends Controller {
     return `${this.mm(box[2] - box[0])} × ${this.mm(box[3] - box[1])} mm`
   }
 
-  unionOf(shapes) {
-    return [
-      Math.min(...shapes.map((s) => s.b[0])), Math.min(...shapes.map((s) => s.b[1])),
-      Math.max(...shapes.map((s) => s.b[2])), Math.max(...shapes.map((s) => s.b[3]))
-    ]
-  }
+  // `unionOf` LIVED HERE AND WAS BYTE-IDENTICAL TO print_sheet's `unionBox`. The exporter would
+  // have been a third copy, so the one definition moved to lib/shape_svg and both import it.
 
   mm(n) {
     return (Math.round(n * 10) / 10).toLocaleString()
