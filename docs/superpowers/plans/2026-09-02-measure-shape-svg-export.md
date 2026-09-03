@@ -1613,7 +1613,39 @@ git commit -m "One definition of the Measure target set, for print and export al
 - Modify: `app/javascript/controllers/measure_controller.js`
 - Test: `test/system/measure_export_test.rb`
 
-- [ ] **Step 1: Write the failing end-to-end test**
+- [ ] **Step 1: First, fix two defects Task 9 shipped in this file's harness**
+
+Both were found and reported during Task 9 but left alone, because that task's instruction was to
+follow the plan's code exactly. They are this plan's bugs, not the implementer's, and Task 11 is the
+right place to fix them because it owns this file and is the first task whose tests actually depend
+on the second one.
+
+**a. The teardown leaks a tmpdir per test.** The plan's `teardown { FileLayer.reset! }` omits the
+cleanup that `measure_print_test.rb` — the file it claims to mirror — performs. Eight tests leave
+eight `measure-export*` directories in the system temp dir on every run, and CLAUDE.md's CI section
+records exactly this cost accumulating on a persistent self-hosted runner. Copy the print test's
+form, including its guard:
+
+```ruby
+  teardown do
+    FileLayer.reset!
+    FileUtils.remove_entry(@root) if @root&.exist?
+  end
+```
+
+**b. `render_geometry!` silently drops its readiness assertion.** The plan's copy omits
+`measure_print_test.rb`'s trailing line while its own comment claims to be a verbatim copy. Without
+it, a geometry render that fails surfaces later as a confusing browser-tier failure — "no circle on
+the page" — instead of naming its real cause. That matters from this task onward, because these are
+the first tests here that read the rendered payload. Restore the last line:
+
+```ruby
+      Maker::GeneratePreviewJob.perform_now(preview.id, filename: filename)
+      assert_equal "ready", preview.reload.status, "the geometry payload must be ready to measure"
+    end
+```
+
+- [ ] **Step 2: Write the failing end-to-end test**
 
 Add to `test/system/measure_export_test.rb`, before the `private` section:
 
