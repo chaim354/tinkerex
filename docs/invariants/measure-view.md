@@ -620,10 +620,12 @@
   Counting `B<a> <b>` ops missed that LightBurn shares geometry between instances by
   `VertID`/`PrimID`, so `bookmark.lbrn2`'s 2,169 text ops emit **14,825** cubics — **6.8×**, and the
   whole reason the payload estimate above was wrong. And grepping `d` attributes for curve command
-  letters gave 163,637 / 43,374 / 35,026 / 48,878 / 34,927 for `C`/`S`/`Q`/`A`/`T` where LEXING the
-  same corpus gives 116,244 / 8,011 / 1,459 / 2 / 859 — a letter in a `d` string is as often part
-  of an id, a class or a style as it is a command. **Count through the parser**, on the same
-  traversal the renderer uses; a text-level count is a different question wearing the same units.
+  letters gave **163,637 / 43,374 / 35,026 / 48,878 / 34,927** where LEXING the same corpus gives
+  **116,244 / 8,011 / 1,459 / 2 / 859** — `C`/`S`/`Q`/`T`/`A`, in that order in both rows, which is
+  the one thing to keep straight about them: the plan's own table reads `859 A, 2 T` and a reader
+  pairing the two sequences by eye will otherwise swap the last pair. **Count through the parser**,
+  on the same traversal the renderer uses; a text-level count is a different question wearing the
+  same units.
 - **DXF SPLINES ARE NEWLY ELIGIBLE FOR A `"p"` DESCRIPTOR AND ARE DELIBERATELY OUT OF SCOPE.** Since
   `tinkerex#216` they are parsed, they are degree 3 everywhere in the corpus, and a degree-3 NURBS
   decomposes into EXACT cubics by Böhm knot insertion — so this is a possibility rather than a
