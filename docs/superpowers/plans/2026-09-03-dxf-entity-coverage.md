@@ -195,9 +195,25 @@ end
   Assert the **bbox and a sampled point**, not the point count.
 
 - [ ] **Step 2: Parse.** `70` flags, `71` degree, `72`/`73`/`74` counts, `40` knots, `41` weights,
-  `10`/`20` control points. Refuse (return nil, and let Stage 1 report it) when degree < 1, control
-  points < degree+1, or the knot count ≠ control points + degree + 1 — a malformed spline must not
-  raise and must not draw a scribble.
+  `10`/`20` control points. Refuse when degree < 1, control points < degree+1, or the knot count
+  ≠ control points + degree + 1 — a malformed spline must not raise and must not draw a scribble.
+
+  > ### ⚠ A REFUSAL MUST BE TALLIED EXPLICITLY. Stage 1 will NOT catch it for you.
+  >
+  > This step originally read "return nil, and let Stage 1 report it". **That is false, and taking
+  > it literally re-opens the exact hole this whole plan exists to close.** Stage 1's tally is
+  > **type-based**: it is computed in `parse_entities` from the `0`-code name, for records whose type
+  > is *not* in `ENTITY_TYPES`. The moment `SPLINE` joins `ENTITY_TYPES`, a SPLINE that `flatten`
+  > refuses stops being tallied and vanishes silently again — with the status line now actively
+  > reassuring the user that nothing was skipped.
+  >
+  > The plumbing is already there (the tally hash reaches `each_geometry`), so this is one line at
+  > the `next if points.nil?` guard. **Tally a refusal under a DISTINCT name** — `SPLINE(malformed)`
+  > rather than `SPLINE` — so "we cannot read this type at all" and "we read this one and it was
+  > broken" do not collapse into the same number. Found by Stage 1's implementer, 2026-09-03.
+
+  **The same trap applies to any stage that promotes a type into `ENTITY_TYPES` and can then refuse
+  an instance of it** — Stage 4 Step 5 has it too, and it is called out there.
 
 - [ ] **Step 3: Evaluate with de Boor** over the valid domain `[U[p], U[n+1]]`:
 
@@ -273,8 +289,12 @@ end
   ghost at the origin still draws — which is why Step 1 asserts the **shape count**.
 
 - [ ] **Step 5: Nesting, with a cap.** Blocks may contain INSERTs. Recurse with a depth cap and a
-  visited set; a self-referencing block is malformed input and must not hang the renderer. Report a
-  refused nesting through Stage 1's mechanism rather than dropping it silently.
+  visited set; a self-referencing block is malformed input and must not hang the renderer.
+
+  **Tally a refused nesting EXPLICITLY, under a distinct name** (e.g. `INSERT(too-deep)` /
+  `INSERT(cyclic)` / `INSERT(unknown-block)`). Stage 1's tally is type-based and stops firing for
+  `INSERT` the moment you add it to `ENTITY_TYPES` — see the boxed warning in Stage 3 Step 2. An
+  INSERT naming a block that does not exist is the likely real case and must not be silent.
 
 - [ ] **Step 6: Verify on real files** — any of the 24 with INSERTs; report shape-count and job-box
   before/after.
