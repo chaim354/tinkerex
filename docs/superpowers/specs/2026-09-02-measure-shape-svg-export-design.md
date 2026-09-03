@@ -68,13 +68,26 @@ approximation of a freeform curve ever proves insufficient in practice.
 | primitive | payload value |
 |---|---|
 | ellipse / circle | `["e", cx, cy, rx, ry]` |
-| arc | `["a", x0, y0, x1, y1, r, largeArc, sweep]` |
+| arc | `["a", cx, cy, r, a0, delta]` |
 
-An arc is stored as **pre-resolved SVG `A`-command parameters** rather than centre-plus-angles.
-The Y-flip reverses arc orientation, and `Dxf.arc_svg` (`dxf.rb:354`) already performs that
-conversion — including flipping the sweep flag from CCW to CW. Doing it server-side keeps flip
-knowledge inside the module that owns the flip, for the same reason `to_client_space` lives in
-`DxfGeometry` rather than in the traversal.
+An arc is stored as **centre, radius, start angle and SIGNED sweep in degrees**, with the client
+resolving the endpoints itself. Millimetres round at `Geometry::PRECISION`; the two angles round at
+`Geometry::ANGLE_PRECISION` (6), because `PRECISION` is a LENGTH and an angle error ε displaces a
+point by `r·ε`. The Y-flip's orientation reversal is still resolved SERVER-side — it is the sign of
+`delta` — so `measure_controller.js` still learns nothing about file types and reads both SVG flags
+off `delta` alone (`large = |delta| > 180`, `sweep-flag = delta > 0`).
+
+> *(This table's arc row read `["a", x0, y0, x1, y1, r, largeArc, sweep]` — **pre-resolved SVG
+> `A`-command parameters** — until implementation on 2026-09-02, on the argument that resolving
+> them server-side keeps Y-flip knowledge in the module that owns the flip. That form was built,
+> reviewed and **found defective**: SVG's endpoint parameterisation puts the centre
+> `sqrt(r² − d²)` from the chord midpoint, so an endpoint rounded to `PRECISION` displaces the
+> whole arc by about `sqrt(2rδ)`. Measured: **1.37 mm of drawn error at r = 200** on a 180° slot
+> end cap, beside `p` points in the same payload good to 0.005 mm — the descriptor was ~240× less
+> faithful than the points it exists to improve on, and the error grew with the radius. The signed
+> form is 0.00836 mm worst case over all 3600 start angles and flat in radius. The original
+> argument was also wrong on its own terms: a signed delta resolved server-side carries no
+> file-type knowledge either.)*
 
 Three call sites stop discarding:
 
@@ -83,10 +96,13 @@ Three call sites stop discarding:
   descriptor from those same transformed points. `.mage` rides `LbrnGeometry` and gains it for free.
 - **`DxfGeometry.build`** — `_curve` → `curve`, through a new `curve_to_client_space(curve, scale)`
   beside the existing `to_client_space(points, scale)`.
-- **`SvgGeometry`** — the only genuinely new work. `ellipse_contours` returns a descriptor, `walk`
-  yields it, and `build` scales it by `sx`/`sy`. It must be **gated on the accumulated `world`
-  transform being axis-aligned**, mirroring `Lbrn2.axis_aligned?` — a rotated `<circle>` is not an
-  SVG ellipse and must stay a polygon.
+- **`SvgGeometry`** — the only genuinely new work. A new `ellipse_curve_for(node, world)` computes
+  the descriptor and `walk` yields it alongside the points; `build` scales both by `sx`/`sy`. It
+  must be **gated on the accumulated `world` transform being axis-aligned**, mirroring
+  `Lbrn2.axis_aligned?` — a rotated `<circle>` is not an SVG ellipse and must stay a polygon.
+  *(This read "`ellipse_contours` returns a descriptor" until implementation on 2026-09-02.
+  `contours_for` returns `[[points, closed], ...]` across seven branches and only two of them can
+  carry a descriptor, so it was left untouched rather than widened.)*
 
 ### What does not change, and why that is the whole safety argument
 
@@ -118,8 +134,13 @@ recorded failure shape: §14d's five `port_writable?` branches, §14b's four ski
 third extension→role table.
 
 **New module `app/javascript/lib/shape_svg.js`** exporting `shapeElement(doc, shape)`. It decides
-**element type and geometry attributes only** — `<ellipse>` / `<path A>` / `<polygon>` /
-`<polyline>` — and returns a bare node. Each caller applies its own presentation:
+**element type and geometry attributes only** — `<circle>` / `<ellipse>` / `<path A>` /
+`<polygon>` / `<polyline>` — and returns a bare node. Each caller applies its own presentation:
+
+*(`<circle>` was not in this list until implementation on 2026-09-02. An `["e", …]` descriptor with
+`rx == ry` emits `<circle>` rather than an `<ellipse>` with equal radii: both draw the same picture,
+but the export's stated destinations are a vector editor and a CAD sketch import, where `<circle>`
+is the unambiguous primitive and an ellipse may arrive as a spline.)*
 
 | caller | presentation |
 |---|---|

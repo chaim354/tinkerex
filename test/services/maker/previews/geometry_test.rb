@@ -71,7 +71,7 @@ module Maker
       end
 
       # THE ABSOLUTE VALUES, AND THE RELATIONSHIP ABOVE IS NOT A SUBSTITUTE FOR THEM. A
-      # relationship-only pin is satisfied by seeding SHARED_REVISION at 1 and shifting all three
+      # relationship-only pin is satisfied by seeding SHARED_REVISION at ANY value and shifting all three
       # totals — arithmetic that stays internally consistent while silently re-measuring every
       # geometry payload in the library, on the one backend of three that holds real files. It also
       # catches the residual the arithmetic cannot close: a shared change bumped into a format's own

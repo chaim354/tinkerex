@@ -19,8 +19,11 @@ module Maker
     # contours into the collector, and gets the finished payload back:
     #
     #   Geometry.build(colors: ->(layers) { ... }) do |out|
-    #     out.add(layer:, points:, closed:, image:, object_id:)
+    #     out.add(layer:, points:, closed:, image:, object_id:, curve: nil)
     #   end
+    #
+    # `curve:` IS OPTIONAL AND DRAWING-ONLY — an exact primitive the FILE declared, built with
+    # `ellipse_curve`/`arc_curve`. A format supplying none is complete; see those two methods.
     #
     # `points` MUST ALREADY BE IN MILLIMETRES, in the client's own Y-down drawing space. Unit
     # resolution is the format's job because only the format knows where its units are recorded
