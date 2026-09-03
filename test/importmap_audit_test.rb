@@ -101,11 +101,17 @@ class ImportmapAuditTest < ActiveSupport::TestCase
 
   # AND THE GATE ACTUALLY POINTS AT IT. The two assertions above are worthless if `config/ci.rb`
   # still runs `bin/importmap audit` directly — the fix would be present, tested, and unreached.
+  # NARROWED TO THE ONE LINE, so a failure prints that line rather than the whole gate file.
+  # Asserting against `config/ci.rb` in full made the message a 200-line dump in which the actual
+  # difference was invisible — a failure nobody can read is most of the way to a failure nobody acts
+  # on, which is the same objection §14e makes to a gate that reports the wrong thing loudly.
   test "the scan gate runs the door, not the raw command" do
-    ci = Rails.root.join("config/ci.rb").read
+    steps = Rails.root.join("config/ci.rb").readlines.grep(/ci\.step .*Importmap/).map(&:strip)
 
-    assert_match(%r{"bin/importmap-audit"}, ci, "the scan gate must run the door")
-    assert_no_match(%r{"bin/importmap audit"}, ci,
-                    "the raw command bypasses the transport-error verdict entirely")
+    assert_equal 1, steps.length,
+                 "expected exactly one Importmap audit step in the scan gate, found: #{steps.inspect}"
+    assert_includes steps.first, '"bin/importmap-audit"',
+                    "the scan gate must run the door — the raw `bin/importmap audit` bypasses the " \
+                    "transport-error verdict entirely. Found: #{steps.first}"
   end
 end
