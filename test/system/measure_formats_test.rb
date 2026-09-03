@@ -33,17 +33,24 @@ class MeasureFormatsTest < ApplicationSystemTestCase
   # not handle, which is two lines of group codes — a fixture file would put that behind something
   # a reader has to open a DXF viewer to see.
   #
+  # THE TYPE IS `ELLIPSE` BECAUSE IT WAS `SPLINE` UNTIL SPLINE BECAME DRAWABLE (tinkerex#216), and
+  # a status-line test must not be pinned to a gap somebody is about to close — that is what made
+  # this file go red on the change that fixed it. ELLIPSE has zero occurrences in the 129-file
+  # corpus and is deliberately out of scope, which is exactly what makes it the stable choice; the
+  # SPLINE half of this claim moved to `dxf_geometry_test.rb`, where the malformed-spline tally is
+  # asserted on the payload directly.
+  #
   # DELIBERATELY NOT IN `FIXTURES`. That list drives the console-error sweep, which asserts at
-  # least one contour — `only-splines.dxf` draws none, and must not.
+  # least one contour — `only-ellipses.dxf` draws none, and must not.
   UNREADABLE_DXF = {
-    "some-splines.dxf" =>
+    "some-ellipses.dxf" =>
       "0\nSECTION\n2\nENTITIES\n" \
       "0\nLINE\n8\nCut\n10\n0\n20\n0\n11\n60\n21\n0\n" \
-      "0\nSPLINE\n8\nCut\n" \
+      "0\nELLIPSE\n8\nCut\n" \
       "0\nLINE\n8\nCut\n10\n0\n20\n0\n11\n0\n21\n30\n" \
-      "0\nSPLINE\n8\nCut\n0\nSPLINE\n8\nCut\n0\nENDSEC\n0\nEOF\n",
-    "only-splines.dxf" =>
-      "0\nSECTION\n2\nENTITIES\n0\nSPLINE\n8\nCut\n0\nSPLINE\n8\nCut\n0\nENDSEC\n0\nEOF\n"
+      "0\nELLIPSE\n8\nCut\n0\nELLIPSE\n8\nCut\n0\nENDSEC\n0\nEOF\n",
+    "only-ellipses.dxf" =>
+      "0\nSECTION\n2\nENTITIES\n0\nELLIPSE\n8\nCut\n0\nELLIPSE\n8\nCut\n0\nENDSEC\n0\nEOF\n"
   }.freeze
 
   setup do
@@ -131,10 +138,10 @@ class MeasureFormatsTest < ApplicationSystemTestCase
   # Stimulus neither throws nor warns, and two deleted controllers left a feature inert for nine
   # days behind a green request test).
   test "a dxf reports the entity types the parser could not draw" do
-    open_measure_view("some-splines.dxf")
+    open_measure_view("some-ellipses.dxf")
 
     assert_selector ".measure-dims",
-                    exact_text: "2 shapes · 3 SPLINE not readable · click one to measure"
+                    exact_text: "2 shapes · 3 ELLIPSE not readable · click one to measure"
   end
 
   # THE OTHER HALF, AND WITHOUT IT AN IMPLEMENTATION THAT ALWAYS APPENDS A CLAUSE PASSES. `exact_text`
@@ -147,15 +154,17 @@ class MeasureFormatsTest < ApplicationSystemTestCase
 
   # THE OBSERVED HARM, AS A TEST. A real .dxf of four SPLINEs and nothing else measured zero shapes
   # and read "No measurable geometry in this file" — a lie about a file that is entirely geometry
-  # (tinkerex#216). This branch never reaches `restingStatus()`, so it is the one case a test of
-  # that method alone would leave uncovered — and it is the case the mechanism was built for. The
-  # view stays on the poster here, which is why this does not wait for --ready.
+  # (tinkerex#216). Splines measure now; the branch does not go away with them, because any file
+  # whose every entity is a type this parser cannot draw lands here, and it never reaches
+  # `restingStatus()` — the one case a test of that method alone would leave uncovered, and the
+  # case the mechanism was built for. The view stays on the poster here, which is why this does
+  # not wait for --ready.
   test "a dxf of nothing but unreadable entities says so instead of blaming the file" do
-    visit file_path(@nodes.fetch("only-splines.dxf"))
+    visit file_path(@nodes.fetch("only-ellipses.dxf"))
     click_on "Measure"
 
     assert_selector ".measure-dims",
-                    exact_text: "No measurable geometry in this file · 2 SPLINE not readable"
+                    exact_text: "No measurable geometry in this file · 2 ELLIPSE not readable"
   end
 
   # THE BROWSER IS THE ONLY THING THAT KNOWS. A payload the client cannot read, a CSP that drops a

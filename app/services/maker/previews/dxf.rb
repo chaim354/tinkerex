@@ -6,8 +6,9 @@ module Maker
     # where an integer group code is followed by its value. DWG (the binary sibling) has no
     # permissive parser (LibreDWG is GPL) and is intentionally NOT handled here. We ship a
     # minimal, dependency-free in-Ruby parser for the common 2D entities a maker's laser/CNC
-    # source carries — LINE, LWPOLYLINE/POLYLINE, CIRCLE, ARC — and emit an SVG, then delegate
-    # to the existing `Svg` renderer (SVG is itself browser-renderable, no rasterizer needed).
+    # source carries — LINE, LWPOLYLINE/POLYLINE, CIRCLE, ARC, SPLINE — and emit an SVG, then
+    # delegate to the existing `Svg` renderer (SVG is itself browser-renderable, no rasterizer
+    # needed).
     #
     # No GPL/AGPL: pure stdlib Ruby (the ezdxf-via-Python path in the research doc is an
     # alternative; this minimal parser avoids the external Python runtime entirely while
@@ -91,9 +92,13 @@ module Maker
       # decision to draw. Callers may rely on equality only, never on any relationship to the
       # entity's position in the file.
       #
-      # `unreadable:` IS AN OPTIONAL TALLY THE CALLER OWNS — a `{ "SPLINE" => 2 }` hash this walk
-      # fills in with the entity types it met and cannot draw, so the payload can say so instead of
-      # dropping them without a word (see `Geometry.build`). Handed IN rather than returned because
+      # `unreadable:` IS AN OPTIONAL TALLY THE CALLER OWNS — a `{ "ELLIPSE" => 2 }` hash this walk
+      # fills in with what it met and could not draw, so the payload can say so instead of dropping
+      # it without a word (see `Geometry.build`). IT HAS TWO FILLERS AND THEY ARE NOT
+      # INTERCHANGEABLE: `parse_entities` counts a type this parser does not handle AT ALL, and
+      # `tally_refusal` counts a type it DOES handle meeting an instance it cannot read — the second
+      # exists precisely because the first stops firing for a type the moment that type becomes
+      # drawable. Handed IN rather than returned because
       # `Geometry.build` binds its own `unreadable:` before the traversal block runs; the caller
       # gives both the same object. The THUMBNAIL leg passes none — a picture has nowhere to put a
       # tally — and that is not a second traversal: which entities DRAW is identical either way,
@@ -112,13 +117,49 @@ module Maker
           next if layer && off.include?(layer)
 
           points, closed, curve = flatten(entity)
-          next if points.nil? || points.length < 2
+          if points.nil? || points.length < 2
+            tally_refusal(entity, unreadable)
+            next
+          end
 
           tally_lwpolyline_bulge(entity, unreadable)
 
           counter += 1
           yield layer, points, closed, curve, counter
         end
+      end
+
+      # A DRAWABLE TYPE THIS PARSER MET AND REFUSED, COUNTED SEPARATELY FROM ONE IT CANNOT DRAW AT
+      # ALL — and that separation is the whole reason this method exists rather than reusing
+      # `parse_entities`' tally.
+      #
+      # THAT TALLY IS TYPE-BASED AND STOPS FIRING THE MOMENT A TYPE BECOMES DRAWABLE.
+      # `parse_entities` counts a `0`-code name that is NOT in `ENTITY_TYPES`, so while SPLINE sat
+      # outside that list every spline was reported. Adding SPLINE to it — which is what makes
+      # 18,906 of them draw — silences that path for splines completely, including the ones
+      # `flatten` refuses: they would vanish exactly as before, with the status line now stating
+      # that nothing was skipped, which is worse than the silence it replaced. The same trap waits
+      # for every future type promoted into `ENTITY_TYPES`.
+      #
+      # A DISTINCT NAME, NEVER THE BARE TYPE. "We cannot read this type at all" and "we read this
+      # one and it was broken" are different claims about a file and must not add up into one
+      # number — the same argument `LWPOLYLINE(bulge)` above makes from the other direction.
+      #
+      # ONLY THE TYPES LISTED, AND THE OMISSIONS ARE DELIBERATE. A LINE with one endpoint, a
+      # CIRCLE of radius 0, a POLYLINE with a single vertex: those refusals lose an entity with NO
+      # EXTENT, so the drawing and the bbox are complete without them and a report would be pure
+      # noise on files that render perfectly. A refused SPLINE loses a real curve out of both, which
+      # is the whole difference. Measured over the five real files kept for this work — 8.7 MB of
+      # `cards.dxf` included — the parser refuses ZERO non-spline entities, so listing them would
+      # add a name to the wire that no file has ever earned.
+      REFUSAL_TALLIED = %w[SPLINE].to_set.freeze
+      REFUSAL_SUFFIX = "(malformed)".freeze
+
+      def tally_refusal(entity, unreadable)
+        return unless unreadable && REFUSAL_TALLIED.include?(entity[:type])
+
+        key = entity[:type] + REFUSAL_SUFFIX
+        unreadable[key] = (unreadable[key] || 0) + 1
       end
 
       # AN LWPOLYLINE'S BULGES ARE COUNTED, NOT DRAWN — the honest half of a feature this parser
@@ -162,6 +203,7 @@ module Maker
         when "CIRCLE"                 then circle_points(entity)
         when "ARC"                    then arc_points(entity)
         when "LWPOLYLINE", "POLYLINE" then polyline_points(entity)
+        when "SPLINE"                 then spline_points(entity)
         end
       end
 
@@ -338,6 +380,222 @@ module Maker
           t = a0 + (i * theta / n)
           [ cx + (radius * Math.cos(t)), cy + (radius * Math.sin(t)) ]
         end
+      end
+
+      # ---- splines -----------------------------------------------------------------------
+
+      # A SPLINE -> its flattened contour, evaluated with de Boor over the file's own knot vector.
+      # nil when the record cannot be read as a curve, which `each_geometry` REPORTS through
+      # `tally_refusal` rather than dropping — see there for why that cannot be left to
+      # `parse_entities`' type-based tally.
+      #
+      # WHAT THE REAL CORPUS ACTUALLY CONTAINS, because this is built for it and not for the spec's
+      # full generality. Across the 29 of 129 files carrying splines (18,906 of them): degree (71)
+      # is 3 EVERYWHERE and the fit-point count (74) is 0 EVERYWHERE, so every one is
+      # control-point based and NO fit-point interpolation is needed — a SPLINE that gives fit
+      # points and no control points is refused here rather than guessed at. Flag 70 takes
+      # 0/8/11/24/27: bit 0 (closed) and bit 1 (periodic) are both present in quantity, 551 of
+      # `cards.dxf`'s 3,308, which is why the evaluation is general de Boor over the knots rather
+      # than the "interior multiplicity equals the degree, therefore a chain of Béziers" shortcut
+      # the knot vectors otherwise invite.
+      #
+      # NO CURVE DESCRIPTOR, FOR `polyline_points`' REASON. `g` is PER CONTOUR and a spline is one
+      # contour spanning many polynomial pieces, so there is no slot for it; and the wire has no
+      # spline form to put there anyway. A measuring client reads the flattened points and is
+      # correct.
+      def spline_points(entity)
+        c = entity[:codes]
+        degree = c[71].first.to_i
+        cps = c[10].zip(c[20]).map { |(x, y)| [ Float(x, exception: false), Float(y, exception: false) ] }
+        knots = c[40].map { |v| Float(v, exception: false) }
+        return nil if degree < 1 || cps.length < degree + 1
+        return nil if cps.any? { |(x, y)| x.nil? || y.nil? }
+        # n + p + 1 knots for n+1 control points of degree p — the format's own arithmetic, and
+        # the one check that catches a truncated or padded knot run before the span search reads
+        # off the end of it.
+        return nil if knots.length != cps.length + degree + 1 || knots.any?(&:nil?)
+        # THE SPAN SEARCH AND THE DOMAIN BOTH ASSUME A NON-DECREASING KNOT VECTOR. A file that
+        # breaks that is malformed, and evaluating it anyway yields a scribble whose bbox takes
+        # the whole file's job box with it.
+        return nil unless knots.each_cons(2).all? { |(a, b)| b >= a }
+        # The valid domain is [U[p], U[n+1]] — outside it the basis functions do not sum to 1 and
+        # the curve is an extrapolation, not the drawing.
+        return nil unless knots[cps.length] > knots[degree]
+
+        hcp = homogeneous(cps, c[41])
+        pts = flatten_spline(hcp, knots, degree)
+        return nil if pts.length < 2
+
+        # Flag bit 0 is CLOSED. Repeating the first point as the last is what `polyline_points`
+        # does and for the same reason: `Geometry.simplify` always keeps both ends, so a closed
+        # outline stays closed after thinning.
+        closed = (c[70].first.to_i & 1) == 1
+        pts << pts.first.dup if closed && pts.first != pts.last
+        [ pts, closed, nil ]
+      end
+
+      # CONTROL POINTS AS (w·x, w·y, w), AND THE EVALUATION IS HOMOGENEOUS WHETHER OR NOT THE FILE
+      # SAYS IT IS RATIONAL. Measured on the corpus: code 41 appears in two of the spline-carrying
+      # families and EVERY weight in all of them is exactly 1.0, while flag bit 2 (rational) is
+      # never set anywhere — which is the state the format's own convention describes. But the
+      # homogeneous path is correct for both cases and costs one lerp and one divide, so reading
+      # the FLAG to decide whether to read the WEIGHTS would be a branch that exists only to be
+      # wrong on the first file that disagrees with today's corpus.
+      #
+      # A WEIGHT RUN THAT DOES NOT MATCH THE CONTROL POINTS ONE FOR ONE IS IGNORED, NOT REFUSED.
+      # There is no correct reading of a half-length weight array, and the unweighted curve through
+      # the same control polygon is a real curve rather than a scribble — losing the contour
+      # entirely would be the larger error. Zero occurrences in the corpus. A non-positive weight
+      # goes the same way: it puts a pole on the curve, which is not a drawing.
+      def homogeneous(cps, raw_weights)
+        weights = raw_weights.map { |v| Float(v, exception: false) }
+        usable = weights.length == cps.length && weights.all? { |w| w && w.positive? }
+
+        cps.each_with_index.map do |(x, y), i|
+          w = usable ? weights[i] : 1.0
+          [ x * w, y * w, w ]
+        end
+      end
+
+      # THE WHOLE CURVE, SPAN BY SPAN. Only knot intervals of NON-ZERO width are curve; a repeated
+      # knot is a continuity statement, not a piece to sample, and dividing by its zero width is
+      # how a naive walk produces NaN coordinates that then poison the job box.
+      #
+      # THE SPAN INDEX COMES FROM THE ITERATION, WHICH IS THE SEARCH DONE ONCE INSTEAD OF PER
+      # SAMPLE — and it is load-bearing, not bookkeeping: de Boor at parameter u is only the curve
+      # when it is handed the span CONTAINING u. Given the wrong span it silently extrapolates that
+      # span's polynomial, which draws a plausible curve of entirely the wrong shape and an equally
+      # wrong bbox. `dxf_geometry_test.rb` pins it with a two-span fixture whose second half would
+      # extrapolate to x = −40.
+      #
+      # THE RIGHT-HAND ENDPOINT IS EVALUATED WITH THE SPAN THAT ENDS THERE, deliberately: u =
+      # U[k+1] is outside the half-open [U[k], U[k+1]) a search would return, but the piece is
+      # continuous up to it and the alternative — the NEXT span — is the domain's end, where there
+      # is no next.
+      def flatten_spline(hcp, knots, degree)
+        pts = []
+        degree.upto(hcp.length - 1) do |span|
+          lo = knots[span]
+          hi = knots[span + 1]
+          next if hi <= lo
+
+          pts << de_boor(lo, span, degree, hcp, knots) if pts.empty?
+          subdivide_span(pts, de_boor(hi, span, degree, hcp, knots), lo, hi, 0, span, degree, hcp, knots)
+        end
+        pts
+      end
+
+      # HOW FINELY A SPAN IS FLATTENED, AS A RELATIVE CRITERION — the midpoint's distance from the
+      # chord, over the path length through it. RELATIVE for `arc_samples`' own documented reason:
+      # this traversal deliberately does not know the file's scale, so an absolute millimetre
+      # tolerance cannot be expressed here at all.
+      #
+      # 0.01 IS THE SAME FLATNESS `arc_samples` ALREADY CHOOSES, arrived at from the other end. For
+      # a segment turning through θ the midpoint deviation over the chord is about θ/8, so a
+      # ratio of 0.01 emits segments turning ~4.6°, where `arc_samples`' SAGITTA_RATIO of 0.001
+      # against the RADIUS gives ~5.0°. A DXF is routinely both circles and splines; the two must
+      # not disagree about how round a curve is.
+      #
+      # AND IT IS THE KNOB THAT DECIDES THE PAYLOAD, WHICH ON THE WORST REAL FILE DOES NOT FIT.
+      # `cards.dxf` is 8.7 MB, 3,308 splines over 19,454 knot spans, and its measure payload goes
+      # 563 KB -> 3,366 KB (render 0.53 s -> 1.61 s). The design's budget was 1,536 KB, and the
+      # FLOOR — every span reduced to the straight chord between its own endpoints, which is not a
+      # curve at all — measures 1,497 KB, so the budget leaves room for 0.3 extra points per span
+      # and cannot be reached by thinning. Coarsening does not rescue it either: 0.02 gives
+      # 2,272 KB and 0.05 gives 1,620 KB, both still over, while the median deviation from the true
+      # curve goes 0.011 mm -> 0.042 mm -> 0.111 mm. 0.011 mm is `Geometry::SIMPLIFY_TOLERANCE`
+      # almost exactly — the accuracy the payload is thinned to anyway — so the ratio is set by
+      # what the rest of the pipeline already promises, and the overrun is REPORTED rather than
+      # paid for in accuracy nothing else in the file gives up.
+      #
+      # DEPTH IS BOUNDED, AND THE FLOOR MATTERS AS MUCH AS THE CEILING. The floor of one forces
+      # every span to be split at least once before the flatness test is trusted: a single cubic
+      # piece can be an S whose midpoint sits exactly on its own chord, which reads as perfectly
+      # flat and would collapse the curve to a straight line. The ceiling is the budget — 3,308
+      # splines in one real file, one family holding 514 spans in a SINGLE spline, so an
+      # unbounded or fixed-high sample count is what blows the payload. Hitting it is not a
+      # refusal and is not reported: the curve still draws, slightly coarser, exactly as
+      # MAX_ARC_SAMPLES clamps an arc.
+      SPLINE_FLATNESS_RATIO = 0.01
+      MIN_SPLINE_DEPTH = 1
+      MAX_SPLINE_DEPTH = 6
+
+      # Appends the points of [lo, hi] AFTER its start, which the caller already holds, and ending
+      # at `p_hi`. Recursive rather than an explicit stack — unlike `Geometry.simplify`, which
+      # recurses once per KEPT POINT and so runs to a contour's length; here the depth is
+      # MAX_SPLINE_DEPTH and nothing else.
+      def subdivide_span(pts, p_hi, lo, hi, depth, span, degree, hcp, knots)
+        p_lo = pts.last
+        mid = (lo + hi) / 2.0
+        p_mid = de_boor(mid, span, degree, hcp, knots)
+
+        if depth >= MAX_SPLINE_DEPTH || (depth >= MIN_SPLINE_DEPTH && flat_enough?(p_lo, p_mid, p_hi))
+          pts << p_hi
+        else
+          subdivide_span(pts, p_mid, lo, mid, depth + 1, span, degree, hcp, knots)
+          subdivide_span(pts, p_hi, mid, hi, depth + 1, span, degree, hcp, knots)
+        end
+      end
+
+      # Is the chord a·b a good enough stand-in for the curve through m?
+      #
+      # MEASURED AGAINST THE PATH LENGTH THROUGH m, NOT AGAINST THE CHORD, and that is the
+      # difference between a criterion and a trap. On a shallow arc the two are the same number.
+      # On a HAIRPIN — where the curve leaves and returns to nearly the same point — the chord is
+      # near zero, so a chord-relative test divides a real deviation by nothing and calls the loop
+      # flat; the path length is the loop's own size and correctly refuses.
+      def flat_enough?(a, m, b)
+        (ax, ay), (mx, my), (bx, by) = a, m, b
+        len = Math.hypot(mx - ax, my - ay) + Math.hypot(bx - mx, by - my)
+        return true if len.zero?
+
+        chord = Math.hypot(bx - ax, by - ay)
+        # Perpendicular distance from m to the chord, via the cross product — and when the chord
+        # is degenerate, m's own distance from the shared endpoint, which is the loop's height.
+        deviation = chord.zero? ? Math.hypot(mx - ax, my - ay)
+                                : (((mx - ax) * (by - ay)) - ((my - ay) * (bx - ax))).abs / chord
+        deviation <= SPLINE_FLATNESS_RATIO * len
+      end
+
+      # DE BOOR, ON THE SPAN THE CALLER SELECTED, in homogeneous coordinates.
+      #
+      #   d[j] = P[j + span - p]                                        for j = 0..p
+      #   for r in 1..p, for j in p.downto(r):
+      #     a = (u - U[j+span-p]) / (U[j+1+span-r] - U[j+span-p])
+      #     d[j] = (1-a)·d[j-1] + a·d[j]
+      #
+      # A ZERO DENOMINATOR IS A REPEATED KNOT, NOT AN ERROR — the corresponding d[j] carries no
+      # weight at this parameter, so `a = 0` selects d[j-1] and the recurrence is unaffected. It is
+      # reachable on any clamped vector, which every real spline here has.
+      #
+      # THE HOMOGENEOUS DIVIDE HAPPENS ONCE, AT THE END. Dividing per level would be both slower
+      # and wrong: the whole point of the (w·x, w·y, w) form is that the recurrence is LINEAR in
+      # it, which projected coordinates are not.
+      def de_boor(u, span, degree, hcp, knots)
+        dx = Array.new(degree + 1)
+        dy = Array.new(degree + 1)
+        dw = Array.new(degree + 1)
+        (0..degree).each do |j|
+          x, y, w = hcp[j + span - degree]
+          dx[j] = x
+          dy[j] = y
+          dw[j] = w
+        end
+
+        (1..degree).each do |r|
+          degree.downto(r) do |j|
+            lo = knots[j + span - degree]
+            den = knots[j + 1 + span - r] - lo
+            a = den.zero? ? 0.0 : (u - lo) / den
+            b = 1.0 - a
+            dx[j] = (b * dx[j - 1]) + (a * dx[j])
+            dy[j] = (b * dy[j - 1]) + (a * dy[j])
+            dw[j] = (b * dw[j - 1]) + (a * dw[j])
+          end
+        end
+
+        w = dw[degree]
+        w.zero? ? [ dx[degree], dy[degree] ] : [ dx[degree] / w, dy[degree] / w ]
       end
 
       # HOW MANY SEGMENTS TO FLATTEN AN ARC OF `radius` SPANNING `radians` INTO.
@@ -656,7 +914,7 @@ module Maker
         out
       end
 
-      ENTITY_TYPES = %w[LINE LWPOLYLINE POLYLINE CIRCLE ARC].freeze
+      ENTITY_TYPES = %w[LINE LWPOLYLINE POLYLINE CIRCLE ARC SPLINE].freeze
 
       # First value for a group code, as Float; nil when absent/unparseable.
       def f1(list)

@@ -457,26 +457,149 @@ module Maker
         assert_not payload.key?("u")
       end
 
+      # ---- splines ----------------------------------------------------------------------------
+
+      # A SPLINE WAS NOT IN `ENTITY_TYPES`, SO `flatten` RETURNED NIL AND EVERY ONE OF THEM WAS
+      # DROPPED — 18,906 across 29 of 129 real files, and a dropped entity is absent from the BBOX
+      # as well as the picture. `elianadxf.dxf` is four splines and nothing else and reported
+      # "No measurable geometry" about a file that is entirely geometry (tinkerex#216).
+      #
+      # THE BBOX AND A SAMPLED POINT, NEVER THE POINT COUNT. A count assertion is satisfied by a
+      # curve of the wrong shape, which is the failure mode that matters here: de Boor evaluated
+      # against the wrong knot span still emits exactly as many points.
+      #
+      # A CLAMPED CUBIC OVER FOUR CONTROL POINTS AND KNOTS [0,0,0,0,1,1,1,1] IS EXACTLY A CUBIC
+      # BEZIER, which is what makes this hand-computable rather than copied out of the code under
+      # test: the apex is at t = 0.5, (P0 + 3P1 + 3P2 + P3)/8 = (5, 7.5). Note 7.5 and not 10 — a
+      # B-spline INTERPOLATES neither of its interior control points, so an implementation that
+      # drew the control POLYGON would report a height of 10 and look entirely plausible.
+      test "a SPLINE is evaluated over its knot vector rather than dropped" do
+        shape = build(spline_dxf(points: ARCH, knots: ONE_SPAN))["shapes"].first
+
+        assert_in_delta 0.0, shape["b"][0], 0.01
+        assert_in_delta 10.0, shape["b"][2], 0.01
+        assert_in_delta(-7.5, shape["b"][1], 0.01,
+                        "the curve reaches 7.5 above its chord — the control polygon's 10 is not it")
+        assert_in_delta 0.0, shape["b"][3], 0.01
+        assert sampled?(shape, 5.0, -7.5), "the apex (5, 7.5), Y-flipped, must be on the curve"
+      end
+
+      # THE SPAN SEARCH IS WHAT MAKES A SPLINE A SPLINE RATHER THAN ONE POLYNOMIAL. Knots
+      # [0,0,0,0,1,1,1,2,2,2,2] join two cubic Beziers at u = 1: P0..P3 then P3..P6. Evaluating
+      # the second span's parameters against the FIRST span's control points extrapolates the
+      # first polynomial past its domain — at u = 2 that is x = −40, a bbox nothing else in the
+      # payload could disagree with. 3,308 of `cards.dxf`'s splines carry exactly this knot
+      # pattern, up to 52 spans each.
+      test "each knot span is evaluated against its own control points" do
+        shape = build(spline_dxf(points: TWO_ARCHES, knots: TWO_SPANS))["shapes"].first
+
+        assert_in_delta 0.0, shape["b"][0], 0.01, "the curve starts at x = 0"
+        assert_in_delta 20.0, shape["b"][2], 0.01, "and ends at x = 20, having never left [0, 20]"
+        assert_in_delta(-7.5, shape["b"][1], 0.01, "the first span arches 7.5 up")
+        assert_in_delta 15.0, shape["b"][3], 0.01, "and the second 15 down"
+        assert sampled?(shape, 15.0, 15.0), "the second span's own apex (15, −15), Y-flipped"
+      end
+
+      # FLAG BIT 0 IS "CLOSED", AND IT CLOSES THE CONTOUR THE WAY `polyline_points` DOES — the
+      # first point repeated as the last, so `Geometry.simplify` (which always keeps both ends)
+      # cannot leave a closed outline a point short of its own shape. 551 of `cards.dxf`'s 3,308
+      # splines set it.
+      test "a closed SPLINE closes its contour" do
+        shape = build(spline_dxf(points: ARCH, knots: ONE_SPAN, flags: 1))["shapes"].first
+
+        assert_equal 1, shape["k"], "the contour is closed"
+        assert_equal shape["p"].first, shape["p"].last, "so its last point is its first"
+      end
+
+      # WEIGHTS ARE HONOURED WHETHER OR NOT FLAG BIT 2 (RATIONAL) IS SET, and this test sets it
+      # CLEAR on purpose. Measured across the 29 real files that carry splines, code 41 appears in
+      # two families and the rational bit is never set in flag 70 — which normally means every
+      # weight is 1.0, and every weight in the corpus IS 1.0. That is a fact about today's corpus,
+      # not a property of the format, so the evaluation runs in homogeneous coordinates always and
+      # this pins that it does: a weight of 3 on the two interior control points pulls the apex
+      # from 7.5 to 9.0, and an implementation that read the flag instead of the weights would
+      # draw 7.5 and look perfectly reasonable.
+      test "SPLINE weights are honoured even where the rational flag is clear" do
+        weighted = build(spline_dxf(points: ARCH, knots: ONE_SPAN, weights: [ 1, 3, 3, 1 ]))
+        unit = build(spline_dxf(points: ARCH, knots: ONE_SPAN, weights: [ 1, 1, 1, 1 ]))
+
+        assert_in_delta(-9.0, weighted["shapes"].first["b"][1], 0.01,
+                        "w = 3 on both interior points pulls the apex to 9.0")
+        assert sampled?(weighted["shapes"].first, 5.0, -9.0)
+        assert_in_delta(-7.5, unit["shapes"].first["b"][1], 0.01,
+                        "and the corpus's all-1.0 weights change nothing, which is why they were " \
+                        "never a reason to skip the homogeneous path")
+      end
+
+      # A REFUSED SPLINE IS TALLIED UNDER ITS OWN NAME, AND THIS IS THE TRAP THE WHOLE BACKSTOP
+      # EXISTS TO CLOSE. Stage 1's tally is TYPE-based — `parse_entities` counts a `0`-code name
+      # that is not in `ENTITY_TYPES` — so the moment SPLINE joined that list, a spline `flatten`
+      # refuses stopped being counted there and would have vanished exactly as before, with the
+      # status line now actively stating that nothing was skipped. A DISTINCT NAME, because "we
+      # cannot read this type at all" and "we read this one and it was broken" are different
+      # claims and must not add up into one number.
+      test "a SPLINE the parser refuses is tallied under its own name rather than vanishing" do
+        {
+          "a knot count that is not control points + degree + 1" =>
+            spline_dxf(points: ARCH, knots: ONE_SPAN.first(7)),
+          "fewer control points than the degree needs" =>
+            spline_dxf(points: ARCH.first(3), knots: [ 0, 0, 0, 0, 1, 1, 1 ]),
+          "a degree below 1" =>
+            spline_dxf(points: ARCH, knots: [ 0, 0, 1, 1, 2 ], degree: 0),
+          "a knot vector that runs backwards" =>
+            spline_dxf(points: ARCH, knots: [ 0, 0, 0, 0, 1, 1, 1, -1 ]),
+          "a knot domain of zero width" =>
+            spline_dxf(points: ARCH, knots: [ 0, 0, 0, 0, 0, 0, 0, 0 ])
+        }.each do |why, dxf|
+          payload = build(dxf)
+
+          assert_equal [], payload["shapes"], "#{why}: must not draw a scribble"
+          assert_equal({ "SPLINE(malformed)" => 1 }, payload["u"], "#{why}: must be said out loud")
+        end
+      end
+
+      # THE OTHER DIRECTION, WITHOUT WHICH A TALLY THAT ALWAYS FIRES PASSES THE TEST ABOVE. A
+      # spline this parser reads completely claims nothing — and it carries a code 42 while doing
+      # so, because on a SPLINE 42 is a control-point tolerance and every one of `cards.dxf`'s
+      # 3,308 splines has one. A tally keyed on the CODE rather than on the entity's TYPE would
+      # report 3,308 unreadable "bulges" in a file that contains no bulge at all.
+      test "a SPLINE the parser reads claims nothing, code 42 and all" do
+        payload = build(spline_dxf(points: ARCH, knots: ONE_SPAN, extra: "42\n0.0000001\n"))
+
+        assert_equal 1, payload["shapes"].length
+        assert_not payload.key?("u")
+      end
+
       # ---- what the parser could not read -----------------------------------------------------
 
       # THE BACKSTOP ITSELF. `Dxf.flatten` is a `case` with no `else`, so for years every entity
       # type this parser cannot draw returned nil and `each_geometry` skipped it with no error, no
       # log and no status — 18,906 SPLINEs across 29 of 129 real files, one of which reported "No
       # measurable geometry" about a file that is nothing but geometry (tinkerex#216).
+      #
+      # THE TYPES HERE WERE SPLINEs UNTIL SPLINE BECAME DRAWABLE, and swapping them is the point
+      # rather than a repair: a type promoted into `ENTITY_TYPES` leaves this path entirely, which
+      # is exactly the trap `tally_refusal` exists for. ELLIPSE and MTEXT are the corpus's real
+      # remaining gaps — 0 and 13 occurrences — and are deliberately out of scope, so this keeps
+      # asking about the TYPE-based tally and nothing else.
       test "an entity type the parser cannot draw is reported rather than dropped" do
-        dxf = "0\nSECTION\n2\nENTITIES\n0\nSPLINE\n8\nA\n0\nELLIPSE\n8\nA\n0\nSPLINE\n8\nA\n" \
+        dxf = "0\nSECTION\n2\nENTITIES\n0\nELLIPSE\n8\nA\n0\nMTEXT\n8\nA\n0\nELLIPSE\n8\nA\n" \
               "0\nLINE\n8\nA\n10\n0\n20\n0\n11\n5\n21\n0\n0\nENDSEC\n0\nEOF\n"
         payload = build(dxf)
 
         assert_equal 1, payload["shapes"].length, "the LINE still draws"
-        assert_equal({ "SPLINE" => 2, "ELLIPSE" => 1 }, payload["u"],
+        assert_equal({ "ELLIPSE" => 2, "MTEXT" => 1 }, payload["u"],
                      "and what could not be drawn is named and counted")
       end
 
       # A SKIPPED ENTITY IS ABSENT FROM THE BBOX, NOT MERELY FROM THE PICTURE — which is the half
-      # that makes this a measurement bug rather than a cosmetic one. `elianadxf.dxf` is four
+      # that makes this a measurement bug rather than a cosmetic one. `elianadxf.dxf` was four
       # SPLINEs and nothing else: shapes=0, job 0x0, a reported job size describing none of the
-      # file. The tally is the only thing on the wire that says so.
+      # file. It measures now; what this pins is that the SAME scenario one step further on — a
+      # file of nothing but splines this parser REFUSES — still reaches the wire, under
+      # `tally_refusal`'s name rather than `parse_entities`', and still reports an empty job box
+      # rather than a made-up one. Bare SPLINE records with no knots and no control points are
+      # exactly that.
       test "a file whose every entity is unreadable says so instead of measuring as empty" do
         payload = build("0\nSECTION\n2\nENTITIES\n0\nSPLINE\n8\nA\n0\nSPLINE\n8\nA\n0\nENDSEC\n0\nEOF\n")
 
@@ -484,7 +607,7 @@ module Maker
         assert_equal({ "w" => 0.0, "h" => 0.0, "x" => 0.0, "y" => 0.0 }, payload["job"],
                      "the job box is still honestly empty — the tally is what makes it legible"
         )
-        assert_equal({ "SPLINE" => 2 }, payload["u"])
+        assert_equal({ "SPLINE(malformed)" => 2 }, payload["u"])
       end
 
       # THE OTHER DIRECTION, AND IT IS THE ONE A NAIVE TALLY GETS WRONG. `parse_entities` has no
@@ -576,6 +699,38 @@ module Maker
         end
 
         calls
+      end
+
+      # A CUBIC BEZIER SPELLED AS A B-SPLINE, and the fixtures every spline test measures against.
+      # Clamped knots (multiplicity degree+1 at each end) over four control points make the curve
+      # exactly Bezier(P0..P3), so its apex is (P0 + 3P1 + 3P2 + P3)/8 = (5, 7.5) by hand rather
+      # than by running the code under test. TWO_SPANS adds an interior knot of multiplicity 3 —
+      # the pattern 3,308 of `cards.dxf`'s splines use — which joins a second Bezier, P3..P6,
+      # apex (15, -15).
+      ARCH = [ [ 0, 0 ], [ 0, 10 ], [ 10, 10 ], [ 10, 0 ] ].freeze
+      ONE_SPAN = [ 0, 0, 0, 0, 1, 1, 1, 1 ].freeze
+      TWO_ARCHES = (ARCH + [ [ 10, -20 ], [ 20, -20 ], [ 20, 0 ] ]).freeze
+      TWO_SPANS = [ 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2 ].freeze
+
+      # A SPLINE record, in the group-code order a real exporter writes: the counts, then the knot
+      # run, then the optional weight run, then the control points. `parse_entities` groups by code
+      # so the order cannot matter to the parser — which is exactly why it is worth writing the
+      # real one here, where a reader can check the fixture against a file.
+      def spline_dxf(points:, knots:, degree: 3, flags: 0, weights: nil, extra: "")
+        body = +"0\nSECTION\n2\nENTITIES\n0\nSPLINE\n8\nA\n70\n#{flags}\n71\n#{degree}\n" \
+                "72\n#{knots.length}\n73\n#{points.length}\n74\n0\n#{extra}"
+        knots.each { |k| body << "40\n#{k}\n" }
+        weights&.each { |w| body << "41\n#{w}\n" }
+        points.each { |(x, y)| body << "10\n#{x}\n20\n#{y}\n30\n0.0\n" }
+        body + "0\nENDSEC\n0\nEOF\n"
+      end
+
+      # Is a point ON the drawn curve? Asked of the THINNED `p` deliberately: an apex is by
+      # construction the point farthest from any chord spanning it, so `Geometry.simplify` keeps
+      # it, and asking the payload rather than the traversal means this fails if either half stops
+      # carrying the shape.
+      def sampled?(shape, x, y)
+        shape["p"].any? { |(px, py)| (px - x).abs < 0.05 && (py - y).abs < 0.05 }
       end
 
       def build(bytes) = JSON.parse(DxfGeometry.render(bytes)[:bytes])
