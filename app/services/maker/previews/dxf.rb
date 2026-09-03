@@ -73,8 +73,10 @@ module Maker
       #
       # Yields every drawable entity as
       #   (layer_name, [[x, y], ...], closed?, curve_or_nil, object_id)
-      # with points in DXF MODEL SPACE: native drawing units, Y-UP, exactly as the file records
-      # them. Neither the Y-flip (SVG is Y-down) nor the unit scale is applied here, because the
+      # with points in DXF MODEL SPACE: native drawing units, Y-UP. For an entity the drawing holds
+      # directly those are exactly the numbers the file records; for one inside a BLOCK they are
+      # its definition coordinates carried through the INSERT's affine, which is the only place
+      # this traversal transforms anything. Neither the Y-flip (SVG is Y-down) nor the unit scale is applied here, because the
       # two consumers need different things — the thumbnail wants a flip and no scale, the payload
       # wants both — and a traversal that pre-applied either would force one of them to undo it.
       #
@@ -95,7 +97,7 @@ module Maker
       # `unreadable:` IS AN OPTIONAL TALLY THE CALLER OWNS — a `{ "ELLIPSE" => 2 }` hash this walk
       # fills in with what it met and could not draw, so the payload can say so instead of dropping
       # it without a word (see `Geometry.build`). IT HAS TWO FILLERS AND THEY ARE NOT
-      # INTERCHANGEABLE: `parse_entities` counts a type this parser does not handle AT ALL, and
+      # INTERCHANGEABLE: `parse_document` counts a type this parser does not handle AT ALL, and
       # `tally_refusal` counts a type it DOES handle meeting an instance it cannot read — the second
       # exists precisely because the first stops firing for a type the moment that type becomes
       # drawable. Handed IN rather than returned because
@@ -103,38 +105,270 @@ module Maker
       # gives both the same object. The THUMBNAIL leg passes none — a picture has nowhere to put a
       # tally — and that is not a second traversal: which entities DRAW is identical either way,
       # this is one extra fact one consumer asks for.
-      def each_geometry(pairs, unreadable: nil)
-        off = layers_off(pairs)
-        counter = 0
+      #
+      # A BLOCK IS PLACED BY ITS INSERTS AND DRAWN NOWHERE ELSE, which is a REMOVAL as much as an
+      # addition — see `parse_document`. So the walk is recursive: an INSERT expands its block's
+      # entities under a composed affine instead of yielding a contour of its own.
+      def each_geometry(pairs, unreadable: nil, &block)
+        entities, blocks = parse_document(pairs, unreadable:)
+        state = { off: layers_off(pairs), blocks:, unreadable:, counter: 0 }
 
-        parse_entities(pairs, unreadable:).each do |entity|
+        emit_entities(entities, IDENTITY, state, [].freeze, &block)
+      end
+
+      # ONE LEVEL OF THE WALK: a list of entity records under one accumulated transform.
+      #
+      # `state` CARRIES THE OBJECT-ID COUNTER BECAUSE THE RECURSION MUST SHARE IT. Ids count DRAWN
+      # contours in document order, and a block placed twice yields two independently selectable
+      # shapes — the client groups and selects by that id, so a per-level counter would hand both
+      # copies the same one and clicking the left one would highlight the right.
+      def emit_entities(entities, xf, state, stack, &block)
+        entities.each do |entity|
           layer = entity[:codes][8].first
           # A DXF layer can be switched OFF, recorded as a NEGATIVE colour on its table entry.
           # Honoured rather than ignored for the same reason `Lbrn2.hidden_cuts` is: a hidden
           # layer is construction geometry the author chose not to cut, and drawing it puts lines
           # in the picture that are not in the job — and, worse here, folds them into the measured
           # extent so the reported size describes something the machine will never make.
-          next if layer && off.include?(layer)
+          #
+          # AN INSERT ON AN OFF LAYER TAKES ITS WHOLE BLOCK WITH IT, which is what this check
+          # placed BEFORE the INSERT branch buys: the block reference is the entity the drawing
+          # holds, so hiding it hides the placement rather than each contour inside it.
+          next if layer && state[:off].include?(layer)
 
-          points, closed, curve = flatten(entity)
-          if points.nil? || points.length < 2
-            tally_refusal(entity, unreadable)
+          if entity[:type] == "INSERT"
+            emit_insert(entity, xf, state, stack, &block)
             next
           end
 
-          tally_lwpolyline_bulge(entity, unreadable)
+          points, closed, curve = flatten(entity)
+          if points.nil? || points.length < 2
+            tally_refusal(entity, state[:unreadable])
+            next
+          end
 
-          counter += 1
-          yield layer, points, closed, curve, counter
+          tally_lwpolyline_bulge(entity, state[:unreadable])
+
+          state[:counter] += 1
+          block.call(layer, apply_affine(points, xf), closed, transform_curve(curve, xf), state[:counter])
         end
+      end
+
+      # ---- blocks and inserts --------------------------------------------------------------
+
+      # AN INSERT PLACES A BLOCK'S ENTITIES UNDER A COMPOSED AFFINE — the entity type this parser
+      # ignored for years while drawing the block bodies themselves (see `parse_document`).
+      #
+      # EVERY PATH THAT DECLINES TO PLACE A BLOCK TALLIES, AND THAT IS THE WHOLE REASON THIS METHOD
+      # HAS FOUR NAMED REFUSALS RATHER THAN A `return`. Stage 1's backstop is TYPE-based:
+      # `parse_document` counts a `0`-code name that is NOT in `ENTITY_TYPES`, which is how INSERT
+      # was reported (177 in `cards.dxf` alone) while it was undrawable. Adding it to that list —
+      # the change that makes blocks place at all — SILENCES that path for INSERT completely, so a
+      # refused insert would vanish exactly as before, with the status line now stating that
+      # nothing was skipped. `tally_refusal` cannot cover it either: an INSERT never reaches
+      # `flatten`, because it yields many contours rather than one.
+      #
+      # DISTINCT NAMES, NOT A BARE `INSERT`. "The file names a block it does not define",
+      # "the nesting is deeper than we will follow" and "this block contains itself" are three
+      # different claims about a drawing and must not add up into one number — the same argument
+      # `SPLINE(malformed)` and `LWPOLYLINE(bulge)` make. `INSERT(unknown-block)` is the likely
+      # real one: a file saved without its dependencies, or a BLOCKS section this parser declined
+      # to read (`parse_document` requires the section LABEL).
+      UNKNOWN_BLOCK = "INSERT(unknown-block)".freeze
+      CYCLIC_BLOCK = "INSERT(cyclic)".freeze
+      TOO_DEEP_BLOCK = "INSERT(too-deep)".freeze
+      TOO_MANY_CELLS = "INSERT(too-many)".freeze
+
+      # HOW FAR A CHAIN OF NESTED INSERTS IS FOLLOWED, AND IT IS NOT THE CYCLE GUARD. The stack
+      # below already refuses a block that contains itself, so this bounds the OTHER explosion: a
+      # block inserting two children, each inserting two more, doubles the drawn geometry per level
+      # out of a file that grows only linearly. Real nesting is shallow — `cards.dxf`, the deepest
+      # file in the corpus, reaches four — so 16 is far outside anything a drawing does.
+      MAX_INSERT_DEPTH = 16
+
+      # A MINSERT'S ROW x COLUMN COUNTS COME FROM THE FILE AND ARE THE ONE PLACE A TINY INPUT CAN
+      # DEMAND UNBOUNDED OUTPUT — `70`/`71` are integers, so a malformed pair asks for billions of
+      # copies of a block from twelve bytes. Same sentence as the cycle guard, different words: a
+      # renderer reading user files must not be hangable by one of them. Zero real occurrences in
+      # 129 files, so the ceiling is set where an honest drawing could plausibly reach (a 100 x 100
+      # perforation grid) rather than where the corpus sits.
+      MAX_INSERT_CELLS = 10_000
+
+      def emit_insert(entity, outer, state, stack, &block)
+        c = entity[:codes]
+        name = c[2].first
+        body = name && state[:blocks][name]
+
+        return tally_insert(state, UNKNOWN_BLOCK) if body.nil?
+        return tally_insert(state, CYCLIC_BLOCK) if stack.include?(name)
+        return tally_insert(state, TOO_DEEP_BLOCK) if stack.length >= MAX_INSERT_DEPTH
+
+        cols = array_count(c[70])
+        rows = array_count(c[71])
+        return tally_insert(state, TOO_MANY_CELLS) if cols * rows > MAX_INSERT_CELLS
+
+        inner_stack = stack + [ name ]
+        rows.times do |row|
+          cols.times do |col|
+            xf = compose(outer, insert_affine(c, body[:base], col, row))
+            emit_entities(body[:entities], xf, state, inner_stack, &block)
+          end
+        end
+      end
+
+      def tally_insert(state, key)
+        unreadable = state[:unreadable]
+        unreadable[key] = (unreadable[key] || 0) + 1 if unreadable
+        nil
+      end
+
+      # A MINSERT COUNT, DEFAULTING TO ONE. `70`/`71` are absent on an ordinary INSERT, and a count
+      # of 0 is what some exporters write for "not an array" — both mean a single placement, so
+      # neither may be read as "draw nothing".
+      def array_count(list)
+        n = f1(list)
+        n.nil? || n < 1 ? 1 : n.to_i
+      end
+
+      # ONE ARRAY CELL'S AFFINE, AS [a, b, c, d, e, f] meaning x' = ax + by + e, y' = cx + dy + f.
+      #
+      # SCALE, THEN ROTATE, THEN TRANSLATE — the order the format specifies and the order that
+      # shows: (10, 5) scaled by (2, 3) and turned a quarter turn is (-15, 20), where rotating
+      # first gives (-10, 30). A plausible drawing either way, which is why the fixture pins it.
+      #
+      # THE BLOCK'S BASE POINT IS SUBTRACTED FIRST, because it is the block's ORIGIN and not an
+      # offset to add: the entity coordinates a block records are relative to it. Folded into the
+      # translation (`t − L·base`) rather than applied as a separate step so one affine describes
+      # the whole placement and composes with its parent's by multiplication. Every one of
+      # `cards.dxf`'s 180 blocks has a base of (0, 0), so the corpus is no evidence at all here.
+      #
+      # A NEGATIVE SCALE IS A MIRROR AND IS PASSED THROUGH AS ITS SIGN. Reading `|sx|` draws the
+      # block at the right size on the wrong side of the insertion point, with a bbox of the
+      # identical WIDTH — the same invisible sign loss `bulge_arc` records one entity type along.
+      #
+      # THE ARRAY STEP RIDES THE ROTATED AXES. `44`/`45` are spacings along the block's own X and
+      # Y, which the rotation turns with it, so the grid stays square to the copies rather than to
+      # the drawing.
+      def insert_affine(codes, base, col, row)
+        sx = insert_scale(codes[41])
+        sy = insert_scale(codes[42])
+        rot = (f1(codes[50]) || 0.0) * Math::PI / 180
+        cos = Math.cos(rot)
+        sin = Math.sin(rot)
+
+        a = cos * sx
+        b = -sin * sy
+        c = sin * sx
+        d = cos * sy
+
+        dx = col * (f1(codes[44]) || 0.0)
+        dy = row * (f1(codes[45]) || 0.0)
+        tx = (f1(codes[10]) || 0.0) + (cos * dx) - (sin * dy)
+        ty = (f1(codes[20]) || 0.0) + (sin * dx) + (cos * dy)
+
+        bx, by = base
+        [ a, b, c, d, tx - (a * bx) - (b * by), ty - (c * bx) - (d * by) ]
+      end
+
+      # AN ABSENT SCALE IS 1, THE FORMAT'S OWN DEFAULT — most INSERTs carry no 41/42/43 at all
+      # (none of `cards.dxf`'s 177 do). A scale the file DOES state is honoured verbatim, zero
+      # included: substituting 1 for a stated 0 would draw a full-size copy the file never asked
+      # for, which is a louder wrong answer than the degenerate one it wrote.
+      def insert_scale(list)
+        s = f1(list)
+        s.nil? ? 1.0 : s
+      end
+
+      # THE TRANSFORM A TOP-LEVEL ENTITY CARRIES, AND IT IS COMPARED BY IDENTITY, NOT BY VALUE.
+      # `apply_affine` and `compose` short-circuit on `equal?(IDENTITY)`, so an entity outside any
+      # block reaches the caller with the very Float objects `flatten` produced — no multiply by
+      # 1.0, no add of 0.0, and therefore no chance of a `-0.0` or a rounding step appearing in a
+      # payload that no block was involved in. A file with no BLOCKS section renders byte-identical
+      # to what it did before inserts existed, which is what the two fixture digests assert.
+      IDENTITY = [ 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 ].freeze
+
+      def apply_affine(points, xf)
+        return points if xf.equal?(IDENTITY)
+
+        a, b, c, d, e, f = xf
+        points.map { |(x, y)| [ (a * x) + (b * y) + e, (c * x) + (d * y) + f ] }
+      end
+
+      # OUTER ∘ INNER — the parent's placement applied to the child's, which is the composition a
+      # nested INSERT needs and the one a naive "add the translations" gets wrong the moment the
+      # parent rotates. 168 of `cards.dxf`'s 177 INSERTs are nested.
+      def compose(outer, inner)
+        return inner if outer.equal?(IDENTITY)
+
+        oa, ob, oc, od, oe, of = outer
+        ia, ib, ic, id, ie, if_ = inner
+        [ (oa * ia) + (ob * ic), (oa * ib) + (ob * id),
+          (oc * ia) + (od * ic), (oc * ib) + (od * id),
+          (oa * ie) + (ob * if_) + oe, (oc * ie) + (od * if_) + of ]
+      end
+
+      # A PLACED CURVE DESCRIPTOR — TRANSFORMED WHEN IT SURVIVES THE TRANSFORM, DROPPED WHEN IT
+      # DOES NOT, AND NEVER LEFT IN THE BLOCK'S OWN COORDINATES.
+      #
+      # `curve` is a RICHER RENDERING OF THE SAME POINTS (see `each_geometry`), so it has to move
+      # with them or it describes a different shape from the bbox beside it — and the THUMBNAIL
+      # draws the descriptor INSTEAD of the points, so a stale one is a wrong picture rather than a
+      # coarse one.
+      #
+      # ONLY A SIMILARITY KEEPS A CIRCLE A CIRCLE. Under a non-uniform scale it is an ellipse whose
+      # axes are turned by the rotation, and the wire's `e` form carries rx and ry with NO rotation
+      # term — there is no honest descriptor to emit, so none is. Dropping is always safe: the
+      # flattened points still carry the true shape, `b`/`d`/the job box are computed from them,
+      # and the thumbnail falls back to a polyline.
+      #
+      # A MIRROR REVERSES AN ARC'S DIRECTION, WHICH IS WHY THE ENDPOINTS SWAP. DXF arcs always
+      # sweep counter-clockwise from a0 to a1; a negative determinant flips that, so the placed
+      # arc's counter-clockwise run starts where the original ENDED. Leaving a0 alone draws the
+      # complementary arc — same endpoints, the wrong side, and `arc_svg` writes it as-is.
+      # `sweep` is carried across unchanged rather than recomputed, because a similarity preserves
+      # it exactly and recomputing would turn `arc_points`' deliberate 360 back into 0.
+      SIMILARITY_EPSILON = 1e-9
+
+      def transform_curve(curve, xf)
+        return nil if curve.nil?
+        return curve if xf.equal?(IDENTITY)
+
+        a, b, c, d = xf
+        scale = Math.sqrt((a * a) + (c * c))
+        return nil unless scale.positive?
+
+        tol = SIMILARITY_EPSILON * scale * scale
+        return nil unless ((b * b) + (d * d) - (scale * scale)).abs <= tol
+        return nil unless ((a * b) + (c * d)).abs <= tol
+
+        placed = curve.merge(cx: (a * curve[:cx]) + (b * curve[:cy]) + xf[4],
+                             cy: (c * curve[:cx]) + (d * curve[:cy]) + xf[5],
+                             r: curve[:r] * scale)
+        return placed if curve[:type] == :circle
+
+        a0 = placed_angle(curve[:a0], xf)
+        a1 = placed_angle(curve[:a1], xf)
+        a0, a1 = a1, a0 if ((a * d) - (b * c)).negative?
+        placed.merge(a0:, a1:)
+      end
+
+      # Where the transform sends the direction the angle names — read back off the IMAGE of the
+      # unit vector rather than added to the rotation, so one expression covers a rotation, a
+      # mirror and both at once instead of a case per sign.
+      def placed_angle(degrees, xf)
+        a, b, c, d = xf
+        t = degrees * Math::PI / 180
+        vx = Math.cos(t)
+        vy = Math.sin(t)
+        (Math.atan2((c * vx) + (d * vy), (a * vx) + (b * vy)) * 180 / Math::PI) % 360
       end
 
       # A DRAWABLE TYPE THIS PARSER MET AND REFUSED, COUNTED SEPARATELY FROM ONE IT CANNOT DRAW AT
       # ALL — and that separation is the whole reason this method exists rather than reusing
-      # `parse_entities`' tally.
+      # `parse_document`'s tally.
       #
       # THAT TALLY IS TYPE-BASED AND STOPS FIRING THE MOMENT A TYPE BECOMES DRAWABLE.
-      # `parse_entities` counts a `0`-code name that is NOT in `ENTITY_TYPES`, so while SPLINE sat
+      # `parse_document` counts a `0`-code name that is NOT in `ENTITY_TYPES`, so while SPLINE sat
       # outside that list every spline was reported. Adding SPLINE to it — which is what makes
       # 18,906 of them draw — silences that path for splines completely, including the ones
       # `flatten` refuses: they would vanish exactly as before, with the status line now stating
@@ -167,7 +401,7 @@ module Maker
       # are not equally reachable; what belongs HERE is that the shortfall must be SAID.
       #
       # AND IT HAS TO BE SAID EXPLICITLY, BECAUSE THE TYPE-BASED TALLY CANNOT SEE IT.
-      # `parse_entities` counts a `0`-code name that is not in `ENTITY_TYPES`, and `LWPOLYLINE` has
+      # `parse_document` counts a `0`-code name that is not in `ENTITY_TYPES`, and `LWPOLYLINE` has
       # always been in it — so a bulged LWPOLYLINE reaches `add` like any other contour, chorded,
       # with the status line stating no shortfall at all. That is the same trap the SPLINE work is
       # warned about from the other direction (a type joining `ENTITY_TYPES` stops being tallied);
@@ -318,7 +552,7 @@ module Maker
       # ONLY `POLYLINE` REACHES HERE, AND THE ASYMMETRY IS THE PARSER'S SHAPE. A `VERTEX` is its
       # own entity record with its own codes hash, so `codes[42]` is unambiguously THAT vertex's
       # bulge. An LWPOLYLINE holds its vertices as repeated 10/20 codes inline and its bulges as an
-      # OPTIONAL 42 per vertex — and `parse_entities` groups an entity's values BY CODE, so the
+      # OPTIONAL 42 per vertex — and `parse_document` groups an entity's values BY CODE, so the
       # interleaving that says which 42 belongs to which vertex is gone before anything can read
       # it. Pairing them needs a positional parser, and all 3,869 real bulges are on POLYLINE, so
       # the LWPOLYLINE half is REPORTED instead (`tally_lwpolyline_bulge`) rather than guessed at.
@@ -387,7 +621,7 @@ module Maker
       # A SPLINE -> its flattened contour, evaluated with de Boor over the file's own knot vector.
       # nil when the record cannot be read as a curve, which `each_geometry` REPORTS through
       # `tally_refusal` rather than dropping — see there for why that cannot be left to
-      # `parse_entities`' type-based tally.
+      # `parse_document`'s type-based tally.
       #
       # WHAT THE REAL CORPUS ACTUALLY CONTAINS, because this is built for it and not for the spec's
       # full generality. Across the 29 of 129 files carrying splines (18,906 of them): degree (71)
@@ -689,7 +923,7 @@ module Maker
 
       # [[name, aci_or_nil], ...] for every LAYER record in the TABLES section.
       #
-      # Walks the pairs directly rather than going through `parse_entities`, which by design
+      # Walks the pairs directly rather than going through `parse_document`, which by design
       # collects only drawable ENTITY_TYPES — adding LAYER there would put non-drawable records
       # into the list every drawing consumer iterates.
       def layer_records(pairs)
@@ -810,47 +1044,114 @@ module Maker
         pairs
       end
 
-      # Walk the pairs, slicing them into entity records keyed by their group codes. Entity types
-      # this parser cannot draw are skipped, and `unreadable:` is where their NAMES survive that
-      # (see `unreadable?`) — the record itself is dropped, codes and all.
+      # Walk the pairs, slicing them into entity records keyed by their group codes, and return
+      # `[top_level_entities, blocks]` — `blocks` being `name => { base:, entities: }`. Entity
+      # types this parser cannot draw are skipped, and `unreadable:` is where their NAMES survive
+      # that (see `unreadable?`) — the record itself is dropped, codes and all.
       #
-      # THIS WALKS EVERY SECTION, NOT THE ENTITIES SECTION. An earlier comment here claimed "we
-      # only look at the ENTITIES section's records", and there is no section filter anywhere in
-      # this file: a BLOCKS-section entity is collected and drawn exactly like a top-level one,
-      # which is why a block body draws at its DEFINITION coordinates and again at nothing
-      # (tinkerex#219 owns the fix; the prose is corrected here so the next reader is not misled
-      # into thinking the behaviour is already scoped). It is also why the TABLES and OBJECTS
-      # sections' records arrive on this same `0`-code stream, which `unreadable?` has to account
-      # for.
-      def parse_entities(pairs, unreadable: nil)
-        entities = []
-        current = nil
+      # THIS WALKS EVERY SECTION AND NOW KNOWS WHICH ONE IT IS IN, AND THAT IS THE HALF OF
+      # tinkerex#219 THAT REMOVES BEHAVIOUR RATHER THAN ADDING IT. `tokenize` returns every
+      # code/value pair in the file with no section filter at all, so until this method tracked
+      # sections a BLOCKS-section entity was collected and yielded as a TOP-LEVEL shape at its
+      # DEFINITION coordinates — while the INSERT that places it was not in `ENTITY_TYPES` and was
+      # dropped. The net effect was never MISSING geometry: it was geometry in the WRONG PLACE,
+      # drawn once however many times the file places it. On `cards.dxf` that was the entire
+      # picture — all 8,148 contours live in blocks and its ENTITIES section holds nothing but
+      # nine INSERTs. **A test asserting only "the inserted copy appears" passes while the ghost
+      # still draws**, which is why the fixture asserts the shape COUNT.
+      #
+      # THE ONE INSERT-CARRYING FILE KEPT FOR THIS WORK PROVES ONLY THE REMOVAL HALF, and saying so
+      # is the difference between evidence and a green run. All 177 of `cards.dxf`'s INSERTs sit at
+      # (0, 0) with no scale and no rotation — measured — so its 8,148 contours land on the very
+      # same coordinates the ghosts did: same job box, same shapes, a different ORDER (they now
+      # arrive through the expansion tree) and 177 fewer entries in the unreadable tally. The
+      # placement arithmetic is pinned synthetically in `dxf_geometry_test.rb` because no file here
+      # exercises it, and 23 of the corpus's other 24 INSERT files are not in this scratch set.
+      #
+      # A BLOCK IS COLLECTED ONLY INSIDE A LABELLED `BLOCKS` SECTION, AND THE DIRECTION OF THAT
+      # CAUTION IS THE ARGUMENT. Keying on the `BLOCK`/`ENDBLK` markers ALONE would be enough for
+      # every real file, but a stray or malformed `BLOCK` in the ENTITIES section would then
+      # swallow the rest of the drawing into a definition nobody inserts — §14b's skip-list blind
+      # spot, silent and total. Requiring the section label fails the other way: an unlabelled
+      # BLOCKS section keeps drawing ghosts, which is exactly what this code did yesterday, and the
+      # INSERTs naming those blocks are reported as `INSERT(unknown-block)` rather than dropped. A
+      # regression is bounded by the status quo; a data loss is not.
+      #
+      # THE TABLES AND OBJECTS SECTIONS' RECORDS STILL ARRIVE ON THIS SAME `0`-CODE STREAM, which
+      # is what `unreadable?` has to account for — the section tracking exists to place BLOCK
+      # bodies, not to filter the walk down to ENTITIES.
+      BLOCKS_SECTION = "BLOCKS".freeze
+
+      def parse_document(pairs, unreadable: nil)
+        top = []
+        blocks = {}
+        section = nil
+        block = nil    # the block record currently being DEFINED, or nil outside BLOCK/ENDBLK
+        pending = nil  # the structural record still absorbing codes: :section or :block
+        current = nil  # the drawable entity record still absorbing codes
 
         pairs.each do |(code, value)|
           if code.zero? # a "0" code starts a new entity (or section marker)
-            entities << current if current
-            # VERTEX is captured too (not drawn itself) so old-style POLYLINE can reclaim its
-            # points — see fold_polyline_vertices.
-            current =
-              if ENTITY_TYPES.include?(value) || value == "VERTEX"
-                { type: value, codes: Hash.new { |h, k| h[k] = [] } }
-              else
-                unreadable[value] = (unreadable[value] || 0) + 1 if unreadable && unreadable?(value)
-                nil
-              end
+            (block ? block[:entities] : top) << current if current
+            current = nil
+            pending = nil
+
+            case value
+            when "SECTION"
+              section = nil
+              pending = :section
+            when "ENDSEC"
+              section = nil
+              block = nil
+            when "BLOCK"
+              block = nil
+              pending = :block if section == BLOCKS_SECTION
+            when "ENDBLK"
+              block = nil
+            else
+              # VERTEX is captured too (not drawn itself) so old-style POLYLINE can reclaim its
+              # points — see fold_polyline_vertices.
+              current =
+                if ENTITY_TYPES.include?(value) || value == "VERTEX"
+                  { type: value, codes: Hash.new { |h, k| h[k] = [] } }
+                else
+                  unreadable[value] = (unreadable[value] || 0) + 1 if unreadable && unreadable?(value)
+                  nil
+                end
+            end
+          elsif pending == :section
+            section = value if code == 2
+          elsif pending == :block
+            # A BLOCK header's `2` is its name and its `10`/`20` its base point. The name arrives
+            # before the base point in every dialect, so the record exists by the time one is read;
+            # a header with no `2` at all defines nothing and its body falls through to `top`,
+            # which is the pre-fix behaviour rather than a silent loss.
+            case code
+            when 2  then block ||= (blocks[value] ||= { base: [ 0.0, 0.0 ], entities: [] })
+            when 10 then block[:base][0] = Float(value, exception: false) || 0.0 if block
+            when 20 then block[:base][1] = Float(value, exception: false) || 0.0 if block
+            end
           elsif current
             current[:codes][code] << value
           end
         end
-        entities << current if current
-        fold_polyline_vertices(entities)
+        (block ? block[:entities] : top) << current if current
+
+        [ fold_polyline_vertices(top),
+          blocks.transform_values { |b| b.merge(entities: fold_polyline_vertices(b[:entities])) } ]
       end
+
+      # THE ENTITIES A DRAWING PLACES DIRECTLY, without the block definitions — `parse_document`'s
+      # first half, kept as its own door because that is the whole question `dxf_test.rb` asks and
+      # a caller wanting one list should not have to know a second exists.
+      def parse_entities(pairs, unreadable: nil) = parse_document(pairs, unreadable:).first
 
       # Is a `0`-code value an entity type we met and could not draw — as opposed to something
       # that was never geometry in the first place?
       #
-      # TWO POPULATIONS ARRIVE ON ONE STREAM, because `parse_entities` above has no section filter.
-      # `STRUCTURAL` therefore has to cover both: the markers that open and close a section, a
+      # TWO POPULATIONS ARRIVE ON ONE STREAM, because `parse_document` above tracks sections only
+      # far enough to place BLOCK bodies — it narrows the walk to none of them, so every section's
+      # records still reach this predicate. `STRUCTURAL` therefore has to cover both: the markers that open and close a section, a
       # table, a block or a vertex run; AND the RECORD types the TABLES and OBJECTS sections are
       # made of, which are not drawings of anything. Measured on the real corpus, one file carries
       # 33 `LAYER`s, another 180 `BLOCK_RECORD`s and 16 `VISUALSTYLE`s — reporting those as
@@ -864,7 +1165,7 @@ module Maker
       # defect. Enumerated from the 129-file corpus plus the spec's table and object records; a
       # miss is noise, and noise is the side to be wrong on.
       #
-      # VERTEX IS NOT HERE BECAUSE IT IS NEVER REACHED — `parse_entities` keeps it as a drawable
+      # VERTEX IS NOT HERE BECAUSE IT IS NEVER REACHED — `parse_document` keeps it as a drawable
       # POLYLINE's own points. It would otherwise be the loudest false report in the corpus: 10,792
       # of them in one file that renders perfectly.
       STRUCTURAL = %w[
@@ -914,7 +1215,12 @@ module Maker
         out
       end
 
-      ENTITY_TYPES = %w[LINE LWPOLYLINE POLYLINE CIRCLE ARC SPLINE].freeze
+      # THE TYPES `parse_document` KEEPS THE CODES OF. INSERT is the odd one: it draws nothing of
+      # its own and never reaches `flatten` — it is here because a record whose codes are dropped
+      # cannot be expanded, and `emit_entities` branches on it before the flatten path. Its arrival
+      # is also what silences the type-based tally for it, which is why `emit_insert` names every
+      # refusal explicitly.
+      ENTITY_TYPES = %w[LINE LWPOLYLINE POLYLINE CIRCLE ARC SPLINE INSERT].freeze
 
       # First value for a group code, as Float; nil when absent/unparseable.
       def f1(list)

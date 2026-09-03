@@ -570,6 +570,276 @@ module Maker
         assert_not payload.key?("u")
       end
 
+      # ---- blocks and inserts -----------------------------------------------------------------
+
+      # THE FIX HAD TO REMOVE BEHAVIOUR, NOT ONLY ADD IT, WHICH IS WHY THIS ASSERTS THE COUNT.
+      # `tokenize` returns every code/value pair in the file and `parse_entities` walked all of
+      # them with no section filter, so a BLOCK's body was collected and drawn as a top-level shape
+      # at its DEFINITION coordinates — while the INSERT that places it was not in `ENTITY_TYPES`
+      # and was dropped. The net effect was never missing geometry: it was geometry in the WRONG
+      # PLACE, drawn ONCE however many times the file places it. 1,094 INSERTs across 24 of 129
+      # real files, 1,222 BLOCK definitions across 51 (tinkerex#219).
+      #
+      # A TEST ASSERTING ONLY "the inserted copy appears" PASSES WHILE THE GHOST STILL DRAWS. The
+      # shape count is the only assertion that can see the half of the fix that deletes.
+      test "a block draws at its INSERT, once, and not at its definition" do
+        dxf = blocks_dxf({ "MYBLK" => "0\nLINE\n8\nA\n10\n0\n20\n0\n11\n10\n21\n0\n" },
+                         "0\nINSERT\n8\nA\n2\nMYBLK\n10\n100\n20\n200\n")
+        shapes = build(dxf)["shapes"]
+
+        assert_equal 1, shapes.length, "once — not a ghost at the definition AND a copy at the insert"
+        assert_in_delta 100.0, shapes.first["b"][0], 0.01
+        assert_in_delta 110.0, shapes.first["b"][2], 0.01
+        assert_in_delta(-200.0, shapes.first["b"][1], 0.01, "the Y-flip applies to the placed copy")
+      end
+
+      # A BLOCK NOBODY INSERTS DRAWS NOTHING, and that is the deletion stated on its own. It is
+      # also the ordinary case rather than an edge one: `cards.dxf` defines 180 blocks and inserts
+      # 177 of them, so three would draw at the origin for no reason at all.
+      test "a block that is never inserted draws nothing" do
+        dxf = blocks_dxf({ "UNUSED" => "0\nCIRCLE\n8\nA\n10\n0\n20\n0\n40\n5\n" }, "")
+
+        assert_equal [], build(dxf)["shapes"]
+        assert_not build(dxf).key?("u"), "an unplaced definition is not an unreadable entity"
+      end
+
+      # ONE INSERT, MANY COPIES — the property the old behaviour could not express at all. Two
+      # INSERTs of one block are two shapes with their own object ids, because the client groups
+      # and selects by that id and a user clicking the left copy must not highlight the right one.
+      test "a block inserted twice draws twice, at both insertion points" do
+        dxf = blocks_dxf({ "H" => "0\nLINE\n8\nA\n10\n0\n20\n0\n11\n4\n21\n0\n" },
+                         "0\nINSERT\n8\nA\n2\nH\n10\n0\n20\n0\n" \
+                         "0\nINSERT\n8\nA\n2\nH\n10\n50\n20\n0\n")
+        shapes = build(dxf)["shapes"]
+
+        assert_equal 2, shapes.length
+        assert_equal [ 1, 2 ], shapes.map { |s| s["o"] }, "each placement is its own selectable object"
+        assert_in_delta 0.0,  shapes[0]["b"][0], 0.01
+        assert_in_delta 50.0, shapes[1]["b"][0], 0.01
+      end
+
+      # SCALE THEN ROTATE, IN THAT ORDER, AND THE FIXTURE IS CHOSEN SO THE ORDER SHOWS. The point
+      # (10, 5) scaled by (2, 3) is (20, 15) and turning that a quarter turn CCW gives (-15, 20);
+      # rotating FIRST would give (-10, 30) — a plausible drawing, the wrong part.
+      #
+      # 42 IS THE Y SCALE HERE AND HAS NOTHING TO DO WITH A BULGE. `tally_lwpolyline_bulge` keys on
+      # the entity's TYPE for exactly this reason, and this fixture is the INSERT-shaped instance
+      # of the trap the SPLINE tolerance already pins from the other side.
+      test "an INSERT's scale and rotation transform the block, scale first" do
+        dxf = blocks_dxf({ "L" => "0\nLINE\n8\nA\n10\n0\n20\n0\n11\n10\n21\n5\n" },
+                         "0\nINSERT\n8\nA\n2\nL\n10\n0\n20\n0\n41\n2\n42\n3\n50\n90\n")
+        payload = build(dxf)
+        b = payload["shapes"].first["b"]
+
+        assert_in_delta(-15.0, b[0], 0.01, "x runs from -15 to 0")
+        assert_in_delta 0.0, b[2], 0.01
+        assert_in_delta(-20.0, b[1], 0.01, "model y 0..20 is client y -20..0")
+        assert_in_delta 0.0, b[3], 0.01
+        assert_not payload.key?("u"), "code 42 on an INSERT is a scale factor, not a bulge"
+      end
+
+      # A NEGATIVE SCALE IS A MIRROR AND MUST NOT BE READ AS ITS MAGNITUDE — the same sign trap the
+      # bulge work records, one entity type along. |sx| draws the block at the right size on the
+      # wrong side of the insertion point, with a bbox of the identical WIDTH.
+      test "a negative INSERT scale mirrors the block rather than scaling by its magnitude" do
+        dxf = blocks_dxf({ "L" => "0\nLINE\n8\nA\n10\n1\n20\n0\n11\n10\n21\n0\n" },
+                         "0\nINSERT\n8\nA\n2\nL\n10\n0\n20\n0\n41\n-1\n42\n1\n")
+        b = build(dxf)["shapes"].first["b"]
+
+        assert_in_delta(-10.0, b[0], 0.01, "the mirrored copy sits at negative x")
+        assert_in_delta(-1.0, b[2], 0.01)
+      end
+
+      # THE BLOCK'S OWN BASE POINT IS SUBTRACTED BEFORE THE INSERT TRANSFORM — it is the block's
+      # origin, not an offset to add. Getting it backwards puts every copy twice its base point
+      # away from where the file says, which on a file whose bases are all zero (all 180 of
+      # `cards.dxf`'s) is exactly zero evidence, hence a fixture with a non-zero one.
+      test "a BLOCK's base point is the block's origin, subtracted before placement" do
+        dxf = blocks_dxf({ "B" => "0\nLINE\n8\nA\n10\n5\n20\n5\n11\n15\n21\n5\n" },
+                         "0\nINSERT\n8\nA\n2\nB\n10\n100\n20\n100\n", base: { "B" => [ 5, 5 ] })
+        b = build(dxf)["shapes"].first["b"]
+
+        assert_in_delta 100.0, b[0], 0.01
+        assert_in_delta 110.0, b[2], 0.01
+        assert_in_delta(-100.0, b[1], 0.01)
+      end
+
+      # NESTING COMPOSES THE WHOLE CHAIN, NOT JUST THE OUTERMOST STEP. 168 of `cards.dxf`'s 177
+      # INSERTs are inside another block, four deep — so a renderer that honoured only the
+      # top-level INSERT would place nine of its 8,148 contours and misplace the rest.
+      #
+      # THE OUTER TRANSFORM ROTATES, so applying the two translations in the wrong order is a
+      # different answer rather than the same one: (5,0) → +(10,0) → turn → (0,15) → +(100,200).
+      test "a nested INSERT composes the outer transform with the inner one" do
+        dxf = blocks_dxf(
+          { "INNER" => "0\nLINE\n8\nA\n10\n0\n20\n0\n11\n5\n21\n0\n",
+            "OUTER" => "0\nINSERT\n8\nA\n2\nINNER\n10\n10\n20\n0\n" },
+          "0\nINSERT\n8\nA\n2\nOUTER\n10\n100\n20\n200\n50\n90\n"
+        )
+        shapes = build(dxf)["shapes"]
+
+        assert_equal 1, shapes.length, "the inner block draws once, through the outer one"
+        assert_in_delta 100.0, shapes.first["b"][0], 0.01
+        assert_in_delta 100.0, shapes.first["b"][2], 0.01
+        assert_in_delta(-215.0, shapes.first["b"][1], 0.01)
+        assert_in_delta(-210.0, shapes.first["b"][3], 0.01)
+      end
+
+      # A MINSERT IS AN ARRAY OF PLACEMENTS AND EACH CELL IS ITS OWN SHAPE. Zero occurrences in the
+      # corpus, which is precisely why it is pinned: the codes are read whether or not a file has
+      # ever used them, and `70`/`71` default to 1 rather than to 0.
+      test "an INSERT's row and column counts place one copy per cell" do
+        dxf = blocks_dxf({ "U" => "0\nLINE\n8\nA\n10\n0\n20\n0\n11\n1\n21\n0\n" },
+                         "0\nINSERT\n8\nA\n2\nU\n10\n0\n20\n0\n70\n3\n71\n2\n44\n10\n45\n20\n")
+        payload = build(dxf)
+
+        assert_equal 6, payload["shapes"].length, "3 columns x 2 rows"
+        assert_in_delta 21.0, payload["job"]["w"], 0.01, "two column steps of 10 plus the unit line"
+        assert_in_delta 20.0, payload["job"]["h"], 0.01
+      end
+
+      # THE SECTION LABEL IS WHAT SCOPES THE REMOVAL, AND THE FAIL-SAFE DIRECTION IS DELIBERATE. A
+      # `BLOCK` marker outside a labelled `BLOCKS` section defines nothing here, so its body still
+      # draws where it always did. Keying on the BLOCK/ENDBLK markers ALONE would be enough for
+      # every real file and would fail the other way: a stray marker in ENTITIES would swallow the
+      # rest of the drawing into a definition nobody inserts — silent, total, and §14b's skip-list
+      # blind spot exactly. A regression is bounded by yesterday's behaviour; a data loss is not.
+      test "a BLOCK marker outside a labelled BLOCKS section still draws its body" do
+        dxf = "0\nSECTION\n2\nENTITIES\n0\nBLOCK\n2\nSTRAY\n" \
+              "0\nLINE\n8\nA\n10\n0\n20\n0\n11\n9\n21\n0\n0\nENDBLK\n" \
+              "0\nCIRCLE\n8\nA\n10\n5\n20\n0\n40\n1\n0\nENDSEC\n0\nEOF\n"
+        payload = build(dxf)
+
+        assert_equal 2, payload["shapes"].length, "neither the body nor what follows it is lost"
+        assert_in_delta 9.0, payload["job"]["w"], 0.01
+      end
+
+      # ---- an INSERT this parser refuses ------------------------------------------------------
+
+      # EVERY REFUSAL IS TALLIED UNDER ITS OWN NAME, AND THE REASON IS THE TRAP THE SPLINE WORK
+      # ALREADY PAID FOR ONCE. Stage 1's tally is TYPE-based — `parse_entities` counts a `0`-code
+      # name that is not in `ENTITY_TYPES` — so adding INSERT to that list, which is what makes
+      # blocks place at all, STOPS it reporting INSERT entirely. A refused insert would then vanish
+      # in silence with the status line stating that nothing was skipped: the exact defect this
+      # whole arc exists to close, re-opened by the fix for it.
+      #
+      # AN INSERT NAMING A BLOCK THE FILE DOES NOT DEFINE IS THE LIKELY REAL CASE — a file saved
+      # without its dependencies, or a BLOCKS section this parser declined to read.
+      test "an INSERT this parser cannot place is named and counted, never dropped" do
+        {
+          "INSERT(unknown-block)" =>
+            blocks_dxf({ "A" => "0\nLINE\n8\nA\n10\n0\n20\n0\n11\n1\n21\n0\n" },
+                       "0\nINSERT\n8\nA\n2\nNOPE\n10\n0\n20\n0\n"),
+          "INSERT(cyclic)" =>
+            blocks_dxf({ "SELF" => "0\nINSERT\n8\nA\n2\nSELF\n10\n1\n20\n0\n" },
+                       "0\nINSERT\n8\nA\n2\nSELF\n10\n0\n20\n0\n"),
+          "INSERT(too-deep)" => deep_insert_chain(Dxf::MAX_INSERT_DEPTH + 1),
+          "INSERT(too-many)" =>
+            blocks_dxf({ "A" => "0\nLINE\n8\nA\n10\n0\n20\n0\n11\n1\n21\n0\n" },
+                       "0\nINSERT\n8\nA\n2\nA\n10\n0\n20\n0\n70\n99999\n71\n99999\n")
+        }.each do |name, dxf|
+          payload = build(dxf)
+
+          assert_equal({ name => 1 }, payload["u"], "#{name}: must be said out loud")
+          assert_equal [], payload["shapes"], "#{name}: and must not half-draw"
+        end
+      end
+
+      # THE OTHER DIRECTION, WITHOUT WHICH A TALLY THAT ALWAYS FIRES PASSES THE TEST ABOVE — and
+      # the case that matters most, since a nested INSERT is 168 of `cards.dxf`'s 177. Nesting
+      # inside the cap claims nothing at all.
+      test "an INSERT this parser places claims nothing" do
+        payload = build(deep_insert_chain(Dxf::MAX_INSERT_DEPTH))
+
+        assert_equal 1, payload["shapes"].length
+        assert_not payload.key?("u")
+      end
+
+      # A SELF-REFERENCING BLOCK IS MALFORMED INPUT AND MUST NOT HANG THE RENDERER — the reason the
+      # recursion carries a stack at all. What it must ALSO not do is lose the geometry beside the
+      # cycle, which a bare `return` at the top of the expansion would.
+      test "a cyclic block still draws what is not the cycle" do
+        dxf = blocks_dxf({ "SELF" => "0\nLINE\n8\nA\n10\n0\n20\n0\n11\n7\n21\n0\n" \
+                                     "0\nINSERT\n8\nA\n2\nSELF\n10\n1\n20\n0\n" },
+                         "0\nINSERT\n8\nA\n2\nSELF\n10\n0\n20\n0\n")
+        payload = build(dxf)
+
+        assert_equal 1, payload["shapes"].length, "the LINE beside the cycle still draws"
+        assert_in_delta 7.0, payload["job"]["w"], 0.01
+        assert_equal({ "INSERT(cyclic)" => 1 }, payload["u"])
+      end
+
+      # A BLOCK REACHED TWICE BY TWO DIFFERENT PARENTS IS NOT A CYCLE, and the difference is why
+      # the guard is the recursion's own PATH rather than a set of every block ever visited. A
+      # global set draws the first placement and silently drops every later one — the same class of
+      # loss as the ghost this stage removes, arriving through the guard that was meant to prevent
+      # a hang.
+      test "a block reached by two different parents draws under both" do
+        dxf = blocks_dxf(
+          { "LEAF"  => "0\nLINE\n8\nA\n10\n0\n20\n0\n11\n2\n21\n0\n",
+            "LEFT"  => "0\nINSERT\n8\nA\n2\nLEAF\n10\n0\n20\n0\n",
+            "RIGHT" => "0\nINSERT\n8\nA\n2\nLEAF\n10\n0\n20\n0\n" },
+          "0\nINSERT\n8\nA\n2\nLEFT\n10\n0\n20\n0\n0\nINSERT\n8\nA\n2\nRIGHT\n10\n100\n20\n0\n"
+        )
+        payload = build(dxf)
+
+        assert_equal 2, payload["shapes"].length
+        assert_not payload.key?("u")
+      end
+
+      # ---- a placed curve keeps its descriptor, or honestly loses it --------------------------
+
+      # A SIMILARITY MAPS A CIRCLE TO A CIRCLE, so the exact primitive survives the placement and
+      # the thumbnail stays crisp. `g` is a RICHER RENDERING OF THE SAME POINTS, so it has to be
+      # transformed by the same affine the points are or it describes a different shape from the
+      # bbox beside it.
+      test "a CIRCLE inside a uniformly scaled INSERT keeps its exact descriptor" do
+        dxf = blocks_dxf({ "C" => "0\nCIRCLE\n8\nA\n10\n0\n20\n0\n40\n2\n" },
+                         "0\nINSERT\n8\nA\n2\nC\n10\n50\n20\n60\n41\n3\n42\n3\n50\n45\n")
+        shape = build(dxf)["shapes"].first
+
+        assert_equal [ "e", 50.0, -60.0, 6.0, 6.0 ], shape["g"]
+        assert_in_delta 12.0, shape["d"], 0.02, "and the measured diameter agrees with it"
+      end
+
+      # A NON-UNIFORM SCALE TURNS A CIRCLE INTO AN ELLIPSE THE WIRE CANNOT SPELL — its `e` form
+      # carries rx and ry but no rotation, so a stretched-then-turned circle has no honest
+      # descriptor. DROPPING IT IS ALWAYS SAFE and keeping it never is: the thumbnail draws the
+      # descriptor INSTEAD of the points, so a wrong one is a wrong picture, while an absent one
+      # falls back to the flattened points the bbox was computed from.
+      test "a CIRCLE inside a non-uniformly scaled INSERT drops its descriptor, not its shape" do
+        dxf = blocks_dxf({ "C" => "0\nCIRCLE\n8\nA\n10\n0\n20\n0\n40\n2\n" },
+                         "0\nINSERT\n8\nA\n2\nC\n10\n0\n20\n0\n41\n3\n42\n1\n")
+        payload = build(dxf)
+
+        assert_not payload["shapes"].first.key?("g"), "no `e` can describe a rotated ellipse"
+        assert_in_delta 12.0, payload["job"]["w"], 0.05, "but the points still measure the stretch"
+        assert_in_delta 4.0, payload["job"]["h"], 0.05
+      end
+
+      # AN ARC CARRIES A START ANGLE AND A DIRECTION, AND A MIRROR REVERSES BOTH. DXF arcs always
+      # sweep CCW from a0 to a1, so under a negative determinant the placed arc's CCW run starts
+      # where the original ENDED — leaving a0 alone draws the complementary arc: same endpoints,
+      # wrong side, and the thumbnail draws the descriptor rather than the points.
+      #
+      # RESOLVED THE WAY A RENDERER DOES, for `"a half-turn arc's descriptor..."`'s reason: the
+      # question is whether the drawn curve passes through the shape's own points, not whether five
+      # numbers look plausible.
+      test "an ARC inside a mirrored INSERT keeps a descriptor that matches its own points" do
+        [ [ 1, 1, 0 ], [ -1, 1, 0 ], [ 1, -1, 0 ], [ -1, -1, 0 ],
+          [ 1, 1, 37 ], [ -1, 1, 37 ], [ 2, 2, 118 ], [ -2, 2, 118 ] ].each do |(sx, sy, rot)|
+          dxf = blocks_dxf({ "A" => "0\nARC\n8\nA\n10\n3\n20\n1\n40\n10\n50\n20\n51\n200\n" },
+                           "0\nINSERT\n8\nA\n2\nA\n10\n7\n20\n11\n41\n#{sx}\n42\n#{sy}\n50\n#{rot}\n")
+          sh = build(dxf)["shapes"].first
+          why = "sx=#{sx} sy=#{sy} rot=#{rot}"
+
+          assert_equal "a", sh["g"].first, "#{why}: a similarity maps an arc to an arc"
+          worst = sh["p"].map { |(x, y)| distance_to_arc(x, y, resolved_arc(sh["g"])) }.max
+          assert_operator worst, :<=, 0.02,
+                          "#{why}: the drawn arc strays #{worst.round(4)} mm from the shape's own points"
+        end
+      end
+
       # ---- what the parser could not read -----------------------------------------------------
 
       # THE BACKSTOP ITSELF. `Dxf.flatten` is a `case` with no `else`, so for years every entity
@@ -731,6 +1001,32 @@ module Maker
       # carrying the shape.
       def sampled?(shape, x, y)
         shape["p"].any? { |(px, py)| (px - x).abs < 0.05 && (py - y).abs < 0.05 }
+      end
+
+      # A DXF WITH A REAL BLOCKS SECTION, because the whole defect is that this parser had no
+      # section filter — a fixture that skipped the `2\nBLOCKS` label would be testing a document
+      # shape the bug never had. `bodies` is name => the block's entity records verbatim, `entities`
+      # is the ENTITIES section's, and `base:` gives a block the non-zero base point real files
+      # mostly do not have.
+      def blocks_dxf(bodies, entities, base: {})
+        out = +"0\nSECTION\n2\nBLOCKS\n"
+        bodies.each do |name, body|
+          bx, by = base[name] || [ 0, 0 ]
+          out << "0\nBLOCK\n8\nA\n2\n#{name}\n70\n0\n10\n#{bx}\n20\n#{by}\n30\n0\n3\n#{name}\n"
+          out << body << "0\nENDBLK\n8\nA\n"
+        end
+        out << "0\nENDSEC\n0\nSECTION\n2\nENTITIES\n" << entities << "0\nENDSEC\n0\nEOF\n"
+      end
+
+      # `links` INSERTs chained one inside the next, with a LINE at the bottom. Generated rather
+      # than written out so the fixture is expressed in terms of `Dxf::MAX_INSERT_DEPTH` and cannot
+      # drift away from the cap it is asking about.
+      def deep_insert_chain(links)
+        bodies = (1...links).each_with_object({}) do |i, h|
+          h["B#{i}"] = "0\nINSERT\n8\nA\n2\nB#{i + 1}\n10\n1\n20\n0\n"
+        end
+        bodies["B#{links}"] = "0\nLINE\n8\nA\n10\n0\n20\n0\n11\n1\n21\n0\n"
+        blocks_dxf(bodies, "0\nINSERT\n8\nA\n2\nB1\n10\n0\n20\n0\n")
       end
 
       def build(bytes) = JSON.parse(DxfGeometry.render(bytes)[:bytes])
