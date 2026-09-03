@@ -70,9 +70,17 @@ module Maker
           # adding a transform here would apply the flip twice. `Lbrn2` also suppresses the
           # descriptor for a rotated XForm (`axis_aligned?`), which is what keeps a rotated ellipse
           # a polygon rather than an upright ellipse the file does not contain.
-          Lbrn2.each_geometry(doc) do |cut, points, closed, ellipse, image, object_id|
+          #
+          # ONE DESCRIPTOR PER CONTOUR, AND THE `||` IS UNAMBIGUOUS RATHER THAN A PRIORITY.
+          # `each_geometry` produces the two from different arms of one case — an <Ellipse> yields
+          # an ellipse and no segments, a <Path> yields segments and no ellipse — so there is no
+          # shape for which this chooses. It is written as a fallthrough anyway because a THIRD
+          # form arriving with an ordering question would then have to answer it here, where the
+          # comment is, rather than silently in whichever arm ran last.
+          Lbrn2.each_geometry(doc) do |cut, points, closed, ellipse, image, object_id, segments|
             out.add(layer: cut, points:, closed:, image: !image.nil?, object_id:,
-                    curve: ellipse && Geometry.ellipse_curve(*ellipse))
+                    curve: (ellipse && Geometry.ellipse_curve(*ellipse)) ||
+                           (segments && Geometry.path_curve(segments)))
           end
         end
       end

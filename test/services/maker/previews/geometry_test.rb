@@ -311,6 +311,29 @@ module Maker
       # DEGREES and round at ANGLE_PRECISION, because 0.005° is 0.0175 mm of arc at r = 200 —
       # coarser than the very points the descriptor rides beside. The 0.0044° below survives; at
       # PRECISION it would have been rounded away entirely.
+      # ONE ABSOLUTE `d` STRING, BUILT FROM NUMBERS. The rounding and the joining live here rather
+      # than in each format module for the reason `ellipse_curve` does — three producers spelling
+      # `"M #{x} #{y}"` is three copies that must agree about a wire format.
+      #
+      # A SEGMENT LIST IN, A STRING OUT, and the direction is the safety argument: a producer hands
+      # this parsed NUMBERS, and `round` is what a String does not answer to, so there is no door
+      # through which a byte of file text reaches the output.
+      test "path_curve rounds to PRECISION and joins one absolute d string" do
+        assert_equal [ "p", "M 1.23 -4.57 C 0 1 2 3 4 5 L 6.79 7 Z" ],
+                     Geometry.path_curve([ [ :M, 1.234, -4.567 ], [ :C, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0 ],
+                                           [ :L, 6.789, 7.0 ], [ :Z ] ])
+      end
+
+      # A WHOLE NUMBER LOSES ITS `.0`, WHICH IS BYTES AND NOT COSMETICS. `Float#round(2)` returns a
+      # Float, so `10.0.to_s` is "10.0" — three bytes per coordinate, six coordinates per cubic, on
+      # the files this form exists for (49,030 bezier segments across the live LightBurn corpus).
+      # It also removes `-0.0`, which is what a coordinate rounding up from -0.001 would otherwise
+      # write into a geometry attribute.
+      test "path_curve writes a whole coordinate without a trailing zero" do
+        assert_equal [ "p", "M 10 0 L 0 -20" ],
+                     Geometry.path_curve([ [ :M, 10.0, -0.001 ], [ :L, 0.0, -20.0 ] ])
+      end
+
       test "arc_curve rounds millimetres at PRECISION and keeps its angles fine" do
         assert_equal [ "a", 1.23, -4.57, 10.0, 336.504401, -179.995604 ],
                      Geometry.arc_curve(1.234, -4.567, 10.0, 336.5044008, -179.9956044)

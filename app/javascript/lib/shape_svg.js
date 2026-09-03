@@ -95,6 +95,25 @@ export function shapeElement(doc, shape) {
     // cost nothing, and SVG's path grammar takes them (exponent notation included).
     return el(doc, "path", { d: `M ${x0} ${y0} A ${r} ${r} 0 ${large} ${sweep} ${x1} ${y1}` })
   }
+  // A CONTOUR THE FILE DESCRIBED WITH CUBICS ARRIVES AS AN ABSOLUTE `d` — `M`/`L`/`C`/`Z` only,
+  // already in client space, built by Geometry.path_curve. Nothing is parsed or reassembled here:
+  // the whole point of normalizing every input to cubics server-side is that the client has one
+  // branch and no geometry of its own.
+  //
+  // A STRING FROM THE SERVER INTO setAttribute, AND IT IS NOT AN INJECTION. `d` is a GEOMETRY
+  // attribute, not markup — it cannot open an element or a URL — and the string reaching it was
+  // built from PARSED NUMBERS, coordinates the format module had already turned into floats, never
+  // from a byte of file text. `el` is still the door, so the same rule as every other attribute
+  // here applies. (The one place user text does reach a page is the print sheet's filename, and
+  // that goes through `textContent` for exactly this reason.)
+  //
+  // HIT-TESTING IS UNCHANGED BY THIS, WHICH IS THE PART EASIEST TO BREAK LATER. A closed contour
+  // is its own target: `.measure-contour { fill: transparent }` fills a <path>'s closed subpath the
+  // same way it fills the <polygon> this replaces, and `Z` is what makes the subpath closed — drop
+  // it and a filled click target becomes a stroke-only one. An OPEN contour never was its own
+  // target; measure_controller pairs it with a transparent fat polyline twin built from `shape.p`,
+  // which is unaffected because it is built from the points and not from this element.
+  if (g && g[0] === "p") return el(doc, "path", { d: g[1] })
   // NO DESCRIPTOR -> THE THINNED POINTS, which is every path, polygon, polyline, rect and bitmap
   // and every curve the file did not describe as a primitive.
   return el(doc, shape.k ? "polygon" : "polyline",

@@ -38,6 +38,20 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # said no such fixture existed and that adding one was the honest upgrade; it already existed,
   # written for LbrnGeometry's own object-grouping test.
   TEXT = "text-backup-path.lbrn2".freeze
+  # WHAT A PRINTED CONTOUR IS, AS A SELECTOR, BECAUSE IT IS NOT ALWAYS A <polygon>. `shapeElement`
+  # picks the element from the shape's OWN descriptor — a <circle>, an <ellipse>, a <path> for an
+  # arc or (since tinkerex#217) for a contour the file described with cubics, and a polygon or
+  # polyline for everything else. Counting `g polygon` therefore reads a curve as a MISSING PART,
+  # which is how three assertions below failed on fixtures whose contents had not changed. The
+  # sheet's own furniture is <line>, <rect> and <text> (print_sheet's `furniture` and `trimMarks`),
+  # so none of these five tags can match it.
+  #
+  # THE TESTS ABOVE THAT SELECT `polygon, polyline` ARE NOT THIS AND MUST NOT BE FOLDED IN: they
+  # drive `renderSheet` with hand-built shape objects carrying no `g` at all, and asserting the
+  # exact pair of tags IS the claim there ("an open contour prints as a polyline and a closed one
+  # as a polygon").
+  PRINTED_CONTOURS = "g polygon, g polyline, g path, g circle, g ellipse".freeze
+
   # AN OPEN CONTOUR, which is drawn as a polyline UNDER a transparent fat twin — the pair the
   # marking test below exists for, and which nested-plate and bezier-circle (all closed) cannot
   # supply. Of the corpus's open contours this one is the easiest to aim at: o=3 is the straight
@@ -2684,10 +2698,12 @@ class MeasurePrintTest < ApplicationSystemTestCase
     out = JSON.parse(page.evaluate_script(<<~JS))
       (() => {
         const doc = document.querySelector(".measure-print-frame").contentDocument
-        const polys = doc.querySelectorAll("g polygon")
-        const xs = polys[0].getAttribute("points").trim().split(/\\s+/).map((p) => parseFloat(p))
-        return JSON.stringify({ count: polys.length,
-                                w: Math.max(...xs) - Math.min(...xs),
+        // THE HOLE IS A BEZIER PATH AND PRINTS AS A <path>, so the count is over every tag a
+        // contour can be (PRINTED_CONTOURS) and the width comes from getBBox rather than from a
+        // `points` attribute this element does not have.
+        const parts = doc.querySelectorAll("#{PRINTED_CONTOURS}")
+        return JSON.stringify({ count: parts.length,
+                                w: parts[0].getBBox().width,
                                 label: doc.querySelector("text[data-role='size']").textContent })
       })()
     JS
@@ -2860,8 +2876,11 @@ class MeasurePrintTest < ApplicationSystemTestCase
     gap = page.evaluate_script(<<~JS)
       (() => {
         const doc = document.querySelector(".measure-print-frame").contentDocument
-        const lefts = Array.from(doc.querySelectorAll("g polygon")).map((n) =>
-          Math.min(...n.getAttribute("points").trim().split(/\\s+/).map((p) => parseFloat(p))))
+        // ONE PART IS A <polygon> AND THE OTHER A <path> — bezier-circle's square and its cubic
+        // circle — so this asks each element for its own left edge instead of parsing an attribute
+        // only one of them carries. getBBox is in the element's own user space, the same space the
+        // `points` parse used to read, so the number this compares is unchanged.
+        const lefts = Array.from(doc.querySelectorAll("#{PRINTED_CONTOURS}")).map((n) => n.getBBox().x)
         return Math.max(...lefts) - Math.min(...lefts)
       })()
     JS
@@ -2942,9 +2961,12 @@ class MeasurePrintTest < ApplicationSystemTestCase
     click_on "Print all"
 
     assert_equal 1, page.evaluate_script("window.__printed")
+    # BY EVERY TAG A CONTOUR CAN BE: nested-plate's hole is a bezier Path and prints as a <path>,
+    # so a `g polygon` count sees one part where two were printed — "Print all printed half the
+    # file" is precisely what this test exists to refuse, and it would have been reporting it.
     assert_equal 2, page.evaluate_script(<<~JS)
       document.querySelector(".measure-print-frame").contentDocument
-        .querySelectorAll("g polygon").length
+        .querySelectorAll("#{PRINTED_CONTOURS}").length
     JS
   end
 
@@ -3259,8 +3281,33 @@ class MeasurePrintTest < ApplicationSystemTestCase
       case contour.tag_name
       when "circle"  then contour[:cx].to_f - contour[:r].to_f
       when "ellipse" then contour[:cx].to_f - contour[:rx].to_f
+      when "path"    then path_min_x(contour[:d])
       else contour[:points].to_s.split(/\s+/).reject(&:empty?).map { |p| p.split(",").first.to_f }.min
       end
+    end
+
+    # A `"p"` DESCRIPTOR'S PATH — absolute `M`/`L`/`C`/`Z`, built by `Geometry.path_curve`. Since
+    # tinkerex#217 a contour the FILE described with cubics draws as one of these, which is what
+    # every bezier Path in this repo's fixtures is: the branch above answered nil for them and the
+    # lookup reported "the fixture or the draw changed" when neither had — the exact failure the
+    # `else` arm's own comment predicted for an arc, arriving one shape kind earlier.
+    #
+    # EVERY COMMAND IN THIS GRAMMAR TAKES WHOLE COORDINATE PAIRS (`M`/`L` one, `C` three, `Z`
+    # none), so the numbers alternate x, y across the whole string and the x values are the ones at
+    # even positions. That is a property of the grammar, not of the fixture, which is why the guard
+    # on the next line matters: ANY other command letter returns nil rather than a number computed
+    # from an assumption that no longer holds. An arc's `A` carries flags among its numbers and is
+    # exactly that case — the rule the `else` arm states, kept intact.
+    #
+    # THE MINIMUM OF THE CONTROL POLYGON, which BOUNDS the drawn curve and equals it wherever the
+    # leftmost point is a node — as it is for a circle written as quadrant cubics. A bound is what
+    # this helper needs: it tells apart contours 30 to 50 mm away from each other, and a miss is
+    # reported as a missing contour rather than as a wrong number.
+    def path_min_x(d)
+      tokens = d.to_s.split
+      return nil unless tokens.all? { |t| t.match?(/\A[-.\d]/) || %w[M L C Z].include?(t) }
+
+      tokens.grep_v(/\A[A-Za-z]/).map(&:to_f).each_slice(2).map(&:first).min
     end
 
     def in_print_sheet(body)
