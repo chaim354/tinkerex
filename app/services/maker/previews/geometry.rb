@@ -19,8 +19,11 @@ module Maker
     # contours into the collector, and gets the finished payload back:
     #
     #   Geometry.build(colors: ->(layers) { ... }) do |out|
-    #     out.add(layer:, points:, closed:, image:, object_id:)
+    #     out.add(layer:, points:, closed:, image:, object_id:, curve: nil)
     #   end
+    #
+    # `curve:` IS OPTIONAL AND DRAWING-ONLY — an exact primitive the FILE declared, built with
+    # `ellipse_curve`/`arc_curve`. A format supplying none is complete; see those two methods.
     #
     # `points` MUST ALREADY BE IN MILLIMETRES, in the client's own Y-down drawing space. Unit
     # resolution is the format's job because only the format knows where its units are recorded
@@ -71,6 +74,62 @@ module Maker
       # mm, to 0.01.
       PRECISION = 2
 
+      # A DEGREE IS NOT A MILLIMETRE, which is why an arc's two angles do NOT round at PRECISION.
+      # An angle error ε moves a point on the arc by r·ε, so PRECISION's 0.005° half-step is
+      # 0.0175 mm at r = 200 and 0.087 mm at r = 1000 — the descriptor would again be less accurate
+      # than the flattened points it rides beside, which is the whole defect `arc_curve` below
+      # exists to remove. Six places is 1e-8 mm at r = 1000 and costs a few characters on the
+      # handful of shapes that carry an arc at all.
+      ANGLE_PRECISION = 6
+
+      # THE WIRE FORM OF A CURVE DESCRIPTOR, WITH ONE DEFINITION HERE RATHER THAN THREE IN THE
+      # FORMAT MODULES. A format supplies the numbers; the encoding lives here, so `["e", ...]` is
+      # not a string spelled in LbrnGeometry, DxfGeometry and SvgGeometry that must then agree —
+      # the N-copies-that-must-agree defect §14b records as four skip-list strings and §14d as five
+      # port_writable? branches.
+      #
+      # ALREADY IN CLIENT SPACE — millimetres, Y-down. `measure_controller.js` branches on NO file
+      # type and must not learn what a DXF Y-flip is; each format's geometry module puts its
+      # descriptor into this space exactly as it already does for its points.
+      #
+      # A DRAWING HINT, NEVER A MEASUREMENT. `b`, `d` and the job box are computed from the
+      # FULL-RESOLUTION points above and are untouched by anything here — the same contract
+      # `Lbrn2.each_geometry` and `Dxf.each_geometry` already state about the descriptors they
+      # yield ("a richer rendering of the same points, never a substitute for them"). A client
+      # ignoring `"g"` draws what it drew before this existed and reports identical numbers.
+      #
+      # AND NOTHING INFERS ONE FROM THE POINTS. A shape gets a descriptor because the FILE said
+      # <Ellipse> / CIRCLE / ARC / <circle>, never because it measured round. `Geometry.diameter`'s
+      # accepted consequence — a genuine 16-gon reports as round — stays confined to the `d` LABEL
+      # and must never reach exported geometry, where it would substitute a circle for a designed
+      # polygon in a file somebody cuts.
+      def ellipse_curve(cx, cy, rx, ry)
+        [ "e", *[ cx, cy, rx, ry ].map { |v| v.round(PRECISION) } ]
+      end
+
+      # CENTRE + START ANGLE + SIGNED SWEEP, NOT RESOLVED SVG `A` ENDPOINTS, BECAUSE ENDPOINT
+      # PARAMETERISATION IS ILL-CONDITIONED NEAR A HALF-TURN. SVG puts the centre sqrt(r² − d²)
+      # from the chord midpoint, d being the half-chord, so an error δ in an endpoint displaces
+      # the centre by about sqrt(2rδ). At r = 200 the 0.005 mm half-step of PRECISION measured
+      # 1.37 mm of drawn error on a 180° slot end cap — the commonest arc in a laser or CNC DXF —
+      # beside `p` points, in the SAME payload, good to 0.005 mm. Centre-plus-angles has no such
+      # conditioning: the client resolves the endpoints itself at full double precision, where the
+      # same rounding costs a bounded ~0.01 mm and nothing amplifies it. Emitting more decimals was
+      # the other candidate and is not a fix — it leaves the parameterisation ill-conditioned and
+      # needs about nine places to be safe at r = 200. `dxf_geometry_test.rb` pins the geometry
+      # rather than the five numbers, because the numbers were never what was wrong.
+      #
+      # `a0` and `delta` ARE DEGREES IN CLIENT SPACE, already through the format's Y-flip, and the
+      # SIGN OF `delta` is the sweep direction — the client reads both SVG flags off it alone
+      # (large = |delta| > 180, sweep-flag = delta > 0). An earlier note here rejected this form
+      # for "pushing the Y-flip's orientation reversal onto the client". It does not: a signed
+      # delta resolved server-side carries no file-type knowledge, and the client does pure
+      # trigonometry on numbers whose orientation is already decided.
+      def arc_curve(cx, cy, r, a0, delta)
+        [ "a", *[ cx, cy, r ].map { |v| v.round(PRECISION) },
+               *[ a0, delta ].map { |v| v.round(ANGLE_PRECISION) } ]
+      end
+
       # A CHANGE IN THIS FILE IS A CHANGE TO EVERY FORMAT'S OUTPUT, so it must bump EVERY format's
       # PAYLOAD_REVISION, not one of them. `Maker::Previews::Enqueue` compares a stored artifact's
       # `renderer_revision` against the renderer that would build it now — so a fix to `simplify`
@@ -86,14 +145,19 @@ module Maker
       # declaring. This is that, as arithmetic, for the three formats that cannot delegate outright
       # (each has its OWN revision too).
       #
-      # SEEDED AT 0, DELIBERATELY: the totals it produces are exactly the three integers it
-      # replaced (4 / 1 / 1), so introducing it re-rendered nothing. Any future edit here bumps it
-      # by one and re-measures the library once, which is the whole point.
+      # SEEDED AT 0, DELIBERATELY: the totals it produced on introduction were exactly the three
+      # integers it replaced (4 / 1 / 1), so introducing it re-rendered nothing. Any edit here
+      # bumps it by one and re-measures the library once, which is the whole point — and the log
+      # below the next paragraph is where an edit says what it changed.
       #
       # RESIDUAL, STATED RATHER THAN HIDDEN: this makes the CORRECT edit one line; it does not stop
       # an editor bumping a format's FORMAT_REVISION for a change that actually lives here. The
       # absolute-value pins in `GeometryTest` are what make that mistake visible.
-      SHARED_REVISION = 0
+      #   1  shapes gained the optional `g` curve descriptor (Collector#add's `curve:`), the arc
+      #      form of which is centre + angles. NOT A SECOND BUMP: that form replaced resolved `A`
+      #      endpoints WITHIN this same revision, before any deployment ever served a revision-1
+      #      arc. A revision invalidates STORED artifacts, and there are none to invalidate.
+      SHARED_REVISION = 1
 
       # Listed so the next editor has the set in front of them rather than having to grep for it;
       # `GeometryTest` asserts this list matches the renderers that actually build a geometry
@@ -118,7 +182,7 @@ module Maker
         # (a zero-length line, a Rect with no W/H) is ordinary in a real file and must not fail the
         # whole render. It still consumed its object_id, which is why ids are never dense — see
         # `Lbrn2.each_geometry`.
-        def add(layer:, points:, closed:, object_id:, image: false)
+        def add(layer:, points:, closed:, object_id:, image: false, curve: nil)
           return if points.length < 2
 
           xs = points.map(&:first)
@@ -144,6 +208,9 @@ module Maker
           # to fewer than MIN_CIRCLE_POINTS and would lose its diameter entirely.
           d = Geometry.diameter(points, closed, x0, y0, x1, y1)
           entry["d"] = d.round(PRECISION) if d
+          # ABSENT RATHER THAN NULL when a format has no exact primitive to offer — which is most
+          # shapes in most files. See Geometry.ellipse_curve for what this is and is not.
+          entry["g"] = curve if curve
 
           @shapes << entry
         end

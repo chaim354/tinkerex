@@ -2,8 +2,11 @@
 
 > **This is CLAUDE.md's §14h, moved out of the always-loaded file on 2026-08-25.** It binds when you
 > touch `app/services/maker/previews/`, `Maker::Previews::Geometry` and the four formats that feed
-> it, `measure_controller.js`, `lib/print_sheet.js`, or anything that reads a `maker_previews` row —
-> and not at all otherwise. **The rules did not change and nothing was dropped.**
+> it, `measure_controller.js`, `lib/print_sheet.js`, `lib/shape_svg.js`, `lib/export_svg.js`, or
+> anything that reads a `maker_previews` row — and not at all otherwise. **The rules did not change
+> and nothing was dropped.** (The two `lib/` modules were added on 2026-09-02 with the curve
+> descriptor and the SVG export; CLAUDE.md's §14h stub names the older paths, and the stub is a
+> pointer — this file is the list that binds.)
 >
 > **The `§14h` anchor still exists in CLAUDE.md and code cites it from the preview stack** — a
 > citation resolves to the stub there, which points here.
@@ -360,3 +363,120 @@
 - **A SINGLE SHEET CARRIES NO `Sheet 1,1 of 1×1` LABEL**, because there is nothing to register
   against — and both halves of that rule are mutation-checked, since an implementation that always
   labels and one that never does each pass half the tests.
+- **`g` IS A DRAWING HINT AND NOTHING MEASURES FROM IT — the contract both traversals already
+  stated, extended to a second consumer.** `Lbrn2.each_geometry` and `Dxf.each_geometry` have
+  always yielded an exact ellipse/circle/arc beside the flattened points, and both thumbnail
+  renderers have always drawn it; `Collector#add` had no slot for one, so the payload discarded it
+  BY NAME (`_ellipse`, `_curve`) and the Measure view drew a 32-gon beside a thumbnail drawing an
+  ellipse. `b`, `d` and the job box are still computed from FULL-RESOLUTION POINTS, so a client
+  ignoring `g` draws what it drew before it existed and reports identical numbers. **ABSENT, NOT
+  NULL:** `"g" => nil` on every polygon is bytes for nothing on exactly the densest files — the
+  ones the payload's size budget exists for — and the client's own check is truthiness, so a null
+  would read as "no descriptor" while still being paid for.
+- **NOTHING INFERS A DESCRIPTOR FROM THE POINTS, AND THAT IS THE WHOLE SAFETY ARGUMENT.** A shape
+  gets one because the FILE said `<Ellipse>` / `CIRCLE` / `ARC` / `<circle>`, never because it
+  measured round. `Geometry.diameter`'s accepted consequence — a genuine 16-gon reports as round —
+  stays confined to the ⌀ LABEL, which is advisory. Reaching it into `g` substitutes a circle for a
+  designed polygon in a file somebody CUTS: the label trap one surface further out and one degree
+  worse. `bezier-circle.lbrn2`'s Path circle is the pin — `d` present, `g` absent — and it is the
+  assertion no `<Ellipse>` fixture can make.
+- **THE AXIS-ALIGNED GATE IS LOAD-BEARING ON BOTH LEGS, AND HAD NO TEST AT ALL UNTIL 2026-09-02.**
+  Under a rotation an SVG `<ellipse>` is not an SVG `<ellipse>`, so emitting one exports geometry
+  the file does not contain. Every `<XForm>` in the fixture corpus was a translate or a scale, so
+  `Lbrn2.axis_aligned?` was a GREEN MUTATION for as long as it existed — it governed only thumbnail
+  crispness and nothing noticed; carrying the descriptor into the payload made it govern exported
+  geometry. `rotated-ellipse.lbrn2` carries an upright ellipse AND a 30° one, because an
+  implementation that always emits and one that never emits each pass half of a one-shape fixture,
+  and its radii differ (20 × 10) because a rotated CIRCLE is still an upright circle and could not
+  tell a working gate from a missing one. `SvgGeometry.ellipse_curve_for` applies the same test for
+  the same reason.
+- **A 360° DXF `ARC` IS ENCODED AS AN ELLIPSE, NEVER AS AN ARC.** `Dxf.arc_points` turns
+  `a0 == a1` into a 360° sweep — its own comment, *"the whole circle, not a zero-length arc"* —
+  whose start and end points are IDENTICAL, and SVG's rule for an arc whose endpoints coincide is
+  to omit the segment ENTIRELY. An `A` command there exports a path that draws nothing: no error,
+  nothing logged, a shape simply missing from a file somebody cuts. **`Dxf.arc_svg` STILL HAS THIS
+  BUG FOR THE THUMBNAIL** — recorded, not fixed, because the fix needs a `THUMBNAIL_REVISION` bump
+  and a DXF thumbnail rebuild; the payload path must not inherit it.
+- **AN ARC'S WIRE FORM IS CENTRE + START ANGLE + SIGNED SWEEP, BECAUSE SVG'S ENDPOINT
+  PARAMETERISATION CANNOT BE ROUNDED.** SVG puts the centre `sqrt(r² − d²)` from the chord midpoint
+  (`d` the half-chord), so an error δ in an endpoint displaces the centre by about `sqrt(2rδ)` —
+  ill-conditioned near a half-turn, and worse as the radius grows. Resolved `A` endpoints rounded
+  to `PRECISION` drew **1.37 mm** from the curve the shape's own points describe at r = 200, on a
+  180° slot end cap — the commonest arc in a laser or CNC DXF — while `p` in the SAME payload was
+  good to 0.005 mm: the descriptor exists to be MORE faithful than the points and was ~240× less
+  so. Centre-plus-angles has no such conditioning, because the client resolves the endpoints itself
+  at double precision: worst case **0.00836 mm over all 3600 start angles**, and FLAT IN RADIUS,
+  which is the actual fix rather than the smaller number. Emitting more decimals is not a fix — it
+  leaves the parameterisation ill-conditioned and needs about nine places to be safe at r = 200.
+  - **`ANGLE_PRECISION` (6) IS SEPARATE FROM `PRECISION` (2) BECAUSE `PRECISION` IS A LENGTH.** An
+    angle error ε displaces a point by `r·ε`, so PRECISION's 0.005° half-step is 0.0175 mm at
+    r = 200 and 0.087 mm at r = 1000 — the descriptor would again be less accurate than the points
+    it rides beside. Rounding both at one constant is the same defect wearing a tidier constant.
+  - **THE GUARD MUST RESOLVE THE DESCRIPTOR BACK TO A CURVE AND COMPARE IT AGAINST THE SHAPE'S OWN
+    `p` AND `b`.** A test asserting the five numbers passes on any self-consistent encoding and
+    could never have seen this — the numbers were never what was wrong, the parameterisation was.
+- **A REVISION IS BUMPED ONCE PER SHIPPED CHANGE, NOT ONCE PER EDIT.** `SHARED_REVISION` moved
+  0 → 1 when `g` was introduced; the arc's wire form was then REDEFINED inside that same unmerged
+  revision and deliberately NOT bumped again. A revision exists to invalidate STORED artifacts, and
+  no deployment had ever served revision-1 arc bytes — there was nothing to invalidate, and a
+  second bump would re-measure every payload in the library for a form no row holds. **The single
+  bump is deliberate, not forgotten**, and `SHARED_REVISION`'s own log says so beside the number,
+  which is where a later reader looks before deciding it was missed.
+- **THE ELEMENT A SHAPE DRAWS AS HAS ONE DEFINITION, `lib/shape_svg.js`, AND IT WRITES NO
+  PRESENTATION.** Three callers want three presentations of one shape — the Measure view's class +
+  layer colour under a transparent hit twin, the print sheet's black 0.2 mm, the exporter's layer
+  colour at 0.1 mm — so the shared module picks the ELEMENT TYPE and the geometry attributes only,
+  and each caller applies its own. `el` and `unionBox` moved there too and `print_sheet.js`
+  RE-EXPORTS both, which is what keeps `measure_print_test.rb`'s pin of `el`'s mis-call guard
+  working through the move; `measure_controller.js`'s `unionOf` was byte-identical to `unionBox`
+  and is gone, and the exporter would have made a third copy. **A circle gets `<circle>`, not an
+  `<ellipse>` with equal radii** — both draw the same picture, but the export's destinations are a
+  vector editor and a CAD sketch import, where `<circle>` is the unambiguous primitive and an
+  ellipse may arrive as a spline. **And the resolved arc endpoints go out UNROUNDED**: rounding
+  them here rebuilds the ill-conditioning the wire form exists to remove, one layer further out.
+- **THE HIT TWIN IS ALWAYS A POLYLINE FROM `shape.p`, EVEN UNDER AN ARC.** It is an invisible 8 px
+  target, so approximating the curve costs nothing visible and keeps the twin one element. Build it
+  from the points, never by reusing the visible node's `points` string — the visible node no longer
+  necessarily has one.
+- **A CONTOUR IS NOT NECESSARILY A `<polygon>`, SO `points` IS NOT A GENERAL WAY TO ASK ONE WHERE
+  IT IS — AND THREE HARNESSES ASSUMED IT WAS.** `measure_formats_test.rb` and
+  `measure_print_test.rb` read `[:points]` off whatever `.measure-contour` they found and got
+  **nil** the moment a file-declared circle rendered as `<circle>`: two errors from subtracting
+  from nil, and one failure reading *"the fixture or the draw changed"* when neither had.
+  `lbrn_measure_test.rb` carries the IDENTICAL pattern and is green only because its helper happens
+  to be aimed at all-polygon fixtures — luck, not coverage, and it selects `polygon.measure-contour`
+  by tag today. Ask each element kind for its own geometry (`circle` cx−r, `ellipse` cx−rx, else
+  the `points` parse) and answer **nil** for anything else: an arc is a `<path>` whose geometry
+  lives in `d` and carries no such attribute at all, so nil makes the caller report a missing
+  contour rather than raise. Select by CLASS, never by tag; `.measure-contour--hit` is a different
+  token, so widening never matches the twin.
+- **THE EXPORT IS NORMALIZED TO THE ORIGIN AND ITS CANVAS SIZE IS THE PART SIZE.** `width="{w}mm"`
+  plus a viewBox spanning the same `w` is the ENTIRE scale mechanism — the same pair the print
+  sheet uses, no transform and no dpi constant — so a px width draws an identical-looking file that
+  is silently the wrong size in an application that will cut it. ONE translate for the whole
+  selection, so several selected parts keep their relative positions; and normalizing at all is
+  what stops a part pulled out of a 1200 mm sheet importing as a speck in an empty canvas. The root
+  is created IN the SVG namespace so the serialiser writes `xmlns` itself — adding
+  `setAttribute("xmlns", …)` as well emits it TWICE, which is not well-formed XML and which some
+  importers reject outright.
+- **THE EXPORT USES THE LAYER COLOUR WHERE THE PRINT SHEET USES BLACK, AND THAT DIVERGENCE IS
+  ARGUED.** The sheet is black because a mono printer turns a layer palette into indistinguishable
+  greys, on the one artifact whose job is to be measured and cut against. A file has no such
+  constraint, and LightBurn maps stroke colour back to layers on import.
+- **`lib/export_svg.js` BUILDS THE DOCUMENT AND THE CONTROLLER BUILDS THE BLOB.** The same split
+  `print_sheet.js` draws between `renderSheet` (pure) and `buildPrintFrame` (not), and it is what
+  lets the export be asserted as a STRING: headless Chrome here has no configured download
+  directory, so the system test shims `URL.createObjectURL` and `HTMLAnchorElement.prototype.click`
+  instead of looking for a file on disk. An empty selection REFUSES rather than writing a 0 × 0 mm
+  document — that opens in every viewer showing nothing, which reads as "the export is broken"
+  rather than "you selected nothing", and the caller has a readout to put the message in.
+- **THE SVG BUTTON'S VISIBLE TEXT IS CONSTANT AND ITS ACCESSIBLE NAME IS NOT.** The actions bar
+  carries six controls, so a second count-bearing label beside "Print 3 parts" is noise — but a
+  button must not lie about what it does, so its `aria-label` AND its `title` are written from the
+  same `targetNoun()` the Print label uses, by the same refresh — and the ERB's at-rest literals
+  are that same string with the noun `all`, so all three can only drift together.
+  **`targetShapes()` and `targetNoun()`
+  are the ONE definition of the three-arm precedence** — marked set, else the selected contour,
+  else the whole file. It was written out TWICE, in `print()` and in `refreshPrintBar()`, under a
+  comment saying the two "must not drift", which is prose where a mechanism belongs; the exporter
+  would have been a third copy.

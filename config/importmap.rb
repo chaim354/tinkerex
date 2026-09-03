@@ -45,6 +45,13 @@ pin "lib/file_chooser", to: "lib/file_chooser.js"
 # precisely so neither repo can break the other (the module header argues that in full).
 pin "lib/print_sheet", to: "lib/print_sheet.js"
 
+# One geometry-payload shape -> one SVG element, and the `el`/`unionBox` doors that used to live in
+# lib/print_sheet. Imported by print_sheet, by measure_controller and by lib/export_svg, so all
+# three draw the same element for the same shape. HOST pins like the ones above; a bundle must NOT
+# import either — they read this app's own geometry payload, which is not part of the addon API.
+pin "lib/shape_svg", to: "lib/shape_svg.js"
+pin "lib/export_svg", to: "lib/export_svg.js"
+
 # The source viewers' ext -> language table (plus our own g-code and OpenSCAD stream modes).
 # A HOST pin like the three above, so it is drawn into every addon's merged importmap — but a
 # bundle must NOT import it: it takes the CodeMirror namespace as an argument, so it is only

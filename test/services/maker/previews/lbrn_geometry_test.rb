@@ -342,6 +342,62 @@ module Maker
         assert_equal({ "w" => 0.0, "h" => 0.0, "x" => 0.0, "y" => 0.0 }, payload["job"])
       end
 
+      # ---- curve descriptors ----------------------------------------------------------------
+
+      # `sample.lbrn2` carries an <Ellipse>, and the traversal has always yielded an exact
+      # descriptor for it — `Lbrn2.to_svg` draws a real <ellipse> from it. The payload discarded it
+      # by name (`_ellipse`) until now, so the Measure view drew a 32-gon beside a thumbnail
+      # drawing an ellipse.
+      test "an Ellipse shape carries an exact curve descriptor" do
+        payload = build("sample.lbrn2")
+        curves = payload["shapes"].filter_map { |s| s["g"] }
+
+        assert_equal 1, curves.length, "sample.lbrn2 has exactly one Ellipse"
+        assert_equal "e", curves.first[0]
+      end
+
+      # NOT "close to". ELLIPSE_SAMPLES is 32 — a multiple of 4 — so an axis-aligned ellipse's axis
+      # extents are sampled EXACTLY and `ellipse_from` recovers the file's own radii rather than an
+      # approximation of them. A tolerance here would pass just as well for a descriptor derived
+      # from a coarse sample, which is the thing worth knowing.
+      test "the descriptor recovers the file's own radii exactly" do
+        payload = build("rotated-ellipse.lbrn2")
+        upright = payload["shapes"].find { |s| s["g"] }
+
+        assert_equal [ "e", 0.0, 0.0, 20.0, 10.0 ], upright["g"]
+      end
+
+      # THE GATE, IN THE DIRECTION THAT MATTERS. Under a rotation an SVG <ellipse> is not an SVG
+      # <ellipse>, so emitting a descriptor would export geometry the file does not contain — and
+      # unlike a wrong LABEL, that is a shape somebody cuts. The upright ellipse in the same
+      # fixture is asserted two tests up: an implementation that always emits and one that never
+      # emits each pass exactly one of the pair.
+      test "a rotated Ellipse carries no descriptor and stays a polygon" do
+        payload = build("rotated-ellipse.lbrn2")
+
+        assert_equal 2, payload["shapes"].length
+        with, without = payload["shapes"].partition { |s| s.key?("g") }
+        assert_equal 1, with.length, "the upright ellipse keeps its descriptor"
+        assert_equal 1, without.length, "the rotated one does not acquire one"
+        assert_operator without.first["p"].length, :>, 12, "it is still drawn as a polygon"
+      end
+
+      # THE SAFETY ARGUMENT, PINNED. `bezier-circle.lbrn2`'s circle is a <Shape Type="Path"> of four
+      # cubic segments — it MEASURES round, so `d` is present and the readout says ⌀20 mm — but the
+      # file never declared it a primitive, so it must carry NO descriptor. Nothing may infer one
+      # from the points: `Geometry.diameter`'s accepted consequence is that a genuine 16-gon reports
+      # as round, which is harmless in a LABEL and is wrong geometry in a file somebody cuts.
+      #
+      # This is the assertion that would catch a "helpfully" widened implementation, and it is the
+      # one no Ellipse fixture can make.
+      test "a Path that measures round carries no descriptor" do
+        payload = build("bezier-circle.lbrn2")
+        round = payload["shapes"].find { |s| s["d"] }
+
+        assert_not_nil round, "the bezier circle still measures round"
+        assert_not round.key?("g"), "but it was never DECLARED round, so nothing may say it is"
+      end
+
       private
 
       def fixture(name) = File.binread(Rails.root.join("test/fixtures/files", name))

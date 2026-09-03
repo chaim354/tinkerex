@@ -69,6 +69,44 @@ class ApplicationSystemTestCase < ActionDispatch::SystemTestCase
 
   include WebHelpers
 
+  # A ROLLED-BACK DATABASE ID MAKES THE BROWSER'S HTTP CACHE LIE, SO EVERY TEST STARTS WITH IT
+  # EMPTY.
+  #
+  # System tests roll back transactionally, so autoincrement ids RESTART FROM 1 in each test --
+  # ActiveStorage blob ids among them. A URL that DERIVES from such an id is therefore not unique
+  # across a run: a later test mints the BYTE-IDENTICAL URL for completely different content, and
+  # Chrome -- which reuses one profile for every test in a worker -- answers it out of cache with
+  # the earlier test's body. Nothing on the server is wrong, nothing raises, no request is even
+  # made: the page simply draws another test's data.
+  #
+  # WHAT IT ACTUALLY BROKE. The Measure view fetches its payload from the blob URL
+  # `FilesController#geometry` names -- `/rails/active_storage/blobs/redirect/<signed_id>/<name>`,
+  # whose `signed_id` is a signed `blob.id` -- and ActiveStorage's redirect controller marks that
+  # 302 cacheable for `ActiveStorage.service_urls_expire_in`. `LbrnMeasureTest` intermittently drew
+  # `plate.svg`, an 80 x 40 rect belonging to `measure_formats_test.rb`, A DIFFERENT FILE ENTIRELY:
+  # 1-3 failures per run on a DIFFERENT test each time, and once as a `.measure-dims` reading
+  # "80 x 40 mm" against a 60 x 40 fixture. Instrumented and confirmed, not inferred -- the node,
+  # its storage_path, its user and `FileLayer.current.root` were all the test's own, and the SERVER
+  # returned another file's payload. Adding `measure_export_test.rb` (200 -> 215 runs) shifted the
+  # blob-id sequence enough to line the collisions up; the branch point is green on the same seed.
+  #
+  # CLEARED HERE RATHER THAN FIXED AT THE ENDPOINT, and that scope is the point. The hazard is not
+  # geometry's: it is EVERY response a browser may cache whose URL is keyed on an id the rollback
+  # rewinds. Making one controller's responses no-store leaves the next one to rediscover this from
+  # scratch, and `cache: "no-store"` in `measure_controller.js` would launder a test-isolation
+  # defect into production code -- where ids never restart, a repointed preview row gets a NEW blob
+  # and so a new URL, and caching the payload is correct.
+  #
+  # FREE ON A GREEN RUN: one CDP round trip per test, no browser restart, no navigation.
+  #
+  # GUARDED, NOT ASSUMED. `execute_cdp` is a Chromium driver extension, so a rack_test or
+  # non-Chromium driver DEGRADES to doing nothing rather than raising -- the same shape as the log
+  # drain below. Mutation-checked: commenting this block out brings the flakiness straight back.
+  setup do
+    browser = page.driver.browser if page.driver.respond_to?(:browser)
+    browser.execute_cdp("Network.clearBrowserCache") if browser.respond_to?(:execute_cdp)
+  end
+
   # THE BROWSER LOG BUFFER OUTLIVES A TEST. Selenium reuses one Chrome across the whole file, and
   # `logs.get(:browser)` is a DRAIN — so a test that never calls `assert_no_console_errors` (or one
   # that fails before reaching it) hands its entries to whichever test runs next, which then fails

@@ -38,12 +38,18 @@ class LbrnMeasureTest < ApplicationSystemTestCase
   CIRCLE_READOUT = "⌀20 mm".freeze
   SQUARE_READOUT = "20 × 20 mm".freeze
 
+  # THE ONLY FIXTURE HERE WITH A <Shape Type="Ellipse">, which is the only shape kind that reaches
+  # the curve-descriptor path on this leg — bezier-circle's and nested-plate's circles are Paths of
+  # cubic segments and stay polygons by design. Rx = Ry = 10 at XForm 1 0 0 1 50 30, so it draws as
+  # <circle cx="50" cy="-30" r="10"> once the Y-flip is applied.
+  SAMPLE = "sample.lbrn2".freeze
+
   setup do
     @root = Pathname.new(Dir.mktmpdir("measure-view"))
     # The fixture lands BEFORE the first page render on purpose: FileLayer::Share reads an EMPTY
     # root as an unmounted mount point, and sign_in_as ends on /files, which renders through the
     # port. Indexing later is fine; an empty library at that moment is not.
-    [ FIXTURE, NESTED ].each do |f|
+    [ FIXTURE, NESTED, SAMPLE ].each do |f|
       File.binwrite(@root.join(f), File.binread(Rails.root.join("test/fixtures/files", f)))
     end
     FileLayer.current = FileLayer::Share.new(root: @root.to_s)
@@ -52,8 +58,10 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
     @node_id   = @user.nodes.find_by!(storage_path: FIXTURE).node_id
     @nested_id = @user.nodes.find_by!(storage_path: NESTED).node_id
+    @sample_id = @user.nodes.find_by!(storage_path: SAMPLE).node_id
     render_geometry!(@node_id, FIXTURE)
     render_geometry!(@nested_id, NESTED)
+    render_geometry!(@sample_id, SAMPLE)
   end
 
   teardown do
@@ -87,7 +95,12 @@ class LbrnMeasureTest < ApplicationSystemTestCase
 
     # COUNT, not mere presence: the whole payload has to reach the DOM, and "the SVG mounted" is
     # true of a draw that emitted one node and dropped the other.
-    assert_selector "svg polygon.measure-contour", count: 2
+    #
+    # BY CLASS, NOT BY TAG, for the reason `contour_with_min_x` carries: a contour is only a
+    # <polygon> when the file described no primitive, and counting the tag would read a shape that
+    # became a <circle> as a DROPPED node — the one thing this assertion exists to detect. Both of
+    # bezier-circle.lbrn2's shapes are bezier Paths and stay polygons, so the count is unchanged.
+    assert_selector "svg .measure-contour", count: 2
     assert_no_console_errors
   end
 
@@ -168,13 +181,46 @@ class LbrnMeasureTest < ApplicationSystemTestCase
   end
 
 
+  # THE VIEW AND THE THUMBNAIL BESIDE IT NOW DRAW THE SAME PRIMITIVE. Until the payload carried
+  # `g`, this drew a 32-gon while Lbrn2.to_svg drew a real <ellipse> from the very same descriptor
+  # the traversal handed both of them.
+  test "an Ellipse draws as a real circle rather than a polygon" do
+    visit file_path(@sample_id)
+    click_on "Measure"
+    assert_selector ".measure-view--ready", wait: 10
+
+    assert_selector ".measure-stage circle.measure-contour"
+    assert_equal "10", find(".measure-stage circle.measure-contour")["r"]
+  end
+
+  # THE HIGHLIGHT MECHANISM MUST SURVIVE THE ELEMENT CHANGE. The layer colour is a PRESENTATION
+  # attribute so that .measure-contour--selected can outrank it, and `.measure-contour { fill:
+  # transparent }` is what makes a closed contour's interior clickable — a <circle> gets both from
+  # the same code path a <polygon> did, but only a driven click proves it. Reading the stroke
+  # ATTRIBUTE back would report what we wrote even when a rule outranks it, so assert the COMPUTED
+  # style (#d40 = rgb(221, 68, 0)).
+  test "a curve contour is clickable and still recolours on selection" do
+    visit file_path(@sample_id)
+    click_on "Measure"
+    assert_selector ".measure-view--ready", wait: 10
+
+    find(".measure-stage circle.measure-contour").click
+    assert_text "⌀20 mm"
+    assert_equal "rgb(221, 68, 0)", page.evaluate_script(<<~JS)
+      getComputedStyle(document.querySelector(".measure-contour--selected")).stroke
+    JS
+  end
+
   test "✕ Image dismisses the Measure view and returns to the poster" do
     open_measure_view
 
     click_on "✕ Image"
 
     assert_no_selector ".measure-view--ready"
-    assert_no_selector "svg polygon.measure-contour"
+    # BY CLASS, NOT BY TAG: an absence assertion scoped to one element kind passes over every other
+    # kind, so `polygon` here would go on being green with a <circle> still on the stage — which is
+    # exactly what the view now draws for a file that declares one.
+    assert_no_selector "svg .measure-contour"
   end
 
   private
@@ -209,10 +255,21 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     # DOCUMENT ORDER CANNOT TELL THESE TWO APART — that is a coin flip, not a test. `draw` appends in
     # DESCENDING bbox-area order and both shapes are exactly 400 mm², so their relative order is
     # whatever the sort's tie-break happens to be. Their coordinates are disjoint, though: the circle
-    # spans x -10..10 and the square x 40..60, so the minimum x of the rendered `points` attribute
-    # identifies each one no matter how they were ordered or which is on top.
+    # spans x -10..10 and the square x 40..60, so each shape's minimum x identifies it no matter how
+    # they were ordered or which is on top.
+    #
+    # SELECTED BY CLASS, NOT BY TAG, BECAUSE A CONTOUR IS NOT NECESSARILY A <polygon>. The Measure
+    # view draws the primitive the FILE declared: a LightBurn <Ellipse>, a DXF CIRCLE/ARC and an
+    # SVG <circle>/<ellipse> reach the client as a `g` curve descriptor and render as a real
+    # <circle>/<ellipse>/<path> (app/javascript/lib/shape_svg.js), never as a sampled polygon. This
+    # file gets away with `polygon` TODAY only because it points the helper exclusively at
+    # bezier-circle.lbrn2 and nested-plate.lbrn2, whose circles are bezier Paths carrying no
+    # descriptor — sample.lbrn2, loaded in the same setup, DOES draw a <circle>, so the tag was one
+    # call site away from a lookup that fails with "the fixture or the draw changed" when neither
+    # has. The transparent fat hit twin is `.measure-contour--hit`, a DIFFERENT class token, so
+    # widening to the class never matches it.
     def contour_with_min_x(expected)
-      match = all("svg polygon.measure-contour").find { |poly| min_x(poly) == expected }
+      match = all("svg .measure-contour").find { |c| min_x(c) == expected }
       assert match, "no contour whose points start at x=#{expected} — the fixture or the draw changed"
       match
     end
@@ -221,7 +278,17 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     # find("svg") is ambiguous.
     def stage_svg = find(".measure-stage svg")
 
-    def min_x(polygon)
-      polygon[:points].split(/\s+/).reject(&:empty?).map { |p| p.split(",").first.to_f }.min
+    # AND `points` IS NOT A GENERAL WAY TO ASK A CONTOUR WHERE IT IS — a <circle> has no such
+    # attribute, so reading one gives nil and every arithmetic use of it raises. Ask each element
+    # kind for its own geometry instead. nil for anything else is deliberate: an arc draws as a
+    # <path> whose geometry lives in `d`, with no attribute to read a minimum x from, and nil is
+    # simply not equal to any expected value — so the caller reports a missing contour rather than
+    # raising. No fixture in this file produces one today.
+    def min_x(contour)
+      case contour.tag_name
+      when "circle"  then contour[:cx].to_f - contour[:r].to_f
+      when "ellipse" then contour[:cx].to_f - contour[:rx].to_f
+      else contour[:points].to_s.split(/\s+/).reject(&:empty?).map { |p| p.split(",").first.to_f }.min
+      end
     end
 end

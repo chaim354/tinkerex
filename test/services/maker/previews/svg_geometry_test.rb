@@ -281,6 +281,57 @@ module Maker
         assert_equal 2, JSON.parse(result[:bytes])["shapes"].length
       end
 
+      # ---- curve descriptors ----------------------------------------------------------------
+
+      # Unlike LightBurn and DXF, this leg had no descriptor at all — `ellipse_contours` flattened
+      # a <circle> to 64 points and nothing carried the exact primitive forward. An SVG source is
+      # the case where losing it is most obviously a downgrade: the user's own file said <circle>.
+      test "a circle carries an exact descriptor in millimetres" do
+        payload = build(%(<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" ) +
+                        %(viewBox="0 0 100 100"><circle cx="30" cy="40" r="10"/></svg>))
+
+        assert_equal [ "e", 30.0, 40.0, 10.0, 10.0 ], payload["shapes"].first["g"]
+      end
+
+      # SVG IS ALREADY Y-DOWN, so unlike DXF there is no flip here — only the scale. A flip added
+      # "for symmetry with DxfGeometry" turns every SVG upside down and still draws a plausible
+      # picture; only a positional assertion catches it, which is what cy = 20 is doing.
+      test "the descriptor is scaled by the viewBox, never flipped" do
+        payload = build(%(<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" ) +
+                        %(viewBox="0 0 200 200"><ellipse cx="100" cy="40" rx="50" ry="20"/></svg>))
+
+        # 100 mm across 200 user units = 0.5 mm per unit.
+        assert_equal [ "e", 50.0, 20.0, 25.0, 10.0 ], payload["shapes"].first["g"]
+      end
+
+      test "an enclosing translate moves the descriptor's centre" do
+        payload = build(%(<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" ) +
+                        %(viewBox="0 0 100 100"><g transform="translate(10,20)">) +
+                        %(<circle cx="30" cy="40" r="5"/></g></svg>))
+
+        assert_equal [ "e", 40.0, 60.0, 5.0, 5.0 ], payload["shapes"].first["g"]
+      end
+
+      # THE GATE. Under a rotation an SVG <ellipse> is not an SVG <ellipse> — it is a rotated one,
+      # which needs a transform this descriptor cannot carry. Emitting an upright ellipse would
+      # export geometry the file does not contain. Radii differ on purpose: a rotated CIRCLE is
+      # still an upright circle and could not tell a working gate from a missing one.
+      test "a rotated ellipse carries no descriptor and stays a polygon" do
+        payload = build(%(<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" ) +
+                        %(viewBox="0 0 100 100"><g transform="rotate(30)">) +
+                        %(<ellipse cx="40" cy="40" rx="20" ry="10"/></g></svg>))
+
+        assert_not payload["shapes"].first.key?("g")
+        assert_operator payload["shapes"].first["p"].length, :>, 12, "still drawn as a polygon"
+      end
+
+      test "a path carries no descriptor" do
+        payload = build(%(<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" ) +
+                        %(viewBox="0 0 100 100"><path d="M0,0 L50,0 L50,50 Z"/></svg>))
+
+        assert_not payload["shapes"].first.key?("g")
+      end
+
       private
 
       def build(bytes) = SvgGeometry.build(bytes)

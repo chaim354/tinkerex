@@ -1,5 +1,7 @@
 import { Controller } from "@hotwired/stimulus"
 import { PAPERS, printSheets } from "lib/print_sheet"
+import { exportSvg } from "lib/export_svg"
+import { SVG_NS, shapeElement, unionBox } from "lib/shape_svg"
 
 // Measure view: click a contour, read its size in mm.
 //
@@ -20,10 +22,12 @@ import { PAPERS, printSheets } from "lib/print_sheet"
 // coordinates sidesteps that rule instead of carving an exception into it. That reasoning binds
 // hardest on the .svg leg, where the bytes we are measuring ARE an SVG the layer refuses to
 // inline — the payload is parsed coordinates, so nothing of the user's markup reaches the DOM.
+// The contour elements themselves come from lib/shape_svg, which builds them the same way and is
+// the ONE definition shared with the print sheet and the exporter; SVG_NS is imported from there
+// too, so the namespace string is not spelled twice.
 //
 // Lazy by design: nothing is fetched until Measure is clicked. The payload reaches 281 KB gzipped
 // on the densest real files, and most pages are never measured.
-const SVG_NS = "http://www.w3.org/2000/svg"
 
 // Must match Maker::Previews::Geometry::SCHEMA_VERSION — ONE number for all four formats, since
 // this parser is one parser.
@@ -55,7 +59,7 @@ export default class extends Controller {
   // controller does not declare, so `this.nameValue` is `undefined` until it appears here — no
   // error, no warning, just an empty filename on every printed sheet.
   static values = { url: String, name: String }
-  static targets = ["stage", "dims", "fallback", "selectToggle", "paper", "printButton"]
+  static targets = ["stage", "dims", "fallback", "selectToggle", "paper", "printButton", "svgButton"]
 
   connect() {
     this.aborted = false
@@ -235,12 +239,7 @@ export default class extends Controller {
   }
 
   print() {
-    // THE SAME THREE ARMS refreshPrintBar LABELS, in the same order. A measuring click points this
-    // at ONE contour — the one whose size the readout is showing — so printing the part you are
-    // looking at costs no mode. Whatever it resolves to, the button already said so.
-    const shapes = this.marked.size ? [...this.marked]
-      : this.selected ? [this.selected.__shape]
-      : this.allShapes
+    const shapes = this.targetShapes()
     // NOT DEAD, BUT ONLY REACHABLE BY DRIVING THIS METHOD DIRECTLY. `allShapes` is undefined
     // between connect() and the first successful draw(), and in that window the button is
     // display:none (`.measure-actions` without --ready), so no click can get here. What the guard
@@ -282,6 +281,43 @@ export default class extends Controller {
     }
   }
 
+  // THE SAME TARGET SET print() USES, resolved by the same method — so the two buttons beside each
+  // other can never act on different shapes.
+  //
+  // THE BLOB IS BUILT AND RELEASED HERE; lib/export_svg builds the DOCUMENT and knows nothing about
+  // downloads. That is the split print_sheet.js draws between renderSheet and buildPrintFrame, and
+  // it is what lets the export be asserted as a string in a test rather than as a file on disk.
+  downloadSvg() {
+    const shapes = this.targetShapes()
+    // The same guard, and the same window, as print()'s: `allShapes` is undefined between
+    // connect() and the first successful draw(), and the button is display:none throughout it.
+    if (!shapes || !shapes.length) return
+
+    let url
+    try {
+      const blob = new Blob([ exportSvg(shapes, { colors: this.colors }) ], { type: "image/svg+xml" })
+      url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      // The SOURCE file's base name plus a suffix, never the source name itself: exporting a
+      // subset of `plate.svg` to a file also called `plate.svg` is a download that silently
+      // shadows the original in the browser's download folder.
+      a.download = `${this.nameValue.replace(/\.[^.]+$/, "")}-parts.svg`
+      a.click()
+    } catch (e) {
+      // REACHES THE READOUT, not just the console — exportSvg throws before any file exists, so a
+      // swallowed message is a button that does nothing whatsoever. AND IT LOGS, because this
+      // catch cannot tell a refusal from a bug: print()'s own catch carries the same pair for the
+      // same reason.
+      console.warn("[measure] export refused:", e)
+      this.setStatus(e.message)
+    } finally {
+      // RELEASED EVEN WHEN THE CLICK THREW. An object URL pins its Blob for the lifetime of the
+      // document, and this view is reachable repeatedly through the ✕ Image -> Measure round trip.
+      if (url) URL.revokeObjectURL(url)
+    }
+  }
+
   area(s) {
     return Math.max(s.b[2] - s.b[0], 0.01) * Math.max(s.b[3] - s.b[1], 0.01)
   }
@@ -289,10 +325,12 @@ export default class extends Controller {
   // A bitmap draws as a dashed placeholder: its base64 is excluded from the payload on purpose
   // (one real file is 1.45 MB as SVG and 0.1 KB as geometry), and a measuring view has no use
   // for the photo — only for the rectangle it occupies.
+  //
+  // THE ELEMENT COMES FROM lib/shape_svg, shared with the print sheet and the exporter — so a
+  // LightBurn <Ellipse>, a DXF CIRCLE/ARC and an SVG <circle> draw as the primitive the FILE
+  // described, the same one the thumbnail beside this view has always drawn.
   contourNode(shape) {
-    const node = document.createElementNS(SVG_NS, shape.k ? "polygon" : "polyline")
-    const points = shape.p.map(([x, y]) => `${x},${y}`).join(" ")
-    node.setAttribute("points", points)
+    const node = shapeElement(document, shape)
     node.setAttribute("class", shape.i ? "measure-bitmap" : (shape.k ? "measure-contour" : "measure-contour measure-contour--open"))
     // LightBurn's own layer colour, sent by the server so the palette has ONE definition (see
     // LbrnGeometry#layer_colors).
@@ -308,11 +346,16 @@ export default class extends Controller {
     node.__shape = shape
     if (shape.k || shape.i) return node
 
-    // An open polyline has no interior to click and a hairline stroke to aim at. Group it with a
+    // An open contour has no interior to click and a hairline stroke to aim at. Group it with a
     // transparent fat twin so the hit area is finger-sized while the drawn line stays 1px.
+    //
+    // THE TWIN IS ALWAYS A POLYLINE FROM shape.p, EVEN WHEN THE DRAWN NODE IS AN ARC. It is an
+    // invisible 8px target, so approximating the arc costs nothing visible and keeps the twin one
+    // element — and it must be built from the points here rather than reusing a `points` string,
+    // because the visible node no longer necessarily has one.
     const group = document.createElementNS(SVG_NS, "g")
     const hit = document.createElementNS(SVG_NS, "polyline")
-    hit.setAttribute("points", points)
+    hit.setAttribute("points", shape.p.map(([ x, y ]) => `${x},${y}`).join(" "))
     hit.setAttribute("class", "measure-contour--hit")
     hit.__shape = shape
     hit.__visible = node // so hover/selection colours the drawn line, not the invisible twin
@@ -403,7 +446,7 @@ export default class extends Controller {
       this.toggleMarks(useObject ? siblings : [shape])
       // BOTH HALVES, because picking parts and learning their sizes are one gesture: a mode that
       // silenced the measurement would make you leave it to check a size.
-      const size = useObject ? this.dims(this.unionOf(siblings)) : this.sizeLabel(shape)
+      const size = useObject ? this.dims(unionBox(siblings)) : this.sizeLabel(shape)
       this.setStatus(`${size} · ${this.selectionStatus()}`)
       return
     }
@@ -476,7 +519,29 @@ export default class extends Controller {
   selectionStatus() {
     const n = this.marked.size
     if (!n) return "nothing selected · Print all prints the whole file"
-    return `${n} part${n === 1 ? "" : "s"} · ${this.dims(this.unionOf([...this.marked]))}`
+    return `${n} part${n === 1 ? "" : "s"} · ${this.dims(unionBox([...this.marked]))}`
+  }
+
+  // THE THREE ARMS, IN PRECEDENCE ORDER, WITH ONE DEFINITION. They were written out twice — once
+  // in print() and once in refreshPrintBar() — under a comment saying the two "must not drift",
+  // which is prose where a mechanism belongs. The exporter would have been a third copy, and three
+  // copies of a precedence rule is §14d's five port_writable? branches in miniature.
+  //
+  //   marked set        -> the set          "Print 3 parts"
+  //   else selected     -> the contour under the measurement, so measuring a part is enough to
+  //                        target it and Select parts is not a toll gate
+  //   else              -> the whole file
+  targetShapes() {
+    return this.marked.size ? [ ...this.marked ]
+      : this.selected ? [ this.selected.__shape ]
+      : this.allShapes
+  }
+
+  // WHAT THE BUTTONS CALL THAT SET. Same three arms, same order, derived from the same state, so a
+  // label can no longer describe one target while an action performs another.
+  targetNoun() {
+    const n = this.marked.size
+    return n ? `${n} part${n === 1 ? "" : "s"}` : this.selected ? "selected" : "all"
   }
 
   // NO `hasPrintButtonTarget` GUARD, DELIBERATELY, and the plan's draft had one. All six controls
@@ -493,30 +558,34 @@ export default class extends Controller {
   // left to be relied on. Such a partial would break draw() itself, and `populatePaper` and
   // `print()` with it; the answer then is that the partial declares the controls, not that four
   // methods each grow a guard.
-  // THREE TARGETS, IN PRECEDENCE ORDER, AND THE LABEL ALWAYS NAMES THE ONE IN FORCE. The middle
-  // arm is why Select parts is no longer a toll gate on printing a single part: click a contour to
-  // measure it and the button already points at it. `print()` reads the same three arms in the
-  // same order; they are two halves of one claim and must not drift.
-  //
-  //   marked set        -> "Print 3 parts"   the set
-  //   else selected     -> "Print selected"  the contour under the measurement
-  //   else              -> "Print all"       the whole file
+  // THE LABEL ALWAYS NAMES THE TARGET IN FORCE, and it can no longer do otherwise: the noun comes
+  // from `targetNoun()` and the shapes `print()` acts on from `targetShapes()`, so the two halves
+  // of the claim are one definition rather than two spellings kept in step by a comment. The
+  // wording is unchanged — "Print all", "Print selected", "Print 3 parts".
   refreshPrintBar() {
-    const n = this.marked.size
-    this.printButtonTarget.textContent =
-      n ? `Print ${n} part${n === 1 ? "" : "s"}` : this.selected ? "Print selected" : "Print all"
+    const noun = this.targetNoun()
+    this.printButtonTarget.textContent = `Print ${noun}`
+    // THE SVG BUTTON'S TEXT DOES NOT MOVE, SO ITS ACCESSIBLE NAME MUST. Both are written here,
+    // from one targetNoun(), so the two buttons cannot come to describe different sets. NO
+    // `hasSvgButtonTarget` GUARD, for the reason the comment above gives about the Print button:
+    // it is the sixth control in the same always-rendered span, so it exists whenever this
+    // controller is connected, and a guard that cannot fail asserts a condition that does not
+    // exist. The at-rest literals in _measure.html.erb are this same string with `noun` = "all".
+    const label = `Download ${noun} as SVG`
+    this.svgButtonTarget.setAttribute("aria-label", label)
+    this.svgButtonTarget.setAttribute("title", label)
   }
 
   contourLabel(shape, siblings) {
     let label = this.sizeLabel(shape)
     if (siblings.length > 1) {
-      label += ` · part of a ${siblings.length}-contour object (⌥ for ${this.dims(this.unionOf(siblings))})`
+      label += ` · part of a ${siblings.length}-contour object (⌥ for ${this.dims(unionBox(siblings))})`
     }
     return label
   }
 
   objectLabel(siblings) {
-    return `${this.dims(this.unionOf(siblings))} · whole object, ${siblings.length} contours`
+    return `${this.dims(unionBox(siblings))} · whole object, ${siblings.length} contours`
   }
 
   // ⌀ only when the server said so. Circularity is decided server-side, from full-resolution
@@ -529,12 +598,8 @@ export default class extends Controller {
     return `${this.mm(box[2] - box[0])} × ${this.mm(box[3] - box[1])} mm`
   }
 
-  unionOf(shapes) {
-    return [
-      Math.min(...shapes.map((s) => s.b[0])), Math.min(...shapes.map((s) => s.b[1])),
-      Math.max(...shapes.map((s) => s.b[2])), Math.max(...shapes.map((s) => s.b[3]))
-    ]
-  }
+  // `unionOf` LIVED HERE AND WAS BYTE-IDENTICAL TO print_sheet's `unionBox`. The exporter would
+  // have been a third copy, so the one definition moved to lib/shape_svg and both import it.
 
   mm(n) {
     return (Math.round(n * 10) / 10).toLocaleString()

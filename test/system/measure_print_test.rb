@@ -853,8 +853,9 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # OPEN CONTOURS EXIST, AND A <polygon> CLOSES ONE FOR THEM. `k` is 0 for a path that never
   # closes — an engraved line, a DXF LWPOLYLINE with no closed flag — and a polygon draws a segment
   # from its last point back to its first that the design does not contain. Every shape in the four
-  # tests above is `k: 1`, so `shape.k ? "polygon" : "polyline"` could be the constant "polygon"
-  # with all of them GREEN.
+  # tests above is `k: 1`, so `shape.k ? "polygon" : "polyline"` — which lives in lib/shape_svg's
+  # `shapeElement` now, not in print_sheet's `contourNode` — could be the constant "polygon" with
+  # all of them GREEN.
   #
   # AND THE POINTS ARE ASSERTED AS THE EXACT STRING THE PRINTER WILL PARSE, which a "spans 60 user
   # units" assertion cannot substitute for in three separate directions. All three are
@@ -1010,6 +1011,30 @@ class MeasurePrintTest < ApplicationSystemTestCase
     # is the spelling that invites a per-shape VALUE, which is what actually stacks two parts on
     # top of each other.
     assert_equal 0, out["movedShapes"]
+  end
+
+  # THE SHEET DRAWS THE PRIMITIVE THE FILE DESCRIBED, and this is a correctness fix rather than a
+  # cosmetic one. With Lbrn2::ELLIPSE_SAMPLES at 32, a ⌀50 mm circle's sampled chords sit 0.12 mm
+  # INSIDE the true curve — the RDP thinning is bounded at 0.01 mm but cannot recover error the
+  # SAMPLER already introduced, and 0.12 mm is measurable on the one sheet whose whole job is to be
+  # measured and cut against.
+  #
+  # SYNTHETIC, not a fixture: the descriptor's numbers are chosen so the assertion is a literal,
+  # the same reason the tiling tests above use synthetic shapes.
+  test "a shape carrying a curve descriptor prints as a real circle" do
+    markup = in_print_sheet(<<~JS)
+      (() => {
+        const shapes = [{ b: [0, 0, 50, 50], p: [[0, 0], [50, 50]], k: 1, c: 0,
+                          g: ["e", 25, 25, 25, 25] }]
+        const { pages } = m.buildSheets(shapes, { name: "Letter", w: 215.9, h: 279.4 })
+        return m.renderSheet(document, pages[0],
+          { name: "t.lbrn2", date: "2026-09-02", sizeLabel: () => null }).outerHTML
+      })()
+    JS
+
+    assert_includes markup, '<circle cx="25" cy="25" r="25"'
+    assert_includes markup, 'stroke-width="0.2"', "still the print sheet's own black hairline"
+    assert_not_includes markup, "<polygon"
   end
 
   # ---- lib/print_sheet.js: sheet furniture -----------------------------------------------------
@@ -1180,9 +1205,13 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # — sixteen junk attributes, no text content, an empty <text> that renders nothing on a page
   # that is otherwise perfectly formed. Nothing thrown, nothing logged.
   #
-  # `el` IS EXPORTED FOR THIS TEST AND FOR NO OTHER REASON — nothing reachable through
-  # renderSheet can put a string in that slot, so without the export this would be a guard that
-  # has never failed, which CLAUDE.md §15 says is a guard that has not been shown to work.
+  # `el` LIVES IN lib/shape_svg NOW AND REACHES THIS TEST THROUGH lib/print_sheet's RE-EXPORT,
+  # which is why that re-export is not tidy-up to be deleted: nothing reachable through
+  # renderSheet can put a string in that slot, so without a reachable `el` this would be a guard
+  # that has never failed, which CLAUDE.md §15 says is a guard that has not been shown to work.
+  # (`el` is exported from shape_svg for a second reason besides — the print sheet, the Measure
+  # view and the exporter all build their elements through it — but that is not what makes this
+  # assertion possible; `import("lib/print_sheet")` resolving `m.el` is.)
   test "el refuses a string in the attribute slot rather than minting junk attributes" do
     out = in_print_sheet(<<~JS)
       (() => {
@@ -3203,15 +3232,35 @@ class MeasurePrintTest < ApplicationSystemTestCase
     # ambiguous.
     def stage_svg = find(".measure-stage svg")
 
-    # The plate spans x -30..30 and the hole only -5..5, so the minimum x of the rendered `points`
-    # attribute identifies each one no matter which was painted on top. POLYGONS ONLY — an open
-    # contour draws as a polyline and is found by class instead (see the open-contour test).
+    # The plate spans x -30..30 and the hole only -5..5, so the minimum x identifies each one no
+    # matter which was painted on top.
+    #
+    # SELECTED BY CLASS, NOT BY TAG, BECAUSE A CONTOUR IS NOT NECESSARILY A <polygon>. The Measure
+    # view draws the primitive the FILE declared: a LightBurn <Ellipse>, a DXF CIRCLE/ARC and an
+    # SVG <circle>/<ellipse> reach the client as a `g` curve descriptor and render as a real
+    # <circle>/<ellipse>/<path> (app/javascript/lib/shape_svg.js), never as a sampled polygon.
+    # sample.lbrn2's Ellipse is the x=40 contour the open-contour test reads onto, and it is a
+    # <circle> — invisible to the old `polygon.measure-contour` selector, so that lookup failed
+    # with "the fixture or the draw changed" when neither had. The transparent fat hit twin is
+    # `.measure-contour--hit`, a DIFFERENT class token, so widening to the class never matches it.
     def contour_with_min_x(expected)
-      match = all("svg polygon.measure-contour").find do |poly|
-        poly[:points].split(/\s+/).reject(&:empty?).map { |p| p.split(",").first.to_f }.min == expected
-      end
+      match = all("svg .measure-contour").find { |c| min_x(c) == expected }
       assert match, "no contour whose points reach x=#{expected} — the fixture or the draw changed"
       match
+    end
+
+    # AND `points` IS NOT A GENERAL WAY TO ASK A CONTOUR WHERE IT IS — a <circle> has no such
+    # attribute, so reading one gives nil and every arithmetic use of it raises. Ask each element
+    # kind for its own geometry instead. nil for anything else is deliberate: an arc draws as a
+    # <path> whose geometry lives in `d`, with no attribute to read a minimum x from, and nil is
+    # simply not equal to any expected value — so the caller reports a missing contour rather than
+    # raising. No fixture in this file produces one today.
+    def min_x(contour)
+      case contour.tag_name
+      when "circle"  then contour[:cx].to_f - contour[:r].to_f
+      when "ellipse" then contour[:cx].to_f - contour[:rx].to_f
+      else contour[:points].to_s.split(/\s+/).reject(&:empty?).map { |p| p.split(",").first.to_f }.min
+      end
     end
 
     def in_print_sheet(body)

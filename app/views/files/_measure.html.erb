@@ -32,6 +32,16 @@
               data-measure-target="paper" data-action="measure#paperChanged"></select>
       <button type="button" class="btn small" data-action="measure#print"
               data-measure-target="printButton">Print all</button>
+      <%#
+        VISIBLE TEXT IS CONSTANT, THE ACCESSIBLE NAME IS NOT. The bar already carries five other
+        controls, so a second count-bearing label beside "Print 3 parts" is noise — but the button
+        must still say what it will do, so refreshPrintBar() writes aria-label/title from the same
+        targetNoun() the Print label uses. The literals here are the at-rest state the controller
+        writes on draw(); they must agree with it, exactly as "Print all" does above.
+      %>
+      <button type="button" class="btn small ghost" data-action="measure#downloadSvg"
+              data-measure-target="svgButton"
+              aria-label="Download all as SVG" title="Download all as SVG">SVG</button>
       <button type="button" class="btn small ghost" data-action="measure#reset">Reset</button>
       <button type="button" class="btn small ghost" aria-label="Return to image"
               data-action="measure#showPoster">✕ Image</button>

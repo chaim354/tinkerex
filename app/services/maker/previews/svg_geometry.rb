@@ -91,9 +91,15 @@ module Maker
 
         counter = Counter.new
         Geometry.build(colors: ->(layers) { layers.to_h { |l| [ l, l ] } }) do |out|
-          walk(root, IDENTITY, Inherited.new, tolerance, counter) do |paint, points, closed, image|
+          walk(root, IDENTITY, Inherited.new, tolerance, counter) do |paint, points, closed, image, curve|
             out.add(layer: paint, points: points.map { |(x, y)| [ x * sx, y * sy ] },
-                    closed:, image:, object_id: counter.value)
+                    closed:, image:, object_id: counter.value,
+                    # THE SAME sx/sy THE POINTS GET. A descriptor scaled differently from the
+                    # contour it describes draws an ellipse that does not sit on its own outline —
+                    # and the outline is what `b` was measured from, so the picture would disagree
+                    # with the readout.
+                    curve: curve && Geometry.ellipse_curve(curve[0] * sx, curve[1] * sy,
+                                                           curve[2] * sx.abs, curve[3] * sy.abs))
           end
         end
       end
@@ -136,8 +142,9 @@ module Maker
 
           counter.succ!
           image = name == "image"
+          curve = ellipse_curve_for(child, world)
           contours.each do |(points, closed)|
-            block.call(here.paint, points.map { |(x, y)| apply(world, x, y) }, closed, image)
+            block.call(here.paint, points.map { |(x, y)| apply(world, x, y) }, closed, image, curve)
           end
         end
       end
@@ -202,6 +209,31 @@ module Maker
           [ cx + (rx * Math.cos(t)), cy + (ry * Math.sin(t)) ]
         end
         [ [ pts, true ] ]
+      end
+
+      # An axis-aligned <circle>/<ellipse> -> [cx, cy, rx, ry] in the SAME space as this element's
+      # yielded points (post-transform, pre-viewBox-scale), or nil. `build` scales both together,
+      # so the two can never disagree about which space they are in.
+      #
+      # GATED ON THE TRANSFORM, AND THAT REFUSAL IS THE POINT. Under a rotation or a skew an SVG
+      # <ellipse> is no longer an SVG <ellipse>; emitting one would export geometry the file does
+      # not contain — and a wrong SHAPE is not a wrong label, it is what a machine cuts. Same test
+      # and same reason as `Lbrn2.axis_aligned?`.
+      #
+      # ONLY THESE TWO ELEMENTS CAN REACH IT. Everything else `contours_for` handles is either a
+      # polygon already or a flattened path, and both may yield MORE THAN ONE contour, which a
+      # single descriptor could not describe. A <rect> with rounded corners is the sharp case: it
+      # is four arcs and four lines, not a primitive.
+      def ellipse_curve_for(node, world)
+        return nil unless %w[circle ellipse].include?(node.name)
+        return nil if world[1].abs > 1e-9 || world[2].abs > 1e-9
+
+        rx = num(node["r"]) || num(node["rx"])
+        ry = num(node["r"]) || num(node["ry"])
+        return nil if rx.nil? || ry.nil? || rx <= 0 || ry <= 0
+
+        cx, cy = apply(world, num(node["cx"]) || 0.0, num(node["cy"]) || 0.0)
+        [ cx, cy, rx * world[0].abs, ry * world[3].abs ]
       end
 
       def line_contours(node)

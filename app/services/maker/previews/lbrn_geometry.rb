@@ -64,8 +64,15 @@ module Maker
         raise Lbrn2::ParseError, "not a LightBurn project" if doc.root.nil?
 
         Geometry.build(colors: colors_for(doc)) do |out|
-          Lbrn2.each_geometry(doc) do |cut, points, closed, _ellipse, image, object_id|
-            out.add(layer: cut, points:, closed:, image: !image.nil?, object_id:)
+          # `ellipse` IS ALREADY IN CLIENT SPACE and needs no conversion, unlike DxfGeometry's.
+          # `Lbrn2.each_geometry` yields points with the composed affine and the Y-flip already
+          # applied, and `Lbrn2.ellipse_from` derives the descriptor from those same points — so
+          # adding a transform here would apply the flip twice. `Lbrn2` also suppresses the
+          # descriptor for a rotated XForm (`axis_aligned?`), which is what keeps a rotated ellipse
+          # a polygon rather than an upright ellipse the file does not contain.
+          Lbrn2.each_geometry(doc) do |cut, points, closed, ellipse, image, object_id|
+            out.add(layer: cut, points:, closed:, image: !image.nil?, object_id:,
+                    curve: ellipse && Geometry.ellipse_curve(*ellipse))
           end
         end
       end

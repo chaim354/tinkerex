@@ -1,7 +1,8 @@
 # Adding a preview format
 
 The preview system renders a file's bytes to a **PNG thumbnail** behind a small seam
-(`app/services/maker/previews/`). Adding a format is four steps.
+(`app/services/maker/previews/`). Adding a format is four steps — plus a fifth if it is 2D vector
+and can also be measured.
 
 1. **Write a renderer** in `app/services/maker/previews/<ext>.rb`. It responds to:
    - `available?` → Boolean — is the toolchain present? (Pure-Ruby renderers return `true`.)
@@ -25,6 +26,20 @@ The preview system renders a file's bytes to a **PNG thumbnail** behind a small 
    in the `Dockerfile` (a build stage + a COPY, like `stl-thumbnailer`/`resvg`), and add an
    idempotent install to the self-hosted CI legs in `.github/workflows/ci.yml`. A box without the
    binary degrades that format to `unsupported` (a non-error terminal state) — never a crash.
+
+5. **If it is 2D vector, it can also measure.** A format that can yield contours gets the Measure
+   view by supplying a traversal to `Maker::Previews::Geometry.build` (see `LbrnGeometry`,
+   `DxfGeometry`, `SvgGeometry`) and declaring `FORMAT_REVISION` / `PAYLOAD_REVISION` — the latter
+   as `Geometry::SHARED_REVISION + FORMAT_REVISION`, never a bare integer, and the module must be
+   named in `Geometry::REVISIONED_BY` or `GeometryTest` fails.
+
+   A traversal MAY also supply a **curve descriptor** through `Collector#add`'s `curve:` keyword,
+   built with `Geometry.ellipse_curve` or `Geometry.arc_curve` and already in client space (mm,
+   Y-down). It is optional and **drawing-only**: `b`, `d` and the job box are computed from the
+   full-resolution points regardless, so a format supplying none is complete. Supply one ONLY where
+   the file itself declared an exact primitive — never inferred from the points — and refuse it
+   under a rotated or skewed transform. `docs/invariants/measure-view.md` is the binding set of
+   rules here; read it before writing a traversal.
 
 Thumbnails generate eagerly: `Maker::Previews::Enqueue.call(user:, node_id:, name:, version_id:)`
 fires from the upload, API-commit, and scan seams (see `FilesController#enqueue_preview`,

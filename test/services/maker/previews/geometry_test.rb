@@ -71,7 +71,7 @@ module Maker
       end
 
       # THE ABSOLUTE VALUES, AND THE RELATIONSHIP ABOVE IS NOT A SUBSTITUTE FOR THEM. A
-      # relationship-only pin is satisfied by seeding SHARED_REVISION at 1 and shifting all three
+      # relationship-only pin is satisfied by seeding SHARED_REVISION at ANY value and shifting all three
       # totals — arithmetic that stays internally consistent while silently re-measuring every
       # geometry payload in the library, on the one backend of three that holds real files. It also
       # catches the residual the arithmetic cannot close: a shared change bumped into a format's own
@@ -79,9 +79,9 @@ module Maker
       #
       # FIVE NAMES, NOT THREE: .lbrn and .mage both route to LbrnGeometry, so a three-name check
       # cannot see a delegation regression.
-      GEOMETRY_REVISIONS = { "a.lbrn2" => 4, "a.lbrn" => 4, "a.mage" => 4, "a.dxf" => 1, "a.svg" => 1 }.freeze
+      GEOMETRY_REVISIONS = { "a.lbrn2" => 5, "a.lbrn" => 5, "a.mage" => 5, "a.dxf" => 2, "a.svg" => 2 }.freeze
 
-      test "introducing the shared term left every format's stored payloads valid" do
+      test "a format's geometry revision moves only when this pin moves with it" do
         GEOMETRY_REVISIONS.each do |filename, expected|
           assert_equal expected, Enqueue.revision_for_name(filename, "geometry"),
                        "#{filename} changed geometry revision — every stored payload of that format " \
@@ -214,6 +214,51 @@ module Maker
         end
 
         assert_equal({}, payload["colors"])
+      end
+
+      # ---- curve descriptors --------------------------------------------------------------
+
+      # A DRAWING HINT AND NEVER A MEASUREMENT. The descriptor rides alongside the points; `b` and
+      # `d` are still computed from the points, so a payload built WITH one and a payload built
+      # WITHOUT one must report identical numbers. Asserted against a shape that is genuinely
+      # round, so `d` is present and could plausibly have been recomputed from the descriptor.
+      test "a curve descriptor changes no measured number" do
+        points = (0..32).map { |i| t = i * (2 * Math::PI / 32); [ 10 * Math.cos(t), 10 * Math.sin(t) ] }
+
+        plain = Geometry.build { |o| o.add(layer: 0, points:, closed: true, object_id: 1) }
+        with  = Geometry.build do |o|
+          o.add(layer: 0, points:, closed: true, object_id: 1,
+                curve: Geometry.ellipse_curve(0.0, 0.0, 10.0, 10.0))
+        end
+
+        assert_equal plain["shapes"][0]["b"], with["shapes"][0]["b"]
+        assert_equal plain["shapes"][0]["d"], with["shapes"][0]["d"]
+        assert_equal plain["shapes"][0]["p"], with["shapes"][0]["p"]
+        assert_equal plain["job"], with["job"]
+      end
+
+      # ABSENT, NOT NULL. A `"g" => nil` on every polygon is bytes on the wire for nothing, and the
+      # client's own check is truthiness, so a null would read as "no descriptor" while still being
+      # paid for on the densest files — the ones the payload's size budget exists for.
+      test "a shape with no curve carries no g key at all" do
+        payload = Geometry.build { |o| o.add(layer: 0, points: [ [ 0, 0 ], [ 1, 1 ] ], closed: false, object_id: 1) }
+
+        assert_not payload["shapes"][0].key?("g")
+      end
+
+      test "ellipse_curve rounds to PRECISION and tags its type" do
+        assert_equal [ "e", 1.23, -4.57, 10.0, 5.0 ],
+                     Geometry.ellipse_curve(1.234, -4.567, 10.0, 5.0)
+      end
+
+      # TWO PRECISIONS IN ONE DESCRIPTOR, and the mixture is the point rather than an oversight:
+      # `cx`, `cy` and `r` are millimetres and round at PRECISION, while `a0` and `delta` are
+      # DEGREES and round at ANGLE_PRECISION, because 0.005° is 0.0175 mm of arc at r = 200 —
+      # coarser than the very points the descriptor rides beside. The 0.0044° below survives; at
+      # PRECISION it would have been rounded away entirely.
+      test "arc_curve rounds millimetres at PRECISION and keeps its angles fine" do
+        assert_equal [ "a", 1.23, -4.57, 10.0, 336.504401, -179.995604 ],
+                     Geometry.arc_curve(1.234, -4.567, 10.0, 336.5044008, -179.9956044)
       end
 
       private
