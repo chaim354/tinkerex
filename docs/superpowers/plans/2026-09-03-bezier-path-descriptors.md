@@ -46,6 +46,32 @@ tuning in the dark.
 > pay for the descriptor. **Do not do it in this arc** — it is a second, independent change to
 > interaction fidelity and it would confound the measurement this plan exists to take.
 
+> ### ⚠ OUTCOME (2026-09-03): growth is ~2×, the estimate above was wrong, and the cost was ACCEPTED
+>
+> Measured by Stage 1 on the three real files, against the estimate:
+>
+> ```
+> metal test 1.lbrn2   574.3 ->  951.8 KB   +66%  (est. +35%)   gzipped 162 -> 285 KB
+> gamebox v7.lbrn2     329.7 ->  555.5 KB   +69%  (est. +54%)   gzipped  86 -> 151 KB
+> bookmark.lbrn2       744.5 -> 1476.2 KB   +98%  (est. +12%)   gzipped 210 -> 440 KB
+> ```
+> Render time moved 3–7%, which is noise.
+>
+> **WHY THE ESTIMATE WAS WRONG, since the failure is reusable.** Its baselines were exact and its
+> per-cubic arithmetic was right (~48–57 measured bytes per cubic against "6 rounded numbers"). What
+> it got wrong was the CUBIC COUNT: it counted `B<a> <b>` ops in the file TEXT, but LightBurn shares
+> geometry between instances by `VertID`/`PrimID` (`Lbrn2::GeometryIndex`), so one `B` op in the text
+> is DRAWN many times. `bookmark.lbrn2` has 2,169 `B` ops in its text and emits **14,825** cubics —
+> 6.8×. **Counting a file's text is not counting what a traversal yields**, and this is the second
+> time on this branch that a text-level count misled a plan (the first: `grep -E "^SPLINE$"` missing
+> every CRLF file, `tinkerex#216`, off by 78×).
+>
+> **The decision.** The offset lever above was offered and DECLINED on 2026-09-03: ship the growth.
+> The reasoning that makes it affordable — after RDP at 0.01 mm, `p` retains only ~2.9 points per
+> cubic, so an exact cubic costs about what its own thinned polyline already cost — is also what
+> makes the lever available later if the size ever bites. **A future reader finding a doubled payload
+> here should know it was measured and accepted, not missed.**
+
 ## The wire form
 
 ```
