@@ -48,7 +48,11 @@ module Maker
       #      rather than as an `A` command SVG omits (tinkerex#216, #219, #215). FOUR CHANGES, ONE
       #      BUMP: a revision names a BUILD of this renderer, not a reason, and re-rendering the
       #      library once covers all four.
-      THUMBNAIL_REVISION = 2
+      #   3  a degree-3 SPLINE draws as its own cubics instead of as this parser's flattening of
+      #      them (`path_svg`), which also cuts the worst file's thumbnail nearly in half. The
+      #      payload gains the matching descriptor in the same breath, so
+      #      `DxfGeometry::FORMAT_REVISION` moves with this — one traversal, two artifacts.
+      THUMBNAIL_REVISION = 3
 
       def payload_revision(kind)
         kind == "geometry" ? Maker::Previews::DxfGeometry::PAYLOAD_REVISION : THUMBNAIL_REVISION
@@ -88,10 +92,11 @@ module Maker
       #
       # `curve` is a RICHER RENDERING OF THE SAME POINTS, never a substitute for them — the same
       # contract as `Lbrn2.each_geometry`'s ellipse/image. A CIRCLE and an ARC are exact primitives
-      # in both DXF and SVG, so the thumbnail draws them as `<circle>`/`<path A>` and stays crisp
-      # at any zoom, while a measuring caller reads the flattened points and is correct ignoring
-      # `curve` entirely. A consumer that used `curve` INSTEAD of the points would be reading a
-      # different geometry from the one the bbox was computed from.
+      # in both DXF and SVG, and a degree-3 SPLINE decomposes into exact cubics, so the thumbnail
+      # draws them as `<circle>`/`<path A>`/`<path C>` and stays crisp at any zoom, while a
+      # measuring caller reads the flattened points and is correct ignoring `curve` entirely. A
+      # consumer that used `curve` INSTEAD of the points would be reading a different geometry from
+      # the one the bbox was computed from.
       #
       # `object_id` counts yielded entities in document order, from 1 — the id the client groups
       # and selects by. Entities that yield nothing (a LINE missing an endpoint, an LWPOLYLINE
@@ -147,7 +152,7 @@ module Maker
             next
           end
 
-          points, closed, curve = flatten(entity)
+          points, closed, curve = flatten(entity, state[:unreadable])
           if points.nil? || points.length < 2
             tally_refusal(entity, state[:unreadable])
             next
@@ -309,6 +314,22 @@ module Maker
         points.map { |(x, y)| [ (a * x) + (b * y) + e, (c * x) + (d * y) + f ] }
       end
 
+      # THE SAME AFFINE `apply_affine` GIVES THE POINTS, applied to a path descriptor's control
+      # points — written directly beneath it so that a change to one and not the other is visible
+      # in the diff. A control point that misses the placement still yields a perfectly well-formed
+      # curve; it is simply not the file's, and the thumbnail draws the descriptor INSTEAD of the
+      # points, so nothing anywhere goes red. `Lbrn2.place_segments` is the same method one leg
+      # over, for the same reason.
+      #
+      # THE COMMAND SYMBOL IS UNTOUCHED AND `[:Z]` HAS NO PAIRS, which is what keeps the closing
+      # command out of the arithmetic.
+      def place_segments(segments, xf)
+        a, b, c, d, e, f = xf
+        segments.map do |(cmd, *nums)|
+          [ cmd, *nums.each_slice(2).flat_map { |(x, y)| [ (a * x) + (b * y) + e, (c * x) + (d * y) + f ] } ]
+        end
+      end
+
       # OUTER ∘ INNER — the parent's placement applied to the child's, which is the composition a
       # nested INSERT needs and the one a naive "add the translations" gets wrong the moment the
       # parent rotates. 168 of `cards.dxf`'s 177 INSERTs are nested.
@@ -330,11 +351,14 @@ module Maker
       # draws the descriptor INSTEAD of the points, so a stale one is a wrong picture rather than a
       # coarse one.
       #
-      # ONLY A SIMILARITY KEEPS A CIRCLE A CIRCLE. Under a non-uniform scale it is an ellipse whose
-      # axes are turned by the rotation, and the wire's `e` form carries rx and ry with NO rotation
-      # term — there is no honest descriptor to emit, so none is. Dropping is always safe: the
-      # flattened points still carry the true shape, `b`/`d`/the job box are computed from them,
-      # and the thumbnail falls back to a polyline.
+      # ONLY A SIMILARITY KEEPS A CIRCLE A CIRCLE — WHICH IS A RULE ABOUT THE `e` AND `a` FORMS AND
+      # NOT ABOUT THIS METHOD. Under a non-uniform scale a circle is an ellipse whose axes are
+      # turned by the rotation, and the wire's `e` form carries rx and ry with NO rotation term —
+      # there is no honest descriptor to emit, so none is. Dropping is always safe: the flattened
+      # points still carry the true shape, `b`/`d`/the job box are computed from them, and the
+      # thumbnail falls back to a polyline. **The `:path` arm below is the exception and answers
+      # first**, because a cubic survives ANY affine; read it before generalising this paragraph
+      # into "a descriptor is dropped under a non-similarity" (§14h).
       #
       # A MIRROR REVERSES AN ARC'S DIRECTION, WHICH IS WHY THE ENDPOINTS SWAP. DXF arcs always
       # sweep counter-clockwise from a0 to a1; a negative determinant flips that, so the placed
@@ -347,6 +371,17 @@ module Maker
       def transform_curve(curve, xf)
         return nil if curve.nil?
         return curve if xf.equal?(IDENTITY)
+        # A CUBIC PATH NEVER DROPS, AND THIS IS THE ARM MOST LIKELY TO BE "FIXED" INTO A REFUSAL BY
+        # ANALOGY WITH THE SIMILARITY TEST BELOW IT. The two arms are not the same situation. An
+        # `e` or an `a` names a CIRCLE — a shape only a similarity preserves — and the wire has no
+        # rotation term to spell what a non-uniform scale turns one into, so there is no honest
+        # descriptor and the right answer is none. A cubic Bézier is a convex combination of its
+        # own four control points, so ANY affine (non-uniform scale, shear, mirror, all at once)
+        # maps the curve by mapping those four points, and the image is still exactly a cubic —
+        # there is nothing to lose and nothing to approximate. Refusing here would coarsen every
+        # placed spline in the corpus for no defect: all 3,308 of `cards.dxf`'s live in BLOCK
+        # definitions and reach the drawing through this call.
+        return curve.merge(segments: place_segments(curve[:segments], xf)) if curve[:type] == :path
 
         a, b, c, d = xf
         scale = Math.sqrt((a * a) + (c * c))
@@ -456,13 +491,21 @@ module Maker
       # SO A NEW ARM HERE IS TWO EDITS, NOT ONE. The type must join `ENTITY_TYPES`, which is what
       # SILENCES `parse_document`'s type-based tally for it — see `tally_refusal` for why an instance
       # this method then refuses has to be counted under its own name instead.
-      def flatten(entity)
+      # `unreadable` REACHES ONLY THE SPLINE ARM, AND ONLY SO THAT ONE STATEMENT BOTH DECIDES AND
+      # REPORTS. A rational spline draws from its points and gets no descriptor (see
+      # `spline_curve`), and §14h requires that refusal be tallied — but the tally and the decision
+      # must be the SAME reading of the file or they drift into claiming a shortfall that did not
+      # happen, or hiding one that did. The alternative shape, a `tally_rational_spline(entity, …)`
+      # beside `tally_lwpolyline_bulge` in `emit_entities`, is a SECOND reading of the weights and
+      # the degree; that method gets away with it because a `42`'s presence is one fact, and this
+      # is three.
+      def flatten(entity, unreadable = nil)
         case entity[:type]
         when "LINE"                   then line_points(entity)
         when "CIRCLE"                 then circle_points(entity)
         when "ARC"                    then arc_points(entity)
         when "LWPOLYLINE", "POLYLINE" then polyline_points(entity)
-        when "SPLINE"                 then spline_points(entity)
+        when "SPLINE"                 then spline_points(entity, unreadable)
         end
       end
 
@@ -658,11 +701,13 @@ module Maker
       # than the "interior multiplicity equals the degree, therefore a chain of Béziers" shortcut
       # the knot vectors otherwise invite.
       #
-      # NO CURVE DESCRIPTOR, FOR `polyline_points`' REASON. `g` is PER CONTOUR and a spline is one
-      # contour spanning many polynomial pieces, so there is no slot for it; and the wire has no
-      # spline form to put there anyway. A measuring client reads the flattened points and is
-      # correct.
-      def spline_points(entity)
+      # THE CURVE DESCRIPTOR IS THE SPLINE'S OWN CUBICS, AND THIS COMMENT USED TO SAY THERE COULD
+      # NOT BE ONE. It read "`g` is PER CONTOUR and a spline is one contour spanning many
+      # polynomial pieces, so there is no slot for it; and the wire has no spline form to put
+      # there anyway" — true of the `e` and `a` forms, and obsolete the moment `"p"` arrived
+      # (tinkerex#217): a path is a SEQUENCE of segments, so one contour of many pieces is exactly
+      # what it spells. See `spline_curve` for what is emitted and what is refused.
+      def spline_points(entity, unreadable = nil)
         c = entity[:codes]
         degree = c[71].first.to_i
         cps = c[10].zip(c[20]).map { |(x, y)| [ Float(x, exception: false), Float(y, exception: false) ] }
@@ -690,7 +735,86 @@ module Maker
         # outline stays closed after thinning.
         closed = (c[70].first.to_i & 1) == 1
         pts << pts.first.dup if closed && pts.first != pts.last
-        [ pts, closed, nil ]
+        # AFTER the two refusals above, so that one entity makes at most one claim: a spline this
+        # method drops entirely is `SPLINE(malformed)` from `tally_refusal`, and a spline it draws
+        # without an exact descriptor is `SPLINE(rational)` from here. Both at once would be two
+        # names for one record.
+        [ pts, closed, spline_curve(hcp, knots, degree, closed, unreadable) ]
+      end
+
+      # THE SPLINE'S OWN CUBICS, SPAN BY SPAN — the `"p"` descriptor, in DXF model space, or nil.
+      #
+      # A DEGREE-3 B-SPLINE *IS* A CHAIN OF CUBIC BEZIERS, so this is an EXACT rewriting and not a
+      # fit: raise every interior knot to multiplicity `degree` and the control points fall out,
+      # which is Böhm's insertion, done here by evaluating the segment's BLOSSOM at the span's own
+      # endpoints (see `blossom`). Nothing is sampled and no tolerance is involved — the client
+      # draws the curve the file declared, where before it drew this method's flattening of it.
+      #
+      # DEGREE 3 ONLY, AND THE OMISSIONS ARE NOT AN OVERSIGHT. The wire form is cubics (§14h), so
+      # only a cubic rewrites into it with nothing lost. A degree-1 spline is its own control
+      # polygon, which `p` already carries EXACTLY — the rule that a contour gets a descriptor only
+      # where `p` is not already exact refuses it on its own. A degree-2 spline elevates to a cubic
+      # exactly (`c1 = p0 + ⅔(c − p0)`, `c2 = p + ⅔(c − p)` — the conversion `Geometry.path_curve`
+      # already documents for SVG's `Q`) and a degree-4 or higher one does not reduce at all.
+      # Neither is here because neither EXISTS: measured through this parser over 129 real files,
+      # every one of 18,906 splines is degree 3. Adding the elevation would be untestable against
+      # anything but a synthetic file, and it is a change with its own measurement.
+      #
+      # A RATIONAL SPLINE IS REFUSED AND SAID OUT LOUD. A rational cubic is a RATIO of polynomials;
+      # an SVG `C` is a polynomial, so no cubic draws one — emitting the projected control points
+      # anyway would put a curve that is not the file's into the picture, and the thumbnail draws
+      # the descriptor INSTEAD of the points. Dropping costs exactness only: `de_boor` evaluates in
+      # homogeneous coordinates, so `p` still carries the true curve either way. Zero occur in the
+      # corpus (code 41 appears in two spline families and every weight in all of them is exactly
+      # 1.0), which is why this is a guard rather than a feature.
+      #
+      # AND THE TEST IS `hcp`, NOT THE FILE'S CODE 41 OR ITS RATIONAL FLAG. `homogeneous` IGNORES a
+      # weight run that does not match the control points one for one and a non-positive weight,
+      # substituting 1.0 — so the curve those files draw is the unweighted one, which a cubic
+      # spells exactly. Reading the raw weights here would refuse a descriptor for a curve that has
+      # no rational component left in it; reading flag 70's bit 2 would refuse on a claim the
+      # corpus never sets even where weights are present. The homogeneous control points are what
+      # was actually evaluated, so they cannot disagree with the drawing.
+      def spline_curve(hcp, knots, degree, closed, unreadable)
+        return nil unless degree == BEZIER_DEGREE
+        return tally_rational_spline(unreadable) if hcp.any? { |(_x, _y, w)| w != 1.0 }
+
+        segments = nil
+        degree.upto(hcp.length - 1) do |span|
+          lo = knots[span]
+          hi = knots[span + 1]
+          # THE SAME NON-EMPTY-SPAN TEST `flatten_spline` MAKES, and it must stay the same one: a
+          # repeated knot is a continuity statement rather than a piece of curve, and one leg
+          # counting it while the other does not puts a `C` in the path with no points under it.
+          next if hi <= lo
+
+          bez = (0..degree).map { |i| blossom(([ lo ] * (degree - i)) + ([ hi ] * i), span, degree, hcp, knots) }
+          segments ||= [ [ :M, *bez.first ] ]
+          segments << [ :C, *bez[1], *bez[2], *bez[3] ]
+        end
+        return nil if segments.nil?
+
+        # `Z` RATHER THAN A REPEATED POINT, matching `Lbrn2.curved_segments`: the closing command
+        # adds no geometry (a closepath is the straight line back to the start, which is exactly
+        # what `spline_points` appends to `pts`) but it makes the drawn <path> a CLOSED SUBPATH,
+        # which is what `.measure-contour { fill: transparent }` fills and therefore what makes a
+        # closed contour clickable in its interior rather than on its stroke alone.
+        segments << [ :Z ] if closed
+        # THE SAME `{ type: … }` SHAPE THE CIRCLE AND ARC DESCRIPTORS USE, so `transform_curve`,
+        # `curve_to_client_space` and `element_svg` each get one `case` to extend rather than a
+        # nil-check-plus-Array-check at every reader.
+        { type: :path, segments: }
+      end
+
+      # The one degree the wire's cubics can carry without loss — see `spline_curve`.
+      BEZIER_DEGREE = 3
+
+      RATIONAL_SPLINE = "SPLINE(rational)".freeze
+
+      # Returns nil, so the caller reads as "no descriptor, and here is why".
+      def tally_rational_spline(unreadable)
+        unreadable[RATIONAL_SPLINE] = (unreadable[RATIONAL_SPLINE] || 0) + 1 if unreadable
+        nil
       end
 
       # CONTROL POINTS AS (w·x, w·y, w), AND THE EVALUATION IS HOMOGENEOUS WHETHER OR NOT THE FILE
@@ -757,7 +881,11 @@ module Maker
       #
       # AND IT IS THE KNOB THAT DECIDES THE PAYLOAD, WHICH ON THE WORST REAL FILE DOES NOT FIT.
       # `cards.dxf` is 8.7 MB, 3,308 splines over 19,454 knot spans, and its measure payload goes
-      # 563 KB -> 3,366 KB (render 0.53 s -> 1.54 s median of 5, range 1.50-1.56). The budget was 1,536 KB, and the
+      # 563 KB -> 3,366 KB (render 0.53 s -> 1.54 s median of 5, range 1.50-1.56) — and then to
+      # 4,387 KB once each spline also carries its own cubics, which is a SEPARATE decision taken
+      # with its own measurement (`spline_curve`) and does not move this knob: a descriptor is
+      # exact at any flatness, so coarsening the sampling would shrink the points beside a curve
+      # the client no longer draws from them. The budget was 1,536 KB, and the
       # FLOOR — every span reduced to the straight chord between its own endpoints, which is not a
       # curve at all — measures 1,497 KB, so the budget leaves room for 0.3 extra points per span
       # and cannot be reached by thinning. Coarsening does not rescue it either: 0.02 gives
@@ -816,12 +944,33 @@ module Maker
         deviation <= SPLINE_FLATNESS_RATIO * len
       end
 
-      # DE BOOR, ON THE SPAN THE CALLER SELECTED, in homogeneous coordinates.
+      # DE BOOR, ON THE SPAN THE CALLER SELECTED, in homogeneous coordinates — the curve AT `u`,
+      # which is the blossom below with `u` handed to every level. See there for the recurrence.
+      def de_boor(u, span, degree, hcp, knots)
+        blossom(Array.new(degree, u), span, degree, hcp, knots)
+      end
+
+      # THE SAME RECURRENCE WITH ONE PARAMETER PER LEVEL INSTEAD OF ONE PARAMETER FOR ALL OF THEM,
+      # which is the POLAR FORM (blossom) of the polynomial this span carries:
       #
       #   d[j] = P[j + span - p]                                        for j = 0..p
       #   for r in 1..p, for j in p.downto(r):
-      #     a = (u - U[j+span-p]) / (U[j+1+span-r] - U[j+span-p])
+      #     a = (u[r] - U[j+span-p]) / (U[j+1+span-r] - U[j+span-p])
       #     d[j] = (1-a)·d[j-1] + a·d[j]
+      #
+      # DE BOOR'S ALGORITHM WAS ALREADY THIS — the classical form is the case where every u[r] is
+      # the same number, which is exactly what `de_boor` above now asks for. So this is a
+      # GENERALISATION rather than a second implementation, and that is the point: a second copy of
+      # a numerical recurrence is §14b's `LbrnMetadata` bug where it costs the most, because the
+      # flattened points and the drawn cubics would then be free to describe different curves. The
+      # evaluation case is bit-identical to what it replaced — same operations, same order, same
+      # values — which is what licenses not re-measuring anything that has no spline in it.
+      #
+      # WHY THIS GIVES THE BEZIER CONTROL POINTS. The blossom is symmetric and affine in each
+      # argument, and `f(u_k, …, u_k, u_{k+1}, …, u_{k+1})` with `i` copies of the span's right end
+      # is the i-th Bézier point of the segment over `[u_k, u_{k+1}]`. `spline_curve` therefore
+      # reads `degree + 1` blossom values per span where a knot-insertion implementation would
+      # rebuild the whole control polygon; the arithmetic is Böhm's either way.
       #
       # A ZERO DENOMINATOR IS A REPEATED KNOT, NOT AN ERROR — the corresponding d[j] carries no
       # weight at this parameter, so `a = 0` selects d[j-1] and the recurrence is unaffected. It is
@@ -830,7 +979,7 @@ module Maker
       # THE HOMOGENEOUS DIVIDE HAPPENS ONCE, AT THE END. Dividing per level would be both slower
       # and wrong: the whole point of the (w·x, w·y, w) form is that the recurrence is LINEAR in
       # it, which projected coordinates are not.
-      def de_boor(u, span, degree, hcp, knots)
+      def blossom(params, span, degree, hcp, knots)
         dx = Array.new(degree + 1)
         dy = Array.new(degree + 1)
         dw = Array.new(degree + 1)
@@ -842,6 +991,7 @@ module Maker
         end
 
         (1..degree).each do |r|
+          u = params[r - 1]
           degree.downto(r) do |j|
             lo = knots[j + span - degree]
             den = knots[j + 1 + span - r] - lo
@@ -1010,6 +1160,7 @@ module Maker
         case curve && curve[:type]
         when :circle then circle_svg(curve, stroke)
         when :arc    then arc_svg(curve, stroke)
+        when :path   then path_svg(curve, stroke)
         else              polyline_svg(flipped, closed, stroke)
         end
       end
@@ -1044,6 +1195,28 @@ module Maker
         # Y-flip reverses orientation, so the sweep flag flips from CCW (1) to 0.
         %(<path d="M #{n(ps[0])} #{n(ps[1])} A #{n(r)} #{n(r)} 0 #{large} 0 #{n(pe[0])} #{n(pe[1])}" ) +
           %(fill="none" stroke="#{stroke}" stroke-width="0.5"/>)
+      end
+
+      # A SPLINE'S OWN CUBICS, DRAWN AS THEY WERE DECLARED — the same choice `circle_svg` and
+      # `arc_svg` make for the primitives they get, one entity type further along. The picture is
+      # then the file's curve at any zoom instead of this parser's flattening of it.
+      #
+      # IT IS ALSO SMALLER, WHICH IS WHY THIS IS NOT PAID FOR TWICE. The payload accepts growth
+      # here (a descriptor rides BESIDE the thinned points it exists to improve on); the thumbnail
+      # has no such duplication, so six numbers REPLACE every sample of that span. Measured, both
+      # ways, on the three spline-carrying files of the scratch corpus: `cards.dxf` (8.7 MB, 3,308
+      # splines over 19,454 knot spans, the worst of 129) goes **3,106 KB -> 1,609 KB, a 48% cut**;
+      # `macropad v5.dxf` 64.5 -> 13.1 KB; `elianadxf.dxf` 34.0 -> 29.9 KB. The two files with no
+      # spline come out byte-identical.
+      #
+      # THE Y-FLIP HAPPENS HERE, exactly as it does in `circle_svg` and `arc_svg`: the traversal
+      # yields model space because the two consumers need different things (the thumbnail a flip
+      # and no scale, the payload both), so every leg that draws applies its own.
+      def path_svg(curve, stroke)
+        d = curve[:segments].map do |(cmd, *nums)|
+          [ cmd, *nums.each_slice(2).flat_map { |(x, y)| flip(x, y) }.map { |v| n(v) } ].join(" ")
+        end.join(" ")
+        %(<path d="#{d}" fill="none" stroke="#{stroke}" stroke-width="0.5"/>)
       end
 
       def polyline_svg(flipped, closed, stroke)

@@ -206,6 +206,15 @@ module Maker
       # OPPOSITE bulges, a BLOCK placed by an INSERT at a non-zero offset, and the full-turn ARC
       # from tinkerex#215. Its own comment header says what each part pins. A fifth entity type
       # gets a fifth part of that fixture, not a fourth fixture.
+      # ON 2026-09-03 THE THIRD FIXTURE FIRED, WHICH IS THE FIRST TIME THIS GUARD HAS CAUGHT
+      # ANYTHING AND THE ENTIRE REASON IT EXISTS. A degree-3 SPLINE now carries its own cubics as a
+      # `"p"` descriptor and the thumbnail draws them (`Dxf.spline_curve`, `Dxf.path_svg`), so
+      # `entities.dxf` — which holds a two-span SPLINE and was added for exactly this — moved on
+      # BOTH artifacts, and both revisions moved with it: `Dxf::THUMBNAIL_REVISION` 2 -> 3 and
+      # `DxfGeometry::FORMAT_REVISION` 2 -> 3. `sample.dxf` and `plate.dxf` did NOT move, and that
+      # is the assertion doing the work in the other direction: between them they hold no spline at
+      # all, so a move there would mean the change reached geometry it has no business touching.
+      #
       test "the traversal's two artifacts are byte-for-byte what they were before it took pairs" do
         {
           "sample.dxf" => %w[
@@ -217,8 +226,8 @@ module Maker
             0839e1081f3a506a009ba31d643d59ebd8ca62242f4d6bcaaf10c79fb77af431
           ],
           "entities.dxf" => %w[
-            a27713d1de9be2c8a8120323d1ec07adf26f32180a5d7c727edcea1764cdcdd5
-            4eed13b16b2abfc2d478d756494327d2a2b26fa78b8b03ca8b38c64a1192cd27
+            496a2be60fd74dfff512be5d072b7538924f7c6ad0b93b12829e36b4293b4149
+            33767099bb6bb04f38d402715f7902aa433d489598e220280a9c50bd16bf7eb4
           ]
         }.each do |name, (svg_sha, payload_sha)|
           bytes = fixture(name)
@@ -616,6 +625,132 @@ module Maker
         assert_not payload.key?("u")
       end
 
+
+      # ---- a spline's own cubics ---------------------------------------------------------------
+
+      # A DEGREE-3 NURBS DECOMPOSES INTO EXACT CUBIC BEZIERS, so the descriptor here is not an
+      # approximation of the file — it IS the file, in the one segment kind the wire has. Every
+      # spline in the corpus is degree 3 (3,308 in `cards.dxf` alone, 19,454 knot spans), so this
+      # is the third producer leg's whole point rather than an edge case.
+      #
+      # THE INTERIOR KNOT SITS AT MULTIPLICITY 1, WHICH IS WHAT MAKES THIS THE REAL EXTRACTION.
+      # Where an interior knot already repeats `degree` times the spline is ALREADY a chain of
+      # Beziers and reading off four control points per span is the identity (the test below pins
+      # that case separately). At multiplicity 1 the two spans share control points and the Bezier
+      # points have to be COMPUTED — get that wrong and the curve still draws, plausibly, in the
+      # wrong place.
+      #
+      # RESOLVED GEOMETRY, NEVER THE `d` STRING. tinkerex#213's arc passed its own five-number
+      # equality test while drawing 1.37 mm off; the question is whether the curve a renderer draws
+      # from this descriptor passes through the points the payload measured.
+      test "a degree-3 SPLINE carries the cubics its own knot vector decomposes into" do
+        shape = build(spline_dxf(points: ARCH_5, knots: ONE_INTERIOR_KNOT))["shapes"].first
+
+        assert_curve_tracks_shape(shape, "a two-span spline whose interior knot repeats once")
+      end
+
+      # THE IDENTITY CASE, AND THE ONE ASSERTION IN THIS FILE THAT READS THE NUMBERS THEMSELVES.
+      # `elianadxf.dxf`'s knots already sit at multiplicity 3, as do 3,308 of `cards.dxf`'s
+      # splines, so extraction there must hand back the file's OWN control points untouched — a
+      # claim about which numbers came out, not about where the curve goes, and one the resolved
+      # curve cannot make (an extraction that quietly re-fitted the same shape would satisfy it).
+      # The tracking assertion above is what covers the curve.
+      test "a spline whose interior knots already repeat degree times extracts as the identity" do
+        shape = build(spline_dxf(points: TWO_ARCHES, knots: TWO_SPANS))["shapes"].first
+
+        # Y-flipped, mm-scaled (no $INSUNITS is millimetres), in the file's own order.
+        assert_equal [ [ 0.0, 0.0 ],
+                       [ 0.0, -10.0 ], [ 10.0, -10.0 ], [ 10.0, 0.0 ],
+                       [ 10.0, 20.0 ], [ 20.0, 20.0 ], [ 20.0, 0.0 ] ],
+                     path_coordinates(shape["g"][1]),
+                     "the control points are the file's own, in client space"
+      end
+
+      # A CLOSED SPLINE'S PATH CLOSES WITH `Z`, for the reason `Lbrn2.curved_segments` states: the
+      # closing command is what makes the drawn <path> a CLOSED SUBPATH, which
+      # `.measure-contour { fill: transparent }` fills — so a descriptor without it draws an
+      # identical picture while silently reducing the shape to a stroke-only click target. 551 of
+      # `cards.dxf`'s 3,308 splines set flag bit 0.
+      test "a closed SPLINE's descriptor closes its subpath" do
+        shape = build(spline_dxf(points: ARCH_5, knots: ONE_INTERIOR_KNOT, flags: 1))["shapes"].first
+
+        assert_equal "Z", shape["g"][1].split.last, "a closed contour's path must close"
+        assert_curve_tracks_shape(shape, "a closed spline")
+      end
+
+      # THE THUMBNAIL DRAWS THE CUBICS TOO, WHICH IS THE SAME CHOICE `circle_svg` AND `arc_svg`
+      # ALREADY MAKE — the exact primitive where the traversal offers one, the flattened points
+      # otherwise. It is also SMALLER: the picture has no thinning stage, so one cubic's six
+      # numbers replace every sample of that span. Measured both ways on `cards.dxf`, the corpus's
+      # worst file: 3,106 KB of polylines becomes 1,609 KB of paths — a 48% cut on the artifact a
+      # Files page actually fetches.
+      #
+      # RESOLVED, NOT MATCHED. Asserting the string contains a `C` is satisfied by a path drawing
+      # any curve at all; what has to hold is that the drawn curve passes through the same points
+      # the payload measured.
+      test "the thumbnail draws a SPLINE's own cubics rather than its sampled polyline" do
+        dxf = spline_dxf(points: ARCH_5, knots: ONE_INTERIOR_KNOT)
+        svg = Dxf.to_svg(dxf)
+
+        assert_no_match(/<polyline|<polygon/, svg, "the samples must not be what is drawn")
+        worst = max_deviation(build(dxf)["shapes"].first["p"], resolve_path(svg[/<path d="([^"]*)"/, 1]))
+        assert_operator worst, :<=, 0.05,
+                        "the drawn curve strays #{worst.round(4)} mm from the shape's own points"
+      end
+
+      # THE DESCRIPTOR IS SCALED AND FLIPPED EXACTLY AS THE POINTS ARE — `$INSUNITS 1` is inches,
+      # so every number is 25.4x its model value and negative in Y. A control point that misses
+      # either draws a perfectly well-formed curve that is simply not the file's, and the thumbnail
+      # draws the descriptor INSTEAD of the points, so nothing else in the payload disagrees.
+      test "a SPLINE descriptor takes the same unit scale and Y-flip the points take" do
+        shape = build(spline_dxf(points: ARCH_5, knots: ONE_INTERIOR_KNOT, insunits: 1))["shapes"].first
+
+        assert_curve_tracks_shape(shape, "an inches file", tol: 25.4 * 0.05)
+        assert_equal [ [ 0.0, 0.0 ], [ 0.0, -508.0 ] ],
+                     path_coordinates(shape["g"][1]).first(2),
+                     "the first control point pair, in millimetres and Y-down"
+      end
+
+      # A RATIONAL SPLINE IS REFUSED, AND THE REFUSAL IS SAID OUT LOUD. A rational cubic is a ratio
+      # of polynomials; an SVG cubic is a polynomial, so there is no `C` that draws one — emitting
+      # the projected control points anyway would draw a curve that is not the file's, and the
+      # thumbnail draws the descriptor INSTEAD of the points. Dropping it costs exactness only: the
+      # points are evaluated in homogeneous coordinates and still carry the true curve.
+      #
+      # AND IT MUST BE TALLIED, because SPLINE is in `ENTITY_TYPES` now and `parse_document`'s
+      # type-based tally therefore no longer fires for it (§14h) — a silent drop here would be a
+      # status line actively stating that nothing was skipped. A DISTINCT NAME: "we could not read
+      # this spline at all" (`SPLINE(malformed)`) and "we read it and could not draw it exactly"
+      # are different claims about a file.
+      #
+      # ZERO OCCUR IN THE CORPUS — code 41 appears in two spline families and every weight in all
+      # of them is exactly 1.0 — so this is a guard against tomorrow's file, which is why the
+      # fixture has to make one rather than find one.
+      test "a rational SPLINE gets no descriptor and is counted rather than dropped" do
+        payload = build(spline_dxf(points: ARCH_5, knots: ONE_INTERIOR_KNOT,
+                                   weights: [ 1, 3, 1, 3, 1 ]))
+        shape = payload["shapes"].first
+
+        assert_not shape.key?("g"), "no cubic can draw a rational curve"
+        assert_equal({ "SPLINE(rational)" => 1 }, payload["u"], "and the shortfall must be said")
+        assert_operator shape["p"].length, :>, 4, "while the points still carry the true curve"
+      end
+
+      # THE OTHER DIRECTION, WITHOUT WHICH A TALLY THAT ALWAYS FIRES PASSES THE TEST ABOVE — and
+      # the corpus's own case, since every weight it carries is 1.0. A weight run this parser
+      # IGNORES (see `Dxf.homogeneous`: a length mismatch is ignored, not refused) draws the
+      # unweighted curve, which a cubic describes exactly, so it is not rational either.
+      test "a spline whose weights are all 1 is not rational and keeps its descriptor" do
+        stated = build(spline_dxf(points: ARCH_5, knots: ONE_INTERIOR_KNOT, weights: [ 1, 1, 1, 1, 1 ]))
+        ignored = build(spline_dxf(points: ARCH_5, knots: ONE_INTERIOR_KNOT, weights: [ 1, 3 ]))
+
+        assert_curve_tracks_shape(stated["shapes"].first, "unit weights, stated")
+        assert_not stated.key?("u")
+        assert_curve_tracks_shape(ignored["shapes"].first, "a weight run that does not match")
+        assert_not ignored.key?("u"),
+                   "an ignored weight run draws the unweighted curve, which a cubic spells exactly"
+      end
+
       # ---- blocks and inserts -----------------------------------------------------------------
 
       # THE FIX HAD TO REMOVE BEHAVIOUR, NOT ONLY ADD IT, WHICH IS WHY THIS ASSERTS THE COUNT.
@@ -886,6 +1021,46 @@ module Maker
         end
       end
 
+
+      # A CUBIC PATH NEVER LOSES ITS DESCRIPTOR, WHICH IS THE OPPOSITE OF THE TWO TESTS ABOVE AND
+      # IS THE WHOLE REASON THE `:path` ARM IS NOT WRITTEN LIKE ITS NEIGHBOURS. A Bézier is a
+      # convex combination of its own four points, so ANY affine — non-uniform scale, shear,
+      # mirror, all three at once — maps the curve by mapping the points, and the result is still
+      # exactly a cubic. The `e` and `a` forms cannot say that (an ellipse needs a rotation term
+      # the wire has not got), so they must drop; a path must NOT, and "fixing" this arm into a
+      # refusal by analogy with them silently coarsens every placed spline in the corpus.
+      #
+      # THIS IS WHERE `cards.dxf` IS DECIDED: all 3,308 of its splines live in BLOCK definitions
+      # and reach the drawing through INSERT expansion, so every one of them comes through here.
+      #
+      # THE NON-UNIFORM CASE IS THE FIRST ROW ON PURPOSE — under 41/42 of 3 and 1 the similarity
+      # test two methods along returns false, which is precisely the branch a copied refusal would
+      # take.
+      test "a SPLINE inside any INSERT keeps a descriptor that matches its own points" do
+        [ [ 3, 1, 0 ], [ 3, 1, 40 ], [ 1, 1, 0 ], [ 2, 2, 37 ],
+          [ -1, 1, 0 ], [ 1, -1, 0 ], [ -2, 3, 118 ], [ 0.5, 4, 250 ] ].each do |(sx, sy, rot)|
+          dxf = blocks_dxf({ "S" => spline_body(points: ARCH_5, knots: ONE_INTERIOR_KNOT) },
+                           "0\nINSERT\n8\nA\n2\nS\n10\n7\n20\n11\n41\n#{sx}\n42\n#{sy}\n50\n#{rot}\n")
+
+          assert_curve_tracks_shape(build(dxf)["shapes"].first, "sx=#{sx} sy=#{sy} rot=#{rot}")
+        end
+      end
+
+      # AND IT IS IN THE PLACED COORDINATES, NOT THE BLOCK'S OWN. `assert_curve_tracks_shape`
+      # already fails on an untransformed descriptor, but only because the placement moves the
+      # curve far enough to notice — a block placed at (0, 0) would pass with the transform missing
+      # entirely, which is the same trap the INSERT fixture header warns about for the points. This
+      # asks the question directly: the descriptor must start where the placed contour starts.
+      test "a placed SPLINE's descriptor is in the drawing's coordinates, not the block's" do
+        dxf = blocks_dxf({ "S" => spline_body(points: ARCH_5, knots: ONE_INTERIOR_KNOT) },
+                         "0\nINSERT\n8\nA\n2\nS\n10\n100\n20\n200\n")
+        shape = build(dxf)["shapes"].first
+
+        assert_in_delta 100.0, path_coordinates(shape["g"][1]).first[0], 0.01
+        assert_in_delta(-200.0, path_coordinates(shape["g"][1]).first[1], 0.01,
+                        "the Y-flip applies to the placed control points too")
+      end
+
       # ---- what the parser could not read -----------------------------------------------------
 
       # THE BACKSTOP ITSELF. `Dxf.flatten` is a `case` with no `else`, so for years every entity
@@ -1028,17 +1203,32 @@ module Maker
       TWO_ARCHES = (ARCH + [ [ 10, -20 ], [ 20, -20 ], [ 20, 0 ] ]).freeze
       TWO_SPANS = [ 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2 ].freeze
 
+      # THE SAME TWO SPANS WITH THE INTERIOR KNOT REPEATED ONCE INSTEAD OF THREE TIMES, which is
+      # the curve `entities.dxf` carries and the case Bezier extraction has to COMPUTE rather than
+      # read off. Five control points, so the knot run is 5 + 3 + 1 = 9 long. The two spans share
+      # control points here — that is what multiplicity 1 means — so the four Bezier points of
+      # either span appear nowhere in the file.
+      ARCH_5 = [ [ 0, 0 ], [ 0, 20 ], [ 10, 20 ], [ 20, 20 ], [ 20, 0 ] ].freeze
+      ONE_INTERIOR_KNOT = [ 0, 0, 0, 0, 1, 2, 2, 2, 2 ].freeze
+
       # A SPLINE record, in the group-code order a real exporter writes: the counts, then the knot
       # run, then the optional weight run, then the control points. `parse_entities` groups by code
       # so the order cannot matter to the parser — which is exactly why it is worth writing the
       # real one here, where a reader can check the fixture against a file.
-      def spline_dxf(points:, knots:, degree: 3, flags: 0, weights: nil, extra: "")
-        body = +"0\nSECTION\n2\nENTITIES\n0\nSPLINE\n8\nA\n70\n#{flags}\n71\n#{degree}\n" \
+      def spline_dxf(insunits: nil, **opts)
+        header = insunits ? "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n#{insunits}\n0\nENDSEC\n" : ""
+        "#{header}0\nSECTION\n2\nENTITIES\n#{spline_body(**opts)}0\nENDSEC\n0\nEOF\n"
+      end
+
+      # THE RECORD ALONE, so the same spline can be written into a BLOCKS body — where every one of
+      # `cards.dxf`'s 3,308 splines actually lives.
+      def spline_body(points:, knots:, degree: 3, flags: 0, weights: nil, extra: "")
+        body = +"0\nSPLINE\n8\nA\n70\n#{flags}\n71\n#{degree}\n" \
                 "72\n#{knots.length}\n73\n#{points.length}\n74\n0\n#{extra}"
         knots.each { |k| body << "40\n#{k}\n" }
         weights&.each { |w| body << "41\n#{w}\n" }
         points.each { |(x, y)| body << "10\n#{x}\n20\n#{y}\n30\n0.0\n" }
-        body + "0\nENDSEC\n0\nEOF\n"
+        body
       end
 
       # Is a point ON the drawn curve? Asked of the THINNED `p` deliberately: an apex is by
@@ -1047,6 +1237,111 @@ module Maker
       # carrying the shape.
       def sampled?(shape, x, y)
         shape["p"].any? { |(px, py)| (px - x).abs < 0.05 && (py - y).abs < 0.05 }
+      end
+
+      # THE DESCRIPTOR RESOLVED THE WAY A RENDERER RESOLVES IT — the third copy of this helper,
+      # after `lbrn_geometry_test.rb`'s and `svg_geometry_test.rb`'s, one per producer leg. The
+      # PRODUCTION side of that duplication is already folded (`Geometry.path_curve` is the one
+      # writer); folding the three test copies would touch two files this change has no other
+      # business in, so it is left as a named debt rather than done in passing.
+      #
+      # STRICT ON PURPOSE: an unknown command RAISES. The wire form is absolute M/L/C/Z and
+      # nothing else, and a lenient parser that skipped an `A` or an `S` would let a producer start
+      # emitting one while every assertion below stayed green — which is exactly how a client that
+      # does not understand the command fails: silently.
+      def resolve_path(d, per_curve: 48)
+        tokens = d.split
+        pts = []
+        cur = start = nil
+        i = 0
+        while i < tokens.length
+          case tokens[i]
+          when "M", "L"
+            cur = [ Float(tokens[i + 1]), Float(tokens[i + 2]) ]
+            start ||= cur
+            pts << cur
+            i += 3
+          when "C"
+            c1 = [ Float(tokens[i + 1]), Float(tokens[i + 2]) ]
+            c2 = [ Float(tokens[i + 3]), Float(tokens[i + 4]) ]
+            p3 = [ Float(tokens[i + 5]), Float(tokens[i + 6]) ]
+            (1..per_curve).each { |k| pts << cubic_at(cur, c1, c2, p3, k.to_f / per_curve) }
+            cur = p3
+            i += 7
+          when "Z"
+            pts << (cur = start)
+            i += 1
+          else
+            raise "unexpected path command #{tokens[i].inspect} — the wire form is absolute M/L/C/Z only"
+          end
+        end
+        pts
+      end
+
+      # Every coordinate PAIR in a `d`, in order, with the command letters dropped — for the one
+      # assertion that is about which numbers came out rather than about where the curve goes.
+      # `Z` carries no pair, so it contributes nothing.
+      def path_coordinates(d)
+        d.split.reject { |t| %w[M L C Z].include?(t) }.map { |t| Float(t) }.each_slice(2).to_a
+      end
+
+      def cubic_at(p0, c1, c2, p3, t)
+        u = 1.0 - t
+        [ 0, 1 ].map do |a|
+          (u * u * u * p0[a]) + (3 * u * u * t * c1[a]) + (3 * u * t * t * c2[a]) + (t * t * t * p3[a])
+        end
+      end
+
+      # THE TWO QUESTIONS THE REST OF THE PAYLOAD ALREADY ANSWERS, ASKED OF THE RESOLVED CURVE —
+      # the same helper the other two producer legs use, and for the same reason: a test asserting
+      # the emitted numbers passes on any self-consistent encoding, which is how tinkerex#213's arc
+      # shipped drawing 1.37 mm off its own points.
+      #
+      # 0.05 mm is where the roundings land, stated rather than tuned: `p` is thinned to within
+      # SIMPLIFY_TOLERANCE (0.01 mm) of the true contour and rounded at PRECISION (<=0.007 mm
+      # diagonally), and the descriptor's control points are rounded at PRECISION too, which
+      # displaces the drawn curve by at most that much because a cubic is a convex combination of
+      # its own four points. Roughly 0.03 mm of headroom, against mutations that miss by
+      # millimetres.
+      #
+      # THE POINTS ARE COMPARED TO THE CURVE AND NOT THE OTHER WAY ROUND. Every point of `p` lies
+      # ON the spline by construction (they are de Boor samples), so they owe the drawn curve
+      # closeness; the curve does not owe the flattening its own coarseness back. The BBOX is the
+      # containment half — a resolved curve that misses `b` has gone somewhere the measurement did
+      # not.
+      def assert_curve_tracks_shape(shape, label, tol: 0.05)
+        assert_equal "p", shape["g"]&.first, "#{label}: expected a path descriptor"
+
+        curve = resolve_path(shape["g"][1])
+        worst = max_deviation(shape["p"], curve)
+        assert_operator worst, :<=, tol,
+                        "#{label}: the drawn curve strays #{worst.round(4)} mm from the shape's own points"
+
+        box = [ curve.map(&:first).min, curve.map(&:last).min,
+                curve.map(&:first).max, curve.map(&:last).max ]
+        %w[left top right bottom].each_with_index do |edge, i|
+          assert_in_delta shape["b"][i], box[i], tol,
+                          "#{label}: the drawn curve misses b's #{edge} edge"
+        end
+      end
+
+      # The largest distance from any point of `original` to the polyline `kept`. Point-to-SEGMENT,
+      # not point-to-point: the resolved curve samples at its own spacing, so a point of `p` landing
+      # between two of its samples is on the drawn line and must not read as a deviation.
+      def max_deviation(original, kept)
+        original.map { |p| kept.each_cons(2).map { |a, b| point_segment_distance(p, a, b) }.min || 0.0 }.max
+      end
+
+      def point_segment_distance(point, a, b)
+        px, py = point
+        ax, ay = a
+        bx, by = b
+        dx = bx - ax
+        dy = by - ay
+        return Math.hypot(px - ax, py - ay) if dx.abs < 1e-12 && dy.abs < 1e-12
+
+        t = ((((px - ax) * dx) + ((py - ay) * dy)) / ((dx * dx) + (dy * dy))).clamp(0.0, 1.0)
+        Math.hypot(px - (ax + (t * dx)), py - (ay + (t * dy)))
       end
 
       # A DXF WITH A REAL BLOCKS SECTION, because the whole defect is that this parser had no

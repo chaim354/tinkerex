@@ -50,7 +50,7 @@ module Maker
         "a.svg"   => 1, # Svg
         "a.mage"  => 1, # Mage       — its own renderer for thumbnails, unlike its geometry leg
         "a.stl"   => 2, # Stl
-        "a.dxf"   => 2, # Dxf
+        "a.dxf"   => 3, # Dxf
         "a.3mf"   => 2, # ThreeMf
         "a.lbrn"  => 4, # Lbrn2
         "a.lbrn2" => 4  # Lbrn2 again — see the delegation note above

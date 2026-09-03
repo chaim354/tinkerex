@@ -87,9 +87,16 @@ module Maker
       # ADDITIVE: it changes no format's bytes until that format calls it, `LbrnGeometry` and
       # `SvgGeometry` now do and each bumped its own term, and `DxfGeometry` does not. Bumping the
       # shared term would re-render every `.dxf` payload in the library for a change that cannot
-      # reach one. A DXF payload IS byte-identical across the change and
-      # `dxf_geometry_test.rb`'s three digests, untouched, are what say so.
-      GEOMETRY_REVISIONS = { "a.lbrn2" => 6, "a.lbrn" => 6, "a.mage" => 6, "a.dxf" => 3, "a.svg" => 3 }.freeze
+      # reach one. A DXF payload WAS byte-identical across THAT change, and `dxf_geometry_test.rb`'s
+      # three digests, untouched, were what said so.
+      #
+      # PAST TENSE SINCE 2026-09-03, and the correction is the rule working rather than an exception:
+      # `DxfGeometry` CALLS `path_curve` now (its splines carry their own cubics), so it bumped its
+      # OWN term again, 3 -> 4, and `entities.dxf`'s two digests moved while `sample.dxf`'s and
+      # `plate.dxf`'s stayed still. The shared term still has not moved, which is the claim this
+      # paragraph exists to defend. Left in the past tense rather than deleted because the argument
+      # for the additive helper is what a reviewer arrives here asking about.
+      GEOMETRY_REVISIONS = { "a.lbrn2" => 6, "a.lbrn" => 6, "a.mage" => 6, "a.dxf" => 4, "a.svg" => 3 }.freeze
 
       test "a format's geometry revision moves only when this pin moves with it" do
         GEOMETRY_REVISIONS.each do |filename, expected|

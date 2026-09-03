@@ -41,12 +41,16 @@
     fix to `simplify`, a new rounding, a different job box. `Geometry.path_curve` was ADDED on
     2026-09-03 and moves not one byte of a format's output until that format CALLS it:
     `LbrnGeometry` (4 → 5) and `SvgGeometry` (1 → 2) do and each bumped its OWN term, `DxfGeometry`
-    does not, and **`dxf_geometry_test.rb`'s three unchanged digests are the evidence rather than
-    the claim** that a DXF payload is byte-identical across it. Bumping the shared term there would
-    re-measure every `.dxf` in the library for a change that cannot reach one — the same waste in
-    the opposite direction from the staleness the constant exists to prevent. **Ask "does this
-    format's output move" per format**; where the answer is yes for all of them, that is what the
-    shared term is for. `GEOMETRY_REVISIONS`' absolute pins are what make either mistake visible.
+    did NOT ON THE DAY, and **`dxf_geometry_test.rb`'s three then-unchanged digests are the evidence
+    rather than the claim** that a DXF payload was byte-identical across it. **It CALLS the helper
+    since 2026-09-03** — a spline's own cubics — and bumped its own term again, 2 → 3, which is this
+    rule working rather than an exception to it: what moved was one format's USE of a helper that
+    did not itself change, and the other three formats' payloads are untouched by it either way.
+    Bumping the shared term there would re-measure every `.dxf` in the library for a change that
+    cannot reach one — the same waste in the opposite direction from the staleness the constant
+    exists to prevent. **Ask "does this format's output move" per format**; where the answer is yes
+    for all of them, that is what the shared term is for. `GEOMETRY_REVISIONS`' absolute pins are
+    what make either mistake visible.
 - **`available?` ASKS WHETHER THIS BOX HAS *ANY* PATH TO A THUMBNAIL — NOT WHETHER IT HAS THE
   RASTERIZER.** `Svg` and `Dxf` gate on **resvg**, because a rasterized SVG is their only path.
   **`Lbrn2` and `Mage` are unconditionally `true`**, because both formats carry the authoring
@@ -251,7 +255,10 @@
   ~5.0°, so a spline and an arc in one file agree about how round a curve is. Gzipped that payload
   is 949 KB, and `cards.dxf` is the worst of 129 files (`elianadxf.dxf` 32 KB, `macropad v5.dxf`
   27 KB); **whether that fetch is acceptable is a product decision, not a tuning one**, and it is
-  flagged rather than settled.
+  flagged rather than settled. **THOSE FIGURES ARE THE STATE BEFORE THE SPLINE DESCRIPTOR** — the
+  same file is 4,386.6 KB / 1,293 KB gzipped since 2026-09-03 (measured below) — **and the knob is
+  unmoved by that on purpose**: a descriptor is exact at ANY flatness, so coarsening the sampling
+  now shrinks the points beside a curve the client no longer draws from them.
 - **A CORRUPT DOCUMENT RAISES; AN EMPTY ONE DOES NOT.** `LbrnGeometry` raises `ParseError` when
   `doc.root` is nil, matching `to_svg`, so the job marks it `failed`. A document that parses with no
   shapes returns the empty payload and goes `ready`. Collapse them and a corrupt file presents as a
@@ -498,16 +505,29 @@
   tell a working gate from a missing one. `SvgGeometry.ellipse_curve_for` applies the same test for
   the same reason. **It binds on `"e"` ALONE and must not be widened to `"p"`** — see the
   cubics-only bullet below for why a cubic path needs no such refusal.
-  - **THE SAME REFUSAL ONE TRANSFORM SOURCE ALONG: A DXF CURVE DESCRIPTOR IS DROPPED UNDER A
-    NON-UNIFORM SCALE.** A BLOCK's contents are placed by their INSERT's affine, and only a
-    SIMILARITY keeps a circle a circle — under a non-uniform scale it is an ellipse whose axes are
-    turned by the rotation, and the wire's `e` form carries rx and ry with NO rotation term. There
-    is no honest descriptor to emit, so `Dxf.transform_curve` emits none: **dropping is always
-    safe** — the flattened points still carry the true shape and `b`, `d` and the job box are
-    computed from them — while the thumbnail draws the descriptor INSTEAD of the points, so a stale
-    one is a WRONG PICTURE rather than a coarse one. A MIRROR is a similarity and survives, but it
-    REVERSES an arc's direction, so the placed arc's endpoints swap; leaving `a0` alone draws the
-    complementary arc — same endpoints, wrong side — and `arc_svg` writes it as-is.
+  - **THE SAME REFUSAL ONE TRANSFORM SOURCE ALONG: A DXF `e` OR `a` DESCRIPTOR IS DROPPED UNDER A
+    NON-UNIFORM SCALE** (it read "A DXF CURVE DESCRIPTOR" until 2026-09-03, when a third arm
+    arrived that must NOT drop — next bullet). A BLOCK's contents are placed by their INSERT's
+    affine, and only a SIMILARITY keeps a circle a circle — under a non-uniform scale it is an
+    ellipse whose axes are turned by the rotation, and the wire's `e` form carries rx and ry with
+    NO rotation term. There is no honest descriptor to emit, so `Dxf.transform_curve` emits none
+    for those two arms: **dropping is always safe** — the flattened points still carry the true
+    shape and `b`, `d` and the job box are computed from them — while the thumbnail draws the
+    descriptor INSTEAD of the points, so a stale one is a WRONG PICTURE rather than a coarse one.
+    A MIRROR is a similarity and survives, but it REVERSES an arc's direction, so the placed arc's
+    endpoints swap; leaving `a0` alone draws the complementary arc — same endpoints, wrong side —
+    and `arc_svg` writes it as-is.
+  - **AND `transform_curve`'s `:path` ARM NEVER DROPS, WHERE ITS TWO NEIGHBOURS MUST — THE ARM MOST
+    LIKELY TO BE "FIXED" INTO A REFUSAL BY ANALOGY WITH THEM.** The situations are not the same: an
+    `e` or an `a` names a CIRCLE, which only a similarity preserves, while a cubic Bézier is a
+    convex combination of its own four control points, so ANY affine — non-uniform scale, shear,
+    mirror, all at once — maps the curve by mapping the points and the image is still EXACTLY a
+    cubic. Nothing is lost and nothing is approximated — the same property that binds the gate this
+    bullet hangs under to `"e"` alone. Load-bearing rather than theoretical: all 3,308 of
+    `cards.dxf`'s splines live in BLOCK definitions and reach the drawing through an INSERT, so
+    **every one of them goes through this arm** and a refusal copied from the neighbours would
+    coarsen every placed spline in the corpus for no defect at all. Mutation-checked — making it
+    drop under a non-similarity turns the placed-spline test RED.
 - **A 360° DXF `ARC` IS ENCODED AS AN ELLIPSE, NEVER AS AN ARC.** `Dxf.arc_points` turns
   `a0 == a1` into a 360° sweep — its own comment, *"the whole circle, not a zero-length arc"* —
   whose start and end points are IDENTICAL, and SVG's rule for an arc whose endpoints coincide is
@@ -575,7 +595,10 @@
   saving, it is a different shape. `SvgPath.curved` and `Lbrn2.curved_segments` are the same
   decision on the two producer legs, deliberately not shared: each is one `any?` over a list only
   that traversal holds. A THIRD producer is the point at which they fold into `Geometry.path_curve`
-  instead of becoming a third copy.
+  instead of becoming a third copy — **and the third producer arrived on 2026-09-03 and made no
+  copy at all**, because the question does not arise for it: a DXF descriptor is decided per ENTITY
+  TYPE, and a SPLINE curves BY DECLARATION rather than by inspection of a segment list. The fold is
+  still owed to a producer that has to ASK; DXF is the case that shows not every leg does.
 - **A ROUNDED `<rect>` DELIBERATELY GETS NO DESCRIPTOR, THOUGH IT WOULD COME FOR FREE.**
   `SvgGeometry.rect_contours` synthesises a `d` of four `A` commands for an `rx` and hands it to
   the same parser, so the segments arrive already built — and are dropped, in the ONE place
@@ -591,6 +614,16 @@
   readout beside it. The extraction was proved **bit-identical to the old sampler over 3,600 cases**
   (radii 1–1000, five rotations, both flags, three tolerances, zero differing points), which is what
   licensed it: **no measured number moved.**
+- **`Dxf.de_boor` IS THE REPEATED-PARAMETER CASE OF `Dxf.blossom`, NOT A SECOND COPY OF THE
+  RECURRENCE** — the bullet above, one leg over, on the recurrence where a second copy would cost
+  most. De Boor's algorithm ALREADY WAS the polar form with every level handed the same `u`, so the
+  extraction is a generalisation and `de_boor` calls into it: the flattened points and the extracted
+  cubics come out of ONE evaluation and cannot describe different curves on the same spline. A
+  second copy here would be §14b's `LbrnMetadata` bug where it is hardest to notice — both copies
+  draw a plausible spline. **The evaluation path is bit-identical, same operations in the same
+  order**, which is precisely what licenses the two spline-free fixtures' digests NOT MOVING:
+  `sample.dxf` and `plate.dxf` come out byte-for-byte unchanged on both artifacts, which is the
+  evidence rather than the claim that the generalisation moved nothing under it.
 - **THE `d` STRING IS BUILT FROM PARSED NUMBERS, NEVER FROM THE AUTHOR'S MARKUP, AND THAT IS WHAT
   MAKES IT COMPATIBLE WITH §15.** `Geometry.path_curve` takes a SEGMENT LIST of Floats the format
   module has already parsed; `round` is a method a String does not answer to and `#{}` never
@@ -615,6 +648,24 @@
     It is a second, independent change to interaction fidelity; taking it in the same arc would
     have confounded the measurement above. A reader finding a doubled payload here should reach for
     this rather than for the descriptor.
+- **THE THIRD PRODUCER LEG'S GROWTH WAS MEASURED AND ACCEPTED THE SAME WAY, AND THE PROJECTION CAME
+  IN LOW.** `cards.dxf` — the corpus's worst file, 3,308 splines over 19,454 knot spans — went
+  **3,366 → 4,386.6 KB (+30.3%)**, gzipped **949 → 1,293 KB**; `elianadxf.dxf` **+80.6%**;
+  `macropad v5.dxf` **+38.3%**. Shapes and job boxes are unchanged on all five scratch files, and
+  the two carrying no spline are byte-identical on the payload AND the SVG — which is what says the
+  growth is the descriptor and nothing else. The plan's own estimate, built from span counts through
+  the parser, said **+27%**. Three points is small and the cause was not chased, but **the direction
+  is worth recording**: even an estimate counted on the right traversal came in UNDER, so **treat a
+  payload projection as a floor rather than a forecast** — as the reason to measure and not as a
+  substitute for it.
+  - **AND THE THUMBNAIL GOT SMALLER, WHICH IS THE SIGN A PAYLOAD-SHAPED ARGUMENT PREDICTS WRONG.**
+    Adding the `:path` arm to `Dxf.element_svg` cut `cards.dxf`'s thumbnail SVG **3,106 →
+    1,609.5 KB (−48%)** and `macropad v5.dxf`'s **64.5 → 13.1 KB (−80%)**. The reason generalises
+    past DXF: the payload pays for a descriptor riding BESIDE the thinned points it exists to
+    improve on, while **the thumbnail leg has no thinning stage and no points to keep**, so six
+    numbers REPLACE every sample of a span instead of joining it. **A descriptor is a saving on that
+    artifact even where it is a cost on this one** — so measure both, per leg, rather than carrying
+    the payload's arithmetic across.
 - **COUNTING A FILE'S TEXT IS NOT COUNTING WHAT A TRAVERSAL YIELDS — THREE TIMES ON ONE BRANCH.**
   `grep -E "^SPLINE$"` missed every CRLF file and put a plan out by **78×** (`tinkerex#216`).
   Counting `B<a> <b>` ops missed that LightBurn shares geometry between instances by
@@ -626,13 +677,35 @@
   pairing the two sequences by eye will otherwise swap the last pair. **Count through the parser**,
   on the same traversal the renderer uses; a text-level count is a different question wearing the
   same units.
-- **DXF SPLINES ARE NEWLY ELIGIBLE FOR A `"p"` DESCRIPTOR AND ARE DELIBERATELY OUT OF SCOPE.** Since
-  `tinkerex#216` they are parsed, they are degree 3 everywhere in the corpus, and a degree-3 NURBS
-  decomposes into EXACT cubics by Böhm knot insertion — so this is a possibility rather than a
-  wish. It is out because `cards.dxf` already sits at **3.4 MB** against a 1,536 KB design budget,
-  and adding to that is a decision with its own measurement. **`DxfGeometry` calling
-  `Geometry.path_curve` is also the moment `Geometry::SHARED_REVISION`'s additive-helper argument
-  stops applying to it**, and the DXF digests move.
+- **A DXF SPLINE'S BÉZIER EXTRACTION IS EXACT FOR DEGREE 3 WITH UNIT WEIGHTS, AND REFUSED
+  OTHERWISE — AND THIS BULLET SAID "DELIBERATELY OUT OF SCOPE" UNTIL 2026-09-03.** It was out on
+  cost, and the cost has since been measured and accepted (two bullets up); the geometry half of it
+  stands unchanged. **A degree-3 B-spline IS a chain of cubic Béziers**, so `Dxf.spline_curve` is an
+  exact REWRITING of the file rather than a fit: each non-empty knot span yields exactly one cubic,
+  read off as four blossom values at that span's own endpoints, which is Böhm's insertion done
+  through the recurrence `de_boor` was already running. Nothing is sampled and no tolerance is
+  involved. **A RATIONAL spline is refused** — a rational cubic is a RATIO of polynomials and an SVG
+  `C` is a polynomial, so no cubic draws one, and emitting the projected control points anyway would
+  put a curve that is not the file's into a picture the thumbnail draws INSTEAD of the points.
+  **The refusal is TALLIED, as `SPLINE(rational)`**: `SPLINE` is in `ENTITY_TYPES` now, so the
+  type-based tally no longer fires for it and a silent drop would leave the status line actively
+  stating that nothing was skipped. Zero rational splines occur in the 129-file corpus — **the guard
+  is about tomorrow's file**, which is why the fixture has to MAKE one rather than find one.
+  - **THE RATIONAL TEST READS THE HOMOGENEOUS CONTROL POINTS, NOT THE FILE'S CODE 41 OR ITS RATIONAL
+    FLAG, AND THE DISTINCTION IS LOAD-BEARING.** `Dxf.homogeneous` already IGNORES a weight run that
+    does not match the control points one for one, and a non-positive weight, substituting 1.0 — so
+    such a file DRAWS the unweighted curve, which a cubic spells exactly. Reading the raw weights
+    would refuse a descriptor for a curve with no rational component left in it; reading flag 70's
+    bit would refuse on a CLAIM the file makes about itself. `hcp` is what was actually evaluated,
+    so the refusal and the drawing cannot disagree.
+  - **A DEGREE OTHER THAN 3 GETS NO DESCRIPTOR AND IS DELIBERATELY NOT TALLIED** — only what the
+    wire form STRUCTURALLY cannot express is a shortfall worth reporting, and neither omission is
+    one. A degree-1 spline IS its own control polygon, which `p` already carries EXACTLY, so the
+    curved-contour rule above refuses it on its own terms and nothing is lost. A degree-2 spline
+    elevates to a cubic EXACTLY (`Geometry.path_curve`'s own `Q` conversion), so it is a feature not
+    yet written rather than a refusal — and it has ZERO corpus occurrences, so shipping it would be
+    untestable against anything but a synthetic file. Tallying either would report a shortfall that
+    did not happen, which is the same lie as hiding one that did.
 - **A REVISION IS BUMPED ONCE PER SHIPPED CHANGE, NOT ONCE PER EDIT.** `SHARED_REVISION` moved
   0 → 1 when `g` was introduced; the arc's wire form was then REDEFINED inside that same unmerged
   revision and deliberately NOT bumped again. A revision exists to invalidate STORED artifacts, and
@@ -654,6 +727,15 @@
   degree-3 SPLINE, a closed POLYLINE with equal and OPPOSITE bulges, a BLOCK placed by an INSERT at
   a non-zero offset, and a full-turn ARC, with a `999`-comment header saying what each part pins. A
   fifth entity type gets a fifth part of that fixture, not a fourth fixture.
+  - **AND ON 2026-09-03 IT FIRED — THE FIRST TIME THAT GUARD HAS CAUGHT ANYTHING SINCE IT WAS
+    ADDED.** Through `tinkerex#216`, `#219` and `#217` it reported "nothing moved" on every run:
+    correct about `sample.dxf` and `plate.dxf`, which hold no spline, no BLOCKS section and no
+    bulge, and blind to changes that moved the output for dozens of real files. The spline
+    descriptor moved **both** of `entities.dxf`'s digests while those two stayed still — the second
+    half doing as much work as the first, since a move there would have meant the change reached
+    geometry it has no business touching. **That is what a fixture earning its place looks like**,
+    and it is the argument for adding one the moment a guard's subject is not represented in what it
+    scans: the alternative is not a weaker guard, it is a guard that cannot fail.
 - **THE ELEMENT A SHAPE DRAWS AS HAS ONE DEFINITION, `lib/shape_svg.js`, AND IT WRITES NO
   PRESENTATION.** Three callers want three presentations of one shape — the Measure view's class +
   layer colour under a transparent hit twin, the print sheet's black 0.2 mm, the exporter's layer
