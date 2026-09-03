@@ -40,7 +40,12 @@ module Maker
       #   2  error-bounded simplification against SIMPLIFY_TOLERANCE
       #   3  carries per-layer colours so the Measure view draws in LightBurn's palette
       #   4  a MillMage shape's layer reads from OpIndex, so .mage shapes stop reporting layer nil
-      FORMAT_REVISION = 4
+      #   5  a bezier contour carries the `"p"` descriptor — the cubics the file itself wrote,
+      #      where every curve used to reach the client as a run of short chords. NOT a shared
+      #      bump, though the wire form is `Geometry.path_curve`'s: see `Geometry::SHARED_REVISION`,
+      #      which spells out why an ADDITIVE helper is versioned by its callers and not by the
+      #      file it lives in.
+      FORMAT_REVISION = 5
 
       # What `Enqueue` actually reads. The shared term is added rather than remembered — see
       # `Geometry::SHARED_REVISION`. Mage delegates to THIS constant, so .mage moves with it too.

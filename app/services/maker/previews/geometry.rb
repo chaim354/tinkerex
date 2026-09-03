@@ -200,6 +200,19 @@ module Maker
       # RESIDUAL, STATED RATHER THAN HIDDEN: this makes the CORRECT edit one line; it does not stop
       # an editor bumping a format's FORMAT_REVISION for a change that actually lives here. The
       # absolute-value pins in `GeometryTest` are what make that mistake visible.
+      #
+      # AND THE RULE CUTS ON WHAT A FORMAT EMITS, NOT ON WHICH FILE WAS EDITED — the one part of it
+      # a reviewer should challenge, so the argument is written down rather than left to be
+      # re-derived. It exists for a change that alters what ALL formats emit: a fix to `simplify`,
+      # a new rounding, a different job box. An ADDITIVE helper is not that. `path_curve` was added
+      # here on 2026-09-03 and moves not one byte of a format's output until that format CALLS it —
+      # `LbrnGeometry` and `SvgGeometry` do and each bumped its OWN term; `DxfGeometry` does not,
+      # and its payloads are byte-identical across the change (`dxf_geometry_test.rb`'s digests,
+      # unchanged, are the evidence rather than the claim). Bumping the shared term would re-render
+      # every already-measured `.dxf` in the library for a change that cannot alter one byte of it,
+      # which is the same waste in the opposite direction from the staleness this constant exists
+      # to prevent. THE TEST OF WHICH ONE TO BUMP IS "does this format's output move", asked per
+      # format — and where the answer is yes for all of them, that is what the shared term is for.
       #   1  shapes gained the optional `g` curve descriptor (Collector#add's `curve:`), the arc
       #      form of which is centre + angles. NOT A SECOND BUMP: that form replaced resolved `A`
       #      endpoints WITHIN this same revision, before any deployment ever served a revision-1

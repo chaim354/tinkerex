@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  THE ONE SVG FIXTURE WHOSE `<path>` ACTUALLY CURVES, so the `"p"` descriptor this leg emits is
+  drawn in a browser rather than only asserted server-side.
+
+  plate.svg and square.svg are a <rect> and a <circle>, which take the `"e"` form or none at all —
+  so until this file existed the SVG leg's cubics reached the DOM in no test at all, and the
+  client's `"p"` branch was exercised only through LightBurn fixtures. Green by luck, which is the
+  same shape as the three harnesses that assumed every contour was a <polygon>.
+
+  ONE `C` AND TWO `A`s, because those are the two families whose descriptor is DERIVED rather than
+  carried through: an `A` is not on the wire at all (it leaves here as cubics, which is what lets a
+  rotated or skewed path keep its descriptor), and the `C`'s control points must ride the same
+  affine as the vertices they belong to.
+
+  REAL PHYSICAL UNITS AND ROUND NUMBERS, plate.svg's rule: width/height are millimetres and the
+  viewBox is 1:1 with them, so every number below IS its own measurement — the part is exactly
+  40 x 20 mm.
+
+  EVERY EXTREME IS AN EXPLICIT ENDPOINT, WHICH IS WHY THE SIZE IS ASSERTABLE AS A LITERAL. The
+  right cap is TWO quarter arcs rather than one semicircle, so its rightmost point (50,20) is a
+  node instead of a sample somewhere inside a sweep; the cubic bulges INWARD, its control points
+  at x=20 well inside the hull, so it moves no edge of the box. A curve whose extreme falls
+  mid-sweep would make the readout depend on how many samples the flattener chose.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="60mm" height="40mm" viewBox="0 0 60 40">
+  <path d="M 10 10 H 40 A 10 10 0 0 1 50 20 A 10 10 0 0 1 40 30 H 10 C 20 25 20 15 10 10 Z"
+        fill="none" stroke="#008000"/>
+</svg>

@@ -22,11 +22,21 @@ class MeasureFormatsTest < ApplicationSystemTestCase
   #   plate.dxf   80 x 40 mm plate (LWPOLYLINE, layer Cut) + a 10 mm hole (CIRCLE, layer Engrave)
   #   plate.svg   the same sizes in a 1:1 mm document, as a <rect> and a <circle>
   #   real-export.mage  100 x 60 job: an open toolpath and a 20 mm circle
-  FIXTURES = %w[plate.dxf plate.svg real-export.mage].freeze
+  #   curves.svg  a 40 x 20 mm <path> that actually CURVES — one `C` and two `A`s
+  #
+  # curves.svg IS THE ONE ADDED FOR A DESCRIPTOR RATHER THAN FOR A FORMAT, and it is an ADDITION
+  # rather than a replacement: plate.svg's two assertions are what pin the SVG leg's sizes and its
+  # paint order, and neither moves. Neither of the two existing SVG fixtures contains a curved
+  # `<path>` — a <rect> and a <circle> take the `"e"` form or none — so the `"p"` descriptor the
+  # SVG leg emits reached the DOM in no test at all and the client's `"p"` branch was exercised
+  # only through LightBurn fixtures. That is the "green by luck" shape §14h already records for the
+  # three harnesses that assumed every contour was a <polygon>.
+  FIXTURES = %w[plate.dxf plate.svg real-export.mage curves.svg].freeze
 
   HOLE_READOUT  = "⌀10 mm".freeze
   PLATE_READOUT = "80 × 40 mm".freeze
   MAGE_READOUT  = "⌀20 mm".freeze
+  CURVES_READOUT = "40 × 20 mm".freeze
 
   # WHAT THE PARSER CANNOT DRAW, WHICH THE STATUS LINE NOW HAS TO SAY. SYNTHESIZED RATHER THAN
   # CHECKED IN: the whole content of interest is a `0`-code naming an entity type this parser does
@@ -98,6 +108,37 @@ class MeasureFormatsTest < ApplicationSystemTestCase
 
     stage_svg.click
     assert_selector ".measure-dims", text: HOLE_READOUT
+  end
+
+  # THE SVG LEG'S `"p"` DESCRIPTOR, END TO END, WHICH NO OTHER TEST IN THIS REPO SEES. Stage 2
+  # asserts the descriptor server-side by RESOLVING it; this asks the different question a browser
+  # is the only thing that can answer — does it reach the DOM as a real curve, and is it still the
+  # thing a click selects.
+  #
+  # THREE CLAIMS, AND EACH FAILS ON A DIFFERENT DEFECT. The element is a <path>, so a leg that
+  # dropped the descriptor and drew the flattened chords (a <polygon>) fails on the tag. Its `d`
+  # holds a `C` and NOTHING outside `M`/`L`/`C`/`Z` — the file's two `A` commands are on the wire
+  # as cubics, which is the whole reason a rotated or skewed <path> can keep its descriptor at all,
+  # so an implementation that passed an arc straight through fails here. And the readout is still
+  # the file's own 40 x 20 mm, because `b` is measured from the FULL-RESOLUTION points and a
+  # descriptor never displaces them.
+  #
+  # THE CLICK IS THE FOURTH CLAIM AND IT IS NOT DECORATION: a closed contour is its own hit target
+  # only because `.measure-contour { fill: transparent }` fills the <path>'s CLOSED subpath, and
+  # what closes it is the `Z` at the end of that `d`. Drop the `Z` and the shape is still drawn
+  # perfectly and stops being clickable anywhere but on its stroke.
+  test "an svg path's own cubics reach the browser as a curve, and stay clickable" do
+    open_measure_view("curves.svg")
+
+    contour = find("svg .measure-contour")
+    assert_equal "path", contour.tag_name,
+                 "a <path> the file drew with curves must not arrive as a flattened polygon"
+    assert_match(/\bC\b/, contour[:d], "the descriptor's cubics must reach the element")
+    assert_empty contour[:d].scan(/[A-Za-z]/).uniq - %w[M L C Z],
+                 "the wire form is cubics and lines only — an `A` here means one was passed through"
+
+    stage_svg.click
+    assert_selector ".measure-dims", text: CURVES_READOUT
   end
 
   test "a mage file measures through the shared LightBurn walker" do
@@ -238,8 +279,15 @@ class MeasureFormatsTest < ApplicationSystemTestCase
     # recurring. Ask each element kind for its own geometry instead.
     #
     # nil FOR ANYTHING ELSE, DELIBERATELY. An arc draws as a <path> whose geometry lives in `d`,
-    # with no attribute a minimum x can be read from; no fixture here produces one, and answering
-    # nil means the day one does the caller reports a missing contour rather than raising again.
+    # with no attribute a minimum x can be read from, and answering nil means such a contour is
+    # reported as missing rather than raising again.
+    #
+    # `curves.svg` PRODUCES EXACTLY THAT AND IS STILL NOT A CASE HERE — a sentence above read "no
+    # fixture here produces one" until 2026-09-03, when one did. It is not a case because each test
+    # opens ONE file, and no test using this helper opens that one: its single contour is found
+    # directly. `lbrn_measure_test.rb` and `measure_print_test.rb` DID grow a `path_min_x` arm,
+    # because their fixtures mix a bezier Path with the shapes those helpers have to tell it from.
+    # An unused fourth branch here would be dead code claiming to be coverage.
     def min_x(contour)
       case contour.tag_name
       when "circle"  then contour[:cx].to_f - contour[:r].to_f

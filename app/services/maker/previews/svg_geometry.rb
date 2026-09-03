@@ -34,7 +34,11 @@ module Maker
       # belongs in `Geometry::SHARED_REVISION`, which the line below adds in.
       #
       #   1  original
-      FORMAT_REVISION = 1
+      #   2  a `<path>`'s curves carry the `"p"` descriptor instead of flattening to chords —
+      #      116,244 `C`, 8,011 `S`, 1,459 `Q`, 859 `A` and 2 `T` across the live corpus. The
+      #      wire form is `Geometry.path_curve`'s and the bump is STILL this format's, not the
+      #      shared term: `Geometry::SHARED_REVISION` carries the argument.
+      FORMAT_REVISION = 2
 
       # What `Enqueue` actually reads — see `Geometry::SHARED_REVISION`.
       PAYLOAD_REVISION = Geometry::SHARED_REVISION + FORMAT_REVISION

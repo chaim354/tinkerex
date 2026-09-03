@@ -79,7 +79,17 @@ module Maker
       #
       # FIVE NAMES, NOT THREE: .lbrn and .mage both route to LbrnGeometry, so a three-name check
       # cannot see a delegation regression.
-      GEOMETRY_REVISIONS = { "a.lbrn2" => 5, "a.lbrn" => 5, "a.mage" => 5, "a.dxf" => 3, "a.svg" => 2 }.freeze
+      #
+      # FOUR OF THE FIVE MOVED ON 2026-09-03 AND `a.dxf` DELIBERATELY DID NOT, which is this
+      # table's whole job. The `"p"` bezier descriptor added `Geometry.path_curve` to the SHARED
+      # builder, and the standing rule one file over says a change THERE bumps every format — so
+      # the reviewer's question is why the shared term did not move. Because `path_curve` is
+      # ADDITIVE: it changes no format's bytes until that format calls it, `LbrnGeometry` and
+      # `SvgGeometry` now do and each bumped its own term, and `DxfGeometry` does not. Bumping the
+      # shared term would re-render every `.dxf` payload in the library for a change that cannot
+      # reach one. A DXF payload IS byte-identical across the change and
+      # `dxf_geometry_test.rb`'s three digests, untouched, are what say so.
+      GEOMETRY_REVISIONS = { "a.lbrn2" => 6, "a.lbrn" => 6, "a.mage" => 6, "a.dxf" => 3, "a.svg" => 3 }.freeze
 
       test "a format's geometry revision moves only when this pin moves with it" do
         GEOMETRY_REVISIONS.each do |filename, expected|
