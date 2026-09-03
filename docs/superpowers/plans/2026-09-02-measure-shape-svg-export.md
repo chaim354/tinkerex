@@ -39,6 +39,15 @@ rules that bind hardest on this plan:
 5. **Mutation-check every guard.** After a guard test goes green, break the thing it guards and
    confirm RED, then restore.
 
+**COMMIT BEFORE YOU MUTATE.** Every mutation check below says to break something, confirm RED, then
+restore with `git checkout -- <file>`. That restores to **HEAD** — so if the task's own
+implementation is still uncommitted, the restore wipes it too, and if the mutated file is brand new
+it is untracked and `git checkout --` fails outright. **Do each task's commit step FIRST, then
+mutate, then restore.** The commit is what makes the restore a real restore. (Learned the hard way
+during this plan's own execution on 2026-09-02, and already recorded in the user's memory as
+`git-checkout-destroys-parallel-agent-work`.) The one exception is Task 3, whose mutation targets
+`lbrn2.rb` — a file that task never edits, so it is clean at HEAD either way.
+
 Also: this suite has **no `Object#stub`** (minitest 6 dropped `minitest/mock`). Use the house
 `counting`/`replacing` patterns already in `dxf_geometry_test.rb`.
 
@@ -593,19 +602,23 @@ LIBRARY_PATH=$(mktemp -d) bin/rails test test/services/maker/previews/dxf_geomet
 
 Expected: PASS.
 
-- [ ] **Step 5: Mutation-check the two traps**
 
-1. Drop `|| curve[:sweep] >= 360`. "a full-circle ARC is encoded as an ellipse" must go **RED**.
-2. Change the sweep flag from `0` to `1`. "an ARC becomes SVG A-command parameters" must go **RED**.
+> **Commit first, then mutate** — `git checkout --` restores to HEAD, so mutating before the
+> commit destroys this task's own work. See the note at the top of this plan.
 
-Restore both.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add app/services/maker/previews/dxf_geometry.rb test/services/maker/previews/dxf_geometry_test.rb
 git commit -m "DxfGeometry: carry CIRCLE and ARC descriptors, with the full-circle case encoded as an ellipse"
 ```
+
+- [ ] **Step 6: Mutation-check the two traps**
+
+1. Drop `|| curve[:sweep] >= 360`. "a full-circle ARC is encoded as an ellipse" must go **RED**.
+2. Change the sweep flag from `0` to `1`. "an ARC becomes SVG A-command parameters" must go **RED**.
+
+Restore both.
 
 ---
 
@@ -753,20 +766,24 @@ LIBRARY_PATH=$(mktemp -d) bin/rails test test/services/maker/previews/svg_geomet
 
 Expected: PASS.
 
-- [ ] **Step 7: Mutation-check the gate and the flip**
+
+> **Commit first, then mutate** — `git checkout --` restores to HEAD, so mutating before the
+> commit destroys this task's own work. See the note at the top of this plan.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add app/services/maker/previews/svg_geometry.rb test/services/maker/previews/svg_geometry_test.rb
+git commit -m "SvgGeometry: an exact descriptor for circle and ellipse, refused under rotation"
+```
+
+- [ ] **Step 8: Mutation-check the gate and the flip**
 
 1. Delete the `world[1]`/`world[2]` guard line. "a rotated ellipse carries no descriptor" → **RED**.
 2. Negate `cy` in the `ellipse_curve` call (`curve[1] * -sy`). "the descriptor is scaled by the
    viewBox, never flipped" → **RED**.
 
 Restore both.
-
-- [ ] **Step 8: Commit**
-
-```bash
-git add app/services/maker/previews/svg_geometry.rb test/services/maker/previews/svg_geometry_test.rb
-git commit -m "SvgGeometry: an exact descriptor for circle and ellipse, refused under rotation"
-```
 
 ---
 
@@ -1489,18 +1506,22 @@ LIBRARY_PATH=$(mktemp -d) bin/rails test test/system/measure_export_test.rb
 
 Expected: PASS.
 
-- [ ] **Step 5: Mutation-check the scale mechanism**
 
-Change `width` to `${round(box[2] - box[0])}px`. "the document carries the selection's own size in
-millimetres" must go **RED**. Restore. Then change the translate to `translate(0 0)` — "the whole
-selection is translated by one transform" must go **RED**. Restore.
+> **Commit first, then mutate** — `git checkout --` restores to HEAD, so mutating before the
+> commit destroys this task's own work. See the note at the top of this plan.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add app/javascript/lib/export_svg.js test/system/measure_export_test.rb
 git commit -m "lib/export_svg: selected shapes to a standalone to-scale SVG document"
 ```
+
+- [ ] **Step 6: Mutation-check the scale mechanism**
+
+Change `width` to `${round(box[2] - box[0])}px`. "the document carries the selection's own size in
+millimetres" must go **RED**. Restore. Then change the translate to `translate(0 0)` — "the whole
+selection is translated by one transform" must go **RED**. Restore.
 
 ---
 
@@ -1784,7 +1805,18 @@ Expected: PASS. If the CSP blocks the `blob:` anchor, the SEVERE-console check i
 works, and only a browser knows. The policy is report-only today, so a report is a finding to
 record in the invariants doc, not a failure to route around.
 
-- [ ] **Step 6: Mutation-check the shared target set**
+
+> **Commit first, then mutate** — `git checkout --` restores to HEAD, so mutating before the
+> commit destroys this task's own work. See the note at the top of this plan.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add app/views/files/_measure.html.erb app/javascript/controllers/measure_controller.js test/system/measure_export_test.rb
+git commit -m "Measure: download the selected shapes as SVG"
+```
+
+- [ ] **Step 7: Mutation-check the shared target set**
 
 In `downloadSvg()`, replace `this.targetShapes()` with `this.allShapes`. "the SVG button exports
 exactly the marked parts" must go **RED** — it would export the Rect and the 100 mm Line too, so
@@ -1793,13 +1825,6 @@ the document comes out `width="100mm"` rather than `width="20mm"`. Restore.
 Then, in `refreshPrintBar()`, hard-code the SVG button's label to `"Download all as SVG"`. "the
 button's accessible name names the set it will export" must go **RED** on its second assertion —
 the half that proves the name TRACKS the target rather than merely existing. Restore.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add app/views/files/_measure.html.erb app/javascript/controllers/measure_controller.js test/system/measure_export_test.rb
-git commit -m "Measure: download the selected shapes as SVG"
-```
 
 ---
 
