@@ -1113,12 +1113,12 @@ companion. Nothing was dropped; this anchor stays.
 ### 14h. Shape measurement, the Measure view → **`docs/invariants/measure-view.md`**
 
 **Read that file before touching** `app/services/maker/previews/`, `Maker::Previews::Geometry` and
-the four formats that feed it, `measure_controller.js`, `lib/print_sheet.js`, or anything that reads
-a `maker_previews` row. It holds the per-format `PAYLOAD_REVISION` arithmetic, the
-`available?`/`available_for?` split, the flattening and thinning rules (measure before thinning), the
-circularity floor, the preview staleness axes, Z-up, and the print sheet's mm-scale mechanism.
-Moved out on 2026-08-25 — 351 lines that bind only inside the preview stack. Nothing was dropped;
-this anchor stays because code cites `§14h`.
+the four formats that feed it, `measure_controller.js`, `lib/print_sheet.js`, `lib/shape_svg.js`,
+`lib/export_svg.js`, or anything that reads a `maker_previews` row. It holds the per-format
+`PAYLOAD_REVISION` arithmetic, the `available?`/`available_for?` split, the flatten/thin rules
+(measure before thinning), the circularity floor, the staleness axes, Z-up, the print sheet's
+mm-scale mechanism, and the `g` curve descriptor + SVG export. Moved out 2026-08-25 — 482 lines
+binding only inside the preview stack. Nothing was dropped; this anchor stays: code cites `§14h`.
 
 ### 14i. Backup and restore → **`docs/invariants/backup-restore.md`**
 
