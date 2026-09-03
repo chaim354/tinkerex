@@ -216,6 +216,46 @@ module Maker
         assert_equal({}, payload["colors"])
       end
 
+      # ---- curve descriptors --------------------------------------------------------------
+
+      # A DRAWING HINT AND NEVER A MEASUREMENT. The descriptor rides alongside the points; `b` and
+      # `d` are still computed from the points, so a payload built WITH one and a payload built
+      # WITHOUT one must report identical numbers. Asserted against a shape that is genuinely
+      # round, so `d` is present and could plausibly have been recomputed from the descriptor.
+      test "a curve descriptor changes no measured number" do
+        points = (0..32).map { |i| t = i * (2 * Math::PI / 32); [ 10 * Math.cos(t), 10 * Math.sin(t) ] }
+
+        plain = Geometry.build { |o| o.add(layer: 0, points:, closed: true, object_id: 1) }
+        with  = Geometry.build do |o|
+          o.add(layer: 0, points:, closed: true, object_id: 1,
+                curve: Geometry.ellipse_curve(0.0, 0.0, 10.0, 10.0))
+        end
+
+        assert_equal plain["shapes"][0]["b"], with["shapes"][0]["b"]
+        assert_equal plain["shapes"][0]["d"], with["shapes"][0]["d"]
+        assert_equal plain["shapes"][0]["p"], with["shapes"][0]["p"]
+        assert_equal plain["job"], with["job"]
+      end
+
+      # ABSENT, NOT NULL. A `"g" => nil` on every polygon is bytes on the wire for nothing, and the
+      # client's own check is truthiness, so a null would read as "no descriptor" while still being
+      # paid for on the densest files — the ones the payload's size budget exists for.
+      test "a shape with no curve carries no g key at all" do
+        payload = Geometry.build { |o| o.add(layer: 0, points: [ [ 0, 0 ], [ 1, 1 ] ], closed: false, object_id: 1) }
+
+        assert_not payload["shapes"][0].key?("g")
+      end
+
+      test "ellipse_curve rounds to PRECISION and tags its type" do
+        assert_equal [ "e", 1.23, -4.57, 10.0, 5.0 ],
+                     Geometry.ellipse_curve(1.234, -4.567, 10.0, 5.0)
+      end
+
+      test "arc_curve rounds its coordinates and passes its flags through" do
+        assert_equal [ "a", 0.0, 0.0, 10.0, 0.0, 5.0, 1, 0 ],
+                     Geometry.arc_curve(0.0, 0.0, 10.0, 0.004, 5.0, 1, 0)
+      end
+
       private
 
       def fixture(name) = File.binread(Rails.root.join("test/fixtures/files", name))

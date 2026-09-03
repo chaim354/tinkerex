@@ -71,6 +71,37 @@ module Maker
       # mm, to 0.01.
       PRECISION = 2
 
+      # THE WIRE FORM OF A CURVE DESCRIPTOR, WITH ONE DEFINITION HERE RATHER THAN THREE IN THE
+      # FORMAT MODULES. A format supplies the numbers; the encoding lives here, so `["e", ...]` is
+      # not a string spelled in LbrnGeometry, DxfGeometry and SvgGeometry that must then agree —
+      # the N-copies-that-must-agree defect §14b records as four skip-list strings and §14d as five
+      # port_writable? branches.
+      #
+      # ALREADY IN CLIENT SPACE — millimetres, Y-down. `measure_controller.js` branches on NO file
+      # type and must not learn what a DXF Y-flip is; each format's geometry module puts its
+      # descriptor into this space exactly as it already does for its points.
+      #
+      # A DRAWING HINT, NEVER A MEASUREMENT. `b`, `d` and the job box are computed from the
+      # FULL-RESOLUTION points above and are untouched by anything here — the same contract
+      # `Lbrn2.each_geometry` and `Dxf.each_geometry` already state about the descriptors they
+      # yield ("a richer rendering of the same points, never a substitute for them"). A client
+      # ignoring `"g"` draws what it drew before this existed and reports identical numbers.
+      #
+      # AND NOTHING INFERS ONE FROM THE POINTS. A shape gets a descriptor because the FILE said
+      # <Ellipse> / CIRCLE / ARC / <circle>, never because it measured round. `Geometry.diameter`'s
+      # accepted consequence — a genuine 16-gon reports as round — stays confined to the `d` LABEL
+      # and must never reach exported geometry, where it would substitute a circle for a designed
+      # polygon in a file somebody cuts.
+      def ellipse_curve(cx, cy, rx, ry)
+        [ "e", *[ cx, cy, rx, ry ].map { |v| v.round(PRECISION) } ]
+      end
+
+      # SVG `A`-command parameters, resolved. Centre-plus-angles would push the Y-flip's
+      # orientation reversal onto the client, which is the one thing the client may not know.
+      def arc_curve(x0, y0, x1, y1, r, large_arc, sweep)
+        [ "a", *[ x0, y0, x1, y1, r ].map { |v| v.round(PRECISION) }, large_arc, sweep ]
+      end
+
       # A CHANGE IN THIS FILE IS A CHANGE TO EVERY FORMAT'S OUTPUT, so it must bump EVERY format's
       # PAYLOAD_REVISION, not one of them. `Maker::Previews::Enqueue` compares a stored artifact's
       # `renderer_revision` against the renderer that would build it now — so a fix to `simplify`
@@ -118,7 +149,7 @@ module Maker
         # (a zero-length line, a Rect with no W/H) is ordinary in a real file and must not fail the
         # whole render. It still consumed its object_id, which is why ids are never dense — see
         # `Lbrn2.each_geometry`.
-        def add(layer:, points:, closed:, object_id:, image: false)
+        def add(layer:, points:, closed:, object_id:, image: false, curve: nil)
           return if points.length < 2
 
           xs = points.map(&:first)
@@ -144,6 +175,9 @@ module Maker
           # to fewer than MIN_CIRCLE_POINTS and would lose its diameter entirely.
           d = Geometry.diameter(points, closed, x0, y0, x1, y1)
           entry["d"] = d.round(PRECISION) if d
+          # ABSENT RATHER THAN NULL when a format has no exact primitive to offer — which is most
+          # shapes in most files. See Geometry.ellipse_curve for what this is and is not.
+          entry["g"] = curve if curve
 
           @shapes << entry
         end
