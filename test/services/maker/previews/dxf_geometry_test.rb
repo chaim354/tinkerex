@@ -166,15 +166,22 @@ module Maker
       # `DxfGeometry::FORMAT_REVISION` must. Update the digest only once the matching revision has
       # been bumped, or every already-measured DXF serves the old bytes forever — a finished
       # design's content never changes, so nothing else will ever invalidate it.
+      #
+      # THE PAYLOAD DIGESTS MOVED ON 2026-09-02 AND THE SVG ONES DELIBERATELY DID NOT, which is the
+      # evidence that carrying the `g` curve descriptor touched the payload alone. Both fixtures
+      # hold a CIRCLE and sample.dxf an ARC, so both payloads gained a `g`;
+      # `DxfGeometry::PAYLOAD_REVISION` had already moved 1 -> 2 via `Geometry::SHARED_REVISION`,
+      # which is the licence this comment demands. `Dxf::THUMBNAIL_REVISION` stays at 1 because
+      # `Dxf.to_svg` was not touched — and these two unchanged SVG digests are what proves it.
       test "the traversal's two artifacts are byte-for-byte what they were before it took pairs" do
         {
           "sample.dxf" => %w[
             f32daab0e0264cb27c3d1ae8f3a9f74cda65b56c4b3009062c202900f9232352
-            750dd2218392ab6cdbe9676a4cd15082a2290f80ad1a6ecfdb82f026594fe5f8
+            f34f842cdbe56506a30670c90c266c5fd2eb65fae71bd53552c5e609eaea664e
           ],
           "plate.dxf" => %w[
             d8844eb6832b6d107fd1ad782ce34fc8a35d3b088b4609a6f0c8e6dba86e035d
-            012fcf62476d99b608c76ef40085154a4b3d6d4d9e00aaf32b079ffb7ce81e41
+            0839e1081f3a506a009ba31d643d59ebd8ca62242f4d6bcaaf10c79fb77af431
           ]
         }.each do |name, (svg_sha, payload_sha)|
           bytes = fixture(name)
@@ -186,9 +193,11 @@ module Maker
         end
       end
 
-      # Arcs and circles are flattened for measuring but drawn as EXACT primitives, so the
-      # thumbnail stays crisp at any zoom. A consumer that used the curve descriptor INSTEAD of
-      # the points would be reading a different geometry from the one the bbox came from.
+      # Arcs and circles are flattened for MEASURING and the exact primitive rides alongside, so
+      # the thumbnail stays crisp at any zoom and the payload's `g` lets the client draw the same
+      # curve. What `g` never does is displace the points: `b`, `d` and the job box are still
+      # computed from the flattened ones, and a consumer that used the descriptor INSTEAD of them
+      # would be reading a different geometry from the one the bbox came from.
       test "the thumbnail keeps exact primitives while the payload measures flattened points" do
         svg = Dxf.to_svg(fixture("sample.dxf"))
 
@@ -207,6 +216,68 @@ module Maker
           assert_in_delta r * 2, payload["shapes"].first["d"], 1e-6,
                           "r=#{r} must measure exactly, at any size"
         end
+      end
+
+      # ---- curve descriptors ----------------------------------------------------------------
+
+      # A CIRCLE entity is exact in both DXF and SVG. The traversal has always yielded the
+      # descriptor (`Dxf.to_svg` draws a real <circle> from it); the payload discarded it by name.
+      test "a CIRCLE entity carries an exact ellipse descriptor in client space" do
+        payload = build(circle_dxf(radius: 5, insunits: nil))
+
+        # Model space is Y-up and the client's is Y-down, so cy is negated — the same flip
+        # to_client_space applies to the points. A centre of (0, 0) makes that invisible, which is
+        # what the next test's off-axis centre is for.
+        assert_equal [ "e", 0.0, 0.0, 5.0, 5.0 ], payload["shapes"].first["g"]
+      end
+
+      test "the descriptor is scaled and Y-flipped exactly as the points are" do
+        # $INSUNITS 1 = inches, so 25.4 mm per unit.
+        payload = build(circle_dxf(radius: 2, insunits: 1, cx: 3, cy: 4))
+
+        assert_equal [ "e", 76.2, -101.6, 50.8, 50.8 ], payload["shapes"].first["g"]
+      end
+
+      # A 90-degree ARC from 0 to 90 about the origin, r=10: it starts at (10, 0) and ends at
+      # (0, 10) in MODEL space, so (10, 0) and (0, -10) once flipped.
+      #
+      # THE SWEEP FLAG IS 0, NOT 1. DXF sweeps counter-clockwise, and the Y-flip reverses
+      # orientation — `Dxf.arc_svg` makes the identical conversion for the thumbnail and its own
+      # comment says so. A `1` here draws the arc the long way round: still an arc, still touching
+      # both endpoints, and the wrong 3/4 of the circle.
+      test "an ARC becomes SVG A-command parameters with the flip applied" do
+        payload = build(arc_dxf(cx: 0, cy: 0, r: 10, a0: 0, a1: 90))
+
+        assert_equal [ "a", 10.0, 0.0, 0.0, -10.0, 10.0, 0, 0 ], payload["shapes"].first["g"]
+      end
+
+      test "an arc sweeping more than half a turn sets the large-arc flag" do
+        payload = build(arc_dxf(cx: 0, cy: 0, r: 10, a0: 0, a1: 270))
+
+        assert_equal 1, payload["shapes"].first["g"][6]
+      end
+
+      # THE CASE THAT WOULD DRAW NOTHING. `Dxf.arc_points` turns a0 == a1 into a 360-degree sweep
+      # ("the whole circle, not a zero-length arc" — its own comment), whose start and end points
+      # are IDENTICAL. SVG's rule for an arc whose endpoints coincide is to omit the segment
+      # ENTIRELY, so encoding it as an arc exports an empty path: no error, nothing logged, a shape
+      # that is simply absent from the file. The honest encoding is an ellipse.
+      #
+      # `Dxf.arc_svg` still has this bug for the THUMBNAIL and this test does not cover it — fixing
+      # that needs a THUMBNAIL_REVISION bump and is recorded as out of scope in the design.
+      test "a full-circle ARC is encoded as an ellipse, not a degenerate arc" do
+        payload = build(arc_dxf(cx: 0, cy: 0, r: 7, a0: 45, a1: 45))
+
+        assert_equal [ "e", 0.0, 0.0, 7.0, 7.0 ], payload["shapes"].first["g"]
+      end
+
+      # An LWPOLYLINE has no exact primitive to offer, and a payload key present on every shape
+      # would be bytes for nothing on exactly the densest files.
+      test "a polyline carries no descriptor" do
+        dxf = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\nA\n90\n3\n10\n0\n20\n0\n10\n10\n20\n0\n" \
+              "10\n10\n20\n10\n0\nENDSEC\n0\nEOF\n"
+
+        assert_not build(dxf)["shapes"].first.key?("g")
       end
 
       # ---- documents ------------------------------------------------------------------------
@@ -259,9 +330,15 @@ module Maker
 
       def fixture(name) = File.binread(Rails.root.join("test/fixtures/files", name))
 
-      def circle_dxf(radius:, insunits:)
+      def circle_dxf(radius:, insunits:, cx: 0, cy: 0)
         header = insunits ? "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n#{insunits}\n0\nENDSEC\n" : ""
-        header + "0\nSECTION\n2\nENTITIES\n0\nCIRCLE\n8\nA\n10\n0\n20\n0\n40\n#{radius}\n0\nENDSEC\n0\nEOF\n"
+        header + "0\nSECTION\n2\nENTITIES\n0\nCIRCLE\n8\nA\n10\n#{cx}\n20\n#{cy}\n40\n#{radius}\n" \
+                 "0\nENDSEC\n0\nEOF\n"
+      end
+
+      def arc_dxf(cx:, cy:, r:, a0:, a1:)
+        "0\nSECTION\n2\nENTITIES\n0\nARC\n8\nA\n10\n#{cx}\n20\n#{cy}\n40\n#{r}\n" \
+        "50\n#{a0}\n51\n#{a1}\n0\nENDSEC\n0\nEOF\n"
       end
     end
   end
