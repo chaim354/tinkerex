@@ -238,12 +238,7 @@ export default class extends Controller {
   }
 
   print() {
-    // THE SAME THREE ARMS refreshPrintBar LABELS, in the same order. A measuring click points this
-    // at ONE contour — the one whose size the readout is showing — so printing the part you are
-    // looking at costs no mode. Whatever it resolves to, the button already said so.
-    const shapes = this.marked.size ? [...this.marked]
-      : this.selected ? [this.selected.__shape]
-      : this.allShapes
+    const shapes = this.targetShapes()
     // NOT DEAD, BUT ONLY REACHABLE BY DRIVING THIS METHOD DIRECTLY. `allShapes` is undefined
     // between connect() and the first successful draw(), and in that window the button is
     // display:none (`.measure-actions` without --ready), so no click can get here. What the guard
@@ -489,6 +484,28 @@ export default class extends Controller {
     return `${n} part${n === 1 ? "" : "s"} · ${this.dims(unionBox([...this.marked]))}`
   }
 
+  // THE THREE ARMS, IN PRECEDENCE ORDER, WITH ONE DEFINITION. They were written out twice — once
+  // in print() and once in refreshPrintBar() — under a comment saying the two "must not drift",
+  // which is prose where a mechanism belongs. The exporter would have been a third copy, and three
+  // copies of a precedence rule is §14d's five port_writable? branches in miniature.
+  //
+  //   marked set        -> the set          "Print 3 parts"
+  //   else selected     -> the contour under the measurement, so measuring a part is enough to
+  //                        target it and Select parts is not a toll gate
+  //   else              -> the whole file
+  targetShapes() {
+    return this.marked.size ? [ ...this.marked ]
+      : this.selected ? [ this.selected.__shape ]
+      : this.allShapes
+  }
+
+  // WHAT THE BUTTONS CALL THAT SET. Same three arms, same order, derived from the same state, so a
+  // label can no longer describe one target while an action performs another.
+  targetNoun() {
+    const n = this.marked.size
+    return n ? `${n} part${n === 1 ? "" : "s"}` : this.selected ? "selected" : "all"
+  }
+
   // NO `hasPrintButtonTarget` GUARD, DELIBERATELY, and the plan's draft had one. All six controls
   // live in ONE always-rendered <span class="measure-actions">, so the target exists whenever this
   // controller is connected. A guard that cannot fail asserts a condition that does not exist.
@@ -503,18 +520,12 @@ export default class extends Controller {
   // left to be relied on. Such a partial would break draw() itself, and `populatePaper` and
   // `print()` with it; the answer then is that the partial declares the controls, not that four
   // methods each grow a guard.
-  // THREE TARGETS, IN PRECEDENCE ORDER, AND THE LABEL ALWAYS NAMES THE ONE IN FORCE. The middle
-  // arm is why Select parts is no longer a toll gate on printing a single part: click a contour to
-  // measure it and the button already points at it. `print()` reads the same three arms in the
-  // same order; they are two halves of one claim and must not drift.
-  //
-  //   marked set        -> "Print 3 parts"   the set
-  //   else selected     -> "Print selected"  the contour under the measurement
-  //   else              -> "Print all"       the whole file
+  // THE LABEL ALWAYS NAMES THE TARGET IN FORCE, and it can no longer do otherwise: the noun comes
+  // from `targetNoun()` and the shapes `print()` acts on from `targetShapes()`, so the two halves
+  // of the claim are one definition rather than two spellings kept in step by a comment. The
+  // wording is unchanged — "Print all", "Print selected", "Print 3 parts".
   refreshPrintBar() {
-    const n = this.marked.size
-    this.printButtonTarget.textContent =
-      n ? `Print ${n} part${n === 1 ? "" : "s"}` : this.selected ? "Print selected" : "Print all"
+    this.printButtonTarget.textContent = `Print ${this.targetNoun()}`
   }
 
   contourLabel(shape, siblings) {
