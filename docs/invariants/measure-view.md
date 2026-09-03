@@ -85,6 +85,72 @@
   entity** — an entity's own code 62 is usually absent or `BYLAYER`, so reading only the entity
   leaves nearly every real file colourless — and a **NEGATIVE table colour means the layer is OFF**,
   so its geometry is neither drawn nor folded into the measured extent.
+- **A `case` WITH NO `else` OVER A FILE FORMAT'S ENTITY TYPES IS SILENT DATA LOSS, AND `Dxf.flatten`
+  HAD ONE.** SPLINE, ELLIPSE and INSERT returned nil and `each_geometry` skipped them with no error,
+  no log and no status: **18,906 splines across 29 of 129 real files**, `elianadxf.dxf` — four
+  splines and nothing else — reporting `shapes=0, job 0×0` under a Measure view reading "No
+  measurable geometry in this file" about a file that is entirely geometry. **WORSE THAN A MISSING
+  PICTURE:** a skipped entity never reaches `Collector#add`, so it is absent from the **bbox** as
+  well as from the drawing and every reported size describes a SUBSET, with nothing on screen to say
+  so — the measure-after-thinning failure below, at whole-entity scale. `Geometry.build(unreadable:)`
+  → the payload's `"u"` key is the backstop, and it lives in the SHARED builder because any of the
+  four traversals can meet something it cannot read; DXF is only where it was measured. The hash is
+  handed IN and filled during the yield, so `build` reads it AFTER the traversal — a tidier version
+  snapshotting the argument at the top emits an empty tally on every file with nothing going red.
+  The client says so in `restingStatus()` **and** in the zero-shape branch, which never reaches it
+  and is the case the mechanism was built for.
+  - **ONCE A TYPE BECOMES DRAWABLE THE TYPE-BASED TALLY STOPS FIRING FOR IT, SO A REFUSED INSTANCE
+    MUST BE TALLIED EXPLICITLY AND UNDER A DISTINCT NAME.** `parse_document` counts a `0`-code name
+    that is NOT in `ENTITY_TYPES`, so promoting `SPLINE` or `INSERT` into that list — the very
+    change that makes them draw — silences the only thing reporting the instances still refused.
+    That is worse than the bug it replaces, because the status line now actively states that nothing
+    was skipped. Hence `SPLINE(malformed)`, `INSERT(unknown-block)`, `INSERT(cyclic)`,
+    `INSERT(too-deep)`, `LWPOLYLINE(bulge)`: "we cannot read this type at all" and "we read this one
+    and it was broken" are different claims about a file and must not add up into one number.
+    **Every future promotion into `ENTITY_TYPES` walks into this.**
+- **NEVER LINE-GREP A DXF.** `grep -E "^SPLINE$"` cannot match a CRLF file: it counted 243 where a
+  walk over code/value pairs counts **18,906**, an undercount of 78×, which nearly scoped this work
+  as speculative. The format is pairs of LINES, so anything anchored on one is reading half a record.
+- **A GROUP CODE MEANS DIFFERENT THINGS ON DIFFERENT ENTITY TYPES, SO A TALLY OR A LOOKUP KEYS ON
+  THE ENTITY TYPE AND NEVER ON A CODE'S PRESENCE.** `42` is a bulge on an LWPOLYLINE vertex, a
+  control-point tolerance on a SPLINE — **3,308 of them in `cards.dxf` alone**, plus more on VPORT,
+  STYLE and VISUALSTYLE records — and the Y scale on an INSERT. A code-keyed bulge tally reports
+  3,308 unreadable bulges in a file containing none, and it stays GREEN under mutation right up
+  until SPLINE becomes drawable, so the type check has to be right before anything makes it visible.
+- **ALL 3,869 REAL BULGES ARE ON OLD-STYLE `POLYLINE` `VERTEX` RECORDS AND NONE ON `LWPOLYLINE`,
+  WHICH IS WHY ONE HALF IS DRAWN AND THE OTHER ONLY REPORTED.** A `VERTEX` is its own record, so
+  `codes[42]` is unambiguously that vertex's bulge; an LWPOLYLINE holds its vertices as repeated
+  10/20 codes with an OPTIONAL 42 each, and `parse_document` groups an entity's values BY CODE — the
+  interleaving that says which bulge belongs to which vertex is gone before anything can read it.
+  Pairing them needs a positional parser, so the honest answer is `LWPOLYLINE(bulge)` in the tally
+  rather than a silent chord. **The one refusal on the drawn half is an arc whose radius dwarfs its
+  chord**: r = c / (2·sin(Δθ/2)) blows up as Δθ approaches EITHER 0 or a full turn, and a 1e-20
+  bulge — a rounding artefact — produced a **15,313 mm job box out of a 10 mm chord**. A job box is
+  a UNION, so one bad vertex takes the whole file's reported size with it.
+  - **A BULGE IS NOT ALWAYS OUTWARD, SO "THE BBOX MUST GROW" IS VACUOUS ON REAL DATA.** Both real
+    bulged files fillet corners, which arc INWARD: a fillet cuts a corner, the straight edges still
+    define the extent, and only 1 of 175 per-shape boxes moved at all — by 0.01 mm, one unit of
+    `PRECISION`. On a real file assert the arcs are PRESENT (stub the arc path to nil and diff per
+    shape: 1,195 drawn, 0 refused, 37 of them on the closing last→first segment, deepest chord
+    deviation 0.043 mm, agreeing with r(1−cos(Δθ/2)) to 4 dp). Pin the growth DIRECTION
+    synthetically instead, with a semicircle AND with a negative bulge: dropping the sign draws the
+    right radius on the wrong side of the chord, with a bbox of the identical SIZE.
+- **`tokenize` DOES NOT SCOPE TO THE `ENTITIES` SECTION, AND THE FIX FOR THAT REMOVED BEHAVIOUR
+  RATHER THAN ADDING IT.** Every code/value pair in the file reaches the walk, so a BLOCKS-section
+  entity was collected and yielded as a TOP-LEVEL shape at its DEFINITION coordinates while the
+  INSERT placing it was dropped. The net effect was never MISSING geometry — it was geometry in the
+  WRONG PLACE, drawn once however many times the file places it. On `cards.dxf` that was the entire
+  picture: all 8,148 contours live in blocks and its ENTITIES section holds nothing but nine
+  INSERTs. **A test asserting only "the inserted copy appears" passes while the ghost still draws —
+  assert the SHAPE COUNT.** `parse_document` now tracks sections just far enough to place block
+  bodies and no further, which is why the unreadable predicate still has to skip every TABLES and
+  OBJECTS record arriving on that same `0`-code stream.
+  - **THE INSERT CYCLE GUARD TRACKS THE RECURSION PATH, NOT A GLOBAL VISITED SET.** A global set
+    draws a shared block's FIRST placement and silently drops every other one — the same data loss
+    this whole arc exists to end, delivered by the guard meant to prevent a hang. Real files share
+    blocks and nest them; 168 of `cards.dxf`'s 177 INSERTs are nested. The depth cap is a SEPARATE
+    concern (a tree doubling per level out of a file that grows linearly), as is the MINSERT
+    row × column ceiling, where `70`/`71` let twelve bytes ask for billions of copies of a block.
 - **SVG IS ALREADY Y-DOWN; DXF IS Y-UP AND MUST BE FLIPPED.** Adding a flip to SVG "for symmetry
   with Dxf" turns every SVG upside down, and it still draws a plausible picture. Only a positional
   assertion catches either direction.
@@ -98,6 +164,13 @@
   silently. `SvgPath` subdivides adaptively; `Dxf.arc_samples` bounds relative sagitta and **rounds
   up to a multiple of 4** so a circle's axis extents are sampled exactly and `d` is the diameter
   rather than a chord.
+  - **AND AN ADAPTIVE SUBDIVISION NEEDS A MINIMUM DEPTH AS WELL AS A MAXIMUM.**
+    `Dxf.flatten_spline` splits each knot span against `SPLINE_FLATNESS_RATIO`, measured against the
+    PATH LENGTH through the midpoint and never against the chord — on a hairpin the chord is near
+    zero, so a chord-relative test divides a real deviation by nothing and calls the loop flat. And
+    a single cubic piece can be an S whose midpoint sits EXACTLY on its own chord, which reads as
+    perfectly flat and collapses the curve to a straight line, so the first split is forced before
+    the test is trusted at all.
 - **`SvgGeometry` RECURSES INTO AN ALLOWLIST OF CONTAINERS, NOT PAST A SKIP-LIST.** It started as
   the latter, naming `defs`/`symbol`/`clipPath`/…, and that list was **dead code** — nothing
   recursed into them either way, so removing an entry left every test green. §14b records the
@@ -152,6 +225,22 @@
   A measuring view needs the rectangle, not the photo. Restoring it re-inflates every
   photo-engraving file by three orders of magnitude. `rake lbrn:geometry_report` is what notices —
   no fixture is big enough to.
+- **THE PAYLOAD BUDGET IS REAL, AND ON THE WORST DXF IT WAS UNREACHABLE — WHICH WAS REPORTED RATHER
+  THAN PAID FOR IN ACCURACY NOTHING ELSE IN THE FILE GIVES UP.** `cards.dxf` (8.7 MB, 3,308 splines
+  over 19,454 knot spans) went 563 KB → **3,366 KB**, against a design budget of 1,536 KB; the
+  render went 0.53 s → 1.5–1.6 s across runs, inside the 3 s the same design asked for. **The FLOOR
+  is 1,497 KB** — every knot span collapsed to the straight chord between its own endpoints, which
+  is not a curve at all — so the budget allowed 0.3 extra points per span above
+  a drawing that is simply wrong, and coarsening does not rescue it: 0.02 → 2,272 KB and
+  0.05 → 1,620 KB are both still over while the median deviation from the true curve goes
+  0.011 → 0.042 → 0.111 mm. **The dominant cost is 8,148 shapes' per-shape scaffolding plus one
+  point per span, not curve sampling** — which is what a budget set before anyone counted the spans
+  could not know. `SPLINE_FLATNESS_RATIO` therefore stays at 0.01, whose 0.011 mm median deviation
+  is `Geometry::SIMPLIFY_TOLERANCE` almost exactly and whose ~4.6°/segment matches `arc_samples`'
+  ~5.0°, so a spline and an arc in one file agree about how round a curve is. Gzipped that payload
+  is 949 KB, and `cards.dxf` is the worst of 129 files (`elianadxf.dxf` 32 KB, `macropad v5.dxf`
+  27 KB); **whether that fetch is acceptable is a product decision, not a tuning one**, and it is
+  flagged rather than settled.
 - **A CORRUPT DOCUMENT RAISES; AN EMPTY ONE DOES NOT.** `LbrnGeometry` raises `ParseError` when
   `doc.root` is nil, matching `to_svg`, so the job marks it `failed`. A document that parses with no
   shapes returns the empty payload and goes `ready`. Collapse them and a corrupt file presents as a
@@ -390,13 +479,31 @@
   and its radii differ (20 × 10) because a rotated CIRCLE is still an upright circle and could not
   tell a working gate from a missing one. `SvgGeometry.ellipse_curve_for` applies the same test for
   the same reason.
+  - **THE SAME REFUSAL ONE TRANSFORM SOURCE ALONG: A DXF CURVE DESCRIPTOR IS DROPPED UNDER A
+    NON-UNIFORM SCALE.** A BLOCK's contents are placed by their INSERT's affine, and only a
+    SIMILARITY keeps a circle a circle — under a non-uniform scale it is an ellipse whose axes are
+    turned by the rotation, and the wire's `e` form carries rx and ry with NO rotation term. There
+    is no honest descriptor to emit, so `Dxf.transform_curve` emits none: **dropping is always
+    safe** — the flattened points still carry the true shape and `b`, `d` and the job box are
+    computed from them — while the thumbnail draws the descriptor INSTEAD of the points, so a stale
+    one is a WRONG PICTURE rather than a coarse one. A MIRROR is a similarity and survives, but it
+    REVERSES an arc's direction, so the placed arc's endpoints swap; leaving `a0` alone draws the
+    complementary arc — same endpoints, wrong side — and `arc_svg` writes it as-is.
 - **A 360° DXF `ARC` IS ENCODED AS AN ELLIPSE, NEVER AS AN ARC.** `Dxf.arc_points` turns
   `a0 == a1` into a 360° sweep — its own comment, *"the whole circle, not a zero-length arc"* —
   whose start and end points are IDENTICAL, and SVG's rule for an arc whose endpoints coincide is
   to omit the segment ENTIRELY. An `A` command there exports a path that draws nothing: no error,
-  nothing logged, a shape simply missing from a file somebody cuts. **`Dxf.arc_svg` STILL HAS THIS
-  BUG FOR THE THUMBNAIL** — recorded, not fixed, because the fix needs a `THUMBNAIL_REVISION` bump
-  and a DXF thumbnail rebuild; the payload path must not inherit it.
+  nothing logged, a shape simply missing from a file somebody cuts. **`Dxf.arc_svg` CARRIED THE
+  IDENTICAL DEFECT FOR THE THUMBNAIL UNTIL 2026-09-03** (tinkerex#215) and now takes the same
+  branch. **Both thresholds are `>=`, not `==`, and must stay identical**: `transform_curve` carries
+  `sweep` across a block placement unchanged rather than recomputing it, so a full-turn arc inside
+  an INSERT would otherwise be a circle in the picture and a different shape in the measurement. It
+  waited only because it needed a `THUMBNAIL_REVISION` bump, which four stages of other work then
+  forced anyway — and it needed a FIXTURE, since no real file in the scratch corpus holds an ARC at
+  all and a thumbnail is a PNG nobody asserts the contents of. **The guard that generalises asks
+  that NO `A` command in the emitted SVG ends where it began**, not merely that a `<circle>` is
+  present: a fix that emits the circle and leaves the dead path behind satisfies an
+  `assert_includes` while still writing a segment no renderer draws.
 - **AN ARC'S WIRE FORM IS CENTRE + START ANGLE + SIGNED SWEEP, BECAUSE SVG'S ENDPOINT
   PARAMETERISATION CANNOT BE ROUNDED.** SVG puts the centre `sqrt(r² − d²)` from the chord midpoint
   (`d` the half-chord), so an error δ in an endpoint displaces the centre by about `sqrt(2rδ)` —
@@ -422,6 +529,20 @@
   second bump would re-measure every payload in the library for a form no row holds. **The single
   bump is deliberate, not forgotten**, and `SHARED_REVISION`'s own log says so beside the number,
   which is where a later reader looks before deciding it was missed.
+- **BOTH DXF REVISIONS MOVE TOGETHER WHENEVER `each_geometry` CHANGES**, because that one traversal
+  feeds the thumbnail AND the payload: `Dxf::THUMBNAIL_REVISION` and `DxfGeometry::FORMAT_REVISION`
+  both, and **never `Geometry::SHARED_REVISION`**, which would re-render every `.lbrn2`, `.mage` and
+  `.svg` payload for a DXF-only change. **AND THE TWO FIXTURE DIGESTS DID NOT MOVE WITH THEM, WHICH
+  IS THE REVERSE OF THE TIME BEFORE AND IS NOT A MISTAKE** — `sample.dxf` and `plate.dxf` hold no
+  spline, no BLOCKS section and no non-zero bulge, so there was nothing in either for the new code
+  to reach, while the output moved for 29, 26 and 24 of the 129-file live corpus. **A revision
+  tracks what the renderer does to REAL files, not what two narrow fixtures happen to hold.** For
+  four stages that byte-for-byte guard reported "nothing moved" about changes that redrew a fifth of
+  every DXF in the library — right about its fixtures and blind to the change, which is a guard that
+  cannot fail for the thing it exists to catch. `entities.dxf` is what closes it: one two-span
+  degree-3 SPLINE, a closed POLYLINE with equal and OPPOSITE bulges, a BLOCK placed by an INSERT at
+  a non-zero offset, and a full-turn ARC, with a `999`-comment header saying what each part pins. A
+  fifth entity type gets a fifth part of that fixture, not a fourth fixture.
 - **THE ELEMENT A SHAPE DRAWS AS HAS ONE DEFINITION, `lib/shape_svg.js`, AND IT WRITES NO
   PRESENTATION.** Three callers want three presentations of one shape — the Measure view's class +
   layer colour under a transparent hit twin, the print sheet's black 0.2 mm, the exporter's layer

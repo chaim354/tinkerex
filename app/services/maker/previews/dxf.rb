@@ -6,9 +6,10 @@ module Maker
     # where an integer group code is followed by its value. DWG (the binary sibling) has no
     # permissive parser (LibreDWG is GPL) and is intentionally NOT handled here. We ship a
     # minimal, dependency-free in-Ruby parser for the common 2D entities a maker's laser/CNC
-    # source carries — LINE, LWPOLYLINE/POLYLINE, CIRCLE, ARC, SPLINE — and emit an SVG, then
-    # delegate to the existing `Svg` renderer (SVG is itself browser-renderable, no rasterizer
-    # needed).
+    # source carries — LINE, LWPOLYLINE/POLYLINE, CIRCLE, ARC, SPLINE, plus BLOCK bodies placed by
+    # their INSERTs — and emit an SVG, then delegate to the existing `Svg` renderer (SVG is itself
+    # browser-renderable, no rasterizer needed). A type NOT on that list is REPORTED rather than
+    # dropped; `flatten` and `Geometry.build`'s `unreadable:` are where that is argued.
     #
     # No GPL/AGPL: pure stdlib Ruby (the ezdxf-via-Python path in the research doc is an
     # alternative; this minimal parser avoids the external Python runtime entirely while
@@ -199,6 +200,15 @@ module Maker
       # perforation grid) rather than where the corpus sits.
       MAX_INSERT_CELLS = 10_000
 
+      # `stack` IS THE RECURSION PATH — THE CHAIN OF BLOCKS CURRENTLY BEING EXPANDED — AND NOT A
+      # GLOBAL VISITED SET, WHICH IS THE OBVIOUS SPELLING AND IS A DATA-LOSS BUG. A block placed
+      # twice is ordinary (that is what a block IS), so a set accumulated across the whole walk
+      # draws the FIRST placement and silently drops every other one — the same disappearance this
+      # arc exists to end, delivered by the guard meant to prevent a hang. A path answers the
+      # question actually being asked, "does this block contain itself", and it is per-branch: the
+      # `stack + [name]` below is a new array, so a sibling INSERT of the same block still expands.
+      # 168 of `cards.dxf`'s 177 INSERTs are nested and its blocks are shared, so the wrong answer
+      # here loses most of a real drawing.
       def emit_insert(entity, outer, state, stack, &block)
         c = entity[:codes]
         name = c[2].first
@@ -436,6 +446,16 @@ module Maker
       end
 
       # An entity → [points (model space, Y-up), closed?, curve_or_nil]. nil when undrawable.
+      #
+      # THIS IS THE `case` WITH NO `else`, AND IT IS WHY THIS ARC EXISTS. A missing arm returns nil
+      # for a whole entity type, and until `unreadable:` there was nothing anywhere to say so: 18,906
+      # SPLINEs across 29 of 129 real files were dropped with no error, no log and no status, and a
+      # dropped entity never reaches `Collector#add`, so it is absent from the BBOX as well as the
+      # picture — the reported job size describing a subset of the file (tinkerex#216).
+      #
+      # SO A NEW ARM HERE IS TWO EDITS, NOT ONE. The type must join `ENTITY_TYPES`, which is what
+      # SILENCES `parse_document`'s type-based tally for it — see `tally_refusal` for why an instance
+      # this method then refuses has to be counted under its own name instead.
       def flatten(entity)
         case entity[:type]
         when "LINE"                   then line_points(entity)
@@ -1049,6 +1069,11 @@ module Maker
       # ---- lexing / entity records -------------------------------------------------------
 
       # DXF is (code, value) pairs on alternating lines. Tolerant of CRLF and leading spaces.
+      #
+      # AND THAT PAIRING IS WHY YOU MUST NEVER LINE-GREP A DXF TO MEASURE ONE. `grep -E "^SPLINE$"`
+      # cannot match a CRLF file and counted 243 splines across the live library where this walk
+      # counts 18,906 — an undercount of 78×, which nearly had the SPLINE work scoped as speculative
+      # (tinkerex#216). A value line is half a record; count by walking the pairs.
       def tokenize(bytes)
         lines = bytes.to_s.b.force_encoding("UTF-8").scrub.split(/\r\n|\r|\n/)
         pairs = []
