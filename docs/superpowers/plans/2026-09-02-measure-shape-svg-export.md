@@ -1732,7 +1732,7 @@ Add to `test/system/measure_export_test.rb`, before the `private` section:
   end
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [ ] **Step 3: Run to verify it fails**
 
 ```bash
 LIBRARY_PATH=$(mktemp -d) bin/rails test test/system/measure_export_test.rb
@@ -1740,7 +1740,7 @@ LIBRARY_PATH=$(mktemp -d) bin/rails test test/system/measure_export_test.rb
 
 Expected: FAIL — no `svgButton` target.
 
-- [ ] **Step 3: Add the button**
+- [ ] **Step 4: Add the button**
 
 In `app/views/files/_measure.html.erb`, between the Print and Reset buttons:
 
@@ -1757,7 +1757,7 @@ In `app/views/files/_measure.html.erb`, between the Print and Reset buttons:
               aria-label="Download all as SVG" title="Download all as SVG">SVG</button>
 ```
 
-- [ ] **Step 4: Register the target and implement the action**
+- [ ] **Step 5: Register the target and implement the action**
 
 In `measure_controller.js`, add `"svgButton"` to `static targets`:
 
@@ -1826,7 +1826,7 @@ Extend the import at the top:
 import { exportSvg } from "lib/export_svg"
 ```
 
-- [ ] **Step 5: Run to verify pass**
+- [ ] **Step 6: Run to verify pass**
 
 ```bash
 LIBRARY_PATH=$(mktemp -d) bin/rails test test/system/measure_export_test.rb
@@ -1841,14 +1841,14 @@ record in the invariants doc, not a failure to route around.
 > **Commit first, then mutate** — `git checkout --` restores to HEAD, so mutating before the
 > commit destroys this task's own work. See the note at the top of this plan.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add app/views/files/_measure.html.erb app/javascript/controllers/measure_controller.js test/system/measure_export_test.rb
 git commit -m "Measure: download the selected shapes as SVG"
 ```
 
-- [ ] **Step 7: Mutation-check the shared target set**
+- [ ] **Step 8: Mutation-check the shared target set**
 
 In `downloadSvg()`, replace `this.targetShapes()` with `this.allShapes`. "the SVG button exports
 exactly the marked parts" must go **RED** — it would export the Rect and the 100 mm Line too, so
