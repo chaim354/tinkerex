@@ -1955,7 +1955,36 @@ That argument is still correct, but 1 is now the live value, so it reads as thou
 describing what this branch just did. Reword the hypothetical so it cannot be misread — e.g. "by
 seeding SHARED_REVISION at any value and shifting all three totals to match".
 
-- [ ] **Step 4: Confirm the docs guard still passes**
+- [ ] **Step 4: Correct the design spec, which the implementation overtook**
+
+`docs/superpowers/specs/2026-09-02-measure-shape-svg-export-design.md:86` reads:
+
+> `ellipse_contours` returns a descriptor, `walk` yields it, and `build` scales it by `sx`/`sy`.
+
+The first clause is **false**. Planning changed course deliberately: `contours_for` returns
+`[[points, closed], ...]` across seven branches, and widening it for the two element names that can
+carry a descriptor would have touched all seven. The shipped design leaves `ellipse_contours`
+untouched and computes the descriptor separately in `walk` via `ellipse_curve_for(node, world)`.
+
+Correct it **in place, with the correction visible** — this repo's own convention for a claim that
+turned out wrong (CLAUDE.md is full of "this read X until <date>; measured: Y"). Do not silently
+rewrite it and do not delete it:
+
+```markdown
+- **`SvgGeometry`** — the only genuinely new work. A new `ellipse_curve_for(node, world)` computes
+  the descriptor and `walk` yields it alongside the points; `build` scales both by `sx`/`sy`. It
+  must be **gated on the accumulated `world` transform being axis-aligned**, mirroring
+  `Lbrn2.axis_aligned?` — a rotated `<circle>` is not an SVG ellipse and must stay a polygon.
+  *(This read "`ellipse_contours` returns a descriptor" until implementation on 2026-09-02.
+  `contours_for` returns `[[points, closed], ...]` across seven branches and only two of them can
+  carry a descriptor, so it was left untouched rather than widened.)*
+```
+
+Leave every OTHER dated record alone — `docs/superpowers/specs|plans/2026-08-19-*` describe finished
+work and retro-editing them would falsify the record. This one documents the branch in progress and
+is wrong about it.
+
+- [ ] **Step 5: Confirm the docs guard still passes**
 
 ```bash
 LIBRARY_PATH=$(mktemp -d) bin/rails test test/docs_hygiene_test.rb
@@ -1964,10 +1993,11 @@ LIBRARY_PATH=$(mktemp -d) bin/rails test test/docs_hygiene_test.rb
 Expected: PASS — every §14 stub still has its file, and CLAUDE.md is untouched and under its
 ceiling.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add docs/invariants/measure-view.md docs/adding-a-preview-format.md \
+        docs/superpowers/specs/2026-09-02-measure-shape-svg-export-design.md \
         app/services/maker/previews/geometry.rb \
         test/services/maker/previews/geometry_test.rb
 git commit -m "Record the curve-descriptor and export invariants"
