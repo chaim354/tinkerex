@@ -42,7 +42,12 @@ module Maker
       # the measure payload does not re-render every DXF thumbnail in the library.
       #
       #   1  original (thumbnail)
-      THUMBNAIL_REVISION = 1
+      #   2  SPLINE drawn, POLYLINE bulges drawn as arcs, BLOCK bodies placed at their INSERTs
+      #      instead of at their definition coordinates, and a full-turn ARC drawn as a circle
+      #      rather than as an `A` command SVG omits (tinkerex#216, #219, #215). FOUR CHANGES, ONE
+      #      BUMP: a revision names a BUILD of this renderer, not a reason, and re-rendering the
+      #      library once covers all four.
+      THUMBNAIL_REVISION = 2
 
       def payload_revision(kind)
         kind == "geometry" ? Maker::Previews::DxfGeometry::PAYLOAD_REVISION : THUMBNAIL_REVISION
@@ -995,7 +1000,20 @@ module Maker
           %(stroke="#{stroke}" stroke-width="0.5"/>)
       end
 
+      # A FULL TURN IS DRAWN AS A CIRCLE, WHICH IS THE SAME BRANCH `DxfGeometry.curve_to_client_space`
+      # ALREADY TAKES AND FOR THE SAME REASON — tinkerex#215. `arc_points` resolves a0 == a1 to a
+      # sweep of 360 ("the whole circle, not a zero-length arc"), so the start and end points below
+      # are computed from ONE angle and come out IDENTICAL; SVG's rule for an elliptical arc whose
+      # endpoints coincide is to omit the segment ENTIRELY. The `A` command was therefore not a
+      # coarse drawing of the circle, it was no drawing at all: `<path d="M 130 0 A 10 10 0 1 0
+      # 130 0"/>` in a thumbnail with the shape simply missing, no error and nothing logged.
+      #
+      # `>=`, NOT `==`. `transform_curve` carries `sweep` across a block placement unchanged rather
+      # than recomputing it, so this must read the same threshold the payload does or a full-turn
+      # arc inside an INSERT would draw one way in the picture and another in the measurement.
       def arc_svg(curve, stroke)
+        return circle_svg(curve, stroke) if curve[:sweep] >= 360
+
         r = curve[:r]
         sx = curve[:cx] + (r * Math.cos(curve[:a0] * Math::PI / 180))
         sy = curve[:cy] + (r * Math.sin(curve[:a0] * Math::PI / 180))

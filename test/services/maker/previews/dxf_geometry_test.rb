@@ -118,8 +118,12 @@ module Maker
       #
       # The thumbnail's SVG is unscaled and the payload is in mm, so the comparison is of SHAPE:
       # the payload's extent divided by the SVG viewBox's must be exactly the unit scale.
+      # entities.dxf EARNS ITS PLACE HERE MORE THAN THE OTHER TWO: it is the only fixture holding a
+      # full-turn ARC, and that entity is drawn by a DIFFERENT branch on each leg — a `<circle>` in
+      # the thumbnail, an `"e"` descriptor in the payload. Two branches for one fact is where the
+      # two artifacts diverge, and tinkerex#215 was exactly that divergence left half-fixed.
       test "the payload and the thumbnail measure the same geometry" do
-        %w[sample.dxf plate.dxf].each do |name|
+        %w[sample.dxf plate.dxf entities.dxf].each do |name|
           bytes = fixture(name)
           payload = build(bytes)
           scale = Dxf.mm_per_unit(Dxf.tokenize(bytes))
@@ -182,6 +186,26 @@ module Maker
       # redefined on the same unmerged branch and no deployment ever served an arc under it, so
       # there was nothing to invalidate. A move in plate's payload digest would mean the change
       # reached shapes it had no business touching.
+      #
+      # ON 2026-09-03 BOTH REVISIONS MOVED AND NEITHER OLD DIGEST DID, WHICH IS THE REVERSE OF THE
+      # PARAGRAPH ABOVE AND IS NOT A MISTAKE. `each_geometry` learned SPLINE, POLYLINE bulges and
+      # BLOCK/INSERT placement, and it feeds the thumbnail as well as the payload, so
+      # `Dxf::THUMBNAIL_REVISION` went 1 -> 2 and `DxfGeometry::FORMAT_REVISION` 1 -> 2. Yet
+      # sample.dxf and plate.dxf are byte-identical before and after — verified, not assumed:
+      # BETWEEN THEM THEY CONTAIN ZERO SPLINES, ZERO NON-ZERO BULGES AND NO BLOCKS SECTION, so
+      # there is nothing in either for the new code to reach. Their digests were deliberately NOT
+      # updated. A REVISION TRACKS WHAT THE RENDERER DOES TO REAL FILES, NOT WHAT THESE TWO NARROW
+      # FIXTURES HAPPEN TO HOLD: the change moved the output of 29, 26 and 24 of the 129-file live
+      # corpus respectively, which is what makes re-rendering the library correct.
+      #
+      # AND THAT IS EXACTLY THE HOLE `entities.dxf` EXISTS TO CLOSE. For four stages this guard
+      # reported "nothing moved" about changes that moved the picture for a fifth of every DXF in
+      # the library — right about its fixtures and blind to the change, which is a guard that
+      # cannot fail for the thing it exists to catch (§15). The third fixture is hand-authored to
+      # hold one instance of each: a two-span degree-3 SPLINE, a closed POLYLINE with equal and
+      # OPPOSITE bulges, a BLOCK placed by an INSERT at a non-zero offset, and the full-turn ARC
+      # from tinkerex#215. Its own comment header says what each part pins. A fifth entity type
+      # gets a fifth part of that fixture, not a fourth fixture.
       test "the traversal's two artifacts are byte-for-byte what they were before it took pairs" do
         {
           "sample.dxf" => %w[
@@ -191,6 +215,10 @@ module Maker
           "plate.dxf" => %w[
             d8844eb6832b6d107fd1ad782ce34fc8a35d3b088b4609a6f0c8e6dba86e035d
             0839e1081f3a506a009ba31d643d59ebd8ca62242f4d6bcaaf10c79fb77af431
+          ],
+          "entities.dxf" => %w[
+            a27713d1de9be2c8a8120323d1ec07adf26f32180a5d7c727edcea1764cdcdd5
+            4eed13b16b2abfc2d478d756494327d2a2b26fa78b8b03ca8b38c64a1192cd27
           ]
         }.each do |name, (svg_sha, payload_sha)|
           bytes = fixture(name)
@@ -322,12 +350,30 @@ module Maker
       # ENTIRELY, so encoding it as an arc exports an empty path: no error, nothing logged, a shape
       # that is simply absent from the file. The honest encoding is an ellipse.
       #
-      # `Dxf.arc_svg` still has this bug for the THUMBNAIL and this test does not cover it — fixing
-      # that needs a THUMBNAIL_REVISION bump and is recorded as out of scope in the design.
       test "a full-circle ARC is encoded as an ellipse, not a degenerate arc" do
         payload = build(arc_dxf(cx: 0, cy: 0, r: 7, a0: 45, a1: 45))
 
         assert_equal [ "e", 0.0, 0.0, 7.0, 7.0 ], payload["shapes"].first["g"]
+      end
+
+      # THE SAME DEFECT, ON THE THUMBNAIL — tinkerex#215. The payload has answered this correctly
+      # since the `g` descriptor shipped; `Dxf.arc_svg` went on writing one `A` command whose start
+      # and end points it had just computed from the SAME angle, so the browser and resvg both
+      # dropped the segment and the circle was absent from the picture. Nothing went red, because
+      # a thumbnail is a PNG nobody asserts the contents of and no fixture held a full-turn ARC.
+      #
+      # THE SECOND ASSERTION IS THE ONE THAT GENERALISES, and it is not a restatement of the first.
+      # A fix that emitted a circle AND left the dead path behind would satisfy an `assert_includes`
+      # while still writing a segment no renderer draws; this asks the stronger question — that no
+      # `A` command in the file ends where it began — which is the defect's actual shape and would
+      # catch it on any arc, not just this fixture's.
+      test "a full-circle ARC draws a circle in the thumbnail, not an arc that renders as nothing" do
+        svg = Dxf.to_svg(fixture("entities.dxf"))
+
+        assert_includes svg, %(<circle cx="120" cy="0" r="10" fill="none"),
+                        "the entities.dxf full-turn ARC must draw as a circle"
+        assert_empty degenerate_arc_paths(svg),
+                     "an `A` command whose endpoints coincide is omitted by SVG — it draws nothing"
       end
 
       # An LWPOLYLINE has no exact primitive to offer, and a payload key present on every shape
@@ -1027,6 +1073,14 @@ module Maker
         end
         bodies["B#{links}"] = "0\nLINE\n8\nA\n10\n0\n20\n0\n11\n1\n21\n0\n"
         blocks_dxf(bodies, "0\nINSERT\n8\nA\n2\nB1\n10\n0\n20\n0\n")
+      end
+
+      # Every `<path>` in the SVG whose single `A` command ends exactly where its `M` began — the
+      # form SVG resolves by omitting the segment. Read off the emitted string rather than
+      # recomputed from the descriptor, because the defect is in what `arc_svg` WRITES.
+      def degenerate_arc_paths(svg)
+        svg.scan(/<path d="M (\S+) (\S+) A [\d.\- ]+ (\S+) (\S+)"/)
+           .select { |(sx, sy, ex, ey)| [ sx, sy ] == [ ex, ey ] }
       end
 
       def build(bytes) = JSON.parse(DxfGeometry.render(bytes)[:bytes])

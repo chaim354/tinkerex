@@ -19,7 +19,10 @@ module Maker
       # belongs in `Geometry::SHARED_REVISION`, which the line below adds in.
       #
       #   1  original
-      FORMAT_REVISION = 1
+      #   2  `Dxf.each_geometry` learned SPLINE, POLYLINE bulges and BLOCK/INSERT placement
+      #      (tinkerex#216, #219). It feeds the THUMBNAIL as well, so `Dxf::THUMBNAIL_REVISION`
+      #      moves in the same breath — the one bump that is never DXF-payload-only.
+      FORMAT_REVISION = 2
 
       # What `Enqueue` actually reads — see `Geometry::SHARED_REVISION`.
       PAYLOAD_REVISION = Geometry::SHARED_REVISION + FORMAT_REVISION
@@ -69,8 +72,9 @@ module Maker
       # circle, not a zero-length arc" — whose start and end points are IDENTICAL. SVG's rule for
       # an arc whose endpoints coincide is to omit the segment ENTIRELY, so an `A` command here
       # would export a path that draws nothing: no error, nothing logged, a shape simply missing
-      # from a file somebody cuts. (`Dxf.arc_svg` still has that bug for the thumbnail; fixing it
-      # needs a THUMBNAIL_REVISION bump and is out of scope — see the design.)
+      # from a file somebody cuts. `Dxf.arc_svg` carried the same defect for the THUMBNAIL until
+      # tinkerex#215 and now takes the matching branch; the two thresholds must stay identical, or
+      # one full-turn arc is a circle in the picture and a different shape in the measurement.
       def curve_to_client_space(curve, scale)
         return nil if curve.nil?
 
