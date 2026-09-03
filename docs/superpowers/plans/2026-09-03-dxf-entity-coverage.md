@@ -87,7 +87,9 @@ naive sample count blows that, thin harder — do not raise the budget without s
 > For scale, not as a claim on the budget: gzipped, that payload is **949 KB**. And `cards.dxf` is
 > the worst file in a 129-file corpus — `elianadxf.dxf` lands at 32 KB and `macropad v5.dxf` at 27 KB.
 > **Whether a ~950 KB gzipped fetch on the largest file is acceptable is a product decision, not a
-> tuning one**, and it is flagged rather than settled here.
+> tuning one**, and it is flagged rather than settled here. **SETTLED 2026-09-03: ACCEPTED** — and
+> accepted again at 1,293 KB once the spline descriptor landed (`tinkerex#226`). The offset lever
+> stays measured and unused; see `docs/invariants/measure-view.md`.
 
 ## The constraint that shapes the sequencing
 

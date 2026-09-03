@@ -254,8 +254,15 @@
   is `Geometry::SIMPLIFY_TOLERANCE` almost exactly and whose ~4.6°/segment matches `arc_samples`'
   ~5.0°, so a spline and an arc in one file agree about how round a curve is. Gzipped that payload
   is 949 KB, and `cards.dxf` is the worst of 129 files (`elianadxf.dxf` 32 KB, `macropad v5.dxf`
-  27 KB); **whether that fetch is acceptable is a product decision, not a tuning one**, and it is
-  flagged rather than settled. **THOSE FIGURES ARE THE STATE BEFORE THE SPLINE DESCRIPTOR** — the
+  27 KB); **whether that fetch is acceptable was a product decision, not a tuning one, and it was
+  ACCEPTED on 2026-09-03 — twice, at 949 KB gzipped and again at 1,293 KB.** So a future reader
+  finding the largest file in the library fetching over a megabyte should know it was measured,
+  raised and taken, not missed. **The lever that would claw it back is measured and deliberately
+  unused:** where a shape carries a descriptor the client draws THAT, so `p` is only a hit target
+  and does not need 0.01 mm fidelity — at ~2.9 retained points per cubic, thinning it there would
+  roughly pay for the descriptor. It stays available; do not take it without a reason better than
+  the number being large, and measure the hit-test cost before you do.
+  **THOSE FIGURES ARE THE STATE BEFORE THE SPLINE DESCRIPTOR** — the
   same file is 4,386.6 KB / 1,293 KB gzipped since 2026-09-03 (measured below) — **and the knob is
   unmoved by that on purpose**: a descriptor is exact at ANY flatness, so coarsening the sampling
   now shrinks the points beside a curve the client no longer draws from them.
