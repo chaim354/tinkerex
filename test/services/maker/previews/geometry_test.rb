@@ -79,9 +79,9 @@ module Maker
       #
       # FIVE NAMES, NOT THREE: .lbrn and .mage both route to LbrnGeometry, so a three-name check
       # cannot see a delegation regression.
-      GEOMETRY_REVISIONS = { "a.lbrn2" => 4, "a.lbrn" => 4, "a.mage" => 4, "a.dxf" => 1, "a.svg" => 1 }.freeze
+      GEOMETRY_REVISIONS = { "a.lbrn2" => 5, "a.lbrn" => 5, "a.mage" => 5, "a.dxf" => 2, "a.svg" => 2 }.freeze
 
-      test "introducing the shared term left every format's stored payloads valid" do
+      test "a format's geometry revision moves only when this pin moves with it" do
         GEOMETRY_REVISIONS.each do |filename, expected|
           assert_equal expected, Enqueue.revision_for_name(filename, "geometry"),
                        "#{filename} changed geometry revision — every stored payload of that format " \

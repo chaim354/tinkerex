@@ -117,14 +117,16 @@ module Maker
       # declaring. This is that, as arithmetic, for the three formats that cannot delegate outright
       # (each has its OWN revision too).
       #
-      # SEEDED AT 0, DELIBERATELY: the totals it produces are exactly the three integers it
-      # replaced (4 / 1 / 1), so introducing it re-rendered nothing. Any future edit here bumps it
-      # by one and re-measures the library once, which is the whole point.
+      # SEEDED AT 0, DELIBERATELY: the totals it produced on introduction were exactly the three
+      # integers it replaced (4 / 1 / 1), so introducing it re-rendered nothing. Any edit here
+      # bumps it by one and re-measures the library once, which is the whole point — and the log
+      # below the next paragraph is where an edit says what it changed.
       #
       # RESIDUAL, STATED RATHER THAN HIDDEN: this makes the CORRECT edit one line; it does not stop
       # an editor bumping a format's FORMAT_REVISION for a change that actually lives here. The
       # absolute-value pins in `GeometryTest` are what make that mistake visible.
-      SHARED_REVISION = 0
+      #   1  shapes gained the optional `g` curve descriptor (Collector#add's `curve:`)
+      SHARED_REVISION = 1
 
       # Listed so the next editor has the set in front of them rather than having to grep for it;
       # `GeometryTest` asserts this list matches the renderers that actually build a geometry
