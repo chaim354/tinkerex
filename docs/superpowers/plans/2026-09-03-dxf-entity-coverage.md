@@ -65,6 +65,30 @@ Measured on this machine, today, with splines still dropped:
 live here. **Budget: after Stage 3, `cards.dxf` must render in ≤ 3 s and produce ≤ 1.5 MB.** If a
 naive sample count blows that, thin harder — do not raise the budget without saying so.
 
+> ### ⚠ OUTCOME (2026-09-03): time met, payload budget MISSED — and it was impossible
+>
+> `cards.dxf` after Stage 3: **1.50 s** (budget 3 s, met) and **3366 KB** (budget 1536 KB, missed by
+> 2.2×). Stage 3 did not raise the budget or coarsen the curve to fit; it measured the floor instead.
+>
+> **The floor is 1497 KB** — every knot span collapsed to the straight chord between its endpoints,
+> which is not a curve at all. So the 1.5 MB budget permitted *0.3 extra points per span* above a
+> drawing that is simply wrong. Coarsening does not rescue it: ratio 0.02 → 2272 KB, 0.05 → 1620 KB,
+> 0.08 → 1539 KB, all still over, while median deviation from the true curve rises 0.011 → 0.042 →
+> 0.111 mm.
+>
+> **The budget was my error, set before anyone counted the spans.** `cards.dxf` holds 19,454 knot
+> spans across 3,308 splines, and the dominant cost is 8,148 shapes' per-shape scaffolding plus one
+> point per span — not curve sampling. No thinning strategy reaches 1.5 MB while still drawing curves.
+>
+> Flattening stayed at ratio 0.011 mm deliberately: that is `Geometry::SIMPLIFY_TOLERANCE` almost
+> exactly, and ~4.6°/segment against `arc_samples`' ~5.0°, so a spline and an arc in the same file
+> agree about how round a curve is. Recorded at `SPLINE_FLATNESS_RATIO` in the source.
+>
+> For scale, not as a claim on the budget: gzipped, that payload is **949 KB**. And `cards.dxf` is
+> the worst file in a 129-file corpus — `elianadxf.dxf` lands at 32 KB and `macropad v5.dxf` at 27 KB.
+> **Whether a ~950 KB gzipped fetch on the largest file is acceptable is a product decision, not a
+> tuning one**, and it is flagged rather than settled here.
+
 ## The constraint that shapes the sequencing
 
 `app/services/maker/previews/dxf.rb` is touched by Stages 1–5. **They cannot run in parallel.** Run
