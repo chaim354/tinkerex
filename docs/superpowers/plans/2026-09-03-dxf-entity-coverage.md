@@ -179,8 +179,19 @@ end
   is visible rather than silently chorded. Zero occur in the real corpus; this is the honest way to
   leave it unimplemented.
 
-- [ ] **Step 6:** Verify against the real file: `dxf3.dxf` (1195 bulges) must change shape and its
-  job box must grow or move. Report before/after.
+- [ ] **Step 6:** Verify against the real file: `dxf3.dxf` (1195 bulges). Report before/after.
+
+  > **CORRECTED AFTER THE FACT (2026-09-03).** This step originally asserted the job box "must grow
+  > or move". **It does not, on either available file, and the step was wrong to demand it.** Both
+  > `dxf3.dxf` and `ore.dxf` bulge exclusively into CORNER FILLETS, which arc *inward*: a fillet cuts
+  > a corner, so the straight edges still define the extent and the union cannot grow. Only 1 of 175
+  > (dxf3) and 2 of 6 (ore) per-shape bboxes moved at all, each by 0.01 mm — one unit of `PRECISION`.
+  >
+  > "Arcs reach past their chords" is true of an OUTWARD bulge only, which is why the semicircle
+  > fixture pins that direction synthetically. Verify the arcs are *present* instead: Stage 2 did it
+  > by rendering with the arc path stubbed to nil and diffing per shape — 1,195 arcs drawn, 0
+  > refused, 37 of them on the closing last→first segment, deepest chord deviation 0.043 mm, agreeing
+  > with `r(1−cos(Δθ/2))` to 4 dp. That is the assertion this step should have asked for.
 
 - [ ] **Step 7: Commit**, then mutate: ignore the bulge sign (use `|b|`) → a test with a
   negative bulge must go **RED** (the arc bulges the wrong side). Add that test if absent.
@@ -190,6 +201,19 @@ end
 ## Stage 3: SPLINE
 
 **Files:** `dxf.rb`, `dxf_geometry_test.rb`. The largest stage; consider it its own review unit.
+
+> ### ⚠ A GROUP CODE MEANS DIFFERENT THINGS ON DIFFERENT ENTITY TYPES — code 42 especially
+>
+> Measured by Stage 2, 2026-09-03: **`cards.dxf` carries 3,308 code-`42` pairs on SPLINE records**,
+> where 42 is a control-point tolerance and has nothing to do with a polyline bulge. There are more
+> on VPORT, STYLE and VISUALSTYLE.
+>
+> Stage 2's LWPOLYLINE-bulge tally therefore keys on `entity[:type] == "LWPOLYLINE"`, not on the
+> presence of code 42 — and **that check is a green mutation today only because SPLINE is not yet
+> drawable.** The moment you add `SPLINE` to `ENTITY_TYPES`, a code-keyed check would report 3,308
+> unreadable "bulges" in a file that has none. Stage 2 left a test pinning this
+> (`"code 42 on an entity that is not an LWPOLYLINE is not a bulge"`); **it must stay green through
+> your change.** If it goes red you have re-keyed something on a code instead of a type.
 
 - [ ] **Step 1: Failing test** — a degree-3 spline whose control points describe a known shape.
   Assert the **bbox and a sampled point**, not the point count.
