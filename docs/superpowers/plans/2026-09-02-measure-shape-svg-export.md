@@ -1877,15 +1877,25 @@ Append to the bullet list, in the same voice as its neighbours:
 
 - [ ] **Step 2: Note the descriptor in the format walkthrough**
 
-In `docs/adding-a-preview-format.md`, in the section describing what a traversal supplies, add:
+`docs/adding-a-preview-format.md` is entirely about the **thumbnail** path — four numbered steps,
+`render(bytes, size:)`, the Registry, the contract test — and says nothing about the geometry
+payload at all. So there is no "what a traversal supplies" section to extend; add a fifth numbered
+step instead, after step 4 and before the "Thumbnails generate eagerly" paragraph:
 
 ```markdown
-A format MAY also supply a **curve descriptor** through `Geometry::Collector#add`'s `curve:`
-keyword, built with `Geometry.ellipse_curve` or `Geometry.arc_curve` and already in client space
-(mm, Y-down). It is optional and drawing-only: `b`, `d` and the job box are computed from the
-points regardless, and a format that supplies none is complete. Supply one ONLY where the file
-itself declared an exact primitive, and refuse it under a rotated or skewed transform — see
-`docs/invariants/measure-view.md`.
+5. **If it is 2D vector, it can also measure.** A format that can yield contours gets the Measure
+   view by supplying a traversal to `Maker::Previews::Geometry.build` (see `LbrnGeometry`,
+   `DxfGeometry`, `SvgGeometry`) and declaring `FORMAT_REVISION` / `PAYLOAD_REVISION` — the latter
+   as `Geometry::SHARED_REVISION + FORMAT_REVISION`, never a bare integer, and the module must be
+   named in `Geometry::REVISIONED_BY` or `GeometryTest` fails.
+
+   A traversal MAY also supply a **curve descriptor** through `Collector#add`'s `curve:` keyword,
+   built with `Geometry.ellipse_curve` or `Geometry.arc_curve` and already in client space (mm,
+   Y-down). It is optional and **drawing-only**: `b`, `d` and the job box are computed from the
+   full-resolution points regardless, so a format supplying none is complete. Supply one ONLY where
+   the file itself declared an exact primitive — never inferred from the points — and refuse it
+   under a rotated or skewed transform. `docs/invariants/measure-view.md` is the binding set of
+   rules here; read it before writing a traversal.
 ```
 
 - [ ] **Step 3: Confirm the docs guard still passes**
