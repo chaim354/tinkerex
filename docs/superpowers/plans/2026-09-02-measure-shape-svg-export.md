@@ -21,6 +21,37 @@ no JS test runner — browser-tier assertions run through Capybara/Selenium.
 
 ---
 
+> ## ⚠ SUPERSEDED DURING EXECUTION: the arc wire form
+>
+> **Everywhere below that an arc is written `["a", x0, y0, x1, y1, r, largeArc, sweep]` is WRONG and
+> must not be copied.** That form was implemented, reviewed, and found defective on 2026-09-02;
+> commit `3fd9eff` replaced it. Affected passages: Task 1's `arc_curve`, Task 4's
+> `curve_to_client_space` / `arc_endpoint` and its ARC assertions, Task 7's `shapeElement` arc
+> branch, and Task 9's arc export test.
+>
+> **The defect.** SVG's `A` command is parameterised by ENDPOINTS, and recovering a centre from
+> endpoints is ill-conditioned near a half-turn: the centre sits `sqrt(r² − d²)` from the chord
+> midpoint, so an error δ in the half-chord displaces it by about `sqrt(2rδ)`. Rounding the
+> endpoints to `PRECISION` (0.01 mm) therefore drew an arc **1.37 mm** from the one the shape's own
+> points describe, at r = 200 — while the `p` points in the SAME payload were accurate to 0.005 mm.
+> The descriptor exists to be MORE faithful than the points and was ~240× less so, on a slot end
+> cap, which is the most common arc in laser and CNC DXF. The error grew with the radius.
+>
+> **The live form is `["a", cx, cy, r, a0, delta]`** — centre and radius in client space,
+> start angle and SIGNED sweep in degrees, with the client resolving the endpoints itself at full
+> double precision. Millimetres round at `Geometry::PRECISION`; angles round at
+> `Geometry::ANGLE_PRECISION` (6), because `PRECISION` is a LENGTH and an angle error ε displaces a
+> point by `r·ε` — 0.005° is 0.0175 mm at r = 200. Worst case over all 3600 start angles is now
+> 0.00836 mm, and it no longer grows with the radius, which is the actual fix rather than the
+> smaller number.
+>
+> **Read `app/services/maker/previews/geometry.rb`'s `arc_curve` and `lib/shape_svg.js` for the
+> real contract.** This plan is kept as the record of what was executed, corrections included —
+> §15's rule that a stale document is worse than none is why this banner exists rather than a
+> silent rewrite.
+
+---
+
 ## Background an engineer needs before starting
 
 Read `docs/invariants/measure-view.md` (CLAUDE.md §14h) before touching anything here. The five
