@@ -74,21 +74,18 @@ module Maker
         r = curve[:r] * scale
         return Geometry.ellipse_curve(cx, cy, r, r) if curve[:type] == :circle || curve[:sweep] >= 360
 
-        x0, y0 = arc_endpoint(curve, curve[:a0], scale)
-        x1, y1 = arc_endpoint(curve, curve[:a1], scale)
-        # THE SWEEP FLAG IS 0 BECAUSE THE Y-FLIP REVERSES ORIENTATION: DXF sweeps counter-clockwise
-        # from a0 to a1, which is clockwise once drawn. `Dxf.arc_svg` writes the same 0 for the
-        # same reason. A 1 here draws the complementary arc — same endpoints, wrong side.
-        Geometry.arc_curve(x0, y0, x1, y1, r, curve[:sweep] > 180 ? 1 : 0, 0)
-      end
-
-      # One end of an arc, in client space. Computed from the centre and the angle rather than
-      # taken from the flattened points, so the endpoint is the arc's true one and not its first
-      # sample — the same reason every reported number comes from full-resolution data.
-      def arc_endpoint(curve, degrees, scale)
-        t = degrees * Math::PI / 180
-        [ (curve[:cx] + (curve[:r] * Math.cos(t))) * scale,
-          -(curve[:cy] + (curve[:r] * Math.sin(t))) * scale ]
+        # THE Y-FLIP MIRRORS THE START ANGLE ABOUT THE X AXIS AND REVERSES THE SWEEP. A DXF point
+        # at angle `a` lands at (Cx + r·cos a, −Cy − r·sin a), which with cy = −Cy is
+        # (cx + r·cos(−a), cy + r·sin(−a)) — so the client-space start angle is −a0 and the
+        # client-space sweep is −sweep, `Dxf.arc_points` having already resolved sweep as the
+        # POSITIVE counter-clockwise run from a0 to a1. Spelled `(360 - a0) % 360` rather than
+        # `-a0 % 360` because the latter answers −0.0 for a0 = 0: the same angle, put on the wire
+        # as a negative zero.
+        #
+        # A NEGATIVE DELTA IS WHAT MAKES THE CLIENT'S SWEEP FLAG 0 — the direction `Dxf.arc_svg`
+        # writes for the thumbnail, and the one a review of 3,960 real arcs confirmed. A POSITIVE
+        # delta here draws the complementary arc: same endpoints, wrong side.
+        Geometry.arc_curve(cx, cy, r, (360 - curve[:a0]) % 360, -curve[:sweep])
       end
     end
   end

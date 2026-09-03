@@ -71,6 +71,14 @@ module Maker
       # mm, to 0.01.
       PRECISION = 2
 
+      # A DEGREE IS NOT A MILLIMETRE, which is why an arc's two angles do NOT round at PRECISION.
+      # An angle error ε moves a point on the arc by r·ε, so PRECISION's 0.005° half-step is
+      # 0.0175 mm at r = 200 and 0.087 mm at r = 1000 — the descriptor would again be less accurate
+      # than the flattened points it rides beside, which is the whole defect `arc_curve` below
+      # exists to remove. Six places is 1e-8 mm at r = 1000 and costs a few characters on the
+      # handful of shapes that carry an arc at all.
+      ANGLE_PRECISION = 6
+
       # THE WIRE FORM OF A CURVE DESCRIPTOR, WITH ONE DEFINITION HERE RATHER THAN THREE IN THE
       # FORMAT MODULES. A format supplies the numbers; the encoding lives here, so `["e", ...]` is
       # not a string spelled in LbrnGeometry, DxfGeometry and SvgGeometry that must then agree —
@@ -96,10 +104,27 @@ module Maker
         [ "e", *[ cx, cy, rx, ry ].map { |v| v.round(PRECISION) } ]
       end
 
-      # SVG `A`-command parameters, resolved. Centre-plus-angles would push the Y-flip's
-      # orientation reversal onto the client, which is the one thing the client may not know.
-      def arc_curve(x0, y0, x1, y1, r, large_arc, sweep)
-        [ "a", *[ x0, y0, x1, y1, r ].map { |v| v.round(PRECISION) }, large_arc, sweep ]
+      # CENTRE + START ANGLE + SIGNED SWEEP, NOT RESOLVED SVG `A` ENDPOINTS, BECAUSE ENDPOINT
+      # PARAMETERISATION IS ILL-CONDITIONED NEAR A HALF-TURN. SVG puts the centre sqrt(r² − d²)
+      # from the chord midpoint, d being the half-chord, so an error δ in an endpoint displaces
+      # the centre by about sqrt(2rδ). At r = 200 the 0.005 mm half-step of PRECISION measured
+      # 1.37 mm of drawn error on a 180° slot end cap — the commonest arc in a laser or CNC DXF —
+      # beside `p` points, in the SAME payload, good to 0.005 mm. Centre-plus-angles has no such
+      # conditioning: the client resolves the endpoints itself at full double precision, where the
+      # same rounding costs a bounded ~0.01 mm and nothing amplifies it. Emitting more decimals was
+      # the other candidate and is not a fix — it leaves the parameterisation ill-conditioned and
+      # needs about nine places to be safe at r = 200. `dxf_geometry_test.rb` pins the geometry
+      # rather than the five numbers, because the numbers were never what was wrong.
+      #
+      # `a0` and `delta` ARE DEGREES IN CLIENT SPACE, already through the format's Y-flip, and the
+      # SIGN OF `delta` is the sweep direction — the client reads both SVG flags off it alone
+      # (large = |delta| > 180, sweep-flag = delta > 0). An earlier note here rejected this form
+      # for "pushing the Y-flip's orientation reversal onto the client". It does not: a signed
+      # delta resolved server-side carries no file-type knowledge, and the client does pure
+      # trigonometry on numbers whose orientation is already decided.
+      def arc_curve(cx, cy, r, a0, delta)
+        [ "a", *[ cx, cy, r ].map { |v| v.round(PRECISION) },
+               *[ a0, delta ].map { |v| v.round(ANGLE_PRECISION) } ]
       end
 
       # A CHANGE IN THIS FILE IS A CHANGE TO EVERY FORMAT'S OUTPUT, so it must bump EVERY format's
@@ -125,7 +150,10 @@ module Maker
       # RESIDUAL, STATED RATHER THAN HIDDEN: this makes the CORRECT edit one line; it does not stop
       # an editor bumping a format's FORMAT_REVISION for a change that actually lives here. The
       # absolute-value pins in `GeometryTest` are what make that mistake visible.
-      #   1  shapes gained the optional `g` curve descriptor (Collector#add's `curve:`)
+      #   1  shapes gained the optional `g` curve descriptor (Collector#add's `curve:`), the arc
+      #      form of which is centre + angles. NOT A SECOND BUMP: that form replaced resolved `A`
+      #      endpoints WITHIN this same revision, before any deployment ever served a revision-1
+      #      arc. A revision invalidates STORED artifacts, and there are none to invalidate.
       SHARED_REVISION = 1
 
       # Listed so the next editor has the set in front of them rather than having to grep for it;

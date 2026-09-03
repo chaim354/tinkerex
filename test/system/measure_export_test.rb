@@ -106,13 +106,42 @@ class MeasureExportTest < ApplicationSystemTestCase
     assert_not_includes body, "<polygon"
   end
 
-  test "an arc exports as an A-command path" do
+  # THE CLIENT RESOLVES THE ENDPOINTS ITSELF, because the wire form is centre + start angle +
+  # signed sweep: SVG's endpoint parameterisation cannot survive the payload's 0.01 mm rounding
+  # near a half-turn, and the server sends the conditioned form instead (Geometry.arc_curve).
+  #
+  # SO THE TIGHT DELTAS BELOW ARE THE ASSERTION, not decoration. A 37° endpoint is
+  # 7.986355100472928, which rounds to 7.99 — 0.0036 mm away, six orders above the tolerance
+  # here. Any rounding reintroduced in lib/shape_svg.js fails this, which is the point: it is the
+  # ENDPOINTS whose rounding the centre reconstruction amplifies, wherever they are rounded.
+  test "an arc exports as an A-command path whose endpoints the client resolved" do
     body = in_export_svg(<<~JS)
-      m.exportSvg([{ b: [0, 0, 10, 10], p: [[10, 0], [0, 10]], k: 0, c: 0,
-                     g: ["a", 10, 0, 0, 10, 10, 0, 0] }], {})
+      m.exportSvg([{ b: [7.99, -6.02, 10, 0], p: [[10, 0], [7.99, -6.02]], k: 0, c: 0,
+                     g: ["a", 0, 0, 10, 0, -37] }], {})
     JS
 
-    assert_includes body, 'd="M 10 0 A 10 10 0 0 0 0 10"'
+    parts = body[/ d="([^"]+)"/, 1].split
+
+    assert_equal [ "M", "A", "10", "10", "0" ], parts.values_at(0, 3, 4, 5, 6),
+                 "the command, both radii and the x-axis rotation"
+    assert_in_delta 10.0, parts[1].to_f, 1e-9
+    assert_in_delta 0.0, parts[2].to_f, 1e-9
+    assert_in_delta 7.986355100472928, parts[9].to_f, 1e-9
+    assert_in_delta(-6.018150231520483, parts[10].to_f, 1e-9)
+  end
+
+  # BOTH SVG FLAGS COME OFF `delta` ALONE — the client's entire share of an orientation the server
+  # has already decided. A DXF arc always arrives negative, because the Y-flip reverses DXF's
+  # counter-clockwise sweep; the positive cases are pinned anyway, since the flag rule is the
+  # wire form's contract and not a DXF fact.
+  test "an arc's large-arc and sweep flags are derived from delta's sign and magnitude" do
+    paths = in_export_svg(<<~JS)
+      [-90, -270, 90, 270].map((delta) =>
+        m.exportSvg([{ b: [-10, -10, 10, 10], p: [[10, 0], [0, 10]], k: 0, c: 0,
+                       g: ["a", 0, 0, 10, 0, delta] }], {}).match(/ d="([^"]+)"/)[1])
+    JS
+
+    assert_equal [ %w[0 0], %w[1 0], %w[0 1], %w[1 1] ], paths.map { |d| d.split.values_at(7, 8) }
   end
 
   # A photo's base64 is deliberately absent from the payload, but the RECTANGLE it occupies is

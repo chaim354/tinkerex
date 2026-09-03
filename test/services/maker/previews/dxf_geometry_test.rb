@@ -173,11 +173,20 @@ module Maker
       # `DxfGeometry::PAYLOAD_REVISION` had already moved 1 -> 2 via `Geometry::SHARED_REVISION`,
       # which is the licence this comment demands. `Dxf::THUMBNAIL_REVISION` stays at 1 because
       # `Dxf.to_svg` was not touched — and these two unchanged SVG digests are what proves it.
+      #
+      # SAMPLE'S PAYLOAD DIGEST MOVED AGAIN LATER THE SAME DAY, WITH NO SECOND BUMP, and the split
+      # between the two fixtures is the evidence that the change was the ARC form and nothing else.
+      # `g`'s arc encoding became centre + angles instead of resolved `A` endpoints — see
+      # `Geometry.arc_curve` — so sample.dxf, which holds an ARC, moved, and plate.dxf, which holds
+      # CIRCLEs only, DID NOT. A revision invalidates STORED artifacts; revision 1 was defined and
+      # redefined on the same unmerged branch and no deployment ever served an arc under it, so
+      # there was nothing to invalidate. A move in plate's payload digest would mean the change
+      # reached shapes it had no business touching.
       test "the traversal's two artifacts are byte-for-byte what they were before it took pairs" do
         {
           "sample.dxf" => %w[
             f32daab0e0264cb27c3d1ae8f3a9f74cda65b56c4b3009062c202900f9232352
-            f34f842cdbe56506a30670c90c266c5fd2eb65fae71bd53552c5e609eaea664e
+            7efb394bb5c87eb18ba524eb00de78b004aa87331ba2bf35bab3231af6d8e9e0
           ],
           "plate.dxf" => %w[
             d8844eb6832b6d107fd1ad782ce34fc8a35d3b088b4609a6f0c8e6dba86e035d
@@ -238,23 +247,73 @@ module Maker
         assert_equal [ "e", 76.2, -101.6, 50.8, 50.8 ], payload["shapes"].first["g"]
       end
 
-      # A 90-degree ARC from 0 to 90 about the origin, r=10: it starts at (10, 0) and ends at
-      # (0, 10) in MODEL space, so (10, 0) and (0, -10) once flipped.
+      # A 90-degree ARC from 0 to 90 about the origin, r=10. In MODEL space it runs counter-
+      # clockwise from (10, 0) to (0, 10); the Y-flip mirrors that about the X axis, so in client
+      # space it starts at the SAME angle 0 and sweeps NEGATIVELY to -90.
       #
-      # THE SWEEP FLAG IS 0, NOT 1. DXF sweeps counter-clockwise, and the Y-flip reverses
-      # orientation — `Dxf.arc_svg` makes the identical conversion for the thumbnail and its own
-      # comment says so. A `1` here draws the arc the long way round: still an arc, still touching
-      # both endpoints, and the wrong 3/4 of the circle.
-      test "an ARC becomes SVG A-command parameters with the flip applied" do
+      # THE SIGN OF DELTA IS THE WHOLE ORIENTATION STORY, and it must stay negative for a DXF.
+      # `Dxf.arc_svg` makes the identical conversion for the thumbnail and its own comment says so.
+      # A POSITIVE delta makes the client write sweep-flag 1, which draws the arc the long way
+      # round: still an arc, still touching both endpoints, and the wrong 3/4 of the circle.
+      test "an ARC becomes centre, start angle and a signed sweep with the flip applied" do
         payload = build(arc_dxf(cx: 0, cy: 0, r: 10, a0: 0, a1: 90))
 
-        assert_equal [ "a", 10.0, 0.0, 0.0, -10.0, 10.0, 0, 0 ], payload["shapes"].first["g"]
+        assert_equal [ "a", 0.0, 0.0, 10.0, 0.0, -90.0 ], payload["shapes"].first["g"]
       end
 
-      test "an arc sweeping more than half a turn sets the large-arc flag" do
+      # The angles are DEGREES and do not round at PRECISION — see Geometry::ANGLE_PRECISION. The
+      # centre and radius are millimetres and do. `(360 - a0) % 360` is why the start angle comes
+      # back as 336.5051 rather than -23.4949; both name the same direction, one of them without a
+      # negative zero for the a0 = 0 case above.
+      test "an arc's millimetres round at PRECISION and its angles do not" do
+        payload = build(arc_dxf(cx: 1.234, cy: -4.567, r: 10, a0: 23.4949, a1: 143.4949))
+
+        assert_equal [ "a", 1.23, 4.57, 10.0, 336.5051, -120.0 ], payload["shapes"].first["g"]
+      end
+
+      # THE DEFECT THE WIRE FORM EXISTS TO REMOVE, PINNED AS GEOMETRY RATHER THAN AS FIVE NUMBERS.
+      # An assertion on the descriptor's literal contents cannot see it — the numbers were always
+      # "right", and what was wrong was that SVG's ENDPOINT parameterisation must not be rounded.
+      # It puts the centre sqrt(r² − d²) from the chord midpoint (d the half-chord), so near a
+      # half-turn an error δ in an endpoint displaces the centre by about sqrt(2rδ): at r = 200 the
+      # 0.005 mm half-step of `Geometry::PRECISION` measured 1.37 mm of drawn error, in a payload
+      # whose own `p` points are good to 0.005 mm. A slot end cap is exactly that arc, and it is
+      # the commonest arc in a laser or CNC DXF.
+      #
+      # SO THIS RESOLVES THE DESCRIPTOR BACK THE WAY A RENDERER DOES — the client's centre → `A`
+      # endpoints, then SVG F.6.5's endpoints → centre — and asks the resulting curve the two
+      # questions the rest of the payload already answers: does it pass through the shape's own
+      # points, and does it reach the shape's own bbox.
+      test "a half-turn arc's descriptor draws the curve its own points and bbox describe" do
+        [ 0.0, 19.0, 23.4949, 137.5, 271.3 ].each do |a0|
+          sh = build(arc_dxf(cx: -1.111, cy: 2.019, r: 200, a0:, a1: (a0 + 180) % 360))["shapes"].first
+          arc = resolved_arc(sh["g"])
+
+          worst = sh["p"].map { |(x, y)| distance_to_arc(x, y, arc) }.max
+          assert_operator worst, :<=, 0.01,
+                          "a0=#{a0}: the drawn arc strays #{worst.round(4)} mm from the shape's own points"
+
+          # ONE-SIDED, ON PURPOSE. `b` is the bbox of the FLATTENED points, so it sits up to a
+          # chord's sagitta INSIDE the true arc's — the drawn arc must CONTAIN it and cannot be
+          # asked to match it. Containment is the direction the defect broke: the displaced centre
+          # pulled the drawn arc 1.27 mm inside the bbox the same shape reports.
+          box = arc_bbox(arc)
+          [ [ box[0], :<=, sh["b"][0] + 0.01, "left" ], [ box[1], :<=, sh["b"][1] + 0.01, "top" ],
+            [ box[2], :>=, sh["b"][2] - 0.01, "right" ], [ box[3], :>=, sh["b"][3] - 0.01, "bottom" ]
+          ].each do |(got, op, want, edge)|
+            assert_operator got, op, want, "a0=#{a0}: the drawn arc falls short of b's #{edge} edge"
+          end
+        end
+      end
+
+      # THE LARGE-ARC FLAG IS NO LONGER ON THE WIRE — lib/shape_svg.js derives it from |delta|,
+      # which is the only place it can be derived once the endpoints are the client's to compute.
+      # What the server owes it is a delta whose MAGNITUDE is the true sweep, so that is what this
+      # asserts; measure_export_test.rb pins the flag the client writes from it.
+      test "an arc sweeping more than half a turn carries the full sweep in delta" do
         payload = build(arc_dxf(cx: 0, cy: 0, r: 10, a0: 0, a1: 270))
 
-        assert_equal 1, payload["shapes"].first["g"][6]
+        assert_equal(-270.0, payload["shapes"].first["g"][5])
       end
 
       # THE CASE THAT WOULD DRAW NOTHING. `Dxf.arc_points` turns a0 == a1 into a 360-degree sweep
@@ -339,6 +398,64 @@ module Maker
       def arc_dxf(cx:, cy:, r:, a0:, a1:)
         "0\nSECTION\n2\nENTITIES\n0\nARC\n8\nA\n10\n#{cx}\n20\n#{cy}\n40\n#{r}\n" \
         "50\n#{a0}\n51\n#{a1}\n0\nENDSEC\n0\nEOF\n"
+      end
+
+      # An arc descriptor -> the arc a renderer actually draws, as [cx, cy, r, a0, delta] with the
+      # angles in degrees. TWO CONVERSIONS, deliberately, because that is the round trip the wire
+      # now makes: lib/shape_svg.js turns centre + angles into the `A` command's endpoints, and the
+      # renderer turns those straight back into a centre. A defect in either shows up here.
+      def resolved_arc(descriptor)
+        _, cx, cy, r, a0, delta = descriptor
+        x0, y0 = polar(cx, cy, r, a0)
+        x1, y1 = polar(cx, cy, r, a0 + delta)
+        endpoints_to_centre(x0, y0, x1, y1, r, delta.abs > 180 ? 1 : 0, delta > 0 ? 1 : 0)
+      end
+
+      # SVG 1.1 F.6.5, in the circular case (rx == ry, x-axis-rotation 0) — the conversion every
+      # renderer performs on an `A` command. F.6.6's OUT-OF-RANGE CORRECTION is part of it, not a
+      # nicety: a rounded half-turn's endpoints are routinely a hair more than 2r apart, and
+      # without the scaling step the square root below goes negative.
+      def endpoints_to_centre(x0, y0, x1, y1, radius, large, sweep)
+        hx = (x0 - x1) / 2.0
+        hy = (y0 - y1) / 2.0
+        h2 = (hx * hx) + (hy * hy)
+        lam = h2 / (radius * radius)
+        r = lam > 1 ? radius * Math.sqrt(lam) : radius
+        coef = Math.sqrt([ 0.0, ((r * r) - h2) / h2 ].max)
+        coef = -coef if large == sweep
+        cx = ((x0 + x1) / 2.0) + (coef * hy)
+        cy = ((y0 + y1) / 2.0) - (coef * hx)
+        a0 = Math.atan2(y0 - cy, x0 - cx) * 180 / Math::PI
+        delta = ((Math.atan2(y1 - cy, x1 - cx) * 180 / Math::PI) - a0) % 360
+        delta -= 360 if sweep.zero? && delta > 0
+        [ cx, cy, r, a0, delta ]
+      end
+
+      # Distance from a point to a circular ARC — not to its circle. Analytic rather than sampled:
+      # a point whose angle falls inside the sweep is |‖p − c‖ − r| away, one outside it is nearest
+      # an endpoint. Sampling would need thousands of points per case to resolve 0.01 mm at r=200.
+      def distance_to_arc(px, py, arc)
+        cx, cy, r, a0, delta = arc
+        ang = Math.atan2(py - cy, px - cx) * 180 / Math::PI
+        lo = delta.negative? ? a0 + delta : a0
+        return ((Math.hypot(px - cx, py - cy)) - r).abs if ((ang - lo) % 360) <= delta.abs
+
+        [ polar(cx, cy, r, a0), polar(cx, cy, r, a0 + delta) ]
+          .map { |(ex, ey)| Math.hypot(px - ex, py - ey) }.min
+      end
+
+      # The drawn arc's bbox: sampled rather than solved for the axis extremes it happens to span,
+      # because 3600 steps put the sampling error at 2e-5 mm at r = 200 — three orders below what
+      # is being asserted — and the closed form is four quadrant cases to get wrong.
+      def arc_bbox(arc)
+        cx, cy, r, a0, delta = arc
+        pts = (0..3600).map { |i| polar(cx, cy, r, a0 + (i * delta / 3600.0)) }
+        [ pts.map(&:first).min, pts.map(&:last).min, pts.map(&:first).max, pts.map(&:last).max ]
+      end
+
+      def polar(cx, cy, r, degrees)
+        t = degrees * Math::PI / 180
+        [ cx + (r * Math.cos(t)), cy + (r * Math.sin(t)) ]
       end
     end
   end

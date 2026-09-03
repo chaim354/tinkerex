@@ -251,9 +251,14 @@ module Maker
                      Geometry.ellipse_curve(1.234, -4.567, 10.0, 5.0)
       end
 
-      test "arc_curve rounds its coordinates and passes its flags through" do
-        assert_equal [ "a", 0.0, 0.0, 10.0, 0.0, 5.0, 1, 0 ],
-                     Geometry.arc_curve(0.0, 0.0, 10.0, 0.004, 5.0, 1, 0)
+      # TWO PRECISIONS IN ONE DESCRIPTOR, and the mixture is the point rather than an oversight:
+      # `cx`, `cy` and `r` are millimetres and round at PRECISION, while `a0` and `delta` are
+      # DEGREES and round at ANGLE_PRECISION, because 0.005° is 0.0175 mm of arc at r = 200 —
+      # coarser than the very points the descriptor rides beside. The 0.0044° below survives; at
+      # PRECISION it would have been rounded away entirely.
+      test "arc_curve rounds millimetres at PRECISION and keeps its angles fine" do
+        assert_equal [ "a", 1.23, -4.57, 10.0, 336.504401, -179.995604 ],
+                     Geometry.arc_curve(1.234, -4.567, 10.0, 336.5044008, -179.9956044)
       end
 
       private

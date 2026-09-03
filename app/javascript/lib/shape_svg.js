@@ -72,8 +72,27 @@ export function shapeElement(doc, shape) {
     return rx === ry ? el(doc, "circle", { cx, cy, r: rx })
                      : el(doc, "ellipse", { cx, cy, rx, ry })
   }
+  // AN ARC ARRIVES AS CENTRE + START ANGLE + SIGNED SWEEP, AND ITS ENDPOINTS ARE RESOLVED HERE.
+  // SVG's endpoint parameterisation is ill-conditioned near a half-turn — it puts the centre
+  // sqrt(r² - d²) from the chord midpoint, so an endpoint rounded to the payload's 0.01 mm drags
+  // the whole arc 1.37 mm off at r = 200, which is a slot end cap in a file somebody cuts. The
+  // server therefore sends the conditioned form and this does the trigonometry at double
+  // precision; Geometry.arc_curve carries the measurement.
   if (g && g[0] === "a") {
-    const [ , x0, y0, x1, y1, r, large, sweep ] = g
+    const [ , cx, cy, r, a0, delta ] = g
+    const at = (deg) => [ cx + r * Math.cos(deg * Math.PI / 180), cy + r * Math.sin(deg * Math.PI / 180) ]
+    const [ x0, y0 ] = at(a0)
+    const [ x1, y1 ] = at(a0 + delta)
+    // BOTH FLAGS COME OFF `delta` ALONE: more than a half-turn goes the long way round, and a
+    // positive sweep is SVG's positive-angle direction. Every DXF arc arrives with delta NEGATIVE
+    // — the Y-flip reverses DXF's counter-clockwise run — so this writes the same 0 the resolved
+    // form always carried.
+    const large = Math.abs(delta) > 180 ? 1 : 0
+    const sweep = delta > 0 ? 1 : 0
+    // THE COMPUTED ENDPOINTS GO OUT UNROUNDED, DELIBERATELY. Rounding them here rebuilds the exact
+    // defect the wire form removed, one layer further out — it is the ENDPOINTS whose rounding the
+    // centre reconstruction amplifies. A few long numbers on the few shapes that are arcs at all
+    // cost nothing, and SVG's path grammar takes them (exponent notation included).
     return el(doc, "path", { d: `M ${x0} ${y0} A ${r} ${r} 0 ${large} ${sweep} ${x1} ${y1}` })
   }
   // NO DESCRIPTOR -> THE THINNED POINTS, which is every path, polygon, polyline, rect and bitmap
