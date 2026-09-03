@@ -22,7 +22,14 @@ module Maker
       #   2  `Dxf.each_geometry` learned SPLINE, POLYLINE bulges and BLOCK/INSERT placement
       #      (tinkerex#216, #219). It feeds the THUMBNAIL as well, so `Dxf::THUMBNAIL_REVISION`
       #      moves in the same breath — the one bump that is never DXF-payload-only.
-      FORMAT_REVISION = 2
+      #   3  a degree-3 SPLINE carries its own cubics as a `"p"` descriptor (`Dxf.spline_curve`),
+      #      so this format calls `Geometry.path_curve` now where it did not before — which is the
+      #      moment `SHARED_REVISION`'s additive-helper argument stops applying to DXF. STILL THIS
+      #      FORMAT'S TERM AND NOT THE SHARED ONE: the helper did not change, a format's use of it
+      #      did, and bumping the shared term would re-measure every `.lbrn2`, `.mage` and `.svg`
+      #      payload for a change that cannot reach one. `Dxf::THUMBNAIL_REVISION` moves too — the
+      #      picture draws the cubics as well.
+      FORMAT_REVISION = 3
 
       # What `Enqueue` actually reads — see `Geometry::SHARED_REVISION`.
       PAYLOAD_REVISION = Geometry::SHARED_REVISION + FORMAT_REVISION
@@ -77,6 +84,7 @@ module Maker
       # one full-turn arc is a circle in the picture and a different shape in the measurement.
       def curve_to_client_space(curve, scale)
         return nil if curve.nil?
+        return Geometry.path_curve(to_client_segments(curve[:segments], scale)) if curve[:type] == :path
 
         cx = curve[:cx] * scale
         cy = -curve[:cy] * scale
@@ -95,6 +103,25 @@ module Maker
         # writes for the thumbnail, and the one a review of 3,960 real arcs confirmed. A POSITIVE
         # delta here draws the complementary arc: same endpoints, wrong side.
         Geometry.arc_curve(cx, cy, r, (360 - curve[:a0]) % 360, -curve[:sweep])
+      end
+
+      # A PATH'S CONTROL POINTS GET EXACTLY WHAT `to_client_space` GIVES THE POINTS — `* scale`,
+      # then the Y-flip — and they must, or the drawn curve does not sit on its own outline, which
+      # is what `b` was measured from. Written as `-y * scale` in the same breath as the x, side by
+      # side so that dropping the minus is visible: a control point that misses the flip yields a
+      # perfectly well-formed curve that is simply not the file's, and the thumbnail draws the
+      # descriptor INSTEAD of the points, so nothing anywhere goes red.
+      #
+      # ONE SCALE, NOT TWO. Unlike `SvgGeometry.scale_segments`, which carries sx and sy because
+      # `preserveAspectRatio="none"` can stretch one axis, a DXF has a single `$INSUNITS` factor —
+      # the drawing is in one unit, in both directions.
+      #
+      # THE COMMAND SYMBOL IS UNTOUCHED AND `[:Z]` HAS NO PAIRS, which is what keeps the closing
+      # command out of the arithmetic.
+      def to_client_segments(segments, scale)
+        segments.map do |(cmd, *nums)|
+          [ cmd, *nums.each_slice(2).flat_map { |(x, y)| [ x * scale, -y * scale ] } ]
+        end
       end
     end
   end

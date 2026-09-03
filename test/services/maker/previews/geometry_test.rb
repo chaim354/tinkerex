@@ -89,7 +89,7 @@ module Maker
       # shared term would re-render every `.dxf` payload in the library for a change that cannot
       # reach one. A DXF payload IS byte-identical across the change and
       # `dxf_geometry_test.rb`'s three digests, untouched, are what say so.
-      GEOMETRY_REVISIONS = { "a.lbrn2" => 6, "a.lbrn" => 6, "a.mage" => 6, "a.dxf" => 3, "a.svg" => 3 }.freeze
+      GEOMETRY_REVISIONS = { "a.lbrn2" => 6, "a.lbrn" => 6, "a.mage" => 6, "a.dxf" => 4, "a.svg" => 3 }.freeze
 
       test "a format's geometry revision moves only when this pin moves with it" do
         GEOMETRY_REVISIONS.each do |filename, expected|
