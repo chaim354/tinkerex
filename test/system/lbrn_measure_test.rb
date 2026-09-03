@@ -288,7 +288,32 @@ class LbrnMeasureTest < ApplicationSystemTestCase
       case contour.tag_name
       when "circle"  then contour[:cx].to_f - contour[:r].to_f
       when "ellipse" then contour[:cx].to_f - contour[:rx].to_f
+      when "path"    then path_min_x(contour[:d])
       else contour[:points].to_s.split(/\s+/).reject(&:empty?).map { |p| p.split(",").first.to_f }.min
       end
+    end
+
+    # A `"p"` DESCRIPTOR'S PATH — absolute `M`/`L`/`C`/`Z`, built by `Geometry.path_curve`. Since
+    # tinkerex#217 a contour the FILE described with cubics draws as one of these, which is what
+    # every bezier Path in this repo's fixtures is: the branch above answered nil for them and the
+    # lookup reported "the fixture or the draw changed" when neither had — the exact failure the
+    # `else` arm's own comment predicted for an arc, arriving one shape kind earlier.
+    #
+    # EVERY COMMAND IN THIS GRAMMAR TAKES WHOLE COORDINATE PAIRS (`M`/`L` one, `C` three, `Z`
+    # none), so the numbers alternate x, y across the whole string and the x values are the ones at
+    # even positions. That is a property of the grammar, not of the fixture, which is why the guard
+    # on the next line matters: ANY other command letter returns nil rather than a number computed
+    # from an assumption that no longer holds. An arc's `A` carries flags among its numbers and is
+    # exactly that case — the rule the `else` arm states, kept intact.
+    #
+    # THE MINIMUM OF THE CONTROL POLYGON, which BOUNDS the drawn curve and equals it wherever the
+    # leftmost point is a node — as it is for a circle written as quadrant cubics. A bound is what
+    # this helper needs: it tells apart contours 30 to 50 mm away from each other, and a miss is
+    # reported as a missing contour rather than as a wrong number.
+    def path_min_x(d)
+      tokens = d.to_s.split
+      return nil unless tokens.all? { |t| t.match?(/\A[-.\d]/) || %w[M L C Z].include?(t) }
+
+      tokens.grep_v(/\A[A-Za-z]/).map(&:to_f).each_slice(2).map(&:first).min
     end
 end

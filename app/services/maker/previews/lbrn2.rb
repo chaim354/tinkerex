@@ -252,13 +252,20 @@ module Maker
 
       # THE one traversal, shared with LbrnMetadata so the thumbnail and the reported job size
       # can never disagree. Yields every drawable leaf as
-      #   (cut_index, [[x, y], ...], closed?, ellipse_or_nil, image_or_nil, object_id)
-      # with the points already transformed into SVG space (composed affine, then Y-flipped).
+      #   (cut_index, [[x, y], ...], closed?, ellipse_or_nil, image_or_nil, object_id,
+      #    path_segments_or_nil)
+      # with the points AND the path segments already transformed into SVG space (composed affine,
+      # then Y-flipped).
       #
-      # The last two are RICHER RENDERINGS OF THE SAME POINTS, never a substitute for them: a
-      # measuring caller (`job_size`) reads only the points and is correct ignoring both, which is
-      # what lets an ellipse stay exact and a bitmap show its photo without either of them
-      # changing what the file measures.
+      # The ellipse, the image and the segments are RICHER RENDERINGS OF THE SAME POINTS, never a
+      # substitute for them: a measuring caller (`job_size`) reads only the points and is correct
+      # ignoring all three, which is what lets an ellipse stay exact and a bitmap show its photo
+      # without either of them changing what the file measures. Older callers taking fewer block
+      # parameters keep working unchanged — `to_svg` takes five and never sees the segments.
+      #
+      # AT MOST ONE OF THE ELLIPSE AND THE SEGMENTS IS EVER NON-nil, and that is structural rather
+      # than a convention to remember: they are produced by different arms of `emit_shape`'s case.
+      # An <Ellipse> has an exact primitive and takes it; a <Path> has cubics and takes those.
       #
       # `object_id` counts NON-GROUP `<Shape>` elements in document order. A Group emits nothing
       # of its own — walk_shapes recurses into <Children> and `next`s — so it consumes no id. A
@@ -407,9 +414,24 @@ module Maker
           yield cut, pts + [ pts.first ], true, (axis_aligned?(world) ? ellipse_from(pts) : nil), nil, object_id
         when "Path", "Line"
           verts, prims = index.geometry_for(shape)
-          polylines(verts, prims).each do |pts, closed|
-            yield cut, pts.map { |(x, y)| apply(world, x, y) }, closed, nil, nil, object_id
+          polylines(verts, prims).each do |pts, closed, segments|
+            # ONE `apply` FOR THE VERTICES AND THE CONTROL POINTS ALIKE, side by side so that
+            # dropping the second is visible. A control point that misses the affine still yields a
+            # perfectly well-formed curve — it is simply not the file's — and this repo's recorded
+            # failure shape is exactly that: plausible output with nothing to go red. `apply` also
+            # carries the Y-flip, so even under the identity XForm every one of these six numbers
+            # per cubic has to go through it.
+            yield cut, pts.map { |(x, y)| apply(world, x, y) }, closed, nil, nil, object_id,
+                  segments && place_segments(segments, world)
           end
+        end
+      end
+
+      # Each segment's coordinate PAIRS through `apply`, the command letter untouched. `[:Z]` has
+      # no pairs and passes through, which is what keeps the closing command out of the arithmetic.
+      def place_segments(segments, world)
+        segments.map do |(cmd, *nums)|
+          [ cmd, *nums.each_slice(2).flat_map { |(x, y)| apply(world, x, y) } ]
         end
       end
 
@@ -629,34 +651,79 @@ module Maker
         end
       end
 
-      # Vertices + a PrimList → one or more polylines as [[[x, y], ...], closed?].
+      # Vertices + a PrimList → one or more contours as [[[x, y], ...], closed?, segments_or_nil].
       #
       # PrimList is the connectivity: "L<a> <b>" a straight segment, "B<a> <b>" a cubic through
       # the two vertices' handles, and "LineClosed"/"BezierClosed" a loop over every vertex in
       # order. Absent, it degrades to a single open polyline — which is what EVERY path used to
       # get, so a closed outline read as an open one and a curve as a chord.
+      #
+      # THE THIRD ELEMENT IS THE CONTOUR'S OWN SEGMENT LIST, AND IT IS WHY THE `B` HANDLES STOP
+      # BEING THROWN AWAY HERE. This method already holds (a, a.c0, b.c1, b) per `B` op — the exact
+      # cubic — and until 2026-09-03 discarded the control points one line later, so every curve in
+      # every LightBurn file reached the client as a run of short chords (49,030 `B` segments
+      # against 41,317 `L` lines across the live corpus). The segments carry the same op sequence
+      # the points do, in the SAME untransformed vertex space, which is what lets `emit_shape` push
+      # both through one `apply`.
+      #
+      # PER CONTOUR, NOT PER SHAPE. A shape splits here whenever an op does not continue from the
+      # previous one (`prev != ai`), and each half reaches `Collector#add` as its own entry with
+      # its own bbox — so one descriptor covering the whole shape would describe geometry the
+      # entry it rides on does not contain.
       def polylines(verts, prims)
         return [] if verts.nil? || verts.length < 2
 
         ops = prim_ops(verts, prims)
-        return [ [ verts.map { |v| [ v.x, v.y ] }, false ] ] if ops.empty?
+        return [ [ verts.map { |v| [ v.x, v.y ] }, false, nil ] ] if ops.empty?
 
         out = []
         current = nil
+        segments = nil
         prev = nil
         ops.each do |(op, ai, bi)|
           a = verts[ai]; b = verts[bi]
           next if a.nil? || b.nil?
 
           if current.nil? || prev != ai
-            out << current if current
+            out << [ current, segments ] if current
             current = [ [ a.x, a.y ] ]
+            segments = [ [ :M, a.x, a.y ] ]
           end
-          current.concat(op == "B" ? bezier_points(a, b) : [ [ b.x, b.y ] ])
+          if op == "B"
+            current.concat(bezier_points(a, b))
+            # THE SAME FOUR POINTS `bezier_points` SAMPLES, unsampled. `c0` is the outgoing handle
+            # and `c1` the incoming one (see Vertex), so the cubic is (a, a.c0, b.c1, b) — one
+            # spelling of that tuple in each method is one too many, but the alternative is
+            # returning the tuple from `bezier_points`, which would make the sampler's caller
+            # unpack a pair on the hot path of every flattened curve.
+            segments << [ :C, *a.c0, *b.c1, b.x, b.y ]
+          else
+            current << [ b.x, b.y ]
+            segments << [ :L, b.x, b.y ]
+          end
           prev = bi
         end
-        out << current if current
-        out.map { |pts| [ pts, pts.length > 2 && pts.first == pts.last ] }
+        out << [ current, segments ] if current
+        out.map do |(pts, segs)|
+          closed = pts.length > 2 && pts.first == pts.last
+          [ pts, closed, curved_segments(segs, closed) ]
+        end
+      end
+
+      # A CONTOUR'S SEGMENTS, OR nil WHEN NOTHING IN IT CURVES — a DECISION, not an omission. A run
+      # of `L` ops is already described exactly by the points beside it (thinning only drops points
+      # within SIMPLIFY_TOLERANCE of the line the browser draws), so a path there would restate the
+      # points in a second encoding and be paid for on every contour of every file. The form exists
+      # for what has no exact form already. A contour that MIXES straight and curved ops keeps all
+      # of its segments, because a path is continuous and the `L`s are how the `C`s are reached.
+      #
+      # `Z` RATHER THAN A REPEATED ENDPOINT — the final segment already lands on the start point,
+      # so this adds no geometry; what it adds is a CLOSED subpath, which is what makes the drawn
+      # element fillable and therefore hit-testable the way the <polygon> it replaces was.
+      def curved_segments(segs, closed)
+        return nil unless segs&.any? { |(cmd, *)| cmd == :C }
+
+        closed ? segs + [ [ :Z ] ] : segs
       end
 
       def prim_ops(verts, prims)

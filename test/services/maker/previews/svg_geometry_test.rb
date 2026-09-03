@@ -325,11 +325,159 @@ module Maker
         assert_operator payload["shapes"].first["p"].length, :>, 12, "still drawn as a polygon"
       end
 
-      test "a path carries no descriptor" do
+      # A STRAIGHT-ONLY PATH STILL CARRIES NO DESCRIPTOR, AND SINCE tinkerex#217 THAT IS A
+      # DECISION RATHER THAN AN ABSENCE. `p` already IS the geometry of a run of `L` ops —
+      # thinning only drops points within SIMPLIFY_TOLERANCE of the line the browser draws — so a
+      # path descriptor there would restate the points in a second encoding and be paid for per
+      # contour on every file. The form exists for what has no exact form already.
+      test "a straight-only path carries no descriptor" do
         payload = build(%(<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" ) +
                         %(viewBox="0 0 100 100"><path d="M0,0 L50,0 L50,50 Z"/></svg>))
 
         assert_not payload["shapes"].first.key?("g")
+      end
+
+      # ---- path descriptors (tinkerex#217) ---------------------------------------------------
+
+      # THE GUARD THAT DISCHARGES THIS LEG, AND IT RESOLVES THE DESCRIPTOR RATHER THAN READING IT.
+      # A string-equality assertion cannot do this job: tinkerex#213's arc descriptor passed its
+      # own five-number equality test while drawing 1.37 mm from the shape's own points, because
+      # the numbers were never what was wrong. The live trap has the same shape — a control point
+      # that misses the scale yields a well-formed `d` describing a plausible curve that is not the
+      # file's — so this asks the two questions the rest of the payload already answers: does the
+      # resolved curve pass through the shape's own `p`, and does it reach the shape's own `b`.
+      test "a curved path is described by its own cubics, in millimetres" do
+        shape = build(wrap(%(<path d="M10,10 C10,0 30,0 30,10 C30,20 10,20 10,10 Z"/>)))["shapes"].first
+
+        assert_equal "p", shape["g"]&.first
+        assert_curve_tracks_shape shape, "a two-cubic lens"
+      end
+
+      # THE ELEMENT'S OWN TRANSFORM AND THE DOCUMENT'S viewBox SCALE ARE TWO DIFFERENT MULTIPLIES IN
+      # TWO DIFFERENT METHODS — `walk`'s `place_segments` and `build`'s `scale_segments` — so a
+      # fixture with no `transform` on it cannot see the first at all, however many times it asserts
+      # the second. This is the same curve as the test above with a translate over it, and it exists
+      # so that the recorded failure shape (transform the endpoints, leave the control points raw)
+      # has a SECOND independent catcher rather than resting on the rotation test alone.
+      test "an enclosing transform moves a path's control points, not only its endpoints" do
+        shape = build(wrap(%(<g transform="translate(25,35)">) +
+                           %(<path d="M10,10 C10,0 30,0 30,10 C30,20 10,20 10,10 Z"/></g>)))["shapes"].first
+
+        assert_in_delta 35.0, shape["b"][0], 0.01, "the whole contour moved by the translate"
+        assert_curve_tracks_shape shape, "a translated two-cubic lens"
+      end
+
+      # THE SAME sx/sy THE POINTS GET, AND THE TWO AXES ARE NOT THE SAME NUMBER. Under
+      # `preserveAspectRatio="none"` this document is 2 mm per unit across and 1 mm per unit down,
+      # so applying `sx` to both axes doubles every y in the descriptor while `b` — measured from
+      # the points — stays put. The curve then draws off its own outline, which is what the bbox
+      # arm of the assertion below sees.
+      test "a descriptor is scaled per axis, like the points beside it" do
+        shape = build(%(<svg xmlns="http://www.w3.org/2000/svg" width="200mm" height="100mm" ) +
+                      %(viewBox="0 0 100 100" preserveAspectRatio="none">) +
+                      %(<path d="M10,10 C10,0 30,0 30,10 C30,20 10,20 10,10 Z"/></svg>))["shapes"].first
+
+        # The lens spans x = 10..30 exactly (its control points share the endpoints' x) and
+        # y = 2.5..17.5 (a symmetric cubic reaches ¾ of its control offset), so 20 user units
+        # across at 2 mm/unit and 15 down at 1 mm/unit. The two are read off `b`, which comes from
+        # the POINTS — this pair only establishes that the fixture is genuinely non-uniform; the
+        # descriptor's own scaling is what the tracking assertion below tests.
+        assert_in_delta 40.0, shape["b"][2] - shape["b"][0], 0.05, "20 units across at 2 mm/unit"
+        assert_in_delta 15.0, shape["b"][3] - shape["b"][1], 0.05, "15 units down at 1 mm/unit"
+        assert_curve_tracks_shape shape, "a cubic under a non-uniform scale"
+      end
+
+      # SVG IS ALREADY Y-DOWN, so unlike DxfGeometry there is no flip — only the scale. A flip
+      # added here "for symmetry with Dxf" turns every SVG upside down and still draws a plausible
+      # picture; only a POSITIONAL assertion catches it. The two cubics bulge in opposite
+      # directions and the shape sits well away from the document's vertical centre, so neither a
+      # flip about the origin nor one about the viewBox could leave this green.
+      test "a descriptor is not flipped" do
+        shape = build(wrap(%(<path d="M10,70 C10,60 30,60 30,70"/>)))["shapes"].first
+        curve = resolve_path(shape["g"][1])
+
+        assert_operator curve.map(&:last).min, :>, 55.0, "the curve stays near the document bottom"
+        assert_operator curve.map(&:last).max, :<, 75.0
+        assert_curve_tracks_shape shape, "an open cubic low in the document"
+      end
+
+      # THE AXIS-ALIGNED GATE DOES NOT APPLY TO `"p"`, AND SAYING SO IS THE POINT. It exists
+      # because an `"e"` ellipse carries rx and ry with no rotation term, so under a rotation the
+      # descriptor would export geometry the file does not contain. A CUBIC PATH HAS NO SUCH
+      # LIMIT — it transforms affinely under ANY matrix, rotation and skew included — so a rotated
+      # `<path>` KEEPS its descriptor. Refusing here would be a needless downgrade, and it is
+      # exactly the "fix" a reader who knows `ellipse_curve_for` would reach for.
+      test "a rotated or skewed path keeps its descriptor" do
+        { "rotate(30 20 15)" => "rotated", "skewX(20)" => "skewed" }.each do |xform, label|
+          shape = build(wrap(%(<g transform="#{xform}">) +
+                             %(<path d="M10,10 C10,0 30,0 30,10 C30,20 10,20 10,10 Z"/></g>)))["shapes"].first
+
+          assert_equal "p", shape["g"]&.first, "a #{label} path still transforms affinely"
+          assert_curve_tracks_shape shape, "a #{label} cubic"
+        end
+      end
+
+      # AN ELLIPSE UNDER THE SAME ROTATION STILL LOSES ITS DESCRIPTOR, which is what makes the
+      # test above a distinction rather than a removal. Both arms are needed: an implementation
+      # that gated neither and one that gated both each pass half of this pair.
+      test "the gate that a path escapes still binds on an ellipse" do
+        payload = build(wrap(%(<g transform="rotate(30)">) +
+                             %(<ellipse cx="40" cy="40" rx="20" ry="10"/>) +
+                             %(<path d="M60,10 C60,0 80,0 80,10"/></g>)))
+        ellipse, path = payload["shapes"].sort_by { |s| s["b"][0] }
+
+        assert_not ellipse.key?("g"), "a rotated <ellipse> is not an SVG <ellipse>"
+        assert_equal "p", path["g"]&.first, "a rotated cubic is still a cubic"
+      end
+
+      # AN ARC REACHES THE CLIENT AS CUBICS AND NOT AS AN `A`. Endpoint arc parameterisation is
+      # ill-conditioned under rounding (tinkerex#213: 1.37 mm of drawn error at r = 200), and an
+      # SVG arc under a non-uniform scale is a different ellipse arc needing a rotation term no
+      # primitive wire form carries. `resolve_path` RAISES on anything outside M/L/C/Z, so a
+      # producer that started emitting a raw arc goes red here rather than drawing a wrong picture.
+      test "an arc in a path arrives as cubics" do
+        shape = build(wrap(%(<path d="M10,30 A10,10 0 0 1 30,30 L30,40 L10,40 Z"/>)))["shapes"].first
+
+        assert_equal "p", shape["g"]&.first
+        assert_curve_tracks_shape shape, "an arc-and-lines path"
+      end
+
+      # A ROUNDED `<rect>` IS BUILT FROM FOUR ARCS BY `rect_contours`, SO IT WOULD ACQUIRE A
+      # DESCRIPTOR FOR FREE — AND IT DELIBERATELY DOES NOT. `contours_for`'s other six branches
+      # answer for elements the FILE declared as primitives, and this arc run is OURS: it is the
+      # shape of a `<rect>` with an `rx`, not geometry the author wrote. Extending the form to it
+      # is a separate change with its own payload measurement, so the descriptor stops at the door
+      # `path` came in by. Recorded rather than left to be noticed.
+      test "a rounded rect gets no descriptor, though it is built from arcs" do
+        payload = build(wrap(%(<rect x="0" y="0" width="40" height="20" rx="5"/>)))
+
+        assert_not payload["shapes"].first.key?("g")
+      end
+
+      # A `d` WITH SEVERAL SUBPATHS IS ONE OBJECT AND SEVERAL CONTOURS, so each gets its OWN
+      # descriptor. One list covering the whole `d` would be attached to both entries while each
+      # `b` covers one subpath — the bbox arm below is what catches that.
+      test "each subpath of one path gets its own descriptor" do
+        shapes = build(wrap(%(<path d="M10,10 C10,0 30,0 30,10 C30,20 10,20 10,10 Z ) +
+                             %(M60,60 C60,50 80,50 80,60 C80,70 60,70 60,60 Z"/>)))["shapes"]
+
+        assert_equal 2, shapes.length
+        assert_equal 1, shapes.map { |s| s["o"] }.uniq.length, "still one clickable object"
+        shapes.each_with_index { |s, i| assert_curve_tracks_shape s, "subpath #{i}" }
+        assert_not_equal shapes[0]["g"][1], shapes[1]["g"][1], "two contours cannot share one path"
+      end
+
+      # THE `d`-STRING SAFETY ARGUMENT, DISCHARGED MECHANICALLY RATHER THAN BY THE COMMENT ALONE.
+      # The wire form is a string, and a reviewer should ask what stops a `d` attribute's own bytes
+      # riding into it. The answer is that nothing does: `SvgPath.lex` turns every coordinate into
+      # a Float before a segment exists, and `Geometry.path_curve` rounds each one. Asserted here
+      # against a `d` carrying markup and a quote in the very attribute the descriptor is built
+      # from — the only place in this leg where user text is even adjacent to the output.
+      test "an emitted d string holds nothing but the command letters and numbers" do
+        payload = build(wrap(%(<path d="M10,10 C10,0 30,0 30,10 &quot;&gt;&lt;script&gt; L5,5 Z"/>)))
+        d = payload["shapes"].first["g"][1]
+
+        assert_match(/\A[MLCZ0-9 .eE+-]+\z/, d, "a d string may hold only numbers and M/L/C/Z")
       end
 
       private
@@ -340,6 +488,93 @@ module Maker
       def wrap(body)
         %(<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">) +
           body + %(</svg>)
+      end
+
+      # THE DESCRIPTOR RESOLVED THE WAY A RENDERER RESOLVES IT. STRICT ON PURPOSE: an unknown
+      # command RAISES. The wire form is absolute M/L/C/Z and nothing else (`Geometry.path_curve`),
+      # and a lenient parser that skipped an `A` or an `S` would let a producer start emitting one
+      # while every assertion below stayed green — which is exactly how a client that does not
+      # understand the command would fail, silently.
+      def resolve_path(d, per_curve: 48)
+        tokens = d.split
+        pts = []
+        cur = start = nil
+        i = 0
+        while i < tokens.length
+          case tokens[i]
+          when "M", "L"
+            cur = [ Float(tokens[i + 1]), Float(tokens[i + 2]) ]
+            start ||= cur
+            pts << cur
+            i += 3
+          when "C"
+            c1 = [ Float(tokens[i + 1]), Float(tokens[i + 2]) ]
+            c2 = [ Float(tokens[i + 3]), Float(tokens[i + 4]) ]
+            p3 = [ Float(tokens[i + 5]), Float(tokens[i + 6]) ]
+            (1..per_curve).each { |k| pts << cubic_at(cur, c1, c2, p3, k.to_f / per_curve) }
+            cur = p3
+            i += 7
+          when "Z"
+            pts << (cur = start)
+            i += 1
+          else
+            raise "unexpected path command #{tokens[i].inspect} — the wire form is absolute M/L/C/Z only"
+          end
+        end
+        pts
+      end
+
+      def cubic_at(p0, c1, c2, p3, t)
+        u = 1.0 - t
+        [ 0, 1 ].map do |a|
+          (u * u * u * p0[a]) + (3 * u * u * t * c1[a]) + (3 * u * t * t * c2[a]) + (t * t * t * p3[a])
+        end
+      end
+
+      # THE TWO QUESTIONS THE REST OF THE PAYLOAD ALREADY ANSWERS, asked of the resolved curve —
+      # the same helper `lbrn_geometry_test.rb` uses on the LightBurn leg, and for the same reason.
+      #
+      # 0.05 mm is where the roundings land, stated rather than tuned: `p` is thinned to within
+      # SIMPLIFY_TOLERANCE (0.01) of the true contour and rounded at PRECISION (≤0.007 mm
+      # diagonally), and the descriptor's control points are rounded at PRECISION too — which
+      # displaces the drawn curve by at most that much, because a cubic is a convex combination of
+      # its own control points. Roughly 0.03 mm of headroom, against a mutation that misses by
+      # whole millimetres.
+      #
+      # THE BBOX IS ASSERTED AS CONTAINMENT-PLUS-REACH rather than as equality, because a cubic's
+      # extreme does not in general fall on a flattened sample: the resolved curve may exceed `b`
+      # by the flattening tolerance and must not fall short of it by more.
+      def assert_curve_tracks_shape(shape, label, tol: 0.05)
+        assert_equal "p", shape["g"]&.first, "#{label}: expected a path descriptor"
+
+        curve = resolve_path(shape["g"][1])
+        worst = max_deviation(shape["p"], curve)
+        assert_operator worst, :<=, tol,
+                        "#{label}: the drawn curve strays #{worst.round(4)} mm from the shape's own points"
+
+        box = [ curve.map(&:first).min, curve.map(&:last).min,
+                curve.map(&:first).max, curve.map(&:last).max ]
+        %w[left top right bottom].each_with_index do |edge, i|
+          assert_in_delta shape["b"][i], box[i], tol, "#{label}: the drawn curve misses b's #{edge} edge"
+        end
+      end
+
+      # The largest distance from any point of `original` to the polyline `kept`. Point-to-SEGMENT,
+      # not point-to-point: two samplings of one curve do not share sample positions.
+      def max_deviation(original, kept)
+        original.map { |p| kept.each_cons(2).map { |a, b| point_segment_distance(p, a, b) }.min || 0.0 }.max
+      end
+
+      def point_segment_distance(point, a, b)
+        px, py = point
+        ax, ay = a
+        bx, by = b
+        dx = bx - ax
+        dy = by - ay
+        return Math.hypot(px - ax, py - ay) if dx.abs < 1e-12 && dy.abs < 1e-12
+
+        t = ((((px - ax) * dx) + ((py - ay) * dy)) / ((dx * dx) + (dy * dy))).clamp(0.0, 1.0)
+        Math.hypot(px - (ax + (t * dx)), py - (ay + (t * dy)))
       end
     end
   end

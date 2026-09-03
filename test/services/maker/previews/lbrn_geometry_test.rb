@@ -3,6 +3,12 @@ require "test_helper"
 module Maker
   module Previews
     class LbrnGeometryTest < ActiveSupport::TestCase
+      # The four cubic quadrants of an r = 10 circle, in the `V<x> <y>c0x..c0y..c1x..c1y..` form
+      # real LightBurn writes — the same vertices `bezier-circle.lbrn2` carries, reused by the two
+      # inline documents below so their expected answers are the same arithmetic as that fixture's.
+      CIRCLE_VERTS = "V10 0c0x10c0y5.523c1x10c1y-5.523V0 10c0x-5.523c0y10c1x5.523c1y10" \
+                     "V-10 0c0x-10c0y-5.523c1x-10c1y5.523V0 -10c0x5.523c0y-10c1x-5.523c1y-10".freeze
+
       test "build returns a versioned payload with one entry per contour" do
         payload = build("real-export.lbrn2")
 
@@ -382,20 +388,126 @@ module Maker
         assert_operator without.first["p"].length, :>, 12, "it is still drawn as a polygon"
       end
 
-      # THE SAFETY ARGUMENT, PINNED. `bezier-circle.lbrn2`'s circle is a <Shape Type="Path"> of four
-      # cubic segments — it MEASURES round, so `d` is present and the readout says ⌀20 mm — but the
-      # file never declared it a primitive, so it must carry NO descriptor. Nothing may infer one
-      # from the points: `Geometry.diameter`'s accepted consequence is that a genuine 16-gon reports
-      # as round, which is harmless in a LABEL and is wrong geometry in a file somebody cuts.
+      # THE SAFETY ARGUMENT, PINNED — AND IT IS ABOUT WHICH KIND OF DESCRIPTOR, NOT ABOUT WHETHER
+      # THERE IS ONE. `bezier-circle.lbrn2`'s circle is a <Shape Type="Path"> of four cubic
+      # segments. It MEASURES round, so `d` is present and the readout says ⌀20 mm; since
+      # tinkerex#217 it also carries a `"p"` descriptor, which is the file's OWN cubics transformed
+      # into client space — a faithful rendering of what the file said, not an inference from the
+      # points. What must never appear is an `"e"`: nothing may promote a contour to an ELLIPSE
+      # because it happened to measure round. `Geometry.diameter`'s accepted consequence is that a
+      # genuine 16-gon reports as round — harmless in a LABEL, and wrong geometry in a file
+      # somebody cuts.
       #
-      # This is the assertion that would catch a "helpfully" widened implementation, and it is the
-      # one no Ellipse fixture can make.
-      test "a Path that measures round carries no descriptor" do
+      # UNTIL 2026-09-03 THIS ASSERTED `g` ABSENT, and that was the same rule stated in a world
+      # where `"p"` did not exist: the only descriptor a Path could have acquired was an inferred
+      # ellipse. The rule did not move; the set of exact forms did.
+      test "a Path that measures round is described by its own cubics, never promoted to an ellipse" do
         payload = build("bezier-circle.lbrn2")
         round = payload["shapes"].find { |s| s["d"] }
 
         assert_not_nil round, "the bezier circle still measures round"
-        assert_not round.key?("g"), "but it was never DECLARED round, so nothing may say it is"
+        assert_equal "p", round["g"]&.first,
+                     "a Path is described by the cubics the file wrote, never by an inferred primitive"
+      end
+
+      # THE GUARD THAT DISCHARGES THE WHOLE FEATURE, AND IT RESOLVES THE DESCRIPTOR RATHER THAN
+      # READING IT. A string-equality assertion cannot do this job: tinkerex#213's arc descriptor
+      # passed its own five-number equality test while drawing 1.37 mm from the shape's own points,
+      # because the numbers were never what was wrong. The live trap here has the same shape — a
+      # control point that misses the affine yields a perfectly well-formed `d` describing a
+      # plausible curve that is not the file's — so this asks the two questions the rest of the
+      # payload already answers: does the resolved curve pass through the shape's own `p` points,
+      # and does it reach the shape's own `b` bbox.
+      test "a bezier Path's descriptor draws the curve its own points and bbox describe" do
+        circle = build("bezier-circle.lbrn2")["shapes"].find { |s| s["g"] }
+
+        assert_curve_tracks_shape circle, "bezier-circle's Path circle"
+      end
+
+      # THE MUTATION THIS FIXTURE EXISTS FOR: TRANSFORM THE VERTICES AND NOT THE CONTROL POINTS.
+      # Every `B` PrimList in the fixture corpus (bezier-circle, nested-plate) sits under the
+      # IDENTITY XForm, where the only affine a control point can miss is `apply`'s Y-flip. That
+      # flip alone does catch it — but a scale and a translate are what a real file's Paths carry
+      # (real-export.lbrn2 places a group at `2 0 0 2 0 100`), and a guard that can only see the
+      # flip would go green the moment someone applied the flip and not the matrix. Built inline
+      # for the reason dxf_geometry_test.rb builds `arc_dxf` inline: what is needed is one
+      # document property, not a new file.
+      #
+      # r = 10 scaled by 2 and placed at (30, 40) is a ⌀40 circle centred (30, -40) after the flip.
+      test "the descriptor's control points ride the same affine as its vertices" do
+        shape = build_xml(bezier_path_doc(xform: "2 0 0 2 30 40"))["shapes"].first
+
+        assert_in_delta 40.0, shape["d"], 0.05, "the scaled circle is ⌀40"
+        assert_curve_tracks_shape shape, "a bezier Path under a scale and a translate"
+      end
+
+      # A DESCRIPTOR BELONGS TO A CONTOUR, NOT TO A SHAPE. `polylines` starts a new contour
+      # whenever an op does not continue from the previous one (`prev != ai`), so one
+      # <Shape Type="Path"> legitimately yields several — and each reaches `Collector#add`
+      # separately, with its own points, its own bbox and therefore its own descriptor. One
+      # descriptor emitted per SHAPE would be attached to both contours, and the resolved curve
+      # would then span the whole shape while `b` covers one contour: the bbox assertion below is
+      # what fails.
+      #
+      # `B0 1B2 3` is two disjoint cubics over four vertices — the first quadrant of the circle and
+      # the third — so the two contours are far apart and neither bbox is a subset of the other.
+      test "a Path that splits into several contours gets one descriptor each" do
+        shapes = build_xml(bezier_path_doc(prims: "B0 1B2 3"))["shapes"]
+
+        assert_equal 2, shapes.length, "the fixture must actually split, or this test is vacuous"
+        # THE GEOMETRY ASSERTION SPEAKS FIRST, DELIBERATELY. The inequality below is a cheap sanity
+        # check and it is NOT what discharges this: a shared descriptor is wrong because it
+        # describes geometry the entry it rides on does not contain, and that is a claim about the
+        # resolved curve against `b`. Ordered the other way, the mutation reports two equal strings
+        # and the assertion that carries the weight never runs.
+        shapes.each_with_index { |s, i| assert_curve_tracks_shape s, "contour #{i}" }
+        assert_not_equal shapes[0]["g"][1], shapes[1]["g"][1],
+                         "two contours cannot share one path"
+      end
+
+      # `prim_ops` HAS A SECOND ARM THAT BUILDS OPS FROM NO `PrimList` AT ALL — a bare
+      # "BezierClosed" means "a cubic between every consecutive vertex, and back to the first" —
+      # and it produces `B` ops that never appear as `B<a> <b>` text anywhere in the file. An
+      # implementation that read the descriptor's segments off the PrimList STRING rather than off
+      # the resolved ops would emit nothing here, silently, on the arm that has no test of its own.
+      test "the synthetic BezierClosed arm carries a descriptor too, and closes it" do
+        shape = build_xml(bezier_path_doc(prims: "BezierClosed"))["shapes"].first
+
+        assert_equal 1, shape["k"], "BezierClosed is a closed contour"
+        assert_match(/ Z\z/, shape["g"][1], "a closed contour's path must close")
+        assert_curve_tracks_shape shape, "a BezierClosed Path"
+      end
+
+      # A STRAIGHT-ONLY CONTOUR GETS NO DESCRIPTOR, AND THAT IS A DECISION RATHER THAN AN OMISSION.
+      # `p` already IS the geometry of a run of `L` ops — thinning only drops points that sit
+      # within SIMPLIFY_TOLERANCE of the line the browser draws — so a path descriptor there would
+      # be an exact restatement of the points beside them, paid for on the wire per contour. The
+      # form exists for what has no exact form already (`Geometry.path_curve`). A contour that
+      # MIXES straight and curved ops still gets the whole path, because a path is continuous.
+      test "a Path with no curve in it carries no descriptor at all" do
+        %w[real-export.lbrn2 text-backup-path.lbrn2 real-export.mage].each do |name|
+          build(name)["shapes"].each do |s|
+            assert_not_equal "p", s["g"]&.first, "#{name}: a straight-only contour needs no path"
+          end
+        end
+      end
+
+      # THE `d`-STRING SAFETY ARGUMENT, DISCHARGED MECHANICALLY RATHER THAN BY THE COMMENT ALONE.
+      # The wire form is a string, and a reviewer should ask what stops a filename or a
+      # `<VertList>`'s own text riding into it. The answer is that it is built from PARSED NUMBERS
+      # — `Lbrn2` has already turned every coordinate into a Float, and `Geometry.path_curve`
+      # rounds each one — so there is no path by which a byte of file text reaches the output. This
+      # asserts that on the real fixtures: nothing outside the M/L/C/Z grammar and the number
+      # grammar appears in any emitted `d`.
+      test "an emitted d string holds nothing but the command letters and numbers" do
+        %w[bezier-circle.lbrn2 nested-plate.lbrn2].each do |name|
+          paths = build(name)["shapes"].filter_map { |s| s["g"] }.select { |g| g[0] == "p" }
+          assert paths.any?, "#{name} must produce a path descriptor, or this is vacuous"
+
+          paths.each do |(_, d)|
+            assert_match(/\A[MLCZ0-9 .eE+-]+\z/, d, "#{name}: a d string may hold only numbers and M/L/C/Z")
+          end
+        end
       end
 
       private
@@ -403,6 +515,98 @@ module Maker
       def fixture(name) = File.binread(Rails.root.join("test/fixtures/files", name))
 
       def build(name) = JSON.parse(LbrnGeometry.render(fixture(name))[:bytes])
+
+      def build_xml(xml) = JSON.parse(LbrnGeometry.render(xml)[:bytes])
+
+      # A bezier Path in the dialect real LightBurn writes, with the one document property the
+      # caller is testing — an XForm, or a connectivity that splits. The vertices are the same
+      # r = 10 circle `bezier-circle.lbrn2` holds (four cubic quadrants, handle length 0.5523r),
+      # so a caller can reason about the answer in mm.
+      def bezier_path_doc(xform: "1 0 0 1 0 0", prims: "B0 1B1 2B2 3B3 0")
+        <<~XML
+          <?xml version="1.0" encoding="UTF-8"?>
+          <LightBurnProject AppVersion="1.6.00" FormatVersion="1" MaterialHeight="0">
+            <Shape Type="Path" CutIndex="0" VertID="1" PrimID="1">
+              <XForm>#{xform}</XForm>
+              <VertList>#{CIRCLE_VERTS}</VertList>
+              <PrimList>#{prims}</PrimList>
+            </Shape>
+          </LightBurnProject>
+        XML
+      end
+
+      # THE DESCRIPTOR RESOLVED THE WAY A RENDERER RESOLVES IT, which is the only form of this
+      # assertion that carries weight — see the test above for why the string form does not.
+      #
+      # STRICT ON PURPOSE: an unknown command RAISES. The wire form is absolute M/L/C/Z and
+      # nothing else (`Geometry.path_curve`), and a lenient parser that skipped an `S`, a `Q` or an
+      # `A` would let a producer start emitting one while every assertion below stayed green —
+      # which is exactly how a client that does not understand the command would fail, silently.
+      def resolve_path(d, per_curve: 48)
+        tokens = d.split
+        pts = []
+        cur = start = nil
+        i = 0
+        while i < tokens.length
+          case tokens[i]
+          when "M", "L"
+            pts << (cur = [ Float(tokens[i + 1]), Float(tokens[i + 2]) ])
+            start ||= cur
+            i += 3
+          when "C"
+            c1 = [ Float(tokens[i + 1]), Float(tokens[i + 2]) ]
+            c2 = [ Float(tokens[i + 3]), Float(tokens[i + 4]) ]
+            p3 = [ Float(tokens[i + 5]), Float(tokens[i + 6]) ]
+            (1..per_curve).each { |k| pts << cubic_at(cur, c1, c2, p3, k.to_f / per_curve) }
+            cur = p3
+            i += 7
+          when "Z"
+            pts << (cur = start)
+            i += 1
+          else
+            raise "unexpected path command #{tokens[i].inspect} — the wire form is absolute M/L/C/Z only"
+          end
+        end
+        pts
+      end
+
+      def cubic_at(p0, c1, c2, p3, t)
+        u = 1.0 - t
+        [ 0, 1 ].map do |axis|
+          (u * u * u * p0[axis]) + (3 * u * u * t * c1[axis]) +
+            (3 * u * t * t * c2[axis]) + (t * t * t * p3[axis])
+        end
+      end
+
+      # THE TWO QUESTIONS THE REST OF THE PAYLOAD ALREADY ANSWERS, asked of the resolved curve.
+      #
+      # 0.05 mm is where the three roundings land, stated rather than tuned: `p` is thinned to
+      # within SIMPLIFY_TOLERANCE (0.01) of the true contour and rounded at PRECISION (≤0.007 mm
+      # diagonally), and the descriptor's control points are rounded at PRECISION too — which
+      # displaces the curve by at most that much, because a cubic is a convex combination of its
+      # own control points. Roughly 0.03 mm of headroom, against a mutation that misses by
+      # millimetres.
+      #
+      # THE BBOX IS TWO-SIDED HERE, where dxf_geometry_test.rb's arc guard is one-sided, and the
+      # difference is a property of these fixtures rather than a stronger rule: a cubic quadrant's
+      # ENDPOINTS are the circle's axis extremes, so the flattened `b` is exact and the resolved
+      # curve owes it equality. Where a curve's extreme falls BETWEEN flattened samples, only
+      # containment is owed.
+      def assert_curve_tracks_shape(shape, label, tol: 0.05)
+        assert_equal "p", shape["g"]&.first, "#{label}: expected a path descriptor"
+
+        curve = resolve_path(shape["g"][1])
+        worst = max_deviation(shape["p"], curve)
+        assert_operator worst, :<=, tol,
+                        "#{label}: the drawn curve strays #{worst.round(4)} mm from the shape's own points"
+
+        box = [ curve.map(&:first).min, curve.map(&:last).min,
+                curve.map(&:first).max, curve.map(&:last).max ]
+        %w[left top right bottom].each_with_index do |edge, i|
+          assert_in_delta shape["b"][i], box[i], tol,
+                          "#{label}: the drawn curve misses b's #{edge} edge"
+        end
+      end
 
       # The largest distance from any point of `original` to the polyline `kept` — i.e. how far
       # the drawn line strays from the real contour. Measured point-to-SEGMENT, not

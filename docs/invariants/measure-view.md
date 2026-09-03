@@ -36,6 +36,17 @@
   `REVISIONED_BY` has 3 entries, and `Lbrn2`/`Mage`/`Dxf`/`Svg` are the 4 formats answering
   `payload_revision(kind)`.) The outcome above is unchanged — what moved is that the arithmetic
   now does it, instead of three remembered edits.
+  - **THE RULE CUTS ON WHAT A FORMAT EMITS, NOT ON WHICH FILE WAS EDITED, AND AN ADDITIVE HELPER IS
+    THE CASE THAT SEPARATES THEM.** It exists for a change that alters what ALL formats emit — a
+    fix to `simplify`, a new rounding, a different job box. `Geometry.path_curve` was ADDED on
+    2026-09-03 and moves not one byte of a format's output until that format CALLS it:
+    `LbrnGeometry` (4 → 5) and `SvgGeometry` (1 → 2) do and each bumped its OWN term, `DxfGeometry`
+    does not, and **`dxf_geometry_test.rb`'s three unchanged digests are the evidence rather than
+    the claim** that a DXF payload is byte-identical across it. Bumping the shared term there would
+    re-measure every `.dxf` in the library for a change that cannot reach one — the same waste in
+    the opposite direction from the staleness the constant exists to prevent. **Ask "does this
+    format's output move" per format**; where the answer is yes for all of them, that is what the
+    shared term is for. `GEOMETRY_REVISIONS`' absolute pins are what make either mistake visible.
 - **`available?` ASKS WHETHER THIS BOX HAS *ANY* PATH TO A THUMBNAIL — NOT WHETHER IT HAS THE
   RASTERIZER.** `Svg` and `Dxf` gate on **resvg**, because a rasterized SVG is their only path.
   **`Lbrn2` and `Mage` are unconditionally `true`**, because both formats carry the authoring
@@ -467,8 +478,15 @@
   measured round. `Geometry.diameter`'s accepted consequence — a genuine 16-gon reports as round —
   stays confined to the ⌀ LABEL, which is advisory. Reaching it into `g` substitutes a circle for a
   designed polygon in a file somebody CUTS: the label trap one surface further out and one degree
-  worse. `bezier-circle.lbrn2`'s Path circle is the pin — `d` present, `g` absent — and it is the
-  assertion no `<Ellipse>` fixture can make.
+  worse. `bezier-circle.lbrn2`'s Path circle is the pin, and it is the assertion no `<Ellipse>`
+  fixture can make.
+  - **THE PIN READ "`d` PRESENT, `g` ABSENT" UNTIL 2026-09-03, AND IT NOW READS "`d` PRESENT, `g`
+    IS A `"p"`, NEVER AN `"e"`."** The rule did not move; the set of exact forms did. That Path
+    carries the file's OWN cubics now, which is a faithful rendering of what the file declared —
+    the opposite of an inference from the points. What must never appear is the `"e"`: nothing may
+    promote a contour to an ELLIPSE because it happened to measure round. Stated as absence, the
+    invariant was the right rule written in a world where the only descriptor a Path could have
+    acquired was an inferred one, and it would have refused the correct implementation.
 - **THE AXIS-ALIGNED GATE IS LOAD-BEARING ON BOTH LEGS, AND HAD NO TEST AT ALL UNTIL 2026-09-02.**
   Under a rotation an SVG `<ellipse>` is not an SVG `<ellipse>`, so emitting one exports geometry
   the file does not contain. Every `<XForm>` in the fixture corpus was a translate or a scale, so
@@ -478,7 +496,8 @@
   implementation that always emits and one that never emits each pass half of a one-shape fixture,
   and its radii differ (20 × 10) because a rotated CIRCLE is still an upright circle and could not
   tell a working gate from a missing one. `SvgGeometry.ellipse_curve_for` applies the same test for
-  the same reason.
+  the same reason. **It binds on `"e"` ALONE and must not be widened to `"p"`** — see the
+  cubics-only bullet below for why a cubic path needs no such refusal.
   - **THE SAME REFUSAL ONE TRANSFORM SOURCE ALONG: A DXF CURVE DESCRIPTOR IS DROPPED UNDER A
     NON-UNIFORM SCALE.** A BLOCK's contents are placed by their INSERT's affine, and only a
     SIMILARITY keeps a circle a circle — under a non-uniform scale it is an ellipse whose axes are
@@ -522,6 +541,98 @@
   - **THE GUARD MUST RESOLVE THE DESCRIPTOR BACK TO A CURVE AND COMPARE IT AGAINST THE SHAPE'S OWN
     `p` AND `b`.** A test asserting the five numbers passes on any self-consistent encoding and
     could never have seen this — the numbers were never what was wrong, the parameterisation was.
+- **THE `"p"` FORM IS CUBICS AND LINES ONLY — `M`/`L`/`C`/`Z` AND NOTHING ELSE — AND THAT ALPHABET
+  IS THE WHOLE DESIGN.** Every input reduces to it: a LightBurn `B` segment IS the cubic
+  `(a, a.c0, b.c1, b)`; SVG's `C` already is one; `S` and `T` reflect the previous control point
+  into one; `Q` converts EXACTLY by degree elevation (`c1 = p0 + ⅔(c − p0)`, `c2 = p + ⅔(c − p)`);
+  and an `A` becomes cubics. **One segment kind is what makes an affine placement a transform of
+  CONTROL POINTS and nothing else** — a Bézier is a convex combination of its own four points, so
+  an affine map commutes with it. That is also why **the axis-aligned gate binds on `"e"` and NOT
+  on `"p"`**: the `"e"` form carries rx and ry with no rotation term, so under a rotation or a skew
+  it would export an upright ellipse the file does not contain, while a cubic path under the same
+  matrix is still exactly itself. A rotated or skewed `<path>` therefore KEEPS its descriptor.
+  Stage 2 mutation-checked the "fix" that extends the gate to `"p"` — a needless refusal with no
+  defect behind it — and both arms are pinned in one test, since gating neither and gating both
+  each pass half a pair.
+  - **AND THE SAME PROPERTY IS WHY THIS FORM MAY ROUND AT `PRECISION` WHERE THE ARC ABOVE COULD
+    NOT.** Rounding a control point by δ moves the drawn curve by at most δ — 0.005 mm, at any
+    radius — because there is no reconstruction step to amplify it.
+- **AN `A`'s CUBIC COUNT IS BOUNDED BY ERROR, NEVER BY A COUNT, AND THE PLAN'S OWN "≤4 cubics,
+  bounded error" WAS SELF-CONTRADICTORY.** The tangent-matched fit's radial error is
+  `r·(2/27)·sin⁶(θ/4)/cos²(θ/4)` — 2.7e-4·r at θ = π/2, i.e. **0.054 mm at r = 200 mm**, an order
+  of magnitude worse than the `p` points beside it, which are flattened and thinned at 0.01 mm. **A
+  descriptor LESS faithful than the polyline it replaces is the `tinkerex#213` defect exactly**, so
+  `SvgPath.arc_cubic_steps` treats 4 as a FLOOR and grows with the radius (about four under an
+  18 mm radius, six at 200 mm), with `MAX_ARC_CUBICS` = 32 as the stop against a pathological one.
+  **On the real corpus the bound never fires** — all 1,699 arcs land at ≤4 and 1,560 at one — so
+  "≤4" was empirically right and structurally wrong, which is the kind of number that survives
+  every test until the file that needs it arrives.
+- **A CONTOUR EMITS A DESCRIPTOR ONLY WHEN IT ACTUALLY CURVES.** A straight-only contour is already
+  described EXACTLY by `p` (thinning only drops points within `SIMPLIFY_TOLERANCE` of the line the
+  browser draws), so a path there restates the same geometry in a second encoding and is paid for
+  on every contour of every file. **A MIXED contour keeps ALL of its `L` segments**, because a path
+  is continuous and the straight segments are how the cubics are reached — dropping them is not a
+  saving, it is a different shape. `SvgPath.curved` and `Lbrn2.curved_segments` are the same
+  decision on the two producer legs, deliberately not shared: each is one `any?` over a list only
+  that traversal holds. A THIRD producer is the point at which they fold into `Geometry.path_curve`
+  instead of becoming a third copy.
+- **A ROUNDED `<rect>` DELIBERATELY GETS NO DESCRIPTOR, THOUGH IT WOULD COME FOR FREE.**
+  `SvgGeometry.rect_contours` synthesises a `d` of four `A` commands for an `rx` and hands it to
+  the same parser, so the segments arrive already built — and are dropped, in the ONE place
+  `contours_for` strips the third element. **That `d` is OURS, not the author's**, and a descriptor
+  is a claim about what the FILE declared; extending it to a shape we constructed is a separate
+  change with its own payload measurement. Mutation-checked as the one such place, and written as
+  a `.map` at the call site rather than a flag on `parse`, because the decision belongs to the
+  caller.
+- **`SvgPath.arc_params` IS SHARED BY THE SAMPLER AND THE CUBIC EMITTER, SO THE MEASURED POINTS AND
+  THE DRAWN CURVE CANNOT DISAGREE ABOUT THE SAME ARC.** A second copy of SVG F.6.5/F.6.6 is §14b's
+  `LbrnMetadata` bug in the densest part of the format: `b`, `d` and the job box come from the
+  points while the client DRAWS the cubics, so a divergence surfaces as a picture contradicting the
+  readout beside it. The extraction was proved **bit-identical to the old sampler over 3,600 cases**
+  (radii 1–1000, five rotations, both flags, three tolerances, zero differing points), which is what
+  licensed it: **no measured number moved.**
+- **THE `d` STRING IS BUILT FROM PARSED NUMBERS, NEVER FROM THE AUTHOR'S MARKUP, AND THAT IS WHAT
+  MAKES IT COMPATIBLE WITH §15.** `Geometry.path_curve` takes a SEGMENT LIST of Floats the format
+  module has already parsed; `round` is a method a String does not answer to and `#{}` never
+  appears, so there is no door by which a filename or a `<VertList>`'s own bytes reach the output.
+  On the client `setAttribute("d", …)` is a GEOMETRY attribute, not markup — it can open neither an
+  element nor a URL — so this is not the inlining §15 forbids, which is about USER MARKUP reaching
+  a document. **Asserted mechanically rather than left to this paragraph**: every `d` emitted over
+  the real fixtures must match the command-and-number grammar and nothing else.
+- **THE PAYLOAD ROUGHLY DOUBLES, AND THAT WAS MEASURED AND ACCEPTED ON 2026-09-03 — NOT MISSED.**
+  LightBurn's three heaviest went **+66% / +69% / +98%** (574 → 952, 330 → 556, 745 → 1476 KB;
+  gzipped 162 → 285, 86 → 151, 210 → 440 KB) against an estimate of +35/+54/+12%. The whole SVG
+  corpus went **+41.9% raw and +48.0% gzipped**, median **+58.2%** among the 134 of 168 files that
+  gain a descriptor, worst +137.9%. Render time moved 3–25%, which is noise on this artifact.
+  Fidelity is the other half of the trade and it holds: over 21,048 resolved descriptors the worst
+  deviation from the shape's own points is **0.0138 mm**, against ~0.017 mm that the thinning plus
+  `PRECISION` rounding account for on their own. **What makes it affordable** is that after RDP at
+  0.01 mm the `p` points retain only ~2.9 per cubic, so an exact cubic costs about what its own
+  thinned polyline already cost.
+  - **THE OFFSET LEVER IS AVAILABLE AND WAS DELIBERATELY NOT TAKEN.** Where a descriptor exists the
+    client DRAWS it, so `p` is only a hit target there — and a hit target does not need 0.01 mm
+    fidelity, so thinning `p` harder on exactly those contours could more than pay the growth back.
+    It is a second, independent change to interaction fidelity; taking it in the same arc would
+    have confounded the measurement above. A reader finding a doubled payload here should reach for
+    this rather than for the descriptor.
+- **COUNTING A FILE'S TEXT IS NOT COUNTING WHAT A TRAVERSAL YIELDS — THREE TIMES ON ONE BRANCH.**
+  `grep -E "^SPLINE$"` missed every CRLF file and put a plan out by **78×** (`tinkerex#216`).
+  Counting `B<a> <b>` ops missed that LightBurn shares geometry between instances by
+  `VertID`/`PrimID`, so `bookmark.lbrn2`'s 2,169 text ops emit **14,825** cubics — **6.8×**, and the
+  whole reason the payload estimate above was wrong. And grepping `d` attributes for curve command
+  letters gave **163,637 / 43,374 / 35,026 / 48,878 / 34,927** where LEXING the same corpus gives
+  **116,244 / 8,011 / 1,459 / 2 / 859** — `C`/`S`/`Q`/`T`/`A`, in that order in both rows, which is
+  the one thing to keep straight about them: the plan's own table reads `859 A, 2 T` and a reader
+  pairing the two sequences by eye will otherwise swap the last pair. **Count through the parser**,
+  on the same traversal the renderer uses; a text-level count is a different question wearing the
+  same units.
+- **DXF SPLINES ARE NEWLY ELIGIBLE FOR A `"p"` DESCRIPTOR AND ARE DELIBERATELY OUT OF SCOPE.** Since
+  `tinkerex#216` they are parsed, they are degree 3 everywhere in the corpus, and a degree-3 NURBS
+  decomposes into EXACT cubics by Böhm knot insertion — so this is a possibility rather than a
+  wish. It is out because `cards.dxf` already sits at **3.4 MB** against a 1,536 KB design budget,
+  and adding to that is a decision with its own measurement. **`DxfGeometry` calling
+  `Geometry.path_curve` is also the moment `Geometry::SHARED_REVISION`'s additive-helper argument
+  stops applying to it**, and the DXF digests move.
 - **A REVISION IS BUMPED ONCE PER SHIPPED CHANGE, NOT ONCE PER EDIT.** `SHARED_REVISION` moved
   0 → 1 when `g` was introduced; the arc's wire form was then REDEFINED inside that same unmerged
   revision and deliberately NOT bumped again. A revision exists to invalidate STORED artifacts, and
@@ -555,10 +666,16 @@
   vector editor and a CAD sketch import, where `<circle>` is the unambiguous primitive and an
   ellipse may arrive as a spline. **And the resolved arc endpoints go out UNROUNDED**: rounding
   them here rebuilds the ill-conditioning the wire form exists to remove, one layer further out.
-- **THE HIT TWIN IS ALWAYS A POLYLINE FROM `shape.p`, EVEN UNDER AN ARC.** It is an invisible 8 px
-  target, so approximating the curve costs nothing visible and keeps the twin one element. Build it
-  from the points, never by reusing the visible node's `points` string — the visible node no longer
-  necessarily has one.
+- **THE HIT TWIN IS ALWAYS A POLYLINE FROM `shape.p`, EVEN UNDER AN ARC OR A `"p"` PATH.** It is an
+  invisible 8 px target, so approximating the curve costs nothing visible and keeps the twin one
+  element. Build it from the points, never by reusing the visible node's `points` string — the
+  visible node no longer necessarily has one.
+  - **A TWIN IS FOR AN OPEN CONTOUR ONLY, AND A CLOSED `"p"` PATH IS ITS OWN TARGET BECAUSE OF ITS
+    `Z`.** `.measure-contour { fill: transparent }` fills a `<path>`'s CLOSED subpath exactly as it
+    filled the `<polygon>` that element replaced — so the closing command is not cosmetic, and a
+    descriptor that omitted it would draw an identical picture while silently reducing every closed
+    curve to a stroke-only click target. `measure_formats_test.rb` clicks `curves.svg` in its
+    interior for that reason.
 - **A CONTOUR IS NOT NECESSARILY A `<polygon>`, SO `points` IS NOT A GENERAL WAY TO ASK ONE WHERE
   IT IS — AND THREE HARNESSES ASSUMED IT WAS.** `measure_formats_test.rb` and
   `measure_print_test.rb` read `[:points]` off whatever `.measure-contour` they found and got
@@ -571,6 +688,16 @@
   lives in `d` and carries no such attribute at all, so nil makes the caller report a missing
   contour rather than raise. Select by CLASS, never by tag; `.measure-contour--hit` is a different
   token, so widening never matches the twin.
+  - **AND THE `<path>` CASE ARRIVED ONE SHAPE KIND EARLIER THAN THE ARC THIS WAS WRITTEN FOR, AS
+    THE COMMON CASE RATHER THAN THE EXOTIC ONE.** Every bezier Path in the fixture corpus draws as
+    a `<path>` since `"p"` (2026-09-03), so `lbrn_measure_test.rb` and `measure_print_test.rb` both
+    gained a `path_min_x` arm reading the minimum of the CONTROL POLYGON — a bound, which is all a
+    helper telling contours 30 mm apart needs, and exact wherever the leftmost point is a node.
+    **It returns nil for any command outside `M`/`L`/`C`/`Z`**, so the `A` rule above survives
+    intact rather than being papered over: an arc's flags sit among its numbers and would be
+    averaged into a coordinate. Three print-sheet assertions counted `g polygon` and were reading a
+    printed curve as a MISSING PART — "Print all printed half the file" is the thing one of them
+    exists to refuse, and it would have been reporting it.
 - **THE EXPORT IS NORMALIZED TO THE ORIGIN AND ITS CANVAS SIZE IS THE PART SIZE.** `width="{w}mm"`
   plus a viewBox spanning the same `w` is the ENTIRE scale mechanism — the same pair the print
   sheet uses, no transform and no dpi constant — so a px width draws an identical-looking file that

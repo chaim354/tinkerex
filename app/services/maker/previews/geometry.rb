@@ -130,6 +130,53 @@ module Maker
                *[ a0, delta ].map { |v| v.round(ANGLE_PRECISION) } ]
       end
 
+      # THE FORM FOR A CONTOUR THE FILE DESCRIBED WITH CURVES THAT ARE NOT A PRIMITIVE — a
+      # LightBurn `B` segment, an SVG `C`/`S`/`Q`/`T`/`A`. An absolute path of `M`/`L`/`C`/`Z` and
+      # nothing else, in client space, each number rounded at PRECISION.
+      #
+      # CUBICS ONLY, BECAUSE EVERY INPUT REDUCES TO ONE exactly or near enough: a LightBurn `B`
+      # segment IS the cubic (a, a.c0, b.c1, b); SVG's `C` already is one, `S` and `T` reflect the
+      # previous control point into one, and `Q` converts EXACTLY (c1 = p0 + ⅔(c − p0),
+      # c2 = p + ⅔(c − p)). An `A` becomes a bounded number of cubics, and that is a feature rather
+      # than a concession — an SVG arc under a NON-UNIFORM scale is a different ellipse arc needing
+      # a rotation term the `"e"` form cannot express, which is the case `Dxf.transform_curve` has
+      # to DROP a descriptor for. One segment kind means every affine placement is a transform of
+      # control points and nothing else.
+      #
+      # WELL-CONDITIONED UNDER ROUNDING, WHICH `arc_curve` ABOVE IS NOT. A cubic evaluates to a
+      # convex combination of its own four points, so rounding a control point by δ moves the drawn
+      # curve by at most δ — 0.005 mm here, at any radius. That is why this form rounds at
+      # PRECISION where an arc's endpoints could not: there is no reconstruction step to amplify
+      # the error.
+      #
+      # A `d` STRING RATHER THAN A SEGMENT ARRAY, and it is the thing in this file a reviewer
+      # should challenge hardest. It is smaller on the wire (one string against an array of arrays,
+      # on payloads whose size budget is the whole reason `simplify` exists) and directly usable —
+      # `setAttribute("d", …)` is a GEOMETRY attribute, not markup, and the client parses no
+      # string. The safety question is what could ride into it, and the answer is nothing: this
+      # takes a SEGMENT LIST OF PARSED NUMBERS, never text. The format module has already turned
+      # every coordinate into a Float, `round` below is a method a String does not answer to, and
+      # `#{}` never appears — so there is no door by which a filename or a `<VertList>`'s own bytes
+      # reach the output. `lbrn_geometry_test.rb` asserts that mechanically over the real fixtures:
+      # an emitted `d` matches the command-and-number grammar and nothing else. This is not the
+      # inlining §15 forbids, which is about USER MARKUP reaching a document.
+      #
+      # `[[:M, x, y], [:L, x, y], [:C, x1, y1, x2, y2, x, y], [:Z]]` in, `["p", "M …"]` out.
+      def path_curve(segments)
+        [ "p", segments.map { |(cmd, *nums)| [ cmd, *nums.map { |v| coord(v) } ].join(" ") }.join(" ") ]
+      end
+
+      # A COORDINATE AS FEW BYTES AS ROUNDING ALLOWS. `Float#round` returns a Float, so a whole
+      # number would print its `.0` — three bytes per coordinate and six coordinates per cubic, on
+      # exactly the files this form exists for (49,030 bezier segments across the live LightBurn
+      # corpus). Dropping it also removes `-0.0`, which is what a coordinate rounding up from
+      # -0.001 would otherwise write into a geometry attribute.
+      def coord(value)
+        rounded = value.round(PRECISION)
+        whole = rounded.to_i
+        (whole == rounded ? whole : rounded).to_s
+      end
+
       # A CHANGE IN THIS FILE IS A CHANGE TO EVERY FORMAT'S OUTPUT, so it must bump EVERY format's
       # PAYLOAD_REVISION, not one of them. `Maker::Previews::Enqueue` compares a stored artifact's
       # `renderer_revision` against the renderer that would build it now — so a fix to `simplify`
@@ -153,6 +200,19 @@ module Maker
       # RESIDUAL, STATED RATHER THAN HIDDEN: this makes the CORRECT edit one line; it does not stop
       # an editor bumping a format's FORMAT_REVISION for a change that actually lives here. The
       # absolute-value pins in `GeometryTest` are what make that mistake visible.
+      #
+      # AND THE RULE CUTS ON WHAT A FORMAT EMITS, NOT ON WHICH FILE WAS EDITED — the one part of it
+      # a reviewer should challenge, so the argument is written down rather than left to be
+      # re-derived. It exists for a change that alters what ALL formats emit: a fix to `simplify`,
+      # a new rounding, a different job box. An ADDITIVE helper is not that. `path_curve` was added
+      # here on 2026-09-03 and moves not one byte of a format's output until that format CALLS it —
+      # `LbrnGeometry` and `SvgGeometry` do and each bumped its OWN term; `DxfGeometry` does not,
+      # and its payloads are byte-identical across the change (`dxf_geometry_test.rb`'s digests,
+      # unchanged, are the evidence rather than the claim). Bumping the shared term would re-render
+      # every already-measured `.dxf` in the library for a change that cannot alter one byte of it,
+      # which is the same waste in the opposite direction from the staleness this constant exists
+      # to prevent. THE TEST OF WHICH ONE TO BUMP IS "does this format's output move", asked per
+      # format — and where the answer is yes for all of them, that is what the shared term is for.
       #   1  shapes gained the optional `g` curve descriptor (Collector#add's `curve:`), the arc
       #      form of which is centre + angles. NOT A SECOND BUMP: that form replaced resolved `A`
       #      endpoints WITHIN this same revision, before any deployment ever served a revision-1
