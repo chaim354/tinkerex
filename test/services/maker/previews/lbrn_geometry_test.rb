@@ -367,6 +367,21 @@ module Maker
         assert_equal [ "e", 0.0, 0.0, 20.0, 10.0 ], upright["g"]
       end
 
+      # THE GATE, IN THE DIRECTION THAT MATTERS. Under a rotation an SVG <ellipse> is not an SVG
+      # <ellipse>, so emitting a descriptor would export geometry the file does not contain — and
+      # unlike a wrong LABEL, that is a shape somebody cuts. The upright ellipse in the same
+      # fixture is asserted two tests up: an implementation that always emits and one that never
+      # emits each pass exactly one of the pair.
+      test "a rotated Ellipse carries no descriptor and stays a polygon" do
+        payload = build("rotated-ellipse.lbrn2")
+
+        assert_equal 2, payload["shapes"].length
+        with, without = payload["shapes"].partition { |s| s.key?("g") }
+        assert_equal 1, with.length, "the upright ellipse keeps its descriptor"
+        assert_equal 1, without.length, "the rotated one does not acquire one"
+        assert_operator without.first["p"].length, :>, 12, "it is still drawn as a polygon"
+      end
+
       # THE SAFETY ARGUMENT, PINNED. `bezier-circle.lbrn2`'s circle is a <Shape Type="Path"> of four
       # cubic segments — it MEASURES round, so `d` is present and the readout says ⌀20 mm — but the
       # file never declared it a primitive, so it must carry NO descriptor. Nothing may infer one

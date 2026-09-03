@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-authored, in the dialect real LightBurn writes (see real-export.lbrn2).
+
+     THE ONLY FIXTURE IN THE REPO WITH A ROTATED XForm, and that is its whole reason for
+     existing. Every other .lbrn2 and .mage fixture carries a translate or a scale, so
+     Lbrn2.axis_aligned? had no test at all and deleting it was a green mutation.
+
+     TWO ELLIPSES, DELIBERATELY BOTH DIRECTIONS — an implementation that always emits a
+     descriptor and one that never does each pass half of a one-shape fixture:
+
+       upright  Rx=20 Ry=10 at the origin, identity XForm
+                -> MUST carry g == ["e", 0.0, 0.0, 20.0, 10.0]
+
+       rotated  the same ellipse under 0.866025 -0.5 0.5 0.866025 (30 degrees), moved to x=100
+                so the two do not overlap
+                -> MUST carry NO g at all: under a rotation an SVG <ellipse> is not an SVG
+                   <ellipse>, and emitting one exports geometry the file does not contain
+
+     The radii differ (20 x 10, not a circle) on purpose: a rotated CIRCLE is still an upright
+     circle, so it cannot tell a working gate from a missing one. -->
+<LightBurnProject AppVersion="1.6.00" FormatVersion="1" MaterialHeight="0">
+    <CutSetting type="Cut">
+        <index Value="0"/>
+        <name Value="C00"/>
+        <speed Value="20"/>
+        <maxPower Value="80"/>
+    </CutSetting>
+    <Shape Type="Ellipse" CutIndex="0" Rx="20" Ry="10">
+        <XForm>1 0 0 1 0 0</XForm>
+    </Shape>
+    <Shape Type="Ellipse" CutIndex="0" Rx="20" Ry="10">
+        <XForm>0.866025 -0.5 0.5 0.866025 100 0</XForm>
+    </Shape>
+</LightBurnProject>
