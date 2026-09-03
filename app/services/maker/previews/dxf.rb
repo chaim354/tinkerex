@@ -114,9 +114,45 @@ module Maker
           points, closed, curve = flatten(entity)
           next if points.nil? || points.length < 2
 
+          tally_lwpolyline_bulge(entity, unreadable)
+
           counter += 1
           yield layer, points, closed, curve, counter
         end
+      end
+
+      # AN LWPOLYLINE'S BULGES ARE COUNTED, NOT DRAWN — the honest half of a feature this parser
+      # implements for `POLYLINE` only. See `bulge_arc` for why the two halves of one DXF concept
+      # are not equally reachable; what belongs HERE is that the shortfall must be SAID.
+      #
+      # AND IT HAS TO BE SAID EXPLICITLY, BECAUSE THE TYPE-BASED TALLY CANNOT SEE IT.
+      # `parse_entities` counts a `0`-code name that is not in `ENTITY_TYPES`, and `LWPOLYLINE` has
+      # always been in it — so a bulged LWPOLYLINE reaches `add` like any other contour, chorded,
+      # with the status line stating no shortfall at all. That is the same trap the SPLINE work is
+      # warned about from the other direction (a type joining `ENTITY_TYPES` stops being tallied);
+      # here the type never left it. A DISTINCT NAME, never a bare `LWPOLYLINE`: "we cannot read
+      # this type" and "we read this one and part of it came out straight" are different claims and
+      # must not add up into one number.
+      #
+      # ONE PER ENTITY, NOT ONE PER BULGE, so the count means the same thing as every other entry
+      # in the tally: contours we did not fully read. Placed AFTER the flatten guard so it claims
+      # only about shapes that actually drew, and after the off-layer skip so a hidden construction
+      # layer is neither drawn, measured, nor complained about.
+      #
+      # THE TYPE CHECK IS NOT A TIDINESS: CODE 42 IS NOT "BULGE", IT IS "THE 42nd THING THIS RECORD
+      # TYPE DECLARES". Measured on the corpus, `cards.dxf` carries 3,308 SPLINE `42`s (a
+      # control-point tolerance) plus `42`s on VPORT, STYLE and VISUALSTYLE records — so a tally
+      # that looked for the CODE rather than for an LWPOLYLINE's code would report 3,308 unreadable
+      # things about a file containing no bulge at all.
+      LWPOLYLINE_BULGE = "LWPOLYLINE(bulge)".freeze
+
+      def tally_lwpolyline_bulge(entity, unreadable)
+        return unless unreadable && entity[:type] == "LWPOLYLINE" && entity[:codes].key?(42)
+        # A ZERO 42 IS THE ORDINARY CASE — exporters write one on every straight vertex, so a check
+        # on the code's PRESENCE would report most of the corpus as partly unreadable.
+        return unless entity[:codes][42].any? { |v| f = Float(v, exception: false); f && !f.zero? }
+
+        unreadable[LWPOLYLINE_BULGE] = (unreadable[LWPOLYLINE_BULGE] || 0) + 1
       end
 
       # An entity → [points (model space, Y-up), closed?, curve_or_nil]. nil when undrawable.
@@ -172,12 +208,23 @@ module Maker
       end
 
       # LWPOLYLINE: vertex X in code 10 (repeated), Y in code 20 (repeated). Old-style POLYLINE
-      # carries its verts as following VERTEX entities, reclaimed by fold_polyline_vertices.
+      # carries its verts as following VERTEX entities, reclaimed by fold_polyline_vertices —
+      # which is also where a BULGE survives, as an optional third element per vertex.
+      #
+      # NO CURVE DESCRIPTOR, EVEN NOW THAT A BULGED SEGMENT IS AN EXACT ARC. `g` is PER CONTOUR
+      # (see `each_geometry`) and a polyline is ONE contour carrying MANY segments, so there is no
+      # slot for the several arcs a real bulged outline holds — a slot outline is two lines and two
+      # semicircles in a single entity. Emitting the descriptor for one of them would claim the
+      # WHOLE contour is that arc, which is worse than claiming nothing. A per-segment descriptor
+      # is a wire-format change and belongs to tinkerex#217, not here.
       def polyline_points(entity)
         c = entity[:codes]
         raw =
           if entity[:verts]&.any?
-            entity[:verts].map { |(x, y)| [ Float(x, exception: false), Float(y, exception: false) ] }
+            entity[:verts].map do |(x, y, bulge)|
+              [ Float(x, exception: false), Float(y, exception: false),
+                bulge && Float(bulge, exception: false) ]
+            end
           else
             xs = c[10].map { |v| Float(v, exception: false) }
             ys = c[20].map { |v| Float(v, exception: false) }
@@ -187,13 +234,110 @@ module Maker
         return nil if pts.length < 2
 
         closed = (c[70].first.to_i & 1) == 1
-        # A CLOSED polyline REPEATS ITS FIRST POINT AS ITS LAST, matching what `Lbrn2` yields for
-        # a Rect/Ellipse. `Geometry.simplify` always keeps the first and last point, so a closed
-        # contour still closes after thinning — and the client draws a <polygon>, which closes
-        # itself, so the duplicate is invisible there. Omitting it would leave the payload's
-        # closed contours a point short of their own outline.
-        pts = pts + [ pts.first ] if closed && pts.first != pts.last
-        [ pts, closed, nil ]
+        [ expand_bulges(pts, closed), closed, nil ]
+      end
+
+      # Vertices (each optionally carrying a bulge) -> the flattened contour.
+      #
+      # A CLOSED polyline REPEATS ITS FIRST POINT AS ITS LAST, matching what `Lbrn2` yields for
+      # a Rect/Ellipse. `Geometry.simplify` always keeps the first and last point, so a closed
+      # contour still closes after thinning — and the client draws a <polygon>, which closes
+      # itself, so the duplicate is invisible there. Omitting it would leave the payload's
+      # closed contours a point short of their own outline.
+      #
+      # THE CLOSING SEGMENT IS A SEGMENT LIKE ANY OTHER AND CAN CARRY A BULGE — a bulge on the LAST
+      # vertex of a closed polyline describes last→first, which a walk over consecutive pairs never
+      # visits. A slot (two straight sides, two semicircular ends) is the commonest bulged contour
+      # in a laser DXF and one of its two ends is exactly that segment, so missing it leaves a
+      # D-shape: entirely plausible on screen, and half the height it should be.
+      #
+      # THE "already closed" TEST COMPARES COORDINATES ONLY. Some exporters repeat the first vertex
+      # explicitly, and that repeat carries its own bulge — so `first != last` over whole vertex
+      # records would answer "not closed yet" for two vertices at the same point and append a
+      # zero-length closing segment.
+      def expand_bulges(pts, closed)
+        segments = pts.each_cons(2).to_a
+        segments << [ pts.last, pts.first ] if closed && pts.first[0, 2] != pts.last[0, 2]
+
+        out = [ pts.first[0, 2] ]
+        segments.each { |(from, to)| out.concat(bulge_arc(from, to) || [ to[0, 2] ]) }
+        out
+      end
+
+      # ONE BULGED SEGMENT -> its arc's points, EXCLUDING the start (the caller already holds it).
+      # nil when the segment is straight, which is the caller's signal to keep the chord.
+      #
+      # A BULGE IS AN ARC SEGMENT RECORDED ON A VERTEX, AND READING ONLY THE COORDINATES DRAWS ITS
+      # CHORD — a wrong picture whose bbox is also too SMALL, since an arc bulging outward reaches
+      # past the chord it replaces. That is the half that makes it a measurement bug rather than a
+      # cosmetic one: the job size describes a subset of the part. 3,869 non-zero bulges across 26
+      # of 129 real files, 580 of them negative in one file alone (tinkerex#216).
+      #
+      # ONLY `POLYLINE` REACHES HERE, AND THE ASYMMETRY IS THE PARSER'S SHAPE. A `VERTEX` is its
+      # own entity record with its own codes hash, so `codes[42]` is unambiguously THAT vertex's
+      # bulge. An LWPOLYLINE holds its vertices as repeated 10/20 codes inline and its bulges as an
+      # OPTIONAL 42 per vertex — and `parse_entities` groups an entity's values BY CODE, so the
+      # interleaving that says which 42 belongs to which vertex is gone before anything can read
+      # it. Pairing them needs a positional parser, and all 3,869 real bulges are on POLYLINE, so
+      # the LWPOLYLINE half is REPORTED instead (`tally_lwpolyline_bulge`) rather than guessed at.
+      #
+      # THE MATHS. `b = tan(Δθ/4)` with Δθ the SIGNED included angle, positive counter-clockwise —
+      # so Δθ = 4·atan(b), which is why |Δθ| < 2π can never be reached. For a chord of length c the
+      # SIGNED radius is c / (2·sin(Δθ/2)); keeping the sign is what lets one expression place the
+      # centre on either side of the chord instead of a case per quadrant. The centre sits on the
+      # perpendicular bisector, r·cos(Δθ/2) from the midpoint along the chord direction turned a
+      # quarter turn counter-clockwise. The geometric radius is |r| and the polar start angle is
+      # read back off the centre, because a negative r means the parametrisation's angle is the
+      # geometric one plus π.
+      #
+      # THE SIGN IS LOAD-BEARING AND LOSING IT IS INVISIBLE: `|b|` draws an arc of the right radius
+      # spanning the right chord on the WRONG SIDE of it, with a bbox of the identical SIZE. Only a
+      # negative-bulge test that asserts WHERE the box sits can see it.
+      #
+      # `arc_samples` DOES THE FLATTENING, so the segment count is bounded by RELATIVE sagitta —
+      # the traversal deliberately does not know the file's scale, which is that helper's own
+      # documented reason for existing. Its floor of 8 samples costs a few points on a shallow
+      # bulge; `Geometry.simplify` removes them again, and a floor is the wrong place to save.
+      #
+      # THE ONE REFUSAL IS AN ARC WHOSE RADIUS DWARFS ITS CHORD, AND IT COVERS BOTH DEGENERATE ENDS
+      # AT ONCE. r = c / (2·sin(Δθ/2)), so |r|/c blows up as Δθ approaches EITHER 0 or a full turn:
+      # a bulge of 1e-20 (a rounding artefact) and one of 1e20 (malformed) both put the centre
+      # astronomically far from the chord, where the points come out of catastrophic cancellation
+      # and one bad vertex takes the whole file's job box with it. Drawing the chord is what this
+      # renderer did for both cases yesterday, so the fallback cannot be a regression. The
+      # threshold is far outside anything real: the corpus's SHALLOWEST bulge, 2.6e-06 (a sweep of
+      # 0.0006°), has |r|/c ≈ 1e5 and is still drawn as an arc.
+      MAX_BULGE_RADIUS_RATIO = 500_000.0
+
+      def bulge_arc(from, to)
+        bulge = from[2]
+        return nil if bulge.nil? || bulge.zero?
+
+        x0, y0 = from
+        x1, y1 = to
+        dx = x1 - x0
+        dy = y1 - y0
+        chord = Math.hypot(dx, dy)
+        return nil if chord.zero?
+
+        theta = 4 * Math.atan(bulge)
+        half = theta / 2.0
+        # SIGNED. A sin of exactly zero divides to Infinity rather than raising, and Infinity fails
+        # the ratio test below like any other over-large radius — so there is one refusal, not two.
+        r = chord / (2 * Math.sin(half))
+        return nil if r.abs > chord * MAX_BULGE_RADIUS_RATIO
+
+        offset = r * Math.cos(half) / chord
+        cx = ((x0 + x1) / 2.0) - (offset * dy)
+        cy = ((y0 + y1) / 2.0) + (offset * dx)
+
+        radius = r.abs
+        a0 = Math.atan2(y0 - cy, x0 - cx)
+        n = arc_samples(radius, theta.abs)
+        (1..n).map do |i|
+          t = a0 + (i * theta / n)
+          [ cx + (radius * Math.cos(t)), cy + (radius * Math.sin(t)) ]
+        end
       end
 
       # HOW MANY SEGMENTS TO FLATTEN AN ARC OF `radius` SPANNING `radians` INTO.
@@ -483,6 +627,12 @@ module Maker
       # nothing (a real DXF from many CAD tools is dominated by these). Attach each run of VERTEX
       # points to the preceding POLYLINE as :verts and drop the VERTEX records. LWPOLYLINE is
       # untouched — its points are inline repeated 10/20 codes.
+      #
+      # A VERTEX'S OWN `42` — ITS BULGE — RIDES ALONG AS AN OPTIONAL THIRD ELEMENT, and that is
+      # precisely the property making POLYLINE bulges cheap and LWPOLYLINE bulges unreachable: a
+      # VERTEX is a RECORD, so its codes hash answers "this vertex's bulge" with no interleaving to
+      # reconstruct (see `bulge_arc`). Kept as the raw group-code string, exactly as x and y are,
+      # so `polyline_points` stays the one place that turns a value into a number.
       def fold_polyline_vertices(entities)
         out = []
         poly = nil
@@ -497,7 +647,7 @@ module Maker
 
             x = e[:codes][10].first
             y = e[:codes][20].first
-            poly[:verts] << [ x, y ] if x && y
+            poly[:verts] << [ x, y, e[:codes][42].first ] if x && y
           else
             poly = nil
             out << e

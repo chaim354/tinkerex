@@ -339,6 +339,124 @@ module Maker
         assert_not build(dxf)["shapes"].first.key?("g")
       end
 
+      # ---- polyline bulges --------------------------------------------------------------------
+
+      # A BULGE IS AN ARC SEGMENT RECORDED ON A VERTEX, AND READING ONLY THE COORDINATES DRAWS ITS
+      # CHORD. That is a wrong picture, and — because an arc bulging outward reaches past the chord
+      # it replaces — an UNDER-REPORTED bbox, which is the half that makes it a measurement bug.
+      # 3,869 non-zero bulges across 26 of 129 real files (tinkerex#216).
+      test "a POLYLINE bulge draws an arc, and the bbox grows to contain it" do
+        # Two vertices 10 apart with bulge 1.0 on the first: a semicircle of radius 5 bulging below.
+        dxf = "0\nSECTION\n2\nENTITIES\n0\nPOLYLINE\n8\nA\n70\n0\n" \
+              "0\nVERTEX\n8\nA\n10\n0\n20\n0\n42\n1.0\n" \
+              "0\nVERTEX\n8\nA\n10\n10\n20\n0\n" \
+              "0\nSEQEND\n0\nENDSEC\n0\nEOF\n"
+        b = build(dxf)["shapes"].first["b"]
+
+        assert_in_delta 0.0,  b[0], 0.05
+        assert_in_delta 10.0, b[2], 0.05
+        # Y is flipped into client space; the arc's far side must be 5 mm from the chord.
+        assert_in_delta 5.0, (b[3] - b[1]), 0.05, "a chord would give a zero-height bbox"
+      end
+
+      # THE SIGN IS LOAD-BEARING, AND DROPPING IT STILL DRAWS A PLAUSIBLE PICTURE — an arc of the
+      # right radius spanning the right chord, on the WRONG SIDE. It has the same EXTENT as the
+      # test above, so only WHERE the box sits tells the two apart: `|b|` passes every assertion up
+      # there and fails both of these. `b` is [min_x, min_y, max_x, max_y] in the client's Y-down
+      # space, so a positive (counter-clockwise) bulge lands BELOW the chord and this one ABOVE.
+      test "a negative bulge arcs to the other side of the chord" do
+        dxf = "0\nSECTION\n2\nENTITIES\n0\nPOLYLINE\n8\nA\n70\n0\n" \
+              "0\nVERTEX\n8\nA\n10\n0\n20\n0\n42\n-1.0\n" \
+              "0\nVERTEX\n8\nA\n10\n10\n20\n0\n" \
+              "0\nSEQEND\n0\nENDSEC\n0\nEOF\n"
+        b = build(dxf)["shapes"].first["b"]
+
+        assert_in_delta(-5.0, b[1], 0.05, "the arc must reach 5 mm on the far side of the chord")
+        assert_in_delta 0.0, b[3], 0.05, "and must not cross to the side a positive bulge takes"
+      end
+
+      # A BULGE ON THE LAST VERTEX OF A CLOSED POLYLINE DESCRIBES THE LAST→FIRST SEGMENT, which a
+      # loop over consecutive pairs never visits. A slot — two straight sides and two semicircular
+      # ends — is the commonest bulged contour in a laser DXF, and one of its two ends is exactly
+      # this segment. Both bulges here, so the contour is a full circle and a missing closing arc
+      # halves the height while leaving a perfectly plausible D-shape on screen.
+      test "a closed polyline's last-to-first segment honours its bulge" do
+        dxf = "0\nSECTION\n2\nENTITIES\n0\nPOLYLINE\n8\nA\n70\n1\n" \
+              "0\nVERTEX\n8\nA\n10\n0\n20\n0\n42\n1.0\n" \
+              "0\nVERTEX\n8\nA\n10\n10\n20\n0\n42\n1.0\n" \
+              "0\nSEQEND\n0\nENDSEC\n0\nEOF\n"
+        shape = build(dxf)["shapes"].first
+
+        assert_in_delta 10.0, (shape["b"][2] - shape["b"][0]), 0.05, "the chord spans the diameter"
+        assert_in_delta 10.0, (shape["b"][3] - shape["b"][1]), 0.05,
+                        "and the two semicircles close into a circle as tall as it is wide"
+        assert_equal 1, shape["k"], "the contour is still closed"
+      end
+
+      # A DEGENERATE BULGE DRAWS ITS CHORD RATHER THAN A SHAPE THE SIZE OF A SOLAR SYSTEM.
+      # r = c / (2·sin(Δθ/2)) blows up as the included angle approaches EITHER zero or a full turn,
+      # so a rounding artefact and a malformed value are the SAME defect from opposite ends: both
+      # put the arc's centre astronomically far from its chord, where the sampled points come out
+      # of catastrophic cancellation. A job box is a UNION, so one such vertex takes the whole
+      # file's reported size with it — silently, and on a file that is otherwise fine. Drawing the
+      # chord is what this renderer did for both cases before bulges existed.
+      test "a bulge whose arc radius dwarfs its chord falls back to the chord" do
+        %w[1e-20 -1e-20 1e20 -1e20].each do |bulge|
+          dxf = "0\nSECTION\n2\nENTITIES\n0\nPOLYLINE\n8\nA\n70\n0\n" \
+                "0\nVERTEX\n8\nA\n10\n0\n20\n0\n42\n#{bulge}\n" \
+                "0\nVERTEX\n8\nA\n10\n10\n20\n0\n" \
+                "0\nSEQEND\n0\nENDSEC\n0\nEOF\n"
+          job = build(dxf)["job"]
+
+          assert_in_delta 10.0, job["w"], 0.01, "bulge #{bulge}: the chord is 10 mm long"
+          assert_in_delta 0.0, job["h"], 0.01, "bulge #{bulge}: and it is dead straight"
+        end
+      end
+
+      # LWPOLYLINE BULGES ARE COUNTED, NOT DRAWN, AND THE ASYMMETRY IS THE PARSER'S SHAPE RATHER
+      # THAN AN OVERSIGHT. `parse_entities` groups an entity's values BY CODE, so an LWPOLYLINE's
+      # optional-per-vertex `42` cannot be paired with the vertex it belongs to — the interleaving
+      # that says which is gone by then. A VERTEX record has its own codes hash, so its bulge is
+      # unambiguous. Zero of the corpus's 3,869 bulges are on an LWPOLYLINE, so this is the honest
+      # way to leave the half that would cost a parser rewrite unimplemented (tinkerex#216).
+      test "an LWPOLYLINE bulge is reported rather than silently chorded" do
+        dxf = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\nA\n90\n2\n70\n0\n" \
+              "10\n0\n20\n0\n42\n1.0\n10\n10\n20\n0\n0\nENDSEC\n0\nEOF\n"
+        payload = build(dxf)
+
+        assert_equal 1, payload["shapes"].length, "the contour still draws"
+        assert_in_delta 0.0, (payload["shapes"].first["b"][3] - payload["shapes"].first["b"][1]),
+                        0.05, "as its chord — which is precisely what the tally is admitting to"
+        assert_equal({ "LWPOLYLINE(bulge)" => 1 }, payload["u"])
+      end
+
+      # CODE 42 IS NOT "BULGE" — IT IS "THE 42nd THING THIS RECORD TYPE DECLARES", so the tally has
+      # to ask what the entity IS and not merely which codes it carries. Measured on the corpus,
+      # `cards.dxf` holds 3,308 SPLINE `42`s (a control-point tolerance) beside `42`s on VPORT,
+      # STYLE and VISUALSTYLE records. None of those are drawable TODAY, which is exactly why this
+      # is pinned now: the moment SPLINE joins `ENTITY_TYPES` a code-keyed check would report 3,308
+      # unreadable things about a file containing no bulge at all.
+      test "code 42 on an entity that is not an LWPOLYLINE is not a bulge" do
+        dxf = "0\nSECTION\n2\nENTITIES\n0\nCIRCLE\n8\nA\n10\n0\n20\n0\n40\n5\n42\n1.0\n" \
+              "0\nENDSEC\n0\nEOF\n"
+        payload = build(dxf)
+
+        assert_equal 1, payload["shapes"].length
+        assert_not payload.key?("u")
+      end
+
+      # A ZERO `42` IS THE ORDINARY CASE AND CLAIMS NOTHING. Real exporters write a bulge of 0 on
+      # every straight vertex, so a tally keyed on the code's PRESENCE would report most of the
+      # corpus's LWPOLYLINEs as partly unreadable while drawing them perfectly.
+      test "a zero LWPOLYLINE bulge is not a report of anything" do
+        dxf = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\nA\n90\n2\n70\n0\n" \
+              "10\n0\n20\n0\n42\n0.0\n10\n10\n20\n0\n42\n0\n0\nENDSEC\n0\nEOF\n"
+        payload = build(dxf)
+
+        assert_equal 1, payload["shapes"].length
+        assert_not payload.key?("u")
+      end
+
       # ---- what the parser could not read -----------------------------------------------------
 
       # THE BACKSTOP ITSELF. `Dxf.flatten` is a `case` with no `else`, so for years every entity
