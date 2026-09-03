@@ -236,14 +236,39 @@ module Maker
       # is this repo's recorded failure shape (§14d's third extension→role table, which drifted).
       # It also means a file that OVERRIDES a layer's colour is honoured without the client
       # knowing such a thing is possible.
-      def build(colors: nil)
+      #
+      # `unreadable:` IS WHAT THIS FORMAT COULD NOT DRAW, NAMED AND COUNTED — because the
+      # alternative is what DXF did for years: `Dxf.flatten`'s `case` had no `else`, so SPLINE,
+      # ELLIPSE and INSERT returned nil and `each_geometry` skipped them with no error, no log and
+      # no status. 18,906 splines across 29 of 129 real files vanished that way, one file reporting
+      # "No measurable geometry" about a file that is nothing but geometry (tinkerex#216).
+      #
+      # WORSE THAN A MISSING PICTURE: a skipped entity never reaches `add`, so it is absent from
+      # the running bbox too — the job size and every extent describe a SUBSET of the file, with
+      # nothing on screen to say so. That is §14h's measure-after-thinning failure at whole-entity
+      # scale.
+      #
+      # ABSENT WHEN EMPTY, like `"g"`. A `"u" => {}` on every well-read file is bytes for nothing,
+      # and the client's check is truthiness.
+      #
+      # FORMAT-AGNOSTIC BY CONSTRUCTION. DXF is where the gap was measured, but any traversal can
+      # meet something it cannot read, and none of the four had a way to say so — this lives here
+      # rather than in `DxfGeometry` for the same reason `simplify` does.
+      #
+      # READ AFTER THE YIELD, NOT BEFORE, AND THAT ORDERING IS THE MECHANISM. A format hands in an
+      # EMPTY hash and its own traversal fills it while the block runs (see `DxfGeometry.build`),
+      # so a "tidier" version that snapshots the argument at the top of this method emits nothing,
+      # on every file, with no error and no failing shape assertion anywhere to notice.
+      def build(colors: nil, unreadable: nil)
         out = Collector.new
         yield out
 
-        { "v" => SCHEMA_VERSION,
-          "job" => out.job_box,
-          "colors" => (colors&.call(out.layers) || {}).compact,
-          "shapes" => out.shapes }
+        payload = { "v" => SCHEMA_VERSION,
+                    "job" => out.job_box,
+                    "colors" => (colors&.call(out.layers) || {}).compact,
+                    "shapes" => out.shapes }
+        payload["u"] = unreadable if unreadable&.any?
+        payload
       end
 
       # Returns { bytes:, content_type: } — the shape GeneratePreviewJob attaches.

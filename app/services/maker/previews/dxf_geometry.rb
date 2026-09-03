@@ -29,13 +29,18 @@ module Maker
         Geometry.encode(build(dxf_bytes))
       end
 
+      # ONE HASH, HANDED TO BOTH — the traversal fills it while the block runs and `Geometry.build`
+      # reads it after, which is the ordering both sides document. Two hashes, or a snapshot taken
+      # at either end, emits an empty tally on every file and nothing anywhere goes red: the shapes
+      # are still right, and `"u"` is simply never there to be missed.
       def build(dxf_bytes)
         pairs = Dxf.tokenize(dxf_bytes)
         scale = Dxf.mm_per_unit(pairs)
         colors = Dxf.layer_colors(pairs)
+        unreadable = {}
 
-        Geometry.build(colors: ->(layers) { layers.to_h { |l| [ l, colors[l] ] } }) do |out|
-          Dxf.each_geometry(pairs) do |layer, points, closed, curve, object_id|
+        Geometry.build(colors: ->(layers) { layers.to_h { |l| [ l, colors[l] ] } }, unreadable:) do |out|
+          Dxf.each_geometry(pairs, unreadable:) do |layer, points, closed, curve, object_id|
             out.add(layer:, points: to_client_space(points, scale), closed:, object_id:,
                     curve: curve_to_client_space(curve, scale))
           end

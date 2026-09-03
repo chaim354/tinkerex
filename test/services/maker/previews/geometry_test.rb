@@ -216,6 +216,45 @@ module Maker
         assert_equal({}, payload["colors"])
       end
 
+      # ---- what a traversal could not read --------------------------------------------------
+
+      # FORMAT-AGNOSTIC ON PURPOSE. DXF is where the gap was measured, but "the traversal met
+      # something it could not draw" is a fact any of the four formats can have and none of them
+      # had a way to say. See Geometry.build.
+      test "a traversal reports what it could not read as a top-level u key" do
+        payload = Geometry.build(unreadable: { "SPLINE" => 2, "ELLIPSE" => 1 }) do |out|
+          out.add(layer: "a", points: [ [ 0.0, 0.0 ], [ 1.0, 1.0 ] ], closed: false, object_id: 1)
+        end
+
+        assert_equal({ "SPLINE" => 2, "ELLIPSE" => 1 }, payload["u"])
+      end
+
+      # ABSENT WHEN EMPTY, EXACTLY AS `g` IS ABSENT PER SHAPE. A `"u" => {}` on every well-read
+      # file is bytes for nothing, and the client's check is truthiness — a null or an empty object
+      # would read as "no report" while still being paid for.
+      test "a payload with nothing unreadable carries no u key at all" do
+        assert_not Geometry.build { |o|
+          o.add(layer: "a", points: [ [ 0.0, 0.0 ], [ 1.0, 1.0 ] ], closed: false, object_id: 1)
+        }.key?("u")
+
+        assert_not Geometry.build(unreadable: {}) { |o|
+          o.add(layer: "a", points: [ [ 0.0, 0.0 ], [ 1.0, 1.0 ] ], closed: false, object_id: 1)
+        }.key?("u")
+      end
+
+      # THE HASH IS READ AFTER THE TRAVERSAL RUNS, NOT WHEN `build` IS CALLED, and that ordering is
+      # the whole mechanism: a format hands in an empty hash and its traversal fills it. Reading it
+      # at the top of `build` would emit nothing, silently, on every file.
+      test "the tally a traversal fills during the yield still reaches the payload" do
+        tally = {}
+        payload = Geometry.build(unreadable: tally) do |out|
+          tally["SPLINE"] = 3
+          out.add(layer: "a", points: [ [ 0.0, 0.0 ], [ 1.0, 1.0 ] ], closed: false, object_id: 1)
+        end
+
+        assert_equal({ "SPLINE" => 3 }, payload["u"])
+      end
+
       # ---- curve descriptors --------------------------------------------------------------
 
       # A DRAWING HINT AND NEVER A MEASUREMENT. The descriptor rides alongside the points; `b` and

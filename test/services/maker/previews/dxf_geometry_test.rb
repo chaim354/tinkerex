@@ -339,6 +339,81 @@ module Maker
         assert_not build(dxf)["shapes"].first.key?("g")
       end
 
+      # ---- what the parser could not read -----------------------------------------------------
+
+      # THE BACKSTOP ITSELF. `Dxf.flatten` is a `case` with no `else`, so for years every entity
+      # type this parser cannot draw returned nil and `each_geometry` skipped it with no error, no
+      # log and no status — 18,906 SPLINEs across 29 of 129 real files, one of which reported "No
+      # measurable geometry" about a file that is nothing but geometry (tinkerex#216).
+      test "an entity type the parser cannot draw is reported rather than dropped" do
+        dxf = "0\nSECTION\n2\nENTITIES\n0\nSPLINE\n8\nA\n0\nELLIPSE\n8\nA\n0\nSPLINE\n8\nA\n" \
+              "0\nLINE\n8\nA\n10\n0\n20\n0\n11\n5\n21\n0\n0\nENDSEC\n0\nEOF\n"
+        payload = build(dxf)
+
+        assert_equal 1, payload["shapes"].length, "the LINE still draws"
+        assert_equal({ "SPLINE" => 2, "ELLIPSE" => 1 }, payload["u"],
+                     "and what could not be drawn is named and counted")
+      end
+
+      # A SKIPPED ENTITY IS ABSENT FROM THE BBOX, NOT MERELY FROM THE PICTURE — which is the half
+      # that makes this a measurement bug rather than a cosmetic one. `elianadxf.dxf` is four
+      # SPLINEs and nothing else: shapes=0, job 0x0, a reported job size describing none of the
+      # file. The tally is the only thing on the wire that says so.
+      test "a file whose every entity is unreadable says so instead of measuring as empty" do
+        payload = build("0\nSECTION\n2\nENTITIES\n0\nSPLINE\n8\nA\n0\nSPLINE\n8\nA\n0\nENDSEC\n0\nEOF\n")
+
+        assert_equal [], payload["shapes"]
+        assert_equal({ "w" => 0.0, "h" => 0.0, "x" => 0.0, "y" => 0.0 }, payload["job"],
+                     "the job box is still honestly empty — the tally is what makes it legible"
+        )
+        assert_equal({ "SPLINE" => 2 }, payload["u"])
+      end
+
+      # THE OTHER DIRECTION, AND IT IS THE ONE A NAIVE TALLY GETS WRONG. `parse_entities` has no
+      # section filter, so the TABLES and OBJECTS sections' records arrive on the same `0`-code
+      # stream as the entities. A real file carries 33 LAYERs, 16 VISUALSTYLEs and 180
+      # BLOCK_RECORDs; reporting those as geometry we failed to draw is a lie about the file, and a
+      # noisier one than the silence this replaced.
+      test "structural markers and table records are not geometry and are never tallied" do
+        dxf = "0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nLAYER\n0\nLAYER\n2\nCut\n62\n1\n0\nENDTAB\n" \
+              "0\nTABLE\n2\nLTYPE\n0\nLTYPE\n2\nCONTINUOUS\n0\nENDTAB\n0\nENDSEC\n" \
+              "0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n2\nB\n0\nENDBLK\n0\nENDSEC\n" \
+              "0\nSECTION\n2\nENTITIES\n0\nPOLYLINE\n8\nCut\n70\n0\n" \
+              "0\nVERTEX\n8\nCut\n10\n0\n20\n0\n0\nVERTEX\n8\nCut\n10\n5\n20\n0\n0\nSEQEND\n" \
+              "0\nENDSEC\n0\nSECTION\n2\nOBJECTS\n0\nDICTIONARY\n0\nENDSEC\n0\nEOF\n"
+        payload = build(dxf)
+
+        assert_equal 1, payload["shapes"].length, "the POLYLINE still draws"
+        assert_not payload.key?("u"), "nothing here is unreadable geometry, so nothing is claimed"
+      end
+
+      # VERTEX IS THE TRAP INSIDE THE TRAP. It is not in ENTITY_TYPES and is not a structural
+      # marker either — it is a drawable POLYLINE's own points, reclaimed by
+      # fold_polyline_vertices. Counting it turns the commonest entity in this corpus into a
+      # report of 10,792 unreadable things on a file that renders perfectly.
+      test "a POLYLINE's VERTEX records are its points, not unreadable entities" do
+        dxf = "0\nSECTION\n2\nENTITIES\n0\nPOLYLINE\n8\nA\n70\n0\n" \
+              "0\nVERTEX\n8\nA\n10\n0\n20\n0\n0\nVERTEX\n8\nA\n10\n5\n20\n0\n" \
+              "0\nVERTEX\n8\nA\n10\n5\n20\n5\n0\nSEQEND\n0\nENDSEC\n0\nEOF\n"
+        payload = build(dxf)
+
+        assert_equal 3, payload["shapes"].first["p"].length, "the vertices became the polyline"
+        assert_not payload.key?("u")
+      end
+
+      # The tally must not disturb what the traversal DRAWS — an unreadable entity between two
+      # drawable ones cannot be allowed to break the POLYLINE/VERTEX fold or shift an object id.
+      test "an unreadable entity between drawable ones changes neither" do
+        dxf = "0\nSECTION\n2\nENTITIES\n" \
+              "0\nLINE\n8\nA\n10\n0\n20\n0\n11\n5\n21\n0\n" \
+              "0\nMTEXT\n8\nA\n1\nhello\n" \
+              "0\nCIRCLE\n8\nA\n10\n0\n20\n0\n40\n3\n0\nENDSEC\n0\nEOF\n"
+        payload = build(dxf)
+
+        assert_equal [ 1, 2 ], payload["shapes"].map { |s| s["o"] }, "ids count DRAWN entities only"
+        assert_equal({ "MTEXT" => 1 }, payload["u"])
+      end
+
       # ---- documents ------------------------------------------------------------------------
 
       test "a DXF with no drawable entities returns the honest empty payload" do

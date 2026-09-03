@@ -28,6 +28,24 @@ class MeasureFormatsTest < ApplicationSystemTestCase
   PLATE_READOUT = "80 × 40 mm".freeze
   MAGE_READOUT  = "⌀20 mm".freeze
 
+  # WHAT THE PARSER CANNOT DRAW, WHICH THE STATUS LINE NOW HAS TO SAY. SYNTHESIZED RATHER THAN
+  # CHECKED IN: the whole content of interest is a `0`-code naming an entity type this parser does
+  # not handle, which is two lines of group codes — a fixture file would put that behind something
+  # a reader has to open a DXF viewer to see.
+  #
+  # DELIBERATELY NOT IN `FIXTURES`. That list drives the console-error sweep, which asserts at
+  # least one contour — `only-splines.dxf` draws none, and must not.
+  UNREADABLE_DXF = {
+    "some-splines.dxf" =>
+      "0\nSECTION\n2\nENTITIES\n" \
+      "0\nLINE\n8\nCut\n10\n0\n20\n0\n11\n60\n21\n0\n" \
+      "0\nSPLINE\n8\nCut\n" \
+      "0\nLINE\n8\nCut\n10\n0\n20\n0\n11\n0\n21\n30\n" \
+      "0\nSPLINE\n8\nCut\n0\nSPLINE\n8\nCut\n0\nENDSEC\n0\nEOF\n",
+    "only-splines.dxf" =>
+      "0\nSECTION\n2\nENTITIES\n0\nSPLINE\n8\nCut\n0\nSPLINE\n8\nCut\n0\nENDSEC\n0\nEOF\n"
+  }.freeze
+
   setup do
     @root = Pathname.new(Dir.mktmpdir("measure-formats"))
     # The fixtures land BEFORE the first page render on purpose: FileLayer::Share reads an EMPTY
@@ -35,12 +53,14 @@ class MeasureFormatsTest < ApplicationSystemTestCase
     FIXTURES.each do |f|
       File.binwrite(@root.join(f), File.binread(Rails.root.join("test/fixtures/files", f)))
     end
+    UNREADABLE_DXF.each { |name, body| File.binwrite(@root.join(name), body) }
     FileLayer.current = FileLayer::Share.new(root: @root.to_s)
 
     @user = sign_in_as("measure-formats@example.com")
     Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
-    @nodes = FIXTURES.to_h { |f| [ f, @user.nodes.find_by!(storage_path: f).node_id ] }
-    FIXTURES.each { |f| render_geometry!(@nodes[f], f) }
+    names = FIXTURES + UNREADABLE_DXF.keys
+    @nodes = names.to_h { |f| [ f, @user.nodes.find_by!(storage_path: f).node_id ] }
+    names.each { |f| render_geometry!(@nodes[f], f) }
   end
 
   teardown do
@@ -103,6 +123,39 @@ class MeasureFormatsTest < ApplicationSystemTestCase
     click_on "Measure"
     assert_selector ".measure-view--ready"
     assert_no_selector ".measure-fallback img", visible: true
+  end
+
+  # THE HONESTY BACKSTOP, DRIVEN THROUGH A BROWSER BECAUSE NOTHING ELSE CAN SEE IT. The payload
+  # carrying `"u"` is asserted server-side; that the VIEW says so is a different claim, and a
+  # controller change that silently does nothing is this repo's recorded failure shape (§14d:
+  # Stimulus neither throws nor warns, and two deleted controllers left a feature inert for nine
+  # days behind a green request test).
+  test "a dxf reports the entity types the parser could not draw" do
+    open_measure_view("some-splines.dxf")
+
+    assert_selector ".measure-dims",
+                    exact_text: "2 shapes · 3 SPLINE not readable · click one to measure"
+  end
+
+  # THE OTHER HALF, AND WITHOUT IT AN IMPLEMENTATION THAT ALWAYS APPENDS A CLAUSE PASSES. `exact_text`
+  # is what carries that: plate.dxf is read completely, so the line must be the bare one it always was.
+  test "a dxf the parser reads completely claims nothing" do
+    open_measure_view("plate.dxf")
+
+    assert_selector ".measure-dims", exact_text: "2 shapes · click one to measure"
+  end
+
+  # THE OBSERVED HARM, AS A TEST. A real .dxf of four SPLINEs and nothing else measured zero shapes
+  # and read "No measurable geometry in this file" — a lie about a file that is entirely geometry
+  # (tinkerex#216). This branch never reaches `restingStatus()`, so it is the one case a test of
+  # that method alone would leave uncovered — and it is the case the mechanism was built for. The
+  # view stays on the poster here, which is why this does not wait for --ready.
+  test "a dxf of nothing but unreadable entities says so instead of blaming the file" do
+    visit file_path(@nodes.fetch("only-splines.dxf"))
+    click_on "Measure"
+
+    assert_selector ".measure-dims",
+                    exact_text: "No measurable geometry in this file · 2 SPLINE not readable"
   end
 
   # THE BROWSER IS THE ONLY THING THAT KNOWS. A payload the client cannot read, a CSP that drops a

@@ -90,11 +90,19 @@ module Maker
       # the emit; DXF has no Group/BackupPath structure forcing an id to be reserved ahead of the
       # decision to draw. Callers may rely on equality only, never on any relationship to the
       # entity's position in the file.
-      def each_geometry(pairs)
+      #
+      # `unreadable:` IS AN OPTIONAL TALLY THE CALLER OWNS — a `{ "SPLINE" => 2 }` hash this walk
+      # fills in with the entity types it met and cannot draw, so the payload can say so instead of
+      # dropping them without a word (see `Geometry.build`). Handed IN rather than returned because
+      # `Geometry.build` binds its own `unreadable:` before the traversal block runs; the caller
+      # gives both the same object. The THUMBNAIL leg passes none — a picture has nowhere to put a
+      # tally — and that is not a second traversal: which entities DRAW is identical either way,
+      # this is one extra fact one consumer asks for.
+      def each_geometry(pairs, unreadable: nil)
         off = layers_off(pairs)
         counter = 0
 
-        parse_entities(pairs).each do |entity|
+        parse_entities(pairs, unreadable:).each do |entity|
           layer = entity[:codes][8].first
           # A DXF layer can be switched OFF, recorded as a NEGATIVE colour on its table entry.
           # Honoured rather than ignored for the same reason `Lbrn2.hidden_cuts` is: a hidden
@@ -400,9 +408,19 @@ module Maker
         pairs
       end
 
-      # Walk the pairs, slicing them into entity records keyed by their group codes. We only
-      # look at the ENTITIES section's records; unknown entity types are skipped.
-      def parse_entities(pairs)
+      # Walk the pairs, slicing them into entity records keyed by their group codes. Entity types
+      # this parser cannot draw are skipped, and `unreadable:` is where their NAMES survive that
+      # (see `unreadable?`) — the record itself is dropped, codes and all.
+      #
+      # THIS WALKS EVERY SECTION, NOT THE ENTITIES SECTION. An earlier comment here claimed "we
+      # only look at the ENTITIES section's records", and there is no section filter anywhere in
+      # this file: a BLOCKS-section entity is collected and drawn exactly like a top-level one,
+      # which is why a block body draws at its DEFINITION coordinates and again at nothing
+      # (tinkerex#219 owns the fix; the prose is corrected here so the next reader is not misled
+      # into thinking the behaviour is already scoped). It is also why the TABLES and OBJECTS
+      # sections' records arrive on this same `0`-code stream, which `unreadable?` has to account
+      # for.
+      def parse_entities(pairs, unreadable: nil)
         entities = []
         current = nil
 
@@ -414,6 +432,9 @@ module Maker
             current =
               if ENTITY_TYPES.include?(value) || value == "VERTEX"
                 { type: value, codes: Hash.new { |h, k| h[k] = [] } }
+              else
+                unreadable[value] = (unreadable[value] || 0) + 1 if unreadable && unreadable?(value)
+                nil
               end
           elsif current
             current[:codes][code] << value
@@ -422,6 +443,39 @@ module Maker
         entities << current if current
         fold_polyline_vertices(entities)
       end
+
+      # Is a `0`-code value an entity type we met and could not draw — as opposed to something
+      # that was never geometry in the first place?
+      #
+      # TWO POPULATIONS ARRIVE ON ONE STREAM, because `parse_entities` above has no section filter.
+      # `STRUCTURAL` therefore has to cover both: the markers that open and close a section, a
+      # table, a block or a vertex run; AND the RECORD types the TABLES and OBJECTS sections are
+      # made of, which are not drawings of anything. Measured on the real corpus, one file carries
+      # 33 `LAYER`s, another 180 `BLOCK_RECORD`s and 16 `VISUALSTYLE`s — reporting those as
+      # geometry we failed to draw would be a louder lie than the silence this replaced.
+      #
+      # A SKIP-LIST, NOT AN ALLOWLIST, AND THE DIRECTION OF THE MISTAKE IS THE ARGUMENT. §14b
+      # records the skip-list blind spot as this repo's recurring bug — but there a missed entry
+      # loses DATA, silently and permanently, and here it can only add a name to a status line. An
+      # allowlist of "entity types we have heard of" would restore exactly the silence this exists
+      # to end: the next ELLIPSE-shaped gap would vanish without a word again, which is the whole
+      # defect. Enumerated from the 129-file corpus plus the spec's table and object records; a
+      # miss is noise, and noise is the side to be wrong on.
+      #
+      # VERTEX IS NOT HERE BECAUSE IT IS NEVER REACHED — `parse_entities` keeps it as a drawable
+      # POLYLINE's own points. It would otherwise be the loudest false report in the corpus: 10,792
+      # of them in one file that renders perfectly.
+      STRUCTURAL = %w[
+        SECTION ENDSEC EOF TABLE ENDTAB BLOCK ENDBLK SEQEND CLASS
+        APPID BLOCK_RECORD DIMSTYLE LAYER LTYPE STYLE UCS VIEW VPORT
+        DICTIONARY ACDBDICTIONARYWDFLT ACDBPLACEHOLDER DICTIONARYVAR XRECORD
+        LAYOUT PLOTSETTINGS MLINESTYLE VISUALSTYLE SCALE MATERIAL TABLESTYLE
+        CELLSTYLEMAP SORTENTSTABLE GROUP IDBUFFER FIELD FIELDLIST DATATABLE
+        LAYER_INDEX SPATIAL_INDEX SPATIAL_FILTER RASTERVARIABLES WIPEOUTVARIABLES
+        IMAGEDEF IMAGEDEF_REACTOR ACAD_PROXY_OBJECT SUNSTUDY VBA_PROJECT
+      ].to_set.freeze
+
+      def unreadable?(value) = !value.empty? && !STRUCTURAL.include?(value)
 
       # Old-style POLYLINE (as opposed to LWPOLYLINE) stores its points in the VERTEX entities that
       # FOLLOW it, terminated by SEQEND — NOT in its own group codes. The parser would otherwise
