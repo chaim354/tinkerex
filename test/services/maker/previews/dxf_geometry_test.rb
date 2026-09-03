@@ -1078,9 +1078,17 @@ module Maker
       # Every `<path>` in the SVG whose single `A` command ends exactly where its `M` began — the
       # form SVG resolves by omitting the segment. Read off the emitted string rather than
       # recomputed from the descriptor, because the defect is in what `arc_svg` WRITES.
+      #
+      # THE `d` ATTRIBUTE IS EXTRACTED BEFORE IT IS PARSED, AND THE FIRST SPELLING OF THIS HELPER
+      # IS WHY. Matching `(\S+) (\S+)"` straight out of the SVG reads the endpoints as `0"` and
+      # `fill="none` — `\S` matches a QUOTE — so the two coordinates never compared equal and the
+      # assertion could not fail. It passed on the broken renderer and on the fixed one alike,
+      # which is §15's dominant failure mode written small: an assertion nobody mutated is
+      # decoration. Found by reverting the fix, not by reading.
       def degenerate_arc_paths(svg)
-        svg.scan(/<path d="M (\S+) (\S+) A [\d.\- ]+ (\S+) (\S+)"/)
-           .select { |(sx, sy, ex, ey)| [ sx, sy ] == [ ex, ey ] }
+        svg.scan(/<path d="([^"]*)"/).flatten
+           .filter_map { |d| d.match(/\AM (\S+) (\S+) A [\d.\- ]+ (\S+) (\S+)\z/) }
+           .select { |m| [ m[1], m[2] ] == [ m[3], m[4] ] }
       end
 
       def build(bytes) = JSON.parse(DxfGeometry.render(bytes)[:bytes])
