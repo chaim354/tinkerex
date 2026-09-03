@@ -1923,7 +1923,39 @@ step instead, after step 4 and before the "Thumbnails generate eagerly" paragrap
    rules here; read it before writing a traversal.
 ```
 
-- [ ] **Step 3: Confirm the docs guard still passes**
+- [ ] **Step 3: Two code comments the earlier tasks deliberately left**
+
+Both were spotted during Task 1 and consciously deferred here, because they are documentation of
+the collector rather than part of its implementation.
+
+**a. `app/services/maker/previews/geometry.rb`'s module header** carries the onboarding example a
+new format author reads to learn the interface, and it now lists 5 of the 6 keywords:
+
+```ruby
+    #   Geometry.build(colors: ->(layers) { ... }) do |out|
+    #     out.add(layer:, points:, closed:, image:, object_id:)
+    #   end
+```
+
+Add the optional keyword and one line saying what it is — a traversal author who reads only this
+header would otherwise never learn the descriptor exists:
+
+```ruby
+    #   Geometry.build(colors: ->(layers) { ... }) do |out|
+    #     out.add(layer:, points:, closed:, image:, object_id:, curve: nil)
+    #   end
+    #
+    # `curve:` IS OPTIONAL AND DRAWING-ONLY — an exact primitive the FILE declared, built with
+    # `ellipse_curve`/`arc_curve`. A format supplying none is complete; see those two methods.
+```
+
+**b. `test/services/maker/previews/geometry_test.rb`'s absolute-pin comment** argues that "a
+relationship-only pin is satisfied by seeding SHARED_REVISION at 1 and shifting all three totals".
+That argument is still correct, but 1 is now the live value, so it reads as though it were
+describing what this branch just did. Reword the hypothetical so it cannot be misread — e.g. "by
+seeding SHARED_REVISION at any value and shifting all three totals to match".
+
+- [ ] **Step 4: Confirm the docs guard still passes**
 
 ```bash
 LIBRARY_PATH=$(mktemp -d) bin/rails test test/docs_hygiene_test.rb
@@ -1932,10 +1964,12 @@ LIBRARY_PATH=$(mktemp -d) bin/rails test test/docs_hygiene_test.rb
 Expected: PASS — every §14 stub still has its file, and CLAUDE.md is untouched and under its
 ceiling.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add docs/invariants/measure-view.md docs/adding-a-preview-format.md
+git add docs/invariants/measure-view.md docs/adding-a-preview-format.md \
+        app/services/maker/previews/geometry.rb \
+        test/services/maker/previews/geometry_test.rb
 git commit -m "Record the curve-descriptor and export invariants"
 ```
 
