@@ -91,16 +91,33 @@ module Maker
 
         counter = Counter.new
         Geometry.build(colors: ->(layers) { layers.to_h { |l| [ l, l ] } }) do |out|
-          walk(root, IDENTITY, Inherited.new, tolerance, counter) do |paint, points, closed, image, curve|
+          walk(root, IDENTITY, Inherited.new, tolerance, counter) do |paint, points, closed, image, curve, segments|
             out.add(layer: paint, points: points.map { |(x, y)| [ x * sx, y * sy ] },
                     closed:, image:, object_id: counter.value,
-                    # THE SAME sx/sy THE POINTS GET. A descriptor scaled differently from the
-                    # contour it describes draws an ellipse that does not sit on its own outline —
-                    # and the outline is what `b` was measured from, so the picture would disagree
-                    # with the readout.
-                    curve: curve && Geometry.ellipse_curve(curve[0] * sx, curve[1] * sy,
-                                                           curve[2] * sx.abs, curve[3] * sy.abs))
+                    # AT MOST ONE DESCRIPTOR PER CONTOUR, AND THE `||` IS UNAMBIGUOUS RATHER THAN A
+                    # PRIORITY. The two come from different branches of `contours_for`: only a
+                    # <circle>/<ellipse> yields an ellipse and only a <path> yields segments, so
+                    # there is no shape for which this chooses. Written as a fallthrough anyway so
+                    # that a THIRD form arriving with an ordering question has to answer it here,
+                    # where the comment is, rather than silently in whichever arm ran last.
+                    curve: (curve && Geometry.ellipse_curve(curve[0] * sx, curve[1] * sy,
+                                                            curve[2] * sx.abs, curve[3] * sy.abs)) ||
+                           (segments && Geometry.path_curve(scale_segments(segments, sx, sy))))
           end
+        end
+      end
+
+      # THE SAME sx/sy THE POINTS GET, per axis. A descriptor scaled differently from the contour
+      # it describes draws a curve that does not sit on its own outline — and the outline is what
+      # `b` was measured from, so the picture would disagree with the readout beside it. The two
+      # axes are NOT the same number under `preserveAspectRatio="none"`, which is the case that
+      # tells a working implementation from one that reaches for `sx` twice.
+      #
+      # THE COMMAND SYMBOL IS UNTOUCHED AND `[:Z]` HAS NO PAIRS, which is what keeps the closing
+      # command out of the arithmetic.
+      def scale_segments(segments, sx, sy)
+        segments.map do |(cmd, *nums)|
+          [ cmd, *nums.each_slice(2).flat_map { |(x, y)| [ x * sx, y * sy ] } ]
         end
       end
 
@@ -143,13 +160,41 @@ module Maker
           counter.succ!
           image = name == "image"
           curve = ellipse_curve_for(child, world)
-          contours.each do |(points, closed)|
-            block.call(here.paint, points.map { |(x, y)| apply(world, x, y) }, closed, image, curve)
+          # ONE `apply` FOR THE POINTS AND THE CONTROL POINTS ALIKE, side by side so that dropping
+          # the second is visible. A control point that misses the affine still yields a perfectly
+          # well-formed curve — it is simply not the file's — and this repo's recorded failure
+          # shape is exactly that: plausible output with nothing to go red.
+          #
+          # AND `ellipse_curve_for`'s AXIS-ALIGNED GATE DOES NOT BIND HERE, WHICH IS THE PART A
+          # LATER READER WILL WANT TO "FIX". That gate exists because the `"e"` wire form carries
+          # rx and ry with no rotation term, so under a rotation or a skew it would export an
+          # upright ellipse the file does not contain. A CUBIC HAS NO SUCH LIMIT: it transforms
+          # affinely under ANY matrix, because a Bézier is a convex combination of its own control
+          # points and an affine map commutes with that. So a rotated or skewed <path> KEEPS its
+          # descriptor, and refusing one here would be a downgrade with no defect behind it.
+          contours.each do |(points, closed, segments)|
+            block.call(here.paint, points.map { |(x, y)| apply(world, x, y) }, closed, image, curve,
+                       segments && place_segments(segments, world))
           end
         end
       end
 
-      # An element → [[points, closed], ...] in its OWN user units, before its transform.
+      # Each segment's coordinate PAIRS through `apply`, the command symbol untouched. `[:Z]` has
+      # no pairs and passes through unchanged.
+      def place_segments(segments, world)
+        segments.map do |(cmd, *nums)|
+          [ cmd, *nums.each_slice(2).flat_map { |(x, y)| apply(world, x, y) } ]
+        end
+      end
+
+      # An element → [[points, closed], ...] in its OWN user units, before its transform — except
+      # `path`, which adds a third element, its own cubic segment list (`SvgPath.parse`).
+      #
+      # ONLY `path` PRODUCES A DESCRIPTOR, AND THE OTHER SIX BRANCHES KEEP THEIR TWO-ELEMENT SHAPE.
+      # Five of them are polygons already or have the exact `"e"` form; the sixth, a ROUNDED
+      # `<rect>`, is the one that would acquire a descriptor by accident, since `rect_contours`
+      # builds it out of four `A` commands and hands them to the same parser. It deliberately does
+      # not — see there.
       def contours_for(node, tolerance)
         case node.name
         when "path"     then SvgPath.parse(node["d"], tolerance)
@@ -188,7 +233,14 @@ module Maker
             "V#{y + h - ry} A#{rx},#{ry} 0 0 1 #{x + w - rx},#{y + h} " \
             "H#{x + rx} A#{rx},#{ry} 0 0 1 #{x},#{y + h - ry} " \
             "V#{y + ry} A#{rx},#{ry} 0 0 1 #{x + rx},#{y} Z"
-        SvgPath.parse(d, Geometry::SIMPLIFY_TOLERANCE / 2)
+        # THE SEGMENT LIST IS DROPPED HERE ON PURPOSE, AND IT IS THE ONE PLACE THAT HAPPENS. This
+        # `d` is OURS — the shape of a `<rect>` with an `rx`, synthesised so the corners are arcs
+        # rather than square — where every other descriptor in this app is geometry the FILE
+        # declared. A curve descriptor is a claim about what the author drew, and extending it to
+        # a shape we constructed is a separate change with its own payload measurement, so the
+        # form stops at the door `path` came in by. `.map` rather than a flag on `parse`, because
+        # the decision belongs to this caller and not to the parser.
+        SvgPath.parse(d, Geometry::SIMPLIFY_TOLERANCE / 2).map { |(pts, closed)| [ pts, closed ] }
       end
 
       def box_contour(x, y, w, h)

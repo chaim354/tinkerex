@@ -9,9 +9,24 @@ module Maker
     # likely to be wrong in a way nothing else notices, so it is testable on its own with string
     # literals rather than only through a rendered file.
     #
-    # RETURNS ONE POLYLINE PER SUBPATH, each `[points, closed]`. A single `d` routinely holds
-    # several — a letter with a counter, a plate with holes — and collapsing them into one contour
-    # would draw a line joining shapes that are not joined, and measure a bbox spanning both.
+    # RETURNS ONE CONTOUR PER SUBPATH, each `[points, closed, segments_or_nil]`. A single `d`
+    # routinely holds several — a letter with a counter, a plate with holes — and collapsing them
+    # into one contour would draw a line joining shapes that are not joined, and measure a bbox
+    # spanning both.
+    #
+    # THE THIRD ELEMENT IS THE SUBPATH'S OWN CUBIC SEGMENT LIST, and it is why this module stopped
+    # throwing its control points away. Every curve command here already resolves to ABSOLUTE
+    # coordinates before it is flattened, so the normalisation work was done and the handles were
+    # dropped one line later: 116,244 `C`, 8,011 `S`, 1,459 `Q`, 859 `A` and 2 `T` across the live
+    # corpus, every one of them reaching the client as a run of short chords.
+    #
+    # `[[:M, x, y], [:L, x, y], [:C, c1x, c1y, c2x, c2y, x, y], [:Z]]` AND NOTHING ELSE — the
+    # alphabet `Geometry.path_curve` encodes. Every input reduces to it: `C` already is a cubic,
+    # `S` and `T` reflect the previous control point into one, `Q` converts EXACTLY by degree
+    # elevation, and an `A` becomes a bounded number of cubics. One segment kind is what makes an
+    # affine placement a transform of control points and nothing else.
+    #
+    # nil WHERE NOTHING IN THE SUBPATH CURVES — see `curved`.
     module SvgPath
       module_function
 
@@ -38,7 +53,7 @@ module Maker
       # curve's need; the bound exists so a degenerate control polygon cannot recurse forever.
       MAX_DEPTH = 16
 
-      # Parse `d` into [[points, closed], ...].
+      # Parse `d` into [[points, closed, segments_or_nil], ...].
       #
       # `tolerance` is the flatness bound for curve subdivision, IN THE PATH'S OWN USER UNITS. The
       # caller converts from millimetres because only it knows the scale — see `SvgGeometry`.
@@ -103,13 +118,20 @@ module Maker
         end
       end
 
-      # The pen: current point, subpath start, last control point (for the S/T shorthands), and
-      # the subpaths closed so far.
+      # The pen: current point, subpath start, last control point (for the S/T shorthands), the
+      # subpath's flattened points AND its cubic segments, and the subpaths closed so far.
+      #
+      # THE SEGMENTS ARE ACCUMULATED BESIDE THE POINTS, IN THE SAME METHODS, ON PURPOSE. Every
+      # command below already holds the absolute control points it is about to sample from; a
+      # second pass reconstructing them from `d` would be a second parser free to disagree with
+      # this one about what the file says — §14b's `LbrnMetadata` bug, in the densest part of the
+      # format. Written side by side, dropping one of the two is visible in the diff.
       class State
         def initialize(tolerance)
           @tolerance = tolerance
           @subpaths = []
           @current = nil
+          @segments = nil
           @start = nil
           @x = @y = 0.0
           @last_control = nil
@@ -151,28 +173,47 @@ module Maker
           args.each_slice(2).map { |(dx, dy)| rel ? [ @x + dx, @y + dy ] : [ dx, dy ] }
         end
 
+        # THE SUBPATH THE PEN DRAWS INTO, opened lazily. A path may begin with a drawing command
+        # and no moveto: treating the current point (0,0) as the start is what a renderer does,
+        # and refusing would drop the whole subpath. The DESCRIPTOR's own `M` is minted here in
+        # the same breath — a segment list whose first command is a `C` is not a path, and the
+        # three commands that can open a subpath implicitly would otherwise each have to remember
+        # to mint one.
+        def ensure_subpath
+          @current ||= [ [ @x, @y ] ]
+          @start ||= [ @x, @y ]
+          @segments ||= [ [ :M, @x, @y ] ]
+        end
+
         def move_to(x, y)
           flush
           @current = [ [ x, y ] ]
           @start = [ x, y ]
+          @segments = [ [ :M, x, y ] ]
           @x = x
           @y = y
         end
 
         def line_to(x, y)
-          # A path may begin with a drawing command and no moveto. Treating the current point
-          # (0,0) as the start is what a renderer does; refusing would drop the whole subpath.
-          @current ||= [ [ @x, @y ] ]
-          @start ||= [ @x, @y ]
+          ensure_subpath
           @current << [ x, y ]
+          # A STRAIGHT SEGMENT IS KEPT EVEN THOUGH A STRAIGHT-ONLY SUBPATH IS DROPPED WHOLE. A path
+          # is CONTINUOUS: these are how the cubics are reached, so a MIXED contour keeps all of
+          # them. `curved` decides the whole-subpath question, once, at the end.
+          @segments << [ :L, x, y ]
           @x = x
           @y = y
         end
 
         def cubic(c1, c2, to)
-          @current ||= [ [ @x, @y ] ]
-          @start ||= [ @x, @y ]
+          ensure_subpath
           SvgPath.flatten_cubic([ @x, @y ], c1, c2, to, @tolerance, @current)
+          # THE SAME FOUR POINTS `flatten_cubic` SAMPLES, unsampled, and already absolute — `pairs`
+          # resolved them, so this inherits its rule that relative pairs are all relative to the
+          # SAME current point rather than chained to each other. A control point that misses that
+          # still yields a perfectly well-formed curve; it is simply not the file's, which is this
+          # repo's recorded failure shape.
+          @segments << [ :C, c1[0], c1[1], c2[0], c2[1], to[0], to[1] ]
           @last_control = c2
           @x, @y = to
         end
@@ -186,9 +227,12 @@ module Maker
         end
 
         def quadratic(c, to)
-          @current ||= [ [ @x, @y ] ]
-          @start ||= [ @x, @y ]
+          ensure_subpath
           SvgPath.flatten_quadratic([ @x, @y ], c, to, @tolerance, @current)
+          @segments << SvgPath.quadratic_as_cubic([ @x, @y ], c, to)
+          # THE QUADRATIC's OWN CONTROL POINT, NOT THE CUBIC's SECOND ONE. `T` reflects the
+          # previous QUADRATIC control point (SVG 1.1 8.3.7); storing what the conversion above
+          # just produced would reflect a different point and bend every `T` by the wrong amount.
           @last_control = c
           @x, @y = to
         end
@@ -206,9 +250,10 @@ module Maker
         def arc(args, rel)
           rx, ry, rotation, large, sweep, x, y = args
           to = rel ? [ @x + x, @y + y ] : [ x, y ]
-          @current ||= [ [ @x, @y ] ]
-          @start ||= [ @x, @y ]
-          SvgPath.flatten_arc([ @x, @y ], rx, ry, rotation, large, sweep, to, @tolerance, @current)
+          ensure_subpath
+          from = [ @x, @y ]
+          SvgPath.flatten_arc(from, rx, ry, rotation, large, sweep, to, @tolerance, @current)
+          @segments.concat(SvgPath.arc_cubics(from, rx, ry, rotation, large, sweep, to, @tolerance))
           @x, @y = to
         end
 
@@ -219,8 +264,13 @@ module Maker
           # yield. `Geometry.simplify` always keeps the first and last point, so the contour still
           # closes after thinning.
           @current << @start.dup if @current.last != @start
-          @subpaths << [ @current, true ]
+          # `Z` RATHER THAN A REPEATED ENDPOINT. The line above already lands the points on the
+          # start; what this adds is a CLOSED SUBPATH, which is what makes the drawn <path>
+          # fillable and therefore hit-testable the way the <polygon> it replaces was.
+          @segments << [ :Z ]
+          @subpaths << [ @current, true, SvgPath.curved(@segments) ]
           @current = nil
+          @segments = nil
           @x, @y = @start
           # `Z` returns the pen to the subpath start; a following drawing command begins a NEW
           # subpath THERE, without an intervening moveto. Dropping @start here would anchor it at
@@ -230,9 +280,45 @@ module Maker
         def flush
           return if @current.nil?
 
-          @subpaths << [ @current, false ] if @current.length >= 2
+          @subpaths << [ @current, false, SvgPath.curved(@segments) ] if @current.length >= 2
           @current = nil
+          @segments = nil
         end
+      end
+
+      # ---- the segment list -----------------------------------------------------------------
+
+      # A SUBPATH'S SEGMENTS, OR nil WHEN NOTHING IN IT CURVES — a DECISION, not an omission. A run
+      # of `L` ops is already described EXACTLY by the points beside it (thinning only drops points
+      # within `Geometry::SIMPLIFY_TOLERANCE` of the line the browser draws), so a path descriptor
+      # there would restate the same geometry in a second encoding and be paid for on every contour
+      # of every file. The form exists for what has no exact form already.
+      #
+      # A CONTOUR THAT MIXES STRAIGHT AND CURVED COMMANDS KEEPS ALL OF ITS SEGMENTS, because a path
+      # is continuous and the `L`s are how the `C`s are reached.
+      #
+      # `Lbrn2.curved_segments` IS THE SAME DECISION ON THE OTHER PRODUCER LEG, and the two are
+      # deliberately separate rather than shared: each is one `any?` over a list only that traversal
+      # holds, at the point where it knows a contour is finished. If a THIRD producer arrives — a
+      # DXF spline is the one already flagged as newly eligible — fold all three into
+      # `Geometry.path_curve` instead of adding a copy.
+      def curved(segments)
+        segments&.any? { |(cmd, *)| cmd == :C } ? segments : nil
+      end
+
+      # A QUADRATIC IS A CUBIC EXACTLY, and this is why the wire form can be cubics-only without
+      # approximating anything: c1 = p0 + ⅔(c − p0), c2 = p + ⅔(c − p) — degree elevation, an
+      # identity, not a fit.
+      #
+      # THE CONVERSION TO WATCH FOR IS THE NAIVE ONE, using the quadratic's own control point for
+      # BOTH cubic controls. It passes through the right endpoints with the right tangents and
+      # draws a curve of the right family, so it looks correct and misses by a THIRD of the bulge —
+      # 5 units on a 20-unit bulge, measured in `svg_path_test.rb`.
+      def quadratic_as_cubic(p0, c, to)
+        [ :C,
+          p0[0] + (2.0 / 3.0 * (c[0] - p0[0])), p0[1] + (2.0 / 3.0 * (c[1] - p0[1])),
+          to[0] + (2.0 / 3.0 * (c[0] - to[0])), to[1] + (2.0 / 3.0 * (c[1] - to[1])),
+          to[0], to[1] ]
       end
 
       # ---- curve flattening ---------------------------------------------------------------
@@ -282,16 +368,33 @@ module Maker
       def mid(a, b) = [ (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0 ]
 
       # SVG's ENDPOINT arc parameterization → centre parameterization → sampled points.
-      # Implements SVG 1.1 appendix F.6.5/F.6.6, including its two correction rules:
-      # a zero radius degenerates to a line, and radii too small to span the endpoints are
-      # scaled up until they exactly do.
       def flatten_arc(from, rx, ry, rotation_deg, large, sweep, to, tolerance, out)
-        rx = rx.abs
-        ry = ry.abs
-        if rx.zero? || ry.zero? || (from[0] == to[0] && from[1] == to[1])
+        params = arc_params(from, rx, ry, rotation_deg, large, sweep, to)
+        if params.nil?
           out << to
           return
         end
+
+        cx, cy, rx, ry, phi, theta1, delta = params
+        steps = arc_steps([ rx, ry ].max, delta.abs, tolerance)
+        (1..steps).each { |i| out << arc_point(cx, cy, rx, ry, phi, theta1 + (delta * i / steps)) }
+      end
+
+      # THE ENDPOINT PARAMETERIZATION SVG WRITES → THE CENTRE ONE EVERYTHING HERE COMPUTES FROM, as
+      # [cx, cy, rx, ry, phi, theta1, delta], or nil where the arc degenerates to a straight line.
+      # Implements SVG 1.1 appendix F.6.5/F.6.6, including its two correction rules: a zero radius
+      # degenerates to a line, and radii too small to span the endpoints are scaled up until they
+      # exactly do.
+      #
+      # ONE DEFINITION, READ BY BOTH `flatten_arc` AND `arc_cubics`. A second copy of F.6.5 would
+      # let the sampled points and the emitted cubics disagree about where the same arc is — and
+      # since `b`, `d` and the job box come from the points while the client DRAWS the cubics, the
+      # disagreement would surface as a picture that contradicts the readout beside it, which is
+      # the failure `Geometry.path_curve` exists to end rather than to relocate.
+      def arc_params(from, rx, ry, rotation_deg, large, sweep, to)
+        rx = rx.abs
+        ry = ry.abs
+        return nil if rx.zero? || ry.zero? || (from[0] == to[0] && from[1] == to[1])
 
         phi = rotation_deg * Math::PI / 180
         cos_phi = Math.cos(phi)
@@ -335,13 +438,95 @@ module Maker
           delta += 2 * Math::PI
         end
 
-        steps = arc_steps([ rx, ry ].max, delta.abs, tolerance)
-        (1..steps).each do |i|
-          t = theta1 + (delta * i / steps)
-          x = (cos_phi * rx * Math.cos(t)) - (sin_phi * ry * Math.sin(t)) + cx
-          y = (sin_phi * rx * Math.cos(t)) + (cos_phi * ry * Math.sin(t)) + cy
-          out << [ x, y ]
+        [ cx, cy, rx, ry, phi, theta1, delta ]
+      end
+
+      # A point on the centre-parameterised ellipse at angle `t`.
+      def arc_point(cx, cy, rx, ry, phi, t)
+        cos_phi = Math.cos(phi)
+        sin_phi = Math.sin(phi)
+        [ (cos_phi * rx * Math.cos(t)) - (sin_phi * ry * Math.sin(t)) + cx,
+          (sin_phi * rx * Math.cos(t)) + (cos_phi * ry * Math.sin(t)) + cy ]
+      end
+
+      # d/dt of `arc_point` — the ellipse's tangent vector, which is what the cubic fit below
+      # scales to place its control points.
+      def arc_tangent(rx, ry, phi, t)
+        cos_phi = Math.cos(phi)
+        sin_phi = Math.sin(phi)
+        [ (-cos_phi * rx * Math.sin(t)) - (sin_phi * ry * Math.cos(t)),
+          (-sin_phi * rx * Math.sin(t)) + (cos_phi * ry * Math.cos(t)) ]
+      end
+
+      # AN `A` COMMAND AS CUBICS — the wire form has no arc, and that is a feature rather than a
+      # concession. Two reasons, both recorded:
+      #
+      #   * AN SVG ARC UNDER A NON-UNIFORM SCALE IS A DIFFERENT ELLIPSE ARC, needing a rotation
+      #     term neither the `"e"` nor the `"a"` wire form carries — the case `Dxf.transform_curve`
+      #     has to DROP a descriptor for. A cubic transforms affinely under ANY matrix, so
+      #     converting sidesteps the whole question and lets a rotated or skewed `<path>` keep its
+      #     descriptor (`SvgGeometry.walk`).
+      #   * ENDPOINT PARAMETERISATION IS ILL-CONDITIONED UNDER ROUNDING. `Geometry.arc_curve`'s own
+      #     comment measures 1.37 mm of drawn error at r = 200 from rounding resolved `A` endpoints
+      #     at PRECISION. A cubic evaluates to a convex combination of its own four points, so the
+      #     same rounding moves the drawn curve by at most PRECISION's half-step, at any radius.
+      #
+      # A DEGENERATE ARC BECOMES AN `L`, matching what `flatten_arc` appends for it — and, since a
+      # subpath of nothing but degenerate arcs then holds no `:C`, `curved` drops it entirely.
+      def arc_cubics(from, rx, ry, rotation_deg, large, sweep, to, tolerance)
+        params = arc_params(from, rx, ry, rotation_deg, large, sweep, to)
+        return [ [ :L, to[0], to[1] ] ] if params.nil?
+
+        cx, cy, rx, ry, phi, theta1, delta = params
+        n = arc_cubic_steps([ rx, ry ].max, delta.abs, tolerance)
+        step = delta / n
+        # The tangent-scaling constant for a sub-arc of `step` radians: the cubic that matches the
+        # ellipse's position AND tangent at both ends. Exact for a straight `step` of 0, and the
+        # source of the residual error `cubic_arc_error` bounds for everything else.
+        alpha = 4.0 / 3.0 * Math.tan(step / 4.0)
+        (0...n).map do |i|
+          t0 = theta1 + (step * i)
+          t1 = t0 + step
+          p0 = arc_point(cx, cy, rx, ry, phi, t0)
+          p1 = arc_point(cx, cy, rx, ry, phi, t1)
+          d0 = arc_tangent(rx, ry, phi, t0)
+          d1 = arc_tangent(rx, ry, phi, t1)
+          [ :C,
+            p0[0] + (alpha * d0[0]), p0[1] + (alpha * d0[1]),
+            p1[0] - (alpha * d1[0]), p1[1] - (alpha * d1[1]),
+            p1[0], p1[1] ]
         end
+      end
+
+      # A CEILING ON A CEILING. The π/2 floor is what makes a circle four cubics — the split every
+      # renderer uses — and 32 is the stop that keeps a pathological radius from generating
+      # thousands of segments on a payload with a size budget.
+      MAX_ARC_CUBICS = 32
+
+      # CUBICS PER ARC, BOUNDED BY GEOMETRIC ERROR RATHER THAN BY A FIXED COUNT — the same rule
+      # `flatten_cubic` above follows for the points, and the one
+      # `docs/invariants/measure-view.md` states for every curve in this app.
+      #
+      # FOUR PER FULL TURN IS THE FLOOR, NOT THE ANSWER. The tangent-based fit's radial error is
+      # 2.7e-4·r at π/2 (see `cubic_arc_error`) — 0.054 mm at r = 200 mm, an order of magnitude
+      # WORSE than the `p` points it rides beside, which are flattened to `tolerance` and thinned
+      # at 0.01 mm. A descriptor less faithful than the polyline it replaces is precisely the
+      # defect tinkerex#213 shipped, so the count grows with the radius instead. In practice that
+      # is four for anything under about an 18 mm radius and six for a 200 mm one.
+      def arc_cubic_steps(radius, radians, tolerance)
+        n = (radians / (Math::PI / 2)).ceil.clamp(1, 4)
+        n += 1 while n < MAX_ARC_CUBICS && cubic_arc_error(radius, radians / n) > tolerance
+        n
+      end
+
+      # The maximum radial deviation of one tangent-matched cubic from the arc it approximates:
+      # r·(2/27)·sin⁶(θ/4)/cos²(θ/4). 2.7e-4·r at θ = π/2, and it falls as roughly θ⁶, which is why
+      # one extra split buys an order of magnitude.
+      def cubic_arc_error(radius, theta)
+        cos = Math.cos(theta / 4.0).abs
+        return Float::INFINITY if cos < 1e-9
+
+        radius * (2.0 / 27.0) * (Math.sin(theta / 4.0)**6) / (cos * cos)
       end
 
       # Signed angle between two vectors, as F.6.5.4 defines it.
