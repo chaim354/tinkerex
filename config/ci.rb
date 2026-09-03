@@ -42,7 +42,10 @@ GATES = {
 
   "scan" => ->(ci) do
     ci.step "Security: Gem audit", "bin/bundler-audit"
-    ci.step "Security: Importmap vulnerability audit", "bin/importmap audit"
+    # `bin/importmap-audit`, NOT `bin/importmap audit`: the endpoint it POSTs to is the only remote
+    # host any check here depends on, and when it is unreachable the gate used to fail on somebody
+    # else's uptime — see lib/importmap_audit.rb for the argument and tinkerex#228 for the outage.
+    ci.step "Security: Importmap vulnerability audit", "bin/importmap-audit"
     ci.step "Security: Brakeman code analysis",
             "bin/brakeman --quiet --no-pager --exit-on-warn --exit-on-error"
   end,

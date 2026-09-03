@@ -1,0 +1,29 @@
+#!/usr/bin/env ruby
+# THE `scan` GATE'S DOOR ONTO `bin/importmap audit` — a thin runner around `ImportmapAudit.verdict`,
+# which holds the decision and is unit-tested (test/importmap_audit_test.rb).
+#
+# WHY A SEPARATE SCRIPT RATHER THAN FLAGS ON `bin/importmap`. `test/ci_hygiene_test.rb` requires a
+# binstub to be a plain loader, because an argument injected there is invisible at config/ci.rb, the
+# one place that claims to define what the gate runs. This changes what the gate does with a
+# FAILURE, which is a larger claim than a flag, so it is a named command in the gate definition and
+# `bin/importmap` stays a plain loader for anyone running the audit by hand.
+#
+# NOT SILENT. An unreachable endpoint prints the tool's own output plus a warning to stderr and the
+# gate continues; a real advisory prints and exits non-zero, unchanged.
+require_relative "../lib/importmap_audit"
+
+output = IO.popen([ File.expand_path("importmap", __dir__), "audit" ], err: [ :child, :out ], &:read)
+status = $?.exitstatus
+
+case ImportmapAudit.verdict(status: status, output: output)
+when :ok
+  print output
+when :unreachable
+  print output
+  warn "\n⚠️  importmap audit could not reach the npm advisory endpoint — TRANSPORT ERROR, NOT A " \
+       "FINDING.\n   The pinned packages were not checked on this run. Dependabot (weekly) is what " \
+       "notices a\n   new advisory in the meantime; see lib/importmap_audit.rb and tinkerex#228.\n"
+else
+  print output
+  exit status
+end
