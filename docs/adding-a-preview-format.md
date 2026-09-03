@@ -38,8 +38,19 @@ and can also be measured.
    Y-down). It is optional and **drawing-only**: `b`, `d` and the job box are computed from the
    full-resolution points regardless, so a format supplying none is complete. Supply one ONLY where
    the file itself declared an exact primitive — never inferred from the points — and refuse it
-   under a rotated or skewed transform. `docs/invariants/measure-view.md` is the binding set of
-   rules here; read it before writing a traversal.
+   under a rotated or skewed transform.
+
+   A traversal SHOULD also hand `Geometry.build` an `unreadable:` hash and fill it with whatever it
+   met and could not draw — `{ "ELLIPSE" => 2 }`, emitted as the payload's top-level `"u"` key and
+   omitted entirely when empty. Every parser here handles a SUBSET of its format, and the
+   alternative is what DXF did for years: an entity type with no arm in the traversal's `case`
+   returned nil and was skipped with no error, no log and no status — missing from the job box as
+   well as from the picture, so the reported size described a subset of the file. **Hand the hash IN
+   and let the traversal fill it during the yield**; `build` reads it after the block returns, so a
+   version that snapshots it earlier reports nothing, on every file, with nothing going red.
+
+   `docs/invariants/measure-view.md` is the binding set of rules here; read it before writing a
+   traversal.
 
 Thumbnails generate eagerly: `Maker::Previews::Enqueue.call(user:, node_id:, name:, version_id:)`
 fires from the upload, API-commit, and scan seams (see `FilesController#enqueue_preview`,

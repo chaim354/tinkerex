@@ -19,7 +19,10 @@ module Maker
       # belongs in `Geometry::SHARED_REVISION`, which the line below adds in.
       #
       #   1  original
-      FORMAT_REVISION = 1
+      #   2  `Dxf.each_geometry` learned SPLINE, POLYLINE bulges and BLOCK/INSERT placement
+      #      (tinkerex#216, #219). It feeds the THUMBNAIL as well, so `Dxf::THUMBNAIL_REVISION`
+      #      moves in the same breath — the one bump that is never DXF-payload-only.
+      FORMAT_REVISION = 2
 
       # What `Enqueue` actually reads — see `Geometry::SHARED_REVISION`.
       PAYLOAD_REVISION = Geometry::SHARED_REVISION + FORMAT_REVISION
@@ -29,13 +32,18 @@ module Maker
         Geometry.encode(build(dxf_bytes))
       end
 
+      # ONE HASH, HANDED TO BOTH — the traversal fills it while the block runs and `Geometry.build`
+      # reads it after, which is the ordering both sides document. Two hashes, or a snapshot taken
+      # at either end, emits an empty tally on every file and nothing anywhere goes red: the shapes
+      # are still right, and `"u"` is simply never there to be missed.
       def build(dxf_bytes)
         pairs = Dxf.tokenize(dxf_bytes)
         scale = Dxf.mm_per_unit(pairs)
         colors = Dxf.layer_colors(pairs)
+        unreadable = {}
 
-        Geometry.build(colors: ->(layers) { layers.to_h { |l| [ l, colors[l] ] } }) do |out|
-          Dxf.each_geometry(pairs) do |layer, points, closed, curve, object_id|
+        Geometry.build(colors: ->(layers) { layers.to_h { |l| [ l, colors[l] ] } }, unreadable:) do |out|
+          Dxf.each_geometry(pairs, unreadable:) do |layer, points, closed, curve, object_id|
             out.add(layer:, points: to_client_space(points, scale), closed:, object_id:,
                     curve: curve_to_client_space(curve, scale))
           end
@@ -64,8 +72,9 @@ module Maker
       # circle, not a zero-length arc" — whose start and end points are IDENTICAL. SVG's rule for
       # an arc whose endpoints coincide is to omit the segment ENTIRELY, so an `A` command here
       # would export a path that draws nothing: no error, nothing logged, a shape simply missing
-      # from a file somebody cuts. (`Dxf.arc_svg` still has that bug for the thumbnail; fixing it
-      # needs a THUMBNAIL_REVISION bump and is out of scope — see the design.)
+      # from a file somebody cuts. `Dxf.arc_svg` carried the same defect for the THUMBNAIL until
+      # tinkerex#215 and now takes the matching branch; the two thresholds must stay identical, or
+      # one full-turn arc is a circle in the picture and a different shape in the measurement.
       def curve_to_client_space(curve, scale)
         return nil if curve.nil?
 

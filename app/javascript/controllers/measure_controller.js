@@ -138,6 +138,9 @@ export default class extends Controller {
 
   draw(payload) {
     this.colors = payload.colors || {}
+    // WHAT THE SERVER'S TRAVERSAL COULD NOT READ, `{ type: count }` or absent. Set BEFORE the
+    // empty-shapes return below, because that branch is exactly the case it exists for.
+    this.unreadable = payload.u || null
     this.byObject = new Map()
     for (const s of payload.shapes) {
       if (!this.byObject.has(s.o)) this.byObject.set(s.o, [])
@@ -145,7 +148,13 @@ export default class extends Controller {
     }
 
     if (!payload.shapes.length) {
-      this.setStatus("No measurable geometry in this file.")
+      // "No measurable geometry in this file" IS A LIE ABOUT A FILE THAT IS ENTIRELY GEOMETRY,
+      // and it was the observed harm rather than a hypothetical one: a real .dxf of four SPLINEs
+      // read exactly this, having measured none of itself. The clause is what makes the empty
+      // stage legible instead of accusing the file.
+      const missing = this.unreadableLabel()
+      this.setStatus(missing ? `No measurable geometry in this file · ${missing}` :
+                               "No measurable geometry in this file.")
       return
     }
 
@@ -461,7 +470,21 @@ export default class extends Controller {
   // `clearSelection` returns to it, so a deselect cannot leave a size on screen with nothing
   // highlighted to own it.
   restingStatus() {
-    return `${this.allShapes.length} shapes · click one to measure`
+    const missing = this.unreadableLabel()
+    return `${this.allShapes.length} shapes${missing ? ` · ${missing}` : ""} · click one to measure`
+  }
+
+  // "2 SPLINE not readable", or "" when the whole file was read. THE ONE PLACE THIS SENTENCE IS
+  // WRITTEN, because two surfaces need it: the resting line, and `draw`'s empty-file branch —
+  // which never reaches restingStatus() and is the case the mechanism was built for.
+  //
+  // EVERY TYPE, UNCAPPED. A cap belongs nowhere in an honesty backstop: hiding the tail of a
+  // report about hidden geometry is the same defect one layer out. The real corpus carries one or
+  // two types per file.
+  unreadableLabel() {
+    if (!this.unreadable) return ""
+    const parts = Object.entries(this.unreadable).map(([type, n]) => `${n} ${type}`)
+    return `${parts.join(", ")} not readable`
   }
 
   clearSelection() {

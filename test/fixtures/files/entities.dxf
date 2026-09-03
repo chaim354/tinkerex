@@ -1,0 +1,250 @@
+999
+entities.dxf -- HAND-AUTHORED, and it exists because the two fixtures beside it could not
+999
+see four stages of work. sample.dxf and plate.dxf hold ZERO splines, ZERO bulges and no
+999
+BLOCKS section at all, so the byte-for-byte digest guard reported "nothing moved" while the
+999
+renderer's output changed for 29, 26 and 24 real files respectively. Every entity here is a
+999
+shape one of those stages draws and none of the older fixtures contains.
+999
+.
+999
+$INSUNITS 4 is millimetres, so one drawing unit is one millimetre and every number below is
+999
+the measurement it claims to be. Model space is Y-UP; the payload and the thumbnail both
+999
+flip it, which is why the job box's height comes out of y = -20..50.
+999
+.
+999
+POLYLINE, closed, four vertices -- (0,0) (40,0) (40,20) (0,20). TWO BULGES OF EQUAL SIZE AND
+999
+OPPOSITE SIGN, which is the whole point of them: b = 1.0 on the bottom edge is a half turn,
+999
+so that edge is a semicircle of r=20 bulging DOWN to y=-20, and b = -1.0 on the top edge is
+999
+the same half turn the other way, biting DOWN into the rectangle as far as y=0. Read |b| and
+999
+the top arc leaves through y=+40 instead -- 20 mm of bbox, in the one direction a
+999
+sign-blind implementation cannot tell apart. Extent x 0..40, y -20..20.
+999
+.
+999
+SPLINE, degree 3, five control points, knots 0,0,0,0,1,2,2,2,2. The interior knot at 1 is
+999
+what makes this TWO spans rather than one Bezier, so it exercises the span search de Boor
+999
+needs -- evaluate the second half against the first span and it extrapolates a plausible
+999
+curve of the wrong shape. Clamped at both ends: the contour starts at (60,0) and ends at
+999
+(80,0) and peaks at y=15, inside a control polygon spanning x 60..80, y 0..20.
+999
+.
+999
+ARC at (120,0), r=10, with start angle == end angle. That is a FULL TURN, not a zero-length
+999
+arc (Dxf.arc_points says so in as many words), and its start and end points therefore
+999
+coincide -- which SVG resolves by omitting the segment ENTIRELY. This entity is here so that
+999
+"a full-circle ARC draws nothing in the thumbnail" (tinkerex#215) has a fixture that fails.
+999
+.
+999
+BLOCKS section defining TAB -- a LINE from (0,0) to (10,0) -- and ONE INSERT placing it at
+999
+(200,50). The offset is non-zero on purpose: at (0,0) a placed block lands exactly where the
+999
+ghost at its definition coordinates used to draw, so the bug that fix removed would still
+999
+pass. Drawn once, at (200,50)-(210,50).
+999
+.
+999
+JOB BOX: 210 x 70 mm, from x 0..210 and y -20..50. FOUR shapes, in document order:
+999
+polyline, spline, arc, inserted line -- the block body is not a fifth.
+0
+SECTION
+2
+HEADER
+9
+$INSUNITS
+70
+4
+0
+ENDSEC
+0
+SECTION
+2
+BLOCKS
+0
+BLOCK
+8
+0
+2
+TAB
+70
+0
+10
+0
+20
+0
+30
+0
+3
+TAB
+0
+LINE
+8
+0
+10
+0
+20
+0
+11
+10
+21
+0
+0
+ENDBLK
+8
+0
+0
+ENDSEC
+0
+SECTION
+2
+ENTITIES
+0
+POLYLINE
+8
+0
+66
+1
+70
+1
+0
+VERTEX
+8
+0
+10
+0
+20
+0
+42
+1.0
+0
+VERTEX
+8
+0
+10
+40
+20
+0
+0
+VERTEX
+8
+0
+10
+40
+20
+20
+42
+-1.0
+0
+VERTEX
+8
+0
+10
+0
+20
+20
+0
+SEQEND
+8
+0
+0
+SPLINE
+8
+0
+70
+8
+71
+3
+72
+9
+73
+5
+74
+0
+40
+0
+40
+0
+40
+0
+40
+0
+40
+1
+40
+2
+40
+2
+40
+2
+40
+2
+10
+60
+20
+0
+10
+60
+20
+10
+10
+70
+20
+20
+10
+80
+20
+10
+10
+80
+20
+0
+0
+ARC
+8
+0
+10
+120
+20
+0
+40
+10
+50
+0
+51
+0
+0
+INSERT
+8
+0
+2
+TAB
+10
+200
+20
+50
+0
+ENDSEC
+0
+EOF
