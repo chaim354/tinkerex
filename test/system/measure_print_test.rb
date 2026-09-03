@@ -853,8 +853,9 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # OPEN CONTOURS EXIST, AND A <polygon> CLOSES ONE FOR THEM. `k` is 0 for a path that never
   # closes — an engraved line, a DXF LWPOLYLINE with no closed flag — and a polygon draws a segment
   # from its last point back to its first that the design does not contain. Every shape in the four
-  # tests above is `k: 1`, so `shape.k ? "polygon" : "polyline"` could be the constant "polygon"
-  # with all of them GREEN.
+  # tests above is `k: 1`, so `shape.k ? "polygon" : "polyline"` — which lives in lib/shape_svg's
+  # `shapeElement` now, not in print_sheet's `contourNode` — could be the constant "polygon" with
+  # all of them GREEN.
   #
   # AND THE POINTS ARE ASSERTED AS THE EXACT STRING THE PRINTER WILL PARSE, which a "spans 60 user
   # units" assertion cannot substitute for in three separate directions. All three are
@@ -1010,6 +1011,30 @@ class MeasurePrintTest < ApplicationSystemTestCase
     # is the spelling that invites a per-shape VALUE, which is what actually stacks two parts on
     # top of each other.
     assert_equal 0, out["movedShapes"]
+  end
+
+  # THE SHEET DRAWS THE PRIMITIVE THE FILE DESCRIBED, and this is a correctness fix rather than a
+  # cosmetic one. With Lbrn2::ELLIPSE_SAMPLES at 32, a ⌀50 mm circle's sampled chords sit 0.12 mm
+  # INSIDE the true curve — the RDP thinning is bounded at 0.01 mm but cannot recover error the
+  # SAMPLER already introduced, and 0.12 mm is measurable on the one sheet whose whole job is to be
+  # measured and cut against.
+  #
+  # SYNTHETIC, not a fixture: the descriptor's numbers are chosen so the assertion is a literal,
+  # the same reason the tiling tests above use synthetic shapes.
+  test "a shape carrying a curve descriptor prints as a real circle" do
+    markup = in_print_sheet(<<~JS)
+      (() => {
+        const shapes = [{ b: [0, 0, 50, 50], p: [[0, 0], [50, 50]], k: 1, c: 0,
+                          g: ["e", 25, 25, 25, 25] }]
+        const { pages } = m.buildSheets(shapes, { name: "Letter", w: 215.9, h: 279.4 })
+        return m.renderSheet(document, pages[0],
+          { name: "t.lbrn2", date: "2026-09-02", sizeLabel: () => null }).outerHTML
+      })()
+    JS
+
+    assert_includes markup, '<circle cx="25" cy="25" r="25"'
+    assert_includes markup, 'stroke-width="0.2"', "still the print sheet's own black hairline"
+    assert_not_includes markup, "<polygon"
   end
 
   # ---- lib/print_sheet.js: sheet furniture -----------------------------------------------------
@@ -1180,9 +1205,13 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # — sixteen junk attributes, no text content, an empty <text> that renders nothing on a page
   # that is otherwise perfectly formed. Nothing thrown, nothing logged.
   #
-  # `el` IS EXPORTED FOR THIS TEST AND FOR NO OTHER REASON — nothing reachable through
-  # renderSheet can put a string in that slot, so without the export this would be a guard that
-  # has never failed, which CLAUDE.md §15 says is a guard that has not been shown to work.
+  # `el` LIVES IN lib/shape_svg NOW AND REACHES THIS TEST THROUGH lib/print_sheet's RE-EXPORT,
+  # which is why that re-export is not tidy-up to be deleted: nothing reachable through
+  # renderSheet can put a string in that slot, so without a reachable `el` this would be a guard
+  # that has never failed, which CLAUDE.md §15 says is a guard that has not been shown to work.
+  # (`el` is exported from shape_svg for a second reason besides — the print sheet, the Measure
+  # view and the exporter all build their elements through it — but that is not what makes this
+  # assertion possible; `import("lib/print_sheet")` resolving `m.el` is.)
   test "el refuses a string in the attribute slot rather than minting junk attributes" do
     out = in_print_sheet(<<~JS)
       (() => {

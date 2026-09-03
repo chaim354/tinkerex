@@ -3,7 +3,8 @@
 // Takes shapes in millimetres and a paper, returns pages of shapes in millimetres, renders a page
 // as an <svg>, and — at the bottom of this file — assembles those pages into a hidden iframe and
 // spools it. Knows nothing about Stimulus, about the Measure controller, or about file formats:
-// it reads `b`, `p`, `k` and `i` off a shape and nothing else.
+// it reads `b`, `k` and `i` off a shape and nothing else — the outline itself (`p`, and the `g`
+// curve descriptor where the file supplied one) is lib/shape_svg's to turn into an element.
 //
 // TWO THIRDS OF IT IS PURE AND THE LAST THIRD IS NOT, WHICH IS WHERE TO LOOK FOR LIFECYCLE.
 // `buildPrintFrame` owns a NODE ON THE HOST PAGE (one `.measure-print-frame` iframe, replaced
@@ -18,6 +19,14 @@
 // Measure's print button entirely on a deployment with no addon source (OVH blanks
 // ADDON_SOURCE_URL outright). The conventions and the constants are copied; the code is not.
 // See docs/superpowers/specs/2026-08-19-measure-print-to-scale-design.md §10 before changing this.
+
+import { SVG_NS, el, unionBox, shapeElement } from "lib/shape_svg"
+
+// RE-EXPORTED RATHER THAN REDEFINED. `el` and `unionBox` moved to lib/shape_svg so the exporter
+// could share them without importing the print module; re-exporting keeps every existing importer
+// — measure_print_test.rb's pin of el's mis-call guard included — working unchanged, and keeps
+// one definition rather than two spellings of the same function.
+export { SVG_NS, el, unionBox }
 
 export const PAPERS = {
   A4:      { name: "A4",      w: 210,   h: 297 },
@@ -53,13 +62,6 @@ export function contentBox(paper) {
     x: MARGIN, y: MARGIN + HEADER_H,
     w: paper.w - MARGIN * 2, h: paper.h - MARGIN * 2 - HEADER_H - CALIB_H,
   }
-}
-
-export function unionBox(shapes) {
-  return [
-    Math.min(...shapes.map((s) => s.b[0])), Math.min(...shapes.map((s) => s.b[1])),
-    Math.max(...shapes.map((s) => s.b[2])), Math.max(...shapes.map((s) => s.b[3])),
-  ]
 }
 
 export function buildSheets(shapes, paper) {
@@ -135,8 +137,6 @@ function touches(shape, box, originX, originY, content) {
 
 const round = (v) => Math.round(v * 10) / 10
 
-const SVG_NS = "http://www.w3.org/2000/svg"
-
 // Build one page as an <svg> element in `doc`.
 //
 // `meta` is { name, date, sizeLabel }. `sizeLabel(shape)` comes from measure_controller.js so the
@@ -203,21 +203,26 @@ export function renderSheet(doc, page, meta) {
   return svg
 }
 
-// BUILT FRESH FROM shape.p, NEVER CLONED FROM THE ON-SCREEN NODE. A clone drags the transparent
+// BUILT FRESH FROM THE SHAPE, NEVER CLONED FROM THE ON-SCREEN NODE. A clone drags the transparent
 // fat hit-twin (.measure-contour--hit, an 8px stroke), the hover/selected/marked classes and the
 // layer colour onto paper.
 //
 // BLACK, not the layer colour: a mono printer turns a layer palette into indistinguishable greys,
 // and this sheet exists to be measured and cut against. 0.2 mm is a line you can cut to.
+//
+// THE ELEMENT ITSELF COMES FROM lib/shape_svg, which is what gives the sheet real curves. With
+// Lbrn2::ELLIPSE_SAMPLES at 32, a ⌀50 mm circle's sampled chords sit 0.12 mm INSIDE the true
+// curve — the RDP thinning is bounded at 0.01 mm but cannot recover error the sampler already
+// introduced. That is visible on paper, on the one sheet whose job is to be measured against.
 function contourNode(doc, shape) {
-  const attrs = {
-    points: shape.p.map(([x, y]) => `${x},${y}`).join(" "),
-    fill: "none", stroke: "#000", "stroke-width": 0.2,
-  }
+  const node = shapeElement(doc, shape)
+  node.setAttribute("fill", "none")
+  node.setAttribute("stroke", "#000")
+  node.setAttribute("stroke-width", 0.2)
   // A bitmap's base64 is deliberately absent from the payload; it is the RECTANGLE a photo
   // occupies that matters for fit, and it draws dashed here exactly as it does on screen.
-  if (shape.i) attrs["stroke-dasharray"] = "4 3"
-  return el(doc, shape.k ? "polygon" : "polyline", attrs)
+  if (shape.i) node.setAttribute("stroke-dasharray", "4 3")
+  return node
 }
 
 // A PART'S SIZE, PRINTED UNDER IT — and NOTHING HERE MEASURES ANYTHING. The words are whatever
@@ -262,51 +267,6 @@ function labelNode(doc, shape, label) {
   // NOT DECORATION: this is what tells a size label from the five furniture texts, for
   // measure_print_test.rb and for anything that ever has to find them again.
   node.setAttribute("data-role", "size")
-  return node
-}
-
-// THE ONE DOOR EVERY ELEMENT IN THIS MODULE IS BUILT THROUGH.
-//
-// EXPORTED FOR ONE REASON: to let the browser tier pin the mis-call guard below. This repo has no
-// JS test runner, and nothing reachable through `renderSheet` can put a string in the `attrs`
-// slot — so without the export that guard would be a guard that has never failed, which
-// CLAUDE.md §15 says is a guard that has not been shown to work. The export is not a second door:
-// every element on a sheet is still constructed here.
-export function el(doc, tag, attrs, text) {
-  // A STRING IN THE `attrs` SLOT DOES NOT THROW, WHICH IS THE WHOLE REASON THIS EXISTS.
-  // `el(doc, "text", "Sheet 1,1 of 2×1")` — one dropped `{}` away from the five <text> sites in
-  // `furniture` — was expected to raise InvalidCharacterError, since an attribute name cannot
-  // begin with a digit. Probed in Chrome: it does not. `Object.entries` walks the string's own
-  // indices and `setAttribute` accepts "0" as a name, so the result is
-  // `<text 0="S" 1="h" 2="e" ...>` — sixteen junk attributes, no text content, an empty <text>
-  // that renders nothing on a page that is otherwise perfectly formed, with nothing thrown and
-  // nothing logged. Measured verbatim in measure_print_test.rb, which pins this.
-  if (typeof attrs === "string") {
-    throw new Error("el(doc, tag, attrs, text): the third argument is the attribute map, not " +
-                    "the text — pass el(doc, tag, {}, text).")
-  }
-  const node = doc.createElementNS(SVG_NS, tag)
-  for (const [ key, value ] of Object.entries(attrs)) {
-    // An undefined value writes the literal string "undefined" (a null writes "null"). Sheet
-    // furniture is full of conditional attributes, so skip here rather than making every call
-    // site remember. `text()` below is the live caller: it omits `text-anchor` entirely for the
-    // default `start` rather than restating it. MEASURED, not reasoned: an unguarded
-    // `text-anchor="undefined"` is an INVALID value, so getComputedStyle reports `start` and the
-    // rendered bbox x comes back 99.99999237060547 — byte-identical to the attribute being
-    // absent. (An earlier draft quoted a contrasting `middle` figure here; it was measured on a
-    // probe string this module never prints, so it reproduced for nothing. Removed rather than
-    // re-measured — the byte-identity is the whole claim.) The sheet looks EXACTLY right, which
-    // is why measure_print_test.rb asserts the ATTRIBUTE rather than a position.
-    if (value != null) node.setAttribute(key, value)
-  }
-  // THE TEXT DOOR EXISTS SO THAT `textContent` IS THE ONLY SPELLING — and since Task 6 it is:
-  // all SIX <text> sites go through `text()` below, which comes through here — the five furniture
-  // texts plus `labelNode`'s size label, which Task 7 added after this count was written. The rule it
-  // enforces: the header carries a library filename, user-controlled and legitimately able to
-  // contain `<` on a NAS-scanned share, so building it as markup is an injection into a
-  // same-origin iframe. Six call sites each remembering that is six chances to forget; one
-  // door is none.
-  if (text != null) node.textContent = text
   return node
 }
 
@@ -484,7 +444,8 @@ function line(doc, x1, y1, x2, y2) {
   return el(doc, "line", { x1, y1, x2, y2, stroke: "#000", "stroke-width": 0.2 })
 }
 
-// ANCHOR LAST AND OPTIONAL, WHICH IS DELIBERATE AND IS `el`'s NULLISH GUARD'S ONE LIVE CALLER.
+// ANCHOR LAST AND OPTIONAL, WHICH IS DELIBERATE AND IS `el`'s NULLISH GUARD'S ONE LIVE CALLER —
+// `el` lives in lib/shape_svg now, and its own comment carries the measurement.
 // `text-anchor`'s initial value IS `start`, so the header omits the attribute rather than
 // restating the default — spelled as a missing argument here instead of as a branch inside `el`.
 //
@@ -559,7 +520,8 @@ export function buildPrintFrame(shapes, paper, meta) {
   // is user-controlled and can legitimately contain `<` on a NAS-scanned share — interpolating it
   // into markup written to a SAME-ORIGIN iframe is an injection with this page's cookies behind
   // it. The Measure view already keeps exactly this rule for the drawing itself, and every <text>
-  // on a sheet reaches `textContent` through `el`'s text door for the same reason (see `el`).
+  // on a sheet reaches `textContent` through `el`'s text door for the same reason (see `el`, in
+  // lib/shape_svg).
   const style = doc.createElement("style")
   // `@page` IS THE ONLY THING THAT TELLS THE PRINTER WHAT SHAPE THE PAPER IS, and it must be built
   // from THIS paper: a hard-coded rule prints A4, A3 and Tabloid declared as Letter, and the
@@ -591,7 +553,11 @@ export function buildPrintFrame(shapes, paper, meta) {
   return frame
 }
 
-// THE DEFAULT SPOOLER, EXPORTED FOR ONE REASON — the same reason `el` is. Everything else about
+// THE DEFAULT SPOOLER, EXPORTED FOR ONE REASON — and it is now the ONLY export here that has this
+// reason, which is worth saying because `el` used to share it. `el` is exported from lib/shape_svg
+// because three modules build their elements through it, and re-exported here so the browser tier's
+// existing pin of its mis-call guard keeps resolving; `spool` has no such second caller and exists
+// as an export purely to be doubled. Everything else about
 // printing is assertable through the `print` seam below, but the seam's own DEFAULT is only
 // reachable when the argument is omitted, and then it is handed a real window with a real print
 // dialog behind it. Exporting it lets the browser tier hand it a double instead, which is the
