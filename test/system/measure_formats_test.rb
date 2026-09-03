@@ -157,16 +157,32 @@ class MeasureFormatsTest < ApplicationSystemTestCase
     end
 
     # DOCUMENT ORDER CANNOT IDENTIFY A CONTOUR — `draw` appends in DESCENDING bbox-area order, so
-    # the order is a property of the drawing rather than of the file. The minimum x of the rendered
-    # `points` attribute names each shape regardless of ordering, the same way lbrn_measure_test
-    # does it.
+    # the order is a property of the drawing rather than of the file. Each shape's minimum x names
+    # it regardless of ordering, the same way lbrn_measure_test does it. A shape `min_x` cannot
+    # read is skipped rather than compared, so it can never raise on the way to the assert below.
     def contour_with_min_x(expected)
-      match = all("svg .measure-contour").find { |c| (min_x(c) - expected).abs < 0.5 }
+      match = all("svg .measure-contour").find { |c| (x = min_x(c)) && (x - expected).abs < 0.5 }
       assert match, "no contour whose points start at x=#{expected} — the fixture or the draw changed"
       match
     end
 
+    # A CONTOUR IS NOT NECESSARILY A <polygon>, SO `points` IS NOT A GENERAL WAY TO ASK ONE WHERE IT
+    # IS. The Measure view draws the primitive the FILE declared: a LightBurn <Ellipse>, a DXF
+    # CIRCLE/ARC and an SVG <circle>/<ellipse> reach the client as a `g` curve descriptor and render
+    # as a real <circle>/<ellipse>/<path> (app/javascript/lib/shape_svg.js), never as a sampled
+    # polygon. plate.dxf's hole and real-export.mage's circle are both <circle> today, and a
+    # <circle> HAS NO `points` ATTRIBUTE AT ALL — so the old one-line body read nil and this
+    # helper's caller subtracted from it, which is the NoMethodError this shape exists to stop
+    # recurring. Ask each element kind for its own geometry instead.
+    #
+    # nil FOR ANYTHING ELSE, DELIBERATELY. An arc draws as a <path> whose geometry lives in `d`,
+    # with no attribute a minimum x can be read from; no fixture here produces one, and answering
+    # nil means the day one does the caller reports a missing contour rather than raising again.
     def min_x(contour)
-      contour[:points].to_s.split(/\s+/).reject(&:empty?).map { |p| p.split(",").first.to_f }.min
+      case contour.tag_name
+      when "circle"  then contour[:cx].to_f - contour[:r].to_f
+      when "ellipse" then contour[:cx].to_f - contour[:rx].to_f
+      else contour[:points].to_s.split(/\s+/).reject(&:empty?).map { |p| p.split(",").first.to_f }.min
+      end
     end
 end

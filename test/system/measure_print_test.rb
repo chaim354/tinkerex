@@ -3232,15 +3232,35 @@ class MeasurePrintTest < ApplicationSystemTestCase
     # ambiguous.
     def stage_svg = find(".measure-stage svg")
 
-    # The plate spans x -30..30 and the hole only -5..5, so the minimum x of the rendered `points`
-    # attribute identifies each one no matter which was painted on top. POLYGONS ONLY — an open
-    # contour draws as a polyline and is found by class instead (see the open-contour test).
+    # The plate spans x -30..30 and the hole only -5..5, so the minimum x identifies each one no
+    # matter which was painted on top.
+    #
+    # SELECTED BY CLASS, NOT BY TAG, BECAUSE A CONTOUR IS NOT NECESSARILY A <polygon>. The Measure
+    # view draws the primitive the FILE declared: a LightBurn <Ellipse>, a DXF CIRCLE/ARC and an
+    # SVG <circle>/<ellipse> reach the client as a `g` curve descriptor and render as a real
+    # <circle>/<ellipse>/<path> (app/javascript/lib/shape_svg.js), never as a sampled polygon.
+    # sample.lbrn2's Ellipse is the x=40 contour the open-contour test reads onto, and it is a
+    # <circle> — invisible to the old `polygon.measure-contour` selector, so that lookup failed
+    # with "the fixture or the draw changed" when neither had. The transparent fat hit twin is
+    # `.measure-contour--hit`, a DIFFERENT class token, so widening to the class never matches it.
     def contour_with_min_x(expected)
-      match = all("svg polygon.measure-contour").find do |poly|
-        poly[:points].split(/\s+/).reject(&:empty?).map { |p| p.split(",").first.to_f }.min == expected
-      end
+      match = all("svg .measure-contour").find { |c| min_x(c) == expected }
       assert match, "no contour whose points reach x=#{expected} — the fixture or the draw changed"
       match
+    end
+
+    # AND `points` IS NOT A GENERAL WAY TO ASK A CONTOUR WHERE IT IS — a <circle> has no such
+    # attribute, so reading one gives nil and every arithmetic use of it raises. Ask each element
+    # kind for its own geometry instead. nil for anything else is deliberate: an arc draws as a
+    # <path> whose geometry lives in `d`, with no attribute to read a minimum x from, and nil is
+    # simply not equal to any expected value — so the caller reports a missing contour rather than
+    # raising. No fixture in this file produces one today.
+    def min_x(contour)
+      case contour.tag_name
+      when "circle"  then contour[:cx].to_f - contour[:r].to_f
+      when "ellipse" then contour[:cx].to_f - contour[:rx].to_f
+      else contour[:points].to_s.split(/\s+/).reject(&:empty?).map { |p| p.split(",").first.to_f }.min
+      end
     end
 
     def in_print_sheet(body)
