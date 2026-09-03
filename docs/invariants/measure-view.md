@@ -228,7 +228,7 @@
 - **THE PAYLOAD BUDGET IS REAL, AND ON THE WORST DXF IT WAS UNREACHABLE — WHICH WAS REPORTED RATHER
   THAN PAID FOR IN ACCURACY NOTHING ELSE IN THE FILE GIVES UP.** `cards.dxf` (8.7 MB, 3,308 splines
   over 19,454 knot spans) went 563 KB → **3,366 KB**, against a design budget of 1,536 KB; the
-  render went 0.53 s → 1.5–1.6 s across runs, inside the 3 s the same design asked for. **The FLOOR
+  render went 0.53 s → 1.54 s (median of 5; 1.50–1.56), inside the 3 s the same design asked for. **The FLOOR
   is 1,497 KB** — every knot span collapsed to the straight chord between its own endpoints, which
   is not a curve at all — so the budget allowed 0.3 extra points per span above
   a drawing that is simply wrong, and coarsening does not rescue it: 0.02 → 2,272 KB and

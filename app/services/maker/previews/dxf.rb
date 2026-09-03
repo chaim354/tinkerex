@@ -757,7 +757,7 @@ module Maker
       #
       # AND IT IS THE KNOB THAT DECIDES THE PAYLOAD, WHICH ON THE WORST REAL FILE DOES NOT FIT.
       # `cards.dxf` is 8.7 MB, 3,308 splines over 19,454 knot spans, and its measure payload goes
-      # 563 KB -> 3,366 KB (render 0.53 s -> 1.61 s). The design's budget was 1,536 KB, and the
+      # 563 KB -> 3,366 KB (render 0.53 s -> 1.54 s median of 5, range 1.50-1.56). The budget was 1,536 KB, and the
       # FLOOR — every span reduced to the straight chord between its own endpoints, which is not a
       # curve at all — measures 1,497 KB, so the budget leaves room for 0.3 extra points per span
       # and cannot be reached by thinning. Coarsening does not rescue it either: 0.02 gives
