@@ -95,7 +95,12 @@ class LbrnMeasureTest < ApplicationSystemTestCase
 
     # COUNT, not mere presence: the whole payload has to reach the DOM, and "the SVG mounted" is
     # true of a draw that emitted one node and dropped the other.
-    assert_selector "svg polygon.measure-contour", count: 2
+    #
+    # BY CLASS, NOT BY TAG, for the reason `contour_with_min_x` carries: a contour is only a
+    # <polygon> when the file described no primitive, and counting the tag would read a shape that
+    # became a <circle> as a DROPPED node — the one thing this assertion exists to detect. Both of
+    # bezier-circle.lbrn2's shapes are bezier Paths and stay polygons, so the count is unchanged.
+    assert_selector "svg .measure-contour", count: 2
     assert_no_console_errors
   end
 
@@ -212,7 +217,10 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     click_on "✕ Image"
 
     assert_no_selector ".measure-view--ready"
-    assert_no_selector "svg polygon.measure-contour"
+    # BY CLASS, NOT BY TAG: an absence assertion scoped to one element kind passes over every other
+    # kind, so `polygon` here would go on being green with a <circle> still on the stage — which is
+    # exactly what the view now draws for a file that declares one.
+    assert_no_selector "svg .measure-contour"
   end
 
   private
@@ -247,10 +255,21 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     # DOCUMENT ORDER CANNOT TELL THESE TWO APART — that is a coin flip, not a test. `draw` appends in
     # DESCENDING bbox-area order and both shapes are exactly 400 mm², so their relative order is
     # whatever the sort's tie-break happens to be. Their coordinates are disjoint, though: the circle
-    # spans x -10..10 and the square x 40..60, so the minimum x of the rendered `points` attribute
-    # identifies each one no matter how they were ordered or which is on top.
+    # spans x -10..10 and the square x 40..60, so each shape's minimum x identifies it no matter how
+    # they were ordered or which is on top.
+    #
+    # SELECTED BY CLASS, NOT BY TAG, BECAUSE A CONTOUR IS NOT NECESSARILY A <polygon>. The Measure
+    # view draws the primitive the FILE declared: a LightBurn <Ellipse>, a DXF CIRCLE/ARC and an
+    # SVG <circle>/<ellipse> reach the client as a `g` curve descriptor and render as a real
+    # <circle>/<ellipse>/<path> (app/javascript/lib/shape_svg.js), never as a sampled polygon. This
+    # file gets away with `polygon` TODAY only because it points the helper exclusively at
+    # bezier-circle.lbrn2 and nested-plate.lbrn2, whose circles are bezier Paths carrying no
+    # descriptor — sample.lbrn2, loaded in the same setup, DOES draw a <circle>, so the tag was one
+    # call site away from a lookup that fails with "the fixture or the draw changed" when neither
+    # has. The transparent fat hit twin is `.measure-contour--hit`, a DIFFERENT class token, so
+    # widening to the class never matches it.
     def contour_with_min_x(expected)
-      match = all("svg polygon.measure-contour").find { |poly| min_x(poly) == expected }
+      match = all("svg .measure-contour").find { |c| min_x(c) == expected }
       assert match, "no contour whose points start at x=#{expected} — the fixture or the draw changed"
       match
     end
@@ -259,7 +278,17 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     # find("svg") is ambiguous.
     def stage_svg = find(".measure-stage svg")
 
-    def min_x(polygon)
-      polygon[:points].split(/\s+/).reject(&:empty?).map { |p| p.split(",").first.to_f }.min
+    # AND `points` IS NOT A GENERAL WAY TO ASK A CONTOUR WHERE IT IS — a <circle> has no such
+    # attribute, so reading one gives nil and every arithmetic use of it raises. Ask each element
+    # kind for its own geometry instead. nil for anything else is deliberate: an arc draws as a
+    # <path> whose geometry lives in `d`, with no attribute to read a minimum x from, and nil is
+    # simply not equal to any expected value — so the caller reports a missing contour rather than
+    # raising. No fixture in this file produces one today.
+    def min_x(contour)
+      case contour.tag_name
+      when "circle"  then contour[:cx].to_f - contour[:r].to_f
+      when "ellipse" then contour[:cx].to_f - contour[:rx].to_f
+      else contour[:points].to_s.split(/\s+/).reject(&:empty?).map { |p| p.split(",").first.to_f }.min
+      end
     end
 end
