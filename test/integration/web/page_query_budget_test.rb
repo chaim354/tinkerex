@@ -497,5 +497,39 @@ module Web
                               -> { add.call("sl", LARGE - SMALL) },
                               "search#index")
     end
+
+    # STAGE 2, S2-6: THE SETTINGS HUB. Four plain counts, one per reference list -- each a single
+    # `SELECT COUNT(*)`, independent of how many rows it is counting, so growing all four together
+    # is what proves none of them was quietly rewritten into something that scans rows.
+    test "settings#show does not grow with shelves, suppliers, locations or tags" do
+      add = lambda do |prefix, count|
+        count.times do |i|
+          @user.maker_shelves.create!(path: "#{prefix}shelf#{i}")
+          @user.maker_suppliers.create!(name: "#{prefix}sup#{i}")
+          @user.maker_locations.create!(name: "#{prefix}loc#{i}")
+          @user.maker_tags.create!(name: "#{prefix}tag#{i}")
+        end
+      end
+      assert_constant_queries(settings_path,
+                              -> { add.call("s", SMALL) },
+                              -> { add.call("l", LARGE - SMALL) },
+                              "settings#show")
+    end
+
+    # THE TAGS LIST (S2-6). Each iteration grows a tag AND tags a project with it, so the one
+    # grouped count (Settings::TagsController#index's @counts) is under measurement -- a per-row
+    # `tag.taggings.count` in the view would show as growth here, the same argument
+    # suppliers#index's own comment makes for its @item_counts.
+    test "settings/tags#index does not grow with the number of tags" do
+      add = lambda do |prefix, count|
+        count.times do |i|
+          @user.maker_projects.create!(name: "#{prefix}p#{i}", tag_list: "#{prefix}tag#{i}")
+        end
+      end
+      assert_constant_queries(settings_tags_path,
+                              -> { add.call("s", SMALL) },
+                              -> { add.call("l", LARGE - SMALL) },
+                              "settings/tags#index")
+    end
   end
 end

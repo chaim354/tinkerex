@@ -157,7 +157,10 @@ class ShellTest < ApplicationSystemTestCase
         project_bom_path(project),
         # STAGE 2, S2-5: the search results page (several groups populated -- see the tag_list:
         # above) and a tag page, the two new surfaces this arc adds to the shell.
-        search_path(q: "lamp"), tag_path("lamp") ].each do |path|
+        search_path(q: "lamp"), tag_path("lamp"),
+        # STAGE 2, S2-6: the settings hub and its tags list -- the same tag_list: above gives the
+        # list a real row to render instead of the empty state.
+        settings_path, settings_tags_path ].each do |path|
         visit path
         # `nav.tabbar` is display:none above 719px, so finding it VISIBLE is the proof that the
         # phone rules are running at all — without it a viewport that never narrowed would satisfy

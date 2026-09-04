@@ -224,6 +224,15 @@ Rails.application.routes.draw do
   get "tags/:name", to: "tags#show", as: :tag, constraints: { name: %r{[^/]+} }
   resources :locations, only: %i[index create destroy], path: "settings/locations"
 
+  # --- The settings hub (stage 2, S2-6): one door onto the reference pages above, the account page
+  # and the theme. `resource` (singular) so the URL is /settings with no id; the controller name is
+  # explicit because Rails would otherwise pluralize it. Tags get their settings list here, beside
+  # the public page a tag already has at /tags/:name. ---
+  resource :settings, only: :show, controller: "settings"
+  namespace :settings do
+    resources :tags, only: %i[index destroy]
+  end
+
   # --- Addons (Tools) — the /tools gallery + every addon's UI ---
   # EVERY addon is now manifest-driven and served by the generic surface (Tools::AddonsController,
   # `tools/:key` below). `generators`, `boxes` and — last — `openscad` have all migrated, so no

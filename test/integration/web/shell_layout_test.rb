@@ -31,6 +31,27 @@ module Web
       end
     end
 
+    # Stage 2, S2-6: the settings hub's door in the rail foot, not the main nav -- it lights on
+    # its own hub AND on its child (settings/tags), the same way "a nested controller lights its
+    # family" pins Projects/Models below, but scoped to .rail-foot since Settings is not one of
+    # rail_links's seven sections (the phone tab bar mirror stays at 7 -- see that test below).
+    test "the rail foot links to Settings and lights it on the hub and its children" do
+      get projects_path
+      assert_select "aside.rail .rail-foot a.rail-btn.rail-settings[href=?]", settings_path
+
+      get settings_path
+      assert_select "aside.rail .rail-foot a.rail-btn.rail-settings[aria-current='page']"
+
+      get settings_tags_path
+      assert_select "aside.rail .rail-foot a.rail-btn.rail-settings[aria-current='page']"
+
+      # NOT lit on a page the settings hub merely links TO -- Suppliers keeps lighting Inventory,
+      # its own rail_links section, not Settings.
+      get suppliers_path
+      assert_select "aside.rail .rail-foot a.rail-btn.rail-settings[aria-current='page']", count: 0
+      assert_select "aside.rail a.rail-link[aria-current='page']", text: "Inventory"
+    end
+
     test "the rail's first link is Home, at the root path" do
       get files_path
       assert_select "nav.rail-nav li:first-child a.rail-link[href='/']", text: "Home"

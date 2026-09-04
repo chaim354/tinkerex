@@ -236,7 +236,11 @@ module Web
         "tools gallery" => tools_path,
         "tools addon" => tools_addon_path("fixture"),
         "trash" => trash_index_path,
-        "search" => search_path(q: "lamp")
+        "search" => search_path(q: "lamp"),
+        # Stage 2, S2-6. @project wears "laser" (setup above), so this renders a non-empty list --
+        # the settings hub itself needs no fixture, it only counts what setup already created.
+        "settings" => settings_path,
+        "settings/tags" => settings_tags_path
       }
     end
 

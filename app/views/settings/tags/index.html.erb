@@ -1,0 +1,27 @@
+<% content_for :title, "Tags — Tinkerex" %>
+
+<div class="page-head">
+  <h1>Tags</h1>
+  <%= link_to "Settings", settings_path, class: "btn ghost small" %>
+</div>
+
+<p class="muted">
+  Every tag you've used, and how many things wear it. Removing a tag here only drops the chip --
+  the project, model or item that wore it keeps everything else.
+</p>
+
+<ul class="settings-list">
+  <% @tags.each do |tag| %>
+    <% count = @counts[tag.id] || 0 %>
+    <li>
+      <%= link_to tag.name, tag_path(tag.name), class: "settings-name tag-chip" %>
+      <span class="settings-fact"><%= count.zero? ? "unused" : pluralize(count, "thing") %></span>
+      <%= button_to "Remove", settings_tag_path(tag), method: :delete,
+                    class: "linkbtn danger small settings-remove",
+                    form: { data: { turbo_confirm: "Remove #{tag.name} from everything wearing it?" } } %>
+    </li>
+  <% end %>
+  <% if @tags.empty? %>
+    <li class="empty muted">No tags yet.</li>
+  <% end %>
+</ul>
