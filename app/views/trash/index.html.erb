@@ -2,7 +2,9 @@
 
 <div class="page-head">
   <h1>Trash</h1>
-  <%= link_to "← Back to Files", files_path, class: "linkbtn" %>
+  <div class="page-actions">
+    <%= link_to "← Back to Files", files_path, class: "btn ghost small" %>
+  </div>
 </div>
 
 <%# One sentence true on every backend. It used to say deleted files are kept "along with their
@@ -10,33 +12,42 @@
     .trash after LIBRARY_TRASH_DAYS. Branching the copy on `versioned?` would spell retention as
     an inference off a capability about history — two questions that merely agree on today's three
     backends. Promising nothing about duration is the honest way to say one thing. %>
-<p class="muted">Files you delete are moved here, and can be restored to your library.</p>
+<p class="muted page-intro">Files you delete are moved here, and can be restored to your library.</p>
 
 <% if @entries.empty? %>
   <p class="empty muted">Trash is empty.</p>
 <% else %>
+  <%# THE SAME `col-*` CLASSES THE FILES LIST CARRIES, so pages/files.css's phone rules drop the
+      same columns here (§14m rule 11). They are a layout contract, not decoration: without them
+      this table is the one page that scrolls sideways at 375px. %>
   <table class="files">
     <thead>
-      <tr><th>Name</th><th>Kind</th><th class="num">Size</th><th>Deleted</th><th></th></tr>
+      <tr>
+        <th class="col-name">Name</th>
+        <th class="col-type">Kind</th>
+        <th class="num col-size">Size</th>
+        <th class="col-modified">Deleted</th>
+        <th class="col-actions"></th>
+      </tr>
     </thead>
     <tbody>
       <% @entries.each do |entry| %>
         <tr>
-          <td>
+          <td class="col-name">
             <% if entry.kind == "dir" %>
               <span class="dir">📁 <%= entry.name %></span>
             <% else %>
               <%= entry.name %>
             <% end %>
           </td>
-          <td class="muted"><%= entry.kind %></td>
+          <td class="muted col-type"><%= entry.kind %></td>
           <%# nil only for a directory, which HAS no size — the one em-dash in this UI that is not
               a backend lie. %>
-          <td class="num muted"><%= entry.size ? number_to_human_size(entry.size) : "—" %></td>
-          <td class="muted"><%= entry.deleted_at&.strftime("%Y-%m-%d %H:%M") || "—" %></td>
-          <td class="row-actions">
+          <td class="num muted col-size"><%= entry.size ? number_to_human_size(entry.size) : "—" %></td>
+          <td class="muted col-modified"><%= entry.deleted_at&.strftime("%Y-%m-%d %H:%M") || "—" %></td>
+          <td class="row-actions col-actions">
             <%= button_to "Restore", restore_trash_path(entry.node_id), method: :post,
-                  form: { data: { turbo_confirm: "Restore #{entry.name}?" } }, class: "linkbtn" %>
+                  form: { data: { turbo_confirm: "Restore #{entry.name}?" } }, class: "btn small" %>
           </td>
         </tr>
       <% end %>
