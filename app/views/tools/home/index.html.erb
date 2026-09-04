@@ -6,11 +6,13 @@
   <% @addons.each do |addon| %>
     <% if addon.available? %>
       <%= link_to tools_addon_path(addon.key), class: "addon-card" do %>
-        <span class="addon-icon"><%= addon.icon %></span>
-        <span class="addon-title"><%= addon.title %></span>
+        <span class="addon-card-head">
+          <span class="addon-icon"><%= addon.icon %></span>
+          <span class="addon-title"><%= addon.title %></span>
+        </span>
         <span class="addon-desc muted"><%= addon.description %></span>
         <% if addon.permissions.any? %>
-          <span class="addon-permissions muted">
+          <span class="addon-permissions addon-card-foot muted">
             This tool can:
             <%= addon.permissions.map { |p| Maker::Addons::Permissions.label_for(p["name"]) }.to_sentence %>
           </span>
@@ -18,8 +20,10 @@
       <% end %>
     <% else %>
       <div class="addon-card disabled" title="<%= addon.unavailable_reason %>">
-        <span class="addon-icon"><%= addon.icon %></span>
-        <span class="addon-title"><%= addon.title %></span>
+        <span class="addon-card-head">
+          <span class="addon-icon"><%= addon.icon %></span>
+          <span class="addon-title"><%= addon.title %></span>
+        </span>
         <span class="addon-desc muted"><%= addon.unavailable_reason %></span>
       </div>
     <% end %>
