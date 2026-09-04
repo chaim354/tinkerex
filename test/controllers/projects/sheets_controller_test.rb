@@ -8,7 +8,7 @@ module Projects
       @user = User.create!(email: "sc-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
-      assert_redirected_to files_path, "sign-in did not take — every test below would be meaningless"
+      assert_redirected_to root_path, "sign-in did not take — every test below would be meaningless"
       @project = @user.maker_projects.create!(name: "Lamp")
       @sheet = @project.sheets.create!(user: @user, name: "Cut list", position: 0,
                                        data: Maker::Sheet.blank_data)

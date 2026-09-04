@@ -149,7 +149,7 @@ module Web
       assert User.find_by(email: "carol@example.com").confirmed?
 
       post user_session_path, params: { user: { email: "carol@example.com", password: PASSWORD } }
-      assert_redirected_to files_path
+      assert_redirected_to root_path
     end
 
     # --- login / logout ---------------------------------------------------------------
@@ -162,7 +162,7 @@ module Web
     test "a confirmed user logs in, accesses the file UI, then logs out" do
       User.create!(email: "erin@example.com", password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: "erin@example.com", password: PASSWORD } }
-      assert_redirected_to files_path
+      assert_redirected_to root_path
 
       get files_path
       assert_response :success
@@ -201,7 +201,7 @@ module Web
       post user_session_path, params: { user: { email: "hank@example.com", password: PASSWORD } }
       assert_response :unprocessable_entity
       post user_session_path, params: { user: { email: "hank@example.com", password: new_pw } }
-      assert_redirected_to files_path
+      assert_redirected_to root_path
     end
   end
 end

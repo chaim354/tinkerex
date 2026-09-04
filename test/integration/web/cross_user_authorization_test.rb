@@ -54,8 +54,8 @@ module Web
       # cannot tell success from failure. Unasserted, an anonymous session makes EVERY case below
       # pass for the wrong reason: `assert_denied`/`assert_unreadable` only ask that the response
       # was not successful, which a redirect to the sign-in page satisfies while proving nothing
-      # about scoping. `files_path` is the real destination -- ApplicationController#after_sign_in_path_for.
-      assert_redirected_to files_path,
+      # about scoping. `root_path` is the real destination -- ApplicationController#after_sign_in_path_for.
+      assert_redirected_to root_path,
                            "the intruder is not signed in — every case below asserts nothing about scoping"
     end
 

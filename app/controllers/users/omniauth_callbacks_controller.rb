@@ -9,7 +9,12 @@ module Users
 
       user = User.from_omniauth(auth)
       sign_in(user, event: :authentication)
-      redirect_to files_path, notice: "Signed in via #{auth.provider}."
+      # Routed through after_sign_in_path_for rather than a second hard-coded literal here --
+      # exactly the "a path written twice is a path that can desync" trap config/routes.rb's own
+      # comments warn about, and how this landed on /files after root became Home (found running
+      # this task's own test suite: omniauth_callback_test.rb stayed red after
+      # ApplicationController#after_sign_in_path_for changed, because this controller never calls it).
+      redirect_to after_sign_in_path_for(user), notice: "Signed in via #{auth.provider}."
     rescue User::AccountLinkRefused
       fail_sso("That email is already linked to an account. Sign in with your password.")
     rescue => e

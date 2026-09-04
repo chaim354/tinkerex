@@ -42,7 +42,7 @@ module V1
 
     def sign_in_web(user)
       post user_session_path, params: { user: { email: user.email, password: PASSWORD } }
-      assert_redirected_to files_path
+      assert_redirected_to root_path
     end
 
     def web_user

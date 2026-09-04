@@ -22,12 +22,23 @@ module Web
     end
 
     test "each top-level section lights its own link" do
-      { projects_path => "Projects", models_path => "Models", tools_path => "Tools",
+      { root_path => "Home", projects_path => "Projects", models_path => "Models", tools_path => "Tools",
         trash_index_path => "Trash" }.each do |path, label|
         get path
         assert_response :success
         assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: label
       end
+    end
+
+    test "the rail's first link is Home, at the root path" do
+      get files_path
+      assert_select "nav.rail-nav li:first-child a.rail-link[href='/']", text: "Home"
+      # Files -- not Home -- is what GET /files lights; Home carries no aria-current here.
+      assert_select "nav.rail-nav li:first-child a.rail-link[aria-current]", count: 0
+
+      get root_path
+      assert_response :success
+      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Home"
     end
 
     test "a nested controller lights its family" do
@@ -114,7 +125,7 @@ module Web
 
     test "the phone tab bar mirrors the rail" do
       get trash_index_path
-      assert_select "nav.tabbar a.tabbar-link", count: 5
+      assert_select "nav.tabbar a.tabbar-link", count: 6
       assert_select "nav.tabbar a.tabbar-link[aria-current='page']", count: 1, text: "Trash"
     end
 

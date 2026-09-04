@@ -24,7 +24,7 @@ module WebHelpers
     fill_in "user[email]",    with: email
     fill_in "user[password]", with: PASSWORD
     click_on "Log in"
-    assert_current_path "/files"
+    assert_current_path "/"
     user
   end
 
