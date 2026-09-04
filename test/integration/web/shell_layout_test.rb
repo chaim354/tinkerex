@@ -22,7 +22,8 @@ module Web
     end
 
     test "each top-level section lights its own link" do
-      { root_path => "Home", projects_path => "Projects", models_path => "Models", tools_path => "Tools",
+      { root_path => "Home", projects_path => "Projects", models_path => "Models",
+        inventory_items_path => "Inventory", tools_path => "Tools",
         trash_index_path => "Trash" }.each do |path, label|
         get path
         assert_response :success

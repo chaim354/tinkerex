@@ -1,0 +1,93 @@
+<% content_for :title, "#{@item.name} — Tinkerex" %>
+
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Inventory path">
+    <%= link_to "Inventory", inventory_items_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page"><%= @item.name %></span>
+  </nav>
+<% end %>
+
+<% low = @item.quantity_cached <= @item.min_quantity %>
+<div class="page-head">
+  <div class="page-title">
+    <h1><%= @item.name %></h1>
+    <% if low %><span class="badge low-stock">Low stock</span><% end %>
+  </div>
+  <div class="page-actions">
+    <%= link_to "Edit", edit_inventory_item_path(@item), class: "btn small" %>
+    <%= button_to "Delete", inventory_item_path(@item), method: :delete, class: "btn small danger",
+          form: { data: { turbo_confirm: "Delete #{@item.name}?" } } %>
+  </div>
+</div>
+
+<dl class="meta">
+  <dt>Part #</dt><dd><%= @item.part_number.presence || "—" %></dd>
+  <dt>Category</dt><dd><%= @item.category.presence || "—" %></dd>
+  <dt>On hand</dt><dd><%= number_with_precision(@item.quantity_cached, precision: 3, strip_insignificant_zeros: true) %> <%= @item.unit %> · min <%= number_with_precision(@item.min_quantity, precision: 3, strip_insignificant_zeros: true) %></dd>
+  <dt>Unit cost</dt><dd><%= @item.unit_cost ? number_to_currency(@item.unit_cost) : "—" %></dd>
+  <dt>Location</dt><dd><%= @item.location&.name || "—" %></dd>
+  <dt>Supplier</dt><dd><%= @item.supplier&.name || "—" %></dd>
+</dl>
+
+<% if @item.notes.present? %>
+  <p class="item-notes"><%= @item.notes %></p>
+<% end %>
+
+<%# scope: :transaction — there is no @transaction model backing this form (the ledger is
+    append-only and posted through InventoryTransaction.apply!, never built-and-saved here), so
+    form_with needs an explicit scope to name its fields transaction[...] at all; without one a
+    model-less form_with(url:) has a blank object_name and fields_for-style bracketing breaks
+    (CLAUDE.md §14d). %>
+<details class="composer adjust" open>
+  <summary class="btn small">Adjust stock</summary>
+  <%= form_with url: adjust_inventory_item_path(@item), scope: :transaction, method: :post, class: "adjust-form" do |f| %>
+    <div class="adjust-fields">
+      <label>
+        <span>Amount</span>
+        <%= f.number_field :delta, step: "any", required: true %>
+      </label>
+      <label>
+        <span>Reason</span>
+        <%= f.select :reason, Maker::InventoryTransaction::REASONS.map { |r| [ r.capitalize, r ] }, selected: "adjusted" %>
+      </label>
+      <label>
+        <span>Project</span>
+        <%= f.select :project_id, @projects, include_blank: true %>
+      </label>
+      <label>
+        <span>Note</span>
+        <%= f.text_field :note %>
+      </label>
+      <%= f.submit "Post", class: "btn primary adjust-submit" %>
+    </div>
+  <% end %>
+</details>
+
+<table class="table ledger">
+  <thead>
+    <tr>
+      <th class="col-when">When</th>
+      <th class="num col-delta">Delta</th>
+      <th class="num col-balance">Balance</th>
+      <th>Reason</th>
+      <th class="col-project">Project</th>
+      <th class="col-note">Note</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% @ledger.each do |t| %>
+      <tr>
+        <td class="col-when"><%= t.created_at.strftime("%Y-%m-%d %H:%M") %></td>
+        <td class="num col-delta"><span class="<%= t.delta.negative? ? "delta-out" : "delta-in" %>"><%= signed(t.delta) %></span></td>
+        <td class="num col-balance"><%= number_with_precision(@balances[t.id], precision: 3, strip_insignificant_zeros: true) %></td>
+        <td><%= t.reason %></td>
+        <td class="col-project"><%= t.project ? link_to(t.project.name, project_path(t.project)) : "—" %></td>
+        <td class="col-note muted"><%= t.note %></td>
+      </tr>
+    <% end %>
+  </tbody>
+</table>
+<% if @ledger_total > @ledger.size %>
+  <p class="muted ledger-truncated">Showing <%= @ledger.size %> of <%= @ledger_total %> entries.</p>
+<% end %>

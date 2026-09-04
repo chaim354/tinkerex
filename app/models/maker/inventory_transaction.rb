@@ -7,6 +7,16 @@ module Maker
 
     belongs_to :user
     belongs_to :inventory_item, class_name: "Maker::InventoryItem"
+    # SOFT REFERENCE, NOT A VALIDATED ONE — deliberately no `belongs_to ... optional: false` and no
+    # `*_belongs_to_user` validation to match. `project_id` records PROVENANCE ("this consumption was
+    # for project X"), and Maker::Project already nullifies it on destroy
+    # (`has_many :inventory_transactions, dependent: :nullify`) for exactly the reason a validated,
+    # required association would break: the ledger is immutable (§ above) and a deleted project must
+    # not strand a posted row unsavable. `optional: true` is what makes `includes(:project)` on the
+    # web ledger (InventoryItemsController#show) resolve without an association error, and a foreign
+    # or since-deleted project renders as "—" rather than 500ing. See
+    # test/models/maker/inventory_transaction_test.rb's "project_id is a soft reference" test.
+    belongs_to :project, class_name: "Maker::Project", optional: true
 
     validates :delta, presence: true, numericality: true
     validates :reason, inclusion: { in: REASONS }

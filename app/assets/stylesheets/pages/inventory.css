@@ -3,6 +3,11 @@
    only page rules live here. The column drops follow pages/files.css's two breakpoints, so the
    phone sweep (test/system/shell_test.rb) holds at 375px without a sideways scroll. */
 @layer pages {
+  /* NOT scoped to .inventory-table: the identical badge sits in the item page's own page-title,
+     outside any table, so its colour has to apply wherever .low-stock is used — the same
+     `.badge.current-project-badge` accent-soft/accent pairing components.css already uses. */
+  .badge.low-stock { background: var(--accent-soft); color: var(--accent); text-transform: none; }
+
   .inventory-table .col-name a { color: var(--fg); font-weight: 500; }
   .inventory-table .col-part { font-family: var(--font-mono); font-size: 12px; color: var(--fg-muted); }
   .inventory-table .col-category, .inventory-table .col-location, .inventory-table .col-supplier { color: var(--fg-muted); }

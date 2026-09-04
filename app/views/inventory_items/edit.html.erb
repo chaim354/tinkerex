@@ -1,0 +1,17 @@
+<% content_for :title, "Edit #{@item.name} — Tinkerex" %>
+
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Inventory path">
+    <%= link_to "Inventory", inventory_items_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <%= link_to @item.name, inventory_item_path(@item) %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page">Edit</span>
+  </nav>
+<% end %>
+
+<div class="page-head">
+  <h1>Edit <%= @item.name %></h1>
+</div>
+
+<%= render "form", item: @item %>

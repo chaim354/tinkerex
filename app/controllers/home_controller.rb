@@ -18,6 +18,9 @@ class HomeController < ApplicationController
   RECENT_PRINTS = 5
   HERO_TASKS = 5
   ATTENTION_WINDOW = 30.days
+  # Stage 2, S2-3: how many low-stock inventory items land in "Needs attention" — the same
+  # bounded-list shape as RECENT_PROJECTS/RECENT_FILES/RECENT_PRINTS above, not a second pattern.
+  ATTENTION_STOCK = 5
 
   def index
     @project = current_project
@@ -60,6 +63,10 @@ class HomeController < ApplicationController
                                  .where(outcome: "failed")
                                  .where("printed_on >= ?", ATTENTION_WINDOW.ago.to_date)
                                  .order(printed_on: :desc, id: :desc).limit(RECENT_PRINTS).to_a
+    # A SECOND attention source, alongside failed prints — low stock is the `<=` scope from
+    # Maker::InventoryItem (min_quantity itself counts as low), bounded and ordered by name the
+    # same way every other list on this page is bounded (this class's own header).
+    @low_stock = current_user.maker_inventory_items.low_stock.order(:name).limit(ATTENTION_STOCK).to_a
     @covers = Maker::Previews::ThumbnailMap.for(
       current_user, @recent_projects.filter_map(&:cover_node_id) + @recent_files.map(&:node_id)
     )
