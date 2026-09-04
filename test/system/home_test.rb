@@ -43,10 +43,10 @@ class HomeTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  # MUTATION-CHECKED (see test/system/README.md): changing `redirect_url: home_path` to
+  # MUTATION-CHECKED (see test/system/README.md): changing `redirect_url: root_path` to
   # `redirect_url: project_path(@project)` in app/views/home/_project_hero.html.erb turns
-  # `assert_current_path home_path` red:
-  #   expected "/projects/desk-lamp" to equal "/home"
+  # `assert_current_path root_path` red:
+  #   expected "/projects/desk-lamp" to equal "/"
   # Reverted immediately after.
   test "an upload from the hero returns to Home with the file in the row and the count in the stats" do
     project = @user.maker_projects.create!(name: "Desk Lamp")
@@ -72,15 +72,10 @@ class HomeTest < ApplicationSystemTestCase
     # "this.form.requestSubmit()", hidden: true` is what a real file choice submits, and
     # `data: { turbo: false }` makes this a full page load rather than a Turbo visit.
     #
-    # HOME_PATH, DELIBERATELY NOT ROOT_PATH. config/routes.rb draws `get "home", to:
-    # "home#index", as: :home` ("/home") and `root to: "home#index"` ("/") as two DISTINCT routes
-    # onto the same action, and the hero passes `redirect_url: home_path` -- confirmed at the
-    # request level by test/integration/web/home_test.rb's own
-    # `assert_select ".home-hero input[...][name='redirect_url'][value=?]", home_path`. Sign-in
-    # lands on root_path ("/"; ApplicationController#after_sign_in_path_for), but THIS redirect is
-    # a different call naming a different route to the same controller action, so the browser lands
-    # on "/home" here, not "/".
-    assert_current_path home_path
+    # Back on "/": the hero passes `redirect_url: root_path`, so an upload from Home returns to the
+    # same URL the rail links. Home has ONE route on purpose -- a `/home` alias existed for a few
+    # commits while the page and its landing were built side by side, and left with them.
+    assert_current_path root_path
     assert_selector ".home-hero .project-stats", text: /1 file/
     assert_selector ".home-files .grid-card .grid-name", text: "sample.txt"
     assert_no_console_errors

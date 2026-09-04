@@ -4,7 +4,7 @@
       <h2>Current project · <%= link_to @project.name, project_path(@project) %></h2>
       <div class="panel-actions">
         <%= render "projects/upload_control", upload_url: project_uploads_path(@project),
-                   attach_url: project_attachments_path(@project), redirect_url: home_path,
+                   attach_url: project_attachments_path(@project), redirect_url: root_path,
                    parent_node_id: @upload_parent_node_id %>
         <%= link_to "Open", project_path(@project), class: "btn small" %>
       </div>

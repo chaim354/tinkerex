@@ -214,7 +214,7 @@ module Web
           hero.build_log_entries.create!(user: @user, body: "entry #{id}", logged_at: Time.current)
         end
       end
-      assert_constant_queries(home_path,
+      assert_constant_queries(root_path,
                               -> { add.call("hs", SMALL) },
                               -> { add.call("hl", LARGE - SMALL) },
                               "home#index")

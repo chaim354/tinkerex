@@ -17,7 +17,7 @@ module Web
     end
 
     test "an empty account sees every section's empty sentence and a prompt to pick a project" do
-      get home_path
+      get root_path
       assert_response :success
       assert_select ".page-head h1", text: "Home"
       assert_select ".home-hero", text: /No current project/
@@ -33,7 +33,7 @@ module Web
       project.tasks.create!(user: @user, title: "Print the base", status: "done", position: 1)
       project.build_log_entries.create!(user: @user, entry_type: "note", logged_at: 1.day.ago, body: "<div>Shade printed.</div>")
       patch current_project_path, params: { project_id: project.id }
-      get home_path
+      get root_path
       assert_select ".home-hero h2 a[href=?]", project_path(project), text: "Desk Lamp"
       assert_select ".home-hero .project-stats", text: /1 of 2 tasks done/
       assert_select ".home-hero .hero-tasks .task-row .task-state--todo", count: 1
@@ -41,13 +41,13 @@ module Web
       assert_select ".home-hero .hero-tasks", text: /Print the base/, count: 0
       assert_select ".home-hero .hero-entry", text: /Shade printed/
       assert_select ".home-hero .upload-btn"
-      assert_select ".home-hero input[type='hidden'][name='redirect_url'][value=?]", home_path
+      assert_select ".home-hero input[type='hidden'][name='redirect_url'][value=?]", root_path
     end
 
     test "the recent rows are bounded and newest first" do
       7.times { |i| @user.maker_projects.create!(name: "Project #{i}", updated_at: i.hours.ago) }
       9.times { |i| file("part-#{i}.stl", at: i.hours.ago) }
-      get home_path
+      get root_path
       assert_select ".home-projects .tile-row .project-tile", count: HomeController::RECENT_PROJECTS
       names = css_select(".home-projects .tile-row .project-name").map(&:text)
       assert_equal "Project 0", names.first
@@ -63,7 +63,7 @@ module Web
       model.file_attachments.create!(user: @user, node_id: node.node_id, role: "model")
       model.print_runs.create!(user: @user, printed_on: 2.days.ago.to_date, outcome: "failed", printer: "MK4")
       model.print_runs.create!(user: @user, printed_on: 3.days.ago.to_date, outcome: "success")
-      get home_path
+      get root_path
       assert_select ".home-prints .print-row", count: 2
       assert_select ".home-prints .print-row a[href=?]", model_path(model), text: "Benchy"
       assert_select ".home-attention .attention-list .attention-row", count: 1
@@ -75,7 +75,7 @@ module Web
       project = @user.maker_projects.create!(name: "Old Rig")
       patch current_project_path, params: { project_id: project.id }
       project.archive!
-      get home_path
+      get root_path
       assert_select ".home-hero", text: /No current project/
       assert_select ".home-projects .project-name", text: "Old Rig", count: 0
     end
