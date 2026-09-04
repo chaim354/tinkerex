@@ -1,23 +1,8 @@
 /* The Projects hub: index tiles, the project page's panels, tasks, the build-log timeline,
    sheets. Panels, buttons, badges and fields are components. */
 @layer pages {
-  /* MIGRATED VERBATIM (old projects.css), substitution table applied, in this order:
-     .projects-grid, .project-tile, .project-tile form, .project-card, .project-card:hover,
-     .project-card:hover .thumb, .project-card .thumb, .project-thumb-empty, .project-name,
-     .project-head, .project-head h1, .project-description,
-     .project-panels and its @media (min-width: 900px) block, .photo-attach,
-     .attachments-grid, .entry-photos, .attachment-tile, .attachment-tile .thumb,
-     .attachment-tile.unavailable .thumb, .tile-meta, .entry-photo .thumb,
-     .attachment-group, .attachment-group:last-child, .attachment-group details[open] > .attachment-group-head,
-     .attachments-missing, .task-form input, .log-timeline, .log-entry, .entry-head, .entry-body,
-     .tasks-group, .task-row, .task-actions, .picker-results, .picker-result, .picker-search,
-     .picker-search input, .sheet-head, .sheet-head h1, .sheet-rename, .sheet-grid, .sheet-status,
-     .sheet-status-error, .sheets-panel .sheet-row, .sheets-panel .sheet-row:last-child.
-     NOT copied (they are components now): .btn*, .linkbtn.small, .badge*, .panel, .panel h2,
-     .panel-head, .panel-actions, .field*, .field-inline*, .form-actions, .form-errors,
-     .attachment-group-head (the heading rule), .attach-to-project, .attach-form*, .project-chip*,
-     .chip-x* (those five are in pages/files.css). */
-  .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 18px; }
+  /* --- Index --- */
+  .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 16px; }
   /* Deliberately NOT `align-items: center` here: `.project-card` is a flex item of `.project-tile`
      with no explicit width, so `align-items: center` sizes it to shrink-to-fit (its content's own
      width) instead of stretching it — which starves `.project-card .thumb`'s `width: 100%` down to
@@ -31,68 +16,88 @@
   .project-card { display: flex; flex-direction: column; gap: 8px; align-items: center; color: var(--fg); }
   .project-card:hover { text-decoration: none; }
   .project-card:hover .thumb { border-color: var(--accent); }
-  .project-card .thumb { width: 100%; height: 130px; }
-  .project-thumb-empty { font-size: 40px; }
-  .project-name { font-size: 14px; font-weight: 600; text-align: center; word-break: break-word; }
+  .project-card .thumb { width: 100%; height: 120px; }
+  .project-thumb-empty { font-size: 36px; }
+  .project-name { font-size: 13px; font-weight: 600; text-align: center; overflow-wrap: anywhere; }
+  .archived-note { margin: 24px 0 0; padding-top: 12px; border-top: 1px solid var(--line); font-size: 12px; }
+  .projects-empty { padding: 40px 16px; text-align: center; border: 1px dashed var(--line); border-radius: var(--radius-panel); }
 
+  /* --- Show: head, stats, panels --- */
   .project-head { align-items: flex-start; }
-  .project-head h1 { margin: 0 0 6px; }
-  .project-description { white-space: pre-wrap; color: var(--fg); margin: 0 0 24px; max-width: 70ch; }
+  .project-head .page-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+  .project-description { white-space: pre-wrap; margin: 0 0 12px; max-width: 72ch; font-size: 14px; line-height: 1.55; }
+  .project-stats { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 20px; font: 12px/1.5 var(--font-mono); color: var(--fg-muted); }
+  .project-stats b { color: var(--fg); font-weight: 500; }
+  .project-panels { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  @media (min-width: 900px) { .project-panels { grid-template-columns: 1fr 1fr; } .attachments-panel { grid-column: 1 / -1; } }
 
-  .project-panels { display: grid; grid-template-columns: 1fr; gap: 24px; }
-  @media (min-width: 900px) { .project-panels { grid-template-columns: 1fr 1fr; }
-    .attachments-panel { grid-column: 1 / -1; } }
-  .photo-attach { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
-
-  .attachments-grid, .entry-photos { display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 14px; }
-  .attachment-tile { display: flex; flex-direction: column; gap: 6px; }
-  .attachment-tile .thumb { width: 100%; height: 110px; }
-  .attachment-tile.unavailable .thumb { font-size: 28px; color: var(--fg-muted); }
-  .tile-meta { display: flex; align-items: center; justify-content: center; }
-  .entry-photo .thumb { width: 100%; height: 90px; }
-
-  .attachment-group { margin-bottom: 20px; }
+  /* --- Files panel: 96px tiles, Detach in the corner on hover --- */
+  .attachments-grid, .entry-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 12px; }
+  .attachment-tile { position: relative; display: flex; flex-direction: column; gap: 4px; }
+  .attachment-tile .thumb { width: 100%; height: 96px; }
+  .attachment-tile .grid-name { font-size: 12px; }
+  .tile-meta { position: absolute; top: 4px; right: 4px; opacity: 0; transition: opacity .12s; }
+  .attachment-tile:hover .tile-meta, .attachment-tile:focus-within .tile-meta { opacity: 1; }
+  @media (hover: none) { .tile-meta { opacity: 1; } }
+  .tile-meta form { margin: 0; }
+  .tile-detach { min-height: 22px; padding: 0 6px; font-size: 11px; background: var(--surface); }
+  .entry-photo .thumb { width: 100%; height: 80px; }
+  .attachment-group { margin-bottom: 16px; }
   .attachment-group:last-child { margin-bottom: 0; }
   /* A <summary>, so it carries the disclosure triangle and is focusable/clickable for free.
      `list-style` is left alone deliberately — the marker IS the affordance that says "this opens". */
-  .attachment-group details[open] > .attachment-group-head { margin-bottom: 10px; }
-  .attachments-missing { font-size: 13px; margin: 4px 0 0; }
+  .attachment-group details[open] > .attachment-group-head { margin-bottom: 8px; }
+  .attachments-missing { font-size: 12px; margin: 4px 0 0; }
+  .photo-attach { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 6px; font-size: 12px; }
 
-  .task-form input { width: 100%; max-width: 480px; padding: 8px;
-    border: 1px solid var(--line); border-radius: 6px; font: inherit; margin-bottom: 8px; }
-  .log-timeline { list-style: none; padding: 0; margin: 12px 0 0; }
-  .log-entry { border-left: 2px solid var(--line); padding: 0 0 16px 14px; position: relative; }
-  .entry-head { display: flex; justify-content: space-between; align-items: center; }
+  /* --- Tasks: a state mark, the transitions as tiny buttons, the composer last --- */
+  .tasks-group { margin-top: 10px; }
+  .task-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .task-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .status-done .task-title { text-decoration: line-through; color: var(--fg-muted); }
+  .task-state { width: 14px; height: 14px; flex: 0 0 auto; border-radius: 50%; border: 1.5px solid var(--fg-muted); position: relative; }
+  .task-state--doing { background: linear-gradient(90deg, var(--accent) 50%, transparent 50%); border-color: var(--accent); }
+  .task-state--done { background: var(--ok); border-color: var(--ok); }
+  .task-state--done::after { content: ""; position: absolute; left: 4px; top: 1px; width: 3px; height: 7px; border: solid var(--bg); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+  .task-actions { display: flex; gap: 4px; align-items: center; }
+  .task-actions form { margin: 0; }
+  .task-move { min-height: 22px; padding: 0 7px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--fg-muted); font: 500 11px/1 var(--font-ui); cursor: pointer; }
+  .task-move:hover { color: var(--fg); border-color: var(--line-strong); }
+  .task-delete { min-height: 22px; padding: 0 6px; border: 0; background: none; color: var(--fg-muted); font: 12px/1 var(--font-ui); cursor: pointer; }
+  .task-delete:hover { color: var(--danger); }
+  .task-form { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+  .task-form input[type="text"] { flex: 1; max-width: none; margin: 0; }
+  .task-error { margin: 8px 0 0; }
+
+  /* --- Build log: composer, then the timeline with its dates in a column --- */
+  .build-log-panel details.composer { margin: 0 0 8px; }
+  .log-timeline { list-style: none; padding: 0; margin: 8px 0 0; }
+  .log-entry { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 4px 14px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .entry-time { font: 11px/1.6 var(--font-mono); white-space: nowrap; padding-top: 1px; }
+  .entry-main { min-width: 0; }
+  .entry-head { display: flex; justify-content: flex-end; }
+  .entry-delete { font-size: 11px; }
   /* No `white-space: pre-wrap` here any more. It was right when .entry-body held a raw plain-text
      body — it is what made manual newlines visible. Since the Action Text move the element wraps real
      HTML with its own <br>s, and because white-space INHERITS, pre-wrap stopped collapsing the
      whitespace node the content partial emits and put a ~45px blank gap above every entry. */
-  .entry-body { margin: 4px 0; }
+  .entry-body { margin: 0 0 6px; font-size: 14px; line-height: 1.55; max-width: 72ch; }
 
-  .tasks-group { margin-top: 12px; }
-  .task-row { display: flex; justify-content: space-between; align-items: center; gap: 8px;
-    padding: 6px 0; border-bottom: 1px solid var(--line); }
-  .task-actions { display: flex; gap: 4px; align-items: center; }
-
-  .picker-results { display: flex; flex-direction: column; gap: 6px; }
-  .picker-result { display: flex; justify-content: space-between; align-items: center;
-    padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
+  /* --- Sheets panel, picker, sheet page (unchanged shapes, tokens) --- */
+  .sheets-panel .sheet-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .sheets-panel .sheet-row:last-child { border-bottom: 0; }
+  .sheets-panel .sheet-row .muted { font: 11px/1.4 var(--font-mono); }
+  .sheet-new-form { display: flex; gap: 6px; align-items: center; }
   .picker-search { display: flex; gap: 8px; margin-bottom: 16px; }
-  .picker-search input { flex: 1; max-width: 480px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
-
+  .picker-search input { flex: 1; max-width: 480px; }
+  .picker-results { display: flex; flex-direction: column; gap: 6px; }
+  .picker-result { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
   .sheet-head { align-items: flex-start; }
-  .sheet-head h1 { margin: 0 0 6px; }
+  .sheet-head h1 { margin: 0 0 4px; }
   .sheet-rename { display: inline-flex; gap: 6px; }
   /* The GRID scrolls sideways, not the whole page container — the page head sits in the same
      element (it holds the Stimulus targets) and must stay put. */
   .sheet-grid { overflow-x: auto; }
-  .sheet-status { font-size: 12px; }
+  .sheet-status { font: 11px/1.4 var(--font-mono); }
   .sheet-status-error { color: var(--danger); }
-
-  .sheets-panel .sheet-row { display: flex; align-items: center; justify-content: space-between;
-                             padding: 6px 0; border-bottom: 1px solid var(--line); }
-  .sheets-panel .sheet-row:last-child { border-bottom: 0; }
-
-  .project-description { max-width: 72ch; font-size: 14px; line-height: 1.55; }
 }

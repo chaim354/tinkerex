@@ -1,11 +1,14 @@
+<%# One task row. The state mark is CSS-drawn from the status (todo hollow, doing half, done
+    filled with a tick); the buttons are the same status transitions as before, plus delete. %>
 <div class="task-row">
+  <span class="task-state task-state--<%= task.status %>" aria-hidden="true"></span>
   <span class="task-title"><%= task.title %></span>
   <div class="task-actions">
     <% (Maker::Task::STATUSES - [ task.status ]).each do |to| %>
       <%= button_to to.capitalize, task_path(task), method: :patch,
-                    params: { task: { status: to } }, class: "linkbtn small" %>
+                    params: { task: { status: to } }, class: "task-move" %>
     <% end %>
-    <%= button_to "✕", task_path(task), method: :delete, class: "linkbtn danger small",
-                  form: { data: { turbo_confirm: "Delete task?" } } %>
+    <%= button_to "✕", task_path(task), method: :delete, class: "task-delete",
+                  "aria-label": "Delete task", form: { data: { turbo_confirm: "Delete task?" } } %>
   </div>
 </div>

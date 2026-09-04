@@ -13,23 +13,6 @@
 <section class="panel tasks-panel" id="project-tasks">
   <h2>Tasks</h2>
 
-  <%# `scope:` is what names the params, and it is not optional here: a model-less form_with has a
-      blank object_name, and `fields_for :task` on one emits name="[task][title]" — which Rack parses
-      to the literal key "[task]", so params.require(:task) 400s on every Add. Don't reintroduce
-      fields_for alongside scope either; that nests to task[task][title]. %>
-  <%= form_with url: project_tasks_path(@project), scope: :task, method: :post, class: "task-form" do |f| %>
-    <%= f.text_field :title, placeholder: "Add a task…", required: true %>
-    <%= f.submit "Add", class: "btn small" %>
-  <% end %>
-
-  <%# THE ERROR HAS TO RENDER HERE, not in the layout's flash. A turbo_stream response replaces this
-      element and nothing else, so a `redirect_to ... alert:` would set a flash no response ever
-      draws — the user would type an invalid task, watch the panel redraw unchanged, and be told
-      nothing. `@task_error` is set only on the turbo_stream branch; the HTML branch still flashes. %>
-  <% if @task_error.present? %>
-    <p class="flash-alert task-error"><%= @task_error %></p>
-  <% end %>
-
   <% Maker::Task::STATUSES.each do |status| %>
     <% group = @tasks.select { |t| t.status == status } %>
     <div class="tasks-group status-<%= status %>">
@@ -42,5 +25,22 @@
         <%= render "projects/task", task: %>
       <% end %>
     </div>
+  <% end %>
+
+  <%# THE ERROR HAS TO RENDER HERE, not in the layout's flash. A turbo_stream response replaces this
+      element and nothing else, so a `redirect_to ... alert:` would set a flash no response ever
+      draws — the user would type an invalid task, watch the panel redraw unchanged, and be told
+      nothing. `@task_error` is set only on the turbo_stream branch; the HTML branch still flashes. %>
+  <% if @task_error.present? %>
+    <p class="flash-alert task-error"><%= @task_error %></p>
+  <% end %>
+
+  <%# `scope:` is what names the params, and it is not optional here: a model-less form_with has a
+      blank object_name, and `fields_for :task` on one emits name="[task][title]" — which Rack parses
+      to the literal key "[task]", so params.require(:task) 400s on every Add. Don't reintroduce
+      fields_for alongside scope either; that nests to task[task][title]. %>
+  <%= form_with url: project_tasks_path(@project), scope: :task, method: :post, class: "task-form" do |f| %>
+    <%= f.text_field :title, placeholder: "Add a task…", required: true %>
+    <%= f.submit "Add", class: "btn small" %>
   <% end %>
 </section>

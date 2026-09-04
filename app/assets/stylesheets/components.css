@@ -21,6 +21,10 @@
   .btn.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
   .btn.ghost { background: transparent; border-color: transparent; }
   .btn.ghost:hover { background: var(--raised); }
+  /* Outlined in the accent: the one secondary action on a page that deserves the colour without
+     the fill (Set as current on a project). */
+  .btn.outline { background: transparent; border-color: var(--accent); color: var(--accent); }
+  .btn.outline:hover { background: var(--accent-soft); border-color: var(--accent); }
   .btn.small, input[type="submit"].small { min-height: 24px; padding: 0 8px; font-size: 12px; }
   .btn.icon { width: 30px; padding: 0; }
   .btn:disabled, input[type="submit"]:disabled { opacity: .55; cursor: default; }

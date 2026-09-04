@@ -35,7 +35,7 @@
             <span class="grid-name"><%= node.name %></span>
           <% end %>
           <div class="tile-meta">
-            <%= button_to "Detach", attachment_path(att), method: :delete, class: "linkbtn danger",
+            <%= button_to "Detach", attachment_path(att), method: :delete, class: "btn small danger tile-detach",
                           form: { data: { turbo_confirm: "Detach #{node.name}? (the file itself is kept)" } } %>
           </div>
         </div>
