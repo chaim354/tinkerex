@@ -41,6 +41,7 @@ Rails.application.routes.draw do
   }
 
   # --- Web UI (server-rendered file browser) ---
+  get "home", to: "home#index", as: :home
   root to: redirect("/files")
 
   # --- Human-identity web auth (Devise) ---
