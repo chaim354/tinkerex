@@ -3,22 +3,25 @@
 <div class="page-head">
   <h1>Models</h1>
   <%= link_to "Import model", new_model_path, class: "btn primary" %>
-  <%= link_to "Shelves", shelves_path, class: "linkbtn" %>
+  <%= link_to "Shelves", shelves_path, class: "btn" %>
 </div>
 
-<form class="models-toolbar" method="get" action="<%= models_path %>">
-  <input type="search" name="q" value="<%= params[:q] %>" placeholder="Search models…">
-  <% [["", "All"], %w[want_to_print Wanted], %w[printed Printed], %w[failed Failed]].each do |val, label| %>
-    <%= link_to label, models_path(status: val.presence, q: params[:q], tag: params[:tag], sort: params[:sort]),
-                class: "filter#{' active' if @status.to_s == val}" %>
-  <% end %>
+<form class="toolbar models-toolbar" method="get" action="<%= models_path %>">
+  <input type="search" name="q" value="<%= params[:q] %>" placeholder="Search models…" aria-label="Search models">
+  <span class="chips">
+    <% [["", "All"], %w[want_to_print Wanted], %w[printed Printed], %w[failed Failed]].each do |val, label| %>
+      <%= link_to label, models_path(status: val.presence, q: params[:q], tag: params[:tag], sort: params[:sort]),
+                  class: "filter chip#{' active' if @status.to_s == val}" %>
+    <% end %>
+  </span>
+  <span class="toolbar-spacer"></span>
   <% if @all_tags.any? %>
-    <select name="tag" onchange="this.form.requestSubmit()">
+    <select name="tag" aria-label="Tag" onchange="this.form.requestSubmit()">
       <option value="">All tags</option>
       <% @all_tags.each do |t| %><option value="<%= t %>" <%= "selected" if params[:tag] == t %>><%= t %></option><% end %>
     </select>
   <% end %>
-  <select name="sort" onchange="this.form.requestSubmit()">
+  <select name="sort" aria-label="Sort" onchange="this.form.requestSubmit()">
     <% [%w[recent Recent], %w[title Title], %w[status Status]].each do |val, label| %>
       <option value="<%= val %>" <%= "selected" if params[:sort] == val %>><%= label %></option>
     <% end %>
