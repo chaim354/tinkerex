@@ -43,9 +43,17 @@ module Projects
         return back_to(project, alert: "Enter a part name.") if attrs[:part_name].blank?
       end
 
-      bom = Maker::Bom.transaction { project.current_bom || project.boms.create!(user: current_user) }
-      line = bom.lines.new(attrs.merge(user: current_user, position: (bom.lines.maximum(:position) || -1) + 1))
-      if line.save
+      # THE BOM AND ITS FIRST LINE LAND TOGETHER OR NOT AT ALL. The bom is minted lazily by the
+      # first line, so a line the MODEL refuses (a foreign item or supplier — the doors above catch
+      # only the shapes they can see) must not leave an empty bom behind: the create and the save
+      # share one transaction, rolled back when the line fails.
+      line = nil
+      Maker::Bom.transaction do
+        bom = project.current_bom || project.boms.create!(user: current_user)
+        line = bom.lines.new(attrs.merge(user: current_user, position: (bom.lines.maximum(:position) || -1) + 1))
+        raise ActiveRecord::Rollback unless line.save
+      end
+      if line.persisted?
         back_to(project, notice: "Added #{line_label(line)}.")
       else
         back_to(project, alert: line.errors.full_messages.to_sentence)

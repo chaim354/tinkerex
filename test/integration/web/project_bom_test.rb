@@ -212,6 +212,9 @@ module Web
                                    quantity: "1", unit: "each" } }
       end
       assert_match(/inventory item/i, flash[:alert])
+      # AND NO EMPTY BOM IS LEFT BEHIND: the bom is minted by the first line, inside the same
+      # transaction, so a line the model refuses rolls the bom back with it (review, 2026-09-04).
+      assert_equal 0, @project.reload.boms.count, "a rejected first line minted an empty bom"
     end
 
     test "a foreign supplier_id surfaces the model's error" do
