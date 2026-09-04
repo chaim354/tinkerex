@@ -1,6 +1,7 @@
 /* The settings pages (stage 2, S2-3 onward): reference lists with an inline add form -- Suppliers,
    Locations; Shelves keeps its own rules in pages/models.css until S2-6 folds them together.
-   Same shape as .shelf-list: one row per record, its facts on the line, Remove at the end. */
+   Same shape as .shelf-list: one row per record, its facts on the line, Remove at the end.
+   Stage 2, S2-6: the hub (.settings-hub, one link + one fact per row) and the theme choice. */
 @layer pages {
   .settings-list { list-style: none; padding: 0; margin: 0 0 20px; max-width: 640px; }
   .settings-list li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
@@ -10,4 +11,8 @@
   .settings-list .settings-remove { margin-left: auto; }
   .settings-add { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; max-width: 640px; }
   .settings-add label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--fg-muted); }
+  /* The hub has no Remove button to anchor to the right, so its own fact takes that job. */
+  .settings-hub .settings-fact { margin-left: auto; }
+  .theme-choice { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .theme-choice .theme-option[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 }

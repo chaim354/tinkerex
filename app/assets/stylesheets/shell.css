@@ -39,7 +39,13 @@
     background: none; border: 0; border-radius: var(--radius-control); color: var(--fg-muted);
     font: 500 12px/1.4 var(--font-ui); text-align: left; cursor: pointer;
   }
-  .rail-btn:hover { color: var(--fg); background: var(--raised); }
+  /* text-decoration: none because the Settings link (an <a>) also carries .rail-btn -- the other
+     three rail-foot controls are <button>s, which never picked up base.css's `a:hover` underline. */
+  .rail-btn:hover { color: var(--fg); background: var(--raised); text-decoration: none; }
+  /* The Settings link's lit state, on the hub and its own children (settings/tags) -- mirrors
+     .rail-link[aria-current="page"]'s colour; .rail-btn reserves no border-left gutter, so this
+     does not add one. */
+  .rail-foot .rail-btn[aria-current="page"] { color: var(--accent); background: var(--accent-soft); }
   .rail-user { padding: 2px 6px; font: 11px/1.4 var(--font-mono); color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* Collapsed: icons only. The same rules apply below 1100px whatever the cookie says. */

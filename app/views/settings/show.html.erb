@@ -1,0 +1,32 @@
+<% content_for :title, "Settings — Tinkerex" %>
+
+<div class="page-head">
+  <h1>Settings</h1>
+</div>
+
+<ul class="settings-list settings-hub">
+  <li>
+    <%= link_to "Shelves", shelves_path, class: "settings-name" %>
+    <span class="settings-fact"><%= pluralize(@shelf_count, "shelf") %></span>
+  </li>
+  <li>
+    <%= link_to "Suppliers", suppliers_path, class: "settings-name" %>
+    <span class="settings-fact"><%= pluralize(@supplier_count, "supplier") %></span>
+  </li>
+  <li>
+    <%= link_to "Locations", locations_path, class: "settings-name" %>
+    <span class="settings-fact"><%= pluralize(@location_count, "location") %></span>
+  </li>
+  <li>
+    <%= link_to "Tags", settings_tags_path, class: "settings-name" %>
+    <span class="settings-fact"><%= pluralize(@tag_count, "tag") %></span>
+  </li>
+  <li>
+    <%= link_to "Account", edit_user_registration_path, class: "settings-name" %>
+    <span class="settings-fact"><%= current_user.email %></span>
+  </li>
+  <li>
+    <span class="settings-name">Theme</span>
+    <%= render "theme" %>
+  </li>
+</ul>

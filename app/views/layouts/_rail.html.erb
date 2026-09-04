@@ -44,6 +44,10 @@
       <%= rail_icon(:collapse) %><span>Collapse</span>
     </button>
     <span class="rail-user" title="<%= current_user.email %>"><%= current_user.email %></span>
+    <%= link_to settings_path, class: "rail-btn rail-settings",
+                "aria-current": (rail_section == "settings" ? "page" : nil) do %>
+      <%= rail_icon(:settings) %><span>Settings</span>
+    <% end %>
     <%= button_to "Sign out", destroy_user_session_path, method: :delete, class: "rail-btn" %>
   </div>
 </aside>

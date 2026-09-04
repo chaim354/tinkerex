@@ -1,0 +1,14 @@
+<%# The same three states the rail's button cycles through, laid out as a choice. This is a
+    SEPARATE theme controller instance from the rail's own -- choose shares cycle's write path
+    (html[data-theme], the cookie, the two metas: design-system.md rule 7), so the two controls
+    can never disagree about what a theme change means, but each instance renders its own
+    label/option targets on its own schedule. aria-pressed is rendered by the server from the
+    cookie on first paint and moved by the controller after a click. %>
+<div class="theme-choice" data-controller="theme" role="group" aria-label="Theme">
+  <% ShellHelper::THEMES.each do |t| %>
+    <button type="button" class="btn small theme-option" data-action="theme#choose"
+            data-theme-theme-param="<%= t %>" data-theme-target="option"
+            aria-pressed="<%= ui_theme == t %>"><%= t.capitalize %></button>
+  <% end %>
+  <span class="settings-fact" data-theme-target="label">Theme: <%= ui_theme %></span>
+</div>
