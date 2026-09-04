@@ -106,5 +106,37 @@ module Web
       assert_select ".home-hero", text: /No current project/
       assert_select ".home-projects .project-name", text: "Old Rig", count: 0
     end
+
+    # Stage 2, S2-3: a second attention source alongside failed prints.
+    test "low-stock items land in attention, and a well-stocked item does not" do
+      low = @user.maker_inventory_items.create!(name: "M3×8 screw", unit: "each", min_quantity: 50)
+      Maker::InventoryTransaction.apply!(item: low, user: @user, delta: 12, reason: "initial")
+      # THE NEGATIVE CASE IS WHAT PINS THE `low_stock` SCOPE — without it, `@low_stock` is just
+      # "the first ATTENTION_STOCK items by name", so a plain read never notices the filter is gone.
+      ok = @user.maker_inventory_items.create!(name: "Aardvark bracket", unit: "each", min_quantity: 5)
+      Maker::InventoryTransaction.apply!(item: ok, user: @user, delta: 100, reason: "initial")
+      get root_path
+      assert_select ".home-attention .attention-row.attention-row--warn",
+                    text: /M3×8 screw: 12 each left, minimum 50/
+      assert_select ".home-attention .attention-row a.btn[href=?]", inventory_item_path(low), text: "Restock"
+      assert_select ".home-attention .attention-row", text: /Aardvark bracket/, count: 0
+    end
+
+    # THE SCOPE IS `<=`, so an item exactly at its own minimum counts as low — not only one below it.
+    test "an item at exactly its minimum counts as low stock" do
+      item = @user.maker_inventory_items.create!(name: "At minimum", unit: "each", min_quantity: 50)
+      Maker::InventoryTransaction.apply!(item:, user: @user, delta: 50, reason: "initial")
+      get root_path
+      assert_select ".home-attention .attention-row.attention-row--warn", text: /At minimum/
+    end
+
+    test "low stock in attention is bounded at HomeController::ATTENTION_STOCK" do
+      (HomeController::ATTENTION_STOCK + 2).times do |i|
+        item = @user.maker_inventory_items.create!(name: "Low #{i}", unit: "each", min_quantity: 10)
+        Maker::InventoryTransaction.apply!(item:, user: @user, delta: 1, reason: "initial")
+      end
+      get root_path
+      assert_select ".home-attention .attention-row.attention-row--warn", count: HomeController::ATTENTION_STOCK
+    end
   end
 end

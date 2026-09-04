@@ -237,12 +237,55 @@ module Web
           hero.tasks.create!(user: @user, title: "task #{id}")
           hero.file_attachments.create!(user: @user, node_id: id, role: "model")
           hero.build_log_entries.create!(user: @user, body: "entry #{id}", logged_at: Time.current)
+          # STAGE 2, S2-3: the attention list's second source. Each item is seeded already below
+          # its own minimum, so the `low_stock` scope's row count grows past ATTENTION_STOCK (5)
+          # between SMALL (3) and LARGE (15) — the same over-the-cap crossing RECENT_PROJECTS etc.
+          # already rely on to catch a per-row query the LIMIT alone would hide.
+          inv = @user.maker_inventory_items.create!(name: "Inv #{id}", unit: "each", min_quantity: 10)
+          Maker::InventoryTransaction.apply!(item: inv, user: @user, delta: 1, reason: "initial")
         end
       end
       assert_constant_queries(root_path,
                               -> { add.call("hs", SMALL) },
                               -> { add.call("hl", LARGE - SMALL) },
                               "home#index")
+    end
+
+    # Stage 2, S2-3. Each item gets its OWN location and supplier so `.includes(:location,
+    # :supplier)` is what is actually under test — without it this would cost 2 extra queries per
+    # row (one per association) instead of the constant 2 the preload issues regardless of N.
+    test "inventory#index does not grow with the number of items" do
+      add = lambda do |prefix, count|
+        count.times do |i|
+          location = @user.maker_locations.create!(name: "#{prefix}loc#{i}")
+          supplier = @user.maker_suppliers.create!(name: "#{prefix}sup#{i}")
+          # A category per item too, so the chip loop is under measurement (review, 2026-09-04).
+          @user.maker_inventory_items.create!(name: "#{prefix}item#{i}", unit: "each", location:, supplier:,
+                                              category: "#{prefix}cat#{i}")
+        end
+      end
+      assert_constant_queries(inventory_items_path,
+                              -> { add.call("s", SMALL) },
+                              -> { add.call("l", LARGE - SMALL) },
+                              "inventory#index")
+    end
+
+    # Each transaction gets its OWN project, for the identical reason: `.includes(:project)` on
+    # the ledger scope is the thing under test (mutation c in the plan), and a shared project would
+    # let a per-row `t.project` lookup hide behind AR's identity map instead of actually costing a
+    # query per row.
+    test "inventory#show does not grow with the number of ledger entries" do
+      item = @user.maker_inventory_items.create!(name: "Bulk part", unit: "each")
+      add = lambda do |prefix, count|
+        count.times do |i|
+          project = @user.maker_projects.create!(name: "#{prefix}proj#{i}")
+          Maker::InventoryTransaction.apply!(item:, user: @user, delta: 1, reason: "restocked", project_id: project.id)
+        end
+      end
+      assert_constant_queries(inventory_item_path(item),
+                              -> { add.call("s", SMALL) },
+                              -> { add.call("l", LARGE - SMALL) },
+                              "inventory#show")
     end
 
     # THE FILE PAGE INSIDE A GIT REPOSITORY, AND THE SUBJECT IS `Library::WorkingTree`. Every other
@@ -339,6 +382,35 @@ module Web
                               -> { add.call("ts", SMALL) },
                               -> { add.call("tl", LARGE - SMALL) },
                               "trash#index")
+    end
+    # THE TWO SETTINGS LISTS (S2-3). Each row shows a count of the items that reference it; the
+    # count comes from ONE grouped query, not one per row -- the shape settings_reference_test.rb
+    # pins locally and this pins against the seed growing.
+    test "suppliers#index does not grow with the number of suppliers" do
+      add = lambda do |prefix, count|
+        count.times do |i|
+          supplier = @user.maker_suppliers.create!(name: "S #{prefix}#{i}", url: "https://example.com/#{prefix}#{i}")
+          @user.maker_inventory_items.create!(name: "I #{prefix}#{i}", supplier:)
+        end
+      end
+      assert_constant_queries(suppliers_path,
+                              -> { add.call("ss", SMALL) },
+                              -> { add.call("sl", LARGE - SMALL) },
+                              "suppliers#index")
+    end
+
+    test "locations#index does not grow with the number of locations" do
+      add = lambda do |prefix, count|
+        count.times do |i|
+          parent = @user.maker_locations.create!(name: "P #{prefix}#{i}")
+          child = @user.maker_locations.create!(name: "C #{prefix}#{i}", parent:)
+          @user.maker_inventory_items.create!(name: "I #{prefix}#{i}", location: child)
+        end
+      end
+      assert_constant_queries(locations_path,
+                              -> { add.call("ls", SMALL) },
+                              -> { add.call("ll", LARGE - SMALL) },
+                              "locations#index")
     end
   end
 end

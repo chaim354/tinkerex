@@ -27,5 +27,7 @@
   .attention-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
   .attention-mark { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
   .attention-row--danger .attention-mark { background: var(--danger); }
+  /* Low stock (stage 2, S2-3): a milder signal than a failed print — accent, not danger. */
+  .attention-row--warn .attention-mark { background: var(--accent); }
   .attention-text { flex: 1; min-width: 0; }
 }

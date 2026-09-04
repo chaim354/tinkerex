@@ -200,6 +200,16 @@ Rails.application.routes.draw do
   # to namespace it with yet.
   resources :shelves, only: %i[index create destroy], path: "settings/shelves"
 
+  # --- Inventory (stage 2, S2-3): the web half of the maker inventory the v1 API already serves.
+  # `path: "inventory"` keeps the URL singular while the helpers stay inventory_item(s)_path; the
+  # Adjust door is a member POST named like the API's (`adjust`), and both go through
+  # Maker::InventoryTransaction.apply! -- the ledger has no update or destroy route on purpose. ---
+  resources :inventory_items, path: "inventory" do
+    post :adjust, on: :member
+  end
+  resources :suppliers, only: %i[index create destroy], path: "settings/suppliers"
+  resources :locations, only: %i[index create destroy], path: "settings/locations"
+
   # --- Addons (Tools) — the /tools gallery + every addon's UI ---
   # EVERY addon is now manifest-driven and served by the generic surface (Tools::AddonsController,
   # `tools/:key` below). `generators`, `boxes` and — last — `openscad` have all migrated, so no

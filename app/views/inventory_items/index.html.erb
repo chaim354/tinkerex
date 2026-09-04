@@ -1,0 +1,73 @@
+<% content_for :title, "Inventory — Tinkerex" %>
+
+<div class="page-head">
+  <h1>Inventory</h1>
+  <%= link_to "New item", new_inventory_item_path, class: "btn primary" %>
+</div>
+
+<form class="toolbar inventory-toolbar" method="get" action="<%= inventory_items_path %>">
+  <input type="search" name="q" value="<%= @q %>" placeholder="Name or part number" aria-label="Search inventory">
+  <%# CARRY THE RAW params, NOT THE NORMALIZED @sort/@dir — the same shape models/index.html.erb's
+      status chips use (`models_path(status:, q: params[:q], tag: params[:tag], sort: params[:sort])`).
+      @sort/@dir are always concrete ("name"/"asc" even with nothing in the URL), so building these
+      links from them would stamp `&sort=name&dir=asc` onto every chip even on a plain first visit —
+      noisy, and it is not what a bookmarked/shared chip URL should freeze in. %>
+  <span class="chips">
+    <%= link_to "All", inventory_items_path(q: params[:q], sort: params[:sort], dir: params[:dir]),
+                class: "filter chip#{' active' if @category.nil? && !@low}" %>
+    <%= link_to "Low stock (#{@low_count})", inventory_items_path(q: params[:q], low: 1, sort: params[:sort], dir: params[:dir]),
+                class: "filter chip#{' active' if @low}" %>
+    <% @categories.each do |cat| %>
+      <%= link_to cat, inventory_items_path(q: params[:q], category: cat, sort: params[:sort], dir: params[:dir]),
+                  class: "filter chip#{' active' if @category == cat}" %>
+    <% end %>
+  </span>
+  <span class="toolbar-spacer"></span>
+  <%# `dir` has no visible control of its own — the sortable column headers set it via a plain
+      navigation link, not through this form — so it rides as a hidden field to survive a search
+      or sort-key change. `sort`'s current value IS the select below; it needs no hidden twin. %>
+  <input type="hidden" name="dir" value="<%= @dir %>">
+  <select name="sort" aria-label="Sort" onchange="this.form.requestSubmit()">
+    <% [ %w[name Name], [ "quantity", "On hand" ], %w[category Category], %w[updated Updated] ].each do |val, label| %>
+      <option value="<%= val %>" <%= "selected" if @sort == val %>><%= label %></option>
+    <% end %>
+  </select>
+  <span class="toolbar-count"><%= pluralize(@items.size, "item") %></span>
+</form>
+
+<% if @items.empty? %>
+  <p class="empty muted">No inventory yet. Add your first item.</p>
+<% else %>
+  <table class="table inventory-table">
+    <thead>
+      <tr>
+        <%= inventory_sort_header "Name", "name", col: "col-name" %>
+        <th class="col-part">Part #</th>
+        <%= inventory_sort_header "Category", "category", col: "col-category" %>
+        <%= inventory_sort_header "On hand", "quantity", col: "col-onhand" %>
+        <th class="col-min">Min</th>
+        <th class="col-location">Location</th>
+        <th class="col-supplier">Supplier</th>
+        <%= inventory_sort_header "Updated", "updated", col: "col-updated" %>
+      </tr>
+    </thead>
+    <tbody>
+      <% @items.each do |item| %>
+        <% low = item.quantity_cached <= item.min_quantity %>
+        <tr class="<%= "low-stock" if low %>">
+          <td class="col-name">
+            <%= link_to item.name, inventory_item_path(item) %>
+            <% if low %><span class="badge low-stock">Low</span><% end %>
+          </td>
+          <td class="col-part mono"><%= item.part_number.presence || "—" %></td>
+          <td class="col-category"><%= item.category.presence || "—" %></td>
+          <td class="num col-onhand"><%= number_with_precision(item.quantity_cached, precision: 3, strip_insignificant_zeros: true) %> <%= item.unit %></td>
+          <td class="num col-min"><%= number_with_precision(item.min_quantity, precision: 3, strip_insignificant_zeros: true) %></td>
+          <td class="col-location"><%= item.location&.name || "—" %></td>
+          <td class="col-supplier"><%= item.supplier&.name || "—" %></td>
+          <td class="col-updated muted"><%= item.updated_at.strftime("%Y-%m-%d") %></td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+<% end %>

@@ -68,7 +68,7 @@
 
 <section class="home-section home-attention">
   <div class="section-head"><h2>Needs attention</h2></div>
-  <% if @failed_prints.empty? %>
+  <% if @failed_prints.empty? && @low_stock.empty? %>
     <p class="empty muted">Nothing needs attention.</p>
   <% else %>
     <ul class="attention-list">
@@ -77,6 +77,16 @@
           <span class="attention-mark" aria-hidden="true"></span>
           <span class="attention-text"><%= link_to run.model.title, model_path(run.model) %> failed on <%= run.printed_on.strftime("%Y-%m-%d") %><%= " on #{run.printer}" if run.printer.present? %>.</span>
           <%= link_to "Log a print", model_path(run.model), class: "btn small" %>
+        </li>
+      <% end %>
+      <%# LOW STOCK, AFTER THE FAILED PRINTS — a second attention source (stage 2, S2-3), sharing
+          the row shape but its own modifier class so it can read as a milder warning rather than
+          the danger colour a failed print gets (pages/home.css). %>
+      <% @low_stock.each do |item| %>
+        <li class="attention-row attention-row--warn">
+          <span class="attention-mark" aria-hidden="true"></span>
+          <span class="attention-text"><%= item.name %>: <%= number_with_precision(item.quantity_cached, precision: 3, strip_insignificant_zeros: true) %> <%= item.unit %> left, minimum <%= number_with_precision(item.min_quantity, precision: 3, strip_insignificant_zeros: true) %>.</span>
+          <%= link_to "Restock", inventory_item_path(item), class: "btn small" %>
         </li>
       <% end %>
     </ul>

@@ -94,6 +94,15 @@ class ShellTest < ApplicationSystemTestCase
   # `.rail { display: none }` gives "/files?view=list scrolls sideways at 375px (scrollWidth 393)".
   test "no page scrolls sideways at phone width" do
     project = @user.maker_projects.create!(name: "Desk Lamp", description: "A lamp." * 20)
+    # THE INVENTORY PAGES (S2-3) with every column populated and a long name, so the table drops
+    # and the settings rows are exercised at 375px, not an empty state.
+    supplier = @user.maker_suppliers.create!(name: "McMaster-Carr Supply Company", url: "https://www.mcmaster.com")
+    parent = @user.maker_locations.create!(name: "Cabinet B")
+    location = @user.maker_locations.create!(name: "Drawer B1, second from the top", parent:)
+    item = @user.maker_inventory_items.create!(name: "M3×8 socket-head cap screw, stainless, box of 100",
+                                               part_number: "91290A113", category: "Fasteners", min_quantity: 50,
+                                               unit_cost: 0.04, location:, supplier:)
+    Maker::InventoryTransaction.apply!(item:, user: @user, delta: 12, reason: "initial", note: "stocktake")
     long = create_node!(@user, node_id: SecureRandom.uuid, kind: "file",
                         name: "a-very-long-file-name-that-would-push-the-table-out-of-the-viewport-v3-final.stl")
     # ENOUGH FILES FOR THE HOME ROW TO OVERFLOW TOO, mutation-checked same as home_test.rb's own
@@ -132,7 +141,8 @@ class ShellTest < ApplicationSystemTestCase
                                     width: 375, height: 812, deviceScaleFactor: 1, mobile: false)
     begin
       [ root_path, files_path(view: "list"), files_path(view: "grid"), project_path(project),
-        file_path(long.node_id), tools_path, models_path, trash_index_path ].each do |path|
+        file_path(long.node_id), tools_path, models_path, trash_index_path,
+        inventory_items_path, inventory_item_path(item), suppliers_path, locations_path ].each do |path|
         visit path
         # `nav.tabbar` is display:none above 719px, so finding it VISIBLE is the proof that the
         # phone rules are running at all — without it a viewport that never narrowed would satisfy

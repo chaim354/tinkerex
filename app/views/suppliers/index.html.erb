@@ -1,0 +1,45 @@
+<% content_for :title, "Suppliers - Tinkerex" %>
+
+<div class="page-head">
+  <h1>Suppliers</h1>
+  <%= link_to "Inventory", inventory_items_path, class: "btn ghost small" %>
+</div>
+
+<p class="muted">
+  Where you buy inventory from. Removing a supplier never deletes the items it supplied -- they
+  just lose the reference.
+</p>
+
+<ul class="settings-list">
+  <% @suppliers.each do |supplier| %>
+    <li>
+      <span class="settings-name"><%= supplier.name %></span>
+      <% if supplier.url.present? %>
+        <%= link_to supplier.url, supplier.url, class: "settings-fact", target: "_blank", rel: "noopener" %>
+      <% end %>
+      <span class="settings-fact"><%= pluralize(@item_counts[supplier.id] || 0, "item") %></span>
+      <%= button_to "Remove", supplier_path(supplier), method: :delete,
+                    class: "linkbtn danger small settings-remove",
+                    form: { data: { turbo_confirm: "Remove #{supplier.name}? Its items keep their own facts." } } %>
+    </li>
+  <% end %>
+  <% if @suppliers.empty? %>
+    <li class="empty muted">No suppliers yet.</li>
+  <% end %>
+</ul>
+
+<%# scope: :supplier -- this form has no model object, so scope: is what names the params at all;
+    a bare `url:` form_with + fields_for would otherwise need the scope spelled out for the same
+    reason CLAUDE.md §14d's form bullet gives for a namespaced model. SuppliersController#create
+    requires :supplier, which is what scope: here produces. %>
+<%= form_with url: suppliers_path, scope: :supplier, class: "settings-add" do |f| %>
+  <label>
+    <span>Name</span>
+    <%= f.text_field :name, required: true %>
+  </label>
+  <label>
+    <span>URL</span>
+    <%= f.url_field :url %>
+  </label>
+  <%= f.submit "Add supplier", class: "btn primary" %>
+<% end %>

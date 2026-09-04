@@ -1,0 +1,15 @@
+<% content_for :title, "New item — Tinkerex" %>
+
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Inventory path">
+    <%= link_to "Inventory", inventory_items_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page">New item</span>
+  </nav>
+<% end %>
+
+<div class="page-head">
+  <h1>New item</h1>
+</div>
+
+<%= render "form", item: @item %>

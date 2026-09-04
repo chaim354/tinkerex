@@ -1,0 +1,75 @@
+<%# scope: :inventory_item — WITHOUT it, form_with derives the param key from the model class, and
+    a NAMESPACED model (Maker::InventoryItem) yields `maker_inventory_item[...]`, which
+    InventoryItemsController's params.require(:inventory_item) rejects — every create/edit through
+    the form would silently fail. Same trap projects/_form.html.erb records (CLAUDE.md §14d). %>
+<%= form_with model: item, scope: :inventory_item,
+              url: (item.persisted? ? inventory_item_path(item) : inventory_items_path),
+              method: (item.persisted? ? :patch : :post), class: "inventory-form" do |f| %>
+  <% if item.errors.any? %>
+    <div class="form-errors flash-alert">
+      <%= item.errors.full_messages.to_sentence %>
+    </div>
+  <% end %>
+
+  <label class="field">
+    <span>Name</span>
+    <%= f.text_field :name, required: true, autofocus: true %>
+  </label>
+
+  <label class="field">
+    <span>Part #</span>
+    <%= f.text_field :part_number %>
+  </label>
+
+  <label class="field">
+    <span>Category</span>
+    <%= f.text_field :category %>
+  </label>
+
+  <label class="field">
+    <span>Unit</span>
+    <%= f.select :unit, Maker::InventoryItem::UNITS %>
+  </label>
+
+  <label class="field">
+    <span>Minimum quantity</span>
+    <%= f.number_field :min_quantity, step: "any" %>
+  </label>
+
+  <label class="field">
+    <span>Unit cost</span>
+    <%= f.number_field :unit_cost, step: "any" %>
+  </label>
+
+  <label class="field">
+    <span>Location</span>
+    <%= f.select :location_id, current_user.maker_locations.order(:name).pluck(:name, :id), include_blank: true %>
+  </label>
+
+  <label class="field">
+    <span>Supplier</span>
+    <%= f.select :supplier_id, current_user.maker_suppliers.order(:name).pluck(:name, :id), include_blank: true %>
+  </label>
+
+  <label class="field">
+    <span>Notes</span>
+    <%= f.text_area :notes, rows: 4 %>
+  </label>
+
+  <%# NEW ONLY — an existing item's balance is never edited directly, only ever moved through the
+      ledger's own Adjust composer on the show page (InventoryTransaction.apply!). This field is
+      form-only: it is not in item_params and the controller posts it as a separate "initial"
+      transaction after the item itself saves (CLAUDE.md §15 — one door, never quantity_cached=). %>
+  <% unless item.persisted? %>
+    <label class="field">
+      <span>Initial quantity</span>
+      <%= f.number_field :initial_quantity, step: "any" %>
+      <span class="field-hint muted">Posts an initial transaction; the balance is never edited directly.</span>
+    </label>
+  <% end %>
+
+  <div class="form-actions">
+    <%= f.submit(item.persisted? ? "Save changes" : "Create item", class: "btn primary") %>
+    <%= link_to "Cancel", (item.persisted? ? inventory_item_path(item) : inventory_items_path), class: "linkbtn" %>
+  </div>
+<% end %>

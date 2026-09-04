@@ -22,7 +22,8 @@ module Web
     end
 
     test "each top-level section lights its own link" do
-      { root_path => "Home", projects_path => "Projects", models_path => "Models", tools_path => "Tools",
+      { root_path => "Home", projects_path => "Projects", models_path => "Models",
+        inventory_items_path => "Inventory", tools_path => "Tools",
         trash_index_path => "Trash" }.each do |path, label|
         get path
         assert_response :success
@@ -125,7 +126,7 @@ module Web
 
     test "the phone tab bar mirrors the rail" do
       get trash_index_path
-      assert_select "nav.tabbar a.tabbar-link", count: 6
+      assert_select "nav.tabbar a.tabbar-link", count: 7
       assert_select "nav.tabbar a.tabbar-link[aria-current='page']", count: 1, text: "Trash"
     end
 

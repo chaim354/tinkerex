@@ -140,6 +140,11 @@ module Web
       # request and would have to be excluded from the coverage assertion instead of covered.
       recipe!("n-bak", "layers" => [ { "name" => "Score", "color" => "#ff0000", "speed" => 100 } ])
       recipe!("n-mill", "operations" => [ { "name" => "Pocket", "tool" => "3mm flat" } ])
+      # STAGE 2, S2-3: one item with a posted ledger row, so the show page's composer AND its
+      # ledger table both render (an item with no transactions would leave `table.ledger`'s tbody
+      # empty and the balance-walk untouched).
+      @inventory_item = @user.maker_inventory_items.create!(name: "M3 bolt", unit: "each", min_quantity: 5)
+      Maker::InventoryTransaction.apply!(item: @inventory_item, user: @user, delta: 3, reason: "initial")
     end
 
     teardown do
@@ -206,6 +211,14 @@ module Web
         # The model catalog's one setting page. Needs no fixture of its own: it seeds its
         # three shelves on first visit, and renders the shared folder chooser either way.
         "shelves" => shelves_path,
+        # Stage 2, S2-3.
+        "inventory index" => inventory_items_path,
+        "inventory item" => inventory_item_path(@inventory_item),
+        "inventory new" => new_inventory_item_path,
+        "inventory edit" => edit_inventory_item_path(@inventory_item),
+        # Stage 2, S2-3 (Task B): renders fine over zero rows, so no fixture is needed here.
+        "suppliers" => suppliers_path,
+        "locations" => locations_path,
         "tools gallery" => tools_path,
         "tools addon" => tools_addon_path("fixture"),
         "trash" => trash_index_path
