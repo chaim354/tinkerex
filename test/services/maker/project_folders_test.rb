@@ -1,35 +1,49 @@
 require "test_helper"
 
 module Maker
-  # The folder map, and above all its TOTALITY.
+  # The folder map, and above all its TOTALITY -- split two ways since stage 3, S3-1.
+  # ROLE_FOLDERS must still map EVERY role (that totality is what the SEED needs:
+  # Maker::FilingRules.seed! builds one row per ROLE_BY_EXT extension via ROLE_FOLDERS.fetch(role),
+  # no default, so a gap here becomes a loud KeyError the first time any user's map is seeded).
+  # `folder_for(user, name)` itself is deliberately NOT total over extensions any more -- an
+  # unmapped one now files into "other" as a per-user, expected answer (see
+  # app/services/maker/project_folders.rb's header for why that is not the same rejected shape).
   class ProjectFoldersTest < ActiveSupport::TestCase
-    # THE GUARD THIS FILE EXISTS FOR. `folder_for` uses `fetch` with no default: reached with an
-    # unmapped role, it raises KeyError — LOUD, not silent. What makes this test necessary is that
-    # the raise is normally UNREACHABLE: role_for only returns a role once some extension is wired
-    # to it in ROLE_BY_EXT, so a role added to ROLES without a folder decision can sit here
-    # completely unexercised, with nothing to notice, until a real file of that new type is
-    # finally scanned and the raise becomes a production incident. This test is what catches the
-    # gap first. (The rejected `fetch(role, "other")` default is the genuinely silent failure — it
-    # would misfile instead of raising.) Mutation-check it by deleting a key from ROLE_FOLDERS.
+    setup do
+      @user = User.create!(email: "project-folders-#{SecureRandom.hex(4)}@example.com",
+                           confirmed_at: Time.current, omniauth_signup: true)
+    end
+
+    # THE GUARD THIS FILE EXISTS FOR. `default_folder_for` uses `fetch` with no default: reached
+    # with an unmapped role, it raises KeyError — LOUD, not silent. What makes this test necessary
+    # is that the raise is normally UNREACHABLE: role_for only returns a role once some extension
+    # is wired to it in ROLE_BY_EXT, so a role added to ROLES without a folder decision can sit
+    # here completely unexercised, with nothing to notice, until `Maker::FilingRules.seed!`
+    # finally reaches the fetch for some user's first visit and the raise becomes a production
+    # incident. This test is what catches the gap first. (The rejected `fetch(role, "other")`
+    # default is the genuinely silent failure — it would misfile instead of raising.)
+    # Mutation-check it by deleting a key from ROLE_FOLDERS.
     test "every role has a folder" do
       assert_equal Maker::FileAttachment::ROLES.to_set,
                    Maker::ProjectFolders::ROLE_FOLDERS.keys.to_set,
-                   "add the new role to ROLE_FOLDERS — a role with no folder is never filed"
+                   "add the new role to ROLE_FOLDERS — a role with no folder is ever seeded"
     end
 
+    # THE STATIC, ROLE-KEYED VOCABULARY -- default_folder_for is what the seed itself is built
+    # from, so this still pins the category decisions directly rather than through a seeded user.
     test "the categories the folders were named for" do
-      assert_equal "cnc",      Maker::ProjectFolders.folder_for("pocket.nc")
-      assert_equal "cnc",      Maker::ProjectFolders.folder_for("roughing.gcode")
-      assert_equal "laser",    Maker::ProjectFolders.folder_for("box.lbrn2")
-      assert_equal "design",   Maker::ProjectFolders.folder_for("panel.svg")
-      assert_equal "design",   Maker::ProjectFolders.folder_for("panel.dxf")
-      assert_equal "models",   Maker::ProjectFolders.folder_for("bracket.stl")
-      assert_equal "cad",      Maker::ProjectFolders.folder_for("body.f3d")
-      assert_equal "docs",     Maker::ProjectFolders.folder_for("guide.pdf")
-      assert_equal "docs",     Maker::ProjectFolders.folder_for("notes.md")
-      assert_equal "images",   Maker::ProjectFolders.folder_for("photo.jpg")
-      assert_equal "archives", Maker::ProjectFolders.folder_for("printables.zip")
-      assert_equal "code",     Maker::ProjectFolders.folder_for("main.cpp")
+      assert_equal "cnc",      Maker::ProjectFolders.default_folder_for("pocket.nc")
+      assert_equal "cnc",      Maker::ProjectFolders.default_folder_for("roughing.gcode")
+      assert_equal "laser",    Maker::ProjectFolders.default_folder_for("box.lbrn2")
+      assert_equal "design",   Maker::ProjectFolders.default_folder_for("panel.svg")
+      assert_equal "design",   Maker::ProjectFolders.default_folder_for("panel.dxf")
+      assert_equal "models",   Maker::ProjectFolders.default_folder_for("bracket.stl")
+      assert_equal "cad",      Maker::ProjectFolders.default_folder_for("body.f3d")
+      assert_equal "docs",     Maker::ProjectFolders.default_folder_for("guide.pdf")
+      assert_equal "docs",     Maker::ProjectFolders.default_folder_for("notes.md")
+      assert_equal "images",   Maker::ProjectFolders.default_folder_for("photo.jpg")
+      assert_equal "archives", Maker::ProjectFolders.default_folder_for("printables.zip")
+      assert_equal "code",     Maker::ProjectFolders.default_folder_for("main.cpp")
     end
 
     # THE ARGUABLE HALF OF THE `code` ROLE, pinned separately from the roll-call above because it
@@ -37,23 +51,51 @@ module Maker
     # configures, not in `docs` with the READMEs. `docs` is where `document` and `instructions`
     # both go, so the alternative was real and this is what rules it out.
     test "build and config files file with the code, not with the documents" do
-      assert_equal "code", Maker::ProjectFolders.folder_for("platformio.ini")
-      assert_equal "code", Maker::ProjectFolders.folder_for("Cargo.toml")
-      assert_equal "docs", Maker::ProjectFolders.folder_for("README.md")
+      assert_equal "code", Maker::ProjectFolders.default_folder_for("platformio.ini")
+      assert_equal "code", Maker::ProjectFolders.default_folder_for("Cargo.toml")
+      assert_equal "docs", Maker::ProjectFolders.default_folder_for("README.md")
     end
 
     # An unrecognised extension must land somewhere rather than raise: role_for defaults to
     # "other", so this is really asserting the two defaults agree.
-    test "an unknown extension goes to other" do
-      assert_equal "other", Maker::ProjectFolders.folder_for("mystery.qqq")
-      assert_equal "other", Maker::ProjectFolders.folder_for("README")
+    test "an unknown extension goes to other, by default_folder_for's role-based fallback" do
+      assert_equal "other", Maker::ProjectFolders.default_folder_for("mystery.qqq")
+      assert_equal "other", Maker::ProjectFolders.default_folder_for("README")
+    end
+
+    # STAGE 3, S3-1: THE PER-USER LOOKUP READS THE SEEDED (OR EDITED) MAP, CASE-INSENSITIVELY.
+    test "folder_for(user, name) reads the user's own seeded rule" do
+      assert_equal "models", Maker::ProjectFolders.folder_for(@user, "bracket.stl")
+      assert_equal "models", Maker::ProjectFolders.folder_for(@user, "bracket.STL")
+      assert_equal "docs",   Maker::ProjectFolders.folder_for(@user, "README.md")
+    end
+
+    # THE TOTALITY GUARD'S NEW HALF (spec §5): "an unmapped role raises" becomes "an unmapped
+    # extension files into other" — folder_for(user, name) is total over the user's OWN rows, not
+    # over every conceivable extension, and "other" is the honest per-user answer for one nobody
+    # has an opinion on (see the class comment for why this is not the rejected `fetch(role,
+    # "other")` shape default_folder_for's own totality test still guards against).
+    test "folder_for(user, name) files an extension with no rule into other" do
+      assert_equal "other", Maker::ProjectFolders.folder_for(@user, "mystery.qqq")
+      assert_equal "other", Maker::ProjectFolders.folder_for(@user, "README")
     end
 
     # The names are lowercase because they appear in Finder and on the NAS — deliberately NOT
-    # ROLE_LABELS ("G-code", "CAD source"), which are UI headings.
-    test "folder names are single lowercase path segments" do
+    # ROLE_LABELS ("G-code", "CAD source"), which are UI headings. STAGE 3, S3-1 ADDS THE SECOND
+    # HALF: every (ext, folder) pair Maker::FilingRules.seed! would actually WRITE must itself pass
+    # Maker::FilingRule's own validation, so the seed can never produce a row the /settings/filing
+    # form would refuse if a user tried to type it back in.
+    test "folder names are single lowercase path segments, and every seed folder passes FilingRule's own validation" do
       Maker::ProjectFolders::ROLE_FOLDERS.values.uniq.each do |name|
         assert_match(/\A[a-z0-9]+\z/, name, name)
+      end
+
+      Maker::FileAttachment::ROLE_BY_EXT.each do |ext, role|
+        folder = Maker::ProjectFolders::ROLE_FOLDERS.fetch(role)
+        rule = @user.maker_filing_rules.new(ext:, folder:)
+        assert rule.valid?,
+               "the seed would write #{ext.inspect} -> #{folder.inspect}, which FilingRule " \
+               "itself refuses: #{rule.errors.full_messages.join(', ')}"
       end
     end
 

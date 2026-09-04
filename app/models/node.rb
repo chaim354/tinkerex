@@ -52,8 +52,21 @@ class Node < ApplicationRecord
   # page never renders, which is the §14b bug this scope's placement already exists to avoid.
   # `LIKE '.%'` is adapter-agnostic (SQLite and Postgres both), and a leading dot carries no
   # wildcard meaning, so no escaping is needed.
+  #
+  # STRAY `*.ptr` POINTER STUBS (stage 3, S3-1) ARE EXCLUDED UNCONDITIONALLY, NOT GATED ON
+  # `show_hidden` THE WAY A DOT-FILE IS. A dot-file is ordinary clutter a user may reasonably want
+  # to see (`.gitignore`, `.clang-format`); a `.ptr` stub is a leftover from the git-tracking arc
+  # that NOTHING writes any more and no user has a reason to ever look at — `rake
+  # projects:sweep_pointers` is the write side that actually removes one (through the port, into
+  # the trash, never the two kinds this app already knows to keep distinct — see §14a's "two
+  # tombstone kinds"); this is the read side, a display rule exactly like `.git`'s marker two
+  # scopes up, and for the same reason: hiding a row that still exists and still syncs costs
+  # nothing and is trivially reversible, where skipping it at the OBSERVER would be the §14b
+  # blind spot a fifth time. `LIKE '%.ptr'` (a suffix, not the whole name) because the stub sits
+  # beside its real file under that file's own name plus the suffix, not under a fixed basename.
   scope :visible_entries, ->(show_hidden = false) {
-    show_hidden ? outside_repo_metadata : outside_repo_metadata.where.not("name LIKE ?", ".%")
+    scope = outside_repo_metadata.where.not("name LIKE ?", "%.ptr")
+    show_hidden ? scope : scope.where.not("name LIKE ?", ".%")
   }
 
   def dir? = kind == "dir"

@@ -62,4 +62,24 @@ namespace :projects do
       puts "Note: a dry run can't see name collisions — a real run may still skip a file shown above as filed."
     end
   end
+
+  desc "Delete stray *.ptr pointer stubs beside their real file under Projects/ (DRY_RUN=1 reports only)"
+  task sweep_pointers: :environment do
+    # A POINTER WITHOUT ITS REAL FILE IS NOT TOUCHED — that is the git-tracking arc's own shape (the
+    # pointer stands for a binary that is elsewhere), and deleting it would be data loss. Deletion goes
+    # through the port so the stub lands in the trash, restorable, never the void.
+    dry = ENV["DRY_RUN"] == "1"
+    User.find_each do |user|
+      tree = Maker::LibraryTree.new(user)
+      user.nodes.present.where(kind: "file").where("name LIKE '%.ptr'").find_each do |ptr|
+        # UNDER Projects/ EXACTLY — a bare prefix would sweep a sibling named ProjectsArchive too.
+        path = tree.path_for(ptr.parent_node_id).to_s
+        next unless path == Maker::ProjectFolders::ROOT || path.start_with?("#{Maker::ProjectFolders::ROOT}/")
+        real = user.nodes.present.find_by(parent_node_id: ptr.parent_node_id, name: ptr.name.delete_suffix(".ptr"))
+        next puts("keep   #{ptr.name} (no real file beside it)") unless real
+        puts "#{dry ? 'would delete' : 'delete'} #{tree.path_for(ptr.parent_node_id)}/#{ptr.name}"
+        FileLayer.current.delete(user, node_id: ptr.node_id) unless dry
+      end
+    end
+  end
 end

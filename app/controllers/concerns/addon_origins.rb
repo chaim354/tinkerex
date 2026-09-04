@@ -43,7 +43,7 @@ module AddonOrigins
       link = Maker::AddonOrigin.link_for(state, addons:)
       next if link.nil?
 
-      [ node_id, { url: link[:url], label: "Edit in #{link[:title]}", state: } ]
+      [ node_id, { url: link[:url], label: "Edit in #{link[:title]}", title: link[:title], state: } ]
     }.to_h
   end
 end

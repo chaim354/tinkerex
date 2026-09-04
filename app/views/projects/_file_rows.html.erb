@@ -1,0 +1,45 @@
+<%#
+  A group's files as a table — the list view's rendering for exactly the rows _file_tile.html.erb
+  draws as tiles (Maker::ProjectFolderListing::Row), wherever they come from: a folder section,
+  Loose, Backups, Linked, or Generated. `.table` is the shared component (components.css);
+  `.project-files` carries only this page's column widths/drops (pages/projects.css), the same
+  split files/_list.html.erb's `table.files` makes.
+
+  `row.section` is precomputed by whoever built the row (Maker::ProjectFolderListing for a folder
+  row, ProjectsController#show for a Linked one) — this partial never walks the tree itself. Blank
+  reads as "Loose", the sweep's own name for the folder's root.
+
+  ORIGIN READS @addon_origins, THE SAME HASH EVERY TILE ON THIS PAGE ALREADY READS FOR ITS
+  right-click menu (AddonOrigins#addon_origins_for, one Registry lookup for the whole page) — never
+  a second resolution here. A row with no addon origin answers nil and the cell reads "—"; a
+  Generated row's origin is never nil, by construction (Maker::AddonOrigin.for is what put it in
+  @generated in the first place). The label is parsed rather than re-derived because nothing renders
+  the bare addon title today outside this cell — see AddonOrigins' own comment on why `title` isn't
+  a key in that hash.
+%>
+<table class="table project-files">
+  <thead>
+    <tr>
+      <th class="col-name">Name</th>
+      <th class="col-section">Section</th>
+      <th class="num col-size">Size</th>
+      <th class="col-modified">Modified</th>
+      <th class="col-origin">Origin</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% rows.each do |row| %>
+      <% node = row.node %>
+      <% origin = @addon_origins[row.node_id] %>
+      <tr>
+        <td class="col-name"><%= link_to node.name, file_path(row.node_id) %></td>
+        <td class="muted col-section"><%= row.section.presence || "Loose" %></td>
+        <td class="num muted col-size"><%= node.size ? number_to_human_size(node.size) : "—" %></td>
+        <td class="muted col-modified">
+          <%= node.mtime ? Time.at(node.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M") : "—" %>
+        </td>
+        <td class="muted col-origin"><%= origin ? origin[:title] : "—" %></td>
+      </tr>
+    <% end %>
+  </tbody>
+</table>

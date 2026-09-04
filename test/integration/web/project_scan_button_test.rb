@@ -156,7 +156,7 @@ module Web
           post project_scan_path(@project)
         end
       end
-      assert_match(/already in #{Maker::ProjectFolders.folder_for('panel.stl')}\//,
+      assert_match(/already in #{Maker::ProjectFolders.folder_for(@user, 'panel.stl')}\//,
                    flash[:notice].to_s)
       assert_match(/stayed at the project root/i, flash[:notice].to_s)
     end

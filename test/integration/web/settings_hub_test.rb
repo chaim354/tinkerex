@@ -3,13 +3,16 @@ require "test_helper"
 module Web
   # Stage 2, S2-6: the settings hub (SettingsController#show) and its one child list
   # (Settings::TagsController), in the shape settings_reference_test.rb already established for
-  # Suppliers/Locations -- a flat list, session-authed (§14d).
+  # Suppliers/Locations -- a flat list, session-authed (§14d). The hub's Filing row (stage 3,
+  # S3-1) is a seventh plain count; Settings::FilingRulesController itself is covered by
+  # settings_filing_test.rb, not here.
   #
   # NO BACKEND IS PINNED HERE, for the same reason settings_reference_test.rb and shelves_test.rb
-  # give: SettingsController#show counts maker_shelves/maker_suppliers/maker_locations/maker_tags,
-  # and Settings::TagsController reads maker_tags/maker_taggings -- neither controller reads
-  # `nodes` or calls the port at all, so there is nothing for FileLayer.current to answer and
-  # nothing for the ambient LIBRARY_BACKEND to change.
+  # give: SettingsController#show counts
+  # maker_shelves/maker_suppliers/maker_locations/maker_filing_rules/maker_tags, and
+  # Settings::TagsController reads maker_tags/maker_taggings -- neither controller reads `nodes`
+  # or calls the port at all, so there is nothing for FileLayer.current to answer and nothing for
+  # the ambient LIBRARY_BACKEND to change.
   class SettingsHubTest < ActionDispatch::IntegrationTest
     PASSWORD = "password123".freeze
 
@@ -34,7 +37,7 @@ module Web
 
     # ============================================================ The hub
 
-    test "the hub lists six rows with facts and links" do
+    test "the hub lists seven rows with facts and links" do
       @user.maker_shelves.create!(path: "Models")
       @user.maker_shelves.create!(path: "Enclosures")
       @user.maker_suppliers.create!(name: "Acme Bolts")
@@ -42,22 +45,25 @@ module Web
       @user.maker_suppliers.create!(name: "Zerex Supply")
       @user.maker_locations.create!(name: "Cabinet B")
       @user.maker_locations.create!(name: "Drawer B1")
+      @user.maker_filing_rules.create!(ext: "stl", folder: "models")
       %w[laser firmware enclosure wiring].each { |name| @user.maker_tags.create!(name:) }
 
       get settings_path
 
       assert_response :success
-      assert_select "ul.settings-list.settings-hub li", count: 6
+      assert_select "ul.settings-list.settings-hub li", count: 7
       names = css_select("ul.settings-list.settings-hub li .settings-name").map { |el| el.text.strip }
-      assert_equal [ "Shelves", "Suppliers", "Locations", "Tags", "Account", "Theme" ], names
+      assert_equal [ "Shelves", "Suppliers", "Locations", "Filing", "Tags", "Account", "Theme" ], names
       assert_select "a.settings-name[href=?]", shelves_path
       assert_select "a.settings-name[href=?]", suppliers_path
       assert_select "a.settings-name[href=?]", locations_path
+      assert_select "a.settings-name[href=?]", settings_filing_rules_path
       assert_select "a.settings-name[href=?]", settings_tags_path
       assert_select "a.settings-name[href=?]", edit_user_registration_path
       assert_select ".settings-fact", text: "2 shelves"
       assert_select ".settings-fact", text: "3 suppliers"
       assert_select ".settings-fact", text: "2 locations"
+      assert_select ".settings-fact", text: "1 rule"
       assert_select ".settings-fact", text: "4 tags"
       assert_select ".settings-fact", text: @user.email
       # cookies[:theme] is unset -- ShellHelper#ui_theme's default, "dark".

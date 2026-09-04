@@ -231,6 +231,12 @@ Rails.application.routes.draw do
   resource :settings, only: :show, controller: "settings"
   namespace :settings do
     resources :tags, only: %i[index destroy]
+    # Stage 3, S3-1: the per-user extension map the intake sweep files by (Maker::FilingRules).
+    # `path: "filing"` keeps the URL as /settings/filing while the helpers stay
+    # settings_filing_rule(s)_path; `update` is the inline per-row folder edit, `create` the add
+    # form, `destroy` the Remove button -- the same four Suppliers/Locations use plus the one they
+    # don't need.
+    resources :filing_rules, only: %i[index create update destroy], path: "filing"
   end
 
   # --- Addons (Tools) — the /tools gallery + every addon's UI ---

@@ -103,6 +103,31 @@
 
 ## Filing
 
+- **THE FOLDER NAMES COME FROM THE USER'S OWN FILING RULES (stage 3, S3-1), SEEDED FROM THE ELEVEN
+  ROLES — NOT FROM `Maker::ProjectFolders::ROLE_FOLDERS` DIRECTLY ANY MORE.**
+  `Maker::ProjectFolders.folder_for(user, name)` reads `Maker::FilingRules.for(user)`: one row per
+  extension, seeded once from `ROLE_FOLDERS` over `Maker::FileAttachment::ROLE_BY_EXT` on a user's
+  first read and edited from then on at `/settings/filing`. `default_folder_for(name)` stays the
+  OLD pure function of the static, role-keyed vocabulary — kept for the seed itself (which cannot
+  ask `FilingRules.for` the very map it is about to build) and for any caller with no user in hand.
+  An extension with no rule files into `"other"`, a per-user, expected answer now rather than the
+  loud `KeyError` an unmapped ROLE still gets (`default_folder_for`'s own `fetch` has no default,
+  on purpose — see `Maker::ProjectFolders`'s header for the full argument for why these are not
+  the same shape).
+  **`#place` DOES NOT CALL `Maker::ProjectFolders.folder_for` AT ALL, AND THAT OMISSION IS
+  LOAD-BEARING.** That method pays `Maker::FilingRules.for`'s `exists?` + `pluck` pair on EVERY
+  call, so using it inside `#file_all`'s per-file loop would be a query pair per file across a run
+  bounded at `MAX_MOVES` (500) — the identical per-file cost this file's own "the memo is per
+  parent, not per node" bullet already warns about for `AttachToProject#refusal_for`, one layer up.
+  `ProjectIntake` instead keeps its own `@filing_rules` memo (`Maker::FilingRules.for(@user)`, read
+  ONCE for the whole sweep) and a private `#folder_for(name)` reading it directly — one query pair
+  per PROJECT's sweep (a `ProjectIntake` instance is itself scoped to one project; see
+  `.for_user`'s per-project loop), not one for a user's whole multi-project run and not one per
+  file. `.destination_for` — a class method with no instance to memo on, called once per
+  addon-output file rather than per sweep-file — still calls `Maker::ProjectFolders.folder_for`
+  directly; its own call volume is bounded by one addon save's output count, never by the
+  library's whole inbox, so it does not need the same memo.
+
 - **THE PAGE LISTS THE FOLDER AND NEVER FILES OR MINTS IT.** `Maker::ProjectFolderListing` reads
   `folder_node_id`, answers liveness through the LibraryTree, and creates nothing; the one writer of the FOLDER
   on `projects#show` is the pre-existing best-effort `ensure_library_folder!` for the upload
@@ -184,8 +209,9 @@
   to tell "never succeeds on retry" from "say yes and it will", or it offers an Overwrite button for
   a save that can never take one. `destination_for` **creates nothing** — looking up a category
   folder must not mkdir it (`#relocate`'s recorded bug) — and takes its name from
-  `Maker::ProjectFolders.folder_for`, the same pure function `#place` uses, so prediction and
-  behaviour cannot disagree. **The 422 has ONE exemption, and only one:** an addon save carrying
+  `Maker::ProjectFolders.folder_for(user, name)`, reading the SAME per-user filing rules `#place`'s
+  own memoized lookup reads a moment later, so prediction and behaviour cannot disagree as long as
+  the user's rules have not changed in between. **The 422 has ONE exemption, and only one:** an addon save carrying
   `state_id` may land on a node that saved item itself produced, in either check (§14c's own-file
   rule). Naming the state is the consent; "the destination is taken" is still terminal for every
   collision with a file this save did not write.

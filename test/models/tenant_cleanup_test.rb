@@ -55,6 +55,7 @@ class TenantCleanupTest < ActiveSupport::TestCase
     "maker_projects" => ->(u) { u.maker_projects.create!(name: "Lamp") },
     "maker_locations" => ->(u) { u.maker_locations.create!(name: "Shelf A") },
     "maker_suppliers" => ->(u) { u.maker_suppliers.create!(name: "Digikey") },
+    "maker_filing_rules" => ->(u) { u.maker_filing_rules.create!(ext: "stl", folder: "models") },
     "maker_collections" => ->(u) { u.maker_collections.create!(name: "Favourites") },
     "maker_shelves" => ->(u) { u.maker_shelves.create!(path: "Models") },
     "maker_notes" => ->(u) { u.maker_notes.create!(node_id: SecureRandom.uuid, body: "note") },
@@ -119,6 +120,7 @@ class TenantCleanupTest < ActiveSupport::TestCase
   BUILD_ORDER = %w[
     devices nodes remote_manifest_chunks user_identities
     maker_items maker_models maker_tags maker_projects maker_locations maker_suppliers
+    maker_filing_rules
     maker_collections maker_shelves maker_notes maker_tasks maker_previews maker_addon_states
     maker_print_runs maker_taggings maker_file_attachments maker_collection_items maker_repo_edits
     maker_build_log_entries maker_sheets maker_boms maker_inventory_items

@@ -113,15 +113,23 @@ module Web
       @project.file_attachments.create!(user: @user, node_id: "n-bak", role: "laser", position: 1)
       @project.file_attachments.create!(user: @user, node_id: "gone", role: "model",
                                         label: "ghost.stl", position: 2)
-      # ONE REPOSITORY INSIDE THE PROJECT'S FOLDER, OR projects/_repo_group IS NEVER RENDERED. A
-      # dir with a `.git` marker child under the folder is what makes
-      # Maker::ProjectFolderListing#repos non-empty, so "project detail" below sweeps it — the
-      # same argument the `d-laser` comment two attachments up makes for models/_file_tree.
+      # ONE REPOSITORY INSIDE THE PROJECT'S FOLDER, so a repo SECTION renders (S3-1: a working tree
+      # is a section of the tree, projects/_file_tree_section, not a group of its own). A dir with a
+      # `.git` marker child under the folder is what marks it — the same argument the `d-laser`
+      # comment two attachments up makes for models/_file_tree.
       folder = project_folder_rows!(@user, @project)
       firmware = @user.nodes.create!(node_id: "d-firmware", name: "firmware", kind: "dir",
                                      parent_node_id: folder.node_id)
       @user.nodes.create!(node_id: "d-firmware-git", name: Library::RepoMetadata::DIR_NAME,
                           kind: "dir", parent_node_id: firmware.node_id)
+      # ONE GENERATED FILE IN THE FOLDER, OR projects/_generated_group IS NEVER RENDERED: a file with
+      # a Maker::AddonState behind it, keyed to the `fixture` addon the sweep's ADDON_SOURCE_PATH
+      # already serves (link_for answers nil for a key the source does not know, and the concern
+      # drops it). The list view of the same page sweeps _file_rows.
+      generated = @user.nodes.create!(node_id: "n-generated", name: "shelf-box.svg", kind: "file",
+                                      parent_node_id: folder.node_id)
+      state = @user.maker_addon_states.create!(addon_key: "fixture", name: "shelf box", data: {}, revision: 2)
+      state.files.create!(node_id: generated.node_id, role: "output", position: 0)
       @project.tasks.create!(user: @user, title: "Cut the base", status: "todo", position: 0)
       @project.build_log_entries.create!(user: @user, body: "Cut the base tonight.",
                                          logged_at: Time.current)
@@ -210,6 +218,7 @@ module Web
         "file detail (text)" => file_path("n-src"),
         "projects index" => projects_path,
         "project detail" => project_path(@project),
+        "project detail (list)" => project_path(@project, view: "list"),
         "project new" => new_project_path,
         "project edit" => edit_project_path(@project),
         "project attachment new" => new_project_attachment_path(@project),
@@ -240,7 +249,9 @@ module Web
         # Stage 2, S2-6. @project wears "laser" (setup above), so this renders a non-empty list --
         # the settings hub itself needs no fixture, it only counts what setup already created.
         "settings" => settings_path,
-        "settings/tags" => settings_tags_path
+        "settings/tags" => settings_tags_path,
+        # Stage 3, S3-1. Needs no fixture: #index seeds its own rows on first visit.
+        "settings/filing" => settings_filing_rules_path
       }
     end
 

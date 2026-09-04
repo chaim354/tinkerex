@@ -1,0 +1,40 @@
+<%#
+  ONE REAL SUBFOLDER of the project's folder, recursively — a section per subfolder, nested exactly
+  as it sits on disk (stage 3, S3-1; "the folder is the truth" replaces the old role-derived
+  grouping). A working tree renders here too, entered rather than stopped at
+  (Maker::ProjectFolderListing#tree): its own files list and its own subfolders nest the same as
+  any other folder, plus a link to its commit and history pages — a repository is a section now,
+  and the old standalone Repositories group (_repo_group.html.erb) is gone.
+
+  @generated_ids IS FILTERED OUT HERE, AT EVERY LEVEL of the recursion, so a file with an addon
+  origin renders ONCE, in the Generated group below, never inside the folder it happens to sit in
+  (ProjectsController#show resolves @generated from @listing.node_ids, which already covers every
+  depth of this tree).
+
+  ALWAYS OPEN: S2-2's "closed by default" rule belongs to the synthetic, cross-cutting Backups
+  group alone (_attachment_group.html.erb, unchanged) — a REAL subfolder is not that, whatever a
+  user happens to name it.
+
+  Local: dir (Maker::ProjectFolderListing::Dir).
+%>
+<% visible = dir.files.reject { |row| @generated_ids.include?(row.node_id) } %>
+<section class="attachment-group file-tree-section">
+  <details open>
+    <%# THE NAME AND THE COUNT STAY ON ONE SOURCE LINE, WITH ONE LITERAL SPACE BETWEEN THEM —
+        _attachment_group.html.erb's summary does the same, and for the same reason: a conditional
+        badge/link block on its own line leaves a newline-plus-indentation TEXT NODE behind even
+        when it renders nothing, which breaks a `text: /name \(N\)/` substring match against the
+        rendered summary (found by driving a real request, not by reading the template). %>
+    <summary class="attachment-group-head"><%= dir.name %><% if dir.repo? %> <span class="badge">repo</span><% end %> <span class="muted">(<%= visible.size %>)</span><% if dir.repo? %> <%= link_to "Commits", repo_commit_path(dir.node_id), class: "linkbtn small" %> <%= link_to "History", repo_history_path(dir.node_id), class: "linkbtn small" %><% end %></summary>
+    <% if visible.any? %>
+      <% if @view == "list" %>
+        <%= render "file_rows", rows: visible %>
+      <% else %>
+        <div class="attachments-grid">
+          <%= render partial: "file_tile", collection: visible, as: :row %>
+        </div>
+      <% end %>
+    <% end %>
+    <%= render partial: "file_tree_section", collection: dir.children, as: :dir %>
+  </details>
+</section>

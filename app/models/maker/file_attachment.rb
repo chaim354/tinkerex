@@ -5,8 +5,9 @@ module Maker
     belongs_to :user
     belongs_to :attachable, polymorphic: true
 
-    # Display order AND the source of truth for the vocabulary — the Files panel renders one
-    # section per key, in this order, using these labels. ROLES derives from the keys so a
+    # Display order AND the source of truth for the vocabulary: the Files page's type filter reads
+    # it, and it seeds the per-user filing rules (S3-1); the project panel groups by the folder's
+    # real subfolders since stage 3, not by these keys. ROLES derives from the keys so a
     # heading can never name a role the validation would reject.
     ROLE_LABELS = {
       "model"          => "Models",
