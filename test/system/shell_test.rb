@@ -103,6 +103,11 @@ class ShellTest < ApplicationSystemTestCase
                                                part_number: "91290A113", category: "Fasteners", min_quantity: 50,
                                                unit_cost: 0.04, location:, supplier:)
     Maker::InventoryTransaction.apply!(item:, user: @user, delta: 12, reason: "initial", note: "stocktake")
+    # STAGE 2, S2-4: one BOM line so the panel's table (and its composer) render at 375px rather
+    # than the empty state -- reuses `item`/`supplier` above, the same argument the inventory
+    # fixtures two lines up make for exercising a populated row rather than an empty page.
+    bom = project.boms.create!(user: @user)
+    bom.lines.create!(user: @user, inventory_item: item, supplier:, quantity: 2, unit: "each")
     long = create_node!(@user, node_id: SecureRandom.uuid, kind: "file",
                         name: "a-very-long-file-name-that-would-push-the-table-out-of-the-viewport-v3-final.stl")
     # ENOUGH FILES FOR THE HOME ROW TO OVERFLOW TOO, mutation-checked same as home_test.rb's own
@@ -142,7 +147,8 @@ class ShellTest < ApplicationSystemTestCase
     begin
       [ root_path, files_path(view: "list"), files_path(view: "grid"), project_path(project),
         file_path(long.node_id), tools_path, models_path, trash_index_path,
-        inventory_items_path, inventory_item_path(item), suppliers_path, locations_path ].each do |path|
+        inventory_items_path, inventory_item_path(item), suppliers_path, locations_path,
+        project_bom_path(project) ].each do |path|
         visit path
         # `nav.tabbar` is display:none above 719px, so finding it VISIBLE is the proof that the
         # phone rules are running at all — without it a viewport that never narrowed would satisfy

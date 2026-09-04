@@ -1,0 +1,20 @@
+<%#
+  The project page's BOM panel (stage 2, S2-4): a capped table plus the composer, sharing
+  projects/_bom_lines with the full page (projects/boms/show.html.erb) so the two surfaces can
+  never render differently. ProjectsController#show loads @bom / @bom_lines / @bom_lines_shown /
+  @bom_rollup / @items / @suppliers and folds the bom's file-line node ids into the page's ONE
+  PageNodes union (@page_nodes) — this partial issues no query of its own.
+%>
+<section class="panel bom-panel">
+  <div class="panel-head">
+    <h2>Bill of materials</h2>
+    <% if @bom %>
+      <span class="bom-rev mono muted">rev <%= @bom.revision %></span>
+    <% end %>
+    <%= link_to "Open", project_bom_path(@project), class: "btn small" %>
+  </div>
+
+  <%= render "projects/bom_lines", lines: @bom_lines, shown: @bom_lines_shown, rollup: @bom_rollup,
+             nodes: @page_nodes, project: @project, bom: @bom, items: @items, suppliers: @suppliers,
+             more_path: project_bom_path(@project) %>
+</section>

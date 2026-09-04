@@ -145,6 +145,14 @@ module Web
       # empty and the balance-walk untouched).
       @inventory_item = @user.maker_inventory_items.create!(name: "M3 bolt", unit: "each", min_quantity: 5)
       Maker::InventoryTransaction.apply!(item: @inventory_item, user: @user, delta: 3, reason: "initial")
+      # STAGE 2, S2-4: a BOM with a line of EACH kind, so both projects/_bom (the panel, on
+      # "project detail") and projects/_bom_lines (the shared table + composer, on "projects/boms"
+      # too) render every branch -- an empty BOM would skip the table and the badge partials
+      # entirely.
+      bom = @project.boms.create!(user: @user)
+      bom.lines.create!(user: @user, inventory_item: @inventory_item, quantity: 2, unit: "each", position: 0)
+      bom.lines.create!(user: @user, node_id: "n-stl", quantity: 1, unit: "each", position: 1)
+      bom.lines.create!(user: @user, part_name: "22 AWG wire", quantity: 3, unit: "m", position: 2)
     end
 
     teardown do
@@ -204,6 +212,7 @@ module Web
         "project edit" => edit_project_path(@project),
         "project attachment new" => new_project_attachment_path(@project),
         "project sheet" => sheet_path(@sheet),
+        "projects/boms" => project_bom_path(@project),
         "models index" => models_path,
         "model detail" => model_path(@model),
         "model new" => new_model_path,

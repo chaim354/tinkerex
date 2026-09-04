@@ -78,7 +78,20 @@ class ProjectsController < ApplicationController
                        .includes(:file_attachments, :rich_text_body)
                        .reorder(logged_at: :desc).to_a
     entry_photo_ids = @entries.flat_map { |e| e.file_attachments.map(&:node_id) }
-    @page_nodes = live_nodes_for(all_attachments.map(&:node_id) + entry_photo_ids)
+    # THE BOM PANEL (stage 2, S2-4). Loaded here, above the union below, so a file-line's target
+    # joins the page's ONE PageNodes union instead of costing its own query -- the same argument
+    # this method already makes for entry_photo_ids two lines up. @bom_lines holds every line (the
+    # rollup wants all of them); @bom_lines_shown is the panel's capped slice, sliced IN RUBY so the
+    # rollup and the cap can never disagree about which lines exist. Maker::Project#current_bom is
+    # the one definition of "latest revision" -- Projects::BomLinesController and
+    # Projects::BomsController both call it too rather than repeating the ORDER clause.
+    @bom = @project.current_bom
+    @bom_lines = @bom ? @bom.lines.includes(:inventory_item, :supplier).to_a : []
+    @bom_lines_shown = @bom_lines.first(Projects::BomLinesController::PANEL_CAP)
+    @bom_rollup = Maker::BomRollup.new(@bom_lines)
+    @items = current_user.maker_inventory_items.order(:name).pluck(:name, :id)
+    @suppliers = current_user.maker_suppliers.order(:name).pluck(:name, :id)
+    @page_nodes = live_nodes_for(all_attachments.map(&:node_id) + entry_photo_ids + @bom_lines.filter_map(&:node_id))
     @attachments, missing = all_attachments.partition { |a| @page_nodes.key?(a.node_id) }
     # NOT SILENT. The panel says how many left and points at the Trash, because a user who deleted
     # a file by accident and watched their project change otherwise has no thread to pull. It

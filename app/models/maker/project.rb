@@ -74,6 +74,15 @@ module Maker
       pick&.node_id
     end
 
+    # THE BOM ON THE WEB: the latest revision, or nil if the project has none yet. ONE query
+    # (`ORDER ... LIMIT 1`) -- Projects::BomLinesController#create is the only writer that MINTS
+    # one, lazily, on the first line's POST; every reader (this method, ProjectsController#show,
+    # Projects::BomsController#show) calls this rather than repeating the ORDER clause, so "latest
+    # revision" has one definition (stage 2, S2-4).
+    def current_bom
+      boms.order(revision: :desc, id: :desc).first
+    end
+
     def archive!
       update!(status: "archived", archived_at: Time.current)
     end
