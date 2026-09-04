@@ -58,6 +58,9 @@ module Maker
 
     def available? = !@folder_id.nil?
     def truncated? = @truncated
+    # The walk ran out of DIR_CAP before it ran out of tree — the panel words that differently from
+    # "more files than tiles", since `total` counts only the dirs that WERE walked.
+    def dir_cap_hit? = @dir_cap_hit
     def node_ids = @files.map(&:node_id)
     def node_id_set = @node_id_set ||= node_ids.to_set
 

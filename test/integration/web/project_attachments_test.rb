@@ -204,6 +204,27 @@ module Web
                     text: "Open the folder"
     end
 
+    # THE OTHER CAP. A walk that stops at DIR_CAP subfolders before it has seen a single file must
+    # not read as an empty project: the truncation line renders OUTSIDE the empty check, and names
+    # the subfolders rather than a "0 of 0" file count (found in review, 2026-09-04).
+    test "a walk cut short by DIR_CAP says so even when no file made the list" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      folder = project.ensure_library_folder!(user)
+      now = Time.current
+      Node.insert_all((Maker::ProjectFolderListing::DIR_CAP + 1).times.map do |i|
+        { node_id: "dcap-#{i}", name: format("sub%03d", i), kind: "dir", user_id: user.id,
+          parent_node_id: folder.node_id, deleted: false, created_at: now, updated_at: now }
+      end)
+
+      get project_path(project)
+      assert_response :success
+      assert_select "p.muted", text: /No files in this project yet/, count: 0
+      assert_select ".attachments-truncated", text: /Not every subfolder was listed/
+      assert_select ".attachments-truncated", text: /Showing/, count: 0
+      assert_select ".attachments-truncated a[href=?]", files_path(folder: folder.node_id)
+    end
+
     # LINKED IS A FOLDER QUESTION, NOT A LIST QUESTION. The listing is capped at FILE_CAP, so an
     # attached file past the cap is absent from the tiles — and must NOT come back as "linked from
     # elsewhere": it sits in the folder, and the truncation line stands for it. The controller asks

@@ -104,7 +104,7 @@
 ## Filing
 
 - **THE PAGE LISTS THE FOLDER AND NEVER FILES OR MINTS IT.** `Maker::ProjectFolderListing` reads
-  `folder_node_id`, answers liveness through the LibraryTree, and creates nothing; the one writer
+  `folder_node_id`, answers liveness through the LibraryTree, and creates nothing; the one writer of the FOLDER
   on `projects#show` is the pre-existing best-effort `ensure_library_folder!` for the upload
   control, which runs before the listing. A file inside the folder with no attachment row is still
   listed — the folder is the relation the panel shows; `maker_file_attachments` stays the relation
