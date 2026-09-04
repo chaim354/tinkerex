@@ -2549,12 +2549,16 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # there is nothing to wear at once now, so what it pins instead is that the one surviving class
   # carries the red stroke AND the tint, and that the hover green cannot take the red back.
   #
-  # THE HOVER HALF IS THE ORDERING CLAIM, and it is applied DIRECTLY rather than by leaving the
-  # pointer where the click left it — the precedent is the cursor test above: the class is what
-  # `hover()` toggles, so a real pointer sequence would be testing Selenium's input synthesis
-  # rather than the cascade. `--hover` and `--marked` are both one class, (0,1,0), so ONLY source
-  # order decides; put `--marked` back above `--hover` and the shape a user just clicked sits under
-  # the green until they move the mouse away, which is the opposite of "stays red".
+  # THE HOVER HALF IS THE ORDERING CLAIM. `--hover` and `--marked` are both a single class,
+  # (0,1,0), so ONLY source order decides a contour wearing both — and MEASURED, NOT REASONED: the
+  # real click below already leaves the pointer on the plate, so `--hover` is on it before the
+  # first assertion runs. Restoring the old order (`--marked` above `--hover`) turns that first
+  # assertion red with `Actual: "rgb(34, 187, 119)"`, which is the state a user would be looking
+  # at — the shape they just clicked sitting under the green until they move the mouse away.
+  #
+  # THE SECOND HALF APPLIES `--hover` DIRECTLY ANYWAY, following the cursor test above: that makes
+  # the claim independent of whether Selenium's pointer synthesis keeps producing a hover, which is
+  # a property of the driver rather than of the cascade this exists for.
   test "a clicked contour is red, tinted, and stays red under the hover" do
     open_measure_view(@nested_id)
 
@@ -2562,6 +2566,8 @@ class MeasurePrintTest < ApplicationSystemTestCase
     plate = contour_with_min_x(-30)
 
     assert plate[:class].include?("measure-contour--marked"), "it must be in the selection"
+    assert plate[:class].include?("measure-contour--hover"),
+           "premise: the click leaves the pointer on the contour, so both classes are worn"
     # COMPUTED, not declared: reading the attribute reports what we WROTE even when a rule outranks
     # it — that is how an attribute-based version of the sibling assertion in lbrn_measure_test.rb
     # stayed green over a stylesheet that had flattened every colour.

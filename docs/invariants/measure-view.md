@@ -448,9 +448,12 @@
   - **`.measure-contour--marked` IS DECLARED AFTER `--hover`, AND THAT ORDER IS THE WHOLE "STAYS
     RED" CLAIM.** Both are a single class, (0,1,0), so source order alone decides a contour that is
     both — and a click leaves the pointer ON the contour it just selected, so with `--marked` first
-    the shape you just picked sits under the hover green until you move the mouse. Pinned by a
-    COMPUTED-style assertion in `measure_print_test.rb` that adds `--hover` directly rather than
-    relying on Selenium's pointer synthesis, the same way the cursor test applies `is-panning`.
+    the shape you just picked sits under the hover green until you move the mouse. **Measured:**
+    restoring that order turns `measure_print_test.rb`'s computed-style assertion red with
+    `Actual: "rgb(34, 187, 119)"` on the plain post-click read, because a Selenium click really does
+    leave `--hover` on the contour; the test then applies `--hover` a second time DIRECTLY, the way
+    the cursor test applies `is-panning`, so the claim does not rest on the driver's pointer
+    synthesis continuing to behave that way.
   - **THE FIXTURE'S RED AND THE SELECTION'S RED ARE DIFFERENT NUMBERS, AND THE OPEN-CONTOUR TEST
     RESTS ON IT.** `sample.lbrn2`'s layer 0 paints `rgb(255, 0, 0)` and `--marked` `#d40` =
     `rgb(221, 68, 0)`. Repaint the selection pure red and "the class reached the drawn line" stops
