@@ -125,7 +125,7 @@ module Web
 
     test "the phone tab bar mirrors the rail" do
       get trash_index_path
-      assert_select "nav.tabbar a.tabbar-link", count: 6
+      assert_select "nav.tabbar a.tabbar-link", count: 7
       assert_select "nav.tabbar a.tabbar-link[aria-current='page']", count: 1, text: "Trash"
     end
 

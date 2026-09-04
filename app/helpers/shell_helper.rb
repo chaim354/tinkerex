@@ -13,6 +13,7 @@ module ShellHelper
     "files" => %w[files library_browse notes repo_commits repo_histories],
     "models" => %w[models shelves],
     "projects" => %w[projects current_project],
+    "inventory" => %w[inventory_items suppliers locations],
     "tools" => %w[tools],
     "trash" => %w[trash]
   }.freeze
@@ -22,6 +23,7 @@ module ShellHelper
     files: "M2 4h5l2 2h5v7H2z",
     models: "M8 2l6 3v6l-6 3-6-3V5z M2 5l6 3 6-3 M8 8v6",
     projects: "M2 3h12v10H2z M6 3v10 M10 3v10",
+    inventory: "M2 5h12v8H2z M2 5l2-3h8l2 3 M6 8h4",
     tools: "M10.5 2.5a3.5 3.5 0 0 0-3.2 4.9L2 12.7 3.3 14l5.3-5.3a3.5 3.5 0 0 0 4.9-3.2L11.6 7.4 9.6 6.4l1.9-1.9z",
     trash: "M3 4h10 M6 4V2.5h4V4 M4.5 4l.8 9.5h5.4L11.5 4 M7 7v4.5 M9 7v4.5",
     search: "M7 2.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z M10.5 10.5L14 14",
@@ -60,6 +62,7 @@ module ShellHelper
       [ "files", "Files", files_path, :files ],
       [ "models", "Models", models_path, :models ],
       [ "projects", "Projects", projects_path, :projects ],
+      [ "inventory", "Inventory", inventory_items_path, :inventory ],
       [ "tools", "Tools", tools_path, :tools ],
       [ "trash", "Trash", trash_index_path, :trash ]
     ]
