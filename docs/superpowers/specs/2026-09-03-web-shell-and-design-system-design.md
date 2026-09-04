@@ -425,11 +425,11 @@ does one count and one select; `q` adds no query.
 
 1. **Design system and shell.** Tokens, base, components, shell sheets and fonts; the three
    controllers; the layout (rail, card, top bar, toasts, theme and rail cookies, `rail_section`);
-   auth pages; every existing class restyled in place; the CSS hygiene test, layout request tests,
+   auth pages; every existing class restyled in place; the `q` search (§9), because the top bar's
+   field must work from the day it appears; the CSS hygiene test, layout request tests,
    theme/rail/toast system tests, the mobile overflow guard. The app looks new everywhere after
    this PR, with the old page controls still in their old places.
-2. **Files.** The toolbar consolidation, tiles and list, the file page header, strip, composer;
-   the `q` search with its tests.
+2. **Files.** The toolbar consolidation, tiles and list, the file page header, strip, composer.
 3. **Projects, Models, Sheets.** Project head, stats, panels, tasks, timeline, composers; models
    index/show/new/edit and the poster fix; shelves; the sheet page.
 4. **Tools, Trash, repo pages, polish.** Gallery and addon classes, trash, commit and history,
