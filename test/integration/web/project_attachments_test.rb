@@ -204,6 +204,30 @@ module Web
                     text: "Open the folder"
     end
 
+    # LINKED IS A FOLDER QUESTION, NOT A LIST QUESTION. The listing is capped at FILE_CAP, so an
+    # attached file past the cap is absent from the tiles — and must NOT come back as "linked from
+    # elsewhere": it sits in the folder, and the truncation line stands for it. The controller asks
+    # the tree (`ProjectFolderListing#contains?`), never the capped id set; asking the set instead
+    # renders exactly the phantom Linked group this test forbids.
+    test "an attached file past the cap is in the folder, not linked" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      folder = project.ensure_library_folder!(user)
+      now = Time.current
+      Node.insert_all((Maker::ProjectFolderListing::FILE_CAP + 1).times.map do |i|
+        { node_id: "cap-#{i}", name: format("f%03d.stl", i), kind: "file", user_id: user.id,
+          parent_node_id: folder.node_id, deleted: false, created_at: now, updated_at: now }
+      end)
+      # f300.stl sorts last, past the cap of 300 tiles.
+      project.file_attachments.create!(user:, node_id: "cap-#{Maker::ProjectFolderListing::FILE_CAP}", role: "model")
+
+      get project_path(project)
+      assert_response :success
+      assert_select ".attachment-group-head", text: /Linked/, count: 0
+      assert_select ".project-stats", text: /linked/, count: 0
+      assert_select ".attachments-truncated", text: /Showing 300 of 301/
+    end
+
     # A GENUINELY EMPTY PROJECT (no folder files, no linked attachments, no repos, nothing
     # missing), as opposed to "a project whose every file is gone" above (which HAS a missing
     # attachment and explains itself differently). ensure_library_folder! still runs on #show, so

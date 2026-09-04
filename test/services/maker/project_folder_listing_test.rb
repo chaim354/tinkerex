@@ -203,5 +203,23 @@ module Maker
       backup_row = Maker::ProjectFolderListing::Row.new(node: backup_node, attachment: nil, linked: false)
       assert backup_row.backup?
     end
+    test "contains? is the folder's ancestry, not the capped list" do
+      _projects, desk_lamp = desk_lamp_folder
+      deep = dir("dir-deep", "docs", desk_lamp.node_id)
+      firmware = dir("dir-firmware", "firmware", desk_lamp.node_id)
+      dir("dir-firmware-git", ".git", firmware.node_id)
+      src = dir("dir-firmware-src", "src", firmware.node_id)
+      inside_deep = file("f-deep", "manual.pdf", deep.node_id)
+      inside_repo = file("f-repo", "main.c", src.node_id)
+      outside = file("f-outside", "orphan.stl", nil)
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
+
+      assert listing.contains?(inside_deep)
+      assert listing.contains?(inside_repo), "a file inside a repository the walk never entered is still IN the folder"
+      assert_not listing.node_ids.include?(inside_repo.node_id), "…and yet is not listed (the repo entry stands for it)"
+      assert_not listing.contains?(outside)
+      assert_not Maker::ProjectFolderListing.new(@user, project_with_folder(nil, name: "Bare")).contains?(inside_deep),
+                 "no folder contains nothing"
+    end
   end
 end

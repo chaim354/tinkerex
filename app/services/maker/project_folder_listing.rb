@@ -61,6 +61,20 @@ module Maker
     def node_ids = @files.map(&:node_id)
     def node_id_set = @node_id_set ||= node_ids.to_set
 
+    # Is this node INSIDE the folder — anywhere beneath it, listed or not? Answered from the tree's
+    # ancestor chain, never from `node_ids`: the listing is capped at FILE_CAP, so a file past the
+    # cap, or inside a repository the walk never entered, is not in the list yet is not "linked
+    # from elsewhere" either — it is in the folder, and the truncation line or the repo entry is
+    # what stands for it. In memory, no query. A broken chain answers false (the caller then
+    # treats the row as linked, which at least renders it).
+    def contains?(node)
+      return false unless @folder_id
+      parent = node.parent_node_id
+      return false if parent.nil?
+      chain = @tree.ancestors_of(parent)
+      chain.present? && chain.include?(@folder_id)
+    end
+
     private
 
     def files_in(dir_ids)

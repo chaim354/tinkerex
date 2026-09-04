@@ -102,8 +102,11 @@ class ProjectsController < ApplicationController
     # living somewhere else in the library, so it gets its own group with Detach and a move-in
     # button instead of the plain folder tile.
     @listing = Maker::ProjectFolderListing.new(current_user, @project)
-    inside = @listing.node_id_set
-    @linked_rows = @attachments.reject { |a| inside.include?(a.node_id) }
+    # "Linked" is a FOLDER question, asked of the tree, not a LIST question: the listing is capped
+    # at FILE_CAP and never enters a repository, so an attached file past the cap or inside a repo
+    # is absent from `node_ids` while sitting squarely in the folder — it must not reappear as
+    # "linked from elsewhere".
+    @linked_rows = @attachments.reject { |a| @listing.contains?(@page_nodes[a.node_id]) }
                                .map { |a| Maker::ProjectFolderListing::Row.new(node: @page_nodes[a.node_id], attachment: a, linked: true) }
     # Dead ids never reach either list: @listing only ever holds live nodes, and @attachments has
     # already dropped anything @page_nodes could not find — `stat_all` would answer nothing for a
