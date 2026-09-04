@@ -148,12 +148,13 @@ class LbrnMeasureTest < ApplicationSystemTestCase
 
   # And the plate is still reachable where the hole is not, so the test above is not passing
   # because the plate became unclickable altogether.
-  # LAYER COLOUR REACHES THE DRAWING, and the highlight still beats it. Both halves matter: the
-  # colour arrives as a PRESENTATION ATTRIBUTE precisely so the --selected class can outrank it,
+  # LAYER COLOUR REACHES THE DRAWING, and the selection still beats it. Both halves matter: the
+  # colour arrives as a PRESENTATION ATTRIBUTE precisely so the --marked class can outrank it,
   # and an inline style (the obvious alternative) would silently invert that — clicking a contour
   # would change its width and nothing else. nested-plate.lbrn2 is all CutIndex 0, whose palette
   # entry is black, so this uses the circle/square fixture's C00 and asserts the mechanism rather
-  # than a specific hue.
+  # than a specific hue. (The class was `--selected` until 2026-09-03; the colour it paints is
+  # unchanged, since the merged single state kept this red.)
   test "contours are stroked in their LightBurn layer colour, and selection still overrides it" do
     open_measure_view
 
@@ -164,7 +165,7 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     assert_selector ".measure-dims", text: SQUARE_READOUT
     # The class must win over the attribute — computed, not declared.
     assert_equal "rgb(221, 68, 0)", contour.style("stroke")["stroke"],
-                 "the --selected rule must outrank the layer colour attribute"
+                 "the --marked rule must outrank the layer colour attribute"
   end
 
   test "the plate is still selectable away from the hole" do
@@ -193,12 +194,13 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     assert_equal "10", find(".measure-stage circle.measure-contour")["r"]
   end
 
-  # THE HIGHLIGHT MECHANISM MUST SURVIVE THE ELEMENT CHANGE. The layer colour is a PRESENTATION
-  # attribute so that .measure-contour--selected can outrank it, and `.measure-contour { fill:
+  # THE SELECTION MECHANISM MUST SURVIVE THE ELEMENT CHANGE. The layer colour is a PRESENTATION
+  # attribute so that .measure-contour--marked can outrank it, and `.measure-contour { fill:
   # transparent }` is what makes a closed contour's interior clickable — a <circle> gets both from
   # the same code path a <polygon> did, but only a driven click proves it. Reading the stroke
   # ATTRIBUTE back would report what we wrote even when a rule outranks it, so assert the COMPUTED
-  # style (#d40 = rgb(221, 68, 0)).
+  # style (#d40 = rgb(221, 68, 0)). The class was `.measure-contour--selected` until 2026-09-03,
+  # when the measurement highlight and the print set merged into one red state.
   test "a curve contour is clickable and still recolours on selection" do
     visit file_path(@sample_id)
     click_on "Measure"
@@ -207,7 +209,7 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     find(".measure-stage circle.measure-contour").click
     assert_text "⌀20 mm"
     assert_equal "rgb(221, 68, 0)", page.evaluate_script(<<~JS)
-      getComputedStyle(document.querySelector(".measure-contour--selected")).stroke
+      getComputedStyle(document.querySelector(".measure-contour--marked")).stroke
     JS
   end
 

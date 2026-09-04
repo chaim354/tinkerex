@@ -59,17 +59,22 @@ export default class extends Controller {
   // controller does not declare, so `this.nameValue` is `undefined` until it appears here — no
   // error, no warning, just an empty filename on every printed sheet.
   static values = { url: String, name: String }
-  static targets = ["stage", "dims", "fallback", "selectToggle", "paper", "printButton", "svgButton"]
+  static targets = ["stage", "dims", "fallback", "paper", "printButton", "svgButton"]
 
   connect() {
     this.aborted = false
-    this.selected = null
     this.hovered = null
-    // THE PRINT SET. Membership is by IDENTITY on the payload's own shape objects, reached through
-    // node.__shape — so nothing about the wire format has to change to give a contour an id.
+    // THE SELECTION, AND SINCE 2026-09-03 THE ONLY SELECTION STATE THERE IS. Membership is by
+    // IDENTITY on the payload's own shape objects, reached through node.__shape — so nothing about
+    // the wire format has to change to give a contour an id.
+    //
+    // IT WAS TWO STATES UNTIL THEN, AND THAT IS WHAT THE USER ASKED TO COLLAPSE: a transient
+    // `selected` contour (the measurement highlight, red) beside this print set (blue), which
+    // could only be added to while a "Select parts" MODE was on. There is no mode now — every
+    // click marks — and one colour answers the one question, which is why `selecting`, `selected`
+    // and the toggle target are absent rather than merely unused. See §14h.
     this.marked = new Set()
     this.nodeByShape = new Map()
-    this.selecting = false
   }
 
   disconnect() {
@@ -93,15 +98,13 @@ export default class extends Controller {
     this.element.classList.remove("measure-view--ready")
     this.stageTarget.replaceChildren()
     this.setStatus("")
-    this.selected = this.hovered = this.svg = null
-    // AND THE PRINT SET WITH IT. Every leak here is silent, because the poster hides the whole
+    this.hovered = this.svg = null
+    // AND THE SELECTION WITH IT. Every leak here is silent, because the poster hides the whole
     // actions bar: a set left populated goes on being promised by the print button — and printed
     // — over shapes that are no longer marked, no longer drawn, and no longer even the objects
     // the next payload will hand out.
     this.marked.clear()
     this.nodeByShape.clear()
-    this.selecting = false
-    this.applySelecting()
     this.refreshPrintBar()
   }
 
@@ -346,7 +349,7 @@ export default class extends Controller {
     //
     // A PRESENTATION ATTRIBUTE, NOT node.style — and the difference is the whole highlight
     // mechanism. An inline style beats a stylesheet, so setting style.stroke here would make
-    // .measure-contour--hover and --selected unable to recolour anything: clicking a contour would
+    // .measure-contour--hover and --marked unable to recolour anything: clicking a contour would
     // change its width and nothing else. A presentation attribute sits BELOW every CSS rule in
     // the cascade, so the layer colour shows at rest and the highlight classes still win. For the
     // same reason .measure-contour must not declare a stroke of its own — a class rule would beat
@@ -413,7 +416,9 @@ export default class extends Controller {
   // WHAT WAS HIT IS NOT ALWAYS WHAT TO STYLE. An open contour is hit through a transparent fat
   // twin (see contourNode), so highlighting the node the event landed on would change the colour
   // of something invisible and nothing would appear to happen. `__visible` points at the drawn
-  // line; closed contours are their own hit target and have none.
+  // line; closed contours are their own hit target and have none. Only `hover` calls this now —
+  // the selection reaches its node through `nodeByShape`, which `draw` populates with the very
+  // same `top.__visible || top` resolution.
   styleNode(node) {
     return node.__visible || node
   }
@@ -432,18 +437,21 @@ export default class extends Controller {
     this.hovered = null
   }
 
+  // EVERY CLICK SELECTS, AND CLICKING A SELECTED CONTOUR AGAIN DROPS IT. There is no mode to
+  // enter first — that was the user's request on 2026-09-03, and the deselect half of it is
+  // deliberate rather than incidental: without it there is no way to drop ONE part from a
+  // gathered set short of clearing the lot and rebuilding it.
   pick(event) {
     if (this.didPan) { this.didPan = false; return }
     const node = this.shapeAt(event)
-    // EMPTY SPACE DESELECTS, and that is not a flourish — it is the only cheap way back to
-    // "Print all" once a click has pointed the button at one contour. It deliberately does NOT
-    // touch the print set: in select mode a stray click on the background must not throw away
-    // the parts you gathered.
-    if (!node) { this.clearSelection(); return }
-
-    if (this.selected) this.styleNode(this.selected).classList.remove("measure-contour--selected")
-    this.selected = node
-    this.styleNode(node).classList.add("measure-contour--selected")
+    // EMPTY SPACE CLEARS THE WHOLE SELECTION — AND THIS REVERSED AN EARLIER RULE ON 2026-09-03, AT
+    // THE USER'S REQUEST. It used to drop the measurement highlight ALONE and to leave the print
+    // set deliberately untouched, on the grounds that a stray background click in select mode must
+    // not throw away the parts you had gathered. With one state there is nothing else for a
+    // background click to mean, and it is still the cheap way back to "Print all" that made the
+    // background clickable in the first place. The cost is real and was accepted: a stray click
+    // now empties the set, recoverable only by picking the parts again.
+    if (!node) { this.clearMarks(); return }
 
     const shape = node.__shape
     const siblings = this.byObject.get(shape.o) || [shape]
@@ -451,19 +459,15 @@ export default class extends Controller {
     // object id, which for a Text is its entire rendered outline rather than one letter.
     const useObject = event.altKey && siblings.length > 1
 
-    if (this.selecting) {
-      this.toggleMarks(useObject ? siblings : [shape])
-      // BOTH HALVES, because picking parts and learning their sizes are one gesture: a mode that
-      // silenced the measurement would make you leave it to check a size.
-      const size = useObject ? this.dims(unionBox(siblings)) : this.sizeLabel(shape)
-      this.setStatus(`${size} · ${this.selectionStatus()}`)
-      return
-    }
-    this.setStatus(useObject ? this.objectLabel(siblings) : this.contourLabel(shape, siblings))
-    // THE BUTTON FOLLOWS THE MEASUREMENT. Without this the label still reads "Print all" while
-    // print() has already started targeting the contour under it — the button lying about what it
-    // does, which is the one thing it exists not to do.
-    this.refreshPrintBar()
+    this.toggleMarks(useObject ? siblings : [shape])
+    // BOTH HALVES, because picking parts and learning their sizes are one gesture: a click that
+    // silenced the measurement would make you unpick a part to read its size.
+    //
+    // AND `contourLabel` RATHER THAN THE BARE `sizeLabel` THE SELECTING ARM USED TO PASS, so the
+    // "⌥ for the whole object" hint survives the merge. It is the ONLY place the app says that
+    // gesture exists, and it used to appear only OUTSIDE select mode — which is now nowhere.
+    const size = useObject ? this.dims(unionBox(siblings)) : this.contourLabel(shape, siblings)
+    this.setStatus(`${size} · ${this.selectionStatus()}`)
   }
 
   // The message the view rests at, and the one definition of it: `draw` opens with it and
@@ -487,30 +491,11 @@ export default class extends Controller {
     return `${parts.join(", ")} not readable`
   }
 
-  clearSelection() {
-    if (!this.selected) return
-    this.styleNode(this.selected).classList.remove("measure-contour--selected")
-    this.selected = null
-    this.refreshPrintBar()
-    if (!this.selecting) this.setStatus(this.restingStatus())
-  }
-
-  toggleSelect() {
-    this.selecting = !this.selecting
-    this.applySelecting()
-    this.setStatus(this.selecting ? this.selectionStatus() : "click a contour to measure")
-  }
-
-  // ONE DEFINITION OF WHAT THE TOGGLE LOOKS LIKE IN A GIVEN STATE, because showPoster() leaves
-  // select mode too. Resetting only `this.selecting` and the cursor class there — the obvious
-  // version — leaves the button reading "Done selecting" with aria-pressed="true" over a
-  // controller that is no longer selecting. Invisible while the poster is up (.measure-actions is
-  // display:none without --ready) and plainly wrong the moment Measure is clicked again.
-  applySelecting() {
-    this.element.classList.toggle("measure-view--selecting", this.selecting)
-    this.selectToggleTarget.setAttribute("aria-pressed", String(this.selecting))
-    this.selectToggleTarget.textContent = this.selecting ? "Done selecting" : "Select parts"
-  }
+  // `clearSelection`, `toggleSelect` AND `applySelecting` LIVED HERE AND WENT WITH THE MODE on
+  // 2026-09-03. The first cleared the measurement highlight alone; the other two owned the "Select
+  // parts" / "Done selecting" toggle and its `aria-pressed`, and `applySelecting` existed to be
+  // the ONE definition of what that button looked like in a given state, because showPoster() had
+  // to leave the mode too. There is no mode and no toggle, so there is nothing for them to say.
 
   // AN ALT-CLICK ON A PARTLY-MARKED OBJECT COMPLETES IT rather than inverting it: flipping each
   // contour individually would leave the object half in the print set, which is never what was
@@ -530,13 +515,25 @@ export default class extends Controller {
     this.refreshPrintBar()
   }
 
+  // THE ONE WAY BACK TO AN EMPTY SELECTION, and it writes the RESTING line rather than
+  // `selectionStatus()`'s "nothing selected" arm. Both doors into it — a click on empty space and
+  // the Reset button — mean "start again", and the resting line is what the view says when it has
+  // never been touched, so saying anything else here would give one state two sentences depending
+  // on how you reached it. The empty arm is still reachable, and only where it is the honest
+  // answer: unpicking the LAST part leaves its size on screen beside "nothing selected".
+  //
+  // NO `allShapes` GUARD AROUND `restingStatus()`, DELIBERATELY. Both callers exist only after a
+  // successful draw() — `pick` needs a drawn SVG to have been clicked, and Reset lives in
+  // `.measure-actions`, which is `display: none` without --ready — so the same argument
+  // refreshPrintBar() makes about its targets applies: a guard that cannot fail asserts a
+  // condition that does not exist.
   clearMarks() {
     for (const shape of this.marked) {
       this.nodeByShape.get(shape)?.classList.remove("measure-contour--marked")
     }
     this.marked.clear()
     this.refreshPrintBar()
-    this.setStatus(this.selectionStatus())
+    this.setStatus(this.restingStatus())
   }
 
   selectionStatus() {
@@ -545,26 +542,29 @@ export default class extends Controller {
     return `${n} part${n === 1 ? "" : "s"} · ${this.dims(unionBox([...this.marked]))}`
   }
 
-  // THE THREE ARMS, IN PRECEDENCE ORDER, WITH ONE DEFINITION. They were written out twice — once
-  // in print() and once in refreshPrintBar() — under a comment saying the two "must not drift",
-  // which is prose where a mechanism belongs. The exporter would have been a third copy, and three
-  // copies of a precedence rule is §14d's five port_writable? branches in miniature.
+  // TWO ARMS, IN PRECEDENCE ORDER, WITH ONE DEFINITION — and there were THREE until 2026-09-03.
+  // They were written out twice — once in print() and once in refreshPrintBar() — under a comment
+  // saying the two "must not drift", which is prose where a mechanism belongs. The exporter would
+  // have been a third copy, and three copies of a precedence rule is §14d's five port_writable?
+  // branches in miniature.
   //
-  //   marked set        -> the set          "Print 3 parts"
-  //   else selected     -> the contour under the measurement, so measuring a part is enough to
-  //                        target it and Select parts is not a toll gate
-  //   else              -> the whole file
+  //   marked set -> the set        "Print 3 parts"
+  //   else       -> the whole file "Print all"
+  //
+  // THE MIDDLE ARM WAS "else the contour under the measurement", and it existed so that measuring
+  // a part was enough to aim the buttons at it — "Select parts is not a toll gate on printing one
+  // part". Selecting IS the measuring click now, so the first arm does that job; keeping a second
+  // state for it would be two answers to one question, which is the shape §14a spends its length
+  // refusing.
   targetShapes() {
-    return this.marked.size ? [ ...this.marked ]
-      : this.selected ? [ this.selected.__shape ]
-      : this.allShapes
+    return this.marked.size ? [ ...this.marked ] : this.allShapes
   }
 
-  // WHAT THE BUTTONS CALL THAT SET. Same three arms, same order, derived from the same state, so a
+  // WHAT THE BUTTONS CALL THAT SET. Same two arms, same order, derived from the same state, so a
   // label can no longer describe one target while an action performs another.
   targetNoun() {
     const n = this.marked.size
-    return n ? `${n} part${n === 1 ? "" : "s"}` : this.selected ? "selected" : "all"
+    return n ? `${n} part${n === 1 ? "" : "s"}` : "all"
   }
 
   // NO `hasPrintButtonTarget` GUARD, DELIBERATELY, and the plan's draft had one. All six controls
@@ -572,10 +572,10 @@ export default class extends Controller {
   // controller is connected. A guard that cannot fail asserts a condition that does not exist.
   //
   // THERE ARE FOUR CALLERS NOW, NOT THREE, AND THE FOURTH RETIRED HALF OF THIS ARGUMENT. The
-  // original three — toggleMarks, clearMarks, showPoster — are each reachable only once a button
-  // in that same span has been clicked (toggleMarks through pick, which marks nothing until
-  // toggleSelect turned the mode on), and showPoster touches selectToggleTarget one line earlier
-  // besides. `draw()` is not: it runs off the LAUNCH button, which lives in a different span, so
+  // original three — toggleMarks, clearMarks, showPoster — are each reachable only once the view
+  // is drawn (toggleMarks and clearMarks through a click on the SVG, showPoster off a button in
+  // that same span). `draw()` is not: it runs off the LAUNCH button, which lives in a different
+  // span, so
   // the clause this comment used to end on — "in the one future it was written for, a partial that
   // omits the bar, nothing reaches this method at all" — is now FALSE and is deleted rather than
   // left to be relied on. Such a partial would break draw() itself, and `populatePaper` and
@@ -583,32 +583,40 @@ export default class extends Controller {
   // methods each grow a guard.
   // THE LABEL ALWAYS NAMES THE TARGET IN FORCE, and it can no longer do otherwise: the noun comes
   // from `targetNoun()` and the shapes `print()` acts on from `targetShapes()`, so the two halves
-  // of the claim are one definition rather than two spellings kept in step by a comment. The
-  // wording is unchanged — "Print all", "Print selected", "Print 3 parts".
+  // of the claim are one definition rather than two spellings kept in step by a comment. Two
+  // wordings survive the merge — "Print all" and "Print 3 parts"; "Print selected" went with the
+  // middle arm on 2026-09-03, since a selected contour IS a one-part set now.
   refreshPrintBar() {
     const noun = this.targetNoun()
     this.printButtonTarget.textContent = `Print ${noun}`
     // THE SVG BUTTON'S TEXT DOES NOT MOVE, SO ITS ACCESSIBLE NAME MUST. Both are written here,
-    // from one targetNoun(), so the two buttons cannot come to describe different sets. NO
-    // `hasSvgButtonTarget` GUARD, for the reason the comment above gives about the Print button:
-    // it is the sixth control in the same always-rendered span, so it exists whenever this
-    // controller is connected, and a guard that cannot fail asserts a condition that does not
-    // exist. The at-rest literals in _measure.html.erb are this same string with `noun` = "all".
+    // from one targetNoun(), so the two buttons cannot come to describe different sets. Its
+    // visible text reads "Download SVG" as of 2026-09-03 (it was "SVG"), which is still CONSTANT:
+    // a second count-bearing label beside "Print 3 parts" is noise, and the count is what the
+    // accessible name carries. NO `hasSvgButtonTarget` GUARD, for the reason the comment above
+    // gives about the Print button: it is a control in the same always-rendered span, so it exists
+    // whenever this controller is connected, and a guard that cannot fail asserts a condition that
+    // does not exist. The at-rest literals in _measure.html.erb are this same string with
+    // `noun` = "all".
     const label = `Download ${noun} as SVG`
     this.svgButtonTarget.setAttribute("aria-label", label)
     this.svgButtonTarget.setAttribute("title", label)
   }
 
+  // THE SIZE, PLUS THE ONE PLACE THE APP SAYS ⌥-CLICK EXISTS. `pick` composes this with
+  // `selectionStatus()`, so a contour that stands alone reads exactly as it always did and only a
+  // multi-contour object costs the extra clause.
+  //
+  // ITS SIBLING `objectLabel` IS GONE (2026-09-03). It read "30 × 10 mm · whole object, 2
+  // contours" for the ⌥ case, and beside `selectionStatus()`'s own "2 parts" that is the same
+  // count twice in one line — so the widened arm passes the union dims and lets the selection
+  // summary do the counting.
   contourLabel(shape, siblings) {
     let label = this.sizeLabel(shape)
     if (siblings.length > 1) {
       label += ` · part of a ${siblings.length}-contour object (⌥ for ${this.dims(unionBox(siblings))})`
     }
     return label
-  }
-
-  objectLabel(siblings) {
-    return `${this.dims(unionBox(siblings))} · whole object, ${siblings.length} contours`
   }
 
   // ⌀ only when the server said so. Circularity is decided server-side, from full-resolution
@@ -628,20 +636,19 @@ export default class extends Controller {
     return (Math.round(n * 10) / 10).toLocaleString()
   }
 
-  // RESET IS BOTH HALVES OF "START AGAIN": the view goes home AND the print set empties. There is
+  // RESET IS BOTH HALVES OF "START AGAIN": the view goes home AND the selection empties. There is
   // no separate Clear button — one button, one meaning, and the set is not a thing you can leave
   // behind by resetting the view and assuming you had.
   //
-  // THE READOUT IS ONLY TOUCHED WHEN THERE WAS ACTUALLY A SET TO CLEAR. `clearMarks` writes
-  // `selectionStatus()`, and outside select mode the readout is carrying a MEASUREMENT the user
-  // just asked for — overwriting it with "nothing selected" on a plain view reset would take
-  // something away from the ordinary case to serve the selecting one.
+  // IT CLEARS UNCONDITIONALLY, AND THAT REPLACED AN `if (this.marked.size)` GUARD ON 2026-09-03.
+  // The guard existed so a plain view reset would not stomp a MEASUREMENT the user had just asked
+  // for with "nothing selected" — but a measurement no longer exists apart from a selection, and
+  // the one state the guard still protects is the stale one: unpick the last part and the readout
+  // reads "60 × 40 mm · nothing selected" over an empty set, which a Reset must not leave standing.
+  // A second statement for the measurement highlight went with the highlight itself.
   reset() {
     if (this.svg && this.home) this.setViewBox(this.svg, this.home)
-    if (this.marked.size) this.clearMarks()
-    // AND THE MEASUREMENT HIGHLIGHT, since it now points the Print button at one contour. Leaving
-    // it behind would make Reset the one action that returns everything except what you print.
-    this.clearSelection()
+    this.clearMarks()
   }
 
   // Zoom about the cursor, so the feature under the pointer stays under it.

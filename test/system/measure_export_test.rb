@@ -196,7 +196,6 @@ class MeasureExportTest < ApplicationSystemTestCase
       HTMLAnchorElement.prototype.click = function () { window.__downloads.push(this.download) }
     JS
 
-    click_on "Select parts"
     find(".measure-stage circle.measure-contour").click
     assert_text "1 part"
 
@@ -220,19 +219,27 @@ class MeasureExportTest < ApplicationSystemTestCase
   end
 
   # THE BUTTON MUST NOT LIE ABOUT WHAT IT DOES. Its visible text is constant because the bar
-  # already carries five other controls, so the accessible name is what tracks the target — written
+  # already carries four other controls, so the accessible name is what tracks the target — written
   # by the same refreshPrintBar() that writes the Print label, from the same targetNoun(). The
   # at-rest literal is also in the ERB, so this catches the two drifting apart.
-  test "the button's accessible name names the set it will export" do
+  #
+  # AND THE VISIBLE TEXT IS ASSERTED ON BOTH SIDES OF THE CLICK, which is what makes "constant" a
+  # claim rather than a description. It reads "Download SVG" as of 2026-09-03, at the user's
+  # request — it was "SVG", a one-word button beside a paper picker — and the ONLY thing that moves
+  # when the target changes is the accessible name.
+  test "the button's accessible name names the set it will export, and its text does not" do
     visit file_path(@sample_id)
     click_on "Measure"
     assert_selector ".measure-view--ready", wait: 10
 
     assert_selector "[data-measure-target='svgButton'][aria-label='Download all as SVG']"
+    assert_selector "[data-measure-target='svgButton']", exact_text: "Download SVG"
 
-    click_on "Select parts"
     find(".measure-stage circle.measure-contour").click
+
     assert_selector "[data-measure-target='svgButton'][aria-label='Download 1 part as SVG']"
+    assert_selector "[data-measure-target='svgButton'][title='Download 1 part as SVG']"
+    assert_selector "[data-measure-target='svgButton']", exact_text: "Download SVG"
   end
 
   test "the exported blob is typed as an SVG image" do

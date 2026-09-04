@@ -420,10 +420,62 @@
   override a layer's colour is honoured without the client knowing that is possible.
 - **THE LAYER COLOUR IS AN SVG PRESENTATION ATTRIBUTE, NEVER `node.style`, AND `.measure-contour` MUST
   NOT DECLARE A STROKE.** Presentation attributes sit BELOW every CSS rule, which is exactly what
-  lets `--hover`/`--selected` recolour a contour. Set it inline instead and selection silently stops
+  lets `--hover`/`--marked` recolour a contour. Set it inline instead and selection silently stops
   changing colour (only width moves); give `.measure-contour` a stroke and every layer flattens to one
   colour. Both directions are mutation-checked, and both need the COMPUTED style asserted — reading
-  the attribute reports what we wrote even when a rule outranks it.
+  the attribute reports what we wrote even when a rule outranks it. (This rule read
+  `--hover`/`--selected` until 2026-09-03; `--selected` merged into `--marked` that day and the
+  mechanism is untouched.)
+
+- **THE SELECTION IS ONE STATE, ONE COLOUR, AND EVERY CLICK IS A SELECTING CLICK — REPLACING THE
+  "Select parts" MODE ON 2026-09-03, AT THE USER'S REQUEST.** Until that date the view carried TWO:
+  `this.selected`, the transient measurement highlight (`--selected`, red), and `this.marked`, the
+  print set (`--marked`, blue), which could only be added to while a **Select parts** toggle was
+  on. The user asked for one — click a contour and it turns **red and stays red** — so `selecting`,
+  `selected`, `toggleSelect`, `applySelecting`, `clearSelection`, the `selectToggle` target, the
+  ERB button and `.measure-view--selecting` are all **gone rather than unused**, and
+  `.measure-contour--marked` inherits `--selected`'s stroke and weight plus its own tint. Four
+  rules follow, and each replaced an earlier one that said the opposite:
+  - **A SECOND CLICK ON A SELECTED CONTOUR DROPS IT.** `toggleMarks` already toggled; keeping that
+    is what makes it possible to drop ONE part from a gathered set, which a select-only click
+    cannot do short of clearing everything and picking it again.
+  - **A CLICK ON EMPTY SPACE CLEARS THE WHOLE SELECTION** and returns the readout to
+    `restingStatus()`. The superseded rule was *"EMPTY SPACE DESELECTS … it deliberately does NOT
+    touch the print set: in select mode a stray click on the background must not throw away the
+    parts you gathered"* — true while a background click dropped only a highlight, meaningless with
+    one state. **The cost was accepted, not missed**: a stray click empties the set and the only
+    recovery is picking the parts again.
+  - **`.measure-contour--marked` IS DECLARED AFTER `--hover`, AND THAT ORDER IS THE WHOLE "STAYS
+    RED" CLAIM.** Both are a single class, (0,1,0), so source order alone decides a contour that is
+    both — and a click leaves the pointer ON the contour it just selected, so with `--marked` first
+    the shape you just picked sits under the hover green until you move the mouse. **Measured:**
+    restoring that order turns `measure_print_test.rb`'s computed-style assertion red with
+    `Actual: "rgb(34, 187, 119)"` on the plain post-click read, because a Selenium click really does
+    leave `--hover` on the contour; the test then applies `--hover` a second time DIRECTLY, the way
+    the cursor test applies `is-panning`, so the claim does not rest on the driver's pointer
+    synthesis continuing to behave that way.
+  - **THE FIXTURE'S RED AND THE SELECTION'S RED ARE DIFFERENT NUMBERS, AND THE OPEN-CONTOUR TEST
+    RESTS ON IT.** `sample.lbrn2`'s layer 0 paints `rgb(255, 0, 0)` and `--marked` `#d40` =
+    `rgb(221, 68, 0)`. Repaint the selection pure red and "the class reached the drawn line" stops
+    being distinguishable from "the line was already that colour" — a test that cannot fail.
+
+- **`reset()` CLEARS THE SELECTION UNCONDITIONALLY, AND `clearMarks()` WRITES THE RESTING LINE.**
+  The superseded rule guarded the clear with `if (this.marked.size)` so a plain view reset would
+  not stomp a MEASUREMENT the user had just asked for — there is no measurement apart from a
+  selection now, and the state that guard walks past is the stale one: unpick the last part and the
+  readout still reads `60 × 40 mm · nothing selected` over an empty set. `clearMarks` writes
+  `restingStatus()` rather than `selectionStatus()`'s empty arm because both its doors — a
+  background click and Reset — mean "start again", and one state must not have two sentences
+  depending on how it was reached. The empty arm is still reachable where it is honest: unpicking
+  the LAST part leaves its size on screen beside "nothing selected".
+
+- **`pick` COMPOSES `contourLabel` WITH `selectionStatus()`, WHICH IS WHAT SAVED THE ⌥ HINT.**
+  `"part of a 2-contour object (⌥ for 30 × 10 mm)"` is the ONLY place the app says alt-click
+  exists, and until 2026-09-03 it was shown only OUTSIDE select mode — i.e. exactly where marking
+  was impossible — so collapsing the modes onto the old selecting arm's bare `sizeLabel` would have
+  deleted the affordance with nothing going red. Its sibling `objectLabel` did go, and deliberately:
+  beside `selectionStatus()`'s own "2 parts" its "whole object, 2 contours" is the same count twice
+  in one line, so the widened arm passes the union dims and lets the summary do the counting.
 - **The pan/click slop is in SCREEN PIXELS, not user units.** Zoomed in, one mm is many pixels, so a
   user-space threshold calls an ordinary click a drag and silently swallows the selection.
 - **THE PRINT SHEET'S SCALE IS `width="215.9mm"` PLUS A `viewBox` SPANNING 215.9 USER UNITS, AND
@@ -808,12 +860,19 @@
   document — that opens in every viewer showing nothing, which reads as "the export is broken"
   rather than "you selected nothing", and the caller has a readout to put the message in.
 - **THE SVG BUTTON'S VISIBLE TEXT IS CONSTANT AND ITS ACCESSIBLE NAME IS NOT.** The actions bar
-  carries six controls, so a second count-bearing label beside "Print 3 parts" is noise — but a
+  carries five controls, so a second count-bearing label beside "Print 3 parts" is noise — but a
   button must not lie about what it does, so its `aria-label` AND its `title` are written from the
   same `targetNoun()` the Print label uses, by the same refresh — and the ERB's at-rest literals
-  are that same string with the noun `all`, so all three can only drift together.
+  are that same string with the noun `all`, so all three can only drift together. **The text reads
+  "Download SVG" as of 2026-09-03, at the user's request** (it was `SVG`, a one-word button beside a
+  paper picker); constant is a claim about the count, not about the wording, so
+  `measure_export_test.rb` asserts the text on BOTH sides of a selecting click.
   **`targetShapes()` and `targetNoun()`
-  are the ONE definition of the three-arm precedence** — marked set, else the selected contour,
-  else the whole file. It was written out TWICE, in `print()` and in `refreshPrintBar()`, under a
-  comment saying the two "must not drift", which is prose where a mechanism belongs; the exporter
-  would have been a third copy.
+  are the ONE definition of the precedence, which is TWO arms since 2026-09-03** — the marked set,
+  else the whole file. The middle arm was *"else the selected contour, so measuring a part is
+  enough to target it and Select parts is not a toll gate on printing one part"*; selecting IS the
+  measuring click now, so the first arm does that job and a second state for it would be two
+  answers to one question. "Print selected" went with it — a selected contour is a one-part set,
+  and the button reads "Print 1 part". It was written out TWICE, in `print()` and in
+  `refreshPrintBar()`, under a comment saying the two "must not drift", which is prose where a
+  mechanism belongs; the exporter would have been a third copy.

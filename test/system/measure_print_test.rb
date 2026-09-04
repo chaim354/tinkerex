@@ -57,8 +57,11 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # supply. Of the corpus's open contours this one is the easiest to aim at: o=3 is the straight
   # horizontal segment (0,0)-(100,0), so every point on it has the same y and the whole left half
   # of it is clear of the 30..70 rect. (real-export.lbrn2's and real-export.mage's are L-shaped,
-  # so a point on them has to be picked per segment.) Its layer 0 is RED, which is what lets a
-  # computed stroke tell the drawn line's own colour from --marked's blue.
+  # so a point on them has to be picked per segment.) Its layer 0 is RED — and since 2026-09-03 so
+  # is the selection, which makes the pair a NEAR MISS worth naming rather than a contrast: the
+  # layer paints rgb(255, 0, 0) and `--marked` #d40 = rgb(221, 68, 0), so a computed stroke can
+  # still tell "the class reached the line" from "the line was already that colour". Repaint the
+  # selection pure red and the open-contour test below stops being able to fail.
   OPEN = "sample.lbrn2".freeze
 
   setup do
@@ -2442,9 +2445,13 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # BOTH ternaries — and `clearMarks`' `this.marked.clear()` with them — left the file entirely
   # GREEN, 60 runs 0 failures. Three green-over-broken in one run.
 
-  test "Select parts turns a click into a selection and back again" do
+  # A CLICK SELECTS AND A SECOND CLICK ON THE SAME CONTOUR DROPS IT — the deselect half being
+  # deliberate rather than incidental (2026-09-03, at the user's request): without it there is no
+  # way to drop ONE part from a gathered set short of clearing the lot and picking it again. The
+  # test is the old "Select parts turns a click into a selection and back again" with its mode
+  # click removed, because the behaviour it pinned is now what a bare click does.
+  test "a click selects a part and a second click on it drops it" do
     open_measure_view(@nested_id)
-    click_on "Select parts"
 
     click_plate
     assert_selector ".measure-contour--marked", count: 1
@@ -2458,106 +2465,123 @@ class MeasurePrintTest < ApplicationSystemTestCase
                     exact_text: "60 × 40 mm · nothing selected · Print all prints the whole file"
   end
 
-  # THE TOGGLE SAYS WHICH MODE YOU ARE IN, in its label and in aria-pressed, and the root class is
-  # what the `cursor: copy` rule keys on. Nothing else asserts any of the three.
-  test "the select toggle reports the mode it is in" do
+  # THERE IS NO MODE TO BE IN, WHICH IS WHAT REPLACED THIS TEST'S SUBJECT ON 2026-09-03. It used
+  # to assert that the "Select parts" toggle reported its state in its label, in `aria-pressed` and
+  # in the root class the `cursor: copy` rule keyed on — all three of which are gone, so there is
+  # nothing left for that test to be about. What matters now is the conjunction: the control is
+  # absent AND a click selects anyway, since either half alone is satisfied by a broken view.
+  #
+  # THE BUTTON COUNT IS PART OF THE CLAIM. `assert_no_button` passes just as happily over a bar
+  # that lost every control, which is exactly the way a template edit fails; four is Print,
+  # Download SVG, Reset and ✕ Image, with the paper <select> not a button and the launch button in
+  # a different span.
+  test "the actions bar carries no select toggle, and a click selects without one" do
     open_measure_view(@nested_id)
-    toggle = find("[data-measure-target='selectToggle']")
-    assert_equal "false", toggle["aria-pressed"]
 
-    click_on "Select parts"
-    assert_equal "Done selecting", toggle.text
-    assert_equal "true", toggle["aria-pressed"]
-    assert_selector ".measure-view--selecting"
-    assert_selector ".measure-dims", exact_text: "nothing selected · Print all prints the whole file"
+    assert_no_button "Select parts", visible: :all
+    assert_no_selector "[data-measure-target='selectToggle']", visible: :all
+    assert_selector ".measure-actions button", count: 4
 
-    click_on "Done selecting"
-    assert_equal "Select parts", toggle.text
-    assert_equal "false", toggle["aria-pressed"]
-    assert_no_selector ".measure-view--selecting"
-    assert_selector ".measure-dims", exact_text: "click a contour to measure"
+    click_plate
+
+    assert_selector ".measure-contour--marked", count: 1
   end
 
-  # THE FOUR CURSOR STATES, AND THE ONE THAT NEEDED A SPECIFICITY FIX. `.measure-view--selecting
-  # .measure-stage svg` and `.measure-stage svg.is-panning` are BOTH (0,2,1), and the selecting rule
-  # is 30 lines later — so without `:not(.is-panning)` it wins the tie and a drag in select mode
-  # shows `copy`, silently removing the grab affordance in the one mode where users pan most.
+  # THE TWO CURSOR STATES LEFT, AND THERE WERE FOUR UNTIL 2026-09-03. `.measure-view--selecting
+  # .measure-stage svg:not(.is-panning) { cursor: copy }` gave the old mode its own cursor, and the
+  # `:not(.is-panning)` was a real specificity fix: that selector and `.measure-stage svg.is-panning`
+  # are BOTH (0,2,1) and the selecting rule was later, so without it a drag while selecting showed
+  # `copy` and silently removed the grab affordance in the mode where users panned most. The mode is
+  # gone at the user's request and the rule went with it, so the tie it had to break no longer
+  # exists — this asserts the two states that are left rather than a fix to a deleted rule.
   #
-  # `is-panning` IS APPLIED DIRECTLY rather than by simulating a drag: the class is what
+  # `is-panning` IS STILL APPLIED DIRECTLY rather than by simulating a drag: the class is what
   # startPan/endPan toggle, so driving a real pointer sequence would test Selenium's input
-  # synthesis, not the cascade this exists for. Mutation-checked by removing `:not(.is-panning)`:
-  # RED on the fourth row, `Expected: "grabbing"  Actual: "copy"`.
-  test "the cursor names the gesture in every mode" do
+  # synthesis, not the cascade this exists for.
+  test "the cursor names the gesture" do
     open_measure_view(@nested_id)
     cursors = ->(*_) { page.evaluate_script(<<~JS) }
       (() => {
-        const view = document.querySelector(".measure-view")
         const svg = document.querySelector(".measure-stage svg")
         const read = () => getComputedStyle(svg).cursor
         const out = {}
-        svg.classList.remove("is-panning"); view.classList.remove("measure-view--selecting")
-        out.idle = read()
+        svg.classList.remove("is-panning"); out.idle = read()
         svg.classList.add("is-panning");    out.panning = read()
-        svg.classList.remove("is-panning"); view.classList.add("measure-view--selecting")
-        out.selecting = read()
-        svg.classList.add("is-panning");    out.selectingAndPanning = read()
-        svg.classList.remove("is-panning"); view.classList.remove("measure-view--selecting")
+        svg.classList.remove("is-panning")
         return JSON.stringify(out)
       })()
     JS
 
-    assert_equal({ "idle" => "crosshair", "panning" => "grabbing",
-                   "selecting" => "copy", "selectingAndPanning" => "grabbing" },
-                 JSON.parse(cursors.call))
+    assert_equal({ "idle" => "crosshair", "panning" => "grabbing" }, JSON.parse(cursors.call))
   end
 
-  # THE READOUT MUST STILL WORK WHILE SELECTING — picking parts and learning their sizes are the
-  # same gesture, and a mode that silenced the measurement would make you leave it to check a size.
+  # SELECTING A PART REPORTS ITS SIZE — picking parts and learning their sizes are one gesture, and
+  # a click that silenced the measurement would make you unpick a part to read it.
   # THE HOLE, NOT THE PLATE, because it is the one shape whose two halves differ: the server gave
   # it a diameter, so `sizeLabel` says ⌀10 while the selection summary's union says 10 × 10. On the
   # plate the two halves are the same string and dropping either one stays green.
   test "selecting a part still reports its size" do
     open_measure_view(@nested_id)
-    click_on "Select parts"
 
     contour_with_min_x(-5).click
 
     assert_selector ".measure-dims", exact_text: "⌀10 mm · 1 part · 10 × 10 mm"
   end
 
-  # Off by default: the view behaves exactly as it did before this feature until the toggle is on.
-  test "a click outside select mode marks nothing" do
+  # THE REVERSAL, STATED AS ITS OWN TEST. This was "a click outside select mode marks nothing",
+  # asserting that a plain click measured and marked NOTHING — the off-by-default half of the mode.
+  # On 2026-09-03 the user asked for the opposite, so the same three surfaces are asserted saying
+  # the other thing: the contour is marked, the readout carries the size AND the selection summary,
+  # and the button names a one-part set rather than the old "Print selected".
+  test "a plain click marks the contour it measures" do
     open_measure_view(@nested_id)
 
     click_plate
 
-    assert_no_selector ".measure-contour--marked"
-    assert_selector ".measure-dims", exact_text: "60 × 40 mm"
-    # AND THE BUTTON NOW NAMES THAT CONTOUR. It read "Print all" until printing one part stopped
-    # requiring select mode; a measuring click points `print()` at the contour under the readout,
-    # so the label has to follow or it is lying about what it does.
-    assert_selector "[data-measure-target='printButton']", exact_text: "Print selected"
+    assert_selector ".measure-contour--marked", count: 1
+    assert_selector ".measure-dims", exact_text: "60 × 40 mm · 1 part · 60 × 40 mm"
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print 1 part"
   end
 
-  # BOTH HIGHLIGHTS AT ONCE. --selected answers "what am I reading" and --marked "what will
-  # print", and clicking in select mode does both — so if either rule hid the other, one of the
-  # two questions would be unanswerable exactly when both matter. The stroke is --selected's
-  # (declared later in the sheet), the fill tint is --marked's (which neither of the others sets).
-  test "a contour that is both read and selected shows both states" do
+  # ONE STATE, ONE COLOUR, AND IT IS RED — the user's own words on 2026-09-03 ("a clicked shape
+  # turns RED and STAYS RED"). This was "a contour that is both read and selected shows both
+  # states", pinning that --selected's red stroke and --marked's blue tint could be worn at once;
+  # there is nothing to wear at once now, so what it pins instead is that the one surviving class
+  # carries the red stroke AND the tint, and that the hover green cannot take the red back.
+  #
+  # THE HOVER HALF IS THE ORDERING CLAIM. `--hover` and `--marked` are both a single class,
+  # (0,1,0), so ONLY source order decides a contour wearing both — and MEASURED, NOT REASONED: the
+  # real click below already leaves the pointer on the plate, so `--hover` is on it before the
+  # first assertion runs. Restoring the old order (`--marked` above `--hover`) turns that first
+  # assertion red with `Actual: "rgb(34, 187, 119)"`, which is the state a user would be looking
+  # at — the shape they just clicked sitting under the green until they move the mouse away.
+  #
+  # THE SECOND HALF APPLIES `--hover` DIRECTLY ANYWAY, following the cursor test above: that makes
+  # the claim independent of whether Selenium's pointer synthesis keeps producing a hover, which is
+  # a property of the driver rather than of the cascade this exists for.
+  test "a clicked contour is red, tinted, and stays red under the hover" do
     open_measure_view(@nested_id)
-    click_on "Select parts"
 
     click_plate
     plate = contour_with_min_x(-30)
 
-    assert plate[:class].include?("measure-contour--marked"), "it must be in the print set"
-    assert plate[:class].include?("measure-contour--selected"), "and it must be the one being read"
+    assert plate[:class].include?("measure-contour--marked"), "it must be in the selection"
+    assert plate[:class].include?("measure-contour--hover"),
+           "premise: the click leaves the pointer on the contour, so both classes are worn"
     # COMPUTED, not declared: reading the attribute reports what we WROTE even when a rule outranks
     # it — that is how an attribute-based version of the sibling assertion in lbrn_measure_test.rb
     # stayed green over a stylesheet that had flattened every colour.
     style = plate.style("stroke", "fill")
-    assert_equal "rgb(221, 68, 0)", style["stroke"], "--selected's stroke must win"
-    assert_equal "rgba(0, 102, 204, 0.16)", style["fill"], "--marked's tint must still show"
+    assert_equal "rgb(221, 68, 0)", style["stroke"], "the selection stroke"
+    assert_equal "rgba(221, 68, 0, 0.16)", style["fill"], "and its tint, in the same red"
+
+    page.execute_script(<<~JS)
+      document.querySelectorAll(".measure-contour--marked")
+              .forEach((n) => n.classList.add("measure-contour--hover"))
+    JS
+
+    assert_equal "rgb(221, 68, 0)", plate.style("stroke")["stroke"],
+                 "the selection red must outrank the hover green"
   end
 
   # ⌥-CLICK WIDENS TO THE WHOLE OBJECT, and on a PARTLY-marked object it COMPLETES rather than
@@ -2574,13 +2598,18 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # the clicked contour's own size.
   test "widening to an object completes it rather than inverting it" do
     open_measure_view(@text_id)
-    click_on "Select parts"
 
     # The first letter alone: a plain click must NOT widen, or the count below cannot tell
     # "completes" from "was already whole".
     contour_with_min_x(0).click
     assert_selector ".measure-contour--marked", count: 1
-    assert_selector ".measure-dims", exact_text: "10 × 10 mm · 1 part · 10 × 10 mm"
+    # AND THE ⌥ HINT IS IN THAT LINE, which is new on 2026-09-03 and is the one place the app says
+    # the gesture exists. It used to be shown only OUTSIDE select mode — i.e. exactly where marking
+    # was impossible — so collapsing the two modes would have deleted it outright; `pick` now
+    # composes `contourLabel` with the selection summary instead of the bare size.
+    assert_selector ".measure-dims",
+                    exact_text: "10 × 10 mm · part of a 2-contour object (⌥ for 30 × 10 mm) · " \
+                                "1 part · 10 × 10 mm"
 
     contour_with_min_x(0).click(:alt)
 
@@ -2604,28 +2633,30 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # element the class has to be on.
   test "marking an open contour marks the line you can see" do
     open_measure_view(@open_id)
-    click_on "Select parts"
 
     line = all("svg polyline.measure-contour", visible: :all).first
+    # THE PREMISE IS ALSO THE NEAR MISS. This layer paints rgb(255, 0, 0) and the selection
+    # rgb(221, 68, 0) — two reds since 2026-09-03, and the whole assertion below rests on them
+    # being different numbers. Repaint the selection pure red and this test can no longer fail.
     assert_equal "rgb(255, 0, 0)", line.style("stroke")["stroke"], "premise: layer 0 is red here"
 
     click_open_line
-    # Reading is moved onto another shape so --selected and --hover are off the line and --marked
-    # is the only rule left that can colour it.
+    # The pointer is moved onto another shape so `--hover` is off the line and `--marked` is the
+    # only rule left that can colour it. That second click marks the x=40 contour too, which is why
+    # the assertion below is scoped to the POLYLINE rather than counting the class outright.
     contour_with_min_x(40).click
 
     assert_selector "polyline.measure-contour.measure-contour--marked", count: 1, visible: :all
-    assert_equal "rgb(0, 102, 204)", line.style("stroke")["stroke"], "--marked must reach the line"
-    # AND THE TINT MUST NOT REACH IT. `--marked` sets `fill: rgba(0,102,204,.16)`, which is the
-    # channel that survives `--selected` — but an OPEN contour has no interior, so the tint paints a
-    # meaningless blob between its two ends. `.measure-contour--open.measure-contour--marked` exists
-    # for exactly that and, until this line, had never been shown to fail: deleting it left all 73
-    # tests green while the fill computed rgba(0, 102, 204, 0.16) instead of none. Reading `stroke`
-    # stopped one property short (§15).
+    assert_equal "rgb(221, 68, 0)", line.style("stroke")["stroke"], "--marked must reach the line"
+    # AND THE TINT MUST NOT REACH IT. `--marked` sets a `fill` — but an OPEN contour has no
+    # interior, so the tint paints a meaningless blob between its two ends.
+    # `.measure-contour--open.measure-contour--marked` exists for exactly that and, until this
+    # line, had never been shown to fail: deleting it left all 73 tests green while the fill
+    # computed the tint instead of none. Reading `stroke` stopped one property short (§15).
     assert_equal "none", line.style("fill")["fill"], "an open contour takes the stroke, not the tint"
   end
 
-  # RESET DOES BOTH HALVES OF "START AGAIN" — the view goes home AND the print set empties. There
+  # RESET DOES BOTH HALVES OF "START AGAIN" — the view goes home AND the selection empties. There
   # is no separate Clear button: one button, one meaning, and a set you cannot leave behind by
   # resetting the view and assuming you had.
   #
@@ -2634,9 +2665,8 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # without `clearMarks` the view goes home and the set silently persists into the next print.
   # Mutation-checked in both directions — dropping the clear leaves "Print 2 parts" standing,
   # dropping the setViewBox leaves the viewBox at the zoomed value.
-  test "Reset returns the view home and empties the print set" do
+  test "Reset returns the view home and empties the selection" do
     open_measure_view(@nested_id)
-    click_on "Select parts"
     click_plate
     contour_with_min_x(-5).click
     assert_selector ".measure-contour--marked", count: 2
@@ -2652,47 +2682,53 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert_equal in_measure_controller("c.home.join(' ')"),
                  in_measure_controller("c.svg.getAttribute('viewBox')"),
                  "the view must return home"
-    assert_no_selector ".measure-contour--marked"
+    assert_no_selector ".measure-contour--marked", visible: :all
     # THE SET, NOT JUST THE CLASSES. Removing the classes and leaving `this.marked` populated looks
     # identical on screen and prints two parts anyway; the button label is the only thing in the
     # DOM that reads the set's size.
     assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
-    assert_selector ".measure-dims", exact_text: "nothing selected · Print all prints the whole file"
+    # THE RESTING LINE, NOT "nothing selected", AND THAT CHANGED ON 2026-09-03. `clearMarks` used to
+    # write `selectionStatus()`'s empty arm here; both doors into it now mean "start again", and the
+    # resting line is what the view says when it has never been touched — one state, one sentence,
+    # however you reached it.
+    assert_selector ".measure-dims", exact_text: "2 shapes · click one to measure"
   end
 
-  # AND IT DROPS THE MEASUREMENT HIGHLIGHT, WHICH IS A DELIBERATE REVERSAL. This test used to
-  # assert the opposite — that Reset left the size in the readout — because back then the highlight
-  # pointed at nothing but itself, and stomping a measurement to serve the selecting mode was a
-  # cost with no benefit. It buys something now: `--selected` aims the Print button at one contour,
-  # so a Reset that left it behind would be the one action returning everything EXCEPT what you are
-  # about to print, and the readout would carry a size with nothing highlighted to own it.
-  test "Reset drops the measurement highlight and returns the readout to rest" do
+  # RESET CLEARS UNCONDITIONALLY, AND THIS IS THE STATE THAT SAYS SO. It replaced "Reset drops the
+  # measurement highlight and returns the readout to rest" on 2026-09-03: there is no highlight
+  # apart from the selection any more, so that test's subject folded into the one above — but the
+  # guard it was written against did not. `reset()` used to clear only `if (this.marked.size)`, so
+  # as not to stomp a measurement the user had just asked for; unpicking the LAST part leaves an
+  # empty set with its size still on screen, which that guard walks straight past. Restore the
+  # guard and this goes red on the stale line while every other Reset assertion stays green.
+  test "Reset returns the readout to rest after a click emptied the selection itself" do
     open_measure_view(@nested_id)
     click_plate
-    assert_selector ".measure-dims", exact_text: "60 × 40 mm"
-    assert_selector ".measure-contour--selected", count: 1
-    assert_selector "[data-measure-target='printButton']", exact_text: "Print selected"
+    click_plate
+    assert_no_selector ".measure-contour--marked", visible: :all
+    assert_selector ".measure-dims",
+                    exact_text: "60 × 40 mm · nothing selected · Print all prints the whole file"
 
     click_on "Reset"
 
-    assert_no_selector ".measure-contour--selected"
     assert_selector ".measure-dims", exact_text: "2 shapes · click one to measure"
     assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
   end
 
-  # PRINTING ONE PART COSTS NO MODE — the whole point of the middle arm. No "Select parts", no
-  # marking: click the contour you want, and the button that already names it prints exactly it.
+  # PRINTING ONE PART COSTS ONE CLICK, which used to be the point of the MIDDLE arm and is now the
+  # first one: the click that measures is the click that selects. No mode to enter, and no second
+  # gesture — the button that already names the part prints exactly it.
   #
   # THE POLYGON COUNT IS THE CLAIM. nested-plate carries two contours, so a `print()` that ignored
-  # `this.selected` and fell through to `allShapes` would put BOTH on the sheet — and the plate is
+  # `this.marked` and fell through to `allShapes` would put BOTH on the sheet — and the plate is
   # first in paint order, so a test reading only the first polygon's size would pass either way.
   test "a measuring click alone is enough to print that one part" do
     open_measure_view(@nested_id)
     stub_print!
     contour_with_min_x(-5).click # the ⌀10 hole, which is NOT the first polygon
-    assert_selector "[data-measure-target='printButton']", exact_text: "Print selected"
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print 1 part"
 
-    click_on "Print selected"
+    click_on "Print 1 part"
 
     assert_equal 1, page.evaluate_script("window.__printed")
     out = JSON.parse(page.evaluate_script(<<~JS))
@@ -2713,31 +2749,30 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert_equal "⌀10 mm", out["label"]
   end
 
-  # AND CLICKING EMPTY SPACE GIVES "Print all" BACK. Without it the first click of a session
-  # permanently narrows what the button does, with Reset the only way out — and Reset also throws
-  # away the zoom, which a user who just wants the whole file has no reason to lose.
+  # CLICKING EMPTY SPACE CLEARS THE WHOLE SELECTION, AND THAT REVERSED THIS TEST'S OWN SUBJECT ON
+  # 2026-09-03, AT THE USER'S REQUEST. It read "clicking empty space deselects without disturbing
+  # the print set" and asserted the marks SURVIVING a background click, on the argument that a
+  # stray click must not throw away the parts you had gathered. With one selection state there is
+  # nothing else for a background click to mean, and it is still what gives "Print all" back
+  # without the Reset that also throws away your zoom. The cost was accepted rather than missed:
+  # a stray click now empties the set, and the only way back is to pick the parts again.
   #
-  # IT MUST NOT TOUCH THE PRINT SET. In select mode a stray click on the background would otherwise
-  # discard everything gathered so far, which is the one thing worse than an extra click.
-  test "clicking empty space deselects without disturbing the print set" do
+  # TWO MARKS, NOT ONE. With a single mark "the selection was cleared" and "the last click was
+  # undone" are the same observation, and a `pick` that dropped only the contour it was handed
+  # would pass. Two parts, one background click, nothing left.
+  test "clicking empty space clears the whole selection" do
     open_measure_view(@nested_id)
-    click_on "Select parts"
     click_plate
-    assert_selector ".measure-contour--marked", count: 1
-
-    click_empty_space
-
-    assert_no_selector ".measure-contour--selected"
-    assert_selector ".measure-contour--marked", count: 1, visible: :all
-    assert_selector "[data-measure-target='printButton']", exact_text: "Print 1 part"
-
-    click_on "Done selecting"
-    click_on "Reset"
     contour_with_min_x(-5).click
-    assert_selector "[data-measure-target='printButton']", exact_text: "Print selected"
+    assert_selector ".measure-contour--marked", count: 2
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print 2 parts"
 
     click_empty_space
 
+    assert_no_selector ".measure-contour--marked", visible: :all
+    # THE SET, NOT JUST THE CLASSES — the button label is the only thing in the DOM that reads
+    # `this.marked.size`, so a clear that stripped the classes and left the set full looks
+    # identical on screen and still prints two parts.
     assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
     assert_selector ".measure-dims", exact_text: "2 shapes · click one to measure"
   end
@@ -2748,7 +2783,6 @@ class MeasurePrintTest < ApplicationSystemTestCase
     open_measure_view(@nested_id)
     assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
 
-    click_on "Select parts"
     click_plate
     assert_selector "[data-measure-target='printButton']", exact_text: "Print 1 part"
 
@@ -2757,13 +2791,13 @@ class MeasurePrintTest < ApplicationSystemTestCase
   end
 
   # ✕ IMAGE LEAVES NOTHING BEHIND, AND EVERY LEAK IT COULD LEAVE IS SILENT. The poster hides the
-  # whole actions bar (`display: none` without --ready), so a stale print set, a stale mode and a
-  # stale toggle label are all invisible until Measure is clicked again — at which point the
-  # button promises to print parts that are not marked, are not on screen, and are not even the
-  # objects the new payload drew.
-  test "✕ Image drops the print set and leaves select mode" do
+  # whole actions bar (`display: none` without --ready), so a stale selection is invisible until
+  # Measure is clicked again — at which point the button promises to print parts that are not
+  # marked, are not on screen, and are not even the objects the new payload drew. (It used to have
+  # a stale MODE and a stale toggle label to leak as well; both went with the mode on 2026-09-03,
+  # which is why the two toggle assertions that closed this test are gone rather than relaxed.)
+  test "✕ Image drops the selection" do
     open_measure_view(@nested_id)
-    click_on "Select parts"
     click_plate
     contour_with_min_x(-5).click
     assert_selector "[data-measure-target='printButton']", exact_text: "Print 2 parts"
@@ -2772,18 +2806,14 @@ class MeasurePrintTest < ApplicationSystemTestCase
 
     # nodeByShape holds one SVG node per contour and nothing in the DOM can see it — but a Map
     # never emptied is a live reference to every node of every file measured in this tab.
-    assert_equal [ 0, 0, false ],
-                 in_measure_controller("[c.marked.size, c.nodeByShape.size, c.selecting]")
+    assert_equal [ 0, 0 ], in_measure_controller("[c.marked.size, c.nodeByShape.size]")
 
     click_on "Measure"
     assert_selector ".measure-view--ready"
 
-    assert_no_selector ".measure-contour--marked"
+    assert_no_selector ".measure-contour--marked", visible: :all
     assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
-    assert_no_selector ".measure-view--selecting"
-    toggle = find("[data-measure-target='selectToggle']")
-    assert_equal "Select parts", toggle.text, "the toggle must not come back reading the other mode"
-    assert_equal "false", toggle["aria-pressed"]
+    assert_selector "[data-measure-target='svgButton'][aria-label='Download all as SVG']"
   end
 
   # TWO CLAIMS NOTHING IN THE DOM CAN ANSWER, and neither has a reader until the print wiring
@@ -2805,11 +2835,11 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # silent data-controller no-op §14d records, and invisible to every assertion above.
   test "a full select-and-reset round trip logs no console error" do
     open_measure_view(@nested_id)
-    click_on "Select parts"
     click_plate
     contour_with_min_x(-5).click
+    click_plate # and the deselect half of the gesture, which is a code path of its own
+    click_empty_space
     click_on "Reset"
-    click_on "Done selecting"
 
     assert_no_console_errors
   end
@@ -2826,7 +2856,6 @@ class MeasurePrintTest < ApplicationSystemTestCase
   test "a real selected part reaches the sheet at exactly its measured size" do
     open_measure_view(@nested_id)
     stub_print!
-    click_on "Select parts"
     click_plate # NOT contour_with_min_x(-30).click — the hole intercepts it; see click_plate
     click_on "Print 1 part"
 
@@ -2868,7 +2897,6 @@ class MeasurePrintTest < ApplicationSystemTestCase
   test "two real selected parts keep their separation on the sheet" do
     open_measure_view(@apart_id)
     stub_print!
-    click_on "Select parts"
     contour_with_min_x(-10).click
     contour_with_min_x(40).click
     click_on "Print 2 parts"
@@ -2907,7 +2935,6 @@ class MeasurePrintTest < ApplicationSystemTestCase
   test "a round part prints its diameter, not a bounding box" do
     open_measure_view(@nested_id)
     stub_print!
-    click_on "Select parts"
     contour_with_min_x(-5).click
     click_on "Print 1 part"
 
@@ -3123,7 +3150,6 @@ class MeasurePrintTest < ApplicationSystemTestCase
   test "the Measure view prints without logging a console error" do
     open_measure_view(@nested_id)
     stub_print!
-    click_on "Select parts"
     click_plate # NOT contour_with_min_x(-30).click — the hole intercepts it; see click_plate
     click_on "Print 1 part"
 
