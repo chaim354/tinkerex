@@ -1,14 +1,17 @@
 <section class="panel build-log-panel">
   <h2>Build log</h2>
 
-  <%# scope: :build_log_entry — form_with on a NAMESPACED model (Maker::BuildLogEntry) derives
-      `maker_build_log_entry[...]`, which the controller's params.require(:build_log_entry)
-      rejects. Same trap as projects/_form.html.erb. %>
-  <%= form_with model: @new_entry, scope: :build_log_entry,
-                url: project_build_log_entries_path(@project), class: "log-form" do |f| %>
-    <%= f.rich_text_area :body, placeholder: "What did you do?", attachments: "false" %>
-    <%= f.submit "Add entry", class: "btn small" %>
-  <% end %>
+  <details class="composer">
+    <summary class="btn small">Add entry</summary>
+    <%# scope: :build_log_entry — form_with on a NAMESPACED model (Maker::BuildLogEntry) derives
+        `maker_build_log_entry[...]`, which the controller's params.require(:build_log_entry)
+        rejects. Same trap as projects/_form.html.erb. %>
+    <%= form_with model: @new_entry, scope: :build_log_entry,
+                  url: project_build_log_entries_path(@project), class: "log-form" do |f| %>
+      <%= f.rich_text_area :body, placeholder: "What did you do?", attachments: "false" %>
+      <%= f.submit "Add entry", class: "btn small" %>
+    <% end %>
+  </details>
 
   <% if @entries.empty? %>
     <p class="muted">No entries yet.</p>

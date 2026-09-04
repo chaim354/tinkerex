@@ -9,7 +9,7 @@
 <% end %>
 
 <div class="page-head project-head">
-  <div>
+  <div class="page-title">
     <h1><%= @project.name %></h1>
     <% if @project.status == "archived" %>
       <span class="badge status-archived">Archived</span>
@@ -18,19 +18,19 @@
   <div class="head-actions">
     <% if current_project == @project %>
       <span class="badge current-project-badge">★ Current project</span>
-      <%= button_to "Clear", current_project_path, method: :delete, class: "linkbtn" %>
+      <%= button_to "Clear", current_project_path, method: :delete, class: "btn small ghost" %>
     <% elsif @project.status != "archived" %>
       <%# An archived project cannot be the current project — CurrentProject scopes its lookup
           with `where.not(status: "archived")`, so this button would post successfully and change
           nothing, with no flash to say so. %>
       <%= button_to "Set as current", current_project_path, method: :patch,
-                    params: { project_id: @project.id }, class: "linkbtn" %>
+                    params: { project_id: @project.id }, class: "btn small outline" %>
     <% end %>
-    <%= link_to "Edit", edit_project_path(@project), class: "linkbtn" %>
+    <%= link_to "Edit", edit_project_path(@project), class: "btn small" %>
     <% if @project.status == "archived" %>
-      <%= button_to "Unarchive", unarchive_project_path(@project), method: :patch, class: "linkbtn" %>
+      <%= button_to "Unarchive", unarchive_project_path(@project), method: :patch, class: "btn small" %>
     <% else %>
-      <%= button_to "Archive", project_path(@project), method: :delete, class: "linkbtn danger",
+      <%= button_to "Archive", project_path(@project), method: :delete, class: "btn small danger",
                     form: { data: { turbo_confirm: "Archive #{@project.name}?" } } %>
     <% end %>
   </div>
@@ -41,6 +41,17 @@
 <% if @project.description.present? %>
   <p class="project-description"><%= @project.description %></p>
 <% end %>
+
+<%# THE STATS LINE reads collections ProjectsController#show already loaded — @attachments,
+    @tasks, @entries, @sheets — and nothing else, so page_query_budget_test.rb's "does not grow
+    with attachments, tasks or build-log entries" holds without a counter cache. %>
+<% done = @tasks.count { |t| t.status == "done" } %>
+<p class="project-stats">
+  <span><b><%= @attachments.size %></b> <%= "file".pluralize(@attachments.size) %></span>
+  <span><b><%= done %> of <%= @tasks.size %></b> <%= "task".pluralize(@tasks.size) %> done</span>
+  <span><b><%= @entries.size %></b> log <%= "entry".pluralize(@entries.size) %></span>
+  <span><b><%= @sheets.size %></b> <%= "sheet".pluralize(@sheets.size) %></span>
+</p>
 
 <div class="project-panels">
   <%= render "attachments" %>
