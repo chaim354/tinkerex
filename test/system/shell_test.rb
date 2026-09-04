@@ -116,6 +116,8 @@ class ShellTest < ApplicationSystemTestCase
         # phone rules are running at all — without it a viewport that never narrowed would satisfy
         # the overflow assertion for entirely the wrong reason. It is what caught the 500px floor.
         assert_selector "nav.tabbar", visible: true
+        assert_selector "form.topbar-project select", visible: true
+        assert_no_selector "aside.rail .current-project select"
         assert page.evaluate_script("document.documentElement.scrollWidth <= window.innerWidth"),
                "#{path} scrolls sideways at 375px (scrollWidth #{page.evaluate_script('document.documentElement.scrollWidth')})"
       end

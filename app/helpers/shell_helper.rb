@@ -36,10 +36,14 @@ module ShellHelper
 
   def rail_collapsed? = cookies[:rail] == "collapsed"
 
+  # `rail--collapsed` only inside the shell: its rules are descendant selectors (`.rail--collapsed
+  # .brand-name`), and the auth card renders a `.brand` too — a user who collapsed the rail and
+  # signed out landed on a sign-in card with its wordmark hidden (found in review, 2026-09-04).
   def body_classes
+    signed_in = respond_to?(:user_signed_in?) && user_signed_in?
     classes = []
-    classes << "app-shell" if respond_to?(:user_signed_in?) && user_signed_in?
-    classes << "rail--collapsed" if rail_collapsed?
+    classes << "app-shell" if signed_in
+    classes << "rail--collapsed" if signed_in && rail_collapsed?
     classes.join(" ")
   end
 

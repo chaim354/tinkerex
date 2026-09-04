@@ -78,6 +78,7 @@
   .flash-stack:empty { display: none; }
 
   .tabbar { display: none; }
+  .topbar-project { display: none; }
 
   /* Signed-out pages: the auth card (Task 5 writes the markup). */
   .auth-main { max-width: 440px; padding-top: 48px; }
@@ -117,6 +118,9 @@
     .tabbar-link:hover { text-decoration: none; }
     .tabbar-link[aria-current="page"] { color: var(--accent); }
     .topbar { flex-wrap: wrap; gap: 6px 8px; padding: 6px 12px; }
+    .topbar-project { display: flex; align-items: center; gap: 6px; margin: 0; }
+    .topbar-project-label { font: 600 10px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .1em; color: var(--accent); }
+    .topbar-project select { min-height: 26px; padding: 3px 24px 3px 8px; font-size: 12px; max-width: 46vw; }
     .topbar-search { flex: 1 1 100%; min-width: 0; }
     .topbar-kbd { display: none; }
     main.container { padding: 12px 12px 72px; }

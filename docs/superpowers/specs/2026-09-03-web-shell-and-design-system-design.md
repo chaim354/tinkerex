@@ -180,7 +180,7 @@ actions stay in each page's `.page-head`, which keeps template churn small.
 |---|---|---|
 | ≥ 1100px | 188px expanded, or 56px icon rail when the `rail` cookie says collapsed | breadcrumb + search field |
 | 720–1099px | 56px icon rail regardless of the cookie; labels become `title` tooltips | same |
-| < 720px | hidden; `nav.tabbar` fixed at the bottom with the five icons; the current project shows as a chip in the top bar | breadcrumb; search collapses to an icon that reveals the field |
+| < 720px | hidden; `nav.tabbar` fixed at the bottom with the five icons; the current project shows as a chip in the top bar (the same form and select, with its own id) | breadcrumb on the first row; the search field takes a full-width second row (built 2026-09-04: a field that is always visible beat the icon-that-reveals the first draft of this row described) |
 
 Tables get a class per column (`col-name`, `col-type`, `col-folder`, `col-size`, `col-version`,
 `col-modified`, `col-actions`) and drop Modified, then Version, then Size below 720px, so the page

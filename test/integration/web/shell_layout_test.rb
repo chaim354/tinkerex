@@ -38,12 +38,24 @@ module Web
       assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Models"
     end
 
-    test "the sign-in page has no rail and no shell class" do
+    test "the sign-in page has no rail and no shell class, whatever the rail cookie says" do
       delete destroy_user_session_path
+      cookies[:rail] = "collapsed"
       get new_user_session_path
       assert_response :success
       assert_select "aside.rail", count: 0
       assert_select "body.app-shell", count: 0
+      # The collapsed rules hide `.brand-name`, and the auth card has one (found in review).
+      assert_select "body.rail--collapsed", count: 0
+    end
+
+    test "the top bar carries a second, phone-only project switcher with its own id" do
+      @user.maker_projects.create!(name: "Desk Lamp")
+      get files_path
+      assert_select "header.topbar form.topbar-project[action=?] select[name='project_id']#topbar_project_id", current_project_path
+      assert_select "select#topbar_project_id option[value='']", text: /none/i
+      assert_select "select#project_id", count: 1
+      assert_select "select#topbar_project_id", count: 1
     end
 
     test "the theme comes from the cookie and defaults to dark" do
