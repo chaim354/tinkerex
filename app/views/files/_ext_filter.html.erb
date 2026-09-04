@@ -35,6 +35,7 @@
   %>
   <form method="get" action="<%= files_path %>" class="ext-picker">
     <% if @exts.any? %><input type="hidden" name="ext" value="<%= @exts.join(',') %>"><% end %>
+    <% if @q %><input type="hidden" name="q" value="<%= @q %>"><% end %>
     <label class="muted" for="ext-add">Type</label>
     <% if groups.any? %>
       <%# The bare word or nothing, NEVER an interpolated true/false. `disabled` is a BOOLEAN
@@ -76,12 +77,12 @@
         it here only bakes a stale choice into a URL someone copies. %>
     <span class="ext-active">
       <% @exts.each do |ext| %>
-        <%= link_to ext_toggle_path(ext, @exts), class: "chip active", "aria-current": "true",
+        <%= link_to ext_toggle_path(ext, @exts, q: @q), class: "chip active", "aria-current": "true",
                     title: "Remove .#{ext} from the filter" do %>
           .<%= ext %><span class="chip-x" aria-hidden="true">×</span>
         <% end %>
       <% end %>
-      <%= link_to "Clear filter", files_path, class: "muted clear-filter" %>
+      <%= link_to "Clear filter", files_path({ q: @q }.compact), class: "muted clear-filter" %>
     </span>
   <% end %>
 </div>

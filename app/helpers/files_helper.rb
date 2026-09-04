@@ -137,9 +137,13 @@ module FilesHelper
   # (see #index), so carrying it would put a param in the URL that the request then ignores.
   # `sort`/`dir` because they are cookie-persisted: pinning them would freeze into a copied or
   # bookmarked chip URL a choice the user can still change from the headers.
-  def ext_toggle_path(ext, active_exts)
+  #
+  # `q` DOES ride along, and it is the one param here that must: a search and a type filter compose
+  # into ONE question (spec §9), so a chip that dropped the search would answer a different one --
+  # turning ".stl among “lamp”" into "every .stl", with nothing on the page saying it had.
+  def ext_toggle_path(ext, active_exts, q: nil)
     toggled = active_exts.include?(ext) ? active_exts - [ ext ] : active_exts + [ ext ]
-    files_path({ ext: toggled.presence&.join(",") }.compact)
+    files_path({ ext: toggled.presence&.join(","), q: }.compact)
   end
 
   # Can another extension still be turned on? `resolve_exts` keeps only the FIRST MAX_EXTS, so

@@ -21,17 +21,23 @@
   built by climbing parent_node_id (already user-scoped), so nothing here re-derives the tree or
   trusts params[:folder] a second time. aria-current marks the leaf for assistive tech.
 %>
-<nav class="breadcrumb" aria-label="Folder path">
-  <%= link_to "Files", files_path %>
-  <% @crumbs.each_with_index do |crumb, i| %>
-    <span class="sep" aria-hidden="true">/</span>
-    <% if i == @crumbs.length - 1 %>
-      <%= link_to crumb.name, files_path(folder: crumb.node_id), "aria-current": "page" %>
-    <% else %>
-      <%= link_to crumb.name, files_path(folder: crumb.node_id) %>
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Folder path">
+    <%= link_to "Files", files_path %>
+    <% @crumbs.each_with_index do |crumb, i| %>
+      <span class="sep" aria-hidden="true">/</span>
+      <% if i == @crumbs.length - 1 %>
+        <%= link_to crumb.name, files_path(folder: crumb.node_id), "aria-current": "page" %>
+      <% else %>
+        <%= link_to crumb.name, files_path(folder: crumb.node_id) %>
+      <% end %>
     <% end %>
-  <% end %>
-</nav>
+    <% if @q %>
+      <span class="sep" aria-hidden="true">/</span>
+      <span aria-current="page">Search “<%= @q %>”</span>
+    <% end %>
+  </nav>
+<% end %>
 
 <%= render "ext_filter" %>
 
@@ -159,9 +165,13 @@
 <% end %>
 
 <% if @nodes.empty? %>
-  <%# Two different emptinesses. "No files yet" is advice for a new library; said to someone who
-      just filtered for .dxf and has none, it reads as "your library is empty" and is a lie. %>
-  <% if @flat %>
+  <%# Three emptinesses. "No files yet" is advice for a new library; said to someone who searched
+      or filtered, it reads as "your library is empty" and is a lie. %>
+  <% if @q && @exts.any? %>
+    <p class="empty muted">No files match “<%= @q %>” among <%= @exts.map { |e| ".#{e}" }.to_sentence %>.</p>
+  <% elsif @q %>
+    <p class="empty muted">No files match “<%= @q %>”.</p>
+  <% elsif @flat %>
     <p class="empty muted">No files match <%= @exts.map { |e| ".#{e}" }.to_sentence %>.</p>
   <% else %>
     <p class="empty muted">No files yet. Upload one to get started.</p>
