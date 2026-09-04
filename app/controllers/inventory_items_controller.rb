@@ -90,8 +90,8 @@ class InventoryItemsController < ApplicationController
   # POST /inventory/:id/adjust — the ledger's one door from the web, mirroring the v1 API's own
   # adjust action (V1::Maker::InventoryItemsController#adjust) field-for-field.
   def adjust
-    delta = BigDecimal(params.require(:transaction)[:delta].to_s) rescue nil
-    return redirect_to(inventory_item_path(@item), alert: "Enter a non-zero amount.") if delta.nil? || delta.zero?
+    delta = parse_delta(params.require(:transaction)[:delta])
+    return redirect_to(inventory_item_path(@item), alert: "Enter a non-zero amount.") if delta.nil?
 
     reason = params[:transaction][:reason].presence || "adjusted"
     unless Maker::InventoryTransaction::REASONS.include?(reason)
@@ -112,12 +112,29 @@ class InventoryItemsController < ApplicationController
 
   private
 
+  # THE COLUMN IS decimal(12,3). BigDecimal() happily parses "Infinity", "-Infinity", "NaN" and
+  # "1e400", and none of them is zero?, so a zero-check alone let them through to apply! — measured
+  # in review: an Infinity row stores as Infinity while the cached balance stays put, so the
+  # model's quantity_cached == SUM(delta) invariant breaks silently, rebuild_quantity_cached! then
+  # writes Infinity, and the ledger being immutable, only deleting the item recovers; a NaN reaches
+  # the DB as NULL and 500s. Non-finite and out-of-column amounts answer nil here, the same
+  # "Enter a non-zero amount" refusal a non-number gets, at BOTH doors (adjust, initial quantity).
+  MAX_DELTA = BigDecimal("999999999.999")
+
+  def parse_delta(raw)
+    delta = BigDecimal(raw.to_s)
+    return nil unless delta.finite? && !delta.zero? && delta.abs <= MAX_DELTA
+    delta
+  rescue ArgumentError, TypeError
+    nil
+  end
+
   def post_initial_quantity!(item)
     raw = params.dig(:inventory_item, :initial_quantity)
     return if raw.blank?
 
-    delta = BigDecimal(raw.to_s) rescue nil
-    return if delta.nil? || delta.zero?
+    delta = parse_delta(raw)
+    return if delta.nil?
 
     Maker::InventoryTransaction.apply!(item:, user: current_user, delta:, reason: "initial")
   end

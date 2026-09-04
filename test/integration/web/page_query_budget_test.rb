@@ -259,7 +259,9 @@ module Web
         count.times do |i|
           location = @user.maker_locations.create!(name: "#{prefix}loc#{i}")
           supplier = @user.maker_suppliers.create!(name: "#{prefix}sup#{i}")
-          @user.maker_inventory_items.create!(name: "#{prefix}item#{i}", unit: "each", location:, supplier:)
+          # A category per item too, so the chip loop is under measurement (review, 2026-09-04).
+          @user.maker_inventory_items.create!(name: "#{prefix}item#{i}", unit: "each", location:, supplier:,
+                                              category: "#{prefix}cat#{i}")
         end
       end
       assert_constant_queries(inventory_items_path,

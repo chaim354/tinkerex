@@ -81,6 +81,17 @@ module Web
       assert_select "td.col-name", text: /100% cotton/
     end
 
+    test "search treats _ as a literal, not a single-character wildcard" do
+      item!("M3_8 literal")
+      item!("M3-8 dash")
+      item!("M3×8 screw")
+
+      get inventory_items_path(q: "M3_8")
+      assert_response :success
+      assert_select "table.table.inventory-table tbody tr", 1
+      assert_select "table.table.inventory-table tbody tr", text: /M3_8 literal/
+    end
+
     test "category chips come from the user's own categories" do
       bolt = item!("Bolt", category: "Fasteners")
       item!("Resistor", category: "Electronics")
@@ -173,6 +184,11 @@ module Web
       assert_response :success
       assert_select "table.table.ledger tbody tr", InventoryItemsController::LEDGER_CAP
       assert_select "p.ledger-truncated", text: /Showing 200 of 201/
+      # THE CAP KEEPS THE NEWEST ROWS AND THE WALK STARTS FROM THE CACHED BALANCE, so the balances
+      # shown stay exact: 201 rows of +1, the newest reads 201 and the 200th (oldest shown) reads 2 —
+      # the one dropped row is already inside quantity_cached.
+      assert_select "table.table.ledger tbody tr:first-child .col-balance", text: /\A\s*201\s*\z/
+      assert_select "table.table.ledger tbody tr:last-child .col-balance", text: /\A\s*2\s*\z/
     end
 
     # --- adjust ------------------------------------------------------------------------------
@@ -214,6 +230,29 @@ module Web
       end
       assert_redirected_to inventory_item_path(item)
       assert_match(/Enter a non-zero/, flash[:alert])
+    end
+
+    # A NON-FINITE OR OUT-OF-COLUMN AMOUNT IS REFUSED AT THE DOOR. BigDecimal("Infinity") parses
+    # and is not zero, so the zero-check alone let it into an immutable ledger (review, 2026-09-04):
+    # the row stored Infinity, the cached balance did not move, and the documented repair
+    # (rebuild_quantity_cached!) wrote Infinity back. NaN reached the DB as NULL and 500ed.
+    test "adjust refuses a non-finite or out-of-column delta, at both doors" do
+      item = item!("Screws")
+      post!(item, 12, reason: "initial")
+
+      %w[Infinity -Infinity NaN 1e400].each do |bad|
+        assert_no_difference -> { item.transactions.count }, "#{bad} reached the ledger" do
+          post adjust_inventory_item_path(item), params: { transaction: { delta: bad, reason: "consumed" } }
+        end
+        assert_redirected_to inventory_item_path(item)
+        assert_match(/Enter a non-zero/, flash[:alert])
+      end
+      assert_equal 12, item.reload.quantity_cached
+
+      assert_no_difference -> { Maker::InventoryTransaction.count } do
+        post inventory_items_path, params: { inventory_item: { name: "Bad start", initial_quantity: "Infinity" } }
+      end
+      assert_equal 0, @user.maker_inventory_items.find_by!(name: "Bad start").quantity_cached
     end
 
     test "adjust drops a foreign project id but still posts" do
