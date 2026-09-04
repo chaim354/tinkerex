@@ -21,6 +21,14 @@ module Maker
     # needs a second `where(kind: "dir")` pluck to enumerate the same rows this one indexed.
     def dir_ids = @dirs.keys
 
+    # The dir Entries directly under one dir (nil = the library root). Built ONCE, lazily, from the
+    # rows the constructor already plucked — a second `where(parent_node_id:)` per level is exactly
+    # the per-file query this class exists to avoid. Order is the pluck's; callers that care sort.
+    def children_of(node_id)
+      @children ||= @dirs.values.group_by(&:parent_node_id)
+      @children.fetch(node_id, [])
+    end
+
     # "" for the library root (node_id nil). nil when the chain is broken -- a tombstoned or
     # missing ancestor, or a cycle. NIL IS AN ANSWER, NOT AN ERROR: a caller sweeping a whole
     # library must skip an unresolvable node, not abort the pass over the other ten thousand.
