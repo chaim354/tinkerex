@@ -22,13 +22,10 @@
      resolve_exts would then drop. */
   .ext-picker select:disabled { opacity: .45; cursor: not-allowed; }
   .ext-active { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-  .ext-filter .chip { padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px;
-    font-size: 13px; color: var(--fg-muted); }
-  .ext-filter .chip:hover { text-decoration: none; background: var(--raised); color: var(--fg); }
-  .ext-filter .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-  /* The × is INSIDE the chip link, so the whole chip is one target that removes that type. */
-  .ext-filter .chip .chip-x { margin-left: 6px; opacity: .75; font-weight: 700; }
-  .ext-filter .chip.active:hover { background: var(--fg); border-color: var(--fg); color: #fff; }
+  /* The active-type chips are the .chip component (components.css), whose active and hover
+     states are token-based. The migrated per-page copies painted `color: #fff` over var(--accent)
+     and var(--fg), which the theme flip made unreadable on dark (Task 2 review, 2026-09-03). The
+     × stays INSIDE the chip link, so the whole chip is one target that removes that type. */
 
   /* Column classes files/_list.html.erb carries (Task 3), so a phone drops columns instead of
      scrolling sideways. Order of loss: modified, version, then size. */
