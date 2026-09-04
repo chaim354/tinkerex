@@ -188,7 +188,12 @@
 
   /* --- Measure view (measure_controller.js) — .lbrn/.lbrn2, .mage, .dxf, .svg --- */
   .measure-view { position: relative; }
-  .measure-stage { display: none; width: 100%; aspect-ratio: 1; }
+  /* SQUARE, AND NEVER TALLER THAN THE VIEWPORT. The stage was 100% of a 920px column; inside the
+     1360px shell it grew to a ~1160px square that no longer fits a 1400px browser window, and
+     WebDriver clicks at the centre of an element's VISIBLE part — measure_print_test's computed
+     click landed on the hole instead of the line. min(100%, 78vh) keeps it square (the tests derive
+     mm-per-pixel from the width) and on screen; on a phone 100% is the smaller term. */
+  .measure-stage { display: none; width: min(100%, 78vh); aspect-ratio: 1; margin: 0 auto; }
   .measure-stage svg { width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
   .measure-stage svg.is-panning { cursor: grabbing; }
   .measure-bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
