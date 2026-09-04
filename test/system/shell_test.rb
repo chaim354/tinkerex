@@ -75,7 +75,10 @@ class ShellTest < ApplicationSystemTestCase
     assert_no_selector ".flash-stack .flash-alert"
   end
 
-  test "command-K focuses the library search" do
+  # Stage 2, S2-5: the field this focuses now posts to SearchController (sitewide), not
+  # FilesController -- rail_controller.js's selector (`.topbar-search input[type=search]`) and
+  # this field's `name` did not change, so the shortcut itself did not need to.
+  test "command-K focuses the top bar's search field" do
     visit projects_path
     find("body").send_keys([ :control, "k" ])
     assert_equal "q", page.evaluate_script("document.activeElement.name")
@@ -93,7 +96,10 @@ class ShellTest < ApplicationSystemTestCase
   # `@media (max-width: 719px)`'s `body.app-shell` keep `var(--rail-width)` and deleting
   # `.rail { display: none }` gives "/files?view=list scrolls sideways at 375px (scrollWidth 393)".
   test "no page scrolls sideways at phone width" do
-    project = @user.maker_projects.create!(name: "Desk Lamp", description: "A lamp." * 20)
+    # `tag_list:` (stage 2, S2-5, Maker::Taggable) so the sweep below has a real tag page to visit
+    # (tag_path("lamp")) and the search results page (search_path(q: "lamp")) has more than the
+    # empty-prompt state to render — this project matches by name AND by tag.
+    project = @user.maker_projects.create!(name: "Desk Lamp", description: "A lamp." * 20, tag_list: "lamp")
     # THE INVENTORY PAGES (S2-3) with every column populated and a long name, so the table drops
     # and the settings rows are exercised at 375px, not an empty state.
     supplier = @user.maker_suppliers.create!(name: "McMaster-Carr Supply Company", url: "https://www.mcmaster.com")
@@ -148,7 +154,10 @@ class ShellTest < ApplicationSystemTestCase
       [ root_path, files_path(view: "list"), files_path(view: "grid"), project_path(project),
         file_path(long.node_id), tools_path, models_path, trash_index_path,
         inventory_items_path, inventory_item_path(item), suppliers_path, locations_path,
-        project_bom_path(project) ].each do |path|
+        project_bom_path(project),
+        # STAGE 2, S2-5: the search results page (several groups populated -- see the tag_list:
+        # above) and a tag page, the two new surfaces this arc adds to the shell.
+        search_path(q: "lamp"), tag_path("lamp") ].each do |path|
         visit path
         # `nav.tabbar` is display:none above 719px, so finding it VISIBLE is the proof that the
         # phone rules are running at all — without it a viewport that never narrowed would satisfy

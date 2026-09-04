@@ -1,0 +1,27 @@
+/* The search results page (stage 2, S2-5): the toolbar's search box, and the grouped result
+   list `shared/_result_group.html.erb` renders once per kind. .toolbar, .empty and .muted are
+   components (components.css); these are this page's own classes, per §14m rule 3. */
+@layer pages {
+  .search-toolbar input[type=search] { flex: 1; max-width: 480px; }
+  .search-prompt { margin: 8px 0; }
+
+  .result-group { margin-bottom: 20px; }
+  .result-group h2 { font-size: 14px; margin-bottom: 6px; }
+  .result-list { list-style: none; margin: 0; padding: 0; }
+  .result-row { display: flex; align-items: baseline; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .result-sub { font: 11px/1.4 var(--font-mono); color: var(--fg-muted); }
+  .result-more { font-size: 12px; margin-top: 6px; }
+
+  /* THE FILES TOOLBAR'S OWN SEARCH BOX (search_test.rb's sibling, files_search_test.rb) lives
+     here rather than in pages/files.css: this feature (stage 2, S2-5) is the only thing that adds
+     it, files.css is otherwise untouched by it, and "how a search box looks" is already this
+     sheet's job for the results page above. It is its own `.files-search` form
+     (files/index.html.erb), a sibling of `.ext-filter` inside `.toolbar.files-toolbar` rather
+     than a field bolted onto `.ext-picker`'s <select> form — `.toolbar`'s existing
+     `flex-wrap: wrap` (components.css) is what keeps it from forcing horizontal scroll at 375px
+     (test/system/shell_test.rb's sweep), which nesting it inside `.ext-picker`'s single-row
+     `inline-flex` would not have given it for free. */
+  .files-search { display: inline-flex; }
+  .files-search input[type=search] { width: 200px; max-width: 100%; padding: 4px 8px;
+    border: 1px solid var(--line); border-radius: 6px; font: inherit; font-size: 13px; }
+}

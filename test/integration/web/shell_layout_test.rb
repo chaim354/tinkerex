@@ -101,9 +101,10 @@ module Web
       assert_select "aside.rail [data-action='rail#toggle'][aria-expanded='false']"
     end
 
-    test "the top bar carries the library search on every page" do
+    test "the top bar carries the sitewide search on every page" do
       get projects_path
-      assert_select "header.topbar form.topbar-search[action=?][method='get'] input[type='search'][name='q']", files_path
+      assert_select "header.topbar form.topbar-search[action=?][method='get'] " \
+                    "input[type='search'][name='q'][placeholder='Search everything']", search_path
     end
 
     test "a page with a breadcrumb renders it in the top bar, not in main" do
