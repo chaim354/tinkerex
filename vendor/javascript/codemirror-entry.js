@@ -15,6 +15,9 @@ export { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirro
 export { EditorState, Compartment } from "@codemirror/state"
 export { unifiedMergeView, getChunks, rejectChunk } from "@codemirror/merge"
 export { basicSetup } from "codemirror"
+// The dark editor theme. Which one a page uses is app/javascript/lib/codemirror_theme.js's
+// decision, read from html[data-theme]; this export is only how it reaches the controllers.
+export { oneDark } from "@codemirror/theme-one-dark"
 export { StreamLanguage } from "@codemirror/language"
 export { cpp } from "@codemirror/lang-cpp"
 export { python } from "@codemirror/lang-python"

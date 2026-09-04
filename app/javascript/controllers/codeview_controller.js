@@ -40,11 +40,12 @@ export default class extends Controller {
     // upgrade; every failure below leaves this <pre> exactly as textpreview left it.
     this.fallbackTarget.textContent = head.text
 
-    let cm, languages
+    let cm, languages, theme
     try {
-      ;[cm, languages] = await Promise.all([
+      ;[cm, languages, theme] = await Promise.all([
         import("codemirror"),
-        import("lib/codemirror_languages")
+        import("lib/codemirror_languages"),
+        import("lib/codemirror_theme")
       ])
     } catch (e) {
       console.warn("[codeview] keeping the plain preview:", e)
@@ -52,13 +53,16 @@ export default class extends Controller {
     }
     if (this.disconnected) return
 
-    this.mount(cm, languages, head.text)
+    this.mount(cm, languages, theme, head.text)
   }
 
-  mount(cm, languages, text) {
+  mount(cm, languages, theme, text) {
     const language = languages.languageFor(this.extValue, cm)
     const extensions = [
       cm.basicSetup,
+      // The dark editor theme, or nothing under the light one — lib/codemirror_theme.js reads
+      // html[data-theme]. Above the read-only facets so the pair below still reads as a unit.
+      ...theme.themeExtensions(cm),
       // BOTH, and neither is redundant. readOnly refuses document changes; editable removes the
       // caret and IME. A contenteditable that merely looks disabled still takes focus and still
       // accepts an IME composition.

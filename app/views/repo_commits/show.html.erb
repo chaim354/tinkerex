@@ -1,4 +1,11 @@
-<h1>Commit — <%= @root.name %></h1>
+<% content_for :title, "Commit — #{@root.name} — Tinkerex" %>
+<div class="page-head">
+  <h1>Commit — <%= @root.name %></h1>
+  <div class="page-actions">
+    <%= link_to "Browse files", files_path(folder: @root.node_id), class: "btn ghost small" %>
+    <%= link_to "History", repo_history_path(@root.node_id), class: "btn ghost small" %>
+  </div>
+</div>
 
 <%# THREE GROUPS BUILT HERE, ONE MARKUP PATH BELOW. The pending group renders inside an OPEN
     details and the other two inside CLOSED ones, so the row markup exists once rather than
@@ -40,7 +47,7 @@
     <% end %>
 
     <% groups.each do |group| %>
-      <section class="commit-group" data-group="<%= group[:key] %>"
+      <section class="commit-group panel" data-group="<%= group[:key] %>"
                data-controller="commitgroup"
                data-commitgroup-label-value="<%= group[:title] %>">
         <details class="commit-group-body" <%= "open" if group[:open] %>>
@@ -116,7 +123,7 @@
 
     <%= text_area_tag :message, nil, rows: 3, placeholder: "What changed?", class: "commit-message" %>
     <div class="editor-bar">
-      <%= submit_tag "Commit" %>
+      <%= submit_tag "Commit", class: "primary" %>
     </div>
   <% end %>
 <% end %>

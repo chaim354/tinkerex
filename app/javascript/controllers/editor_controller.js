@@ -34,11 +34,12 @@ export default class extends Controller {
 
     if (text.length > MAX_BYTES) return // stays a read-only <pre>; the server refuses the save too
 
-    let cm, languages
+    let cm, languages, theme
     try {
-      ;[cm, languages] = await Promise.all([
+      ;[cm, languages, theme] = await Promise.all([
         import("codemirror"),
-        import("lib/codemirror_languages")
+        import("lib/codemirror_languages"),
+        import("lib/codemirror_theme")
       ])
     } catch (e) {
       console.warn("[editor] keeping the plain preview:", e)
@@ -46,15 +47,16 @@ export default class extends Controller {
     }
     if (this.disconnected) return
 
-    this.mount(cm, languages, text)
+    this.mount(cm, languages, theme, text)
   }
 
-  mount(cm, languages, text) {
+  mount(cm, languages, theme, text) {
     const language = languages.languageFor(this.extValue, cm)
     // NO EditorState.readOnly AND NO EditorView.editable HERE — codeview sets both, and this
     // controller exists precisely because unsetting them on that one is not a flag flip: a page
     // that is sometimes editable needs a different mount, not a mutated one.
-    const extensions = [cm.basicSetup]
+    // The dark editor theme, or nothing under the light one (lib/codemirror_theme.js).
+    const extensions = [cm.basicSetup, ...theme.themeExtensions(cm)]
     if (language) extensions.push(language)
 
     this.view = new cm.EditorView({

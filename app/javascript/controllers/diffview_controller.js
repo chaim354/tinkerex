@@ -75,11 +75,12 @@ export default class extends Controller {
     }
     if (this.disconnected) return
 
-    let cm, languages
+    let cm, languages, theme
     try {
-      ;[cm, languages] = await Promise.all([
+      ;[cm, languages, theme] = await Promise.all([
         import("codemirror"),
-        import("lib/codemirror_languages")
+        import("lib/codemirror_languages"),
+        import("lib/codemirror_theme")
       ])
     } catch (e) {
       console.warn("[diffview] keeping the row without a diff:", e)
@@ -87,13 +88,18 @@ export default class extends Controller {
     }
     if (this.disconnected) return
 
-    this.mount(cm, languages, original, work)
+    this.mount(cm, languages, theme, original, work)
   }
 
-  mount(cm, languages, original, work) {
+  mount(cm, languages, theme, original, work) {
     const language = languages.languageFor(this.extValue, cm)
     const extensions = [
       cm.basicSetup,
+      // The dark editor theme, or nothing under the light one (lib/codemirror_theme.js). Ahead of
+      // the merge view, whose own chunk tints still land on top of oneDark's ground — measured on
+      // a dark diff: .cm-changedLine rgba(100, 160, 128, .08), .cm-deletedChunk rgba(160, 128,
+      // 100, .08), over an editor at rgb(40, 44, 52).
+      ...theme.themeExtensions(cm),
       cm.unifiedMergeView({ original, mergeControls: false }),
       // BOTH FACETS, and neither is redundant — codeview_controller's rule, for its reason:
       // readOnly refuses a document change and editable removes the caret and IME. A

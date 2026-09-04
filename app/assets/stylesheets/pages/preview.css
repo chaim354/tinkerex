@@ -59,15 +59,13 @@
   .repo-banner-link { text-decoration: none; }
   .repo-banner-link:hover { text-decoration: underline; }
 
-  /* --- Review and commit (repo_commits/show.html.erb) --- */
+  /* --- Review and commit (repo_commits/show.html.erb) ---
+
+     THE ROW, MESSAGE AND GROUP RULES ARE RESTATED AT THE FOOT OF THIS LAYER, under "the staging
+     panel and the history list, restated". PR 4 tightened their metrics together with the
+     history list they now share a vocabulary with, and one definition each is the rule
+     (§14m rule 3): what is here is what is NOT restated there. */
   .commit-box { display: block; }
-  .commit-rows { list-style: none; margin: 0 0 12px; padding: 0; }
-  .commit-rows > li { border: 1px solid var(--line); border-radius: var(--radius-panel); margin-bottom: 10px; }
-  .commit-row-head {
-    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-    padding: 8px 10px; border-bottom: 1px solid var(--line);
-  }
-  .commit-row-head code { font-family: var(--font-mono); font-size: 13px; }
   /* Tabular figures so a column of +12 / −3 lines up rather than shimmering row to row. */
   .commit-row-head .plus, .commit-row-head .minus { font-variant-numeric: tabular-nums; font-size: 12px; }
   /* --danger is the palette's red and --ok its green: the addition colour was the literal #1a7f37
@@ -75,10 +73,6 @@
      maps it to --ok. Both are theme tokens now, so neither is a literal to be matched by eye. */
   .commit-row-head .plus  { color: var(--ok); }
   .commit-row-head .minus { color: var(--danger); }
-  .commit-message {
-    width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--line);
-    border-radius: 6px; background: var(--bg); color: inherit; box-sizing: border-box;
-  }
   /* The inline diff (diffview_controller.js). Bounded for .preview-code's reason — a repository
      with six edited files must not make the commit page six file-lengths tall. */
   .commit-diff .cm-editor { max-height: 320px; }
@@ -91,11 +85,6 @@
      STYLED OFF `data-group` AND `data-state`, NEVER OFF CLASSES OF THEIR OWN. Those attributes are
      already there for the tests to select on, so a parallel set of class names would be a second
      vocabulary for one fact, free to disagree with the first (§14d's own warning about naming). */
-  .commit-group + .commit-group { margin-top: 20px; }
-  .commit-group-body > summary { cursor: pointer; padding: 6px 0; font-weight: 600; }
-  /* The count beside a title is the ONLY thing a closed group says about how much is hiding inside
-     it, so it keeps .muted's colour but not its weight — dimmed AND small reads as decoration. */
-  .commit-group-body > summary .muted { font-weight: 400; }
   .commit-group-note { margin: 2px 0 10px; font-size: 13px; }
 
   /* "tinkerex never creates these." IS AN EXPLANATION, NOT A WARNING, and shares .muted with every
@@ -254,4 +243,56 @@
   .lbrn-summary dt { color: var(--fg-muted); }
   .lbrn-summary dd { margin: 0; font-weight: 600; }
   .lbrn-text { font-size: 12px; margin: 10px 0 0; }
+
+  /* --- The staging panel and the history list, restated (PR 4, spec §8) ---
+
+     THE RULES THE "Review and commit" AND "three groups" SECTIONS ABOVE POINT AT. They moved here
+     rather than being edited in place because the commit rows, the commit message and the
+     repository history list were re-metricked as ONE vocabulary — the same border, the same
+     radius, the same mono meta line — and a reader comparing them should not have to hold three
+     screens apart. Each selector is still declared exactly once in this file. */
+  /* The trash and repository pages' one-line explanation under the head. Capped in ch rather than
+     px because it is prose: a measure that long stops being readable, whatever the viewport. */
+  .page-intro { max-width: 72ch; margin: -8px 0 16px; font-size: 13px; }
+  .commit-group + .commit-group { margin-top: 12px; }
+  /* The disclosure triangle is drawn here, not left to the browser: `display: flex` on a <summary>
+     drops the native marker in WebKit only, so a group would carry a triangle in Firefox and none
+     in Safari. `list-style: none` plus the -webkit- pseudo-element removes both, and ::before is
+     then the ONE marker, rotating on [open] in both engines. */
+  .commit-group-body > summary { cursor: pointer; padding: 2px 0; font-weight: 600; list-style: none; display: flex; align-items: center; gap: 8px; }
+  .commit-group-body > summary::-webkit-details-marker { display: none; }
+  .commit-group-body > summary::before {
+    content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--fg-muted); border-bottom: 1.5px solid var(--fg-muted);
+    transform: rotate(-45deg); transition: transform 120ms ease;
+  }
+  .commit-group-body[open] > summary::before { transform: rotate(45deg); }
+  /* The count beside a title is the ONLY thing a closed group says about how much is hiding inside
+     it, so it keeps .muted's colour but not its weight. It is set in the mono face at 11px because
+     it is a figure read against the other groups' figures, not a second title — the same reason
+     .commit-meta below is mono. */
+  .commit-group-body > summary .muted { font: 400 11px/1.4 var(--font-mono); }
+  .commit-rows { list-style: none; margin: 8px 0 0; padding: 0; }
+  .commit-rows > li { border: 1px solid var(--line); border-radius: var(--radius-panel); margin-bottom: 8px; background: var(--bg); }
+  .commit-row-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  /* `overflow-wrap: anywhere` because a path has no spaces to break at: without it a deep one is
+     the single element that makes the commit page scroll sideways at 375px (§14m rule 11). */
+  .commit-row-head code { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+  .commit-row-state { font: 500 10px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; }
+  .commit-nodiff { margin: 0; padding: 6px 10px; font-size: 12px; }
+  .commit-message { width: 100%; font: 13px/1.5 var(--font-ui); padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: inherit; }
+  .commit-rename-note, .commit-truncated { font-size: 12px; }
+
+  /* --- Repository history (repo_histories/show.html.erb) ---
+
+     A THREE-COLUMN GRID, NOT A FLEX ROW, so every oid starts at the same x down the whole list —
+     which is the point of a short oid you scan rather than read. .history-list on the FILE page is
+     flex for the opposite reason: its rows carry actions that must sit hard right. */
+  .commit-history { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+  .commit-history-row { display: grid; grid-template-columns: 76px minmax(0, 1fr) auto; gap: 4px 14px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .commit-oid { font-size: 12px; color: var(--fg-muted); }
+  .commit-subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .commit-meta { font: 11px/1.5 var(--font-mono); white-space: nowrap; }
+  /* The meta line cannot ellipsise (a date read half way is worse than one on its own line), so on
+     a phone it drops under the subject instead of squeezing the two columns beside it. */
+  @media (max-width: 719px) { .commit-history-row { grid-template-columns: 76px minmax(0, 1fr); } .commit-meta { grid-column: 2; } }
 }

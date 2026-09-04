@@ -1,9 +1,11 @@
-<h1>History — <%= @root.name %></h1>
-
-<p class="page-sub">
-  <%= link_to "Browse files", files_path(folder: @root.node_id), class: "btn ghost small" %>
-  <%= link_to "Review and commit", repo_commit_path(@root.node_id), class: "btn ghost small" %>
-</p>
+<% content_for :title, "History — #{@root.name} — Tinkerex" %>
+<div class="page-head">
+  <h1>History — <%= @root.name %></h1>
+  <div class="page-actions">
+    <%= link_to "Browse files", files_path(folder: @root.node_id), class: "btn ghost small" %>
+    <%= link_to "Review and commit", repo_commit_path(@root.node_id), class: "btn ghost small" %>
+  </div>
+</div>
 
 <%# HONEST EMPTINESS, AND IT IS THE WHOLE REASON Maker::Git::History CARRIES `stopped`. Only
     `exhausted?` establishes that there is nothing earlier; every other stop means the walk ran out
@@ -24,9 +26,9 @@
           any later control that acts on a commit; a second element carrying it inside the row
           would silently double every count taken over it. %>
       <li data-oid="<%= entry.oid %>" class="commit-history-row">
-        <code class="mono"><%= entry.short_oid %></code>
+        <code class="mono commit-oid"><%= entry.short_oid %></code>
         <span class="commit-subject"><%= entry.subject %></span>
-        <span class="muted">
+        <span class="muted commit-meta">
           <%= entry.author_name %> ·
           <time datetime="<%= entry.time.iso8601 %>"><%= entry.time.strftime("%Y-%m-%d %H:%M") %></time>
         </span>

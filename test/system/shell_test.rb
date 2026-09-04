@@ -110,7 +110,7 @@ class ShellTest < ApplicationSystemTestCase
                                     width: 375, height: 812, deviceScaleFactor: 1, mobile: false)
     begin
       [ files_path(view: "list"), files_path(view: "grid"), project_path(project), file_path(long.node_id),
-        tools_path, models_path ].each do |path|
+        tools_path, models_path, trash_index_path ].each do |path|
         visit path
         # `nav.tabbar` is display:none above 719px, so finding it VISIBLE is the proof that the
         # phone rules are running at all — without it a viewport that never narrowed would satisfy
