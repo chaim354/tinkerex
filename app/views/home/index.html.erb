@@ -1,0 +1,84 @@
+<% content_for :title, "Home — Tinkerex" %>
+
+<div class="page-head">
+  <h1>Home</h1>
+  <div class="page-actions">
+    <%= link_to "New project", new_project_path, class: "btn small" %>
+    <%= link_to "Tools", tools_path, class: "btn small" %>
+    <%= link_to "Files", files_path, class: "btn small primary" %>
+  </div>
+</div>
+
+<%= render "project_hero" %>
+
+<section class="home-section home-projects">
+  <div class="section-head"><h2>Projects</h2><%= link_to "See all", projects_path, class: "muted section-more" %></div>
+  <% if @recent_projects.empty? %>
+    <p class="empty muted">No projects yet. Create your first build.</p>
+  <% else %>
+    <%= render "tile_row" do %>
+      <% @recent_projects.each do |project| %>
+        <%= render "projects/card", project:, thumb: @covers.thumb(project.cover_node_id) %>
+      <% end %>
+    <% end %>
+  <% end %>
+</section>
+
+<section class="home-section home-files">
+  <div class="section-head"><h2>Files</h2><%= link_to "See all", files_path, class: "muted section-more" %></div>
+  <% if @recent_files.empty? %>
+    <p class="empty muted">No files yet. Upload one to get started.</p>
+  <% else %>
+    <%= render "tile_row" do %>
+      <% @recent_files.each do |node| %>
+        <% ext_label = File.extname(node.name).delete(".").upcase.first(4) %>
+        <% if Maker::Previews::Registry.for_filename(node.name).present? %>
+          <%= link_to file_path(node.node_id), class: "grid-card file-cell",
+                      data: thumb_cell_data(node.node_id, ext_label).merge(file_menu_data(node.node_id, @addon_origins[node.node_id])) do %>
+            <%= render "files/thumb", thumb: @covers.thumb(node.node_id), ext_label: %>
+            <span class="grid-name"><%= node.name %></span>
+          <% end %>
+        <% else %>
+          <%= link_to file_path(node.node_id), class: "grid-card", data: file_menu_data(node.node_id, @addon_origins[node.node_id]) do %>
+            <span class="thumb generic-thumb" aria-hidden="true"><%= ext_label.presence || "FILE" %></span>
+            <span class="grid-name"><%= node.name %></span>
+          <% end %>
+        <% end %>
+      <% end %>
+    <% end %>
+  <% end %>
+</section>
+
+<section class="home-section home-prints">
+  <div class="section-head"><h2>Prints</h2><%= link_to "See all", models_path, class: "muted section-more" %></div>
+  <% if @recent_prints.empty? %>
+    <p class="empty muted">No prints logged yet.</p>
+  <% else %>
+    <ul class="print-list">
+      <% @recent_prints.each do |run| %>
+        <li class="print-row">
+          <span class="print-outcome print-outcome--<%= run.outcome %>" aria-hidden="true"><%= run.outcome == "success" ? "✓" : "✕" %></span>
+          <%= link_to run.model.title, model_path(run.model) %>
+          <span class="muted mono"><%= run.printed_on.strftime("%Y-%m-%d") %><%= " · #{run.printer}" if run.printer.present? %></span>
+        </li>
+      <% end %>
+    </ul>
+  <% end %>
+</section>
+
+<section class="home-section home-attention">
+  <div class="section-head"><h2>Needs attention</h2></div>
+  <% if @failed_prints.empty? %>
+    <p class="empty muted">Nothing needs attention.</p>
+  <% else %>
+    <ul class="attention-list">
+      <% @failed_prints.each do |run| %>
+        <li class="attention-row attention-row--danger">
+          <span class="attention-mark" aria-hidden="true"></span>
+          <span class="attention-text"><%= link_to run.model.title, model_path(run.model) %> failed on <%= run.printed_on.strftime("%Y-%m-%d") %><%= " on #{run.printer}" if run.printer.present? %>.</span>
+          <%= link_to "Log a print", model_path(run.model), class: "btn small" %>
+        </li>
+      <% end %>
+    </ul>
+  <% end %>
+</section>

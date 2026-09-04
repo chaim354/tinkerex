@@ -1,0 +1,6 @@
+<%# A horizontal, scroll-snapping row of the SAME tiles the indexes use, so a thumbnail's poll cell,
+    its right-click menu and its link behave identically here (files-preview.md). One thumbs and
+    filemenu controller per row, as the grids do. %>
+<div class="tile-row" data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
+  <%= yield %>
+</div>
