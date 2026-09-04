@@ -39,7 +39,7 @@ class SettingsThemeTest < ApplicationSystemTestCase
     # MUTATION-CHECKED (test/system/README.md): inside theme_controller.js#choose, replacing
     # `this.apply(next)` with the write path minus its `document.cookie = ...` line (i.e. set
     # `document.documentElement.dataset.theme`, the two metas and call `this.render(next)`
-    # directly, skipping the cookie) leaves line 21-22's own DOM assertions green -- the in-page
+    # directly, skipping the cookie) leaves line 25's own DOM assertion green -- the in-page
     # DOM still flips to "light" -- but turns line 26's cookie read red, before this test ever
     # reaches the reload:
     #   Selenium::WebDriver::Error::NoSuchCookieError: no such cookie

@@ -121,6 +121,8 @@ module Web
       model = @user.maker_models.create!(title: "Bracket", slug: "bracket")
       Maker::Tagging.create!(user: @user, tag: laser, taggable: project)
       Maker::Tagging.create!(user: @user, tag: laser, taggable: model)
+      item = @user.maker_inventory_items.create!(name: "Laser lens")
+      Maker::Tagging.create!(user: @user, tag: laser, taggable: item)
 
       delete settings_tag_path(laser)
 
@@ -130,6 +132,7 @@ module Web
       assert_equal 0, Maker::Tagging.where(tag_id: laser.id).count
       assert Maker::Project.exists?(project.id)
       assert Maker::Model.exists?(model.id)
+      assert Maker::InventoryItem.exists?(item.id)
     end
 
     # MUTATION-CHECK (a): swapping the scoped lookup in Settings::TagsController#destroy for a

@@ -49,7 +49,9 @@ export default class extends Controller {
   }
 
   render(theme) {
-    this.element.setAttribute("aria-label", `Theme: ${theme}`)
+    // The element's own label is the RAIL BUTTON's (the button is the element there). The settings
+    // row's element is a role="group" whose label the server wrote; leave that one alone.
+    if (this.optionTargets.length === 0) this.element.setAttribute("aria-label", `Theme: ${theme}`)
     if (this.hasLabelTarget) this.labelTarget.textContent = `Theme: ${theme}`
     this.optionTargets.forEach((opt) => {
       opt.setAttribute("aria-pressed", opt.dataset.themeThemeParam === theme ? "true" : "false")
