@@ -41,7 +41,14 @@ module Web
       assert_select ".home-hero .hero-tasks", text: /Print the base/, count: 0
       assert_select ".home-hero .hero-entry", text: /Shade printed/
       assert_select ".home-hero .upload-btn"
-      assert_select ".home-hero input[type='hidden'][name='redirect_url'][value=?]", root_path
+      # One redirect, two wire shapes (projects/_upload_control): the share/s3 multipart form carries
+      # it as a hidden field, the chunk_remote presigned flow as the uploader controller's value —
+      # so this assertion branches on the backend the leg runs under, as files_toolbar_test does.
+      if FileLayer.current.capabilities.port_writable?
+        assert_select ".home-hero input[type='hidden'][name='redirect_url'][value=?]", root_path
+      else
+        assert_select ".home-hero [data-uploader-redirect-url-value=?]", root_path
+      end
     end
 
     test "the recent rows are bounded and newest first" do
