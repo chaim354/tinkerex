@@ -119,9 +119,11 @@ module Web
       assert_select ".tag-chips a.tag-chip", 2
     end
 
-    test "the index shows tag filter chips and ?tag= narrows, excluding an untagged project" do
+    # THE NEGATIVE WEARS A DIFFERENT TAG, not none: an untagged row is excluded by the inner join
+    # alone, so only a differently-tagged sibling proves the scope matches the NAME (review, S2-5).
+    test "the index shows tag filter chips and ?tag= narrows, excluding a project wearing another tag" do
       tagged = @user.maker_projects.create!(name: "Laser Sign", tag_list: "laser")
-      untagged = @user.maker_projects.create!(name: "Bare Shelf")
+      untagged = @user.maker_projects.create!(name: "Firmware Board", tag_list: "firmware")
 
       get projects_path
       assert_select ".projects-toolbar a.filter.chip", text: "laser"
@@ -129,6 +131,11 @@ module Web
       get projects_path(tag: "laser")
       assert_select "a.project-card[href=?]", project_path(tagged)
       assert_select "a.project-card[href=?]", project_path(untagged), false
+    end
+
+    test "a user with no project tags sees no filter toolbar" do
+      get projects_path
+      assert_select ".projects-toolbar", count: 0
     end
 
     # Ground rules for this task: ProjectsController#index also gained a `?q=` filter (one line,

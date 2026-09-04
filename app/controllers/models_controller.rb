@@ -22,8 +22,13 @@ class ModelsController < ApplicationController
   def index
     models = current_user.maker_models.catalogued.includes(:file_attachments)
     models = models.by_status(params[:status])
-    if params[:q].present?
-      models = models.where("title LIKE ?", "%#{ActiveRecord::Base.sanitize_sql_like(params[:q])}%")
+    # THE FILES IDIOM: LOWER on both sides, ESCAPE so sanitize_sql_like means something on SQLite,
+    # capped like every other search box. This clause predates the idiom; /search previews a query
+    # escaped and its "See all" landed here unescaped, so `100%` matched on one page and not the
+    # other (found in review, S2-5).
+    q = params[:q].to_s.strip.first(80)
+    if q.present?
+      models = models.where("LOWER(title) LIKE ? ESCAPE '\\'", "%#{ActiveRecord::Base.sanitize_sql_like(q.downcase)}%")
     end
     if params[:tag].present?
       # Maker::Taggable#tagged_with (stage 2, S2-5) -- same SQL this join always ran, now shared

@@ -444,9 +444,10 @@ module Web
       assert_equal [ "hardware" ], item.reload.tags.pluck(:name)
     end
 
-    test "the index shows tag filter chips and ?tag= narrows, excluding an untagged item" do
+    # The negative wears a DIFFERENT tag — an untagged row is excluded by the join alone (review, S2-5).
+    test "the index shows tag filter chips and ?tag= narrows, excluding an item wearing another tag" do
       tagged = item!("Laser lens", tag_list: "laser")
-      item!("Plain bolt")
+      item!("Plain bolt", tag_list: "firmware")
 
       get inventory_items_path
       assert_select "span.chips a.filter.chip", text: "laser"
