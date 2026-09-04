@@ -48,7 +48,10 @@ module Web
       assert_equal [ "Lamp-Base.stl", "root.stl" ], listed_names.sort
       assert_select "header.topbar nav.breadcrumb [aria-current='page']", text: /Search “stl”/
       assert_select "nav.breadcrumb a[href=?]", files_path(folder: "dir-sub"), count: 0
-      assert_select "header.topbar input[name='q'][value='stl']"
+      # THE FILES PAGE'S OWN SEARCH BOX, not the top bar's -- the top bar now posts to
+      # SearchController (stage 2, S2-5) and no longer echoes this page's own @q (shell_layout_test.rb
+      # pins the top bar's own contract; _topbar.html.erb explains why it must not reuse this ivar).
+      assert_select ".files-toolbar form.files-search input[name='q'][value='stl']"
     end
 
     test "the search rides along on the view toggle, the type picker and the sort headers" do
@@ -73,7 +76,7 @@ module Web
       assert_select "nav.breadcrumb [aria-current='page']", count: 0
       assert_equal %w[100%-done.txt cad root.stl], listed_names.sort
       get files_path(q: "a" * 100)
-      assert_select "header.topbar input[name='q'][value=?]", "a" * 80
+      assert_select ".files-toolbar form.files-search input[name='q'][value=?]", "a" * 80
     end
 
     test "an empty result says what was searched" do

@@ -216,6 +216,12 @@ Rails.application.routes.draw do
     post :adjust, on: :member
   end
   resources :suppliers, only: %i[index create destroy], path: "settings/suppliers"
+
+  # --- Tags and search (stage 2, S2-5). One results page for everything, driven from the top bar;
+  # a page per tag. A tag name is whatever Maker::Tag normalized (stripped, downcased) and may hold
+  # a dot, so the segment constraint is "anything but a slash". ---
+  get "search", to: "search#index", as: :search
+  get "tags/:name", to: "tags#show", as: :tag, constraints: { name: %r{[^/]+} }
   resources :locations, only: %i[index create destroy], path: "settings/locations"
 
   # --- Addons (Tools) — the /tools gallery + every addon's UI ---

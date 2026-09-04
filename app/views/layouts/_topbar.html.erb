@@ -1,6 +1,8 @@
 <%# The top bar (spec §5.3): the page's breadcrumb when it supplies one via content_for :crumbs,
-    else its title; and the library search. @q is set by FilesController#index (Task 4) and is
-    nil everywhere else, which renders an empty field. %>
+    else its title; and the search box, which posts to the sitewide SearchController (stage 2,
+    S2-5) rather than to the Files page it used to. The Files page keeps its OWN search in its
+    own toolbar (files/index.html.erb's .files-search) for the flat, files-only query FilesController
+    already answers. %>
 <header class="topbar">
   <div class="topbar-crumbs">
     <% if content_for?(:crumbs) %>
@@ -24,11 +26,18 @@
             id: "topbar_project_id", onchange: "this.form.requestSubmit()" %>
     <% end %>
   <% end %>
-  <%= form_with url: files_path, method: :get, class: "topbar-search", role: "search",
+  <%= form_with url: search_path, method: :get, class: "topbar-search", role: "search",
                 data: { turbo: false } do %>
     <%= rail_icon(:search) %>
-    <input type="search" name="q" value="<%= @q %>" placeholder="Search files"
-           aria-label="Search files" autocomplete="off">
+    <%# ALWAYS BLANK, DELIBERATELY -- @q IS ALSO THE NAME FilesController, InventoryItemsController
+        AND SearchController ITSELF GIVE THEIR OWN IVARS, and echoing whichever one the current
+        request happens to carry would leak one page's private local filter (Files', Inventory's)
+        into a box that now means something else (search EVERYTHING). SearchController's OWN page
+        already has its own big, sticky search-toolbar input for that job (search/index.html.erb) —
+        this is the entry point, not a second display of the last query. rail_controller.js's
+        Ctrl/Cmd-K handler finds this field by `.topbar-search input[type=search]`, unchanged. %>
+    <input type="search" name="q" placeholder="Search everything" aria-label="Search everything"
+           autocomplete="off">
     <kbd class="topbar-kbd" aria-hidden="true">⌘K</kbd>
   <% end %>
 </header>

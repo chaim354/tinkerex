@@ -101,9 +101,17 @@ module Web
       assert_select "aside.rail [data-action='rail#toggle'][aria-expanded='false']"
     end
 
-    test "the top bar carries the library search on every page" do
+    test "the top bar carries the sitewide search on every page" do
       get projects_path
-      assert_select "header.topbar form.topbar-search[action=?][method='get'] input[type='search'][name='q']", files_path
+      assert_select "header.topbar form.topbar-search[action=?][method='get'] " \
+                    "input[type='search'][name='q'][placeholder='Search everything']", search_path
+      # AND IT RENDERS BLANK on a page that has its own `q` — @q means the Files search on /files,
+      # the inventory search on /inventory — so echoing it would put the wrong term in a box that
+      # now means "search everything" (review, S2-5).
+      get files_path(q: "widget")
+      assert_select "header.topbar form.topbar-search input[name='q']" do |inputs|
+        assert_nil inputs.first["value"], "the top bar echoed the Files page's query"
+      end
     end
 
     test "a page with a breadcrumb renders it in the top bar, not in main" do

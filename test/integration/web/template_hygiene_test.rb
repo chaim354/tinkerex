@@ -106,7 +106,9 @@ module Web
       # every source file in the library. The balance check below covers the two-snippet shape
       # on disk, but only a rendered page can catch the one-snippet shape's trailing delimiter.
       file!("n-src", "firmware.cpp")
-      @project = @user.maker_projects.create!(name: "Desk Lamp")
+      # tag_list: "laser" (stage 2, S2-5) also gives "tags/show" below a non-empty group to render
+      # shared/_result_group through -- otherwise that template would need its own fixture.
+      @project = @user.maker_projects.create!(name: "Desk Lamp", tag_list: "laser")
       @project.file_attachments.create!(user: @user, node_id: "n-stl", role: "model", position: 0)
       @project.file_attachments.create!(user: @user, node_id: "n-bak", role: "laser", position: 1)
       @project.file_attachments.create!(user: @user, node_id: "gone", role: "model",
@@ -213,6 +215,9 @@ module Web
         "project attachment new" => new_project_attachment_path(@project),
         "project sheet" => sheet_path(@sheet),
         "projects/boms" => project_bom_path(@project),
+        # Stage 2, S2-5. @project wears "laser" (setup above), so this renders shared/_result_group
+        # (Task A's own partial, also rendered by Task B's search page) at least once.
+        "tags/show" => tag_path("laser"),
         "models index" => models_path,
         "model detail" => model_path(@model),
         "model new" => new_model_path,
@@ -230,7 +235,8 @@ module Web
         "locations" => locations_path,
         "tools gallery" => tools_path,
         "tools addon" => tools_addon_path("fixture"),
-        "trash" => trash_index_path
+        "trash" => trash_index_path,
+        "search" => search_path(q: "lamp")
       }
     end
 

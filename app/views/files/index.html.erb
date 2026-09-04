@@ -112,9 +112,22 @@
   <p class="upload-to-project upload-caption muted">Uploads go to <strong><%= current_project.name %></strong> and are attached to it.</p>
 <% end %>
 
-<%# ONE TOOLBAR ROW: the type filter and its chips, the dot-file switch, the count, the view
-    toggle and the sort — in both views (the list keeps its sortable headers as well). %>
+<%# ONE TOOLBAR ROW: the search box, the type filter and its chips, the dot-file switch, the
+    count, the view toggle and the sort — in both views (the list keeps its sortable headers as
+    well). %>
 <div class="toolbar files-toolbar">
+  <%# THE FILES PAGE'S OWN SEARCH (spec S2-5), separate from the top bar's sitewide box (which now
+      posts to SearchController). This one stays flat-library-and-files-only, exactly what
+      FilesController#index's own ?q= has always answered — a plain GET, its own small form so
+      the ext-picker form below keeps its one job (choosing a type). `ext` rides along as a
+      hidden field so searching does not silently drop an active type filter (composing with the
+      filter is pinned in files_search_test.rb); `folder` does NOT, because a search is flat by
+      design (#index ignores it outright — see @flat above). %>
+  <%= form_with url: files_path, method: :get, class: "files-search", data: { turbo: false } do %>
+    <% if @exts.any? %><%= hidden_field_tag :ext, @exts.join(",") %><% end %>
+    <input type="search" name="q" value="<%= @q %>" placeholder="Search files"
+           aria-label="Search files" autocomplete="off">
+  <% end %>
   <%= render "ext_filter" %>
   <%# HIDDEN-FILE TOGGLE. Dot-prefixed entries are noise in a maker's library — 78 of them on the
       deployed share box, mostly `.gitignore`, `.github` and `.clang-format` sitting between the

@@ -90,5 +90,65 @@ module Web
       assert_select ".log-timeline .log-entry > .entry-main .entry-body", text: /First print came out clean/
       assert_select ".log-timeline .log-entry > .entry-main .entry-head form button", text: "Delete"
     end
+
+    # --- tags (stage 2, S2-5) ----------------------------------------------------------------
+
+    test "an untagged project shows no chip row" do
+      get project_path(@project)
+      assert_select ".tag-chips", 0
+    end
+
+    test "tag chips render on the project page and link to the tag page" do
+      tagged = @user.maker_projects.create!(name: "Tagged Lamp", tag_list: "laser, firmware")
+      get project_path(tagged)
+      assert_select ".tag-chips a.tag-chip[href=?]", tag_path("firmware"), text: "firmware"
+      assert_select ".tag-chips a.tag-chip[href=?]", tag_path("laser"), text: "laser"
+    end
+
+    test "the form carries a tag_list field" do
+      get edit_project_path(@project)
+      assert_select "input[name='project[tag_list]']"
+    end
+
+    test "update with tag_list writes two tags and the page renders their chips" do
+      patch project_path(@project), params: { project: { name: @project.name, tag_list: "laser, firmware" } }
+      assert_redirected_to project_path(@project)
+      assert_equal %w[firmware laser], @project.reload.tag_list.split(", ").sort
+
+      get project_path(@project)
+      assert_select ".tag-chips a.tag-chip", 2
+    end
+
+    # THE NEGATIVE WEARS A DIFFERENT TAG, not none: an untagged row is excluded by the inner join
+    # alone, so only a differently-tagged sibling proves the scope matches the NAME (review, S2-5).
+    test "the index shows tag filter chips and ?tag= narrows, excluding a project wearing another tag" do
+      tagged = @user.maker_projects.create!(name: "Laser Sign", tag_list: "laser")
+      untagged = @user.maker_projects.create!(name: "Firmware Board", tag_list: "firmware")
+
+      get projects_path
+      assert_select ".projects-toolbar a.filter.chip", text: "laser"
+
+      get projects_path(tag: "laser")
+      assert_select "a.project-card[href=?]", project_path(tagged)
+      assert_select "a.project-card[href=?]", project_path(untagged), false
+    end
+
+    test "a user with no project tags sees no filter toolbar" do
+      get projects_path
+      assert_select ".projects-toolbar", count: 0
+    end
+
+    # Ground rules for this task: ProjectsController#index also gained a `?q=` filter (one line,
+    # the Files LOWER(name) LIKE ... ESCAPE idiom) so SearchController's "See all" link into
+    # projects_path(q:) narrows -- Task B's own search_test.rb exercises that link end to end;
+    # this is the controller-level check that the filter itself works in isolation.
+    test "?q= narrows the index by name" do
+      matched = @user.maker_projects.create!(name: "Desk Lamp Mk2")
+      other = @user.maker_projects.create!(name: "Bare Shelf")
+
+      get projects_path(q: "lamp")
+      assert_select "a.project-card[href=?]", project_path(matched)
+      assert_select "a.project-card[href=?]", project_path(other), false
+    end
   end
 end

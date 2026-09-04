@@ -20,6 +20,12 @@
     <%= f.text_area :description, rows: 5, placeholder: "What are you building?" %>
   </label>
 
+  <label class="field">
+    <span>Tags</span>
+    <%= f.text_field :tag_list, value: project.tag_list, placeholder: "laser, firmware" %>
+    <span class="field-hint muted">Comma-separated</span>
+  </label>
+
   <%#
     THE COVER IMAGE, choosable here rather than only inferred. `Maker::Project#cover_node_id` falls
     back to the derived pick (first image, else first model, else first attachment) whenever the

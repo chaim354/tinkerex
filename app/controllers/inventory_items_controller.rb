@@ -26,6 +26,9 @@ class InventoryItemsController < ApplicationController
       like = "%#{Maker::InventoryItem.sanitize_sql_like(@q.downcase)}%"
       items = items.where("LOWER(name) LIKE ? ESCAPE '\\' OR LOWER(part_number) LIKE ? ESCAPE '\\'", like, like)
     end
+    # `?tag=` (stage 2, S2-5): same tagged_with idiom as ModelsController/ProjectsController.
+    @tag = params[:tag].presence
+    items = items.tagged_with(@tag) if @tag
     @category = params[:category].presence
     items = items.where(category: @category) if @category
     @low = params[:low] == "1"
@@ -34,6 +37,11 @@ class InventoryItemsController < ApplicationController
     @dir = params[:dir] == "desc" ? "desc" : "asc"
     @items = items.order(Arel.sql("#{SORTS[@sort]} #{@dir}"), :id).to_a
     @categories = current_user.maker_inventory_items.where.not(category: [ nil, "" ]).distinct.order(:category).pluck(:category)
+    # Tags in use across the user's items, for the filter chips in the toolbar's span.chips --
+    # ONE query. Mirrors ProjectsController#index's @project_tags.
+    @item_tags = current_user.maker_tags.joins(:taggings)
+                             .where(maker_taggings: { taggable_type: "Maker::InventoryItem" })
+                             .distinct.order(:name).pluck(:name)
     @low_count = current_user.maker_inventory_items.low_stock.count
   end
 
@@ -152,7 +160,7 @@ class InventoryItemsController < ApplicationController
   def item_params
     params.require(:inventory_item).permit(
       :name, :part_number, :category, :unit, :min_quantity, :unit_cost,
-      :location_id, :supplier_id, :notes
+      :location_id, :supplier_id, :notes, :tag_list
     )
   end
 

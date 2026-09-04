@@ -28,6 +28,9 @@
   <dt>Unit cost</dt><dd><%= @item.unit_cost ? number_to_currency(@item.unit_cost) : "—" %></dd>
   <dt>Location</dt><dd><%= @item.location&.name || "—" %></dd>
   <dt>Supplier</dt><dd><%= @item.supplier&.name || "—" %></dd>
+  <% if @item.tags.any? %>
+    <dt>Tags</dt><dd><%= tag_chips(@item) %></dd>
+  <% end %>
 </dl>
 
 <% if @item.notes.present? %>

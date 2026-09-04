@@ -26,6 +26,8 @@ class ProjectsController < ApplicationController
   # tiles and the build-log photos — and both ask the same question of the same table.
   include PageNodes
 
+  QUERY_MAX = 80
+
   # One flat list of live projects, newest activity first. `?archived=1` swaps in the archived
   # ones. The web reads `status` as archived-or-not and never shows or sets the other four values
   # (spec decision #1) — the column, its validation and the v1 API are deliberately untouched.
@@ -33,11 +35,31 @@ class ProjectsController < ApplicationController
     # `== "1"`, not `.present?`: a checkbox submits "0" for off, and `.present?` would read that as
     # "show me the archive" — the opposite page.
     @archived_view = params[:archived] == "1"
-    all = current_user.maker_projects.includes(:file_attachments).order(updated_at: :desc).to_a
+    # `?tag=` (stage 2, S2-5): the same tagged_with idiom ModelsController and
+    # InventoryItemsController use. Applied BEFORE the archived partition below, so a tag filter
+    # narrows both views rather than only whichever one the partition happens to build first.
+    @tag = params[:tag].presence
+    # `?q=` (stage 2, S2-5): the Files search idiom (FilesController#index / resolve_query) --
+    # LOWER(name) LIKE ... ESCAPE '\', because SQLite has no default LIKE escape character and
+    # sanitize_sql_like alone is inert there. This page has no visible search box of its own (the
+    # Files toolbar owns that); this exists so SearchController's "See all" link into
+    # projects_path(q:) narrows the same way the results preview did.
+    @q = params[:q].to_s.strip.first(QUERY_MAX).presence
+    scope = current_user.maker_projects.includes(:file_attachments)
+    scope = scope.tagged_with(@tag) if @tag
+    if @q
+      scope = scope.where("LOWER(name) LIKE ? ESCAPE '\\'", "%#{Maker::Project.sanitize_sql_like(@q.downcase)}%")
+    end
+    all = scope.order(updated_at: :desc).to_a
     archived, live = all.partition { |p| p.status == "archived" }
     @projects = @archived_view ? archived : live
     @archived_count = archived.size
     @covers = Maker::Previews::ThumbnailMap.for(current_user, @projects.filter_map(&:cover_node_id))
+    # Tags in use across the user's projects, for the filter chips below the toolbar -- ONE query,
+    # not one per candidate tag. Mirrors InventoryItemsController#index's @item_tags.
+    @project_tags = current_user.maker_tags.joins(:taggings)
+                                .where(maker_taggings: { taggable_type: "Maker::Project" })
+                                .distinct.order(:name).pluck(:name)
   end
 
   def show
@@ -216,7 +238,7 @@ class ProjectsController < ApplicationController
   # would buy a nicer error for a case nobody reaches through the UI, at the price of a query on
   # every project save.
   def project_params
-    attrs = params.require(:project).permit(:name, :description, :status, :cover_node_id)
+    attrs = params.require(:project).permit(:name, :description, :status, :cover_node_id, :tag_list)
     attrs[:cover_node_id] = nil if params[:project][:cover_clear] == "1"
     attrs
   end

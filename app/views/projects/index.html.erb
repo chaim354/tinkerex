@@ -5,6 +5,23 @@
   <%= link_to "New project", new_project_path, class: "btn primary" unless @archived_view %>
 </div>
 
+<%# Tag filter chips (stage 2, S2-5) -- only when the user has at least one tagged project, same
+    "only when there's something to filter by" rule models/index.html.erb's own tag select
+    follows. "All" keeps the current archived view (its own toggle is the note/link below, not
+    this row) and simply drops the tag param. %>
+<% if @project_tags.any? %>
+  <div class="toolbar projects-toolbar">
+    <span class="chips">
+      <%= link_to "All", projects_path(archived: (@archived_view ? 1 : nil)),
+                  class: "filter chip#{' active' if @tag.blank?}" %>
+      <% @project_tags.each do |t| %>
+        <%= link_to t, projects_path(tag: t, archived: (@archived_view ? 1 : nil)),
+                    class: "filter chip#{' active' if @tag == t}" %>
+      <% end %>
+    </span>
+  </div>
+<% end %>
+
 <% if @projects.empty? %>
   <p class="projects-empty muted">
     <%= @archived_view ? "No archived projects." : "No projects yet. Create your first build." %>

@@ -1,0 +1,27 @@
+<% content_for :title, "Search — Tinkerex" %>
+
+<div class="page-head">
+  <h1>Search</h1>
+</div>
+
+<%# A plain GET form, exactly like models/index.html.erb's own search box — no Stimulus
+    controller for what a native form already does, and the result is a shareable URL. Unlike
+    the toolbar forms on the Files page this one carries a visible submit button (the plan calls
+    for it explicitly): this is the destination search hits land on, not an in-page refinement
+    control glued to a select's onchange. %>
+<%= form_with url: search_path, method: :get, class: "toolbar search-toolbar", role: "search",
+              data: { turbo: false } do %>
+  <input type="search" name="q" value="<%= @q %>" placeholder="Search everything"
+         aria-label="Search everything" autocomplete="off" autofocus>
+  <%= submit_tag "Search", class: "btn" %>
+<% end %>
+
+<% if @q.blank? %>
+  <p class="search-prompt muted">Search files, projects, models, inventory and tags.</p>
+<% elsif @groups.empty? %>
+  <p class="empty muted">Nothing matches “<%= @q %>”.</p>
+<% else %>
+  <% @groups.each do |group| %>
+    <%= render "shared/result_group", **group %>
+  <% end %>
+<% end %>

@@ -27,6 +27,17 @@ module Web
       assert_select ".page-head a.btn[href=?]", shelves_path, text: "Shelves"
     end
 
+    # THE INDEX'S OWN SEARCH USES THE FILES IDIOM (LOWER, ESCAPE), because /search's "See all" lands
+    # here with the same query: a `%` that previewed one model there must find the same one here.
+    test "?q= is case-insensitive and treats % and _ as literals" do
+      literal = @user.maker_models.create!(title: "100% infill test")
+      get models_path(q: "100%")
+      assert_select "a[href=?]", model_path(literal)
+      assert_select "a[href=?]", model_path(@model), false
+      get models_path(q: "BENCHY")
+      assert_select "a[href=?]", model_path(@model)
+    end
+
     test "a model card keeps its badge, which the stylesheet places over the cover" do
       get models_path
       assert_select ".model-card .badge.mstatus-printed", text: /printed/i

@@ -1,0 +1,22 @@
+<% content_for :title, "#{@tag.name} — Tinkerex" %>
+
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Tag path">
+    <span>Tags</span>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page"><%= @tag.name %></span>
+  </nav>
+<% end %>
+
+<div class="page-head">
+  <h1><span class="tag-chip"><%= @tag.name %></span></h1>
+  <p class="page-subtitle muted"><%= pluralize(@groups.sum { |g| g[:total] }, "thing") %></p>
+</div>
+
+<% if @groups.all? { |g| g[:records].empty? } %>
+  <p class="empty muted">Nothing wears this tag yet.</p>
+<% else %>
+  <% @groups.each do |group| %>
+    <%= render "shared/result_group", **group %>
+  <% end %>
+<% end %>

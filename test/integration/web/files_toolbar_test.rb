@@ -54,10 +54,11 @@ module Web
       end
     end
 
-    test "the toolbar carries the filter, the dot-file switch, the count, the view toggle and the sort, in both views" do
+    test "the toolbar carries the search box, the filter, the dot-file switch, the count, the view toggle and the sort, in both views" do
       %w[list grid].each do |view|
         get files_path(view:)
         assert_select ".toolbar.files-toolbar", count: 1
+        assert_select ".files-toolbar form.files-search input[type='search'][name='q']"
         assert_select ".files-toolbar .ext-picker select#ext-add"
         assert_select ".files-toolbar p.hidden-toggle a.chip[href*=?]", "hidden=1", text: "Show dot-files"
         assert_select ".files-toolbar .toolbar-count", text: "4 items"

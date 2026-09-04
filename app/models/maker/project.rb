@@ -10,6 +10,9 @@ module Maker
              class_name: "Maker::BuildLogEntry", dependent: :destroy
     has_many :file_attachments, -> { order(:position) },
              as: :attachable, class_name: "Maker::FileAttachment", dependent: :destroy
+    # Tags (stage 2, S2-5): taggings/tags, tag_list, tag_list=, tagged_with -- Maker::Taggable,
+    # shared with Maker::Model (where it shipped first) and Maker::InventoryItem.
+    include Maker::Taggable
     has_many :tasks, as: :taskable, class_name: "Maker::Task", dependent: :destroy
     has_many :boms, class_name: "Maker::Bom", foreign_key: :project_id, dependent: :destroy
     has_many :sheets, -> { order(:position, :id) },

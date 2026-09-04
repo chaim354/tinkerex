@@ -13,13 +13,26 @@
       links from them would stamp `&sort=name&dir=asc` onto every chip even on a plain first visit —
       noisy, and it is not what a bookmarked/shared chip URL should freeze in. %>
   <span class="chips">
+    <%# "All" resets category/low AND tag -- it is the one hard reset in this row. %>
     <%= link_to "All", inventory_items_path(q: params[:q], sort: params[:sort], dir: params[:dir]),
                 class: "filter chip#{' active' if @category.nil? && !@low}" %>
-    <%= link_to "Low stock (#{@low_count})", inventory_items_path(q: params[:q], low: 1, sort: params[:sort], dir: params[:dir]),
+    <%= link_to "Low stock (#{@low_count})", inventory_items_path(q: params[:q], low: 1, tag: @tag, sort: params[:sort], dir: params[:dir]),
                 class: "filter chip#{' active' if @low}" %>
     <% @categories.each do |cat| %>
-      <%= link_to cat, inventory_items_path(q: params[:q], category: cat, sort: params[:sort], dir: params[:dir]),
+      <%= link_to cat, inventory_items_path(q: params[:q], category: cat, tag: @tag, sort: params[:sort], dir: params[:dir]),
                   class: "filter chip#{' active' if @category == cat}" %>
+    <% end %>
+    <%#
+      Tag chips (stage 2, S2-5), after the category chips. Tag is a THIRD, composable facet -- an
+      item can carry a category AND tags at once -- unlike category/low, which stay mutually
+      exclusive with each other in this row exactly as they always have. So each tag chip carries
+      the current category/low forward, and "All" above resets every facet including tag; there is
+      no separate "clear tag" control because "All" already is one.
+    %>
+    <% @item_tags.each do |t| %>
+      <%= link_to t, inventory_items_path(q: params[:q], category: @category, low: (@low ? 1 : nil),
+                                          tag: t, sort: params[:sort], dir: params[:dir]),
+                  class: "filter chip#{' active' if @tag == t}" %>
     <% end %>
   </span>
   <span class="toolbar-spacer"></span>
