@@ -119,5 +119,41 @@ module Web
       get new_model_path
       assert_redirected_to new_user_session_path
     end
+
+    # --- the auth card (spec §8): a restyled form that renamed a field would look finished and
+    # never sign anyone in, so these pin the card's markup AND Devise's field names together. ---
+
+    test "sign in renders the card with Devise's fields" do
+      get new_user_session_path
+      assert_response :success
+      assert_select ".auth-card .brand-name", text: "Tinkerex"
+      assert_select ".auth-card form[action=?] input[name='user[email]'][type='email']", user_session_path
+      assert_select ".auth-card form input[name='user[password]'][type='password']"
+      assert_select ".auth-card form input[name='user[remember_me]'][type='checkbox']"
+      assert_select ".auth-card form input[type='submit'][value='Log in'].primary"
+      assert_select ".auth-card ul.auth-links a[href=?]", new_user_registration_path
+      assert_select ".auth-card ul.auth-links a[href=?]", new_user_password_path
+    end
+
+    test "sign up, reset and resend render the card with their fields" do
+      get new_user_registration_path
+      assert_select ".auth-card form input[name='user[email]']"
+      assert_select ".auth-card form input[name='user[password]']"
+      assert_select ".auth-card form input[name='user[password_confirmation]']"
+      assert_select ".auth-card form input[type='submit'][value='Sign up'].primary"
+
+      get new_user_password_path
+      assert_select ".auth-card form input[name='user[email]']"
+      assert_select ".auth-card form input[type='submit'].primary"
+
+      get new_user_confirmation_path
+      assert_select ".auth-card form input[name='user[email]']"
+    end
+
+    test "a failed sign-in shows the alert as a toast, not inside the card" do
+      post user_session_path, params: { user: { email: "nobody@example.com", password: "wrong" } }
+      assert_response :unprocessable_entity
+      assert_select ".flash-stack .flash-alert"
+    end
   end
 end
