@@ -15,7 +15,10 @@ module ShellHelper
     "projects" => %w[projects current_project],
     "inventory" => %w[inventory_items suppliers locations],
     "tools" => %w[tools],
-    "trash" => %w[trash]
+    "trash" => %w[trash],
+    # The hub and its own children (settings/tags) light the rail FOOT's Settings link, not a rail
+    # item; Shelves, Suppliers and Locations keep lighting the section they serve (models, inventory).
+    "settings" => %w[settings]
   }.freeze
 
   ICON_PATHS = {
