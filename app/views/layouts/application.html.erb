@@ -1,24 +1,22 @@
 <!DOCTYPE html>
-<html>
+<html lang="en" data-theme="<%= ui_theme %>">
   <head>
     <title><%= content_for(:title) || "Tinkerex" %></title>
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="application-name" content="Tinkerex">
     <meta name="mobile-web-app-capable" content="yes">
+    <meta name="color-scheme" content="<%= color_scheme_meta %>">
+    <meta name="theme-color" content="<%= theme_color_hex %>">
     <%= csrf_meta_tags %>
     <%= csp_meta_tag %>
 
     <%= yield :head %>
 
-    <%# Enable PWA manifest for installable apps (make sure to enable in config/routes.rb too!) %>
-    <%#= tag.link rel: "manifest", href: pwa_manifest_path(format: :json) %>
-
-    <link rel="icon" href="/icon.png" type="image/png">
+    <link rel="icon" href="/favicon.ico" sizes="32x32">
     <link rel="icon" href="/icon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/icon.png">
 
-    <%# Includes all stylesheet files in app/assets/stylesheets %>
     <%= stylesheet_link_tag "application", "components", "shell",
                             "pages/files", "pages/projects", "pages/models", "pages/tools", "pages/preview",
                             "data-turbo-track": "reload" %>
@@ -27,42 +25,24 @@
     <%= javascript_importmap_tags "application", importmap: (@importmap || Rails.application.importmap) %>
   </head>
 
-  <body>
+  <body class="<%= body_classes %>">
     <% if respond_to?(:user_signed_in?) && user_signed_in? %>
-      <header class="topbar">
-        <a href="<%= files_path %>" class="brand">Tinkerex</a>
-        <div class="topbar-right">
-          <%= link_to "Files", files_path, class: "linkbtn" %>
-          <%= link_to "Models", models_path, class: "linkbtn" %>
-          <%= link_to "Projects", projects_path, class: "linkbtn" %>
-          <%= link_to "Tools", tools_path, class: "linkbtn" %>
-          <%= link_to "Trash", trash_index_path, class: "linkbtn" %>
-          <% choices = current_project_choices %>
-          <% if choices.any? %>
-            <%= form_with url: current_project_path, method: :patch, data: { turbo: false },
-                          class: "current-project-form" do %>
-              <label class="current-project">
-                <span class="muted">Project:</span>
-                <%= select_tag :project_id,
-                      options_for_select([ [ "— none —", "" ] ] + choices, current_project&.id),
-                      onchange: "this.form.requestSubmit()" %>
-              </label>
-            <% end %>
-          <% end %>
-          <span class="muted"><%= current_user.email %></span>
-          <%= button_to "Sign out", destroy_user_session_path, method: :delete, class: "linkbtn" %>
-        </div>
-      </header>
+      <%= render "layouts/rail" %>
+      <div class="shell-main">
+        <%= render "layouts/topbar" %>
+        <%= render "layouts/flash" %>
+        <%# Pages that need the full width opt in with content_for :container_class, "container-wide"
+            (the addon host page does, from its manifest). Inert everywhere else. %>
+        <main class="container <%= content_for(:container_class) %>">
+          <%= yield %>
+        </main>
+      </div>
+      <%= render "layouts/tabbar" %>
+    <% else %>
+      <%= render "layouts/flash" %>
+      <main class="container auth-main">
+        <%= yield %>
+      </main>
     <% end %>
-
-    <% if flash[:notice] %><div class="flash flash-notice"><%= flash[:notice] %></div><% end %>
-    <% if flash[:alert]  %><div class="flash flash-alert"><%= flash[:alert] %></div><% end %>
-
-    <%# Pages that genuinely need more than the 920px reading measure opt in with
-        `content_for :container_class, "container-wide"` — three-column layouts, mainly. Inert
-        everywhere else, so the default stays the narrow container. %>
-    <main class="container <%= content_for(:container_class) %>">
-      <%= yield %>
-    </main>
   </body>
 </html>

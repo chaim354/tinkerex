@@ -40,13 +40,15 @@
                               "data-turbo-track": "reload" %>
 <% end %>
 
-<nav class="breadcrumb" aria-label="Sheet path">
-  <%= link_to "Projects", projects_path %>
-  <span class="sep" aria-hidden="true">/</span>
-  <%= link_to @sheet.project.name, project_path(@sheet.project) %>
-  <span class="sep" aria-hidden="true">/</span>
-  <span aria-current="page"><%= @sheet.name %></span>
-</nav>
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Sheet path">
+    <%= link_to "Projects", projects_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <%= link_to @sheet.project.name, project_path(@sheet.project) %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page"><%= @sheet.name %></span>
+  </nav>
+<% end %>
 
 <%# The controller element wraps the HEAD AS WELL AS the grid: Stimulus resolves targets only
     within its own element's subtree, so a status span left up in the page head outside this div

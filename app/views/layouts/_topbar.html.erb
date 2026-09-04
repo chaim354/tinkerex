@@ -1,0 +1,19 @@
+<%# The top bar (spec §5.3): the page's breadcrumb when it supplies one via content_for :crumbs,
+    else its title; and the library search. @q is set by FilesController#index (Task 4) and is
+    nil everywhere else, which renders an empty field. %>
+<header class="topbar">
+  <div class="topbar-crumbs">
+    <% if content_for?(:crumbs) %>
+      <%= content_for(:crumbs) %>
+    <% else %>
+      <span class="topbar-title"><%= page_title_text %></span>
+    <% end %>
+  </div>
+  <%= form_with url: files_path, method: :get, class: "topbar-search", role: "search",
+                data: { turbo: false } do %>
+    <%= rail_icon(:search) %>
+    <input type="search" name="q" value="<%= @q %>" placeholder="Search files"
+           aria-label="Search files" autocomplete="off">
+    <kbd class="topbar-kbd" aria-hidden="true">⌘K</kbd>
+  <% end %>
+</header>

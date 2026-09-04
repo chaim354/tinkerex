@@ -1,29 +1,125 @@
-/* The application shell. Replaced in Task 3, which builds the rail, top bar, tab bar, toast stack
-   and the responsive rules here.
-
-   IT IS NOT EMPTY IN THE MEANTIME, FOR TWO REASONS. The old application.css carried the shell's
-   only rules — the top bar and the content container — and this rewrite takes them out of it, so
-   without them parked here the app has no `.container` at all between this commit and Task 3's,
-   and `main.container` / `.container-wide` are pinned selectors (spec §10). And the guard in
-   test/css_hygiene_test.rb refuses a sheet that parses to fewer than six rules, so a one-rule
-   placeholder fails the very non-vacuity check it exists beside (§14e: assert the scanned set is
-   non-empty before trusting what it reports).
-
-   MIGRATED VERBATIM (old application.css 28-39), substitution table applied: .topbar, .brand,
-   .topbar-right, .container, .container-wide. */
+/* The application shell (spec §5): the rail and its current-project card, the top bar, the phone
+   tab bar, the content container, the toast stack, the auth card, and the three widths. */
 @layer shell {
-  .topbar {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 20px; border-bottom: 1px solid var(--line); background: var(--raised);
+  body.app-shell { display: grid; grid-template-columns: var(--rail-width) minmax(0, 1fr); min-height: 100vh; }
+  body.app-shell.rail--collapsed { grid-template-columns: var(--rail-collapsed-width) minmax(0, 1fr); }
+
+  .rail {
+    position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 14px;
+    padding: 12px 8px; background: var(--surface); border-right: 1px solid var(--line); overflow: hidden auto;
   }
-  .brand { font-weight: 700; color: var(--fg); }
-  .topbar-right { display: flex; align-items: center; gap: 12px; }
+  .brand { display: flex; align-items: center; gap: 8px; padding: 2px 8px; color: var(--fg); font-weight: 600; white-space: nowrap; }
+  .brand:hover { text-decoration: none; }
+  .brand-mark { width: 18px; height: 18px; flex: 0 0 auto; border-radius: 4px; background: var(--accent); }
 
-  .container { max-width: 920px; margin: 0 auto; padding: 24px 20px 64px; }
-  /* Opt-in, per page, via `content_for :container_class`. 920px is a reading measure; a page with a
-     nav rail on one side and a list on the other has to pay for both out of the middle column, and at
-     920px the gallery in the middle drops to a single card per row. */
-  .container-wide { max-width: 1360px; }
+  .current-project-form { margin: 0; }
+  .current-project {
+    display: flex; flex-direction: column; gap: 2px; padding: 10px 10px 8px;
+    border-radius: var(--radius-panel); background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  .current-project-label { font: 600 10px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .1em; color: var(--accent); }
+  .current-project-name { font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .current-project-hint { font-size: 11px; color: var(--fg-muted); }
+  .current-project select { margin-top: 6px; width: 100%; min-height: 26px; padding: 3px 24px 3px 8px; font-size: 12px; }
 
-  .shell-placeholder { display: none; }
+  .rail-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .rail-link {
+    display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: var(--radius-control);
+    border-left: 2px solid transparent; color: var(--fg-muted); font-weight: 500; white-space: nowrap;
+  }
+  .rail-link:hover { color: var(--fg); background: var(--raised); text-decoration: none; }
+  .rail-link[aria-current="page"] { color: var(--accent); border-left-color: var(--accent); background: var(--accent-soft); }
+  .rail-icon { width: 16px; height: 16px; flex: 0 0 auto; }
+
+  .rail-foot { margin-top: auto; display: flex; flex-direction: column; gap: 4px; padding: 8px 2px 0; border-top: 1px solid var(--line); }
+  .rail-foot form { margin: 0; }
+  .rail-btn {
+    display: inline-flex; align-items: center; gap: 8px; width: 100%; padding: 5px 6px;
+    background: none; border: 0; border-radius: var(--radius-control); color: var(--fg-muted);
+    font: 500 12px/1.4 var(--font-ui); text-align: left; cursor: pointer;
+  }
+  .rail-btn:hover { color: var(--fg); background: var(--raised); }
+  .rail-user { padding: 2px 6px; font: 11px/1.4 var(--font-mono); color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Collapsed: icons only. The same rules apply below 1100px whatever the cookie says. */
+  .rail--collapsed .rail { padding-inline: 6px; }
+  .rail--collapsed .brand { justify-content: center; padding: 2px 0; }
+  .rail--collapsed .brand-name, .rail--collapsed .rail-label, .rail--collapsed .current-project,
+  .rail--collapsed .rail-user, .rail--collapsed .rail-btn span { display: none; }
+  .rail--collapsed .rail-link, .rail--collapsed .rail-btn { justify-content: center; padding-inline: 0; }
+  .rail--collapsed .rail-foot form button { justify-content: center; }
+
+  .shell-main { min-width: 0; display: flex; flex-direction: column; }
+  .topbar {
+    position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 16px;
+    min-height: var(--topbar-height); padding: 0 24px; background: var(--surface); border-bottom: 1px solid var(--line);
+  }
+  .topbar-crumbs { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; }
+  .topbar-title { font-weight: 600; }
+  .topbar-search {
+    display: flex; align-items: center; gap: 8px; flex: 0 1 320px; min-width: 160px; height: 30px; padding: 0 8px;
+    border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--bg); color: var(--fg-muted);
+  }
+  .topbar-search:focus-within { border-color: var(--accent); }
+  .topbar-search input { flex: 1; min-width: 0; min-height: 0; padding: 0; border: 0; background: transparent; color: var(--fg); font: 13px/1.4 var(--font-ui); }
+  .topbar-search input:focus-visible { outline: none; }
+  .topbar-search input::-webkit-search-cancel-button { filter: grayscale(1); }
+  .topbar-kbd { padding: 3px 5px; border: 1px solid var(--line); border-radius: 3px; font: 500 10px/1 var(--font-mono); color: var(--fg-muted); }
+
+  main.container { width: 100%; max-width: 1360px; margin: 0 auto; padding: 20px 24px 64px; }
+  main.container.container-wide { max-width: none; }
+
+  .flash-stack {
+    position: fixed; top: 12px; right: 12px; z-index: 900; display: flex; flex-direction: column; gap: 8px;
+    width: min(420px, calc(100vw - 24px)); pointer-events: none;
+  }
+  .flash-stack > .flash { box-shadow: var(--shadow-float); pointer-events: auto; }
+  .flash-stack:empty { display: none; }
+
+  .tabbar { display: none; }
+
+  /* Signed-out pages: the auth card (Task 5 writes the markup). */
+  .auth-main { max-width: 440px; padding-top: 48px; }
+  .auth-card { padding: 24px; border: 1px solid var(--line); border-radius: var(--radius-float); background: var(--surface); }
+  .auth-card .brand { padding: 0; margin-bottom: 18px; }
+  .auth-card h2 { font-size: 18px; margin: 0 0 16px; }
+  .auth-card .field input { max-width: none; }
+  .auth-card .actions { margin-top: 8px; }
+  .auth-hint { font-size: 12px; color: var(--fg-muted); }
+  .auth-links { list-style: none; margin: 16px 0 0; padding: 12px 0 0; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+  #error_explanation {
+    margin: 0 0 14px; padding: 10px 12px; border-radius: var(--radius-control);
+    background: color-mix(in srgb, var(--danger) 14%, var(--surface)); color: var(--danger); font-size: 13px;
+  }
+  #error_explanation h2 { font-size: 13px; margin: 0 0 4px; }
+  #error_explanation ul { margin: 0; padding-left: 18px; }
+  .account-delete { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
+
+  @media (max-width: 1099px) {
+    body.app-shell { grid-template-columns: var(--rail-collapsed-width) minmax(0, 1fr); }
+    .rail { padding-inline: 6px; }
+    .brand { justify-content: center; padding: 2px 0; }
+    .brand-name, .rail-label, .current-project, .rail-user, .rail-btn span { display: none; }
+    .rail-link, .rail-btn { justify-content: center; padding-inline: 0; }
+    .topbar { padding: 0 16px; }
+    main.container { padding: 16px 16px 64px; }
+  }
+
+  @media (max-width: 719px) {
+    body.app-shell { grid-template-columns: minmax(0, 1fr); padding-bottom: var(--tabbar-height); }
+    .rail { display: none; }
+    .tabbar {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex;
+      height: var(--tabbar-height); background: var(--surface); border-top: 1px solid var(--line);
+    }
+    .tabbar-link { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--fg-muted); font-size: 10px; }
+    .tabbar-link:hover { text-decoration: none; }
+    .tabbar-link[aria-current="page"] { color: var(--accent); }
+    .topbar { flex-wrap: wrap; gap: 6px 8px; padding: 6px 12px; }
+    .topbar-search { flex: 1 1 100%; min-width: 0; }
+    .topbar-kbd { display: none; }
+    main.container { padding: 12px 12px 72px; }
+    .page-head h1 { font-size: 18px; }
+  }
 }

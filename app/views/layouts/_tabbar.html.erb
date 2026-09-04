@@ -1,0 +1,9 @@
+<%# The phone navigation (spec §5.4): the same five links as the rail, shown below 720px by
+    shell.css and hidden above it. %>
+<nav class="tabbar" aria-label="Main">
+  <% rail_links.each do |key, label, path, icon| %>
+    <%= link_to path, class: "tabbar-link", "aria-current": (rail_section == key ? "page" : nil) do %>
+      <%= rail_icon(icon) %><span><%= label %></span>
+    <% end %>
+  <% end %>
+</nav>

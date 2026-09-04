@@ -7,12 +7,12 @@ module FilesHelper
   # one, and a column that announces no sort state is a column you cannot navigate. Every header
   # carries it, including the inactive ones ("none"), because a table where only one `th` has the
   # attribute reads as a table whose other columns are not sortable at all.
-  def sort_header(label, key, current_sort, current_dir, extra = {})
+  def sort_header(label, key, current_sort, current_dir, extra = {}, col: nil)
     active = current_sort == key
     next_dir = (active && current_dir == "asc") ? "desc" : "asc"
     arrow = active ? (current_dir == "asc" ? " ▲" : " ▼") : ""
     aria  = active ? (current_dir == "asc" ? "ascending" : "descending") : "none"
-    tag.th("aria-sort": aria, class: ("sorted" if active)) do
+    tag.th("aria-sort": aria, class: [ ("sorted" if active), col ].compact.join(" ").presence) do
       link_to("#{label}#{arrow}", files_path(extra.merge(sort: key, dir: next_dir)))
     end
   end

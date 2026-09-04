@@ -1,0 +1,49 @@
+<%# The rail (spec §5.1-5.2). The current-project card KEEPS the form and the select that
+    current_project_topbar_test, box_revisions_test and addon_bundle_test pin
+    (form[action=current_project_path] select[name=project_id], .current-project select). %>
+<aside class="rail" id="rail" data-controller="rail">
+  <%= link_to files_path, class: "brand", "aria-label": "Tinkerex home" do %>
+    <span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span>
+  <% end %>
+
+  <% choices = current_project_choices %>
+  <% if choices.any? %>
+    <%= form_with url: current_project_path, method: :patch, data: { turbo: false },
+                  class: "current-project-form" do %>
+      <label class="current-project">
+        <span class="current-project-label">Current project</span>
+        <span class="current-project-name"><%= current_project&.name || "None" %></span>
+        <span class="current-project-hint">Uploads and tool output land here</span>
+        <%= select_tag :project_id,
+              options_for_select([ [ "— none —", "" ] ] + choices, current_project&.id),
+              onchange: "this.form.requestSubmit()", "aria-label": "Switch current project" %>
+      </label>
+    <% end %>
+  <% end %>
+
+  <nav class="rail-nav" aria-label="Main">
+    <ul>
+      <% rail_links.each do |key, label, path, icon| %>
+        <li>
+          <%= link_to path, class: "rail-link", title: label,
+                      "aria-current": (rail_section == key ? "page" : nil) do %>
+            <%= rail_icon(icon) %><span class="rail-label"><%= label %></span>
+          <% end %>
+        </li>
+      <% end %>
+    </ul>
+  </nav>
+
+  <div class="rail-foot">
+    <button type="button" class="rail-btn" data-controller="theme" data-action="theme#cycle"
+            aria-label="Theme: <%= ui_theme %>">
+      <%= rail_icon(:theme) %><span data-theme-target="label">Theme: <%= ui_theme %></span>
+    </button>
+    <button type="button" class="rail-btn" data-action="rail#toggle" data-rail-target="toggle"
+            aria-expanded="<%= rail_collapsed? ? "false" : "true" %>" aria-label="Collapse navigation">
+      <%= rail_icon(:collapse) %><span>Collapse</span>
+    </button>
+    <span class="rail-user" title="<%= current_user.email %>"><%= current_user.email %></span>
+    <%= button_to "Sign out", destroy_user_session_path, method: :delete, class: "rail-btn" %>
+  </div>
+</aside>

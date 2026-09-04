@@ -6,24 +6,24 @@
 <table class="files" data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
   <thead>
     <tr>
-      <%= sort_header "Name", "name", @sort, @dir, files_query_base %>
-      <%= sort_header "Type", "type", @sort, @dir, files_query_base %>
-      <% if @flat %><th>Folder</th><% end %>
+      <%= sort_header "Name", "name", @sort, @dir, files_query_base, col: "col-name" %>
+      <%= sort_header "Type", "type", @sort, @dir, files_query_base, col: "col-type" %>
+      <% if @flat %><th class="col-folder">Folder</th><% end %>
       <%# Size is NOT sortable, and that is deliberate: it is the one column whose value does not
           come from `nodes` on every backend (Chunk#stat_all reads it from the versions row), so a
           size sort would be the only inexact one — worse than none in a column of exact-looking
           numbers. See the spec, §5.3. %>
-      <th class="num">Size</th>
-      <% if capabilities.versioned? %><th>Version</th><% end %>
-      <%= sort_header "Modified", "modified", @sort, @dir, files_query_base %>
-      <th></th>
+      <th class="num col-size">Size</th>
+      <% if capabilities.versioned? %><th class="col-version">Version</th><% end %>
+      <%= sort_header "Modified", "modified", @sort, @dir, files_query_base, col: "col-modified" %>
+      <th class="col-actions"></th>
     </tr>
   </thead>
   <tbody>
     <% @nodes.each do |node| %>
       <% info = @info_by_node[node.node_id] %>
       <tr>
-        <td>
+        <td class="col-name">
           <% if node.file? %>
             <%# Only a file this deployment can actually thumbnail gets a preview cell. A
                 non-renderable file (pdf, txt, image, ...) renders as a plain name link, exactly
@@ -60,22 +60,22 @@
         </td>
         <%# The EXTENSION, not node.kind — see FilesHelper#file_type_label for why the cell under
             a "Type" header cannot go on saying "file". %>
-        <td class="muted"><%= file_type_label(node) %></td>
+        <td class="muted col-type"><%= file_type_label(node) %></td>
         <%# Where this file actually lives — a flat list without it is unnavigable. The link goes
             to that folder, so the flat view doubles as a way to FIND things. A file at the
             library root has no path, so it names the root the breadcrumb already calls "Files". %>
         <% if @flat %>
-          <td class="muted">
+          <td class="muted col-folder">
             <%= link_to(@folder_paths[node.node_id].presence || "Files",
                         files_path(folder: node.parent_node_id)) %>
           </td>
         <% end %>
-        <td class="num muted"><%= info.content_token ? number_to_human_size(info.size) : "—" %></td>
+        <td class="num muted col-size"><%= info.content_token ? number_to_human_size(info.size) : "—" %></td>
         <% if capabilities.versioned? %>
-          <td class="muted mono"><%= info.content_token&.first(8) || "—" %></td>
+          <td class="muted mono col-version"><%= info.content_token&.first(8) || "—" %></td>
         <% end %>
-        <td class="muted"><%= info.mtime ? Time.at(info.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M") : "—" %></td>
-        <td class="row-actions">
+        <td class="muted col-modified"><%= info.mtime ? Time.at(info.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M") : "—" %></td>
+        <td class="row-actions col-actions">
           <% if node.file? %>
             <%= link_to "Download", blob_file_path(node.node_id, download: 1) %>
           <% end %>
