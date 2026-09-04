@@ -42,12 +42,18 @@
   <p class="project-description"><%= @project.description %></p>
 <% end %>
 
-<%# THE STATS LINE reads collections ProjectsController#show already loaded — @attachments,
-    @tasks, @entries, @sheets — and nothing else, so page_query_budget_test.rb's "does not grow
-    with attachments, tasks or build-log entries" holds without a counter cache. %>
+<%# THE STATS LINE reads collections ProjectsController#show already loaded — @listing, @tasks,
+    @entries, @sheets, @linked_rows — and nothing else, so page_query_budget_test.rb's "does not
+    grow with attachments, tasks or build-log entries" holds without a counter cache. The file
+    count is the FOLDER's (@listing.total), not maker_file_attachments — an attachment to a node
+    living elsewhere in the library (Linked) is counted separately, right here, rather than folded
+    into the first number. %>
 <% done = @tasks.count { |t| t.status == "done" } %>
 <p class="project-stats">
-  <span><b><%= @attachments.size %></b> <%= "file".pluralize(@attachments.size) %></span>
+  <span><b><%= @listing.total %></b> <%= "file".pluralize(@listing.total) %></span>
+  <% if @linked_rows.any? %>
+    <span><b><%= @linked_rows.size %></b> linked</span>
+  <% end %>
   <span><b><%= done %> of <%= @tasks.size %></b> <%= "task".pluralize(@tasks.size) %> done</span>
   <span><b><%= @entries.size %></b> log <%= "entry".pluralize(@entries.size) %></span>
   <span><b><%= @sheets.size %></b> <%= "sheet".pluralize(@sheets.size) %></span>

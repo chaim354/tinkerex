@@ -32,6 +32,7 @@
   @media (min-width: 900px) { .project-panels { grid-template-columns: 1fr 1fr; } .attachments-panel { grid-column: 1 / -1; } }
 
   /* --- Files panel: 96px tiles, Detach in the corner on hover --- */
+  .attachments-panel .panel-path { font-size: 12px; margin-left: 8px; }
   .attachments-grid, .entry-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 12px; }
   .attachment-tile { position: relative; display: flex; flex-direction: column; gap: 4px; }
   .attachment-tile .thumb { width: 100%; height: 96px; }
@@ -41,6 +42,7 @@
   @media (hover: none) { .tile-meta { opacity: 1; } }
   .tile-meta form { margin: 0; }
   .tile-detach { min-height: 22px; padding: 0 6px; font-size: 11px; background: var(--surface); }
+  .repo-tile .generic-thumb { letter-spacing: .08em; }
   .entry-photo .thumb { width: 100%; height: 80px; }
   .attachment-group { margin-bottom: 16px; }
   .attachment-group:last-child { margin-bottom: 0; }

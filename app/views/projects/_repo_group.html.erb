@@ -1,0 +1,33 @@
+<%#
+  The Repositories section — one entry per git working tree found inside the project's folder,
+  never descended: Maker::ProjectFolderListing's walk stops at a `.git` marker and reports the
+  directory as a Repo instead of entering it, because a checked-out firmware repo is one thing in a
+  project, not three hundred source files filed under "Code". Local: repos
+  (Maker::ProjectFolderListing::Repo — node_id, name, path).
+
+  ALWAYS OPEN AND NEVER EMPTY-CHECKED HERE: _attachments.html.erb only renders this partial when
+  @listing.repos is present, the same rule every other optional section in the panel follows.
+
+  A REPO TILE IS NOT A FILE TILE, deliberately. It carries no thumb_cell_data/file_menu_data (there
+  is nothing to poll a thumbnail for and no right-click "Edit in…" for a directory) and no
+  tile-meta corner (a repository is not attached or detached the way a file is — its files come and
+  go with the working tree). It links straight into the Files browser at that folder, the same
+  navigation `files/_grid.html.erb` gives an ordinary folder card.
+%>
+<section class="attachment-group">
+  <details open>
+    <summary class="attachment-group-head">
+      Repositories <span class="muted">(<%= repos.size %>)</span>
+    </summary>
+    <div class="attachments-grid">
+      <% repos.each do |repo| %>
+        <div class="attachment-tile repo-tile">
+          <%= link_to files_path(folder: repo.node_id), class: "grid-card" do %>
+            <span class="thumb generic-thumb" aria-hidden="true">REPO</span>
+            <span class="grid-name"><%= repo.name %></span>
+          <% end %>
+        </div>
+      <% end %>
+    </div>
+  </details>
+</section>

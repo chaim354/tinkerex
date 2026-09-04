@@ -90,9 +90,25 @@ module Web
 
     test "projects#show does not grow with attachments, tasks or build-log entries" do
       project = @user.maker_projects.create!(name: "Budgeted", status: "active")
+      # THE FOLDER, NOT JUST THE RELATION, HAS TO GROW TOO. Since stage 2's S2-2 the panel's file
+      # list is Maker::ProjectFolderListing (one dirs pluck, one capped files query, one count),
+      # and it is a genuinely separate code path from @attachments -- an eager load missing on
+      # either side is invisible unless BOTH grow, which is the exact shape this file's own header
+      # names for build-log rich text (flat, then +1 query per entry, whole suite green).
+      folder = project.ensure_library_folder!(@user)
       add = lambda do |prefix, count|
         count.times do |i|
           id = "#{prefix}#{i}"
+          # A SUBFOLDER PER ITERATION exercises the dir WALK (collect_dirs), not merely the row
+          # count a flat folder would grow.
+          sub = @user.nodes.create!(node_id: "#{id}-dir", name: id, kind: "dir",
+                                    parent_node_id: folder.node_id, size: 0,
+                                    mtime: 1_700_000_000_000_000_000)
+          @user.nodes.create!(node_id: "#{id}-file", name: "#{id}.stl", kind: "file",
+                              parent_node_id: sub.node_id, size: 1,
+                              mtime: 1_700_000_000_000_000_000,
+                              content_hash: "h-#{id}", current_version_id: "v-#{id}")
+          # THE LINKED CASE: an attachment to a node OUTSIDE the folder, growing @linked_rows.
           node!(id, "#{id}.stl")
           project.file_attachments.create!(user: @user, node_id: id, role: "model")
           project.tasks.create!(user: @user, title: "task #{id}")

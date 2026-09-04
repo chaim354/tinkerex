@@ -2,10 +2,10 @@
 
 > CLAUDE.md §14f's area file. Read before touching `app/services/maker/project_intake.rb`,
 > `app/services/maker/project_discovery.rb`, `app/services/maker/attach_to_project.rb`,
-> `app/services/maker/project_folders.rb`, `app/jobs/maker/project_intake_job.rb`,
-> `app/jobs/maker/project_discovery_job.rb`, or `Library::ScanJob`'s post-reconcile sequence. The
-> arc that produced it — measurements, what each guard caught, what was deliberately left out — is
-> in `docs/STATUS.md`.
+> `app/services/maker/project_folders.rb`, `app/services/maker/project_folder_listing.rb`,
+> `app/jobs/maker/project_intake_job.rb`, `app/jobs/maker/project_discovery_job.rb`, or
+> `Library::ScanJob`'s post-reconcile sequence. The arc that produced it — measurements, what each
+> guard caught, what was deliberately left out — is in `docs/STATUS.md`.
 
 ## Discovery — a folder under `Projects/` becomes a project
 
@@ -102,6 +102,13 @@
   duplicate-adoption race it alone prevents on the backends the other cannot reach.
 
 ## Filing
+
+- **THE PAGE LISTS THE FOLDER AND NEVER FILES OR MINTS IT.** `Maker::ProjectFolderListing` reads
+  `folder_node_id`, answers liveness through the LibraryTree, and creates nothing; the one writer
+  on `projects#show` is the pre-existing best-effort `ensure_library_folder!` for the upload
+  control, which runs before the listing. A file inside the folder with no attachment row is still
+  listed — the folder is the relation the panel shows; `maker_file_attachments` stays the relation
+  detach, cover and addon origin read.
 
 - **`:in_working_tree` IS UNSCOPED, UNLIKE `:attached_elsewhere` — DO NOT ADD A KWARG TO IT.** A
   refusal from `#refusal_for` does not mean "refuse the attachment": `#call` returns
