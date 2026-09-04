@@ -194,6 +194,36 @@ module Web
              params: { bom_line: { target_kind: "file", node_id: "unknown-node", quantity: "1", unit: "each" } }
       end
       assert_match(/isn't in your library/, flash[:alert])
+
+      # A DIRECTORY IS NOT A FILE: the lookup carries kind: "file", so a folder the user does own is
+      # refused the same way — without it a line could point at a folder and link file_path to it.
+      folder = @user.nodes.create!(node_id: SecureRandom.uuid, name: "models", kind: "dir")
+      assert_no_difference "Maker::BomLine.count" do
+        post project_bom_lines_path(@project),
+             params: { bom_line: { target_kind: "file", node_id: folder.node_id, quantity: "1", unit: "each" } }
+      end
+      assert_match(/isn't in your library/, flash[:alert])
+    end
+
+    # THE RETURN PATH FOLLOWS THE REFERER: the same three doors serve the panel and the full page,
+    # and redirect_back_or_to is what sends a post from /projects/:id/bom back there rather than to
+    # the project page (review, 2026-09-04: nothing pinned the non-fallback arm).
+    test "a line added from the full page returns to the full page" do
+      item = item!(name: "NEMA17")
+      post project_bom_lines_path(@project),
+           params: { bom_line: { target_kind: "stock", inventory_item_id: item.id, quantity: "1", unit: "each" } },
+           headers: { "HTTP_REFERER" => project_bom_path(@project) }
+      assert_redirected_to project_bom_path(@project)
+    end
+
+    # A STOCK LINE IS COUNTED IN ITS ITEM'S UNIT. Consume subtracts the line's quantity from the item,
+    # so the unit the row shows must be the unit the item is stocked in; the composer's unit field
+    # applies to file and text lines only (review, 2026-09-04).
+    test "a stock line takes its item's unit, whatever the composer sent" do
+      item = item!(name: "PETG", unit: "kg")
+      post project_bom_lines_path(@project),
+           params: { bom_line: { target_kind: "stock", inventory_item_id: item.id, quantity: "2", unit: "each" } }
+      assert_equal "kg", Maker::BomLine.last.unit
     end
 
     test "target_kind text with a blank part name is refused" do
@@ -230,6 +260,8 @@ module Web
 
     # --- quantity and unit validation ------------------------------------------------------------
 
+    # THE UNIT CASE IS A TEXT LINE ON PURPOSE: a stock line takes its item's unit at the door, so a
+    # bad unit on one is overridden, not refused; only file and text lines carry the composer's.
     test "quantity and unit are validated" do
       item = item!(name: "NEMA17")
       assert_no_difference "Maker::BomLine.count" do
@@ -240,7 +272,7 @@ module Web
 
       assert_no_difference "Maker::BomLine.count" do
         post project_bom_lines_path(@project),
-             params: { bom_line: { target_kind: "stock", inventory_item_id: item.id, quantity: "1", unit: "furlong" } }
+             params: { bom_line: { target_kind: "text", part_name: "wire", quantity: "1", unit: "furlong" } }
       end
       assert flash[:alert].present?
     end
@@ -325,6 +357,9 @@ module Web
       get project_path(@project)
       assert_select "table.table.bom-lines tbody tr", count: cap
       assert_select ".bom-more a[href=?]", project_bom_path(@project), text: /Showing #{cap} of #{cap + 1}/
+      # THE ROLLUP COUNTS EVERY LINE, NOT THE SHOWN SLICE — a panel reading "8 lines" above
+      # "Showing 8 of 9" would contradict itself (review, 2026-09-04).
+      assert_select ".bom-rollup", text: /#{cap + 1} lines/
 
       get project_bom_path(@project)
       assert_response :success
