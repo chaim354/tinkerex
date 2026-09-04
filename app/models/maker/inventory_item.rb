@@ -18,6 +18,9 @@ module Maker
     # `dependent: :nullify` to this line would be actively wrong; read that method's comment before
     # "tidying" it.
     has_many :bom_lines, class_name: "Maker::BomLine", foreign_key: :inventory_item_id
+    # Tags (stage 2, S2-5): taggings/tags, tag_list, tag_list=, tagged_with -- Maker::Taggable,
+    # shared with Maker::Model (where it shipped first) and Maker::Project.
+    include Maker::Taggable
 
     before_destroy :release_bom_lines
 

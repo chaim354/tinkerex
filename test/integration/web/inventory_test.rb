@@ -414,5 +414,46 @@ module Web
       delete inventory_item_path(foreign)
       assert_response :not_found
     end
+
+    # --- tags (stage 2, S2-5) ------------------------------------------------------------------
+
+    test "new renders a tag_list field too" do
+      get new_inventory_item_path
+      assert_select "input[name='inventory_item[tag_list]']"
+    end
+
+    test "an untagged item shows no Tags row in the meta strip" do
+      item = item!("Untagged")
+      get inventory_item_path(item)
+      assert_select "dl.meta dt", text: "Tags", count: 0
+    end
+
+    test "tag chips render in the meta strip and link to the tag page" do
+      item = item!("M3 bolt", tag_list: "laser, firmware")
+      get inventory_item_path(item)
+      assert_select "dl.meta dt", text: "Tags"
+      assert_select "dl.meta dd .tag-chips a.tag-chip[href=?]", tag_path("firmware"), text: "firmware"
+      assert_select "dl.meta dd .tag-chips a.tag-chip[href=?]", tag_path("laser"), text: "laser"
+    end
+
+    test "update with tag_list writes tags" do
+      item = item!("M3 bolt")
+      patch inventory_item_path(item),
+            params: { inventory_item: { name: item.name, unit: item.unit, tag_list: "hardware" } }
+      assert_redirected_to inventory_item_path(item)
+      assert_equal [ "hardware" ], item.reload.tags.pluck(:name)
+    end
+
+    test "the index shows tag filter chips and ?tag= narrows, excluding an untagged item" do
+      tagged = item!("Laser lens", tag_list: "laser")
+      item!("Plain bolt")
+
+      get inventory_items_path
+      assert_select "span.chips a.filter.chip", text: "laser"
+
+      get inventory_items_path(tag: "laser")
+      assert_select "table.table.inventory-table tbody tr", 1
+      assert_select "td.col-name a[href=?]", inventory_item_path(tagged)
+    end
   end
 end

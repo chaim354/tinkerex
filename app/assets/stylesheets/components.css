@@ -75,6 +75,16 @@
   .chip.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
   .chip .chip-x { opacity: .7; font-weight: 700; }
   .chip.active:hover { border-color: var(--danger); color: var(--danger); background: transparent; }
+  /* Tags (stage 2, S2-5): the chip row a tagged record's page renders (TagsHelper#tag_chips) and
+     the tag page's own h1. Smaller and lowercase so a run of them reads as metadata beside a
+     title, not as a second row of the same buttons `.chip` renders for a toolbar filter. */
+  .tag-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag-chip {
+    display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--fg-muted);
+    font: 500 11px/1.4 var(--font-mono); text-transform: lowercase; text-decoration: none;
+  }
+  .tag-chip:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
   .view-toggle { display: inline-flex; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); }
   .view-toggle .toggle { padding: 4px 10px; font: 500 12px/1.4 var(--font-ui); color: var(--fg-muted); text-decoration: none; }
   .view-toggle .toggle:hover { background: var(--raised); color: var(--fg); text-decoration: none; }

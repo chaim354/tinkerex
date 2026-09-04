@@ -1,0 +1,61 @@
+<%#
+  ONE GROUPED LIST, RENDERED BY BOTH THE TAG PAGE AND THE SEARCH PAGE (stage 2, S2-5) — the
+  contract is fixed here because tags/show.html.erb and search/index.html.erb are two different
+  tasks' work landing on the same partial. Its styling (`.result-group`, `.result-list`,
+  `.result-row`, `.result-sub`, `.result-more`) lives in `pages/search.css`, linked from the
+  shared layout, so it applies here too without this page loading a stylesheet of its own.
+
+  Locals:
+    title       String   -- the group's heading ("Projects", "Files", ...)
+    kind        Symbol   -- :project | :model | :inventory_item | :file | :tag
+    records     Array    -- the (possibly capped) rows to render
+    total       Integer  -- optional, defaults to records.size. May exceed it when capped.
+    more_path   String   -- optional, defaults to nil. A link into that kind's own, already
+                            tag/query-filterable index.
+    more_label  String   -- optional, defaults to "See all".
+
+  A FILE ROW IS A PLAIN NAME LINK, DELIBERATELY NOT thumb_cell_data — this list has no polling
+  cell to seed (docs/invariants/files-preview.md), just a name and an extension label.
+
+  Renders nothing at all when records is empty, so a caller may render this unconditionally per
+  group (SearchController#add_group never adds an empty one anyway; TagsController's groups can
+  be, and this is what makes "per non-empty group" true without the caller filtering).
+%>
+<% if records.any? %>
+  <% total = local_assigns.fetch(:total, records.size) %>
+  <% more_path = local_assigns.fetch(:more_path, nil) %>
+  <% more_label = local_assigns.fetch(:more_label, "See all") %>
+  <section class="result-group result-group--<%= kind %>">
+    <h2><%= title %> <span class="muted"><%= total %></span></h2>
+    <ul class="result-list">
+      <% records.each do |record| %>
+        <li class="result-row">
+          <% case kind
+             when :project %>
+            <%= link_to record.name, project_path(record) %>
+            <% if record.description.present? %>
+              <span class="result-sub"><%= truncate(record.description, length: 80) %></span>
+            <% end %>
+          <% when :model %>
+            <%= link_to record.title, model_path(record) %>
+            <span class="badge mstatus-<%= record.print_status %>"><%= record.print_status.tr("_", " ") %></span>
+          <% when :inventory_item %>
+            <%= link_to record.name, inventory_item_path(record) %>
+            <span class="result-sub"><%= [
+              "#{number_with_precision(record.quantity_cached, precision: 3, strip_insignificant_zeros: true)} #{record.unit}",
+              record.location&.name
+            ].compact.join(" · ") %></span>
+          <% when :file %>
+            <%= link_to record.name, file_path(record.node_id) %>
+            <span class="result-sub"><%= File.extname(record.name).delete(".").upcase.first(4) %></span>
+          <% when :tag %>
+            <%= link_to record.name, tag_path(record.name), class: "tag-chip" %>
+          <% end %>
+        </li>
+      <% end %>
+    </ul>
+    <% if more_path && total > records.size %>
+      <p class="result-more"><%= link_to "#{more_label} #{total}", more_path %></p>
+    <% end %>
+  </section>
+<% end %>

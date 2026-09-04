@@ -56,6 +56,12 @@
     <%= f.text_area :notes, rows: 4 %>
   </label>
 
+  <label class="field">
+    <span>Tags</span>
+    <%= f.text_field :tag_list, value: item.tag_list, placeholder: "laser, firmware" %>
+    <span class="field-hint muted">Comma-separated</span>
+  </label>
+
   <%# NEW ONLY — an existing item's balance is never edited directly, only ever moved through the
       ledger's own Adjust composer on the show page (InventoryTransaction.apply!). This field is
       form-only: it is not in item_params and the controller posts it as a separate "initial"

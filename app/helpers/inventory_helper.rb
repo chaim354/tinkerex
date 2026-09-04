@@ -11,7 +11,7 @@ module InventoryHelper
     tag.th("aria-sort": aria, class: [ ("sorted" if active), col ].compact.join(" ").presence) do
       link_to("#{label}#{arrow}",
               inventory_items_path(q: @q.presence, category: @category, low: (@low ? 1 : nil),
-                                    sort: key, dir: next_dir))
+                                    tag: @tag, sort: key, dir: next_dir))
     end
   end
 end

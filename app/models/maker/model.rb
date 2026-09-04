@@ -23,13 +23,14 @@ module Maker
 
     has_many :file_attachments, -> { order(:position) },
              as: :attachable, class_name: "Maker::FileAttachment", dependent: :destroy
-    has_many :taggings, as: :taggable, class_name: "Maker::Tagging", dependent: :destroy
-    has_many :tags, through: :taggings, class_name: "Maker::Tag"
+    # Tags (taggings/tags, tag_list, tag_list=, apply_pending_tag_list, tagged_with) are
+    # Maker::Taggable now (stage 2, S2-5) -- lifted verbatim out of here, since Project and
+    # InventoryItem need the identical behaviour and this is where it shipped first.
+    include Maker::Taggable
     has_many :print_runs, -> { order(:printed_on, :id) },
              class_name: "Maker::PrintRun", dependent: :destroy
 
     before_validation :ensure_slug
-    after_save :apply_pending_tag_list
 
     validates :title, presence: true
     validates :slug, presence: true, uniqueness: { scope: :user_id }
@@ -51,18 +52,6 @@ module Maker
     # nil. Reads loaded file_attachments; callers rendering many cards should include(:file_attachments).
     def cover_node_id
       self[:cover_node_id].presence || derived_cover_node_id
-    end
-
-    # Comma-separated tag names, for the edit form. Writing find-or-creates the user's tags and
-    # replaces the set (Maker::Tag normalizes name to stripped-downcase and is unique per user).
-    def tag_list
-      tags.map(&:name).sort.join(", ")
-    end
-
-    # Comma-separated tag names, for the edit form. Writing find-or-creates the user's tags and
-    # REPLACES the set on the next save (deferred so it's safe on a new, unsaved record too).
-    def tag_list=(str)
-      @tag_list_pending = str
     end
 
     # Return the model's library folder node, (re)creating `Models/<slug>` if folder_node_id is
@@ -102,17 +91,6 @@ module Maker
              atts.find { |a| a.role == "model" } ||
              atts.first
       pick&.node_id
-    end
-
-    def apply_pending_tag_list
-      return unless defined?(@tag_list_pending)
-      names = @tag_list_pending.to_s.split(",").map { |n| n.strip.downcase }.reject(&:blank?).uniq
-      wanted = names.map { |n| user.maker_tags.find_or_create_by!(name: n) }
-      transaction do
-        taggings.where.not(tag_id: wanted.map(&:id)).destroy_all
-        wanted.each { |t| taggings.find_or_create_by!(user: user, tag: t) }
-      end
-      remove_instance_variable(:@tag_list_pending)
     end
   end
 end

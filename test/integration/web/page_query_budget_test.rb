@@ -171,7 +171,11 @@ module Web
     test "projects#index does not grow with the number of projects" do
       add = lambda do |prefix, count|
         count.times do |i|
-          project = @user.maker_projects.create!(name: "#{prefix}#{i}", status: "active")
+          # A tag per project too (stage 2, S2-5, review 2026-09-04), so the filter-chip query
+          # (@project_tags) is under measurement -- the same reasoning inventory#index's own
+          # category-per-item seed states below.
+          project = @user.maker_projects.create!(name: "#{prefix}#{i}", status: "active",
+                                                  tag_list: "#{prefix}tag#{i}")
           node!("pc-#{prefix}#{i}", "pc-#{prefix}#{i}.stl")
           project.file_attachments.create!(user: @user, node_id: "pc-#{prefix}#{i}", role: "image")
         end
@@ -300,14 +304,34 @@ module Web
           location = @user.maker_locations.create!(name: "#{prefix}loc#{i}")
           supplier = @user.maker_suppliers.create!(name: "#{prefix}sup#{i}")
           # A category per item too, so the chip loop is under measurement (review, 2026-09-04).
+          # A tag per item too (stage 2, S2-5), for the identical reason on @item_tags.
           @user.maker_inventory_items.create!(name: "#{prefix}item#{i}", unit: "each", location:, supplier:,
-                                              category: "#{prefix}cat#{i}")
+                                              category: "#{prefix}cat#{i}", tag_list: "#{prefix}tag#{i}")
         end
       end
       assert_constant_queries(inventory_items_path,
                               -> { add.call("s", SMALL) },
                               -> { add.call("l", LARGE - SMALL) },
                               "inventory#index")
+    end
+
+    # Stage 2, S2-5. Each iteration tags one project, one model and one inventory item with the
+    # SAME tag ("laser"), so all three of TagsController#show's group queries grow with N while
+    # staying well under GROUP_CAP -- crossing that cap would add a count query to only the
+    # "large" measurement and fail constancy for a reason that has nothing to do with an N+1, so
+    # SMALL/LARGE (3/15) are chosen to stay far under it.
+    test "tags#show does not grow with the number of things wearing the tag" do
+      add = lambda do |prefix, count|
+        count.times do |i|
+          @user.maker_projects.create!(name: "#{prefix}p#{i}", tag_list: "laser")
+          @user.maker_models.create!(title: "#{prefix}m#{i}", tag_list: "laser")
+          @user.maker_inventory_items.create!(name: "#{prefix}i#{i}", unit: "each", tag_list: "laser")
+        end
+      end
+      assert_constant_queries(tag_path("laser"),
+                              -> { add.call("s", SMALL) },
+                              -> { add.call("l", LARGE - SMALL) },
+                              "tags#show")
     end
 
     # Each transaction gets its OWN project, for the identical reason: `.includes(:project)` on

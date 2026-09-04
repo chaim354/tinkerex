@@ -26,7 +26,9 @@ class ModelsController < ApplicationController
       models = models.where("title LIKE ?", "%#{ActiveRecord::Base.sanitize_sql_like(params[:q])}%")
     end
     if params[:tag].present?
-      models = models.joins(:tags).where(maker_tags: { name: params[:tag].to_s.strip.downcase })
+      # Maker::Taggable#tagged_with (stage 2, S2-5) -- same SQL this join always ran, now shared
+      # with Project and InventoryItem rather than reimplemented per controller.
+      models = models.tagged_with(params[:tag])
     end
     @models = models.order(SORTS.fetch(params[:sort], SORTS["recent"])).to_a
     # AN AUTO MODEL WITH NO ATTACHMENTS IS AN EMPTIED FOLDER, and it is hidden rather than dismissed
