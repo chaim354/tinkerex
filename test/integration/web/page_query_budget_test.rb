@@ -381,5 +381,34 @@ module Web
                               -> { add.call("tl", LARGE - SMALL) },
                               "trash#index")
     end
+    # THE TWO SETTINGS LISTS (S2-3). Each row shows a count of the items that reference it; the
+    # count comes from ONE grouped query, not one per row -- the shape settings_reference_test.rb
+    # pins locally and this pins against the seed growing.
+    test "suppliers#index does not grow with the number of suppliers" do
+      add = lambda do |prefix, count|
+        count.times do |i|
+          supplier = @user.maker_suppliers.create!(name: "S #{prefix}#{i}", url: "https://example.com/#{prefix}#{i}")
+          @user.maker_inventory_items.create!(name: "I #{prefix}#{i}", supplier:)
+        end
+      end
+      assert_constant_queries(suppliers_path,
+                              -> { add.call("ss", SMALL) },
+                              -> { add.call("sl", LARGE - SMALL) },
+                              "suppliers#index")
+    end
+
+    test "locations#index does not grow with the number of locations" do
+      add = lambda do |prefix, count|
+        count.times do |i|
+          parent = @user.maker_locations.create!(name: "P #{prefix}#{i}")
+          child = @user.maker_locations.create!(name: "C #{prefix}#{i}", parent:)
+          @user.maker_inventory_items.create!(name: "I #{prefix}#{i}", location: child)
+        end
+      end
+      assert_constant_queries(locations_path,
+                              -> { add.call("ls", SMALL) },
+                              -> { add.call("ll", LARGE - SMALL) },
+                              "locations#index")
+    end
   end
 end
