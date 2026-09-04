@@ -45,7 +45,8 @@ class SearchController < ApplicationController
     add_group("Models", :model, models.order(:title), models_path(q: @q))
 
     # Inventory: name OR part number, mirroring InventoryItemsController#index's own clause.
-    items = current_user.maker_inventory_items
+    # `includes(:location)`: a result row says where the item lives; five rows, five lookups without it.
+    items = current_user.maker_inventory_items.includes(:location)
                         .where("LOWER(name) LIKE ? ESCAPE '\\' OR LOWER(part_number) LIKE ? ESCAPE '\\'",
                                like, like)
     add_group("Inventory", :inventory_item, items.order(:name), inventory_items_path(q: @q))

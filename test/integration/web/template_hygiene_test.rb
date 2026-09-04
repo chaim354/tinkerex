@@ -235,7 +235,8 @@ module Web
         "locations" => locations_path,
         "tools gallery" => tools_path,
         "tools addon" => tools_addon_path("fixture"),
-        "trash" => trash_index_path
+        "trash" => trash_index_path,
+        "search" => search_path(q: "lamp")
       }
     end
 

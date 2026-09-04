@@ -476,5 +476,26 @@ module Web
                               -> { add.call("ll", LARGE - SMALL) },
                               "locations#index")
     end
+    # SEARCH READS FIVE KINDS, EACH ONE CAPPED QUERY PLUS ONE COUNT (S2-5). The seed grows every
+    # kind under the one query the page runs, so a per-row read in any group would show.
+    test "search#index does not grow with matches of any kind" do
+      add = lambda do |prefix, count|
+        count.times do |i|
+          id = "#{prefix}#{i}"
+          location = @user.maker_locations.create!(name: "Bin #{id}")
+          @user.nodes.create!(node_id: "search-#{id}", name: "lamp-#{id}.stl", kind: "file")
+          project = @user.maker_projects.create!(name: "Lamp #{id}", status: "active")
+          @user.maker_models.create!(title: "lamp #{id}", slug: "lamp-#{id}")
+          item = @user.maker_inventory_items.create!(name: "lamp brick #{id}", location:)
+          tag = @user.maker_tags.create!(name: "lamp-#{id}")
+          Maker::Tagging.create!(user: @user, tag:, taggable: project)
+          Maker::Tagging.create!(user: @user, tag:, taggable: item)
+        end
+      end
+      assert_constant_queries(search_path(q: "lamp"),
+                              -> { add.call("ss", SMALL) },
+                              -> { add.call("sl", LARGE - SMALL) },
+                              "search#index")
+    end
   end
 end

@@ -32,7 +32,7 @@ class CssHygieneTest < ActiveSupport::TestCase
   COMPONENT_SELECTORS = %w[
     .btn .linkbtn .chip .view-toggle .toolbar .breadcrumb .pager .page-head .panel .thumb
     .grid-card .badge dl.meta .empty .flash .file-menu .note-popover .filechooser
-    table.files .folder-field-btn details.menu
+    table.files .folder-field-btn details.menu .tag-chips .tag-chip
   ].freeze
 
   def read(name) = SHEETS_DIR.join(name).read
