@@ -95,7 +95,7 @@ module Web
       # and it is a genuinely separate code path from @attachments -- an eager load missing on
       # either side is invisible unless BOTH grow, which is the exact shape this file's own header
       # names for build-log rich text (flat, then +1 query per entry, whole suite green).
-      folder = project.ensure_library_folder!(@user)
+      folder = project_folder_rows!(@user, project)
       add = lambda do |prefix, count|
         count.times do |i|
           id = "#{prefix}#{i}"
@@ -221,7 +221,7 @@ module Web
       # the folder through Maker::ProjectFolderListing, and a listing budgeted over an EMPTY folder
       # cannot see a per-dir query: the review's per-dir mutation reddened projects#show and left this
       # test green until the folder was seeded (2026-09-04).
-      hero_folder = hero.ensure_library_folder!(@user)
+      hero_folder = project_folder_rows!(@user, hero)
       add = lambda do |prefix, count|
         count.times do |i|
           id = "#{prefix}#{i}"

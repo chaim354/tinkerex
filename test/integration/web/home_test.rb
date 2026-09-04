@@ -34,7 +34,7 @@ module Web
       project.build_log_entries.create!(user: @user, entry_type: "note", logged_at: 1.day.ago, body: "<div>Shade printed.</div>")
       # THE HERO'S FILE COUNT IS THE FOLDER'S (Maker::ProjectFolderListing#total, the same thing
       # projects#show's own stats line reads) — one file placed straight in the project's folder.
-      folder = project.ensure_library_folder!(@user)
+      folder = project_folder_rows!(@user, project)
       @user.nodes.create!(node_id: "n-hero-file", name: "bracket.stl", kind: "file",
                           parent_node_id: folder.node_id, mtime: 1_000_000_000, size: 5)
       patch current_project_path, params: { project_id: project.id }

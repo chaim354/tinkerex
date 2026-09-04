@@ -17,7 +17,7 @@ module Web
       # count is now Maker::ProjectFolderListing#total (the folder), not maker_file_attachments —
       # an attachment to a node outside the folder is the Linked case, set up separately below so
       # it does not inflate this count.
-      folder = @project.ensure_library_folder!(@user)
+      folder = project_folder_rows!(@user, @project)
       %w[base.stl shade.3mf].each_with_index do |name, i|
         @user.nodes.create!(node_id: "n-#{i}", name:, kind: "file", parent_node_id: folder.node_id,
                             mtime: 1_000_000_000, size: 10)

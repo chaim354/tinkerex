@@ -115,7 +115,7 @@ module Web
       # dir with a `.git` marker child under the folder is what makes
       # Maker::ProjectFolderListing#repos non-empty, so "project detail" below sweeps it — the
       # same argument the `d-laser` comment two attachments up makes for models/_file_tree.
-      folder = @project.ensure_library_folder!(@user)
+      folder = project_folder_rows!(@user, @project)
       firmware = @user.nodes.create!(node_id: "d-firmware", name: "firmware", kind: "dir",
                                      parent_node_id: folder.node_id)
       @user.nodes.create!(node_id: "d-firmware-git", name: Library::RepoMetadata::DIR_NAME,
