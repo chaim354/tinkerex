@@ -22,26 +22,35 @@
     </span>
     <span class="measure-actions">
       <%#
+        THERE IS NO "Select parts" TOGGLE HERE ANY MORE (2026-09-03, at the user's request).
+        Selecting is what a click DOES — every click on a contour marks it, a second click on the
+        same contour drops it, and a click on empty space clears the lot — so the button that used
+        to arm that behaviour, its `aria-pressed`, and the `selectToggle` target are gone rather
+        than hidden. See measure_controller.js's `pick` and §14h.
+      %>
+      <%#
         THE PAPER OPTIONS ARE POPULATED BY THE CONTROLLER FROM print_sheet.js's PAPERS table, not
         listed here. A second copy of the paper list in ERB is a second definition that drifts, and
         this select only ever appears once the controller has run anyway.
       %>
-      <button type="button" class="btn small ghost" data-action="measure#toggleSelect"
-              data-measure-target="selectToggle" aria-pressed="false">Select parts</button>
       <select class="measure-paper" aria-label="Paper size"
               data-measure-target="paper" data-action="measure#paperChanged"></select>
       <button type="button" class="btn small" data-action="measure#print"
               data-measure-target="printButton">Print all</button>
       <%#
-        VISIBLE TEXT IS CONSTANT, THE ACCESSIBLE NAME IS NOT. The bar already carries five other
+        VISIBLE TEXT IS CONSTANT, THE ACCESSIBLE NAME IS NOT. The bar already carries four other
         controls, so a second count-bearing label beside "Print 3 parts" is noise — but the button
         must still say what it will do, so refreshPrintBar() writes aria-label/title from the same
         targetNoun() the Print label uses. The literals here are the at-rest state the controller
         writes on draw(); they must agree with it, exactly as "Print all" does above.
+
+        THE TEXT READS "Download SVG" AS OF 2026-09-03, at the user's request; it was "SVG". Still
+        constant, and still not the count — a one-word button beside a paper picker did not say
+        what it would produce.
       %>
       <button type="button" class="btn small ghost" data-action="measure#downloadSvg"
               data-measure-target="svgButton"
-              aria-label="Download all as SVG" title="Download all as SVG">SVG</button>
+              aria-label="Download all as SVG" title="Download all as SVG">Download SVG</button>
       <button type="button" class="btn small ghost" data-action="measure#reset">Reset</button>
       <button type="button" class="btn small ghost" aria-label="Return to image"
               data-action="measure#showPoster">✕ Image</button>

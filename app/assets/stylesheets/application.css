@@ -277,23 +277,33 @@ dl.meta dd { margin: 0; }
 /* Outline geometry drawn from the /geometry payload — see measure_controller.js (Task 8). */
 /* NO `stroke` HERE ON PURPOSE: the layer colour arrives as a presentation attribute from
    measure_controller.js, and any class rule would outrank it and flatten every layer
-   to one colour. The --hover/--selected rules below DO declare one, which is how they
+   to one colour. The --hover/--marked rules below DO declare one, which is how they
    still win over the attribute. */
 .measure-contour { fill: transparent; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .measure-contour--open { fill: none; }
 .measure-contour--hit { stroke: transparent; stroke-width: 8; fill: none; pointer-events: stroke; vector-effect: non-scaling-stroke; }
-/* The print set. A SEPARATE CLASS FROM --selected, which is the measurement highlight: one answers
-   "what am I reading", the other "what will print", and one contour can be both at once. Declared
-   BEFORE --hover/--selected so their stroke wins on a contour that is both, while the fill tint —
-   which neither of them sets — goes on saying "this will print". */
-.measure-contour--marked { stroke: #06c; stroke-width: 2; fill: rgba(0, 102, 204, .16); }
-/* An open contour has no interior, so the tint would paint a meaningless blob between its ends.
-   Higher specificity than both rules above, so it wins regardless of source order. */
-.measure-contour--open.measure-contour--marked { fill: none; }
 .measure-contour--hover { stroke: #2b7; stroke-width: 2; }
-.measure-contour--selected { stroke: #d40; stroke-width: 2.5; }
+/* THE SELECTION, IN ONE COLOUR, SINCE 2026-09-03 AND AT THE USER'S REQUEST. There were two rules
+   until then: `--marked` painted the print set blue (#06c) and `--selected` painted the contour
+   being measured this red, because a mode gathered one while a plain click did the other. A click
+   now does both, so this rule keeps --selected's colour and weight and --marked's tint, and
+   `.measure-contour--selected` is gone rather than left as a second name for the same state.
+
+   DECLARED AFTER --hover, AND THAT ORDER IS THE WHOLE "STAYS RED" CLAIM. Both are one class,
+   (0,1,0), so source order alone decides a contour that is both — and a click leaves the pointer
+   ON the contour it just selected, so with this rule first the shape you just picked would sit
+   under the hover green until you moved the mouse away. Reverse the two and the computed-style
+   assertions in lbrn_measure_test.rb and measure_print_test.rb go red with rgb(34, 187, 119). */
+.measure-contour--marked { stroke: #d40; stroke-width: 2.5; fill: rgba(221, 68, 0, .16); }
+/* An open contour has no interior, so the tint would paint a meaningless blob between its ends.
+   Higher specificity than the rules above, so it wins regardless of source order. */
+.measure-contour--open.measure-contour--marked { fill: none; }
 .measure-bitmap { fill: rgba(128, 128, 128, .18); stroke: #888; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
-.measure-view--selecting .measure-stage svg:not(.is-panning) { cursor: copy; }
+/* `.measure-view--selecting .measure-stage svg:not(.is-panning) { cursor: copy }` STOOD HERE and
+   went with the mode on 2026-09-03. Its `:not(.is-panning)` was a specificity fix — both selectors
+   were (0,2,1) and this one was later, so without it a drag while selecting showed `copy` instead
+   of `grabbing`. There is no selecting class to key on now; the stage is `crosshair` at rest and
+   `grabbing` while panning, and nothing else. */
 .measure-paper { font-size: 13px; }
 
 /* login */
