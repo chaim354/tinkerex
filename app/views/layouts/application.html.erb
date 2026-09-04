@@ -19,11 +19,11 @@
     <link rel="apple-touch-icon" href="/icon.png">
 
     <%# Includes all stylesheet files in app/assets/stylesheets %>
-    <%= stylesheet_link_tag "application", "data-turbo-track": "reload" %>
-    <%= stylesheet_link_tag "projects", "data-turbo-track": "reload" %>
-    <%= stylesheet_link_tag "notes", "data-turbo-track": "reload" %>
-    <%= stylesheet_link_tag "models", "data-turbo-track": "reload" %>
+    <%= stylesheet_link_tag "application", "components", "shell",
+                            "pages/files", "pages/projects", "pages/models", "pages/tools", "pages/preview",
+                            "data-turbo-track": "reload" %>
     <%= stylesheet_link_tag "lexxy", "data-turbo-track": "reload" %>
+    <%= stylesheet_link_tag "vendor-overrides", "data-turbo-track": "reload" %>
     <%= javascript_importmap_tags "application", importmap: (@importmap || Rails.application.importmap) %>
   </head>
 

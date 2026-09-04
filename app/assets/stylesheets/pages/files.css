@@ -1,0 +1,60 @@
+/* The Files pages: the list and grid, the type filter, sorting, notes. Components (table.files,
+   .thumb, .chip, .view-toggle) come from components.css; these are the page's own classes. */
+@layer pages {
+  .files-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px; }
+  .files-grid .thumb { width: 100%; height: 140px; }
+  .sort-form { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
+  .hidden-toggle { margin: 0 0 10px; font-size: 12px; }
+  .upload-to-project { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 12px; }
+  .upload-alt { font-size: 12px; }
+
+  /* MIGRATED VERBATIM (old application.css 639-657): .ext-filter, .ext-picker, .ext-picker label,
+     .ext-picker select, .ext-picker select:disabled, .ext-active, .ext-filter .chip,
+     .ext-filter .chip:hover, .ext-filter .chip.active, .ext-filter .chip .chip-x,
+     .ext-filter .chip.active:hover — with the substitution table applied. */
+  /* --- The flat by-extension filter: a dropdown of what the library holds + the active chips --- */
+  .ext-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 14px; }
+  .ext-picker { display: inline-flex; gap: 6px; align-items: center; }
+  .ext-picker label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .ext-picker select { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px;
+    font: inherit; font-size: 13px; max-width: 260px; }
+  /* The full-set state (MAX_EXTS reached) — the control goes inert rather than accepting a value
+     resolve_exts would then drop. */
+  .ext-picker select:disabled { opacity: .45; cursor: not-allowed; }
+  .ext-active { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .ext-filter .chip { padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px;
+    font-size: 13px; color: var(--fg-muted); }
+  .ext-filter .chip:hover { text-decoration: none; background: var(--raised); color: var(--fg); }
+  .ext-filter .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  /* The × is INSIDE the chip link, so the whole chip is one target that removes that type. */
+  .ext-filter .chip .chip-x { margin-left: 6px; opacity: .75; font-weight: 700; }
+  .ext-filter .chip.active:hover { background: var(--fg); border-color: var(--fg); color: #fff; }
+
+  /* Column classes files/_list.html.erb carries (Task 3), so a phone drops columns instead of
+     scrolling sideways. Order of loss: modified, version, then size. */
+  @media (max-width: 719px) { table.files .col-modified, table.files .col-version { display: none; } }
+  @media (max-width: 479px) { table.files .col-size, table.files .col-folder { display: none; } }
+
+  /* MIGRATED VERBATIM (old notes.css): .notes-panel, .notes-panel h2, .note, .note-body :first-child,
+     .note-body :last-child, .note-meta — substitution table applied. (.note-badge, .file-menu and
+     .note-popover are components now and are NOT copied here.) */
+  /* Detail-page notes section */
+  .notes-panel { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 16px; }
+  .notes-panel h2 { font-size: 16px; margin: 0 0 12px; }
+  .note { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px; margin-bottom: 10px; max-width: 640px; }
+  .note-body :first-child { margin-top: 0; }
+  .note-body :last-child { margin-bottom: 0; }
+  .note-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; font-size: 12px; }
+
+  /* MIGRATED VERBATIM (old projects.css): .attach-to-project, .attach-form, .attach-form select,
+     .project-chip, .project-chip form, .chip-x, .chip-x:hover — these live on files/show. */
+  .attach-to-project { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 16px; }
+  .attach-form { display: inline-flex; align-items: center; gap: 8px; }
+  .attach-form select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; }
+  .project-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px;
+    border: 1px solid var(--line); border-radius: 999px; font-size: 13px; }
+  .project-chip form { display: inline; }
+  .chip-x { background: none; border: 0; cursor: pointer; color: var(--fg-muted);
+    font-size: 15px; line-height: 1; padding: 0 4px; }
+  .chip-x:hover { color: var(--fg); }
+}

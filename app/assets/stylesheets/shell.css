@@ -1,0 +1,29 @@
+/* The application shell. Replaced in Task 3, which builds the rail, top bar, tab bar, toast stack
+   and the responsive rules here.
+
+   IT IS NOT EMPTY IN THE MEANTIME, FOR TWO REASONS. The old application.css carried the shell's
+   only rules — the top bar and the content container — and this rewrite takes them out of it, so
+   without them parked here the app has no `.container` at all between this commit and Task 3's,
+   and `main.container` / `.container-wide` are pinned selectors (spec §10). And the guard in
+   test/css_hygiene_test.rb refuses a sheet that parses to fewer than six rules, so a one-rule
+   placeholder fails the very non-vacuity check it exists beside (§14e: assert the scanned set is
+   non-empty before trusting what it reports).
+
+   MIGRATED VERBATIM (old application.css 28-39), substitution table applied: .topbar, .brand,
+   .topbar-right, .container, .container-wide. */
+@layer shell {
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 20px; border-bottom: 1px solid var(--line); background: var(--raised);
+  }
+  .brand { font-weight: 700; color: var(--fg); }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+
+  .container { max-width: 920px; margin: 0 auto; padding: 24px 20px 64px; }
+  /* Opt-in, per page, via `content_for :container_class`. 920px is a reading measure; a page with a
+     nav rail on one side and a list on the other has to pay for both out of the middle column, and at
+     920px the gallery in the middle drops to a single card per row. */
+  .container-wide { max-width: 1360px; }
+
+  .shell-placeholder { display: none; }
+}

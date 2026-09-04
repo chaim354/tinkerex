@@ -1,720 +1,120 @@
-/*
- * This is a manifest file that'll be compiled into application.css.
- *
- * With Propshaft, assets are served efficiently without preprocessing steps. You can still include
- * application-wide styles in this file, but keep in mind that CSS precedence will follow the standard
- * cascading order, meaning styles declared later in the document or manifest will override earlier ones,
- * depending on specificity.
- *
- * Consider organizing styles into separate files for maintainability.
- */
+/* Tinkerex design system: the layer order, the tokens, the fonts and the base rules.
+   Components live in components.css (one definition each), the shell in shell.css, page families
+   under pages/, and the third-party skins in vendor-overrides.css — the ONE unlayered sheet.
+   THE @layer STATEMENT MUST STAY THE FIRST RULE OF THIS FILE, AND THIS FILE THE FIRST OUR LAYOUT
+   LINKS: the first @layer statement the browser meets fixes the order for the whole document.
+   test/css_hygiene_test.rb guards both. Spec: docs/superpowers/specs/2026-09-03-web-shell-and-design-system-design.md */
+@layer tokens, base, components, shell, pages;
 
-/* --- Web UI (file browser) --- */
-:root {
-  --fg: #1c2230; --muted: #6b7280; --line: #e5e7eb; --bg: #fff;
-  --accent: #2563eb; --danger: #dc2626; --soft: #f7f8fa;
-}
-* { box-sizing: border-box; }
-body {
-  margin: 0; color: var(--fg); background: var(--bg);
-  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-}
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
-.muted { color: var(--muted); }
-.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
-.num { text-align: right; }
-
-.topbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 20px; border-bottom: 1px solid var(--line); background: var(--soft);
-}
-.brand { font-weight: 700; color: var(--fg); }
-.topbar-right { display: flex; align-items: center; gap: 12px; }
-
-.container { max-width: 920px; margin: 0 auto; padding: 24px 20px 64px; }
-/* Opt-in, per page, via `content_for :container_class`. 920px is a reading measure; a page with a
-   nav rail on one side and a list on the other has to pay for both out of the middle column, and at
-   920px the gallery in the middle drops to a single card per row. */
-.container-wide { max-width: 1360px; }
-
-.flash { padding: 10px 20px; font-size: 14px; }
-.flash-notice { background: #ecfdf5; color: #065f46; }
-.flash-alert { background: #fef2f2; color: #991b1b; }
-
-.page-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-.page-head h1 { margin: 0; font-size: 22px; }
-.page-subtitle { margin: 2px 0 0; font-size: 14px; }
-
-.breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 16px; font-size: 14px; }
-.breadcrumb .sep { color: var(--muted); }
-.breadcrumb [aria-current="page"] { color: var(--fg); font-weight: 600; }
-.page-actions, .row-actions { display: flex; gap: 8px; align-items: center; }
-
-.uploader {
-  display: flex; align-items: center; gap: 14px; padding: 16px;
-  border: 1px dashed var(--line); border-radius: 10px; margin-bottom: 20px; background: var(--soft);
-}
-.upload-btn { cursor: pointer; }
-.upload-btn span, .btn {
-  display: inline-block; padding: 8px 14px; border-radius: 8px;
-  background: var(--accent); color: #fff; font-weight: 600; font-size: 14px; border: 0; cursor: pointer;
-}
-.btn:hover, .upload-btn span:hover { text-decoration: none; filter: brightness(1.05); }
-.btn.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); }
-.btn.danger, .linkbtn.danger { background: transparent; color: var(--danger); border: 1px solid transparent; }
-.btn.danger { border-color: var(--danger); }
-.upload-status { font-size: 13px; color: var(--muted); }
-
-.linkbtn {
-  background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0; font: inherit;
-}
-.linkbtn:hover { text-decoration: underline; }
-
-table.files { width: 100%; border-collapse: collapse; }
-table.files th, table.files td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); }
-table.files th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
-table.files tbody tr:hover { background: var(--soft); }
-.dir { font-weight: 600; }
-.empty { padding: 40px 0; text-align: center; }
-
-dl.meta { display: grid; grid-template-columns: 140px 1fr; gap: 6px 16px; margin: 0 0 20px; }
-dl.meta dt { color: var(--muted); }
-dl.meta dd { margin: 0; }
-
-.preview { border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
-.preview-image { max-width: 100%; height: auto; display: block; border-radius: 6px; }
-.preview-pdf { width: 100%; height: 80vh; border: 1px solid var(--line); border-radius: 6px; }
-.preview-text {
-  margin: 0; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, Menlo, monospace;
-  font-size: 13px; max-height: 480px; overflow: auto;
-}
-.preview-fallback { text-align: center; padding: 24px; }
-
-/* --- Source view, read-only AND editable — CodeMirror 6 --- */
-/* `.preview-code` IS BOTH MOUNTS, and the comment said "codeview_controller.js" alone until the
-   editable sibling shipped. files/show.html.erb picks between two controllers on one class:
-   `codeview` where the file is outside a working tree, `editor` where it is inside one and under
-   the size cap. Every rule here has to hold for both, which is why the class is the selector and
-   neither controller's name is. */
-/* The editor needs a bounded height of its own: .cm-scroller only scrolls inside a box with
-   one, so without this the viewer grows to the length of the file and the PAGE scrolls, which
-   is the one thing the 480px cap on .preview-text above was already avoiding. Matching that
-   number keeps a file's page the same height before and after the bundle mounts. */
-.preview-code .cm-editor { max-height: 480px; border-radius: 6px; }
-.preview-code .cm-editor.cm-focused { outline: none; }
-.preview-code .cm-scroller { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
-
-/* The editor's Save bar (editor_controller.js builds it in #addSaveBar) and the commit box's
-   own footer share this class: both are "one action plus a word about what just happened",
-   and giving the commit page a second name for that would be two definitions of one thing. */
-.editor-bar {
-  display: flex; align-items: center; gap: 10px;
-  margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
-}
-.editor-bar button, .editor-bar input[type=submit] {
-  font: inherit; padding: 5px 12px; border: 1px solid var(--line); border-radius: 6px;
-  background: var(--bg); color: inherit; cursor: pointer;
-}
-.editor-bar button:hover:not(:disabled),
-.editor-bar input[type=submit]:hover { background: var(--soft); }
-.editor-bar button:disabled { opacity: .55; cursor: default; }
-/* Empty until a save reports back, so it must take no space when it says nothing — otherwise
-   the bar jumps a line the first time the editor answers. */
-.editor-status { color: var(--muted); font-size: 13px; }
-
-/* The way INTO the commit box, on a file page inside a working tree. It sits above the editor
-   rather than in the .editor-bar because it is a property of the REPOSITORY, not of this file's
-   unsaved state, and it must still show on a file with nothing pending. */
-.repo-banner {
-  margin: 0 0 8px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
-  background: var(--soft); font-size: 13px;
-}
-.repo-banner-link { text-decoration: none; }
-.repo-banner-link:hover { text-decoration: underline; }
-
-/* --- Review and commit (repo_commits/show.html.erb) --- */
-.commit-box { display: block; }
-.commit-rows { list-style: none; margin: 0 0 12px; padding: 0; }
-.commit-rows > li { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 10px; }
-.commit-row-head {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 8px 10px; border-bottom: 1px solid var(--line);
-}
-.commit-row-head code { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
-/* Tabular figures so a column of +12 / −3 lines up rather than shimmering row to row. */
-.commit-row-head .plus, .commit-row-head .minus { font-variant-numeric: tabular-nums; font-size: 12px; }
-/* --danger is the palette's red; there is no green token, so the addition colour is a literal
-   picked to sit at the same weight against --bg. Add a --success token before reusing it. */
-.commit-row-head .plus  { color: #1a7f37; }
-.commit-row-head .minus { color: var(--danger); }
-.commit-message {
-  width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--line);
-  border-radius: 6px; background: var(--bg); color: inherit; box-sizing: border-box;
-}
-/* The inline diff (diffview_controller.js). Bounded for .preview-code's reason — a repository
-   with six edited files must not make the commit page six file-lengths tall. */
-.commit-diff .cm-editor { max-height: 320px; }
-.commit-diff .cm-editor.cm-focused { outline: none; }
-.commit-diff .cm-scroller { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
-.commit-diff:empty { display: none; }
-
-/* --- The staging panel's three groups (repo_commits/show.html.erb) ---
-
-   STYLED OFF `data-group` AND `data-state`, NEVER OFF CLASSES OF THEIR OWN. Those attributes are
-   already there for the tests to select on, so a parallel set of class names would be a second
-   vocabulary for one fact, free to disagree with the first (§14d's own warning about naming). */
-.commit-group + .commit-group { margin-top: 20px; }
-.commit-group-body > summary { cursor: pointer; padding: 6px 0; font-weight: 600; }
-/* The count beside a title is the ONLY thing a closed group says about how much is hiding inside
-   it, so it keeps .muted's colour but not its weight — dimmed AND small reads as decoration. */
-.commit-group-body > summary .muted { font-weight: 400; }
-.commit-group-note { margin: 2px 0 10px; font-size: 13px; }
-
-/* "tinkerex never creates these." IS AN EXPLANATION, NOT A WARNING, and shares .muted with every
-   other aside on the page on purpose — .history-note's rule, for its reason. OS clutter is the
-   ordinary contents of a folder on a NAS; painting it in --danger would teach makers to read a
-   normal library as a fault. The actual protection is that the group arrives UNCHECKED, which is
-   a property of the markup and of commitgroup_controller's scope, never of a colour. */
-
-/* BUILT BY commitgroup_controller.js, so this is the only description of the control's shape a
-   reader can find by looking at the page. It sits INSIDE the <details> and above the rows, which
-   is what stops a collapsed group being bulk-selected unseen. */
-.commit-group-all {
-  display: inline-flex; align-items: center; gap: 6px; margin: 0 0 10px;
-  font-size: 13px; color: var(--muted); cursor: pointer;
+@layer tokens {
+  :root {
+    color-scheme: dark;
+    --bg: #15181d;
+    --surface: #1b1f25;
+    --raised: #232830;
+    --line: #2b313a;
+    --line-strong: #3a424d;
+    --fg: #e4e7ec;
+    --fg-muted: #8a93a2;
+    --accent: #f0a53a;
+    --accent-ink: #1a1408;
+    --accent-soft: rgba(240, 165, 58, .10);
+    --ok: #5cc186;
+    --danger: #ef6b5c;
+    --focus: var(--accent);
+    --shadow-float: 0 10px 30px rgba(0, 0, 0, .45);
+    /* Rendered drawings (thumbnails, generator previews, cut sheets) are opaque white PNGs, so
+       their stage stays paper-white in both themes; a dark stage would frame a white square. */
+    --thumb-stage: #ffffff;
+    /* Aliases for rules migrated from the pre-2026-09 sheets. New rules use the names above. */
+    --muted: var(--fg-muted);
+    --soft: var(--raised);
+    --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+    --radius-control: 4px;
+    --radius-panel: 6px;
+    --radius-float: 10px;
+    --rail-width: 188px;
+    --rail-collapsed-width: 56px;
+    --topbar-height: 44px;
+    --tabbar-height: 52px;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f4f5f7;
+    --surface: #ffffff;
+    --raised: #eceef2;
+    --line: #dfe2e7;
+    --line-strong: #c9ced6;
+    --fg: #1a1e26;
+    --fg-muted: #626b78;
+    --accent: #b8700a;
+    --accent-ink: #ffffff;
+    --accent-soft: rgba(184, 112, 10, .10);
+    --ok: #2f8f5b;
+    --danger: #c8413a;
+    --shadow-float: 0 10px 30px rgba(20, 24, 32, .18);
+  }
+  @media (prefers-color-scheme: light) {
+    :root[data-theme="system"] {
+      color-scheme: light;
+      --bg: #f4f5f7;
+      --surface: #ffffff;
+      --raised: #eceef2;
+      --line: #dfe2e7;
+      --line-strong: #c9ced6;
+      --fg: #1a1e26;
+      --fg-muted: #626b78;
+      --accent: #b8700a;
+      --accent-ink: #ffffff;
+      --accent-soft: rgba(184, 112, 10, .10);
+      --ok: #2f8f5b;
+      --danger: #c8413a;
+      --shadow-float: 0 10px 30px rgba(20, 24, 32, .18);
+    }
+  }
 }
 
-/* A ROW GIT WILL NOT COMMIT. The only non-committable state that reaches this page is `ignored` —
-   a TRACKED path that .gitignore also covers — and it is listed rather than dropped so the panel
-   and `git status` cannot disagree. It therefore has to READ as inert, or an unticked row with no
-   checkbox looks like one the maker simply forgot. */
-.commit-rows > li[data-state="ignored"] { background: var(--soft); }
-.commit-rows > li[data-state="ignored"] code { color: var(--muted); }
+@layer base {
+  /* Self-hosted (app/assets/fonts, SIL OFL 1.1): the CSP's font_src is :self, and a self-hosted
+     app does not call Google. Propshaft rewrites these url()s to the fingerprinted paths. */
+  @font-face {
+    font-family: "IBM Plex Sans"; font-style: normal; font-weight: 400 600; font-display: swap;
+    src: url("ibm-plex-sans.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "IBM Plex Sans"; font-style: italic; font-weight: 400; font-display: swap;
+    src: url("ibm-plex-sans-italic.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "IBM Plex Mono"; font-style: normal; font-weight: 400; font-display: swap;
+    src: url("ibm-plex-mono-400.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "IBM Plex Mono"; font-style: normal; font-weight: 500; font-display: swap;
+    src: url("ibm-plex-mono-500.woff2") format("woff2");
+  }
 
-/* A row with nothing under its head — an `ignored` row mounts neither a diff nor a "no diff" note
-   — would otherwise carry .commit-row-head's separator with empty space beneath it: a rule drawn
-   across the bottom of the card for no reason. */
-.commit-row-head:only-child { border-bottom: none; }
-
-/* --- File history (history_controller.js, mounted by files/show.html.erb) ---
-
-   EVERY ROW IN HERE IS BUILT IN JS, so this block is the only description of the panel's shape
-   that a reader can find by looking at the page. The controller writes no styles of its own and
-   must not start: a rule that lives in a JS string is one no stylesheet search will ever turn up.
-
-   .history-note IS THE HONEST-EMPTINESS SENTENCE and shares .muted with every other aside on the
-   page ON PURPOSE. "No changes to this file in the last 250 commits" is not a warning and must not
-   be dressed as one — it is the ordinary answer for a file in a busy repository, and styling it as
-   an error would teach makers to read a normal result as a fault. */
-.history-panel { margin-top: 28px; }
-.history-panel h2 { margin-bottom: 8px; }
-/* The way to the repository-wide list, beside the heading rather than under the rows: it is about
-   the repository, not about what this walk happened to find, so it must not move or disappear with
-   the rows below it. */
-.history-repo-link { font-size: 13px; font-weight: 400; margin-left: 10px; }
-.history-list { list-style: none; margin: 0; padding: 0; }
-.history-list > li { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; }
-.history-row-head {
-  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 8px 10px;
-}
-.history-oid { color: var(--muted); }
-/* The subject takes the slack so the actions stay hard right on a wide row and wrap as a group on
-   a narrow one; min-width:0 is what lets a long one-line commit message ellipsise instead of
-   pushing the actions off the card. */
-.history-subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.history-meta { font-size: 12px; }
-.history-actions { display: inline-flex; gap: 10px; font-size: 13px; }
-/* Empty until View or Diff opens one, so it must take no space when it holds nothing — otherwise
-   every row carries a blank strip and the list reads as loading forever. */
-.history-detail:empty { display: none; }
-.history-detail { border-top: 1px solid var(--line); padding: 8px 10px; }
-.history-blob {
-  margin: 0; max-height: 320px; overflow: auto; background: var(--soft); border-radius: 6px;
-  padding: 8px 10px; font-family: ui-monospace, Menlo, monospace; font-size: 13px;
-}
-/* Bounded for .commit-diff's reason — a row's diff must not make the file page ten screens tall. */
-.history-diff .cm-editor { max-height: 320px; }
-.history-diff .cm-editor.cm-focused { outline: none; }
-.history-diff .cm-scroller { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
-
-/* --- Interactive 3D viewer (modelviewer_controller.js) — STL/3MF/OBJ --- */
-.model-viewer { position: relative; }
-.model-viewer-stage {
-  width: 100%; height: 60vh; min-height: 320px; border-radius: 6px;
-  background: var(--soft); display: none; touch-action: none;
-}
-.model-viewer-stage canvas { display: block; border-radius: 6px; }
-.model-viewer-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
-.model-viewer-source { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); max-width: 60%; }
-.mv-launch { display: inline-flex; gap: 8px; }
-.mv-actions { display: none; gap: 8px; }
-.model-viewer-dims { color: var(--muted); font-variant-numeric: tabular-nums; }
-.model-viewer-fallback { text-align: center; padding: 24px; }
-/* The controller adds --ready on a successful render: reveal the canvas + bar, hide the poster. */
-.model-viewer--ready .model-viewer-stage { display: block; }
-.model-viewer--ready .model-viewer-fallback { display: none; }
-.model-viewer--ready .mv-launch { display: none; }
-.model-viewer--ready .mv-actions { display: inline-flex; }
-.model-viewer:fullscreen { background: var(--soft); padding: 12px; }
-.model-viewer:fullscreen .model-viewer-stage { height: calc(100vh - 64px); }
-
-/* --- Measure view (measure_controller.js) — .lbrn/.lbrn2, .mage, .dxf, .svg --- */
-.measure-view { position: relative; }
-.measure-stage { display: none; width: 100%; aspect-ratio: 1; }
-.measure-stage svg { width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
-.measure-stage svg.is-panning { cursor: grabbing; }
-.measure-bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-.measure-launch { display: inline-flex; gap: 8px; }
-.measure-actions { display: none; gap: 4px; }
-.measure-dims { flex: 1; color: var(--muted); font-variant-numeric: tabular-nums; }
-.measure-fallback { text-align: center; padding: 24px; }
-/* The controller adds --ready on a successful render: reveal the outline stage, hide the poster. */
-.measure-view--ready .measure-stage { display: block; }
-.measure-view--ready .measure-fallback { display: none; }
-.measure-view--ready .measure-launch { display: none; }
-.measure-view--ready .measure-actions { display: inline-flex; }
-/* Outline geometry drawn from the /geometry payload — see measure_controller.js (Task 8). */
-/* NO `stroke` HERE ON PURPOSE: the layer colour arrives as a presentation attribute from
-   measure_controller.js, and any class rule would outrank it and flatten every layer
-   to one colour. The --hover/--marked rules below DO declare one, which is how they
-   still win over the attribute. */
-.measure-contour { fill: transparent; stroke-width: 1; vector-effect: non-scaling-stroke; }
-.measure-contour--open { fill: none; }
-.measure-contour--hit { stroke: transparent; stroke-width: 8; fill: none; pointer-events: stroke; vector-effect: non-scaling-stroke; }
-.measure-contour--hover { stroke: #2b7; stroke-width: 2; }
-/* THE SELECTION, IN ONE COLOUR, SINCE 2026-09-03 AND AT THE USER'S REQUEST. There were two rules
-   until then: `--marked` painted the print set blue (#06c) and `--selected` painted the contour
-   being measured this red, because a mode gathered one while a plain click did the other. A click
-   now does both, so this rule keeps --selected's colour and weight and --marked's tint, and
-   `.measure-contour--selected` is gone rather than left as a second name for the same state.
-
-   DECLARED AFTER --hover, AND THAT ORDER IS THE WHOLE "STAYS RED" CLAIM. Both are one class,
-   (0,1,0), so source order alone decides a contour that is both — and a click leaves the pointer
-   ON the contour it just selected, so with this rule first the shape you just picked would sit
-   under the hover green until you moved the mouse away. Reverse the two and the computed-style
-   assertions in lbrn_measure_test.rb and measure_print_test.rb go red with rgb(34, 187, 119). */
-.measure-contour--marked { stroke: #d40; stroke-width: 2.5; fill: rgba(221, 68, 0, .16); }
-/* An open contour has no interior, so the tint would paint a meaningless blob between its ends.
-   Higher specificity than the rules above, so it wins regardless of source order. */
-.measure-contour--open.measure-contour--marked { fill: none; }
-.measure-bitmap { fill: rgba(128, 128, 128, .18); stroke: #888; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
-/* `.measure-view--selecting .measure-stage svg:not(.is-panning) { cursor: copy }` STOOD HERE and
-   went with the mode on 2026-09-03. Its `:not(.is-panning)` was a specificity fix — both selectors
-   were (0,2,1) and this one was later, so without it a drag while selecting showed `copy` instead
-   of `grabbing`. There is no selecting class to key on now; the stage is `crosshair` at rest and
-   `grabbing` while panning, and nothing else. */
-.measure-paper { font-size: 13px; }
-
-/* login */
-.auth-card { max-width: 380px; margin: 80px auto; text-align: center; }
-.auth-card h1 { margin: 0; font-size: 28px; }
-.placeholder-note {
-  background: #fffbeb; border: 1px solid #fde68a; color: #92400e;
-  padding: 10px 12px; border-radius: 8px; font-size: 13px; margin: 18px 0; text-align: left;
-}
-.auth-form { display: flex; flex-direction: column; gap: 10px; }
-.auth-form input[type=email] { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
-.auth-form input[type=submit] {
-  padding: 10px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer;
-}
-
-/* --- Thumbnails (server-rendered PNG previews), shared by the list + grid views --- */
-.file-cell { display: flex; align-items: center; gap: 12px; }
-.thumb { display: flex; align-items: center; justify-content: center; border: 1px solid var(--line);
-         border-radius: 6px; overflow: hidden; background: #fff; }
-.thumb img { width: 100%; height: 100%; object-fit: contain; }
-.thumb-icon { font-size: 10px; color: var(--muted); font-weight: 600; }
-.thumb-spinner { width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--muted);
-                 border-radius: 50%; animation: thumb-spin 0.8s linear infinite; }
-@keyframes thumb-spin { to { transform: rotate(360deg); } }
-/* Size is set by the container so one .thumb serves both views. */
-table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
-
-/* --- List/grid toggle --- */
-.view-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.view-toggle .toggle { padding: 6px 12px; font-size: 13px; font-weight: 600; color: var(--muted);
-                       background: var(--bg); }
-.view-toggle .toggle:hover { text-decoration: none; background: var(--soft); }
-.view-toggle .toggle.active { background: var(--accent); color: #fff; }
-.view-toggle .toggle + .toggle { border-left: 1px solid var(--line); }
-
-/* --- Grid (gallery) view --- */
-.files-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 18px; }
-.grid-card { display: flex; flex-direction: column; gap: 8px; color: var(--fg); }
-.grid-card:hover { text-decoration: none; }
-.grid-card:hover .thumb { border-color: var(--accent); }
-.grid-card .grid-name { font-size: 13px; line-height: 1.35; text-align: center; word-break: break-word; }
-.files-grid .thumb { width: 100%; height: 150px; }
-.folder-thumb { font-size: 46px; background: var(--soft); }
-.generic-thumb { font-size: 15px; font-weight: 700; letter-spacing: 0.5px; color: var(--muted); background: var(--soft); }
-
-/* --- Tools (addons) gallery --- */
-.tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 18px; }
-.addon-card { display: flex; flex-direction: column; gap: 6px; padding: 18px;
-              border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--fg); }
-.addon-card:hover { text-decoration: none; border-color: var(--accent); }
-.addon-card.disabled { opacity: 0.55; }
-.addon-icon { font-size: 32px; }
-.addon-title { font-weight: 700; }
-.addon-desc { font-size: 13px; }
-/* ONE CLASS, TWO ELEMENTS: a <span> on the gallery card, a <ul> on the addon page. Without the
-   13px it inherits body 15px and renders LARGER than the .addon-desc above it; without the list
-   reset the page's version carries UA bullets and a 40px indent. */
-.addon-permissions { font-size: 13px; }
-ul.addon-permissions { list-style: none; margin: 0 0 18px; padding: 0; }
-ul.addon-permissions li { margin-top: 4px; }
-.addon-thumb { width: 100%; height: 120px; object-fit: contain; background: var(--soft); border-radius: 6px; }
-.addon-thumb.is-missing { display: none; }
-/* THE FRAME A GENERATOR WITH NO SAMPLE PHOTO GETS, and it is a placeholder rather than nothing so
-   that the grid never reflows. Dropping the box (`is-missing` above) moved every card below it by
-   ~126px the moment a sample 404'd — AFTER the gallery looked settled — which is why
-   `settle_addon_cards` exists and why a click could land in dead space. 171 of the 181 offered
-   generators ship a photo and 10 do not, so this frame is the exception, not the common case.
-   The size comes from `.addon-thumb`, which this element also carries: one declaration, so the
-   real box and the empty one cannot drift apart and bring the jump back. */
-.addon-thumb-empty {
-  display: flex; align-items: center; justify-content: center;
-  border: 1px dashed var(--line); color: var(--muted); font-size: 11px;
-}
-
-/* --- Box Generator addon --- */
-.box-search {
-  width: 100%; padding: 9px 12px; margin: 4px 0 18px;
-  border: 1px solid var(--line); border-radius: 8px;
-  font-size: 15px; background: var(--bg); color: var(--fg);
-}
-/* Index: table of contents | generator gallery | saved-box rail. */
-.box-index { display: grid; grid-template-columns: 172px minmax(0, 1fr) 264px; gap: 28px; align-items: start; }
-.box-index > section, .box-index > aside { min-width: 0; }
-.box-index h2 { margin-top: 0; }
-
-.box-toc { position: sticky; top: 16px; }
-.box-toc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-.box-toc-title, .box-group-title, .box-saved-name {
-  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted);
-}
-.box-toc-all {
-  border: none; background: none; padding: 0; cursor: pointer;
-  font-size: 12px; color: var(--muted); text-decoration: underline;
-}
-.box-toc-all:hover { color: var(--accent); }
-.box-toc-list { list-style: none; padding: 0; margin: 0; }
-.box-toc-list li[hidden] { display: none; }
-.box-toc-list a {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 5px 8px; border-radius: 7px; font-size: 14px; color: var(--fg);
-}
-.box-toc-list a:hover { background: var(--soft); text-decoration: none; }
-.box-toc-list li.is-active a { background: var(--soft); color: var(--accent); font-weight: 600; }
-.box-toc-count, .box-group-count {
-  font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;
-}
-
-/* Every section folds. The <details> does the folding; the marker is replaced by a chevron that
-   turns, because the UA triangle sits at a different baseline in every browser. */
-.box-group { margin-bottom: 18px; scroll-margin-top: 16px; }
-.box-group-summary, .box-saved-summary {
-  display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 0; list-style: none;
-}
-.box-group-summary::-webkit-details-marker, .box-saved-summary::-webkit-details-marker { display: none; }
-.box-group-summary::before, .box-saved-summary::before {
-  content: ""; flex: 0 0 auto; width: 6px; height: 6px; margin-right: 2px;
-  border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted);
-  transform: rotate(-45deg); transition: transform 120ms ease;
-}
-details[open] > .box-group-summary::before, details[open] > .box-saved-summary::before { transform: rotate(45deg); }
-.box-group-summary:hover .box-group-title, .box-saved-summary:hover .box-saved-name { color: var(--accent); }
-.box-group > .tools-grid { margin-top: 10px; }
-.addon-card[hidden], .box-group[hidden] { display: none; }
-
-/* The saved rail: section, then box type, both closed until asked for. */
-.box-saved-rail { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
-.box-saved-count { font-size: 13px; margin: -6px 0 10px; }
-.box-saved-section { border-bottom: 1px solid var(--line); }
-.box-saved-type { margin-left: 14px; }
-.box-saved-type .box-saved-name { text-transform: none; font-weight: 600; font-size: 13px; color: var(--fg); }
-.box-saved-link { font-size: 13px; }
-
-/* A param value can be MULTILINE (boxes' TrayLayout/FrontPanel section params are newline-separated),
-   so the value cell must not collapse it into one line. */
-.addon-params dd { white-space: pre-wrap; }
-
-.saved-boxes { list-style: none; padding: 0 0 8px 14px; margin: 0; display: flex; flex-direction: column; gap: 8px; }
-.saved-boxes li > div { font-size: 12px; margin-top: 1px; }
-.box-noresults { margin: 6px 0; }
-
-@media (max-width: 1080px) {
-  .box-index { grid-template-columns: 1fr; }
-  .box-toc, .box-saved-rail { position: static; max-height: none; }
-  .box-toc-list { display: flex; flex-wrap: wrap; gap: 4px; }
-  .box-toc-list a { border: 1px solid var(--line); }
-}
-
-.box-editor { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; align-items: start; }
-.box-editor > form { min-width: 0; }
-.box-params {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 12px 16px; margin: 16px 0;
-}
-.box-field { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
-.box-field-label { color: var(--muted); }
-.box-field input[type="number"], .box-field input[type="text"], .box-field select {
-  width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
-  font-size: 14px; background: var(--bg); color: var(--fg);
-}
-.box-field input[type="checkbox"] { width: auto; align-self: flex-start; }
-/* A layout is column-aligned ASCII art (walls line up over the size markers), so it is only
-   editable in a monospace face that doesn't wrap — and it needs the full grid row, not one
-   190px auto-fill column. */
-.box-field-multiline { grid-column: 1 / -1; }
-/* A LABELLED ENUM'S OPTIONS ARE A LETTER PLUS A SENTENCE, so one column cuts them off mid-word.
-   Measured on the deployed app at a 976px form (four 232px columns): `top_edge`'s longest option
-   needs 324px and `bottom_edge`'s 300px, while the other eleven selects on that same form have
-   34–114px of slack. Two columns is 480px. Widening every column instead would drop the form from
-   four columns to three to serve two fields. */
-.box-field-wide { grid-column: span 2; }
-/* On a grid narrow enough to fit only ONE column, `span 2` makes the browser add an IMPLICIT second
-   one. Measured at a 375px viewport, not assumed: the page does NOT overflow — `1 / -1` was chosen
-   partly on that guess and the guess was wrong — but the tracks come back `190px 169px`, so every
-   ordinary field is squeezed into 190px and left ragged to give this one field two columns. With
-   this rule the grid stays a single clean 375px column and the wide field spans it, which is the
-   same full-row shape a multiline field already takes. `1 / -1` is the whole row and never creates
-   a track, at any width. */
-@media (max-width: 640px) { .box-field-wide { grid-column: 1 / -1; } }
-.box-field textarea {
-  width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
-  background: var(--bg); color: var(--fg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px; line-height: 1.35; overflow-x: auto; resize: vertical;
-}
-/* Name + destination + both buttons, pinned above a form that can run to sixty fields. */
-.box-actions {
-  position: sticky; top: 0; z-index: 2;
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 10px 14px; align-items: end;
-  padding: 12px 0 14px; margin-bottom: 4px;
-  background: var(--bg); border-bottom: 1px solid var(--line);
-}
-.box-actions .page-actions { margin: 0; display: flex; gap: 8px; }
-@media (max-width: 720px) { .box-actions { grid-template-columns: 1fr; } }
-
-.box-side { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 16px; }
-.box-side .box-preview { padding: 12px; }
-.box-preview .preview-image { width: 100%; background: #fff; border-radius: 6px; }
-/* Until the first render lands the <img> has no src, so give it a placeholder box rather than
-   letting the panel collapse to nothing under the "Rendering…" line. */
-.box-preview .preview-image:not([src]) { min-height: 180px; }
-.box-preview-status { font-size: 12px; color: var(--muted); margin: 8px 0 0; white-space: pre-wrap; }
-.box-preview-status.is-error { color: var(--danger); }
-
-/* The tray top view: a plan of the compartments, drawn client-side beside the cut sheet. */
-.box-topview { border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
-.box-topview h3 { margin: 0 0 8px; font-size: 13px; display: flex; align-items: baseline; gap: 8px; }
-.box-topview-summary { font-size: 12px; font-weight: 400; margin-left: auto; }
-/* Print / PDF / SVG, plus the paper the tiler pages onto. These live on the panel because the
-   panel is what removes itself when a generator has no compartments — so the controls inherit
-   that gate for free rather than needing one of their own. */
-.box-topview-actions { display: flex; gap: 6px; align-items: center; margin: 0 0 8px; }
-.box-topview-actions select { font-size: 12px; padding: 2px 4px; }
-.box-topview-actions .btn-sm { padding: 3px 8px; font-size: 12px; }
-.box-topview-canvas { background: #fff; border-radius: 6px; padding: 8px; overflow-x: auto; }
-.box-topview-canvas .tv-svg { display: block; width: 100%; height: auto; max-height: 320px; }
-.box-topview-hint { font-size: 11.5px; margin: 8px 0 0; }
-.tv-cell { fill: #f3ede0; }
-.tv-cell-merged { fill: #e7dcc4; }
-.tv-wall { fill: #2f3336; }
-/* Compartment sizes are annotation, not geometry — same role (and colour family) as boxes.py's own
-   red annotation text on the cut sheet, so the two views read as one drawing. */
-.tv-label { fill: #b23c2c; text-anchor: middle; dominant-baseline: central;
-            font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-
-@media (max-width: 720px) {
-  .box-editor { grid-template-columns: 1fr; }
-  .box-side { position: static; }
-}
-
-/* Generators addon (public/addons/generators/generators.js, mounted by Tools::AddonsController) —
-   controls left, live preview right. .generator-saved-list/.generator-saved are unused since the
-   migration: the generic host surface has no per-saved-state show route (spec §3.1) to link to. */
-.generator-editor { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 24px; align-items: start; margin-top: 16px; }
-.generator-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.generator-params { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px 12px; margin: 6px 0; }
-.generator-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
-.generator-picker-label, .generator-name-label, .generator-folder-label {
-  display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted);
-}
-.generator-field input, .generator-picker-label select, .generator-name-label input, .generator-folder-label select {
-  width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px;
-  font-size: 14px; background: var(--bg); color: var(--fg);
-}
-.generator-field input[type="checkbox"] { width: auto; align-self: flex-start; }
-.generator-save { margin-top: 4px; align-self: flex-start; }
-.generator-preview { position: sticky; top: 16px; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: #fff; }
-.generator-preview img { display: block; width: 100%; height: auto; max-height: 72vh; object-fit: contain; }
-.generator-saved-list { margin-top: 28px; }
-.generator-saved { margin: 4px 0; }
-
-@media (max-width: 720px) {
-  .generator-editor { grid-template-columns: 1fr; }
-  .generator-preview { position: static; }
-}
-
-.box-prior { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
-.box-prior h3 { margin: 0; font-size: 14px; }
-.box-prior-hint { font-size: 13px; margin-top: 2px; }
-.box-prior-list { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-direction: column; gap: 10px; }
-.box-prior-item { display: flex; align-items: center; gap: 10px; }
-.box-prior-item .thumb { width: 40px; height: 40px; flex: 0 0 40px; background: var(--soft); }
-.box-prior-meta { flex: 1; min-width: 0; }
-.box-prior-name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.box-prior-date { font-size: 12px; color: var(--muted); }
-
-.box-help {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 15px; height: 15px; margin-left: 5px; vertical-align: 1px;
-  border: 1px solid var(--line); border-radius: 50%;
-  font-size: 10px; line-height: 1; color: var(--muted);
-}
-.box-help:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
-
-/* EVERY param group folds, not just the advanced ones — same <details>/<summary> pattern as the
-   index's sections, so both pages fold the same way. The fields inside are unchanged. */
-.param-groups-head {
-  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
-  margin: 14px 0 6px;
-}
-.param-groups-title, .param-group-title {
-  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted);
-}
-.param-group { border: none; padding: 0; margin: 0 0 6px; min-width: 0; }
-.param-group-summary {
-  display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 7px 0; list-style: none;
-}
-.param-group-summary::-webkit-details-marker { display: none; }
-.param-group-summary::before {
-  content: ""; flex: 0 0 auto; width: 6px; height: 6px; margin-right: 2px;
-  border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted);
-  transform: rotate(-45deg); transition: transform 120ms ease;
-}
-.param-group[open] > .param-group-summary::before { transform: rotate(45deg); }
-.param-group-summary:hover .param-group-title { color: var(--accent); }
-/* The advanced groups keep their boxed-off look, so "these are the fiddly ones" survives the change. */
-.param-group-adv { border: 1px solid var(--line); border-radius: 8px; padding: 2px 12px 4px; margin: 0 0 10px; }
-.param-group > .box-params { margin-top: 6px; }
-
-/* --- LightBurn laser-settings panel (beside the preview on a .lbrn/.lbrn2 file page) --- */
-.preview-row.has-settings { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
-.preview-row.has-settings > .preview { flex: 1 1 46%; min-width: 240px; }
-.preview-row.has-settings > .lbrn-settings { flex: 1 1 46%; min-width: 260px; }
-.lbrn-settings { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
-.lbrn-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
-.lbrn-head h2 { margin: 0; font-size: 16px; }
-.lbrn-layers { width: 100%; border-collapse: collapse; font-size: 13px; }
-.lbrn-layers th { text-align: left; color: var(--muted); font-weight: 600; padding: 5px 6px; border-bottom: 1px solid var(--line); }
-.lbrn-layers td { padding: 5px 6px; border-bottom: 1px solid var(--soft); }
-.lbrn-layers .num { text-align: right; font-variant-numeric: tabular-nums; }
-.lbrn-swatch { display: inline-block; width: 11px; height: 11px; border-radius: 2px; vertical-align: middle; margin-right: 7px; }
-.lbrn-summary { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 12px 0 0; font-size: 13px; }
-.lbrn-summary dt { color: var(--muted); }
-.lbrn-summary dd { margin: 0; font-weight: 600; }
-.lbrn-text { font-size: 12px; margin: 10px 0 0; }
-
-/* --- The attach collision prompt (?move_conflict=): a <dialog open> rendered in the flow --- */
-/* `position: static` + `display: block` keep it OUT of the top layer, so it reads as an inline
-   banner on the file/project page with no JS and no backdrop to dismiss. */
-dialog.move-conflict { display: block; position: static; width: 100%; max-width: none;
-  margin: 0 0 16px; padding: 14px 16px; border: 1px solid var(--line); border-left: 4px solid var(--accent);
-  border-radius: 8px; background: var(--soft); color: var(--fg); }
-dialog.move-conflict p { margin: 0 0 10px; }
-dialog.move-conflict .dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-dialog.move-conflict form { display: inline; }
-
-/* --- Sortable column headers + the grid's equivalent select pair --- */
-table.files th.sorted a { color: var(--fg); font-weight: 700; }
-table.files th a { color: inherit; }
-table.files th a:hover { text-decoration: underline; }
-.sort-form { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
-.sort-form select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; }
-
-/* --- The flat by-extension filter: a dropdown of what the library holds + the active chips --- */
-.ext-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 14px; }
-.ext-picker { display: inline-flex; gap: 6px; align-items: center; }
-.ext-picker label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
-.ext-picker select { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px;
-  font: inherit; font-size: 13px; max-width: 260px; }
-/* The full-set state (MAX_EXTS reached) — the control goes inert rather than accepting a value
-   resolve_exts would then drop. */
-.ext-picker select:disabled { opacity: .45; cursor: not-allowed; }
-.ext-active { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.ext-filter .chip { padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px;
-  font-size: 13px; color: var(--muted); }
-.ext-filter .chip:hover { text-decoration: none; background: var(--soft); color: var(--fg); }
-.ext-filter .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-/* The × is INSIDE the chip link, so the whole chip is one target that removes that type. */
-.ext-filter .chip .chip-x { margin-left: 6px; opacity: .75; font-weight: 700; }
-.ext-filter .chip.active:hover { background: var(--fg); border-color: var(--fg); color: #fff; }
-.truncated { margin: 0 0 12px; padding: 8px 12px; border-radius: 6px;
-  background: var(--soft); color: var(--muted); font-size: 13px; }
-.param-group-adv > summary { cursor: pointer; }
-.param-group-adv[open] > summary { margin-bottom: 10px; }
-
-/* ---- Reusable folder/file chooser (filechooser_controller.js) ----------- */
-.folder-field { display: inline-flex; }
-.folder-field-btn {
-  display: inline-flex; align-items: center; gap: 6px; max-width: 260px;
-  padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px;
-  background: var(--bg); color: var(--fg); font: inherit; font-size: 14px; cursor: pointer;
-}
-.folder-field-btn:hover { border-color: var(--accent); }
-.folder-field-btn .ff-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.filechooser-overlay {
-  position: fixed; inset: 0; z-index: 1000; padding: 16px;
-  background: rgba(17, 24, 39, 0.45);
-  display: flex; align-items: center; justify-content: center;
-}
-.filechooser {
-  display: flex; flex-direction: column; overflow: hidden;
-  width: min(720px, 100%); max-height: min(560px, 90vh);
-  background: var(--bg); color: var(--fg);
-  border-radius: 12px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
-}
-.filechooser-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 16px; border-bottom: 1px solid var(--line); font-weight: 600;
-}
-.filechooser-close { background: none; border: 0; font-size: 16px; color: var(--muted); cursor: pointer; }
-.filechooser-crumbs {
-  padding: 8px 16px; border-bottom: 1px solid var(--line);
-  color: var(--muted); font-size: 13px; white-space: nowrap; overflow-x: auto;
-}
-.filechooser-cols { display: flex; flex: 1; min-height: 0; overflow-x: auto; }
-.filechooser-col { flex: 0 0 200px; min-height: 0; overflow-y: auto; border-right: 1px solid var(--line); }
-.filechooser-row {
-  display: block; padding: 7px 12px; font-size: 14px; cursor: pointer;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.filechooser-row:hover { background: var(--soft); }
-.filechooser-row.sel { background: var(--accent); color: #fff; }
-.filechooser-row.is-file { color: var(--muted); }
-.filechooser-row.sel.is-file { color: #fff; }
-.filechooser-empty { padding: 10px 12px; color: var(--muted); font-size: 13px; }
-.filechooser-foot {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 12px 16px; border-top: 1px solid var(--line);
-}
-.filechooser-actions { display: flex; align-items: center; gap: 8px; }
-.filechooser-sel {
-  max-width: 240px; font-size: 13px; color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.filechooser-back { display: none; } /* narrow screens only */
-.filechooser-newform { display: flex; align-items: center; gap: 6px; }
-.filechooser-newform input { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; font: inherit; }
-.filechooser-newerr { color: var(--danger); font-size: 12px; }
-
-@media (max-width: 640px) {
-  .filechooser-col { flex-basis: 100%; }
-  .filechooser-col:not(:last-child) { display: none; } /* single-column drill-down */
-  .filechooser-back { display: inline-flex; }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 13px/1.45 var(--font-ui);
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { margin: 0; line-height: 1.2; letter-spacing: -0.01em; text-wrap: balance; }
+  h1 { font-size: 20px; font-weight: 600; }
+  h2 { font-size: 16px; font-weight: 600; }
+  h3 { font-size: 13px; font-weight: 600; }
+  p { margin: 0 0 8px; }
+  code, kbd, pre, .mono { font-family: var(--font-mono); font-size: 12px; }
+  .muted { color: var(--fg-muted); }
+  .num { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .prose { max-width: 72ch; font-size: 14px; line-height: 1.55; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  ::selection { background: var(--accent-soft); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+  }
 }
