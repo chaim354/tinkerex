@@ -13,7 +13,11 @@ landed it (§11).
    for the document, so the statement must be the first rule of the first sheet the layout links.
 2. **`vendor-overrides.css` is the ONE unlayered sheet, linked last.** An unlayered rule outranks
    every layered one, which is why the Lexxy / CodeMirror / spreadsheet skins have to live outside
-   the layers to beat those libraries' own unlayered CSS — and why nothing else may.
+   the layers to beat those libraries' own unlayered CSS — and why nothing else may. The CodeMirror
+   editors are the one place the dark theme is a JS extension rather than CSS: `lib/codemirror_theme.js`
+   adds `oneDark` (in the ONE vendored bundle, §14d) when `html[data-theme]` resolves dark, and
+   `vendor-overrides.css` paints only the light editor, its `[data-theme="system"]` rules wrapped in
+   `@media (prefers-color-scheme: light)` so CSS and JS ask the same question.
 3. **A component selector is defined in `components.css` and nowhere else.** The list is
    `COMPONENT_SELECTORS` in `test/css_hygiene_test.rb`. A page sheet under `pages/` may qualify a
    component inside a container (`.files-grid .thumb`) but never redeclares the bare selector. The
