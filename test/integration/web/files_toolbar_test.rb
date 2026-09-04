@@ -32,7 +32,15 @@ module Web
       get files_path
       assert_response :success
       assert_select ".page-head .page-actions label.upload-btn span", text: "Upload a file"
-      assert_select ".page-head .page-actions form.uploader[action=?]", files_path
+      # Two flows, one per deployment (files/index.html.erb's own comment): a multipart form on a
+      # port-writable backend, the two-phase `uploader` controller on chunk_remote. Asserting the
+      # form alone was red on the chunk_remote leg and green on the other two.
+      if FileLayer.current.capabilities.port_writable?
+        assert_select ".page-head .page-actions form.uploader[action=?]", files_path
+      else
+        assert_select ".page-head .page-actions section.uploader[data-controller='uploader'][data-uploader-begin-url-value=?]",
+                      begin_upload_files_path
+      end
       assert_select "main .uploader", count: 1
     end
 
@@ -71,13 +79,22 @@ module Web
       patch current_project_path, params: { project_id: project.id }
       get files_path
       assert_select ".page-actions label.upload-btn span", text: /Upload/
-      assert_select ".page-actions form.uploader[action=?]", project_uploads_path(project)
+      if FileLayer.current.capabilities.port_writable?
+        assert_select ".page-actions form.uploader[action=?]", project_uploads_path(project)
+      else
+        assert_select ".page-actions .uploader[data-controller='uploader'][data-uploader-attach-url-value=?]",
+                      project_attachments_path(project)
+      end
       assert_select ".upload-to-project.upload-caption", text: /Uploads go to Desk Lamp/
       assert_select ".page-actions details.menu a.menu-item.upload-alt[href=?]",
                     files_path(upload: "library"), text: "Upload to library root instead"
 
       get files_path(upload: "library")
-      assert_select ".page-actions form.uploader[action=?]", files_path
+      if FileLayer.current.capabilities.port_writable?
+        assert_select ".page-actions form.uploader[action=?]", files_path
+      else
+        assert_select ".page-actions section.uploader[data-controller='uploader']:not([data-uploader-attach-url-value])"
+      end
       assert_select ".upload-caption", count: 0
       assert_select ".page-actions details.menu a.menu-item.upload-alt[href=?]", files_path,
                     text: "Upload to project “Desk Lamp” instead"
