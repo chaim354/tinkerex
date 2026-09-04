@@ -1,0 +1,55 @@
+<%#
+  TOOL OUTPUT (stage 3, S3-1) — every file inside the folder that an addon produced, listed ONCE
+  here rather than inside whichever real subfolder it happens to sit in
+  (_file_tree_section.html.erb filters @generated_ids out of every section for exactly this).
+  @generated is { node_id => Maker::AddonState } (ProjectsController#show, one query pair for the
+  whole page — Maker::AddonOrigin.for's own contract, CLAUDE.md §14a); @addon_origins already
+  resolved each state's OWN addon page for the right-click menu every tile on this page carries, so
+  this reads that hash rather than asking the Registry a second time (AddonOrigins#addon_origins_for
+  is the one place that fetches it, and only once addon output is confirmed to exist at all).
+
+  ALWAYS OPEN, LIKE LINKED — these are files that exist and are exactly where they should be; there
+  is nothing here to fold away by default.
+
+  TILES: the ordinary thumbnail (_file_tile.html.erb, reused so this is not a second copy of the
+  seven-key wire contract) plus an ALWAYS-VISIBLE meta line underneath naming the saved item and
+  its revision, and an "Open in <tool>" link when this deployment still serves that addon (nil when
+  it does not — the same rule the file page's own button follows, docs/invariants/addons.md). LIST:
+  _file_rows.html.erb, whose Origin column is never blank for a row that reached this group.
+%>
+<section class="attachment-group generated-group">
+  <details open>
+    <summary class="attachment-group-head">
+      Generated <span class="muted">(<%= @generated.size %>)</span>
+    </summary>
+    <%# THE LISTING'S OWN ROW, NOT @page_nodes — @generated is scoped to @listing.node_ids, so
+        @listing.row_for already carries this node's real Row, section and all, with no second
+        lookup. @page_nodes is built from attachments/photos/BOM lines and has no reason to hold a
+        plain folder file nothing ever attached. %>
+    <% rows = @generated.filter_map { |node_id, state|
+         row = @listing.row_for(node_id)
+         [ row, state ] if row
+       } %>
+    <% if @view == "list" %>
+      <%= render "file_rows", rows: rows.map(&:first) %>
+    <% else %>
+      <div class="attachments-grid">
+        <% rows.each do |row, state| %>
+          <%# A plain wrapper, NOT a second .attachment-tile: _file_tile.html.erb already renders
+              its own complete tile div, and doubling the class on an ENCLOSING element would put
+              two elements answering to the same selector one inside the other, for no reason —
+              the meta line below is a sibling, not part of the tile. %>
+          <div class="generated-tile">
+            <%= render "file_tile", row: row %>
+            <div class="generated-meta">
+              <span class="muted"><%= state.name %> · rev <%= state.revision %></span>
+              <% if (origin = @addon_origins[row.node_id]) %>
+                <%= link_to origin[:label], origin[:url], class: "linkbtn small" %>
+              <% end %>
+            </div>
+          </div>
+        <% end %>
+      </div>
+    <% end %>
+  </details>
+</section>

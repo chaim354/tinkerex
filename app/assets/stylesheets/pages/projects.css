@@ -49,7 +49,6 @@
   }
   .tile-meta form { margin: 0; }
   .tile-detach, .tile-move { min-height: 22px; padding: 0 6px; font-size: 11px; background: var(--surface); }
-  .repo-tile .generic-thumb { letter-spacing: .08em; }
   .entry-photo .thumb { width: 100%; height: 80px; }
   .attachment-group { margin-bottom: 16px; }
   .attachment-group:last-child { margin-bottom: 0; }
@@ -58,6 +57,28 @@
   .attachment-group details[open] > .attachment-group-head { margin-bottom: 8px; }
   .attachments-missing { font-size: 12px; margin: 4px 0 0; }
   .photo-attach { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 6px; font-size: 12px; }
+
+  /* --- The folder as a tree (stage 3, S3-1): a subfolder inside a subfolder nests one indent
+     in, the badge sits beside the folder name, and the note under Loose reads as a caption, not
+     another section. `.attachment-group-head .badge` is a container qualification of the
+     components.css selector (design-system rule 3), not a redeclaration. --- */
+  .file-tree-section .file-tree-section { margin-left: 18px; border-left: 1px solid var(--line); padding-left: 14px; }
+  .attachment-group-head .badge { margin: 0 2px 0 8px; }
+  .attachment-group-head .linkbtn.small { margin-left: 8px; font-size: 11px; }
+  .loose-note { font-size: 12px; margin: -8px 0 16px; }
+
+  /* --- Generated (stage 3, S3-1): the tile keeps its own thumbnail's shape; the meta line below
+     it is always visible (unlike a Linked tile's hover corner), because naming the tool and
+     revision is the point of the group, not an on-demand detail. --- */
+  .generated-tile { display: flex; flex-direction: column; gap: 4px; }
+  .generated-meta { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
+  .generated-meta .linkbtn.small { font-size: 11px; }
+
+  /* --- The list view (stage 3, S3-1): `.table` is the component (components.css);
+     `.project-files` carries only this page's column drops, the same split table.files/
+     pages/files.css makes. Order of loss narrowest-first: section+modified, then size. --- */
+  @media (max-width: 719px) { .project-files .col-section, .project-files .col-modified { display: none; } }
+  @media (max-width: 479px) { .project-files .col-size { display: none; } }
 
   /* --- Tasks: a state mark, the transitions as tiny buttons, the composer last --- */
   .tasks-group { margin-top: 10px; }

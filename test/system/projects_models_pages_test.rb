@@ -26,6 +26,11 @@ require "application_system_test_case"
 #   - Deleting `.lexxy-content { color: inherit; }` from vendor-overrides.css reddens test 5:
 #     `lexxy-content.css's own colour survived: oklch(0.2 0 0) inside a rgb(228, 231, 236) parent`
 #     — the vendor near-black is back inside the page's light text (2026-09-04).
+#   - Dropping `cookies[:project_view] = { value: requested, ... }` from
+#     ProjectsController#resolve_project_view (so an explicit ?view= still switches the render for
+#     ONE request but nothing is written to remember it) reddens test 6 at its second visit:
+#     `expected to find css "table.project-files" but there were no matches`, because a bare
+#     revisit with no ?view= falls back to the tiles default with nothing left to read.
 class ProjectsModelsPagesTest < ApplicationSystemTestCase
   setup do
     @root = use_fresh_share_library!
@@ -107,6 +112,28 @@ class ProjectsModelsPagesTest < ApplicationSystemTestCase
     JS
     assert_equal colours[1], colours[0],
                  "lexxy-content.css's own colour survived: #{colours[0]} inside a #{colours[1]} parent"
+    assert_no_console_errors
+  end
+
+  # THE TILES/LIST TOGGLE (stage 3, S3-1) — a real click, not a driven ?view= request, so this is
+  # the one place that proves the link in the panel head actually works and that the choice
+  # survives a fresh visit through the cookie (ProjectsController#resolve_project_view), not just
+  # for the lifetime of one page load.
+  test "the tiles/list toggle switches the panel and remembers the choice across a visit" do
+    folder = project_folder_rows!(@user, @project)
+    create_node!(@user, node_id: SecureRandom.uuid, name: "bracket.stl", kind: "file",
+                parent_node_id: folder.node_id)
+    visit project_path(@project)
+    assert_selector ".attachments-grid .attachment-tile .grid-name", text: "bracket.stl"
+    assert_no_selector "table.project-files"
+
+    click_on "List"
+    assert_selector "table.project-files td.col-name", text: "bracket.stl"
+    assert_no_selector ".attachments-grid .attachment-tile"
+
+    # The cookie must remember the list choice across a fresh visit with no ?view= at all.
+    visit project_path(@project)
+    assert_selector "table.project-files"
     assert_no_console_errors
   end
 end

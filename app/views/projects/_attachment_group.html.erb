@@ -1,60 +1,42 @@
 <%#
-  One collapsible role section of the project Files panel — also what renders the Backups,
-  Repositories-adjacent Linked-from-elsewhere and (via the folder loop) every ROLE_LABELS group.
+  One collapsible cross-cutting group of the project Files panel — Loose, Backups and Linked
+  from elsewhere (a real subfolder renders through _file_tree_section.html.erb instead, since
+  stage 3, S3-1 made sections the folder's own subfolders rather than a role derived from the
+  filename).
 
   Locals: key (a stable slug for the section, unused below but kept for a caller that wants one),
   label, rows (Maker::ProjectFolderListing::Row), open (Boolean).
 
   A ROW IS A FOLDER FILE OR A LINKED ATTACHMENT, AND row.linked? IS THE ONLY BRANCH IN THIS
-  PARTIAL. A folder row's node comes straight from the listing's own walk and carries no
-  attachment at all (row.attachment is nil) — there is nothing to detach and nowhere else in the
-  library the file already lives, so its tile is the thumbnail alone. A linked row's node is
-  attached to this project but living somewhere else in the library, so its tile also carries a
-  corner: Detach (severs the reference; the file itself is kept) and Move into project
-  (Maker::AttachToProject#relocate under the file's own name — the same door the collision
-  prompt's "Move it in as…" button posts to, in _move_conflict.html.erb).
+  PARTIAL (inside _file_tile.html.erb, which owns it). A folder row's node comes straight from the
+  listing's own walk and carries no attachment at all (row.attachment is nil) — there is nothing
+  to detach and nowhere else in the library the file already lives, so its tile is the thumbnail
+  alone. A linked row's node is attached to this project but living somewhere else in the library,
+  so its tile also carries a corner: Detach (severs the reference; the file itself is kept) and
+  Move into project (Maker::AttachToProject#relocate under the file's own name — the same door the
+  collision prompt's "Move it in as…" button posts to, in _move_conflict.html.erb).
 
-  EXTRACTED BECAUSE THERE ARE NOW SEVERAL CALLERS — one per role, Backups, and Linked — and they
-  must render identically apart from being open or closed and carrying that one corner or not.
-  Inlining any of them was the obvious thing and would have meant one more copy of the tile
-  markup, which is how the Detach/Move corner ends up on some of them and not the others.
+  TILES OR LIST, LIKE EVERY OTHER GROUP ON THE PAGE (@view) — _file_rows.html.erb draws the same
+  rows as a table when the panel is in list mode, so Loose/Backups/Linked switch exactly the way a
+  real subfolder section does. `open` is a real HTML attribute either way, so a closed section
+  costs nothing at render time and the browser keeps the toggle state for the life of the page. It
+  is NOT persisted across loads: that would need a cookie per section per project, and the panel's
+  default (everything open but Backups) is the answer for almost every visit.
 
-  `open` is a real HTML attribute, so a closed section costs nothing at render time and the browser
-  keeps the toggle state for the life of the page. It is NOT persisted across loads: that would need
-  a cookie per section per project, and the panel's default (everything open but Backups) is the
-  answer for almost every visit.
+  NATIVE <details>, NOT A STIMULUS CONTROLLER: collapsing is what the element is for, it works
+  before any JavaScript loads, and `models/_file_tree.html.erb` already uses it for exactly this.
 %>
 <section class="attachment-group">
   <details <%= "open" if open %>>
     <summary class="attachment-group-head">
       <%= label %> <span class="muted">(<%= rows.size %>)</span>
     </summary>
-    <div class="attachments-grid">
-      <% rows.each do |row| %>
-        <% node = row.node %>
-        <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
-        <div class="attachment-tile">
-          <%# THE SAME TWO BUILDERS THE FILES PAGE USES (FilesHelper), which is the point: these
-              tiles carry the identical right-click menu, and written out here they were a fifth
-              copy of one seven-key wire contract free to drift from the four over there.
-              @addon_origins is keyed on node_id, so one lookup serves both — but the builder takes
-              the ORIGIN, not the ivar, so a surface without one can still adopt it. %>
-          <%= link_to file_path(row.node_id), class: "grid-card file-cell",
-                      data: thumb_cell_data(row.node_id, ext)
-                              .merge(file_menu_data(row.node_id, @addon_origins[row.node_id])) do %>
-            <%= render "files/thumb", thumb: @page_thumbs.thumb(row.node_id), ext_label: ext %>
-            <span class="grid-name"><%= node.name %></span>
-          <% end %>
-          <% if row.linked? %>
-            <div class="tile-meta">
-              <%= button_to "Detach", attachment_path(row.attachment), method: :delete, class: "btn small danger tile-detach",
-                            form: { data: { turbo_confirm: "Detach #{node.name}? (the file itself is kept)" } } %>
-              <%= button_to "Move into project", relocate_project_attachments_path(@project),
-                            params: { node_id: row.node_id }, class: "btn small tile-move" %>
-            </div>
-          <% end %>
-        </div>
-      <% end %>
-    </div>
+    <% if @view == "list" %>
+      <%= render "file_rows", rows: rows %>
+    <% else %>
+      <div class="attachments-grid">
+        <%= render partial: "file_tile", collection: rows, as: :row %>
+      </div>
+    <% end %>
   </details>
 </section>

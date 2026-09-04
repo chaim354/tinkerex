@@ -1,10 +1,11 @@
 <%#
-  The project's FOLDER, shown as the Files panel — the folder's own live files grouped by role
-  from their filename (Maker::FileAttachment.role_for), then a collapsed Backups section, then one
-  entry per repository found inside it, then every attachment that points OUTSIDE the folder
-  ("Linked from elsewhere"). Maker::ProjectFolderListing (@listing) computes the first three;
-  ProjectsController#show computes the fourth by diffing @attachments against @listing's own node
-  ids.
+  The project's FOLDER, shown as the Files panel — the folder as a TREE (stage 3, S3-1): loose
+  root files first (the sweep's inbox), then one section per real subfolder, nested exactly as it
+  sits on disk (a working tree is a section too, expandable in place), then Generated (tool
+  output, once, never repeated in its section), then every attachment that points OUTSIDE the
+  folder ("Linked from elsewhere"). Maker::ProjectFolderListing (@listing) computes the tree, the
+  loose files and the cross-cutting Backups list; ProjectsController#show computes Generated
+  (Maker::AddonOrigin.for) and Linked (diffing @attachments against @listing's own tree).
 
   THE FOLDER AND THE RELATION ARE TWO DIFFERENT THINGS, AND THE PANEL SHOWS BOTH. `@attachments` is
   the file→project RELATION ProjectsController#show has always computed (detach, cover, addon
@@ -13,7 +14,7 @@
   row, whose `attachment` is nil. A file that IS attached but still lives somewhere else in the
   library renders once, in Linked, with Detach and a button to move it in. `@page_nodes` (PageNodes)
   is what the Linked rows below (and the build-log photos elsewhere on this page) read to find
-  their node; a folder row needs no such lookup — its node comes straight off `@listing.files`.
+  their node; a folder row needs no such lookup — its node comes straight off the listing's own walk.
 
   `@missing_attachment_count` — attached rows whose node ProjectsController#show could not find
   live at all — is unrelated to either list above and is reported on its own, below.
@@ -29,10 +30,9 @@
   page instead of N instances polling their own slice. `filemenu` rides along on the same element
   for the same reason — one document-level listener, every tile.
 
-  NATIVE <details>, NOT A STIMULUS CONTROLLER: collapsing is what the element is for, it works
-  before any JavaScript loads, and `models/_file_tree.html.erb` already uses it for exactly this.
-  Open by default, because the panel's job is to show a project's files — Backups is the one
-  section that starts closed (see below).
+  @view (tiles/list) IS READ BY EVERY GROUP PARTIAL BELOW, NOT BY THIS ONE — this template only
+  decides WHICH groups exist and in what order; _attachment_group/_file_tree_section/
+  _generated_group each decide tiles vs. _file_rows.html.erb for their own rows, off the same ivar.
 %>
 <section class="panel attachments-panel">
   <div class="panel-head">
@@ -42,6 +42,15 @@
         upload control below already degrades the same way for the same reason. %>
     <%= link_to @listing.path, files_path(folder: @listing.folder_id), class: "panel-path mono muted" if @listing.available? %>
     <div class="panel-actions">
+      <%# Tiles / List (stage 3, S3-1) — the same view-toggle component the Files page uses
+          (components.css), a different cookie and a different default (ProjectsController
+          #resolve_project_view): this page starts on tiles, the Files page on list. %>
+      <div class="view-toggle" role="group" aria-label="View">
+        <%= link_to "Tiles", project_path(@project, view: "tiles"),
+                    class: "toggle#{' active' if @view == 'tiles'}" %>
+        <%= link_to "List", project_path(@project, view: "list"),
+                    class: "toggle#{' active' if @view == 'list'}" %>
+      </div>
       <%# "Look at my library NOW", instead of waiting on library_scan's 15 minutes (share/s3) or
           remote_changelog_pull's 2 (chunk_remote). It scans the LIBRARY, not this folder — a scan
           cannot be aimed at a subfolder (Library::Reconciler compares against the whole catalog), so
@@ -65,26 +74,35 @@
           data-scanreload-url-value="<%= project_path(@project) %>"></span>
   <% end %>
 
-  <%# BACKUPS COME OUT FIRST, and they are keyed on the NODE's name rather than any attachment's
-      label — a folder row carries no attachment at all, and Row#backup? always reads the node.
-      They keep their own section at the bottom instead of being dropped: a rescue copy is still a
-      real file in the project's folder, and a panel that pretended otherwise would be lying about
-      what is on disk. %>
-  <% backups, live = @listing.files.partition(&:backup?) %>
-  <%# Fold anything off-vocabulary into "other" rather than dropping it. Row#role (FileAttachment
-      .role_for) is TOTAL over ROLE_LABELS' own keys, so the "other" fallback below cannot trigger
-      today — but the render iterates ROLE_LABELS, so without it an unrecognized role would render
-      NOWHERE, and a file silently missing from a user's project is a far worse failure than one
-      filed under the wrong heading. %>
-  <% grouped = live.group_by { |r| Maker::FileAttachment::ROLE_LABELS.key?(r.role) ? r.role : "other" } %>
-  <% if live.empty? && backups.empty? && @linked_rows.empty? && @listing.repos.empty? && @missing_attachment_count.zero? && !@listing.truncated? %>
+  <%# BACKUPS COME OUT FIRST, pulled out of the tree wherever they physically sit and keyed on the
+      NODE's name rather than any attachment's label — a folder row carries no attachment at all,
+      and Row#backup? always reads the node. They keep their own closed section rather than being
+      dropped: a rescue copy is still a real file in the project's folder, and a panel that
+      pretended otherwise would be lying about what is on disk. Filtered against @generated_ids
+      like every other group, for the rare case an
+      addon's own output happens to look like one. %>
+  <% backups = @listing.backups.reject { |r| @generated_ids.include?(r.node_id) } %>
+  <% loose = @listing.loose.reject { |r| @generated_ids.include?(r.node_id) } %>
+  <% if @listing.tree.empty? && loose.empty? && backups.empty? && @linked_rows.empty? &&
+        @generated.empty? && @missing_attachment_count.zero? && !@listing.truncated? %>
     <p class="muted">No files in this project yet.<% if @listing.available? %> Upload one, or drop files into <span class="mono"><%= @listing.path %></span>.<% end %></p>
   <% else %>
     <div data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
-      <% Maker::FileAttachment::ROLE_LABELS.each do |role, label| %>
-        <% group = grouped[role] %>
-        <% next if group.blank? %>
-        <%= render "attachment_group", key: role, label: label, rows: group, open: true %>
+      <%# LOOSE FIRST — the sweep's inbox. Shown only when there is something in it; the note says
+          why these files sit apart from every real section instead of reading as forgotten. %>
+      <% if loose.any? %>
+        <%= render "attachment_group", key: "loose", label: "Loose", rows: loose, open: true %>
+        <p class="muted loose-note">Loose files are filed on the next sweep.</p>
+      <% end %>
+
+      <%# ONE SECTION PER REAL SUBFOLDER, nested exactly as it sits on disk — a repository renders
+          here too, expandable in place, never as a separate group (S3-1 retired the old
+          standalone Repositories group). %>
+      <%= render partial: "file_tree_section", collection: @listing.tree, as: :dir %>
+
+      <%# TOOL OUTPUT, once, never repeated inside whichever section it sits in. %>
+      <% if @generated.any? %>
+        <%= render "generated_group" %>
       <% end %>
 
       <%# COLLAPSED, and that is the whole of "don't show the backups": they are one click away
@@ -92,10 +110,6 @@
           for it. %>
       <% if backups.any? %>
         <%= render "attachment_group", key: "backups", label: "Backups", rows: backups, open: false %>
-      <% end %>
-
-      <% if @listing.repos.any? %>
-        <%= render "repo_group", repos: @listing.repos %>
       <% end %>
 
       <%# ATTACHED, BUT LIVING ELSEWHERE. Not a folder row and not counted in @listing.total — its
@@ -120,7 +134,7 @@
       what a cut-short walk means. %>
   <% if @listing.truncated? %>
     <p class="muted attachments-truncated">
-      <% if @listing.files.size < @listing.total %>Showing <%= @listing.files.size %> of <%= @listing.total %> files.<% end %>
+      <% if @listing.all_rows.size < @listing.total %>Showing <%= @listing.all_rows.size %> of <%= @listing.total %> files.<% end %>
       <% if @listing.dir_cap_hit? %>Not every subfolder was listed.<% end %>
       <%= link_to "Open the folder", files_path(folder: @listing.folder_id) %>
     </p>

@@ -1,4 +1,5 @@
 require "test_helper"
+require_relative "../../support/fake_addon_source"
 
 module Web
   class ProjectAttachmentsTest < ActionDispatch::IntegrationTest
@@ -25,7 +26,7 @@ module Web
     end
 
     # Seed a library node + attach it to a project via the model (attach UI is Task 6). THE NODE
-    # SITS AT THE LIBRARY ROOT — outside any project's folder — which stage 2's folder-based panel
+    # SITS AT THE LIBRARY ROOT — outside any project's folder — which the folder-based panel
     # (Maker::ProjectFolderListing) makes the LINKED CASE: attached to this project, but not one of
     # its folder's own files. Kept under its original name because most of the tests below only
     # care that an attached, live file renders as a tile — which a Linked row still does.
@@ -36,10 +37,10 @@ module Web
 
     # A node placed INSIDE a folder — the project's own root, or a subfolder created separately
     # with kind: "dir" and passed as `parent`. This is what Maker::ProjectFolderListing walks, so a
-    # test about role-heading grouping, Backups, or Repositories needs its fixtures here rather
-    # than at attach_node's library root. Ensures the project's folder once; the ensure is
-    # idempotent (Maker::Project#ensure_library_folder!), so calling it once per fixture in a test
-    # with several is harmless.
+    # test about the tree, Backups, or a repository needs its fixtures here rather than at
+    # attach_node's library root. Ensures the project's folder once; the ensure is idempotent
+    # (Maker::Project#ensure_library_folder!), so calling it once per fixture in a test with several
+    # is harmless.
     def folder_file!(user, project, name:, node_id:, parent: nil)
       folder = project.ensure_library_folder!(user)
       user.nodes.create!(node_id:, name:, kind: "file", parent_node_id: parent || folder.node_id)
@@ -53,6 +54,12 @@ module Web
     def attach_folder_node(user, project, name:, node_id:, role: "model", parent: nil)
       folder_file!(user, project, name:, node_id:, parent:)
       project.file_attachments.create!(user:, node_id:, role:)
+    end
+
+    # A subfolder inside the project's own folder, by name — the unit this page now sections by.
+    def subfolder!(user, project, name:, node_id: SecureRandom.uuid, parent: nil)
+      folder = project.ensure_library_folder!(user)
+      user.nodes.create!(node_id:, name:, kind: "dir", parent_node_id: parent || folder.node_id)
     end
 
     test "attached files render as tiles linking to the file view" do
@@ -116,46 +123,57 @@ module Web
       assert_select "p.muted", text: "No files attached yet.", count: 0
     end
 
-    # --- the folder is the panel (stage 2, S2-2) ---------------------------------
+    # --- the folder as a tree (stage 3, S3-1) -----------------------------------
 
-    # "grouped by role from the filename" is the headline, and NO row here has an attachment at
-    # all except bracket.stl — the point being that a folder file is listed on the strength of
-    # being in the folder, with or without a maker_file_attachments row.
-    test "the panel lists the folder, grouped by role from the filename, whether or not a row exists" do
+    # THE HEADLINE SCENARIO: sections are the folder's REAL subfolders, nested exactly as they sit
+    # on disk — no role vocabulary anywhere in this panel any more. Loose (root) files come first.
+    test "loose files come first, then one nested section per real subfolder" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      folder = project.ensure_library_folder!(user)
-      models = user.nodes.create!(node_id: "d-models", name: "models", kind: "dir",
-                                  parent_node_id: folder.node_id)
-      images = user.nodes.create!(node_id: "d-images", name: "images", kind: "dir",
-                                  parent_node_id: folder.node_id)
-      folder_file!(user, project, name: "bracket.stl", node_id: "n-bracket", parent: folder.node_id)
-      project.file_attachments.create!(user:, node_id: "n-bracket", role: "model")
-      folder_file!(user, project, name: "shade.stl", node_id: "n-shade", parent: models.node_id)
-      folder_file!(user, project, name: "photo.jpg", node_id: "n-photo", parent: images.node_id)
+      models = subfolder!(user, project, name: "models")
+      docs = subfolder!(user, project, name: "docs")
+      wiring = subfolder!(user, project, name: "wiring", parent: docs.node_id)
+      folder_file!(user, project, name: "notes.txt", node_id: "n-notes")
+      folder_file!(user, project, name: "bracket.stl", node_id: "n-bracket", parent: models.node_id)
+      folder_file!(user, project, name: "manual.pdf", node_id: "n-manual", parent: docs.node_id)
+      folder_file!(user, project, name: "pinout.pdf", node_id: "n-pinout", parent: wiring.node_id)
 
       get project_path(project)
       assert_response :success
-      assert_select ".attachment-group-head", text: /Models \(2\)/
-      assert_select ".attachment-group-head", text: /Images \(1\)/
-      assert_select ".attachment-tile", 3
-      assert_select ".attachment-group-head", text: /Linked/, count: 0
+
+      # Loose first, and it names why these files sit apart.
+      assert_select ".attachment-group-head", text: /Loose \(1\)/
+      assert_select ".attachment-group .grid-name", text: "notes.txt"
+      assert_select "p.loose-note", text: /Loose files are filed on the next sweep/
+
+      assert_select ".file-tree-section details summary", text: /models \(1\)/
+      assert_select ".file-tree-section details summary", text: /docs \(1\)/
+      # docs NESTS wiring — a nested .file-tree-section INSIDE docs' own <details>, not merely
+      # somewhere else on the page. `> details > summary` picks each section's OWN summary
+      # (a summary's only children here are its badge/links, never a nested section — that sits
+      # beside it, inside the same <details> — so a block-scoped assert_select on the summary
+      # itself cannot see a child section; this walks the DOM directly instead.
+      docs_section = css_select(".file-tree-section").find { |el| el.at_css("> details > summary")&.text.to_s =~ /docs \(1\)/ }
+      assert docs_section, "expected to find the docs section"
+      assert_match(/wiring \(1\)/, docs_section.at_css(".file-tree-section details summary")&.text.to_s,
+                   "docs must nest wiring")
+      assert_select ".attachment-tile .grid-name", text: "bracket.stl"
+      assert_select ".attachment-tile .grid-name", text: "manual.pdf"
+      assert_select ".attachment-tile .grid-name", text: "pinout.pdf"
     end
 
-    test "a file attached from elsewhere is Linked, with Detach and Move into project" do
+    test "an empty subfolder still renders its own section, with no files" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      attach_node(user, project, name: "loose.stl", node_id: "n-loose", role: "model")
+      subfolder!(user, project, name: "empty")
 
       get project_path(project)
       assert_response :success
-      assert_select ".attachment-group-head", text: /Linked from elsewhere \(1\)/
-      assert_select ".attachment-tile button.tile-detach"
-      assert_select ".attachment-tile form[action=?] button.tile-move",
-                    relocate_project_attachments_path(project)
+      assert_select ".file-tree-section details summary", text: /empty \(0\)/
+      assert_select "p.muted", text: /No files in this project yet/, count: 0
     end
 
-    test "a repository inside the folder is one entry and its files are not tiles" do
+    test "a repository inside the folder is a nested section, badged, linking to its commit and history pages, with its files inside it" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
       folder = project.ensure_library_folder!(user)
@@ -167,9 +185,14 @@ module Web
 
       get project_path(project)
       assert_response :success
-      assert_select ".attachment-group-head", text: /Repositories \(1\)/
-      assert_select ".repo-tile a[href=?]", files_path(folder: firmware.node_id)
-      assert_select ".attachment-tile .grid-name", text: "main.c", count: 0
+      assert_select ".file-tree-section details summary", text: /firmware/ do
+        assert_select "span.badge", text: "repo"
+        assert_select "a[href=?]", repo_commit_path(firmware.node_id)
+        assert_select "a[href=?]", repo_history_path(firmware.node_id)
+      end
+      assert_select ".attachment-tile .grid-name", text: "main.c"
+      # No standalone Repositories group any more — a repo is a section now.
+      assert_select ".attachment-group-head", text: /Repositories/, count: 0
     end
 
     test "folder files do not get Detach" do
@@ -249,7 +272,20 @@ module Web
       assert_select ".attachments-truncated", text: /Showing 300 of 301/
     end
 
-    # A GENUINELY EMPTY PROJECT (no folder files, no linked attachments, no repos, nothing
+    test "a file attached from elsewhere is Linked, with Detach and Move into project" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      attach_node(user, project, name: "loose.stl", node_id: "n-loose", role: "model")
+
+      get project_path(project)
+      assert_response :success
+      assert_select ".attachment-group-head", text: /Linked from elsewhere \(1\)/
+      assert_select ".attachment-tile button.tile-detach"
+      assert_select ".attachment-tile form[action=?] button.tile-move",
+                    relocate_project_attachments_path(project)
+    end
+
+    # A GENUINELY EMPTY PROJECT (no folder files, no linked attachments, no subfolders, nothing
     # missing), as opposed to "a project whose every file is gone" above (which HAS a missing
     # attachment and explains itself differently). ensure_library_folder! still runs on #show, so
     # @listing.available? is true and the sentence names the folder path.
@@ -328,87 +364,46 @@ module Web
       assert_select ".picker-result form[action=?]", entry_photos_path(entry)
     end
 
-    test "the files panel groups attachments by type and omits empty categories" do
-      user = sign_in
-      project = user.maker_projects.create!(name: "Lamp")
-
-      # FOUR NODES INSIDE THE FOLDER, not at the library root as before folder-based listing:
-      # role-heading grouping (Models, Images, Vector, …) now comes from
-      # Maker::ProjectFolderListing, which only sees files inside the project's folder — a
-      # root-level attachment renders in Linked instead (see the Linked-case tests above).
-      attach_folder_node(user, project, name: "bracket.stl", node_id: "n-1", role: "model")
-      attach_folder_node(user, project, name: "shade.stl",   node_id: "n-2", role: "model")
-      attach_folder_node(user, project, name: "photo.jpg",   node_id: "n-3", role: "image")
-      attach_folder_node(user, project, name: "panel.dxf",   node_id: "n-4", role: "vector")
-
-      get project_path(project)
-      assert_response :success
-
-      # One section per non-empty role, in ROLE_LABELS order.
-      assert_select ".attachment-group", count: 3
-      assert_select ".attachment-group-head", text: /Models/
-      assert_select ".attachment-group-head", text: /Images/
-      assert_select ".attachment-group-head", text: /Vector/
-      # Empty categories are not rendered at all.
-      assert_select ".attachment-group-head", text: /G-code/, count: 0
-      assert_select ".attachment-group-head", text: /Archives/, count: 0
-
-      # Headings carry the count, and the per-tile role badge is gone.
-      assert_select ".attachment-group-head", text: /Models \(2\)/
-      assert_select ".attachment-tile .badge", count: 0
-    end
-
-    # THE COUNTS COUNT WHAT IS SHOWN. A gone attachment used to render in its category and be
-    # tallied there, so "Models (3)" could mean two files and a ghost — a heading contradicting the
-    # tiles beneath it.
-    test "a gone attachment is not counted in its category heading either" do
-      user = sign_in
-      project = user.maker_projects.create!(name: "Lamp")
-      # arm.stl has to live INSIDE the folder for "Models (1)" to be the heading it renders under
-      # — a root-level attachment renders in Linked instead (see above).
-      attach_folder_node(user, project, name: "arm.stl", node_id: "n-arm", role: "model")
-      project.file_attachments.create!(user:, node_id: "vanished", role: "model",
-                                       label: "bracket.stl")
-
-      get project_path(project)
-      assert_select ".attachment-group-head", text: /Models \(1\)/
-      assert_select ".attachment-tile .grid-name", text: "arm.stl"
-      assert_no_match(/bracket\.stl/, response.body)
-    end
-
     # --- collapsible sections + LightBurn/MillMage backups ----------------------
 
-    # Native <details>, so this works with no JavaScript at all. `open` on the ordinary groups is
-    # what keeps the panel's default behaviour identical to before it became collapsible.
-    test "each role section is a collapsible details, open by default" do
+    # Native <details>, so this works with no JavaScript at all. `open` on an ordinary subfolder
+    # section is what keeps the panel readable by default — Backups is the one group that starts
+    # closed (see below).
+    test "a real subfolder's section is a collapsible details, open by default" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      # A plain folder file, no attachment at all — the folder is the relation a role section
-      # shows, per docs/invariants/project-intake.md.
-      folder_file!(user, project, name: "arm.stl", node_id: "n-arm")
+      models = subfolder!(user, project, name: "models")
+      folder_file!(user, project, name: "arm.stl", node_id: "n-arm", parent: models.node_id)
 
       get project_path(project)
-      assert_select ".attachment-group details[open] summary.attachment-group-head", text: /Models \(1\)/
+      assert_select ".file-tree-section details[open] summary", text: /models \(1\)/
     end
 
     # LightBurn and MillMage drop a `<stem>_backup.<ext>` rescue copy beside every project file, so
     # a laser-heavy project's panel was half rescue copies of the design next to it. They move to
     # their own CLOSED section rather than being dropped: the file is really in the project's
     # folder, and a panel that hid it would be lying about what is on disk.
-    test "LightBurn backups move to a collapsed Backups section, out of Laser" do
+    test "LightBurn backups move to a collapsed Backups section, out of their own subfolder" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      # Backup detection (Row#backup?) reads @listing.files, so both fixtures have to be inside
-      # the folder — a Linked row renders in its own section regardless of extension.
-      folder_file!(user, project, name: "sign.lbrn2", node_id: "n-sign")
-      folder_file!(user, project, name: "sign_backup.lbrn2", node_id: "n-bak")
+      laser = subfolder!(user, project, name: "laser")
+      # Backup detection (Row#backup?) reads the node's own name, wherever it sits in the tree.
+      folder_file!(user, project, name: "sign.lbrn2", node_id: "n-sign", parent: laser.node_id)
+      folder_file!(user, project, name: "sign_backup.lbrn2", node_id: "n-bak", parent: laser.node_id)
 
       get project_path(project)
-      assert_select ".attachment-group-head", text: /Laser \(1\)/
+      assert_select ".file-tree-section details summary", text: /laser \(1\)/
       assert_select ".attachment-group-head", text: /Backups \(1\)/
-      # CLOSED, which is the whole of "don't show the backups" — one click away, not gone.
+      # CLOSED, which is the whole of "don't show the backups" — one click away, not gone (its
+      # tile is still IN the markup, same as any other <details> content, just not the default
+      # open state — assert_select sees it either way).
       assert_select ".attachment-group details:not([open]) summary", text: /Backups/
-      assert_select ".attachment-group details[open] summary", text: /Laser/
+      assert_select ".file-tree-section details[open] summary", text: /laser/
+      # THE FILE ITSELF RENDERS EXACTLY ONCE, and NOT inside the laser section it physically sits
+      # in -- Backups pulls it out rather than duplicating it.
+      assert_select ".attachment-tile .grid-name", text: "sign_backup.lbrn2", count: 1
+      laser_section = css_select(".file-tree-section").find { |el| el.at_css("> details > summary")&.text.to_s =~ /laser/ }
+      assert_no_match(/sign_backup\.lbrn2/, laser_section.text, "the backup must not also render inside laser")
     end
 
     # THE NARROWNESS IS THE POINT. A user's own `battery_backup.stl` is not a LightBurn rescue copy,
@@ -420,45 +415,96 @@ module Web
       folder_file!(user, project, name: "battery_backup.stl", node_id: "n-bat")
 
       get project_path(project)
-      assert_select ".attachment-group-head", text: /Models \(1\)/
+      assert_select "p.loose-note"
+      assert_select ".attachment-tile .grid-name", text: "battery_backup.stl"
       assert_select ".attachment-group-head", text: /Backups/, count: 0
     end
 
-    # WAS: "an attachment with an off-vocabulary role still renders, under Other" — it set a
-    # STORED role column to a bogus value with update_column, bypassing validation, because
-    # role_for is total and nothing else could produce one. Row#role no longer reads that column
-    # at all (Maker::FileAttachment.role_for(node.name), always — see
-    # docs/invariants/project-intake.md), and a folder row carries no attachment to corrupt in the
-    # first place (Row#attachment is nil), so that hazard is gone by construction, not merely
-    # untested. What is left worth pinning is the ROLE_LABELS.key?(role) ? role : "other" fallback
-    # in _attachments.html.erb still routing an unrecognized EXTENSION under Other — the same
-    # visible behaviour, reached the way the new design actually reaches it.
-    test "a file with an unrecognized extension still renders, under Other" do
+    # --- pointers (stage 3, S3-1) -----------------------------------------------
+
+    # A STRAY *.ptr POINTER STUB RENDERS NOWHERE — Node.visible_entries excludes it unconditionally
+    # (never a scan skip: it stays in the catalog, only hidden from display — see node.rb). The
+    # sibling it points at is unaffected.
+    test "a .ptr pointer stub beside its real file renders nowhere on the page" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      folder_file!(user, project, name: "mystery.xyz", node_id: "n-x")
+      folder_file!(user, project, name: "bracket.stl", node_id: "n-bracket")
+      folder_file!(user, project, name: "bracket.stl.ptr", node_id: "n-ptr")
 
       get project_path(project)
       assert_response :success
-      assert_select ".attachment-group-head", text: /Other \(1\)/
-      assert_select ".attachment-tile .grid-name", text: "mystery.xyz"
+      assert_select ".attachment-tile .grid-name", text: "bracket.stl"
+      assert_no_match(/bracket\.stl\.ptr/, response.body)
+      assert_select ".loose-note", text: /Loose files are filed on the next sweep/
+      # ONE tile, ONE file counted -- the pointer is not a second, merely-hidden row.
+      assert_select ".attachment-tile", 1
+      assert_select ".attachment-group-head", text: /Loose \(1\)/
     end
 
-    # THE COMPLAINT THIS ITEM STARTED FROM, asserted on both surfaces at once: a .csv is filed under
-    # "Documents" in the project panel AND the Files page offers a chip in a family of that same
-    # name. Before this the two pages named overlapping files differently, and .csv had no role at
-    # all. This fails if either surface drifts, which is what "one vocabulary" has to mean.
-    test "a document is filed under Documents and the chips agree" do
+    # --- the list view (stage 3, S3-1) ------------------------------------------
+
+    test "the list view renders a table with Section and Origin cells and the choice is remembered" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      folder_file!(user, project, name: "cutlist.csv", node_id: "n-doc")
+      models = subfolder!(user, project, name: "models")
+      folder_file!(user, project, name: "bracket.stl", node_id: "n-bracket", parent: models.node_id)
+
+      get project_path(project, view: "list")
+      assert_response :success
+      assert_select "table.table.project-files"
+      assert_select "table.project-files td.col-section", text: "models"
+      assert_select "table.project-files td.col-origin", text: "—"
+      assert_select ".view-toggle a.toggle.active", text: "List"
+
+      # The cookie remembers list across a bare request with no ?view= at all.
+      get project_path(project)
+      assert_select "table.table.project-files"
+    end
+
+    test "tiles is the default view, and an explicit ?view=tiles switches back" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      folder_file!(user, project, name: "bracket.stl", node_id: "n-bracket")
+
+      get project_path(project)
+      assert_select ".view-toggle a.toggle.active", text: "Tiles"
+      assert_select ".attachments-grid .attachment-tile"
+
+      get project_path(project, view: "list")
+      get project_path(project, view: "tiles")
+      assert_select ".view-toggle a.toggle.active", text: "Tiles"
+      assert_select "table.project-files", count: 0
+    end
+
+    # --- Generated (stage 3, S3-1) ----------------------------------------------
+
+    # THE FIXTURE IDIOM FROM addon_origin_surfaces_test.rb: a Maker::AddonState + AddonFile tie a
+    # node to a saved addon "thing". Revision 3, not the default 1, so the "rev N" assertion cannot
+    # pass against a hardcoded number.
+    test "a generated file appears once in Generated, with its tool, item and revision, and never in its section" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      models = subfolder!(user, project, name: "models")
+      node = folder_file!(user, project, name: "box.svg", node_id: "n-box", parent: models.node_id)
+      state = user.maker_addon_states.create!(addon_key: "boxes", name: "shelf box", data: {}, revision: 3)
+      state.files.create!(node_id: node.node_id, role: "output", position: 0)
+      source = FakeAddonSource.new(manifests: [
+        { "key" => "boxes", "title" => "Box Generator", "icon" => "📦", "description" => "Parametric boxes",
+          "api_version" => "1", "entry" => "boxes.js" }
+      ])
+      Maker::Addons::Source.stub = source
 
       get project_path(project)
       assert_response :success
-      assert_select ".attachment-group-head", text: /Documents/
-
-      assert_includes FilesHelper::EXT_FAMILIES.keys, "Documents"
-      assert_includes FilesHelper::EXT_FAMILIES["Documents"], "csv"
+      assert_select ".generated-group .attachment-group-head", text: /Generated \(1\)/
+      assert_select ".generated-group .grid-name", text: "box.svg"
+      assert_select ".generated-group .generated-meta", text: /shelf box/
+      assert_select ".generated-group .generated-meta", text: /rev 3/
+      assert_select ".generated-group a", text: "Edit in Box Generator"
+      # NOT repeated inside its own section.
+      assert_select ".file-tree-section details summary", text: /models \(0\)/
+    ensure
+      Maker::Addons::Source.reset!
     end
   end
 end

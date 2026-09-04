@@ -137,12 +137,30 @@ class ProjectsController < ApplicationController
     # living somewhere else in the library, so it gets its own group with Detach and a move-in
     # button instead of the plain folder tile.
     @listing = Maker::ProjectFolderListing.new(current_user, @project)
+    # Tiles or list (stage 3, S3-1) — the same whitelist-and-cookie idiom FilesController#resolve_view
+    # uses, with its own values and its own cookie: this page's default is tiles, the Files page's
+    # is list, and the two toggles must not read each other's choice.
+    @view = resolve_project_view
+    # GENERATED (stage 3, S3-1): a file inside the folder that an addon produced is listed ONCE, in
+    # its own group below, never repeated inside the section it happens to sit in. Scoped to
+    # @listing.node_ids ONLY — never `tile_ids` a few lines down, which also carries Linked rows:
+    # a Linked file that is also addon output stays in Linked (unchanged since S2-2), because
+    # Generated is about how THIS FOLDER files itself, not about every addon-produced node the page
+    # renders anywhere. One query pair (Maker::AddonOrigin.for's own contract), regardless of N.
+    @generated = Maker::AddonOrigin.for(user: current_user, node_ids: @listing.node_ids)
+    @generated_ids = @generated.keys.to_set
     # "Linked" is a FOLDER question, asked of the tree, not a LIST question: the listing is capped
-    # at FILE_CAP and never enters a repository, so an attached file past the cap or inside a repo
-    # is absent from `node_ids` while sitting squarely in the folder — it must not reappear as
-    # "linked from elsewhere".
+    # at FILE_CAP, so an attached file past the cap, or inside a repository the walk never entered
+    # (DIR_CAP), is absent from `node_ids` while sitting squarely in the folder — it must not
+    # reappear as "linked from elsewhere". `section` is the file's own library path (not scoped to
+    # this folder, since a Linked file lives somewhere else in it entirely) — @listing.path_for
+    # reads the same tree this listing already built, so this costs no extra query either.
     @linked_rows = @attachments.reject { |a| @listing.contains?(@page_nodes[a.node_id]) }
-                               .map { |a| Maker::ProjectFolderListing::Row.new(node: @page_nodes[a.node_id], attachment: a, linked: true) }
+                               .map { |a|
+                                 node = @page_nodes[a.node_id]
+                                 Maker::ProjectFolderListing::Row.new(node:, attachment: a, linked: true,
+                                                                       section: @listing.path_for(node))
+                               }
     # Dead ids never reach either list: @listing only ever holds live nodes, and @attachments has
     # already dropped anything @page_nodes could not find — `stat_all` would answer nothing for a
     # gone id anyway, but it would still spend a slot in the ORDERED walk BACKFILL_LIMIT bounds.
@@ -150,11 +168,11 @@ class ProjectsController < ApplicationController
     @page_thumbs = Maker::Previews::ThumbnailMap.for(
       current_user, tile_ids + entry_photo_ids.select { |id| @page_nodes.key?(id) }
     )
-    # TILE_IDS ONLY, NOT THE BUILD-LOG PHOTOS. `_attachment_group` is the only partial on this page
-    # whose tiles carry `contextmenu->filemenu#open` (`_repo_group`'s tiles are directories and
-    # carry no file menu at all); `_log_entry`'s photos are spans driven by the `thumbs` controller
-    # alone, with no menu to add an entry to — so an origin resolved for one would be work nothing
-    # reads. That is why entry photos are not merged into this union either.
+    # TILE_IDS ONLY, NOT THE BUILD-LOG PHOTOS. Every tile this page can render — a folder section, a
+    # repository's own files, Backups, Generated, Linked — carries `contextmenu->filemenu#open`;
+    # `_log_entry`'s photos are spans driven by the `thumbs` controller alone, with no menu to add
+    # an entry to — so an origin resolved for one would be work nothing reads. That is why entry
+    # photos are not merged into this union either.
     @addon_origins = addon_origins_for(tile_ids)
     @tasks = @project.tasks.order(:position, :created_at).to_a
     @sheets = @project.sheets.to_a
@@ -212,6 +230,24 @@ class ProjectsController < ApplicationController
 
   def set_project
     @project = current_user.maker_projects.find_by!(slug: params[:id])
+  end
+
+  # Tiles or list (stage 3, S3-1) — the same whitelist-and-cookie idiom as
+  # FilesController#resolve_view: an explicit `?view=` wins and is remembered for a year; otherwise
+  # the last remembered choice; otherwise tiles. A DIFFERENT cookie (`project_view`, not
+  # `files_view`) and a DIFFERENT default (tiles, not list) — this page and the Files page must not
+  # read each other's remembered choice, and tiles is what the panel has always defaulted to.
+  PROJECT_VIEWS = %w[tiles list].freeze
+  DEFAULT_PROJECT_VIEW = "tiles".freeze
+
+  def resolve_project_view
+    requested = params[:view].presence
+    if PROJECT_VIEWS.include?(requested)
+      cookies[:project_view] = { value: requested, expires: 1.year }
+      return requested
+    end
+    saved = cookies[:project_view]
+    PROJECT_VIEWS.include?(saved) ? saved : DEFAULT_PROJECT_VIEW
   end
 
   # Best-effort: a project MUST save even if the library backend can't make its folder right now

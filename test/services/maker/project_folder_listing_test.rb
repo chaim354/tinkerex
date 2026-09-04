@@ -49,7 +49,15 @@ module Maker
       n
     end
 
-    test "files at the folder root and in subfolders are listed; a library-root file is not" do
+    # Flattens every file Row out of a tree, depth-first, for assertions that don't care which
+    # level a file sits at.
+    def all_tree_files(dirs)
+      dirs.flat_map { |d| d.files + all_tree_files(d.children) }
+    end
+
+    def names_of(rows) = rows.map { |r| r.node.name }
+
+    test "files at the folder root are loose; a subfolder's files sit under its own Dir; a library-root file is absent entirely" do
       _projects, desk_lamp = desk_lamp_folder
       docs = dir("dir-docs", "docs", desk_lamp.node_id)
       models = dir("dir-models", "models", desk_lamp.node_id)
@@ -63,9 +71,57 @@ module Maker
 
       assert listing.available?
       assert_equal "Projects/desk-lamp", listing.path
-      assert_equal %w[bracket.stl manual.pdf shade.stl], listing.files.map { |r| r.node.name }.sort
+      assert_equal %w[bracket.stl], names_of(listing.loose)
+      assert_equal %w[docs models], listing.tree.map(&:name).sort
+      assert_equal %w[manual.pdf], names_of(listing.tree.find { |d| d.name == "docs" }.files)
+      assert_equal %w[shade.stl], names_of(listing.tree.find { |d| d.name == "models" }.files)
       assert_equal 3, listing.total
       assert_not listing.truncated?, "an ordinary small listing must not read as truncated"
+    end
+
+    test "a nested subfolder appears under its parent's own Dir, each carrying its own files" do
+      _projects, desk_lamp = desk_lamp_folder
+      docs = dir("dir-docs", "docs", desk_lamp.node_id)
+      wiring = dir("dir-wiring", "wiring", docs.node_id)
+      file("f-manual", "manual.pdf", docs.node_id)
+      file("f-pinout", "pinout.pdf", wiring.node_id)
+
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
+
+      docs_dir = listing.tree.sole
+      assert_equal "docs", docs_dir.name
+      assert_equal "Projects/desk-lamp/docs", docs_dir.path
+      assert_equal %w[manual.pdf], names_of(docs_dir.files)
+      wiring_dir = docs_dir.children.sole
+      assert_equal "wiring", wiring_dir.name
+      assert_equal %w[pinout.pdf], names_of(wiring_dir.files)
+    end
+
+    # AN EMPTY SUBFOLDER IS STILL LISTED -- it is real, on disk, and hiding it would say less than
+    # the folder actually holds. Its own children (none here) render as an empty <details> too.
+    test "an empty subfolder appears in the tree with no files and no children" do
+      _projects, desk_lamp = desk_lamp_folder
+      dir("dir-empty", "empty", desk_lamp.node_id)
+
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
+
+      empty_dir = listing.tree.sole
+      assert_equal "empty", empty_dir.name
+      assert_equal [], empty_dir.files
+      assert_equal [], empty_dir.children
+    end
+
+    test "dirs sort by name and each dir's own files sort by name" do
+      _projects, desk_lamp = desk_lamp_folder
+      dir("dir-zebra", "zebra", desk_lamp.node_id)
+      alpha = dir("dir-alpha", "alpha", desk_lamp.node_id)
+      file("f-2", "b.stl", alpha.node_id)
+      file("f-1", "a.stl", alpha.node_id)
+
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
+
+      assert_equal %w[alpha zebra], listing.tree.map(&:name)
+      assert_equal %w[a.stl b.stl], names_of(listing.tree.first.files)
     end
 
     test "a dot-dir's contents are skipped, and a bare .git marker is never its own repo" do
@@ -77,12 +133,13 @@ module Maker
       project = project_with_folder(desk_lamp.node_id)
       listing = Maker::ProjectFolderListing.new(@user, project)
 
-      assert_equal [], listing.files
+      assert_equal [], listing.loose
+      assert_equal [], listing.tree
       assert_equal 0, listing.total
       assert_equal [], listing.repos
     end
 
-    test "a subdir holding a .git child is one Repo, its files are excluded, and the root's own files still list even when the root itself looks like a working tree" do
+    test "a subdir holding a .git child is entered as a repo section, its files listed under it, and the root's own files still list even when the root itself looks like a working tree" do
       _projects, desk_lamp = desk_lamp_folder
       file("f-root", "bracket.stl", desk_lamp.node_id)
       dir("dir-root-git", ".git", desk_lamp.node_id) # desk-lamp ITSELF has a .git child
@@ -99,9 +156,31 @@ module Maker
       assert_equal "firmware", repo.name
       assert_equal "Projects/desk-lamp/firmware", repo.path
 
+      firmware_dir = listing.tree.find { |d| d.name == "firmware" }
+      assert firmware_dir.repo?
+      assert_equal %w[main.c], names_of(firmware_dir.files)
+
       # The root is always entered regardless of its own .git child -- only a CHILD's working-tree
-      # status diverts it into @repos; the walk never asks the question about root_id itself.
-      assert_equal [ "bracket.stl" ], listing.files.map { |r| r.node.name }
+      # status flags it as a repo; the walk never asks the question about root_id itself.
+      assert_equal %w[bracket.stl], names_of(listing.loose)
+    end
+
+    # STAGE 3, S3-1: a working tree is ENTERED, not stopped at -- its own subfolders nest exactly
+    # like any other folder's.
+    test "a repo's own subfolder nests inside it, and only the .git marker's contents are unobserved" do
+      _projects, desk_lamp = desk_lamp_folder
+      firmware = dir("dir-firmware", "firmware", desk_lamp.node_id)
+      dir("dir-firmware-git", ".git", firmware.node_id)
+      src = dir("dir-src", "src", firmware.node_id)
+      file("f-main", "main.c", src.node_id)
+
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
+
+      firmware_dir = listing.tree.sole
+      assert firmware_dir.repo?
+      src_dir = firmware_dir.children.sole
+      assert_equal "src", src_dir.name
+      assert_equal %w[main.c], names_of(src_dir.files)
     end
 
     test "a tombstoned subfolder's files are absent -- the tree holds live dirs only" do
@@ -113,11 +192,12 @@ module Maker
       project = project_with_folder(desk_lamp.node_id)
       listing = Maker::ProjectFolderListing.new(@user, project)
 
-      assert_equal [], listing.files
+      assert_equal [], listing.tree
+      assert_equal [], listing.loose
       assert_equal 0, listing.total
     end
 
-    test "more than FILE_CAP files truncates the tile list but not the total" do
+    test "more than FILE_CAP files truncates the listing but not the total" do
       _projects, desk_lamp = desk_lamp_folder
       now = Time.current
       Node.insert_all((Maker::ProjectFolderListing::FILE_CAP + 1).times.map do |i|
@@ -129,7 +209,7 @@ module Maker
       project = project_with_folder(desk_lamp.node_id)
       listing = Maker::ProjectFolderListing.new(@user, project)
 
-      assert_equal Maker::ProjectFolderListing::FILE_CAP, listing.files.size
+      assert_equal Maker::ProjectFolderListing::FILE_CAP, listing.loose.size
       assert listing.truncated?
       assert_equal Maker::ProjectFolderListing::FILE_CAP + 1, listing.total
     end
@@ -163,12 +243,13 @@ module Maker
                 ->(*) { raise "ProjectFolderListing must never call ensure_path! -- it is a reader" }) do
         listing = Maker::ProjectFolderListing.new(@user, no_folder)
         assert_not listing.available?
-        assert_equal [], listing.files
+        assert_equal [], listing.tree
+        assert_equal [], listing.loose
         assert_equal 0, listing.total
 
         listing2 = Maker::ProjectFolderListing.new(@user, dead_folder)
         assert_not listing2.available?
-        assert_equal [], listing2.files
+        assert_equal [], listing2.tree
         assert_equal 0, listing2.total
       end
       assert_equal before, @user.nodes.count
@@ -184,7 +265,7 @@ module Maker
       listing = nil
       n = count_queries { listing = Maker::ProjectFolderListing.new(@user, project, load_files: false) }
 
-      assert_equal [], listing.files
+      assert_equal [], listing.loose
       assert_equal 1, listing.total
       assert_equal 1, listing.repos.size
       assert_equal "firmware", listing.repos.first.name
@@ -194,15 +275,95 @@ module Maker
     test "Row#role reads the filename and Row#backup? recognizes a LightBurn rescue copy" do
       node = @user.nodes.create!(node_id: "f-role", name: "plate.dxf", kind: "file",
                                  parent_node_id: nil, mtime: 1, size: 1)
-      row = Maker::ProjectFolderListing::Row.new(node:, attachment: nil, linked: false)
+      row = Maker::ProjectFolderListing::Row.new(node:, attachment: nil, linked: false, section: "")
       assert_equal "vector", row.role
       assert_not row.backup?
 
       backup_node = @user.nodes.create!(node_id: "f-backup", name: "plate_backup.lbrn2", kind: "file",
                                         parent_node_id: nil, mtime: 1, size: 1)
-      backup_row = Maker::ProjectFolderListing::Row.new(node: backup_node, attachment: nil, linked: false)
+      backup_row = Maker::ProjectFolderListing::Row.new(node: backup_node, attachment: nil, linked: false, section: "")
       assert backup_row.backup?
     end
+
+    # BACKUPS ARE PULLED OUT OF THE TREE (stage 3, S3-1), wherever they physically sit, into one
+    # flat cross-cutting list -- each still carrying the SECTION it was pulled from, so the panel's
+    # list view can say where a rescue copy really lives.
+    test "a backup-flagged file is pulled out of its dir into #backups, carrying its own section, and does not appear in the dir's files" do
+      _projects, desk_lamp = desk_lamp_folder
+      laser = dir("dir-laser", "laser", desk_lamp.node_id)
+      file("f-sign", "sign.lbrn2", laser.node_id)
+      file("f-bak", "sign_backup.lbrn2", laser.node_id)
+      file("f-root-bak", "root_backup.lbrn2", desk_lamp.node_id)
+
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
+
+      laser_dir = listing.tree.sole
+      assert_equal %w[sign.lbrn2], names_of(laser_dir.files)
+      assert_equal %w[root_backup.lbrn2 sign_backup.lbrn2], names_of(listing.backups).sort
+      backup_row = listing.backups.find { |r| r.node.name == "sign_backup.lbrn2" }
+      assert_equal "laser", backup_row.section
+      root_backup_row = listing.backups.find { |r| r.node.name == "root_backup.lbrn2" }
+      assert_equal "", root_backup_row.section
+      # Still counted in the total and in node_ids -- it is a real file in the folder, just not
+      # rendered inside its own dir section.
+      assert_equal 3, listing.total
+      assert_includes listing.node_ids, "f-bak"
+    end
+
+    test "Row#section is the display path relative to the project folder, blank for a loose row" do
+      _projects, desk_lamp = desk_lamp_folder
+      docs = dir("dir-docs", "docs", desk_lamp.node_id)
+      wiring = dir("dir-wiring", "wiring", docs.node_id)
+      file("f-root", "bracket.stl", desk_lamp.node_id)
+      file("f-manual", "manual.pdf", docs.node_id)
+      file("f-pinout", "pinout.pdf", wiring.node_id)
+
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
+
+      assert_equal "", listing.loose.first.section
+      docs_dir = listing.tree.sole
+      assert_equal "docs", docs_dir.files.first.section
+      assert_equal "docs/wiring", docs_dir.children.sole.files.first.section
+    end
+
+    test "#path_for answers a node's full library path from the same tree, for a node outside this folder" do
+      _projects, desk_lamp = desk_lamp_folder
+      elsewhere = dir("dir-elsewhere", "Elsewhere", nil)
+      outside = file("f-outside", "orphan.stl", elsewhere.node_id)
+
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
+
+      assert_equal "Elsewhere", listing.path_for(outside)
+    end
+
+    test "#row_for finds this listing's own Row by node_id, and answers nil outside it" do
+      _projects, desk_lamp = desk_lamp_folder
+      docs = dir("dir-docs", "docs", desk_lamp.node_id)
+      file("f-manual", "manual.pdf", docs.node_id)
+      outside = file("f-outside", "orphan.stl", nil)
+
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
+
+      assert_equal "manual.pdf", listing.row_for("f-manual").node.name
+      assert_nil listing.row_for(outside.node_id)
+      assert_nil listing.row_for("does-not-exist")
+    end
+
+    test "#all_rows holds every row anywhere -- loose, backups, and every depth of the tree" do
+      _projects, desk_lamp = desk_lamp_folder
+      docs = dir("dir-docs", "docs", desk_lamp.node_id)
+      file("f-root", "bracket.stl", desk_lamp.node_id)
+      file("f-manual", "manual.pdf", docs.node_id)
+      file("f-bak", "manual_backup.pdf", docs.node_id) # not a recognized backup ext -- stays put
+      file("f-real-bak", "sign_backup.lbrn2", docs.node_id)
+
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
+
+      assert_equal %w[bracket.stl manual.pdf manual_backup.pdf sign_backup.lbrn2],
+                   names_of(listing.all_rows).sort
+      assert_equal listing.all_rows.map(&:node_id).sort, listing.node_ids.sort
+    end
+
     test "contains? is the folder's ancestry, not the capped list" do
       _projects, desk_lamp = desk_lamp_folder
       deep = dir("dir-deep", "docs", desk_lamp.node_id)
@@ -215,8 +376,7 @@ module Maker
       listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
 
       assert listing.contains?(inside_deep)
-      assert listing.contains?(inside_repo), "a file inside a repository the walk never entered is still IN the folder"
-      assert_not listing.node_ids.include?(inside_repo.node_id), "…and yet is not listed (the repo entry stands for it)"
+      assert listing.contains?(inside_repo), "a file inside a repository is still IN the folder"
       assert_not listing.contains?(outside)
       assert_not Maker::ProjectFolderListing.new(@user, project_with_folder(nil, name: "Bare")).contains?(inside_deep),
                  "no folder contains nothing"
