@@ -1,0 +1,45 @@
+<% content_for :title, "Locations - Tinkerex" %>
+
+<div class="page-head">
+  <h1>Locations</h1>
+  <%= link_to "Inventory", inventory_items_path, class: "btn ghost small" %>
+</div>
+
+<p class="muted">
+  Where inventory lives on your shelves. Nest a location under another to place it, like a drawer
+  inside a cabinet. Removing a location never deletes what it held -- child locations and items
+  just lose the reference.
+</p>
+
+<ul class="settings-list">
+  <% @locations.each do |location| %>
+    <li>
+      <span class="settings-name"><%= location.name %></span>
+      <% if location.parent %>
+        <span class="settings-fact">in <%= location.parent.name %></span>
+      <% end %>
+      <span class="settings-fact"><%= pluralize(@item_counts[location.id] || 0, "item") %></span>
+      <%= button_to "Remove", location_path(location), method: :delete,
+                    class: "linkbtn danger small settings-remove",
+                    form: { data: { turbo_confirm: "Remove #{location.name}? Its children and items keep their own facts." } } %>
+    </li>
+  <% end %>
+  <% if @locations.empty? %>
+    <li class="empty muted">No locations yet.</li>
+  <% end %>
+</ul>
+
+<%# scope: :location -- same reason as suppliers/index: this form has no model object, so scope:
+    is what makes fields serialize as location[...], which LocationsController#create requires. %>
+<%= form_with url: locations_path, scope: :location, class: "settings-add" do |f| %>
+  <label>
+    <span>Name</span>
+    <%= f.text_field :name, required: true %>
+  </label>
+  <label>
+    <span>Parent</span>
+    <%= f.select :parent_id, options_from_collection_for_select(@locations, :id, :name),
+                 { include_blank: "— none —" } %>
+  </label>
+  <%= f.submit "Add location", class: "btn primary" %>
+<% end %>
