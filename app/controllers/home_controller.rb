@@ -1,7 +1,8 @@
 # The Home page (stage 2, S2-1): the current project, then what changed recently, then what
-# needs attention. EVERY READ HERE IS BOUNDED AND ORDERED BY A COLUMN THAT ALREADY EXISTS — there
+# needs attention. EVERY LIST HERE IS BOUNDED AND ORDERED BY A COLUMN THAT ALREADY EXISTS — there
 # is no activity table and no counter, and page_query_budget_test.rb asserts the count is constant
-# in N.
+# in N. The one unbounded read, the current project's tasks, is a single query whose rows are
+# counted in Ruby: three facts, one round trip.
 class HomeController < ApplicationController
   # The hero's upload control (`projects/upload_control`) branches on `capabilities.port_writable?`
   # exactly as the project page and the Files page do — the `capabilities` helper method comes from
