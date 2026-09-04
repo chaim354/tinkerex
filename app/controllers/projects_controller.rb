@@ -84,29 +84,49 @@ class ProjectsController < ApplicationController
     # a file by accident and watched their project change otherwise has no thread to pull. It
     # disappears on its own when the reaper clears the rows.
     @missing_attachment_count = missing.size
-    # Dead ids are dropped before the port is asked: `stat_all` would answer nothing for them
-    # anyway, but they would still spend a slot in the ORDERED walk BACKFILL_LIMIT bounds.
+
+    # The folder project-view uploads go into. Best-effort (re-ensured here so a folder the user
+    # deleted is recreated); nil → uploads fall back to the library root rather than 500 the page.
+    # AND IT RUNS BEFORE THE LISTING BELOW, which reads the folder_node_id this (re)writes —
+    # looking at a folder must never be what mints it (docs/invariants/project-intake.md).
+    @upload_parent_node_id = begin
+      @project.ensure_library_folder!(current_user).node_id
+    rescue StandardError
+      nil
+    end
+
+    # THE FOLDER IS WHAT THE PANEL SHOWS; @attachments stay the file→project RELATION (detach,
+    # cover, addon origin, the missing count). Maker::ProjectFolderListing reads folder_node_id and
+    # never mints a folder — the ensure above is the one writer, and it runs first. An attachment
+    # whose node is not among the listing's own (capped) ids is Linked: attached to this project but
+    # living somewhere else in the library, so it gets its own group with Detach and a move-in
+    # button instead of the plain folder tile.
+    @listing = Maker::ProjectFolderListing.new(current_user, @project)
+    # "Linked" is a FOLDER question, asked of the tree, not a LIST question: the listing is capped
+    # at FILE_CAP and never enters a repository, so an attached file past the cap or inside a repo
+    # is absent from `node_ids` while sitting squarely in the folder — it must not reappear as
+    # "linked from elsewhere".
+    @linked_rows = @attachments.reject { |a| @listing.contains?(@page_nodes[a.node_id]) }
+                               .map { |a| Maker::ProjectFolderListing::Row.new(node: @page_nodes[a.node_id], attachment: a, linked: true) }
+    # Dead ids never reach either list: @listing only ever holds live nodes, and @attachments has
+    # already dropped anything @page_nodes could not find — `stat_all` would answer nothing for a
+    # gone id anyway, but it would still spend a slot in the ORDERED walk BACKFILL_LIMIT bounds.
+    tile_ids = @listing.node_ids + @linked_rows.map(&:node_id)
     @page_thumbs = Maker::Previews::ThumbnailMap.for(
-      current_user, @attachments.map(&:node_id) + entry_photo_ids.select { |id| @page_nodes.key?(id) }
+      current_user, tile_ids + entry_photo_ids.select { |id| @page_nodes.key?(id) }
     )
-    # ATTACHMENTS ONLY, NOT THE BUILD-LOG PHOTOS. `_attachment_group` is the only partial on this
-    # page whose tiles carry `contextmenu->filemenu#open`; `_log_entry`'s photos are spans driven by
-    # the `thumbs` controller alone, with no menu to add an entry to — so an origin resolved for one
-    # would be work nothing reads. That is why THIS one is not merged into the union above.
-    @addon_origins = addon_origins_for(@attachments.map(&:node_id))
+    # TILE_IDS ONLY, NOT THE BUILD-LOG PHOTOS. `_attachment_group` is the only partial on this page
+    # whose tiles carry `contextmenu->filemenu#open` (`_repo_group`'s tiles are directories and
+    # carry no file menu at all); `_log_entry`'s photos are spans driven by the `thumbs` controller
+    # alone, with no menu to add an entry to — so an origin resolved for one would be work nothing
+    # reads. That is why entry photos are not merged into this union either.
+    @addon_origins = addon_origins_for(tile_ids)
     @tasks = @project.tasks.order(:position, :created_at).to_a
     @sheets = @project.sheets.to_a
     # The entry form binds to a real object: `rich_text_area` reads its value from the form's
     # object, and Action Text's form helper is not built for the object-less `fields_for` the plain
     # textarea used.
     @new_entry = @project.build_log_entries.new
-    # The folder project-view uploads go into. Best-effort (re-ensured here so a folder the user
-    # deleted is recreated); nil → uploads fall back to the library root rather than 500 the page.
-    @upload_parent_node_id = begin
-      @project.ensure_library_folder!(current_user).node_id
-    rescue StandardError
-      nil
-    end
     @move_conflict = move_conflict_prompt
     # `== "1"`, not `.present?` — the same reading #index applies to `archived`. Set by
     # Projects::ScansController's async branch; it is a one-shot render hint, not state, which is

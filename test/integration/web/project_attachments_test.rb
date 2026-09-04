@@ -24,15 +24,43 @@ module Web
       user
     end
 
-    # Seed a library node + attach it to a project via the model (attach UI is Task 6).
+    # Seed a library node + attach it to a project via the model (attach UI is Task 6). THE NODE
+    # SITS AT THE LIBRARY ROOT — outside any project's folder — which stage 2's folder-based panel
+    # (Maker::ProjectFolderListing) makes the LINKED CASE: attached to this project, but not one of
+    # its folder's own files. Kept under its original name because most of the tests below only
+    # care that an attached, live file renders as a tile — which a Linked row still does.
     def attach_node(user, project, name:, node_id:, role: "model")
       user.nodes.create!(node_id:, name:, kind: "file")
+      project.file_attachments.create!(user:, node_id:, role:)
+    end
+
+    # A node placed INSIDE a folder — the project's own root, or a subfolder created separately
+    # with kind: "dir" and passed as `parent`. This is what Maker::ProjectFolderListing walks, so a
+    # test about role-heading grouping, Backups, or Repositories needs its fixtures here rather
+    # than at attach_node's library root. Ensures the project's folder once; the ensure is
+    # idempotent (Maker::Project#ensure_library_folder!), so calling it once per fixture in a test
+    # with several is harmless.
+    def folder_file!(user, project, name:, node_id:, parent: nil)
+      folder = project.ensure_library_folder!(user)
+      user.nodes.create!(node_id:, name:, kind: "file", parent_node_id: parent || folder.node_id)
+    end
+
+    # Like attach_node, but the node lives inside the project's folder rather than at the library
+    # root, AND an attachment row is created for it — the shape the pre-folder grouping tests
+    # already assumed (an attached file, live, counted once). A folder row needs no attachment at
+    # all to be listed (folder_file! above covers that), but several existing tests are about the
+    # attachment relation surviving the folder split, not just the folder listing on its own.
+    def attach_folder_node(user, project, name:, node_id:, role: "model", parent: nil)
+      folder_file!(user, project, name:, node_id:, parent:)
       project.file_attachments.create!(user:, node_id:, role:)
     end
 
     test "attached files render as tiles linking to the file view" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
+      # attach_node's node sits at the library ROOT, outside the project's folder — the LINKED
+      # CASE now (Row#linked? true) — and a Linked row still renders as an ordinary
+      # .attachment-tile linking to the file view, which is all this test is pinning.
       attach_node(user, project, name: "base.stl", node_id: "n-1", role: "model")
 
       get project_path(project)
@@ -64,6 +92,8 @@ module Web
     test "the panel says how many attachments left, rather than removing them silently" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
+      # attach_node's node sits at the library root — the Linked case now — and still renders as
+      # an ordinary tile with a grid-name, which is all this test needs.
       attach_node(user, project, name: "bracket.stl", node_id: "n-live", role: "model")
       project.file_attachments.create!(user:, node_id: "gone", role: "model", label: "ghost.stl")
 
@@ -75,7 +105,7 @@ module Web
     end
 
     # An "empty" project and a project whose files were all deleted are DIFFERENT SENTENCES. Saying
-    # "No files attached yet" to someone who just deleted four is a lie about what happened.
+    # "No files in this project yet" to someone who just deleted four is a lie about what happened.
     test "a project whose every file is gone explains itself instead of reading as empty" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
@@ -84,6 +114,152 @@ module Web
       get project_path(project)
       assert_select ".attachments-missing", text: /1 attached file no longer in your library/
       assert_select "p.muted", text: "No files attached yet.", count: 0
+    end
+
+    # --- the folder is the panel (stage 2, S2-2) ---------------------------------
+
+    # "grouped by role from the filename" is the headline, and NO row here has an attachment at
+    # all except bracket.stl — the point being that a folder file is listed on the strength of
+    # being in the folder, with or without a maker_file_attachments row.
+    test "the panel lists the folder, grouped by role from the filename, whether or not a row exists" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      folder = project.ensure_library_folder!(user)
+      models = user.nodes.create!(node_id: "d-models", name: "models", kind: "dir",
+                                  parent_node_id: folder.node_id)
+      images = user.nodes.create!(node_id: "d-images", name: "images", kind: "dir",
+                                  parent_node_id: folder.node_id)
+      folder_file!(user, project, name: "bracket.stl", node_id: "n-bracket", parent: folder.node_id)
+      project.file_attachments.create!(user:, node_id: "n-bracket", role: "model")
+      folder_file!(user, project, name: "shade.stl", node_id: "n-shade", parent: models.node_id)
+      folder_file!(user, project, name: "photo.jpg", node_id: "n-photo", parent: images.node_id)
+
+      get project_path(project)
+      assert_response :success
+      assert_select ".attachment-group-head", text: /Models \(2\)/
+      assert_select ".attachment-group-head", text: /Images \(1\)/
+      assert_select ".attachment-tile", 3
+      assert_select ".attachment-group-head", text: /Linked/, count: 0
+    end
+
+    test "a file attached from elsewhere is Linked, with Detach and Move into project" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      attach_node(user, project, name: "loose.stl", node_id: "n-loose", role: "model")
+
+      get project_path(project)
+      assert_response :success
+      assert_select ".attachment-group-head", text: /Linked from elsewhere \(1\)/
+      assert_select ".attachment-tile button.tile-detach"
+      assert_select ".attachment-tile form[action=?] button.tile-move",
+                    relocate_project_attachments_path(project)
+    end
+
+    test "a repository inside the folder is one entry and its files are not tiles" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      folder = project.ensure_library_folder!(user)
+      firmware = user.nodes.create!(node_id: "d-firmware", name: "firmware", kind: "dir",
+                                    parent_node_id: folder.node_id)
+      user.nodes.create!(node_id: "d-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
+                         parent_node_id: firmware.node_id)
+      folder_file!(user, project, name: "main.c", node_id: "n-mainc", parent: firmware.node_id)
+
+      get project_path(project)
+      assert_response :success
+      assert_select ".attachment-group-head", text: /Repositories \(1\)/
+      assert_select ".repo-tile a[href=?]", files_path(folder: firmware.node_id)
+      assert_select ".attachment-tile .grid-name", text: "main.c", count: 0
+    end
+
+    test "folder files do not get Detach" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      attach_folder_node(user, project, name: "bracket.stl", node_id: "n-bracket", role: "model")
+
+      get project_path(project)
+      assert_response :success
+      assert_select ".attachment-tile", 1
+      assert_select ".attachment-tile .tile-detach", count: 0
+      assert_select ".attachment-tile .tile-meta", count: 0
+    end
+
+    test "the panel caps at FILE_CAP and points at the folder" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      folder = project.ensure_library_folder!(user)
+      now = Time.current
+      Node.insert_all((Maker::ProjectFolderListing::FILE_CAP + 1).times.map do |i|
+        { node_id: "cap-#{i}", name: format("f%03d.stl", i), kind: "file", user_id: user.id,
+          parent_node_id: folder.node_id, deleted: false, created_at: now, updated_at: now }
+      end)
+
+      get project_path(project)
+      assert_response :success
+      assert_select ".attachment-tile", Maker::ProjectFolderListing::FILE_CAP
+      # `text:` on the LINK selector below checks the link's own text ("Open the folder"), not the
+      # paragraph's — the count sentence is asserted on the paragraph itself.
+      assert_select ".attachments-truncated", text: /Showing 300 of 301/
+      assert_select ".attachments-truncated a[href=?]", files_path(folder: folder.node_id),
+                    text: "Open the folder"
+    end
+
+    # THE OTHER CAP. A walk that stops at DIR_CAP subfolders before it has seen a single file must
+    # not read as an empty project: the truncation line renders OUTSIDE the empty check, and names
+    # the subfolders rather than a "0 of 0" file count (found in review, 2026-09-04).
+    test "a walk cut short by DIR_CAP says so even when no file made the list" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      folder = project.ensure_library_folder!(user)
+      now = Time.current
+      Node.insert_all((Maker::ProjectFolderListing::DIR_CAP + 1).times.map do |i|
+        { node_id: "dcap-#{i}", name: format("sub%03d", i), kind: "dir", user_id: user.id,
+          parent_node_id: folder.node_id, deleted: false, created_at: now, updated_at: now }
+      end)
+
+      get project_path(project)
+      assert_response :success
+      assert_select "p.muted", text: /No files in this project yet/, count: 0
+      assert_select ".attachments-truncated", text: /Not every subfolder was listed/
+      assert_select ".attachments-truncated", text: /Showing/, count: 0
+      assert_select ".attachments-truncated a[href=?]", files_path(folder: folder.node_id)
+    end
+
+    # LINKED IS A FOLDER QUESTION, NOT A LIST QUESTION. The listing is capped at FILE_CAP, so an
+    # attached file past the cap is absent from the tiles — and must NOT come back as "linked from
+    # elsewhere": it sits in the folder, and the truncation line stands for it. The controller asks
+    # the tree (`ProjectFolderListing#contains?`), never the capped id set; asking the set instead
+    # renders exactly the phantom Linked group this test forbids.
+    test "an attached file past the cap is in the folder, not linked" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      folder = project.ensure_library_folder!(user)
+      now = Time.current
+      Node.insert_all((Maker::ProjectFolderListing::FILE_CAP + 1).times.map do |i|
+        { node_id: "cap-#{i}", name: format("f%03d.stl", i), kind: "file", user_id: user.id,
+          parent_node_id: folder.node_id, deleted: false, created_at: now, updated_at: now }
+      end)
+      # f300.stl sorts last, past the cap of 300 tiles.
+      project.file_attachments.create!(user:, node_id: "cap-#{Maker::ProjectFolderListing::FILE_CAP}", role: "model")
+
+      get project_path(project)
+      assert_response :success
+      assert_select ".attachment-group-head", text: /Linked/, count: 0
+      assert_select ".project-stats", text: /linked/, count: 0
+      assert_select ".attachments-truncated", text: /Showing 300 of 301/
+    end
+
+    # A GENUINELY EMPTY PROJECT (no folder files, no linked attachments, no repos, nothing
+    # missing), as opposed to "a project whose every file is gone" above (which HAS a missing
+    # attachment and explains itself differently). ensure_library_folder! still runs on #show, so
+    # @listing.available? is true and the sentence names the folder path.
+    test "a genuinely empty project says so, not that files were attached" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+
+      get project_path(project)
+      assert_response :success
+      assert_select "p.muted", text: /\ANo files in this project yet\./
     end
 
     # --- attach existing + detach ----------------------------------------------
@@ -156,10 +332,14 @@ module Web
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
 
-      attach_node(user, project, name: "bracket.stl", node_id: "n-1", role: "model")
-      attach_node(user, project, name: "shade.stl",   node_id: "n-2", role: "model")
-      attach_node(user, project, name: "photo.jpg",   node_id: "n-3", role: "image")
-      attach_node(user, project, name: "panel.dxf",   node_id: "n-4", role: "vector")
+      # FOUR NODES INSIDE THE FOLDER, not at the library root as before folder-based listing:
+      # role-heading grouping (Models, Images, Vector, …) now comes from
+      # Maker::ProjectFolderListing, which only sees files inside the project's folder — a
+      # root-level attachment renders in Linked instead (see the Linked-case tests above).
+      attach_folder_node(user, project, name: "bracket.stl", node_id: "n-1", role: "model")
+      attach_folder_node(user, project, name: "shade.stl",   node_id: "n-2", role: "model")
+      attach_folder_node(user, project, name: "photo.jpg",   node_id: "n-3", role: "image")
+      attach_folder_node(user, project, name: "panel.dxf",   node_id: "n-4", role: "vector")
 
       get project_path(project)
       assert_response :success
@@ -184,7 +364,9 @@ module Web
     test "a gone attachment is not counted in its category heading either" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      attach_node(user, project, name: "arm.stl", node_id: "n-arm", role: "model")
+      # arm.stl has to live INSIDE the folder for "Models (1)" to be the heading it renders under
+      # — a root-level attachment renders in Linked instead (see above).
+      attach_folder_node(user, project, name: "arm.stl", node_id: "n-arm", role: "model")
       project.file_attachments.create!(user:, node_id: "vanished", role: "model",
                                        label: "bracket.stl")
 
@@ -201,7 +383,9 @@ module Web
     test "each role section is a collapsible details, open by default" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      attach_node(user, project, name: "arm.stl", node_id: "n-arm", role: "model")
+      # A plain folder file, no attachment at all — the folder is the relation a role section
+      # shows, per docs/invariants/project-intake.md.
+      folder_file!(user, project, name: "arm.stl", node_id: "n-arm")
 
       get project_path(project)
       assert_select ".attachment-group details[open] summary.attachment-group-head", text: /Models \(1\)/
@@ -214,8 +398,10 @@ module Web
     test "LightBurn backups move to a collapsed Backups section, out of Laser" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      attach_node(user, project, name: "sign.lbrn2", node_id: "n-sign", role: "laser")
-      attach_node(user, project, name: "sign_backup.lbrn2", node_id: "n-bak", role: "laser")
+      # Backup detection (Row#backup?) reads @listing.files, so both fixtures have to be inside
+      # the folder — a Linked row renders in its own section regardless of extension.
+      folder_file!(user, project, name: "sign.lbrn2", node_id: "n-sign")
+      folder_file!(user, project, name: "sign_backup.lbrn2", node_id: "n-bak")
 
       get project_path(project)
       assert_select ".attachment-group-head", text: /Laser \(1\)/
@@ -231,21 +417,26 @@ module Web
     test "a file merely named _backup in another format is not treated as a backup" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      attach_node(user, project, name: "battery_backup.stl", node_id: "n-bat", role: "model")
+      folder_file!(user, project, name: "battery_backup.stl", node_id: "n-bat")
 
       get project_path(project)
       assert_select ".attachment-group-head", text: /Models \(1\)/
       assert_select ".attachment-group-head", text: /Backups/, count: 0
     end
 
-    # The view iterates ROLE_LABELS, so a role outside that vocabulary would render nowhere at all —
-    # a file silently missing from the user's own project. Nothing can write such a value today
-    # (role_for is total, the model validates), so this has to bypass validation to set one up.
-    test "an attachment with an off-vocabulary role still renders, under Other" do
+    # WAS: "an attachment with an off-vocabulary role still renders, under Other" — it set a
+    # STORED role column to a bogus value with update_column, bypassing validation, because
+    # role_for is total and nothing else could produce one. Row#role no longer reads that column
+    # at all (Maker::FileAttachment.role_for(node.name), always — see
+    # docs/invariants/project-intake.md), and a folder row carries no attachment to corrupt in the
+    # first place (Row#attachment is nil), so that hazard is gone by construction, not merely
+    # untested. What is left worth pinning is the ROLE_LABELS.key?(role) ? role : "other" fallback
+    # in _attachments.html.erb still routing an unrecognized EXTENSION under Other — the same
+    # visible behaviour, reached the way the new design actually reaches it.
+    test "a file with an unrecognized extension still renders, under Other" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      att = attach_node(user, project, name: "mystery.xyz", node_id: "n-x", role: "other")
-      att.update_column(:role, "bogus_role")
+      folder_file!(user, project, name: "mystery.xyz", node_id: "n-x")
 
       get project_path(project)
       assert_response :success
@@ -260,8 +451,7 @@ module Web
     test "a document is filed under Documents and the chips agree" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      attach_node(user, project, name: "cutlist.csv", node_id: "n-doc",
-                  role: Maker::FileAttachment.role_for("cutlist.csv"))
+      folder_file!(user, project, name: "cutlist.csv", node_id: "n-doc")
 
       get project_path(project)
       assert_response :success

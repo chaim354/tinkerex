@@ -1,18 +1,28 @@
 <%#
-  Attached design files, grouped by role into COLLAPSIBLE sections in ROLE_LABELS order.
+  The project's FOLDER, shown as the Files panel — the folder's own live files grouped by role
+  from their filename (Maker::FileAttachment.role_for), then a collapsed Backups section, then one
+  entry per repository found inside it, then every attachment that points OUTSIDE the folder
+  ("Linked from elsewhere"). Maker::ProjectFolderListing (@listing) computes the first three;
+  ProjectsController#show computes the fourth by diffing @attachments against @listing's own node
+  ids.
 
-  `@attachments` has already had the dead ones filtered out by ProjectsController#show, against
-  `@page_nodes` (PageNodes) — a file deleted from the library leaves the project immediately, and
-  `@missing_attachment_count` is how many did, so the change is never silent. There is no "(file
-  unavailable)" tile any more: it was the only thing that branch rendered, and hiding those rows
-  makes it unreachable rather than merely rare. That partition is also why `_attachment_group`
-  dereferences `@page_nodes[...]` with no `&.` — every row reaching it has a live node.
+  THE FOLDER AND THE RELATION ARE TWO DIFFERENT THINGS, AND THE PANEL SHOWS BOTH. `@attachments` is
+  the file→project RELATION ProjectsController#show has always computed (detach, cover, addon
+  origin, the missing count) — but a file dropped straight into the project's folder on the NAS is
+  listed here even though nothing ever attached it: the folder IS the relation for a plain folder
+  row, whose `attachment` is nil. A file that IS attached but still lives somewhere else in the
+  library renders once, in Linked, with Detach and a button to move it in. `@page_nodes` (PageNodes)
+  is what the Linked rows below (and the build-log photos elsewhere on this page) read to find
+  their node; a folder row needs no such lookup — its node comes straight off `@listing.files`.
 
-  `@page_thumbs` (ThumbnailMap) is best-effort and INDEPENDENT OF THAT, which is the distinction to
-  keep: a backend blip degrades a tile to its format badge, a different condition from the file
-  being gone. It is exactly why liveness reads `nodes.present` and not the port — ThumbnailMap
-  rescues FetchError to {}, so an unmounted NAS would otherwise empty this panel and report every
-  file deleted. Pinned by page_nodes_test.rb.
+  `@missing_attachment_count` — attached rows whose node ProjectsController#show could not find
+  live at all — is unrelated to either list above and is reported on its own, below.
+
+  `@page_thumbs` (ThumbnailMap) is best-effort and INDEPENDENT OF LIVENESS, which is the distinction
+  to keep: a backend blip degrades a tile to its format badge, a different condition from a file
+  being gone. It is exactly why liveness reads `nodes.present` and not the port, for the folder
+  listing as much as for the Linked rows — ThumbnailMap rescues FetchError to {}, so an unmounted
+  NAS would otherwise empty this panel and report every file deleted. Pinned by page_nodes_test.rb.
 
   ONE `thumbs` controller wraps every group rather than one per grid: Stimulus finds targets
   anywhere in the controller element's subtree, so a single instance polls all pending cells on the
@@ -21,11 +31,16 @@
 
   NATIVE <details>, NOT A STIMULUS CONTROLLER: collapsing is what the element is for, it works
   before any JavaScript loads, and `models/_file_tree.html.erb` already uses it for exactly this.
-  Open by default, because the panel's job is to show a project's files.
+  Open by default, because the panel's job is to show a project's files — Backups is the one
+  section that starts closed (see below).
 %>
 <section class="panel attachments-panel">
   <div class="panel-head">
     <h2>Files</h2>
+    <%# The folder's own path, so the panel says WHERE it is showing, not just what. Nothing to
+        link to when the folder ensure failed this render (an unmounted NAS, a bucket blip) — the
+        upload control below already degrades the same way for the same reason. %>
+    <%= link_to @listing.path, files_path(folder: @listing.folder_id), class: "panel-path mono muted" if @listing.available? %>
     <div class="panel-actions">
       <%# "Look at my library NOW", instead of waiting on library_scan's 15 minutes (share/s3) or
           remote_changelog_pull's 2 (chunk_remote). It scans the LIBRARY, not this folder — a scan
@@ -50,35 +65,44 @@
           data-scanreload-url-value="<%= project_path(@project) %>"></span>
   <% end %>
 
-  <% if @attachments.empty? && @missing_attachment_count.zero? %>
-    <p class="muted">No files attached yet.</p>
+  <%# BACKUPS COME OUT FIRST, and they are keyed on the NODE's name rather than any attachment's
+      label — a folder row carries no attachment at all, and Row#backup? always reads the node.
+      They keep their own section at the bottom instead of being dropped: a rescue copy is still a
+      real file in the project's folder, and a panel that pretended otherwise would be lying about
+      what is on disk. %>
+  <% backups, live = @listing.files.partition(&:backup?) %>
+  <%# Fold anything off-vocabulary into "other" rather than dropping it. Row#role (FileAttachment
+      .role_for) is TOTAL over ROLE_LABELS' own keys, so the "other" fallback below cannot trigger
+      today — but the render iterates ROLE_LABELS, so without it an unrecognized role would render
+      NOWHERE, and a file silently missing from a user's project is a far worse failure than one
+      filed under the wrong heading. %>
+  <% grouped = live.group_by { |r| Maker::FileAttachment::ROLE_LABELS.key?(r.role) ? r.role : "other" } %>
+  <% if live.empty? && backups.empty? && @linked_rows.empty? && @listing.repos.empty? && @missing_attachment_count.zero? && !@listing.truncated? %>
+    <p class="muted">No files in this project yet.<% if @listing.available? %> Upload one, or drop files into <span class="mono"><%= @listing.path %></span>.<% end %></p>
   <% else %>
-    <%# Group by role, but fold anything off-vocabulary into "other" rather than dropping it. Every
-        writer of `role` currently routes through role_for (total) or the model validation, so this
-        cannot trigger today — but the render iterates ROLE_LABELS, so without this an unrecognized
-        role renders NOWHERE. A file silently vanishing from a user's project is a far worse failure
-        than one filed under the wrong heading, and role_for's own unknown-extension default makes
-        "other" the obvious bucket.
-
-        BACKUPS COME OUT FIRST, and they are keyed on the NODE's name rather than the attachment's
-        `label`, because the name is what LightBurn wrote and the label is whatever a user may since
-        have typed. They keep their own section at the bottom instead of being dropped: a rescue copy
-        is still a real file in the project's folder, and a panel that pretended otherwise would be
-        lying about what is on disk. %>
-    <% backups, live = @attachments.partition { |a| Maker::FileAttachment.backup?(@page_nodes[a.node_id].name) } %>
-    <% grouped = live.group_by { |a| Maker::FileAttachment::ROLE_LABELS.key?(a.role) ? a.role : "other" } %>
     <div data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
       <% Maker::FileAttachment::ROLE_LABELS.each do |role, label| %>
         <% group = grouped[role] %>
         <% next if group.blank? %>
-        <%= render "attachment_group", key: role, label: label, group: group, open: true %>
+        <%= render "attachment_group", key: role, label: label, rows: group, open: true %>
       <% end %>
 
       <%# COLLAPSED, and that is the whole of "don't show the backups": they are one click away
           rather than gone, so nothing about the project's folder is hidden from someone looking
           for it. %>
       <% if backups.any? %>
-        <%= render "attachment_group", key: "backups", label: "Backups", group: backups, open: false %>
+        <%= render "attachment_group", key: "backups", label: "Backups", rows: backups, open: false %>
+      <% end %>
+
+      <% if @listing.repos.any? %>
+        <%= render "repo_group", repos: @listing.repos %>
+      <% end %>
+
+      <%# ATTACHED, BUT LIVING ELSEWHERE. Not a folder row and not counted in @listing.total — its
+          own section, always open, so it reads as "these still need your attention" rather than
+          being buried among the folder's own files. %>
+      <% if @linked_rows.any? %>
+        <%= render "attachment_group", key: "linked", label: "Linked from elsewhere", rows: @linked_rows, open: true %>
       <% end %>
     </div>
 
@@ -88,5 +112,17 @@
         <%= link_to "Check the trash", trash_index_path %>
       </p>
     <% end %>
+  <% end %>
+
+  <%# OUTSIDE the empty check on purpose: a walk that hit DIR_CAP before reaching a single file
+      would otherwise say "No files in this project yet" and nothing else (found in review). Two
+      sentences for two caps — `total` counts only the dirs that were walked, so "0 of 0" is not
+      what a cut-short walk means. %>
+  <% if @listing.truncated? %>
+    <p class="muted attachments-truncated">
+      <% if @listing.files.size < @listing.total %>Showing <%= @listing.files.size %> of <%= @listing.total %> files.<% end %>
+      <% if @listing.dir_cap_hit? %>Not every subfolder was listed.<% end %>
+      <%= link_to "Open the folder", files_path(folder: @listing.folder_id) %>
+    </p>
   <% end %>
 </section>

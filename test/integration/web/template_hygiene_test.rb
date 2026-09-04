@@ -111,6 +111,15 @@ module Web
       @project.file_attachments.create!(user: @user, node_id: "n-bak", role: "laser", position: 1)
       @project.file_attachments.create!(user: @user, node_id: "gone", role: "model",
                                         label: "ghost.stl", position: 2)
+      # ONE REPOSITORY INSIDE THE PROJECT'S FOLDER, OR projects/_repo_group IS NEVER RENDERED. A
+      # dir with a `.git` marker child under the folder is what makes
+      # Maker::ProjectFolderListing#repos non-empty, so "project detail" below sweeps it — the
+      # same argument the `d-laser` comment two attachments up makes for models/_file_tree.
+      folder = project_folder_rows!(@user, @project)
+      firmware = @user.nodes.create!(node_id: "d-firmware", name: "firmware", kind: "dir",
+                                     parent_node_id: folder.node_id)
+      @user.nodes.create!(node_id: "d-firmware-git", name: Library::RepoMetadata::DIR_NAME,
+                          kind: "dir", parent_node_id: firmware.node_id)
       @project.tasks.create!(user: @user, title: "Cut the base", status: "todo", position: 0)
       @project.build_log_entries.create!(user: @user, body: "Cut the base tonight.",
                                          logged_at: Time.current)

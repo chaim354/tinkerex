@@ -13,10 +13,23 @@ module Web
                            password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
       @project = @user.maker_projects.create!(name: "Desk Lamp", description: "An articulated lamp.")
+      # BOTH FILES LIVE IN THE PROJECT'S FOLDER, not at the library root: the stats line's file
+      # count is now Maker::ProjectFolderListing#total (the folder), not maker_file_attachments —
+      # an attachment to a node outside the folder is the Linked case, set up separately below so
+      # it does not inflate this count.
+      folder = project_folder_rows!(@user, @project)
       %w[base.stl shade.3mf].each_with_index do |name, i|
-        @user.nodes.create!(node_id: "n-#{i}", name:, kind: "file", mtime: 1_000_000_000, size: 10)
+        @user.nodes.create!(node_id: "n-#{i}", name:, kind: "file", parent_node_id: folder.node_id,
+                            mtime: 1_000_000_000, size: 10)
         @project.file_attachments.create!(user: @user, node_id: "n-#{i}", role: "model")
       end
+      # THE LINKED CASE: attached to this project, but the node lives elsewhere in the library. It
+      # is what "1 linked" below is about, and it is also the ONE attachment tile on this page that
+      # carries Detach — a plain folder file has nothing to detach (the folder IS its relation).
+      @user.nodes.create!(node_id: "n-linked", name: "spare.stl", kind: "file",
+                          mtime: 1_000_000_000, size: 10)
+      @linked_attachment = @project.file_attachments.create!(user: @user, node_id: "n-linked",
+                                                              role: "model")
       @project.tasks.create!(user: @user, title: "Print the base", status: "done", position: 0)
       @project.tasks.create!(user: @user, title: "Wire the LED", status: "todo", position: 1)
       @project.tasks.create!(user: @user, title: "Design the clip", status: "todo", position: 2)
@@ -30,6 +43,7 @@ module Web
       assert_response :success
       assert_select ".project-head .page-title h1", text: "Desk Lamp"
       assert_select ".project-stats", text: /2 files/
+      assert_select ".project-stats", text: /1 linked/
       assert_select ".project-stats", text: /1 of 3 tasks done/
       assert_select ".project-stats", text: /1 log entry\b/
       assert_select ".project-stats", text: /1 sheet\b/
@@ -42,10 +56,13 @@ module Web
       assert_select ".head-actions form[action=?] button.btn.danger", project_path(@project), text: "Archive"
     end
 
+    # DETACH IS THE LINKED ROW'S CONTROL, ONLY. base.stl/shade.3mf are plain folder files now (no
+    # tile-meta corner at all — folder_files_do_not_get_detach in project_attachments_test.rb pins
+    # that directly); @linked_attachment is the one tile this page renders with a Detach button.
     test "attachment tiles carry Detach as a corner control that keeps its text" do
       get project_path(@project)
       assert_select ".attachments-panel .attachment-tile .tile-meta form[action=?] button.tile-detach",
-                    attachment_path(@project.file_attachments.first), text: "Detach"
+                    attachment_path(@linked_attachment), text: "Detach"
     end
 
     test "task rows carry a state mark and the composer sits below the list" do

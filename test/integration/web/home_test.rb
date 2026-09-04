@@ -32,9 +32,15 @@ module Web
       project.tasks.create!(user: @user, title: "Wire the LED", status: "todo", position: 0)
       project.tasks.create!(user: @user, title: "Print the base", status: "done", position: 1)
       project.build_log_entries.create!(user: @user, entry_type: "note", logged_at: 1.day.ago, body: "<div>Shade printed.</div>")
+      # THE HERO'S FILE COUNT IS THE FOLDER'S (Maker::ProjectFolderListing#total, the same thing
+      # projects#show's own stats line reads) — one file placed straight in the project's folder.
+      folder = project_folder_rows!(@user, project)
+      @user.nodes.create!(node_id: "n-hero-file", name: "bracket.stl", kind: "file",
+                          parent_node_id: folder.node_id, mtime: 1_000_000_000, size: 5)
       patch current_project_path, params: { project_id: project.id }
       get root_path
       assert_select ".home-hero h2 a[href=?]", project_path(project), text: "Desk Lamp"
+      assert_select ".home-hero .project-stats", text: /1 file\b/
       assert_select ".home-hero .project-stats", text: /1 of 2 tasks done/
       assert_select ".home-hero .hero-tasks .task-row .task-state--todo", count: 1
       assert_select ".home-hero .hero-tasks", text: /Wire the LED/
@@ -49,6 +55,20 @@ module Web
       else
         assert_select ".home-hero [data-uploader-redirect-url-value=?]", root_path
       end
+    end
+
+    # THE COUNT IS THE FOLDER'S, NOT maker_file_attachments'. An attachment to a node OUTSIDE the
+    # project's folder (the Linked case) must not inflate the hero the way it no longer inflates
+    # the project page's own stats line — HomeController#index and ProjectsController#show read
+    # the identical Maker::ProjectFolderListing#total.
+    test "an attachment to a node outside the folder does not count toward the hero's files" do
+      project = @user.maker_projects.create!(name: "Desk Lamp")
+      @user.nodes.create!(node_id: "n-root", name: "loose.stl", kind: "file",
+                          mtime: 1_000_000_000, size: 5)
+      project.file_attachments.create!(user: @user, node_id: "n-root", role: "model")
+      patch current_project_path, params: { project_id: project.id }
+      get root_path
+      assert_select ".home-hero .project-stats", text: /0 files/
     end
 
     test "the recent rows are bounded and newest first" do

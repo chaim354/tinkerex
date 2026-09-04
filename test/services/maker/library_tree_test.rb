@@ -115,6 +115,29 @@ module Maker
       assert_equal %w[d-enc d-models d-parts], Maker::LibraryTree.new(@user).dir_ids.sort
     end
 
+    # THE INDEX Maker::ProjectFolderListing WALKS. A file child and a tombstoned dir child must
+    # both be absent -- the walk this feeds only ever enters LIVE dirs.
+    test "children_of a dir returns its live dir children only -- a tombstoned or file child is absent" do
+      dir("d-enc-dead", "Dead", "d-models").update!(deleted: true)
+      @user.nodes.create!(node_id: "f-readme", name: "readme.txt", kind: "file",
+                          parent_node_id: "d-models", mtime: 1, size: 1)
+      tree = Maker::LibraryTree.new(@user)
+      assert_equal [ "d-enc" ], tree.children_of("d-models").map(&:node_id)
+    end
+
+    test "children_of an unknown id is empty, not a raise" do
+      assert_equal [], Maker::LibraryTree.new(@user).children_of("nope")
+    end
+
+    # THE MEMO IS THE POINT, same argument as path_for's -- a per-level `where(parent_node_id:)`
+    # is exactly the per-file query this class exists to avoid.
+    test "children_of asked twice issues no second query" do
+      tree = Maker::LibraryTree.new(@user)
+      first = tree.children_of("d-models").map(&:node_id)
+      after = count_queries { assert_equal first, tree.children_of("d-models").map(&:node_id) }
+      assert_equal 0, after
+    end
+
     test "the index costs one query regardless of how many dirs there are" do
       before = count_queries { Maker::LibraryTree.new(@user) }
       12.times { |i| dir("bulk-#{i}", "bulk#{i}", nil) }

@@ -90,9 +90,25 @@ module Web
 
     test "projects#show does not grow with attachments, tasks or build-log entries" do
       project = @user.maker_projects.create!(name: "Budgeted", status: "active")
+      # THE FOLDER, NOT JUST THE RELATION, HAS TO GROW TOO. Since stage 2's S2-2 the panel's file
+      # list is Maker::ProjectFolderListing (one dirs pluck, one capped files query, one count),
+      # and it is a genuinely separate code path from @attachments -- an eager load missing on
+      # either side is invisible unless BOTH grow, which is the exact shape this file's own header
+      # names for build-log rich text (flat, then +1 query per entry, whole suite green).
+      folder = project_folder_rows!(@user, project)
       add = lambda do |prefix, count|
         count.times do |i|
           id = "#{prefix}#{i}"
+          # A SUBFOLDER PER ITERATION exercises the dir WALK (collect_dirs), not merely the row
+          # count a flat folder would grow.
+          sub = @user.nodes.create!(node_id: "#{id}-dir", name: id, kind: "dir",
+                                    parent_node_id: folder.node_id, size: 0,
+                                    mtime: 1_700_000_000_000_000_000)
+          @user.nodes.create!(node_id: "#{id}-file", name: "#{id}.stl", kind: "file",
+                              parent_node_id: sub.node_id, size: 1,
+                              mtime: 1_700_000_000_000_000_000,
+                              content_hash: "h-#{id}", current_version_id: "v-#{id}")
+          # THE LINKED CASE: an attachment to a node OUTSIDE the folder, growing @linked_rows.
           node!(id, "#{id}.stl")
           project.file_attachments.create!(user: @user, node_id: id, role: "model")
           project.tasks.create!(user: @user, title: "task #{id}")
@@ -201,10 +217,19 @@ module Web
     test "home#index does not grow with projects, files, runs or tasks" do
       hero = @user.maker_projects.create!(name: "Hero", status: "active")
       patch current_project_path, params: { project_id: hero.id }
+      # THE HERO'S FOLDER GROWS TOO — a subfolder with a file per step — because the hero now counts
+      # the folder through Maker::ProjectFolderListing, and a listing budgeted over an EMPTY folder
+      # cannot see a per-dir query: the review's per-dir mutation reddened projects#show and left this
+      # test green until the folder was seeded (2026-09-04).
+      hero_folder = project_folder_rows!(@user, hero)
       add = lambda do |prefix, count|
         count.times do |i|
           id = "#{prefix}#{i}"
           node!(id, "#{id}.stl")
+          sub = @user.nodes.create!(node_id: "#{id}-dir", name: "sub-#{id}", kind: "dir",
+                                    parent_node_id: hero_folder.node_id, mtime: 1, size: 0)
+          @user.nodes.create!(node_id: "#{id}-in", name: "#{id}.pdf", kind: "file",
+                              parent_node_id: sub.node_id, mtime: 1, size: 1)
           project = @user.maker_projects.create!(name: "P #{id}", status: "active")
           project.file_attachments.create!(user: @user, node_id: id, role: "model")
           model = @user.maker_models.create!(title: "M #{id}", slug: "m-#{id}")

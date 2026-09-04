@@ -22,17 +22,25 @@ class HomeController < ApplicationController
   def index
     @project = current_project
     if @project
+      # THE WRITER RUNS FIRST, on purpose: current_project_folder_node_id (re)creates the project's
+      # folder (best-effort — see its own comment), and @hero_stats[:files] below reads that same
+      # folder through Maker::ProjectFolderListing, which only ever READS folder_node_id. Computing
+      # the count before the ensure would ask about whatever folder_node_id happened to already be
+      # on the row, exactly the ordering ProjectsController#show now also pins.
+      @upload_parent_node_id = current_project_folder_node_id
       tasks = @project.tasks.order(:position, :created_at).to_a
       @hero_tasks = tasks.reject { |t| t.status == "done" }.first(HERO_TASKS)
       @hero_stats = {
-        files: @project.file_attachments.count,
+        # THE SAME COUNT projects#show shows: the project's FOLDER, not maker_file_attachments — an
+        # attachment to a node living elsewhere in the library (the Linked case) must not inflate
+        # the hero the way it no longer inflates the project page's own stats line.
+        files: Maker::ProjectFolderListing.new(current_user, @project, load_files: false).total,
         tasks_done: tasks.count { |t| t.status == "done" },
         tasks_total: tasks.size,
         entries: @project.build_log_entries.count,
         sheets: @project.sheets.count
       }
       @hero_entry = @project.build_log_entries.includes(:rich_text_body).reorder(logged_at: :desc).first
-      @upload_parent_node_id = current_project_folder_node_id
     end
 
     # `.includes(:file_attachments)` is load-bearing, not decoration: `cover_node_id` falls back to
