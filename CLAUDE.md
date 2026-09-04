@@ -431,9 +431,9 @@ Each line below cost a real bug **in this repo**. the record (§11) has the full
 them. Invariants belonging to the sync engine or the desktop client live in those repos'
 own CLAUDE.md — see §3 and §14j.
 
-**Seven subsections live in `docs/invariants/` and are stubs here** — 14c (addons), 14f (project
+**Eight subsections live in `docs/invariants/` and are stubs here** — 14c (addons), 14f (project
 intake), 14g (deploy secrets), 14h (Measure), 14i (backup), 14k (the model catalog), 14l (git
-editing). They are §14 material, not an appendix: each binds hard inside its own subsystem and not
+editing), 14m (the design system). They are §14 material, not an appendix: each binds hard inside its own subsystem and not
 at all outside it, so it is loaded when it applies rather than skimmed on every unrelated session.
 **Read the file before touching the paths its stub names.** Anything below that binds on only one
 area belongs there too, with a stub here.
@@ -1199,6 +1199,16 @@ Eighteen rules there; the ones most often undone: bytes the catalog tracks go th
 bytes git owns never do; ask `local_worktree?`, never an adapter class; `index.clear` is never
 written; content against HEAD's blob, never a stat; a `.lock` is refused, never deleted; the history
 walk is ALWAYS capped and `stopped` reaches the view; restore writes a pending edit, never a commit.
+
+### 14m. The web shell and design system → **`docs/invariants/design-system.md`**
+
+**Read that file before touching** `app/assets/stylesheets/`, `app/views/layouts/`,
+`app/helpers/shell_helper.rb`, the `theme`/`rail`/`toast` Stimulus controllers, or any template's
+class names. Twelve rules there; the ones most often undone: the `@layer` order opens
+`application.css` and every rule of ours is layered, `vendor-overrides.css` alone is not; a
+component selector is defined in `components.css` and nowhere else; theme and rail state are
+cookies the layout renders, never an inline script; the classes the tests pin and the 52 the addon
+bundles build markup with keep their names through any restyle. Guard: `test/css_hygiene_test.rb`.
 
 ## 15. Working agreements for the coding agent
 

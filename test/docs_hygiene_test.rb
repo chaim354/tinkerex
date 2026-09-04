@@ -54,7 +54,14 @@ class DocsHygieneTest < ActiveSupport::TestCase
   # OVER and the answer was to tighten that prose, not to raise this number. It landed one line
   # under, and banking that line for the next unrelated addition is exactly what a ratchet exists to
   # prevent. CLAUDE.md is 1,354 lines today.
-  MAX_LINES = 1_354
+  #
+  # RAISED 1,354 -> 1,364 ON 2026-09-03 FOR THE §14m STUB pointing at docs/invariants/design-system.md
+  # (the web shell and design system arc). The same argument as 14l, and the same shape: the twelve
+  # rules of the design system stayed OUT of this file, and what landed is the ten-line pointer that
+  # makes them findable by the mechanism every other area file uses. The file sat at EXACTLY the
+  # ceiling when the arc began, so the raise is the stub's whole cost and not a line more — the
+  # preamble's "Seven subsections" became "Eight" on its own line without wrapping.
+  MAX_LINES = 1_364
 
   test "CLAUDE.md stays under its line ceiling" do
     lines = CLAUDE_MD.readlines.size
@@ -204,7 +211,7 @@ class DocsHygieneTest < ActiveSupport::TestCase
     # scanning an empty set (§14e): it reports success over what it never checked. TWICE IS A
     # PATTERN, so the rule is now written down rather than left to be noticed a third time —
     # ADD THE ANCHOR HERE IN THE SAME COMMIT THAT CREATES THE STUB.
-    moved = %w[14c 14f 14g 14h 14i 14k 14l]
+    moved = %w[14c 14f 14g 14h 14i 14k 14l 14m]
 
     moved.each do |anchor|
       assert_match(/^### #{anchor}\. /, claude,
