@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_28_160000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_04_220446) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -164,6 +164,15 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_28_160000) do
     t.string "version_id"
     t.index ["user_id", "attachable_type", "attachable_id", "node_id"], name: "index_maker_file_attachments_uniqueness", unique: true
     t.index ["user_id", "node_id"], name: "index_maker_file_attachments_on_user_id_and_node_id"
+  end
+
+  create_table "maker_filing_rules", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "ext", null: false
+    t.string "folder", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "ext"], name: "index_maker_filing_rules_on_user_id_and_ext", unique: true
   end
 
   create_table "maker_inventory_items", force: :cascade do |t|
@@ -463,6 +472,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_28_160000) do
   add_foreign_key "maker_addon_files", "maker_addon_states", column: "addon_state_id"
   add_foreign_key "maker_addon_state_revisions", "maker_addon_states", column: "addon_state_id"
   add_foreign_key "maker_addon_states", "users"
+  add_foreign_key "maker_filing_rules", "users"
   add_foreign_key "maker_repo_edits", "users"
   add_foreign_key "nodes", "users"
   add_foreign_key "remote_manifest_chunks", "users"

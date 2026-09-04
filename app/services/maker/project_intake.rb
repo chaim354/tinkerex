@@ -159,16 +159,18 @@ module Maker
     # the reason #live_folder reads `folder_node_id` rather than calling
     # Project#ensure_library_folder!. A folder that does not exist yet simply cannot be occupied.
     #
-    # THE FOLDER NAME COMES FROM Maker::ProjectFolders.folder_for — the same pure function #place
-    # uses a moment later, so what this predicts and what the sweep does cannot disagree. Not a
-    # second copy of the vocabulary (§14d: add an extension in ROLE_BY_EXT only).
+    # THE FOLDER NAME COMES FROM Maker::ProjectFolders.folder_for(user, name) — reading the SAME
+    # per-user filing rules #place's own memoized lookup reads a moment later (#folder_for below),
+    # so what this predicts and what the sweep does cannot disagree as long as the user's rules
+    # have not changed in between. Not a second copy of the vocabulary (§14d: add an extension in
+    # ROLE_BY_EXT only; stage 3 S3-1: edit a folder at /settings/filing, not here).
     def self.destination_for(user:, parent_node_id:, name:)
       return nil if parent_node_id.blank?
 
       project = user.maker_projects.find_by(folder_node_id: parent_node_id)
       return nil unless project
 
-      folder_name = Maker::ProjectFolders.folder_for(name)
+      folder_name = Maker::ProjectFolders.folder_for(user, name)
       folder = user.nodes.present.find_by(parent_node_id:, name: folder_name, kind: "dir")
       occupied = folder && user.nodes.present.find_by(parent_node_id: folder.node_id, name:,
                                                       kind: "file")
@@ -442,6 +444,30 @@ module Maker
       @live_folder ||= @user.nodes.present.find_by(node_id: @project.folder_node_id, kind: "dir")
     end
 
+    # STAGE 3, S3-1: THE USER'S FILING RULES, READ ONCE FOR THIS INSTANCE'S WHOLE SWEEP — never
+    # once per file. #place asks #folder_for below for every node #file_all's loop visits, and
+    # without this memo that would call Maker::FilingRules.for(@user) — an `exists?` guard plus a
+    # `pluck` — up to MAX_MOVES (500) times for a run that needs the answer exactly once. The fix
+    # is the same shape #live_folder just above and #attach_policy below already use: one memo per
+    # ProjectIntake INSTANCE, and an instance is itself scoped to one project's sweep (see
+    # .for_user's loop, which builds a fresh instance per project) — so this is "once per project's
+    # sweep," the same per-parent-not-per-node granularity docs/invariants/project-intake.md
+    # already records for AttachToProject#refusal_for's own memo, not "once for a user's whole
+    # multi-project run."
+    def filing_rules
+      @filing_rules ||= Maker::FilingRules.for(@user)
+    end
+
+    # THE SAME TWO-LINE LOOKUP AS Maker::ProjectFolders.folder_for(user, name), reading the
+    # memoized #filing_rules HASH DIRECTLY instead of that method's own per-call
+    # Maker::FilingRules.for(@user) — the entire reason this exists rather than just calling that
+    # method here. Maker::ProjectFolders.ext_of is still the one definition of "how to pull an
+    # extension out of a name," so this does not duplicate the vocabulary itself, only the one
+    # memoized-hash fetch around it.
+    def folder_for(name)
+      filing_rules.fetch(Maker::ProjectFolders.ext_of(name), "other")
+    end
+
     # Every live FILE in the folder's subtree, breadth-first — ONE QUERY PER LEVEL, not per node.
     #
     # A `dir` is descended into and a `file` is collected; a SYMLINK is neither, so it is ignored
@@ -706,7 +732,7 @@ module Maker
       refusal = attach_policy.refusal_for(node, within_own_folder: true)
       return refusal if refusal
 
-      dest = Maker::ProjectFolders.folder_for(node.name)
+      dest = folder_for(node.name)
       # Before create_child! and Maker::MoveNode.call, so a dry run creates no folder and writes
       # nothing — the reason it is a `dry run` and not a `report`.
       #

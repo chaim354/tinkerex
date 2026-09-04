@@ -412,6 +412,21 @@ module Maker
       assert_equal "design", parent_name(node)
     end
 
+    # STAGE 3, S3-1: THE SWEEP OBEYS THE USER'S OWN FILING RULES, NOT JUST ROLE_FOLDERS' DEFAULT.
+    # Edited after the seed, the way a real visit to /settings/filing would leave it -- #place
+    # reads Maker::FilingRules.for(@user) once per sweep (see ProjectIntake#filing_rules), so an
+    # edit made before this sweep runs is exactly what it is meant to see.
+    test "a user's own filing rule overrides the seeded default" do
+      Maker::FilingRules.seed!(@user)
+      @user.maker_filing_rules.find_by!(ext: "stl").update!(folder: "prints")
+      node = file("bracket.stl")
+
+      result = intake
+
+      assert_equal 1, result.moved
+      assert_equal "prints", parent_name(node)
+    end
+
     test "each category gets its own folder, created only when needed" do
       svg = file("panel.svg")
       nc = file("pocket.nc")

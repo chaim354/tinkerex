@@ -70,6 +70,10 @@ class User < ApplicationRecord
   has_many :maker_build_log_entries, class_name: "Maker::BuildLogEntry", dependent: :destroy
   has_many :maker_locations, class_name: "Maker::Location", dependent: :destroy
   has_many :maker_suppliers, class_name: "Maker::Supplier", dependent: :destroy
+  # Stage 3, S3-1: the per-user extension map (Maker::FilingRules, /settings/filing). `:destroy`
+  # for the same reason as the reference lists just above -- no callbacks, no dependents, nothing
+  # a faster delete would need to skip.
+  has_many :maker_filing_rules, class_name: "Maker::FilingRule", dependent: :destroy
   # `:destroy`, not `:delete_all`, only because there is no reason to reach for the faster one:
   # the row carries no callbacks and no dependents. What is NOT optional is that this line
   # exists at all -- without it, TenantCleanupTest fails three ways at once, and the one that

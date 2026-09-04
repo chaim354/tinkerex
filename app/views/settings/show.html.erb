@@ -18,6 +18,10 @@
     <span class="settings-fact"><%= pluralize(@location_count, "location") %></span>
   </li>
   <li>
+    <%= link_to "Filing", settings_filing_rules_path, class: "settings-name" %>
+    <span class="settings-fact"><%= pluralize(@filing_rule_count, "rule") %></span>
+  </li>
+  <li>
     <%= link_to "Tags", settings_tags_path, class: "settings-name" %>
     <span class="settings-fact"><%= pluralize(@tag_count, "tag") %></span>
   </li>

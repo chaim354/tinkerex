@@ -84,7 +84,7 @@ class FilesControllerPreviewKindTest < ActiveSupport::TestCase
   # WOULD need one.
   test "viewing scad as text did not move its role or its folder" do
     assert_equal "cad_source", Maker::FileAttachment.role_for("bracket.scad")
-    assert_equal "cad", Maker::ProjectFolders.folder_for("bracket.scad")
+    assert_equal "cad", Maker::ProjectFolders.default_folder_for("bracket.scad")
   end
 
   # EVERY ENTRY MUST BE DOING WORK. An extension whose role is already a text role reaches the
@@ -174,7 +174,7 @@ class FilesControllerPreviewKindTest < ActiveSupport::TestCase
   # mutation that cannot express the defect proves nothing about the guard.
   test "previewing an extensionless text file did not move its role or its folder" do
     assert_equal "other", Maker::FileAttachment.role_for("LICENSE")
-    assert_equal "other", Maker::ProjectFolders.folder_for("LICENSE")
+    assert_equal "other", Maker::ProjectFolders.default_folder_for("LICENSE")
   end
 
   # THE DERIVATION ASSERTED AS A PROPERTY: every extension whose role is a text role must actually

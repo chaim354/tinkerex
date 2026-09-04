@@ -240,7 +240,9 @@ module Web
         # Stage 2, S2-6. @project wears "laser" (setup above), so this renders a non-empty list --
         # the settings hub itself needs no fixture, it only counts what setup already created.
         "settings" => settings_path,
-        "settings/tags" => settings_tags_path
+        "settings/tags" => settings_tags_path,
+        # Stage 3, S3-1. Needs no fixture: #index seeds its own rows on first visit.
+        "settings/filing" => settings_filing_rules_path
       }
     end
 

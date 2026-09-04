@@ -17,6 +17,18 @@ them (`.rb`, `.py`, `.gcode`, `.yml`, `.csv`, `.scad`, every `.c` and `.h`) got 
 and a **blank grid cell** — `Enqueue.call` returns nil for a name no renderer claims, so no row is
 ever created. No test spanned the two layers; each table looked right alone.
 
+**STAGE 3, S3-1: `ROLE_BY_EXT` IS NOW THE SEED OF THE FILING MAP, NOT THE FILING MAP ITSELF.**
+`Maker::ProjectFolders.folder_for(user, name)` no longer answers straight out of `ROLE_BY_EXT` +
+`ROLE_FOLDERS` — it reads `Maker::FilingRules.for(user)`, a per-user table seeded ONCE from those
+two (`ROLE_BY_EXT`'s extension → role → `ROLE_FOLDERS`'s role → folder) on a user's first read, then
+edited at `/settings/filing`. That does not loosen this file's own rule: an extension still needs a
+`ROLE_BY_EXT` entry to be SEEDED with any folder at all (an extension nobody has wired stays
+answerable only as `"other"`, the fallback every per-user row lookup shares), so "add an extension
+in `ROLE_BY_EXT` only" is still where a new extension's file-type identity is decided — it is only
+the FILING destination that a user may now override afterward. `default_folder_for(name)` is the
+old pure function preserved verbatim (no user, no override) for the seed's own use and for a
+caller with no user in hand.
+
 Two consequences of the one table:
 
 - Every extension must satisfy `FilesController::EXT_RE` (`/\A[a-z0-9]{1,8}\z/`) or it renders a

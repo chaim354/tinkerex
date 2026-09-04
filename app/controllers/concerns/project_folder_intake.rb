@@ -113,11 +113,13 @@ module ProjectFolderIntake
   # (CLAUDE.md's rule for a verb more than one caller performs, applied to a sentence here rather
   # than to a branch).
   #
-  # `Maker::ProjectFolders.folder_for(name)` — NOT A FIELD ON THE Result, WHICH DOESN'T CARRY ONE —
-  # recomputes the destination category folder from the name alone. That is safe, not a guess:
-  # #place (app/services/maker/project_intake.rb) computes that exact same `dest` from that exact
-  # same name, via that exact same pure function, before the collision it hit ever entered the
-  # picture — so asking again here, after the fact, cannot disagree with what #place already knew.
+  # `Maker::ProjectFolders.folder_for(current_user, name)` — NOT A FIELD ON THE Result, WHICH
+  # DOESN'T CARRY ONE — recomputes the destination category folder from the user and the name
+  # alone. That is safe, not a guess: #place (app/services/maker/project_intake.rb) computes that
+  # exact same `dest` from that exact same user's filing rules and that exact same name, via the
+  # same ext-keyed lookup, before the collision it hit ever entered the picture — so asking again
+  # here, after the fact, cannot disagree with what #place already knew (stage 3, S3-1: the
+  # lookup is now per-user, so it takes current_user where it once took the name alone).
   #
   # WORDED AS SUCCESS, NOT AS A FAILURE — because it is one: the file WAS uploaded and IS attached
   # to the project, exactly as durable as the file that DID get filed (Maker::AttachToProject's
@@ -147,7 +149,7 @@ module ProjectFolderIntake
     return "#{lead}." unless left_unfiled_by_conflict?(intake_result, filename)
 
     "#{lead}, but a file of that name is already in " \
-      "#{Maker::ProjectFolders.folder_for(filename)}/, so this one stayed at the project root."
+      "#{Maker::ProjectFolders.folder_for(current_user, filename)}/, so this one stayed at the project root."
   end
 
   # The first of `names` this sweep left at the project root because its destination category folder
