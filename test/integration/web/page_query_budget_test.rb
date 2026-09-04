@@ -116,6 +116,17 @@ module Web
                               parent_node_id: sub.node_id, size: 1,
                               mtime: 1_700_000_000_000_000_000,
                               content_hash: "h-#{id}", current_version_id: "v-#{id}")
+          # TWO LEVELS DEEP, A REPO MARKER AND A GENERATED FILE (S3-1): the tree nests, a working
+          # tree is a section, and the Generated group reads one origin hash — each a path a
+          # per-row read could hide in if the seed never reached it (found in review).
+          deep = @user.nodes.create!(node_id: "#{id}-deep", name: "deep", kind: "dir",
+                                     parent_node_id: sub.node_id, size: 0, mtime: 1_700_000_000_000_000_000)
+          @user.nodes.create!(node_id: "#{id}-deep-file", name: "#{id}-deep.pdf", kind: "file",
+                              parent_node_id: deep.node_id, size: 1, mtime: 1_700_000_000_000_000_000)
+          @user.nodes.create!(node_id: "#{id}-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
+                              parent_node_id: sub.node_id, size: 0, mtime: 1_700_000_000_000_000_000)
+          state = @user.maker_addon_states.create!(addon_key: "fixture", name: "gen #{id}", data: {}, revision: 1)
+          state.files.create!(node_id: "#{id}-file", role: "output", position: 0)
           # THE LINKED CASE: an attachment to a node OUTSIDE the folder, growing @linked_rows.
           node!(id, "#{id}.stl")
           project.file_attachments.create!(user: @user, node_id: id, role: "model")
@@ -135,10 +146,18 @@ module Web
         end
       end
 
+      # The generated files need an addon the source knows, or the origins are dropped and the
+      # Generated group never renders under measurement.
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [
+        { "key" => "fixture", "title" => "Fixture", "icon" => "🧪", "description" => "A fixture addon",
+          "api_version" => "1", "entry" => "fixture.js" }
+      ])
       assert_constant_queries(project_path(project),
                               -> { add.call("s", SMALL) },
                               -> { add.call("l", LARGE - SMALL) },
                               "projects#show")
+    ensure
+      Maker::Addons::Source.reset!
     end
 
     # STAGE 2, S2-4: the full BOM page renders every line, unlike the project page's capped panel

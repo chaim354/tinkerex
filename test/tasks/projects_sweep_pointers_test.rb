@@ -66,6 +66,21 @@ class ProjectsSweepPointersTaskTest < ActiveSupport::TestCase
     assert ptr.reload.deleted?, "the pointer must be tombstoned, not merely hidden"
     assert_nil ptr.storage_path, "the port's delete releases storage_path (§14a)"
     assert @user.nodes.present.exists?(node_id: "f-real"), "the real file must be untouched"
+    # THE BYTES REACHED .trash — the whole point of going through the port. A row-only tombstone
+    # (deleted + NULL storage_path, the file left on disk) satisfies the assertions above and is
+    # §14a's copy→delete→tombstone landmine; these two are what tell the two apart (review).
+    assert @root.join(".trash", "f-ptr", "bracket.stl.ptr").exist?, "the pointer's bytes must land in .trash/<node_id>/"
+    assert_not @root.join(Maker::ProjectFolders::ROOT, "desk-lamp", "bracket.stl.ptr").exist?, "the pointer must leave the folder"
+  end
+
+  test "a pointer under a sibling folder whose name merely starts with Projects is left alone" do
+    archive = dir!("dir-archive", "#{Maker::ProjectFolders::ROOT}Archive", nil)
+    file!("f-arch-real", "old.stl", archive.node_id)
+    ptr = file!("f-arch-ptr", "old.stl.ptr", archive.node_id)
+
+    invoke!
+
+    assert_not ptr.reload.deleted?, "a bare prefix match would sweep ProjectsArchive/ too (review)"
   end
 
   # DATA LOSS IF THIS WERE EVER WRONG: the pointer stands for a binary that lives elsewhere (the

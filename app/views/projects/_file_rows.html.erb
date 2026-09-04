@@ -38,7 +38,7 @@
         <td class="muted col-modified">
           <%= node.mtime ? Time.at(node.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M") : "—" %>
         </td>
-        <td class="muted col-origin"><%= origin ? origin[:label].delete_prefix("Edit in ") : "—" %></td>
+        <td class="muted col-origin"><%= origin ? origin[:title] : "—" %></td>
       </tr>
     <% end %>
   </tbody>

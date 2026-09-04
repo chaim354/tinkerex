@@ -503,6 +503,11 @@ module Web
       assert_select ".generated-group a", text: "Edit in Box Generator"
       # NOT repeated inside its own section.
       assert_select ".file-tree-section details summary", text: /models \(0\)/
+
+      # THE LIST VIEW'S ORIGIN COLUMN IS THE TOOL'S TITLE, read from the origin hash's own key —
+      # not a prefix stripped off the menu label, which a rewording would silently break (review).
+      get project_path(project, view: "list")
+      assert_select ".generated-group td.col-origin", text: "Box Generator"
     ensure
       Maker::Addons::Source.reset!
     end

@@ -72,7 +72,9 @@ namespace :projects do
     User.find_each do |user|
       tree = Maker::LibraryTree.new(user)
       user.nodes.present.where(kind: "file").where("name LIKE '%.ptr'").find_each do |ptr|
-        next unless tree.path_for(ptr.parent_node_id).to_s.start_with?(Maker::ProjectFolders::ROOT)
+        # UNDER Projects/ EXACTLY — a bare prefix would sweep a sibling named ProjectsArchive too.
+        path = tree.path_for(ptr.parent_node_id).to_s
+        next unless path == Maker::ProjectFolders::ROOT || path.start_with?("#{Maker::ProjectFolders::ROOT}/")
         real = user.nodes.present.find_by(parent_node_id: ptr.parent_node_id, name: ptr.name.delete_suffix(".ptr"))
         next puts("keep   #{ptr.name} (no real file beside it)") unless real
         puts "#{dry ? 'would delete' : 'delete'} #{tree.path_for(ptr.parent_node_id)}/#{ptr.name}"
