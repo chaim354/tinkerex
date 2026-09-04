@@ -1,0 +1,158 @@
+<%#
+  The bill of materials' table + rollup + composer — rendered by BOTH surfaces
+  (projects/_bom, the project page's capped panel; projects/boms/show, the full page) so they
+  can never drift apart the way projects/_tasks warns a per-surface copy would.
+
+  Locals:
+    lines     — EVERY line on the bom (Maker::BomRollup is built over this; nil-safe, pass [])
+    shown     — the lines the TABLE renders (a capped prefix of `lines` on the panel, all of
+                `lines` on the full page)
+    rollup    — a Maker::BomRollup over `lines`
+    nodes     — { node_id => Node } for design-file targets, the caller's PageNodes union —
+                NEVER queried per row here (CLAUDE.md §14a's constant-in-N budget test)
+    project   — the Maker::Project the composer posts against
+    bom       — the current Maker::Bom, or nil before the first line exists
+    items     — [[name, id], …] for the stock-target select
+    suppliers — [[name, id], …] for the supplier select
+    more_path — project_bom_path(project) on the panel (renders "Showing N of M"); nil on the
+                full page, which already shows every line
+%>
+<% if lines.empty? %>
+  <p class="muted">No lines yet.</p>
+<% else %>
+  <table class="table bom-lines">
+    <thead>
+      <tr>
+        <th class="col-ref">Ref</th>
+        <th class="col-target">Target</th>
+        <th class="num col-qty">Qty</th>
+        <th class="col-supplier">Supplier</th>
+        <th class="col-stock">Stock</th>
+        <th class="col-actions"></th>
+      </tr>
+    </thead>
+    <tbody>
+      <% shown.each do |line| %>
+        <% item = line.target_kind == :inventory_item ? line.inventory_item : nil %>
+        <% node = line.target_kind == :design_file ? nodes[line.node_id] : nil %>
+        <% short = item && item.quantity_cached < line.quantity %>
+        <tr class="<%= "short" if short %>">
+          <td class="col-ref mono"><%= line.reference %></td>
+          <td class="col-target">
+            <% case line.target_kind %>
+            <% when :inventory_item %>
+              <span class="badge bom-stock">stock</span>
+              <% if item %>
+                <%= link_to item.name, inventory_item_path(item) %>
+              <% else %>
+                <span class="muted">deleted item</span>
+              <% end %>
+            <% when :design_file %>
+              <span class="badge bom-file">file</span>
+              <% if node %>
+                <%= link_to node.name, file_path(node.node_id) %>
+              <% else %>
+                <span class="muted">no longer in your library</span>
+              <% end %>
+            <% when :free_text %>
+              <span class="badge bom-text">text</span>
+              <%= line.part_name %>
+            <% else %>
+              <span class="muted">—</span>
+            <% end %>
+          </td>
+          <td class="num col-qty"><%= number_with_precision(line.quantity, precision: 3, strip_insignificant_zeros: true) %> <%= line.unit %></td>
+          <td class="col-supplier"><%= line.supplier&.name %></td>
+          <td class="col-stock">
+            <% if item %>
+              <%= number_with_precision(item.quantity_cached, precision: 3, strip_insignificant_zeros: true) %> on hand<%= " — short" if short %>
+            <% end %>
+          </td>
+          <td class="col-actions">
+            <% if item %>
+              <%= button_to "Consume", consume_bom_line_path(line), class: "btn small bom-consume",
+                            form: { data: { turbo_confirm: "Consume #{number_with_precision(line.quantity, precision: 3, strip_insignificant_zeros: true)} #{item.unit} of #{item.name} for #{project.name}?" } } %>
+            <% end %>
+            <%= button_to "Remove", bom_line_path(line), method: :delete, class: "linkbtn danger small bom-remove" %>
+          </td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+
+  <% if more_path && shown.size < lines.size %>
+    <p class="bom-more"><%= link_to "Showing #{shown.size} of #{lines.size}", more_path %></p>
+  <% end %>
+
+  <%
+    fragments = [ pluralize(rollup.count, "line") ]
+    fragments << "#{rollup.stock_count} from stock" if rollup.stock_count.positive?
+    fragments << "#{rollup.file_count} #{'file'.pluralize(rollup.file_count)}" if rollup.file_count.positive?
+    fragments << "#{rollup.text_count} free text" if rollup.text_count.positive?
+    short_lines = rollup.short
+    fragments << "#{short_lines.size} short" if short_lines.any?
+    fragments << "est. #{number_to_currency(rollup.estimated_cost)} at unit cost" if rollup.estimated_cost
+  %>
+  <p class="bom-rollup"><%= fragments.join(" · ") %></p>
+<% end %>
+
+<%# scope: :bom_line — WITHOUT it, a model-less form_with(url:) has a blank object_name, and
+    fields_for-style bracketing breaks (CLAUDE.md §14d, the trap projects/_tasks.html.erb's own
+    comment records). Every field below is a plain f.* call for exactly that reason. %>
+<details class="composer bom-add">
+  <summary class="btn small">Add line</summary>
+  <%= form_with url: project_bom_lines_path(project), scope: :bom_line, method: :post, class: "bom-add-form" do |f| %>
+    <div class="bom-fields">
+      <label class="field">
+        <span>Reference</span>
+        <%= f.text_field :reference %>
+      </label>
+      <label class="field">
+        <span>Quantity</span>
+        <%= f.number_field :quantity, step: "any", value: 1 %>
+      </label>
+      <label class="field">
+        <span>Unit</span>
+        <%= f.select :unit, Maker::BomLine::UNITS %>
+      </label>
+    </div>
+
+    <%# EXACTLY ONE TARGET, CHOSEN BY THE RADIO: Projects::BomLinesController#create is what
+        actually enforces this (it drops the other two inputs server-side before the line is
+        built), so a client that fills more than one field and picks the "wrong" radio still gets
+        the target it chose, never a validation error about a field it never meant to set. %>
+    <fieldset class="bom-target">
+      <legend>Target</legend>
+      <label>
+        <%= f.radio_button :target_kind, "stock" %>
+        <span>Stock</span>
+        <%= f.select :inventory_item_id, items, include_blank: true %>
+      </label>
+      <label>
+        <%= f.radio_button :target_kind, "file" %>
+        <span>File</span>
+        <%= render "shared/folder_field", name: "bom_line[node_id]",
+                   children_url: library_children_path, create_url: library_folders_path,
+                   mode: "file", root_label: "Choose a file…" %>
+      </label>
+      <label>
+        <%= f.radio_button :target_kind, "text" %>
+        <span>Part name</span>
+        <%= f.text_field :part_name, placeholder: "e.g. 22 AWG wire" %>
+      </label>
+    </fieldset>
+
+    <div class="bom-fields">
+      <label class="field">
+        <span>Supplier</span>
+        <%= f.select :supplier_id, suppliers, include_blank: true %>
+      </label>
+      <label class="field">
+        <span>Notes</span>
+        <%= f.text_field :notes %>
+      </label>
+    </div>
+
+    <%= f.submit "Add line", class: "btn small primary" %>
+  <% end %>
+</details>

@@ -140,6 +140,14 @@ Rails.application.routes.draw do
     end
     resources :build_log_entries, only: %i[create destroy], module: :projects, shallow: true
     resources :tasks, only: %i[create update destroy], module: :projects, shallow: true
+    # THE BILL OF MATERIALS (stage 2, S2-4). ONE bom per project on the web -- the latest revision,
+    # created lazily by the first line's POST and never by a GET. Lines are shallow like tasks;
+    # `consume` posts a `consumed` transaction against the project through
+    # Maker::InventoryTransaction.apply!, the ledger's one door.
+    resource :bom, only: :show, module: :projects
+    resources :bom_lines, only: %i[create destroy], module: :projects, shallow: true do
+      post :consume, on: :member
+    end
     # Free-form spreadsheets. Shallow like tasks and build-log entries: create is nested under the
     # project, the grid page and its autosave/CSV live at /sheets/:id.
     resources :sheets, only: %i[create show update destroy], module: :projects, shallow: true

@@ -92,6 +92,23 @@
      whitespace node the content partial emits and put a ~45px blank gap above every entry. */
   .entry-body { margin: 0 0 6px; font-size: 14px; line-height: 1.55; max-width: 72ch; }
 
+  /* --- Bill of materials: badges are components.css; rows, rollup, composer here --- */
+  .bom-rev { font-size: 12px; }
+  .bom-lines .col-ref { font-family: var(--font-mono); font-size: 12px; }
+  .bom-lines .col-supplier, .bom-lines .col-stock { color: var(--fg-muted); }
+  .bom-lines tr.short .col-stock { color: var(--accent); }
+  .bom-more { font-size: 12px; margin: 6px 0 0; }
+  .bom-rollup { font: 12px/1.5 var(--font-mono); color: var(--fg-muted); margin: 8px 0; }
+  .bom-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; align-items: end; margin-bottom: 8px; }
+  .bom-fields label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--fg-muted); }
+  .bom-target { display: flex; flex-direction: column; gap: 8px; border: 0; padding: 0; margin: 0 0 8px; }
+  .bom-target legend { font-size: 11px; color: var(--fg-muted); padding: 0; }
+  .bom-target label { display: flex; gap: 8px; align-items: center; }
+  @media (max-width: 719px) {
+    .bom-fields { grid-template-columns: 1fr 1fr; }
+    .bom-lines .col-supplier, .bom-lines .col-ref { display: none; }
+  }
+
   /* --- Sheets panel, picker, sheet page (unchanged shapes, tokens) --- */
   .sheets-panel .sheet-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); }
   .sheets-panel .sheet-row:last-child { border-bottom: 0; }

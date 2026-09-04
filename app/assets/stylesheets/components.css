@@ -163,6 +163,9 @@
   .badge.mstatus-failed { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
   .badge.current-project-badge { background: var(--accent-soft); color: var(--accent); text-transform: none; }
   .badge.low-stock { background: var(--accent-soft); color: var(--accent); text-transform: none; }
+  .badge.bom-stock { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); text-transform: none; }
+  .badge.bom-file { background: var(--accent-soft); color: var(--accent); text-transform: none; }
+  .badge.bom-text { background: var(--raised); color: var(--fg-muted); text-transform: none; }
   .empty { padding: 40px 16px; text-align: center; color: var(--fg-muted); border: 1px dashed var(--line); border-radius: var(--radius-panel); }
   .truncated { margin: 0 0 12px; padding: 8px 12px; border-radius: var(--radius-control); background: var(--raised); color: var(--fg-muted); font-size: 12px; }
 

@@ -96,6 +96,14 @@ module Web
       # either side is invisible unless BOTH grow, which is the exact shape this file's own header
       # names for build-log rich text (flat, then +1 query per entry, whole suite green).
       folder = project_folder_rows!(@user, project)
+      # STAGE 2, S2-4: the BOM panel grows too -- one line per iteration, CYCLING through the
+      # three kinds (not all three every time) so the total stays UNDER Projects::BomLinesController
+      # ::PANEL_CAP at the small size. The panel caps its table at PANEL_CAP rows, so a seed that
+      # already exceeds the cap at BOTH sizes would saturate `shown` at the same row count either
+      # way and make a per-row N+1 invisible to this measurement -- probed, not assumed: with all
+      # three kinds added every iteration (9 lines at SMALL=3, already past PANEL_CAP=8), a
+      # deliberately reintroduced per-row node lookup in the view stayed GREEN here.
+      bom = project.boms.create!(user: @user)
       add = lambda do |prefix, count|
         count.times do |i|
           id = "#{prefix}#{i}"
@@ -114,6 +122,16 @@ module Web
           project.tasks.create!(user: @user, title: "task #{id}")
           project.build_log_entries.create!(user: @user, body: "entry #{id}",
                                            logged_at: Time.current)
+          case i % 3
+          when 0
+            bom_item = @user.maker_inventory_items.create!(name: "bom-item-#{id}", unit: "each")
+            bom.lines.create!(user: @user, inventory_item: bom_item, quantity: 1, unit: "each")
+          when 1
+            node!("bf-#{id}", "bom-#{id}.stl")
+            bom.lines.create!(user: @user, node_id: "bf-#{id}", quantity: 1, unit: "each")
+          else
+            bom.lines.create!(user: @user, part_name: "bom-text-#{id}", quantity: 1, unit: "each")
+          end
         end
       end
 
@@ -121,6 +139,28 @@ module Web
                               -> { add.call("s", SMALL) },
                               -> { add.call("l", LARGE - SMALL) },
                               "projects#show")
+    end
+
+    # STAGE 2, S2-4: the full BOM page renders every line, unlike the project page's capped panel
+    # above -- its own budget, over the same three-kinds-per-iteration growth.
+    test "boms#show does not grow with lines" do
+      project = @user.maker_projects.create!(name: "Budgeted BOM", status: "active")
+      bom = project.boms.create!(user: @user)
+      add = lambda do |prefix, count|
+        count.times do |i|
+          id = "#{prefix}#{i}"
+          item = @user.maker_inventory_items.create!(name: "item-#{id}", unit: "each")
+          node!("bf-#{id}", "bom-#{id}.stl")
+          bom.lines.create!(user: @user, inventory_item: item, quantity: 1, unit: "each")
+          bom.lines.create!(user: @user, node_id: "bf-#{id}", quantity: 1, unit: "each")
+          bom.lines.create!(user: @user, part_name: "text-#{id}", quantity: 1, unit: "each")
+        end
+      end
+
+      assert_constant_queries(project_bom_path(project),
+                              -> { add.call("s", SMALL) },
+                              -> { add.call("l", LARGE - SMALL) },
+                              "boms#show")
     end
 
     # EVERY PROJECT GETS A COVER, and without one this test could not see the page's cover map at

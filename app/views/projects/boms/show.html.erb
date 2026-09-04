@@ -1,0 +1,27 @@
+<% content_for :title, "Bill of materials — #{@project.name} — Tinkerex" %>
+
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Project path">
+    <%= link_to "Projects", projects_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <%= link_to @project.name, project_path(@project) %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page">Bill of materials</span>
+  </nav>
+<% end %>
+
+<div class="page-head">
+  <div class="page-title">
+    <h1>Bill of materials</h1>
+    <% if @bom %><span class="badge">rev <%= @bom.revision %></span><% end %>
+  </div>
+  <div class="page-actions">
+    <%= link_to "Back to #{@project.name}", project_path(@project), class: "btn small" %>
+  </div>
+</div>
+
+<%# ALL of @lines, both as `lines:` (the rollup's input) and `shown:` (the table renders every
+    row) — `more_path: nil` is what tells projects/_bom_lines this is the uncapped surface, so it
+    never renders the panel's "Showing N of M" link. %>
+<%= render "projects/bom_lines", lines: @lines, shown: @lines, rollup: @rollup, nodes: @line_nodes,
+           project: @project, bom: @bom, items: @items, suppliers: @suppliers, more_path: nil %>
