@@ -1,20 +1,5 @@
 <% content_for :title, "Files — Tinkerex" %>
 
-<div class="page-head">
-  <h1>Files</h1>
-  <%# List/grid toggle. files_query_base rides along so the choice keeps whatever the user is
-      looking at (the folder, and from Task 6 the type filter) instead of dumping them at the
-      root; the choice itself is remembered in a cookie (FilesController#resolve_view), so it
-      sticks across navigation, and the sort is remembered the same way rather than being pinned
-      into these two links. %>
-  <div class="view-toggle" role="group" aria-label="View">
-    <%= link_to "Grid", files_path(files_query_base.merge(view: "grid")),
-                class: "toggle#{' active' if @view == 'grid'}" %>
-    <%= link_to "List", files_path(files_query_base.merge(view: "list")),
-                class: "toggle#{' active' if @view == 'list'}" %>
-  </div>
-</div>
-
 <%#
   Breadcrumb: root -> current folder, each segment a link. Root always shows; @crumbs is [] at
   the root, so this collapses to just "Files" there. Segments walk down the path the controller
@@ -39,27 +24,159 @@
   </nav>
 <% end %>
 
-<%= render "ext_filter" %>
+<%# THE PAGE HEAD HOLDS THE ONE PRIMARY ACTION (spec §8): Upload, in whichever of its two flows
+    this deployment has, or the current project's upload-and-attach control. The rest of what used
+    to stack above the list — rescan, the destination switch — is an overflow menu, rendered only
+    when it would have an item.
 
-<%# HIDDEN-FILE TOGGLE. Dot-prefixed entries are noise in a maker's library — 78 of them on the
-    deployed share box, mostly `.gitignore`, `.github` and `.clang-format` sitting between the
-    models — but hiding them with no way back is how a file becomes unreachable, so this is a
-    toggle rather than a silent filter.
+    UPLOAD — when a project is CURRENT, the single upload button defaults into it (its
+    Projects/<slug> folder + attach), reusing the EXISTING project upload/attach control (spec
+    2026-07-23) — no new controller, no new JS. A menu item overrides to a plain library-root
+    upload (?upload=library) without clearing the current project. When no project is current, or
+    the override is active, the plain two-flow upload renders exactly as before. %>
+<% project_upload = current_project && params[:upload] != "library" %>
+<% menu_items = capabilities.scannable? || current_project.present? %>
+<div class="page-head">
+  <h1>Files</h1>
+  <div class="page-actions">
+    <% if project_upload %>
+      <%= render "projects/upload_control",
+                 upload_url: project_uploads_path(current_project),
+                 attach_url: project_attachments_path(current_project),
+                 redirect_url: files_path(folder: @current_project_folder_node_id),
+                 parent_node_id: @current_project_folder_node_id %>
+    <% elsif capabilities.port_writable? %>
+      <%#
+        ONE BUTTON, TWO FLOWS -- and this branch is why `port_writable` exists. It does NOT ask
+        "can this deployment accept uploads": both of these upload. It asks WHICH DOOR the bytes
+        go in, and the answer is the deployment's, not the user's. Rendering the wrong form is not
+        a cosmetic bug: the JS uploader would drive begin_upload, which FilesController answers 501
+        on a share/s3 library, so the button would simply fail.
 
-    THE STATE LIVES IN A COOKIE (FilesController#resolve_hidden), not in files_query_base, for the
-    same reason `view` and `sort` do: the choice has to survive clicking into a folder, and folder
-    links carry only `folder:`. The link therefore sends the value it wants rather than a bare
-    flag — `hidden=0` is a real instruction to hide, not an absent parameter.
+        Share/S3: no chunk store to presign into, so the bytes come up in one multipart POST.
+      %>
+      <%= form_with url: files_path, method: :post, class: "uploader",
+                    data: { turbo: false }, html: { multipart: true } do |f| %>
+        <label class="upload-btn">
+          <%= f.file_field :file, onchange: "this.form.requestSubmit()", hidden: true %>
+          <span>Upload a file</span>
+        </label>
+      <% end %>
+    <% else %>
+      <%# Chunk: the browser hashes, we presign the missing chunks, the browser PUTs them (§15). %>
+      <section class="uploader"
+               data-controller="uploader"
+               data-uploader-begin-url-value="<%= begin_upload_files_path %>"
+               data-uploader-finalize-url-value="<%= finalize_upload_files_path %>">
+        <label class="upload-btn">
+          <input type="file" data-uploader-target="input" data-action="uploader#upload" hidden>
+          <span>Upload a file</span>
+        </label>
+        <span class="upload-status" data-uploader-target="status"></span>
+      </section>
+    <% end %>
+    <% if menu_items %>
+      <details class="menu" data-controller="menu">
+        <summary class="btn icon" aria-label="More actions" title="More actions">⋯</summary>
+        <div class="menu-list">
+          <% if capabilities.scannable? %>
+            <%#
+              RESCAN, offered ONLY on a scannable (share/s3) library: the catalog there is
+              periodically polled from the store (spec decision 5), so a user who just edited files
+              on the NAS can catch the index up now instead of waiting for the 15-minute recurring
+              Library::ScanJob. Chunk mode's catalog is the sync engine's changelog -- nothing to
+              poll -- so the button is hidden AND FilesController#rescan refuses the POST
+              (require_scannable!). `capabilities.scannable?` RAISES if misspelled (the concern's
+              helper, not an ivar with &.), so a typo fails at render in a test rather than silently
+              vanishing. `folder:` rides along so the redirect lands back in this folder.
+            %>
+            <%= button_to "Rescan library", rescan_files_path(files_query_base),
+                          class: "menu-item", data: { turbo: false } %>
+          <% end %>
+          <% if current_project %>
+            <% if project_upload %>
+              <%= link_to "Upload to library root instead",
+                          files_path(files_query_base.merge(upload: "library")), class: "menu-item upload-alt" %>
+            <% else %>
+              <%= link_to "Upload to project “#{current_project.name}” instead",
+                          files_path(files_query_base), class: "menu-item upload-alt" %>
+            <% end %>
+          <% end %>
+        </div>
+      </details>
+    <% end %>
+  </div>
+</div>
 
-    `.git` STAYS HIDDEN EITHER WAY and that is not an oversight — Node#visible_entries explains why
-    the marker is a different rule from the clutter. %>
-<p class="hidden-toggle muted">
-  <% if @show_hidden %>
-    <%= link_to "Hide dot-files", files_path(files_query_base.merge(hidden: "0")) %>
-  <% else %>
-    <%= link_to "Show dot-files", files_path(files_query_base.merge(hidden: "1")) %>
-  <% end %>
-</p>
+<% if project_upload %>
+  <p class="upload-to-project upload-caption muted">Uploads go to <strong><%= current_project.name %></strong> and are attached to it.</p>
+<% end %>
+
+<%# ONE TOOLBAR ROW: the type filter and its chips, the dot-file switch, the count, the view
+    toggle and the sort — in both views (the list keeps its sortable headers as well). %>
+<div class="toolbar files-toolbar">
+  <%= render "ext_filter" %>
+  <%# HIDDEN-FILE TOGGLE. Dot-prefixed entries are noise in a maker's library — 78 of them on the
+      deployed share box, mostly `.gitignore`, `.github` and `.clang-format` sitting between the
+      models — but hiding them with no way back is how a file becomes unreachable, so this is a
+      toggle rather than a silent filter.
+
+      THE STATE LIVES IN A COOKIE (FilesController#resolve_hidden), not in files_query_base, for the
+      same reason `view` and `sort` do: the choice has to survive clicking into a folder, and folder
+      links carry only `folder:`. The link therefore sends the value it wants rather than a bare
+      flag — `hidden=0` is a real instruction to hide, not an absent parameter.
+
+      `.git` STAYS HIDDEN EITHER WAY and that is not an oversight — Node#visible_entries explains why
+      the marker is a different rule from the clutter. %>
+  <p class="hidden-toggle muted">
+    <% if @show_hidden %>
+      <%= link_to "Hide dot-files", files_path(files_query_base.merge(hidden: "0")), class: "chip active" %>
+    <% else %>
+      <%= link_to "Show dot-files", files_path(files_query_base.merge(hidden: "1")), class: "chip" %>
+    <% end %>
+  </p>
+  <span class="toolbar-spacer"></span>
+  <span class="toolbar-count">
+    <% if @flat %>
+      <%= pluralize(number_with_delimiter(@match_count), "match", "matches") %>
+    <% else %>
+      <%= pluralize(number_with_delimiter(@paged ? @child_count : @nodes.size), "item") %>
+    <% end %>
+  </span>
+  <%# List/grid toggle. files_query_base rides along so the choice keeps whatever the user is
+      looking at (the folder, and from Task 6 the type filter) instead of dumping them at the
+      root; the choice itself is remembered in a cookie (FilesController#resolve_view), so it
+      sticks across navigation, and the sort is remembered the same way rather than being pinned
+      into these two links. %>
+  <div class="view-toggle" role="group" aria-label="View">
+    <%= link_to "Grid", files_path(files_query_base.merge(view: "grid")),
+                class: "toggle#{' active' if @view == 'grid'}" %>
+    <%= link_to "List", files_path(files_query_base.merge(view: "list")),
+                class: "toggle#{' active' if @view == 'list'}" %>
+  </div>
+  <%#
+    The grid has no column headers to click, so the sort is a pair of selects — and on the shared
+    toolbar the list carries them too, beside its sortable headers. GET, so the result is a plain
+    shareable URL exactly like the header links produce. `onchange` submits without JS of our own
+    (an inline handler on a native form, not a controller) — the same shape models/index.html.erb's
+    toolbar already uses.
+  %>
+  <form method="get" action="<%= files_path %>" class="sort-form">
+    <% files_query_base.each do |k, v| %>
+      <input type="hidden" name="<%= k %>" value="<%= v %>">
+    <% end %>
+    <label class="muted" for="sort-key">Sort</label>
+    <select name="sort" id="sort-key" onchange="this.form.requestSubmit()">
+      <% { "name" => "Name", "type" => "Type", "modified" => "Modified" }.each do |value, label| %>
+        <option value="<%= value %>" <%= "selected" if @sort == value %>><%= label %></option>
+      <% end %>
+    </select>
+    <select name="dir" aria-label="Sort direction" onchange="this.form.requestSubmit()">
+      <option value="asc"  <%= "selected" if @dir == "asc" %>>Ascending</option>
+      <option value="desc" <%= "selected" if @dir == "desc" %>>Descending</option>
+    </select>
+  </form>
+</div>
 
 <% if @truncated %>
   <p class="truncated">
@@ -97,73 +214,6 @@
   </nav>
 <% end %>
 
-<%#
-  UPLOAD — when a project is CURRENT, the single upload button defaults into it (its Projects/<slug>
-  folder + attach), reusing the EXISTING project upload/attach control (spec 2026-07-23) — no new
-  controller, no new JS. A small link overrides to a plain library-root upload (?upload=library)
-  without clearing the current project. When no project is current, or the override is active, the
-  plain two-flow upload renders exactly as before:
-
-  ONE BUTTON, TWO FLOWS -- and this branch is why `port_writable` exists. It does NOT ask "can
-  this deployment accept uploads": both of these upload. It asks WHICH DOOR the bytes go in, and
-  the answer is the deployment's, not the user's. Rendering the wrong form is not a cosmetic bug:
-  the JS uploader would drive begin_upload, which FilesController answers 501 on a share/s3
-  library, so the button would simply fail.
-%>
-<% if current_project && params[:upload] != "library" %>
-  <div class="upload-to-project">
-    <span class="muted">Uploading to project: <strong><%= current_project.name %></strong></span>
-    <%= render "projects/upload_control",
-               upload_url: project_uploads_path(current_project),
-               attach_url: project_attachments_path(current_project),
-               redirect_url: files_path(folder: @current_project_folder_node_id),
-               parent_node_id: @current_project_folder_node_id %>
-    <%= link_to "Upload to library root instead",
-                files_path(files_query_base.merge(upload: "library")), class: "muted upload-alt" %>
-  </div>
-<% else %>
-  <% if capabilities.port_writable? %>
-    <%# Share/S3: no chunk store to presign into, so the bytes come up in one multipart POST. %>
-    <%= form_with url: files_path, method: :post, class: "uploader",
-                  data: { turbo: false }, html: { multipart: true } do |f| %>
-      <label class="upload-btn">
-        <%= f.file_field :file, onchange: "this.form.requestSubmit()", hidden: true %>
-        <span>Upload a file</span>
-      </label>
-    <% end %>
-  <% else %>
-    <%# Chunk: the browser hashes, we presign the missing chunks, the browser PUTs them (§15). %>
-    <section class="uploader"
-             data-controller="uploader"
-             data-uploader-begin-url-value="<%= begin_upload_files_path %>"
-             data-uploader-finalize-url-value="<%= finalize_upload_files_path %>">
-      <label class="upload-btn">
-        <input type="file" data-uploader-target="input" data-action="uploader#upload" hidden>
-        <span>Upload a file</span>
-      </label>
-      <span class="upload-status" data-uploader-target="status"></span>
-    </section>
-  <% end %>
-  <% if current_project %>
-    <%= link_to "Upload to project “#{current_project.name}” instead",
-                files_path(files_query_base), class: "muted upload-alt" %>
-  <% end %>
-<% end %>
-
-<%#
-  RESCAN, offered ONLY on a scannable (share/s3) library: the catalog there is periodically
-  polled from the store (spec decision 5), so a user who just edited files on the NAS can catch
-  the index up now instead of waiting for the 15-minute recurring Library::ScanJob. Chunk mode's
-  catalog is the sync engine's changelog -- nothing to poll -- so the button is hidden AND
-  FilesController#rescan refuses the POST (require_scannable!). `capabilities.scannable?` RAISES
-  if misspelled (the concern's helper, not an ivar with &.), so a typo fails at render in a test
-  rather than silently vanishing. `folder:` rides along so the redirect lands back in this folder.
-%>
-<% if capabilities.scannable? %>
-  <%= button_to "Rescan library", rescan_files_path(files_query_base),
-                class: "linkbtn", data: { turbo: false } %>
-<% end %>
-
 <% if @nodes.empty? %>
   <%# Three emptinesses. "No files yet" is advice for a new library; said to someone who searched
       or filtered, it reads as "your library is empty" and is a lie. %>
@@ -177,27 +227,6 @@
     <p class="empty muted">No files yet. Upload one to get started.</p>
   <% end %>
 <% elsif @view == "grid" %>
-  <%#
-    The grid has no column headers to click, so it gets the same sort as a pair of selects. GET,
-    so the result is a plain shareable URL exactly like the header links produce. `onchange`
-    submits without JS of our own (an inline handler on a native form, not a controller) — the
-    same shape models/index.html.erb's toolbar already uses.
-  %>
-  <form method="get" action="<%= files_path %>" class="sort-form">
-    <% files_query_base.each do |k, v| %>
-      <input type="hidden" name="<%= k %>" value="<%= v %>">
-    <% end %>
-    <label class="muted" for="sort-key">Sort</label>
-    <select name="sort" id="sort-key" onchange="this.form.requestSubmit()">
-      <% { "name" => "Name", "type" => "Type", "modified" => "Modified" }.each do |value, label| %>
-        <option value="<%= value %>" <%= "selected" if @sort == value %>><%= label %></option>
-      <% end %>
-    </select>
-    <select name="dir" aria-label="Sort direction" onchange="this.form.requestSubmit()">
-      <option value="asc"  <%= "selected" if @dir == "asc" %>>Ascending</option>
-      <option value="desc" <%= "selected" if @dir == "desc" %>>Descending</option>
-    </select>
-  </form>
   <%= render "grid" %>
 <% else %>
   <%= render "list" %>
