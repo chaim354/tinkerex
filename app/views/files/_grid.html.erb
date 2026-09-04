@@ -7,6 +7,8 @@
 <div class="files-grid" data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
   <% @nodes.each do |node| %>
     <% info = @info_by_node[node.node_id] %>
+    <%# ext_label is the thumbnail badge and is capped at four characters so it fits the box; the
+        tile's sub-line below uses the full extension, so "LBRN2" does not read as "LBRN". %>
     <% ext_label = File.extname(node.name).delete(".").upcase.first(4) %>
     <% if !node.file? %>
       <%= link_to files_path(folder: node.node_id), class: "grid-card grid-folder" do %>
@@ -24,6 +26,7 @@
                           .merge(file_menu_data(node.node_id, @addon_origins[node.node_id])) do %>
         <%= render "thumb", thumb:, ext_label: %>
         <span class="grid-name"><%= node.name %></span>
+        <span class="grid-sub"><%= [ (info.content_token ? number_to_human_size(info.size) : nil), File.extname(node.name).delete(".").upcase.presence ].compact.join(" · ") %></span>
         <%= render "note_badge", count: @note_counts[node.node_id] %>
       <% end %>
     <% else %>
@@ -33,6 +36,7 @@
                   data: file_menu_data(node.node_id, @addon_origins[node.node_id]) do %>
         <span class="thumb generic-thumb" aria-hidden="true"><%= ext_label.presence || "FILE" %></span>
         <span class="grid-name"><%= node.name %></span>
+        <span class="grid-sub"><%= [ (info.content_token ? number_to_human_size(info.size) : nil), File.extname(node.name).delete(".").upcase.presence ].compact.join(" · ") %></span>
         <%= render "note_badge", count: @note_counts[node.node_id] %>
       <% end %>
     <% end %>

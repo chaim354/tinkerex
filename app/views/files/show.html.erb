@@ -20,7 +20,11 @@
 <% addon_origin = @addon_origins[@node.node_id] %>
 
 <div class="page-head">
-  <h1><%= @node.name %></h1>
+  <div class="page-title">
+    <h1><%= @node.name %></h1>
+    <% ext = File.extname(@node.name).delete(".").upcase %>
+    <% if ext.present? %><span class="badge file-badge"><%= ext %></span><% end %>
+  </div>
   <div class="page-actions">
     <%# Reopens the generator on the saved item that produced this file, with its parameters
         already loaded (the ?state= deep link Tools::AddonsController resolves into ctx.launch).
@@ -272,13 +276,21 @@
 <section class="notes-panel">
   <h2>Notes <span class="muted">(<%= @notes.size %>)</span></h2>
 
-  <%# scope: :note — Maker::Note is namespaced, so form_with would otherwise derive
-      `maker_note[...]` and NotesController's params.dig(:note, :body) would read nil. %>
-  <%= form_with model: @new_note, scope: :note, url: file_notes_path(@node.node_id),
-                method: :post, class: "note-form" do |f| %>
-    <%= f.rich_text_area :body, placeholder: "Add a note…", attachments: "false" %>
-    <%= f.submit "Add note", class: "btn small" %>
-  <% end %>
+  <%# CLOSED UNTIL ASKED FOR (spec §8): the editor's whole toolbar used to sit open on every file
+      page with nothing to write. The form, its scope, its field and the Lexxy element are
+      unchanged; only a <details> wraps them. Lexxy mounts inside a closed details and lays itself
+      out when it opens — verified by test/system/files_pages_test.rb, which types a note through
+      it. Keep the ERB comment above the form that explains `scope: :note`. %>
+  <details class="composer">
+    <summary class="btn small">Add a note</summary>
+    <%# scope: :note — Maker::Note is namespaced, so form_with would otherwise derive
+        `maker_note[...]` and NotesController's params.dig(:note, :body) would read nil. %>
+    <%= form_with model: @new_note, scope: :note, url: file_notes_path(@node.node_id),
+                  method: :post, class: "note-form" do |f| %>
+      <%= f.rich_text_area :body, placeholder: "Add a note…", attachments: "false" %>
+      <%= f.submit "Add note", class: "btn small" %>
+    <% end %>
+  </details>
 
   <% if @notes.empty? %>
     <p class="muted">No notes yet.</p>

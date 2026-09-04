@@ -199,6 +199,24 @@
   details.composer > summary::-webkit-details-marker { display: none; }
   details.composer[open] > summary { margin-bottom: 10px; }
 
+  /* --- Overflow menu: a <details> the browser opens; menu_controller.js closes it on an
+     outside click. The summary is a .btn (the caller adds .icon for the ⋯ form). --- */
+  details.menu { position: relative; display: inline-block; }
+  details.menu > summary { list-style: none; }
+  details.menu > summary::-webkit-details-marker { display: none; }
+  details.menu[open] > summary { border-color: var(--line-strong); }
+  .menu-list {
+    position: absolute; right: 0; top: calc(100% + 4px); z-index: 50; min-width: 220px; padding: 4px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel); box-shadow: var(--shadow-float);
+  }
+  .menu-list form { margin: 0; }
+  .menu-item {
+    display: block; width: 100%; text-align: left; padding: 7px 10px; background: none; border: 0;
+    color: var(--fg); font: 13px/1.4 var(--font-ui); border-radius: var(--radius-control); cursor: pointer;
+    text-decoration: none; white-space: nowrap;
+  }
+  .menu-item:hover { background: var(--raised); text-decoration: none; }
+
   /* --- The folder/file chooser (filechooser_controller.js; shared with the addon bundles, which
      build this markup themselves — every class here is part of the §14c contract) --- */
   .folder-field { display: inline-flex; }
