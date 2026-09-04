@@ -63,6 +63,15 @@ pin "lib/export_svg", to: "lib/export_svg.js"
 # every one of them dynamic-imports, so this never ships on a page with no text file.
 pin "lib/codemirror_languages", to: "lib/codemirror_languages.js"
 
+# Which CodeMirror theme the page wants, read from html[data-theme]. A HOST pin for the same
+# reason as the languages table directly above — it takes the CodeMirror namespace as an argument
+# rather than importing the bundle, so it is only meaningful to a controller that already holds
+# it, and it is DYNAMIC-imported from all three so neither it nor the bundle ships on a page with
+# no text file. There is no pin_all_from for app/javascript/lib: every module in it is pinned by
+# name, so a new one that nothing pins resolves to nothing and its importer's dynamic import
+# rejects — which in these three controllers degrades silently to the plain <pre>.
+pin "lib/codemirror_theme", to: "lib/codemirror_theme.js"
+
 # THE ADDON SDK — a HOST pin, which is the whole point: merged_importmap draws every host pin before
 # the addon's own, so a bundle imports "@maker/addon-sdk" without declaring anything in its manifest
 # and without the host shipping a copy per addon. Unlike lib/file_chooser directly above (which a
