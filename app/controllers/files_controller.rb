@@ -183,7 +183,11 @@ class FilesController < ApplicationController
     # ?folder= is ignored outright rather than intersected -- "show me every .stl" that quietly
     # meant "in this folder" would be the wrong answer to the only question the chips can ask.
     @exts = resolve_exts
-    @flat = @exts.any?
+    @q = resolve_query
+    # A search is flat for the same reason a type filter is: it is a question about the whole
+    # library, not about one folder (spec §9). With no types active the base scope is every live
+    # node, folders included — finding "desk-lamp" the folder is as useful as finding its files.
+    @flat = @exts.any? || @q.present?
     if @flat
       @folder = nil
       @crumbs = []
@@ -192,13 +196,25 @@ class FilesController < ApplicationController
       # A `.git` row reaches THIS scope only as a file — a `gitdir:` pointer, since flat mode
       # filters kind: "file" — but the rule is the catalog's, not the folder view's, and one
       # condition must not have two answers across the two scopes (§14a).
-      scope = flat_ext_scope(@exts).visible_entries(@show_hidden)
+      scope = (@exts.any? ? flat_ext_scope(@exts) : current_user.nodes.present).visible_entries(@show_hidden)
+      # LOWER on both sides: SQLite's LIKE is case-insensitive for ASCII and Postgres's is not,
+      # and this app runs on both (§14e). sanitize_sql_like makes % and _ literal -- BUT ONLY WITH
+      # `ESCAPE '\'`, which is LIKE_EXT's rule below and is load-bearing here for the same reason:
+      # SQLite has NO default escape character, so without it the backslash sanitize_sql_like
+      # inserts is matched as a LITERAL backslash and the sanitising is a no-op on self-host.
+      # Measured on this connection: '100%-done.txt' LIKE '%\%%' -> 0 (no name holds a backslash,
+      # so a search for "%" finds NOTHING), and the same with ESCAPE '\' -> 1.
+      scope = scope.where("LOWER(name) LIKE ? ESCAPE '\\'",
+                          "%#{Node.sanitize_sql_like(@q.downcase)}%") if @q
       @match_count = scope.count
       # ORDERED BY THE USER'S SORT, NOT BY NAME, BECAUSE HERE THE ORDER *SELECTS* -- see
       # flat_order. This line used to be `.order(:name)`, and the LIMIT then took the alphabetical
       # head of the library while the page displayed it under whatever heading the user had
       # clicked.
-      @nodes = scope.order(flat_order(@exts, @sort, @dir)).limit(FLAT_LIMIT).to_a
+      # flat_order's "type" ranking is a CASE over the active extensions and has nothing to rank
+      # with none active, so a search without types sorts by name instead.
+      sort_key = (@exts.empty? && @sort == "type") ? "name" : @sort
+      @nodes = scope.order(flat_order(@exts, sort_key, @dir)).limit(FLAT_LIMIT).to_a
       @truncated = @match_count > FLAT_LIMIT
     else
       @folder = current_folder
@@ -1108,7 +1124,7 @@ class FilesController < ApplicationController
   # key or the other, never an intersection the rest of the page would have to make sense of.
   helper_method :files_query_base
   def files_query_base
-    { folder: @folder&.node_id, ext: @exts.presence&.join(",") }.compact
+    { folder: @folder&.node_id, ext: @exts.presence&.join(","), q: @q }.compact
   end
 
   # A file extension is 1-8 lowercase alphanumerics. ANYTHING ELSE IS DROPPED, not escaped and not
@@ -1124,6 +1140,15 @@ class FilesController < ApplicationController
   # cut reads as "that's all your STLs", which is the same class of lie as a paginated listing
   # mistaken for a snapshot. Pagination is the follow-up if a real library hits this.
   FLAT_LIMIT = 2000
+
+  # The library search (spec §9). Stripped and bounded; blank is nil so `if @q` reads as "a search
+  # is active". 80 characters is longer than any name the list shows without an ellipsis, and it
+  # bounds the LIKE the same way EXT_RE bounds the type filter's.
+  QUERY_MAX = 80
+
+  def resolve_query
+    params[:q].to_s.strip.first(QUERY_MAX).presence
+  end
 
   # EVERY EXTENSION THE USER'S LIBRARY ACTUALLY HOLDS, with how many files carry it:
   # { "stl" => 42, "lbrn2" => 17, ... }. This is what the type filter offers.

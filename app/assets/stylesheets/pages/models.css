@@ -1,0 +1,69 @@
+/* The model catalog: index toolbar, the detail page's two columns, the file tree, print log,
+   and the shelves settings page. */
+@layer pages {
+  /* MIGRATED VERBATIM (old models.css), substitution table applied, in file order — every rule
+     EXCEPT the three .badge.mstatus-* rules, which are components now. Literal hexes in this
+     file (#f8fafc, #e5e7eb, #334155, #64748b, #eee, #f1f5f9, #fff) all have rows in the table;
+     .file-tree-box keeps var(--thumb-stage) as its background because it is a paper-like list. */
+  .models-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0 18px; }
+  .models-toolbar .filter.active { font-weight: 600; text-decoration: underline; }
+  .models-toolbar input[type="search"] { flex: 1; min-width: 160px; }
+
+  /* Detail page: main column (image → instructions) + side column (meta → files → print log). */
+  .model-layout { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr); gap: 28px; align-items: start; }
+  @media (max-width: 800px) { .model-layout { grid-template-columns: 1fr; } }
+
+  .model-hero { margin-bottom: 14px; }
+  .model-hero-img { display: block; width: 100%; max-height: 60vh; object-fit: contain;
+                    background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius-panel); }
+  .model-hero-thumb { display: flex; align-items: center; justify-content: center; width: 100%;
+                      aspect-ratio: 4/3; background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius-panel); }
+  .model-hero-thumb img { max-width: 100%; max-height: 100%; }
+  .model-hero-empty { display: flex; align-items: center; justify-content: center; width: 100%;
+                      aspect-ratio: 4/3; font-size: 48px; background: var(--raised); border-radius: var(--radius-panel); }
+
+  .image-gallery { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+  .image-gallery img { width: 84px; height: 66px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); }
+
+  .model-instructions, .model-notes { margin-top: 20px; }
+  .model-instructions h2, .model-notes h2, .model-files h2 { font-size: 15px; margin: 0 0 10px; }
+  .model-main .preview-pdf { width: 100%; height: 640px; border: 1px solid var(--line); border-radius: var(--radius-panel); }
+
+  /* Files as a scrollable folder tree. */
+  .model-files { margin-bottom: 22px; }
+  .file-tree-box { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 8px 6px; max-height: 420px;
+                   overflow: auto; background: var(--surface); color: var(--fg); font-size: 13px; }
+  .file-tree { list-style: none; margin: 0; padding: 0; }
+  .file-tree .file-tree { margin-left: 16px; padding-left: 6px; border-left: 1px solid var(--line); }
+  .file-tree li { padding: 1px 0; }
+  .tree-dir > details > summary { cursor: pointer; list-style: none; padding: 2px 4px; border-radius: 4px; }
+  .tree-dir > details > summary::-webkit-details-marker { display: none; }
+  .tree-dir > details > summary:hover { background: var(--raised); }
+  .tree-folder::before { content: "📁"; margin-right: 6px; }
+  .tree-folder { font-weight: 600; color: var(--fg); }
+  .tree-file .tree-fname { display: block; padding: 2px 4px 2px 22px; border-radius: 4px;
+                           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tree-file .tree-fname::before { content: "🧊"; margin-left: -18px; margin-right: 4px; }
+  .tree-file .tree-fname:hover { background: var(--raised); }
+
+  .model-print-settings { margin-bottom: 22px; }
+  .ps-grid { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 13px; margin: 0;
+             border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 10px 12px; }
+  .ps-grid dt { color: var(--fg-muted); white-space: nowrap; }
+  .ps-grid dd { margin: 0; }
+
+  .print-log .print-run { padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .print-form { display: grid; gap: 8px; max-width: 480px; }
+  .print-form .row { display: flex; gap: 10px; }
+
+  /* The shelves settings page. A shelf row is path + status + Remove on one line, which needs the
+     button_to override: button_to emits a block-level <form>, so without it "Remove" drops onto its
+     own line under the two spans. */
+  .shelf-list { list-style: none; padding: 0; margin: 0 0 20px; max-width: 640px; }
+  .shelf-list li { display: flex; align-items: center; gap: 10px; padding: 8px 0;
+                   border-bottom: 1px solid var(--line); }
+  .shelf-list li form { display: inline; margin: 0; }
+  .shelf-path { font-family: var(--font-mono); font-size: 13px; }
+  .shelf-status { margin-left: auto; font-size: 13px; }
+  .shelf-add { display: flex; align-items: center; gap: 10px; }
+}

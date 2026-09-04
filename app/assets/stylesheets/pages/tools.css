@@ -1,0 +1,270 @@
+/* The /tools gallery, the addon host page, and the classes the addon BUNDLES build their own
+   markup with (Box Generator, Generators, OpenSCAD). Those class names are a cross-repo contract
+   (docs/invariants/addons.md, spec §10): restyle, never rename. */
+@layer pages {
+  /* MIGRATED VERBATIM (old application.css 352-379, 381-603 and 658-659), substitution table
+     applied, in file order: .tools-grid, .addon-card*, .addon-icon, .addon-title, .addon-desc,
+     .addon-permissions, ul.addon-permissions*, .addon-thumb*, .addon-thumb-empty,
+     .box-search, .box-index*, .box-toc*, .box-group*, .box-saved*, .addon-params dd,
+     .saved-boxes*, .box-noresults, the @media (max-width: 1080px) block, .box-editor*,
+     .box-params, .box-field*, the @media (max-width: 640px) block, .box-actions*, the
+     @media (max-width: 720px) blocks, .box-side*, .box-preview*, .box-topview*, .tv-*,
+     .generator-*, .box-prior*, .box-help*, .param-groups-head, .param-groups-title,
+     .param-group*, .param-group-adv*. */
+
+  /* --- Tools (addons) gallery --- */
+  .tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 18px; }
+  .addon-card { display: flex; flex-direction: column; gap: 6px; padding: 18px;
+                border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--bg); color: var(--fg); }
+  .addon-card:hover { text-decoration: none; border-color: var(--accent); }
+  .addon-card.disabled { opacity: 0.55; }
+  .addon-icon { font-size: 32px; }
+  .addon-title { font-weight: 700; }
+  .addon-desc { font-size: 13px; }
+  /* ONE CLASS, TWO ELEMENTS: a <span> on the gallery card, a <ul> on the addon page. Without the
+     13px it inherits body 15px and renders LARGER than the .addon-desc above it; without the list
+     reset the page's version carries UA bullets and a 40px indent. */
+  .addon-permissions { font-size: 13px; }
+  ul.addon-permissions { list-style: none; margin: 0 0 18px; padding: 0; }
+  ul.addon-permissions li { margin-top: 4px; }
+  .addon-thumb { width: 100%; height: 120px; object-fit: contain; background: var(--raised); border-radius: 6px; }
+  .addon-thumb.is-missing { display: none; }
+  /* THE FRAME A GENERATOR WITH NO SAMPLE PHOTO GETS, and it is a placeholder rather than nothing so
+     that the grid never reflows. Dropping the box (`is-missing` above) moved every card below it by
+     ~126px the moment a sample 404'd — AFTER the gallery looked settled — which is why
+     `settle_addon_cards` exists and why a click could land in dead space. 171 of the 181 offered
+     generators ship a photo and 10 do not, so this frame is the exception, not the common case.
+     The size comes from `.addon-thumb`, which this element also carries: one declaration, so the
+     real box and the empty one cannot drift apart and bring the jump back. */
+  .addon-thumb-empty {
+    display: flex; align-items: center; justify-content: center;
+    border: 1px dashed var(--line); color: var(--fg-muted); font-size: 11px;
+  }
+
+  /* --- Box Generator addon --- */
+  .box-search {
+    width: 100%; padding: 9px 12px; margin: 4px 0 18px;
+    border: 1px solid var(--line); border-radius: 8px;
+    font-size: 15px; background: var(--bg); color: var(--fg);
+  }
+  /* Index: table of contents | generator gallery | saved-box rail. */
+  .box-index { display: grid; grid-template-columns: 172px minmax(0, 1fr) 264px; gap: 28px; align-items: start; }
+  .box-index > section, .box-index > aside { min-width: 0; }
+  .box-index h2 { margin-top: 0; }
+
+  .box-toc { position: sticky; top: 16px; }
+  .box-toc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .box-toc-title, .box-group-title, .box-saved-name {
+    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-muted);
+  }
+  .box-toc-all {
+    border: none; background: none; padding: 0; cursor: pointer;
+    font-size: 12px; color: var(--fg-muted); text-decoration: underline;
+  }
+  .box-toc-all:hover { color: var(--accent); }
+  .box-toc-list { list-style: none; padding: 0; margin: 0; }
+  .box-toc-list li[hidden] { display: none; }
+  .box-toc-list a {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 5px 8px; border-radius: 7px; font-size: 14px; color: var(--fg);
+  }
+  .box-toc-list a:hover { background: var(--raised); text-decoration: none; }
+  .box-toc-list li.is-active a { background: var(--raised); color: var(--accent); font-weight: 600; }
+  .box-toc-count, .box-group-count {
+    font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums;
+  }
+
+  /* Every section folds. The <details> does the folding; the marker is replaced by a chevron that
+     turns, because the UA triangle sits at a different baseline in every browser. */
+  .box-group { margin-bottom: 18px; scroll-margin-top: 16px; }
+  .box-group-summary, .box-saved-summary {
+    display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 0; list-style: none;
+  }
+  .box-group-summary::-webkit-details-marker, .box-saved-summary::-webkit-details-marker { display: none; }
+  .box-group-summary::before, .box-saved-summary::before {
+    content: ""; flex: 0 0 auto; width: 6px; height: 6px; margin-right: 2px;
+    border-right: 1.5px solid var(--fg-muted); border-bottom: 1.5px solid var(--fg-muted);
+    transform: rotate(-45deg); transition: transform 120ms ease;
+  }
+  details[open] > .box-group-summary::before, details[open] > .box-saved-summary::before { transform: rotate(45deg); }
+  .box-group-summary:hover .box-group-title, .box-saved-summary:hover .box-saved-name { color: var(--accent); }
+  .box-group > .tools-grid { margin-top: 10px; }
+  .addon-card[hidden], .box-group[hidden] { display: none; }
+
+  /* The saved rail: section, then box type, both closed until asked for. */
+  .box-saved-rail { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
+  .box-saved-count { font-size: 13px; margin: -6px 0 10px; }
+  .box-saved-section { border-bottom: 1px solid var(--line); }
+  .box-saved-type { margin-left: 14px; }
+  .box-saved-type .box-saved-name { text-transform: none; font-weight: 600; font-size: 13px; color: var(--fg); }
+  .box-saved-link { font-size: 13px; }
+
+  /* A param value can be MULTILINE (boxes' TrayLayout/FrontPanel section params are newline-separated),
+     so the value cell must not collapse it into one line. */
+  .addon-params dd { white-space: pre-wrap; }
+
+  .saved-boxes { list-style: none; padding: 0 0 8px 14px; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+  .saved-boxes li > div { font-size: 12px; margin-top: 1px; }
+  .box-noresults { margin: 6px 0; }
+
+  @media (max-width: 1080px) {
+    .box-index { grid-template-columns: 1fr; }
+    .box-toc, .box-saved-rail { position: static; max-height: none; }
+    .box-toc-list { display: flex; flex-wrap: wrap; gap: 4px; }
+    .box-toc-list a { border: 1px solid var(--line); }
+  }
+
+  .box-editor { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; align-items: start; }
+  .box-editor > form { min-width: 0; }
+  .box-params {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 12px 16px; margin: 16px 0;
+  }
+  .box-field { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+  .box-field-label { color: var(--fg-muted); }
+  .box-field input[type="number"], .box-field input[type="text"], .box-field select {
+    width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+    font-size: 14px; background: var(--bg); color: var(--fg);
+  }
+  .box-field input[type="checkbox"] { width: auto; align-self: flex-start; }
+  /* A layout is column-aligned ASCII art (walls line up over the size markers), so it is only
+     editable in a monospace face that doesn't wrap — and it needs the full grid row, not one
+     190px auto-fill column. */
+  .box-field-multiline { grid-column: 1 / -1; }
+  /* A LABELLED ENUM'S OPTIONS ARE A LETTER PLUS A SENTENCE, so one column cuts them off mid-word.
+     Measured on the deployed app at a 976px form (four 232px columns): `top_edge`'s longest option
+     needs 324px and `bottom_edge`'s 300px, while the other eleven selects on that same form have
+     34–114px of slack. Two columns is 480px. Widening every column instead would drop the form from
+     four columns to three to serve two fields. */
+  .box-field-wide { grid-column: span 2; }
+  /* On a grid narrow enough to fit only ONE column, `span 2` makes the browser add an IMPLICIT second
+     one. Measured at a 375px viewport, not assumed: the page does NOT overflow — `1 / -1` was chosen
+     partly on that guess and the guess was wrong — but the tracks come back `190px 169px`, so every
+     ordinary field is squeezed into 190px and left ragged to give this one field two columns. With
+     this rule the grid stays a single clean 375px column and the wide field spans it, which is the
+     same full-row shape a multiline field already takes. `1 / -1` is the whole row and never creates
+     a track, at any width. */
+  @media (max-width: 640px) { .box-field-wide { grid-column: 1 / -1; } }
+  .box-field textarea {
+    width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 13px; line-height: 1.35; overflow-x: auto; resize: vertical;
+  }
+  /* Name + destination + both buttons, pinned above a form that can run to sixty fields. */
+  .box-actions {
+    position: sticky; top: 0; z-index: 2;
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 10px 14px; align-items: end;
+    padding: 12px 0 14px; margin-bottom: 4px;
+    background: var(--bg); border-bottom: 1px solid var(--line);
+  }
+  .box-actions .page-actions { margin: 0; display: flex; gap: 8px; }
+  @media (max-width: 720px) { .box-actions { grid-template-columns: 1fr; } }
+
+  .box-side { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 16px; }
+  .box-side .box-preview { padding: 12px; }
+  .box-preview .preview-image { width: 100%; background: var(--thumb-stage); border-radius: 6px; }
+  /* Until the first render lands the <img> has no src, so give it a placeholder box rather than
+     letting the panel collapse to nothing under the "Rendering…" line. */
+  .box-preview .preview-image:not([src]) { min-height: 180px; }
+  .box-preview-status { font-size: 12px; color: var(--fg-muted); margin: 8px 0 0; white-space: pre-wrap; }
+  .box-preview-status.is-error { color: var(--danger); }
+
+  /* The tray top view: a plan of the compartments, drawn client-side beside the cut sheet. */
+  .box-topview { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px; }
+  .box-topview h3 { margin: 0 0 8px; font-size: 13px; display: flex; align-items: baseline; gap: 8px; }
+  .box-topview-summary { font-size: 12px; font-weight: 400; margin-left: auto; }
+  /* Print / PDF / SVG, plus the paper the tiler pages onto. These live on the panel because the
+     panel is what removes itself when a generator has no compartments — so the controls inherit
+     that gate for free rather than needing one of their own. */
+  .box-topview-actions { display: flex; gap: 6px; align-items: center; margin: 0 0 8px; }
+  .box-topview-actions select { font-size: 12px; padding: 2px 4px; }
+  .box-topview-actions .btn-sm { padding: 3px 8px; font-size: 12px; }
+  .box-topview-canvas { background: var(--thumb-stage); border-radius: 6px; padding: 8px; overflow-x: auto; }
+  .box-topview-canvas .tv-svg { display: block; width: 100%; height: auto; max-height: 320px; }
+  .box-topview-hint { font-size: 11.5px; margin: 8px 0 0; }
+  .tv-cell { fill: #f3ede0; }
+  .tv-cell-merged { fill: #e7dcc4; }
+  .tv-wall { fill: #2f3336; }
+  /* Compartment sizes are annotation, not geometry — same role (and colour family) as boxes.py's own
+     red annotation text on the cut sheet, so the two views read as one drawing. */
+  .tv-label { fill: #b23c2c; text-anchor: middle; dominant-baseline: central;
+              font-family: var(--font-mono); }
+
+  @media (max-width: 720px) {
+    .box-editor { grid-template-columns: 1fr; }
+    .box-side { position: static; }
+  }
+
+  /* Generators addon (public/addons/generators/generators.js, mounted by Tools::AddonsController) —
+     controls left, live preview right. .generator-saved-list/.generator-saved are unused since the
+     migration: the generic host surface has no per-saved-state show route (spec §3.1) to link to. */
+  .generator-editor { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 24px; align-items: start; margin-top: 16px; }
+  .generator-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .generator-params { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px 12px; margin: 6px 0; }
+  .generator-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--fg-muted); }
+  .generator-picker-label, .generator-name-label, .generator-folder-label {
+    display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--fg-muted);
+  }
+  .generator-field input, .generator-picker-label select, .generator-name-label input, .generator-folder-label select {
+    width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px;
+    font-size: 14px; background: var(--bg); color: var(--fg);
+  }
+  .generator-field input[type="checkbox"] { width: auto; align-self: flex-start; }
+  .generator-save { margin-top: 4px; align-self: flex-start; }
+  .generator-preview { position: sticky; top: 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px; background: var(--thumb-stage); }
+  .generator-preview img { display: block; width: 100%; height: auto; max-height: 72vh; object-fit: contain; }
+  .generator-saved-list { margin-top: 28px; }
+  .generator-saved { margin: 4px 0; }
+
+  @media (max-width: 720px) {
+    .generator-editor { grid-template-columns: 1fr; }
+    .generator-preview { position: static; }
+  }
+
+  .box-prior { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px 14px; }
+  .box-prior h3 { margin: 0; font-size: 14px; }
+  .box-prior-hint { font-size: 13px; margin-top: 2px; }
+  .box-prior-list { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-direction: column; gap: 10px; }
+  .box-prior-item { display: flex; align-items: center; gap: 10px; }
+  .box-prior-item .thumb { width: 40px; height: 40px; flex: 0 0 40px; background: var(--raised); }
+  .box-prior-meta { flex: 1; min-width: 0; }
+  .box-prior-name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .box-prior-date { font-size: 12px; color: var(--fg-muted); }
+
+  .box-help {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 15px; height: 15px; margin-left: 5px; vertical-align: 1px;
+    border: 1px solid var(--line); border-radius: 50%;
+    font-size: 10px; line-height: 1; color: var(--fg-muted);
+  }
+  .box-help:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+
+  /* EVERY param group folds, not just the advanced ones — same <details>/<summary> pattern as the
+     index's sections, so both pages fold the same way. The fields inside are unchanged. */
+  .param-groups-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    margin: 14px 0 6px;
+  }
+  .param-groups-title, .param-group-title {
+    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-muted);
+  }
+  .param-group { border: none; padding: 0; margin: 0 0 6px; min-width: 0; }
+  .param-group-summary {
+    display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 7px 0; list-style: none;
+  }
+  .param-group-summary::-webkit-details-marker { display: none; }
+  .param-group-summary::before {
+    content: ""; flex: 0 0 auto; width: 6px; height: 6px; margin-right: 2px;
+    border-right: 1.5px solid var(--fg-muted); border-bottom: 1.5px solid var(--fg-muted);
+    transform: rotate(-45deg); transition: transform 120ms ease;
+  }
+  .param-group[open] > .param-group-summary::before { transform: rotate(45deg); }
+  .param-group-summary:hover .param-group-title { color: var(--accent); }
+  /* The advanced groups keep their boxed-off look, so "these are the fiddly ones" survives the change. */
+  .param-group-adv { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 2px 12px 4px; margin: 0 0 10px; }
+  .param-group > .box-params { margin-top: 6px; }
+
+  .param-group-adv > summary { cursor: pointer; }
+  .param-group-adv[open] > summary { margin-bottom: 10px; }
+}

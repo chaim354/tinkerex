@@ -1,0 +1,257 @@
+/* The preview surfaces on a file page: image/PDF/text previews, the CodeMirror viewer and editor,
+   the repository banner, the commit box and staging groups, file history, the 3D viewer, the
+   Measure view and the LightBurn settings panel. docs/invariants/measure-view.md and
+   files-preview.md govern the behaviour behind these classes; this file only paints them. */
+@layer pages {
+  /* MIGRATED VERBATIM (old application.css 85-92, 94-133, 136-239, 241-307, 605-620),
+     substitution table applied, in file order. Keep every comment that travels with a rule —
+     several explain source-order dependencies (.measure-contour--marked after --hover) that
+     the tests pin by computed style. Measure's literal layer colours (#2b7, #d40, the rgba tints,
+     #888) STAY literal: they are the file's own colours, not the theme's. */
+  .preview { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 16px; }
+  .preview-image { max-width: 100%; height: auto; display: block; border-radius: 6px; }
+  .preview-pdf { width: 100%; height: 80vh; border: 1px solid var(--line); border-radius: 6px; }
+  .preview-text {
+    margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono);
+    font-size: 13px; max-height: 480px; overflow: auto;
+  }
+  .preview-fallback { text-align: center; padding: 24px; }
+
+  /* --- Source view, read-only AND editable — CodeMirror 6 --- */
+  /* `.preview-code` IS BOTH MOUNTS, and the comment said "codeview_controller.js" alone until the
+     editable sibling shipped. files/show.html.erb picks between two controllers on one class:
+     `codeview` where the file is outside a working tree, `editor` where it is inside one and under
+     the size cap. Every rule here has to hold for both, which is why the class is the selector and
+     neither controller's name is. */
+  /* The editor needs a bounded height of its own: .cm-scroller only scrolls inside a box with
+     one, so without this the viewer grows to the length of the file and the PAGE scrolls, which
+     is the one thing the 480px cap on .preview-text above was already avoiding. Matching that
+     number keeps a file's page the same height before and after the bundle mounts. */
+  .preview-code .cm-editor { max-height: 480px; border-radius: 6px; }
+  .preview-code .cm-editor.cm-focused { outline: none; }
+  .preview-code .cm-scroller { font-family: var(--font-mono); font-size: 13px; }
+
+  /* The editor's Save bar (editor_controller.js builds it in #addSaveBar) and the commit box's
+     own footer share this class: both are "one action plus a word about what just happened",
+     and giving the commit page a second name for that would be two definitions of one thing. */
+  .editor-bar {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
+  }
+  .editor-bar button, .editor-bar input[type=submit] {
+    font: inherit; padding: 5px 12px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--bg); color: inherit; cursor: pointer;
+  }
+  .editor-bar button:hover:not(:disabled),
+  .editor-bar input[type=submit]:hover { background: var(--raised); }
+  .editor-bar button:disabled { opacity: .55; cursor: default; }
+  /* Empty until a save reports back, so it must take no space when it says nothing — otherwise
+     the bar jumps a line the first time the editor answers. */
+  .editor-status { color: var(--fg-muted); font-size: 13px; }
+
+  /* The way INTO the commit box, on a file page inside a working tree. It sits above the editor
+     rather than in the .editor-bar because it is a property of the REPOSITORY, not of this file's
+     unsaved state, and it must still show on a file with nothing pending. */
+  .repo-banner {
+    margin: 0 0 8px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--raised); font-size: 13px;
+  }
+  .repo-banner-link { text-decoration: none; }
+  .repo-banner-link:hover { text-decoration: underline; }
+
+  /* --- Review and commit (repo_commits/show.html.erb) --- */
+  .commit-box { display: block; }
+  .commit-rows { list-style: none; margin: 0 0 12px; padding: 0; }
+  .commit-rows > li { border: 1px solid var(--line); border-radius: var(--radius-panel); margin-bottom: 10px; }
+  .commit-row-head {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 8px 10px; border-bottom: 1px solid var(--line);
+  }
+  .commit-row-head code { font-family: var(--font-mono); font-size: 13px; }
+  /* Tabular figures so a column of +12 / −3 lines up rather than shimmering row to row. */
+  .commit-row-head .plus, .commit-row-head .minus { font-variant-numeric: tabular-nums; font-size: 12px; }
+  /* --danger is the palette's red and --ok its green: the addition colour was the literal #1a7f37
+     until the 2026-09 design system gave the palette a success token, and the substitution table
+     maps it to --ok. Both are theme tokens now, so neither is a literal to be matched by eye. */
+  .commit-row-head .plus  { color: var(--ok); }
+  .commit-row-head .minus { color: var(--danger); }
+  .commit-message {
+    width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--bg); color: inherit; box-sizing: border-box;
+  }
+  /* The inline diff (diffview_controller.js). Bounded for .preview-code's reason — a repository
+     with six edited files must not make the commit page six file-lengths tall. */
+  .commit-diff .cm-editor { max-height: 320px; }
+  .commit-diff .cm-editor.cm-focused { outline: none; }
+  .commit-diff .cm-scroller { font-family: var(--font-mono); font-size: 13px; }
+  .commit-diff:empty { display: none; }
+
+  /* --- The staging panel's three groups (repo_commits/show.html.erb) ---
+
+     STYLED OFF `data-group` AND `data-state`, NEVER OFF CLASSES OF THEIR OWN. Those attributes are
+     already there for the tests to select on, so a parallel set of class names would be a second
+     vocabulary for one fact, free to disagree with the first (§14d's own warning about naming). */
+  .commit-group + .commit-group { margin-top: 20px; }
+  .commit-group-body > summary { cursor: pointer; padding: 6px 0; font-weight: 600; }
+  /* The count beside a title is the ONLY thing a closed group says about how much is hiding inside
+     it, so it keeps .muted's colour but not its weight — dimmed AND small reads as decoration. */
+  .commit-group-body > summary .muted { font-weight: 400; }
+  .commit-group-note { margin: 2px 0 10px; font-size: 13px; }
+
+  /* "tinkerex never creates these." IS AN EXPLANATION, NOT A WARNING, and shares .muted with every
+     other aside on the page on purpose — .history-note's rule, for its reason. OS clutter is the
+     ordinary contents of a folder on a NAS; painting it in --danger would teach makers to read a
+     normal library as a fault. The actual protection is that the group arrives UNCHECKED, which is
+     a property of the markup and of commitgroup_controller's scope, never of a colour. */
+
+  /* BUILT BY commitgroup_controller.js, so this is the only description of the control's shape a
+     reader can find by looking at the page. It sits INSIDE the <details> and above the rows, which
+     is what stops a collapsed group being bulk-selected unseen. */
+  .commit-group-all {
+    display: inline-flex; align-items: center; gap: 6px; margin: 0 0 10px;
+    font-size: 13px; color: var(--fg-muted); cursor: pointer;
+  }
+
+  /* A ROW GIT WILL NOT COMMIT. The only non-committable state that reaches this page is `ignored` —
+     a TRACKED path that .gitignore also covers — and it is listed rather than dropped so the panel
+     and `git status` cannot disagree. It therefore has to READ as inert, or an unticked row with no
+     checkbox looks like one the maker simply forgot. */
+  .commit-rows > li[data-state="ignored"] { background: var(--raised); }
+  .commit-rows > li[data-state="ignored"] code { color: var(--fg-muted); }
+
+  /* A row with nothing under its head — an `ignored` row mounts neither a diff nor a "no diff" note
+     — would otherwise carry .commit-row-head's separator with empty space beneath it: a rule drawn
+     across the bottom of the card for no reason. */
+  .commit-row-head:only-child { border-bottom: none; }
+
+  /* --- File history (history_controller.js, mounted by files/show.html.erb) ---
+
+     EVERY ROW IN HERE IS BUILT IN JS, so this block is the only description of the panel's shape
+     that a reader can find by looking at the page. The controller writes no styles of its own and
+     must not start: a rule that lives in a JS string is one no stylesheet search will ever turn up.
+
+     .history-note IS THE HONEST-EMPTINESS SENTENCE and shares .muted with every other aside on the
+     page ON PURPOSE. "No changes to this file in the last 250 commits" is not a warning and must not
+     be dressed as one — it is the ordinary answer for a file in a busy repository, and styling it as
+     an error would teach makers to read a normal result as a fault. */
+  .history-panel { margin-top: 28px; }
+  .history-panel h2 { margin-bottom: 8px; }
+  /* The way to the repository-wide list, beside the heading rather than under the rows: it is about
+     the repository, not about what this walk happened to find, so it must not move or disappear with
+     the rows below it. */
+  .history-repo-link { font-size: 13px; font-weight: 400; margin-left: 10px; }
+  .history-list { list-style: none; margin: 0; padding: 0; }
+  .history-list > li { border: 1px solid var(--line); border-radius: var(--radius-panel); margin-bottom: 8px; }
+  .history-row-head {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 8px 10px;
+  }
+  .history-oid { color: var(--fg-muted); }
+  /* The subject takes the slack so the actions stay hard right on a wide row and wrap as a group on
+     a narrow one; min-width:0 is what lets a long one-line commit message ellipsise instead of
+     pushing the actions off the card. */
+  .history-subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .history-meta { font-size: 12px; }
+  .history-actions { display: inline-flex; gap: 10px; font-size: 13px; }
+  /* Empty until View or Diff opens one, so it must take no space when it holds nothing — otherwise
+     every row carries a blank strip and the list reads as loading forever. */
+  .history-detail:empty { display: none; }
+  .history-detail { border-top: 1px solid var(--line); padding: 8px 10px; }
+  .history-blob {
+    margin: 0; max-height: 320px; overflow: auto; background: var(--raised); border-radius: 6px;
+    padding: 8px 10px; font-family: var(--font-mono); font-size: 13px;
+  }
+  /* Bounded for .commit-diff's reason — a row's diff must not make the file page ten screens tall. */
+  .history-diff .cm-editor { max-height: 320px; }
+  .history-diff .cm-editor.cm-focused { outline: none; }
+  .history-diff .cm-scroller { font-family: var(--font-mono); font-size: 13px; }
+
+  /* --- Interactive 3D viewer (modelviewer_controller.js) — STL/3MF/OBJ --- */
+  .model-viewer { position: relative; }
+  .model-viewer-stage {
+    width: 100%; height: 60vh; min-height: 320px; border-radius: 6px;
+    background: var(--raised); display: none; touch-action: none;
+  }
+  .model-viewer-stage canvas { display: block; border-radius: 6px; }
+  .model-viewer-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
+  .model-viewer-source { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); max-width: 60%; }
+  .mv-launch { display: inline-flex; gap: 8px; }
+  .mv-actions { display: none; gap: 8px; }
+  .model-viewer-dims { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+  .model-viewer-fallback { text-align: center; padding: 24px; }
+  /* The controller adds --ready on a successful render: reveal the canvas + bar, hide the poster. */
+  .model-viewer--ready .model-viewer-stage { display: block; }
+  .model-viewer--ready .model-viewer-fallback { display: none; }
+  .model-viewer--ready .mv-launch { display: none; }
+  .model-viewer--ready .mv-actions { display: inline-flex; }
+  .model-viewer:fullscreen { background: var(--raised); padding: 12px; }
+  .model-viewer:fullscreen .model-viewer-stage { height: calc(100vh - 64px); }
+
+  /* --- Measure view (measure_controller.js) — .lbrn/.lbrn2, .mage, .dxf, .svg --- */
+  .measure-view { position: relative; }
+  /* SQUARE, AND NEVER TALLER THAN THE VIEWPORT. The stage was 100% of a 920px column; inside the
+     1360px shell it grew to a ~1160px square that no longer fits a 1400px browser window, and
+     WebDriver clicks at the centre of an element's VISIBLE part — measure_print_test's computed
+     click landed on the hole instead of the line. min(100%, 78vh) keeps it square (the tests derive
+     mm-per-pixel from the width) and on screen; on a phone 100% is the smaller term. */
+  .measure-stage { display: none; width: min(100%, 78vh); aspect-ratio: 1; margin: 0 auto; }
+  .measure-stage svg { width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+  .measure-stage svg.is-panning { cursor: grabbing; }
+  .measure-bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .measure-launch { display: inline-flex; gap: 8px; }
+  .measure-actions { display: none; gap: 4px; }
+  .measure-dims { flex: 1; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+  .measure-fallback { text-align: center; padding: 24px; }
+  /* The controller adds --ready on a successful render: reveal the outline stage, hide the poster. */
+  .measure-view--ready .measure-stage { display: block; }
+  .measure-view--ready .measure-fallback { display: none; }
+  .measure-view--ready .measure-launch { display: none; }
+  .measure-view--ready .measure-actions { display: inline-flex; }
+  /* Outline geometry drawn from the /geometry payload — see measure_controller.js (Task 8). */
+  /* NO `stroke` HERE ON PURPOSE: the layer colour arrives as a presentation attribute from
+     measure_controller.js, and any class rule would outrank it and flatten every layer
+     to one colour. The --hover/--marked rules below DO declare one, which is how they
+     still win over the attribute. */
+  .measure-contour { fill: transparent; stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .measure-contour--open { fill: none; }
+  .measure-contour--hit { stroke: transparent; stroke-width: 8; fill: none; pointer-events: stroke; vector-effect: non-scaling-stroke; }
+  .measure-contour--hover { stroke: #2b7; stroke-width: 2; }
+  /* THE SELECTION, IN ONE COLOUR, SINCE 2026-09-03 AND AT THE USER'S REQUEST. There were two rules
+     until then: `--marked` painted the print set blue (#06c) and `--selected` painted the contour
+     being measured this red, because a mode gathered one while a plain click did the other. A click
+     now does both, so this rule keeps --selected's colour and weight and --marked's tint, and
+     `.measure-contour--selected` is gone rather than left as a second name for the same state.
+
+     DECLARED AFTER --hover, AND THAT ORDER IS THE WHOLE "STAYS RED" CLAIM. Both are one class,
+     (0,1,0), so source order alone decides a contour that is both — and a click leaves the pointer
+     ON the contour it just selected, so with this rule first the shape you just picked would sit
+     under the hover green until you moved the mouse away. Reverse the two and the computed-style
+     assertions in lbrn_measure_test.rb and measure_print_test.rb go red with rgb(34, 187, 119). */
+  .measure-contour--marked { stroke: #d40; stroke-width: 2.5; fill: rgba(221, 68, 0, .16); }
+  /* An open contour has no interior, so the tint would paint a meaningless blob between its ends.
+     Higher specificity than the rules above, so it wins regardless of source order. */
+  .measure-contour--open.measure-contour--marked { fill: none; }
+  .measure-bitmap { fill: rgba(128, 128, 128, .18); stroke: #888; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+  /* `.measure-view--selecting .measure-stage svg:not(.is-panning) { cursor: copy }` STOOD HERE and
+     went with the mode on 2026-09-03. Its `:not(.is-panning)` was a specificity fix — both selectors
+     were (0,2,1) and this one was later, so without it a drag while selecting showed `copy` instead
+     of `grabbing`. There is no selecting class to key on now; the stage is `crosshair` at rest and
+     `grabbing` while panning, and nothing else. */
+  .measure-paper { font-size: 13px; }
+
+  /* --- LightBurn laser-settings panel (beside the preview on a .lbrn/.lbrn2 file page) --- */
+  .preview-row.has-settings { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+  .preview-row.has-settings > .preview { flex: 1 1 46%; min-width: 240px; }
+  .preview-row.has-settings > .lbrn-settings { flex: 1 1 46%; min-width: 260px; }
+  .lbrn-settings { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 14px 16px; }
+  .lbrn-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+  .lbrn-head h2 { margin: 0; font-size: 16px; }
+  .lbrn-layers { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .lbrn-layers th { text-align: left; color: var(--fg-muted); font-weight: 600; padding: 5px 6px; border-bottom: 1px solid var(--line); }
+  .lbrn-layers td { padding: 5px 6px; border-bottom: 1px solid var(--raised); }
+  .lbrn-layers .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .lbrn-swatch { display: inline-block; width: 11px; height: 11px; border-radius: 2px; vertical-align: middle; margin-right: 7px; }
+  .lbrn-summary { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 12px 0 0; font-size: 13px; }
+  .lbrn-summary dt { color: var(--fg-muted); }
+  .lbrn-summary dd { margin: 0; font-weight: 600; }
+  .lbrn-text { font-size: 12px; margin: 10px 0 0; }
+}

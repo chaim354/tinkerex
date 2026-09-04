@@ -1,0 +1,29 @@
+/* THE ONE UNLAYERED SHEET, LINKED LAST. Lexxy, CodeMirror and the spreadsheet grid ship their
+   own unlayered CSS, and an unlayered rule outranks every layered one — so the overrides that
+   must beat them cannot live in a layer. Nothing else in the app may be unlayered
+   (test/css_hygiene_test.rb). Tokens only; no new colours. */
+
+/* Lexxy (the build-log and notes editors): the element is <lexxy-editor class="lexxy-content">
+   in light DOM. */
+lexxy-editor, lexxy-editor.lexxy-content {
+  background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: var(--radius-panel);
+  font-family: var(--font-ui);
+}
+lexxy-editor:focus-within { border-color: var(--accent); }
+lexxy-editor button, lexxy-toolbar button { color: var(--fg-muted); }
+lexxy-editor button:hover, lexxy-toolbar button:hover { color: var(--fg); background: var(--raised); }
+lexxy-toolbar { border-bottom: 1px solid var(--line); background: var(--surface); }
+.lexxy-content a { color: var(--accent); }
+
+/* CodeMirror 6 (the source viewer, the editor, diffs, history blobs). */
+.cm-editor { background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: var(--radius-panel); }
+.cm-editor .cm-gutters { background: var(--raised); color: var(--fg-muted); border-right: 1px solid var(--line); }
+.cm-editor .cm-activeLine { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.cm-editor .cm-activeLineGutter { background: color-mix(in srgb, var(--accent) 12%, var(--raised)); }
+.cm-editor .cm-selectionBackground, .cm-editor ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.cm-editor .cm-cursor { border-left-color: var(--fg); }
+
+/* The spreadsheet grid (jspreadsheet CE + jsuites) stays a LIGHT ISLAND in PR 1 — spec §13 names
+   it as the one third-party surface that may keep its own scheme. color-scheme: light keeps its
+   native form controls readable inside the dark shell. */
+.sheet-grid { color-scheme: light; background: #ffffff; color: #1a1e26; border-radius: var(--radius-panel); padding: 4px; }

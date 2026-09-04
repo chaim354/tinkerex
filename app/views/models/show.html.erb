@@ -1,10 +1,12 @@
 <% content_for :title, "#{@model.title} — Tinkerex" %>
 
-<nav class="breadcrumb" aria-label="Model path">
-  <%= link_to "Models", models_path %>
-  <span class="sep" aria-hidden="true">/</span>
-  <span aria-current="page"><%= @model.title %></span>
-</nav>
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Model path">
+    <%= link_to "Models", models_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page"><%= @model.title %></span>
+  </nav>
+<% end %>
 
 <div class="page-head">
   <div>

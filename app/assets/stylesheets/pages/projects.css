@@ -1,0 +1,98 @@
+/* The Projects hub: index tiles, the project page's panels, tasks, the build-log timeline,
+   sheets. Panels, buttons, badges and fields are components. */
+@layer pages {
+  /* MIGRATED VERBATIM (old projects.css), substitution table applied, in this order:
+     .projects-grid, .project-tile, .project-tile form, .project-card, .project-card:hover,
+     .project-card:hover .thumb, .project-card .thumb, .project-thumb-empty, .project-name,
+     .project-head, .project-head h1, .project-description,
+     .project-panels and its @media (min-width: 900px) block, .photo-attach,
+     .attachments-grid, .entry-photos, .attachment-tile, .attachment-tile .thumb,
+     .attachment-tile.unavailable .thumb, .tile-meta, .entry-photo .thumb,
+     .attachment-group, .attachment-group:last-child, .attachment-group details[open] > .attachment-group-head,
+     .attachments-missing, .task-form input, .log-timeline, .log-entry, .entry-head, .entry-body,
+     .tasks-group, .task-row, .task-actions, .picker-results, .picker-result, .picker-search,
+     .picker-search input, .sheet-head, .sheet-head h1, .sheet-rename, .sheet-grid, .sheet-status,
+     .sheet-status-error, .sheets-panel .sheet-row, .sheets-panel .sheet-row:last-child.
+     NOT copied (they are components now): .btn*, .linkbtn.small, .badge*, .panel, .panel h2,
+     .panel-head, .panel-actions, .field*, .field-inline*, .form-actions, .form-errors,
+     .attachment-group-head (the heading rule), .attach-to-project, .attach-form*, .project-chip*,
+     .chip-x* (those five are in pages/files.css). */
+  .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 18px; }
+  /* Deliberately NOT `align-items: center` here: `.project-card` is a flex item of `.project-tile`
+     with no explicit width, so `align-items: center` sizes it to shrink-to-fit (its content's own
+     width) instead of stretching it — which starves `.project-card .thumb`'s `width: 100%` down to
+     the thumb's own content size (measured: a 161.5px tile shrank the thumb to ~50px). Leaving
+     `align-items` at its flex default (`stretch`) keeps `.project-card` — and so its `.thumb` — at
+     the tile's full width, exactly as the plain-block wrapper this replaces did. The Unarchive
+     button is centered instead by scoping `text-align: center` to the form alone, which centers its
+     inline-block `<button>` without touching `.project-card`'s box model at all. */
+  .project-tile { display: flex; flex-direction: column; gap: 6px; }
+  .project-tile form { text-align: center; }
+  .project-card { display: flex; flex-direction: column; gap: 8px; align-items: center; color: var(--fg); }
+  .project-card:hover { text-decoration: none; }
+  .project-card:hover .thumb { border-color: var(--accent); }
+  .project-card .thumb { width: 100%; height: 130px; }
+  .project-thumb-empty { font-size: 40px; }
+  .project-name { font-size: 14px; font-weight: 600; text-align: center; word-break: break-word; }
+
+  .project-head { align-items: flex-start; }
+  .project-head h1 { margin: 0 0 6px; }
+  .project-description { white-space: pre-wrap; color: var(--fg); margin: 0 0 24px; max-width: 70ch; }
+
+  .project-panels { display: grid; grid-template-columns: 1fr; gap: 24px; }
+  @media (min-width: 900px) { .project-panels { grid-template-columns: 1fr 1fr; }
+    .attachments-panel { grid-column: 1 / -1; } }
+  .photo-attach { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
+
+  .attachments-grid, .entry-photos { display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 14px; }
+  .attachment-tile { display: flex; flex-direction: column; gap: 6px; }
+  .attachment-tile .thumb { width: 100%; height: 110px; }
+  .attachment-tile.unavailable .thumb { font-size: 28px; color: var(--fg-muted); }
+  .tile-meta { display: flex; align-items: center; justify-content: center; }
+  .entry-photo .thumb { width: 100%; height: 90px; }
+
+  .attachment-group { margin-bottom: 20px; }
+  .attachment-group:last-child { margin-bottom: 0; }
+  /* A <summary>, so it carries the disclosure triangle and is focusable/clickable for free.
+     `list-style` is left alone deliberately — the marker IS the affordance that says "this opens". */
+  .attachment-group details[open] > .attachment-group-head { margin-bottom: 10px; }
+  .attachments-missing { font-size: 13px; margin: 4px 0 0; }
+
+  .task-form input { width: 100%; max-width: 480px; padding: 8px;
+    border: 1px solid var(--line); border-radius: 6px; font: inherit; margin-bottom: 8px; }
+  .log-timeline { list-style: none; padding: 0; margin: 12px 0 0; }
+  .log-entry { border-left: 2px solid var(--line); padding: 0 0 16px 14px; position: relative; }
+  .entry-head { display: flex; justify-content: space-between; align-items: center; }
+  /* No `white-space: pre-wrap` here any more. It was right when .entry-body held a raw plain-text
+     body — it is what made manual newlines visible. Since the Action Text move the element wraps real
+     HTML with its own <br>s, and because white-space INHERITS, pre-wrap stopped collapsing the
+     whitespace node the content partial emits and put a ~45px blank gap above every entry. */
+  .entry-body { margin: 4px 0; }
+
+  .tasks-group { margin-top: 12px; }
+  .task-row { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .task-actions { display: flex; gap: 4px; align-items: center; }
+
+  .picker-results { display: flex; flex-direction: column; gap: 6px; }
+  .picker-result { display: flex; justify-content: space-between; align-items: center;
+    padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
+  .picker-search { display: flex; gap: 8px; margin-bottom: 16px; }
+  .picker-search input { flex: 1; max-width: 480px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
+
+  .sheet-head { align-items: flex-start; }
+  .sheet-head h1 { margin: 0 0 6px; }
+  .sheet-rename { display: inline-flex; gap: 6px; }
+  /* The GRID scrolls sideways, not the whole page container — the page head sits in the same
+     element (it holds the Stimulus targets) and must stay put. */
+  .sheet-grid { overflow-x: auto; }
+  .sheet-status { font-size: 12px; }
+  .sheet-status-error { color: var(--danger); }
+
+  .sheets-panel .sheet-row { display: flex; align-items: center; justify-content: space-between;
+                             padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .sheets-panel .sheet-row:last-child { border-bottom: 0; }
+
+  .project-description { max-width: 72ch; font-size: 14px; line-height: 1.55; }
+}

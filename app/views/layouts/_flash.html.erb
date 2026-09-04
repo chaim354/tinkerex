@@ -1,0 +1,17 @@
+<%# Toasts (spec §5.5). The classes are the ones four system tests assert on. Only notice and
+    alert are drawn, exactly as the old layout did. A notice removes itself (toast_controller.js);
+    an alert stays until dismissed. %>
+<div class="flash-stack" data-controller="toast" aria-live="polite">
+  <% if flash[:notice].present? %>
+    <div class="flash flash-notice" role="status" data-toast-target="item">
+      <span class="flash-text"><%= flash[:notice] %></span>
+      <button type="button" class="flash-close" aria-label="Dismiss" data-action="toast#dismiss">&times;</button>
+    </div>
+  <% end %>
+  <% if flash[:alert].present? %>
+    <div class="flash flash-alert" role="alert" data-toast-target="item">
+      <span class="flash-text"><%= flash[:alert] %></span>
+      <button type="button" class="flash-close" aria-label="Dismiss" data-action="toast#dismiss">&times;</button>
+    </div>
+  <% end %>
+</div>

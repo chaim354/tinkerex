@@ -1,73 +1,76 @@
-<h2>Edit <%= resource_name.to_s.humanize %></h2>
+<div class="auth-card">
+  <h2>Your account</h2>
 
-<%= form_for(resource, as: resource_name, url: registration_path(resource_name), html: { method: :put }) do |f| %>
-  <%= render "users/shared/error_messages", resource: resource %>
+  <%= form_for(resource, as: resource_name, url: registration_path(resource_name), html: { method: :put }) do |f| %>
+    <%= render "users/shared/error_messages", resource: resource %>
 
-  <div class="field">
-    <%= f.label :email %><br />
-    <%= f.email_field :email, autofocus: true, autocomplete: "email" %>
-  </div>
+    <div class="field">
+      <%= f.label :email %>
+      <%= f.email_field :email, autofocus: true, autocomplete: "email" %>
+    </div>
 
-  <% if devise_mapping.confirmable? && resource.pending_reconfirmation? %>
-    <div>Currently waiting confirmation for: <%= resource.unconfirmed_email %></div>
+    <% if devise_mapping.confirmable? && resource.pending_reconfirmation? %>
+      <div>Currently waiting confirmation for: <%= resource.unconfirmed_email %></div>
+    <% end %>
+
+    <div class="field">
+      <%= f.label :password %>
+      <%= f.password_field :password, autocomplete: "new-password" %>
+      <span class="auth-hint">leave blank if you don't want to change it</span>
+      <% if @minimum_password_length %>
+        <span class="auth-hint"><%= @minimum_password_length %> characters minimum</span>
+      <% end %>
+    </div>
+
+    <div class="field">
+      <%= f.label :password_confirmation %>
+      <%= f.password_field :password_confirmation, autocomplete: "new-password" %>
+    </div>
+
+    <div class="field">
+      <%= f.label :current_password %>
+      <%= f.password_field :current_password, autocomplete: "current-password" %>
+      <span class="auth-hint">we need your current password to confirm your changes</span>
+    </div>
+
+    <div class="actions">
+      <%= f.submit "Update", class: "primary" %>
+    </div>
   <% end %>
 
-  <div class="field">
-    <%= f.label :password %> <i>(leave blank if you don't want to change it)</i><br />
-    <%= f.password_field :password, autocomplete: "new-password" %>
-    <% if @minimum_password_length %>
-      <br />
-      <em><%= @minimum_password_length %> characters minimum</em>
+  <h3>Delete this account</h3>
+
+  <%#
+    Devise's default here is a bare button_to with no password field.
+    Users::RegistrationsController#destroy now requires user[current_password], so without this
+    field deletion would be impossible through the UI. Pinned by account_settings_test's
+    "the rendered delete form carries the field the controller requires", which is scoped to
+    div.account-delete — the update form above ALSO has a current_password field, so an unscoped
+    assertion passes even when this one is renamed.
+  %>
+  <div class="account-delete">
+    <p>
+      This removes your account and everything in it — projects, the file catalog, tasks, the
+      build log, sheets, previews and paired devices. It cannot be undone.
+    </p>
+
+    <%= form_with url: registration_path(resource_name), method: :delete do |f| %>
+      <div class="field">
+        <%= f.label :current_password, "Confirm your password to delete this account" %><br />
+        <%# name: is explicit because this form has no model to scope from — form_with would
+            otherwise emit a bare `current_password`, which #destroy does not read. Passing the
+            symbol keeps the id as `current_password` so the label's `for` actually matches. %>
+        <%= f.password_field :current_password, name: "user[current_password]",
+                             autocomplete: "current-password", required: true %>
+      </div>
+      <div class="actions">
+        <%= f.submit "Delete my account", class: "btn danger", data: {
+              turbo_confirm: "Permanently delete your account and all of its data? " \
+                             "This cannot be undone."
+            } %>
+      </div>
     <% end %>
   </div>
 
-  <div class="field">
-    <%= f.label :password_confirmation %><br />
-    <%= f.password_field :password_confirmation, autocomplete: "new-password" %>
-  </div>
-
-  <div class="field">
-    <%= f.label :current_password %> <i>(we need your current password to confirm your changes)</i><br />
-    <%= f.password_field :current_password, autocomplete: "current-password" %>
-  </div>
-
-  <div class="actions">
-    <%= f.submit "Update" %>
-  </div>
-<% end %>
-
-<h3>Delete this account</h3>
-
-<%#
-  Devise's default here is a bare button_to with no password field.
-  Users::RegistrationsController#destroy now requires user[current_password], so without this
-  field deletion would be impossible through the UI. Pinned by account_settings_test's
-  "the rendered delete form carries the field the controller requires", which is scoped to
-  div.account-delete — the update form above ALSO has a current_password field, so an unscoped
-  assertion passes even when this one is renamed.
-%>
-<div class="account-delete">
-  <p>
-    This removes your account and everything in it — projects, the file catalog, tasks, the
-    build log, sheets, previews and paired devices. It cannot be undone.
-  </p>
-
-  <%= form_with url: registration_path(resource_name), method: :delete do |f| %>
-    <div class="field">
-      <%= f.label :current_password, "Confirm your password to delete this account" %><br />
-      <%# name: is explicit because this form has no model to scope from — form_with would
-          otherwise emit a bare `current_password`, which #destroy does not read. Passing the
-          symbol keeps the id as `current_password` so the label's `for` actually matches. %>
-      <%= f.password_field :current_password, name: "user[current_password]",
-                           autocomplete: "current-password", required: true %>
-    </div>
-    <div class="actions">
-      <%= f.submit "Delete my account", data: {
-            turbo_confirm: "Permanently delete your account and all of its data? " \
-                           "This cannot be undone."
-          } %>
-    </div>
-  <% end %>
+  <%= link_to "Back", files_path, class: "btn ghost" %>
 </div>
-
-<%= link_to "Back", :back %>
