@@ -175,6 +175,7 @@ module Web
     # which the grid renders and the file page does not.
     def pages
       {
+        "home" => root_path,
         "files (list)" => files_path(view: "list"),
         "files (grid)" => files_path(view: "grid"),
         "files (filtered)" => files_path(ext: "stl"),

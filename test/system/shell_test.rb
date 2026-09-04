@@ -96,6 +96,28 @@ class ShellTest < ApplicationSystemTestCase
     project = @user.maker_projects.create!(name: "Desk Lamp", description: "A lamp." * 20)
     long = create_node!(@user, node_id: SecureRandom.uuid, kind: "file",
                         name: "a-very-long-file-name-that-would-push-the-table-out-of-the-viewport-v3-final.stl")
+    # ENOUGH FILES FOR THE HOME ROW TO OVERFLOW TOO, mutation-checked same as home_test.rb's own
+    # dedicated scroll-containment test (see test/system/README.md) — without these, root_path's
+    # single `long` tile never fills `.home-files .tile-row` wide enough to overflow its own box,
+    # so dropping `.tile-row`'s `overflow-x: auto` in app/assets/stylesheets/pages/home.css read
+    # GREEN here on the first attempt, for having nothing to contain rather than containing it
+    # correctly — measured, not assumed: adding these 8 nodes is what turned that false green into
+    #   / scrolls sideways at 375px (scrollWidth 1312)
+    # which is the failure this loop's own final assertion below is written to catch. Reverted
+    # immediately after. RECENT_FILES caps display at 8; 8 more (9 total with `long`) mirrors
+    # home_test.rb's margin.
+    8.times { |i| create_node!(@user, node_id: SecureRandom.uuid, kind: "file", name: "shell-sweep-#{i}.stl") }
+
+    # ROOT_PATH RENDERS THE HOME HERO IN ITS FULL SHAPE ONLY WITH A CURRENT PROJECT SET, so pick
+    # one through the rail's own <select> BEFORE narrowing the viewport below — at 375px the rail
+    # itself is `display: none` (`assert_no_selector "aside.rail .current-project select"` in the
+    # loop below), and the topbar's own project select is a separate, narrower affordance this test
+    # has no need to drive. `visit root_path` first because sign_in_as's post-login DOM predates
+    # this project — the rail's <select> was rendered before `project` existed.
+    visit root_path
+    select project.name, from: "project_id"
+    assert_selector ".home-hero h2", text: project.name
+
     # THE VIEWPORT IS SET THROUGH CDP, NOT `manage.window.resize_to`, AND THE DIFFERENCE IS THE
     # WHOLE GUARD. Headless Chrome refuses to make a window narrower than 500px: asking for
     # 375x812 through the WebDriver window API and then measuring gave `innerWidth=500` on every
@@ -109,8 +131,8 @@ class ShellTest < ApplicationSystemTestCase
     page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
                                     width: 375, height: 812, deviceScaleFactor: 1, mobile: false)
     begin
-      [ files_path(view: "list"), files_path(view: "grid"), project_path(project), file_path(long.node_id),
-        tools_path, models_path, trash_index_path ].each do |path|
+      [ root_path, files_path(view: "list"), files_path(view: "grid"), project_path(project),
+        file_path(long.node_id), tools_path, models_path, trash_index_path ].each do |path|
         visit path
         # `nav.tabbar` is display:none above 719px, so finding it VISIBLE is the proof that the
         # phone rules are running at all — without it a viewport that never narrowed would satisfy

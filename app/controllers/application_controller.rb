@@ -44,11 +44,12 @@ class ApplicationController < ActionController::Base
 
   helper_method :web_device
 
-  # After a Devise sign-in (or sign-up confirmation), land on the file library — the app's
-  # home surface — matching the pre-Devise behavior. (Devise's default is root_path, which
-  # redirects to /files anyway; this skips the extra hop and keeps redirects explicit.)
+  # After a Devise sign-in (or sign-up confirmation), land on the Home page — the app's front
+  # door (config/routes.rb's `root to: "home#index"`). This IS Devise's own default
+  # (root_path); it is stated explicitly rather than left to fall through, so a reader does not
+  # have to know Devise's default to know where sign-in lands.
   def after_sign_in_path_for(_resource)
-    files_path
+    root_path
   end
 
   # A stable, reusable Device for the signed-in web user. Lets the web UI mint per-user

@@ -36,7 +36,7 @@ module Web
       user = User.create!(email: "du-#{SecureRandom.hex(4)}@example.com",
                           password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: user.email, password: PASSWORD } }
-      assert_redirected_to files_path, "sign-in did not take — this test proves nothing without it"
+      assert_redirected_to root_path, "sign-in did not take — this test proves nothing without it"
 
       before = ActiveStorage::Blob.count
       post PATH, params: blob_params, as: :json

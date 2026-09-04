@@ -9,6 +9,7 @@ module ShellHelper
   # resolve to their family. A controller not listed here lights nothing, which is correct for
   # Devise's pages (they render without the rail anyway).
   SECTIONS = {
+    "home" => %w[home],
     "files" => %w[files library_browse notes repo_commits repo_histories],
     "models" => %w[models shelves],
     "projects" => %w[projects current_project],
@@ -17,6 +18,7 @@ module ShellHelper
   }.freeze
 
   ICON_PATHS = {
+    home: "M2 8l6-5 6 5v6H9v-4H7v4H2z",
     files: "M2 4h5l2 2h5v7H2z",
     models: "M8 2l6 3v6l-6 3-6-3V5z M2 5l6 3 6-3 M8 8v6",
     projects: "M2 3h12v10H2z M6 3v10 M10 3v10",
@@ -54,6 +56,7 @@ module ShellHelper
 
   def rail_links
     [
+      [ "home", "Home", root_path, :home ],
       [ "files", "Files", files_path, :files ],
       [ "models", "Models", models_path, :models ],
       [ "projects", "Projects", projects_path, :projects ],

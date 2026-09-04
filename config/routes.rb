@@ -41,7 +41,7 @@ Rails.application.routes.draw do
   }
 
   # --- Web UI (server-rendered file browser) ---
-  root to: redirect("/files")
+  root to: "home#index"
 
   # --- Human-identity web auth (Devise) ---
   # Governs the server-rendered web UI only. The v1 device-token machinery (namespace :v1

@@ -23,6 +23,9 @@ require "application_system_test_case"
 #     the summary then TOGGLES IT SHUT, so the failure is `Capybara::ElementNotFound: Unable to
 #     find visible field "print_run[printer]"` rather than a closed-state assertion. The test does
 #     depend on the composer starting closed; it just reports it one line later than test 1 does.
+#   - Deleting `.lexxy-content { color: inherit; }` from vendor-overrides.css reddens test 5:
+#     `lexxy-content.css's own colour survived: oklch(0.2 0 0) inside a rgb(228, 231, 236) parent`
+#     — the vendor near-black is back inside the page's light text (2026-09-04).
 class ProjectsModelsPagesTest < ApplicationSystemTestCase
   setup do
     @root = use_fresh_share_library!
@@ -84,6 +87,26 @@ class ProjectsModelsPagesTest < ApplicationSystemTestCase
     fill_in "print_run[printer]", with: "Prusa MK4"
     click_on "Log a print"
     assert_selector ".print-log .print-run", text: "Prusa MK4"
+    assert_no_console_errors
+  end
+
+  # The rendered rich text (`div.lexxy-content`, action_text's content layout) arrives painted by
+  # lexxy-content.css in its own near-black, `oklch(0.2 0 0)` — on the dark theme that is black on
+  # black, and a build-log entry read as almost empty. Found on the Home hero's "Latest entry"
+  # (stage 2, S2-1, 2026-09-04), present on this page since stage 1; vendor-overrides.css now makes
+  # `.lexxy-content` inherit. Only a browser can see a computed colour, hence a system test; it
+  # asserts the rendered text takes its PARENT's colour, so it holds in either theme.
+  test "a rendered entry takes the page's text colour, not lexxy's own" do
+    @project.build_log_entries.create!(user: @user, body: "Shade printed in translucent PETG.",
+                                       logged_at: Time.current)
+    visit project_path(@project)
+    assert_selector ".log-timeline .log-entry .entry-body .lexxy-content", text: "Shade printed"
+    colours = page.evaluate_script(<<~JS)
+      (() => { const c = document.querySelector(".log-entry .entry-body .lexxy-content");
+               return [getComputedStyle(c).color, getComputedStyle(c.parentElement).color]; })()
+    JS
+    assert_equal colours[1], colours[0],
+                 "lexxy-content.css's own colour survived: #{colours[0]} inside a #{colours[1]} parent"
     assert_no_console_errors
   end
 end

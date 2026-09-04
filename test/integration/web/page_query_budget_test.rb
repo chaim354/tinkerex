@@ -190,6 +190,36 @@ module Web
                               "files#index (folder)")
     end
 
+    # THE HERO IS SEEDED TOO, NOT JUST THE RECENT LISTS — a current project is what makes
+    # HomeController#index actually enter the hero's branch (tasks, stats, the latest entry, the
+    # folder-ensure), so a page seeded with no current project would budget only the anonymous
+    # empty-hero path and miss an N+1 in the branch every signed-in visit with a project actually
+    # takes. The hero project itself gains one task, one attachment and one log entry per seed step for the same reason: its task
+    # list is loaded with `.to_a` (one query regardless of row count), so growing EVERY collection the hero
+    # reads is what would catch a per-row query if one crept in — with only the tasks growing, a
+    # per-attachment probe in the stats line stayed green (found in review, 2026-09-04).
+    test "home#index does not grow with projects, files, runs or tasks" do
+      hero = @user.maker_projects.create!(name: "Hero", status: "active")
+      patch current_project_path, params: { project_id: hero.id }
+      add = lambda do |prefix, count|
+        count.times do |i|
+          id = "#{prefix}#{i}"
+          node!(id, "#{id}.stl")
+          project = @user.maker_projects.create!(name: "P #{id}", status: "active")
+          project.file_attachments.create!(user: @user, node_id: id, role: "model")
+          model = @user.maker_models.create!(title: "M #{id}", slug: "m-#{id}")
+          model.print_runs.create!(user: @user, printed_on: Date.current, outcome: "failed")
+          hero.tasks.create!(user: @user, title: "task #{id}")
+          hero.file_attachments.create!(user: @user, node_id: id, role: "model")
+          hero.build_log_entries.create!(user: @user, body: "entry #{id}", logged_at: Time.current)
+        end
+      end
+      assert_constant_queries(root_path,
+                              -> { add.call("hs", SMALL) },
+                              -> { add.call("hl", LARGE - SMALL) },
+                              "home#index")
+    end
+
     # THE FILE PAGE INSIDE A GIT REPOSITORY, AND THE SUBJECT IS `Library::WorkingTree`. Every other
     # case here grows the page's OWN rows; this one grows the repository AROUND one unchanged file.
     # The walk that decides whether that file is editable is an ANCESTOR walk — a couple of queries

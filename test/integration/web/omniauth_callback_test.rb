@@ -26,7 +26,7 @@ module Web
       assert_difference -> { User.count }, 1 do
         get user_openid_connect_omniauth_callback_path
       end
-      assert_redirected_to files_path
+      assert_redirected_to root_path
     end
 
     test "OAuth refusing to take over a password account fails generically" do

@@ -44,7 +44,7 @@ class SheetGridTest < ApplicationSystemTestCase
     # Wait for Turbo to actually FOLLOW the login redirect before navigating (see
     # tray_layout_test.rb — without this the next visit races the redirect and 401s into the login
     # page, which reads exactly like the page failing to render).
-    assert_current_path "/files"
+    assert_current_path "/"
   end
 
   test "a formula computes in the grid and persists as its raw text" do
