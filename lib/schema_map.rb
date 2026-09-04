@@ -77,7 +77,7 @@ module SchemaMap
                      maker_tags maker_tasks] },
     { "label" => "Models & projects", "group" => "maker",
       "tables" => %w[maker_models maker_print_runs maker_projects maker_build_log_entries
-                     maker_sheets maker_shelves] },
+                     maker_sheets maker_shelves maker_filing_rules] },
     { "label" => "Inventory & BOM", "group" => "maker",
       "tables" => %w[maker_boms maker_bom_lines maker_inventory_items
                      maker_inventory_transactions maker_suppliers maker_locations] },
