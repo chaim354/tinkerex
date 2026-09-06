@@ -251,6 +251,43 @@ class GerberTest < ApplicationSystemTestCase
   # A SINGLE LAYER GETS `Fit` AND NOTHING ELSE. There is one layer, so a toggle for it is a button
   # whose only effect is to blank the page — and the side toggle is absent for the same reason the
   # template omits it (one render, two buttons showing the same picture).
+  # A STAGE WITH NO SIZE MUST NOT POISON THE VIEW. Screen -> user-space conversion divides by the
+  # element's on-screen scale, and an element with a 0 x 0 rect (a hidden browser pane, a collapsed
+  # container, a background tab) has none: the first draft of the shared module put `NaN` into the
+  # viewBox on one wheel event over the real Wheel Clock board, and every pan after that stayed NaN
+  # until Fit. Measured in the desktop app's hidden preview pane, where the viewport itself is 0 x 0
+  # — which is why headless Chrome never saw it. The lib now answers the view's centre for a point
+  # on a sizeless element and refuses a non-finite viewBox outright.
+  # MUTATION: removing both guards in lib/svg_pan_zoom.js reds this on the finite assertion.
+  test "a wheel over a stage collapsed to no size leaves the view finite" do
+    node = write_gerber_zip!
+
+    visit file_path(node.node_id)
+
+    assert_selector ".gerber-stage[data-gerber-state='ready']"
+    home = view_box
+    page.execute_script(<<~JS)
+      const stage = document.querySelector('.gerber-stage [data-gerber-target="stage"]')
+      stage.style.width = "0px"; stage.style.height = "0px"; stage.style.overflow = "hidden"
+      stage.querySelector("svg").style.width = "0px"; stage.querySelector("svg").style.height = "0px"
+    JS
+    assert_equal [ 0, 0 ], page.evaluate_script(<<~JS), "premise: the stage must really be sizeless"
+      (() => { const r = document.querySelector('.gerber-stage svg').getBoundingClientRect(); return [r.width, r.height] })()
+    JS
+
+    wheel_on(delta_y: -100)
+    drag_on(dx: 40, dy: 10)
+    # THE RAW ATTRIBUTE, NOT `view_box`: Ruby's `"NaN".to_f` is 0.0, so a parsed viewBox is finite
+    # by construction and an assertion on it passed with `NaN NaN …` on the element (the mutation
+    # was caught only by Chrome logging the invalid attribute). The string is the honest witness.
+    raw = page.evaluate_script("document.querySelector('.gerber-stage svg').getAttribute('viewBox')")
+
+    assert_no_match(/NaN|Infinity/, raw, "the viewBox must stay finite on a sizeless stage")
+    # The wheel still zooms — about the view's centre, the only point a sizeless element can name.
+    assert_operator view_box[2], :<, home[2], "the zoom itself must still apply"
+    assert_no_console_errors
+  end
+
   test "the single-layer page offers Fit and no layer toggles" do
     node = write_gerber!(name: "board.gtl")
 

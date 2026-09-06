@@ -33,16 +33,28 @@ export function installPanZoom(svg, { home, onChange = null } = {}) {
 
   const span = () => Math.max(home[2], home[3])
 
-  function setViewBox([ x, y, w, h ]) {
+  // A viewBox WITH A NaN IN IT IS A BLANK STAGE, AND IT STAYS BLANK: every later pan and zoom is
+  // arithmetic on the poisoned value. So a next view that is not finite in every component is
+  // refused and the current one kept — Fit still works, because `home` is finite.
+  function setViewBox(next) {
+    if (!next.every(Number.isFinite)) return
+    const [ x, y, w, h ] = next
     view = [ x, y, w, h ]
     svg.setAttribute("viewBox", `${x} ${y} ${w} ${h}`)
     onChange?.(view)
   }
 
   // Screen px -> user units (see the header for why the letterbox is part of this).
+  //
+  // AN ELEMENT WITH NO SIZE HAS NO SCALE, and dividing by it is how a NaN got into the viewBox:
+  // measured in a hidden browser pane (viewport 0 x 0, every rect 0 x 0), where one wheel event
+  // left `NaN NaN 308.7 56.5` on the real Wheel Clock board until Fit was pressed. A collapsed
+  // container, a display:none ancestor mid-transition or a background tab is the same shape. The
+  // honest answer for a point on a sizeless element is the view's own centre.
   function toUserSpace(clientX, clientY) {
     const rect = svg.getBoundingClientRect()
     const [ x, y, w, h ] = view
+    if (!(rect.width > 0 && rect.height > 0)) return { x: x + w / 2, y: y + h / 2 }
     const scale = Math.min(rect.width / w, rect.height / h)
     const offX = (rect.width - w * scale) / 2
     const offY = (rect.height - h * scale) / 2
