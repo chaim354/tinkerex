@@ -25,8 +25,9 @@ module Maker
     test "sections list the folder's loose files under the project name, then each subfolder by path" do
       names = pub.sections.map(&:first)
 
-      assert_equal [ "Desk Lamp", "Projects/desk-lamp/firmware", "Projects/desk-lamp/models",
-                     "Projects/desk-lamp/models/deep", "Projects/desk-lamp/photos" ], names
+      # FOLDER-RELATIVE, not the library path: a visitor reads "models/deep", never
+      # "Projects/desk-lamp/models/deep" (seen live on the dev server before this was fixed).
+      assert_equal [ "Desk Lamp", "firmware", "models", "models/deep", "photos" ], names
       loose = pub.sections.first.last.map { |r| r.node.name }
       # The dot-file is in the folder and NOT in the listing: Maker::ProjectFolderListing applies
       # Node.visible_entries, the same display rule the owner's own page uses.

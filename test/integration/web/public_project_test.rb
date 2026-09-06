@@ -137,7 +137,7 @@ module Web
 
       sections = css_select("h3.public-section").map(&:text)
       assert_includes sections, "Desk Lamp"
-      assert_includes sections, "Projects/desk-lamp/models"
+      assert_includes sections, "models" # folder-relative, never the library path
 
       row = css_select("table.public-files tr").find { |tr| tr.text.include?("base.stl") }
       assert row, "base.stl must be listed"

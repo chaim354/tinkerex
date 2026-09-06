@@ -44,9 +44,13 @@ module Maker
       @sections ||= begin
         out = []
         out << [ project.name, listing.loose ] if listing.loose.any?
+        # FOLDER-RELATIVE NAMES: `dir.path` is the LIBRARY path ("Projects/desk-lamp/models/deep"),
+        # which is the owner's filing, not the visitor's vocabulary -- seen live on the dev server
+        # as a column of "Projects/desk-lamp/…" headings. Strip the folder's own path once.
+        prefix = "#{listing.path}/"
         walk = lambda do |dirs|
           dirs.each do |dir|
-            out << [ dir.path, dir.files ] if dir.files.any?
+            out << [ dir.path.delete_prefix(prefix), dir.files ] if dir.files.any?
             walk.call(dir.children)
           end
         end

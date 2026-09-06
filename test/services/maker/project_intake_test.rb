@@ -412,6 +412,23 @@ module Maker
       assert_equal "design", parent_name(node)
     end
 
+    # STAGE 3, S3-4: a README at the project root is the project's own description, rendered from
+    # the root by the public page, so the sweep attaches it and leaves it where it is -- measured
+    # on the dev library before this rule, the sweep filed a fresh README.md into docs/ and the
+    # public page rendered nothing. Every README spelling Maker::Readme knows stays; a `notes.md`
+    # beside it is still filed, which is what pins the rule to the NAME rather than the extension.
+    test "a README at the root is attached but never filed away" do
+      readme = file("README.md")
+      notes = file("notes.md")
+      result = intake
+
+      assert_equal 1, result.moved
+      assert_includes result.skips, [ "README.md", :project_readme ]
+      assert_equal @folder.name, parent_name(readme), "the README left the project root"
+      assert_equal "docs", parent_name(notes)
+      assert_equal 2, result.attached, "a refusal attaches the row and leaves the bytes"
+    end
+
     # STAGE 3, S3-1: THE SWEEP OBEYS THE USER'S OWN FILING RULES, NOT JUST ROLE_FOLDERS' DEFAULT.
     # Edited after the seed, the way a real visit to /settings/filing would leave it -- #place
     # reads Maker::FilingRules.for(@user) once per sweep (see ProjectIntake#filing_rules), so an
@@ -1339,15 +1356,22 @@ module Maker
     # THE CONTROL, so the test above cannot pass for the wrong reason. Remove the `.git` and the
     # identical fixtures must sort — otherwise "nothing moved" would be evidence of a broken sweep
     # rather than of the rule working.
+    # The README stays for its OWN reason (`:project_readme`, stage 3, S3-4) and the other two
+    # must move — which is what keeps this control able to tell "the working tree froze the inbox"
+    # from "nothing moves anyway": the skip carries the reason, and a frozen inbox would carry
+    # `:in_working_tree` for all three instead.
     test "with NO .git, the same files sort normally" do
       readme = file("README.md")
       main   = file("main.py")
+      ini    = file("platformio.ini")
 
       result = intake
 
       assert_equal 2, result.moved
-      assert_not_equal @folder.node_id, readme.reload.parent_node_id
+      assert_equal [ [ "README.md", :project_readme ] ], result.skips
+      assert_equal @folder.node_id, readme.reload.parent_node_id
       assert_not_equal @folder.node_id, main.reload.parent_node_id
+      assert_not_equal @folder.node_id, ini.reload.parent_node_id
     end
 
     # A repo one level down is the ordinary shape — `Projects/lamp/firmware/` is a checkout, and
