@@ -59,6 +59,10 @@ class StructuralOrphanTest < ActiveSupport::TestCase
       p = u.maker_projects.create!(name: "Lamp")
       [ p, p.sheets.create!(user: u, name: "Cut list") ]
     },
+    "maker_connections.project_id" => ->(u) {
+      p = u.maker_projects.create!(name: "Lamp")
+      [ p, p.connections.create!(user: u, from_label: "Driver board", to_label: "Stepper motor") ]
+    },
     "maker_collection_items.collection_id" => ->(u) {
       c = u.maker_collections.create!(name: "Favourites")
       [ c, c.collection_items.create!(user: u, item: u.maker_items.create!(title: "Bracket")) ]
