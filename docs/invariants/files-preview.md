@@ -122,6 +122,99 @@ rendered only what it stacked would make those files invisible.
 presigned redirect, exactly as it does for the 3D viewer and the KiCanvas embed. Shared and
 pre-existing, not new here.
 
+## `:model3d` is the browser's own viewer, and Online3DViewer is what decides its list
+
+**The engine is ONE vendored bundle and its WebAssembly importers are SEPARATE FILES.**
+`bin/build-o3dv` esbuild-bundles `online-3d-viewer@0.18.0`'s `source/engine/main.js` into
+`vendor/javascript/o3dv.js` (one importmap pin, `preload: false`, dynamic-imported by
+`modelviewer_controller.js` on the click, the KiCanvas/tracespace pattern) and copies the OpenCascade,
+rhino3dm and Draco importers into `public/o3dv/<version>/`. **Build from `source/`, never from the
+package's own `build/engine/o3dv.module.js`** — that file leaves nine bare imports unresolved
+(`three`, five `three/examples/jsm/loaders/*`, `fflate`), so vendoring it resolves `three` through
+this app's pin, 0.185.1 against the engine's own 0.176.0, and needs five new pins nothing else wants.
+
+**The `three` pins are now an ADDON CONTRACT and nothing else.** No file in this repo imports
+`three` any more. `chaim354/tinkerex-addons`' openscad bundle dynamic-imports `three`,
+`three/addons/controls/OrbitControls.js` and `three/addons/loaders/3MFLoader.js` through the HOST
+importmap (`Tools::AddonsController#merged_importmap`), so removing any of those five pins —
+including the transitive `three-core` and `fflate` — breaks that addon at runtime with no local
+error pointing at the pin. `STLLoader.js` and `OBJLoader.js` are the two that addon does not import,
+which is the only reason they could be retired with the old viewer.
+
+**Upstream fetches its wasm importers from jsdelivr, and `bin/build-o3dv` REWRITES those URLs.**
+0.18.0 exposes no setter for this: `LoadExternalLibrary` injects a `<script src>` at a hard-coded
+CDN URL and `CreateOcctWorker` fetches a worker script, string-patches it and runs it from a `blob:`
+URL. All three are wrong here — `script-src 'self'` refuses both shapes, a self-hosted box on an
+isolated network has no jsdelivr, and §9's vendoring rule is "no CDN". The build script patches them
+to `/o3dv/<version>/`, replaces the blob worker with a plain same-origin one (the worker's own
+`importScripts` and emscripten's `locateFile` both resolve beside it, so nothing else needed
+patching), and then **refuses to ship a bundle that still contains a jsdelivr string, or one that
+does not contain the local paths** — the second half being what stops a patch that deleted rather
+than replaced. `test/system/o3dv_test.rb` asserts the same thing from the browser: the page requests
+our worker and requests nothing from a CDN.
+
+**occt-import-js is LGPL-2.1 and that is fine, on the posture the image already takes for OCCT.**
+It is a separate WebAssembly file the browser fetches and runs on its own; nothing links against it
+and none of it is copied into our bundle, which is the LGPL's own dynamic-use case, and replacing it
+means dropping a different build into `public/o3dv/<version>/`. The `Dockerfile` makes the identical
+argument for OCCT inside the F3D subprocess ("OCCT is LGPL and stays process-isolated"). Its licence
+text, and OpenCASCADE's, ship beside the wasm. **web-ifc (MPL-2.0) is NOT shipped** and `.ifc` is
+absent from the viewable list, so nothing can reach that importer. §9.
+
+**`'wasm-unsafe-eval'` in `script-src` is what keeps the CAD importers working when the policy is
+enforced.** Chrome refuses `WebAssembly.instantiate` under a `script-src` carrying neither it nor
+`'unsafe-eval'`; it permits no `eval`, no `new Function` and no string timer, so it is not the
+widening `'unsafe-eval'` would be. Report-only today, so today it only keeps the report log clean.
+
+**THE URL MUST CARRY THE FILENAME — `named_blob_file_path`, never `blob_file_path`.** The engine
+picks its importer from the fetched URL's own trailing extension (`GetFileExtension`), never from
+the bytes or a Content-Type. This is KiCanvas's rule exactly, with the same symptom when it is
+broken: the viewer simply never recognises the file, and the page falls back to the poster with
+nothing in the console pointing at the URL. Both templates and the model page's `data-url` options
+use the named route.
+
+**`VIEWABLE_3D_EXTS` AND THE RENDERER REGISTRY ARE TWO LISTS, AND THEY DO NOT MATCH.** The browser
+list is the engine's importers minus four stated absences (`ifc` unshipped, `svg` owned by the
+Measure branch which returns first, `bim` not a maker format, `brp` a second spelling of `brep`).
+The server list is `f3d --list-readers` on the shipped 3.5.0, which has no reader for `3dm`, `amf`
+or `fcstd` — so those three open in the browser and have no thumbnail, which is the honest answer:
+registering them would create a preview row and a job for a render that can only fail. `3mf` is
+absent from the F3D list for the opposite reason — it already has a better renderer, the slicer's
+own embedded thumbnail. Both directions are asserted in `registry_test.rb`.
+
+**A ROLE IS WHERE A FILE FILES, NOT WHETHER IT RENDERS**, and the 2026-09-06 widening is where that
+is easiest to get wrong. `ROLE_BY_EXT` gained the mesh formats as `model`, but `.fcstd` is viewable
+and stays `cad_source` (it is a FreeCAD project you go back and edit; making it a `model` would MOVE
+it out of `cad/` on the user's NAS) and `.svg` stays `vector`. **The widening reaches existing users
+ONCE, by a data migration, never by a re-seed on read**
+(`db/migrate/20260906140000_rederive_model_roles_and_seed_filing_rules.rb`, the shape
+`SeedPcbFilingRules` set): `Maker::FilingRules.seed!` stays guarded by `exists?` because
+`/settings/filing` promises a removed rule files into `other`, so the migration tops up only users
+who already hold rules (a user with none is seeded in full on their first read) and re-derives only
+`other` attachment roles on the thirteen extensions, ghost nodes skipped. Its `down` takes only those
+extensions on both doors — the folder column is free-form, and a hand-made rule filing something
+else into `models` must survive a rollback.
+
+**THE ENGINE NORMALISES UP-AXIS AT IMPORT, SO THE CONTROLLER MUST NOT.** Each importer declares its
+format's up direction and `ThreeModelLoader` rotates the three object by -90° about X wherever that
+is Z — so the scene is always Y-up and a per-format camera table (which the Three.js viewer needed,
+because neither STLLoader nor 3MFLoader rotated anything) now lays every STL on its side instead of
+fixing it. The consequence for the DIMENSIONS is the trap: `Viewer#GetBoundingBox` reads the
+ROTATED scene and reports a Z-up file's height as its depth — measured, a 20 x 10 x 5 STL read back
+as "20 × 5 × 10 mm". `OV.GetBoundingBox(model)` walks the imported model's own vertices, through
+mesh INSTANCES so an assembly's node transforms are applied, and is the only honest source.
+
+**`--ready` MEANS "THE VIEWER IS OPEN", NOT "THE MODEL RENDERED".** `EmbeddedViewer` measures its
+parent's `clientWidth`/`clientHeight` in its constructor and `.model-viewer-stage` is `display:none`
+until that class lands, so the class must be added BEFORE the engine is constructed or the canvas is
+0x0 forever. Success and failure are carried by `data-modelviewer-state` (`loading`/`ready`/
+`failed`) instead, which is also what the system test drives. The failure contract is unchanged from
+the Three.js viewer: any error puts the server-rendered thumbnail poster back.
+
+**The S3 caveat is shared with KiCanvas and the Gerber viewer**: `connect-src 'self'` blocks a
+viewer's fetch of a presigned cross-origin redirect. Pre-existing, and this engine is bounded by it
+exactly as the old one was.
+
 ## Extensionless text is a SEPARATE AXIS, and it must not move files
 
 `File.extname("LICENSE")` is `""`, and so is `File.extname(".gitignore")` — a leading dot with no

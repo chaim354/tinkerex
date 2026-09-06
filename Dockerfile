@@ -176,7 +176,8 @@ COPY --from=resvg /out/bin/resvg /usr/local/bin/resvg
 # PNG grid thumbnail. (The detail view embeds the whole PDF via the browser's own viewer — no tool.)
 COPY --from=pdfium /tmp/pdfium /usr/local/bin/pdfium
 
-# F3D → Maker::Previews::Mesh#available? is true, so .obj/.step/.stp/.iges/.igs get a thumbnail
+# F3D → Maker::Previews::Mesh#available? is true, so .obj/.step/.stp/.iges/.igs/.brep and the mesh
+# formats gltf/glb/ply/off/dae/wrl/3ds/fbx get a thumbnail
 # instead of falling through to `unsupported`.
 #
 # F3D_BIN RATHER THAN A PATH SYMLINK: the renderer already reads ENV["F3D_BIN"], and the final stage

@@ -108,11 +108,17 @@ module Web
       assert_select "h2", text: /Files\s*\(1\)/
     end
 
-    test "show renders a 3D switcher over STL/3MF/OBJ only, excluding STEP" do
+    # STEP IS IN THE SWITCHER SINCE 2026-09-06 and this test used to assert the opposite ("STL/3MF/
+    # OBJ only, excluding STEP") — the Online3DViewer slice gave the browser an OpenCascade importer,
+    # so the reason for that exclusion is gone. What has NOT changed is that the switcher is
+    # filtered at all: `.f3d` is the file that must still be absent, and it is the honest
+    # replacement because no engine we ship reads it.
+    test "show renders a 3D switcher over every viewable file, excluding the ones nothing can read" do
       user = sign_in
       m = user.maker_models.create!(title: "Multi")
       folder = m.ensure_library_folder!(user)
-      { "body.stl" => "b1", "lid.3mf" => "l1", "clip.obj" => "c1", "cad.step" => "s1" }.each_with_index do |(name, nid), i|
+      { "body.stl" => "b1", "lid.3mf" => "l1", "clip.obj" => "c1", "cad.step" => "s1",
+        "scene.glb" => "g1", "part.f3d" => "f1" }.each_with_index do |(name, nid), i|
         user.nodes.create!(node_id: nid, name:, kind: "file", parent_node_id: folder.node_id)
         m.file_attachments.create!(user:, node_id: nid, role: Maker::FileAttachment.role_for(name), position: i)
       end
@@ -120,11 +126,15 @@ module Web
       get model_path(m)
       assert_response :success
       assert_select ".model-hero.model-viewer[data-modelviewer-lazy-value=?]", "true"
-      assert_select "select.model-viewer-source option", count: 3        # stl + 3mf + obj, NOT step
-      assert_select "select.model-viewer-source option[data-url=?][data-format=?]", blob_file_path("b1"), "stl"
-      assert_select "select.model-viewer-source option[data-format=?]", "3mf"
-      assert_select "select.model-viewer-source option[data-format=?]", "obj"
-      assert_select "select.model-viewer-source option", text: "cad.step", count: 0
+      assert_select "select.model-viewer-source option", count: 5        # everything but the .f3d
+      # THE NAMED BLOB ROUTE HERE TOO — the engine reads the importer off the URL's own trailing
+      # extension, so a `data-url` without one switches the viewer to a file it cannot identify.
+      assert_select "select.model-viewer-source option[data-url=?][data-format=?]",
+                    named_blob_file_path("b1", filename: "body.stl"), "stl"
+      %w[3mf obj step glb].each do |fmt|
+        assert_select "select.model-viewer-source option[data-format=?]", fmt
+      end
+      assert_select "select.model-viewer-source option", text: "part.f3d", count: 0
       assert_select ".mv-launch [data-action~=?]", "modelviewer#load"
     end
 
@@ -154,7 +164,8 @@ module Web
 
       get model_path(m)
       assert_response :success
-      assert_select ".model-hero.model-viewer[data-modelviewer-url-value=?]", blob_file_path("solo1")
+      assert_select ".model-hero.model-viewer[data-modelviewer-url-value=?]",
+                    named_blob_file_path("solo1", filename: "body.stl")
       assert_select ".model-hero.model-viewer[data-modelviewer-format-value=?]", "stl"
       assert_select "select.model-viewer-source", count: 0
       assert_select ".mv-launch [data-action~=?]", "modelviewer#load"

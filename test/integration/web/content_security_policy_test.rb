@@ -38,6 +38,41 @@ module Web
       assert_match(/script-src[^;]*'self'/, csp)
     end
 
+    # `'wasm-unsafe-eval'` IS WHAT KEEPS THE 3D VIEWER'S CAD IMPORTERS WORKING WHEN THE POLICY IS
+    # ENFORCED. Chrome refuses `WebAssembly.instantiate` under a `script-src` carrying neither this
+    # nor `'unsafe-eval'`, and OpenCascade (STEP/IGES/BREP/FCStd) and the Draco glTF decoder are
+    # both wasm — so without it, flipping report_only to false would take STEP previews down while
+    # every mesh format kept working, a failure shaped exactly like a broken CAD file rather than
+    # like a policy. (rhino3dm's 3DM importer is the one this does NOT cover: its embind glue uses
+    # `new Function`, so `.3dm` is the importer to re-check before the policy enforces — the
+    # initializer says so.)
+    #
+    # AND `'unsafe-eval'` MUST STAY OUT, which is the half worth asserting rather than assuming:
+    # the two are separate sources precisely so a page can run WebAssembly without also being
+    # allowed to `eval` a string, and reaching for the wrong one would hand back the XSS surface
+    # this policy exists to remove.
+    test "script-src permits WebAssembly and still refuses eval" do
+      get files_path
+      csp = response.headers["Content-Security-Policy-Report-Only"]
+
+      assert_match(/script-src[^;]*'wasm-unsafe-eval'/, csp)
+      assert_no_match(/script-src[^;]*'unsafe-eval'/, csp)
+    end
+
+    # NO `blob:` AND NO `worker-src` WIDENING, and that is a claim about bin/build-o3dv rather than
+    # about this file: upstream Online3DViewer builds its OpenCascade worker out of a `blob:` URL,
+    # which `'self'` refuses, and the vendoring script patches it into a plain same-origin worker
+    # served from public/o3dv/<version>/ instead. `worker-src` falls back to `child-src` and then
+    # to `script-src`, so `'self'` already covers that — reverting the patch would be invisible
+    # here and visible only as a violation report, which is why it is written down.
+    test "the policy still has no blob: script source and no worker-src of its own" do
+      get files_path
+      csp = response.headers["Content-Security-Policy-Report-Only"]
+
+      assert_no_match(/script-src[^;]*blob:/, csp)
+      assert_no_match(/worker-src/, csp)
+    end
+
     test "frame-ancestors is 'self', not 'none' — the app frames its own PDF previews" do
       # files/show and models/show embed blob_file_path in a same-origin <iframe>. 'none' would
       # refuse to let our own page frame our own endpoint, blanking every PDF preview the moment

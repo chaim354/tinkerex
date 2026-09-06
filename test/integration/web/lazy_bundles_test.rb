@@ -12,7 +12,18 @@ module Web
   # and this drives a real page so the assertion is about what a browser receives, not the config.
   class LazyBundlesTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
-    LAZY = %w[kicanvas tracespace codemirror lib/codemirror_languages lib/codemirror_theme].freeze
+    # `online-3d-viewer` IS THE LARGEST OF THEM (1.0 MB, 274 KB gzipped) and therefore the one this
+    # test earns the most on: modelviewer_controller.js imports it only when the user clicks
+    # "View in 3D", so even a page holding a `.stl` must not fetch it.
+    #
+    # THE BASENAME IS `o3dv`, NOT THE PIN NAME — the check below derives the digested href from
+    # `File.basename(name)`, and this pin maps the specifier "online-3d-viewer" to the file
+    # "o3dv.js". Listed here with its FILE name so the preload lookup finds the right asset; the
+    # importmap-entry half of the assertion needs the SPECIFIER, so the two are a pair.
+    LAZY = { "kicanvas" => "kicanvas", "tracespace" => "tracespace", "codemirror" => "codemirror",
+             "lib/codemirror_languages" => "codemirror_languages",
+             "lib/codemirror_theme" => "codemirror_theme",
+             "online-3d-viewer" => "o3dv" }.freeze
 
     setup do
       @user = User.create!(email: "lazy-#{SecureRandom.hex(4)}@example.com",
@@ -30,9 +41,9 @@ module Web
       assert_operator preloads.size, :>, 5, "expected the ordinary modules to be preloaded, found #{preloads.size}"
 
       imports = JSON.parse(css_select("script[type=importmap]").first.text).fetch("imports")
-      LAZY.each do |name|
+      LAZY.each do |name, basename|
         assert imports.key?(name), "#{name} lost its importmap entry -- preload: false is not unpin"
-        digested = "/#{File.basename(name)}-"
+        digested = "/#{basename}-"
         offenders = preloads.select { |href| href.include?(digested) }
         assert_empty offenders, "#{name} is module-preloaded on every page: #{offenders}"
       end

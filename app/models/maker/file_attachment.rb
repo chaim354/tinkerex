@@ -36,7 +36,21 @@ module Maker
     # added in this file, and whoever adds one has no reason to go looking two files away.
     # `markdown` is the current bound at exactly 8 characters. Pinned by files_helper_test.rb.
     ROLE_BY_EXT = {
+      # 3D MODELS — meshes and the exchange/CAD formats that arrive as finished geometry. The set
+      # widened on 2026-09-06 with the Online3DViewer slice: what the browser can now SHOW and what
+      # the F3D subprocess can now make a thumbnail of both grew, and a file the app can render is
+      # a file it should file as a model rather than sweep into "Other".
+      #
+      # A ROLE IS WHERE A FILE FILES, NOT WHETHER IT RENDERS, which is why this list and
+      # VIEWABLE_3D_EXTS below are two lists and not one. `fcstd` is VIEWABLE (the OpenCascade
+      # importer reads it) and stays `cad_source`, because it is a FreeCAD project you go back and
+      # edit — it belongs in `cad/` beside the `.f3d`, and moving it would move real files on the
+      # user's NAS. `svg` is viewable too (the engine extrudes it) and stays `vector` for the same
+      # reason plus a louder one: it is the Measure view's page.
       "stl" => "model", "3mf" => "model", "obj" => "model", "step" => "model", "stp" => "model",
+      "gltf" => "model", "glb" => "model", "ply" => "model", "off" => "model", "dae" => "model",
+      "wrl" => "model", "3ds" => "model", "fbx" => "model", "3dm" => "model", "amf" => "model",
+      "iges" => "model", "igs" => "model", "brep" => "model",
       "png" => "image", "jpg" => "image", "jpeg" => "image", "gif" => "image", "webp" => "image", "bmp" => "image",
       "pdf" => "instructions", "zip" => "source_archive",
       # CNC. `nc`/`tap`/`ngc` are the router/mill dialects; without them a CNC-heavy project is
@@ -141,6 +155,34 @@ module Maker
       "g1" => "pcb", "g2" => "pcb", "g3" => "pcb", "g4" => "pcb",
       "gd1" => "pcb", "gg1" => "pcb", "drl" => "pcb", "xln" => "pcb", "gbrjob" => "pcb"
     }.freeze
+
+    # EVERY EXTENSION THE 3D VIEWER CAN OPEN — the ONE list, read by BOTH doors that offer it
+    # (`FilesController#preview_kind`'s `:model3d` branch and `ModelsController#show`'s hero
+    # switcher). Each controller carried its own copy of `%w[stl 3mf obj]` until 2026-09-06, which
+    # is the second-table shape §14d exists to stop: the file page and the model page would have
+    # disagreed about which of a model's files are viewable, silently and in one direction only.
+    #
+    # IT IS THE SHIPPED IMPORTERS' OWN LIST, checked against online-3d-viewer 0.18.0's
+    # `source/engine/import/importer.js` rather than its README — the engine registers importers for
+    # `3dm 3ds 3mf amf bim brep brp dae fbx fcstd glb gltf ifc iges igs obj off ply step stl stp svg
+    # wrl`, and this is that set minus four deliberate absences:
+    #
+    #   `ifc`  — its importer is web-ifc, MPL-2.0, which bin/build-o3dv does not ship (§9). Listing
+    #            it would open a viewer that can only ever fail.
+    #   `svg`  — viewable (the engine extrudes it), but `.svg` is the MEASURE view's page and
+    #            `preview_kind` returns `:measure` for it several branches earlier. Listing it here
+    #            would state a claim the ordering silently overrides.
+    #   `bim`  — not a maker format; nothing in this app files one.
+    #   `brp`  — upstream's alias for `brep`. One spelling per format: F3D's reader lists `brep`
+    #            only, so a `.brp` would view in the browser and have no server thumbnail.
+    #
+    # THE CAD ENTRIES NEED THE WASM IMPORTER. `step`/`stp`/`iges`/`igs`/`brep`/`fcstd` go through
+    # OpenCascade and `3dm` through rhino3dm — separate files under `public/o3dv/<version>/`, so a
+    # deployment that lost that directory shows the thumbnail poster for those six rather than a
+    # broken page (the controller's failure contract).
+    VIEWABLE_3D_EXTS = %w[
+      stl 3mf obj gltf glb ply off dae wrl 3ds fbx 3dm amf step stp iges igs brep fcstd
+    ].freeze
 
     # Roles whose files are TEXT a browser can display as source. Consulted by
     # FilesController#preview_kind, which carried its own inline list of 26 extensions until

@@ -33,7 +33,29 @@ Rails.application.configure do
     # builds in the browser.
     policy.img_src     :self, :data, :blob
     policy.object_src  :none
-    policy.script_src  :self
+    # `'wasm-unsafe-eval'` BUYS THE WEBASSEMBLY IMPORTERS AND NOTHING ELSE, which is the whole
+    # reason it exists as a source separate from `'unsafe-eval'`. Chrome refuses
+    # `WebAssembly.instantiate` under an enforcing `script-src` that carries neither, and the 3D
+    # viewer's OpenCascade (STEP/IGES/BREP/FCStd) and Draco importers are wasm — so without this,
+    # flipping report_only to false would take STEP previews down while leaving every mesh format
+    # working, a failure shaped exactly like a broken CAD file. It does NOT permit `eval`,
+    # `new Function` or a string timer, so the XSS surface `'unsafe-eval'` would open stays closed.
+    #
+    # ONE IMPORTER THIS DOES NOT COVER: rhino3dm (3DM). Its emscripten embind glue builds
+    # constructors with `new Function` at module load (two sites, probed in the review), so under an
+    # ENFORCING policy `.3dm` alone degrades to the poster — and it has no F3D thumbnail either, so
+    # that page would show nothing. Harmless while report-only; re-check `.3dm` before flipping
+    # `content_security_policy_report_only`, and do not reach for `'unsafe-eval'` to keep it.
+    #
+    # TODAY IT ONLY STOPS THE REPORTS (the policy is report-only, see the bottom of this file), and
+    # that is worth having on its own: a directory of noise in the [csp-violation] log is what the
+    # "clear the violations, then flip" plan above has to read through.
+    #
+    # NOTHING NEW IS NEEDED FOR THE OCCT *WORKER*. `worker-src` falls back to `child-src` and then
+    # to `script-src`, and bin/build-o3dv patches upstream's fetched `blob:` worker into a plain
+    # same-origin one served from public/o3dv/<version>/ — which `'self'` already covers. A blob:
+    # worker would have needed a `worker-src blob:` widening; not doing that was the point.
+    policy.script_src  :self, :wasm_unsafe_eval
     # 'unsafe-inline' because the vendored grid and the editor set style attributes at runtime.
     # Narrowing this is the follow-up, and it is why style-src is NOT in the nonce directives
     # below: a nonce plus 'unsafe-inline' means the nonce wins and inline styles break, which is

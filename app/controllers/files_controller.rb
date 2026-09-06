@@ -1534,10 +1534,19 @@ class FilesController < ApplicationController
     # extensions instead (§14d drift, one layer down). `Maker::FileAttachment.text?` is now the
     # one definition and the Registry derives from the same constant behind it.
     return :text  if Maker::FileAttachment.text?(name)
-    # Mesh formats the browser can parse itself -> the interactive client-side 3D viewer
+    # Formats the browser can parse itself -> the interactive client-side 3D viewer
     # (modelviewer_controller.js), which supersedes the static thumbnail on the detail page. The
-    # thumbnail is still generated (Registry has these) and serves as the viewer's fallback poster.
-    return :model3d if %w[stl 3mf obj].include?(ext)
+    # thumbnail is still generated (Registry has most of these) and serves as the viewer's fallback
+    # poster — the same "a poster, not a replacement" relationship the Registry comment describes.
+    #
+    # DERIVED FROM THE ONE VOCABULARY, not a list beside it — the same collapse the `:text` branch
+    # above got on 2026-08-25, and for the same reason: ModelsController#show offers the SAME
+    # viewer for a model's files off the SAME constant, so a second literal here would let the file
+    # page and the model page disagree about which formats are viewable.
+    #
+    # THIS BRANCH NOW TAKES step/stp/iges/igs FROM `:thumbnail` BELOW, which is the visible change:
+    # a CAD file's page was a static PNG and is now that PNG with a "View in 3D" button over it.
+    return :model3d if Maker::FileAttachment::VIEWABLE_3D_EXTS.include?(ext)
     # A file we can render a server-side thumbnail for (step, stp, iges, igs, ...) but
     # that the browser can't display raw. The :thumbnail branch in show.html.erb reads @thumbnail.
     return :thumbnail if Maker::Previews::Registry.for(ext)
