@@ -132,6 +132,19 @@ module Web
       # git repository behind it either.
       @user.nodes.create!(node_id: "n-firmware-readme", name: "README.md", kind: "file",
                           parent_node_id: firmware.node_id)
+      # STAGE 3, S3-2 (Task B): ONE .kicad_sch FILE, OR projects/_schematics's POPULATED branch
+      # never runs. Its own doc comment says the partial "renders nothing when the folder holds
+      # none" — and show.html.erb calls render UNCONDITIONALLY (the partial decides), so the FILE
+      # already counted as "covered" without this node; what was missing is the list/badge/
+      # kicanvas-embed markup inside the `if kicad_rows.any?` branch, which is exactly where a
+      # leaked ERB comment would show up and exactly what the empty-folder case cannot exercise. A
+      # plain node with no real bytes is enough for a server-rendered request test: the partial
+      # only links to the file and mounts a `data-controller="kicanvas"` div, and the bytes are
+      # fetched CLIENT-SIDE, which this test never runs (test/system/kicanvas_test.rb is where a
+      # real KiCad file matters — test/support/kicad_fixture.rb, Task B's).
+      @user.nodes.create!(node_id: "n-schematic", name: "driver.kicad_sch", kind: "file",
+                          parent_node_id: folder.node_id, mtime: 1_000_000_000, size: 5,
+                          content_hash: "h-schematic", current_version_id: "v-schematic")
       # ONE GENERATED FILE IN THE FOLDER, OR projects/_generated_group IS NEVER RENDERED: a file with
       # a Maker::AddonState behind it, keyed to the `fixture` addon the sweep's ADDON_SOURCE_PATH
       # already serves (link_for answers nil for a key the source does not know, and the concern
@@ -226,6 +239,7 @@ module Web
         "file detail (measure, lbrn)" => file_path("n-bak"),
         "file detail (measure, mage)" => file_path("n-mill"),
         "file detail (text)" => file_path("n-src"),
+        "file detail (kicanvas)" => file_path("n-schematic"),
         "projects index" => projects_path,
         "project detail" => project_path(@project),
         "project detail (list)" => project_path(@project, view: "list"),
