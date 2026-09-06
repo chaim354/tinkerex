@@ -142,17 +142,20 @@ the one preview kind that is, beside the `.gbrjob` read that already lives there
 untouched**: `zip` stays role `source_archive`, so a Gerber zip loose at a project's ROOT is still
 filed into the source folder by the intake sweep (the sweep runs before any read and decides by
 name), while one already in a subfolder is never moved — a content-aware refiling is a separate
-decision. The rule is stated beside the code in four places that must sweep together:
-`Maker::GerberArchive`'s header, `Maker::GerberSets`' class comment and `#archive_boards`,
-`FilesHelper#gerber_layers_for` / `#gerber_archive_entry` (the ONE wire shape all three pages
-build), and `gerber_controller.js`'s `filesFor`.
+decision. The rule is stated beside the code in three places that must sweep together:
+`Maker::GerberArchive`'s header, `FilesHelper#gerber_archive_entry` (the ONE wire shape, built by
+`FilesController#show`), and `gerber_controller.js`'s `filesFor`.
 
-**One board is one FOLDER.** A project holds a main board and a daughterboard; grouping by project
-would stack both folders' copper into an image of nothing real. `Maker::GerberSets` owns that rule
-and both Fabrication panels (private and public) read it, the arrangement `PublicProject#kicad_rows`
-already establishes for Schematics. The panel's file LIST and the viewer's STACK are different
-lists — a stray layer beside a job-driven export is listed and not stacked — and a panel that
-rendered only what it stacked would make those files invisible.
+**A GERBER IS A FILE LIKE ANY OTHER ON THE PROJECT PAGES, AND THE BOARD RENDERS ONLY ON ITS OWN
+FILE PAGE** (2026-09-06, at the user's request). The private and public project pages' Fabrication
+panels — one inline viewer per folder, grouped by `Maker::GerberSets` (one board per folder, a zip
+a board of its own, the list and the stack two different lists) — are gone, and the grouping with
+them; `git show 2addf8f:app/services/maker/gerber_sets.rb` holds it. What remains of `GerberSets` is
+`job_layer_names`, the `.gbrjob` reader behind a job file's page. A layer's page shows that layer; a
+`.gbrjob`'s and a zip's page show the board; **a loose set with no job file is one layer per page**
+— the one thing the panel could do that the file page cannot, deliberately not rebuilt. A public
+project therefore has **no board render**: the public page lists the layers as files a visitor can
+download, and there is no public file page to mount a viewer on.
 
 **THE STAGE'S PAN, ZOOM AND FIT ARE `app/javascript/lib/svg_pan_zoom.js`, SHARED WITH THE MEASURE
 VIEW — never a second copy.** The maths was `measure_controller.js`'s (the wheel-zoom-about-the-
@@ -161,7 +164,8 @@ pan slop, the pointer capture) and moved out on 2026-09-06 so the Gerber stage c
 hands; both controllers now install the one module (§14d, "a verb more than one controller performs
 gets a named service"). Two consequences a later editor can undo by accident: the module needs
 `preserveAspectRatio="xMidYMid meet"` on the element it is handed, which is why BOTH callers set it
-and the module does not; and `.gerber-stage svg` carries **`touch-action: none`**, without which the
+and the module does not; and `.gerber-viewer .model-viewer-stage svg` carries **`touch-action:
+none`**, without which the
 browser claims a two-finger gesture for its own scroll and the pinch handler never receives the
 second pointer — not degraded, never fired. **No Measure system test drives a wheel or a drag**, so
 `test/system/gerber_test.rb`'s zoom, pan and Fit cases are the only pin the shared maths has.
@@ -177,14 +181,24 @@ and kept, because tracespace places every side and every layer on one viewBox an
 render would make `Fit` mean "the current picture's box", which for a board with its outline hidden
 is not the board.
 
-**THE TOOLBAR IS BUILT BY THE CONTROLLER, NOT BY THE THREE TEMPLATES** that mount it — a `Fit`
-button always, plus one `.btn small` toggle per layer for a stackup. The labels come from
-tracespace's own `type`/`side` and therefore cannot exist before the parse, so three server-rendered
-copies of that list would be three places free to drift about something only the browser can
-compute. They use the same wording as `FilesHelper::GERBER_LAYER_LABELS` ("top copper", "top silk",
-"drill") so a toggle and the row badge beside it describe one board once; the two cannot share a
-source — one answers from the extension in Ruby before the fetch, the other from tracespace after
-it. The **side** buttons stay in the templates precisely because they are known without a parse.
+**THE VIEWER WEARS THE 3D VIEWER'S CHROME AND FETCHES NOTHING UNTIL LAUNCHED.** The `:gerber`
+branch is a `.model-viewer.gerber-viewer`: at rest a poster (a sentence and the Download button —
+Gerbers have no thumbnail) with a `View layer` / `View board` button, then the same stage and bar as
+`:model3d` — dims, Fit, Fullscreen, ✕ Image — plus Top/Bottom and one toggle per layer for a
+stackup. The `.model-viewer*` classes are the 3D viewer's because the chrome IS the 3D viewer's,
+defined once in `pages/preview.css`; `.gerber-viewer` adds only what an `<svg>` stage needs
+(`color`, the grab cursor, `touch-action: none`, a wrapping bar). `model-viewer--ready` goes on
+BEFORE the fetch for the 3D viewer's reason (the stage must have a size when the SVG lands).
+**✕ Image KEEPS the parsed render**, so re-opening is a re-compose and no fetch — pinned by the
+resource timeline in `test/system/gerber_test.rb`. The dims are the board's physical size in mm,
+read off the `width`/`height` tracespace writes (`mm` or `in`, converted) BEFORE the controller
+overrides them to 100%. The layer toggles are still **built by the controller** into the template's
+tools span (their labels are tracespace's `type`/`side`, unknowable before the parse) and read their
+state off the hidden set, so a layer hidden before ✕ Image stays hidden after the re-open; Fit,
+Fullscreen, ✕ Image and the side buttons are in the template because they are known without a
+parse. The toggle wording ("top copper", "top silk", "drill") is the vocabulary the panel's row
+badges used; the badges went with the panel and the words stayed. A Turbo-restored snapshot of an
+open viewer is reset to the poster on connect — the fresh controller holds no render for it.
 
 **"CONVERT THE GERBERS AND USE THE 3D VIEWER" WAS ASKED AND REFUSED** — `docs/roads-not-taken.md`
 §10. A board export is a 2D artefact and the fab house reads exactly what tracespace draws; there

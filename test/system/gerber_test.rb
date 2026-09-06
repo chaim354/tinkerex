@@ -2,8 +2,8 @@ require "application_system_test_case"
 require "support/gerber_fixture"
 
 # tracespace ACTUALLY RENDERING a Gerber in a real browser. Everything else about the `:gerber`
-# branch — which extensions reach it, the data attributes, the Fabrication panel's grouping, the
-# `.gbrjob` rules — is request-level (test/integration/web/gerber_preview_test.rb, cheap, and
+# branch — which extensions reach it, the data attributes, the two project pages' absence of a
+# viewer, the `.gbrjob` rules — is request-level (test/integration/web/gerber_preview_test.rb, cheap, and
 # already covers the parts a browser adds nothing to). What only a browser can see is this file's
 # whole subject: does the vendored module load, does it parse real RS-274X and Excellon bytes, does
 # it paint geometry rather than an empty `<svg>`, and does the CSP (report-only, but this is the
@@ -13,12 +13,17 @@ require "support/gerber_fixture"
 # `<kicanvas-embed>` paints into an open shadow root several custom elements deep, so that suite
 # needs a recursive `shadowRoot` probe in JS — Capybara's Selenium-backed `:css` finder does not
 # pierce shadow boundaries. gerber_controller.js assigns markup it built itself into the stage, so
-# a plain `assert_selector ".gerber-stage svg path"` works and is the honest assertion.
+# a plain `assert_selector ".gerber-viewer svg path"` works and is the honest assertion.
 #
 # `data-gerber-state="ready"` IS SET AFTER THE RENDER, NOT BEFORE IT — again unlike KiCanvas, whose
 # `ready` fires as soon as the embed is inserted and whose own async load then continues. Here the
 # fetch, the parse, the plot and the serialisation have all happened by the time the attribute
 # lands, so the path assertion below is not a race and needs no poll of its own.
+#
+# EVERY CASE CLICKS THE LAUNCH BUTTON FIRST. The viewer wears the 3D viewer's chrome (2026-09-06),
+# so nothing — not the module, not a byte — loads until "View layer" / "View board" is clicked; a
+# `visit` followed straight by the ready assertion would wait out the timeout on a poster. The
+# label is the server's: "View layer" for a single file, "View board" for a .gbrjob or a zip.
 #
 # A DRILL FILE RENDERS A `<circle>`, NOT A `<path>` — measured against the vendored bundle, not
 # assumed. So the single-layer assertion below is on a `.gtl`; the board assertions are on a set
@@ -37,40 +42,33 @@ class GerberTest < ApplicationSystemTestCase
     FileUtils.remove_entry(@root) if @root&.exist?
   end
 
-  # The project's folder ROWS plus the directories they claim to be — never
-  # `ensure_library_folder!`, which is a real mkdir through the port (the house rule; see
-  # test/support/public_fixture.rb's header for the full argument).
-  def project_with_board!(visibility: "private", stem: "board")
-    project = @user.maker_projects.create!(name: "Driver", visibility:)
-    projects_dir = @user.nodes.create!(node_id: SecureRandom.uuid, name: Maker::ProjectFolders::ROOT,
-                                       kind: "dir", mtime: 1, size: 0,
-                                       storage_path: Maker::ProjectFolders::ROOT)
-    folder = @user.nodes.create!(node_id: SecureRandom.uuid, name: project.slug, kind: "dir",
-                                 parent_node_id: projects_dir.node_id, mtime: 1, size: 0,
-                                 storage_path: File.join(Maker::ProjectFolders::ROOT, project.slug))
-    @root.join(folder.storage_path).mkpath
-    project.update_column(:folder_node_id, folder.node_id)
-    dir = gerber_dir!(name: "pcb", parent_node_id: folder.node_id)
-    [ project, write_gerber_set!(stem:, parent_node_id: dir.node_id) ]
-  end
-
   # MUTATION (§15, test/system/README.md; run for real, output in the PR, then reverted):
   # gerber_controller.js's `await import("tracespace")` changed to `await import("tracespace-x")` —
   # a specifier the importmap has no pin for — reds this test on the `ready` assertion, because the
   # catch block sets data-gerber-state="failed" instead.
-  test "a real Gerber layer renders in the browser" do
+  test "a real Gerber layer renders in the browser once launched, and the bar shows its size" do
     node = write_gerber!(name: "board.gtl")
 
     visit file_path(node.node_id)
 
-    assert_selector ".gerber-stage[data-gerber-state='ready']"
+    # AT REST: the poster, the launch button, and NO svg — nothing has been fetched.
+    assert_selector ".gerber-viewer .mv-launch button", text: "View layer"
+    assert_no_selector ".gerber-viewer svg"
+    click_button "View layer"
+
+    assert_selector ".gerber-viewer[data-gerber-state='ready']"
     # GEOMETRY, NOT MERELY AN <svg>. tracespace emits a well-formed empty document for a file it
     # parsed and found nothing in, so asserting the element alone would pass over a viewer that
     # loaded and rendered nothing — this repo's dominant failure shape.
-    assert_selector ".gerber-stage svg path", minimum: 1
-    # The stage fills its box rather than rendering at the board's physical 10mm — the controller
+    assert_selector ".gerber-viewer svg path", minimum: 1
+    # The stage fills its box rather than rendering at the board's physical size — the controller
     # overrides the attributes tracespace writes, and CSS cannot beat them (see gerber_controller.js).
-    assert_equal "100%", find(".gerber-stage svg")[:width]
+    assert_equal "100%", find(".gerber-viewer svg")[:width]
+    # …and the physical size those attributes carried is what the bar shows, in mm, one decimal.
+    # 10.5, NOT 10: the fixture's square is 10 mm on a side and is drawn with a 0.5 mm round
+    # aperture, so the copper's outer extent — which is what tracespace sizes the render to —
+    # overhangs by 0.25 mm on each edge. Measured against the vendored bundle, not derived.
+    assert_selector ".gerber-viewer .model-viewer-dims", text: "10.5 × 10.5 mm"
     assert_no_console_errors
   end
 
@@ -78,32 +76,10 @@ class GerberTest < ApplicationSystemTestCase
     node = write_gerber!(name: "board.drl", body: MINIMAL_DRILL)
 
     visit file_path(node.node_id)
+    click_button "View layer"
 
-    assert_selector ".gerber-stage[data-gerber-state='ready']"
-    assert_selector ".gerber-stage svg circle", minimum: 1
-    assert_no_console_errors
-  end
-
-  # THE STACKUP, AND THE TOGGLE. Bottom is a genuinely different picture — renderBoard mirrors the
-  # board and composes the other side's copper, mask and silk — so comparing the two innerHTMLs is
-  # what proves the toggle swapped something rather than re-rendering the same side.
-  test "a project folder's Gerbers render as a board, and the Bottom toggle swaps the side" do
-    project, = project_with_board!
-
-    visit project_path(project)
-
-    assert_selector ".fabrication-panel .gerber-stage[data-gerber-state='ready']"
-    assert_selector ".fabrication-panel .gerber-stage svg path", minimum: 1
-    top = find(".fabrication-panel .gerber-stage [data-gerber-target='stage']")["innerHTML"]
-
-    find(".fabrication-panel button[data-gerber-side='bottom']").click
-
-    # WAIT ON THE TOGGLE'S OWN STATE BEFORE READING THE STAGE. `show()` sets the class in the same
-    # turn it assigns the markup, so this is what keeps the read below from racing the click.
-    assert_selector ".fabrication-panel button[data-gerber-side='bottom'].active"
-    bottom = find(".fabrication-panel .gerber-stage [data-gerber-target='stage']")["innerHTML"]
-    assert_not_equal top, bottom, "the Bottom toggle rendered the same SVG as Top"
-    assert_selector ".fabrication-panel .gerber-stage svg path", minimum: 1
+    assert_selector ".gerber-viewer[data-gerber-state='ready']"
+    assert_selector ".gerber-viewer svg circle", minimum: 1
     assert_no_console_errors
   end
 
@@ -120,17 +96,18 @@ class GerberTest < ApplicationSystemTestCase
     node = write_gerber_zip!
 
     visit file_path(node.node_id)
+    click_button "View board"
 
-    assert_selector ".gerber-stage[data-gerber-state='ready']"
+    assert_selector ".gerber-viewer[data-gerber-state='ready']"
     # GEOMETRY, NOT MERELY AN <svg> — the copper layers inside the archive supply the paths, which
     # is what proves the members were really extracted and parsed rather than merely fetched.
-    assert_selector ".gerber-stage svg path", minimum: 1
-    top = find(".gerber-stage [data-gerber-target='stage']")["innerHTML"]
+    assert_selector ".gerber-viewer svg path", minimum: 1
+    top = find(".gerber-viewer .model-viewer-stage")["innerHTML"]
 
     find("button[data-gerber-side='bottom']").click
 
     assert_selector "button[data-gerber-side='bottom'].active"
-    bottom = find(".gerber-stage [data-gerber-target='stage']")["innerHTML"]
+    bottom = find(".gerber-viewer .model-viewer-stage")["innerHTML"]
     assert_not_equal top, bottom, "the Bottom toggle rendered the same SVG as Top"
     assert_no_console_errors
   end
@@ -160,8 +137,9 @@ class GerberTest < ApplicationSystemTestCase
     node = write_gerber_zip!
 
     visit file_path(node.node_id)
+    click_button "View board"
 
-    assert_selector ".gerber-stage[data-gerber-state='ready']"
+    assert_selector ".gerber-viewer[data-gerber-state='ready']"
     home_x, home_y, home_w, home_h = view_box
 
     wheel_on(delta_y: -100)
@@ -183,8 +161,9 @@ class GerberTest < ApplicationSystemTestCase
     node = write_gerber_zip!
 
     visit file_path(node.node_id)
+    click_button "View board"
 
-    assert_selector ".gerber-stage[data-gerber-state='ready']"
+    assert_selector ".gerber-viewer[data-gerber-state='ready']"
     home_x, home_y, home_w, home_h = view_box
 
     drag_on(dx: 80, dy: 0)
@@ -203,8 +182,9 @@ class GerberTest < ApplicationSystemTestCase
     node = write_gerber_zip!
 
     visit file_path(node.node_id)
+    click_button "View board"
 
-    assert_selector ".gerber-stage[data-gerber-state='ready']"
+    assert_selector ".gerber-viewer[data-gerber-state='ready']"
     home = view_box
 
     # MOVED ON BOTH AXES OF THE FEATURE BEFORE FITTING, so this cannot pass on a Fit that only
@@ -214,7 +194,7 @@ class GerberTest < ApplicationSystemTestCase
     drag_on(dx: 60, dy: 40)
     assert_not_equal home, view_box, "premise: the view must be off home before Fit"
 
-    find(".gerber-tools .btn", exact_text: "Fit").click
+    find(".gerber-viewer .mv-actions .btn", exact_text: "Fit").click
 
     assert_equal home, view_box, "Fit must return the viewBox the render arrived with"
     assert_no_console_errors
@@ -229,28 +209,63 @@ class GerberTest < ApplicationSystemTestCase
     node = write_gerber_zip!
 
     visit file_path(node.node_id)
+    click_button "View board"
 
-    assert_selector ".gerber-stage[data-gerber-state='ready']"
+    assert_selector ".gerber-viewer[data-gerber-state='ready']"
     # ZOOMED FIRST, so the "the view survives" assertion below is about a view the toggle could
     # actually have lost. Against the fit view it would pass on a re-render that reset everything.
     wheel_on(delta_y: -100)
     zoomed = view_box
-    before = all(".gerber-stage svg path", visible: :all).size
+    before = all(".gerber-viewer svg path", visible: :all).size
     assert_operator before, :>, 1, "premise: the board must draw more than one layer's paths"
 
     find(".gerber-tools .btn", exact_text: "top copper").click
 
     assert_selector ".gerber-tools .btn[aria-pressed='false']", exact_text: "top copper"
     assert_no_selector ".gerber-tools .btn.active", exact_text: "top copper"
-    assert_operator all(".gerber-stage svg path", visible: :all).size, :<, before,
+    assert_operator all(".gerber-viewer svg path", visible: :all).size, :<, before,
                     "hiding top copper must remove its geometry from the render"
     assert_equal zoomed, view_box, "a toggle must not throw the reader back to the fit view"
     assert_no_console_errors
   end
 
-  # A SINGLE LAYER GETS `Fit` AND NOTHING ELSE. There is one layer, so a toggle for it is a button
-  # whose only effect is to blank the page — and the side toggle is absent for the same reason the
-  # template omits it (one render, two buttons showing the same picture).
+  # ✕ IMAGE KEEPS THE RENDER. The way back to the poster drops the SVG, the toggles and the dims —
+  # and keeps the parsed board, so the next "View board" is a re-compose and NO fetch: the resource
+  # timeline is the witness, counting the blob URL's entries before and after. A re-open that
+  # fetched again would pass every other assertion here and cost a twelve-layer board its whole
+  # parse for a click that should be free.
+  #
+  # MUTATION (§15, test/system/README.md; run for real, output in the PR, then reverted):
+  # gerber_controller.js's `if (!this.rendered) await this.render()` changed to
+  # `await this.render()` reds this test on the fetch count (2 where 1 is expected).
+  test "✕ Image returns to the poster, and View board re-opens the render without a fetch" do
+    node = write_gerber_zip!
+
+    visit file_path(node.node_id)
+    click_button "View board"
+    assert_selector ".gerber-viewer[data-gerber-state='ready']"
+    assert_selector ".gerber-viewer svg path", minimum: 1
+    fetches = -> { page.evaluate_script("performance.getEntriesByType('resource').filter(e => e.name.includes('/blob')).length") }
+    assert_equal 1, fetches.call, "the archive is fetched exactly once on launch"
+
+    click_button "✕ Image"
+
+    assert_no_selector ".gerber-viewer.model-viewer--ready"
+    assert_no_selector ".gerber-viewer[data-gerber-state]"
+    assert_no_selector ".gerber-viewer svg"
+    assert_selector ".gerber-viewer .mv-launch button", text: "View board"
+
+    click_button "View board"
+
+    assert_selector ".gerber-viewer[data-gerber-state='ready']"
+    assert_selector ".gerber-viewer svg path", minimum: 1
+    assert_equal 1, fetches.call, "re-opening fetched the archive again"
+    assert_no_console_errors
+  end
+
+  # A SINGLE LAYER GETS THE BAR'S OWN ACTIONS AND NOTHING ELSE. There is one layer, so a toggle for
+  # it is a button whose only effect is to blank the stage — and the side buttons are absent for the
+  # same reason the template omits them (one render, two buttons showing the same picture).
   # A STAGE WITH NO SIZE MUST NOT POISON THE VIEW. Screen -> user-space conversion divides by the
   # element's on-screen scale, and an element with a 0 x 0 rect (a hidden browser pane, a collapsed
   # container, a background tab) has none: the first draft of the shared module put `NaN` into the
@@ -263,16 +278,17 @@ class GerberTest < ApplicationSystemTestCase
     node = write_gerber_zip!
 
     visit file_path(node.node_id)
+    click_button "View board"
 
-    assert_selector ".gerber-stage[data-gerber-state='ready']"
+    assert_selector ".gerber-viewer[data-gerber-state='ready']"
     home = view_box
     page.execute_script(<<~JS)
-      const stage = document.querySelector('.gerber-stage [data-gerber-target="stage"]')
+      const stage = document.querySelector('.gerber-viewer .model-viewer-stage')
       stage.style.width = "0px"; stage.style.height = "0px"; stage.style.overflow = "hidden"
       stage.querySelector("svg").style.width = "0px"; stage.querySelector("svg").style.height = "0px"
     JS
     assert_equal [ 0, 0 ], page.evaluate_script(<<~JS), "premise: the stage must really be sizeless"
-      (() => { const r = document.querySelector('.gerber-stage svg').getBoundingClientRect(); return [r.width, r.height] })()
+      (() => { const r = document.querySelector('.gerber-viewer svg').getBoundingClientRect(); return [r.width, r.height] })()
     JS
 
     wheel_on(delta_y: -100)
@@ -280,7 +296,7 @@ class GerberTest < ApplicationSystemTestCase
     # THE RAW ATTRIBUTE, NOT `view_box`: Ruby's `"NaN".to_f` is 0.0, so a parsed viewBox is finite
     # by construction and an assertion on it passed with `NaN NaN …` on the element (the mutation
     # was caught only by Chrome logging the invalid attribute). The string is the honest witness.
-    raw = page.evaluate_script("document.querySelector('.gerber-stage svg').getAttribute('viewBox')")
+    raw = page.evaluate_script("document.querySelector('.gerber-viewer svg').getAttribute('viewBox')")
 
     assert_no_match(/NaN|Infinity/, raw, "the viewBox must stay finite on a sizeless stage")
     # The wheel still zooms — about the view's centre, the only point a sizeless element can name.
@@ -292,34 +308,21 @@ class GerberTest < ApplicationSystemTestCase
     node = write_gerber!(name: "board.gtl")
 
     visit file_path(node.node_id)
+    click_button "View layer"
 
-    assert_selector ".gerber-stage[data-gerber-state='ready']"
-    assert_selector ".gerber-tools .btn", exact_text: "Fit"
-    assert_selector ".gerber-tools .btn", count: 1
+    assert_selector ".gerber-viewer[data-gerber-state='ready']"
+    assert_selector ".gerber-viewer .mv-actions .btn", exact_text: "Fit"
     assert_no_selector "[data-gerber-layer-id]"
-    assert_no_console_errors
-  end
-
-  # SIGNED OUT, ON A PUBLIC PAGE. The viewer's own fetches go through the public file route, which a
-  # visitor's request has no session behind — a route that answered 404 there would leave the panel
-  # rendered and the board blank, which is exactly the pair Maker::PublicProject exists to prevent.
-  test "the public project page renders the board to a signed-out visitor" do
-    @user.update!(handle: "gerber")
-    project, = project_with_board!(visibility: "public")
-    Capybara.reset_sessions!
-
-    visit public_project_path("gerber", project.slug)
-
-    assert_selector ".fabrication-panel .gerber-stage[data-gerber-state='ready']"
-    assert_selector ".fabrication-panel .gerber-stage svg path", minimum: 1
+    assert_no_selector "[data-gerber-side]"
     assert_no_console_errors
   end
 
   private
     # THE VIEWBOX AS FOUR FLOATS. Split on whitespace AND commas, because the SVG spec allows both
-    # and a board's box is routinely negative in y (`viewBox="0 -10 10 10"` on this fixture), so a
+    # and a board's box is routinely negative in y (`viewBox="-0.25 -10.25 10.5 10.5"` on this
+    # fixture — measured, and the 0.25 is the drawing aperture's overhang), so a
     # number scan that dropped the signs would read a pan as a no-op.
-    def view_box(selector = ".gerber-stage")
+    def view_box(selector = ".gerber-viewer")
       raw = page.evaluate_script(<<~JS)
         (() => {
           const el = document.querySelector("#{selector} svg")
@@ -334,7 +337,7 @@ class GerberTest < ApplicationSystemTestCase
     # `clientX` and `clientY` — so this constructs the event the listener actually sees.
     # `cancelable: true` matters: the handler calls `preventDefault()`, and a non-cancelable event
     # makes that a silent no-op plus a console warning the sweep would catch.
-    def wheel_on(selector = ".gerber-stage", delta_y:)
+    def wheel_on(selector = ".gerber-viewer", delta_y:)
       page.execute_script(<<~JS)
         (() => {
           const el = document.querySelector("#{selector} svg")
@@ -351,7 +354,7 @@ class GerberTest < ApplicationSystemTestCase
     # `pointerId: 1` with `isPrimary: true` is what the handler tracks in its pointer map, and
     # `button: 0` is what its mouse guard checks; ONE move is enough because the pan is computed
     # from the origin rather than accumulated per frame.
-    def drag_on(selector = ".gerber-stage", dx:, dy:)
+    def drag_on(selector = ".gerber-viewer", dx:, dy:)
       page.execute_script(<<~JS)
         (() => {
           const el = document.querySelector("#{selector} svg")

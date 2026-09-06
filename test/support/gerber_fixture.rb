@@ -1,9 +1,9 @@
 # REAL, MINIMAL Gerber and Excellon bytes tracespace can actually parse — shared between
 # test/system/gerber_test.rb (which asserts the viewer renders in a live browser),
 # test/integration/web/gerber_preview_test.rb (which needs a `.gbrjob` the SERVER really reads) and
-# test/system/shell_test.rb's phone-width sweep (which needs the Fabrication panel's real markup on
-# the page at 375px, and needs tracespace not to error on garbage bytes and trip
-# assert_no_console_errors for a reason that has nothing to do with layout).
+# test/system/shell_test.rb's phone-width sweep (which launches the file page's viewer at 375px and
+# needs tracespace not to error on garbage bytes and trip assert_no_console_errors for a reason
+# that has nothing to do with layout).
 #
 # test/system/README.md's house rule for the system suite, and the reason this file exists at all
 # rather than reusing test_helper's `create_node!`: that helper always materialises a literal "x"
@@ -86,8 +86,8 @@ module GerberFixture
 
   # A DIRECTORY WITH A REAL storage_path, so `write_gerber!` above can place files inside it — the
   # `parent&.storage_path.present?` branch is what needs this, and a dir row made with a NULL
-  # storage_path would silently put every "child" at the library root instead, where they would all
-  # group into ONE board and the grouping tests would pass for the wrong reason.
+  # storage_path would silently put every "child" at the library root instead, where a `.gbrjob`
+  # would find the wrong siblings and the job tests would pass for the wrong reason.
   def gerber_dir!(name:, parent_node_id: nil)
     parent = parent_node_id && @user.nodes.find_by(node_id: parent_node_id)
     rel = parent&.storage_path.present? ? File.join(parent.storage_path, name) : name
@@ -140,7 +140,7 @@ module GerberFixture
     write_gerber!(name:, parent_node_id:, body:)
   end
 
-  # THE THREE-LAYER SET THE PANEL RENDERS AS A BOARD: top copper, bottom copper, drill. Named
+  # THE THREE-LAYER SET A `.gbrjob`'s PAGE RENDERS AS A BOARD: top copper, bottom copper, drill. Named
   # `<stem>.gtl` etc. because tracespace identifies a layer from its FILENAME, so these extensions
   # are what put each file on the right side of the stackup.
   def write_gerber_set!(stem: "board", parent_node_id: nil)

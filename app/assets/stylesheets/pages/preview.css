@@ -191,6 +191,32 @@
   .model-viewer:fullscreen { background: var(--raised); padding: 12px; }
   .model-viewer:fullscreen .model-viewer-stage { height: calc(100vh - 64px); }
 
+  /* --- Gerber/Excellon (tracespace) — the file page's :gerber branch WEARS THE 3D VIEWER'S CHROME
+     (every .model-viewer* rule above: the stage hidden until --ready, the bar, the poster, the
+     fullscreen height), and `.gerber-viewer` says only what an <svg> stage needs that a <canvas>
+     one does not. The project pages' Fabrication panels, which mounted this viewer inline, went on
+     2026-09-06 and took `.gerber-stage` with them: the stage IS `.model-viewer-stage` now, whose
+     explicit height is what the controller's `height="100%"` SVG resolves against (a percentage
+     height against an auto-height ancestor is 0px — the KiCanvas comment below). `color` because a
+     tracespace render is `fill="currentColor"` line work on nothing and needs the page's ink over
+     the stage's --raised surface. */
+  .gerber-viewer .model-viewer-stage { color: var(--fg); }
+  /* `cursor: grab` says the board can be dragged before anyone tries it; `is-panning` is the class
+     lib/svg_pan_zoom adds for the length of a drag, so the cursor answers the gesture rather than
+     the hover.
+
+     `touch-action: none` IS WHAT LETS A SECOND FINGER REACH THE PINCH HANDLER AT ALL. Without it
+     the browser claims a two-finger gesture for page scrolling and zooming and never delivers the
+     second pointer, so the pinch is not merely degraded — it never fires. It also stops a
+     one-finger drag scrolling the page under the board on a phone. */
+  .gerber-viewer .model-viewer-stage svg { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+  .gerber-viewer .model-viewer-stage svg.is-panning { cursor: grabbing; }
+  /* A board's bar carries Top/Bottom and one toggle per layer beside Fit, Fullscreen and ✕ Image —
+     a dozen buttons on a six-layer board — so it wraps where the 3D viewer's three-button bar never
+     needs to. `.btn small` is the component (design-system.md rule 3); these only lay the groups out. */
+  .gerber-viewer .mv-actions { flex-wrap: wrap; }
+  .gerber-sides, .gerber-tools { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+
   /* --- Measure view (measure_controller.js) — .lbrn/.lbrn2, .mage, .dxf, .svg --- */
   .measure-view { position: relative; }
   /* SQUARE, AND NEVER TALLER THAN THE VIEWPORT. The stage was 100% of a 920px column; inside the
@@ -329,45 +355,4 @@
   /* --- Schematics section on the project page (projects/_schematics.html.erb) --- */
   .schematics-list { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   .schematics-list li { display: flex; align-items: center; gap: 8px; }
-
-  /* --- Gerber/Excellon (tracespace) — the file page's :gerber branch AND both Fabrication panels
-     share this class, gerber_controller.js putting an <svg> inside it either way.
-
-     THE HEIGHT RULE IS THE KiCANVAS ONE ABOVE AND FOR THE SAME REASON: the SVG is told height 100%
-     by the controller, and a percentage height resolves to nothing against an auto-height ancestor,
-     so the box needs an explicit one or the board renders at 0px. What differs is the BACKGROUND —
-     a Gerber render is `fill="currentColor"` line work on nothing, so it needs a surface with
-     contrast under it, where kicanvas-embed paints its own.
-
-     `display: flex; flex-direction: column` so the stage target fills what the status line and the
-     side toggle leave — without it the inner div is auto-height and the 100% SVG collapses again,
-     one level down from where the KiCanvas comment warns about it. */
-  .gerber-stage { min-height: 320px; height: 320px; background: var(--raised); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
-  .preview .gerber-stage { height: 70vh; }
-  /* `min-height: 0` on a flex CHILD is what lets it shrink below its content's intrinsic size,
-     which is the whole mechanism that keeps a tall board inside the box instead of pushing the
-     panel open (flex items default to min-height: auto). */
-  .gerber-stage [data-gerber-target="stage"] { flex: 1; min-height: 0; color: var(--fg); }
-  /* `cursor: grab` says the board can be dragged before anyone tries it; `is-panning` is the class
-     lib/svg_pan_zoom adds for the length of a drag, so the cursor answers the gesture rather than
-     the hover.
-
-     `touch-action: none` IS WHAT LETS A SECOND FINGER REACH THE PINCH HANDLER AT ALL. Without it
-     the browser claims a two-finger gesture for page scrolling and zooming and never delivers the
-     second pointer, so the pinch is not merely degraded — it never fires. It also stops a
-     one-finger drag scrolling the page under the board on a phone. */
-  .gerber-stage svg { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
-  .gerber-stage svg.is-panning { cursor: grabbing; }
-  .gerber-stage > .muted { padding: 24px; text-align: center; }
-  .gerber-sides { display: flex; gap: 6px; margin: 0; }
-  /* The controller-built toolbar (Fit + one toggle per layer). It wraps because a six-layer board
-     puts seven buttons in a panel that is half a project page wide; `.btn small` is the component
-     and this rule only lays the row out (design-system.md rule 3). */
-  .gerber-stage .gerber-tools { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
-
-  /* --- Fabrication section on the project and public project pages (_fabrication.html.erb).
-     Several boards can sit in one panel (a project holds a main board and a daughterboard), so each
-     gets its own heading, list and stage rather than the single-preview shape Schematics uses. */
-  .fabrication-board + .fabrication-board { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 16px; }
-  .fabrication-board h3 { margin: 0 0 8px; font-size: 14px; }
 }

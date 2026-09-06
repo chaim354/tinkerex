@@ -156,15 +156,16 @@ class ShellTest < ApplicationSystemTestCase
     # ancestry), so the public Schematics panel mounts a KiCanvas that fetches the public named URL
     # for real -- a 404 there would surface at the final assert_no_console_errors.
     kicad = write_kicad_schematic!(name: "shell-sweep.kicad_sch", parent_node_id: folder.node_id)
-    # THE FABRICATION PANEL, at 375px. Its stackup is an <svg> the browser is told to render at
+    # THE GERBER FILE PAGE, at 375px. Its stackup is an <svg> the browser is told to render at
     # width: 100% — the one element on these pages whose natural size is its PHYSICAL size (a board
     # is millimetres wide), so it is the one most likely to push the page sideways if
-    # gerber_controller.js's attribute override or pages/preview.css's flex rules regress. REAL
+    # gerber_controller.js's attribute override or pages/preview.css's stage rules regress. REAL
     # BYTES for the KiCanvas argument directly above: tracespace fetches these for real in a live
     # Chrome, and a parse failure would log its own console error, indistinguishable at the final
-    # assert_no_console_errors from an actual overflow regression.
-    # IN ITS OWN SUBFOLDER because Maker::GerberSets groups by parent directory; the project page
-    # and the FILE page below both render from it.
+    # assert_no_console_errors from an actual overflow regression. The viewer is LAZY, so the loop
+    # below launches it on that page before measuring — a poster cannot overflow, and a sweep that
+    # never clicked would be measuring nothing. (The project page lists these as ordinary rows since
+    # 2026-09-06; there is no panel there to render them.)
     pcb_dir = gerber_dir!(name: "pcb", parent_node_id: folder.node_id)
     gerbers = write_gerber_set!(stem: "shell-sweep", parent_node_id: pcb_dir.node_id)
     # STAGE 3, S3-5: ONE RELEASE WITH A LONG VERSION AND THREE FILES, so the summary's flex row has
@@ -244,6 +245,10 @@ class ShellTest < ApplicationSystemTestCase
         # list a real row to render instead of the empty state.
         settings_path, settings_tags_path ].each do |path|
         visit path
+        if path == file_path(gerbers[:gtl].node_id)
+          click_button "View layer"
+          assert_selector ".gerber-viewer[data-gerber-state='ready']"
+        end
         # `nav.tabbar` is display:none above 719px, so finding it VISIBLE is the proof that the
         # phone rules are running at all — without it a viewport that never narrowed would satisfy
         # the overflow assertion for entirely the wrong reason. It is what caught the 500px floor.
