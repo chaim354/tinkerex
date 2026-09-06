@@ -203,6 +203,19 @@ Rails.application.routes.draw do
          to: "projects/entry_photos#create", as: :entry_photos
   delete "entry_photos/:id", to: "projects/entry_photos#destroy", as: :entry_photo
 
+  # --- PUBLISHING (stage 3, S3-4). SESSIONLESS: every controller here stands on
+  # Public::BaseController < ActionController::Base, never ApplicationController (the seam guard in
+  # test/architecture_invariants_test.rb and CLAUDE.md §14d say why). `k` is an unlisted project's
+  # token, carried as a query param by every link the page renders (Maker::PublicProject#link_params).
+  # `format: false` on the file route: KiCanvas keys on the URL's extension, so the optional
+  # `*filename` glob carries the real name and `.kicad_sch` must not be parsed as a format. ---
+  scope module: :public, as: :public do
+    get "explore",                                to: "explore#index",  as: :explore
+    get "u/:handle",                              to: "users#show",     as: :user,    constraints: { handle: /[a-z0-9][a-z0-9-]*/i }
+    get "u/:handle/:slug",                        to: "projects#show",  as: :project, constraints: { handle: /[a-z0-9][a-z0-9-]*/i }
+    get "u/:handle/:slug/files/:id(/*filename)",  to: "files#show",     as: :file,    constraints: { handle: /[a-z0-9][a-z0-9-]*/i }, format: false
+  end
+
   # --- Maker: Models (3D-print model library; server-rendered web UI, session auth) ---
   # A curated view over library files at Models/<slug>/. `create` is the JSON import endpoint the
   # importer Stimulus controller calls; there is no plain-HTML create (import IS the new flow).
@@ -251,6 +264,10 @@ Rails.application.routes.draw do
     # form, `destroy` the Remove button -- the same four Suppliers/Locations use plus the one they
     # don't need.
     resources :filing_rules, only: %i[index create update destroy], path: "filing"
+    # STAGE 3, S3-4: the handle is claimed on the Account page (users/registrations/edit) through
+    # its own form, because Devise's update demands the current password and a handle is not a
+    # credential.
+    resource :handle, only: :update
   end
 
   # --- Addons (Tools) — the /tools gallery + every addon's UI ---

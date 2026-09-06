@@ -14,6 +14,15 @@
     <% if @project.status == "archived" %>
       <span class="badge status-archived">Archived</span>
     <% end %>
+    <% if @project.published? %>
+      <span class="badge visibility-<%= @project.visibility %>"><%= @project.visibility.humanize %></span>
+      <%# An unlisted project's link carries ?k=<token>, which IS the credential for that page --
+          a public one needs none. %>
+      <%= link_to "Public page",
+                  public_project_path(@project.user.handle, @project.slug,
+                                      **(@project.unlisted? ? { k: @project.unlisted_token } : {})),
+                  class: "linkbtn small public-link" %>
+    <% end %>
   </div>
   <div class="head-actions">
     <% if current_project == @project %>

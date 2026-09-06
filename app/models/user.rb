@@ -139,6 +139,57 @@ class User < ApplicationRecord
 
   normalizes :email, with: ->(e) { e.to_s.strip.downcase }
 
+  # THE HANDLE IS THE FIRST SEGMENT OF EVERY PUBLIC URL (/u/<handle>/<slug>, spec §2.2), so it is
+  # lowercase, URL-safe and unique, claimed once under Settings → Account, and LOCKED while any
+  # project is unlisted or public -- a rename would break every link a maker has already handed out.
+  # Nullable: an account that never publishes never needs one.
+  #
+  # 2–32 CHARACTERS, AND THE OPTIONAL GROUP IS DELIBERATELY NOT OPTIONAL: a one-character handle
+  # would match `[a-z0-9]` alone, which contradicts both the message below and the `pattern`
+  # attribute the Account form renders. The three must agree or the browser accepts what the
+  # server refuses.
+  HANDLE_RE = /\A[a-z0-9][a-z0-9-]{0,30}[a-z0-9]\z/
+  # Segments that exist at the site root or are obvious impersonation targets. `u` itself is here
+  # so /u/u/... cannot be minted; the rest are the app's own top-level paths (config/routes.rb) —
+  # every first segment HANDLE_RE could mint (the underscored ones, `bom_lines`, `current_project`,
+  # `print_runs`…, are unmintable already). A handle only ever appears under /u/, so today this is
+  # defence in depth for a future bare /<handle> route, not a live gap; S3-4's review enumerated
+  # the routes file and found four missing, added below (`csp-violation-report` is hyphenated and
+  # therefore mintable).
+  RESERVED_HANDLES = %w[
+    u explore admin administrator api v1 assets rails up files projects models tools settings
+    trash search tags inventory shelves suppliers locations repos library notes attachments
+    build_log_entries users login logout sign_in sign_up signin signup register account
+    connections csp-violation-report sheets tasks
+    tinkerex support help about root www mail
+  ].freeze
+
+  normalizes :handle, with: ->(h) { h.to_s.strip.downcase.presence }
+  validates :handle, allow_nil: true, uniqueness: true,
+            format: { with: HANDLE_RE, message: "is 2–32 characters of a–z, 0–9 and hyphens, starting and ending with a letter or digit" },
+            exclusion: { in: RESERVED_HANDLES, message: "is reserved" }
+  validate :handle_is_locked_while_published, on: :update
+
+  def handle_locked? = maker_projects.published.exists?
+
+  # A CLAIMED HANDLE IS FROZEN WHILE ANYTHING IS PUBLISHED -- renaming or clearing it would 404
+  # every /u/<handle>/<slug> already handed out. Guarded on `handle_in_database.present?` so the
+  # FIRST claim is never blocked, and on :update so a fresh record never queries for projects it
+  # cannot have.
+  #
+  # `will_save_change_to_handle?` / `handle_in_database`, NOT `handle_changed?` / `handle_was`:
+  # the pair reads the same during validation but diverges after save, and the after-save reading
+  # is the one that silently stops guarding anything.
+  def handle_is_locked_while_published
+    return unless will_save_change_to_handle? && handle_in_database.present? && handle_locked?
+
+    errors.add(:handle, "can't change while a project is unlisted or public")
+  end
+  # `private :<name>`, MATCHING LINE 138 ABOVE AND NOT A BARE `private` KEYWORD: this class has no
+  # private section, so opening one here would take `password_set?` and `next_seq!` (both called
+  # from outside) private with it.
+  private :handle_is_locked_while_published
+
   # --- OmniAuth seam (docs/parity-roadmap.md §A) ------------------------------------
   # find-or-create a User from an OmniAuth auth hash.
   #

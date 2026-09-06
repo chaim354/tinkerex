@@ -1,0 +1,26 @@
+<%#
+  One public project on a list — /u/:handle and /explore share it, which is what keeps the two
+  from drifting about what a project looks like. Every link is public: the project page, the
+  maker's page, and each tag's /explore filter.
+
+  Local: project (Maker::Project, publicly listed).
+%>
+<article class="grid-card project-card">
+  <h3 class="card-title">
+    <%= link_to project.name, public_project_path(project.user.handle, project.slug) %>
+  </h3>
+  <span class="muted">by <%= link_to "@#{project.user.handle}", public_user_path(project.user.handle) %></span>
+  <% if project.description.present? %>
+    <p class="muted card-blurb"><%= truncate(project.description, length: 160) %></p>
+  <% end %>
+  <% if project.tags.any? %>
+    <div class="tag-chips">
+      <% project.tags.sort_by(&:name).each do |t| %>
+        <%= link_to t.name, public_explore_path(tag: t.name), class: "tag-chip" %>
+      <% end %>
+    </div>
+  <% end %>
+  <time class="muted card-time" datetime="<%= project.updated_at.iso8601 %>">
+    <%= project.updated_at.strftime("%Y-%m-%d") %>
+  </time>
+</article>

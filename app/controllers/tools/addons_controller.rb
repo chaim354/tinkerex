@@ -347,8 +347,10 @@ module Tools
     # would confirm the existence of a stranger's node.
     #
     # ALWAYS `application/octet-stream` + `attachment`, WHATEVER THE FILE IS — never Marcel's
-    # answer, and never the SAFE_INLINE_TYPES allowlist FilesController weighs for a human's browser
-    # tab. Nothing is lost: the only caller is `host.files.read`, a `fetch` reading `.arrayBuffer()`,
+    # answer, and never the SAFE_INLINE_TYPES allowlist `FileDelivery` weighs for a human's browser
+    # tab (that allowlist moved out of FilesController in stage 3, S3-4, when the public file route
+    # became its second caller; `FilesController::SAFE_INLINE_TYPES` is still an alias of it).
+    # Nothing is lost: the only caller is `host.files.read`, a `fetch` reading `.arrayBuffer()`,
     # and neither header affects a fetch body (the same reasoning that keeps image/svg+xml off the
     # service proxy's inline allowlist, §14c). Two things are gained, and the FIRST WAS A LIVE BUG
     # FOUND BY PROBING THIS ENDPOINT RATHER THAN BY READING IT:

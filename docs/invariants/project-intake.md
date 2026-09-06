@@ -148,6 +148,16 @@
   one parent and the ancestor walk is two queries per level (measured: 45 queries against 15 for
   ten files at depth four), so a fresh instance per call would throw the memo away once per file.
 
+- **A README AT THE PROJECT ROOT IS ATTACHED AND NEVER FILED — `:project_readme`, the fourth
+  refusal (stage 3, S3-4).** It is the project's own description and the public page renders it
+  from the root (`Maker::PublicProject#readme` reads `listing.loose`); measured on the dev
+  library, the sweep moved a freshly written README.md into `docs/` and the public page showed
+  nothing. Keyed on the NAME (`Maker::Readme::NAMES`), never the extension — `notes.md` beside it
+  is still filed. SCOPED with `within_own_folder:` like `:attached_elsewhere`, for the mirror
+  reason: the sweep asks whether a file already at this root should be filed; the relocate door is
+  a user moving a README in from elsewhere, and refusing there would strand it outside the folder.
+  Guard: `project_intake_test.rb` ("a README at the root is attached but never filed away").
+
 - **ROOT = INBOX IS THE WHOLE SORT RULE, AND IT IS STATELESS.** Only files at a project
   folder's own root are ever filed; anything already in a subfolder — including one filed
   "wrong" by hand — is never revisited, and no column records that a file was "handled."

@@ -81,10 +81,79 @@ class Maker::MarkdownTest < ActiveSupport::TestCase
     assert_no_match %r{alt2}, html
   end
 
+  # STAGE 3, S3-4: an absolute IMAGE is not an absolute LINK. A link is prose the reader chooses to
+  # follow; an `<img>` is fetched by the browser on render, so a hotlinked one on a public project
+  # page is a tracking pixel aimed at every visitor — and `img-src 'self' data: blob:` blocks it
+  # anyway once the CSP enforces, leaving a broken image where words used to be.
+  test "an absolute image becomes its alt text, and the resolve block is never asked about it" do
+    html = Maker::Markdown.render("![pix](https://evil.example/p.gif)") do |href|
+      raise "resolve must not be called for an absolute img src (#{href})"
+    end
+
+    assert_no_match %r{<img}, html
+    assert_no_match %r{evil\.example}, html
+    assert_match %r{pix}, html
+  end
+
+  test "a protocol-relative or data: image is absolute too, and one with no alt leaves nothing behind" do
+    assert_match %r{logo}, Maker::Markdown.render("![logo](data:image/png;base64,AAAA)")
+
+    html = Maker::Markdown.render("![](//cdn.example/p.png)")
+
+    assert_no_match %r{<img}, html
+    assert_no_match %r{cdn\.example}, html
+  end
+
+  # THE ALT TEXT GOES IN AS A TEXT NODE, NEVER AS A STRING Nokogiri would re-parse as markup. This
+  # loop runs AFTER the executable elements were removed, so a String replacement re-injects a
+  # `<script>` nothing will look at again, and the allowlist sanitizer then UNWRAPS it into the
+  # prose "alert(1)" — the exact defect the renderer's header records. Probed both ways.
+  test "an image's alt text is inserted as text, never re-parsed as markup" do
+    html = Maker::Markdown.render(%(![<script>alert(1)</script>](https://x/y.png)))
+
+    assert_no_match %r{<script}, html
+    assert_match %r{&lt;script&gt;alert\(1\)&lt;/script&gt;}, html
+  end
+
+  # RAW HTML REACHES THE SAME TWO RULES. kramdown passes a well-formed `<img …>` through as an
+  # element (probed: an UNQUOTED `src=x` is escaped to text instead, which is kramdown's business,
+  # not this class's), so an absolute one loses its src the same way — taking `onerror` with it —
+  # and a relative one that resolves keeps only the allowlisted attributes.
+  test "a raw HTML image is subject to both rules, and onerror never survives either way" do
+    absolute = Maker::Markdown.render(%(x\n\n<img src="https://evil.example/p.gif" onerror="alert(1)" alt="hi">\n))
+
+    assert_no_match %r{onerror}, absolute
+    assert_no_match %r{<img}, absolute
+    assert_match %r{hi}, absolute
+
+    relative = Maker::Markdown.render(%(x\n\n<img src="img/x.png" onerror="alert(1)" alt="hi">\n)) { |_h| "/files/n-9" }
+
+    assert_no_match %r{onerror}, relative
+    assert_match %r{<img src="/files/n-9" alt="hi">}, relative
+  end
+
   test "rendering with no block at all leaves relative links unresolved as text" do
     html = Maker::Markdown.render("[gone](missing.stl)")
 
     assert_no_match %r{<a[\s>]}, html
     assert_match %r{gone}, html
+  end
+
+  # THE UNWRAP IS A TEXT NODE, NEVER A STRING — the link-side twin of the image rule above. `a.text`
+  # is DECODED, so a link whose visible text was the escaped literal `&lt;strong&gt;shout&lt;/strong&gt;`
+  # comes back as `<strong>shout</strong>`; `a.replace(String)` parsed that as markup and an
+  # allowlisted element the maker wrote to be DISPLAYED became live (`<h1>` split the paragraph),
+  # while an escaped `<script>` became the prose "alert(1)". Found by S3-4's review probing the
+  # entity-escaped form — the raw `<b>` form cannot show it, kramdown strips that before `.text`.
+  test "an unresolved link's text is inserted as text, never re-parsed as markup" do
+    html = Maker::Markdown.render("[&lt;strong&gt;shout&lt;/strong&gt;](nope/missing.md)") { |_h| nil }
+
+    assert_no_match %r{<strong>}, html
+    assert_match %r{&lt;strong&gt;shout&lt;/strong&gt;}, html
+
+    script = Maker::Markdown.render("[&lt;script&gt;alert(1)&lt;/script&gt;](nope/x.md)") { |_h| nil }
+
+    assert_no_match %r{<script}, script
+    assert_match %r{&lt;script&gt;alert\(1\)&lt;/script&gt;}, script
   end
 end

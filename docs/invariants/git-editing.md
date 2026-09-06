@@ -64,7 +64,9 @@ but `app/services/maker/repo_card.rb` sits under `app/services/maker/`, one dire
 `app/services/maker/git/**` glob `test_the_git_surface_never_branches_on_an_adapter_class` scans, so
 a class check written there would NOT trip that guard. Nothing enforces this rule on that file
 today; it is honoured by inspection, the same gap the previous paragraph already names for anything
-outside the three scanned globs. The README half of the same class reads its file through the PORT
+outside the three scanned globs. The README half of that class is **`Maker::Readme`** since stage 3,
+S3-4 — the public project page renders the project FOLDER's own README with the same reader, so the
+card is now its first caller rather than the only copy — and it reads its file through the PORT
 (`FileLayer.current.read`, this file's own opening rule — "bytes the catalog tracks go through the
 port"), never `File.read` against `LocalRepo#workdir`: a README is a catalog file like any other,
 not git's own working-tree read, and it is read on EVERY backend (share, s3, chunk_remote), not

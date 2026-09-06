@@ -6,6 +6,23 @@ module Maker
 
     STATUSES = %w[planning active paused done archived].freeze
 
+    # PUBLISHING (stage 3, S3-4; spec §2.5). private is the default and the only state with no
+    # public URL; unlisted needs the token; public is listed on /u/:handle and /explore.
+    VISIBILITIES = %w[private unlisted public].freeze
+    # SPDX ids → labels. Hardware-first: the three CERN OHL v2 flavours, then the usual suspects.
+    LICENSES = {
+      "CERN-OHL-P-2.0" => "CERN OHL v2 Permissive",
+      "CERN-OHL-W-2.0" => "CERN OHL v2 Weakly Reciprocal",
+      "CERN-OHL-S-2.0" => "CERN OHL v2 Strongly Reciprocal",
+      "TAPR-OHL-1.0"   => "TAPR Open Hardware License",
+      "CC-BY-4.0"      => "Creative Commons Attribution 4.0",
+      "CC-BY-SA-4.0"   => "Creative Commons Attribution-ShareAlike 4.0",
+      "CC0-1.0"        => "CC0 1.0 (public domain)",
+      "MIT"            => "MIT",
+      "Apache-2.0"     => "Apache 2.0",
+      "GPL-3.0-or-later" => "GNU GPL v3 or later"
+    }.freeze
+
     has_many :build_log_entries, -> { order(:logged_at) },
              class_name: "Maker::BuildLogEntry", dependent: :destroy
     has_many :file_attachments, -> { order(:position) },
@@ -38,13 +55,27 @@ module Maker
              foreign_key: :project_id, dependent: :nullify
 
     before_validation :ensure_slug
+    before_validation :mint_unlisted_token
+
+    normalizes :license, with: ->(l) { l.to_s.strip.presence }
 
     validates :name, presence: true
     validates :slug, presence: true, uniqueness: { scope: :user_id }
     validates :status, inclusion: { in: STATUSES }
+    validates :visibility, inclusion: { in: VISIBILITIES }
+    validates :license, inclusion: { in: LICENSES.keys }, allow_nil: true
+    validate :publishing_needs_a_handle
 
     scope :by_status, ->(s) { where(status: s) if s.present? }
     scope :active, -> { where(status: "active") }
+    # What User#handle_locked? reads: anything with a public URL to break.
+    scope :published,       -> { where.not(visibility: "private") }
+    scope :publicly_listed, -> { where(visibility: "public") }
+
+    def published?       = visibility != "private"
+    def unlisted?        = visibility == "unlisted"
+    def publicly_listed? = visibility == "public"
+    def license_label    = LICENSES[license]
 
     # Friendly, user-scoped URLs (/projects/desk-lamp). Slugs are unique per user, so a
     # current_user-scoped find_by(slug:) is unambiguous. Does NOT change JSON `id` (the v1 API
@@ -146,6 +177,21 @@ module Maker
     end
 
     private
+
+    # A HANDLE BEFORE A URL. The public URL is /u/<handle>/<slug>; with no handle there is no URL,
+    # so the switch away from private refuses rather than minting a page nobody can reach.
+    def publishing_needs_a_handle
+      return unless published? && user&.handle.blank?
+
+      errors.add(:visibility, "needs a handle first — choose one under Settings → Account")
+    end
+
+    # MINTED THE FIRST TIME A PROJECT LEAVES private AND NEVER CLEARED OR ROTATED: an unlisted link
+    # someone was given keeps working across unlisted → public → unlisted. 32 hex = 128 bits.
+    # `||=`, NOT `=` -- reminting on every save would silently invalidate a link already handed out.
+    def mint_unlisted_token
+      self.unlisted_token ||= SecureRandom.hex(16) if published?
+    end
 
     def ensure_slug
       source = slug.presence || name

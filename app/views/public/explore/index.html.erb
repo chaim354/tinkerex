@@ -1,0 +1,40 @@
+<%#
+  EVERYONE'S PUBLIC PROJECTS (stage 3, S3-4), newest first, filterable by tag.
+
+  The chips count PUBLIC projects only, which is why a tag worn solely by a private project has no
+  chip here: a count over `published` would disclose that the project exists, and a chip over an
+  empty public set would lead to an empty page.
+%>
+<% content_for :title, "Explore" %>
+<% content_for :container_class, "public-main" %>
+
+<div class="page-head">
+  <div class="page-title">
+    <h1>Explore</h1>
+    <span class="mono muted"><%= pluralize(@projects.size, "project") %></span>
+  </div>
+</div>
+
+<% if @chips.any? %>
+  <div class="explore-chips">
+    <%# The "All" chip only appears when a filter is ON — with no tag chosen it would be a link to
+        the page you are already looking at. %>
+    <% if @tag %>
+      <%= link_to "All", public_explore_path, class: "tag-chip" %>
+    <% end %>
+    <% @chips.each do |name, count| %>
+      <%= link_to "#{name} (#{count})", public_explore_path(tag: name),
+                  class: "tag-chip#{' active' if name == @tag}" %>
+    <% end %>
+  </div>
+<% end %>
+
+<% if @projects.any? %>
+  <div class="project-card-grid">
+    <% @projects.each do |project| %>
+      <%= render "public/project_card", project: project %>
+    <% end %>
+  </div>
+<% else %>
+  <p class="empty">No public projects yet.</p>
+<% end %>

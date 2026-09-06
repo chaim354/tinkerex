@@ -190,6 +190,16 @@ module Maker
       return :model_bundle if model_owning(node)
       return :attached_elsewhere if !within_own_folder && attached_elsewhere?(node)
       return :in_working_tree if working_tree.in_working_tree?(node)
+      # A README AT THE PROJECT ROOT STAYS THERE (stage 3, S3-4). It is the project's own
+      # description — the public page renders it from the folder root (Maker::PublicProject#readme
+      # reads `listing.loose`) — and it is not "a loose document to file": measured on the dev
+      # library, the sweep moved a README.md the maker had just written into docs/, and the public
+      # page rendered nothing. SCOPED like :attached_elsewhere, and for the mirror-image reason: the
+      # sweep (`within_own_folder: true`) is asking whether a file already at this root should be
+      # filed, and a README should not; the relocate door (`false`) is a user moving a README INTO
+      # the project from elsewhere, and refusing there would leave it stranded outside the folder.
+      # "Attach the row, leave the bytes" is exactly what a refusal means here (project-intake.md).
+      return :project_readme if within_own_folder && Maker::Readme::NAMES.include?(node.name)
 
       nil
     end

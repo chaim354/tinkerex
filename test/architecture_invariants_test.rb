@@ -997,6 +997,95 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
                  "public needs an argument here and in §14d, not a skip."
   end
 
+  # A PUBLIC PAGE NEVER READS THE SESSION (stage 3, S3-4; spec §6, CLAUDE.md §14d). This is the
+  # OTHER half of the test above: that one says every ApplicationController descendant authenticates,
+  # and the honest way to have a page that does not is to stand outside that tree entirely rather
+  # than to `skip_before_action` inside it. Both halves are asserted here, because either alone is
+  # satisfiable while the rule is broken — a `Public::` controller could descend from
+  # ApplicationController and skip the callback (caught by the superclass/descendant assertions), or
+  # keep the right superclass and still read `current_user` through a helper (caught by the scan).
+  #
+  # THE SCAN MATCHES ACCESSOR FORMS, NOT THE WORD. `session` and `cookies` appear in this
+  # namespace's own PROSE — base_controller.rb says "a public page never reads the session" in as
+  # many words — so a bare /session/ would be red on the code that is correct, which is the shape
+  # `offending` documents above and the reason both comment kinds are stripped here. `session[` /
+  # `session.` and `cookies[` / `cookies.` are the reads; the four accessors are matched as whole
+  # words.
+  #
+  # ERB COMMENTS ARE STRIPPED AS BLOCKS, NOT AS LINES, because `<%# … %>` spans them: every template
+  # in this namespace opens with a multi-line comment, and a line-oriented strip would either miss
+  # their interiors or (with a `<%#`-prefix rule) miss nothing at all. The stripper carries the open
+  # state across lines and keeps whatever follows the terminator on the same line, so real code
+  # sharing a line with a comment's end is still scanned.
+  #
+  # NON-VACUOUS BY ASSERTION (§14e): the scan is 15 files today (5 controllers, 10 templates) and a
+  # renamed directory would otherwise retire this invariant with `assert_empty` passing over zero
+  # files. 10 is a plausibility floor, not today's count.
+  test "the Public namespace stands outside ApplicationController and names no session accessor" do
+    Rails.application.eager_load!
+
+    assert_equal ActionController::Base, Public::BaseController.superclass,
+                 "Public::BaseController must stand on ActionController::Base — an " \
+                 "ApplicationController descendant would need a `skip_before_action`, which the " \
+                 "test above exists to flag"
+    publics = ApplicationController.descendants.select { |klass| klass.name.to_s.start_with?("Public::") }
+    assert_empty publics.map(&:name),
+                 "a Public:: controller descends from ApplicationController; the namespace is " \
+                 "sessionless by construction, not by skipping a callback"
+
+    files = (Dir.glob(ROOT.join("app", "controllers", "public", "**", "*.rb")) +
+             Dir.glob(ROOT.join("app", "views", "public", "**", "*.erb"))).sort
+    assert_operator files.size, :>=, 10,
+                    "the Public scan matched #{files.size} file(s), below the plausibility floor " \
+                    "of 10 — so `assert_empty` below cannot fail for the reason it exists " \
+                    "(CLAUDE.md §14e). A renamed or moved directory is the usual cause"
+
+    offenders = files.flat_map do |file|
+      erb_open = false
+      File.readlines(file, chomp: true).each_with_index.filter_map do |line, idx|
+        code, erb_open = strip_erb_comment(line, erb_open)
+        next if code.lstrip.start_with?("#")
+        next unless code.match?(SESSION_ACCESSOR)
+        "#{Pathname.new(file).relative_path_from(ROOT)}:#{idx + 1}"
+      end
+    end
+
+    assert_empty offenders,
+                 "a public controller or view reads the session:\n  #{offenders.join("\n  ")}\n" \
+                 "A public page is a 404 to everyone for a private project — including its own " \
+                 "signed-in owner — precisely because it cannot know who is looking. A template " \
+                 "that branches on the visitor makes the page disagree with the file route."
+  end
+
+  SESSION_ACCESSOR = /\b(current_user|current_project|user_signed_in\?|web_device)\b|\bsession\s*[\[.]|\bcookies\s*[\[.]/
+
+  # `line` with every `<%# … %>` region removed, plus whether a comment is still open at its end.
+  # Returns [code, still_open]. A `.rb` file contains no `<%#` at all, so this is a no-op there and
+  # the two file kinds can share one loop.
+  def strip_erb_comment(line, open)
+    out = +""
+    rest = line
+    loop do
+      if open
+        idx = rest.index("%>")
+        return [ out, true ] unless idx
+
+        rest = rest[(idx + 2)..]
+        open = false
+      else
+        idx = rest.index("<%#")
+        unless idx
+          out << rest
+          return [ out, false ]
+        end
+
+        out << rest[0...idx]
+        rest = rest[(idx + 3)..]
+        open = true
+      end
+    end
+  end
+
   # THE TWO INDEXES ALLOWED TO BE A STRICT PREFIX OF ANOTHER, as "table" => "index name".
   #
   # Both are the SAME mechanism and neither is discoverable from a fixture, which is why they are

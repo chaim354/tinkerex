@@ -1,0 +1,90 @@
+<%#
+  ONE PUBLISHED PROJECT, READ-ONLY, FOR ANYONE (stage 3, S3-4; spec §2.5).
+
+  EVERY QUESTION GOES TO `pub` (Maker::PublicProject) — including "where does this file's link
+  point", so the page and the file route cannot disagree about what is public. No form, no button,
+  no link into a private path anywhere: a visitor is not the person who would change something,
+  and public_project_test.rb asserts the absence directly rather than trusting this comment.
+
+  AN EMPTY PANEL IS OMITTED, NOT RENDERED AS AN EMPTY STATE. "No connections yet." is an invitation
+  to add one, which is exactly what a visitor cannot do; the private page keeps its empty states.
+%>
+<% content_for :title, "#{@project.name} — @#{@pub.handle}" %>
+<% content_for :container_class, "public-main" %>
+
+<% unless @project.publicly_listed? %>
+  <%# UNLISTED MEANS "REACHABLE BY LINK", NOT "INDEXED". The token in the URL is the credential, and
+      a crawler that found it once would keep the page in a result set forever. Public projects are
+      deliberately indexable — that is the point of /explore. %>
+  <% content_for :head do %>
+    <meta name="robots" content="noindex">
+  <% end %>
+<% end %>
+
+<%# A REAL BREADCRUMB IN THE PAGE, NOT `content_for :crumbs`. The layout renders `layouts/topbar`
+    (which is what consumes :crumbs) only on the SIGNED-IN branch, and a public page renders the
+    visitor's shell by design — so a content_for here would be markup nothing ever yields. %>
+<nav class="breadcrumb" aria-label="Project path">
+  <%= link_to "@#{@pub.handle}", public_user_path(@pub.handle) %>
+  <span class="sep" aria-hidden="true">/</span>
+  <span aria-current="page"><%= @project.name %></span>
+</nav>
+
+<div class="page-head public-head">
+  <div class="page-title">
+    <h1><%= @project.name %></h1>
+  </div>
+  <p class="public-byline">
+    by <%= link_to "@#{@pub.handle}", public_user_path(@pub.handle) %>
+    <span class="badge status-<%= @project.status %>"><%= @project.status.humanize %></span>
+    <% if @project.license_label %>
+      <span class="badge license"><%= @project.license_label %></span>
+    <% end %>
+    <% if @project.unlisted? %>
+      <span class="badge visibility-unlisted">Unlisted link</span>
+    <% end %>
+  </p>
+</div>
+
+<% if @project.description.present? %>
+  <p class="project-description"><%= @project.description %></p>
+<% end %>
+
+<%# NOT `tag_chips(@project)`: that helper links into /tags/:name, which is the SIGNED-IN owner's
+    private tag page. A visitor's tag link belongs on /explore. %>
+<% if @project.tags.any? %>
+  <div class="tag-chips">
+    <% @project.tags.sort_by(&:name).each do |t| %>
+      <%= link_to t.name, public_explore_path(tag: t.name), class: "tag-chip" %>
+    <% end %>
+  </div>
+<% end %>
+
+<% readme = @pub.readme %>
+<% if readme&.html.present? %>
+  <section class="panel readme-panel">
+    <div class="markdown"><%= readme.html %></div>
+    <% if readme.note %>
+      <p class="muted readme-note"><%= readme.note %></p>
+    <% end %>
+  </section>
+<% elsif readme&.note %>
+  <p class="muted readme-note"><%= readme.note %></p>
+<% end %>
+
+<div class="project-panels">
+  <%= render "files", pub: @pub %>
+  <%= render "photos", pub: @pub %>
+  <%= render "build_log", pub: @pub %>
+  <%= render "bom", pub: @pub %>
+  <%# The S3-3 wiring partial's read-only branch — its first real caller. `editable: false` is what
+      renders plain cells and no composer; drop it and the public page grows text inputs and a
+      Remove button posting at a private route. %>
+  <% if @pub.connections.any? %>
+    <%= render "projects/wiring", project: @project, connections: @pub.connections, editable: false %>
+  <% end %>
+  <%= render "schematics", pub: @pub %>
+  <% @pub.repo_cards.each_value do |card| %>
+    <%= render "repo_card", card: card %>
+  <% end %>
+</div>

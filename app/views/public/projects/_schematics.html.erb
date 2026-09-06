@@ -1,0 +1,37 @@
+<%#
+  Every .kicad_sch/.kicad_pcb anywhere in the folder, plus ONE inline KiCanvas preview — the
+  private partial's shape (projects/_schematics.html.erb) with public URLs.
+
+  THE PREVIEW URL IS THE NAMED FORM, EXTENSION LAST, AND THE TOKEN RIDES ALONG. KiCanvas reads a
+  file's type off the URL it fetches, not off the bytes, so the route's optional `*filename` glob
+  carries the real name — which is also why that route is declared `format: false` (a trailing
+  `.kicad_sch` must not be parsed as a response format).
+
+  THE LIST LINKS ARE `download: true` ON PURPOSE. A .kicad_sch is not an inline-safe type, so the
+  concern would attach it anyway; saying so in the URL means the link and the button a visitor
+  reaches for agree, and there is no private file page to send them to instead.
+
+  Local: pub (Maker::PublicProject).
+%>
+<% if pub.kicad_rows.any? %>
+  <section class="panel schematics-panel">
+    <h2>Schematics</h2>
+    <ul class="schematics-list">
+      <% pub.kicad_rows.each do |row| %>
+        <% ext = File.extname(row.node.name).downcase.delete(".") %>
+        <li>
+          <%= link_to row.node.name, pub.file_url_for(row.node_id, download: true) %>
+          <span class="badge"><%= ext == "kicad_sch" ? "schematic" : "board" %></span>
+        </li>
+      <% end %>
+    </ul>
+    <% preview = pub.kicad_rows.first %>
+    <div class="kicanvas-stage schematics-preview"
+         data-controller="kicanvas"
+         data-kicanvas-url-value="<%= pub.file_url_for(preview.node_id, filename: preview.node.name) %>"
+         data-kicanvas-controls-value="basic">
+      <p class="muted" data-kicanvas-target="status">Loading the viewer…</p>
+      <div data-kicanvas-target="stage"></div>
+    </div>
+  </section>
+<% end %>

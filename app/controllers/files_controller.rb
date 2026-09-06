@@ -27,6 +27,11 @@
 # valid content-addressed manifest + immutable version with correct refcounts. No second,
 # bytes-through-Rails write path.
 class FilesController < ApplicationController
+  # ONE delivery switch, shared with the sessionless Public::FilesController (stage 3,
+  # S3-4). It carries SAFE_INLINE_TYPES and the disposition policy; #blob below supplies
+  # the node and the user. See app/controllers/concerns/file_delivery.rb.
+  include FileDelivery
+
   # ONE named mechanism for what this deployment can do, reachable from the views AND from the v1
   # API. Not two: a view reaching for FileLayer.current.capabilities inline while a controller
   # also sets @caps is how the two answers drift apart, which is §9a-3's complaint and Landmine
@@ -89,12 +94,12 @@ class FilesController < ApplicationController
   # whose #perform then raises ArgumentError, since a chunk backend has no observer.
   before_action :require_scannable!, only: :rescan
 
-  # Content types safe to render inline in the app origin. Raster images only — deliberately
-  # NO image/svg+xml (SVG can carry <script>) and NO text/html, which would be stored XSS.
-  SAFE_INLINE_TYPES = %w[
-    image/png image/jpeg image/gif image/webp image/bmp
-    image/x-icon image/vnd.microsoft.icon
-  ].freeze
+  # THE ALLOWLIST MOVED TO `FileDelivery` (stage 3, S3-4) — the public file route applies the same
+  # policy, and a second copy of it is the one-condition-two-answers divergence §14a forbids. This
+  # name stays because it is cited from OUTSIDE this file (s3_delivery_test.rb, the renderer
+  # contract's raster list, docs/invariants/addons.md), and it is the SAME frozen array, not a
+  # second definition that could drift.
+  SAFE_INLINE_TYPES = FileDelivery::SAFE_INLINE_TYPES
 
   # A node id that doesn't belong to current_user (or doesn't exist) -> 404, never a 500
   # and never another user's data (all lookups are scoped to current_user).
@@ -753,54 +758,14 @@ class FilesController < ApplicationController
   # --- Download / view bytes ---------------------------------------------------
   # GET /files/:id/blob — hand the browser the file's bytes, however THIS deployment holds them.
   #
-  # THE SPLIT THIS METHOD EXISTS TO KEEP: the disposition policy below is the CONTROLLER's and
-  # must not vary by backend — the same button gives the same answer on chunk, share and s3, or
-  # the shared contracts are pinning adapters that the web layer then diverges anyway. HOW the
-  # bytes travel does vary, and that is FileLayer#download's answer, not ours. The controller
-  # owns the policy; the adapter owns the mechanism.
+  # THE DELIVERY SWITCH AND THE DISPOSITION POLICY ARE `FileDelivery`'s (stage 3, S3-4), shared
+  # verbatim with the sessionless public file route. What is left HERE is the one thing that
+  # cannot be shared: which node this request is allowed to see. A node id that doesn't belong to
+  # current_user (or doesn't exist) → 404 via the rescue_from at the top of this class, never a
+  # 500 and never another user's data.
   def blob
     node = current_user.nodes.present.find_by!(node_id: params[:id])
-    filename = node.name
-    content_type = Marcel::MimeType.for(name: filename)
-    # Serve user-uploaded bytes inline ONLY for a small allowlist of raster image types.
-    # Everything else — notably SVG and HTML, which the browser would execute in the app
-    # origin (stored XSS in the user's own session) — is forced to a download. `nosniff`
-    # stops the browser second-guessing the declared type. `?download=1` always attaches.
-    # PDF is inline-safe too, even though SAFE_INLINE_TYPES is raster-only: the browser hands
-    # application/pdf to its built-in viewer (PDFium/pdf.js), which sandboxes any embedded PDF
-    # JavaScript — a PDF is never executed as page script in the app origin the way SVG/HTML are.
-    # nosniff (set on the send_file/Stream branches) stops the browser re-sniffing it as HTML.
-    inline_ok = !params[:download] &&
-                (SAFE_INLINE_TYPES.include?(content_type) || content_type == "application/pdf")
-    disposition = inline_ok ? "inline" : "attachment"
-
-    delivery = FileLayer.current.download(current_user, node_id: node.node_id,
-                                          disposition:, content_type:)
-
-    # No `else`: an unhandled variant raises NoMatchingPatternError, which is what a new
-    # Delivery variant with no consumer here should do. A silent fallthrough would serve a
-    # blank 200 with the right filename.
-    case delivery
-    in FileLayer::Delivery::Redirect(url:)
-      # NO Content-Disposition / Content-Type / nosniff on this branch, and the asymmetry is
-      # deliberate rather than an omission: they would be headers on a 302 that the browser
-      # discards on its way to the store. The policy travels SIGNED INTO THE URL instead
-      # (FileLayer::S3#download) — the same answer, applied by the only party that can apply it.
-      redirect_to url, allow_other_host: true
-    in FileLayer::Delivery::SendFile(path:)
-      # `path` is CONSUMED, never built and never re-validated: it was resolved through
-      # Share#absolute_path's escape guard, which is the single choke point #read uses too.
-      # A File.join / Pathname / ".." check here would either bypass that guard or become a
-      # second copy of it that drifts (§9a-3). See share_delivery_test.rb's poisoned-row tests.
-      response.headers["X-Content-Type-Options"] = "nosniff"
-      send_file path, disposition:, type: content_type, filename:
-    in FileLayer::Delivery::Stream(enum:)
-      response.headers["X-Content-Type-Options"] = "nosniff"
-      response.headers["Content-Type"] = content_type
-      response.headers["Content-Disposition"] =
-        ActionDispatch::Http::ContentDisposition.format(disposition:, filename:)
-      self.response_body = enum
-    end
+    deliver_file(current_user, node, download: params[:download].present?)
   end
 
   # DELETE /files/:id — remove the file from the library, however THIS deployment holds it.

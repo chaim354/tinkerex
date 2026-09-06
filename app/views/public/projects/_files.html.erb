@@ -1,0 +1,54 @@
+<%#
+  THE FOLDER'S FILES, SECTION BY SECTION (stage 3, S3-4). `pub.sections` is the order: the folder's
+  own loose files first under the project's name, then every subfolder by its path. Backups are
+  already left out — a public page is not a recovery tool.
+
+  NO `data-controller="thumbs"` AND THAT IS DELIBERATE, not an omission. The poll exists to turn a
+  spinner into an image while the owner watches their own upload render; a visitor has no such
+  expectation and the endpoint it polls is signed-in-only anyway. So this renders READY thumbs and,
+  for anything else, the spinner markup `files/_thumb` emits with its animation stopped
+  (pages/public.css) — a static badge rather than a promise the page will never keep.
+
+  Local: pub (Maker::PublicProject).
+%>
+<% if pub.sections.any? %>
+  <section class="panel files-panel">
+    <div class="panel-head">
+      <h2>Files</h2>
+      <span class="mono muted"><%= pluralize(pub.sections.sum { |_name, rows| rows.size }, "file") %></span>
+    </div>
+
+    <% pub.sections.each do |name, rows| %>
+      <h3 class="public-section"><%= name %></h3>
+      <table class="table public-files">
+        <thead>
+          <tr>
+            <th class="col-thumb"></th>
+            <th class="col-name">File</th>
+            <th class="col-size">Size</th>
+            <th class="col-dl"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <% rows.each do |row| %>
+            <% ext = File.extname(row.node.name).delete(".").upcase %>
+            <tr>
+              <td class="col-thumb">
+                <span class="file-cell">
+                  <%= render "files/thumb", thumb: pub.thumbs.thumb(row.node_id), ext_label: ext %>
+                </span>
+              </td>
+              <%# Inline for images and PDF, an attachment for everything else — FileDelivery
+                  decides, exactly as it does for the owner's own /files/:id/blob. %>
+              <td class="col-name"><%= link_to row.node.name, pub.file_url_for(row.node_id) %></td>
+              <td class="col-size num"><%= number_to_human_size(row.node.size) %></td>
+              <td class="col-dl">
+                <%= link_to "Download", pub.file_url_for(row.node_id, download: true), class: "linkbtn small" %>
+              </td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    <% end %>
+  </section>
+<% end %>

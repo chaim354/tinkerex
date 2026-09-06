@@ -92,7 +92,7 @@
           why these files sit apart from every real section instead of reading as forgotten. %>
       <% if loose.any? %>
         <%= render "attachment_group", key: "loose", label: "Loose", rows: loose, open: true %>
-        <p class="muted loose-note">Loose files are filed on the next sweep.</p>
+        <p class="muted loose-note">Loose files are filed on the next sweep; a README stays here.</p>
       <% end %>
 
       <%# ONE SECTION PER REAL SUBFOLDER, nested exactly as it sits on disk — a repository renders

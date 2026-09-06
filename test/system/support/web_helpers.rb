@@ -142,6 +142,22 @@ module WebHelpers
   # gallery asks the sidecar proxy for a sample photo that most generators don't have, and the 404
   # is what triggers the thumbfallback controller. Chrome logs a failed subresource at SEVERE, so
   # without this the expected 404 masks any genuine error logged alongside it.
+  # THE SECOND REAL CASE (stage 3, S3-4): KiCanvas's `kc-ui-icon` renders a sprite icon as
+  # `<svg><use xlink:href="${sprites_url}#name"/></svg>` through its `html` tagged template, which
+  # turns any interpolation that is not one of its own Literals into the placeholder `$$:<i>:$$`,
+  # clones the template into the document, and only THEN walks the tree substituting values. An
+  # SVG <use> with an external href fetches on creation, so Chrome requests `<page dir>/$$:0:$$`
+  # — resolved against the PAGE, since `$$:0:$$` is relative — gets a 404, and aborts the request
+  # when the real href lands a moment later (net::ERR_ABORTED; the icon renders correctly). Linux
+  # Chrome on the CI runners logs that 404 at SEVERE; the macOS Chrome the suite runs on locally
+  # does not, which is why `bin/ci` was green and the PR's system job red (run 34012418596). It
+  # fires wherever a `<kicanvas-embed controls="basic">` renders (the project pages' Schematics
+  # preview; the file page's `controls="full"` toolbar never hit it in three months of sweeps), so
+  # it is upstream's bug at the pinned commit (bin/build-kicanvas), not the page's: the open item
+  # for patching the build names the fix (`new Literal(...)` around the href). Match the WHOLE
+  # message shape, not the bare token, so a genuine 404 elsewhere on the page still fails.
+  KICANVAS_PLACEHOLDER_FETCH = %r{/\$\$:\d+:\$\$ - Failed to load resource: the server responded with a status of 404}
+
   def assert_no_console_errors(ignoring: [])
     logs = page.driver.browser.logs.get(:browser).select { |l| l.level == "SEVERE" }
     messages = logs.map(&:message).reject { |m| ignoring.any? { |pattern| m.match?(pattern) } }

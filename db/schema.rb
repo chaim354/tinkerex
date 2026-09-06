@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_06_024258) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_06_035251) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -319,13 +319,18 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_06_024258) do
     t.datetime "created_at", null: false
     t.text "description"
     t.string "folder_node_id"
+    t.string "license"
     t.string "name", null: false
     t.string "slug", null: false
     t.string "status", default: "planning", null: false
+    t.string "unlisted_token"
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
+    t.string "visibility", default: "private", null: false
+    t.index ["unlisted_token"], name: "index_maker_projects_on_unlisted_token", unique: true
     t.index ["user_id", "slug"], name: "index_maker_projects_on_user_id_and_slug", unique: true
     t.index ["user_id", "status"], name: "index_maker_projects_on_user_id_and_status"
+    t.index ["visibility", "updated_at"], name: "index_maker_projects_on_visibility_and_updated_at"
   end
 
   create_table "maker_repo_edits", force: :cascade do |t|
@@ -459,6 +464,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_06_024258) do
     t.string "email", null: false
     t.string "encrypted_password", default: "", null: false
     t.integer "failed_attempts", default: 0, null: false
+    t.string "handle"
     t.bigint "head_seq", default: 0, null: false
     t.datetime "last_sign_in_at"
     t.string "last_sign_in_ip"
@@ -475,6 +481,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_06_024258) do
     t.datetime "updated_at", null: false
     t.index ["confirmation_token"], name: "index_users_on_confirmation_token", unique: true
     t.index ["email"], name: "index_users_on_email", unique: true
+    t.index ["handle"], name: "index_users_on_handle", unique: true
     t.index ["reset_password_token"], name: "index_users_on_reset_password_token", unique: true
     t.index ["unlock_token"], name: "index_users_on_unlock_token", unique: true
   end

@@ -307,7 +307,8 @@ class ProjectsController < ApplicationController
   # would buy a nicer error for a case nobody reaches through the UI, at the price of a query on
   # every project save.
   def project_params
-    attrs = params.require(:project).permit(:name, :description, :status, :cover_node_id, :tag_list)
+    attrs = params.require(:project).permit(:name, :description, :status, :cover_node_id, :tag_list,
+                                            :visibility, :license)
     attrs[:cover_node_id] = nil if params[:project][:cover_clear] == "1"
     attrs
   end
