@@ -73,6 +73,31 @@ class ProjectsSweepPointersTaskTest < ActiveSupport::TestCase
     assert_not @root.join(Maker::ProjectFolders::ROOT, "desk-lamp", "bracket.stl.ptr").exist?, "the pointer must leave the folder"
   end
 
+  # TWO USERS OVER ONE DIRECTORY — the share box's real shape: every path has two catalog rows,
+  # one per account. The first user's delete moves the bytes into ITS trash; the second user's
+  # row then names a path that is gone, and the port answers FetchError — the same error an
+  # unmounted share raises, so the task must not tombstone on it. It skips, says so, and finishes.
+  # MUTATION-CHECKED: removing the rescue turns this into an uncaught FileLayer::FetchError from
+  # the task (the run dies after the first user's pointers, leaving the second user's untouched
+  # and unreported).
+  test "a twin row over the same directory is skipped and reported, never raised on, never tombstoned" do
+    desk_lamp = projects_desk_lamp
+    file!("f-real", "bracket.stl", desk_lamp.node_id)
+    first = file!("f-ptr", "bracket.stl.ptr", desk_lamp.node_id)
+    twin_user = User.create!(email: "twin-#{SecureRandom.hex(4)}@example.com", confirmed_at: Time.current, omniauth_signup: true)
+    twin_projects = create_node!(twin_user, node_id: "t-projects", name: Maker::ProjectFolders::ROOT, kind: "dir")
+    twin_lamp = create_node!(twin_user, node_id: "t-lamp", name: "desk-lamp", kind: "dir", parent_node_id: twin_projects.node_id)
+    create_node!(twin_user, node_id: "t-real", name: "bracket.stl", kind: "file", parent_node_id: twin_lamp.node_id)
+    twin = create_node!(twin_user, node_id: "t-ptr", name: "bracket.stl.ptr", kind: "file", parent_node_id: twin_lamp.node_id)
+
+    out = capture_io { invoke! }.first
+
+    assert first.reload.deleted?, "the first user's pointer is swept"
+    assert_not twin.reload.deleted?, "the twin row is left for the next scan, never tombstoned by the task"
+    assert_match(/^skip .*bracket\.stl\.ptr .*bytes already gone/, out)
+    assert_match(/1 deleted, 1 skipped/, out)
+  end
+
   test "a pointer under a sibling folder whose name merely starts with Projects is left alone" do
     archive = dir!("dir-archive", "#{Maker::ProjectFolders::ROOT}Archive", nil)
     file!("f-arch-real", "old.stl", archive.node_id)

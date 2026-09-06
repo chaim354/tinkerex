@@ -69,6 +69,7 @@ namespace :projects do
     # pointer stands for a binary that is elsewhere), and deleting it would be data loss. Deletion goes
     # through the port so the stub lands in the trash, restorable, never the void.
     dry = ENV["DRY_RUN"] == "1"
+    tally = Hash.new(0)
     User.find_each do |user|
       tree = Maker::LibraryTree.new(user)
       user.nodes.present.where(kind: "file").where("name LIKE '%.ptr'").find_each do |ptr|
@@ -76,10 +77,24 @@ namespace :projects do
         path = tree.path_for(ptr.parent_node_id).to_s
         next unless path == Maker::ProjectFolders::ROOT || path.start_with?("#{Maker::ProjectFolders::ROOT}/")
         real = user.nodes.present.find_by(parent_node_id: ptr.parent_node_id, name: ptr.name.delete_suffix(".ptr"))
-        next puts("keep   #{ptr.name} (no real file beside it)") unless real
-        puts "#{dry ? 'would delete' : 'delete'} #{tree.path_for(ptr.parent_node_id)}/#{ptr.name}"
-        FileLayer.current.delete(user, node_id: ptr.node_id) unless dry
+        next (tally[:kept] += 1; puts("keep   #{ptr.name} (no real file beside it)")) unless real
+        puts "#{dry ? 'would delete' : 'delete'} #{path}/#{ptr.name}"
+        next tally[:would_delete] += 1 if dry
+        begin
+          FileLayer.current.delete(user, node_id: ptr.node_id)
+          tally[:deleted] += 1
+        rescue FileLayer::FetchError => e
+          # TWO USERS OVER ONE DIRECTORY (the share box indexes one library under two accounts): the
+          # twin row's delete already moved the bytes, so this row's path is gone and the port answers
+          # FetchError. NOT tombstoned here — an unmounted share raises the very same error, and §14a
+          # says a missing mount must never read as "your file is gone". The next scan sees the
+          # vanished path and tombstones it honestly (57 of ~3,900 rows is far below the scan's
+          # mass-deletion guard). Skipped, reported, and the run goes on to the next pointer.
+          tally[:skipped] += 1
+          puts "skip   #{path}/#{ptr.name} (#{e.message.lines.first.strip}) — bytes already gone; the next scan tombstones this row"
+        end
       end
     end
+    puts "sweep_pointers: #{tally.map { |k, v| "#{v} #{k.to_s.tr('_', ' ')}" }.join(', ').presence || 'nothing to do'}"
   end
 end
