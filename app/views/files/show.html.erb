@@ -157,6 +157,12 @@
         names. That is why this branch can be one shape for both — see that method for why a job
         file is the only kind whose page renders something other than itself.
 
+        A ZIPPED EXPORT REACHES THIS BRANCH THROUGH @gerber_archive, and renders the whole board:
+        FilesController#show asks Maker::GerberArchive what is inside a .zip (the one preview kind
+        decided by a read rather than by the name), and the single entry it builds carries the ZIP's
+        own URL plus the member paths gerber_controller.js extracts with JSZip. So a zip page is a
+        stackup with Top and Bottom, exactly like a .gbrjob's.
+
         named_blob_file_path is what that method builds, for the reason the KiCanvas comment above
         spells out for its own route: the trailing extension is the file's real name. tracespace
         reads it off the File object rather than off the URL, so this is a smaller dependency here

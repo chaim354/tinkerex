@@ -452,16 +452,39 @@ class FilesController < ApplicationController
     @pending_count = @repo_root && Maker::RepoEdit.pending_for(current_user, @repo_root.node_id).count
     token = @info&.content_token
     @thumbnail = token && current_thumbnail(@node, token)
+    # A ZIP IS A BOARD WHEN ITS CONTENTS SAY SO — the one preview kind decided by a READ rather than
+    # by the name. `preview_kind` answers from the name for the whole vocabulary and stays that way;
+    # this branch lives here beside `gerber_layers_for`'s `.gbrjob` read, the other server read a
+    # Gerber page makes. One port read, bounded and cached (Maker::GerberArchive).
+    @gerber_archive = Maker::GerberArchive.archive?(@node.name) &&
+                      Maker::GerberArchive.for(user: current_user, node: @node)
+    @kind = :gerber if @gerber_archive
     # THE :gerber BRANCH'S LAYER LIST, BUILT HERE BECAUSE ONLY A `.gbrjob` NEEDS A QUERY AND A READ.
     # An ordinary layer is its own whole answer; a job file's page renders the BOARD it names, which
     # means resolving its siblings. Nil for every other kind, so the view's branch and this one
     # cannot disagree about whether the page has a Gerber on it.
-    @gerber_layers = @kind == :gerber ? gerber_layers_for(@node) : nil
+    #
+    # A ZIPPED EXPORT IS ONE ENTRY — the zip's own URL plus the member paths the BROWSER extracts —
+    # built through `FilesHelper#gerber_archive_entry`, the same builder both Fabrication panels
+    # reach through `gerber_layers_for`. A second literal of that shape here is the drift to avoid:
+    # only a browser ever reads those keys, so nothing on the server would report the two spellings
+    # diverging.
+    @gerber_layers =
+      if @gerber_archive
+        [ helpers.gerber_archive_entry(name: @node.name,
+                                       url: named_blob_file_path(@node.node_id, filename: @node.name),
+                                       members: @gerber_archive.stacked) ]
+      elsif @kind == :gerber
+        gerber_layers_for(@node)
+      end
     # THE STACKUP/SINGLE CHOICE IS THIS ONE FACT, decided once here rather than re-derived in the
     # template from the size of the list above: a folder holding exactly one layer beside a job file
     # would then read as "single" and lose its Top/Bottom toggle, which is a different question from
     # the one the page is answering.
-    @gerber_single = @kind == :gerber && !gerber_job?(@node.name)
+    #
+    # AN ARCHIVE IS NEVER SINGLE, for the `.gbrjob` reason: a zip is a whole export, so the honest
+    # render is the BOARD, with Top and Bottom.
+    @gerber_single = @kind == :gerber && !gerber_job?(@node.name) && !@gerber_archive
     # THE ATTACH CONTROL'S TWO HALVES. `@attached_projects` is what the file is already in — a
     # file can be in several projects, and until now the page gave no sign it was in any. The
     # dropdown then offers the REST: re-attaching to a project it is already in is a no-op, so
@@ -1451,6 +1474,10 @@ class FilesController < ApplicationController
   #
   # `.freeze` ON THE RESULT, NOT ON `ROLE_BY_EXT.select` ALONE: `select` on a frozen Hash returns a
   # NEW, unfrozen Hash, and `keys` a new Array — nothing here is frozen unless it is said.
+  #
+  # `Maker::GerberArchive` READS THIS TOO, to decide which MEMBERS of a zip are layers — so an
+  # extension added to the `pcb` role starts counting inside an archive at the same moment it starts
+  # counting loose in a folder, which is the point of there being one list.
   GERBER_EXTS = Maker::FileAttachment::ROLE_BY_EXT.select { |_ext, role| role == "pcb" }.keys.freeze
 
   # WHAT gerber_controller.js FETCHES on a file page: `[{ name:, url: }]`, name-ordered.

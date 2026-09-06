@@ -10,6 +10,8 @@
 # placeholder for a file node (deliberately — most fixtures never read the bytes back), which
 # tracespace would receive as an unparseable layer. test/support/kicad_fixture.rb is the same
 # shape for the same reason and this deliberately mirrors it.
+require "zip"
+
 module GerberFixture
   # ONE RS-274X LAYER DRAWING A 10 mm SQUARE, which is the smallest thing that produces a real
   # `<path>` rather than an empty render. Probed against the vendored bundle, not guessed:
@@ -92,6 +94,50 @@ module GerberFixture
     @root.join(rel).mkpath
     @user.nodes.create!(node_id: SecureRandom.uuid, name:, kind: "dir", parent_node_id:,
                         size: 0, storage_path: rel, mtime: 1_000_000_000)
+  end
+
+  # A ZIP BUILT IN MEMORY WITH RUBYZIP from the same minimal bytes, so a test controls its member
+  # paths exactly. `entries` maps "path/in/zip" => body. `write_buffer` returns the StringIO it was
+  # handed (probed on rubyzip 3.6.0), so `.string` is the archive.
+  def gerber_zip(entries)
+    Zip::OutputStream.write_buffer(StringIO.new("".b)) do |out|
+      entries.each do |path, body|
+        out.put_next_entry(path)
+        out.write(body)
+      end
+    end.string
+  end
+
+  # THE FUSION 360 "CAM OUTPUTS" SHAPE the report was about: layers three directories deep, a drill
+  # in a sibling directory, a job naming them, and assembly text that is not a layer.
+  def fusion_zip(stem: "board", job: true)
+    base = "Clough42/#{stem}/CAMOutputs"
+    entries = {
+      "#{base}/GerberFiles/copper_top_l1.gbr"    => MINIMAL_GERBER,
+      "#{base}/GerberFiles/copper_bottom_l4.gbr" => MINIMAL_GERBER,
+      "#{base}/GerberFiles/profile.gbr"          => MINIMAL_GERBER,
+      "#{base}/DrillFiles/drill_1_64.xln"        => MINIMAL_DRILL,
+      "#{base}/Assembly/PnP_#{stem}_front.txt"   => "pnp"
+    }
+    if job
+      entries["#{base}/GerberFiles/gerber_job.gbrjob"] =
+        gerber_job("copper_top_l1.gbr", "copper_bottom_l4.gbr", "profile.gbr", "drill_1_64.xln")
+    end
+    gerber_zip(entries)
+  end
+
+  # The four member PATHS a `fusion_zip` stacks, name-ordered — what the server lists and what the
+  # browser then pulls out of the archive. Written once here because three suites assert on it.
+  def fusion_zip_members(stem: "board")
+    base = "Clough42/#{stem}/CAMOutputs"
+    [ "#{base}/DrillFiles/drill_1_64.xln",
+      "#{base}/GerberFiles/copper_bottom_l4.gbr",
+      "#{base}/GerberFiles/copper_top_l1.gbr",
+      "#{base}/GerberFiles/profile.gbr" ]
+  end
+
+  def write_gerber_zip!(name: "board.zip", parent_node_id: nil, body: fusion_zip)
+    write_gerber!(name:, parent_node_id:, body:)
   end
 
   # THE THREE-LAYER SET THE PANEL RENDERS AS A BOARD: top copper, bottom copper, drill. Named

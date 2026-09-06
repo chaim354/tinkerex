@@ -215,6 +215,73 @@ module Maker
       assert_equal %w[board.drl board.gbl board.gtl], board.stacked.map { |r| r.node.name }
     end
 
+    # --- a zipped export ---------------------------------------------------------
+
+    # A ZIP IS A BOARD OF ITS OWN. `rows` is the zip alone (the panel lists one line), `stacked` is
+    # empty because what is stacked lives INSIDE the archive, and `archive.members` is what the
+    # browser pulls out of it.
+    test "a zipped export is one board named for the zip, listing itself and stacking nothing" do
+      dir = gerber_dir!(name: "pcb")
+      zip = write_gerber_zip!(parent_node_id: dir.node_id)
+
+      boards = boards_for(zip, section: "pcb")
+
+      assert_equal 1, boards.size
+      board = boards.first
+      assert_equal "board", board.name, "the zip's own stem names the board"
+      assert_equal %w[board.zip], board.rows.map { |r| r.node.name }
+      assert_empty board.stacked
+      assert_equal fusion_zip_members, board.archive.members
+      assert_equal zip.node_id, board.archive.row.node_id
+    end
+
+    # AN EXPORT IS COMPLETE BY CONSTRUCTION, so it is NEVER merged into the loose set beside it:
+    # stacking a stray `.gtl` on top of the zip's own top copper would render two revisions as one
+    # board, the image-of-nothing-real the folder rule exists to prevent.
+    test "a zip beside a loose set in one folder is TWO boards, name-ordered" do
+      dir = gerber_dir!(name: "pcb")
+      set = write_gerber_set!(parent_node_id: dir.node_id)
+      zip = write_gerber_zip!(name: "zed-export.zip", parent_node_id: dir.node_id)
+
+      boards = boards_for(*set.values, zip, section: "pcb")
+
+      assert_equal 2, boards.size
+      assert_equal %w[pcb zed-export], boards.map(&:name)
+      assert_nil boards.first.archive, "the loose set is not an archive board"
+      assert_equal %w[board.drl board.gbl board.gtl], boards.first.stacked.map { |r| r.node.name }
+      assert_equal fusion_zip_members, boards.last.archive.members
+    end
+
+    # A ZIP THAT IS NOT AN EXPORT IS NOT A BOARD — the answer Maker::GerberArchive gives for a zip
+    # of firmware, an unreadable one, or one past its cap.
+    test "a zip holding no Gerber member is no board at all" do
+      dir = gerber_dir!(name: "pcb")
+      zip = write_gerber_zip!(body: gerber_zip("notes.txt" => "hi"), parent_node_id: dir.node_id)
+
+      assert_empty boards_for(zip, section: "pcb")
+    end
+
+    # THE CAP IS JUDGED ON THE CATALOG'S OWN COLUMN, so an oversized zip on a project page costs NO
+    # read — the panel renders every board without streaming an arbitrary archive off the NAS.
+    test "an oversized zip is no board and is never read" do
+      dir = gerber_dir!(name: "pcb")
+      zip = write_gerber_zip!(parent_node_id: dir.node_id)
+      zip.update_column(:size, Maker::GerberArchive::READ_LIMIT + 1)
+
+      adapter = FileLayer.current
+      original = adapter.method(:read)
+      reads = []
+      adapter.define_singleton_method(:read) { |user, **kw| reads << kw[:node_id]; original.call(user, **kw) }
+      begin
+        boards = boards_for(zip.reload, section: "pcb")
+      ensure
+        adapter.singleton_class.remove_method(:read)
+      end
+
+      assert_empty boards
+      assert_empty reads, "an oversized archive was opened through the port"
+    end
+
     # A JOB ALONE IS STILL A BOARD ROW (so the panel lists it), with nothing to stack.
     test "a job file with no layers beside it lists itself and stacks nothing" do
       dir = gerber_dir!(name: "pcb")

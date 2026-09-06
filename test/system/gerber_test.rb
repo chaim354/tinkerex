@@ -107,6 +107,34 @@ class GerberTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # THE ZIP IS UNPACKED IN THE BROWSER, AND ONLY A BROWSER CAN SHOW THAT. The server never opens a
+  # member (Maker::GerberArchive lists the central directory and stops); everything below the fetch
+  # — JSZip loading the archive, pulling the four members the server named, and tracespace
+  # identifying each one from its BASENAME three directories down — happens here and nowhere else in
+  # the suite. A request test can only assert that the paths were written into the attribute.
+  #
+  # MUTATION (§15, test/system/README.md; run for real, output in the PR, then reverted):
+  # gerber_controller.js's `zip.file(path)` changed to `zip.file(path + "x")` reds this test on the
+  # `ready` assertion — the member miss throws and the catch sets data-gerber-state="failed".
+  test "a zipped Fusion export renders as a board, and the Bottom toggle swaps the side" do
+    node = write_gerber_zip!
+
+    visit file_path(node.node_id)
+
+    assert_selector ".gerber-stage[data-gerber-state='ready']"
+    # GEOMETRY, NOT MERELY AN <svg> — the copper layers inside the archive supply the paths, which
+    # is what proves the members were really extracted and parsed rather than merely fetched.
+    assert_selector ".gerber-stage svg path", minimum: 1
+    top = find(".gerber-stage [data-gerber-target='stage']")["innerHTML"]
+
+    find("button[data-gerber-side='bottom']").click
+
+    assert_selector "button[data-gerber-side='bottom'].active"
+    bottom = find(".gerber-stage [data-gerber-target='stage']")["innerHTML"]
+    assert_not_equal top, bottom, "the Bottom toggle rendered the same SVG as Top"
+    assert_no_console_errors
+  end
+
   # SIGNED OUT, ON A PUBLIC PAGE. The viewer's own fetches go through the public file route, which a
   # visitor's request has no session behind — a route that answered 404 there would leave the panel
   # rendered and the board blank, which is exactly the pair Maker::PublicProject exists to prevent.

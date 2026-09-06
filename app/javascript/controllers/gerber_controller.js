@@ -8,13 +8,15 @@ import { Controller } from "@hotwired/stimulus"
 // KiCanvas rule, and config/importmap.rb pins it `preload: false` so the browser does not fetch it
 // anyway (test/integration/web/lazy_bundles_test.rb).
 //
-// `layersValue` IS A SERVER-BUILT LIST OF {name, url}, AND THE `name` IS LOAD-BEARING. tracespace
-// identifies what a layer IS — top copper, solder mask, drill — from the FILENAME, never from the
-// bytes, so the name the server put in this list is what decides where the file lands in the
-// stackup. That is the same property KiCanvas has (it reads the trailing extension off the URL it
-// fetches), which is why both surfaces link the NAMED blob route: the fetch below does not depend
-// on it, but nothing is gained by having the two disagree, and a download from the same URL wants
-// the real name.
+// `layersValue` IS A SERVER-BUILT LIST OF {name, url} — OR ONE ARCHIVE ENTRY — AND THE `name` IS
+// LOAD-BEARING. tracespace identifies what a layer IS — top copper, solder mask, drill — from the
+// FILENAME, never from the bytes, so the name the server put in this list is what decides where the
+// file lands in the stackup. That is the same property KiCanvas has (it reads the trailing
+// extension off the URL it fetches), which is why both surfaces link the NAMED blob route: the
+// fetch below does not depend on it, but nothing is gained by having the two disagree, and a
+// download from the same URL wants the real name. An entry carrying `archive: true` is a zipped
+// export and expands to several layers here — `filesFor` below, and FilesHelper#gerber_layers_for
+// is where the server builds both shapes.
 //
 // SINGLE vs STACKUP is a SERVER decision, not a count of the layers here. A file page renders the
 // one file it is about even when its folder holds a whole board (`singleValue` true → renderLayers,
@@ -36,16 +38,8 @@ export default class extends Controller {
       // FETCHED IN PARALLEL, but a single failure fails the whole board: a stackup missing its
       // outline layer renders at the wrong size and a stackup missing its drill file renders solid
       // copper over the holes, either of which is a WRONG picture rather than a partial one.
-      const files = await Promise.all(
-        this.layersValue.map(async ({ name, url }) => {
-          const res = await fetch(url)
-          if (!res.ok) throw new Error(`${name}: ${res.status}`)
-          // `new File([text], name)` rather than the Response's own blob: tracespace's `read()`
-          // branches on its argument — a STRING is a filesystem path it would try to open through
-          // node:fs — so it has to be a File, and a File carries the name the parser keys on.
-          return new File([await res.text()], name)
-        })
-      )
+      // `.flat()` because one entry can be a whole archive — see `filesFor`.
+      const files = (await Promise.all(this.layersValue.map((layer) => this.filesFor(layer)))).flat()
       // read -> plot -> renderLayers is the whole pipeline; renderBoard composes the two sides out
       // of a renderLayers result, so both branches share everything up to that point.
       const rendered = ts.renderLayers(ts.plot(await ts.read(files)))
@@ -65,6 +59,37 @@ export default class extends Controller {
       this.element.dataset.gerberState = "failed"
       if (this.hasStatusTarget) this.statusTarget.textContent = "The viewer could not load."
     }
+  }
+
+  // ONE LAYER ENTRY IS EITHER A FILE OR A WHOLE ARCHIVE. A loose layer is fetched and named as it
+  // always was. An entry with `archive: true` is a zipped export: the zip is fetched ONCE through
+  // the same URL a download uses, opened HERE with JSZip — never by Rails (§15; Maker::GerberArchive's
+  // header has the argument) — and each member the server named is handed to tracespace as a File
+  // named by its BASENAME, because that is what tracespace identifies a layer from and what the
+  // server matched the job file against. A member the zip does not hold fails the whole board, the
+  // rule the fetch above already applies to a missing layer: a stackup rendered without its outline
+  // or its drills is a wrong picture, not a partial one.
+  //
+  // `new File([text], name)` rather than the Response's own blob: tracespace's `read()` branches on
+  // its argument — a STRING is a filesystem path it would try to open through node:fs — so it has
+  // to be a File, and a File carries the name the parser keys on.
+  //
+  // `import("jszip")` IS LAZY for the same reason tracespace's is: the pin is preloaded for
+  // bundle_controller.js's static import, but a Gerber page without a zip never runs this.
+  async filesFor({ name, url, archive, members }) {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`${name}: ${res.status}`)
+    if (!archive) return [new File([await res.text()], name)]
+
+    const { default: JSZip } = await import("jszip")
+    const zip = await JSZip.loadAsync(await res.arrayBuffer())
+    return Promise.all(
+      members.map(async (path) => {
+        const entry = zip.file(path)
+        if (!entry) throw new Error(`${name}: ${path} is not in the archive`)
+        return new File([await entry.async("string")], path.split("/").pop())
+      })
+    )
   }
 
   top() { this.show("top") }
