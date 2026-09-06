@@ -154,6 +154,10 @@ Rails.application.routes.draw do
     # created lazily by the first line's POST and never by a GET. Lines are shallow like tasks;
     # `consume` posts a `consumed` transaction against the project through
     # Maker::InventoryTransaction.apply!, the ledger's one door.
+    # THE WIRING TABLE (stage 3, S3-3): connections between two labelled ends, with a wire and a
+    # note, in order. Shallow like tasks; edited inline on the project page, rendered read-only
+    # on the public page later (S3-4).
+    resources :connections, only: %i[create update destroy], module: :projects, shallow: true
     resource :bom, only: :show, module: :projects
     resources :bom_lines, only: %i[create destroy], module: :projects, shallow: true do
       post :consume, on: :member
