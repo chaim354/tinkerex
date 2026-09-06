@@ -189,6 +189,21 @@ module Web
       assert_select "summary .badge[title]", count: 0
     end
 
+    # THE OTHER DOOR INTO THE SAME FACTS: an explicit `release[repo_node_id]` beside a PLAIN tag,
+    # which is what a client that does not use the encoded select posts. The controller's split
+    # must step aside for it (S3-5's review found the branch covered by nothing).
+    test "an explicit repo_node_id beside a plain tag wins over the split" do
+      seed!({ "README.md" => "# Desk Lamp\n" }, repo: "firmware", tags: %w[v0.1.0])
+      firmware = repo_node!("firmware")
+
+      create_release!(git_tag: "v0.1.0", repo_node_id: firmware.node_id)
+      release = Maker::Release.order(:id).last
+
+      assert_equal "v0.1.0", release.git_tag
+      assert_equal firmware.node_id, release.repo_node_id
+      assert_equal @commit_oid.to_s, release.git_oid
+    end
+
     test "a tag that does not exist in the picked repository refuses the release" do
       seed!({ "README.md" => "# Desk Lamp\n" }, repo: "firmware", tags: %w[v0.1.0])
       firmware = repo_node!("firmware")
@@ -304,13 +319,13 @@ module Web
       assert_equal true, release.files_truncated
 
       follow_redirect!
-      assert_select "details.release summary .badge.truncated", text: "1 of a larger folder"
+      assert_select "details.release summary .badge.partial", text: "1 of a larger folder"
 
       @user.update!(handle: "ada")
       @project.update!(visibility: "public")
       get public_project_path("ada", @project.slug)
       assert_response :success
-      assert_select "details.release summary .badge.truncated", text: "1 of a larger folder"
+      assert_select "details.release summary .badge.partial", text: "1 of a larger folder"
     end
 
     test "destroy removes the release and its file rows, and touches no bytes" do
@@ -362,6 +377,11 @@ module Web
       moved = node!("base.stl")
       @project.file_attachments.find_by(node_id: moved.node_id)&.destroy!
       moved.update!(parent_node_id: nil)
+      # AND ONE FILE THAT MOVED ON, so the PUBLIC rendering of "changed since" is pinned too: the
+      # two panels share Maker::ReleaseFile#state_against, but sharing a definition does not test
+      # the call (S3-5's review found the public calls covered by no assertion). On share the token
+      # is the catalog's content_hash, so rewriting it is what the port then reports.
+      node!("README.md").update_column(:content_hash, "h-moved-on")
 
       get public_project_path("ada", @project.slug, k: token)
       assert_response :success
@@ -369,6 +389,8 @@ module Web
       assert_select "section.panel.releases-panel h2", text: "Releases"
       assert_select ".releases-panel .mono.muted", text: "1 release"
       assert_select "details.release .release-version", text: "v1.0.0"
+      assert_select "details.release summary .badge.changed", text: "1 changed since"
+      assert_select "table.release-files td.col-state .badge.changed", text: "changed", count: 1
       assert_select ".release-notes", text: /First cut\./
       assert_select "details.composer", count: 0
       assert_select ".releases-panel form", count: 0

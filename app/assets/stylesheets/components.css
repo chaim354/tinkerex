@@ -181,8 +181,11 @@
   .badge.visibility-public { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
   .badge.visibility-unlisted { background: var(--accent-soft); color: var(--accent); }
   /* Releases (stage 3, S3-5): a release recorded from a folder larger than the snapshot's cap says
-     so on its row -- the quiet neutral, since it is a fact about the record, not a fault. */
-  .badge.truncated { background: var(--raised); color: var(--fg-muted); text-transform: none; }
+     so on its row -- the quiet neutral, since it is a fact about the record, not a fault. NOT
+     `.badge.truncated`: the bare `.truncated` BANNER rule below shares that class and, later in the
+     source at equal specificity, turned the chip into a squared box with a stray margin (measured
+     in a browser by S3-5's review). */
+  .badge.partial { background: var(--raised); color: var(--fg-muted); text-transform: none; }
   /* Releases (stage 3, S3-5): "N changed since" on a release summary, and "changed"/"gone" on a
      file row. A COMPONENT MODIFIER, not a page rule, because both the private panel and the public
      one render it -- a copy in each page sheet is the shape rule 3 (design-system.md) forbids.
