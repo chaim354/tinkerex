@@ -18,6 +18,26 @@ module Maker
   # of their own for a node_id to resolve against. Nothing here consults a session; the controllers
   # above it cannot (Public::BaseController stands on ActionController::Base).
   class PublicProject
+    # THE FEED IS CAPPED AND THE CAP IS NOT A PAGE SIZE — there is no "older entries" link and
+    # there will not be one: a reader polls the newest N, and a project with 4000 build-log lines
+    # must not hand every poll 4000 rendered rich-text bodies. 50 is what a reader shows.
+    FEED_CAP = 50
+
+    # One thing that happened, whatever kind of thing it was (stage 3, S3-6). A `Data` rather than
+    # the records themselves BECAUSE the two kinds are merged: a build-log entry has `logged_at`
+    # and a release has `published_at`, and a sort that had to ask which it was holding is the
+    # shape that gets one kind's ordering wrong. `html` is already-rendered, already-sanitized
+    # markup (Action Text's own, §15's text-only rule applied on the way in), never raw user text.
+    FeedItem = Data.define(:kind, :id, :title, :time, :html, :url)
+
+    # One file the browser will fetch and zip (stage 3, S3-6). `path` is FOLDER-RELATIVE, because
+    # that is the path inside the zip — the owner's library filing ("Projects/desk-lamp/models") is
+    # not the visitor's vocabulary, the same argument `#sections` makes for its headings. `url` is
+    # the public file route, which is the whole point: the bundle is assembled in the visitor's
+    # browser out of the same downloads the page already links, so no byte passes through Rails
+    # that a plain download would not already have moved (§15).
+    BundleFile = Data.define(:path, :size, :url)
+
     attr_reader :project, :owner, :listing, :tree
 
     def initialize(project)
@@ -75,6 +95,15 @@ module Maker
                                   link: ->(id) { file_url_for(id) })
     end
 
+    # The README's own ROW, or nil — the same row `#readme` renders, asked for as a row so the
+    # bundle manifest can name it (`readme_path`) without rendering anything. `Maker::Readme.row_in`
+    # owns the preference order; see its comment for why this is not a second `find` here.
+    def readme_row
+      return @readme_row if defined?(@readme_row)
+
+      @readme_row = Maker::Readme.row_in(listing.loose)
+    end
+
     def entries
       @entries ||= project.build_log_entries.includes(:file_attachments, :rich_text_body)
                           .reorder(logged_at: :desc).to_a
@@ -102,6 +131,64 @@ module Maker
         ids = releases.flat_map { |r| r.files.map(&:node_id) }.uniq
         ids.empty? ? {} : FileLayer.current.stat_all(owner, node_ids: ids)
       end
+    end
+
+    # THE FEED (stage 3, S3-6): the build log and the releases as ONE list, newest first, capped.
+    #
+    # `page_url` IS PASSED IN RATHER THAN BUILT HERE, and that is not squeamishness about a service
+    # naming a route — `#file_url_for` right below names one happily. It is that an ATOM feed needs
+    # ABSOLUTE urls and this app configures no `default_url_options` for the routes (only for the
+    # mailer), so `url_helpers.public_project_url` raises "Missing host to link to!" outside a
+    # request. The controller has the request and knows the host the visitor actually reached; this
+    # object does not, and inventing one would put a wrong hostname in every reader's history.
+    #
+    # THE TWO KINDS ARE MERGED AND SORTED ONCE, never rendered as two sections: a reader shows one
+    # stream, and "what happened to this project, newest first" is one question. The sort key
+    # carries the id after the time so two things logged in the same second have a stable order
+    # rather than a database-dependent one.
+    def feed_items(page_url:)
+      items = entries.map do |entry|
+        FeedItem.new(kind: :entry, id: entry.id, time: entry.logged_at, html: entry.body.to_s,
+                     title: "Build log — #{entry.logged_at.strftime("%Y-%m-%d")}",
+                     url: "#{page_url}#entry-#{entry.id}")
+      end
+      items += releases.map do |release|
+        count = release.files.size
+        FeedItem.new(kind: :release, id: release.id, time: release.published_at,
+                     title: "Release #{release.version}",
+                     html: "#{release.notes}<p>#{count} #{count == 1 ? "file" : "files"} in this release.</p>",
+                     url: "#{page_url}#release-#{release.id}")
+      end
+      items.sort_by { |item| [ item.time, item.id ] }.reverse.first(FEED_CAP)
+    end
+
+    # EVERY FILE THE BUNDLE BUTTON WILL FETCH (stage 3, S3-6) — the listing's own rows, minus the
+    # backups the page already leaves out (`#sections`' rule: a rescue copy is noise to everyone
+    # but the maker, and a visitor did not ask for two copies of a LightBurn file).
+    #
+    # NO `permits?` PER ROW, AND THAT IS AN ARGUMENT RATHER THAN AN OMISSION: every listing row is
+    # a live, visible file beneath the project folder, which is exactly the ancestry arm of
+    # `permits?`. Asking again would be a second authority over the same fact, the thing this class
+    # exists to prevent. The dot-files and `.git` internals a visitor must never get are already
+    # gone — `ProjectFolderListing` filters on `Node.visible_entries` and never descends into a
+    # dot-dir — which is the same reason `#sections` can render its rows without a check.
+    #
+    # THE LIST IS THE LISTING'S, SO IT IS CAPPED (FILE_CAP) and the manifest says so with
+    # `truncated`. A bundle that silently held the first 300 files of a 900-file folder would be a
+    # lie the visitor cannot detect; one that says "first 300" is a partial answer they can.
+    def bundle_files
+      @bundle_files ||= listing.all_rows.reject(&:backup?)
+                               .map { |row| BundleFile.new(path: bundle_path(row), size: row.node.size.to_i,
+                                                           url: file_url_for(row.node_id, download: true)) }
+                               .sort_by(&:path)
+    end
+
+    # The path this node has INSIDE the bundle, or nil when the listing does not hold it (outside
+    # the folder, past FILE_CAP, or in a repository DIR_CAP never entered). `Maker::BomCsv` names
+    # it in the `file` column so a row of the CSV points at a file in the same zip.
+    def bundle_path_for(node_id)
+      row = listing.row_for(node_id)
+      row && bundle_path(row)
     end
 
     # Every KiCad schematic/board anywhere in the folder, name-ordered — the private page's own
@@ -240,6 +327,14 @@ module Maker
     end
 
     private
+
+    # FOLDER-RELATIVE, from the row's OWN `section` — the display path the listing computed while
+    # it built the tree, never re-derived by walking node_id chains a second time (that class's own
+    # rule). "" is the folder's root, so a README lands at the top of the zip as `README.md`.
+    def bundle_path(row)
+      section = row.section.to_s
+      section.empty? ? row.node.name : "#{section}/#{row.node.name}"
+    end
 
     # `visible_entries` for ONE node — from the page's primed set when it is one of the page's own
     # nodes, and from its own one-row query otherwise. `@page_nodes` rather than `page_nodes`

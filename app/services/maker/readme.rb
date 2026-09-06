@@ -45,8 +45,17 @@ module Maker
     # `rows` are Maker::ProjectFolderListing::Row objects already in memory — the same rows the
     # caller is about to render as tiles — so finding the README costs no query. nil means "this
     # listing holds no README", which a caller renders as nothing at all rather than as a note.
+    # WHICH ROW IS THE README, as its own answer — `NAMES` is a PREFERENCE ORDER, so "the first
+    # name in the list that this listing holds" is a rule and not a lookup, and a second caller
+    # spelling it out again is a pair that can drift. `Maker::PublicProject#readme_row` is that
+    # second caller (stage 3, S3-6: the bundle manifest names the README so the button can label
+    # it), and it wants the ROW rather than the rendered card this method returns.
+    def self.row_in(rows)
+      NAMES.filter_map { |name| rows.find { |r| r.node.name == name } }.first
+    end
+
     def self.for(user:, rows:, base_path:, listing:, link:)
-      row = NAMES.filter_map { |name| rows.find { |r| r.node.name == name } }.first
+      row = row_in(rows)
       return nil if row.nil?
       if row.node.size.to_i > READ_LIMIT
         return new(html: nil, note: "README too large to show here (#{row.node.size.to_i / 1024} KB); open the file instead.")

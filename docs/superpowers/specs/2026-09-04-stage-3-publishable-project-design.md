@@ -104,6 +104,7 @@ Each slice is one PR with its own plan, executed and reviewed the way stage 2's 
 - Bytes never pass through Rails on s3 or chunk_remote (§15): public downloads use the port's
   delivery exactly as the Files page does.
 - Markdown is rendered with raw HTML stripped; a README is the user's prose, never trusted markup.
+- The bundle is built in the browser from the public file route; Rails never zips bytes.
 - Every new page has a query budget (constancy in N) and joins the phone sweep; every form uses
   `form_with … scope:` and asserts its rendered field names; the design system's rules hold.
 - Licences stay permissive (§9): KiCanvas is MIT and its notices ship beside the vendored build.

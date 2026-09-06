@@ -29,7 +29,9 @@
     </div>
 
     <% pub.releases.each_with_index do |release, index| %>
-      <details class="release" <%= "open" if index.zero? %>>
+      <%# THE ANCHOR THE FEED POINTS AT (stage 3, S3-6) -- public/projects/_build_log carries the
+          same for an entry, and the feed's two item kinds are the two id prefixes. %>
+      <details class="release" id="release-<%= release.id %>" <%= "open" if index.zero? %>>
         <summary>
           <span class="release-version mono"><%= release.version %></span>
           <time datetime="<%= release.published_at.iso8601 %>"><%= release.published_at.strftime("%Y-%m-%d") %></time>
