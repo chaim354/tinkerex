@@ -1,6 +1,7 @@
 <%#
   The Fabrication section: every Gerber layer, Excellon drill file and .gbrjob manifest anywhere in
-  the project's folder, grouped into BOARDS and each board rendered as a stackup.
+  the project's folder — plus every .zip that turns out to hold an export — grouped into BOARDS and
+  each board rendered as a stackup.
 
   ONE BOARD PER FOLDER, NOT ONE PER PROJECT — Maker::GerberSets owns that rule and the public
   partial reads the same service, so the two surfaces can never disagree about what a board is (the
@@ -11,10 +12,16 @@
   RENDERS NOTHING when the folder holds no Gerbers, exactly like Schematics: @listing degrades to an
   empty all_rows on an unavailable folder, so this partial needs no availability check of its own.
 
-  THE FILE LIST IS `rows` AND THE VIEWER GETS `stacked`, AND THEY ARE DIFFERENT LISTS. Where a
-  .gbrjob names the set, a stray layer from an old revision is LISTED here and left out of the
-  render — see Maker::GerberSets. A panel that listed only what it stacked would make those files
-  invisible, which is the opposite of what a fabrication panel is for.
+  THE FILE LIST IS `rows` AND THE VIEWER GETS FilesHelper#gerber_layers_for, AND THEY ARE DIFFERENT
+  LISTS. Where a .gbrjob names the set, a stray layer from an old revision is LISTED here and left
+  out of the render — see Maker::GerberSets. A panel that listed only what it stacked would make
+  those files invisible, which is the opposite of what a fabrication panel is for.
+
+  A ZIPPED EXPORT IS A BOARD OF ITS OWN and reaches this partial through the same shape: its `rows`
+  is the zip alone (one line, badge "archive") and its viewer entry is the ZIP's URL plus the member
+  paths the browser extracts — Maker::GerberArchive lists it on the server, JSZip unpacks it in
+  gerber_controller.js, and Rails never extracts a byte. The layers attribute is built by the helper
+  rather than inline here so the file page and both panels cannot spell that shape differently.
 %>
 <% boards = Maker::GerberSets.for(user: current_user, rows: @listing.all_rows) %>
 <% if boards.any? %>
@@ -36,9 +43,8 @@
         <div class="gerber-stage"
              data-controller="gerber"
              data-gerber-single-value="false"
-             data-gerber-layers-value="<%= board.stacked.map { |row|
-                   { name: row.node.name,
-                     url: named_blob_file_path(row.node_id, filename: row.node.name) } }.to_json %>">
+             data-gerber-layers-value="<%= gerber_layers_for(board) { |row|
+                   named_blob_file_path(row.node_id, filename: row.node.name) }.to_json %>">
           <p class="muted" data-gerber-target="status">Loading the viewer…</p>
           <p class="gerber-sides">
             <button type="button" class="btn small active" data-gerber-target="side"

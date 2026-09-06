@@ -102,14 +102,48 @@ early return is the one that reads. `test/controllers/files_controller_preview_k
 on the CONSTANT for that reason — asserting through `preview_kind` alone would stay green while
 `pcb` was added to `TEXT_ROLES`.
 
-**A `.gbrjob` IS READ ON THE SERVER, and it is the only preview input that is.**
-`Maker::GerberSets.job_layer_names` opens it through the port to learn which layers the export
-claims — one port read per job file, bounded by `READ_LIMIT` and by the catalog's own size column,
-never a query. Every failure (unreadable, unmounted, invalid JSON, no `FilesAttributes`, names
+**A `.gbrjob` IS READ ON THE SERVER, and a zipped export is the other** — between them the only two
+preview inputs the server opens. `Maker::GerberSets.job_layer_names` opens the job file through the
+port to learn which layers the export claims — one port read per job file, bounded by `READ_LIMIT`
+and by the catalog's own size column, never a query. Every failure (unreadable, unmounted, invalid JSON, no `FilesAttributes`, names
 nothing this folder holds) collapses to nil and falls back to "every Gerber in the directory",
 because that is the honest answer when nothing has told us otherwise. `Path` is matched by
 `File.basename` against the rows already in hand, **never resolved as a path**: exporters write any
 prefix they like, and resolving would reach outside the folder or land on a name that repeats.
+
+**A ZIPPED EXPORT IS A BOARD OF ITS OWN, AND THE SERVER ONLY LISTS IT.** Every CAM tool hands a
+board over as a `.zip` (Fusion's "CAM outputs", Altium, KiCad's fabrication plugin, JLCPCB's
+`Gerber_*.zip`) and that zip is the artefact a fab house takes, so `Maker::GerberArchive` makes it
+a board where it lies — nobody has to unzip it into the library, which is the report this came
+from. **ONE bounded port read per archive, judged on the catalog's own `size` column FIRST**
+(`GerberArchive::READ_LIMIT`, 16 MB — past it the zip is something else and is never opened), and
+the answer is cached in `Rails.cache` by `(node_id, content token)` with **nil cached too**, so a
+zip of firmware stays known-not-a-board until its content changes. The token is `content_hash` or
+`current_version_id` — the port's own `content_token` read off the catalog, the pair
+`Maker::Previews::MissingBackfill` already uses.
+
+**rubyzip LISTS and never extracts; JSZip in the BROWSER does** (§15 — Rails serving extracted
+layers would put bytes through the control plane on every backend, and the browser must fetch the
+zip to render it anyway). The server reads the central directory, keeps the members whose extension
+is in `GERBER_EXTS`, and hands the browser the member PATHS; `gerber_controller.js` fetches the zip
+once through the same URL a download uses and names each member by its **BASENAME**, which is what
+tracespace identifies a layer from (probed: Fusion's `copper_top_l1.gbr` three directories down is
+identified correctly from the basename alone). An inline `.gbrjob` member picks the stack
+**downward only**, matched by basename — `GerberSets`'s folder rule applied inside the archive,
+with every failure falling back to "every layer in the zip". **A zip is never merged with the loose
+layers beside it**: an export is complete by construction, so a zip beside a loose set in one
+folder is TWO boards.
+
+The zip's **own file page IS the board** (a stackup, with Top and Bottom, like a `.gbrjob`'s).
+`preview_kind` stays **NAME-ONLY** — the zip branch is decided in `FilesController#show` by a READ,
+the one preview kind that is, beside the `.gbrjob` read that already lives there. **Filing is
+untouched**: `zip` stays role `source_archive`, so a Gerber zip loose at a project's ROOT is still
+filed into the source folder by the intake sweep (the sweep runs before any read and decides by
+name), while one already in a subfolder is never moved — a content-aware refiling is a separate
+decision. The rule is stated beside the code in four places that must sweep together:
+`Maker::GerberArchive`'s header, `Maker::GerberSets`' class comment and `#archive_boards`,
+`FilesHelper#gerber_layers_for` / `#gerber_archive_entry` (the ONE wire shape all three pages
+build), and `gerber_controller.js`'s `filesFor`.
 
 **One board is one FOLDER.** A project holds a main board and a daughterboard; grouping by project
 would stack both folders' copper into an image of nothing real. `Maker::GerberSets` owns that rule

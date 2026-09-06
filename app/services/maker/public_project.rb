@@ -213,9 +213,11 @@ module Maker
     # cannot disagree (the pattern `kicad_rows` directly above establishes for the Schematics pair,
     # where the shared thing is an extension list rather than a grouping).
     #
-    # IN THE OWNER'S NAME. `GerberSets` reads any `.gbrjob` through the port to learn which layers
-    # the export claims, and a visitor has no library for a node_id to resolve against — the same
-    # rule every other reader in this class follows.
+    # IN THE OWNER'S NAME. `GerberSets` reads through the port twice over — any `.gbrjob`, to learn
+    # which layers the export claims, and any `.zip`, to learn whether it IS an export
+    # (`Maker::GerberArchive`, one bounded and cached read per archive) — and a visitor has no
+    # library for a node_id to resolve against, so both go in the owner's name. The same rule every
+    # other reader in this class follows.
     def gerber_boards
       @gerber_boards ||= Maker::GerberSets.for(user: owner, rows: listing.all_rows)
     end

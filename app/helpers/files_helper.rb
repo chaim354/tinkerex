@@ -193,7 +193,11 @@ module FilesHelper
   #
   # THE FALLBACK IS "gerber", NOT nil: every key of GERBER_EXTS reaches this, so an extension added
   # to the `pcb` role without a word here still renders a badge rather than an empty span.
+  # `"zip" => "archive"` IS THE ONE ENTRY THAT IS NOT A LAYER. An archive board lists exactly one
+  # row — the zip itself (Maker::GerberSets#archive_boards) — and without a word here it would fall
+  # through to "gerber" and read as a layer file, which is the one thing it is not.
   GERBER_LAYER_LABELS = {
+    "zip" => "archive",
     "gtl" => "top copper", "gbl" => "bottom copper",
     "gts" => "top mask", "gbs" => "bottom mask",
     "gto" => "top silk", "gbo" => "bottom silk",
@@ -207,6 +211,35 @@ module FilesHelper
 
   def gerber_layer_label(name)
     GERBER_LAYER_LABELS.fetch(File.extname(name).downcase.delete("."), "gerber")
+  end
+
+  # THE ONE WIRE SHAPE gerber_controller.js READS, built for all three pages that mount it — the
+  # file page, the private Fabrication panel, the public one — which differ only in how a row's
+  # URL is spelled (the named blob route, or the public file route with its token), so that is
+  # the block. A loose board is one {name, url} per stacked row; a zipped export is ONE entry, the
+  # zip's, with `archive: true` and the member paths to extract — the browser fetches the zip once
+  # through the same route a download uses and unzips it itself (Maker::GerberArchive's header).
+  #
+  # DEFINED ONCE FOR ALL THREE, and that is the point rather than a tidy-up: the two partials each
+  # spelled the loose shape out inline, so the archive entry would have been a third and a fourth
+  # literal `{ archive: true, members: … }` — four places free to disagree about a shape only a
+  # browser ever reads, with no server-side assertion able to see the drift.
+  def gerber_layers_for(board)
+    if board.archive
+      row = board.archive.row
+      [ gerber_archive_entry(name: row.node.name, url: yield(row), members: board.archive.members) ]
+    else
+      board.stacked.map { |row| { name: row.node.name, url: yield(row) } }
+    end
+  end
+
+  # THE ARCHIVE ENTRY ITSELF, AND THE REASON IT IS ITS OWN METHOD: `FilesController#show` builds one
+  # for a zip's OWN file page, where there is no board and no listing Row to hand the block above —
+  # only the node. Both doors therefore write the shape once here rather than the controller
+  # spelling out a second `{ archive: true, members: … }` literal that no server-side assertion
+  # could see drift in (only a browser ever reads these keys).
+  def gerber_archive_entry(name:, url:, members:)
+    { name:, url:, archive: true, members: }
   end
 
   # ONE number formatter for both recipe panels (laser and CNC), because they were each getting

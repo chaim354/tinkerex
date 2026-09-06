@@ -1,6 +1,6 @@
 <%#
-  Every Gerber layer, drill file and .gbrjob anywhere in the folder, grouped into boards and each
-  one rendered as a stackup — the private partial's shape (projects/_fabrication.html.erb) with
+  Every Gerber layer, drill file, .gbrjob and zipped export anywhere in the folder, grouped into
+  boards and each one rendered as a stackup — the private partial's shape (projects/_fabrication.html.erb) with
   public URLs, the arrangement public/projects/_schematics.html.erb already uses.
 
   THE GROUPING IS THE SAME SERVICE (Maker::GerberSets, reached through pub.gerber_boards), so a
@@ -15,6 +15,11 @@
   inline-safe type, so the delivery concern would attach it anyway, and there is no private file
   page to send a visitor to instead. The VIEWER's own URLs are not — it fetches them with `fetch`
   and reads the text, and ?download=1 would only add a Content-Disposition nothing reads.
+
+  THE VIEWER'S LIST IS FilesHelper#gerber_layers_for, not `stacked` spelled out here: a zipped
+  export is one entry carrying the ZIP's own URL and the member paths the browser extracts with
+  JSZip (Maker::GerberArchive), and that shape is defined once for this partial, the private one
+  and the file page.
 
   Local: pub (Maker::PublicProject).
 %>
@@ -35,9 +40,8 @@
         <div class="gerber-stage"
              data-controller="gerber"
              data-gerber-single-value="false"
-             data-gerber-layers-value="<%= board.stacked.map { |row|
-                   { name: row.node.name,
-                     url: pub.file_url_for(row.node_id, filename: row.node.name) } }.to_json %>">
+             data-gerber-layers-value="<%= gerber_layers_for(board) { |row|
+                   pub.file_url_for(row.node_id, filename: row.node.name) }.to_json %>">
           <p class="muted" data-gerber-target="status">Loading the viewer…</p>
           <p class="gerber-sides">
             <button type="button" class="btn small active" data-gerber-target="side"

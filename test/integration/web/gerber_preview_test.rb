@@ -125,6 +125,38 @@ module Web
       assert_select "p.muted", text: /No Gerber layers/
     end
 
+    # --- a zipped export's own file page -----------------------------------------
+
+    # THE ZIP IS THE BOARD. A Fusion "CAM outputs" archive reaches the :gerber branch by a READ (the
+    # only preview kind that does), renders as a STACKUP, and hands the browser ONE entry: the zip's
+    # own URL plus the member paths JSZip pulls out of it. Rails extracts nothing.
+    test "a .zip holding a Gerber export renders the board from one archive entry" do
+      zip = write_gerber_zip!
+
+      get file_path(zip.node_id)
+      assert_response :success
+      assert_select ".gerber-stage[data-controller=?]", "gerber"
+      # A STACKUP, LIKE A .gbrjob's PAGE: an export is a whole board, so Top and Bottom are both real
+      # pictures rather than two buttons showing the same one.
+      assert_select ".gerber-stage[data-gerber-single-value=?]", "false"
+      assert_select ".gerber-stage [data-gerber-target=?]", "side", 2
+      assert_equal [ { "name" => "board.zip",
+                       "url" => named_blob_file_path(zip.node_id, filename: "board.zip"),
+                       "archive" => true,
+                       "members" => fusion_zip_members } ],
+                   layers_of(".gerber-stage")
+    end
+
+    # A ZIP IS ONLY A BOARD WHEN ITS CONTENTS SAY SO — `preview_kind` still answers from the NAME for
+    # the whole vocabulary, and a zip of source is no more a board than a `.txt` is.
+    test "a .zip of nothing relevant renders no gerber stage" do
+      zip = write_gerber_zip!(name: "firmware.zip", body: gerber_zip("src/main.c" => "int main(){}"))
+
+      get file_path(zip.node_id)
+      assert_response :success
+      assert_select ".gerber-stage", 0
+    end
+
     test "a .txt file page does not render the gerber branch" do
       node = write_gerber!(name: "notes.txt", body: "plain")
 
@@ -199,6 +231,50 @@ module Web
       assert_select ".fabrication-board h3", text: "board"
     end
 
+    # A ZIPPED EXPORT IS ONE BOARD IN THE PANEL: one listed line (the zip, badge "archive") and a
+    # viewer entry carrying the member paths — nobody has to unzip it into the library, which is the
+    # report this whole feature came from.
+    test "the project page lists a zipped export as a board of its own" do
+      project = @user.maker_projects.create!(name: "Driver")
+      folder = make_project_folder!(@user, project)
+      dir = gerber_dir!(name: "Electronics", parent_node_id: folder.node_id)
+      zip = write_gerber_zip!(parent_node_id: dir.node_id)
+
+      get project_path(project)
+      assert_response :success
+      assert_select ".fabrication-panel .fabrication-board", 1
+      assert_select ".fabrication-board h3", text: "board"
+      assert_select ".fabrication-board .schematics-list li", 1
+      assert_select ".fabrication-board a[href=?]", file_path(zip.node_id)
+      assert_select ".fabrication-board .badge", text: "archive"
+      assert_equal [ { "name" => "board.zip",
+                       "url" => named_blob_file_path(zip.node_id, filename: "board.zip"),
+                       "archive" => true,
+                       "members" => fusion_zip_members } ],
+                   layers_of(".fabrication-board .gerber-stage")
+    end
+
+    # A ZIP IS NEVER MERGED WITH THE LOOSE LAYERS BESIDE IT: an export is complete by construction,
+    # so stacking a stray revision's copper on top of it would render an image of nothing real.
+    test "a zip beside a loose set in one folder is two boards on the page" do
+      project = @user.maker_projects.create!(name: "Driver")
+      folder = make_project_folder!(@user, project)
+      dir = gerber_dir!(name: "pcb", parent_node_id: folder.node_id)
+      write_gerber_set!(parent_node_id: dir.node_id)
+      write_gerber_zip!(name: "zed-export.zip", parent_node_id: dir.node_id)
+
+      get project_path(project)
+      assert_response :success
+      assert_select ".fabrication-panel .fabrication-board", 2
+      assert_select ".fabrication-board h3", text: "pcb"
+      assert_select ".fabrication-board h3", text: "zed-export"
+      stages = css_select(".fabrication-board .gerber-stage")
+      assert_equal [ %w[board.drl board.gbl board.gtl], [ "zed-export.zip" ] ],
+                   stages.map { |s| JSON.parse(s["data-gerber-layers-value"]).map { |l| l["name"] } }
+      assert_equal [ nil, true ],
+                   stages.map { |s| JSON.parse(s["data-gerber-layers-value"]).first["archive"] }
+    end
+
     test "the project page shows no Fabrication panel when the folder holds no Gerbers" do
       project = @user.maker_projects.create!(name: "Driver")
       folder = make_project_folder!(@user, project)
@@ -232,6 +308,44 @@ module Web
                    layers_of(".fabrication-board .gerber-stage").map { |l| l["url"] }
     end
 
+    # THE PUBLIC PANEL RENDERS THE ARCHIVE THROUGH THE PUBLIC FILE ROUTE — the same helper builds the
+    # entry on both pages, so the two can only differ in how the URL is spelled.
+    test "the public page renders a zipped export through the public file URL" do
+      project = @user.maker_projects.create!(name: "Driver", visibility: "public")
+      folder = make_project_folder!(@user, project)
+      dir = gerber_dir!(name: "Electronics", parent_node_id: folder.node_id)
+      zip = write_gerber_zip!(parent_node_id: dir.node_id)
+      reset!
+
+      get public_project_path("gerber", project.slug)
+      assert_response :success
+      assert_select ".fabrication-board .badge", text: "archive"
+      assert_equal [ { "name" => "board.zip",
+                       "url" => public_file_path("gerber", project.slug, zip.node_id,
+                                                 filename: "board.zip"),
+                       "archive" => true,
+                       "members" => fusion_zip_members } ],
+                   layers_of(".fabrication-board .gerber-stage")
+    end
+
+    # THE ARCHIVE'S OWN URL IS REALLY DELIVERABLE, and it is the only fetch the viewer makes for a
+    # zipped board — the members never have URLs of their own, because the browser unzips the bytes
+    # this one call returns.
+    test "the public viewer's archive URL actually serves the zip bytes" do
+      project = @user.maker_projects.create!(name: "Driver", visibility: "public")
+      folder = make_project_folder!(@user, project)
+      dir = gerber_dir!(name: "Electronics", parent_node_id: folder.node_id)
+      write_gerber_zip!(parent_node_id: dir.node_id)
+      reset!
+
+      get public_project_path("gerber", project.slug)
+      entry = layers_of(".fabrication-board .gerber-stage").first
+
+      get entry["url"]
+      assert_response :success
+      assert_equal fusion_zip, response.body.b
+    end
+
     # EVERY URL AN UNLISTED PAGE RENDERS CARRIES THE TOKEN — including the ones only JavaScript ever
     # fetches. Without it the viewer's own fetches 404 and the board never paints, while the page
     # around it looks perfectly fine.
@@ -240,14 +354,19 @@ module Web
       folder = make_project_folder!(@user, project)
       dir = gerber_dir!(name: "pcb", parent_node_id: folder.node_id)
       write_gerber_set!(parent_node_id: dir.node_id)
+      # THE ARCHIVE ENTRY IS BUILT BY A DIFFERENT BRANCH of the same helper, so it needs its own
+      # sample here: a zipped board whose one URL lost the token would leave the panel rendered and
+      # the board blank, with nothing on the page saying why.
+      write_gerber_zip!(name: "zed-export.zip", parent_node_id: dir.node_id)
       token = project.reload.unlisted_token
       reset!
 
       get public_project_path("gerber", project.slug, k: token)
       assert_response :success
-      urls = layers_of(".fabrication-board .gerber-stage").map { |l| l["url"] } +
-             css_select(".fabrication-board .schematics-list a").map { |a| a["href"] }
-      assert_equal 6, urls.size
+      urls = css_select(".fabrication-board .gerber-stage").flat_map { |s|
+        JSON.parse(s["data-gerber-layers-value"]).map { |l| l["url"] }
+      } + css_select(".fabrication-board .schematics-list a").map { |a| a["href"] }
+      assert_equal 8, urls.size
       urls.each { |url| assert_includes url, "k=#{token}", url }
     end
 
