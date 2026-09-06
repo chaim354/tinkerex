@@ -67,6 +67,29 @@
   .attachment-group-head .linkbtn.small { margin-left: 8px; font-size: 11px; }
   .loose-note { font-size: 12px; margin: -8px 0 16px; }
 
+  /* --- Repository card (stage 3, S3-2): the README rendered, the latest commit, the current tag,
+     at the top of a repo section, before its files. The tag badges and the Commits/History links
+     inside `.repo-facts` are plain, unqualified `.badge`/`.linkbtn` from components.css — nothing
+     here redeclares either. `.markdown` is a generic name on purpose — a public project page will
+     want the identical rendering later (spec S3-4) — kept here rather than promoted to
+     components.css until that second caller exists. --- */
+  .repo-card { display: flex; flex-direction: column; gap: 10px; margin: 0 0 12px; padding: 10px 12px;
+               border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
+  .repo-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; }
+  .repo-facts .mono { font-family: var(--font-mono); }
+  .repo-summary { font-weight: 500; }
+  .repo-card .readme > summary { cursor: pointer; font-size: 12px; color: var(--fg-muted); }
+  .readme-note { font-size: 11px; margin: 4px 0 0; }
+  .markdown { font-size: 13px; line-height: 1.55; max-height: 360px; overflow: auto; margin-top: 6px; }
+  .markdown > :first-child { margin-top: 0; }
+  .markdown > :last-child { margin-bottom: 0; }
+  .markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 { font-size: 1em; margin: 0.8em 0 0.3em; }
+  .markdown h1 { font-size: 1.3em; }
+  .markdown h2 { font-size: 1.15em; }
+  .markdown pre { padding: 8px 10px; border-radius: var(--radius-control); background: var(--raised); overflow-x: auto; }
+  .markdown code { font-family: var(--font-mono); font-size: 0.9em; }
+  .markdown img { max-width: 100%; }
+
   /* --- Generated (stage 3, S3-1): the tile keeps its own thumbnail's shape; the meta line below
      it is always visible (unlike a Linked tile's hover corner), because naming the tool and
      revision is the point of the group, not an on-demand detail. --- */

@@ -136,6 +136,14 @@ module Maker
     # call; built once from `all_rows`, never per lookup.
     def row_for(node_id) = (@rows_by_id ||= all_rows.index_by(&:node_id))[node_id]
 
+    # Full library path => node_id for every row this listing holds (loose, any subfolder, any
+    # repo), built ONCE per listing: a README's relative links resolve through it, and a page with
+    # several repository cards must not rebuild it per card (review, S3-2). Pure string arithmetic
+    # on the catalog's own paths — never the disk.
+    def path_index
+      @path_index ||= all_rows.index_by { |row| "#{path_for(row.node)}/#{row.node.name}" }.transform_values(&:node_id)
+    end
+
     # The node's full library path — NOT scoped to this folder, unlike `Row#section`. Used for the
     # Linked group's Section column: those rows live anywhere in the user's library, and the tree
     # already indexes every live dir the user owns, so this costs no extra query.

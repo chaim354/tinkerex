@@ -1,10 +1,13 @@
 require "application_system_test_case"
+require "support/kicad_fixture"
 
 # The shell's behaviour only a browser can see (spec §12): the rail's collapse surviving a Turbo
 # navigation and a reload, the theme button cycling and persisting, a notice toast leaving on its
 # own while an alert waits to be dismissed, Cmd/Ctrl-K reaching the search field, and — the guard
 # for the bug that started this rework — no page scrolling sideways at phone width.
 class ShellTest < ApplicationSystemTestCase
+  include KicadFixture
+
   setup do
     @root = use_fresh_share_library!
     @user = sign_in_as("shell@example.com")
@@ -116,6 +119,12 @@ class ShellTest < ApplicationSystemTestCase
     bom.lines.create!(user: @user, inventory_item: item, supplier:, quantity: 2, unit: "each")
     long = create_node!(@user, node_id: SecureRandom.uuid, kind: "file",
                         name: "a-very-long-file-name-that-would-push-the-table-out-of-the-viewport-v3-final.stl")
+    # STAGE 3, S3-2: the :kicanvas branch is new markup (KiCanvas's own toolbar included) that no
+    # other page in this sweep exercises. REAL bytes, not test_helper's create_node! placeholder —
+    # KiCanvas fetches this file for real in a live Chrome, and garbage input failing to parse
+    # would log its own console error, indistinguishable at the final assert_no_console_errors
+    # from an actual overflow regression. See test/support/kicad_fixture.rb.
+    kicad = write_kicad_schematic!(name: "shell-sweep.kicad_sch")
     # ENOUGH FILES FOR THE HOME ROW TO OVERFLOW TOO, mutation-checked same as home_test.rb's own
     # dedicated scroll-containment test (see test/system/README.md) — without these, root_path's
     # single `long` tile never fills `.home-files .tile-row` wide enough to overflow its own box,
@@ -152,7 +161,7 @@ class ShellTest < ApplicationSystemTestCase
                                     width: 375, height: 812, deviceScaleFactor: 1, mobile: false)
     begin
       [ root_path, files_path(view: "list"), files_path(view: "grid"), project_path(project),
-        file_path(long.node_id), tools_path, models_path, trash_index_path,
+        file_path(long.node_id), file_path(kicad.node_id), tools_path, models_path, trash_index_path,
         inventory_items_path, inventory_item_path(item), suppliers_path, locations_path,
         project_bom_path(project),
         # STAGE 2, S2-5: the search results page (several groups populated -- see the tag_list:

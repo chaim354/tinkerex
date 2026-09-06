@@ -175,4 +175,80 @@ class Maker::Git::LocalRepoTest < ActiveSupport::TestCase
     assert_equal 5, s.rows.size
     assert_operator s.truncated_count, :>=, 1
   end
+
+  # STAGE 3, S3-2: git facts for a repository CARD. `head_summary`/`tags_at_head` read rugged
+  # only — no port write, no CommitPaths — so they are tested against the SAME fixture shape as
+  # everything else here, `make_repo!`'s single seeded commit.
+  test "head_summary reads the last commit's oid, summary, author and time" do
+    root = make_repo!(files: { "a.txt" => "x\n" })
+    head_commit = Rugged::Repository.new(File.join(library_root, "demo")).head.target
+
+    summary = Maker::Git::LocalRepo.open(@user, root).head_summary
+
+    assert_equal head_commit.oid, summary.oid
+    assert_equal head_commit.oid[0, 8], summary.short_oid
+    assert_equal "seed", summary.summary
+    assert_equal "Seed", summary.author
+    assert_equal head_commit.time, summary.time
+  end
+
+  test "head_summary is nil on an unborn repository" do
+    root = make_repo!(commit: false)
+
+    assert_nil Maker::Git::LocalRepo.open(@user, root).head_summary
+  end
+
+  # THE FIRST LINE ONLY. A commit body is prose the maker wrote for git log, not for a one-line
+  # card — the same choice Maker::Git::History::Entry#subject already made off the identical
+  # `message.lines.first.to_s.strip` (probed: kramdown never enters this path, so nothing here
+  # needs the multi-line body sanitised).
+  test "head_summary's summary is only the first line of a multi-line commit message" do
+    root = make_repo!(files: { "a.txt" => "x\n" })
+    repo = Rugged::Repository.new(File.join(library_root, "demo"))
+    who = { name: "Seed", email: "seed@example.com", time: Time.now }
+    index = repo.index
+    File.write(File.join(library_root, "demo", "a.txt"), "y\n")
+    index.add(path: "a.txt", oid: Rugged::Blob.from_workdir(repo, "a.txt"), mode: 0o100644)
+    index.write
+    Rugged::Commit.create(repo, tree: index.write_tree(repo), message: "Fix the thing\n\nLonger body here.",
+                          parents: [ repo.head.target_id ], update_ref: "HEAD", author: who, committer: who)
+
+    summary = Maker::Git::LocalRepo.open(@user, root).head_summary
+
+    assert_equal "Fix the thing", summary.summary
+  end
+
+  test "tags_at_head returns a lightweight tag and an annotated tag on HEAD, sorted, but not one on an older commit" do
+    root = make_repo!(files: { "a.txt" => "one\n" })
+    repo = Rugged::Repository.new(File.join(library_root, "demo"))
+    old_oid = repo.head.target_id
+
+    File.write(File.join(library_root, "demo", "a.txt"), "two\n")
+    index = repo.index
+    index.add(path: "a.txt", oid: Rugged::Blob.from_workdir(repo, "a.txt"), mode: 0o100644)
+    index.write
+    who = { name: "Seed", email: "seed@example.com", time: Time.now }
+    Rugged::Commit.create(repo, tree: index.write_tree(repo), message: "second", parents: [ old_oid ],
+                          update_ref: "HEAD", author: who, committer: who)
+
+    repo.tags.create("old-tag", old_oid)
+    repo.tags.create("zeta", repo.head.target_id)
+    repo.tags.create("alpha-annotated", repo.head.target_id, message: "Release", tagger: who)
+
+    tags = Maker::Git::LocalRepo.open(@user, root).tags_at_head
+
+    assert_equal [ "alpha-annotated", "zeta" ], tags
+  end
+
+  test "tags_at_head is empty when HEAD carries no tag" do
+    root = make_repo!
+
+    assert_equal [], Maker::Git::LocalRepo.open(@user, root).tags_at_head
+  end
+
+  test "tags_at_head is empty on an unborn repository" do
+    root = make_repo!(commit: false)
+
+    assert_equal [], Maker::Git::LocalRepo.open(@user, root).tags_at_head
+  end
 end

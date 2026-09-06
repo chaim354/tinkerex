@@ -81,6 +81,16 @@ Rails.application.routes.draw do
     end
     member do
       get "blob"
+      # KiCanvas (stage 3, S3-2) identifies a schematic/board by the URL it fetches, NOT by the
+      # bytes it receives: its FetchFileSystem takes the FETCHED URL'S OWN trailing extension as
+      # the file's name, so pointed at the plain `blob` route above — no extension anywhere in the
+      # path — it never recognises the file as a `.kicad_sch`/`.kicad_pcb` at all and logs "No
+      # vaild root schematic was found." regardless of what the bytes actually are (measured
+      # against the vendored module). Same node, same auth, same #blob action; `:filename` is
+      # NEVER looked up, only ITS OWN trailing extension is read by the client fetching this URL.
+      # `format: false` for the reason the identical `tools_addon_asset` route below states: Rails
+      # would otherwise slice ".kicad_sch" off as a format segment.
+      get "blob/*filename", to: "files#blob", as: :named_blob, format: false
       # The .lbrn2 Measure view's coordinate payload. A SECOND preview kind for the same node
       # (kind: "geometry"), so this neither replaces nor disturbs the thumbnail. The payload
       # itself leaves via the blob URL, off Rails — this action only reports where it is.

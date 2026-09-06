@@ -1451,6 +1451,18 @@ class FilesController < ApplicationController
   # each entry, so the list cannot claim a format the renderers do not actually measure.
   MEASURABLE_EXTS = %w[lbrn lbrn2 mage dxf svg].freeze
 
+  # KiCad schematics and boards, rendered client-side by KiCanvas (stage 3, S3-2; the vendored
+  # module in vendor/javascript/kicanvas.js, kicanvas_controller.js). WRITTEN OUT, exactly like
+  # MEASURABLE_EXTS above, rather than added to `Maker::FileAttachment::ROLE_BY_EXT` — and that is
+  # not an oversight, it is the one option that was never available: both extensions carry an
+  # underscore and "kicad_sch" is 9 characters, so either one FAILS `EXT_RE`
+  # (/\A[a-z0-9]{1,8}\z/) and an entry there would render a filter chip that links and silently
+  # does nothing (files-preview.md's own warning; that file already lists these two by name among
+  # the deliberate absences). Living outside ROLE_BY_EXT also means Registry.for/text? have never
+  # heard of them, so they fall out of the thumbnail-poll cell and the type-filter chip row for
+  # free — no second exclusion list to keep in step (§14d).
+  KICANVAS_EXTS = %w[kicad_sch kicad_pcb].freeze
+
   def preview_kind(name)
     ext = File.extname(name).downcase.delete(".")
     # BEFORE the :image branch, which .svg would otherwise take. An SVG is still shown as an image
@@ -1466,6 +1478,12 @@ class FilesController < ApplicationController
     # PDF before the :thumbnail branch: the detail view EMBEDS the whole PDF for the browser's own
     # viewer (a full, scrollable preview), while pdf is ALSO in Registry for a page-1 grid thumbnail.
     return :pdf   if ext == "pdf"
+    # BEFORE the :text branch, matching the comment on :measure/:image/:pdf above — though for a
+    # different reason: these two can never reach that branch anyway (they are outside ROLE_BY_EXT,
+    # so Maker::FileAttachment.text? has never heard of them). The early return is here so the
+    # branch order reads the same way every other special-cased format's does, not because order
+    # is load-bearing for THIS pair.
+    return :kicanvas if KICANVAS_EXTS.include?(ext)
     # DERIVED FROM THE ONE VOCABULARY (§14d), not a second list beside it. This was an inline set
     # of 26 extensions sitting next to Maker::FileAttachment::ROLE_BY_EXT, and it had already
     # drifted: five of its entries (xml log ini cfg conf) were in no ROLE_BY_EXT entry at all, so

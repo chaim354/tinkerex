@@ -96,6 +96,26 @@ module Web
       # either side is invisible unless BOTH grow, which is the exact shape this file's own header
       # names for build-log rich text (flat, then +1 query per entry, whole suite green).
       folder = project_folder_rows!(@user, project)
+      # STAGE 3, S3-2: ONE repo (a `.git` marker child, plus a README.md file) so the CARD is
+      # under measurement — added ONCE here, at this fixture's first step, NOT inside `add`
+      # below, whose own per-iteration `.git` marker (line ~127) already grows the NUMBER of
+      # repo? dirs with N, for an unrelated reason (S3-1's nesting-depth coverage). That
+      # pre-existing growth is why Maker::RepoCard's root-node lookup MUST be one batched
+      # `WHERE node_id IN (...)` in ProjectsController#show rather than one query per repo — an
+      # O(repos) query would already fail this guard today, before this line ever ran, the moment
+      # a real project holds more than one repository. The README read itself is a PORT call
+      # (`FileLayer.current.read`, i.e. `File.binread`), never `sql.active_record`, so it cannot
+      # show up in this guard either way — it fails closed to "README unavailable" here because
+      # this row, like every other one this fixture creates, has no real storage_path behind it,
+      # and that failure path is exactly what this seed exercises for the card's git facts too.
+      firmware = @user.nodes.create!(node_id: "firmware-dir", name: "firmware", kind: "dir",
+                                     parent_node_id: folder.node_id, size: 0,
+                                     mtime: 1_700_000_000_000_000_000)
+      @user.nodes.create!(node_id: "firmware-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
+                          parent_node_id: firmware.node_id, size: 0, mtime: 1_700_000_000_000_000_000)
+      @user.nodes.create!(node_id: "firmware-readme", name: "README.md", kind: "file",
+                          parent_node_id: firmware.node_id, size: 12, mtime: 1_700_000_000_000_000_000,
+                          content_hash: "h-firmware-readme", current_version_id: "v-firmware-readme")
       # STAGE 2, S2-4: the BOM panel grows too -- one line per iteration, CYCLING through the
       # three kinds (not all three every time) so the total stays UNDER Projects::BomLinesController
       # ::PANEL_CAP at the small size. The panel caps its table at PANEL_CAP rows, so a seed that

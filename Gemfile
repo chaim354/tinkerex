@@ -117,6 +117,13 @@ end
 
 gem "kramdown", "~> 2.5"
 
+# GFM input for kramdown (MIT; CLAUDE.md §9 permissive-only) — fenced code blocks, tables,
+# strikethrough. kramdown's own `input: "GFM"` raises Kramdown::Error without this parser
+# (probed: "kramdown has no parser to handle the specified input format: GFM"). Used only by
+# Maker::Markdown (stage 3, S3-2 — README rendering); NotesHelper#render_note stays on
+# kramdown's default input and needs no change.
+gem "kramdown-parser-gfm", "~> 1.1"
+
 # Lexxy — Basecamp's Action Text editor (MIT; CLAUDE.md §9 permissive-only). Used TEXT-ONLY:
 # attachments are disabled because Lexxy's attachment path runs through Active Storage, a store
 # separate from the file library, which §15 and the FileLayer port exist to avoid.

@@ -163,6 +163,14 @@ module FilesHelper
     "Turn one off first — at most #{FilesController::MAX_EXTS} types at a time."
   end
 
+  # A KiCad schematic or board (stage 3, S3-2) — projects/_schematics.html.erb's own membership
+  # test. Reads FilesController::KICANVAS_EXTS rather than a second copy of the two extensions, the
+  # same way #ext_slots_left? above reads MAX_EXTS: one list, so the Schematics section and
+  # FilesController#preview_kind's :kicanvas branch can never name a different set of formats.
+  def kicad?(name)
+    FilesController::KICANVAS_EXTS.include?(File.extname(name).downcase.delete("."))
+  end
+
   # ONE number formatter for both recipe panels (laser and CNC), because they were each getting
   # it wrong in a different direction and neither could be caught by the fixtures.
   #

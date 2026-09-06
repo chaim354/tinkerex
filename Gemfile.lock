@@ -192,6 +192,8 @@ GEM
       zeitwerk (>= 2.6.18, < 3.0)
     kramdown (2.5.2)
       rexml (>= 3.4.4)
+    kramdown-parser-gfm (1.1.0)
+      kramdown (~> 2.0)
     language_server-protocol (3.17.0.5)
     lexxy (0.9.27)
       rails (>= 8.0.2)
@@ -497,6 +499,7 @@ DEPENDENCIES
   importmap-rails
   kamal
   kramdown (~> 2.5)
+  kramdown-parser-gfm (~> 1.1)
   lexxy (= 0.9.27)
   nokogiri (~> 1.19)
   omniauth (~> 2.1)
@@ -582,6 +585,7 @@ CHECKSUMS
   json-jwt (1.17.1) sha256=5e1ced0f7b206b4c567efee19e6503c1426a819749132926cda579ec013d1f46
   kamal (2.12.0) sha256=c51d1ab085e515470f98d0c0f043637122b5ebf76e8b610cb1fbbed0b7f9b8fa
   kramdown (2.5.2) sha256=1ba542204c66b6f9111ff00dcc26075b95b220b07f2905d8261740c82f7f02fa
+  kramdown-parser-gfm (1.1.0) sha256=fb39745516427d2988543bf01fc4cf0ab1149476382393e0e9c48592f6581729
   language_server-protocol (3.17.0.5) sha256=fd1e39a51a28bf3eec959379985a72e296e9f9acfce46f6a79d31ca8760803cc
   lexxy (0.9.27) sha256=f7e17e6ada031b5be4f5f40a0c3f3161db19f5752f929056869d7e6b8e20cd7f
   lint_roller (1.1.0) sha256=2c0c845b632a7d172cb849cc90c1bce937a28c5c8ccccb50dfd46a485003cc87

@@ -146,6 +146,40 @@ module Maker
       # `@user.email` from CommitPaths so that class needs no User at all.
       def user_email = @user.email
 
+      # HEAD's facts for a repository CARD (stage 3, S3-2) — oid, summary, author, time.
+      # `short_oid` is 8 hex characters, NOT git's traditional 7: Maker::Git::History::Entry
+      # already made that choice (`oid[0, 8]`, pinned by repo_history_flow_test.rb's "history JSON
+      # lists the commits that touched this path" — `assert_equal 8, …["short_oid"].length`) and a
+      # card sitting next to a commit list that trims to a different length would be a visible,
+      # pointless inconsistency.
+      Head = Data.define(:oid, :short_oid, :summary, :author, :time)
+
+      # nil when HEAD is unborn — there is no commit for a card to summarise. READS RUGGED ONLY; a
+      # repository whose `refusal` is set (not local, no .git, locked, mid-operation) must not
+      # reach here — the caller asks `refusal`/`committable?` FIRST, the same order
+      # `Maker::Git::History.new` is required to keep (git-editing.md) and for the identical
+      # reason: constructing anything here dereferences the port's `workdir` on the way to rugged.
+      def head_summary
+        return nil if unborn?
+
+        c = rugged.head.target
+        Head.new(oid: c.oid, short_oid: c.oid[0, 8], summary: c.message.lines.first.to_s.strip,
+                author: c.author[:name], time: c.time)
+      end
+
+      # Tag names whose target is HEAD — a lightweight tag's own target, or an annotated tag's
+      # PEELED target (the annotation object sits between the ref and the commit) — sorted; []
+      # when none. `[] if unborn?` for the same reason `head_summary` returns nil: nothing here
+      # needs the working tree, only the ref database, but an unborn HEAD has no target to compare
+      # tags against at all.
+      def tags_at_head
+        return [] if unborn?
+
+        head = rugged.head.target_id
+        rugged.tags.select { |t| t.target_id == head || (t.annotated? && t.annotation.target_id == head) }
+             .map(&:name).sort
+      end
+
       private
 
       def compute_refusal
