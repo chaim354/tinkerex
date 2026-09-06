@@ -143,9 +143,9 @@ module Web
                                      parent_node_id: sub.node_id, size: 0, mtime: 1_700_000_000_000_000_000)
           @user.nodes.create!(node_id: "#{id}-deep-file", name: "#{id}-deep.pdf", kind: "file",
                               parent_node_id: deep.node_id, size: 1, mtime: 1_700_000_000_000_000_000)
-          # A GERBER PER SUBFOLDER (Gerber previews): the Fabrication panel groups boards from rows
-          # already in memory and must add no query per layer or per board -- the review measured
-          # it constant and found no guard, so this seed is the guard.
+          # A GERBER PER SUBFOLDER: pcb-role rows are ordinary file rows on this page (the
+          # Fabrication panel that once grouped them went on 2026-09-06), kept so the seed still
+          # holds a subfolder of them — a shape the tree section renders and must not query per row.
           @user.nodes.create!(node_id: "#{id}-gtl", name: "#{id}.gtl", kind: "file",
                               parent_node_id: sub.node_id, size: 1, mtime: 1_700_000_000_000_000_000)
           @user.nodes.create!(node_id: "#{id}-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
@@ -238,8 +238,9 @@ module Web
                               content_hash: "h-#{id}", current_version_id: "v-#{id}")
           @user.nodes.create!(node_id: "#{id}-deep-file", name: "#{id}-deep.pdf", kind: "file",
                               parent_node_id: deep.node_id, size: 1, mtime: 1_700_000_000_000_000_000)
-          # A GERBER PER SUBFOLDER (Gerber previews): the public Fabrication panel groups boards
-          # from rows already in memory and must add no query per layer or per board.
+          # A GERBER PER SUBFOLDER: pcb-role rows are ordinary file rows on this page (the public
+          # Fabrication panel that once grouped them went on 2026-09-06), kept so the seed still
+          # holds a subfolder of them — a shape the tree section renders and must not query per row.
           @user.nodes.create!(node_id: "#{id}-gtl", name: "#{id}.gtl", kind: "file",
                               parent_node_id: sub.node_id, size: 1, mtime: 1_700_000_000_000_000_000)
           # AN IMAGE IN THE FOLDER AND ANOTHER OUTSIDE IT, ATTACHED TO AN ENTRY: the photos panel
