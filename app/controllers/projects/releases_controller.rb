@@ -64,10 +64,18 @@ module Projects
     # until it renders -- and says so when a tag was RECORDED rather than VERIFIED, since those two
     # look identical on the page except for the missing commit id (§14a: a library that is not a
     # local folder has no repository this process can read).
+    # AND SAYS WHEN THE RECORD IS NOT COMPLETE (S3-5's review): a folder past the snapshot's cap
+    # is recorded as its first files, and a row the port could not stat is left out and counted.
+    # Both facts also sit on the panel (`files_truncated` is a column; skips are not, because a
+    # skipped row is a scan in flight, not a property of the release).
     def created_notice(result, git_tag)
       unverified = git_tag.present? && !result.tag_verified
+      notes = []
+      notes << "tag recorded, not verified" if unverified
+      notes << "first #{result.file_count} of a larger folder" if result.truncated
+      notes << "#{result.skipped} #{'file'.pluralize(result.skipped)} the library could not read, left out" if result.skipped.positive?
       "Released #{result.release.version} with #{result.file_count} #{'file'.pluralize(result.file_count)}" \
-        "#{' (tag recorded, not verified)' if unverified}."
+        "#{" (#{notes.join('; ')})" if notes.any?}."
     end
   end
 end

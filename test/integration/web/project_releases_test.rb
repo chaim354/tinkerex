@@ -280,6 +280,39 @@ module Web
 
     # --- 6. destroy and tenancy ------------------------------------------------------------------
 
+    # A RECORD THAT IS NOT COMPLETE SAYS SO, TWICE: in the flash the moment it is made and on the
+    # row forever (`files_truncated` is a column). The snapshot's cap is injected at 1 -- building
+    # five thousand files is not a test -- through the constant the default kwarg reads.
+    def with_snapshot_cap(cap)
+      klass = Maker::ReleaseSnapshot
+      original = klass::FILE_CAP
+      klass.send(:remove_const, :FILE_CAP)
+      klass.const_set(:FILE_CAP, cap)
+      yield
+    ensure
+      klass.send(:remove_const, :FILE_CAP)
+      klass.const_set(:FILE_CAP, original)
+    end
+
+    test "a release of a folder larger than the snapshot's cap says so in the flash and on its row" do
+      seed!({ "README.md" => "# Desk Lamp\n", "models/base.stl" => "solid base\n" })
+
+      with_snapshot_cap(1) { create_release! }
+
+      assert_equal "Released v1.0.0 with 1 file (first 1 of a larger folder).", flash[:notice]
+      release = Maker::Release.order(:id).last
+      assert_equal true, release.files_truncated
+
+      follow_redirect!
+      assert_select "details.release summary .badge.truncated", text: "1 of a larger folder"
+
+      @user.update!(handle: "ada")
+      @project.update!(visibility: "public")
+      get public_project_path("ada", @project.slug)
+      assert_response :success
+      assert_select "details.release summary .badge.truncated", text: "1 of a larger folder"
+    end
+
     test "destroy removes the release and its file rows, and touches no bytes" do
       seed!({ "README.md" => "# Desk Lamp\n", "models/base.stl" => "solid base\n" })
       create_release!

@@ -45,6 +45,9 @@
             <span class="muted">BOM rev <%= release.bom_revision %></span>
           <% end %>
           <span class="muted"><%= pluralize(release.files.size, "file") %></span>
+          <% if release.files_truncated %>
+            <span class="badge truncated" title="The folder held more files than a release records; these are the first."><%= release.files.size %> of a larger folder</span>
+          <% end %>
           <% changed = release.files.count { |f| f.state_against(pub.release_tokens[f.node_id]) } %>
           <% if changed.positive? %>
             <span class="badge changed"><%= changed %> changed since</span>

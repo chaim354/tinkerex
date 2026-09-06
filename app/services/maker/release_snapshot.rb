@@ -50,6 +50,9 @@ module Maker
                                             # a tag typed on a non-local library names no repository the app opened.
                                             repo_node_id: (verified ? repo_node_id.presence : nil),
                                             bom:, bom_revision: bom&.revision,
+                                            # PERSISTED, not only reported: the flash is gone a second
+                                            # later and the panel is what a maker reads back.
+                                            files_truncated: @listing.truncated?,
                                             published_at: Time.current, notes:)
         now = Time.current
         # `stat_all` answers with an ABSENT KEY for a node it cannot see (§14a), never a raise, so

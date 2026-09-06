@@ -203,6 +203,7 @@ module Maker
                                      .call(version: "v0.1.0", notes: nil, git_tag: nil, repo_node_id: nil)
 
       assert_equal true, capped.truncated
+      assert_equal true, capped.release.reload.files_truncated, "the flash is gone in a second; the row is what the panel reads back"
       assert_equal 1, capped.file_count
       assert_equal 0, capped.skipped, "truncation is not a skip: the port answered for every row it was asked about"
 
