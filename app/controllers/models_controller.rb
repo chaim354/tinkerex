@@ -74,11 +74,19 @@ class ModelsController < ApplicationController
     # why for each). This read the SAME literal `%w[stl 3mf obj]` that FilesController carried
     # until 2026-09-06; one constant now, so the file page and this page cannot drift about which
     # of a model's files open in the viewer.
+    # THE MANIFEST IS PER FILE, WHICH IS WHY IT IS BUILT HERE AND NOT ON THE ELEMENT: the switcher
+    # swaps one model for another, so the slicer colours and the unit factor have to travel on each
+    # `<option>` (§14d — modelviewer_controller.js reads them beside `url`/`format`). `for` refuses
+    # by name first, so the non-3MF entries cost nothing; a 3MF costs ONE bounded port read (one
+    # query on share) the first time this model is viewed and nothing after — the constancy
+    # page_query_budget_test.rb asserts is in the number of ATTACHMENTS, and this is per 3D FILE,
+    # which is the same per-file shape the page's thumbnails already have.
     @viewable_3d = @attachments.filter_map do |a|
-      name = @page_nodes[a.node_id].name
-      ext = File.extname(name).downcase.delete(".")
+      node = @page_nodes[a.node_id]
+      ext = File.extname(node.name).downcase.delete(".")
       next unless Maker::FileAttachment::VIEWABLE_3D_EXTS.include?(ext)
-      { node_id: a.node_id, name:, format: ext }
+      { node_id: a.node_id, name: node.name, format: ext,
+        manifest: Maker::ThreeMfManifest.for(user: current_user, node:) }
     end
     @viewable_3d_default = @viewable_3d.find { |f| f[:node_id] == @model.cover_node_id } || @viewable_3d.first
     # The model's files as a folder TREE (preserves the imported zip's structure) for the detail

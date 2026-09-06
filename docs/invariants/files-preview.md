@@ -279,6 +279,34 @@ ROTATED scene and reports a Z-up file's height as its depth — measured, a 20 x
 as "20 × 5 × 10 mm". `OV.GetBoundingBox(model)` walks the imported model's own vertices, through
 mesh INSTANCES so an assembly's node transforms are applied, and is the only honest source.
 
+**A 3MF's UNITS AND ITS SLICER COLOURS COME FROM THE SERVER'S MANIFEST, NOT FROM THE IMPORTER.**
+Two facts about a `.3mf` reach the browser as data because three.js's `3MFLoader` cannot supply
+either. It **ignores `<model unit>`** — measured, an Onshape export declaring `unit="meter"` and
+standing 1.9 m tall read "0 × 1 × 0.6 mm", 1000x short — so `showDims()` multiplies by a factor the
+server read, and the controller's own comment claiming "the formats that declare a unit (3MF, FCStd)
+already converted by their importer" was FALSE and is corrected. And it cannot see a slicer's
+**filament colours**: Bambu Studio and PrusaSlicer keep the palette and the per-object extruder in
+their own `Metadata/*.config`, so every part of a Bambu project rendered in the viewer's default
+grey. `Maker::ThreeMfManifest` reads both — **one bounded port read, judged on the catalog's `size`
+column first and cached in `Rails.cache` by content token with nil cached, `Maker::GerberArchive`'s
+shape exactly** — and `FilesController#show` / `ModelsController#show` hand it over as data
+attributes (per `<option>` on the model page: the manifest is a fact about one FILE and the switcher
+swaps files).
+
+**The colours are applied BY THE ENGINE'S MESH INDEX, and three rules keep that safe.** The match is
+`userData.originalMeshInstance.id.meshIndex`, never a name — a Bambu `<object>` carries no `name`
+attribute at all, so a name match applies nothing. The server therefore answers **one colour per
+leaf mesh in `<build><item>` order with components resolved depth-first**, which is the order the
+loader builds and the engine numbers; **resource order is not build order** and a walk over
+`<resources>` paints a real Bambu project's parts in each other's colours. Nothing is applied unless
+the list length **equals `model.MeshCount()` exactly** (a wrong colour on the wrong part is worse
+than grey); a mesh carrying its own vertex colours (a CAD export's `m:colorgroup`, which the importer
+DOES read) is left alone; and the material is **cloned first**, because the engine gives every mesh
+built from one 3MF material the same material object. **Painting is out of scope** — Bambu
+`paint_color` and PrusaSlicer `slic3rpe:mmu_segmentation` are per-triangle assignments the loader
+drops, and a PrusaSlicer volume is a triangle RANGE of one mesh, so a Prusa object's colour is its
+whole mesh's.
+
 **`--ready` MEANS "THE VIEWER IS OPEN", NOT "THE MODEL RENDERED".** `EmbeddedViewer` measures its
 parent's `clientWidth`/`clientHeight` in its constructor and `.model-viewer-stage` is `display:none`
 until that class lands, so the class must be added BEFORE the engine is constructed or the canvas is

@@ -1,5 +1,6 @@
 require "application_system_test_case"
 require "support/mesh_fixture"
+require "support/three_mf_fixture"
 
 # ONLINE3DVIEWER ACTUALLY RENDERING A MODEL IN A REAL BROWSER. Everything else about the `:model3d`
 # branch — which extensions reach it, the data attributes, the model page's switcher membership —
@@ -27,6 +28,7 @@ require "support/mesh_fixture"
 # recursion is needed here.
 class O3dvTest < ApplicationSystemTestCase
   include MeshFixture
+  include ThreeMfFixture
 
   setup do
     @root = use_fresh_share_library!
@@ -122,6 +124,121 @@ class O3dvTest < ApplicationSystemTestCase
     find("select.model-viewer-source").select("shell.ply")
     assert_selector ".model-viewer-dims", text: MeshFixture::PLY_DIMS
     assert_selector ".model-viewer-stage canvas"
+    assert_no_console_errors
+  end
+
+  # ---- 3MF: the slicer's colours and the declared unit, which the importer cannot read ----------
+
+  # THE ONE CLAIM ONLY A BROWSER CAN SETTLE. Everything about the manifest itself is a unit test
+  # (three_mf_manifest_test.rb) and everything about the data attributes is request-level
+  # (files_flow_test.rb); what neither can see is whether the server's leaf ORDER is the same order
+  # the engine numbers its meshes in. That is the assumption the whole feature rests on, it is an
+  # assumption about someone else's importer, and it is checked here by reading the materials out
+  # of the live scene and sorting them by the engine's own `meshIndex`.
+  #
+  # THE FIXTURE'S BUILD ORDER IS NOT ITS ID ORDER (container 4 then 2, resources 2 then 4), so a
+  # server walk over `<resources>` would put the colours on the wrong cubes and this test would read
+  # them reversed rather than absent.
+  MESH_MATERIALS_JS = <<~JS
+    (function () {
+      const el = document.querySelector(".model-viewer");
+      const c = window.Stimulus.getControllerForElementAndIdentifier(el, "modelviewer");
+      const out = [];
+      c.viewer.GetViewer().scene.traverse(function (o) {
+        if (!o.isMesh) return;
+        const m = Array.isArray(o.material) ? o.material[0] : o.material;
+        out.push({ index: o.userData.originalMeshInstance ? o.userData.originalMeshInstance.id.meshIndex : null,
+                   hex: m.color.getHexString(), uuid: m.uuid });
+      });
+      out.sort(function (a, b) { return a.index - b.index; });
+      return out;
+    })()
+  JS
+
+  def mesh_materials = page.evaluate_script(MESH_MATERIALS_JS)
+
+  test "a Bambu project's parts wear their own filament colours, in the engine's mesh order" do
+    node = write_model!(name: "plate.3mf",
+                        body: bambu_3mf(objects: [ { extruder: 1 }, { extruder: 2 } ],
+                                        filaments: %w[#161616 #F98C36 #FFFFFF]))
+    view_in_3d!(node)
+    assert_selector ".model-viewer[data-modelviewer-state='ready']"
+
+    materials = mesh_materials
+    assert_equal [ 0, 1 ], materials.map { |m| m["index"] },
+                 "the engine did not number these meshes 0,1 — the whole match is by that index"
+    assert_equal %w[161616 f98c36], materials.map { |m| m["hex"] }
+    assert_not_equal materials[0]["uuid"], materials[1]["uuid"],
+                     "both parts share one material object, so painting one would paint both"
+    assert_no_console_errors
+  end
+
+  # A PART-LEVEL EXTRUDER IS THE CASE A REAL PROJECT USES for lettering in a second filament, and it
+  # is the one the server has to resolve through TWO ids (the build item's object and the component's
+  # object inside the part file). Driven here as well as in the unit test because a wrong id pairing
+  # produces a manifest of the right LENGTH — which the count check happily accepts.
+  test "a part-level extruder paints that part, not the object's colour" do
+    node = write_model!(name: "letters.3mf",
+                        body: bambu_3mf(objects: [ { extruder: 1 }, { extruder: 1, part_extruder: 2 } ],
+                                        filaments: %w[#161616 #F98C36 #FFFFFF]))
+    view_in_3d!(node)
+    assert_selector ".model-viewer[data-modelviewer-state='ready']"
+
+    assert_equal %w[161616 f98c36], mesh_materials.map { |m| m["hex"] }
+    assert_no_console_errors
+  end
+
+  # A COUNT MISMATCH APPLIES NOTHING, and this is the case worth driving rather than reasoning about:
+  # three colours for two meshes means the server's walk and the importer disagreed about the file,
+  # and a wrong colour on the wrong part is worse than grey.
+  #
+  # THE MISMATCH IS REAL, NOT SIMULATED. The third object holds a well-formed EMPTY mesh: the
+  # server's walk counts it (it is an `<object>` with a `<mesh>`) while Online3DViewer's converter
+  # drops a mesh with no triangles, so `MeshCount()` is 2 against a list of 3 — measured, and it is
+  # the only shape found where the two genuinely disagree AND the import still succeeds (deleting a
+  # part file instead takes the whole import down, because three's loader clones a component's
+  # object without checking it resolved).
+  #
+  # BOTH MESHES MUST COME OUT SHARING THE ENGINE'S ONE MATERIAL, which is the sharpest assertion
+  # available: applying anything at all clones per mesh, so the uuids diverge whether or not the
+  # colour happens to look right.
+  test "more colours than meshes leaves every part on the engine's own material" do
+    node = write_model!(name: "mismatch.3mf",
+                        body: bambu_3mf(objects: [ { extruder: 1 }, { extruder: 2 },
+                                                   { extruder: 3, empty: true } ],
+                                        filaments: %w[#161616 #F98C36 #FFFFFF]))
+    view_in_3d!(node)
+    assert_selector ".model-viewer[data-modelviewer-state='ready']"
+
+    materials = mesh_materials
+    assert_equal 2, materials.size, "the empty third object should not have reached the scene"
+    assert_equal materials[0]["uuid"], materials[1]["uuid"],
+                 "a material was cloned, so colours were applied despite the count mismatch"
+    assert_empty(materials.map { |m| m["hex"] } & %w[161616 f98c36 ffffff],
+                 "a slicer colour was applied from a list that does not match this model")
+  end
+
+  # THE UNIT, WHICH IS A MEASUREMENT BUG RATHER THAN A COLOUR ONE. three's 3MFLoader ignores
+  # `<model unit>`, so this 10-unit cube declaring metres reads "10 × 10 × 10 mm" — 1000x short —
+  # unless the server's factor reaches showDims(). The number is exact, and it is exact in the
+  # rendered form (`toLocaleString` groups it), because that is what the user sees.
+  test "a 3MF declaring metres measures in millimetres" do
+    node = write_model!(name: "metre-cube.3mf", body: plain_3mf(unit: "meter", size: 10))
+    view_in_3d!(node)
+
+    assert_selector ".model-viewer[data-modelviewer-state='ready']"
+    assert_selector ".model-viewer-dims", text: "10,000 × 10,000 × 10,000 mm"
+    assert_no_console_errors
+  end
+
+  # A PLAIN 3MF IN MILLIMETRES IS THE CONTROL, and it is not redundant: it is what proves the factor
+  # is a factor rather than a constant, and that a file with no slicer metadata is left alone.
+  test "a plain 3MF in millimetres measures its own size and keeps the engine's colour" do
+    node = write_model!(name: "plain.3mf", body: plain_3mf(size: 20))
+    view_in_3d!(node)
+
+    assert_selector ".model-viewer[data-modelviewer-state='ready']"
+    assert_selector ".model-viewer-dims", text: "20 × 20 × 20 mm"
     assert_no_console_errors
   end
 

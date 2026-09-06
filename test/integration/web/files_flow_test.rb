@@ -1,4 +1,6 @@
 require "test_helper"
+require "support/mesh_fixture"
+require "support/three_mf_fixture"
 
 module Web
   # Exercises the server-rendered web UI end to end -- the file list, the detail page, blob
@@ -22,6 +24,9 @@ module Web
   # redundant rather than load-bearing.
   class FilesFlowTest < ActionDispatch::IntegrationTest
     include ActiveJob::TestHelper
+    # Real 3MF packages for the two manifest tests below — a slicer project and a plain CAD export.
+    # `upload` puts real bytes through the port, and `Maker::ThreeMfManifest` really opens them.
+    include ThreeMfFixture
 
     setup do
       @root = use_fresh_share_library!
@@ -282,6 +287,39 @@ module Web
       assert_select "[data-action~=?]", "modelviewer#reset"
       assert_select "[data-action~=?]", "modelviewer#fullscreen"
       assert_select "[data-action~=?]", "modelviewer#showPoster"
+      # NOT A 3MF, SO THE MANIFEST ATTRIBUTES ARE THE NO-OP PAIR. Empty and 1 mean "apply nothing,
+      # scale by nothing" — asserted here rather than left implicit, because the controller reads
+      # both on EVERY format and a missing attribute would make `unitFactorValue` 0 for STL too.
+      assert_select ".model-viewer[data-modelviewer-colors-value=?]", "[]"
+      assert_select ".model-viewer[data-modelviewer-unit-factor-value=?]", "1"
+    end
+
+    # THE SLICER'S COLOURS AND THE DECLARED UNIT REACH THE PAGE AS DATA, which is the whole server
+    # half of the feature: three's 3MFLoader can read neither (the colours are Bambu metadata, the
+    # `unit` attribute it simply ignores), so `Maker::ThreeMfManifest` reads them here and the
+    # browser applies them by mesh index. The unit test owns what the manifest SAYS; this owns that
+    # the page carries it.
+    test "a Bambu 3MF page carries its filament colours and unit factor as data" do
+      sign_in
+      node_id = upload("plate.3mf", bambu_3mf(objects: [ { extruder: 1 }, { extruder: 2 } ],
+                                              filaments: %w[#161616 #F98C36 #FFFFFF]))
+
+      get file_path(node_id)
+      assert_response :success
+      assert_select ".model-viewer[data-modelviewer-colors-value=?]", '["#161616","#F98C36"]'
+      assert_select ".model-viewer[data-modelviewer-unit-factor-value=?]", "1.0"
+    end
+
+    # THE ONSHAPE CASE, WHICH IS A MEASUREMENT BUG RATHER THAN A COLOUR ONE: a part declaring
+    # `unit="meter"` reads 1000x short in the dims line without this number.
+    test "a 3MF declaring metres carries the factor that makes its dimensions right" do
+      sign_in
+      node_id = upload("part.3mf", plain_3mf(unit: "meter"))
+
+      get file_path(node_id)
+      assert_response :success
+      assert_select ".model-viewer[data-modelviewer-unit-factor-value=?]", "1000.0"
+      assert_select ".model-viewer[data-modelviewer-colors-value=?]", "[null]"
     end
 
     # ONE PER IMPORTER FAMILY, not one per extension: Online3DViewer's own mesh readers (3mf, obj,
