@@ -61,13 +61,19 @@ module Maker
     # bytes are read from — on the public page the OWNER, never the visitor (GerberSets's rule).
     #
     # THE TOKEN IS `content_hash` OR `current_version_id`, WHICH IS THE PORT'S OWN `content_token`
-    # SPELLED FROM THE CATALOG. `Node` has no `current_version` reader — the column is
-    # `current_version_id` — and the pair is exactly what `Maker::Previews::MissingBackfill` reads
-    # for the same purpose: a hash on share/s3, a version id on chunk_remote. Asking the port for
-    # `stat` instead would cost a second call on every project-page board just to build a cache key.
+    # SPELLED FROM THE CATALOG: a hash on share/s3, a version id on chunk_remote — the same value
+    # `Maker::Previews::MissingBackfill` gets from the port's bulk `stat_all`. It is read off the
+    # two columns here, and nowhere else in `app/`, because asking the port for `stat` would cost
+    # a second call on every project-page board just to build a cache key. (`Node` has no
+    # `current_version` reader; the column is `current_version_id`.)
+    #
+    # AN UNKNOWN SIZE IS REFUSED, NOT READ. `nodes.size` is nullable, and `nil.to_i` is 0 — which
+    # would pass the guard and hand the read to the port's own 256 MB cap, sixteen times this
+    # class's. Nothing writes a NULL size today (the scan and the mirror both set it); if one ever
+    # appears, "bounded before any read" still has to mean what it says.
     def self.for(user:, node:)
       return nil unless archive?(node.name)
-      return nil if node.size.to_i > READ_LIMIT
+      return nil if node.size.nil? || node.size > READ_LIMIT
 
       token = node.content_hash.presence || node.current_version_id.presence
       Rails.cache.fetch([ "gerber-archive", node.node_id, token ], expires_in: CACHE_TTL) do

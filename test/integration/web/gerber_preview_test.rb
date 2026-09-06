@@ -335,7 +335,12 @@ module Web
       project = @user.maker_projects.create!(name: "Driver", visibility: "public")
       folder = make_project_folder!(@user, project)
       dir = gerber_dir!(name: "Electronics", parent_node_id: folder.node_id)
-      write_gerber_zip!(parent_node_id: dir.node_id)
+      # THE BYTES ARE CAPTURED ONCE AND COMPARED TO THEMSELVES. `fusion_zip` stamps `DOSTime.now`
+      # (2-second granularity) into every header, so two builds that straddle an even second differ
+      # at byte 10 — an `assert_equal fusion_zip, response.body` was red about one run in seven, and
+      # for a reason that had nothing to do with the route (the review measured it).
+      body = fusion_zip
+      write_gerber_zip!(parent_node_id: dir.node_id, body:)
       reset!
 
       get public_project_path("gerber", project.slug)
@@ -343,7 +348,7 @@ module Web
 
       get entry["url"]
       assert_response :success
-      assert_equal fusion_zip, response.body.b
+      assert_equal body, response.body.b
     end
 
     # EVERY URL AN UNLISTED PAGE RENDERS CARRIES THE TOKEN — including the ones only JavaScript ever

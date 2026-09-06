@@ -119,8 +119,10 @@ from. **ONE bounded port read per archive, judged on the catalog's own `size` co
 (`GerberArchive::READ_LIMIT`, 16 MB — past it the zip is something else and is never opened), and
 the answer is cached in `Rails.cache` by `(node_id, content token)` with **nil cached too**, so a
 zip of firmware stays known-not-a-board until its content changes. The token is `content_hash` or
-`current_version_id` — the port's own `content_token` read off the catalog, the pair
-`Maker::Previews::MissingBackfill` already uses.
+`current_version_id` — the port's own `content_token`, read off the catalog's two columns rather
+than through a second `stat` call (`Maker::Previews::MissingBackfill` gets the same value from the
+port's bulk `stat_all`; this is the one reader of the pair off the catalog). An unknown `size`
+(NULL) is refused, never read: the bound has to hold before any read, and `nil.to_i` would pass it.
 
 **rubyzip LISTS and never extracts; JSZip in the BROWSER does** (§15 — Rails serving extracted
 layers would put bytes through the control plane on every backend, and the browser must fetch the

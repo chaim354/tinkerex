@@ -188,6 +188,19 @@ module Maker
       end
     end
 
+    # A NULL SIZE IS REFUSED, NOT READ. `nil.to_i` is 0, which would pass the cap and hand the
+    # read to the port's own 256 MB bound — sixteen times this class's. Nothing writes a NULL size
+    # today; this pins what the guard means if one ever appears (the review's finding).
+    test "a zip whose size is unknown is not a board and is never read" do
+      node = write_gerber_zip!
+      node.update_column(:size, nil)
+
+      counting_reads do |reads|
+        assert_nil GerberArchive.for(user: @user, node:)
+        assert_empty reads, "an archive of unknown size was opened through the port"
+      end
+    end
+
     # THE JOB MEMBER HAS ITS OWN CAP, judged on the entry's uncompressed size before it is read.
     # Past it the manifest is ignored and every layer stacks, exactly as an unparseable one does.
     test "a job member past the job cap is ignored and every layer stacks" do
