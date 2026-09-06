@@ -189,6 +189,30 @@ named below. Trimmed long-form notes used to live in `docs/plan-direct-client.md
 
 ---
 
+## 10. Gerber → 3D via the model viewer — REJECTED (2026-09-06)
+
+- **Considered:** convert a board's Gerber/Excellon layers into a mesh and show it in the same
+  Online3DViewer stage `:model3d` uses, so a PCB would get the 3D viewer's orbit, pan and zoom
+  instead of a flat picture. Asked directly, in those words, which is why it is written down.
+- **Why rejected:** three independent reasons. (a) **A board export is a 2D artefact** — the fab
+  house reads exactly what tracespace draws, and the file page's job is to show *that*, faithfully,
+  at any zoom; a render of an extruded approximation is a different document from the one being
+  checked. (b) **There is no permissively licensed Gerber→mesh pipeline** (§9), so this is a
+  polygon-boolean extruder we would own: copper, mask, silk and drill hits unioned and subtracted
+  per layer. (c) **The cost buys worse fidelity** — an ordinary four-layer board is hundreds of
+  thousands of triangles for a picture of the same layers with the trace edges rounded off by
+  tessellation, and every drill hit is another boolean.
+- **What was actually being asked for was the INTERACTION, not the third dimension** — move around
+  and zoom in, which the 3D viewer happens to be where you meet it. That is a `viewBox`, and
+  `measure_controller.js` already drove one.
+- **Current approach:** tracespace's SVG plus **one shared viewBox pan/zoom**
+  (`app/javascript/lib/svg_pan_zoom.js`, extracted from the Measure view so there is not a second
+  copy of the maths), a `Fit` button, and **per-layer show/hide toggles** — which re-compose from
+  the one `renderLayers` result and are a thing a mesh conversion could not have offered at all.
+  `docs/invariants/files-preview.md`'s `:gerber` section, CLAUDE.md §14d.
+
+---
+
 ## Active decisions (do NOT confuse with the above — these are CURRENT, not abandoned)
 
 For clarity, these settled choices are **adopted**, not roads-not-taken:

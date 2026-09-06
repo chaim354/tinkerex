@@ -2,6 +2,7 @@ import { Controller } from "@hotwired/stimulus"
 import { PAPERS, printSheets } from "lib/print_sheet"
 import { exportSvg } from "lib/export_svg"
 import { SVG_NS, shapeElement, unionBox } from "lib/shape_svg"
+import { installPanZoom } from "lib/svg_pan_zoom"
 
 // Measure view: click a contour, read its size in mm.
 //
@@ -45,9 +46,6 @@ const SCHEMA_VERSION = 1
 // These check at 250, 650, 1250, 2150, 3450, 5250, 7750, 11250, 16250 ms — five looks inside the
 // first 3.5 s, where real renders land, and still bounded so a wedged job stops being polled.
 const POLL_DELAYS_MS = [250, 400, 600, 900, 1300, 1800, 2500, 3500, 5000]
-
-// Screen pixels of pointer travel before a drag counts as a pan rather than a click.
-const PAN_SLOP_PX = 3
 
 // Remembered across visits: the paper in your printer does not change between files.
 const PAPER_KEY = "measure.paper"
@@ -165,7 +163,13 @@ export default class extends Controller {
     const pad = Math.max(payload.job.w, payload.job.h) * 0.02
     this.home = [payload.job.x - pad, payload.job.y - pad,
                  payload.job.w + pad * 2, payload.job.h + pad * 2]
-    this.setViewBox(svg, this.home)
+    // THE viewBox ITSELF IS WRITTEN BY installPanZoom, through the `bindInteractions` call at the
+    // bottom of this method — it sets `home` as it installs, so this element gets its viewBox
+    // before the browser paints (nothing between here and there yields to the event loop, and the
+    // element is not in the document until `replaceChildren` a few lines below either).
+    // `preserveAspectRatio` stays HERE because the lib's screen ->
+    // user-space maths assumes it and cannot set it: the element is the caller's, and a caller that
+    // wanted `none` would need different maths, not a silently overridden attribute.
     svg.setAttribute("preserveAspectRatio", "xMidYMid meet")
 
     // SMALLEST CONTOUR WINS, VIA PAINT ORDER. Appending in DESCENDING bbox-area order puts small
@@ -378,19 +382,30 @@ export default class extends Controller {
     return group
   }
 
+  // HOVER, CLICK AND HIT-TESTING ARE THIS FILE'S; THE viewBox IS lib/svg_pan_zoom's. The wheel,
+  // drag-pan and pinch handlers the four lines below used to add live there now, so the Gerber
+  // stage can have the same hands without a second copy of the letterbox maths (§14d). What stays
+  // here is everything that knows what a CONTOUR is — which the lib deliberately does not.
+  //
+  // ORDER STILL MATTERS AND IS UNCHANGED: hover binds before the lib's own `pointermove`, and the
+  // click handler below reads `panZoom.didPan()` rather than a flag of its own.
   bindInteractions(svg) {
     svg.addEventListener("pointermove", (e) => this.hover(e))
     svg.addEventListener("pointerleave", () => this.clearHover())
     svg.addEventListener("click", (e) => this.pick(e))
-    svg.addEventListener("wheel", (e) => this.zoom(e), { passive: false })
-    svg.addEventListener("pointerdown", (e) => this.startPan(e))
-    svg.addEventListener("pointermove", (e) => this.movePan(e))
-    svg.addEventListener("pointerup", (e) => this.endPan(e))
-    svg.addEventListener("pointercancel", (e) => this.endPan(e))
+    // draw() runs again on every ✕ Image -> Measure round trip, each time on a NEW <svg>; the old
+    // handle's listeners die with the element it held, but dropping it explicitly keeps that a
+    // statement rather than a thing to work out.
+    this.panZoom?.destroy()
+    // NO `onChange` HERE, DELIBERATELY. The lib offers one and gerber_controller.js needs it (it
+    // has to carry a view across a re-render); nothing in this file reads the current viewBox back,
+    // so a `this.view` mirror would be state written and never read. The handle's `view()` is the
+    // door if a reader ever appears.
+    this.panZoom = installPanZoom(svg, { home: this.home })
   }
 
   // `event.target` IS NOT TRUSTWORTHY ON A CLICK HERE, AND THE PAN'S POINTER CAPTURE IS WHY.
-  // `startPan` captures the pointer on the <svg> so a drag that wanders off the element keeps
+  // lib/svg_pan_zoom captures the pointer on the <svg> so a drag that wanders off the element keeps
   // panning — and a captured pointer retargets its own compatibility mouse events too, so
   // `mouseup` is delivered to the <svg> rather than the contour. `click` is then dispatched at the
   // nearest common ancestor of the mousedown and mouseup targets, which is that same <svg>.
@@ -424,7 +439,11 @@ export default class extends Controller {
   }
 
   hover(event) {
-    if (this.panOrigin) return
+    // `panning()` IS LIVE STATE, NOT `didPan()`. It is true from the first pointerdown of a drag,
+    // before the slop is crossed — which is what this needs: repainting a hover highlight on every
+    // move of a pan is the work being skipped, and a slop-gated answer would still do it for the
+    // first few pixels of every drag.
+    if (this.panZoom?.panning()) return
     const node = this.shapeAt(event)
     if (node === this.hovered) return
     if (this.hovered) this.styleNode(this.hovered).classList.remove("measure-contour--hover")
@@ -442,7 +461,9 @@ export default class extends Controller {
   // deliberate rather than incidental: without it there is no way to drop ONE part from a
   // gathered set short of clearing the lot and rebuilding it.
   pick(event) {
-    if (this.didPan) { this.didPan = false; return }
+    // A DRAG THAT ENDED ON A CONTOUR IS NOT A SELECTION. The flag is the lib's and is cleared by
+    // the next pointerdown, so this reads it and does not have to reset it.
+    if (this.panZoom?.didPan()) return
     const node = this.shapeAt(event)
     // EMPTY SPACE CLEARS THE WHOLE SELECTION — AND THIS REVERSED AN EARLIER RULE ON 2026-09-03, AT
     // THE USER'S REQUEST. It used to drop the measurement highlight ALONE and to leave the print
@@ -647,74 +668,21 @@ export default class extends Controller {
   // reads "60 × 40 mm · nothing selected" over an empty set, which a Reset must not leave standing.
   // A second statement for the measurement highlight went with the highlight itself.
   reset() {
-    if (this.svg && this.home) this.setViewBox(this.svg, this.home)
+    this.panZoom?.reset()
     this.clearMarks()
   }
 
-  // Zoom about the cursor, so the feature under the pointer stays under it.
-  zoom(event) {
-    if (!this.svg) return
-    event.preventDefault()
-    const [x, y, w, h] = this.view
-    const factor = event.deltaY > 0 ? 1.15 : 1 / 1.15
-    const span = Math.max(this.home[2], this.home[3])
-    const nextW = Math.min(Math.max(w * factor, span / 500), span * 4)
-    const nextH = h * (nextW / w)
-
-    const p = this.toUserSpace(event)
-    this.setViewBox(this.svg, [
-      p.x - (p.x - x) * (nextW / w), p.y - (p.y - y) * (nextH / h), nextW, nextH
-    ])
-  }
-
-  startPan(event) {
-    if (event.button !== 0 || !this.svg) return
-    this.panOrigin = this.toUserSpace(event)
-    this.panScreen = { x: event.clientX, y: event.clientY }
-    this.didPan = false
-    this.svg.setPointerCapture(event.pointerId)
-    this.svg.classList.add("is-panning")
-  }
-
-  movePan(event) {
-    if (!this.panOrigin) return
-    // THE SLOP IS IN SCREEN PIXELS, NOT USER UNITS, and that is not interchangeable: zoomed in,
-    // one mm is many pixels, so a user-space threshold calls an ordinary click a drag and
-    // silently swallows the selection the user was trying to make.
-    if (Math.hypot(event.clientX - this.panScreen.x, event.clientY - this.panScreen.y) > PAN_SLOP_PX) {
-      this.didPan = true
-    }
-    const p = this.toUserSpace(event)
-    const [x, y, w, h] = this.view
-    this.setViewBox(this.svg, [x + (this.panOrigin.x - p.x), y + (this.panOrigin.y - p.y), w, h])
-  }
-
-  endPan(event) {
-    if (!this.panOrigin) return
-    this.panOrigin = null
-    this.svg.releasePointerCapture?.(event.pointerId)
-    this.svg.classList.remove("is-panning")
-  }
-
-  // Screen px -> the SVG's own user units (mm), which is what viewBox maths needs.
-  toUserSpace(event) {
-    const rect = this.svg.getBoundingClientRect()
-    const [x, y, w, h] = this.view
-    // preserveAspectRatio="xMidYMid meet" letterboxes: the scale is the SMALLER of the two,
-    // and the unused axis is centred. Ignoring that makes the cursor drift on non-square files.
-    const scale = Math.min(rect.width / w, rect.height / h)
-    const offX = (rect.width - w * scale) / 2
-    const offY = (rect.height - h * scale) / 2
-    return {
-      x: x + (event.clientX - rect.left - offX) / scale,
-      y: y + (event.clientY - rect.top - offY) / scale
-    }
-  }
-
-  setViewBox(svg, [x, y, w, h]) {
-    svg.setAttribute("viewBox", `${x} ${y} ${w} ${h}`)
-    this.view = [x, y, w, h]
-  }
+  // `zoom`, `startPan`, `movePan`, `endPan`, `toUserSpace` and `setViewBox` LIVED HERE and are now
+  // lib/svg_pan_zoom's — the letterbox conversion, the [span/500, span*4] clamp, the 3-screen-pixel
+  // pan slop and the pointer capture, all unchanged. They moved so the Gerber stage could have the
+  // same hands rather than a second copy of them (§14d).
+  //
+  // `this.view` WENT WITH THEM: every reader of it was one of those six methods, so keeping a
+  // mirror here would be state written on every wheel tick and read by nothing. `this.home` stays
+  // because the install needs it, and `this.svg` because `showPoster` still clears it and
+  // measure_print_test.rb's Reset case reads the element's viewBox back through it. The handle is
+  // `this.panZoom` — `reset`, `didPan`, `panning`, and `set`/`view` for a caller that ever needs
+  // the numbers.
 
   setStatus(text) {
     if (this.hasDimsTarget) this.dimsTarget.textContent = text

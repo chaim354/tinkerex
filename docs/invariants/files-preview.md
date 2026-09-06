@@ -154,6 +154,45 @@ already establishes for Schematics. The panel's file LIST and the viewer's STACK
 lists — a stray layer beside a job-driven export is listed and not stacked — and a panel that
 rendered only what it stacked would make those files invisible.
 
+**THE STAGE'S PAN, ZOOM AND FIT ARE `app/javascript/lib/svg_pan_zoom.js`, SHARED WITH THE MEASURE
+VIEW — never a second copy.** The maths was `measure_controller.js`'s (the wheel-zoom-about-the-
+cursor, the `xMidYMid meet` letterbox conversion, the `[span/500, span*4]` clamp, the screen-pixel
+pan slop, the pointer capture) and moved out on 2026-09-06 so the Gerber stage could have the same
+hands; both controllers now install the one module (§14d, "a verb more than one controller performs
+gets a named service"). Two consequences a later editor can undo by accident: the module needs
+`preserveAspectRatio="xMidYMid meet"` on the element it is handed, which is why BOTH callers set it
+and the module does not; and `.gerber-stage svg` carries **`touch-action: none`**, without which the
+browser claims a two-finger gesture for its own scroll and the pinch handler never receives the
+second pointer — not degraded, never fired. **No Measure system test drives a wheel or a drag**, so
+`test/system/gerber_test.rb`'s zoom, pan and Fit cases are the only pin the shared maths has.
+
+**A LAYER TOGGLE RE-COMPOSES FROM THE ONE `renderLayers` RESULT AND NEVER RE-FETCHES.**
+`gerber_controller.js` keeps that result and hands `renderBoard` a **filtered `layers` list**
+(probed against the vendored bundle with a real Fusion export: it composes both sides correctly),
+so hiding a layer costs a re-compose and a re-serialise — not a fetch, a parse or a plot, which on
+a twelve-layer board is seconds rather than milliseconds. Hiding every layer renders an empty
+board and is allowed; the way back is the same click. The current view survives a toggle **and** a
+Top/Bottom switch, both of which replace the whole `<svg>` — `home` is read off the FIRST render
+and kept, because tracespace places every side and every layer on one viewBox and re-reading it per
+render would make `Fit` mean "the current picture's box", which for a board with its outline hidden
+is not the board.
+
+**THE TOOLBAR IS BUILT BY THE CONTROLLER, NOT BY THE THREE TEMPLATES** that mount it — a `Fit`
+button always, plus one `.btn small` toggle per layer for a stackup. The labels come from
+tracespace's own `type`/`side` and therefore cannot exist before the parse, so three server-rendered
+copies of that list would be three places free to drift about something only the browser can
+compute. They use the same wording as `FilesHelper::GERBER_LAYER_LABELS` ("top copper", "top silk",
+"drill") so a toggle and the row badge beside it describe one board once; the two cannot share a
+source — one answers from the extension in Ruby before the fetch, the other from tracespace after
+it. The **side** buttons stay in the templates precisely because they are known without a parse.
+
+**"CONVERT THE GERBERS AND USE THE 3D VIEWER" WAS ASKED AND REFUSED** — `docs/roads-not-taken.md`
+§10. A board export is a 2D artefact and the fab house reads exactly what tracespace draws; there
+is no permissively licensed Gerber→mesh pipeline, and extruding copper and mask polygons needs
+booleans and hundreds of thousands of triangles to arrive at a worse picture of the same layers.
+What was actually wanted was the 3D viewer's *interaction*, which is a viewBox — hence the shared
+module above, plus layer toggles a mesh could not offer.
+
 **The S3 caveat is KiCanvas's, unchanged**: the viewer's fetch follows a presigned redirect to the
 bucket, which reads only under the bucket's CORS rule and the `connect-src` the port names — the
 same two halves as the 3D viewer and the KiCanvas embed (stated once, under `:model3d` below).
