@@ -112,6 +112,10 @@ class TenantCleanupTest < ActiveSupport::TestCase
 
     "maker_bom_lines" => ->(u) {
       u.maker_boms.first.lines.create!(user: u, part_name: "M3 bolt", quantity: 4)
+    },
+
+    "maker_connections" => ->(u) {
+      u.maker_projects.first.connections.create!(user: u, from_label: "Driver", to_label: "Motor")
     }
   }.freeze
 
@@ -124,7 +128,7 @@ class TenantCleanupTest < ActiveSupport::TestCase
     maker_collections maker_shelves maker_notes maker_tasks maker_previews maker_addon_states
     maker_print_runs maker_taggings maker_file_attachments maker_collection_items maker_repo_edits
     maker_build_log_entries maker_sheets maker_boms maker_inventory_items
-    maker_inventory_transactions maker_bom_lines
+    maker_inventory_transactions maker_bom_lines maker_connections
   ].freeze
 
   def rows_for(user, table)

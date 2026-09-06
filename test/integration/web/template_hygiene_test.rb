@@ -186,6 +186,11 @@ module Web
       bom.lines.create!(user: @user, inventory_item: @inventory_item, quantity: 2, unit: "each", position: 0)
       bom.lines.create!(user: @user, node_id: "n-stl", quantity: 1, unit: "each", position: 1)
       bom.lines.create!(user: @user, part_name: "22 AWG wire", quantity: 3, unit: "m", position: 2)
+      # STAGE 3, S3-3: ONE CONNECTION, OR projects/_wiring's POPULATED branch never renders -- same
+      # argument as the BOM lines three lines up: an empty table would skip the row markup (and the
+      # per-row form-wiring) entirely.
+      @project.connections.create!(user: @user, from_label: "Driver board", to_label: "Stepper motor",
+                                   wire: "22 AWG", position: 0)
     end
 
     teardown do

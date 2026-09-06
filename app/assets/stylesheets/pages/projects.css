@@ -153,6 +153,15 @@
     .bom-lines .col-supplier, .bom-lines .col-ref { display: none; }
   }
 
+  /* --- Wiring (stage 3, S3-3): a row's fields live in table cells but its <form> lives outside
+     the table (projects/_wiring.html.erb's own comment says why), so there is no row wrapper to
+     hang a flex layout on -- each field is a plain `.table` input at full cell width instead. Drop
+     order narrowest-first, matching the BOM table's own two breakpoints just above: Note first
+     (least essential once the row is already named by From/To/Wire), then Wire. --- */
+  .wiring input[type="text"] { width: 100%; margin: 0; }
+  @media (max-width: 719px) { .wiring .col-note { display: none; } }
+  @media (max-width: 479px) { .wiring .col-wire { display: none; } }
+
   /* --- Sheets panel, picker, sheet page (unchanged shapes, tokens) --- */
   .sheets-panel .sheet-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); }
   .sheets-panel .sheet-row:last-child { border-bottom: 0; }

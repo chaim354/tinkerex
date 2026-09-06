@@ -77,7 +77,7 @@ module SchemaMap
                      maker_tags maker_tasks] },
     { "label" => "Models & projects", "group" => "maker",
       "tables" => %w[maker_models maker_print_runs maker_projects maker_build_log_entries
-                     maker_sheets maker_shelves maker_filing_rules] },
+                     maker_sheets maker_shelves maker_filing_rules maker_connections] },
     { "label" => "Inventory & BOM", "group" => "maker",
       "tables" => %w[maker_boms maker_bom_lines maker_inventory_items
                      maker_inventory_transactions maker_suppliers maker_locations] },
@@ -164,6 +164,7 @@ module SchemaMap
     [ "maker_bom_lines.supplier_id",                  "maker_suppliers.id",       "app", "buy from" ],
     [ "maker_build_log_entries.project_id",           "maker_projects.id",        "app", "logs" ],
     [ "maker_sheets.project_id",                      "maker_projects.id",        "app", "sheet of" ],
+    [ "maker_connections.project_id",                 "maker_projects.id",        "app", "wired in" ],
     [ "maker_collection_items.collection_id",         "maker_collections.id",     "app", "in" ],
     [ "maker_collection_items.item_id",               "maker_items.id",           "app", "holds" ],
     [ "maker_inventory_items.location_id",            "maker_locations.id",       "app", "stored at" ],
