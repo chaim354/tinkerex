@@ -5,8 +5,11 @@ import JSZip from "jszip"
 // links — never by Rails zipping bytes (CLAUDE.md §15; on s3 that route REDIRECTS to the store, so
 // a server-side zip would pull every byte through the app just to hand it straight back out).
 // Sequential fetches, so a folder of large STLs does not open a hundred connections at once; a
-// failed fetch stops the build and NAMES THE FILE, which on the s3 deployment is the CSP follow-up
-// S3-2 recorded (`default-src 'self'` with no `connect-src` blocks the presigned redirect).
+// failed fetch stops the build and NAMES THE FILE. On the s3 deployment that route REDIRECTS to a
+// presigned URL at the bucket, so the fetch is cross-origin: it reads only if the bucket's CORS
+// rule allows this origin (docs/DEPLOY.md), under a connect-src the port names for the CSP
+// (FileLayer#presigned_origin). S3-2 recorded the gap as connect-src's; the half that actually
+// refused the bytes was the bucket's missing CORS rule.
 export default class extends Controller {
   static targets = ["status"]
   static values = { manifest: String, name: String }

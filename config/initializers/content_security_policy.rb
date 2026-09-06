@@ -32,6 +32,28 @@ Rails.application.configure do
     # :data for inline preview thumbnails; :blob for the client-side SVG the generators addon
     # builds in the browser.
     policy.img_src     :self, :data, :blob
+    # `connect-src` NAMES THE STORE A PRESIGNED DOWNLOAD REDIRECTS TO, AND THE PORT SAYS WHICH. On
+    # the s3 backend `/files/:id/blob` answers 302 to a presigned URL at the bucket, and every
+    # in-browser viewer — the 3D viewer, KiCanvas, the Gerber viewer, the public bundle — FETCHES
+    # it: `'self'` alone reports each of those fetches today and would refuse them the day this
+    # enforces, the gap S3-2 through S3-6 recorded as "the s3 follow-up". A Proc source is
+    # instance_exec'd on the controller per response, where app constants resolve (an initializer
+    # cannot autoload them — §14a's boot-guard lesson), so the policy asks `FileLayer.current` and
+    # NEVER hand-writes a store address from LIBRARY_S3_ENDPOINT: the adapter reads the SDK's
+    # resolved endpoint, so this names what the wire will carry, and nil — `'self'` only — on the
+    # two backends that stream from Rails (share, chunk_remote). The OTHER half is the bucket's
+    # CORS rule, which Rails cannot set: docs/DEPLOY.md. Pinned per leg by
+    # test/integration/web/content_security_policy_test.rb.
+    #
+    # `respond_to?` IS FOR THE TEST DOUBLES, not for a real adapter: controller tests install a
+    # port that stands in for ONE failure mode (`UnreachablePort`, `MissingBytesPort`, a bare
+    # Object with a single `download`) and answers nothing else, and this middleware runs on every
+    # HTML response those tests render. The three real adapters are contract-bound to answer
+    # (`adapter_contract.rb`), and the s3 leg's CSP test goes red if this ever yields nothing there.
+    policy.connect_src :self, lambda {
+      port = FileLayer.current
+      port.presigned_origin if port.respond_to?(:presigned_origin)
+    }
     policy.object_src  :none
     # `'wasm-unsafe-eval'` BUYS THE WEBASSEMBLY IMPORTERS AND NOTHING ELSE, which is the whole
     # reason it exists as a source separate from `'unsafe-eval'`. Chrome refuses

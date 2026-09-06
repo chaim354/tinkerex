@@ -118,9 +118,9 @@ already establishes for Schematics. The panel's file LIST and the viewer's STACK
 lists — a stray layer beside a job-driven export is listed and not stacked — and a panel that
 rendered only what it stacked would make those files invisible.
 
-**The S3 caveat is KiCanvas's, unchanged**: `connect-src 'self'` blocks the viewer's fetch of a
-presigned redirect, exactly as it does for the 3D viewer and the KiCanvas embed. Shared and
-pre-existing, not new here.
+**The S3 caveat is KiCanvas's, unchanged**: the viewer's fetch follows a presigned redirect to the
+bucket, which reads only under the bucket's CORS rule and the `connect-src` the port names — the
+same two halves as the 3D viewer and the KiCanvas embed (stated once, under `:model3d` below).
 
 ## `:model3d` is the browser's own viewer, and Online3DViewer is what decides its list
 
@@ -211,9 +211,19 @@ until that class lands, so the class must be added BEFORE the engine is construc
 `failed`) instead, which is also what the system test drives. The failure contract is unchanged from
 the Three.js viewer: any error puts the server-rendered thumbnail poster back.
 
-**The S3 caveat is shared with KiCanvas and the Gerber viewer**: `connect-src 'self'` blocks a
-viewer's fetch of a presigned cross-origin redirect. Pre-existing, and this engine is bounded by it
-exactly as the old one was.
+**ON S3 A VIEWER'S FETCH LEAVES THE ORIGIN, AND BOTH HALVES OF LETTING IT ARE STATED ONCE.** The
+blob route answers a presigned redirect to the bucket, so the 3D viewer, KiCanvas, the Gerber viewer
+and the public bundle all fetch cross-origin. The browser reads that response only if (1) the
+bucket's CORS rule allows this app's origin — an operator step Rails cannot perform, `docs/DEPLOY.md`
+— and (2) the CSP's `connect-src` names the bucket's origin, which
+`config/initializers/content_security_policy.rb` asks the port for per response
+(`FileLayer#presigned_origin`: the SDK's resolved endpoint on s3, nil on share and chunk_remote,
+which stream from Rails). **Never hand-write a store address into the policy**: the s3 overlay's own
+endpoint named the wrong host for three weeks after tinkerex#85's reboot moved SeaweedFS, and a copied
+literal would have named it just as faithfully. S3-2 through S3-6 recorded this as "`connect-src`
+blocks the fetch"; the policy is report-only, so it never did — the bucket had no CORS rule and,
+latterly, no reachable endpoint. Pinned per leg by `content_security_policy_test.rb` and, for the
+port's answer, by the shared adapter contract.
 
 ## Extensionless text is a SEPARATE AXIS, and it must not move files
 

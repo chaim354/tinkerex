@@ -43,6 +43,34 @@ module FileLayer
                                      secret_access_key: "sk", prefix: PREFIX, client: @fake.client)
     end
 
+    # --- presigned_origin: what the CSP's connect-src names -----------------------------------
+
+    # ASSERTED AGAINST THE WIRE, not the config: the origin must be the one a real presigned
+    # download carries, which holds only while #build_client forces path-style addressing — a
+    # virtual-hosted signer would put the bucket in the host, and reading the endpoint alone would
+    # then name an origin no redirect ever goes to.
+    test "presigned_origin is the origin every presigned download carries" do
+      id = create_file!(name: "o.stl", bytes: "origin")
+      url = URI(adapter.download(@user, node_id: id, disposition: :attachment).url)
+
+      assert_equal "#{url.scheme}://#{url.host}", adapter.presigned_origin
+      # The SDK resolves us-east-1 to the LEGACY GLOBAL host, not `s3.us-east-1.amazonaws.com` —
+      # which is the whole case for reading the origin off the client instead of composing it from
+      # the region: the composed guess was this test's first draft, and it was wrong.
+      assert_equal "https://s3.amazonaws.com", adapter.presigned_origin
+    end
+
+    # The self-host case: a SeaweedFS/MinIO endpoint on a non-default port, through a REAL SDK
+    # client rather than the fake — construction is lazy and presigning is local HMAC, so nothing
+    # is contacted. The port must survive: "http://192.168.1.2" is a different origin from ":8333",
+    # and a policy naming the former would refuse every fetch to the latter.
+    test "presigned_origin keeps a custom endpoint's scheme, host and port" do
+      custom = FileLayer::S3.new(bucket: "b", region: "us-east-1", access_key_id: "ak",
+                                 secret_access_key: "sk", endpoint: "http://192.168.1.2:8333")
+
+      assert_equal "http://192.168.1.2:8333", custom.presigned_origin
+    end
+
     # Seed the object as another tool would have, then index it with THE REAL OBSERVER. That is
     # the backend's actual premise: the bucket already has the user's files in it, and a scan is
     # what puts them in `nodes`.

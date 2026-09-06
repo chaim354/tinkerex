@@ -33,6 +33,11 @@ module FileLayer
                        port_writable: true, dir_deletable: false, local_worktree: true)
     end
 
+    # Nothing to presign, so nothing for the CSP's `connect-src` to name: every download here is a
+    # same-origin `send_file`. Answered (as nil) rather than left undefined because the policy asks
+    # the port per response — see S3#presigned_origin for what a presignable backend answers.
+    def presigned_origin = nil
+
     def stat(user, node_id:)
       file_info(live_node!(user, node_id))
     end
