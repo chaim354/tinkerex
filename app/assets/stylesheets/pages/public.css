@@ -40,9 +40,11 @@
   .explore-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
   .explore-chips .tag-chip.active { border-color: var(--accent); color: var(--accent); }
 
-  /* COLUMN DROPS, NOT A HORIZONTAL SCROLLER: the phone sweep asserts `scrollWidth <= innerWidth`
-     (test/system/shell_test.rb), and Size is the least useful cell to a visitor on a phone, the
-     thumbnail the next least. Name and Download survive at every width. */
+  /* COLUMN DROPS: Size is the least useful cell to a visitor on a phone, the thumbnail the next
+     least; Name and Download survive at every width. READABILITY, NOT OVERFLOW SAFETY, and the
+     distinction is measured rather than argued — deleting both blocks leaves test/system/
+     shell_test.rb's phone sweep GREEN, because the table's min-content already fits 375px. The
+     same result pages/files.css's own drops have, recorded in that sweep's header. */
   @media (max-width: 719px) {
     .public-files .col-size { display: none; }
   }

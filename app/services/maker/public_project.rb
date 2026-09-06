@@ -130,6 +130,22 @@ module Maker
       end
     end
 
+    # WHICH OF `page_nodes` ARE VISIBLE ENTRIES, IN ONE QUERY FOR THE WHOLE PAGE.
+    # `public/projects/_bom` asks `permits?` for every design-file line — that is how it chooses
+    # between a link and plain text — and each of those nodes came from `page_nodes`, so the
+    # per-node `exists?` in `visible_entry?` below was one query PER LINE: measured at 18 queries
+    # for the small seed against 22 for the large one, exactly the four extra file lines
+    # (test/integration/web/page_query_budget_test.rb, "public projects#show").
+    #
+    # A CACHE, NOT A SECOND AUTHORITY. It asks the SAME `owner.nodes.visible_entries` scope, over
+    # ids this page already holds, and a node outside that population still asks for itself — which
+    # is what keeps `deliverable!` right for a file past FILE_CAP that is deliberately not on the
+    # page. The file route never reaches this: nothing on it loads `page_nodes`, so a download still
+    # costs the single existence check it always did rather than the build log and the BOM as well.
+    def visible_page_ids
+      @visible_page_ids ||= owner.nodes.visible_entries.where(node_id: page_nodes.keys).pluck(:node_id).to_set
+    end
+
     # READY THUMBNAILS ONLY on a public page — `ThumbnailMap.for` still backfills, which is what
     # makes a first visit start the renders, but nothing here polls: `files/_thumb` renders the
     # spinner markup for a pending row and `pages/public.css` stops its animation, so it reads as a
@@ -147,11 +163,31 @@ module Maker
     # and plain `nil` for a broken one, so an unguarded `#include?` is a NoMethodError on exactly
     # the row a corrupt catalog produces. A nil `parent_node_id` (a node at the library root) walks
     # to `[nil]` and correctly matches no folder.
+    #
+    # `listing.available?` GATES THE TWO ANCESTRY ARMS AND ONLY THOSE. A project with no folder
+    # (`folder_node_id` is nullable and publishing requires only a handle) or whose folder was
+    # deleted still owns its attachments — an entry photo living elsewhere in the library is the
+    # project's by the attachment row, and the page renders it — so the attachment arm answers
+    # regardless. The gate must stay on the ancestry arms: `Array(ancestors_of(x)).include?(nil)`
+    # is TRUE for every resolvable chain, so with a nil `folder_node_id` an ungated ancestry arm
+    # would permit EVERY file in the owner's library (probed by S3-4's review, not reasoned).
+    #
+    # NOTHING BENEATH A `.git` MARKER DELIVERS. The listing never descends into one, but this walk
+    # is the LibraryTree's, which indexes every live dir — and on chunk_remote the catalog mirrors
+    # whatever a client synced, so `.git/config` has a plain name, sits under the folder, and would
+    # pass both checks above. Share and s3 never index those keys; this is the one door that must
+    # not depend on that.
     def permits?(node)
-      return false unless node && node.kind == "file" && !node.deleted && listing.available?
-      return false unless Node.visible_entries.where(node_id: node.node_id).exists?
-      return true if node.parent_node_id == project.folder_node_id
-      return true if Array(tree.ancestors_of(node.parent_node_id)).include?(project.folder_node_id)
+      return false unless node && node.kind == "file" && !node.deleted
+      return false unless visible_entry?(node)
+
+      if listing.available?
+        # The parent itself first, then its ancestors: `ancestors_of` may or may not include its
+        # argument, and a file DIRECTLY inside `.git/` must fail the name check either way.
+        lineage = [ node.parent_node_id, *Array(tree.ancestors_of(node.parent_node_id)) ].compact.uniq
+        return false if lineage.any? { |id| tree.name_of(id) == Library::RepoMetadata::DIR_NAME }
+        return true if lineage.include?(project.folder_node_id)
+      end
 
       attached_ids.include?(node.node_id)
     end
@@ -176,6 +212,16 @@ module Maker
     end
 
     private
+
+    # `visible_entries` for ONE node — from the page's primed set when it is one of the page's own
+    # nodes, and from its own one-row query otherwise. `@page_nodes` rather than `page_nodes`
+    # deliberately: reading the ivar asks "has the page already loaded these?" WITHOUT loading them,
+    # which is what keeps the file route at one query (see `visible_page_ids`).
+    def visible_entry?(node)
+      return visible_page_ids.include?(node.node_id) if @page_nodes&.key?(node.node_id)
+
+      owner.nodes.visible_entries.where(node_id: node.node_id).exists?
+    end
 
     # Every node attached to the project itself or to one of its build-log entries, in TWO queries
     # regardless of how many entries there are — never one per entry. The second is expressed as a

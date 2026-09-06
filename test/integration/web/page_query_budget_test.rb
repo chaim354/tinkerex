@@ -183,6 +183,108 @@ module Web
       Maker::Addons::Source.reset!
     end
 
+    # STAGE 3, S3-4: THE SAME PROJECT, READ BY A STRANGER. Not a duplicate of the budget above: the
+    # public page is a DIFFERENT reader over the same rows (Maker::PublicProject, not
+    # ProjectsController#show's ivars), and the two share no eager load — every panel it renders is
+    # its own query. It is also the page most exposed to an N+1, being the one a link on the
+    # internet points at.
+    #
+    # NOBODY IS SIGNED IN, AND THAT IS THE MEASUREMENT. `setup` signs @user in, so this test signs
+    # out first: a visitor's request must never touch Warden (Public::BaseController stands on
+    # ActionController::Base and `shell_signed_in?` asks `public_surface?` FIRST), and measuring as
+    # the owner would budget a session lookup no real visitor pays.
+    #
+    # THE OWNER NEEDS A HANDLE BEFORE THE PROJECT CAN LEAVE `private` — Maker::Project refuses
+    # otherwise, and the handle then locks. That ordering is the fixture, not a preference.
+    test "public projects#show does not grow with files, entries, BOM lines or connections" do
+      delete destroy_user_session_path
+      @user.update!(handle: "budgeted")
+      project = @user.maker_projects.create!(name: "Published", status: "active", visibility: "public")
+      folder = project_folder_rows!(@user, project)
+      bom = project.boms.create!(user: @user)
+      add = lambda do |prefix, count|
+        count.times do |i|
+          id = "#{prefix}#{i}"
+          # A SUBFOLDER PER ITERATION, with a `.git` marker and a nested dir -- the projects#show
+          # seed's shape above, and here it is what grows the number of REPO CARDS. Maker::
+          # PublicProject#repo_cards resolves every card's root node in ONE `WHERE node_id IN (...)`;
+          # written as a lookup per repo it would be invisible on a one-repo fixture and linear on a
+          # folder that holds a few.
+          sub = @user.nodes.create!(node_id: "#{id}-dir", name: id, kind: "dir",
+                                    parent_node_id: folder.node_id, size: 0,
+                                    mtime: 1_700_000_000_000_000_000)
+          @user.nodes.create!(node_id: "#{id}-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
+                              parent_node_id: sub.node_id, size: 0, mtime: 1_700_000_000_000_000_000)
+          deep = @user.nodes.create!(node_id: "#{id}-deep", name: "deep", kind: "dir",
+                                     parent_node_id: sub.node_id, size: 0, mtime: 1_700_000_000_000_000_000)
+          @user.nodes.create!(node_id: "#{id}-file", name: "#{id}.stl", kind: "file",
+                              parent_node_id: sub.node_id, size: 1, mtime: 1_700_000_000_000_000_000,
+                              content_hash: "h-#{id}", current_version_id: "v-#{id}")
+          @user.nodes.create!(node_id: "#{id}-deep-file", name: "#{id}-deep.pdf", kind: "file",
+                              parent_node_id: deep.node_id, size: 1, mtime: 1_700_000_000_000_000_000)
+          # AN IMAGE IN THE FOLDER AND ANOTHER OUTSIDE IT, ATTACHED TO AN ENTRY: the photos panel
+          # unions the two, and only the second reaches `page_nodes` -- the map every entry photo and
+          # every BOM file target is resolved through, in one query for the page rather than one per
+          # attachment.
+          @user.nodes.create!(node_id: "#{id}-pic", name: "#{id}.png", kind: "file",
+                              parent_node_id: folder.node_id, size: 1, mtime: 1_700_000_000_000_000_000,
+                              content_hash: "hp-#{id}", current_version_id: "vp-#{id}")
+          node!("#{id}-shot", "#{id}-shot.png")
+          entry = project.build_log_entries.create!(user: @user, body: "entry #{id}",
+                                                    logged_at: Time.current)
+          entry.file_attachments.create!(user: @user, node_id: "#{id}-shot", role: "image", position: 0)
+          project.connections.create!(user: @user, from_label: "from-#{id}", to_label: "to-#{id}")
+          # THE LINKED CASE, which is also what grows `attached_ids` -- the two plucks `permits?`
+          # answers the attachment arm from, and neither may become a query per attachment.
+          node!(id, "#{id}.stl")
+          project.file_attachments.create!(user: @user, node_id: id, role: "model")
+          # ONE BOM LINE PER ITERATION, CYCLING THE THREE KINDS. The public table has NO cap (unlike
+          # the private panel's PANEL_CAP), and the design-file kind is the expensive one: the
+          # partial asks `pub.permits?` for every such line so it can decide between a link and
+          # plain text, which is exactly where a per-row existence check hides.
+          case i % 3
+          when 0
+            bom_item = @user.maker_inventory_items.create!(name: "pub-item-#{id}", unit: "each")
+            bom.lines.create!(user: @user, inventory_item: bom_item, quantity: 1, unit: "each")
+          when 1
+            bom.lines.create!(user: @user, node_id: "#{id}-file", quantity: 1, unit: "each")
+          else
+            bom.lines.create!(user: @user, part_name: "pub-text-#{id}", quantity: 1, unit: "each")
+          end
+        end
+      end
+      assert_constant_queries(public_project_path(@user.handle, project.slug),
+                              -> { add.call("ps", SMALL) },
+                              -> { add.call("pl", LARGE - SMALL) },
+                              "public projects#show")
+    end
+
+    # STAGE 3, S3-4: /explore IS THE ONE CROSS-USER PAGE IN THE APP, so its growth axis is one
+    # project on one OWNER per step -- a card names its maker (`project.user.handle`) and its tags,
+    # and both are `includes`d. A seed that reused one user would let `project.user` come back from
+    # AR's identity map and hide a per-card lookup, the same trap inventory#show's own comment
+    # records for `.includes(:project)`.
+    #
+    # THE TAG CHIPS ARE THE SECOND AXIS AND ARE ONE GROUPED QUERY: a distinct tag per project, so
+    # the chip list grows too. SMALL/LARGE (3/15) stay under both caps -- ExploreController::PAGE
+    # (60) and the chips' own limit (30) -- because saturating either would hold the rendered row
+    # count still between the two measurements and make a per-row query invisible.
+    test "explore#index does not grow with public projects or tags" do
+      add = lambda do |prefix, count|
+        count.times do |i|
+          id = "#{prefix}#{i}"
+          owner = User.create!(email: "explore-#{id}@example.com", password: PASSWORD,
+                               confirmed_at: Time.current, handle: "explore-#{id}")
+          owner.maker_projects.create!(name: "Lamp #{id}", description: "A lamp.", status: "active",
+                                       visibility: "public", tag_list: "tag-#{id}")
+        end
+      end
+      assert_constant_queries(public_explore_path,
+                              -> { add.call("es", SMALL) },
+                              -> { add.call("el", LARGE - SMALL) },
+                              "explore#index")
+    end
+
     # STAGE 2, S2-4: the full BOM page renders every line, unlike the project page's capped panel
     # above -- its own budget, over the same three-kinds-per-iteration growth.
     test "boms#show does not grow with lines" do

@@ -94,7 +94,11 @@ module Web
       @prior_addon_source_path = ENV["ADDON_SOURCE_PATH"]
       ENV["ADDON_SOURCE_PATH"] = Rails.root.join("test/fixtures/addons").to_s
 
-      @user = User.create!(email: "hygiene-#{SecureRandom.hex(4)}@example.com",
+      # STAGE 3, S3-4: THE HANDLE COMES FIRST AND CANNOT BE ADDED LATER IN THIS SETUP. A project
+      # refuses to leave `private` while its maker has none, and once one is published the handle
+      # itself locks (Maker::Project's own validation, User#handle_locked?) — so the order below is
+      # the only one that works, not a preference.
+      @user = User.create!(email: "hygiene-#{SecureRandom.hex(4)}@example.com", handle: "hygiene",
                            password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
       @user.nodes.create!(node_id: "d-laser", name: "laser", kind: "dir")
@@ -154,8 +158,15 @@ module Web
       state = @user.maker_addon_states.create!(addon_key: "fixture", name: "shelf box", data: {}, revision: 2)
       state.files.create!(node_id: generated.node_id, role: "output", position: 0)
       @project.tasks.create!(user: @user, title: "Cut the base", status: "todo", position: 0)
-      @project.build_log_entries.create!(user: @user, body: "Cut the base tonight.",
-                                         logged_at: Time.current)
+      # STAGE 3, S3-4: AN IMAGE IN THE FOLDER *AND* ONE ATTACHED TO THE ENTRY, because the public
+      # page reads the two through different code (`public/projects/_photos` unions the folder's
+      # image-role rows with the entries' live attachments, and `public/projects/_build_log`
+      # renders the entry's own). `.png`, not the `.svg` two blocks up: `role_for` answers "vector"
+      # for svg and only an "image" role reaches the photos panel.
+      photo = file!("n-photo", "shot.png", parent_node_id: folder.node_id)
+      entry = @project.build_log_entries.create!(user: @user, body: "Cut the base tonight.",
+                                                 logged_at: Time.current)
+      entry.file_attachments.create!(user: @user, node_id: photo, role: "image", position: 0)
       @sheet = @project.sheets.create!(user: @user, name: "Cut list", position: 0,
                                        data: Maker::Sheet.blank_data)
       @model = @user.maker_models.create!(title: "Bracket", slug: "bracket",
@@ -191,6 +202,15 @@ module Web
       # per-row form-wiring) entirely.
       @project.connections.create!(user: @user, from_label: "Driver board", to_label: "Stepper motor",
                                    wire: "22 AWG", position: 0)
+      # STAGE 3, S3-4: PUBLISHED LAST, once every panel above has something to render — the public
+      # page shows the SAME fixtures through ten new templates, so nothing here is seeded twice.
+      # `license:` renders the head's licence badge, one of the two branches that badge has.
+      @project.update!(visibility: "public", license: "CERN-OHL-P-2.0")
+      # THE UNLISTED SIBLING RENDERS ONE BRANCH NO PUBLIC PROJECT CAN: the `noindex` meta and the
+      # "Unlisted link" badge, reached only with `k` (the token IS the credential). It needs no
+      # fixtures of its own — its panels are all empty, which is the OTHER half of a partial that
+      # renders nothing when its collection is empty.
+      @unlisted = @user.maker_projects.create!(name: "Hidden Rig", visibility: "unlisted")
     end
 
     teardown do
@@ -280,7 +300,20 @@ module Web
         "settings" => settings_path,
         "settings/tags" => settings_tags_path,
         # Stage 3, S3-1. Needs no fixture: #index seeds its own rows on first visit.
-        "settings/filing" => settings_filing_rules_path
+        "settings/filing" => settings_filing_rules_path,
+        # STAGE 3, S3-4: THE PUBLIC SURFACE, five pages over ten templates. Signed in, which is
+        # neither a mistake nor a weakening: Public::BaseController stands on
+        # ActionController::Base and never reads the session (the seam guard in
+        # test/architecture_invariants_test.rb), so these render the visitor's page either way —
+        # and a separate signed-out sweep would be a second `pages` map to keep in step.
+        "public project" => public_project_path(@user.handle, @project.slug),
+        "public project (unlisted)" => public_project_path(@unlisted.user.handle, @unlisted.slug,
+                                                           k: @unlisted.unlisted_token),
+        "public user" => public_user_path(@user.handle),
+        "explore" => public_explore_path,
+        # The tag chip's own destination, which is the filtered branch of the same page — its
+        # "All" chip renders only when a filter is on.
+        "explore (tag)" => public_explore_path(tag: "laser")
       }
     end
 

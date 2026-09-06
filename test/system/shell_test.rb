@@ -103,6 +103,20 @@ class ShellTest < ApplicationSystemTestCase
     # (tag_path("lamp")) and the search results page (search_path(q: "lamp")) has more than the
     # empty-prompt state to render — this project matches by name AND by tag.
     project = @user.maker_projects.create!(name: "Desk Lamp", description: "A lamp." * 20, tag_list: "lamp")
+    # STAGE 3, S3-4: THE SAME PROJECT, PUBLISHED, so the three public pages below are the phone
+    # rendering of THIS fixture rather than three empty states. The handle is set first because a
+    # project cannot leave `private` without one (Maker::Project's own validation).
+    #
+    # THE FOLDER GETS ITS STORAGE PATH AND A REAL DIRECTORY, which `project_folder_rows!` alone does
+    # not give it (rows only, deliberately -- it must not mkdir through the port). The KiCad file
+    # below is written into it for real, so the catalog and the disk have to agree about where the
+    # folder is or the public page would link at a path the port cannot read.
+    @user.update!(handle: "sweep")
+    project.update!(visibility: "public")
+    folder = project_folder_rows!(@user, project)
+    @user.nodes.find_by!(node_id: folder.parent_node_id).update!(storage_path: Maker::ProjectFolders::ROOT)
+    folder.update!(storage_path: File.join(Maker::ProjectFolders::ROOT, project.slug))
+    @root.join(folder.storage_path).mkpath
     # THE INVENTORY PAGES (S2-3) with every column populated and a long name, so the table drops
     # and the settings rows are exercised at 375px, not an empty state.
     supplier = @user.maker_suppliers.create!(name: "McMaster-Carr Supply Company", url: "https://www.mcmaster.com")
@@ -134,7 +148,12 @@ class ShellTest < ApplicationSystemTestCase
     # KiCanvas fetches this file for real in a live Chrome, and garbage input failing to parse
     # would log its own console error, indistinguishable at the final assert_no_console_errors
     # from an actual overflow regression. See test/support/kicad_fixture.rb.
-    kicad = write_kicad_schematic!(name: "shell-sweep.kicad_sch")
+    # PARENTED UNDER THE PROJECT FOLDER (S3-4), which the private file page above does not care
+    # about but the public page does twice over: it is what puts the file in the project's listing
+    # (Maker::PublicProject#kicad_rows) AND what makes it deliverable at all (`permits?` answers by
+    # ancestry), so the public Schematics panel mounts a KiCanvas that fetches the public named URL
+    # for real -- a 404 there would surface at the final assert_no_console_errors.
+    kicad = write_kicad_schematic!(name: "shell-sweep.kicad_sch", parent_node_id: folder.node_id)
     # ENOUGH FILES FOR THE HOME ROW TO OVERFLOW TOO, mutation-checked same as home_test.rb's own
     # dedicated scroll-containment test (see test/system/README.md) — without these, root_path's
     # single `long` tile never fills `.home-files .tile-row` wide enough to overflow its own box,
@@ -170,6 +189,14 @@ class ShellTest < ApplicationSystemTestCase
     page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
                                     width: 375, height: 812, deviceScaleFactor: 1, mobile: false)
     begin
+      # THE OVERFLOW ASSERTION IS THE SWEEP; the per-page selectors around it are how each half
+      # proves the phone rules ran at all. Shared as a lambda rather than duplicated, so the two
+      # loops below cannot drift about what "scrolls sideways" means.
+      no_sideways_scroll = lambda do |path|
+        assert page.evaluate_script("document.documentElement.scrollWidth <= window.innerWidth"),
+               "#{path} scrolls sideways at 375px (scrollWidth #{page.evaluate_script('document.documentElement.scrollWidth')})"
+      end
+
       [ root_path, files_path(view: "list"), files_path(view: "grid"), project_path(project),
         file_path(long.node_id), file_path(kicad.node_id), tools_path, models_path, trash_index_path,
         inventory_items_path, inventory_item_path(item), suppliers_path, locations_path,
@@ -187,8 +214,38 @@ class ShellTest < ApplicationSystemTestCase
         assert_selector "nav.tabbar", visible: true
         assert_selector "form.topbar-project select", visible: true
         assert_no_selector "aside.rail .current-project select"
-        assert page.evaluate_script("document.documentElement.scrollWidth <= window.innerWidth"),
-               "#{path} scrolls sideways at 375px (scrollWidth #{page.evaluate_script('document.documentElement.scrollWidth')})"
+        no_sideways_scroll.call(path)
+      end
+
+      # STAGE 3, S3-4: THE PUBLIC PAGES, IN THEIR OWN LOOP BECAUSE THEIR SHELL IS THE OTHER ONE.
+      # The three assertions above are the SIGNED-IN shell's, and this session IS signed in — so
+      # reusing them here would fail for the right reason and read as an overflow bug. A public page
+      # renders the VISITOR's shell whatever the session says (`shell_signed_in?` asks
+      # `public_surface?` first), and asserting the absence of both chrome elements is what proves
+      # that took effect in a real browser rather than only in an integration test's markup.
+      # MUTATION-CHECKED, AND THE ANSWER IS THE SAME ONE THIS TEST'S HEADER GIVES FOR files.css:
+      # deleting BOTH `.public-files` column drops from pages/public.css (Size at 719px, the
+      # thumbnail at 479px) leaves this GREEN — the public file table's min-content fits the 351px
+      # the phone container offers, so those two rules buy READABILITY, not overflow safety, and
+      # this sweep does not cover them. What it does cover is the shell: the two `assert_no_selector`
+      # lines below are the visitor-shell proof, and they go red the moment a public page renders
+      # the signed-in chrome.
+      #
+      # EACH ONE ALSO NAMES A MARKER OF ITS OWN CONTENT, and that is not decoration: `visit` does
+      # not fail on a 404, and a 404 renders no tabbar and no rail and does not scroll sideways --
+      # so without a positive assertion a broken route would satisfy all three checks below and this
+      # loop would be green over three error pages. The project page's marker is the KiCanvas stage
+      # reaching `ready`, which is the strongest of the three: it proves the controller mounted and
+      # started fetching the PUBLIC named URL, so `assert_no_console_errors` at the end is covering
+      # a real fetch rather than a div nothing ever asked for.
+      { public_project_path(@user.handle, project.slug) => ".kicanvas-stage[data-kicanvas-state='ready']",
+        public_user_path(@user.handle) => "main.public-main .project-card-grid",
+        public_explore_path => "main.public-main .project-card-grid" }.each do |path, marker|
+        visit path
+        assert_selector marker
+        assert_no_selector "nav.tabbar"
+        assert_no_selector "aside.rail"
+        no_sideways_scroll.call(path)
       end
       assert_no_console_errors
     ensure

@@ -599,12 +599,9 @@ area belongs there too, with a stub here.
   Deployment is kamal-proxy (Go) and `x_sendfile_header` is **nil**, so `Rack::Sendfile`
   no-ops and `Rack::Files` is the only branch that runs. The knob stays **commented** in
   `production.rb`: enabling it would **silently serve empty bodies** for every share download.
-- **`Delivery`'s three variants are three MECHANISMS** — `Redirect(url)` (s3) / `SendFile(path)`
-  (share) / `Stream(enum)` (chunk_remote) — consumed in ONE place, **`FileDelivery#deliver_file`**,
-  **never constructing a path**; its two callers (`FilesController#blob`, `Public::FilesController`)
-  differ in WHICH node they may hand it, never in the policy. `disposition:` is **required, not
-  defaulted**: nil makes `ContentDisposition.format` emit a header with no disposition type, which
-  browsers resolve as **inline** — a silent cross-backend divergence, on S3 only, signed into the URL.
+- **`Delivery`'s three variants are three MECHANISMS** — `Redirect` (s3), `SendFile` (share),
+  `Stream` (chunk_remote) — consumed only in **`FileDelivery#deliver_file`**, never a built path.
+  `disposition:` is **required**: nil reads as **inline**, silently, on S3 only, signed into the URL.
 - **`stat_all(user, node_ids:) -> Hash keyed by node_id` is a port verb**, and **a missing
   node is an ABSENT KEY, not a raise** — `stat` is asked about one node so `NotFound` is its
   whole answer, but a bulk caller holds a **list**, and a row tombstoned mid-page must not
@@ -834,6 +831,9 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
 - **Server-rendered Hotwire on `Maker::*` models, session-authed — NEVER the device-token v1
   API.** `/v1/*` is Bearer-token; the web app is cookies. Consequence: web controllers are not
   limited to what the JSON API exposes.
+- **`Public::` STANDS ON `ActionController::Base` AND NEVER READS THE SESSION** (guard:
+  `architecture_invariants_test.rb`): a private project 404s even to its signed-in owner, unlisted
+  needs its token, and `Maker::PublicProject#permits?` is the ONE answer to "is this file public".
 - **The `port_writable?` two-door branch is now written out ONCE** (`Maker::Addons::LibraryOutput`)
   — it was five until Stage 2 gave the chunk family its four metadata verbs and the other four
   callers (`Maker::LibraryFolder#mkdir`, `FilesController#destroy`, `TrashController#restore`,
