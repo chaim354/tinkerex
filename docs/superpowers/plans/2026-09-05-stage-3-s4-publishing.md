@@ -593,7 +593,12 @@ module Maker
 
     def readme
       return @readme if defined?(@readme)
-      @readme = Maker::Readme.for(user: owner, rows: listing.loose, base_path: "", listing:,
+      # base_path IS THE FOLDER'S OWN LIBRARY PATH, NOT "": `listing.path_index` keys on full
+      # library paths ("Projects/desk-lamp/models/base.stl"), so a README at the folder root
+      # resolves `models/base.stl` against `listing.path` ("Projects/desk-lamp"). Found by Task B,
+      # pinned in test/services/maker/readme_test.rb ("a base_path that is not the README's own
+      # directory resolves nothing").
+      @readme = Maker::Readme.for(user: owner, rows: listing.loose, base_path: listing.path, listing:,
                                   link: ->(id) { file_url_for(id) })
     end
 
