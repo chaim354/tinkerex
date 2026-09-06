@@ -251,6 +251,10 @@ Rails.application.routes.draw do
     # form, `destroy` the Remove button -- the same four Suppliers/Locations use plus the one they
     # don't need.
     resources :filing_rules, only: %i[index create update destroy], path: "filing"
+    # STAGE 3, S3-4: the handle is claimed on the Account page (users/registrations/edit) through
+    # its own form, because Devise's update demands the current password and a handle is not a
+    # credential.
+    resource :handle, only: :update
   end
 
   # --- Addons (Tools) — the /tools gallery + every addon's UI ---

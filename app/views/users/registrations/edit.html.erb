@@ -38,6 +38,26 @@
     </div>
   <% end %>
 
+  <section class="panel handle-panel">
+    <h2>Your handle</h2>
+    <p class="muted">Public projects live at <code>/u/&lt;handle&gt;/&lt;project&gt;</code>. Lowercase letters, digits and hyphens.</p>
+    <%# scope: :user -- form_with url: with no model has a blank object_name, so the field would be
+        named "handle" and the controller's require(:user) would reject it (CLAUDE.md §14d). %>
+    <%= form_with url: settings_handle_path, method: :patch, scope: :user, class: "handle-form" do |f| %>
+      <label class="field">
+        <span>Handle</span>
+        <%= f.text_field :handle, value: current_user.handle, placeholder: "e.g. chaim",
+                         pattern: "[a-z0-9][a-z0-9-]{0,30}[a-z0-9]", autocomplete: "off",
+                         disabled: current_user.handle_locked? %>
+      </label>
+      <% if current_user.handle_locked? %>
+        <p class="muted">Locked while a project is unlisted or public.</p>
+      <% else %>
+        <%= f.submit current_user.handle ? "Change handle" : "Claim handle", class: "btn small" %>
+      <% end %>
+    <% end %>
+  </section>
+
   <h3>Delete this account</h3>
 
   <%#

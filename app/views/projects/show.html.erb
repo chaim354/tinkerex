@@ -14,6 +14,20 @@
     <% if @project.status == "archived" %>
       <span class="badge status-archived">Archived</span>
     <% end %>
+    <% if @project.published? %>
+      <span class="badge visibility-<%= @project.visibility %>"><%= @project.visibility.humanize %></span>
+      <%#
+        THE ROUTE HELPER IS TASK C'S. Guarded on respond_to? so this commit is green on its own and
+        Task C's removal of the guard is the one line that turns the link on. An unlisted project's
+        link carries ?k=<token>, which IS the credential for that page -- a public one needs none.
+      %>
+      <% if respond_to?(:public_project_path) %>
+        <%= link_to "Public page",
+                    public_project_path(@project.user.handle, @project.slug,
+                                        **(@project.unlisted? ? { k: @project.unlisted_token } : {})),
+                    class: "linkbtn small public-link" %>
+      <% end %>
+    <% end %>
   </div>
   <div class="head-actions">
     <% if current_project == @project %>
