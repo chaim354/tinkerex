@@ -29,7 +29,11 @@ module Maker
   class Readme < Data.define(:html, :note)
     # First match wins, so the order is the preference order. Wider than the three names the repo
     # card shipped with: a project folder's README is written by a human in Finder, not by a
-    # `git init` template, and `README.txt` is what a Windows toolchain produces.
+    # `git init` template, and `README.txt` is what a Windows toolchain produces. THE REPO CARD
+    # INHERITS THE WIDER LIST ON PURPOSE (`RepoCard::README_NAMES` is this constant, not a copy):
+    # a repository root holding `README.txt` or `Readme.md` now renders it where S3-2 showed
+    # nothing, and `README.txt` outranks a bare `README`. That is the better behaviour and the
+    # only way the two callers cannot drift; do not give the card its own three-name array back.
     NAMES = %w[README.md README.markdown README.txt README readme.md Readme.md].freeze
     CAP = 64 * 1024 # what a card RENDERS; a longer README is cut here with a note
     # WHAT WILL BE READ AT ALL. The port's `read` takes no byte limit and answers the whole object

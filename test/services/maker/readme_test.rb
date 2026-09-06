@@ -212,11 +212,14 @@ module Maker
     end
 
     # The repo card is now this class's first caller, not a second copy of it — its three constants
-    # are the SAME objects, so they cannot drift.
+    # are the SAME objects, so they cannot drift. `assert_same` on ALL THREE: `assert_equal` stays
+    # green if someone re-types `README_CAP = 64 * 1024` in repo_card.rb, which is exactly the
+    # drift this test exists to refuse (S3-4's review). Small Integers are immediates, so
+    # `(64 * 1024).equal?(65536)` holds and the assertion is meaningful rather than flaky.
     test "Maker::RepoCard's README constants are aliases of this class's" do
       assert_same Maker::Readme::NAMES, Maker::RepoCard::README_NAMES
-      assert_equal Maker::Readme::CAP, Maker::RepoCard::README_CAP
-      assert_equal Maker::Readme::READ_LIMIT, Maker::RepoCard::README_READ_LIMIT
+      assert_same Maker::Readme::CAP, Maker::RepoCard::README_CAP
+      assert_same Maker::Readme::READ_LIMIT, Maker::RepoCard::README_READ_LIMIT
     end
   end
 end

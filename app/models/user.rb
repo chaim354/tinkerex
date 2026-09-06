@@ -150,11 +150,17 @@ class User < ApplicationRecord
   # server refuses.
   HANDLE_RE = /\A[a-z0-9][a-z0-9-]{0,30}[a-z0-9]\z/
   # Segments that exist at the site root or are obvious impersonation targets. `u` itself is here
-  # so /u/u/... cannot be minted; the rest are the app's own top-level paths (config/routes.rb).
+  # so /u/u/... cannot be minted; the rest are the app's own top-level paths (config/routes.rb) —
+  # every first segment HANDLE_RE could mint (the underscored ones, `bom_lines`, `current_project`,
+  # `print_runs`…, are unmintable already). A handle only ever appears under /u/, so today this is
+  # defence in depth for a future bare /<handle> route, not a live gap; S3-4's review enumerated
+  # the routes file and found four missing, added below (`csp-violation-report` is hyphenated and
+  # therefore mintable).
   RESERVED_HANDLES = %w[
     u explore admin administrator api v1 assets rails up files projects models tools settings
     trash search tags inventory shelves suppliers locations repos library notes attachments
     build_log_entries users login logout sign_in sign_up signin signup register account
+    connections csp-violation-report sheets tasks
     tinkerex support help about root www mail
   ].freeze
 

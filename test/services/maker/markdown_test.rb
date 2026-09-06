@@ -138,4 +138,22 @@ class Maker::MarkdownTest < ActiveSupport::TestCase
     assert_no_match %r{<a[\s>]}, html
     assert_match %r{gone}, html
   end
+
+  # THE UNWRAP IS A TEXT NODE, NEVER A STRING — the link-side twin of the image rule above. `a.text`
+  # is DECODED, so a link whose visible text was the escaped literal `&lt;strong&gt;shout&lt;/strong&gt;`
+  # comes back as `<strong>shout</strong>`; `a.replace(String)` parsed that as markup and an
+  # allowlisted element the maker wrote to be DISPLAYED became live (`<h1>` split the paragraph),
+  # while an escaped `<script>` became the prose "alert(1)". Found by S3-4's review probing the
+  # entity-escaped form — the raw `<b>` form cannot show it, kramdown strips that before `.text`.
+  test "an unresolved link's text is inserted as text, never re-parsed as markup" do
+    html = Maker::Markdown.render("[&lt;strong&gt;shout&lt;/strong&gt;](nope/missing.md)") { |_h| nil }
+
+    assert_no_match %r{<strong>}, html
+    assert_match %r{&lt;strong&gt;shout&lt;/strong&gt;}, html
+
+    script = Maker::Markdown.render("[&lt;script&gt;alert(1)&lt;/script&gt;](nope/x.md)") { |_h| nil }
+
+    assert_no_match %r{<script}, script
+    assert_match %r{&lt;script&gt;alert\(1\)&lt;/script&gt;}, script
+  end
 end

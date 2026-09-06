@@ -74,7 +74,14 @@ module Maker
           if (target = yield(href))
             a["href"] = target
           else
-            a.replace(a.text) # unwrap: drop the link, keep the words
+            # UNWRAP AS A TEXT NODE, NEVER `a.replace(a.text)` WITH A STRING — the same rule the
+            # image loop below states at length. `a.text` is DECODED text, so a link whose visible
+            # text was the escaped literal `&lt;strong&gt;shout&lt;/strong&gt;` comes back as
+            # `<strong>shout</strong>`, and a String replacement is PARSED as markup: an allowlisted
+            # element the maker wrote to be displayed became live markup, and an escaped `<script>`
+            # became the prose "alert(1)". Probed 2026-09-06 (S3-4's review); a Text node serializes
+            # escaped and cannot re-enter the tree as an element.
+            a.replace(Nokogiri::XML::Text.new(a.text, a.document)) # unwrap: drop the link, keep the words
           end
         end
 

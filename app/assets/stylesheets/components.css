@@ -176,6 +176,10 @@
   .badge.bom-stock { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); text-transform: none; }
   .badge.bom-file { background: var(--accent-soft); color: var(--accent); text-transform: none; }
   .badge.bom-text { background: var(--raised); color: var(--fg-muted); text-transform: none; }
+  /* Publishing (stage 3, S3-4): the project head's visibility badge. Public reads as "on", unlisted
+     as the quieter accent -- a link, not a listing. Private renders no badge at all. */
+  .badge.visibility-public { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+  .badge.visibility-unlisted { background: var(--accent-soft); color: var(--accent); }
   .empty { padding: 40px 16px; text-align: center; color: var(--fg-muted); border: 1px dashed var(--line); border-radius: var(--radius-panel); }
   .truncated { margin: 0 0 12px; padding: 8px 12px; border-radius: var(--radius-control); background: var(--raised); color: var(--fg-muted); font-size: 12px; }
 
