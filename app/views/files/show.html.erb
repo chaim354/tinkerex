@@ -135,9 +135,10 @@
         guessed. :filename in that route is decorative to the SERVER (never looked up; #blob still
         resolves the node from :id alone) and load-bearing to the CLIENT.
 
-        ON S3, connect-src 'self' blocks the embed's fetch of a presigned redirect, exactly as it
-        does for modelviewer_controller.js's model fetch — a shared, pre-existing limitation, not
-        something new here. %>
+        ON S3 the embed's fetch follows a presigned redirect to the bucket — cross-origin, so it
+        reads only under the bucket's CORS rule (docs/DEPLOY.md) and the connect-src the port
+        names for the CSP (FileLayer#presigned_origin), exactly as modelviewer_controller.js's
+        model fetch does. %>
     <div class="kicanvas-stage"
          data-controller="kicanvas"
          data-kicanvas-url-value="<%= named_blob_file_path(@node.node_id, filename: @node.name) %>"

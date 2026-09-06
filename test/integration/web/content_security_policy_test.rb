@@ -73,6 +73,27 @@ module Web
       assert_no_match(/worker-src/, csp)
     end
 
+    # `connect-src` NAMES THE STORE A PRESIGNED DOWNLOAD REDIRECTS TO, and the port is what says
+    # which. On s3 `/files/:id/blob` answers 302 to the bucket and every in-browser viewer fetches
+    # that URL; a policy of `'self'` alone reports each fetch today and refuses it the day it
+    # enforces (S3-2's "s3 follow-up"). Branches on the CAPABILITY, not the backend's name, so the
+    # three legs each pin their own answer: the s3 leg must carry the adapter's origin, and the
+    # other two must carry nothing but 'self' — a store address hand-written into the initializer
+    # fails on those two, and a dropped source fails on s3.
+    test "connect-src names the presigned origin on a presignable backend and only 'self' elsewhere" do
+      get files_path
+      csp = response.headers["Content-Security-Policy-Report-Only"]
+      sources = csp[/connect-src ([^;]+)/, 1]
+      port = FileLayer.current
+
+      if port.capabilities.presignable?
+        assert_match(%r{\Ahttps?://[^/\s]+\z}, port.presigned_origin.to_s)
+        assert_equal "'self' #{port.presigned_origin}", sources
+      else
+        assert_equal "'self'", sources
+      end
+    end
+
     test "frame-ancestors is 'self', not 'none' — the app frames its own PDF previews" do
       # files/show and models/show embed blob_file_path in a same-origin <iframe>. 'none' would
       # refuse to let our own page frame our own endpoint, blanking every PDF preview the moment

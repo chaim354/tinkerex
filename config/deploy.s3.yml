@@ -42,7 +42,17 @@ env:
     # deploy.yml, which Kamal's deep_merge cannot delete. That env is gone (Arc D Part 2)
     # and nothing in this app reads the name any more, so there is nothing to neutralise.
     LIBRARY_BACKEND: s3
-    LIBRARY_S3_ENDPOINT: http://192.168.1.8:8333
+    # 192.168.1.2, NOT .8, AND THE DIFFERENCE IS A WHOLE BACKEND. SeaweedFS is the `miniweeed`
+    # container on Unraid's `br0`, a MACVLAN network whose IPAM allocates in container start order
+    # and never consults DHCP, so the 2026-08-17 reboot moved it from .8 to .2 and put Redis on .8.
+    # tinkerex#85 fixed the chunk store's CHUNK_ENDPOINT and pinned the container's address
+    # (`IPAMConfig.ipv4_address`), but this overlay kept .8 because "share and s3 do not use
+    # CHUNK_*" — true, and beside the point: this is the SAME host. Every S3 call from this
+    # deployment refused the connection until 2026-09-06, so the catalog stayed empty and there was
+    # nothing for a preview to fail on. Probe before "correcting" it back:
+    # `curl -sI http://192.168.1.2:8333/` answers `Server: SeaweedFS ...`; `.8:8333` refuses.
+    # The store also has to KNOW this deployment's identity — docs/DEPLOY.md, "bucket CORS".
+    LIBRARY_S3_ENDPOINT: http://192.168.1.2:8333
     LIBRARY_S3_BUCKET: my-bucket
     LIBRARY_S3_PREFIX: library/
     LIBRARY_S3_REGION: us-east-1

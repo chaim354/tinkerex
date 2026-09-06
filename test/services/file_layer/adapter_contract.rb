@@ -230,6 +230,21 @@ module FileLayerAdapterContract
     assert_includes [ true, false ], caps.port_writable?
   end
 
+  # THE PORT NAMES THE ORIGIN ITS PRESIGNED URLS CARRY, OR NOTHING. The CSP's connect-src asks it
+  # per response, so a presignable adapter that answered nil would report every viewer fetch on
+  # that backend, and a non-presignable one that answered an origin would widen the policy for a
+  # redirect it never issues. An ORIGIN, not a URL: scheme, host and port, no path, no trailing
+  # slash — a CSP source carrying a path matches only that path.
+  def test_contract_presigned_origin_is_an_origin_iff_presignable
+    origin = adapter.presigned_origin
+    if adapter.capabilities.presignable?
+      assert_match(%r{\Ahttps?://[^/\s]+\z}, origin.to_s,
+                   "a presignable backend must name a bare origin")
+    else
+      assert_nil origin, "a backend that never redirects must not widen connect-src"
+    end
+  end
+
   # EVERY adapter answers this, and only Share answers true. Asserted in the shared contract
   # rather than per-adapter so a fourth backend cannot quietly omit it -- the omission would
   # read as "commits are unavailable here", which is indistinguishable from a correct false.

@@ -89,6 +89,25 @@ module FileLayer
                        port_writable: true, dir_deletable: false, local_worktree: false)
     end
 
+    # THE ORIGIN EVERY PRESIGNED URL FROM THIS ADAPTER CARRIES, for the CSP's `connect-src`. The
+    # browser's own fetch of a `Delivery::Redirect` — the 3D viewer, KiCanvas, the Gerber viewer,
+    # the public bundle — leaves this app's origin for the store's, and a policy naming only 'self'
+    # reports each of those today and would refuse them the day it enforces. Read from the SDK's
+    # RESOLVED endpoint rather than from LIBRARY_S3_ENDPOINT, because the two differ exactly when
+    # it matters: with no endpoint set the SDK picks the regional AWS host, and a hand-parsed env
+    # var would name nothing. It IS the URL's origin only because #build_client forces PATH-STYLE
+    # addressing — a virtual-hosted signer would put the bucket in the host — which is why s3_test
+    # pins this against a real presigned download rather than against the config. Memoised because
+    # it is a pure function of construction (not per-user state — compare ChunkRemote#transport).
+    # The two backends that never redirect answer nil.
+    def presigned_origin
+      @presigned_origin ||= begin
+        uri = URI(@client.config.endpoint.to_s)
+        port = uri.port == uri.default_port ? "" : ":#{uri.port}"
+        "#{uri.scheme}://#{uri.host}#{port}"
+      end
+    end
+
     # Mirrors Share#stat exactly: answered from the NODE, never from the bucket. A stat is what
     # a browse view calls per row, so asking S3 would put a billed round-trip behind every file
     # in a listing. The node carries everything the port promises, because the observer put it

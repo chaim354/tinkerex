@@ -93,6 +93,11 @@ module FileLayer
 
     def capabilities = CAPABILITIES
 
+    # `presignable` is false here — this app streams a download rather than trusting a URL another
+    # server signed (§14a) — so there is no store origin for the CSP's `connect-src` to name. Nil,
+    # answered, for the same reason Share answers it: the policy asks the port per response.
+    def presigned_origin = nil
+
     # ── METADATA READS: LOCAL SQL, NO WIRE ────────────────────────────────────────────────────
     #
     # This is the design's central claim made real (§6). ChangelogSync has already mirrored the

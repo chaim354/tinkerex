@@ -20,10 +20,12 @@ import { Controller } from "@hotwired/stimulus"
 // one file it is about even when its folder holds a whole board (`singleValue` true → renderLayers,
 // one layer, no side toggle); a project panel renders the board (`renderBoard`, top and bottom).
 //
-// ON S3 THE FETCH BELOW HITS THE SAME connect-src 'self' WALL modelviewer_controller.js and
-// kicanvas_controller.js already do: a presigned redirect leaves the origin and the CSP blocks it.
-// A shared, pre-existing limitation of every client-side viewer in this app, not something new
-// here — the share and chunk_remote deployments stream from Rails and are unaffected.
+// ON S3 THE FETCH BELOW LEAVES THE ORIGIN, as modelviewer_controller.js's and
+// kicanvas_controller.js's do: the blob route answers a presigned redirect to the bucket, which
+// the browser reads only if the bucket's CORS rule allows this origin (docs/DEPLOY.md), under a
+// connect-src the port names for the CSP (FileLayer#presigned_origin). Shared by every
+// client-side viewer in this app; the share and chunk_remote deployments stream from Rails and
+// never leave the origin.
 export default class extends Controller {
   static targets = ["stage", "status", "side"]
   static values = { layers: Array, single: Boolean }

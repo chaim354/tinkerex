@@ -8,7 +8,7 @@ Docker build, no repo checkout, and no source transfer to either server.
 |---|---|---|
 | Host | `kamal1@192.168.1.95` | `ubuntu@15.204.216.249` |
 | Kamal config | `config/deploy.yml` (default) | `+ config/deploy.ovh.yml` overlay (`-d ovh`) |
-| Chunk storage | SeaweedFS `192.168.1.8:8333` | Cloudflare R2 |
+| S3 library storage (`-d s3` / OVH) | SeaweedFS `192.168.1.2:8333` — the `miniweeed` container, pinned on `br0` since tinkerex#85 (`.8` is Redis now) | Cloudflare R2 |
 | Deploy command | `kamal deploy` | `kamal deploy -d ovh` |
 
 > **Why build on the Mac?** Both servers are amd64 and the Mac is arm64, so Kamal cross-builds
@@ -699,21 +699,39 @@ survives redeploys.
   servers; `sudo` is only for the one-time Docker install.
 - **Bytes never flow through Rails.** The server only signs presigned URLs (local HMAC); each
   client PUT/GETs `CHUNK_ENDPOINT` directly, so that host must be reachable from every client.
-- **3D viewer & bucket CORS (s3 / chunk-over-S3 backends).** The in-browser 3D viewer
-  (`modelviewer_controller.js`) `fetch`es a model's raw bytes from `/files/:id/blob`. On the
-  **s3** library backend — and for small single-chunk files on a **chunk** backend whose store is
-  S3/SeaweedFS — that endpoint 302-redirects to a cross-origin presigned URL, which the browser
-  only reads if the bucket returns CORS headers for the app origin. Rails can't set these (bytes
-  bypass Rails by design — §15). Add a bucket CORS rule allowing `GET` from the app origin, e.g.:
+- **In-browser viewers & bucket CORS (the s3 backend).** The 3D viewer, KiCanvas, the Gerber
+  viewer and the public bundle all `fetch` a file's bytes from `/files/:id/blob` (or the public
+  file route). On the **s3** library backend that endpoint 302-redirects to a cross-origin presigned
+  URL, which the browser only reads if the bucket returns CORS headers for the app origin. Rails
+  can't set these (bytes bypass Rails by design — §15); the app's half is the CSP's `connect-src`,
+  which names the store's origin through the port (`FileLayer#presigned_origin`) and must never be
+  hand-written. Add a bucket CORS rule allowing `GET`/`HEAD` from **every origin the deployment
+  answers on — both proxy hosts**, no wildcard:
 
   ```json
-  [{ "AllowedOrigins": ["https://<app-host>"], "AllowedMethods": ["GET"],
-     "AllowedHeaders": ["*"], "MaxAgeSeconds": 3600 }]
+  [{ "AllowedOrigins": ["http://s3.tinkerex.local", "http://s3.tinkerex.home"],
+     "AllowedMethods": ["GET", "HEAD"], "AllowedHeaders": ["*"], "MaxAgeSeconds": 3600 }]
   ```
 
-  (SeaweedFS: the bucket CORS API / `s3.configure`; R2/S3: the bucket's CORS config.) Without it,
-  affected files **degrade to the static thumbnail** — nothing breaks. The **share** backend and
-  multi-chunk files on the **chunk** backend are same-origin and need no CORS.
+  On the Unraid SeaweedFS (`miniweeed`, `weed mini`, S3 API on `192.168.1.2:8333`) exactly this was
+  applied on 2026-09-06 through the S3 API — `put_bucket_cors` from a `bin/rails runner` inside the
+  s3 container, whose `seaweednew` identity holds `Admin` on `my-bucket`; `get_bucket_cors` reads
+  it back, and SeaweedFS answers `Access-Control-Allow-Origin` only for a listed origin (probed
+  with a foreign `Origin:` → no header). **The identity itself lives in SeaweedFS's filer, not in
+  git or 1Password**: a rebuilt container knows only the admin its `AWS_ACCESS_KEY_ID` env seeds
+  (additive — SeaweedFS re-adds it on every reload), which is how the 2026-08-23 rebuild silently
+  dropped the app's `seaweednew` identity (`InvalidAccessKeyId` on every call). After a rebuild,
+  re-create it from `weed shell` inside the container, piping the line over stdin so the secret is
+  never on a command line:
+
+  ```
+  s3.configure -user=seaweednew -access_key=<LIBRARY_S3_ACCESS_KEY_ID> \
+    -secret_key=<op://tinkerex/seaweednew/secret key> \
+    -actions=Read,Write,List,Tagging,Admin -buckets=my-bucket -apply
+  ```
+
+  Without CORS, affected files **degrade to the static thumbnail** — nothing breaks. The
+  **share** and **chunk_remote** backends stream from Rails and need no CORS.
 - **TLS is opt-in per host via `FORCE_SSL` (2026-07-30).** Set it to any non-empty value on a host
   reachable **from the internet**. It turns on `assume_ssl` (trust the terminating proxy's
   `X-Forwarded-Proto`), `force_ssl` (http→https redirect, HSTS, and — the one that matters —

@@ -63,9 +63,9 @@
       through the SAME public route this page links, adds bom.csv, and zips it client-side, so no
       byte passes through Rails that a plain download would not already have moved (§15). The
       status line is where a refused fetch is reported -- on the s3 deployment the public file
-      route redirects to a presigned URL and the CSP (`default-src 'self'`, no `connect-src`)
-      blocks that fetch, the shared follow-up S3-2 already carries, so the button must SAY it
-      failed rather than sit there having done nothing. %>
+      route redirects to a presigned URL at the bucket, a cross-origin fetch that reads only
+      under the bucket's CORS rule (docs/DEPLOY.md) and the connect-src the port names for the
+      CSP, so the button must SAY it failed rather than sit there having done nothing. %>
   <% bundle = @pub.bundle_files %>
   <% if bundle.any? %>
     <div class="bundle" data-controller="bundle"

@@ -6,9 +6,10 @@ import { Controller } from "@hotwired/stimulus"
 // itself — a `named_blob_file_path`, NOT the plain blob URL the 3D viewer's loaders use: KiCanvas
 // decides what it just fetched from the URL's OWN trailing extension, so it has to be the one
 // carrying `.kicad_sch`/`.kicad_pcb` (see files/show.html.erb's comment on that route; measured
-// against the vendored module, not guessed). On s3 a presigned redirect is blocked by
-// connect-src 'self', exactly as it is for the 3D viewer's fetch — a shared, pre-existing
-// limitation, not something new here.
+// against the vendored module, not guessed). On s3 that fetch follows a presigned redirect to the
+// bucket — cross-origin, so it reads only under the bucket's CORS rule (docs/DEPLOY.md) and a
+// connect-src the port names for the CSP (FileLayer#presigned_origin), exactly as the 3D
+// viewer's fetch does.
 export default class extends Controller {
   static values = { url: String, controls: { type: String, default: "basic" } }
   static targets = ["stage", "status"]
