@@ -93,7 +93,7 @@
     <details class="composer wiring-add">
       <summary class="btn small">Add connection</summary>
       <%= form_with url: project_connections_path(project), scope: :connection, class: "wiring-add-form" do |f| %>
-        <div class="bom-fields">
+        <div class="composer-fields">
           <label class="field">
             <span>From</span>
             <%= f.text_field :from_label, placeholder: "e.g. Driver board", required: true %>

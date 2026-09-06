@@ -143,13 +143,13 @@
   .bom-lines tr.short .col-stock { color: var(--accent); }
   .bom-more { font-size: 12px; margin: 6px 0 0; }
   .bom-rollup { font: 12px/1.5 var(--font-mono); color: var(--fg-muted); margin: 8px 0; }
-  .bom-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; align-items: end; margin-bottom: 8px; }
-  .bom-fields label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--fg-muted); }
+  .composer-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; align-items: end; margin-bottom: 8px; }
+  .composer-fields label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--fg-muted); }
   .bom-target { display: flex; flex-direction: column; gap: 8px; border: 0; padding: 0; margin: 0 0 8px; }
   .bom-target legend { font-size: 11px; color: var(--fg-muted); padding: 0; }
   .bom-target label { display: flex; gap: 8px; align-items: center; }
   @media (max-width: 719px) {
-    .bom-fields { grid-template-columns: 1fr 1fr; }
+    .composer-fields { grid-template-columns: 1fr 1fr; }
     .bom-lines .col-supplier, .bom-lines .col-ref { display: none; }
   }
 

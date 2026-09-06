@@ -164,5 +164,24 @@ module Web
       delete connection_path(other_connection)
       assert_response :not_found
     end
+
+    # --- read-only ------------------------------------------------------------------------------
+
+    # `editable: false` HAS NO PAGE YET -- S3-4's public project page is its first caller -- so the
+    # partial is rendered directly. Pinned now rather than then because every test above drives
+    # the project page, which always passes `editable: true`: inverting the branch would leave all
+    # of them green while the public page grew Save buttons and a composer.
+    test "editable: false renders plain cells with no form, input or composer" do
+      connection!(from_label: "Driver", to_label: "Motor", wire: "22 AWG", note: "twisted pair")
+
+      html = ApplicationController.render(partial: "projects/wiring",
+                                          locals: { project: @project, connections: @project.connections.to_a,
+                                                    editable: false })
+      doc = Nokogiri::HTML.fragment(html)
+      assert_equal 0, doc.css("form, input, details.composer").size
+      assert_equal [ "Driver", "Motor", "22 AWG", "twisted pair" ],
+                   doc.css("tr.wiring-row td").map { |td| td.text.strip }
+      assert_equal 4, doc.css("thead th").size, "no actions column in read-only mode"
+    end
   end
 end

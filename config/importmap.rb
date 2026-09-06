@@ -61,7 +61,7 @@ pin "lib/export_svg", to: "lib/export_svg.js"
 # THREE CONTROLLERS NOW, not one: codeview (read-only), editor (editable, inside a working tree)
 # and diffview (the commit box's inline diff). The count is not load-bearing — what is, is that
 # every one of them dynamic-imports, so this never ships on a page with no text file.
-pin "lib/codemirror_languages", to: "lib/codemirror_languages.js"
+pin "lib/codemirror_languages", to: "lib/codemirror_languages.js", preload: false
 
 # Which CodeMirror theme the page wants, read from html[data-theme]. A HOST pin for the same
 # reason as the languages table directly above — it takes the CodeMirror namespace as an argument
@@ -70,7 +70,7 @@ pin "lib/codemirror_languages", to: "lib/codemirror_languages.js"
 # no text file. There is no pin_all_from for app/javascript/lib: every module in it is pinned by
 # name, so a new one that nothing pins resolves to nothing and its importer's dynamic import
 # rejects — which in these three controllers degrades silently to the plain <pre>.
-pin "lib/codemirror_theme", to: "lib/codemirror_theme.js"
+pin "lib/codemirror_theme", to: "lib/codemirror_theme.js", preload: false
 
 # THE ADDON SDK — a HOST pin, which is the whole point: merged_importmap draws every host pin before
 # the addon's own, so a bundle imports "@maker/addon-sdk" without declaring anything in its manifest
@@ -106,14 +106,21 @@ pin "three/addons/loaders/3MFLoader.js", to: "3MFLoader.js" # @0.185.1
 # facets and StateFields fail to match by object identity, and CM6 responds by silently ignoring
 # the extension — no error, no warning. test/ci_hygiene_test.rb fails the build if a per-package
 # pin appears. To add a language, add it to codemirror-entry.js and rebuild.
-pin "codemirror", to: "codemirror.js" # bundle: see bin/build-codemirror for pinned versions
+pin "codemirror", to: "codemirror.js", preload: false # bundle: see bin/build-codemirror for pinned versions
 
 # KiCanvas (MIT; notices in vendor/javascript/LICENSE-kicanvas.md) — KiCad schematics and boards
 # rendered in the browser. ONE vendored build from a pinned commit (bin/build-kicanvas), the
 # CodeMirror pattern: no npm package, no CDN. Imported LAZILY by kicanvas_controller.js on the
 # pages that hold a .kicad_sch/.kicad_pcb, so nothing else downloads its 470 KB. The module
 # has no exports; importing it registers <kicanvas-embed> and <kicanvas-source>.
-pin "kicanvas", to: "kicanvas.js" # bundle: see bin/build-kicanvas for the pinned commit
+#
+# `preload: false` ON EVERY LAZY PIN, OR THE LAZINESS IS FICTION. importmap-rails 2.x emits a
+# <link rel="modulepreload"> for every pin by default, so a bundle a controller dynamic-imports
+# only when a file is opened was still FETCHED on every page -- measured on the dev server: the
+# 477 KB kicanvas.js and the CodeMirror bundle in the sign-in page's preload set. The pin stays
+# (a dynamic import still resolves through the map); only the preload hint goes.
+# test/integration/web/lazy_bundles_test.rb drives a real page and pins it.
+pin "kicanvas", to: "kicanvas.js", preload: false # bundle: see bin/build-kicanvas for the pinned commit
 # Lexxy (MIT) — the Action Text editor, replacing Trix. Served from the gem's own asset path, so
 # there is nothing vendored under vendor/javascript and no jspm shared-chunk patching (see the
 # jszip notes above). Attachments are disabled at the element, so @rails/activestorage is
