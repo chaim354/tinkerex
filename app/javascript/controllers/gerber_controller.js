@@ -180,6 +180,12 @@ export default class extends Controller {
   // A SINGLE LAYER GETS `Fit` AND NOTHING ELSE: there is one layer, so a toggle for it is a button
   // whose only effect is to blank the page, and `renderLayers` has no stackup to re-compose.
   buildTools() {
+    // IDEMPOTENT, BECAUSE `connect()` IS NOT ALWAYS FIRST. A Turbo Drive back-navigation restores
+    // the page from its snapshot WITH the toolbar this method already built, then connects a fresh
+    // controller that builds another — two rows whose buttons both work and disagree about which
+    // layers are hidden (the review measured it: tools=2, buttons=10, one row aria-pressed=false
+    // beside one reading true). The stale row goes before the new one is made.
+    this.element.querySelector(".gerber-tools")?.remove()
     const tools = document.createElement("div")
     tools.className = "gerber-tools"
     tools.appendChild(this.toolButton("Fit", { gerberAction: "fit" }))

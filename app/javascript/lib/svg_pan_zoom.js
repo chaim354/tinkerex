@@ -65,20 +65,39 @@ export function installPanZoom(svg, { home, onChange = null } = {}) {
     zoomAbout(p.x, p.y, event.deltaY > 0 ? ZOOM_STEP : 1 / ZOOM_STEP)
   }
 
+  // THE GESTURE IS DECIDED BY HOW MANY POINTERS ARE DOWN, RE-DERIVED ON EVERY DOWN AND UP: one is
+  // a pan from that pointer's current position, exactly two is a pinch measured from the view at
+  // the moment the pair formed, anything else is nothing. Re-deriving (rather than arming state on
+  // the transitions the author imagined) is what keeps a third finger, or one of three lifting,
+  // from leaving a stale pinch or a pan origin from before a zoom — the review measured both as a
+  // view that jumped twice on a single pixel of movement.
+  function rearm() {
+    const active = [ ...pointers.values() ]
+    if (active.length === 2) {
+      const [ a, b ] = active
+      pinchStart = { dist: Math.hypot(a.x - b.x, a.y - b.y), view: [ ...view ],
+                     centre: toUserSpace((a.x + b.x) / 2, (a.y + b.y) / 2) }
+      panOrigin = null
+      // A pinch is a gesture, not a click: whatever pointerup follows it must not select.
+      didPan = true
+      return
+    }
+    pinchStart = null
+    if (active.length === 1) {
+      const [ p ] = active
+      panOrigin = toUserSpace(p.x, p.y)
+      panScreen = { x: p.x, y: p.y }
+      return
+    }
+    panOrigin = null
+  }
+
   function onPointerDown(event) {
     if (event.button !== 0 && event.pointerType === "mouse") return
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
     svg.setPointerCapture(event.pointerId)
-    if (pointers.size === 2) {
-      const [ a, b ] = [ ...pointers.values() ]
-      pinchStart = { dist: Math.hypot(a.x - b.x, a.y - b.y), view: [ ...view ],
-                     centre: toUserSpace((a.x + b.x) / 2, (a.y + b.y) / 2) }
-      panOrigin = null
-      return
-    }
-    panOrigin = toUserSpace(event.clientX, event.clientY)
-    panScreen = { x: event.clientX, y: event.clientY }
-    didPan = false
+    if (pointers.size === 1) didPan = false
+    rearm()
     svg.classList.add("is-panning")
   }
 
@@ -105,10 +124,11 @@ export function installPanZoom(svg, { home, onChange = null } = {}) {
   }
 
   function onPointerUp(event) {
+    if (!pointers.has(event.pointerId)) return
     pointers.delete(event.pointerId)
     svg.releasePointerCapture?.(event.pointerId)
-    if (pointers.size < 2) pinchStart = null
-    if (pointers.size === 0) { panOrigin = null; svg.classList.remove("is-panning") }
+    rearm()
+    if (pointers.size === 0) svg.classList.remove("is-panning")
   }
 
   svg.addEventListener("wheel", onWheel, { passive: false })

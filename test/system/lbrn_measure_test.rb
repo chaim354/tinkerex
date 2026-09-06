@@ -90,6 +90,42 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     assert_selector ".measure-dims", text: CIRCLE_READOUT
   end
 
+  # A DRAG IS NOT A CLICK, AND THIS IS THE ONLY PIN THAT RULE HAS. The pan/zoom maths moved into
+  # lib/svg_pan_zoom.js on 2026-09-06 (shared with the Gerber stage), and `pick` now asks its
+  # `didPan()` whether the pointer travelled past the slop before the click landed. The Gerber
+  # controller never calls `didPan()`, so nothing in test/system/gerber_test.rb covers it — the
+  # review measured `didPan: () => false` leaving every Measure test green. This case starts a drag
+  # ON the square, moves 40 px (well past the 3 px slop), releases, and then fires the click the
+  # browser sends after a mouseup, exactly as a real drag does: the square must NOT be reported.
+  # MUTATION: `didPan: () => false` in the lib reds this on the readout assertion.
+  test "a drag across a contour does not select it" do
+    open_measure_view
+    square = contour_with_min_x(40)
+
+    page.execute_script(<<~JS, square.native)
+      (() => {
+        const el = arguments[0]
+        const svg = el.closest("svg")
+        const r = el.getBoundingClientRect()
+        const x = r.left + r.width / 2, y = r.top + r.height / 2
+        const opts = (cx, cy) => ({
+          pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0, buttons: 1,
+          clientX: cx, clientY: cy, bubbles: true, cancelable: true
+        })
+        el.dispatchEvent(new PointerEvent("pointerdown", opts(x, y)))
+        svg.dispatchEvent(new PointerEvent("pointermove", opts(x + 40, y)))
+        svg.dispatchEvent(new PointerEvent("pointerup", opts(x + 40, y)))
+        svg.dispatchEvent(new MouseEvent("click", opts(x + 40, y)))
+      })()
+    JS
+
+    assert_no_selector ".measure-dims", text: SQUARE_READOUT
+    # `--marked` is the class a picked contour carries (measure_controller.js's `pick`); the first
+    # draft of this line named a class the controller never sets, which no drag could ever add.
+    assert_no_selector ".measure-contour--marked"
+    assert_no_console_errors
+  end
+
   test "the Measure view draws the file's contours without logging a console error" do
     open_measure_view
 

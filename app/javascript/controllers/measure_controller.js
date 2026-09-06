@@ -164,9 +164,10 @@ export default class extends Controller {
     this.home = [payload.job.x - pad, payload.job.y - pad,
                  payload.job.w + pad * 2, payload.job.h + pad * 2]
     // THE viewBox ITSELF IS WRITTEN BY installPanZoom, through the `bindInteractions` call at the
-    // bottom of this method — it sets `home` as it installs, so this element gets its viewBox
-    // before the browser paints (nothing between here and there yields to the event loop, and the
-    // element is not in the document until `replaceChildren` a few lines below either).
+    // bottom of this method — it sets `home` as it installs. That runs AFTER `replaceChildren` has
+    // put the element in the document, and it is still fine, because nothing between here and
+    // there yields to the event loop: the browser cannot paint a viewBox-less frame in between.
+    // An `await` inserted anywhere in this method would break that, which is why there is none.
     // `preserveAspectRatio` stays HERE because the lib's screen ->
     // user-space maths assumes it and cannot set it: the element is the caller's, and a caller that
     // wanted `none` would need different maths, not a silently overridden attribute.
