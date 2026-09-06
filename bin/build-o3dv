@@ -1,0 +1,274 @@
+#!/usr/bin/env bash
+# Rebuild vendor/javascript/o3dv.js — the Online3DViewer engine the browser runs, so this app can
+# show every 3D format its importers read (STL/3MF/OBJ/glTF/PLY/OFF/DAE/WRL/3DS/FBX/3DM/AMF and,
+# through OpenCascade, STEP/IGES/BREP/FCStd) without a server-side conversion.
+#
+# THE CODEMIRROR/KICANVAS/TRACESPACE PATTERN: one vendored ES module built from PINNED versions,
+# one importmap pin, no npm package at runtime and NO CDN. That last clause is the whole reason
+# this script is longer than bin/build-tracespace — see "THE CDN" below.
+#
+# WHY THE BUNDLE IS BUILT FROM `source/engine/main.js` AND NOT COPIED FROM `build/engine/`.
+# The plan said to copy the package's own `build/engine/o3dv.module.js`. Probed, not assumed: that
+# file is a rollup that leaves NINE bare imports unresolved —
+#
+#   import * as THREE from 'three';
+#   import { TGALoader } from 'three/examples/jsm/loaders/TGALoader.js';
+#   import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+#   … ColladaLoader, VRMLLoader, 3MFLoader, AMFLoader, SVGLoader … and 'fflate'
+#
+# — so vendoring it would resolve `three` through THIS app's importmap pin (0.185.1) against the
+# engine's own expectation of 0.176.0, and would need five NEW `three/examples/jsm/...` pins that
+# nothing else in the app wants. esbuild-bundling `source/engine/main.js` instead gives one
+# self-contained ES module carrying the three version the engine was tested against, with the
+# app's own `three` pins left entirely alone for the openscad addon that depends on them
+# (config/importmap.rb says so at those pins).
+#
+# THE CDN, AND WHY THIS SCRIPT PATCHES UPSTREAM SOURCE. Four of the engine's importers are
+# WebAssembly modules it does not bundle: it fetches them from `https://cdn.jsdelivr.net/npm/...`
+# at runtime, by injecting a <script src> into <head> (io/externallibs.js) and, for OpenCascade, by
+# fetching a worker script and running it out of a `blob:` URL (import/importerutils.js). Both are
+# wrong here three times over: `script-src 'self'` refuses the script tag and `'self'` refuses a
+# blob: worker (config/initializers/content_security_policy.rb — report-only today, so today it
+# would only fill the report log); a self-hosted box on an isolated network has no jsdelivr at all;
+# and CLAUDE.md §9's vendoring rule is "no CDN" for exactly the supply-chain reason. 0.18.0 exposes
+# no setter for this — `SetExternalLibLocation` does not exist in this version, the plan's name for
+# it notwithstanding — so the URLs are rewritten HERE, at build time, to `/o3dv/<version>/`, and
+# the artifact is then CHECKED to contain no jsdelivr string at all. Every replacement below is
+# exact-match-or-refuse: a rename upstream fails this script instead of silently shipping a viewer
+# that phones home.
+#
+# THE OCCT WORKER LOSES ITS BLOB, AND THAT IS A SIMPLIFICATION RATHER THAN A PORT. Upstream builds
+# a blob: worker only because it must string-replace two paths into a worker script it fetched from
+# a CDN. Served from our own directory the worker needs no patching at all: its
+# `importScripts('occt-import-js.js')` and emscripten's `locateFile` both resolve relative to the
+# WORKER's own URL, so `new Worker('/o3dv/<version>/occt-import-js-worker.js')` finds the .js and
+# the .wasm beside it. Same-origin, so `script-src 'self'` covers it (worker-src falls back to
+# script-src) and no `blob:` source has to be added to the policy.
+#
+# WHAT IS DELIBERATELY NOT SHIPPED: web-ifc (MPL-2.0), the IFC importer. IFC is not a maker format,
+# MPL is file-level copyleft we have no reason to carry, and `.ifc` is absent from
+# Maker::FileAttachment::VIEWABLE_3D_EXTS so nothing can reach that importer. Its URL is rewritten
+# with the others (so the no-jsdelivr check stays total) and the file simply is not there.
+#
+# LICENCES (§9): online-3d-viewer MIT, three MIT, fflate MIT (all bundled into the artifact);
+# rhino3dm MIT and draco3d Apache-2.0 (shipped as separate files); occt-import-js LGPL-2.1 —
+# a separately shipped WebAssembly file the browser fetches at runtime and that nothing links
+# against, the same posture the Dockerfile already takes for OCCT inside the F3D subprocess
+# ("OCCT is LGPL and stays process-isolated"). Every notice ships beside the bytes it covers.
+#
+# Needs node + npm on PATH, the same as bin/build-kicanvas and bin/build-tracespace. Idempotent:
+# everything happens in a temp dir.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+ROOT="$PWD"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+O3DV_VERSION="0.18.0"
+# The three external-library versions are UPSTREAM'S OWN, read out of the CDN URLs in
+# source/engine/import/importerutils.js. They are asserted against that file below rather than
+# trusted, because shipping a different build of an importer than the engine expects is the kind of
+# mismatch that surfaces as a corrupt mesh rather than as an error.
+OCCT_VERSION="0.0.22"
+RHINO_VERSION="8.17.0"
+DRACO_VERSION="1.5.7"
+
+LIB_DIR="public/o3dv/$O3DV_VERSION"
+# PUBLIC FILES ARE SERVED STATIC AND UNFINGERPRINTED, so the DIRECTORY carries the version: a bump
+# writes a new directory and the vendored bundle points at it, instead of overwriting bytes that
+# a cached page may still be asking for by the old name.
+LIB_BASE="/o3dv/$O3DV_VERSION/"
+
+cat > "$WORK/package.json" <<JSON
+{
+  "name": "tinkerex-o3dv-bundle",
+  "private": true,
+  "dependencies": {
+    "online-3d-viewer": "$O3DV_VERSION",
+    "esbuild": "0.25.10",
+
+    "occt-import-js": "$OCCT_VERSION",
+    "rhino3dm": "$RHINO_VERSION",
+    "draco3d": "$DRACO_VERSION"
+  }
+}
+JSON
+
+echo "installing pinned packages…"
+(cd "$WORK" && npm install --silent --no-audit --no-fund)
+
+PKG="$WORK/node_modules/online-3d-viewer"
+UTILS="$PKG/source/engine/import/importerutils.js"
+
+# THE PATCH. Node rather than sed because every replacement is exact-match-or-refuse and sed
+# cannot fail on "the needle was not there" — a silently-unpatched build is precisely the outcome
+# this whole section exists to prevent.
+LIB_BASE="$LIB_BASE" OCCT_VERSION="$OCCT_VERSION" RHINO_VERSION="$RHINO_VERSION" \
+  DRACO_VERSION="$DRACO_VERSION" UTILS="$UTILS" node <<'NODE'
+const fs = require('fs')
+const { LIB_BASE, OCCT_VERSION, RHINO_VERSION, DRACO_VERSION, UTILS } = process.env
+
+let src = fs.readFileSync(UTILS, 'utf8')
+
+function replaceOnce (needle, replacement, what) {
+  const count = src.split(needle).length - 1
+  if (count !== 1) {
+    console.error(`REFUSING TO BUILD: expected exactly one occurrence of ${what} in ${UTILS}, found ${count}.`)
+    console.error('Upstream moved or renamed it. Re-read source/engine/import/importerutils.js and update bin/build-o3dv.')
+    process.exit(1)
+  }
+  src = src.replace(needle, replacement)
+}
+
+// The occt worker: replace the whole function, because what changes is its MECHANISM (a fetched,
+// string-patched blob: worker becomes a plain same-origin one), not a URL inside it. Bounded by
+// the two `export function` markers so the slice cannot silently swallow anything else, and the
+// removed text is checked to be the thing we meant to remove.
+const start = src.indexOf('export function CreateOcctWorker')
+const end = src.indexOf('export function LoadExternalLibrary')
+if (start === -1 || end === -1 || start >= end) {
+  console.error('REFUSING TO BUILD: could not locate CreateOcctWorker before LoadExternalLibrary in ' + UTILS)
+  process.exit(1)
+}
+const removed = src.slice(start, end)
+for (const marker of ['occt-import-js@' + OCCT_VERSION, 'createObjectURL', 'new Worker']) {
+  if (!removed.includes(marker)) {
+    console.error(`REFUSING TO BUILD: CreateOcctWorker no longer contains ${marker} — upstream changed shape.`)
+    process.exit(1)
+  }
+}
+src = src.slice(0, start) + `export function CreateOcctWorker (worker)
+{
+	return new Promise ((resolve, reject) => {
+		// PATCHED BY bin/build-o3dv. Upstream fetches this worker from jsdelivr, rewrites two
+		// paths into its text and runs it from a blob: URL. Served from our own directory it
+		// needs no rewriting: importScripts('occt-import-js.js') and emscripten's locateFile
+		// both resolve against the WORKER's URL, so the .js and the .wasm are found beside it.
+		try {
+			occtWorkerUrl = '${LIB_BASE}occt-import-js-worker.js';
+			resolve (new Worker (occtWorkerUrl));
+		} catch (err) {
+			reject (err);
+		}
+	});
+}
+
+` + src.slice(end)
+
+// The three <script src> importers. draco3d does NOT publish a `.min.js` — upstream's URL relies
+// on jsDelivr minifying `draco_decoder_nodejs.js` on the fly, so the local name is the real one.
+replaceOnce(`'https://cdn.jsdelivr.net/npm/rhino3dm@${RHINO_VERSION}/rhino3dm.min.js'`,
+            `'${LIB_BASE}rhino3dm.min.js'`, 'the rhino3dm CDN url')
+replaceOnce(`'https://cdn.jsdelivr.net/npm/draco3d@${DRACO_VERSION}/draco_decoder_nodejs.min.js'`,
+            `'${LIB_BASE}draco_decoder_nodejs.js'`, 'the draco3d CDN url')
+// web-ifc is NOT shipped (MPL-2.0, and .ifc is not in VIEWABLE_3D_EXTS). Rewritten anyway so the
+// "no jsdelivr anywhere in the artifact" check below stays a total statement rather than one with
+// a documented exception nobody re-reads.
+replaceOnce("'https://cdn.jsdelivr.net/npm/web-ifc@0.0.68/web-ifc-api-iife.js'",
+            `'${LIB_BASE}web-ifc-api-iife.js'`, 'the web-ifc CDN url')
+
+fs.writeFileSync(UTILS, src)
+NODE
+
+# THE EXPORTS THE CONTROLLER CALLS, CHECKED BEFORE THE ARTIFACT IS COPIED IN — bin/build-tracespace's
+# rule and its reasoning: a rename upstream would otherwise produce a perfectly valid bundle missing
+# the name modelviewer_controller.js reaches for, which fails at runtime as a silent fallback to the
+# thumbnail poster. Checked in main.js's own export block, not in the minified output, where the
+# names survive only as `xy as EmbeddedViewer` aliases.
+MISSING=""
+for NAME in EmbeddedViewer RGBColor RGBAColor EdgeSettings Direction; do
+  grep -qE "^\s*${NAME},?\s*$" "$PKG/source/engine/main.js" || MISSING="$MISSING $NAME"
+done
+if [ -n "$MISSING" ]; then
+  echo "REFUSING TO BUILD: online-3d-viewer no longer exports:$MISSING" >&2
+  echo "Update app/javascript/controllers/modelviewer_controller.js in the same change." >&2
+  exit 1
+fi
+
+echo "bundling…"
+(cd "$WORK" && npx esbuild node_modules/online-3d-viewer/source/engine/main.js \
+  --bundle --format=esm --platform=browser --minify --target=es2020 \
+  --legal-comments=none \
+  --outfile=o3dv.js)
+
+# NO CDN IN THE ARTIFACT. The point of the patch above, asserted on the OUTPUT rather than on the
+# input, so a URL introduced by a dependency we did not read is caught too.
+if grep -q "cdn.jsdelivr.net" "$WORK/o3dv.js"; then
+  echo "REFUSING TO SHIP: the bundle still reaches a CDN:" >&2
+  grep -o "https://cdn\.jsdelivr\.net[^'\"]*" "$WORK/o3dv.js" | sort -u >&2
+  exit 1
+fi
+# AND THE LOCAL PATHS ARE ACTUALLY IN IT, which is the other half: a patch that replaced the URLs
+# with nothing would satisfy the check above perfectly (§14e's vacuous-guard shape).
+for NAME in occt-import-js-worker.js rhino3dm.min.js draco_decoder_nodejs.js; do
+  grep -q "$LIB_BASE$NAME" "$WORK/o3dv.js" || {
+    echo "REFUSING TO SHIP: $LIB_BASE$NAME is not referenced by the bundle." >&2; exit 1; }
+done
+
+mkdir -p "$ROOT/vendor/javascript" "$ROOT/$LIB_DIR"
+cp "$WORK/o3dv.js" "$ROOT/vendor/javascript/o3dv.js"
+
+# THE WASM IMPORTERS. Everything the shipped formats need and nothing else — no web-ifc, no
+# draco ENCODER (we only decode), no rhino3dm.js/.module.js beside the .min.js the engine names.
+cp "$WORK/node_modules/occt-import-js/dist/occt-import-js.js" \
+   "$WORK/node_modules/occt-import-js/dist/occt-import-js.wasm" \
+   "$WORK/node_modules/occt-import-js/dist/occt-import-js-worker.js" \
+   "$ROOT/$LIB_DIR/"
+cp "$WORK/node_modules/rhino3dm/rhino3dm.min.js" \
+   "$WORK/node_modules/rhino3dm/rhino3dm.wasm" \
+   "$ROOT/$LIB_DIR/"
+cp "$WORK/node_modules/draco3d/draco_decoder_nodejs.js" \
+   "$WORK/node_modules/draco3d/draco_decoder.wasm" \
+   "$ROOT/$LIB_DIR/"
+
+# THE NOTICES, BESIDE THE BYTES THEY COVER. occt-import-js ships OCCT's own licence text as well as
+# its own; both are copied verbatim rather than summarised, which is what LGPL-2.1 §1 asks for.
+cp "$WORK/node_modules/occt-import-js/dist/license.occt-import-js.txt" \
+   "$WORK/node_modules/occt-import-js/dist/license.occt.txt" \
+   "$ROOT/$LIB_DIR/"
+
+cat > "$ROOT/$LIB_DIR/README.md" <<EOF
+# Online3DViewer external importers — v$O3DV_VERSION
+
+Written by \`bin/build-o3dv\`; do not edit by hand. These are the WebAssembly importers
+\`vendor/javascript/o3dv.js\` loads at runtime, from this directory rather than from jsdelivr (see
+that script's header for why). Served static and unfingerprinted, so the version lives in the
+directory name and \`$LIB_BASE\` is baked into the bundle.
+
+| file | package | version | licence |
+|---|---|---|---|
+| \`occt-import-js.{js,wasm}\`, \`occt-import-js-worker.js\` | occt-import-js | $OCCT_VERSION | **LGPL-2.1** (\`license.occt-import-js.txt\`), wrapping OpenCASCADE (\`license.occt.txt\`) |
+| \`rhino3dm.min.js\`, \`rhino3dm.wasm\` | rhino3dm | $RHINO_VERSION | MIT |
+| \`draco_decoder_nodejs.js\`, \`draco_decoder.wasm\` | draco3d | $DRACO_VERSION | Apache-2.0 |
+
+**occt-import-js is the one LGPL thing this app ships to a browser** (STEP/IGES/BREP/FCStd). It is
+a separate file the browser fetches and runs on its own; nothing links against it and no part of
+it is copied into our bundle, which is the LGPL's own dynamic-use case — and the same posture the
+Dockerfile already takes for OCCT inside the F3D subprocess. Replacing it is a matter of dropping a
+different build in this directory. CLAUDE.md §9.
+
+**web-ifc is deliberately absent** (MPL-2.0, file-level copyleft). \`.ifc\` is not in
+\`Maker::FileAttachment::VIEWABLE_3D_EXTS\`, so no page can reach that importer.
+EOF
+
+{
+  printf 'online-3d-viewer %s (MIT), bundled with three (MIT) and fflate (MIT) into\n' "$O3DV_VERSION"
+  printf 'vendor/javascript/o3dv.js by bin/build-o3dv.\n\n'
+  printf 'The WebAssembly importers it loads at runtime are NOT in this file — they are separate\n'
+  printf 'files under public/o3dv/%s/, with their own notices beside them (see the README\n' "$O3DV_VERSION"
+  printf 'there). occt-import-js is LGPL-2.1 and is shipped, unmodified, as one of those files.\n\n'
+  printf -- '--- online-3d-viewer ---\n\n'
+  cat "$PKG/LICENSE.md"
+  printf '\n\n--- three.js (bundled) ---\n\n'
+  cat "$WORK/node_modules/three/LICENSE" 2>/dev/null || printf 'MIT License, Copyright (c) 2010-2025 three.js authors\n'
+  printf '\n\n--- fflate (bundled) ---\n\n'
+  cat "$WORK/node_modules/fflate/LICENSE" 2>/dev/null || printf 'MIT License, Copyright (c) 2023 Arjun Barrett\n'
+} > "$ROOT/vendor/javascript/LICENSE-o3dv.md"
+
+SIZE=$(wc -c < "$ROOT/vendor/javascript/o3dv.js")
+GZIP=$(gzip -9 -c "$ROOT/vendor/javascript/o3dv.js" | wc -c)
+printf 'wrote vendor/javascript/o3dv.js from online-3d-viewer@%s — %d bytes (%d gzipped)\n' \
+  "$O3DV_VERSION" "$SIZE" "$GZIP"
+printf 'wrote %s:\n' "$LIB_DIR"
+ls -l "$ROOT/$LIB_DIR" | awk 'NR>1 { printf "  %10d  %s\n", $5, $9 }'
