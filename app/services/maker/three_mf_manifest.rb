@@ -69,6 +69,10 @@ module Maker
     # A component that resolves to an object that resolves to a component... A real file nests one
     # level; this only has to refuse a cycle, not support deep assemblies.
     MAX_DEPTH = 16
+    # Objects visited across one whole walk, every build item included — a bound on WORK where
+    # MAX_DEPTH bounds only nesting (see `walk`). A real project is dozens; a thousand-part assembly
+    # is hundreds; ten thousand is a file nobody printed.
+    MAX_STEPS = 10_000
 
     def self.threemf?(name) = File.extname(name.to_s).downcase.delete(".") == EXT
 
@@ -105,18 +109,34 @@ module Maker
     # the same class's probed finding: `open_buffer` on an empty buffer raises TypeError, not
     # Zip::Error.
     def self.manifest_from(bytes)
+      zip = open_zip(bytes) or return nil
+      root = xml(zip, ROOT_MODEL)
+      return nil unless root && root.name == "model"
+
+      factor = UNIT_TO_MM.fetch(root["unit"].to_s.downcase, 1.0)
+      leaves = leaf_meshes(zip, root)
+      colors = Slicer.for(zip)&.colors_for(leaves) || Array.new(leaves.size)
+      Manifest.new(unit_factor: factor, colors:)
+    rescue Nokogiri::XML::SyntaxError
+      nil
+    end
+
+    # THE ARCHIVE IS OPENED IN A RESCUE OF ITS OWN, NARROWER IN SCOPE AND WIDER IN CLASSES than the
+    # method's. rubyzip 3.6.0 does not fail cleanly on a central directory that is present but cut
+    # short: a real 3MF minus its last 1, 5 or 10 bytes raised `NoMethodError` ("undefined method
+    # 'positive?' for nil") and `ArgumentError` ("comparison of Integer with nil") out of
+    # `open_buffer`, not `Zip::Error` (the review measured it; only a zip minus 20 bytes, its whole
+    # EOCD gone, answered `Zip::Error`). A method-level `rescue NoMethodError` would also swallow
+    # THIS class's own bugs, which must stay loud — so the wide list wraps exactly the one call that
+    # is the gem's, and nothing else. The block form is not used: it discards the block's value and
+    # answers a re-serialised buffer (`zf.write_buffer`), so the archive is taken by return value.
+    # Empty bytes are refused first: `open_buffer` on them raises TypeError, and a file with no bytes
+    # is not a 3MF either way.
+    def self.open_zip(bytes)
       return nil if bytes.nil? || bytes.empty?
 
-      Zip::File.open_buffer(StringIO.new(bytes.b)) do |zip|
-        root = xml(zip, ROOT_MODEL)
-        return nil unless root && root.name == "model"
-
-        factor = UNIT_TO_MM.fetch(root["unit"].to_s.downcase, 1.0)
-        leaves = leaf_meshes(zip, root)
-        colors = Slicer.for(zip)&.colors_for(leaves) || Array.new(leaves.size)
-        return Manifest.new(unit_factor: factor, colors:)
-      end
-    rescue Zip::Error, Nokogiri::XML::SyntaxError
+      Zip::File.open_buffer(StringIO.new(bytes.b))
+    rescue Zip::Error, TypeError, NoMethodError, ArgumentError
       nil
     end
 
@@ -129,22 +149,36 @@ module Maker
       build = child(root, "build")
       return [] if build.nil?
 
+      budget = { steps: MAX_STEPS }
       elements(build, "item").flat_map do |item|
         id = item["objectid"].to_s
-        walk(zip, parts, ROOT_MODEL, id, id, 0)
+        walk(zip, parts, ROOT_MODEL, id, id, 0, budget)
       end
     end
 
     # An object holding a `<mesh>` is one imported mesh; an object holding `<components>` is none of
     # its own and every component's, in component order, each resolved in the part file its own
     # `p:path` names (relative to the zip root). A component naming a part file this zip does not
-    # hold emits nothing — three's loader fails that item too, so the counts still agree.
+    # hold emits nothing. That choice is NOT what keeps the counts aligned — measured, three's loader
+    # fails the WHOLE import on a missing part, so the browser never reaches `applyColors` and this
+    # list is moot for such a file; skipping is chosen only so that nothing raises here.
     #
     # `<mesh>` IS REQUIRED FOR A LEAF rather than "no components": an object with neither (a 3MF may
     # carry one) would otherwise be counted as a mesh the importer never made, and the count check
     # on the client would then refuse the whole file's colours.
-    def self.walk(zip, parts, path, object_id, item_object_id, depth)
+    #
+    # BOUNDED TWICE, BECAUSE A DEPTH LIMIT ALONE DOES NOT BOUND THE WORK. `depth` caps nesting at
+    # MAX_DEPTH; `budget` is a total step count across the whole walk, every build item included,
+    # and it is the one that matters: a self-referencing object with three components is 3^16 walks
+    # under a depth bound alone — the review measured it not finishing in 20 s, on a request thread,
+    # per page view — and a diamond-shaped graph fans out the same way without ever repeating an
+    # ancestor, which is why the bound is on WORK rather than on cycles. Past the budget the walk
+    # stops, the list comes back short, and the client's count check refuses the colours — the safe
+    # answer for a file shaped like nothing anyone printed. Sharing between branches stays legal:
+    # a Bambu project names one part from several items, and each is its own mesh.
+    def self.walk(zip, parts, path, object_id, item_object_id, depth, budget)
       return [] if depth > MAX_DEPTH
+      return [] if (budget[:steps] -= 1).negative?
 
       object = objects_in(zip, parts, path)&.[](object_id.to_s)
       return [] if object.nil?
@@ -154,7 +188,7 @@ module Maker
       return [] if components.nil?
 
       elements(components, "component").flat_map do |component|
-        walk(zip, parts, component_path(component) || path, component["objectid"], item_object_id, depth + 1)
+        walk(zip, parts, component_path(component) || path, component["objectid"], item_object_id, depth + 1, budget)
       end
     end
 

@@ -78,9 +78,12 @@ class ModelsController < ApplicationController
     # swaps one model for another, so the slicer colours and the unit factor have to travel on each
     # `<option>` (§14d — modelviewer_controller.js reads them beside `url`/`format`). `for` refuses
     # by name first, so the non-3MF entries cost nothing; a 3MF costs ONE bounded port read (one
-    # query on share) the first time this model is viewed and nothing after — the constancy
-    # page_query_budget_test.rb asserts is in the number of ATTACHMENTS, and this is per 3D FILE,
-    # which is the same per-file shape the page's thumbnails already have.
+    # query on share; on chunk_remote a chunk download through the sync server) the first time this
+    # model is viewed and nothing after, cached by content token. THAT COST IS PER 3MF ATTACHMENT,
+    # AND page_query_budget_test.rb DOES NOT SEE IT: its growing fixture is all `.stl`, which `for`
+    # refuses by name, so the constancy it asserts is over files that never reach a read. A model
+    # holding N 3MFs pays N reads on a cold cache — the same per-file shape the page's thumbnails
+    # already have, stated here rather than hidden behind a guard that cannot fail for it.
     @viewable_3d = @attachments.filter_map do |a|
       node = @page_nodes[a.node_id]
       ext = File.extname(node.name).downcase.delete(".")

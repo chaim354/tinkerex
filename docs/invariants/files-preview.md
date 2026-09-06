@@ -300,9 +300,11 @@ leaf mesh in `<build><item>` order with components resolved depth-first**, which
 loader builds and the engine numbers; **resource order is not build order** and a walk over
 `<resources>` paints a real Bambu project's parts in each other's colours. Nothing is applied unless
 the list length **equals `model.MeshCount()` exactly** (a wrong colour on the wrong part is worse
-than grey); a mesh carrying its own vertex colours (a CAD export's `m:colorgroup`, which the importer
-DOES read) is left alone; and the material is **cloned first**, because the engine gives every mesh
-built from one 3MF material the same material object. **Painting is out of scope** — Bambu
+than grey); a mesh carrying its own vertex colours is left alone — the reachable case is a slicer
+project whose meshes still carry the `m:colorgroup` they were imported with, NOT a plain CAD export,
+whose manifest is all-null and never reaches that guard (it is unpinned: the review measured its
+removal green); and the material is **cloned first**, because the engine gives every mesh built from
+one 3MF material the same material object. **Painting is out of scope** — Bambu
 `paint_color` and PrusaSlicer `slic3rpe:mmu_segmentation` are per-triangle assignments the loader
 drops, and a PrusaSlicer volume is a triangle RANGE of one mesh, so a Prusa object's colour is its
 whole mesh's.

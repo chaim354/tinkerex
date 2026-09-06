@@ -157,6 +157,19 @@ module Maker
     # `open_buffer` raises `TypeError: no implicit conversion of StringIO into String` — so
     # `listing_from` guards on empty bytes rather than rescuing a class broad enough to hide a bug.
     # An interrupted export really does leave one of these on a share.
+    # A ZIP CUT SHORT IS THE ORDINARY MALFORMED SHAPE — an interrupted copy onto the NAS — and rubyzip
+    # 3.6.0 does not answer it with Zip::Error: an archive minus its last 1, 5 or 10 bytes raises
+    # NoMethodError or ArgumentError out of `open_buffer` (measured in the 3MF review, which found
+    # this reader raising identically on the same bytes), so every view of such a file was a 500. The
+    # archive is now opened behind a rescue of exactly those classes and nothing else (`open_zip`).
+    # MUTATION: narrowing that rescue back to `Zip::Error` reds this on the 1- and 5-byte cuts.
+    test "a zip cut short by a few bytes is not a board, and does not raise" do
+      whole = fusion_zip
+      [ 1, 5, 10 ].each do |cut|
+        assert_nil GerberArchive.listing_from(whole[0...-cut]), "cut by #{cut} bytes"
+      end
+    end
+
     test "a zero-byte .zip is not a board, and does not raise" do
       node = write_gerber_zip!(body: "")
 

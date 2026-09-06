@@ -148,7 +148,7 @@ module Web
       # pair rather than a manifest.
       assert_select "select.model-viewer-source option[data-colors][data-unit-factor]", count: 5
       assert_select "select.model-viewer-source option[data-colors=?]", "[]", count: 5
-      assert_select "select.model-viewer-source option[data-unit-factor=?]", "1", count: 5
+      assert_select "select.model-viewer-source option[data-unit-factor=?]", "1.0", count: 5
     end
 
     # THE MANIFEST IS PER FILE, WHICH IS WHY IT RIDES ON THE OPTION. Two 3MFs with different slicer

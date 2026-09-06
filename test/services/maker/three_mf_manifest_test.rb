@@ -176,9 +176,72 @@ module Maker
       end
     end
 
-    # A COMPONENT NAMING A PART FILE THE ZIP DOES NOT HOLD EMITS NOTHING for that component — three's
-    # loader fails that item too, so the counts still agree and the browser still applies what it
-    # has. The manifest itself must not raise.
+    # A 3MF CUT SHORT IS THE ORDINARY MALFORMED SHAPE — an interrupted upload, a sync that stopped —
+    # and rubyzip 3.6.0 does not answer it with Zip::Error: a real archive minus its last 1, 5 or 10
+    # bytes raises NoMethodError or ArgumentError out of `open_buffer` (the review measured it), which
+    # the method's own rescue never named, so every view of such a file was a 500. The archive is
+    # now opened behind a rescue of exactly those classes and nothing else.
+    # MUTATION: narrowing `open_zip`'s rescue back to `Zip::Error` reds this on the 1- and 5-byte cuts.
+    test "a 3MF cut short by a few bytes is nil, not a raise" do
+      whole = bambu_3mf
+      [ 1, 5, 10 ].each do |cut|
+        assert_nil ThreeMfManifest.manifest_from(whole[0...-cut]), "cut by #{cut} bytes"
+      end
+    end
+
+    # A CYCLE IN THE COMPONENT GRAPH STOPS AT ITS FIRST REPEAT, NOT AT THE DEPTH LIMIT. Under a
+    # depth bound alone an object naming itself three times is 3^16 walks — the review measured it
+    # not finishing in 20 s, on a request thread, per page view. No conforming producer writes one,
+    # which is exactly why it has to be a file this reader shrugs at rather than one it trusts.
+    # MUTATION: removing BOTH bounds — the depth check and the budget decrement — reds this on the
+    # timeout; either alone still stops it, which is the point of having two.
+    test "a cyclic component graph terminates at once" do
+      body = threemf_zip("3D/3dmodel.model" => <<~XML)
+        <model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+          <resources>
+            <object id="1"><components>
+              <component objectid="1"/><component objectid="1"/><component objectid="1"/>
+            </components></object>
+          </resources>
+          <build><item objectid="1"/></build>
+        </model>
+      XML
+
+      manifest = Timeout.timeout(5) { ThreeMfManifest.manifest_from(body) }
+
+      assert_equal [], manifest.colors, "a cycle reaches no mesh"
+    end
+
+    # THE STEP BUDGET BOUNDS WORK THE CYCLE CHECK CANNOT SEE: a diamond-shaped graph repeats no
+    # ancestor, so every branch is legal, and a root of 120 components each naming an object of 100
+    # components is 12,000 leaves. Past MAX_STEPS the walk stops; the client's count check then
+    # refuses the colours, which is the safe answer for a file shaped like nothing anyone printed.
+    # MUTATION: removing the `budget` decrement reds this (12,000 leaves come back).
+    test "a walk stops at MAX_STEPS instead of finishing a pathological graph" do
+      fan = (1..100).map { |i| %(<component objectid="#{200 + i}"/>) }.join
+      leaves = (1..100).map { |i| %(<object id="#{200 + i}"><mesh><vertices/><triangles/></mesh></object>) }.join
+      root = (1..120).map { %(<component objectid="2"/>) }.join
+      body = threemf_zip("3D/3dmodel.model" => <<~XML)
+        <model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+          <resources>
+            #{leaves}
+            <object id="2"><components>#{fan}</components></object>
+            <object id="1"><components>#{root}</components></object>
+          </resources>
+          <build><item objectid="1"/></build>
+        </model>
+      XML
+
+      manifest = Timeout.timeout(10) { ThreeMfManifest.manifest_from(body) }
+
+      assert_operator manifest.colors.size, :<, 12_000, "the budget must stop the walk short of every leaf"
+      assert_operator manifest.colors.size, :<=, ThreeMfManifest::MAX_STEPS
+    end
+
+    # A COMPONENT NAMING A PART FILE THE ZIP DOES NOT HOLD EMITS NOTHING for that component, and the
+    # manifest itself must not raise. That is all this pins: three's loader fails the WHOLE import
+    # on a missing part (measured — see o3dv_test.rb's count-mismatch fixture), so the browser never
+    # reaches applyColors for such a file and the shape of this list is moot there.
     test "a component pointing at a missing part file drops that mesh and keeps the rest" do
       body = bambu_3mf(objects: [ { extruder: 1 }, { extruder: 2 } ])
       body = threemf_without(body, "3D/Objects/object_101.model")

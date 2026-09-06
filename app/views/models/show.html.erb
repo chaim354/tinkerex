@@ -53,7 +53,7 @@
            data-modelviewer-url-value="<%= named_blob_file_path(@viewable_3d.first[:node_id], filename: @viewable_3d.first[:name]) %>"
            data-modelviewer-format-value="<%= @viewable_3d.first[:format] %>"
            data-modelviewer-colors-value="<%= (@viewable_3d.first[:manifest]&.colors || []).to_json %>"
-           data-modelviewer-unit-factor-value="<%= @viewable_3d.first[:manifest]&.unit_factor || 1 %>"
+           data-modelviewer-unit-factor-value="<%= @viewable_3d.first[:manifest]&.unit_factor || 1.0 %>"
            <% end %>>
         <div class="model-viewer-stage" data-modelviewer-target="canvas"></div>
         <div class="model-viewer-bar">
@@ -68,7 +68,7 @@
                         data-url="<%= named_blob_file_path(f[:node_id], filename: f[:name]) %>"
                         data-format="<%= f[:format] %>"
                         data-colors="<%= (f[:manifest]&.colors || []).to_json %>"
-                        data-unit-factor="<%= f[:manifest]&.unit_factor || 1 %>"
+                        data-unit-factor="<%= f[:manifest]&.unit_factor || 1.0 %>"
                         <%= "selected" if f[:node_id] == @viewable_3d_default[:node_id] %>><%= f[:name] %></option>
               <% end %>
             </select>

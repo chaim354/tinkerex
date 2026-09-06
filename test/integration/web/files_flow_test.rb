@@ -291,7 +291,7 @@ module Web
       # scale by nothing" — asserted here rather than left implicit, because the controller reads
       # both on EVERY format and a missing attribute would make `unitFactorValue` 0 for STL too.
       assert_select ".model-viewer[data-modelviewer-colors-value=?]", "[]"
-      assert_select ".model-viewer[data-modelviewer-unit-factor-value=?]", "1"
+      assert_select ".model-viewer[data-modelviewer-unit-factor-value=?]", "1.0"
     end
 
     # THE SLICER'S COLOURS AND THE DECLARED UNIT REACH THE PAGE AS DATA, which is the whole server

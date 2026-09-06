@@ -150,9 +150,13 @@ export default class extends Controller {
   // and the loader disagreed about how many meshes this file has, and painting the wrong part is
   // worse than leaving it grey — so a mismatch applies NOTHING and says so in the console.
   //
-  // TWO MORE THINGS NOT TO SIMPLIFY AWAY. A mesh whose geometry carries its own vertex colours (a
-  // CAD export's `m:colorgroup`, which the importer DOES read) is left alone — the file's own
-  // colours beat a slicer's guess at them. And the material is CLONED first: the engine hands every
+  // TWO MORE THINGS NOT TO SIMPLIFY AWAY. A mesh whose geometry carries its own vertex colours is
+  // left alone — the file's own colours beat a slicer's guess at them. The case that reaches that
+  // guard is NOT a plain CAD export (its manifest is all-null, so `!hex` returns first): it is a
+  // slicer project whose meshes still carry the `m:colorgroup` they were imported with, which
+  // Bambu writes when a coloured model is re-exported. No fixture pins it (the review measured the
+  // guard's removal green), so this sentence is the guard's only witness. And the material is
+  // CLONED first: the engine hands every
   // mesh built from one 3MF material the SAME material object, so setting `.color` on it in place
   // paints every part the last colour in the list. The clone keeps the array shape the engine used
   // (`meshThreeMaterials` is an array, one entry per material group).
