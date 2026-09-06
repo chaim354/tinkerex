@@ -9,6 +9,7 @@ module Maker
       setup do
         @stl = File.binread(Rails.root.join("test/fixtures/files/tetra.stl"))
         @obj = File.binread(Rails.root.join("test/fixtures/files/tetra.obj"))
+        @off = File.binread(Rails.root.join("test/fixtures/files/tetra.off"))
       end
 
       test "available? reflects whether the f3d binary is on PATH" do
@@ -47,6 +48,18 @@ module Maker
       test "renders an OBJ to a PNG thumbnail via f3d" do
         skip "f3d not installed" unless Maker::Previews::Mesh.available?
         result = Maker::Previews::Mesh.render(@obj, size: 128, ext: "obj")
+        assert_equal "image/png", result[:content_type]
+        assert_equal 128, result[:width]
+        assert_equal "\x89PNG".b, result[:bytes][0, 4].b
+      end
+
+      # ONE OF THE VIEWER WIDENING'S NEW FORMATS THROUGH THE REAL BINARY, and deliberately one the
+      # ASSIMP PLUGIN reads (off, dae, fbx), not a native reader: the registry's nine new entries
+      # rested on `f3d --list-readers` alone, read on the Homebrew build, so this is what proves the
+      # plugin set the shipped tarball carries actually renders (the review's finding).
+      test "renders an OFF (assimp plugin) to a PNG thumbnail via f3d" do
+        skip "f3d not installed" unless Maker::Previews::Mesh.available?
+        result = Maker::Previews::Mesh.render(@off, size: 128, ext: "off")
         assert_equal "image/png", result[:content_type]
         assert_equal 128, result[:width]
         assert_equal "\x89PNG".b, result[:bytes][0, 4].b

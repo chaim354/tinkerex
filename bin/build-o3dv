@@ -177,7 +177,7 @@ NODE
 # thumbnail poster. Checked in main.js's own export block, not in the minified output, where the
 # names survive only as `xy as EmbeddedViewer` aliases.
 MISSING=""
-for NAME in EmbeddedViewer RGBColor RGBAColor EdgeSettings Direction; do
+for NAME in EmbeddedViewer RGBColor RGBAColor EdgeSettings Direction GetBoundingBox; do
   grep -qE "^\s*${NAME},?\s*$" "$PKG/source/engine/main.js" || MISSING="$MISSING $NAME"
 done
 if [ -n "$MISSING" ]; then

@@ -36,11 +36,16 @@ Rails.application.configure do
     # `'wasm-unsafe-eval'` BUYS THE WEBASSEMBLY IMPORTERS AND NOTHING ELSE, which is the whole
     # reason it exists as a source separate from `'unsafe-eval'`. Chrome refuses
     # `WebAssembly.instantiate` under an enforcing `script-src` that carries neither, and the 3D
-    # viewer's OpenCascade (STEP/IGES/BREP/FCStd), rhino3dm (3DM) and Draco importers are wasm —
-    # so without this, flipping report_only to false would take STEP previews down while leaving
-    # every mesh format working, a failure shaped exactly like a broken CAD file. It does NOT
-    # permit `eval`, `new Function` or a string timer, so the XSS surface `'unsafe-eval'` would
-    # open stays closed.
+    # viewer's OpenCascade (STEP/IGES/BREP/FCStd) and Draco importers are wasm — so without this,
+    # flipping report_only to false would take STEP previews down while leaving every mesh format
+    # working, a failure shaped exactly like a broken CAD file. It does NOT permit `eval`,
+    # `new Function` or a string timer, so the XSS surface `'unsafe-eval'` would open stays closed.
+    #
+    # ONE IMPORTER THIS DOES NOT COVER: rhino3dm (3DM). Its emscripten embind glue builds
+    # constructors with `new Function` at module load (two sites, probed in the review), so under an
+    # ENFORCING policy `.3dm` alone degrades to the poster — and it has no F3D thumbnail either, so
+    # that page would show nothing. Harmless while report-only; re-check `.3dm` before flipping
+    # `content_security_policy_report_only`, and do not reach for `'unsafe-eval'` to keep it.
     #
     # TODAY IT ONLY STOPS THE REPORTS (the policy is report-only, see the bottom of this file), and
     # that is worth having on its own: a directory of noise in the [csp-violation] log is what the

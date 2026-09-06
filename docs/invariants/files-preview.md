@@ -185,11 +185,15 @@ own embedded thumbnail. Both directions are asserted in `registry_test.rb`.
 **A ROLE IS WHERE A FILE FILES, NOT WHETHER IT RENDERS**, and the 2026-09-06 widening is where that
 is easiest to get wrong. `ROLE_BY_EXT` gained the mesh formats as `model`, but `.fcstd` is viewable
 and stays `cad_source` (it is a FreeCAD project you go back and edit; making it a `model` would MOVE
-it out of `cad/` on the user's NAS) and `.svg` stays `vector`. **No re-derive migration ships with
-that widening, deliberately**: `Maker::FilingRules.seed!` is guarded by `exists?`, so an existing
-user's filing map is untouched and their `.iges`/`.glb` files keep filing where they always did;
-only a new user gets the wider map. Existing `maker_file_attachments.role` values are likewise not
-re-derived. Both are recoverable later by a migration; neither is worth moving a user's files for.
+it out of `cad/` on the user's NAS) and `.svg` stays `vector`. **The widening reaches existing users
+ONCE, by a data migration, never by a re-seed on read**
+(`db/migrate/20260906140000_rederive_model_roles_and_seed_filing_rules.rb`, the shape
+`SeedPcbFilingRules` set): `Maker::FilingRules.seed!` stays guarded by `exists?` because
+`/settings/filing` promises a removed rule files into `other`, so the migration tops up only users
+who already hold rules (a user with none is seeded in full on their first read) and re-derives only
+`other` attachment roles on the thirteen extensions, ghost nodes skipped. Its `down` takes only those
+extensions on both doors — the folder column is free-form, and a hand-made rule filing something
+else into `models` must survive a rollback.
 
 **THE ENGINE NORMALISES UP-AXIS AT IMPORT, SO THE CONTROLLER MUST NOT.** Each importer declares its
 format's up direction and `ThreeModelLoader` rotates the three object by -90° about X wherever that

@@ -40,10 +40,12 @@ module Web
 
     # `'wasm-unsafe-eval'` IS WHAT KEEPS THE 3D VIEWER'S CAD IMPORTERS WORKING WHEN THE POLICY IS
     # ENFORCED. Chrome refuses `WebAssembly.instantiate` under a `script-src` carrying neither this
-    # nor `'unsafe-eval'`, and OpenCascade (STEP/IGES/BREP/FCStd), rhino3dm (3DM) and the Draco
-    # glTF decoder are all wasm — so without it, flipping report_only to false would take STEP
-    # previews down while every mesh format kept working, a failure shaped exactly like a broken
-    # CAD file rather than like a policy.
+    # nor `'unsafe-eval'`, and OpenCascade (STEP/IGES/BREP/FCStd) and the Draco glTF decoder are
+    # both wasm — so without it, flipping report_only to false would take STEP previews down while
+    # every mesh format kept working, a failure shaped exactly like a broken CAD file rather than
+    # like a policy. (rhino3dm's 3DM importer is the one this does NOT cover: its embind glue uses
+    # `new Function`, so `.3dm` is the importer to re-check before the policy enforces — the
+    # initializer says so.)
     #
     # AND `'unsafe-eval'` MUST STAY OUT, which is the half worth asserting rather than assuming:
     # the two are separate sources precisely so a page can run WebAssembly without also being
