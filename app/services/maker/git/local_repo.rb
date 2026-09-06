@@ -180,7 +180,48 @@ module Maker
              .map(&:name).sort
       end
 
+      Tag = Data.define(:name, :oid)
+      TAG_CAP = 200
+
+      # EVERY tag with the COMMIT it resolves to — an annotated tag's PEELED target, a lightweight
+      # tag's own target — name-sorted, for the release picker (stage 3, S3-5). The peel is the same
+      # one `tags_at_head` above makes and for the same reason: the annotation object sits between
+      # the ref and the commit, so an unpeeled `target_id` records the TAG object's oid, which is
+      # not a commit and matches nothing a maker can look up.
+      #
+      # CAPPED, LIKE EVERY WALK IN THIS CLASS, AND SORTED BEFORE THE CAP (git-editing.md): a
+      # repository with more tags than this lists the alphabetical first TAG_CAP and the picker
+      # says so. The sort comes first for the reason `full_status` sorts before it caps -- an
+      # unsorted cap keeps an arbitrary subset, and two renders of one repository could offer
+      # different tags with nothing reporting it (S3-5's review; an earlier version of this method
+      # capped first and cited `full_status` as precedent for doing so, which was false). Sorting
+      # names costs nothing; the peel is what the cap bounds, and it still runs TAG_CAP times.
+      #
+      # THIS LIST IS FOR THE PICKER ONLY. Verifying a tag the maker chose goes through `tag(name)`
+      # below -- a direct lookup, uncapped -- because a real tag past the cap must never be refused
+      # as "no such tag".
+      def tags
+        return [] if unborn?
+
+        rugged.tags.sort_by(&:name).first(TAG_CAP).map { |t| peel(t) }
+      end
+
+      # ONE tag by exact name, or nil. Rugged's collection resolves the ref directly, so this is
+      # O(1) and sees every tag, past any cap.
+      def tag(name)
+        return nil if unborn? || name.blank?
+
+        found = rugged.tags[name]
+        found && peel(found)
+      end
+
       private
+
+      # The PEEL both readers share: an annotated tag's target is the annotation object, and the
+      # commit sits one hop behind it; a lightweight tag points at the commit itself.
+      def peel(tag)
+        Tag.new(name: tag.name, oid: tag.annotated? ? tag.annotation.target_id : tag.target_id)
+      end
 
       def compute_refusal
         unless @adapter.capabilities.local_worktree?

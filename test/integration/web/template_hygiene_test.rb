@@ -202,6 +202,28 @@ module Web
       # per-row form-wiring) entirely.
       @project.connections.create!(user: @user, from_label: "Driver board", to_label: "Stepper motor",
                                    wire: "22 AWG", position: 0)
+      # STAGE 3, S3-5: ONE RELEASE CARRYING EVERY BRANCH ITS TWO PANELS HAVE -- a verified tag (the
+      # badge plus a short oid), a BOM revision, a changelog, a file still current (which renders a
+      # Download), one whose content has moved on since ("changed"), and one that has left the
+      # library ("gone", no link). Without the last two the state column and both no-link branches
+      # are unreachable from any page here, which is the same argument the BOM lines three blocks up
+      # make for seeding one line of each kind.
+      #
+      # ROWS RATHER THAN Maker::ReleaseSnapshot, deliberately: the snapshot reads the folder through
+      # the port and these fixtures have no bytes behind them, so it would capture nothing on the
+      # s3 and chunk_remote legs and this sweep must render the same markup on all three.
+      # `token_for` keeps the CURRENT file's row unchanged on every backend (§14a: the token is the
+      # content hash on share/s3 and the sync server's version id on chunk_remote).
+      release = @project.releases.create!(user: @user, version: "v1.0.0", git_tag: "v1.0.0",
+                                          git_oid: "0" * 40, repo_node_id: "d-firmware",
+                                          bom:, bom_revision: bom.revision,
+                                          published_at: Time.current, notes: "<div>First cut.</div>")
+      release.files.create!(user: @user, node_id: "n-schematic", name: "driver.kicad_sch",
+                            path: "driver.kicad_sch", content_token: token_for("n-schematic"), size: 5)
+      release.files.create!(user: @user, node_id: "n-photo", name: "shot.png", path: "shot.png",
+                            content_token: "t-stale", size: 5)
+      release.files.create!(user: @user, node_id: "n-vanished", name: "old.stl",
+                            path: "models/old.stl", content_token: "t-old", size: 5)
       # STAGE 3, S3-4: PUBLISHED LAST, once every panel above has something to render — the public
       # page shows the SAME fixtures through ten new templates, so nothing here is seeded twice.
       # `license:` renders the head's licence badge, one of the two branches that badge has.

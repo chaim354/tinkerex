@@ -37,6 +37,11 @@ module Maker
     # THE WIRING TABLE (stage 3, S3-3): connections between two labelled ends, in position order.
     has_many :connections, -> { order(:position, :id) },
              class_name: "Maker::Connection", foreign_key: :project_id, dependent: :destroy
+    # RELEASES (stage 3, S3-5), newest first — the order both panels read, stated once here rather
+    # than in each. `:destroy` rather than `:nullify`: a release names the project in its own
+    # `project_belongs_to_user` validation, so a nulled pointer would be an unsaveable row (§14d).
+    has_many :releases, -> { order(published_at: :desc, id: :desc) },
+             class_name: "Maker::Release", foreign_key: :project_id, dependent: :destroy
     # `:nullify`, AND IT IS THE ONLY OPTION THAT WORKS — do not "normalise" it onto the
     # `:destroy` lines above. The ledger outlives the project on purpose: a transaction records
     # that stock actually moved, and `InventoryItem#quantity_cached` was computed from it, so

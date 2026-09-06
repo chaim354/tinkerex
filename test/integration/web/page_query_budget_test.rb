@@ -156,6 +156,17 @@ module Web
           # STAGE 3, S3-3: the wiring panel grows too -- one connection per iteration, the same
           # constant-in-N argument as tasks and build-log entries two lines up.
           project.connections.create!(user: @user, from_label: "from-#{id}", to_label: "to-#{id}")
+          # STAGE 3, S3-5: A RELEASE PER ITERATION, EACH WITH A FILE, and BOTH halves grow for a
+          # reason. The panel has no cap, so the number of releases is what a missing
+          # `includes(:rich_text_notes)` costs one query each of; the number of FILES is what a
+          # per-row `stat` instead of the page's ONE `stat_all` costs. A seed growing only one of
+          # them leaves the other mutation green.
+          release = project.releases.create!(user: @user, version: "v#{id}", published_at: Time.current,
+                                             notes: "<div>cut #{id}</div>")
+          release.files.create!(user: @user, node_id: "#{id}-file", name: "#{id}.stl",
+                                path: "#{id}/#{id}.stl", content_token: "h-#{id}", size: 1)
+          release.files.create!(user: @user, node_id: id, name: "#{id}.stl", path: "#{id}.stl",
+                                content_token: "h-#{id}", size: 1)
           case i % 3
           when 0
             bom_item = @user.maker_inventory_items.create!(name: "bom-item-#{id}", unit: "each")
@@ -238,6 +249,16 @@ module Web
           # answers the attachment arm from, and neither may become a query per attachment.
           node!(id, "#{id}.stl")
           project.file_attachments.create!(user: @user, node_id: id, role: "model")
+          # STAGE 3, S3-5: a release per iteration with TWO files, for the reason the private
+          # budget's own comment gives -- and here the file count carries a second load too, since
+          # the public panel asks `permits?` per row. Those nodes join Maker::PublicProject#page_nodes
+          # precisely so that check is answered from the page's one index rather than a query a row.
+          release = project.releases.create!(user: @user, version: "v#{id}", published_at: Time.current,
+                                             notes: "<div>cut #{id}</div>")
+          release.files.create!(user: @user, node_id: "#{id}-file", name: "#{id}.stl",
+                                path: "#{id}/#{id}.stl", content_token: "h-#{id}", size: 1)
+          release.files.create!(user: @user, node_id: id, name: "#{id}.stl", path: "#{id}.stl",
+                                content_token: "h-#{id}", size: 1)
           # ONE BOM LINE PER ITERATION, CYCLING THE THREE KINDS. The public table has NO cap (unlike
           # the private panel's PANEL_CAP), and the design-file kind is the expensive one: the
           # partial asks `pub.permits?` for every such line so it can decide between a link and

@@ -10,16 +10,29 @@ module Maker
   # The element is removed rather than its attributes scrubbed, so the guarantee is "no attachment
   # survives a save" regardless of which attributes Action Text or Lexxy emit in a future version.
   #
-  # CONSEQUENCE, DELIBERATE: both including models `validates :body, presence: true`, so a body that
-  # was ONLY an attachment strips to empty and is REJECTED. That is correct — the submission
-  # contained nothing this app accepts — and it is pinned by a test so it is not later read as a
-  # regression.
+  # CONSEQUENCE, DELIBERATE: the two models that `validates :body, presence: true` (Maker::Note and
+  # Maker::BuildLogEntry) REJECT a body that was ONLY an attachment, because it strips to empty.
+  # That is correct — the submission contained nothing this app accepts — and it is pinned by a
+  # test so it is not later read as a regression. Maker::Release's `notes` are optional, so the
+  # same submission there strips to a blank changelog and the release is created without one.
   module TextOnlyRichText
     extend ActiveSupport::Concern
 
     ATTACHMENT_SELECTOR = "action-text-attachment".freeze
 
     included do
+      # WHICH RICH TEXT ATTRIBUTE THIS MODEL CARRIES, because the name is not always `body`.
+      # Maker::Note and Maker::BuildLogEntry name theirs `body` and say nothing; Maker::Release's
+      # changelog is `notes` and overrides this. Until S3-5 the strip below read `body` LITERALLY,
+      # so including this concern in a model with any other name raised, on the first save,
+      # `NameError: undefined local variable or method 'body' for an instance of Maker::Release`.
+      # Mutation-checked by putting the literal spelling back: 16 of release_test.rb's 17 cases
+      # error, and text_only_rich_text_test.rb's 7 note/entry cases stay green — the default is
+      # genuinely untouched. That is why the alternative (a second copy of the strip in Release)
+      # is the wrong answer:
+      # the policy would then have two places to be forgotten in, and this file's whole
+      # existence is that forgetting it is silent.
+      class_attribute :text_only_rich_text_attribute, instance_writer: false, default: :body
       before_validation :strip_rich_text_attachments
     end
 
@@ -32,11 +45,12 @@ module Maker
     # a serialisation and an attribute write, which is a smaller claim than "prevents churn" and
     # is the one that is actually true.
     def strip_rich_text_attachments
-      content = body&.body
+      attribute = text_only_rich_text_attribute
+      content = public_send(attribute)&.body
       return if content.nil?
 
       # MUTATES THE LIVE TREE IN PLACE, and that is safe only because of the line that follows it.
-      # `body.body` returns a MEMOIZED Content — the same object across reads — so this is not a
+      # The attribute's `.body` returns a MEMOIZED Content — the same object across reads — so this is not a
       # throwaway copy, and Action Text's own ActionText::Fragment#update dups the source before
       # yielding precisely to avoid what this does. What makes it correct here is that the strip is
       # immediately followed by replacing the attribute, so the mutated Content is discarded on the
@@ -47,7 +61,7 @@ module Maker
       return if nodes.empty?
 
       nodes.each(&:remove)
-      self.body = fragment.to_html
+      public_send("#{attribute}=", fragment.to_html)
     end
   end
 end

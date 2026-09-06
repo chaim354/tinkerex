@@ -70,7 +70,11 @@ module Maker
     attr_reader :folder_id, :path, :total
 
     # `load_files: false` answers `total` (and `repos`) without the files query — Home's hero.
-    def initialize(user, project, tree: nil, load_files: true)
+    # `file_cap:` is the PAGE's render budget by default (FILE_CAP); a caller that must see the
+    # whole folder — Maker::ReleaseSnapshot, whose record is permanent — passes its own, and
+    # `truncated?` answers against whichever cap was given (stage 3, S3-5's review).
+    def initialize(user, project, tree: nil, load_files: true, file_cap: FILE_CAP)
+      @file_cap = file_cap
       @user = user
       @tree = tree || Maker::LibraryTree.new(user)
       @folder_id = project.folder_node_id.presence
@@ -83,17 +87,17 @@ module Maker
       @dir_ids_set = dir_ids.to_set
       scope = dir_ids.empty? ? user.nodes.none : files_in(dir_ids)
       @total = dir_ids.empty? ? 0 : scope.count
-      rows = load_files && !dir_ids.empty? ? scope.order(:name, :node_id).limit(FILE_CAP + 1).to_a : []
+      rows = load_files && !dir_ids.empty? ? scope.order(:name, :node_id).limit(@file_cap + 1).to_a : []
       # TRUNCATED READS TRUE ON EITHER CAP, not the file one alone: a folder can blow past DIR_CAP
       # with only a handful of files in each of its many subfolders and never come near FILE_CAP,
       # and that walk is exactly as incomplete as an over-long file list is. @dir_cap_hit is set by
       # collect_dirs, the only place that knows whether the walk stopped because it ran out of tree
       # or because it ran out of budget.
-      @truncated = rows.size > FILE_CAP || @dir_cap_hit
+      @truncated = rows.size > @file_cap || @dir_cap_hit
       # THE CAP APPLIES TO THE WHOLE FOLDER, BEFORE THE ROWS ARE SORTED INTO THEIR DIRS — unchanged
       # from before the tree existed: a folder past FILE_CAP can render a subfolder with only part
       # of its files, exactly as the old flat list could render only part of the folder.
-      by_parent = rows.first(FILE_CAP).group_by(&:parent_node_id)
+      by_parent = rows.first(@file_cap).group_by(&:parent_node_id)
       @loose = bucket(by_parent[@folder_id] || [], "")
       @tree_dirs = @folder_id ? build_dirs(@folder_id, by_parent, "") : []
     end

@@ -83,6 +83,10 @@
   <% if @pub.connections.any? %>
     <%= render "projects/wiring", project: @project, connections: @pub.connections, editable: false %>
   <% end %>
+  <%# Stage 3, S3-5: releases. Its own partial rather than projects/_releases with `editable:
+      false` -- the download is a public file URL gated on `permits?`, not /files/:id/blob, which
+      is a difference in kind rather than a branch (the partial's own header says so). %>
+  <%= render "releases", pub: @pub %>
   <%= render "schematics", pub: @pub %>
   <% @pub.repo_cards.each_value do |card| %>
     <%= render "repo_card", card: card %>

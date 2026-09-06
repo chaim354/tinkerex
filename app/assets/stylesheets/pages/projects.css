@@ -162,6 +162,27 @@
   @media (max-width: 719px) { .wiring .col-note { display: none; } }
   @media (max-width: 479px) { .wiring .col-wire { display: none; } }
 
+  /* --- Releases (stage 3, S3-5): a <details> per release whose summary is a wrapping row of
+     facts -- version, date, tag, BOM revision, file count, "N changed since". `list-style: none`
+     is NOT set: the disclosure triangle is the affordance, and `display: flex` on a <summary>
+     removes it in Chrome, so the flex row lives on an inner rule-free summary instead. Column
+     drops narrowest-first, matching the BOM and wiring tables above: Size at 719px (least useful
+     once the file is named), State at 479px -- READABILITY, not overflow safety, the same honest
+     claim pages/public.css makes about its own drops. --- */
+  .releases-panel details.release { border-bottom: 1px solid var(--line); padding: 6px 0; }
+  .releases-panel details.release:last-of-type { border-bottom: 0; }
+  .releases-panel details.release > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; cursor: pointer; }
+  .releases-panel details.release > summary time { font: 11px/1.4 var(--font-mono); color: var(--fg-muted); }
+  .release-version { font-weight: 600; }
+  .release-notes { margin: 8px 0; }
+  .release-files { margin-top: 6px; }
+  .release-files .col-size { width: 1%; white-space: nowrap; }
+  .release-files .col-state { width: 1%; white-space: nowrap; }
+  .release-files .col-dl { width: 1%; white-space: nowrap; text-align: right; }
+  .release-add-form .lexxy-content, .release-add-form trix-editor { margin-bottom: 8px; }
+  @media (max-width: 719px) { .release-files .col-size { display: none; } }
+  @media (max-width: 479px) { .release-files .col-state { display: none; } }
+
   /* --- Sheets panel, picker, sheet page (unchanged shapes, tokens) --- */
   .sheets-panel .sheet-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); }
   .sheets-panel .sheet-row:last-child { border-bottom: 0; }

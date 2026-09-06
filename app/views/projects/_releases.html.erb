@@ -1,0 +1,158 @@
+<%#
+  RELEASES (stage 3, S3-5): what the project folder held at a named moment, with a changelog.
+
+  A RELEASE RECORDS REFERENCES, NEVER BYTES (spec §3), so every Download here delivers the CURRENT
+  file through the ordinary blob route -- and the row says so when the current file is no longer the
+  one the release captured. `state_against` (Maker::ReleaseFile) is the ONE definition of that
+  comparison, shared with public/projects/_releases so the two pages cannot drift about it.
+
+  Locals:
+    project        -- the Maker::Project the composer posts against
+    releases       -- Maker::Release, newest first (the association's own order), with :files and
+                      :rich_text_notes already loaded -- this partial issues no query of its own
+    current_tokens -- node_id => FileInfo, from ONE FileLayer#stat_all over every file of every
+                      release below (ProjectsController#show). An ABSENT KEY is the port's answer
+                      for a node that is no longer live, which is why a missing entry reads as
+                      "gone" rather than as an error.
+    repos          -- [[dir name, dir node_id, [tag names]]] for every readable working tree in the
+                      folder, or [] where the library is not a local folder (git-editing.md: ask
+                      the CAPABILITY, never an adapter class). Empty swaps the tag picker for a free
+                      text field, and the tag is then recorded rather than verified.
+    editable       -- true on the owner's page; the public page renders its own partial instead
+
+  THE COMPOSER'S TAG PICKER IS ONE SELECT CARRYING TWO FACTS. A folder may hold several
+  repositories, so a tag needs the one it came from -- and a select cannot fill a second field
+  without JS -- so each option's VALUE is "<repo node_id>:<tag>" and Projects::ReleasesController
+  splits it on the first colon. Its own comment argues why that is unambiguous.
+%>
+<section class="panel releases-panel">
+  <div class="panel-head">
+    <h2>Releases</h2>
+    <span class="mono muted"><%= pluralize(releases.size, "release") %></span>
+  </div>
+
+  <% if releases.empty? %>
+    <p class="muted">No releases yet.</p>
+  <% else %>
+    <% releases.each_with_index do |release, index| %>
+      <%# `open` ON THE NEWEST ONLY: the one a maker is looking for is almost always the last one
+          cut, and a page of expanded file tables is a page nobody reads. %>
+      <details class="release" <%= "open" if index.zero? %>>
+        <summary>
+          <span class="release-version mono"><%= release.version %></span>
+          <time datetime="<%= release.published_at.iso8601 %>"><%= release.published_at.strftime("%Y-%m-%d") %></time>
+          <% if release.git_tag.present? %>
+            <%# A RECORDED TAG AND A VERIFIED ONE LOOK THE SAME EXCEPT FOR THE COMMIT. Where the
+                library is not a local folder there is no repository this process can read, so the
+                tag is stored as typed -- the title says so rather than leaving a reader to infer
+                it from an absent oid. %>
+            <% if release.short_oid %>
+              <span class="badge"><%= release.git_tag %></span>
+              <span class="mono muted"><%= release.short_oid %></span>
+            <% else %>
+              <span class="badge" title="recorded, not verified"><%= release.git_tag %></span>
+            <% end %>
+          <% end %>
+          <% if release.bom_revision %>
+            <span class="muted">BOM rev <%= release.bom_revision %></span>
+          <% end %>
+          <span class="muted"><%= pluralize(release.files.size, "file") %></span>
+          <% if release.files_truncated %>
+            <%# A PERMANENT RECORD SAYS WHEN IT IS NOT COMPLETE: the folder held more files than the
+                snapshot's cap, so this release lists its first ones (S3-5's review). %>
+            <span class="badge partial" title="The folder held more files than a release records; these are the first."><%= release.files.size %> of a larger folder</span>
+          <% end %>
+          <% changed = release.files.count { |f| f.state_against(current_tokens[f.node_id]) } %>
+          <% if changed.positive? %>
+            <span class="badge changed"><%= changed %> changed since</span>
+          <% end %>
+        </summary>
+
+        <% if release.notes.present? %>
+          <%# A div, not a p: Action Text emits block-level markup and a <p> cannot legally contain it. %>
+          <div class="release-notes markdown"><%= release.notes %></div>
+        <% end %>
+
+        <% if release.files.any? %>
+          <table class="table release-files">
+            <thead>
+              <tr>
+                <th class="col-path">File</th>
+                <th class="col-size num">Size</th>
+                <th class="col-state">State</th>
+                <th class="col-dl"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <% release.files.each do |f| %>
+                <% info = current_tokens[f.node_id] %>
+                <% state = f.state_against(info) %>
+                <tr>
+                  <%# THE PATH AS THE RELEASE SAW IT, never re-derived: a node's id survives a move
+                      and its path does not, so rebuilding it would rewrite history every time a
+                      maker tidies up (Maker::ReleaseFile's own comment). `path` is nil-safe for a
+                      row written before it existed. %>
+                  <td class="col-path"><%= f.path.presence || f.name %></td>
+                  <td class="col-size num"><%= f.size ? number_to_human_size(f.size) : "—" %></td>
+                  <td class="col-state">
+                    <% if state %>
+                      <span class="badge changed"><%= state %></span>
+                    <% end %>
+                  </td>
+                  <td class="col-dl">
+                    <% if info %>
+                      <%= link_to "Download", blob_file_path(f.node_id, download: 1), class: "linkbtn small" %>
+                    <% else %>
+                      <span class="muted">no longer in the library</span>
+                    <% end %>
+                  </td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        <% end %>
+
+        <% if editable %>
+          <%= button_to "Remove release", release_path(release), method: :delete,
+                        class: "linkbtn danger small",
+                        form: { data: { turbo_confirm: "Remove release #{release.version}? The files stay where they are." } } %>
+        <% end %>
+      </details>
+    <% end %>
+  <% end %>
+
+  <% if editable %>
+    <%# scope: :release -- this form has no model object, so scope: is what names the params at
+        all; Projects::ReleasesController requires :release, which scope: here produces (CLAUDE.md
+        §14d's form-scope rule). %>
+    <details class="composer release-add">
+      <summary class="btn small">Create release</summary>
+      <%= form_with url: project_releases_path(project), scope: :release, class: "release-add-form" do |f| %>
+        <div class="composer-fields">
+          <label class="field">
+            <span>Version</span>
+            <%= f.text_field :version, placeholder: "v0.1.0", required: true %>
+          </label>
+          <% if repos.any? %>
+            <label class="field">
+              <span>Tag</span>
+              <%= f.select :git_tag,
+                           repos.map { |name, node_id, tags| [ name, tags.map { |t| [ t, "#{node_id}:#{t}" ] } ] },
+                           { include_blank: "No tag" } %>
+            </label>
+          <% else %>
+            <label class="field">
+              <span>Tag</span>
+              <%= f.text_field :git_tag, placeholder: "v0.1.0" %>
+            </label>
+          <% end %>
+        </div>
+        <% if repos.empty? %>
+          <p class="muted">Tags can be verified where the library is a local folder.</p>
+        <% end %>
+        <%= f.rich_text_area :notes, placeholder: "What changed?", attachments: "false" %>
+        <%= f.submit "Create release", class: "btn small primary" %>
+      <% end %>
+    </details>
+  <% end %>
+</section>

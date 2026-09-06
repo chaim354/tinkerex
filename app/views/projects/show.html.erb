@@ -81,5 +81,10 @@
       read-only on the public page later (S3-4), which has no reason to alias its own ivars to
       this partial's names. %>
   <%= render "wiring", project: @project, connections: @connections, editable: true %>
+  <%# Stage 3, S3-5: releases. Locals for the same reason wiring takes them -- the public page
+      renders its own partial over the same records, and neither has any business aliasing the
+      other's ivars. %>
+  <%= render "releases", project: @project, releases: @releases, current_tokens: @release_tokens,
+             repos: @release_repos, editable: true %>
   <%= render "sheets" %>
 </div>

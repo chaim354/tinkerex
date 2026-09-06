@@ -63,6 +63,25 @@ class StructuralOrphanTest < ActiveSupport::TestCase
       p = u.maker_projects.create!(name: "Lamp")
       [ p, p.connections.create!(user: u, from_label: "Driver board", to_label: "Stepper motor") ]
     },
+    "maker_releases.project_id" => ->(u) {
+      p = u.maker_projects.create!(name: "Lamp")
+      [ p, p.releases.create!(user: u, version: "v0.1.0", published_at: Time.current) ]
+    },
+    # `:nullify` here, not `:destroy` — a release outlives the BOM it recorded, because
+    # `bom_revision` is a copy taken at release time. "No orphan" is satisfied by either, so the
+    # half this cannot express (the release SURVIVES with its revision) is pinned in
+    # test/models/maker/release_test.rb, the same division the inventory ledger case makes below.
+    "maker_releases.bom_id" => ->(u) {
+      p = u.maker_projects.create!(name: "Lamp")
+      bom = p.boms.create!(user: u)
+      [ bom, p.releases.create!(user: u, version: "v0.1.0", published_at: Time.current,
+                                bom: bom, bom_revision: bom.revision) ]
+    },
+    "maker_release_files.release_id" => ->(u) {
+      rel = u.maker_projects.create!(name: "Lamp")
+             .releases.create!(user: u, version: "v0.1.0", published_at: Time.current)
+      [ rel, rel.files.create!(user: u, node_id: SecureRandom.uuid, name: "base.stl") ]
+    },
     "maker_collection_items.collection_id" => ->(u) {
       c = u.maker_collections.create!(name: "Favourites")
       [ c, c.collection_items.create!(user: u, item: u.maker_items.create!(title: "Bracket")) ]
