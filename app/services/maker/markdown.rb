@@ -31,8 +31,10 @@ module Maker
     ALLOWED_ATTRS = %w[href src alt title].freeze
 
     # resolve: ->(href) { url-or-nil }, asked only for a RELATIVE href — no scheme, no leading
-    # slash (an absolute URL, a `mailto:`, or a root-relative "/x" is left exactly as kramdown
-    # wrote it, so the block never has to recognise those itself). nil DROPS the link: an `<a>`
+    # slash (an absolute URL, a `mailto:`, or a root-relative "/x" never reaches the block, so it
+    # never has to recognise those itself: an absolute `<a href>` is left exactly as kramdown wrote
+    # it, an absolute `<img src>` becomes its alt text — see rewrite_relative_links). nil DROPS the
+    # link: an `<a>`
     # unwraps to its own text (the words stay, the link doesn't), an `<img>` is removed outright —
     # there is no broken-image placeholder to fall back to, and a dangling `src` would just 404 in
     # the browser. No block at all (a caller with nothing to resolve against) behaves the same as a
@@ -50,8 +52,11 @@ module Maker
 
       # "Relative" is defined once, here, rather than left for each caller of #rewrite_relative_links
       # to reason about: no URI scheme (http:, mailto:, javascript: — the sanitizer's job, not this
-      # method's) and no leading "/". A scheme or a leading slash is kept AS WRITTEN; only what's
-      # left over is a path the block might resolve against the repo's own subtree.
+      # method's) and no leading "/". Only what's left over is a path the block might resolve
+      # against the repo's own subtree; what an ABSOLUTE href gets instead is the element's own
+      # business (a link keeps it, an image loses it — see below). A protocol-relative
+      # "//cdn.example/p.png" is absolute by the leading-slash arm, not by a scheme, which is why
+      # this one predicate is the whole test and neither call site adds a second one.
       def absolute_href?(href) = href.to_s.match?(%r{\A(?:[a-zA-Z][a-zA-Z0-9+.\-]*:|/)})
 
       def rewrite_relative_links(html)
@@ -75,7 +80,25 @@ module Maker
 
         fragment.css("img[src]").each do |img|
           src = img["src"].to_s
-          next if absolute_href?(src)
+          # AN ABSOLUTE IMAGE BECOMES ITS ALT TEXT; AN ABSOLUTE LINK IS LEFT ALONE, and the two are
+          # deliberately different (stage 3, S3-4). A link is the user's prose — an outbound
+          # reference the reader chooses to follow. An `<img>` is fetched by the BROWSER the moment
+          # the page renders, so a hotlinked one on a public project page is a tracking pixel
+          # pointed at every visitor, and `img-src 'self' data: blob:`
+          # (config/initializers/content_security_policy.rb) blocks it anyway once the CSP enforces
+          # — leaving the src in place would show a broken image where prose used to be.
+          #
+          # A TEXT NODE, NEVER `img.replace(alt)` WITH A STRING. Nokogiri PARSES a String
+          # replacement as markup, and this loop runs AFTER the executable elements were removed
+          # above, so `![<script>alert(1)</script>](https://x/y.png)` would re-inject a script that
+          # nothing else in this method will look at again — the sanitizer then unwraps it into the
+          # prose "alert(1)", the exact defect this class's header records. A Text node serializes
+          # escaped and cannot re-enter the tree as an element.
+          if absolute_href?(src)
+            alt = img["alt"].to_s
+            alt.empty? ? img.remove : img.replace(Nokogiri::XML::Text.new(alt, img.document))
+            next
+          end
 
           if (target = yield(src))
             img["src"] = target
