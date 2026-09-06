@@ -15,8 +15,11 @@ module Maker
   # safelist Scrubber — the one that treats `<script>`/`<style>` contents as CDATA to discard
   # outright — so a disallowed tag is UNWRAPPED (the element goes, its text stays as a bare text
   # node) rather than deleted whole (probed: `<script>alert(1)</script>` sanitizes to the bare text
-  # "alert(1)", not to nothing). Either way the ELEMENT a browser would execute is gone; "raw HTML
-  # stripped" means that, never "every word that was ever inside a tag disappears too".
+  # "alert(1)", not to nothing). That is why `rewrite_relative_links` removes the EXECUTABLE
+  # elements (script, style, iframe, object, embed, noscript, template) WITH their content first —
+  # a README's script must not become prose — and leaves every other disallowed tag to the
+  # sanitizer's unwrapping, so "raw HTML stripped" means the element a browser would run is gone,
+  # never "every word that was ever inside a tag disappears too".
   #
   # `syntax_highlighter: nil` IS NOT COSMETIC. kramdown's fenced-code default is `:rouge`, and this
   # app ships neither rouge nor coderay (probed: absent from Gemfile.lock) — a fenced block would
@@ -53,6 +56,11 @@ module Maker
 
       def rewrite_relative_links(html)
         fragment = Nokogiri::HTML.fragment(html)
+        # EXECUTABLE ELEMENTS GO WITH THEIR CONTENT, here, before the sanitizer sees them: the
+        # allowlist `sanitize` below UNWRAPS a disallowed tag (Loofah's PermitScrubber), so on its
+        # own it turned `<script>alert(1)</script>` into the prose "alert(1)" in the middle of a
+        # README (seen live, 2026-09-05). Safe, and still wrong to show.
+        fragment.css("script, style, iframe, object, embed, noscript, template").each(&:remove)
 
         fragment.css("a[href]").each do |a|
           href = a["href"].to_s

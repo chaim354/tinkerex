@@ -19,17 +19,17 @@ class Maker::MarkdownTest < ActiveSupport::TestCase
     assert_match %r{<pre><code>puts 1}, html
   end
 
-  # RAW HTML STRIPPED BY THE SANITIZER, NOT BY KRAMDOWN — kramdown itself passes both straight
-  # through (probed at the console: `Kramdown::Document.new("<script>…", input: "GFM").to_html`
-  # returns the tag verbatim). "Stripped" means the ELEMENT a browser would execute is gone; a
-  # custom `tags:`/`attributes:` allowlist unwraps rather than deletes a disallowed tag (Loofah's
-  # PermitScrubber, not its CDATA-aware safelist Scrubber), so the bare text "alert(1)" survives as
-  # a text node — probed, and asserted here as the true (safe) behaviour rather than an unchecked
-  # assumption that the word vanishes too.
-  test "a script tag and an onclick attribute are stripped; their text may survive as plain text" do
+  # RAW HTML IS NOT KRAMDOWN'S TO STRIP — it passes `<script>` through verbatim (probed at the
+  # console). The renderer removes executable elements WITH their content before the allowlist
+  # sanitizer runs, because that sanitizer UNWRAPS a disallowed tag (Loofah's PermitScrubber, not
+  # its CDATA-aware safelist Scrubber) and would otherwise leave the script's text as prose.
+  test "a script tag goes WITH its text, and an onclick attribute is stripped" do
     html = Maker::Markdown.render(%(before\n\n<script>alert(1)</script>\n\n<p onclick="evil()">after</p>\n))
 
     assert_no_match %r{<script}, html
+    # THE TEXT TOO: the sanitizer alone unwraps the tag and leaves "alert(1)" as prose (seen live on
+    # a README, 2026-09-05); the renderer removes executable elements with their content first.
+    assert_no_match %r{alert\(1\)}, html
     assert_no_match %r{onclick}, html
     assert_match %r{before}, html
     assert_match %r{after}, html
