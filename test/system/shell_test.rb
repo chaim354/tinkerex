@@ -247,7 +247,11 @@ class ShellTest < ApplicationSystemTestCase
         assert_no_selector "aside.rail"
         no_sideways_scroll.call(path)
       end
-      assert_no_console_errors
+      # KICANVAS_PLACEHOLDER_FETCH: the Schematics preview's `controls="basic"` embed makes Chrome
+      # fetch `<page dir>/$$:0:$$` once before KiCanvas substitutes its icon sprite href — Linux
+      # Chrome logs that aborted 404 at SEVERE, macOS Chrome does not (web_helpers.rb says why).
+      # Exactly that message and nothing else; a genuine 404 on any of these pages still fails.
+      assert_no_console_errors ignoring: [ KICANVAS_PLACEHOLDER_FETCH ]
     ensure
       page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
     end

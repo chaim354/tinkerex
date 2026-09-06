@@ -62,6 +62,17 @@ scope, spec §6). `FilesHelper#kicad?` reads `FilesController::KICANVAS_EXTS` ra
 second copy of the two extensions, so `projects/_schematics.html.erb`'s membership test and
 `preview_kind`'s `:kicanvas` branch can never name a different set of formats.
 
+**A `controls="basic"` embed makes Chrome fetch `<page dir>/$$:0:$$` once, and that is upstream's
+bug, not the page's** (stage 3, S3-4; `tinkerex#252`). KiCanvas's `kc-ui-icon` renders a sprite
+icon as `<use xlink:href="${sprites_url}#name">` through its `html` tagged template, which stands
+in a `$$:<i>:$$` placeholder for every non-Literal interpolation, clones the template into the
+document, and substitutes afterwards — and an SVG `<use>` with an external href fetches on
+creation, relative to the page. The request 404s and is aborted when the real href lands; the icon
+renders. Linux Chrome logs it at SEVERE, macOS Chrome does not, so the phone sweep ignores exactly
+that message (`WebHelpers::KICANVAS_PLACEHOLDER_FETCH`) and nothing wider. The fix belongs in
+`bin/build-kicanvas` (a `Literal` around the href) or upstream; do not route the placeholder to a
+204 to hide it, and do not widen the ignore.
+
 ## Extensionless text is a SEPARATE AXIS, and it must not move files
 
 `File.extname("LICENSE")` is `""`, and so is `File.extname(".gitignore")` — a leading dot with no
