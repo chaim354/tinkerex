@@ -57,6 +57,19 @@ The consequence is §14b's, already paid once: `Library::ScanJob`'s gate WAS an
 indexed**. Widening commits to another backend is a new ANSWER in `FileLayer::Capabilities`, never a
 rewrite of the callers.
 
+**A THIRD reader, and it lives outside this rule's own guard.** `Maker::RepoCard` (stage 3, S3-2 —
+the project page's repository card) asks `capabilities.local_worktree?` before opening
+`LocalRepo.open` for git facts, the same way `RepoCommitsController`/`RepoHistoriesController` do —
+but `app/services/maker/repo_card.rb` sits under `app/services/maker/`, one directory above the
+`app/services/maker/git/**` glob `test_the_git_surface_never_branches_on_an_adapter_class` scans, so
+a class check written there would NOT trip that guard. Nothing enforces this rule on that file
+today; it is honoured by inspection, the same gap the previous paragraph already names for anything
+outside the three scanned globs. The README half of the same class reads its file through the PORT
+(`FileLayer.current.read`, this file's own opening rule — "bytes the catalog tracks go through the
+port"), never `File.read` against `LocalRepo#workdir`: a README is a catalog file like any other,
+not git's own working-tree read, and it is read on EVERY backend (share, s3, chunk_remote), not
+gated on `local_worktree?` at all — only the commit/tag facts are.
+
 ## `index.clear` is never written — and the index is never left untouched either
 
 `Maker::Git::CommitPaths` seeds its builder from **HEAD's tree** and inserts only the selected paths;

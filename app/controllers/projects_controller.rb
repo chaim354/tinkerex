@@ -137,6 +137,27 @@ class ProjectsController < ApplicationController
     # living somewhere else in the library, so it gets its own group with Detach and a move-in
     # button instead of the plain folder tile.
     @listing = Maker::ProjectFolderListing.new(current_user, @project)
+    # THE REPOSITORY CARD (stage 3, S3-2): one per repo Dir anywhere in the folder's tree — the
+    # README rendered, the latest commit, the current tag, links to the commit/history pages.
+    # Keyed by node_id so `_file_tree_section.html.erb` (recursive, one call per Dir) can look its
+    # own card up without re-walking anything. `repo_dirs` collects the FULL Dir objects (not
+    # @listing.repos, which flattens away `#files`/`#children` — exactly what the card needs to
+    # find a README and resolve relative links).
+    #
+    # ONE BATCHED QUERY FOR EVERY REPO ON THE PAGE, NEVER ONE PER REPO: Maker::RepoCard.for needs
+    # the repo dir's own Node (LocalRepo.open dereferences its storage_path through the port), and
+    # @listing's Dir struct does not carry one. page_query_budget_test.rb's seed already grows the
+    # NUMBER of repo? dirs with N (a `.git` marker per iteration, for its own unrelated nesting
+    # coverage) — an O(repos) `find_by` here would turn that pre-existing growth into a query-count
+    # regression the moment a project holds more than one repository, which it already does by the
+    # time this runs at "large".
+    repo_dirs = collect_repo_dirs(@listing.tree)
+    repo_roots = current_user.nodes.present.where(node_id: repo_dirs.map(&:node_id), kind: "dir")
+                             .index_by(&:node_id)
+    @repo_cards = repo_dirs.index_by(&:node_id).transform_values do |dir|
+      Maker::RepoCard.for(user: current_user, dir:, root_node: repo_roots[dir.node_id],
+                          listing: @listing, capabilities:)
+    end
     # Tiles or list (stage 3, S3-1) — the same whitelist-and-cookie idiom FilesController#resolve_view
     # uses, with its own values and its own cookie: this page's default is tiles, the Files page's
     # is list, and the two toggles must not read each other's choice.
@@ -248,6 +269,15 @@ class ProjectsController < ApplicationController
     end
     saved = cookies[:project_view]
     PROJECT_VIEWS.include?(saved) ? saved : DEFAULT_PROJECT_VIEW
+  end
+
+  # Every repo? Dir anywhere in the tree, at any depth — mirrors
+  # Maker::ProjectFolderListing#flatten_dirs (private there, and rightly so: that walk is the
+  # LISTING's business, this one is the CARD's). @listing.repos already flattens the same set, but
+  # throws away #files/#children into a bare node_id/name/path Repo struct; Maker::RepoCard needs
+  # the full Dir to find a README among a repo's own root files.
+  def collect_repo_dirs(dirs)
+    dirs.flat_map { |d| (d.repo? ? [ d ] : []) + collect_repo_dirs(d.children) }
   end
 
   # Best-effort: a project MUST save even if the library backend can't make its folder right now

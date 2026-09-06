@@ -26,6 +26,13 @@
         when it renders nothing, which breaks a `text: /name \(N\)/` substring match against the
         rendered summary (found by driving a real request, not by reading the template). %>
     <summary class="attachment-group-head"><%= dir.name %><% if dir.repo? %> <span class="badge">repo</span><% end %> <span class="muted">(<%= visible.size %>)</span><% if dir.repo? %> <%= link_to "Commits", repo_commit_path(dir.node_id), class: "linkbtn small" %> <%= link_to "History", repo_history_path(dir.node_id), class: "linkbtn small" %><% end %></summary>
+    <%# THE CARD (stage 3, S3-2): README rendered, latest commit, current tag — at the top of the
+        section, before its files. @repo_cards is keyed by node_id (ProjectsController#show) and
+        holds one for every repo? Dir on the page, so a missing entry here would be a real bug, not
+        a normal case — the `&&` guard is defensive rather than expected to ever fail. %>
+    <% if dir.repo? && (card = @repo_cards[dir.node_id]) %>
+      <%= render "projects/repo_card", card: %>
+    <% end %>
     <% if visible.any? %>
       <% if @view == "list" %>
         <%= render "file_rows", rows: visible %>

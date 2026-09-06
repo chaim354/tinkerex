@@ -1,0 +1,43 @@
+<%#
+  ONE REPOSITORY'S CARD (stage 3, S3-2): the README rendered, the latest commit, the current tag,
+  links to the commit and history pages. Rendered at the top of a repo section
+  (_file_tree_section.html.erb), before its files — Maker::RepoCard.for already computed
+  everything here from Maker::Git::LocalRepo and the port; this partial only lays it out.
+
+  Commits/History repeat links _file_tree_section's own summary line already carries (S3-1) —
+  deliberately: the summary line stays for when a maker scans the section headers alone, and the
+  card is a self-contained unit a page-searcher or a future public page (spec S3-4) can lift on
+  its own. Removing them from the summary was not asked for and would touch a test this task does
+  not own (project_attachments_test.rb's "a repository inside the folder…" pins them there).
+
+  Local: card (Maker::RepoCard).
+%>
+<div class="repo-card">
+  <div class="repo-facts">
+    <% if card.head %>
+      <%= link_to card.head.short_oid, repo_commit_path(card.dir.node_id), class: "mono" %>
+      <span class="repo-summary"><%= card.head.summary %></span>
+      <span class="muted">— <%= card.head.author %>, <%= time_ago_in_words(card.head.time) %> ago</span>
+      <% if card.tags.any? %>
+        <% card.tags.each do |tag| %><span class="badge"><%= tag %></span><% end %>
+      <% else %>
+        <span class="muted">no tag</span>
+      <% end %>
+    <% else %>
+      <span class="muted"><%= card.refusal %></span>
+    <% end %>
+    <%= link_to "Commits", repo_commit_path(card.dir.node_id), class: "linkbtn small" %>
+    <%= link_to "History", repo_history_path(card.dir.node_id), class: "linkbtn small" %>
+  </div>
+  <% if card.readme_html.present? %>
+    <details class="readme" open>
+      <summary>README</summary>
+      <div class="markdown"><%= card.readme_html %></div>
+      <% if card.readme_note %>
+        <p class="muted readme-note"><%= card.readme_note %></p>
+      <% end %>
+    </details>
+  <% elsif card.readme_note %>
+    <p class="muted readme-note"><%= card.readme_note %></p>
+  <% end %>
+</div>

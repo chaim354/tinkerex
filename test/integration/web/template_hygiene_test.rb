@@ -122,6 +122,16 @@ module Web
                                      parent_node_id: folder.node_id)
       @user.nodes.create!(node_id: "d-firmware-git", name: Library::RepoMetadata::DIR_NAME,
                           kind: "dir", parent_node_id: firmware.node_id)
+      # STAGE 3, S3-2: A README.md NODE, OR projects/_repo_card's readme branch never renders —
+      # without one, `card.readme_note` and `card.readme_html` are both nil and the whole `readme`
+      # `<details>`/note paragraph is skipped, same as the file's own comment two lines up argues
+      # for _generated_group. This node has no real storage_path behind it (like every other one
+      # this fixture seeds), so it renders the "README unavailable" line rather than rendered
+      # markdown — still the branch that needs sweeping, and still real coverage: the card itself,
+      # its facts line and its refusal/no-tag wording are exercised by `firmware` having no real
+      # git repository behind it either.
+      @user.nodes.create!(node_id: "n-firmware-readme", name: "README.md", kind: "file",
+                          parent_node_id: firmware.node_id)
       # ONE GENERATED FILE IN THE FOLDER, OR projects/_generated_group IS NEVER RENDERED: a file with
       # a Maker::AddonState behind it, keyed to the `fixture` addon the sweep's ADDON_SOURCE_PATH
       # already serves (link_for answers nil for a key the source does not know, and the concern
