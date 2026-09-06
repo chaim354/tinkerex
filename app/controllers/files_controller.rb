@@ -459,6 +459,13 @@ class FilesController < ApplicationController
     @gerber_archive = Maker::GerberArchive.archive?(@node.name) &&
                       Maker::GerberArchive.for(user: current_user, node: @node)
     @kind = :gerber if @gerber_archive
+    # WHAT THE 3D VIEWER'S IMPORTER CANNOT KNOW — the slicer's per-object filament colours and the
+    # model's declared unit, which three.js's 3MFLoader ignores. nil for everything that is not a
+    # 3MF (`for` refuses by NAME before it looks at anything else), so this is safe to call for any
+    # file and costs a non-3MF nothing. On a 3MF it is the second read this action can make, beside
+    # the Gerber one above: ONE port read, bounded on the catalog's size column and cached by
+    # content token, so it is one query per view of one file and nothing after the first.
+    @viewer_manifest = Maker::ThreeMfManifest.for(user: current_user, node: @node)
     # THE :gerber BRANCH'S LAYER LIST, BUILT HERE BECAUSE ONLY A `.gbrjob` NEEDS A QUERY AND A READ.
     # An ordinary layer is its own whole answer; a job file's page renders the BOARD it names, which
     # means resolving its siblings. Nil for every other kind, so the view's branch and this one

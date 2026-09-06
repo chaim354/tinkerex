@@ -23,7 +23,13 @@ import { Controller } from "@hotwired/stimulus"
 // thumbnail poster. `data-modelviewer-state` reports which of those happened —
 // loading / ready / failed — and is what the system test drives.
 export default class extends Controller {
-  static values = { url: String, format: String, lazy: Boolean }
+  static values = {
+    url: String, format: String, lazy: Boolean,
+    // WHAT THE IMPORTER CANNOT KNOW, HANDED OVER BY THE SERVER (Maker::ThreeMfManifest): one
+    // "#RRGGBB"-or-null per imported mesh from the slicer's own metadata, and the millimetre factor
+    // for a 3MF's declared `unit`. Empty and 1 for every other format, which is a no-op on both.
+    colors: Array, unitFactor: { type: Number, default: 1 }
+  }
   static targets = ["canvas", "dims", "fallback", "source"]
 
   connect() {
@@ -65,6 +71,11 @@ export default class extends Controller {
       const opt = this.sourceTarget.selectedOptions[0]
       this.urlValue = opt.dataset.url
       this.formatValue = opt.dataset.format
+      // The manifest belongs to the FILE, so it is carried per option and copied over here — a
+      // switch that moved the url and left the colours behind would paint the new model with the
+      // old one's palette, which the count check would usually but not always catch.
+      this.colorsValue = JSON.parse(opt.dataset.colors || "[]")
+      this.unitFactorValue = Number(opt.dataset.unitFactor || 1)
     }
     const gen = ++this.generation // invalidate any in-flight load (rapid switches / keyboard nav)
 
@@ -124,9 +135,65 @@ export default class extends Controller {
 
   loaded(gen) {
     if (this.disposed || gen !== this.generation || !this.viewer) return
+    this.applyColors()
     this.showDims()
     this.state("ready")
     this.focusViewer()
+  }
+
+  // THE SLICER'S COLOURS, APPLIED BY IMPORT INDEX — Maker::ThreeMfManifest's header carries the
+  // whole argument. Matched on `userData.originalMeshInstance.id.meshIndex`, the engine's own
+  // numbering of the meshes it imported, never by name: a Bambu `<object>` has no `name` attribute
+  // at all (the name lives in model_settings.config), so a name match would apply nothing.
+  //
+  // APPLIED ONLY WHEN THE LIST IS EXACTLY AS LONG AS THE MODEL. A mismatch means the server's walk
+  // and the loader disagreed about how many meshes this file has, and painting the wrong part is
+  // worse than leaving it grey — so a mismatch applies NOTHING and says so in the console.
+  //
+  // TWO MORE THINGS NOT TO SIMPLIFY AWAY. A mesh whose geometry carries its own vertex colours is
+  // left alone — the file's own colours beat a slicer's guess at them. The case that reaches that
+  // guard is NOT a plain CAD export (its manifest is all-null, so `!hex` returns first): it is a
+  // slicer project whose meshes still carry the `m:colorgroup` they were imported with, which
+  // Bambu writes when a coloured model is re-exported. No fixture pins it (the review measured the
+  // guard's removal green), so this sentence is the guard's only witness. And the material is
+  // CLONED first: the engine hands every
+  // mesh built from one 3MF material the SAME material object, so setting `.color` on it in place
+  // paints every part the last colour in the list. The clone keeps the array shape the engine used
+  // (`meshThreeMaterials` is an array, one entry per material group).
+  applyColors() {
+    const colors = this.colorsValue || []
+    const model = this.viewer?.GetModel()
+    if (!model || colors.length === 0 || colors.length !== model.MeshCount()) {
+      if (colors.length) {
+        console.info(`[modelviewer] ${colors.length} colours for ${model?.MeshCount()} meshes; not applied`)
+      }
+      return
+    }
+
+    const three = this.viewer.GetViewer()
+    // `scene.traverse` rather than the engine's own EnumerateMeshes: three's API, so nothing here
+    // depends on which internal model object holds the meshes in this release. `isMesh` is what
+    // keeps the edge LineSegments out.
+    three.scene.traverse((mesh) => {
+      if (!mesh.isMesh) return
+      const index = mesh.userData.originalMeshInstance?.id?.meshIndex
+      const hex = Number.isInteger(index) ? colors[index] : null
+      if (!hex || mesh.geometry.attributes.color) return
+
+      const source = mesh.material
+      const painted = Array.isArray(source) ? source.map((m) => m.clone()) : source.clone()
+      const each = Array.isArray(painted) ? painted : [painted]
+      each.forEach((m) => {
+        m.color.set(hex)
+        m.vertexColors = false
+        m.needsUpdate = true
+      })
+      mesh.material = painted
+      // Non-null only while the engine is holding the original for a highlight; keeping the two in
+      // step means ending a highlight restores OUR colour rather than the default grey.
+      if (mesh.userData.threeMaterials) mesh.userData.threeMaterials = painted
+    })
+    three.Render()
   }
 
   fail(gen, error) {
@@ -176,9 +243,16 @@ export default class extends Controller {
   //
   // `OV.GetBoundingBox(model)` walks the imported MODEL's vertices instead, in the file's own axes,
   // and it walks MESH INSTANCES — so an assembly's node transformations are applied and a
-  // multi-part STEP measures as it sits rather than as its parts were authored. Units are the
-  // file's own, mm by the 3D-print and CAD convention, with the formats that declare a unit (3MF,
-  // FCStd) already converted by their importer. Round to 0.1 for a readable size.
+  // multi-part STEP measures as it sits rather than as its parts were authored.
+  //
+  // THE NUMBERS ARE IN THE FILE'S OWN UNITS, AND A 3MF's ARE NOT NECESSARILY MILLIMETRES — this
+  // paragraph used to claim "the formats that declare a unit (3MF, FCStd) already converted by
+  // their importer", which is FALSE for 3MF and was measured to be false: three's 3MFLoader ignores
+  // `<model unit>` entirely, so an Onshape export declaring `unit="meter"` and standing 1.9 m tall
+  // read as "0 × 1 × 0.6 mm" — 1000x short, a number that disagrees with the user's own CAD. The
+  // factor therefore comes from the SERVER (Maker::ThreeMfManifest reads the attribute the importer
+  // dropped) and is 1 for every other format, including the ones that really do convert. Round to
+  // 0.1 for a readable size.
   showDims() {
     if (!this.hasDimsTarget) return
     const model = this.viewer.GetModel()
@@ -186,7 +260,8 @@ export default class extends Controller {
     if (!box) return
     const min = box.GetMin()
     const max = box.GetMax()
-    const mm = (n) => (Math.round(n * 10) / 10).toLocaleString()
+    const factor = this.unitFactorValue || 1
+    const mm = (n) => (Math.round(n * factor * 10) / 10).toLocaleString()
     this.dimsTarget.textContent =
       `${mm(max.x - min.x)} × ${mm(max.y - min.y)} × ${mm(max.z - min.z)} mm`
   }

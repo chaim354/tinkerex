@@ -104,33 +104,50 @@ module Maker
     # StringIO`, a page-breaking error nowhere near the mistake. Returning also skips that
     # `write_buffer`, which re-serialises the whole archive back into a buffer nothing reads.
     def self.listing_from(bytes)
-      return nil if bytes.nil? || bytes.empty?
+      zip = open_zip(bytes) or return nil
 
       names = []
       job = nil
-      Zip::File.open_buffer(StringIO.new(bytes.b)) do |zip|
-        zip.each do |entry|
-          next if entry.directory?
+      zip.each do |entry|
+        next if entry.directory?
 
-          name = entry.name.dup.force_encoding(Encoding::UTF_8).scrub
-          ext = ext_of(name)
-          next unless FilesController::GERBER_EXTS.include?(ext)
+        name = entry.name.dup.force_encoding(Encoding::UTF_8).scrub
+        ext = ext_of(name)
+        next unless FilesController::GERBER_EXTS.include?(ext)
 
-          if ext == "gbrjob"
-            job ||= entry
-          else
-            names << name
-          end
+        if ext == "gbrjob"
+          job ||= entry
+        else
+          names << name
         end
-        return nil if names.empty?
-
-        names.sort!
-        listed = job && job_layer_names(job)
-        stacked = listed ? names.select { |n| listed.include?(File.basename(n)) } : names
-        stacked = names if stacked.empty?
-        return Listing.new(members: names, stacked:, job_name: job && File.basename(job.name))
       end
+      return nil if names.empty?
+
+      names.sort!
+      listed = job && job_layer_names(job)
+      stacked = listed ? names.select { |n| listed.include?(File.basename(n)) } : names
+      stacked = names if stacked.empty?
+      Listing.new(members: names, stacked:, job_name: job && File.basename(job.name))
     rescue Zip::Error
+      nil
+    end
+
+    # THE ARCHIVE IS OPENED IN A RESCUE OF ITS OWN, NARROWER IN SCOPE AND WIDER IN CLASSES than the
+    # method's — `Maker::ThreeMfManifest.open_zip` is the same door for the same reason. rubyzip
+    # 3.6.0 does not fail cleanly on a central directory that is present but cut short: a real zip
+    # minus its last 1, 5 or 10 bytes raises `NoMethodError` ("undefined method 'positive?' for
+    # nil") or `ArgumentError` ("comparison of Integer with nil") out of `open_buffer`, not
+    # `Zip::Error` (measured in the 3MF review; this reader raised identically on the same bytes,
+    # and a truncated upload is an ordinary thing for a file page to meet). A method-level rescue of
+    # those classes would also swallow this class's own bugs, which must stay loud — so the wide
+    # list wraps exactly the gem's call. The block form is not used: it discards the block's value
+    # and answers a re-serialised buffer. Empty bytes are refused first (`open_buffer` raises
+    # TypeError on them).
+    def self.open_zip(bytes)
+      return nil if bytes.nil? || bytes.empty?
+
+      Zip::File.open_buffer(StringIO.new(bytes.b))
+    rescue Zip::Error, TypeError, NoMethodError, ArgumentError
       nil
     end
 

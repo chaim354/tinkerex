@@ -257,7 +257,13 @@
          data-controller="modelviewer"
          data-modelviewer-lazy-value="true"
          data-modelviewer-url-value="<%= named_blob_file_path(@node.node_id, filename: @node.name) %>"
-         data-modelviewer-format-value="<%= File.extname(@node.name).downcase.delete('.') %>">
+         data-modelviewer-format-value="<%= File.extname(@node.name).downcase.delete('.') %>"
+         <%# WHAT THE IMPORTER CANNOT READ FOR ITSELF, from Maker::ThreeMfManifest: one slicer
+             filament colour per imported mesh, and the millimetre factor for the model's declared
+             unit (three's 3MFLoader ignores it, so an Onshape part in metres measures 1000x short).
+             Empty and 1 for every other format, which is the no-op the controller checks for. %>
+         data-modelviewer-colors-value="<%= (@viewer_manifest&.colors || []).to_json %>"
+         data-modelviewer-unit-factor-value="<%= @viewer_manifest&.unit_factor || 1.0 %>">
       <div class="model-viewer-stage" data-modelviewer-target="canvas"></div>
       <div class="model-viewer-bar">
         <span class="model-viewer-dims" data-modelviewer-target="dims"></span>

@@ -52,6 +52,14 @@ pin "lib/print_sheet", to: "lib/print_sheet.js"
 pin "lib/shape_svg", to: "lib/shape_svg.js"
 pin "lib/export_svg", to: "lib/export_svg.js"
 
+# ONE viewBox pan/zoom for every SVG stage — imported STATICALLY by measure_controller.js (which is
+# where the maths was written) and by gerber_controller.js. A HOST pin like the ones above; a bundle
+# must NOT import it, since it takes an <svg> element this app built. Preloaded on purpose, unlike
+# the lazy bundles below: it is ~4 KB and both importers are plain controller modules the page
+# already loads, so `preload: false` would only cost a second round trip on a page that is certain
+# to want it.
+pin "lib/svg_pan_zoom", to: "lib/svg_pan_zoom.js"
+
 # The source viewers' ext -> language table (plus our own g-code and OpenSCAD stream modes).
 # A HOST pin like the three above, so it is drawn into every addon's merged importmap — but a
 # bundle must NOT import it: it takes the CodeMirror namespace as an argument, so it is only

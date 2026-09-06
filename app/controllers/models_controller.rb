@@ -74,11 +74,22 @@ class ModelsController < ApplicationController
     # why for each). This read the SAME literal `%w[stl 3mf obj]` that FilesController carried
     # until 2026-09-06; one constant now, so the file page and this page cannot drift about which
     # of a model's files open in the viewer.
+    # THE MANIFEST IS PER FILE, WHICH IS WHY IT IS BUILT HERE AND NOT ON THE ELEMENT: the switcher
+    # swaps one model for another, so the slicer colours and the unit factor have to travel on each
+    # `<option>` (§14d — modelviewer_controller.js reads them beside `url`/`format`). `for` refuses
+    # by name first, so the non-3MF entries cost nothing; a 3MF costs ONE bounded port read (one
+    # query on share; on chunk_remote a chunk download through the sync server) the first time this
+    # model is viewed and nothing after, cached by content token. THAT COST IS PER 3MF ATTACHMENT,
+    # AND page_query_budget_test.rb DOES NOT SEE IT: its growing fixture is all `.stl`, which `for`
+    # refuses by name, so the constancy it asserts is over files that never reach a read. A model
+    # holding N 3MFs pays N reads on a cold cache — the same per-file shape the page's thumbnails
+    # already have, stated here rather than hidden behind a guard that cannot fail for it.
     @viewable_3d = @attachments.filter_map do |a|
-      name = @page_nodes[a.node_id].name
-      ext = File.extname(name).downcase.delete(".")
+      node = @page_nodes[a.node_id]
+      ext = File.extname(node.name).downcase.delete(".")
       next unless Maker::FileAttachment::VIEWABLE_3D_EXTS.include?(ext)
-      { node_id: a.node_id, name:, format: ext }
+      { node_id: a.node_id, name: node.name, format: ext,
+        manifest: Maker::ThreeMfManifest.for(user: current_user, node:) }
     end
     @viewable_3d_default = @viewable_3d.find { |f| f[:node_id] == @model.cover_node_id } || @viewable_3d.first
     # The model's files as a folder TREE (preserves the imported zip's structure) for the detail

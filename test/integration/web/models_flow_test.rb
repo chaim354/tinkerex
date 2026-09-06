@@ -1,7 +1,13 @@
 require "test_helper"
+require "support/mesh_fixture"
+require "support/three_mf_fixture"
 
 module Web
   class ModelsFlowTest < ActionDispatch::IntegrationTest
+    # Real 3MF bytes for the switcher's manifest attributes — the hero reads them per OPTION, and a
+    # node with no bytes behind it would answer nil on every leg and prove nothing.
+    include ThreeMfFixture
+
     PASSWORD = "correct horse battery staple".freeze
 
     # Views READ file metadata + capabilities through FileLayer.current; pin a real backend so a
@@ -136,6 +142,50 @@ module Web
       end
       assert_select "select.model-viewer-source option", text: "part.f3d", count: 0
       assert_select ".mv-launch [data-action~=?]", "modelviewer#load"
+      # EVERY OPTION CARRIES THE MANIFEST PAIR, whatever its format. `load()` copies both into the
+      # controller on a switch, so an option missing them would leave the PREVIOUS file's colours
+      # and unit factor in place — and these rows have no bytes, so the honest answer is the no-op
+      # pair rather than a manifest.
+      assert_select "select.model-viewer-source option[data-colors][data-unit-factor]", count: 5
+      assert_select "select.model-viewer-source option[data-colors=?]", "[]", count: 5
+      assert_select "select.model-viewer-source option[data-unit-factor=?]", "1.0", count: 5
+    end
+
+    # THE MANIFEST IS PER FILE, WHICH IS WHY IT RIDES ON THE OPTION. Two 3MFs with different slicer
+    # palettes and different declared units: the switcher has to hand the viewer the right one for
+    # whichever file is selected, and building it on the ELEMENT instead would paint the second
+    # model with the first one's colours.
+    test "each 3D option carries its own file's slicer colours and unit factor" do
+      @user = sign_in
+      m = @user.maker_models.create!(title: "Painted")
+      bambu = write_model!(name: "plate.3mf",
+                           body: bambu_3mf(objects: [ { extruder: 1 }, { extruder: 2 } ],
+                                           filaments: %w[#161616 #F98C36 #FFFFFF]))
+      metres = write_model!(name: "part.3mf", body: plain_3mf(unit: "meter"))
+      [ bambu, metres ].each_with_index do |node, i|
+        m.file_attachments.create!(user: @user, node_id: node.node_id, role: "model", position: i)
+      end
+
+      get model_path(m)
+      assert_response :success
+      assert_select "select.model-viewer-source option[value=?][data-colors=?][data-unit-factor=?]",
+                    bambu.node_id, '["#161616","#F98C36"]', "1.0"
+      assert_select "select.model-viewer-source option[value=?][data-colors=?][data-unit-factor=?]",
+                    metres.node_id, "[null]", "1000.0"
+    end
+
+    # THE SINGLE-FILE HERO PUTS THE SAME PAIR ON THE ELEMENT, because there is no option to carry
+    # them — the two branches of the same template, and only one of them was ever exercised above.
+    test "a lone 3MF hero carries its manifest on the element" do
+      @user = sign_in
+      m = @user.maker_models.create!(title: "Solo 3MF")
+      node = write_model!(name: "part.3mf", body: plain_3mf(unit: "inch"))
+      m.file_attachments.create!(user: @user, node_id: node.node_id, role: "model")
+
+      get model_path(m)
+      assert_response :success
+      assert_select ".model-hero.model-viewer[data-modelviewer-unit-factor-value=?]", "25.4"
+      assert_select ".model-hero.model-viewer[data-modelviewer-colors-value=?]", "[null]"
     end
 
     test "show marks the cover file as the default selected option in the switcher" do

@@ -348,9 +348,22 @@
      which is the whole mechanism that keeps a tall board inside the box instead of pushing the
      panel open (flex items default to min-height: auto). */
   .gerber-stage [data-gerber-target="stage"] { flex: 1; min-height: 0; color: var(--fg); }
-  .gerber-stage svg { display: block; width: 100%; height: 100%; }
+  /* `cursor: grab` says the board can be dragged before anyone tries it; `is-panning` is the class
+     lib/svg_pan_zoom adds for the length of a drag, so the cursor answers the gesture rather than
+     the hover.
+
+     `touch-action: none` IS WHAT LETS A SECOND FINGER REACH THE PINCH HANDLER AT ALL. Without it
+     the browser claims a two-finger gesture for page scrolling and zooming and never delivers the
+     second pointer, so the pinch is not merely degraded — it never fires. It also stops a
+     one-finger drag scrolling the page under the board on a phone. */
+  .gerber-stage svg { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+  .gerber-stage svg.is-panning { cursor: grabbing; }
   .gerber-stage > .muted { padding: 24px; text-align: center; }
   .gerber-sides { display: flex; gap: 6px; margin: 0; }
+  /* The controller-built toolbar (Fit + one toggle per layer). It wraps because a six-layer board
+     puts seven buttons in a panel that is half a project page wide; `.btn small` is the component
+     and this rule only lays the row out (design-system.md rule 3). */
+  .gerber-stage .gerber-tools { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
 
   /* --- Fabrication section on the project and public project pages (_fabrication.html.erb).
      Several boards can sit in one panel (a project holds a main board and a daughterboard), so each

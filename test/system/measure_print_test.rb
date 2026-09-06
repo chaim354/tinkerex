@@ -2661,10 +2661,14 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # resetting the view and assuming you had.
   #
   # BOTH HALVES ARE ASSERTED SEPARATELY BECAUSE THEY FAIL SEPARATELY. `reset()` is two statements
-  # and either can be dropped alone: without `setViewBox` the zoom survives and the marks clear;
-  # without `clearMarks` the view goes home and the set silently persists into the next print.
-  # Mutation-checked in both directions — dropping the clear leaves "Print 2 parts" standing,
-  # dropping the setViewBox leaves the viewBox at the zoomed value.
+  # and either can be dropped alone: without `panZoom.reset()` the zoom survives and the marks
+  # clear; without `clearMarks` the view goes home and the set silently persists into the next
+  # print. Mutation-checked in both directions — dropping the clear leaves "Print 2 parts"
+  # standing, dropping the panZoom reset leaves the viewBox at the zoomed value.
+  #
+  # IT REACHES THROUGH `c.panZoom`, NOT `c.setViewBox`, SINCE 2026-09-06: the viewBox maths moved
+  # to lib/svg_pan_zoom.js so the Gerber stage could share it, and the handle the controller holds
+  # is the door. Nothing else about this test changed.
   test "Reset returns the view home and empties the selection" do
     open_measure_view(@nested_id)
     click_plate
@@ -2674,7 +2678,7 @@ class MeasurePrintTest < ApplicationSystemTestCase
 
     # Move the view off home so the reset has something to undo — asserting against `home` alone
     # would pass on a reset that never ran.
-    zoomed = in_measure_controller("(c.setViewBox(c.svg, [1, 2, 3, 4]), c.svg.getAttribute('viewBox'))")
+    zoomed = in_measure_controller("(c.panZoom.set([1, 2, 3, 4]), c.svg.getAttribute('viewBox'))")
     assert_equal "1 2 3 4", zoomed
 
     click_on "Reset"
