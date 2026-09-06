@@ -181,11 +181,46 @@ module Maker
       bulk = adapter.method(:stat_all)
       gone = @user.nodes.present.find_by!(name: "vanished.stl").node_id
 
-      replacing(adapter, :stat_all, ->(user, node_ids:) { bulk.call(user, node_ids:).except(gone) }) do
-        assert_equal 1, snapshot.file_count
+      result = replacing(adapter, :stat_all, ->(user, node_ids:) { bulk.call(user, node_ids:).except(gone) }) do
+        snapshot
       end
 
+      assert_equal 1, result.file_count
+      # THE SKIP IS COUNTED, NOT SILENT: a release taken while a scan tombstones rows records fewer
+      # files than the folder held, and the result says how many (S3-5's review).
+      assert_equal 1, result.skipped
       assert_equal [ "kept.stl" ], @project.releases.first.files.map(&:name)
+    end
+
+    # A PERMANENT RECORD MUST NOT CLAIM COMPLETENESS IT DOES NOT HAVE. The listing's FILE_CAP is a
+    # page's render budget; the snapshot passes its own, and when even that is exceeded the result
+    # says so, for the flash and the panel to repeat (S3-5's review, HIGH). Exercised through an
+    # injected cap of 1, because building five thousand nodes is not a test.
+    test "a folder past the snapshot's cap records the first files and reports truncation" do
+      seed_folder!("a.stl" => "a\n", "b.stl" => "b\n")
+
+      capped = Maker::ReleaseSnapshot.new(user: @user, project: @project, file_cap: 1)
+                                     .call(version: "v0.1.0", notes: nil, git_tag: nil, repo_node_id: nil)
+
+      assert_equal true, capped.truncated
+      assert_equal 1, capped.file_count
+      assert_equal 0, capped.skipped, "truncation is not a skip: the port answered for every row it was asked about"
+
+      assert_equal false, snapshot(version: "v0.2.0").truncated, "two files are well inside the default cap"
+    end
+
+    # A TAG PAST THE PICKER'S CAP STILL VERIFIES. `LocalRepo#tags` is bounded for the picker;
+    # verification asks `#tag(name)` directly, so a repository with more tags than TAG_CAP can
+    # still release on its newest one (S3-5's review, HIGH: the capped list refused a real tag).
+    test "a tag the picker's capped list leaves out is still verified" do
+      names = (Maker::Git::LocalRepo::TAG_CAP + 1).times.map { |i| format("v%04d", i) }
+      repo, oid = seed_repo!(tags: names)
+      last = names.max
+
+      result = snapshot(git_tag: last, repo_node_id: repo.node_id)
+
+      assert_equal true, result.tag_verified
+      assert_equal oid, result.release.git_oid
     end
 
     test "no tag records no tag, no oid and no repository" do
@@ -289,6 +324,7 @@ module Maker
       assert_equal false, result.tag_verified
       assert_equal "v2.0.0-not-in-the-repo", result.release.git_tag
       assert_nil result.release.git_oid, "nothing verified the tag, so no commit may be claimed"
+      assert_nil result.release.repo_node_id, "nothing opened the repository, so none may be named"
     end
 
     test "the version and changelog reach the row" do

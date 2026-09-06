@@ -13,16 +13,23 @@ module Maker
   class ReleaseSnapshot
     class TagNotFound < StandardError; end
 
-    Result = Data.define(:release, :file_count, :tag_verified)
+    # `truncated`: the folder held more files than FILE_CAP, so the release lists the first ones
+    # and says so (a permanent record must not claim completeness it does not have — S3-5's
+    # review). `skipped`: rows the port could not stat at snapshot time, left out rather than
+    # recorded with no token (§14a: an absent key is the port's answer, never a raise).
+    Result = Data.define(:release, :file_count, :tag_verified, :truncated, :skipped)
+    # A snapshot's cap is not a page's: the listing's FILE_CAP (300) is a render budget, and a
+    # release is a record. 5000 files is one stat_all and one insert_all, both bounded here.
+    FILE_CAP = 5000
 
     def self.call(user:, project:, version:, notes: nil, git_tag: nil, repo_node_id: nil)
       new(user:, project:).call(version:, notes:, git_tag:, repo_node_id:)
     end
 
-    def initialize(user:, project:)
+    def initialize(user:, project:, file_cap: FILE_CAP)
       @user = user
       @project = project
-      @listing = Maker::ProjectFolderListing.new(user, project)
+      @listing = Maker::ProjectFolderListing.new(user, project, file_cap: file_cap)
     end
 
     def call(version:, notes:, git_tag:, repo_node_id:)
@@ -39,7 +46,9 @@ module Maker
       # which must not exist without their release nor the release without them.
       Maker::Release.transaction do
         release = @project.releases.create!(user: @user, version:, git_tag:, git_oid:,
-                                            repo_node_id: (git_tag.presence && repo_node_id.presence),
+                                            # The repository is recorded only when a tag was VERIFIED in it;
+                                            # a tag typed on a non-local library names no repository the app opened.
+                                            repo_node_id: (verified ? repo_node_id.presence : nil),
                                             bom:, bom_revision: bom&.revision,
                                             published_at: Time.current, notes:)
         now = Time.current
@@ -53,7 +62,8 @@ module Maker
         end
         Maker::ReleaseFile.insert_all(records) if records.any?
       end
-      Result.new(release:, file_count: release.files.count, tag_verified: verified)
+      Result.new(release:, file_count: release.files.count, tag_verified: verified,
+                 truncated: @listing.truncated?, skipped: rows.size - release.files.count)
     end
 
     private
@@ -75,7 +85,9 @@ module Maker
       # locked repository is refused, never unlocked (git-editing.md).
       raise TagNotFound, local.refusal if local.refusal
 
-      tag = local.tags.find { |t| t.name == git_tag }
+      # A DIRECT LOOKUP, never the picker's capped list: a real tag past TAG_CAP would otherwise
+      # be refused as "no such tag" (S3-5's review).
+      tag = local.tag(git_tag)
       raise TagNotFound, "no tag #{git_tag} in #{root.name}" if tag.nil?
 
       [ tag.oid, true ]

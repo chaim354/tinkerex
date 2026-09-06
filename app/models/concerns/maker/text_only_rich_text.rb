@@ -29,8 +29,8 @@ module Maker
       # Mutation-checked by putting the literal spelling back: 16 of release_test.rb's 17 cases
       # error, and text_only_rich_text_test.rb's 7 note/entry cases stay green — the default is
       # genuinely untouched. That is why the alternative (a second copy of the strip in Release)
-      # is the wrong
-      # answer: the policy would then have two places to be forgotten in, and this file's whole
+      # is the wrong answer:
+      # the policy would then have two places to be forgotten in, and this file's whole
       # existence is that forgetting it is silent.
       class_attribute :text_only_rich_text_attribute, instance_writer: false, default: :body
       before_validation :strip_rich_text_attachments

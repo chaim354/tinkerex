@@ -83,4 +83,44 @@ class Maker::Git::LocalRepoTagsTest < ActiveSupport::TestCase
     assert_equal Maker::Git::LocalRepo::TAG_CAP, tags.size
     assert_equal tags.map(&:name).sort, tags.map(&:name), "the capped slice is still name-sorted"
   end
+
+  # SORTED BEFORE THE CAP, so the capped set is the alphabetical first TAG_CAP and two renders
+  # can never differ (git-editing.md's rule for `full_status`; S3-5's review caught this method
+  # capping first and citing that rule as precedent). The 201st name sorts LAST and must be the
+  # one left out -- a cap taken in ref order could drop any name and still pass the test above.
+  test "the cap keeps the alphabetical first TAG_CAP, so the last name by sort is the one left out" do
+    root = make_repo!(name: "many-sorted")
+    repo = repo_at("many-sorted")
+    head = repo.head.target_id
+    names = (Maker::Git::LocalRepo::TAG_CAP + 1).times.map { |i| format("v%04d", i) }
+    names.shuffle(random: Random.new(7)).each { |t| repo.tags.create(t, head) }
+
+    tags = local_for(root).tags
+
+    assert_equal names.sort.first(Maker::Git::LocalRepo::TAG_CAP), tags.map(&:name)
+    assert_not_includes tags.map(&:name), names.max
+  end
+
+  # A DIRECT LOOKUP SEES PAST THE CAP. The picker's list is bounded; verifying the tag a maker
+  # chose is not, or a real tag would be refused as "no such tag" (S3-5's review, HIGH).
+  test "tag(name) answers a tag the capped list left out, and nil for a name that is not a tag" do
+    root = make_repo!(name: "past-cap")
+    repo = repo_at("past-cap")
+    head = repo.head.target_id
+    (Maker::Git::LocalRepo::TAG_CAP + 1).times { |i| repo.tags.create(format("v%04d", i), head) }
+    last = format("v%04d", Maker::Git::LocalRepo::TAG_CAP)
+    local = local_for(root)
+
+    assert_not_includes local.tags.map(&:name), last, "the fixture must put the tag past the cap"
+    found = local.tag(last)
+    assert_equal last, found.name
+    assert_equal head, found.oid
+    assert_nil local.tag("v9999")
+    assert_nil local.tag("")
+  end
+
+  test "tag(name) on an unborn HEAD is nil" do
+    root = make_repo!(name: "unborn-tag", commit: false)
+    assert_nil local_for(root).tag("v1.0.0")
+  end
 end
