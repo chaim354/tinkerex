@@ -219,6 +219,14 @@ Rails.application.routes.draw do
     get "u/:handle",                              to: "users#show",     as: :user,    constraints: { handle: /[a-z0-9][a-z0-9-]*/i }
     get "u/:handle/:slug",                        to: "projects#show",  as: :project, constraints: { handle: /[a-z0-9][a-z0-9-]*/i }
     get "u/:handle/:slug/files/:id(/*filename)",  to: "files#show",     as: :file,    constraints: { handle: /[a-z0-9][a-z0-9-]*/i }, format: false
+    # STAGE 3, S3-6. These three DO parse a format, which is why `format: false` is deliberately
+    # absent here and present one line up: `/feed.atom`, `/bundle.json` and `/bom.csv` are how a
+    # reader, a fetch and a spreadsheet each name what they want, and the `defaults:` makes the
+    # bare path answer the same thing. They cannot collide with the file route above — that one is
+    # `/files/:id`, these are leaves of their own.
+    get "u/:handle/:slug/feed",                   to: "feeds#show",     as: :feed,    constraints: { handle: /[a-z0-9][a-z0-9-]*/i }, defaults: { format: :atom }
+    get "u/:handle/:slug/bundle",                 to: "bundles#show",   as: :bundle,  constraints: { handle: /[a-z0-9][a-z0-9-]*/i }, defaults: { format: :json }
+    get "u/:handle/:slug/bom",                    to: "boms#show",      as: :bom,     constraints: { handle: /[a-z0-9][a-z0-9-]*/i }, defaults: { format: :csv }
   end
 
   # --- Maker: Models (3D-print model library; server-rendered web UI, session auth) ---

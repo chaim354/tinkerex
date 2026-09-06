@@ -16,7 +16,10 @@
     </div>
     <ol class="log-timeline">
       <% pub.entries.each do |entry| %>
-        <li class="log-entry">
+        <%# THE ANCHOR THE FEED POINTS AT (stage 3, S3-6). Every feed item's link is this page plus
+            a fragment, so a reader that opens an entry lands ON it rather than at the top of a page
+            that may hold fifty. public_feed_test.rb asserts the two agree. %>
+        <li class="log-entry" id="entry-<%= entry.id %>">
           <time class="entry-time muted"><%= entry.logged_at.strftime("%Y-%m-%d") %></time>
           <%# A div, not a p: Action Text emits block-level markup and a <p> cannot legally contain it. %>
           <div class="entry-body"><%= entry.body %></div>

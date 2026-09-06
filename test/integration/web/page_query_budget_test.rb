@@ -280,6 +280,79 @@ module Web
                               "public projects#show")
     end
 
+    # STAGE 3, S3-6: THE FEED AND THE MANIFEST ARE TWO MORE READERS OVER THE SAME ROWS, and neither
+    # rides the page's eager loads — `Public::FeedsController` and `Public::BundlesController` each
+    # build their own Maker::PublicProject and read a different slice of it. They also both answer a
+    # POLLER rather than a person: a feed reader fetches on a timer and the bundle button fetches
+    # the manifest before every download, so a per-row query here is paid over and over by a
+    # deployment nobody is even looking at.
+    #
+    # THE TWO GROWTH AXES ARE DELIBERATELY DIFFERENT. The feed grows with build-log entries and
+    # releases and does not care how many files the folder holds; the manifest is the reverse. One
+    # test with one seed would leave whichever axis it did not grow unmeasured while reading green.
+    test "public feeds#show does not grow with build-log entries or releases" do
+      delete destroy_user_session_path
+      @user.update!(handle: "feeder")
+      project = @user.maker_projects.create!(name: "Fed", status: "active", visibility: "public")
+      project_folder_rows!(@user, project)
+      add = lambda do |prefix, count|
+        count.times do |i|
+          id = "#{prefix}#{i}"
+          # THE RICH TEXT IS THE POINT ON BOTH SIDES. An entry's `body` and a release's `notes` are
+          # each an Action Text association, and each is what this file's own header records
+          # regressing on projects#show: flat, then +1 query per row, with the whole suite green.
+          # The feed renders BOTH bodies, so it carries the hazard twice.
+          project.build_log_entries.create!(user: @user, body: "entry #{id}", logged_at: Time.current)
+          node!("#{id}-rel", "#{id}.stl")
+          release = project.releases.create!(user: @user, version: "v#{id}", published_at: Time.current,
+                                             notes: "<div>cut #{id}</div>")
+          # A release's FILES are read too — the item's content line counts them — so the
+          # association has to be eager-loaded or the count is a query a release.
+          release.files.create!(user: @user, node_id: "#{id}-rel", name: "#{id}.stl",
+                                path: "#{id}.stl", content_token: "h-#{id}", size: 1)
+        end
+      end
+      # SMALL/LARGE (3/15) both stay under Maker::PublicProject::FEED_CAP (50) on purpose:
+      # saturating the cap would hold the rendered item count still between the two measurements
+      # and make a per-item query invisible.
+      assert_constant_queries(public_feed_path(@user.handle, project.slug),
+                              -> { add.call("fs", SMALL) },
+                              -> { add.call("fl", LARGE - SMALL) },
+                              "public feeds#show")
+    end
+
+    test "public bundles#show does not grow with files" do
+      delete destroy_user_session_path
+      @user.update!(handle: "bundler")
+      project = @user.maker_projects.create!(name: "Bundled", status: "active", visibility: "public")
+      folder = project_folder_rows!(@user, project)
+      bom = project.boms.create!(user: @user)
+      add = lambda do |prefix, count|
+        count.times do |i|
+          id = "#{prefix}#{i}"
+          # A SUBFOLDER PER ITERATION as well as a file, because the manifest's paths come from the
+          # listing's own tree walk — a folder-relative path re-derived per row by walking parents
+          # would be a query per file and is exactly the shape this guard exists to refuse.
+          sub = @user.nodes.create!(node_id: "#{id}-dir", name: id, kind: "dir",
+                                    parent_node_id: folder.node_id, size: 0,
+                                    mtime: 1_700_000_000_000_000_000)
+          @user.nodes.create!(node_id: "#{id}-file", name: "#{id}.stl", kind: "file",
+                              parent_node_id: sub.node_id, size: 1, mtime: 1_700_000_000_000_000_000,
+                              content_hash: "h-#{id}", current_version_id: "v-#{id}")
+          # A BOM LINE PER ITERATION TOO: the manifest itself does not render the BOM, but the
+          # readme/`bundle_files` pass shares one Maker::PublicProject with whatever else the
+          # controller touches, and a line-per-query here would grow with the same seed.
+          bom.lines.create!(user: @user, part_name: "part-#{id}", quantity: 1, unit: "each")
+        end
+      end
+      # Under ProjectFolderListing::FILE_CAP (300) and DIR_CAP (500) at both sizes, for the reason
+      # the feed's own comment gives about FEED_CAP.
+      assert_constant_queries(public_bundle_path(@user.handle, project.slug),
+                              -> { add.call("bs", SMALL) },
+                              -> { add.call("bl", LARGE - SMALL) },
+                              "public bundles#show")
+    end
+
     # STAGE 3, S3-4: /explore IS THE ONE CROSS-USER PAGE IN THE APP, so its growth axis is one
     # project on one OWNER per step -- a card names its maker (`project.user.handle`) and its tags,
     # and both are `includes`d. A seed that reused one user would let `project.user` come back from

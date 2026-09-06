@@ -21,6 +21,18 @@
   <% end %>
 <% end %>
 
+<%# STAGE 3, S3-6: THE FEED, DISCOVERABLE THE WAY A READER LOOKS FOR ONE. A second `content_for
+    :head` block rather than a branch inside the one above -- content_for APPENDS, and the two say
+    unrelated things (that block is about indexing an unlisted page, this one is a subscription).
+    The href carries `k` through link_params like every other link on the page: an unlisted feed
+    without the token is a 404, and a reader that saved a credential-less URL would poll one
+    forever. %>
+<% content_for :head do %>
+  <link rel="alternate" type="application/atom+xml"
+        title="<%= "#{@project.name} — @#{@pub.handle}" %>"
+        href="<%= public_feed_path(@pub.handle, @project.slug, **@pub.link_params) %>">
+<% end %>
+
 <%# A REAL BREADCRUMB IN THE PAGE, NOT `content_for :crumbs`. The layout renders `layouts/topbar`
     (which is what consumes :crumbs) only on the SIGNED-IN branch, and a public page renders the
     visitor's shell by design — so a content_for here would be markup nothing ever yields. %>
@@ -43,7 +55,31 @@
     <% if @project.unlisted? %>
       <span class="badge visibility-unlisted">Unlisted link</span>
     <% end %>
+    <%= link_to "Feed", public_feed_path(@pub.handle, @project.slug, **@pub.link_params), class: "feed-link" %>
   </p>
+
+  <%# STAGE 3, S3-6: THE BUNDLE, BUILT IN THE VISITOR'S BROWSER. The button hands
+      `bundle_controller.js` a manifest URL and nothing else; that controller fetches each file
+      through the SAME public route this page links, adds bom.csv, and zips it client-side, so no
+      byte passes through Rails that a plain download would not already have moved (§15). The
+      status line is where a refused fetch is reported -- on the s3 deployment the public file
+      route redirects to a presigned URL and the CSP (`default-src 'self'`, no `connect-src`)
+      blocks that fetch, the shared follow-up S3-2 already carries, so the button must SAY it
+      failed rather than sit there having done nothing. %>
+  <% bundle = @pub.bundle_files %>
+  <% if bundle.any? %>
+    <div class="bundle" data-controller="bundle"
+         data-bundle-manifest-value="<%= public_bundle_path(@pub.handle, @project.slug, **@pub.link_params) %>"
+         data-bundle-name-value="<%= @project.slug %>">
+      <button type="button" class="btn small" data-action="bundle#build">
+        <%# "FIRST N FILES" WHEN THE LISTING HIT ITS CAP, the same fact the manifest carries as
+            `truncated`. A button that said "300 files" for a folder holding 900 would be a lie the
+            visitor cannot detect until they open the zip. %>
+        Download bundle (<%= "first " if @pub.listing.truncated? %><%= pluralize(bundle.size, "file") %>, <%= number_to_human_size(bundle.sum(&:size)) %>)
+      </button>
+      <span class="muted" data-bundle-target="status"></span>
+    </div>
+  <% end %>
 </div>
 
 <% if @project.description.present? %>

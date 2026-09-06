@@ -18,6 +18,14 @@
 
   .public-section { margin: 14px 0 4px; font-size: 13px; font-weight: 600; color: var(--fg-muted); }
 
+  /* THE BUNDLE BUTTON AND ITS STATUS (stage 3, S3-6). A flex row that WRAPS, because the status is
+     a whole sentence — "Fetching 7 of 30: models/bracket-v3-final.stl", or the failure line naming
+     a file — and at 375px it has to go under the button rather than push the page sideways
+     (§14m rule 11; test/system/shell_test.rb's sweep is what would say otherwise).
+     `overflow-wrap: anywhere` for the same reason a long file NAME needs it in the tables. */
+  .bundle { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+  .bundle .muted { font-size: 12px; overflow-wrap: anywhere; }
+
   /* 40px, matching `table.files .thumb` — the same row height the owner's file list has. */
   .public-files .col-thumb .thumb { width: 40px; height: 40px; flex: 0 0 40px; }
   .public-files .col-thumb { width: 48px; }

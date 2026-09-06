@@ -1034,7 +1034,10 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
                  "sessionless by construction, not by skipping a callback"
 
     files = (Dir.glob(ROOT.join("app", "controllers", "public", "**", "*.rb")) +
-             Dir.glob(ROOT.join("app", "views", "public", "**", "*.erb"))).sort
+             # EVERY TEMPLATE KIND, not `*.erb`: the namespace's first non-ERB template was the Atom
+             # builder (stage 3, S3-6), and a `*.erb` glob let `session[:who]` sit in it with this
+             # guard green (mutation-proven by S3-6's review). A template is a template.
+             Dir.glob(ROOT.join("app", "views", "public", "**", "*.{erb,builder,jbuilder}"))).sort
     assert_operator files.size, :>=, 10,
                     "the Public scan matched #{files.size} file(s), below the plausibility floor " \
                     "of 10 — so `assert_empty` below cannot fail for the reason it exists " \

@@ -99,7 +99,13 @@ module Web
       assert_select "main a[href^='/tags/']", false, "tag chips must link into /explore, not the private tag page"
       assert_select "main a[href^='/repos/']", false
       assert_select "main form", false
-      assert_select "main button", false
+      # STAGE 3, S3-6: THE ONE BUTTON A PUBLIC PAGE MAY CARRY, AND THE RULE BEHIND IT IS UNCHANGED.
+      # "No button" was always shorthand for "a visitor is not the person who would change
+      # something". The bundle button submits nothing, sits in no form, and its whole effect is to
+      # fetch the files this page already links and zip them in the visitor's OWN browser. Kept as
+      # an exact inventory rather than relaxed to nothing, so a real write control still fails here.
+      assert_select "main button", 1
+      assert_select "main .bundle button[type=button][data-action=?]", "bundle#build"
     end
 
     test "a visitor gets the visitor shell, with no rail and no tab bar" do
