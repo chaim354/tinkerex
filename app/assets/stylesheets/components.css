@@ -180,6 +180,12 @@
      as the quieter accent -- a link, not a listing. Private renders no badge at all. */
   .badge.visibility-public { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
   .badge.visibility-unlisted { background: var(--accent-soft); color: var(--accent); }
+  /* Releases (stage 3, S3-5): "N changed since" on a release summary, and "changed"/"gone" on a
+     file row. A COMPONENT MODIFIER, not a page rule, because both the private panel and the public
+     one render it -- a copy in each page sheet is the shape rule 3 (design-system.md) forbids.
+     `text-transform: none` for the same reason the bom-* modifiers carry it: these read as words,
+     not as a label. */
+  .badge.changed { background: var(--accent-soft); color: var(--accent); text-transform: none; }
   .empty { padding: 40px 16px; text-align: center; color: var(--fg-muted); border: 1px dashed var(--line); border-radius: var(--radius-panel); }
   .truncated { margin: 0 0 12px; padding: 8px 12px; border-radius: var(--radius-control); background: var(--raised); color: var(--fg-muted); font-size: 12px; }
 

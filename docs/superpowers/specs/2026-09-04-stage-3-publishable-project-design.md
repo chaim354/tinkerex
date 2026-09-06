@@ -109,3 +109,12 @@ Each slice is one PR with its own plan, executed and reviewed the way stage 2's 
 - Licences stay permissive (§9): KiCanvas is MIT and its notices ship beside the vendored build.
 - Out of stage 3: anything needing the sync server's cooperation (old-version downloads on share,
   sharing between users), parts export and supplier links, KiCad rendering on the server.
+
+**Releases (S3-5), the four rules the panels rest on.** A release records REFERENCES, never bytes, so
+a download always delivers the CURRENT file through the existing blob / public file route and the
+row says "changed since this release" when the token differs (`Maker::ReleaseFile#state_against` is
+the one definition, shared by both panels). Each panel takes ONE `stat_all` over the union of the
+node ids it shows, never one `stat` a row. A tag is verified against the picked repository only where
+`capabilities.local_worktree?`, and recorded as typed everywhere else — never silently dropped. A
+release is created and deleted, never edited: it describes a moment, and an editable one would
+describe a moment that was never taken.

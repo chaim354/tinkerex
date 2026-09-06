@@ -158,6 +158,11 @@ Rails.application.routes.draw do
     # note, in order. Shallow like tasks; edited inline on the project page, rendered read-only
     # on the public page later (S3-4).
     resources :connections, only: %i[create update destroy], module: :projects, shallow: true
+    # RELEASES (stage 3, S3-5): a snapshot of what the folder held, with a changelog. Create is
+    # nested under the project; destroy is shallow, like tasks and connections. There is no update
+    # -- a release is a record of a moment, so it is deleted and remade rather than edited, and no
+    # `show` because both panels render inline (spec S3-5).
+    resources :releases, only: %i[create destroy], module: :projects, shallow: true
     resource :bom, only: :show, module: :projects
     resources :bom_lines, only: %i[create destroy], module: :projects, shallow: true do
       post :consume, on: :member

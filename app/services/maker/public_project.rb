@@ -86,6 +86,24 @@ module Maker
 
     def connections = @connections ||= project.connections.to_a
 
+    # RELEASES (stage 3, S3-5), newest first -- the association's own order. `:rich_text_notes` is
+    # the association Action Text gives `has_rich_text :notes`; without it a page of ten releases
+    # costs ten extra round-trips, which is exactly what page_query_budget_test.rb measures.
+    def releases
+      @releases ||= project.releases.includes(:files, :rich_text_notes).to_a
+    end
+
+    # ONE `stat_all` over every file of every release shown, so "changed since this release" is
+    # constant in N -- the private panel's own rule (ProjectsController#show), asked here in the
+    # OWNER's name, since a visitor has no library for a node_id to resolve against. An absent key
+    # is the port's answer for a node that is no longer live (§14a).
+    def release_tokens
+      @release_tokens ||= begin
+        ids = releases.flat_map { |r| r.files.map(&:node_id) }.uniq
+        ids.empty? ? {} : FileLayer.current.stat_all(owner, node_ids: ids)
+      end
+    end
+
     # Every KiCad schematic/board anywhere in the folder, name-ordered — the private page's own
     # rule (projects/_schematics.html.erb), reading the SAME extension list so the two surfaces can
     # never name a different set of formats.
@@ -125,7 +143,17 @@ module Maker
     # file targets. ONE query, regardless of how many of either there are.
     def page_nodes
       @page_nodes ||= begin
-        ids = entries.flat_map { |e| e.file_attachments.map(&:node_id) } + bom_lines.filter_map(&:node_id)
+        ids = entries.flat_map { |e| e.file_attachments.map(&:node_id) } + bom_lines.filter_map(&:node_id) +
+              # RELEASE FILES JOIN THIS UNION, AND THE PANEL CANNOT RENDER A LINK WITHOUT IT
+              # (stage 3, S3-5). public/projects/_releases resolves each row's node HERE and only
+              # then asks `permits?`, so a release file left out of this list is not merely
+              # un-batched: MEASURED, every download link disappears and a file sitting in the
+              # folder reads "no longer available", while page_query_budget_test.rb stays green,
+              # because a check that is never reached costs no queries. What the index buys on TOP
+              # of that is the batching -- `permits?` answers `visible_entry?` from
+              # `visible_page_ids` for a node it finds here and with its own one-row query for one
+              # it does not, the per-line cost the BOM's own comment records above.
+              releases.flat_map { |r| r.files.map(&:node_id) }
         ids.empty? ? {} : owner.nodes.present.where(node_id: ids.uniq).index_by(&:node_id)
       end
     end

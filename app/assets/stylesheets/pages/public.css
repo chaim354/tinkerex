@@ -45,6 +45,14 @@
      distinction is measured rather than argued — deleting both blocks leaves test/system/
      shell_test.rb's phone sweep GREEN, because the table's min-content already fits 375px. The
      same result pages/files.css's own drops have, recorded in that sweep's header. */
+  /* RELEASES (stage 3, S3-5) ARE STYLED IN pages/projects.css AND DELIBERATELY NOT COPIED HERE.
+     The layout links every page sheet on every page (application.html.erb; css_hygiene_test.rb
+     pins the order), so a `pages/` file scopes rules by NAME, not by which page loads it -- and
+     `.releases-panel` is the same markup on both pages, rendered by two partials that share
+     `Maker::ReleaseFile#state_against` for exactly this reason. A second identical block here
+     would be a copy that has to be kept in step, which is what the panel's one shared rule
+     (`.badge.changed`, in components.css) already exists to avoid. */
+
   @media (max-width: 719px) {
     .public-files .col-size { display: none; }
   }

@@ -154,6 +154,29 @@ class ShellTest < ApplicationSystemTestCase
     # ancestry), so the public Schematics panel mounts a KiCanvas that fetches the public named URL
     # for real -- a 404 there would surface at the final assert_no_console_errors.
     kicad = write_kicad_schematic!(name: "shell-sweep.kicad_sch", parent_node_id: folder.node_id)
+    # STAGE 3, S3-5: ONE RELEASE WITH A LONG VERSION AND THREE FILES, so the summary's flex row has
+    # something to wrap and the release table has rows to drop columns from at 375px -- the BOM and
+    # wiring argument again, an EMPTY panel renders no <details> and no table at all. All three file
+    # states are present (current, changed, gone) because each renders a different cell, and the
+    # widest of them is the one that would push the row out of the viewport.
+    #
+    # ROWS, NOT Maker::ReleaseSnapshot: what this sweep needs is markup at a width, and the snapshot
+    # would additionally have to agree with whatever the folder happens to hold.
+    release = project.releases.create!(user: @user, version: "v2.0.0-release-candidate.4",
+                                       git_tag: "v2.0.0-release-candidate.4", git_oid: "0" * 40,
+                                       published_at: Time.current,
+                                       notes: "<div>Reworked the frame and the driver mount.</div>")
+    release.files.create!(user: @user, node_id: kicad.node_id, name: kicad.name,
+                          path: kicad.name, size: 4096,
+                          content_token: FileLayer.current.stat(@user, node_id: kicad.node_id).content_token)
+    # LIVE BUT MOVED ON (it sits at the library root, so the PUBLIC page additionally refuses it a
+    # link) -- the "changed" badge and the no-link cell in one row.
+    release.files.create!(user: @user, node_id: long.node_id, name: long.name, path: long.name,
+                          size: 1_048_576, content_token: "t-stale")
+    release.files.create!(user: @user, node_id: "shell-sweep-gone", size: 2048,
+                          name: "a-very-long-file-name-that-would-push-the-table-out-of-the-viewport-v3-final.stl",
+                          path: "models/a-very-long-file-name-that-would-push-the-table-out-of-the-viewport-v3-final.stl",
+                          content_token: "t-gone")
     # ENOUGH FILES FOR THE HOME ROW TO OVERFLOW TOO, mutation-checked same as home_test.rb's own
     # dedicated scroll-containment test (see test/system/README.md) — without these, root_path's
     # single `long` tile never fills `.home-files .tile-row` wide enough to overflow its own box,

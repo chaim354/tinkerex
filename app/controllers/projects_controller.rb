@@ -158,6 +158,24 @@ class ProjectsController < ApplicationController
       Maker::RepoCard.for(user: current_user, dir:, root_node: repo_roots[dir.node_id],
                           listing: @listing, capabilities:)
     end
+    # RELEASES (stage 3, S3-5). `includes(:files, :rich_text_notes)` because the panel reads both
+    # for every release it renders -- :rich_text_notes is the association Action Text gives
+    # `has_rich_text :notes`, and without it a page of ten releases costs ten extra round-trips,
+    # the exact regression page_query_budget_test.rb exists for.
+    @releases = @project.releases.includes(:files, :rich_text_notes).to_a
+    # ONE `stat_all` OVER EVERY FILE OF EVERY RELEASE SHOWN, never one `stat` per file: "changed
+    # since this release" is a comparison against what the port reports NOW, and asking per row is
+    # how that panel becomes linear in the number of files a project has ever released. An absent
+    # key is the port's answer for a node that is no longer live (§14a), which is what the panel
+    # renders as "no longer in the library".
+    release_node_ids = @releases.flat_map { |r| r.files.map(&:node_id) }.uniq
+    @release_tokens = release_node_ids.empty? ? {} : FileLayer.current.stat_all(current_user, node_ids: release_node_ids)
+    # The tag picker reads tags only where the library is a local folder -- the repo card's own rule
+    # (docs/invariants/git-editing.md), asked of the CAPABILITY and never of an adapter class.
+    # Elsewhere the composer takes a tag as free text and the snapshot records it unverified.
+    # Reuses the dirs and root nodes the repository cards above already collected, so a folder full
+    # of repositories still costs the one batched `nodes` query it already paid.
+    @release_repos = capabilities.local_worktree? ? release_repo_tags(repo_dirs, repo_roots) : []
     # Tiles or list (stage 3, S3-1) — the same whitelist-and-cookie idiom FilesController#resolve_view
     # uses, with its own values and its own cookie: this page's default is tiles, the Files page's
     # is list, and the two toggles must not read each other's choice.
@@ -281,6 +299,31 @@ class ProjectsController < ApplicationController
   # the full Dir to find a README among a repo's own root files.
   def collect_repo_dirs(dirs)
     dirs.flat_map { |d| (d.repo? ? [ d ] : []) + collect_repo_dirs(d.children) }
+  end
+
+  # [[dir name, dir node_id, [tag names]]] for the release composer's picker (stage 3, S3-5), over
+  # the repo dirs and root nodes #show already collected for the cards -- no query and no second
+  # walk. A repository with no tags is dropped rather than rendered as an empty optgroup.
+  #
+  # RESCUED PER REPOSITORY, NOT AROUND THE LOOP: one unreadable working tree (a corrupt .git, a
+  # file vanished under us) must cost its own tags, not every other repository's. `refusal` is
+  # asked FIRST, before rugged, which is the order every caller of Maker::Git::LocalRepo keeps --
+  # constructing anything past it dereferences the port's workdir on the way to libgit2, and a
+  # locked repository is refused rather than opened (docs/invariants/git-editing.md).
+  def release_repo_tags(dirs, roots)
+    dirs.filter_map do |dir|
+      root = roots[dir.node_id]
+      next if root.nil?
+
+      tags = begin
+        local = Maker::Git::LocalRepo.open(current_user, root)
+        local.refusal ? [] : local.tags.map(&:name)
+      rescue StandardError => e
+        Rails.logger.warn("[releases] tags unreadable for #{dir.name}: #{e.class} #{e.message}")
+        []
+      end
+      tags.any? ? [ dir.name, dir.node_id, tags ] : nil
+    end
   end
 
   # Best-effort: a project MUST save even if the library backend can't make its folder right now

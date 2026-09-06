@@ -14,5 +14,20 @@ module Maker
 
     validates :node_id, presence: true
     validates :name, presence: true
+
+    # "changed" / "gone" / nil, ASKED OF WHAT THE PORT REPORTS NOW -- `info` is this node's entry in
+    # the ONE `stat_all` each panel takes over every release file it shows, so nil means the port
+    # answered with an ABSENT KEY (§14a) and the file is no longer in the library at all.
+    #
+    # ONE DEFINITION FOR TWO PANELS, and that is the whole reason it is here rather than inline in
+    # each. The private page and the public page both say "changed since this release", and a pair
+    # of expressions that must agree is the shape this repo keeps paying for (§14a's own warning
+    # about one condition with two answers). A release whose token was nil at snapshot time and is
+    # nil now is UNCHANGED, which is the honest reading: the port reported the same thing twice.
+    def state_against(info)
+      return "gone" if info.nil?
+
+      info.content_token == content_token ? nil : "changed"
+    end
   end
 end

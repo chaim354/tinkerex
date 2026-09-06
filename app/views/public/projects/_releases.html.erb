@@ -1,0 +1,99 @@
+<%#
+  RELEASES, PUBLIC (stage 3, S3-5): the same snapshots the owner sees, minus the composer and the
+  Remove button -- a visitor has nothing to write with, so this is projects/_releases's read-only
+  half rather than that partial with an `editable` flag: the DOWNLOAD is structurally different
+  (a public file URL that must carry the unlisted token and pass `permits?`, not /files/:id/blob),
+  which is more than a branch inside one row.
+
+  A RELEASE NEVER COPIED THE BYTES (spec §3), so every link here delivers the CURRENT file -- and
+  the row says so when the current file is no longer the one the release captured.
+  `Maker::ReleaseFile#state_against` is the ONE definition of that comparison, shared with the
+  private panel so the two pages cannot drift about what "changed since" means.
+
+  A FILE LINKS ONLY IF `pub.permits?` SAYS SO, which is the same rule public/projects/_bom applies
+  to a design-file line: a release row may name a file that has since been moved out of the folder
+  and detached, and the file route would refuse it -- so a link would 404. The node is resolved
+  through `pub.page_nodes`, the page's ONE live-node index; release files are in it for that reason
+  first (without them this table links nothing at all) and for batching second.
+
+  AN EMPTY PANEL IS OMITTED, NOT RENDERED AS AN EMPTY STATE -- show.html.erb's own rule: "No
+  releases yet." is an invitation to cut one, which is exactly what a visitor cannot do.
+
+  Local: pub (Maker::PublicProject).
+%>
+<% if pub.releases.any? %>
+  <section class="panel releases-panel">
+    <div class="panel-head">
+      <h2>Releases</h2>
+      <span class="mono muted"><%= pluralize(pub.releases.size, "release") %></span>
+    </div>
+
+    <% pub.releases.each_with_index do |release, index| %>
+      <details class="release" <%= "open" if index.zero? %>>
+        <summary>
+          <span class="release-version mono"><%= release.version %></span>
+          <time datetime="<%= release.published_at.iso8601 %>"><%= release.published_at.strftime("%Y-%m-%d") %></time>
+          <% if release.git_tag.present? %>
+            <% if release.short_oid %>
+              <span class="badge"><%= release.git_tag %></span>
+              <span class="mono muted"><%= release.short_oid %></span>
+            <% else %>
+              <span class="badge" title="recorded, not verified"><%= release.git_tag %></span>
+            <% end %>
+          <% end %>
+          <% if release.bom_revision %>
+            <span class="muted">BOM rev <%= release.bom_revision %></span>
+          <% end %>
+          <span class="muted"><%= pluralize(release.files.size, "file") %></span>
+          <% changed = release.files.count { |f| f.state_against(pub.release_tokens[f.node_id]) } %>
+          <% if changed.positive? %>
+            <span class="badge changed"><%= changed %> changed since</span>
+          <% end %>
+        </summary>
+
+        <% if release.notes.present? %>
+          <%# A div, not a p: Action Text emits block-level markup and a <p> cannot legally contain it. %>
+          <div class="release-notes markdown"><%= release.notes %></div>
+        <% end %>
+
+        <% if release.files.any? %>
+          <table class="table release-files">
+            <thead>
+              <tr>
+                <th class="col-path">File</th>
+                <th class="col-size num">Size</th>
+                <th class="col-state">State</th>
+                <th class="col-dl"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <% release.files.each do |f| %>
+                <% state = f.state_against(pub.release_tokens[f.node_id]) %>
+                <% node = pub.page_nodes[f.node_id] %>
+                <tr>
+                  <%# THE PATH AS THE RELEASE SAW IT, never re-derived -- Maker::ReleaseFile's own
+                      comment says why. Never the node's CURRENT name either: this is what the
+                      release listed. %>
+                  <td class="col-path"><%= f.path.presence || f.name %></td>
+                  <td class="col-size num"><%= f.size ? number_to_human_size(f.size) : "—" %></td>
+                  <td class="col-state">
+                    <% if state %>
+                      <span class="badge changed"><%= state %></span>
+                    <% end %>
+                  </td>
+                  <td class="col-dl">
+                    <% if node && pub.permits?(node) %>
+                      <%= link_to "Download", pub.file_url_for(f.node_id, download: true), class: "linkbtn small" %>
+                    <% else %>
+                      <span class="muted">no longer available</span>
+                    <% end %>
+                  </td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        <% end %>
+      </details>
+    <% end %>
+  </section>
+<% end %>
