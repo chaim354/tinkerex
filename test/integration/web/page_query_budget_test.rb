@@ -143,6 +143,11 @@ module Web
                                      parent_node_id: sub.node_id, size: 0, mtime: 1_700_000_000_000_000_000)
           @user.nodes.create!(node_id: "#{id}-deep-file", name: "#{id}-deep.pdf", kind: "file",
                               parent_node_id: deep.node_id, size: 1, mtime: 1_700_000_000_000_000_000)
+          # A GERBER PER SUBFOLDER (Gerber previews): the Fabrication panel groups boards from rows
+          # already in memory and must add no query per layer or per board -- the review measured
+          # it constant and found no guard, so this seed is the guard.
+          @user.nodes.create!(node_id: "#{id}-gtl", name: "#{id}.gtl", kind: "file",
+                              parent_node_id: sub.node_id, size: 1, mtime: 1_700_000_000_000_000_000)
           @user.nodes.create!(node_id: "#{id}-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
                               parent_node_id: sub.node_id, size: 0, mtime: 1_700_000_000_000_000_000)
           state = @user.maker_addon_states.create!(addon_key: "fixture", name: "gen #{id}", data: {}, revision: 1)
@@ -233,6 +238,10 @@ module Web
                               content_hash: "h-#{id}", current_version_id: "v-#{id}")
           @user.nodes.create!(node_id: "#{id}-deep-file", name: "#{id}-deep.pdf", kind: "file",
                               parent_node_id: deep.node_id, size: 1, mtime: 1_700_000_000_000_000_000)
+          # A GERBER PER SUBFOLDER (Gerber previews): the public Fabrication panel groups boards
+          # from rows already in memory and must add no query per layer or per board.
+          @user.nodes.create!(node_id: "#{id}-gtl", name: "#{id}.gtl", kind: "file",
+                              parent_node_id: sub.node_id, size: 1, mtime: 1_700_000_000_000_000_000)
           # AN IMAGE IN THE FOLDER AND ANOTHER OUTSIDE IT, ATTACHED TO AN ENTRY: the photos panel
           # unions the two, and only the second reaches `page_nodes` -- the map every entry photo and
           # every BOM file target is resolved through, in one query for the page rather than one per

@@ -171,6 +171,44 @@ module FilesHelper
     FilesController::KICANVAS_EXTS.include?(File.extname(name).downcase.delete("."))
   end
 
+  # A Gerber layer, an Excellon drill file or a `.gbrjob` — the Fabrication panel's membership test,
+  # reading `FilesController::GERBER_EXTS` for the same reason `#kicad?` reads KICANVAS_EXTS: one
+  # list, so the panel and `preview_kind`'s `:gerber` branch can never name a different set. That
+  # constant is itself derived from `Maker::FileAttachment::ROLE_BY_EXT`'s `pcb` role, so this is
+  # two hops from the one vocabulary rather than a copy of it (§14d).
+  def gerber?(name)
+    FilesController::GERBER_EXTS.include?(File.extname(name).downcase.delete("."))
+  end
+
+  # WHAT THIS LAYER IS, from its extension — the badge beside each file in the Fabrication panel.
+  # A SHORT, HUMAN word, not the extension repeated: "gtl" beside "board.gtl" says nothing, and the
+  # whole reason to list a board's files is that a reader cannot tell top copper from solder mask by
+  # looking at three letters.
+  #
+  # DELIBERATELY NOT tracespace's OWN `layers[].type`, though it answers a similar question. That
+  # answer only exists after a fetch, a parse and a plot in the BROWSER — this is server-rendered
+  # markup that must be right before any of that happens, and a badge that appeared a second late
+  # (or not at all, when the bundle fails to load) would be worse than one derived from the name.
+  # The two agree on every extension here; where they could not, the name is what the maker sees.
+  #
+  # THE FALLBACK IS "gerber", NOT nil: every key of GERBER_EXTS reaches this, so an extension added
+  # to the `pcb` role without a word here still renders a badge rather than an empty span.
+  GERBER_LAYER_LABELS = {
+    "gtl" => "top copper", "gbl" => "bottom copper",
+    "gts" => "top mask", "gbs" => "bottom mask",
+    "gto" => "top silk", "gbo" => "bottom silk",
+    "gtp" => "top paste", "gbp" => "bottom paste",
+    "gko" => "outline", "gm1" => "outline", "gm2" => "mechanical", "gm3" => "mechanical",
+    "gp1" => "plane", "gp2" => "plane",
+    "g1" => "inner copper", "g2" => "inner copper", "g3" => "inner copper", "g4" => "inner copper",
+    "gd1" => "drill drawing", "gg1" => "drill guide",
+    "drl" => "drill", "xln" => "drill", "gbrjob" => "job"
+  }.freeze
+
+  def gerber_layer_label(name)
+    GERBER_LAYER_LABELS.fetch(File.extname(name).downcase.delete("."), "gerber")
+  end
+
   # ONE number formatter for both recipe panels (laser and CNC), because they were each getting
   # it wrong in a different direction and neither could be caught by the fixtures.
   #

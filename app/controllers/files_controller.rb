@@ -452,6 +452,16 @@ class FilesController < ApplicationController
     @pending_count = @repo_root && Maker::RepoEdit.pending_for(current_user, @repo_root.node_id).count
     token = @info&.content_token
     @thumbnail = token && current_thumbnail(@node, token)
+    # THE :gerber BRANCH'S LAYER LIST, BUILT HERE BECAUSE ONLY A `.gbrjob` NEEDS A QUERY AND A READ.
+    # An ordinary layer is its own whole answer; a job file's page renders the BOARD it names, which
+    # means resolving its siblings. Nil for every other kind, so the view's branch and this one
+    # cannot disagree about whether the page has a Gerber on it.
+    @gerber_layers = @kind == :gerber ? gerber_layers_for(@node) : nil
+    # THE STACKUP/SINGLE CHOICE IS THIS ONE FACT, decided once here rather than re-derived in the
+    # template from the size of the list above: a folder holding exactly one layer beside a job file
+    # would then read as "single" and lose its Top/Bottom toggle, which is a different question from
+    # the one the page is answering.
+    @gerber_single = @kind == :gerber && !gerber_job?(@node.name)
     # THE ATTACH CONTROL'S TWO HALVES. `@attached_projects` is what the file is already in — a
     # file can be in several projects, and until now the page gave no sign it was in any. The
     # dropdown then offers the REST: re-attaching to a project it is already in is a no-op, so
@@ -1428,6 +1438,60 @@ class FilesController < ApplicationController
   # free — no second exclusion list to keep in step (§14d).
   KICANVAS_EXTS = %w[kicad_sch kicad_pcb].freeze
 
+  # Gerber layers, Excellon drill files and the `.gbrjob` manifest, rendered client-side by
+  # tracespace (the vendored module in vendor/javascript/tracespace.js, gerber_controller.js).
+  #
+  # DERIVED FROM `ROLE_BY_EXT`, NOT WRITTEN OUT — the OPPOSITE of KICANVAS_EXTS directly above, and
+  # the difference is not style. Those two extensions CANNOT earn a `ROLE_BY_EXT` entry (an
+  # underscore, nine characters — they fail `EXT_RE`), so a hand list there is the only option
+  # available. Every extension in the `pcb` role PASSES `EXT_RE`, so it lives in the one vocabulary
+  # and this constant reads it. A second literal list here would be exactly the drift §14d exists
+  # to stop — and it would be worse than usual, because the filing rules, the type-filter chips and
+  # this branch would then disagree about what a board's files even are.
+  #
+  # `.freeze` ON THE RESULT, NOT ON `ROLE_BY_EXT.select` ALONE: `select` on a frozen Hash returns a
+  # NEW, unfrozen Hash, and `keys` a new Array — nothing here is frozen unless it is said.
+  GERBER_EXTS = Maker::FileAttachment::ROLE_BY_EXT.select { |_ext, role| role == "pcb" }.keys.freeze
+
+  # WHAT gerber_controller.js FETCHES on a file page: `[{ name:, url: }]`, name-ordered.
+  #
+  # AN ORDINARY LAYER IS ITSELF, AND THAT IS THE WHOLE PAGE. A `.gtl` file page shows the `.gtl`,
+  # even when its folder holds the rest of the board — the project page's Fabrication panel is
+  # where a board is a board, and a file page that quietly rendered the neighbours would be showing
+  # something other than the file it is about.
+  #
+  # A `.gbrjob` IS THE ONE EXCEPTION, because it is not a layer at all: it is JSON naming the set,
+  # so the only honest render of it IS the board. Its layers are the siblings it names — resolved
+  # through `Maker::GerberSets.job_layer_names`, the same reader the panel uses, so the two surfaces
+  # can never disagree about what a manifest says — falling back to every pcb-role sibling when the
+  # job names nothing this folder holds (see that method for why every failure collapses to nil).
+  # The manifest itself is never in the list: tracespace's Gerber parser would turn JSON into a junk
+  # layer rather than an error.
+  #
+  # ONE QUERY, AND ONLY FOR A `.gbrjob`. `named_blob_file_path` carries the real filename because
+  # tracespace decides what a layer IS from that name (gerber_controller.js's header) and because a
+  # download from the same URL should arrive named correctly.
+  def gerber_job?(name) = File.extname(name).downcase.delete(".") == "gbrjob"
+
+  def gerber_layers_for(node)
+    return [ gerber_layer_for(node) ] unless gerber_job?(node.name)
+
+    listed = Maker::GerberSets.job_layer_names(user: current_user, node:)
+    # BOUNDED, like every directory read on this controller (FLAT_LIMIT): a job file sitting loose
+    # in a very large folder must not load the whole folder into memory to find its layers.
+    siblings = current_user.nodes.present.where(parent_node_id: node.parent_node_id, kind: "file")
+                           .order(:name).limit(FLAT_LIMIT).to_a
+                           .select { |n| GERBER_EXTS.include?(File.extname(n.name).downcase.delete(".")) }
+                           .reject { |n| gerber_job?(n.name) }
+    named = listed ? siblings.select { |n| listed.include?(n.name) } : siblings
+    named = siblings if named.empty?
+    named.sort_by(&:name).map { |n| gerber_layer_for(n) }
+  end
+
+  def gerber_layer_for(node)
+    { name: node.name, url: named_blob_file_path(node.node_id, filename: node.name) }
+  end
+
   def preview_kind(name)
     ext = File.extname(name).downcase.delete(".")
     # BEFORE the :image branch, which .svg would otherwise take. An SVG is still shown as an image
@@ -1449,6 +1513,13 @@ class FilesController < ApplicationController
     # branch order reads the same way every other special-cased format's does, not because order
     # is load-bearing for THIS pair.
     return :kicanvas if KICANVAS_EXTS.include?(ext)
+    # BEFORE :text, AND THAT ORDER IS LOAD-BEARING HERE IN A WAY THE :kicanvas LINE ABOVE'S IS NOT.
+    # A Gerber layer is plain ASCII and `.gbrjob` is JSON, so both would read as source in a code
+    # viewer — correct about the bytes and useless about the board. The RENDER is the page. (What
+    # keeps them out of the text branch is only this early return: the `pcb` role is deliberately
+    # not in TEXT_ROLES, so `Maker::FileAttachment.text?` answers false for them anyway — belt and
+    # braces, with the role table as the real guard and this line as the one that reads.)
+    return :gerber if GERBER_EXTS.include?(ext)
     # DERIVED FROM THE ONE VOCABULARY (§14d), not a second list beside it. This was an inline set
     # of 26 extensions sitting next to Maker::FileAttachment::ROLE_BY_EXT, and it had already
     # drifted: five of its entries (xml log ini cfg conf) were in no ROLE_BY_EXT entry at all, so

@@ -412,6 +412,19 @@ module Maker
       assert_equal "design", parent_name(node)
     end
 
+    # THE pcb ROLE'S HEADLINE PROMISE, END TO END (Gerber previews): a board's layers dropped at the
+    # project root are swept into pcb/ by the intake, not scattered through other/. The lookup is
+    # pinned in project_folders_test.rb; this is the sweep actually moving the bytes.
+    test "a loose Gerber layer at the root is filed into pcb" do
+      top = file("board.gtl")
+      drill = file("board.drl")
+      job = file("board.gbrjob")
+      result = intake
+
+      assert_equal 3, result.moved
+      assert_equal %w[pcb pcb pcb], [ top, drill, job ].map { |n| parent_name(n) }
+    end
+
     # STAGE 3, S3-4: a README at the project root is the project's own description, rendered from
     # the root by the public page, so the sweep attaches it and leaves it where it is -- measured
     # on the dev library before this rule, the sweep filed a fresh README.md into docs/ and the

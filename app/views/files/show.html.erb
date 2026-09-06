@@ -145,6 +145,43 @@
       <p class="muted" data-kicanvas-target="status">Loading the viewer…</p>
       <div data-kicanvas-target="stage"></div>
     </div>
+  <% elsif @kind == :gerber %>
+    <%# A Gerber layer or an Excellon drill file, rendered in the browser by tracespace (the
+        vendored module in vendor/javascript/tracespace.js, gerber_controller.js). Imported LAZILY
+        on connect, so nothing downloads it on a page with no Gerber — the KiCanvas branch's rule
+        directly above, and the same reason its pin is preload: false.
+
+        THE LAYER LIST IS THE CONTROLLER'S (FilesController#gerber_layers_for), never rebuilt here:
+        for an ordinary layer it is this one file, and for a .gbrjob it is the siblings the job
+        names. That is why this branch can be one shape for both — see that method for why a job
+        file is the only kind whose page renders something other than itself.
+
+        named_blob_file_path is what that method builds, for the reason the KiCanvas comment above
+        spells out for its own route: the trailing extension is the file's real name. tracespace
+        reads it off the File object rather than off the URL, so this is a smaller dependency here
+        than it is there — but a download from the same link should still arrive named correctly.
+
+        THE SIDE TOGGLE IS FOR A STACKUP ONLY. A single layer has one render (renderLayers), so
+        offering Top/Bottom would be two buttons showing the same picture. %>
+    <% if @gerber_layers.empty? %>
+      <p class="muted">No Gerber layers sit beside this job file.</p>
+    <% else %>
+      <div class="gerber-stage"
+           data-controller="gerber"
+           data-gerber-single-value="<%= @gerber_single %>"
+           data-gerber-layers-value="<%= @gerber_layers.to_json %>">
+        <p class="muted" data-gerber-target="status">Loading the viewer…</p>
+        <% unless @gerber_single %>
+          <p class="gerber-sides">
+            <button type="button" class="btn small active" data-gerber-target="side"
+                    data-gerber-side="top" data-action="gerber#top">Top</button>
+            <button type="button" class="btn small" data-gerber-target="side"
+                    data-gerber-side="bottom" data-action="gerber#bottom">Bottom</button>
+          </p>
+        <% end %>
+        <div data-gerber-target="stage"></div>
+      </div>
+    <% end %>
   <% elsif @kind == :text %>
     <%# Source viewer — CodeMirror 6, loaded dynamically so the bundle ships only on a page that
         actually has a text file on it. The inner preformatted block is the FALLBACK and the

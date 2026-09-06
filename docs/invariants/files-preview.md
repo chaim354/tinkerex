@@ -73,6 +73,55 @@ that message (`WebHelpers::KICANVAS_PLACEHOLDER_FETCH`) and nothing wider. The f
 `bin/build-kicanvas` (a `Literal` around the href) or upstream; do not route the placeholder to a
 204 to hide it, and do not widen the ignore.
 
+## `:gerber` is `:kicanvas`'s MIRROR IMAGE — same shape, opposite answer on one question
+
+`FilesController::GERBER_EXTS` is **derived** from `Maker::FileAttachment::ROLE_BY_EXT`'s `pcb`
+role, where `KICANVAS_EXTS` directly above it is written out — and the difference is a fact about
+the extensions, not a style choice. `kicad_sch`/`kicad_pcb` **cannot** earn a `ROLE_BY_EXT` entry
+(an underscore, nine characters — they fail `EXT_RE`), so a hand list is the only option available
+to them. Every Gerber extension **passes** `EXT_RE` (`gbrjob` is the longest, at six), so it lives
+in the one vocabulary and the constant reads it. **Add a Gerber extension in `ROLE_BY_EXT` only** —
+the filing rules, the type-filter chips and this branch all follow from it, and a second literal
+list in the controller is the drift §14d exists to stop.
+
+That also means Gerbers behave like every other role and *unlike* KiCad files on the surfaces
+`ROLE_BY_EXT` feeds: they get a type-filter chip, they get a `Type` column value, and `role_for`
+answers `pcb`, which is what files a board's layer set into `pcb/` instead of scattering it through
+`other`. What they do **not** get is a thumbnail: no `Maker::Previews` renderer is registered for
+any of them and none will be, so `Registry.for_filename` answers nil and the grid renders the plain
+extension badge — the same branch any other non-renderable file takes, with nothing taught to skip
+them. **A server-side PCB renderer is out of scope on licensing grounds** (gerbv is GPL, §9); the
+render happens in the browser, from `vendor/javascript/tracespace.js` (MIT), and the file page's
+`:gerber` branch is the only place it is offered.
+
+**The `pcb` role is deliberately NOT in `TEXT_ROLES`, and `preview_kind` returns `:gerber` BEFORE
+the text branch.** Both are true on purpose and each alone would be enough: a Gerber layer is plain
+ASCII and a `.gbrjob` is JSON, so either mistake alone renders a source viewer where the board
+should be. The role's absence is the real guard (it also keeps `TextThumb` from claiming them); the
+early return is the one that reads. `test/controllers/files_controller_preview_kind_test.rb` asserts
+on the CONSTANT for that reason — asserting through `preview_kind` alone would stay green while
+`pcb` was added to `TEXT_ROLES`.
+
+**A `.gbrjob` IS READ ON THE SERVER, and it is the only preview input that is.**
+`Maker::GerberSets.job_layer_names` opens it through the port to learn which layers the export
+claims — one port read per job file, bounded by `READ_LIMIT` and by the catalog's own size column,
+never a query. Every failure (unreadable, unmounted, invalid JSON, no `FilesAttributes`, names
+nothing this folder holds) collapses to nil and falls back to "every Gerber in the directory",
+because that is the honest answer when nothing has told us otherwise. `Path` is matched by
+`File.basename` against the rows already in hand, **never resolved as a path**: exporters write any
+prefix they like, and resolving would reach outside the folder or land on a name that repeats.
+
+**One board is one FOLDER.** A project holds a main board and a daughterboard; grouping by project
+would stack both folders' copper into an image of nothing real. `Maker::GerberSets` owns that rule
+and both Fabrication panels (private and public) read it, the arrangement `PublicProject#kicad_rows`
+already establishes for Schematics. The panel's file LIST and the viewer's STACK are different
+lists — a stray layer beside a job-driven export is listed and not stacked — and a panel that
+rendered only what it stacked would make those files invisible.
+
+**The S3 caveat is KiCanvas's, unchanged**: `connect-src 'self'` blocks the viewer's fetch of a
+presigned redirect, exactly as it does for the 3D viewer and the KiCanvas embed. Shared and
+pre-existing, not new here.
+
 ## Extensionless text is a SEPARATE AXIS, and it must not move files
 
 `File.extname("LICENSE")` is `""`, and so is `File.extname(".gitignore")` — a leading dot with no

@@ -1,0 +1,54 @@
+<%#
+  The Fabrication section: every Gerber layer, Excellon drill file and .gbrjob manifest anywhere in
+  the project's folder, grouped into BOARDS and each board rendered as a stackup.
+
+  ONE BOARD PER FOLDER, NOT ONE PER PROJECT — Maker::GerberSets owns that rule and the public
+  partial reads the same service, so the two surfaces can never disagree about what a board is (the
+  Schematics pair's own arrangement, where the shared thing is an extension list rather than a
+  grouping). @listing.all_rows is the input for the same reason Schematics uses it: it is the one
+  place that knows the folder's FULL set, at any depth.
+
+  RENDERS NOTHING when the folder holds no Gerbers, exactly like Schematics: @listing degrades to an
+  empty all_rows on an unavailable folder, so this partial needs no availability check of its own.
+
+  THE FILE LIST IS `rows` AND THE VIEWER GETS `stacked`, AND THEY ARE DIFFERENT LISTS. Where a
+  .gbrjob names the set, a stray layer from an old revision is LISTED here and left out of the
+  render — see Maker::GerberSets. A panel that listed only what it stacked would make those files
+  invisible, which is the opposite of what a fabrication panel is for.
+%>
+<% boards = Maker::GerberSets.for(user: current_user, rows: @listing.all_rows) %>
+<% if boards.any? %>
+  <section class="panel fabrication-panel">
+    <h2>Fabrication</h2>
+    <% boards.each do |board| %>
+      <div class="fabrication-board">
+        <h3><%= board.name %></h3>
+        <ul class="schematics-list">
+          <% board.rows.each do |row| %>
+            <li>
+              <%= link_to row.node.name, file_path(row.node_id) %>
+              <span class="badge"><%= gerber_layer_label(row.node.name) %></span>
+            </li>
+          <% end %>
+        </ul>
+        <%# The same gerber controller the file page mounts; `single: false` here always, because a
+            panel showing a BOARD is what this section is, even where that board is one layer. %>
+        <div class="gerber-stage"
+             data-controller="gerber"
+             data-gerber-single-value="false"
+             data-gerber-layers-value="<%= board.stacked.map { |row|
+                   { name: row.node.name,
+                     url: named_blob_file_path(row.node_id, filename: row.node.name) } }.to_json %>">
+          <p class="muted" data-gerber-target="status">Loading the viewer…</p>
+          <p class="gerber-sides">
+            <button type="button" class="btn small active" data-gerber-target="side"
+                    data-gerber-side="top" data-action="gerber#top">Top</button>
+            <button type="button" class="btn small" data-gerber-target="side"
+                    data-gerber-side="bottom" data-action="gerber#bottom">Bottom</button>
+          </p>
+          <div data-gerber-target="stage"></div>
+        </div>
+      </div>
+    <% end %>
+  </section>
+<% end %>

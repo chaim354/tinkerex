@@ -44,6 +44,27 @@ module Maker
       assert_equal "images",   Maker::ProjectFolders.default_folder_for("photo.jpg")
       assert_equal "archives", Maker::ProjectFolders.default_folder_for("printables.zip")
       assert_equal "code",     Maker::ProjectFolders.default_folder_for("main.cpp")
+      assert_equal "pcb",      Maker::ProjectFolders.default_folder_for("board.gtl")
+      assert_equal "pcb",      Maker::ProjectFolders.default_folder_for("board.drl")
+    end
+
+    # THE ARGUABLE HALF OF THE `pcb` ROLE, pinned separately for the reason the `code` block below
+    # is: a `.gbrjob` is JSON and a `.drl` is a drill program, so `docs` and `cnc` were both real
+    # alternatives. They file with the layers because a board house is handed ONE directory, and
+    # splitting a fabrication package across three folders is what this rules out.
+    test "the drill file and the job manifest file with the board, not with the CNC or the docs" do
+      assert_equal "pcb", Maker::ProjectFolders.default_folder_for("board.drl")
+      assert_equal "pcb", Maker::ProjectFolders.default_folder_for("board.xln")
+      assert_equal "pcb", Maker::ProjectFolders.default_folder_for("board.gbrjob")
+      assert_equal "cnc", Maker::ProjectFolders.default_folder_for("pocket.nc")
+    end
+
+    # THE PER-USER MAP CARRIES THE NEW ROLE TOO — a seeded user files a loose `.gtl` into `pcb/`,
+    # which is what the intake sweep actually reads (the role table alone would not prove it).
+    test "a newly seeded user files a Gerber into pcb" do
+      assert_equal "pcb", Maker::ProjectFolders.folder_for(@user, "board.gtl")
+      assert_equal "pcb", Maker::ProjectFolders.folder_for(@user, "BOARD.GTL")
+      assert_equal "pcb", Maker::ProjectFolders.folder_for(@user, "board.gbrjob")
     end
 
     # THE ARGUABLE HALF OF THE `code` ROLE, pinned separately from the roll-call above because it

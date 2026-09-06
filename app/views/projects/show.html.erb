@@ -74,6 +74,10 @@
   <%# Stage 3, S3-2: KiCad schematics/boards anywhere in the folder. The partial itself decides
       whether there is anything to show — see its own header comment. %>
   <%= render "schematics" %>
+  <%# The board's fabrication outputs, rendered by tracespace. Beside Schematics because they are
+      the same subject one stage further along — the design, then what goes to the board house —
+      and the partial decides for itself whether the folder holds any. %>
+  <%= render "fabrication" %>
   <%= render "build_log" %>
   <%= render "tasks" %>
   <%= render "bom" %>

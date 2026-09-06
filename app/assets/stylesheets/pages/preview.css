@@ -313,4 +313,32 @@
   /* --- Schematics section on the project page (projects/_schematics.html.erb) --- */
   .schematics-list { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   .schematics-list li { display: flex; align-items: center; gap: 8px; }
+
+  /* --- Gerber/Excellon (tracespace) — the file page's :gerber branch AND both Fabrication panels
+     share this class, gerber_controller.js putting an <svg> inside it either way.
+
+     THE HEIGHT RULE IS THE KiCANVAS ONE ABOVE AND FOR THE SAME REASON: the SVG is told height 100%
+     by the controller, and a percentage height resolves to nothing against an auto-height ancestor,
+     so the box needs an explicit one or the board renders at 0px. What differs is the BACKGROUND —
+     a Gerber render is `fill="currentColor"` line work on nothing, so it needs a surface with
+     contrast under it, where kicanvas-embed paints its own.
+
+     `display: flex; flex-direction: column` so the stage target fills what the status line and the
+     side toggle leave — without it the inner div is auto-height and the 100% SVG collapses again,
+     one level down from where the KiCanvas comment warns about it. */
+  .gerber-stage { min-height: 320px; height: 320px; background: var(--raised); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .preview .gerber-stage { height: 70vh; }
+  /* `min-height: 0` on a flex CHILD is what lets it shrink below its content's intrinsic size,
+     which is the whole mechanism that keeps a tall board inside the box instead of pushing the
+     panel open (flex items default to min-height: auto). */
+  .gerber-stage [data-gerber-target="stage"] { flex: 1; min-height: 0; color: var(--fg); }
+  .gerber-stage svg { display: block; width: 100%; height: 100%; }
+  .gerber-stage > .muted { padding: 24px; text-align: center; }
+  .gerber-sides { display: flex; gap: 6px; margin: 0; }
+
+  /* --- Fabrication section on the project and public project pages (_fabrication.html.erb).
+     Several boards can sit in one panel (a project holds a main board and a daughterboard), so each
+     gets its own heading, list and stage rather than the single-preview shape Schematics uses. */
+  .fabrication-board + .fabrication-board { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 16px; }
+  .fabrication-board h3 { margin: 0 0 8px; font-size: 14px; }
 }

@@ -1,5 +1,6 @@
 require "application_system_test_case"
 require "support/kicad_fixture"
+require "support/gerber_fixture"
 
 # The shell's behaviour only a browser can see (spec §12): the rail's collapse surviving a Turbo
 # navigation and a reload, the theme button cycling and persisting, a notice toast leaving on its
@@ -7,6 +8,7 @@ require "support/kicad_fixture"
 # for the bug that started this rework — no page scrolling sideways at phone width.
 class ShellTest < ApplicationSystemTestCase
   include KicadFixture
+  include GerberFixture
 
   setup do
     @root = use_fresh_share_library!
@@ -154,6 +156,17 @@ class ShellTest < ApplicationSystemTestCase
     # ancestry), so the public Schematics panel mounts a KiCanvas that fetches the public named URL
     # for real -- a 404 there would surface at the final assert_no_console_errors.
     kicad = write_kicad_schematic!(name: "shell-sweep.kicad_sch", parent_node_id: folder.node_id)
+    # THE FABRICATION PANEL, at 375px. Its stackup is an <svg> the browser is told to render at
+    # width: 100% — the one element on these pages whose natural size is its PHYSICAL size (a board
+    # is millimetres wide), so it is the one most likely to push the page sideways if
+    # gerber_controller.js's attribute override or pages/preview.css's flex rules regress. REAL
+    # BYTES for the KiCanvas argument directly above: tracespace fetches these for real in a live
+    # Chrome, and a parse failure would log its own console error, indistinguishable at the final
+    # assert_no_console_errors from an actual overflow regression.
+    # IN ITS OWN SUBFOLDER because Maker::GerberSets groups by parent directory; the project page
+    # and the FILE page below both render from it.
+    pcb_dir = gerber_dir!(name: "pcb", parent_node_id: folder.node_id)
+    gerbers = write_gerber_set!(stem: "shell-sweep", parent_node_id: pcb_dir.node_id)
     # STAGE 3, S3-5: ONE RELEASE WITH A LONG VERSION AND THREE FILES, so the summary's flex row has
     # something to wrap and the release table has rows to drop columns from at 375px -- the BOM and
     # wiring argument again, an EMPTY panel renders no <details> and no table at all. All three file
@@ -221,7 +234,7 @@ class ShellTest < ApplicationSystemTestCase
       end
 
       [ root_path, files_path(view: "list"), files_path(view: "grid"), project_path(project),
-        file_path(long.node_id), file_path(kicad.node_id), tools_path, models_path, trash_index_path,
+        file_path(long.node_id), file_path(kicad.node_id), file_path(gerbers[:gtl].node_id), tools_path, models_path, trash_index_path,
         inventory_items_path, inventory_item_path(item), suppliers_path, locations_path,
         project_bom_path(project),
         # STAGE 2, S2-5: the search results page (several groups populated -- see the tag_list:

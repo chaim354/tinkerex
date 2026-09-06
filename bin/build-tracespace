@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# Rebuild vendor/javascript/tracespace.js — the Gerber/Excellon renderer the browser runs, so this
+# app ships no server-side PCB renderer and no sidecar (gerbv is GPL, §9).
+#
+# THE CODEMIRROR/KICANVAS PATTERN: one vendored ES module built from PINNED versions, one importmap
+# pin, no npm package at runtime and no CDN. It differs from bin/build-kicanvas only in where the
+# source comes from (npm, not a git checkout), so the pins below are exact versions rather than a
+# commit.
+#
+# WHY @tracespace/core@5.0.0-alpha.0 AND NOT pcb-stackup@4.2.8 (the plan's fallback): v5 is
+# browser-native. `read()` takes browser `File` objects and reads them with `FileReader`, where v4's
+# `pcb-stackup` is built on Node streams and needs the `buffer`/`process` shims this app vendors for
+# JSZip. Probed, not assumed: v5 bundles for the browser with no shim at all, and the artifact
+# contains no `eval`, no `new Function`, no `new Worker` and no `process.env` — which matters because
+# this app's CSP is `script-src 'self'` (report-only today) and would report every one of those.
+#
+# THE TWO `--external:` FLAGS ARE THE ONE CONCESSION AND THEY ARE UPSTREAM'S OWN SHAPE.
+# `@tracespace/core`'s `readFile` branches on its argument: a STRING is a filesystem path and is
+# read through a dynamic `import("node:fs/promises")` / `import("node:path")` pair inside a
+# `.catch()`; a `File` takes the FileReader branch. esbuild --platform=browser refuses to RESOLVE
+# those two specifiers and fails the build, so they are marked external — the dynamic imports stay
+# in the artifact as unresolvable bare specifiers that are never evaluated, because
+# gerber_controller.js only ever passes `File` objects. If one were ever reached, upstream's own
+# `.catch()` turns it into the TypeError it wrote for exactly that case. Do NOT "fix" this by
+# switching to --platform=node: that would swap in Node's `process`/`Buffer` globals, which do not
+# exist in a browser.
+#
+# EVERY PACKAGE IN THE RESOLVED TREE IS PINNED, not just the direct one — bin/build-codemirror's
+# rule and its reasoning: an unpinned transitive range emits different bytes from the same source
+# the day it publishes, and rebuilding twice in one sitting cannot detect that. Here the tree is
+# small and already exact (the five sibling @tracespace packages pin each other at
+# "5.0.0-alpha.0"), so the block below is the whole of it. Re-derive it after a bump the same way:
+#
+#     npm install --no-audit --no-fund   # in a scratch dir holding only the direct pin
+#     node -e 'const l=require("./package-lock.json"); for (const [p,v] of
+#       Object.entries(l.packages)) if (p.startsWith("node_modules/"))
+#       console.log(`    "${p.slice(13)}": "${v.version}",`)'
+#
+# dropping the @esbuild/* platform binaries. Every package here is MIT (§9), verified against each
+# package.json at the versions pinned below; the LICENSE ships beside the artifact.
+#
+# Needs node + npm on PATH, the same as bin/build-kicanvas and bin/build-codemirror. Idempotent:
+# everything happens in a temp dir.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+ROOT="$PWD"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+TRACESPACE_VERSION="5.0.0-alpha.0"
+
+# The DIRECT pin first, then the five transitive @tracespace packages and the three @types packages
+# npm resolves alongside them. The @types entries never enter the artifact (they are declarations);
+# they are pinned anyway so `npm install` is reproducible rather than merely the bundle being so.
+cat > "$WORK/package.json" <<'JSON'
+{
+  "name": "tinkerex-tracespace-bundle",
+  "private": true,
+  "dependencies": {
+    "@tracespace/core": "5.0.0-alpha.0",
+    "esbuild": "0.25.10",
+
+    "@tracespace/identify-layers": "5.0.0-alpha.0",
+    "@tracespace/parser": "5.0.0-alpha.0",
+    "@tracespace/plotter": "5.0.0-alpha.0",
+    "@tracespace/renderer": "5.0.0-alpha.0",
+    "@tracespace/xml-id": "5.0.0-alpha.0",
+    "@types/hast": "2.3.10",
+    "@types/moo": "0.5.10",
+    "@types/unist": "2.0.11"
+  }
+}
+JSON
+
+# THE ENTRY IS THE CONTROLLER'S WHOLE SURFACE — five names, verified against the installed package's
+# own lib/index.d.ts rather than the README (they agree; the check is the point). `read` -> `plot`
+# -> `renderLayers` renders ONE layer, `renderBoard` composes a two-sided stackup out of a
+# renderLayers result, and `stringifySvg` turns either one's hast tree into markup the controller
+# assigns to the stage. Nothing else is re-exported: an unused export is dead weight in a lazily
+# imported bundle and a promise this app has not tested.
+cat > "$WORK/entry.js" <<'JS'
+export { read, plot, renderLayers, renderBoard, stringifySvg } from "@tracespace/core"
+JS
+
+echo "installing pinned tracespace packages…"
+(cd "$WORK" && npm install --silent --no-audit --no-fund)
+
+# THE EXPORTS ARE CHECKED BEFORE THE BUNDLE IS COPIED IN, because a rename upstream would otherwise
+# produce a perfectly valid artifact missing the function gerber_controller.js calls — a silent
+# failure of exactly the kind an alpha dependency invites.
+DECL="$WORK/node_modules/@tracespace/core/lib/index.d.ts"
+MISSING=""
+for NAME in read plot renderLayers renderBoard stringifySvg; do
+  # `declare function <name>(` and `export {<name>}` are the two shapes lib/index.d.ts uses; a bare
+  # substring search would match the word inside a comment or another identifier, which is how a
+  # check like this goes vacuous.
+  grep -qE "(declare function|export \{) *${NAME}\b" "$DECL" || MISSING="$MISSING $NAME"
+done
+if [ -n "$MISSING" ]; then
+  echo "REFUSING TO BUILD: @tracespace/core no longer exports:$MISSING" >&2
+  echo "Update this script's entry file AND app/javascript/controllers/gerber_controller.js together." >&2
+  exit 1
+fi
+
+echo "bundling…"
+(cd "$WORK" && npx esbuild entry.js \
+  --bundle --format=esm --platform=browser --minify --target=es2020 \
+  --external:node:fs/promises --external:node:path \
+  --legal-comments=none \
+  --outfile=tracespace.js)
+
+mkdir -p "$ROOT/vendor/javascript"
+cp "$WORK/tracespace.js" "$ROOT/vendor/javascript/tracespace.js"
+
+# The package name and version at the top, so the notice file says WHAT it covers — the artifact is
+# built bytes, not an upstream file whose provenance is its own filename.
+{
+  printf '@tracespace/core %s and its @tracespace/* dependencies (MIT).\n' "$TRACESPACE_VERSION"
+  printf 'Bundled into vendor/javascript/tracespace.js by bin/build-tracespace.\n\n'
+  cat "$WORK/node_modules/@tracespace/core/LICENSE"
+} > "$ROOT/vendor/javascript/LICENSE-tracespace.md"
+
+SIZE=$(wc -c < "$ROOT/vendor/javascript/tracespace.js")
+GZIP=$(gzip -9 -c "$ROOT/vendor/javascript/tracespace.js" | wc -c)
+printf 'wrote vendor/javascript/tracespace.js from @tracespace/core@%s — %d bytes (%d gzipped)\n' \
+  "$TRACESPACE_VERSION" "$SIZE" "$GZIP"
