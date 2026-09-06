@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_06_035251) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_06_052700) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -333,6 +333,36 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_06_035251) do
     t.index ["visibility", "updated_at"], name: "index_maker_projects_on_visibility_and_updated_at"
   end
 
+  create_table "maker_release_files", force: :cascade do |t|
+    t.string "content_token"
+    t.datetime "created_at", null: false
+    t.string "name", null: false
+    t.string "node_id", null: false
+    t.string "path"
+    t.integer "release_id", null: false
+    t.bigint "size"
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["release_id", "node_id"], name: "index_maker_release_files_on_release_id_and_node_id", unique: true
+    t.index ["user_id", "node_id"], name: "index_maker_release_files_on_user_id_and_node_id"
+  end
+
+  create_table "maker_releases", force: :cascade do |t|
+    t.integer "bom_id"
+    t.integer "bom_revision"
+    t.datetime "created_at", null: false
+    t.string "git_oid"
+    t.string "git_tag"
+    t.integer "project_id", null: false
+    t.datetime "published_at", null: false
+    t.string "repo_node_id"
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.string "version", null: false
+    t.index ["project_id", "published_at"], name: "index_maker_releases_on_project_id_and_published_at"
+    t.index ["user_id", "project_id", "version"], name: "index_maker_releases_on_user_id_and_project_id_and_version", unique: true
+  end
+
   create_table "maker_repo_edits", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -494,6 +524,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_06_035251) do
   add_foreign_key "maker_addon_states", "users"
   add_foreign_key "maker_connections", "users"
   add_foreign_key "maker_filing_rules", "users"
+  add_foreign_key "maker_release_files", "users"
+  add_foreign_key "maker_releases", "users"
   add_foreign_key "maker_repo_edits", "users"
   add_foreign_key "nodes", "users"
   add_foreign_key "remote_manifest_chunks", "users"

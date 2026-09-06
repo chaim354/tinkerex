@@ -77,7 +77,8 @@ module SchemaMap
                      maker_tags maker_tasks] },
     { "label" => "Models & projects", "group" => "maker",
       "tables" => %w[maker_models maker_print_runs maker_projects maker_build_log_entries
-                     maker_sheets maker_shelves maker_filing_rules maker_connections] },
+                     maker_sheets maker_shelves maker_filing_rules maker_connections
+                     maker_releases maker_release_files] },
     { "label" => "Inventory & BOM", "group" => "maker",
       "tables" => %w[maker_boms maker_bom_lines maker_inventory_items
                      maker_inventory_transactions maker_suppliers maker_locations] },
@@ -157,6 +158,10 @@ module SchemaMap
     # HINT, never an authority — the commit box asks git (app/models/maker/repo_edit.rb).
     [ "maker_repo_edits.node_id",           "nodes.node_id",      "app", "edited" ],
     [ "maker_repo_edits.repo_root_node_id", "nodes.node_id",      "app", "pending in" ],
+    # A RELEASE RECORDS A REFERENCE, NEVER BYTES (stage 3, S3-5): one row per file naming the node
+    # and the content token the port reported at release time. Soft like every arrow into `nodes`
+    # above — a file deleted after a release keeps its row, and the page says so.
+    [ "maker_release_files.node_id",        "nodes.node_id",      "app", "released file" ],
     # --- maker layer internals ----------------------------------------------------
     [ "maker_boms.project_id",                        "maker_projects.id",        "app", "BOM for" ],
     [ "maker_bom_lines.bom_id",                       "maker_boms.id",            "app", "line of" ],
@@ -165,6 +170,9 @@ module SchemaMap
     [ "maker_build_log_entries.project_id",           "maker_projects.id",        "app", "logs" ],
     [ "maker_sheets.project_id",                      "maker_projects.id",        "app", "sheet of" ],
     [ "maker_connections.project_id",                 "maker_projects.id",        "app", "wired in" ],
+    [ "maker_releases.project_id",                    "maker_projects.id",        "app", "released from" ],
+    [ "maker_releases.bom_id",                        "maker_boms.id",            "app", "BOM revision recorded" ],
+    [ "maker_release_files.release_id",               "maker_releases.id",        "app", "file of" ],
     [ "maker_collection_items.collection_id",         "maker_collections.id",     "app", "in" ],
     [ "maker_collection_items.item_id",               "maker_items.id",           "app", "holds" ],
     [ "maker_inventory_items.location_id",            "maker_locations.id",       "app", "stored at" ],
@@ -190,6 +198,7 @@ module SchemaMap
     # ever names, via has_one_attached :asset.
     [ "action_text_rich_texts.record_id",     "maker_notes.id",             "poly", "body" ],
     [ "action_text_rich_texts.record_id",     "maker_build_log_entries.id", "poly", "body" ],
+    [ "action_text_rich_texts.record_id",     "maker_releases.id",          "poly", "notes" ],
     [ "active_storage_attachments.record_id", "maker_previews.id",          "poly", "asset" ],
     # --- Rails plumbing -----------------------------------------------------------
     [ "active_storage_attachments.blob_id",     "active_storage_blobs.id", "fk", "bytes" ],
