@@ -18,7 +18,12 @@ module Maker
   # restated here rather than reinvented (LocalRepo itself asks the same way).
   RepoCard = Data.define(:dir, :head, :tags, :readme_html, :readme_note, :refusal) do
     README_NAMES = %w[README.md README readme.md].freeze
-    README_CAP = 64 * 1024 # A CALLER-SIDE cap; the port's own MAX_BYTES (256 MB) isn't built for a card.
+    README_CAP = 64 * 1024 # what the card RENDERS; a longer README is cut here with a note
+    # WHAT THE CARD WILL READ AT ALL. The port's `read` takes no byte limit and answers the whole
+    # object (up to FileLayer::MAX_BYTES, 256 MB) — on chunk_remote a full WAN stream — so the cap
+    # on the RENDER above bounded nothing by itself (review, S3-2). The catalog already knows the
+    # size; a README past this is not read, and the card says so.
+    README_READ_LIMIT = README_CAP * 4
 
     # `root_node` is the repo dir's own Node row, fetched ONCE for every repo on the page by the
     # controller — never here. `LocalRepo.open` needs `root_node.storage_path` (through the port's
@@ -73,6 +78,9 @@ module Maker
       def readme_facts(user:, dir:, listing:)
         row = README_NAMES.filter_map { |name| dir.files.find { |r| r.node.name == name } }.first
         return [ nil, nil ] if row.nil?
+        if row.node.size.to_i > README_READ_LIMIT
+          return [ nil, "README too large to show here (#{row.node.size.to_i / 1024} KB); open the file instead." ]
+        end
 
         bytes = FileLayer.current.read(user, node_id: row.node_id)
         truncated = bytes.bytesize > README_CAP
@@ -84,7 +92,7 @@ module Maker
         text = text.dup.force_encoding(Encoding::UTF_8).scrub
 
         base = Pathname.new(dir.path)
-        index = library_path_index(listing)
+        index = listing.path_index
         html = Maker::Markdown.render(text) do |href|
           target_id = index[base.join(href).cleanpath.to_s]
           target_id && Rails.application.routes.url_helpers.file_path(target_id)
@@ -93,26 +101,6 @@ module Maker
         [ html, note ]
       rescue FileLayer::NotFound, FileLayer::FetchError
         [ nil, "README unavailable." ]
-      end
-
-      # Full library path => node_id, for every row `listing` holds anywhere (loose, any repo, any
-      # depth of subfolder) — NOT scoped to this one repo, so a README may link `../hardware/x.pdf`
-      # into a SIBLING section of the same project, not only within its own subtree. Built from
-      # `listing.all_rows` (already in memory — the same union the tree, Backups and Linked groups
-      # render from) and `listing.path_for`, which the class documents as costing no extra query
-      # (an already-built, memoised map off the one dirs pluck `Maker::LibraryTree.new` did for the
-      # whole page) — so this is safe to build once per repo without showing up as SQL in
-      # page_query_budget_test.rb, however many rows the project folder holds.
-      #
-      # `Pathname#join`/`#cleanpath` resolve "." and ".." the way a filesystem would, WITHOUT
-      # touching the filesystem — pure string arithmetic on the CATALOG's own path strings, never
-      # `File.expand_path` against the real (and, on share, NETWORK) disk. `href` reaching this
-      # block is already guaranteed relative (no scheme, no leading "/") by
-      # `Maker::Markdown.rewrite_relative_links`, so `Pathname#join` never resets to an unrelated
-      # absolute path partway through.
-      def library_path_index(listing)
-        listing.all_rows.index_by { |row| "#{listing.path_for(row.node)}/#{row.node.name}" }
-               .transform_values(&:node_id)
       end
     end
   end

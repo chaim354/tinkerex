@@ -7,6 +7,14 @@ module Web
   class ProjectRepoCardTest < ActionDispatch::IntegrationTest
     include GitRepoFixture
 
+    # A FRESH SHARE LIBRARY PER TEST, PINNED BEFORE ANY FIXTURE RUNS. make_project_repo! calls
+    # ensure_library_folder! -- a real mkdir through the port -- before it first reads
+    # library_root (which would pin share lazily), so on the ambient s3 and chunk_remote legs the
+    # mkdir hit the stub bucket (Forbidden) and the sync server's provisioning (refused): seven
+    # errors per leg, green on share (found by the full gate, 2026-09-05). Same setup as
+    # repo_history_flow_test.rb.
+    setup { @library = use_fresh_share_library! }
+
     PASSWORD = "correct horse battery staple".freeze
 
     def sign_in(email = "maker@example.com")
@@ -122,6 +130,24 @@ module Web
       assert_select ".repo-card .markdown li", text: "flashes the LED"
       assert_select ".repo-card .markdown script", count: 0
       assert_select ".repo-card .markdown a[href=?]", file_path(base.node_id), text: "the base plate"
+    end
+
+    # THE CATALOG'S SIZE GATES THE READ. The port's `read` has no byte limit, so the render cap alone
+    # streamed a README of any size before cutting it (review, S3-2). A README the catalog says is
+    # past README_READ_LIMIT is never read: the port's `read` is replaced with a raise for the test.
+    test "a README the catalog says is huge is never read; the card says so" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      dir = make_project_repo!(user, project)
+      user.nodes.find_by!(parent_node_id: dir.node_id, name: "README.md").update_column(:size, 2.megabytes)
+
+      replacing(FileLayer.current, :read, ->(*) { raise "the port must not be read for a README past the limit" }) do
+        get project_path(project)
+      end
+
+      assert_response :success
+      assert_select ".repo-card .readme-note", text: /too large to show/
+      assert_select ".repo-card .markdown", count: 0
     end
 
     test "a README beyond the cap is truncated with a note, and what precedes the cut still renders" do

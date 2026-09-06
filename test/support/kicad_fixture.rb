@@ -11,8 +11,9 @@
 # (deliberately: most fixtures never read the bytes back), which KiCanvas would receive as
 # unparseable garbage.
 module KicadFixture
-  # TODO(kicanvas fixture): set by test/system/kicanvas_test.rb's own probing — see that file's
-  # header comment for what KiCanvas actually needed.
+  # A minimal schematic in the KiCad 6 file format (`version 20211123`), the smallest shape KiCanvas
+  # parses — settled by test/system/kicanvas_test.rb's own probing, whose header records that the
+  # thing KiCanvas keys on is the EXTENSION IN THE URL it fetches, not the bytes' version line.
   MINIMAL_KICAD_SCH = <<~SCH
     (kicad_sch (version 20211123) (generator eeschema)
       (uuid c0326988-8693-490b-a3fb-e69d8c3ef544)
