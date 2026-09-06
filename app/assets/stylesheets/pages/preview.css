@@ -295,4 +295,22 @@
   /* The meta line cannot ellipsise (a date read half way is worse than one on its own line), so on
      a phone it drops under the subject instead of squeezing the two columns beside it. */
   @media (max-width: 719px) { .commit-history-row { grid-template-columns: 76px minmax(0, 1fr); } .commit-meta { grid-column: 2; } }
+
+  /* --- KiCad schematics/boards (KiCanvas), stage 3 S3-2 — the file page's :kicanvas branch AND
+     the project page's Schematics section share this class (kicanvas_controller.js builds the
+     <kicanvas-embed> inside it either way). `height`, not just `min-height`: kicanvas-embed below
+     is told `height: 100%`, and a percentage height resolves to nothing against an ancestor whose
+     own height is auto — the box needs an explicit one or the embed renders at 0px regardless of
+     what the custom element does internally. The project panel keeps the 320px default; the file
+     page — the format's main stage — asks for more room. */
+  .kicanvas-stage { min-height: 320px; height: 320px; background: var(--raised); border-radius: 6px; }
+  .preview .kicanvas-stage { height: 70vh; }
+  .kicanvas-stage kicanvas-embed { display: block; width: 100%; height: 100%; }
+  /* The "Loading the viewer…" line occupies the box until connect() replaces it; keeps the page
+     from jumping once the module resolves and the embed's own shadow DOM takes over painting. */
+  .kicanvas-stage > .muted { padding: 24px; text-align: center; }
+
+  /* --- Schematics section on the project page (projects/_schematics.html.erb) --- */
+  .schematics-list { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .schematics-list li { display: flex; align-items: center; gap: 8px; }
 }

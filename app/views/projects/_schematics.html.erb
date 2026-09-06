@@ -1,0 +1,44 @@
+<%#
+  The Schematics section (stage 3, S3-2): every .kicad_sch/.kicad_pcb file anywhere in the
+  project's folder — @listing.all_rows, the one place that knows the full set (loose, backups, or
+  any depth of the tree; ProjectFolderListing's own doc comment) — listed with a link to its own
+  file page, plus ONE inline KiCanvas preview. RENDERS NOTHING when the folder holds none: @listing
+  degrades the same way on an unavailable folder (all_rows is simply empty), so this partial needs
+  no availability check of its own, the same shape _attachments already relies on.
+
+  THE TWO EXTENSIONS LIVE ONE PLACE — FilesController::KICANVAS_EXTS, read through
+  FilesHelper#kicad? — so this list and FilesController#preview_kind's :kicanvas branch can never
+  name a different set of formats (§14d).
+
+  "the first schematic" (spec S3-2) is the first ROW here once sorted by name, for a stable pick
+  across renders — on a folder holding only boards that is the first BOARD, which KiCanvas renders
+  exactly as readily as a schematic (files/show.html.erb's :kicanvas branch uses the very same
+  <kicanvas-embed> for both, so there is no second element to reach for here).
+%>
+<% kicad_rows = @listing.all_rows.select { |row| kicad?(row.node.name) }.sort_by { |row| row.node.name } %>
+<% if kicad_rows.any? %>
+  <section class="panel schematics-panel">
+    <h2>Schematics</h2>
+    <ul class="schematics-list">
+      <% kicad_rows.each do |row| %>
+        <% ext = File.extname(row.node.name).downcase.delete(".") %>
+        <li>
+          <%= link_to row.node.name, file_path(row.node_id) %>
+          <span class="badge"><%= ext == "kicad_sch" ? "schematic" : "board" %></span>
+        </li>
+      <% end %>
+    </ul>
+    <%# ONE inline preview, controls="basic" — the file page's own is "full". Same kicanvas
+        controller as files/show.html.erb; see that template's comment for both the S3 caveat and
+        why this is named_blob_file_path, never blob_file_path — KiCanvas reads the file's type off
+        the URL's OWN trailing extension, and the plain blob route carries none. %>
+    <% preview = kicad_rows.first %>
+    <div class="kicanvas-stage schematics-preview"
+         data-controller="kicanvas"
+         data-kicanvas-url-value="<%= named_blob_file_path(preview.node_id, filename: preview.node.name) %>"
+         data-kicanvas-controls-value="basic">
+      <p class="muted" data-kicanvas-target="status">Loading the viewer…</p>
+      <div data-kicanvas-target="stage"></div>
+    </div>
+  </section>
+<% end %>

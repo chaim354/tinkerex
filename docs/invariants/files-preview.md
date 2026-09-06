@@ -38,6 +38,30 @@ Two consequences of the one table:
   must stay `instructions`. A third copy in `importer_controller.js`'s `roleFor` has drifted; it is
   browser-only and the server re-derives authoritatively.
 
+## `:kicanvas` is a preview kind with NO `ROLE_BY_EXT` entry behind it, on purpose
+
+`FilesController::KICANVAS_EXTS` (`kicad_sch`, `kicad_pcb` — stage 3, S3-2) is written out beside
+`preview_kind`, the same way `MEASURABLE_EXTS` already is, and for the same first reason: neither
+extension can EARN a `ROLE_BY_EXT` entry, because both fail `EXT_RE` (an underscore, and
+`kicad_sch`/`kicad_pcb` are 9 characters against an 8-character bound) — the exact failure this
+file's own warning two paragraphs up describes. Adding one anyway would render a filter chip that
+links and does nothing.
+
+That absence is also what keeps a `.kicad_sch`/`.kicad_pcb` file OFF the thumbnail-poll cell for
+free: `Maker::Previews::Registry.for_filename` (what `_grid.html.erb`/`_list.html.erb` check
+before wiring up `thumb_cell_data`) has no renderer registered for either extension and never will
+by way of this table, so both files render as a plain name/badge, the same branch any other
+non-renderable file takes. Nothing had to be taught to skip them — they were never in scope. The
+type filter's chip row is excluded the same way, independently: `ext_facets` tallies real
+extensions and drops anything failing `EXT_RE` before a chip is ever built.
+
+The browser-side renderer is KiCanvas (vendored, `vendor/javascript/kicanvas.js`), not a
+server-side thumbnail — this is the one preview kind in this table with no `Maker::Previews`
+renderer standing behind it at all, by design (KiCad rendering on the server is explicitly out of
+scope, spec §6). `FilesHelper#kicad?` reads `FilesController::KICANVAS_EXTS` rather than holding a
+second copy of the two extensions, so `projects/_schematics.html.erb`'s membership test and
+`preview_kind`'s `:kicanvas` branch can never name a different set of formats.
+
 ## Extensionless text is a SEPARATE AXIS, and it must not move files
 
 `File.extname("LICENSE")` is `""`, and so is `File.extname(".gitignore")` — a leading dot with no

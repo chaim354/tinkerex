@@ -119,6 +119,32 @@
   <% elsif @kind == :pdf %>
     <%# Full PDF preview via the browser's own viewer (served inline from the blob endpoint). %>
     <iframe src="<%= blob_file_path(@node.node_id) %>" class="preview-pdf" title="<%= @node.name %> (PDF)"></iframe>
+  <% elsif @kind == :kicanvas %>
+    <%# KiCad schematic/board, rendered in the browser by KiCanvas (stage 3, S3-2; the vendored
+        module in vendor/javascript/kicanvas.js, kicanvas_controller.js). Imported LAZILY on
+        connect, so nothing downloads it on a page with no KiCad file. controls="full" gives the
+        file page KiCanvas's own toolbar (zoom, pan, layer toggles); the project page's Schematics
+        section asks for "basic" instead — see projects/_schematics.html.erb.
+
+        named_blob_file_path, NOT blob_file_path -- KiCanvas identifies a schematic/board from the
+        URL IT FETCHES, not from the bytes it receives: its own FetchFileSystem reads the trailing
+        extension off the fetched URL's path to decide what it just downloaded, so pointed at the
+        plain blob route (no extension anywhere in the path) it never recognises this as a
+        .kicad_sch/.kicad_pcb at all and renders nothing but its own placeholder background,
+        logging "No vaild root schematic was found." — measured against the vendored module, not
+        guessed. :filename in that route is decorative to the SERVER (never looked up; #blob still
+        resolves the node from :id alone) and load-bearing to the CLIENT.
+
+        ON S3, connect-src 'self' blocks the embed's fetch of a presigned redirect, exactly as it
+        does for modelviewer_controller.js's model fetch — a shared, pre-existing limitation, not
+        something new here. %>
+    <div class="kicanvas-stage"
+         data-controller="kicanvas"
+         data-kicanvas-url-value="<%= named_blob_file_path(@node.node_id, filename: @node.name) %>"
+         data-kicanvas-controls-value="full">
+      <p class="muted" data-kicanvas-target="status">Loading the viewer…</p>
+      <div data-kicanvas-target="stage"></div>
+    </div>
   <% elsif @kind == :text %>
     <%# Source viewer — CodeMirror 6, loaded dynamically so the bundle ships only on a page that
         actually has a text file on it. The inner preformatted block is the FALLBACK and the
