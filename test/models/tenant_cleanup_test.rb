@@ -116,6 +116,14 @@ class TenantCleanupTest < ActiveSupport::TestCase
 
     "maker_connections" => ->(u) {
       u.maker_projects.first.connections.create!(user: u, from_label: "Driver", to_label: "Motor")
+    },
+
+    "maker_releases" => ->(u) {
+      u.maker_projects.first.releases.create!(user: u, version: "v0.1.0", published_at: Time.current)
+    },
+
+    "maker_release_files" => ->(u) {
+      u.maker_releases.first.files.create!(user: u, node_id: SecureRandom.uuid, name: "base.stl")
     }
   }.freeze
 
@@ -129,6 +137,7 @@ class TenantCleanupTest < ActiveSupport::TestCase
     maker_print_runs maker_taggings maker_file_attachments maker_collection_items maker_repo_edits
     maker_build_log_entries maker_sheets maker_boms maker_inventory_items
     maker_inventory_transactions maker_bom_lines maker_connections
+    maker_releases maker_release_files
   ].freeze
 
   def rows_for(user, table)

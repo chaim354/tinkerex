@@ -180,6 +180,28 @@ module Maker
              .map(&:name).sort
       end
 
+      Tag = Data.define(:name, :oid)
+      TAG_CAP = 200
+
+      # EVERY tag with the COMMIT it resolves to — an annotated tag's PEELED target, a lightweight
+      # tag's own target — name-sorted, for the release picker (stage 3, S3-5). The peel is the same
+      # one `tags_at_head` above makes and for the same reason: the annotation object sits between
+      # the ref and the commit, so an unpeeled `target_id` records the TAG object's oid, which is
+      # not a commit and matches nothing a maker can look up.
+      #
+      # CAPPED, LIKE EVERY WALK IN THIS CLASS (git-editing.md): a repository with more tags than
+      # this lists the first TAG_CAP and the picker says so. The cap is taken BEFORE the sort, so
+      # which TAG_CAP you get is libgit2's ref order rather than the alphabetical first — the same
+      # bound `full_status` takes, and stating it beats implying a "first 200 by name" the code
+      # does not do.
+      def tags
+        return [] if unborn?
+
+        rugged.tags.first(TAG_CAP).map do |t|
+          Tag.new(name: t.name, oid: t.annotated? ? t.annotation.target_id : t.target_id)
+        end.sort_by(&:name)
+      end
+
       private
 
       def compute_refusal
