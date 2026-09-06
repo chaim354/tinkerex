@@ -146,13 +146,21 @@ module Maker
     # stream, and "what happened to this project, newest first" is one question. The sort key
     # carries the id after the time so two things logged in the same second have a stable order
     # rather than a database-dependent one.
+    # ITS OWN BOUNDED READERS, NOT THE PAGE'S. `entries` and `releases` are the page's unbounded
+    # memos; a feed that mapped over them loaded every build-log entry and every release, Action
+    # Text bodies included, and then kept fifty (S3-6's review). Each side takes the newest
+    # FEED_CAP, so the merge can never need more than that from either, and the query count stays
+    # what the budget test pins.
     def feed_items(page_url:)
-      items = entries.map do |entry|
+      newest_entries = project.build_log_entries.includes(:rich_text_body)
+                              .reorder(logged_at: :desc, id: :desc).limit(FEED_CAP)
+      newest_releases = project.releases.includes(:files, :rich_text_notes).limit(FEED_CAP)
+      items = newest_entries.map do |entry|
         FeedItem.new(kind: :entry, id: entry.id, time: entry.logged_at, html: entry.body.to_s,
                      title: "Build log — #{entry.logged_at.strftime("%Y-%m-%d")}",
                      url: "#{page_url}#entry-#{entry.id}")
       end
-      items += releases.map do |release|
+      items += newest_releases.map do |release|
         count = release.files.size
         FeedItem.new(kind: :release, id: release.id, time: release.published_at,
                      title: "Release #{release.version}",

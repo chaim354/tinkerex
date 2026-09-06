@@ -79,6 +79,21 @@ module Maker
                       %("wire, 22 AWG")
     end
 
+    # A STRANGER OPENS THIS FILE IN A SPREADSHEET: a cell beginning `=`, `+`, `-`, `@`, a tab or a
+    # carriage return is a formula to Excel and Sheets, so a published part name of
+    # `=HYPERLINK(...)` would run in the visitor's sheet. Defused with a leading apostrophe, in every
+    # text column, and only in THIS export -- Maker::Sheet#to_csv keeps formulas on purpose, because
+    # that is the owner downloading their own sheet (S3-6's review).
+    test "a cell that would be a spreadsheet formula is defused with a leading apostrophe" do
+      @bom.lines.create!(user: @user, part_name: %(=HYPERLINK("https://evil.example","click")),
+                         quantity: 1, unit: "each", reference: "-R1")
+      @bom.lines.create!(user: @user, part_name: "@mention", quantity: 2, unit: "each", reference: "+R2")
+
+      assert_equal [ "'-R1", %('=HYPERLINK("https://evil.example","click")), "1.0", "each", nil ], row_for("'-R1")
+      assert_equal [ "'+R2", "'@mention", "2.0", "each", nil ], row_for("'+R2")
+      assert_equal [ "B1", "M3 bolt", "2.0", "each", nil ], row_for("B1"), "an ordinary cell is untouched"
+    end
+
     test "no lines is a header-only document" do
       assert_equal [ %w[reference part quantity unit file] ], rows([])
     end

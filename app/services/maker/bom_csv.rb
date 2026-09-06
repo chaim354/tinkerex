@@ -44,7 +44,20 @@ module Maker
       # CSV points at a file sitting beside it in the same zip. A permitted file the listing does
       # not hold (attached from elsewhere in the library, or past FILE_CAP) still gets its name.
       file = node && (@pub.bundle_path_for(node.node_id) || node.name)
-      [ line.reference, part_for(line, node), line.quantity, line.unit, file ]
+      [ defuse(line.reference), defuse(part_for(line, node)), line.quantity, defuse(line.unit), defuse(file) ]
+    end
+
+    # A STRANGER OPENS THIS FILE IN A SPREADSHEET. A cell beginning `=`, `+`, `-`, `@`, a tab or a
+    # carriage return is a FORMULA to Excel and Sheets, so a published part name of `=HYPERLINK(…)`
+    # would run in the visitor's sheet. A leading apostrophe makes it text again — the standard
+    # defusal — and only this export needs it: `Maker::Sheet#to_csv` preserves formulas on purpose,
+    # because that is the owner downloading their own sheet (S3-6's review).
+    FORMULA_LEAD = /\A[=+\-@\t\r]/
+
+    def defuse(value)
+      return value unless value.is_a?(String) && value.match?(FORMULA_LEAD)
+
+      "'#{value}"
     end
 
     # The node this line points at, ONLY when the project permits it. Resolved through the page's

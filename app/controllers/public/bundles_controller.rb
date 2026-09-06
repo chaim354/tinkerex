@@ -22,7 +22,10 @@ module Public
         generated_at: Time.current.iso8601,
         # THE LISTING'S CAP, REPORTED RATHER THAN HIDDEN — see Maker::PublicProject#bundle_files.
         truncated: pub.listing.truncated?,
-        readme_path: pub.readme_row&.node&.name,
+        # THE SAME SPELLING AS EVERY OTHER PATH IN THIS MANIFEST (`bundle_path_for`), so the README
+        # names the zip entry it will actually be, not a second derivation that agrees only while
+        # the README stays at the folder root (S3-6's review).
+        readme_path: pub.readme_row && pub.bundle_path_for(pub.readme_row.node_id),
         bom_csv_url: public_bom_path(pub.handle, project.slug, **pub.link_params),
         files: pub.bundle_files.map { |f| { path: f.path, size: f.size, url: f.url } }
       }

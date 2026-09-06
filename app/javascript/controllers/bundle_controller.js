@@ -50,7 +50,7 @@ export default class extends Controller {
       // The blob is the whole archive; revoking frees it. Not immediately — the download has to
       // start reading from the URL first.
       setTimeout(() => URL.revokeObjectURL(a.href), 60_000)
-      this.say(`Bundled ${manifest.files.length} files (${this.mb(blob.size)} MB).`)
+      this.say(`Bundled ${manifest.files.length} files (${this.human(blob.size)}).`)
     } catch (e) {
       this.say(`Could not build the bundle — ${e.message}. Files can still be downloaded one at a time.`)
     } finally {
@@ -60,4 +60,10 @@ export default class extends Controller {
 
   say(text) { this.statusTarget.textContent = text }
   mb(bytes) { return (bytes / 1048576).toFixed(1) }
+  // A 28 KB zip read as "0.0 MB" on the dev server; say the unit the number deserves.
+  human(bytes) {
+    if (bytes >= 1048576) return `${this.mb(bytes)} MB`
+    if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${bytes} bytes`
+  }
 }
