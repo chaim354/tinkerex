@@ -32,11 +32,14 @@ module Web
 
     def disposition_of(url) = CGI.parse(URI(url).query)["response-content-disposition"].first.to_s
 
-    # THE THREE MECHANISMS, ASKED OF THE CAPABILITIES AND NEVER OF A CLASS. `presignable?` is the
-    # redirect backend (s3); `port_writable?` distinguishes the two that answer in-band (share
-    # sends a file, chunk_remote streams). Each arm asserts the thing only that mechanism can get
-    # wrong: a redirect carries its policy SIGNED INTO THE URL (there are no headers on a 302),
-    # while the other two carry it in the headers.
+    # TWO ARMS, ASKED OF THE CAPABILITIES AND NEVER OF A CLASS. `presignable?` is the redirect
+    # backend (s3, pinned below with FakeS3); everything else answers in-band with headers. Each
+    # arm asserts the thing only that mechanism can get wrong: a redirect carries its policy
+    # SIGNED INTO THE URL (there are no headers on a 302), the in-band answer carries it in the
+    # headers. HONESTLY: the in-band arm is exercised by SHARE only. chunk_remote's `Stream`
+    # mechanism is not reachable from a fixture here (`create_node!` has bytes only on share),
+    # so on this ROUTE no leg runs it; the same `FileDelivery#deliver_file` is what
+    # `FilesController#blob` runs, and the chunk_remote leg covers the Stream arm there.
     def assert_delivered(disposition, filename)
       caps = FileLayer.current.capabilities
       if caps.presignable?

@@ -183,6 +183,18 @@ module Web
       assert_select "table.public-bom a[href=?]", public_file_path("ada", @project.slug, @f[:base].node_id)
     end
 
+    # A LINE POINTING OUTSIDE THE PROJECT NAMES NOTHING. The route refuses the bytes, and the cell
+    # must not publish the private file's NAME in their place — the one spot the page would state
+    # a fact about a non-permitted node (S3-4's review). A dash, since the line has no free text.
+    test "a BOM line pointing at a file outside the project shows neither its name nor a link" do
+      @f[:bom].lines.create!(user: @user, node_id: @f[:outsider].node_id, quantity: 1, unit: "each")
+
+      get path
+      assert_not_includes response.body, "elsewhere.stl"
+      assert_select "table.public-bom td.col-part", text: "—"
+      assert_select "table.public-bom a[href*=?]", @f[:outsider].node_id, count: 0
+    end
+
     # --- 8. wiring ------------------------------------------------------------------
 
     test "the wiring table renders read-only" do

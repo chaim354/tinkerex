@@ -42,7 +42,11 @@
                 <% if node && pub.permits?(node) %>
                   <%= link_to node.name, pub.file_url_for(node.node_id) %>
                 <% else %>
-                  <%= node&.name || line.part_name %>
+                  <%# NEVER THE NODE'S NAME HERE: a line pointing at a file outside the project
+                      would publish that private file's name while the route 404s its bytes --
+                      the one place the page would state a fact about a non-permitted node
+                      (S3-4's review). The line's own free text or a dash. %>
+                  <%= line.part_name.presence || "—" %>
                 <% end %>
               <% when :free_text %>
                 <%= line.part_name %>

@@ -135,6 +135,49 @@ module Maker
       assert_not pub.permits?(@f[:dotfile]), ".env is in the folder and must never be a public download"
     end
 
+    # THE VISIBILITY CHECK IS THE OWNER'S. `nodes` is unique on (user_id, node_id), not node_id
+    # alone, so an unscoped `Node.visible_entries.where(node_id:)` asks whether ANY user has a
+    # visible row with that id -- and another user's plainly named row under the same id would
+    # have vouched for this owner's `.env` (S3-4's review). Ids are UUIDs, so this is a guard on
+    # the narrowest true statement rather than on a live exploit.
+    test "another user's visible row with the same node id does not vouch for a dot-file" do
+      other = make_owner!(handle: "bob")
+      other.nodes.create!(node_id: @f[:dotfile].node_id, name: "plain.stl", kind: "file", mtime: 1, size: 1)
+
+      assert_not pub.permits?(@f[:dotfile])
+    end
+
+    # A PROJECT WITH NO FOLDER STILL OWNS ITS ATTACHMENTS, AND NOTHING ELSE. `folder_node_id` is
+    # nullable and publishing needs only a handle, so this state is reachable; the page renders
+    # an entry photo living elsewhere by its attachment row, and the route must agree. The
+    # ancestry arms stay closed here for the reason the code comment gives: with a nil folder,
+    # `Array(ancestors_of(x)).include?(nil)` is true for every chain in the library.
+    test "a project with no folder permits its attachments and nothing by ancestry" do
+      @project.update_column(:folder_node_id, nil)
+      folderless = Maker::PublicProject.new(@project.reload)
+
+      assert folderless.permits?(@f[:entry_photo]), "an attached entry photo is the project's by its row"
+      assert_not folderless.permits?(@f[:base]), "a file that was in the folder is unreachable without it"
+      assert_not folderless.permits?(@f[:outsider])
+    end
+
+    # NOTHING BENEATH A .git MARKER DELIVERS. The listing never descends into one, but permits?
+    # walks the LibraryTree, which indexes every live dir; on chunk_remote the catalog mirrors
+    # whatever a client synced, so `.git/config` has a plain name, sits under the folder, and
+    # would pass the visibility and ancestry checks. Two depths: a file directly inside `.git/`
+    # and one nested under it.
+    test "a file beneath a .git marker is refused even inside the folder" do
+      git = make_dir!(@user, Library::RepoMetadata::DIR_NAME, @f[:models])
+      config = make_file!(@user, "config", git)
+      hooks = make_dir!(@user, "hooks", git)
+      hook = make_file!(@user, "pre-commit", hooks)
+
+      refused = Maker::PublicProject.new(@project.reload)
+      assert_not refused.permits?(config)
+      assert_not refused.permits?(hook)
+      assert refused.permits?(@f[:base]), "a sibling outside the marker is still delivered"
+    end
+
     test "a node of another user is refused, and nil is refused" do
       other = make_owner!(handle: "bob")
       theirs = other.nodes.create!(node_id: SecureRandom.uuid, name: "theirs.stl", kind: "file",
