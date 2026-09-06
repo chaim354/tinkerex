@@ -117,6 +117,16 @@ class ShellTest < ApplicationSystemTestCase
     # fixtures two lines up make for exercising a populated row rather than an empty page.
     bom = project.boms.create!(user: @user)
     bom.lines.create!(user: @user, inventory_item: item, supplier:, quantity: 2, unit: "each")
+    # STAGE 3, S3-3: one connection, the BOM argument again -- an EMPTY panel renders no table, so
+    # without a row the sweep never reached the wiring table, its per-row forms or the 375px
+    # rendering of five input cells. MEASURED, NOT ASSUMED: the two `.wiring` column drops (Note at
+    # 719px, Wire at 479px) are NOT what keeps this row inside the viewport -- deleting both left
+    # this sweep green, because Chrome shrinks a 100%-width input to its cell. They are a
+    # readability choice, and this seed pins the render path, not the breakpoints.
+    project.connections.create!(user: @user, from_label: "Driver board",
+                                to_label: "Stepper motor, second from the top",
+                                wire: "22 AWG twisted pair", note: "route away from the mains lead",
+                                position: 0)
     long = create_node!(@user, node_id: SecureRandom.uuid, kind: "file",
                         name: "a-very-long-file-name-that-would-push-the-table-out-of-the-viewport-v3-final.stl")
     # STAGE 3, S3-2: the :kicanvas branch is new markup (KiCanvas's own toolbar included) that no

@@ -17,6 +17,9 @@ module Maker
     has_many :boms, class_name: "Maker::Bom", foreign_key: :project_id, dependent: :destroy
     has_many :sheets, -> { order(:position, :id) },
              class_name: "Maker::Sheet", foreign_key: :project_id, dependent: :destroy
+    # THE WIRING TABLE (stage 3, S3-3): connections between two labelled ends, in position order.
+    has_many :connections, -> { order(:position, :id) },
+             class_name: "Maker::Connection", foreign_key: :project_id, dependent: :destroy
     # `:nullify`, AND IT IS THE ONLY OPTION THAT WORKS — do not "normalise" it onto the
     # `:destroy` lines above. The ledger outlives the project on purpose: a transaction records
     # that stock actually moved, and `InventoryItem#quantity_cached` was computed from it, so

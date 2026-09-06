@@ -1,0 +1,118 @@
+<%#
+  The wiring table (stage 3, S3-3): connections between two labelled ends, with a wire and a
+  note, edited inline, in position order. Read-only rendering (`editable: false`) is what S3-4
+  reuses on the public page, which is why this partial takes LOCALS rather than reading @project/
+  @connections off the controller the way projects/_tasks.html.erb does -- a public-page
+  controller has no reason to alias its own ivars just to satisfy this partial.
+
+  Locals:
+    project     -- the Maker::Project the composer and each row's Save/Remove post against
+    connections -- every Maker::Connection on the project, in position order
+                   (Maker::Project#connections' own default scope) -- ProjectsController#show
+                   loads this in ONE query; this partial issues none of its own
+    editable    -- true on the project page (this user's own project); false renders plain cells
+                   and no composer
+
+  A <form> CANNOT SPAN TABLE CELLS, so each row's <form> sits OUTSIDE the table -- one empty
+  form_with per row (nothing inside the block but the CSRF/method-override hidden fields Rails
+  always inserts) -- and every field plus the row's Save button point back at it by id via the
+  HTML `form=` attribute. project_wiring_test.rb asserts that wiring directly (`input[form=?]`
+  against "connection-#{id}"), not merely that the fields render.
+%>
+<section class="panel wiring-panel">
+  <div class="panel-head">
+    <h2>Wiring</h2>
+    <span class="mono muted"><%= pluralize(connections.size, "connection") %></span>
+  </div>
+
+  <% if connections.empty? %>
+    <p class="muted">No connections yet.</p>
+  <% else %>
+    <% if editable %>
+      <% connections.each do |connection| %>
+        <%= form_with model: connection, scope: :connection, url: connection_path(connection),
+                      method: :patch, id: "connection-#{connection.id}" do %>
+        <% end %>
+      <% end %>
+    <% end %>
+    <table class="table wiring">
+      <thead>
+        <tr>
+          <th class="col-from">From</th>
+          <th class="col-to">To</th>
+          <th class="col-wire">Wire</th>
+          <th class="col-note">Note</th>
+          <% if editable %>
+            <th class="col-actions"></th>
+          <% end %>
+        </tr>
+      </thead>
+      <tbody>
+        <% connections.each do |connection| %>
+          <% form_id = "connection-#{connection.id}" %>
+          <tr class="wiring-row">
+            <% if editable %>
+              <td class="col-from">
+                <%= text_field_tag "connection[from_label]", connection.from_label,
+                                   form: form_id, id: "#{form_id}-from_label" %>
+              </td>
+              <td class="col-to">
+                <%= text_field_tag "connection[to_label]", connection.to_label,
+                                   form: form_id, id: "#{form_id}-to_label" %>
+              </td>
+              <td class="col-wire">
+                <%= text_field_tag "connection[wire]", connection.wire,
+                                   form: form_id, id: "#{form_id}-wire" %>
+              </td>
+              <td class="col-note">
+                <%= text_field_tag "connection[note]", connection.note,
+                                   form: form_id, id: "#{form_id}-note" %>
+              </td>
+              <td class="col-actions">
+                <%= submit_tag "Save", form: form_id, class: "btn small" %>
+                <%= button_to "Remove", connection_path(connection), method: :delete,
+                              class: "linkbtn danger small",
+                              form: { data: { turbo_confirm: "Remove #{connection.from_label} → #{connection.to_label}?" } } %>
+              </td>
+            <% else %>
+              <td class="col-from"><%= connection.from_label %></td>
+              <td class="col-to"><%= connection.to_label %></td>
+              <td class="col-wire"><%= connection.wire %></td>
+              <td class="col-note"><%= connection.note %></td>
+            <% end %>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  <% end %>
+
+  <% if editable %>
+    <%# scope: :connection -- this form has no model object, so scope: is what names the params
+        at all; Projects::ConnectionsController#create requires :connection, which scope: here
+        produces (CLAUDE.md §14d's form-scope rule). %>
+    <details class="composer wiring-add">
+      <summary class="btn small">Add connection</summary>
+      <%= form_with url: project_connections_path(project), scope: :connection, class: "wiring-add-form" do |f| %>
+        <div class="composer-fields">
+          <label class="field">
+            <span>From</span>
+            <%= f.text_field :from_label, placeholder: "e.g. Driver board", required: true %>
+          </label>
+          <label class="field">
+            <span>To</span>
+            <%= f.text_field :to_label, placeholder: "e.g. Stepper motor", required: true %>
+          </label>
+          <label class="field">
+            <span>Wire</span>
+            <%= f.text_field :wire, placeholder: "e.g. 22 AWG, pin 3" %>
+          </label>
+          <label class="field">
+            <span>Note</span>
+            <%= f.text_field :note %>
+          </label>
+        </div>
+        <%= f.submit "Add", class: "btn small primary" %>
+      <% end %>
+    </details>
+  <% end %>
+</section>

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_04_220446) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_06_024258) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -149,6 +149,19 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_04_220446) do
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
     t.index ["user_id", "name"], name: "index_maker_collections_on_user_id_and_name"
+  end
+
+  create_table "maker_connections", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "from_label", null: false
+    t.text "note"
+    t.integer "position", default: 0, null: false
+    t.integer "project_id", null: false
+    t.string "to_label", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.string "wire"
+    t.index ["user_id", "project_id", "position"], name: "index_maker_connections_on_user_id_and_project_id_and_position"
   end
 
   create_table "maker_file_attachments", force: :cascade do |t|
@@ -472,6 +485,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_04_220446) do
   add_foreign_key "maker_addon_files", "maker_addon_states", column: "addon_state_id"
   add_foreign_key "maker_addon_state_revisions", "maker_addon_states", column: "addon_state_id"
   add_foreign_key "maker_addon_states", "users"
+  add_foreign_key "maker_connections", "users"
   add_foreign_key "maker_filing_rules", "users"
   add_foreign_key "maker_repo_edits", "users"
   add_foreign_key "nodes", "users"

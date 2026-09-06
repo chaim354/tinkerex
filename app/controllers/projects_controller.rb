@@ -197,6 +197,9 @@ class ProjectsController < ApplicationController
     @addon_origins = addon_origins_for(tile_ids)
     @tasks = @project.tasks.order(:position, :created_at).to_a
     @sheets = @project.sheets.to_a
+    # THE WIRING TABLE (stage 3, S3-3). ONE query -- Maker::Project#connections already orders by
+    # position, like #sheets above, so no further .order() is needed here.
+    @connections = @project.connections.to_a
     # The entry form binds to a real object: `rich_text_area` reads its value from the form's
     # object, and Action Text's form helper is not built for the object-less `fields_for` the plain
     # textarea used.

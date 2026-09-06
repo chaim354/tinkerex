@@ -93,6 +93,7 @@ class User < ApplicationRecord
   has_many :maker_previews, class_name: "Maker::Preview", dependent: :destroy
   has_many :maker_boms, class_name: "Maker::Bom", dependent: :destroy
   has_many :maker_bom_lines, class_name: "Maker::BomLine", dependent: :destroy
+  has_many :maker_connections, class_name: "Maker::Connection", dependent: :destroy
   has_many :maker_addon_states, class_name: "Maker::AddonState", dependent: :destroy
   has_many :maker_notes, class_name: "Maker::Note", dependent: :destroy
   has_many :maker_sheets, class_name: "Maker::Sheet", dependent: :destroy

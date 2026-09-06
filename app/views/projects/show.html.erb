@@ -68,5 +68,9 @@
   <%= render "build_log" %>
   <%= render "tasks" %>
   <%= render "bom" %>
+  <%# Stage 3, S3-3: the wiring table. Locals, not @project/@connections -- the same partial is
+      read-only on the public page later (S3-4), which has no reason to alias its own ivars to
+      this partial's names. %>
+  <%= render "wiring", project: @project, connections: @connections, editable: true %>
   <%= render "sheets" %>
 </div>

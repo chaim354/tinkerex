@@ -102,7 +102,7 @@
 <details class="composer bom-add">
   <summary class="btn small">Add line</summary>
   <%= form_with url: project_bom_lines_path(project), scope: :bom_line, method: :post, class: "bom-add-form" do |f| %>
-    <div class="bom-fields">
+    <div class="composer-fields">
       <label class="field">
         <span>Reference</span>
         <%= f.text_field :reference %>
@@ -142,7 +142,7 @@
       </label>
     </fieldset>
 
-    <div class="bom-fields">
+    <div class="composer-fields">
       <label class="field">
         <span>Supplier</span>
         <%= f.select :supplier_id, suppliers, include_blank: true %>

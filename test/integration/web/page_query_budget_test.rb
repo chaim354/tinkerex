@@ -153,6 +153,9 @@ module Web
           project.tasks.create!(user: @user, title: "task #{id}")
           project.build_log_entries.create!(user: @user, body: "entry #{id}",
                                            logged_at: Time.current)
+          # STAGE 3, S3-3: the wiring panel grows too -- one connection per iteration, the same
+          # constant-in-N argument as tasks and build-log entries two lines up.
+          project.connections.create!(user: @user, from_label: "from-#{id}", to_label: "to-#{id}")
           case i % 3
           when 0
             bom_item = @user.maker_inventory_items.create!(name: "bom-item-#{id}", unit: "each")
