@@ -107,6 +107,13 @@ pin "three/addons/loaders/3MFLoader.js", to: "3MFLoader.js" # @0.185.1
 # the extension — no error, no warning. test/ci_hygiene_test.rb fails the build if a per-package
 # pin appears. To add a language, add it to codemirror-entry.js and rebuild.
 pin "codemirror", to: "codemirror.js" # bundle: see bin/build-codemirror for pinned versions
+
+# KiCanvas (MIT; notices in vendor/javascript/LICENSE-kicanvas.md) — KiCad schematics and boards
+# rendered in the browser. ONE vendored build from a pinned commit (bin/build-kicanvas), the
+# CodeMirror pattern: no npm package, no CDN. Imported LAZILY by kicanvas_controller.js on the
+# pages that hold a .kicad_sch/.kicad_pcb, so nothing else downloads its 470 KB. The module
+# has no exports; importing it registers <kicanvas-embed> and <kicanvas-source>.
+pin "kicanvas", to: "kicanvas.js" # bundle: see bin/build-kicanvas for the pinned commit
 # Lexxy (MIT) — the Action Text editor, replacing Trix. Served from the gem's own asset path, so
 # there is nothing vendored under vendor/javascript and no jspm shared-chunk patching (see the
 # jszip notes above). Attachments are disabled at the element, so @rails/activestorage is

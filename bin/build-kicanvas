@@ -1,0 +1,19 @@
+#!/bin/zsh
+# Build KiCanvas (MIT — LICENSE-kicanvas.md beside the output) from a PINNED commit into ONE vendored
+# ES module, the CodeMirror pattern (bin/build-codemirror): no npm package, no CDN, one importmap pin.
+# KiCanvas has no release tags; the commit below is what `vendor/javascript/kicanvas.js` was built
+# from, and bumping it is a deliberate edit here followed by a rebuild and a look at a .kicad_sch.
+# Needs node + npm on PATH (the same as build-codemirror). Idempotent: rebuilds into a temp dir.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+ROOT="$PWD"
+KICANVAS_COMMIT="b031159eb74aaa7eef2b026fd85d35bc05ff2095"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+git clone -q https://github.com/theacodes/kicanvas.git "$WORK/kicanvas"
+git -C "$WORK/kicanvas" checkout -q "$KICANVAS_COMMIT"
+( cd "$WORK/kicanvas" && npm ci --silent && npm run build --silent )
+mkdir -p "$ROOT/vendor/javascript"
+cp "$WORK/kicanvas/build/kicanvas.js" "$ROOT/vendor/javascript/kicanvas.js"
+cp "$WORK/kicanvas/LICENSE.md" "$ROOT/vendor/javascript/LICENSE-kicanvas.md"
+echo "kicanvas.js built from $KICANVAS_COMMIT: $(wc -c < "$ROOT/vendor/javascript/kicanvas.js") bytes"
