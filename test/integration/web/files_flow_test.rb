@@ -259,7 +259,7 @@ module Web
       assert_no_match(/No inline preview/, response.body)
     end
 
-    # ---- Interactive 3D viewer (STL/3MF/OBJ) — client-side, supersedes the static thumbnail ----
+    # ---- Interactive 3D viewer — client-side, supersedes the static thumbnail ----
 
     test "an STL detail page renders the 3D viewer button-gated (lazy), not auto-loading" do
       sign_in
@@ -268,7 +268,12 @@ module Web
       get file_path(node_id)
       assert_response :success
       assert_select ".model-viewer[data-controller=?]", "modelviewer"
-      assert_select ".model-viewer[data-modelviewer-url-value=?]", blob_file_path(node_id)
+      # THE NAMED BLOB ROUTE, AND THE FILENAME IN IT IS THE POINT. Online3DViewer picks an importer
+      # from the URL'S OWN trailing extension, so the extensionless `blob_file_path` this used until
+      # 2026-09-06 reaches no importer at all — the identical trap KiCanvas fell into, and the
+      # reason that route exists (config/routes.rb).
+      assert_select ".model-viewer[data-modelviewer-url-value=?]",
+                    named_blob_file_path(node_id, filename: "bracket.stl")
       assert_select ".model-viewer[data-modelviewer-format-value=?]", "stl"
       # Button-gated: the viewer waits for a click instead of fetching bytes on load.
       assert_select ".model-viewer[data-modelviewer-lazy-value=?]", "true"
@@ -279,17 +284,31 @@ module Web
       assert_select "[data-action~=?]", "modelviewer#showPoster"
     end
 
-    test "3MF and OBJ also render the 3D viewer, with the right format value" do
+    # ONE PER IMPORTER FAMILY, not one per extension: Online3DViewer's own mesh readers (3mf, obj,
+    # ply, off), its glTF reader (gltf, glb), the three.js-backed ones (dae, wrl, 3ds, fbx, amf),
+    # rhino3dm (3dm) and the OpenCascade wasm (step, iges, brep, fcstd). A format missing from
+    # Maker::FileAttachment::VIEWABLE_3D_EXTS renders "No inline preview for this file type."
+    test "every viewable 3D format reaches the viewer with its own format value" do
       sign_in
-      { "part.3mf" => "3mf", "widget.obj" => "obj" }.each do |name, fmt|
+      { "part.3mf" => "3mf", "widget.obj" => "obj", "scan.ply" => "ply", "mesh.off" => "off",
+        "scene.gltf" => "gltf", "scene.glb" => "glb", "rig.dae" => "dae", "world.wrl" => "wrl",
+        "old.3ds" => "3ds", "char.fbx" => "fbx", "surf.3dm" => "3dm", "print.amf" => "amf",
+        "cad.iges" => "iges", "cad.igs" => "igs", "solid.brep" => "brep",
+        "body.fcstd" => "fcstd" }.each do |name, fmt|
         node_id = upload(name, "data".b)
         get file_path(node_id)
         assert_response :success
         assert_select ".model-viewer[data-modelviewer-format-value=?]", fmt
+        assert_select ".model-viewer[data-modelviewer-url-value=?]",
+                      named_blob_file_path(node_id, filename: name)
       end
     end
 
-    test "a STEP file keeps the static thumbnail preview (not the 3D viewer)" do
+    # THE THUMBNAIL BECAME THE POSTER, IT DID NOT GO AWAY — and a STEP file is where that reads
+    # most differently from before. This page was a bare `img.preview-image` with no viewer at all
+    # until 2026-09-06; the server-rendered PNG is now the resting state INSIDE the viewer's
+    # fallback, which is also where it lands if the OpenCascade importer cannot boot.
+    test "a STEP file's server thumbnail becomes the 3D viewer's poster" do
       user = sign_in
       node_id = upload("cad.step", "ISO-10303-21;".b)
       token = FileLayer.current.stat(user, node_id:).content_token
@@ -299,8 +318,21 @@ module Web
 
       get file_path(node_id)
       assert_response :success
-      assert_select "img.preview-image"
+      assert_select ".model-viewer[data-modelviewer-format-value=?]", "step"
+      assert_select ".model-viewer-fallback img.preview-image"
+      assert_select ".mv-launch [data-action~=?]", "modelviewer#load"
+    end
+
+    # THE OTHER SIDE OF THE VOCABULARY, so the widening stays a decision rather than a drift. A
+    # `.f3d` is role `model`-adjacent (`cad_source`) and there is no importer for it in any engine
+    # we ship — the page must keep saying so instead of opening a viewer that can only fail.
+    test "a CAD source file with no importer gets no 3D viewer" do
+      sign_in
+      node_id = upload("part.f3d", "binary".b)
+      get file_path(node_id)
+      assert_response :success
       assert_select ".model-viewer", count: 0
+      assert_match(/No inline preview/, response.body)
     end
 
     test "a LightBurn file's detail page shows the laser-settings panel beside the preview" do

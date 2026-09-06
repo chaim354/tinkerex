@@ -154,20 +154,36 @@
   .history-diff .cm-editor.cm-focused { outline: none; }
   .history-diff .cm-scroller { font-family: var(--font-mono); font-size: 13px; }
 
-  /* --- Interactive 3D viewer (modelviewer_controller.js) — STL/3MF/OBJ --- */
+  /* --- Interactive 3D viewer (modelviewer_controller.js) — every format Online3DViewer reads,
+     Maker::FileAttachment::VIEWABLE_3D_EXTS --- */
   .model-viewer { position: relative; }
+  /* THE STAGE IS THE VIEWER'S PARENT ELEMENT, AND ITS SIZE IS READ IN JS. Online3DViewer's
+     EmbeddedViewer measures clientWidth/clientHeight in its constructor, so the controller adds
+     --ready (which un-hides this) BEFORE booting — a 0x0 stage yields a canvas that never
+     recovers. `background` is also read from here, by getComputedStyle, because the engine's
+     renderer has no alpha channel and would paint black behind a transparent clear colour. */
   .model-viewer-stage {
     width: 100%; height: 60vh; min-height: 320px; border-radius: 6px;
     background: var(--raised); display: none; touch-action: none;
   }
   .model-viewer-stage canvas { display: block; border-radius: 6px; }
+  /* The engine appends its own unclassed <div> ("Loading model…", "Importing model…", and the
+     import error text) beside the canvas. We cannot give it a class, so it is selected
+     structurally — without this it renders as unstyled black text in the stage's top-left. */
+  .model-viewer-stage > div {
+    display: flex; align-items: center; justify-content: center;
+    height: 100%; color: var(--fg-muted); font-size: 14px; text-align: center; padding: 16px;
+  }
   .model-viewer-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
   .model-viewer-source { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); max-width: 60%; }
   .mv-launch { display: inline-flex; gap: 8px; }
   .mv-actions { display: none; gap: 8px; }
   .model-viewer-dims { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
   .model-viewer-fallback { text-align: center; padding: 24px; }
-  /* The controller adds --ready on a successful render: reveal the canvas + bar, hide the poster. */
+  /* --ready MEANS "THE VIEWER IS OPEN", NOT "THE MODEL RENDERED" — reveal the canvas + bar, hide
+     the poster. The controller adds it when the user launches (the stage must have a size before
+     the engine reads it, above) and removes it again if the load fails, so the poster returns.
+     Which of the three happened is on the root element as data-modelviewer-state. */
   .model-viewer--ready .model-viewer-stage { display: block; }
   .model-viewer--ready .model-viewer-fallback { display: none; }
   .model-viewer--ready .mv-launch { display: none; }

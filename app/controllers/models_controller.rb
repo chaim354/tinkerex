@@ -14,11 +14,6 @@ class ModelsController < ApplicationController
   SORTS = { "recent" => { updated_at: :desc }, "title" => { title: :asc },
             "status" => { print_status: :asc, title: :asc } }.freeze
 
-  # Formats modelviewer_controller.js can parse client-side (STL/3MF/OBJ). STEP/IGES are role
-  # "model" too but can't be rendered in-browser, so they're excluded from the 3D switcher.
-  VIEWABLE_3D_EXTS = %w[stl 3mf obj].freeze
-  private_constant :VIEWABLE_3D_EXTS
-
   def index
     models = current_user.maker_models.catalogued.includes(:file_attachments)
     models = models.by_status(params[:status])
@@ -71,12 +66,18 @@ class ModelsController < ApplicationController
     # and 100 jobs per view for images nothing renders. Pinned as a budget in page_nodes_test.rb.
     @covers = Maker::Previews::ThumbnailMap.for(current_user, [ @model.cover_node_id ].compact)
     # The model's browser-viewable 3D files, in position order, for the hero's "View in 3D"
-    # switcher. Filter by extension (role "model" also covers STEP/IGES, which the viewer can't
-    # render). Default selection = the cover file if it's viewable, else the first one.
+    # switcher. Default selection = the cover file if it's viewable, else the first one.
+    #
+    # FILTERED BY EXTENSION, NOT BY ROLE, and the two are genuinely different questions: `.fcstd`
+    # is `cad_source` and IS viewable, `.f3d`/`.sldprt` are `cad_source` and are not, and `.svg` is
+    # `vector` and is deliberately left out (§14d — Maker::FileAttachment::VIEWABLE_3D_EXTS says
+    # why for each). This read the SAME literal `%w[stl 3mf obj]` that FilesController carried
+    # until 2026-09-06; one constant now, so the file page and this page cannot drift about which
+    # of a model's files open in the viewer.
     @viewable_3d = @attachments.filter_map do |a|
       name = @page_nodes[a.node_id].name
       ext = File.extname(name).downcase.delete(".")
-      next unless VIEWABLE_3D_EXTS.include?(ext)
+      next unless Maker::FileAttachment::VIEWABLE_3D_EXTS.include?(ext)
       { node_id: a.node_id, name:, format: ext }
     end
     @viewable_3d_default = @viewable_3d.find { |f| f[:node_id] == @model.cover_node_id } || @viewable_3d.first

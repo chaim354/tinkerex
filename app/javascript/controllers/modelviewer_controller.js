@@ -1,51 +1,36 @@
 import { Controller } from "@hotwired/stimulus"
 
-// WHICH WAY IS UP, PER FORMAT. Three.js's world is Y-up and NEITHER STLLoader NOR ThreeMFLoader
-// rotates what it parses — 3MFLoader's own docblock tells the caller to do it
-// (`object.rotation.set(-Math.PI/2, 0, 0) // z-up conversion`), and we were not. So a Z-up print
-// file rendered lying on its side here, exactly as it did in the server-side thumbnail
-// (tools/stl-thumbnailer/src/lib.rs), and the two agreed with each other about being wrong.
+// Interactive 3D viewer for every format Online3DViewer's importers read — meshes (STL, 3MF, OBJ,
+// glTF/GLB, PLY, OFF, DAE, WRL, 3DS, FBX, AMF), Rhino (3DM) and, through OpenCascade compiled to
+// WebAssembly, the CAD formats (STEP, IGES, BREP, FCStd). The bytes are parsed CLIENT-SIDE — no
+// server conversion — and rendered as a manipulable WebGL scene.
 //
-// `.stl` and `.3mf` are Z-UP: the format declares nothing, but every producer and consumer in 3D
-// printing treats +Z as up, and the 3MF core spec puts the build plate in the XY plane. `.obj` is
-// left Y-UP, which is Wavefront's own convention and what Blender/Maya/most DCC tools export —
-// guessing Z there would break the case this map exists to get right.
+// THE ENGINE IS DYNAMIC-IMPORTED in boot(), so the ~1 MB bundle ships only on a page that actually
+// holds a 3D file (Stimulus eager-imports controller MODULES at startup, so a top-level `import`
+// would load it everywhere). Its `preload: false` pin is the other half — see config/importmap.rb
+// and test/integration/web/lazy_bundles_test.rb.
 //
-// THE CAMERA IS MOVED, THE MODEL IS NOT, and that is the half worth not "simplifying". Rotating the
-// object instead (the docblock's suggestion) is equivalent on screen and wrong for `showDims`: the
-// bounding box is read AFTER parse, so a rotated 10x20x30 model would report "10 x 30 x 20 mm" —
-// a measurement that disagrees with the user's own slicer. Leaving the mesh in its file's axes and
-// telling the camera which way is up keeps the numbers honest.
-const UP_AXIS = { stl: "z", "3mf": "z", obj: "y" }
-// Camera offset expressed as (right, back, up) multiples of the model's largest dimension — an
-// iso-ish 3/4 view, roughly matching the poster thumbnail it replaces so the picture does not jump
-// when the viewer boots.
-const VIEW_OFFSET = { right: 1.4, back: 1.6, up: 1.0 }
-
-// Interactive 3D viewer for the mesh formats a print library is made of (STL / 3MF / OBJ).
-// Parses the raw model bytes CLIENT-SIDE — no server conversion — and renders a manipulable
-// WebGL scene. Three.js (~2MB unminified core) is pulled via a DYNAMIC import in boot() so it
-// ships only on pages that actually contain a 3D file, not site-wide (Stimulus eager-imports
-// controller MODULES at startup, so a top-level `import` would load Three everywhere).
+// THE URL MUST END IN THE REAL FILENAME. Online3DViewer picks an importer from the URL'S OWN
+// trailing extension (`GetFileExtension` in its io/fileutils.js), never from the bytes or a
+// Content-Type — so both templates point this at `named_blob_file_path`, exactly as KiCanvas and
+// the Gerber viewer do, and for exactly the same reason (§14d; kicanvas_test.rb's header has the
+// long version).
 //
-// `lazy` defers the whole boot (and therefore the Three.js download + the byte fetch) until the
+// `lazy` defers the whole boot (and therefore the engine download AND the byte fetch) until the
 // user clicks "View in 3D" (load()). A `source` <select> lets one viewer switch between several
 // model files. Graceful degradation is the contract: any failure (no WebGL, import error,
-// fetch/CORS failure, corrupt file) leaves the server-rendered thumbnail poster visible. The
-// `--ready` class, added only on a successful render, reveals the canvas and hides that poster.
+// fetch/CORS failure, corrupt file, a missing wasm importer) restores the server-rendered
+// thumbnail poster. `data-modelviewer-state` reports which of those happened —
+// loading / ready / failed — and is what the system test drives.
 export default class extends Controller {
   static values = { url: String, format: String, lazy: Boolean }
   static targets = ["canvas", "dims", "fallback", "source"]
 
-  async connect() {
+  connect() {
     this.disposed = false
     this.generation = 0
     if (this.lazyValue) return // wait for load()
-    try {
-      await this.boot()
-    } catch (e) {
-      console.warn("[modelviewer] keeping thumbnail fallback:", e)
-    }
+    this.load()
   }
 
   disconnect() {
@@ -53,45 +38,107 @@ export default class extends Controller {
     this.teardown()
   }
 
-  // Free every GPU/DOM resource the current scene holds, WITHOUT marking the controller disposed —
-  // so a later boot() (a file switch, or re-opening after showPoster) can start clean. Reused by
-  // disconnect(), showPoster(), and the switch path in load().
+  // Free the WebGL context and empty the stage, WITHOUT marking the controller disposed — so a
+  // later load() (re-opening after showPoster) can start clean. Reused by disconnect() and
+  // showPoster().
+  //
+  // A SOURCE SWITCH DOES NOT COME THROUGH HERE, deliberately: `LoadModelFromUrlList` clears the
+  // viewer itself, so switching reuses the one EmbeddedViewer instead of building a second WebGL
+  // context. That is not only cheaper — `EmbeddedViewer`'s constructor registers a `window`
+  // resize listener it never removes, so one instance per file switch would accumulate listeners
+  // pointing at destroyed viewers. One instance per open is bounded by the user's own clicking.
   teardown() {
-    if (this.frame) cancelAnimationFrame(this.frame)
     this.resizeObserver?.disconnect()
-    this.controls?.dispose()
-    this.scene?.traverse((o) => {
-      o.geometry?.dispose?.()
-      if (o.material) [].concat(o.material).forEach((m) => m.dispose?.())
-    })
-    if (this.renderer) {
-      this.renderer.dispose()
-      this.renderer.domElement?.remove()
-    }
-    this.frame = this.resizeObserver = this.controls = null
-    this.scene = this.camera = this.renderer = this.home = null
+    this.viewer?.Destroy()
+    this.viewer = null
+    this.resizeObserver = null
+    this.modelLoaded = this.modelFailed = null
+    // Destroy() disposes the renderer but leaves its <canvas> (and any progress text) in the DOM.
+    if (this.hasCanvasTarget) this.canvasTarget.replaceChildren()
     if (this.hasDimsTarget) this.dimsTarget.textContent = ""
   }
 
-  // "View in 3D" (and the file-switch path): resolve the active source, tear down any current
-  // scene, then boot. On failure fall back to the poster.
+  // "View in 3D" (and the file-switch path): resolve the active source, then import the engine and
+  // hand it the URL. On failure fall back to the poster.
   async load() {
     if (this.hasSourceTarget && this.sourceTarget.selectedOptions.length) {
       const opt = this.sourceTarget.selectedOptions[0]
       this.urlValue = opt.dataset.url
       this.formatValue = opt.dataset.format
     }
-    const gen = ++this.generation // invalidate any in-flight boot (rapid switches / keyboard nav)
-    if (this.renderer) this.teardown() // switching files
+    const gen = ++this.generation // invalidate any in-flight load (rapid switches / keyboard nav)
+
+    // THE STAGE MUST BE VISIBLE AND SIZED BEFORE THE VIEWER IS CONSTRUCTED. `EmbeddedViewer` reads
+    // `parentElement.clientWidth/clientHeight` in its constructor, and `.model-viewer-stage` is
+    // `display: none` until `--ready` is added — so booting first yields a 0x0 canvas that never
+    // recovers. `--ready` therefore means "the viewer is open", not "the model rendered"; the
+    // state attribute is what carries success.
+    this.element.classList.add("model-viewer--ready")
+    this.state("loading")
+
     try {
       await this.boot(gen)
-      if (gen === this.generation && this.renderer) this.focusViewer()
+      if (this.disposed || gen !== this.generation) return
+      // The callbacks are reassigned per load rather than closed over at construction, so a
+      // completion that belongs to a SUPERSEDED load cannot report itself as the current one.
+      this.modelLoaded = () => this.loaded(gen)
+      this.modelFailed = () => this.fail(gen, new Error("the importer could not read this file"))
+      this.viewer.LoadModelFromUrlList([this.urlValue])
     } catch (e) {
-      if (this.disposed || gen !== this.generation) return // superseded — leave newer state alone
-      console.warn("[modelviewer] keeping thumbnail fallback:", e)
-      this.teardown()
-      this.element.classList.remove("model-viewer--ready")
+      this.fail(gen, e)
     }
+  }
+
+  async boot(gen) {
+    if (this.viewer) return
+    const OV = await import("online-3d-viewer")
+    if (this.disposed || gen !== this.generation) return
+    this.OV = OV
+
+    this.viewer = new OV.EmbeddedViewer(this.canvasTarget, {
+      // THE RENDERER IS NOT CREATED WITH `alpha: true` (checked in the engine's viewer.js), so a
+      // transparent background paints BLACK rather than letting the stage show through. Reading
+      // the stage's own computed colour instead keeps the viewer on the page's palette in both
+      // themes without duplicating a hex value that a restyle would leave behind (§14m).
+      backgroundColor: this.stageColor(OV),
+      defaultColor: new OV.RGBColor(150, 160, 170), // used only where the file names no colour
+      edgeSettings: new OV.EdgeSettings(false, new OV.RGBColor(0, 0, 0), 1),
+      onModelLoaded: () => this.modelLoaded?.(),
+      onModelLoadFailed: () => this.modelFailed?.()
+    })
+
+    this.resizeObserver = new ResizeObserver(() => this.viewer?.Resize())
+    this.resizeObserver.observe(this.canvasTarget)
+  }
+
+  // `getComputedStyle` resolves the var(--raised) the stylesheet sets; `rgb(r g b)` and
+  // `rgba(r, g, b, a)` are both matched. A colour we cannot parse (or a transparent one, which is
+  // what a detached element reports) falls back to the light-theme surface rather than to black.
+  stageColor(OV) {
+    const parts = getComputedStyle(this.canvasTarget).backgroundColor.match(/\d+(\.\d+)?/g)
+    if (parts && parts.length >= 3 && parts[3] !== "0") {
+      return new OV.RGBAColor(+parts[0], +parts[1], +parts[2], 255)
+    }
+    return new OV.RGBAColor(247, 248, 250, 255)
+  }
+
+  loaded(gen) {
+    if (this.disposed || gen !== this.generation || !this.viewer) return
+    this.showDims()
+    this.state("ready")
+    this.focusViewer()
+  }
+
+  fail(gen, error) {
+    if (this.disposed || gen !== this.generation) return // superseded — leave newer state alone
+    console.warn(`[modelviewer] ${this.formatValue}: keeping thumbnail fallback:`, error)
+    this.teardown()
+    this.element.classList.remove("model-viewer--ready")
+    this.state("failed")
+  }
+
+  state(value) {
+    this.element.dataset.modelviewerState = value
   }
 
   // Dropdown change: live-switch only while the viewer is already showing; otherwise the choice is
@@ -100,11 +147,12 @@ export default class extends Controller {
     if (this.element.classList.contains("model-viewer--ready")) this.load()
   }
 
-  // "✕ Image": drop the scene (frees GPU memory, stops the render loop) and reveal the poster.
+  // "✕ Image": drop the scene (frees the WebGL context) and reveal the poster.
   showPoster() {
-    this.generation++ // cancel any in-flight boot so it can't reopen the viewer after dismissal
+    this.generation++ // cancel any in-flight load so it can't reopen the viewer after dismissal
     this.teardown()
     this.element.classList.remove("model-viewer--ready")
+    this.element.removeAttribute("data-modelviewer-state")
     // The ✕ button that had focus is now hidden; return focus to the "View in 3D" launch button.
     this.element.querySelector(".mv-launch button")?.focus()
   }
@@ -115,138 +163,49 @@ export default class extends Controller {
     this.element.querySelector(".mv-actions button")?.focus()
   }
 
-  async boot(gen = this.generation) {
-    const THREE = await import("three")
-    const { OrbitControls } = await import("three/addons/controls/OrbitControls.js")
-
-    // Same-origin request; may 302 to a presigned cross-origin URL on s3/chunk-over-S3, which
-    // needs bucket CORS — if it's not set the fetch rejects here and we fall back cleanly.
-    const res = await fetch(this.urlValue, { credentials: "same-origin" })
-    if (!res.ok) throw new Error(`fetch ${res.status}`)
-    const buf = await res.arrayBuffer()
-
-    const object = await this.parse(THREE, buf)
-
-    // A newer load()/showPoster() started (or the element was disconnected) while we awaited the
-    // bytes/parse — abort before building a second WebGL context + canvas, which would leak.
-    if (this.disposed || gen !== this.generation) return
-
-    const stage = this.canvasTarget
-    const width = stage.clientWidth || 640
-    const height = stage.clientHeight || 420
-
-    this.scene = new THREE.Scene()
-    this.scene.background = new THREE.Color(0xf7f8fa)
-
-    // Center the model at the origin and read its size for the dimensions label + camera framing.
-    const box = new THREE.Box3().setFromObject(object)
-    const size = box.getSize(new THREE.Vector3())
-    const center = box.getCenter(new THREE.Vector3())
-    object.position.sub(center)
-    this.scene.add(object)
-    this.showDims(size)
-
-    const maxDim = Math.max(size.x, size.y, size.z) || 1
-    this.camera = new THREE.PerspectiveCamera(45, width / height, maxDim / 100, maxDim * 100)
-    // BEFORE the position and before OrbitControls, which both read camera.up: the controls build
-    // their spherical frame from it, so a viewer set up Y-up and corrected afterwards orbits about
-    // the wrong pole and tumbles under the mouse.
-    this.applyUpAxis(maxDim)
-
-    this.renderer = new THREE.WebGLRenderer({ antialias: true })
-    this.renderer.setPixelRatio(window.devicePixelRatio)
-    this.renderer.setSize(width, height)
-    stage.appendChild(this.renderer.domElement)
-
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.0))
-    const key = new THREE.DirectionalLight(0xffffff, 1.4)
-    key.position.set(1, 1, 1)
-    this.scene.add(key)
-
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement)
-    this.controls.enableDamping = true
-    this.controls.target.set(0, 0, 0)
-    this.controls.update()
-    this.home = { pos: this.camera.position.clone(), target: this.controls.target.clone() }
-
-    this.resizeObserver = new ResizeObserver(() => this.resize())
-    this.resizeObserver.observe(stage)
-
-    this.element.classList.add("model-viewer--ready")
-    this.animate()
-  }
-
-  // Point the camera's up vector at whichever axis this format calls up, and place it on an
-  // iso-ish 3/4 view in that frame. An unknown format falls back to Three's own Y-up default —
-  // the same answer as before this existed, so a new format added to parse() degrades rather than
-  // renders sideways.
-  applyUpAxis(maxDim) {
-    const { right, back, up } = VIEW_OFFSET
-    if (UP_AXIS[this.formatValue] === "z") {
-      this.camera.up.set(0, 0, 1)
-      this.camera.position.set(maxDim * right, maxDim * back, maxDim * up)
-    } else {
-      this.camera.up.set(0, 1, 0)
-      this.camera.position.set(maxDim * right, maxDim * up, maxDim * back)
-    }
-  }
-
-  async parse(THREE, buf) {
-    const surface = () =>
-      new THREE.MeshStandardMaterial({ color: 0x8899aa, metalness: 0.1, roughness: 0.8 })
-
-    switch (this.formatValue) {
-      case "stl": {
-        const { STLLoader } = await import("three/addons/loaders/STLLoader.js")
-        const geometry = new STLLoader().parse(buf)
-        geometry.computeVertexNormals()
-        return new THREE.Mesh(geometry, surface())
-      }
-      case "3mf": {
-        const { ThreeMFLoader } = await import("three/addons/loaders/3MFLoader.js")
-        return new ThreeMFLoader().parse(buf) // respects embedded units/materials
-      }
-      case "obj": {
-        const { OBJLoader } = await import("three/addons/loaders/OBJLoader.js")
-        const group = new OBJLoader().parse(new TextDecoder().decode(buf))
-        group.traverse((o) => { if (o.isMesh) o.material = surface() }) // no .mtl -> neutral surface
-        return group
-      }
-      default:
-        throw new Error(`unsupported format ${this.formatValue}`)
-    }
-  }
-
-  // STL/OBJ are unitless -> mm by the 3D-print convention; 3MF carries its own unit (applied by
-  // the loader). Round to 0.1 for a readable bounding-box size.
-  showDims(size) {
+  // THE DIMENSIONS COME FROM THE *MODEL*, NEVER FROM THE VIEWER'S SCENE, and that distinction is
+  // the thing in this file most likely to be "simplified" into a bug.
+  //
+  // The engine normalises everything it imports to a Y-UP SCENE: each importer declares its own
+  // format's up direction (`GetUpDirection` — Z for STL, 3DS, 3DM, FCStd and SVG; Y for OBJ, PLY,
+  // OFF, glTF, OpenCascade and the three.js-backed FBX/DAE/WRL/3MF/AMF) and `ThreeModelLoader`
+  // rotates the three object by -90° about X wherever that direction is Z. So `Viewer#GetBoundingBox`
+  // — the obvious call, and the one this used at first — reports a Z-up file's HEIGHT AS ITS DEPTH.
+  // Measured, not reasoned: an STL whose vertices span 20 x 10 x 5 came back as "20 × 5 × 10 mm",
+  // a number that disagrees with the user's own slicer.
+  //
+  // `OV.GetBoundingBox(model)` walks the imported MODEL's vertices instead, in the file's own axes,
+  // and it walks MESH INSTANCES — so an assembly's node transformations are applied and a
+  // multi-part STEP measures as it sits rather than as its parts were authored. Units are the
+  // file's own, mm by the 3D-print and CAD convention, with the formats that declare a unit (3MF,
+  // FCStd) already converted by their importer. Round to 0.1 for a readable size.
+  showDims() {
     if (!this.hasDimsTarget) return
+    const model = this.viewer.GetModel()
+    const box = model && this.OV.GetBoundingBox(model)
+    if (!box) return
+    const min = box.GetMin()
+    const max = box.GetMax()
     const mm = (n) => (Math.round(n * 10) / 10).toLocaleString()
-    this.dimsTarget.textContent = `${mm(size.x)} × ${mm(size.y)} × ${mm(size.z)} mm`
+    this.dimsTarget.textContent =
+      `${mm(max.x - min.x)} × ${mm(max.y - min.y)} × ${mm(max.z - min.z)} mm`
   }
 
-  resize() {
-    if (!this.renderer || this.disposed) return
-    const stage = this.canvasTarget
-    const width = stage.clientWidth || 640
-    const height = stage.clientHeight || 420
-    this.camera.aspect = width / height
-    this.camera.updateProjectionMatrix()
-    this.renderer.setSize(width, height)
-  }
-
-  animate() {
-    if (this.disposed || !this.renderer) return
-    this.frame = requestAnimationFrame(() => this.animate())
-    this.controls.update()
-    this.renderer.render(this.scene, this.camera)
-  }
-
+  // "Reset view": put the camera back exactly where `EmbeddedViewer` put it after the import — its
+  // own Y-up default, then a fit to the model's bounding sphere.
+  //
+  // THERE IS NO PER-FORMAT UP-AXIS TABLE HERE, and adding one back is the mistake this comment
+  // exists to prevent. The Three.js viewer this replaced carried one (`UP_AXIS`) because neither
+  // STLLoader nor 3MFLoader rotated what it parsed, so a Z-up print file rendered lying on its
+  // side. Online3DViewer does that job itself, per importer, at import time (see showDims above) —
+  // so naming Direction.Z here would rotate an ALREADY-ROTATED model and lay every STL on its
+  // side: the exact bug the old table existed to fix, reintroduced from the other end.
   reset() {
-    if (!this.home) return
-    this.camera.position.copy(this.home.pos)
-    this.controls.target.copy(this.home.target)
-    this.controls.update()
+    if (!this.viewer) return
+    const viewer = this.viewer.GetViewer()
+    viewer.SetUpVector(this.OV.Direction.Y, false)
+    const sphere = viewer.GetBoundingSphere(() => true)
+    if (sphere) viewer.FitSphereToWindow(sphere, false)
   }
 
   fullscreen() {

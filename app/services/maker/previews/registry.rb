@@ -22,10 +22,30 @@ module Maker
         "mage"  => Maker::Previews::Mage,     # MillMage XML → embedded <Thumbnail> base64 PNG
         "stl"   => Maker::Previews::Stl,     # pure-CPU euc rasterizer (no GL/Mesa) — stl-thumbnailer
         "obj"   => Maker::Previews::Mesh,    # F3D headless PNG                  (f3d BSD-3 subprocess)
-        "step"  => Maker::Previews::Mesh,    # STEP/IGES via F3D's OCCT plugin — OCCT (LGPL) stays
-        "stp"   => Maker::Previews::Mesh,    # process-isolated in the f3d subprocess.
+        "step"  => Maker::Previews::Mesh,    # STEP/IGES/BREP via F3D's OCCT plugin — OCCT (LGPL)
+        "stp"   => Maker::Previews::Mesh,    # stays process-isolated in the f3d subprocess.
         "iges"  => Maker::Previews::Mesh,
         "igs"   => Maker::Previews::Mesh,
+        "brep"  => Maker::Previews::Mesh,
+        # THE MESH FORMATS THE BROWSER VIEWER GAINED ON 2026-09-06, given the SERVER thumbnail that
+        # is its poster and its grid cell. Every one was read off `f3d --list-readers` on the
+        # shipped 3.5.0 rather than assumed: gltf/glb/ply/wrl/3ds are native readers, off/dae/fbx
+        # come from the assimp plugin, brep from occt.
+        #
+        # THE VIEWER'S LIST IS LONGER THAN THIS ONE, DELIBERATELY. `Maker::FileAttachment::
+        # VIEWABLE_3D_EXTS` also holds `3dm`, `amf` and `fcstd`, which F3D 3.5.0 lists NO reader
+        # for — they open in the browser and show the "Generating preview…"/no-thumbnail path in
+        # the grid, which is the honest answer. Registering them here would create a row and a job
+        # for a render that can only ever fail. `3mf` is absent for the opposite reason: it already
+        # has a BETTER renderer (ThreeMf pulls the slicer's own embedded thumbnail).
+        "gltf"  => Maker::Previews::Mesh,
+        "glb"   => Maker::Previews::Mesh,
+        "ply"   => Maker::Previews::Mesh,
+        "off"   => Maker::Previews::Mesh,
+        "dae"   => Maker::Previews::Mesh,
+        "wrl"   => Maker::Previews::Mesh,
+        "3ds"   => Maker::Previews::Mesh,
+        "fbx"   => Maker::Previews::Mesh,
         # Common document/image types → grid thumbnails. (Images already preview inline in the detail
         # view; this gives the GRID a uniform raster too.)
         "png"   => Maker::Previews::ImageThumb, # raster images → downscaled PNG (libvips / ruby-vips, MIT)

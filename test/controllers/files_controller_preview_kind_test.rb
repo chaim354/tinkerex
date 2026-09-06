@@ -51,6 +51,38 @@ class FilesControllerPreviewKindTest < ActiveSupport::TestCase
     assert_equal :model3d, kind("bracket.stl")
   end
 
+  # THE `:model3d` BRANCH, DERIVED FROM THE ONE VOCABULARY since 2026-09-06 — the same collapse the
+  # `:text` branch got, and for the same reason: ModelsController#show offers the SAME viewer off
+  # the SAME constant, so a literal here would let the file page and the model page disagree about
+  # which of a model's files are viewable. NAMED rather than swept, so shrinking VIEWABLE_3D_EXTS
+  # turns this red where a derived sweep over that constant would go on passing over a smaller set
+  # (the argument PREVIOUSLY_TEXT above makes for itself).
+  test "every format the 3D viewer can open reaches the :model3d branch" do
+    %w[bracket.stl part.3mf widget.obj scene.gltf scene.glb scan.ply mesh.off rig.dae world.wrl
+       old.3ds char.fbx surf.3dm print.amf cad.step cad.stp cad.iges cad.igs solid.brep
+       body.fcstd].each { |name| assert_equal :model3d, kind(name), name }
+  end
+
+  # THE FOUR THE ENGINE READS AND THIS APP STILL DOES NOT OFFER, each for its own stated reason
+  # (Maker::FileAttachment::VIEWABLE_3D_EXTS names all four). `.svg` is the one that matters most:
+  # it IS importable, and `:measure` returning first is what keeps the Measure view its page — so
+  # this asserts the ORDER as much as the list.
+  test "the formats deliberately left out of the viewer keep the pages they had" do
+    assert_equal :measure, kind("panel.svg"), "the Measure view owns .svg, and returns first"
+    assert_equal :other,   kind("building.ifc"), "web-ifc is MPL-2.0 and is not shipped"
+    assert_equal :other,   kind("model.bim"),    "not a maker format"
+    assert_equal :other,   kind("solid.brp"),    "one spelling per format; .brep is the one"
+  end
+
+  # A ROLE IS WHERE A FILE FILES, NOT WHETHER IT RENDERS — the split `.scad` already carries, now
+  # in the other direction. `.fcstd` is VIEWABLE and stays `cad_source`, so it keeps filing into
+  # `cad/` beside the `.f3d` it sits next to; making it a `model` would MOVE it on the user's NAS.
+  test "viewing a FreeCAD project in 3D did not move its role or its folder" do
+    assert_equal :model3d, kind("body.fcstd")
+    assert_equal "cad_source", Maker::FileAttachment.role_for("body.fcstd")
+    assert_equal "cad", Maker::ProjectFolders.default_folder_for("body.fcstd")
+  end
+
   # THE `:gerber` BRANCH (tracespace). Every one of these is plain ASCII and `.gbrjob` is JSON, so
   # each would read as `:text` if this branch were removed or reordered below the text one — which
   # is a preview that is correct about the bytes and useless about the board. The three families are
@@ -104,8 +136,21 @@ class FilesControllerPreviewKindTest < ActiveSupport::TestCase
     assert_equal :text, kind("bracket.scad")
 
     %w[part.f3d body.fcstd flange.sldprt rig.sldasm].each do |name|
-      assert_equal :other, kind(name),
-                   "#{name} is a BINARY cad_source file — a text preview of it is mojibake"
+      assert_not_equal :text, kind(name),
+                       "#{name} is a BINARY cad_source file — a text preview of it is mojibake"
+    end
+  end
+
+  # THE ASSERTION ABOVE WAS `assert_equal :other` UNTIL 2026-09-06, AND THE WEAKENING IS THE POINT
+  # rather than a concession. Its claim has always been "these must not read as TEXT"; it happened
+  # to be able to say `:other` because none of the four had any preview at all. `.fcstd` now has
+  # one — the OpenCascade importer reads a FreeCAD project — so the old spelling asserted a second,
+  # unrelated fact (that it has no viewer) that the slice deliberately changed. Both halves are
+  # kept, separately, so neither can be lost the next time one of the four gains a preview.
+  test "the binary cad_source siblings still have exactly the previews they should" do
+    assert_equal :model3d, kind("body.fcstd"), "FreeCAD projects open in the 3D viewer"
+    %w[part.f3d flange.sldprt rig.sldasm].each do |name|
+      assert_equal :other, kind(name), "#{name} has no reader in any engine this app ships"
     end
   end
 

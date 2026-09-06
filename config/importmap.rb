@@ -80,21 +80,33 @@ pin "lib/codemirror_theme", to: "lib/codemirror_theme.js", preload: false
 # api_version 1 lives, even though the file behind it may move freely.
 pin "@maker/addon-sdk", to: "maker/addon_sdk.js"
 
-# Three.js r0.185.1 (MIT) — the interactive 3D viewer (modelviewer_controller.js), DYNAMIC-imported
-# so the payload ships only on pages with a 3D file. Vendored from unpkg (the official ES build),
-# NOT `bin/importmap pin three` (jspm): jspm splits the core into an internal `../_/…` chunk and
-# minifies, the same dangling-relative-import class as JSZip above. The official build is cleaner:
-# `three.module.js` re-exports `./three.core.js` (repointed to the bare "three-core" specifier), and
-# `3MFLoader.js` imports fflate via a relative path (repointed to the bare "fflate"). OrbitControls/
-# STL/OBJ import only the bare "three". The addon specifiers use three's own "three/addons/…" alias
-# so the code reads idiomatically. Verified: no dangling relative/URL import remains in any file.
-pin "three", to: "three.module.js" # @0.185.1
+# Three.js r0.185.1 (MIT). Vendored from unpkg (the official ES build), NOT `bin/importmap pin
+# three` (jspm): jspm splits the core into an internal `../_/…` chunk and minifies, the same
+# dangling-relative-import class as JSZip above. The official build is cleaner: `three.module.js`
+# re-exports `./three.core.js` (repointed to the bare "three-core" specifier), and `3MFLoader.js`
+# imports fflate via a relative path (repointed to the bare "fflate"). OrbitControls imports only
+# the bare "three". The addon specifier uses three's own "three/addons/…" alias so the code reads
+# idiomatically. Verified: no dangling relative/URL import remains in any file.
+#
+# NOTHING IN THIS REPO IMPORTS THESE ANY MORE, AND THEY STAY ANYWAY — THEY ARE AN ADDON CONTRACT.
+# The 3D viewer moved to Online3DViewer (pinned below), which bundles its own three, so the last
+# host importer of these five pins is gone. `chaim354/tinkerex-addons`' openscad bundle
+# dynamic-imports "three", "three/addons/controls/OrbitControls.js" and
+# "three/addons/loaders/3MFLoader.js" THROUGH THIS MAP — Tools::AddonsController#merged_importmap
+# draws every host pin before the addon's own, so a bundle never re-pins what the host provides
+# (the @maker/addon-sdk pin above states the rule). Removing any of them breaks that addon at
+# runtime with no local error pointing here, exactly as the `buffer` note above warns for
+# `generators`. `three-core` and `fflate` are transitive: three.module.js and 3MFLoader import
+# them by those bare specifiers.
+#
+# `STLLoader.js` AND `OBJLoader.js` WERE RETIRED WITH THE OLD VIEWER (2026-09-06) and their
+# vendored files deleted. They are the two the openscad bundle does NOT import — checked against
+# that repo, which is the only reason they could go while their five neighbours could not.
+pin "three", to: "three.module.js" # @0.185.1 — addon contract (openscad)
 pin "three-core", to: "three.core.js" # @0.185.1 — three.module.js's core (the only thing that imports it)
 pin "fflate", to: "fflate.js" # MIT — 3MFLoader's unzip dependency (examples/jsm/libs/fflate.module.js)
-pin "three/addons/controls/OrbitControls.js", to: "OrbitControls.js" # @0.185.1
-pin "three/addons/loaders/STLLoader.js", to: "STLLoader.js" # @0.185.1
-pin "three/addons/loaders/OBJLoader.js", to: "OBJLoader.js" # @0.185.1
-pin "three/addons/loaders/3MFLoader.js", to: "3MFLoader.js" # @0.185.1
+pin "three/addons/controls/OrbitControls.js", to: "OrbitControls.js" # @0.185.1 — addon contract
+pin "three/addons/loaders/3MFLoader.js", to: "3MFLoader.js" # @0.185.1 — addon contract
 # CodeMirror 6 (MIT) — the source viewers (codeview_controller.js read-only,
 # editor_controller.js editable, diffview_controller.js the commit box's inline diff),
 # DYNAMIC-imported so the payload ships only on a page that shows a text file. ONE PIN FOR ONE BUNDLE, built by
@@ -136,6 +148,31 @@ pin "kicanvas", to: "kicanvas.js", preload: false # bundle: see bin/build-kicanv
 # calls read/plot/renderLayers/renderBoard/stringifySvg itself and puts the resulting markup in the
 # stage, which is why the SVG lands in the LIGHT DOM (KiCanvas paints into a shadow root).
 pin "tracespace", to: "tracespace.js", preload: false # bundle: see bin/build-tracespace for the pinned versions
+
+# Online3DViewer 0.18.0 (MIT; notices in vendor/javascript/LICENSE-o3dv.md) — the interactive 3D
+# viewer (modelviewer_controller.js), which replaced the hand-rolled Three.js one on 2026-09-06 and
+# with it grew the viewable set from three formats to nineteen. ONE vendored build from pinned npm
+# versions (bin/build-o3dv), the CodeMirror/KiCanvas/tracespace pattern: no npm package at runtime,
+# no CDN.
+#
+# BUILT FROM `source/engine/main.js`, NOT COPIED FROM THE PACKAGE'S OWN `build/engine/`. That
+# shipped module leaves nine bare imports unresolved (`three`, five `three/examples/jsm/loaders/*`,
+# `fflate`), so vendoring it would resolve `three` through the pins above — 0.185.1 against the
+# engine's own 0.176.0 — and need five new pins nothing else wants. The bundle carries its own
+# three, which is why the pins above are now an ADDON contract and nothing more.
+#
+# `preload: false` FOR THE REASON KiCANVAS'S PIN ARGUES ABOVE — the pin stays so a dynamic import
+# resolves, only the modulepreload hint goes. This is the largest lazy bundle in the app (1.0 MB,
+# 274 KB gzipped), and modelviewer_controller.js imports it only when the user clicks "View in 3D",
+# so a page holding a 3D file does not pay for it either until then.
+# test/integration/web/lazy_bundles_test.rb drives a real page and pins it.
+#
+# THE WASM IMPORTERS ARE NOT IN THE BUNDLE and are not pinned: OpenCascade (STEP/IGES/BREP/FCStd),
+# rhino3dm (3DM) and the Draco glTF decoder are separate files under public/o3dv/0.18.0/ that the
+# engine fetches at runtime — served static and unfingerprinted, which is why the version is in the
+# DIRECTORY name. bin/build-o3dv rewrites upstream's hard-coded jsdelivr URLs to that path and
+# refuses to ship a bundle that still names a CDN.
+pin "online-3d-viewer", to: "o3dv.js", preload: false # bundle: see bin/build-o3dv for the pinned versions
 # Lexxy (MIT) — the Action Text editor, replacing Trix. Served from the gem's own asset path, so
 # there is nothing vendored under vendor/javascript and no jspm shared-chunk patching (see the
 # jszip notes above). Attachments are disabled at the element, so @rails/activestorage is

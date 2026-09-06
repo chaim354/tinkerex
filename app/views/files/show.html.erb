@@ -237,14 +237,19 @@
       </div>
     <% end %>
   <% elsif @kind == :model3d %>
-    <%# Interactive client-side 3D viewer (Three.js), see modelviewer_controller.js. `lazy` gates
-        the byte fetch + Three.js download behind the "View in 3D" button, so nothing heavy loads
-        unless the user asks. The fallback (thumbnail poster + download) is the resting state and
-        also the graceful-degradation target if the viewer can't boot. %>
+    <%# Interactive client-side 3D viewer (Online3DViewer), see modelviewer_controller.js. `lazy`
+        gates the byte fetch AND the ~1 MB engine download behind the "View in 3D" button, so
+        nothing heavy loads unless the user asks. The fallback (thumbnail poster + download) is the
+        resting state and also the graceful-degradation target if the viewer can't boot.
+
+        THE NAMED BLOB ROUTE, NOT THE PLAIN ONE, and it is load-bearing exactly as it is for the
+        KiCanvas embed a hundred lines up: Online3DViewer chooses an importer from the URL'S OWN
+        trailing extension, never from the bytes or a Content-Type, so a path with no extension in
+        it reaches no importer at all. %>
     <div class="model-viewer"
          data-controller="modelviewer"
          data-modelviewer-lazy-value="true"
-         data-modelviewer-url-value="<%= blob_file_path(@node.node_id) %>"
+         data-modelviewer-url-value="<%= named_blob_file_path(@node.node_id, filename: @node.name) %>"
          data-modelviewer-format-value="<%= File.extname(@node.name).downcase.delete('.') %>">
       <div class="model-viewer-stage" data-modelviewer-target="canvas"></div>
       <div class="model-viewer-bar">

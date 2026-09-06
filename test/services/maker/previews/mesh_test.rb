@@ -15,8 +15,21 @@ module Maker
         assert_includes [ true, false ], Maker::Previews::Mesh.available?
       end
 
-      test "covers the mesh + CAD extensions (NOT stl — that routes to the euc Stl renderer)" do
-        assert_equal %w[obj step stp iges igs], Maker::Previews::Mesh::EXTENSIONS
+      # THE LITERAL IS THE TEST, and it is deliberately not re-derived from the Registry — the
+      # renderer contract test already asserts every entry here resolves back through `Registry.for`,
+      # so a derivation would agree with itself. What this catches is an extension added to one and
+      # not the other, in either direction.
+      #
+      # `stl` IS NOT HERE (it routes to the euc Stl rasterizer) and neither are `3dm`, `amf` or
+      # `fcstd`, which the BROWSER viewer opens and F3D 3.5.0 lists no reader for. Every entry that
+      # IS here came off `f3d --list-readers` on the shipped 3.5.0: obj/gltf/glb/ply/wrl/3ds native,
+      # off/dae/fbx assimp, step/stp/iges/igs/brep occt.
+      test "covers exactly the mesh + CAD extensions f3d can read and no others" do
+        assert_equal %w[obj step stp iges igs brep gltf glb ply off dae wrl 3ds fbx],
+                     Maker::Previews::Mesh::EXTENSIONS
+        %w[stl 3dm amf fcstd].each do |ext|
+          assert_not_includes Maker::Previews::Mesh::EXTENSIONS, ext
+        end
       end
 
       test "renders an STL to a PNG thumbnail via f3d" do

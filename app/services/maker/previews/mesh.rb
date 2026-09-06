@@ -3,8 +3,9 @@ require "tempfile"
 
 module Maker
   module Previews
-    # Mesh + CAD (`.stl`, `.obj`, `.step`/`.stp`, `.iges`/`.igs`) → thumbnail PNG. NOT GLB: F3D
-    # renders rasters, it does not convert scenes — see `render`.
+    # Mesh + CAD (`.obj`, `.gltf`/`.glb`, `.ply`, `.off`, `.dae`, `.wrl`, `.3ds`, `.fbx`,
+    # `.step`/`.stp`, `.iges`/`.igs`, `.brep`) → thumbnail PNG. GLB is an INPUT here and never an
+    # output: F3D renders rasters, it does not convert scenes — see `render`.
     #
     # Renders headless via the **F3D** CLI (BSD-3 — CLAUDE.md §9), one binary that covers all
     # meshes and (through its OCCT plugin) STEP/IGES. F3D is invoked as a SUBPROCESS, which keeps
@@ -18,10 +19,14 @@ module Maker
 
       RenderError = Class.new(StandardError)
 
-      # NB: `stl` is NOT here — it routes to Maker::Previews::Stl (the euc rasterizer), not F3D.
-      # The renderer contract test pins EXTENSIONS to what the Registry actually resolves, so a
-      # stale `stl` here fails loudly rather than lying about ownership.
-      EXTENSIONS = %w[obj step stp iges igs].freeze
+      # PINNED AGAINST `f3d --list-readers` ON THE SHIPPED 3.5.0, not against the README: obj is
+      # native, step/stp/iges/igs/brep come from the occt plugin, gltf/glb/ply/wrl/3ds are native
+      # and off/dae/fbx come from assimp. The renderer contract test asserts every entry resolves
+      # back through the Registry, so an extension listed here that is not registered fails loudly
+      # rather than lying about ownership — which is also why `stl` is NOT here (it routes to
+      # Maker::Previews::Stl, the euc rasterizer) and why `3dm`/`amf`/`fcstd`, which the BROWSER
+      # viewer reads, are not either: F3D 3.5.0 has no reader for them.
+      EXTENSIONS = %w[obj step stp iges igs brep gltf glb ply off dae wrl 3ds fbx].freeze
 
       F3D = ENV.fetch("F3D_BIN", "f3d").freeze
 

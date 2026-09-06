@@ -25,6 +25,31 @@ module Maker
         assert_equal Maker::Previews::Stl, Maker::Previews::Registry.for("stl")
       end
 
+      # THE MESH FORMATS THE BROWSER VIEWER GAINED ON 2026-09-06 GOT A SERVER THUMBNAIL TOO, and
+      # that pairing is the point: the thumbnail is the viewer's POSTER and the grid's only cell,
+      # so a format that views but does not render is a blank card and a viewer that opens onto
+      # nothing. Every one of these was read off `f3d --list-readers` on the shipped 3.5.0 —
+      # gltf/glb/ply/wrl/3ds native, off/dae/fbx assimp, brep occt.
+      test "the new browser-viewable mesh formats resolve to the F3D Mesh renderer" do
+        %w[gltf glb ply off dae wrl 3ds fbx brep].each do |ext|
+          assert_equal Maker::Previews::Mesh, Maker::Previews::Registry.for(ext), ext
+        end
+      end
+
+      # THE THREE THE VIEWER READS AND F3D 3.5.0 DOES NOT, asserted so the gap is a recorded
+      # decision rather than an oversight found later. Registering them would create a preview row
+      # and a job for a render that can only ever fail; nil is what `Enqueue.call` reads as "no
+      # renderer, do not litter the table". `.3mf` is nil-adjacent for the opposite reason and is
+      # checked above: it has a BETTER renderer than F3D (the slicer's own embedded thumbnail).
+      test "the viewable formats F3D cannot read have no renderer" do
+        %w[3dm amf fcstd].each do |ext|
+          assert_nil Maker::Previews::Registry.for(ext),
+                     "f3d 3.5.0 lists no reader for .#{ext} — a row here is a job that must fail"
+          assert_includes Maker::FileAttachment::VIEWABLE_3D_EXTS, ext,
+                          "…but the BROWSER still opens it, which is why this pair is asserted together"
+        end
+      end
+
       test "returns nil for an unsupported extension" do
         assert_nil Maker::Previews::Registry.for("sldprt")
         assert_nil Maker::Previews::Registry.for("dwg")
