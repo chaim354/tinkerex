@@ -108,7 +108,10 @@ module Maker
     def board_for(dir_node_id, dir_rows)
       rows = dir_rows.sort_by { |row| row.node.name }
       jobs, layers = rows.partition { |row| ext_of(row.node.name) == "gbrjob" }
-      listed = jobs.filter_map { |job| self.class.job_layer_names(user: @user, node: job.node) }.first
+      # LAZY: only the first job that answers is READ. Each read is a port call (a public page
+      # triggers it anonymously), so a directory holding several job files must not pay for all
+      # of them when the first names the set (the review measured the eager form reading every one).
+      listed = jobs.lazy.filter_map { |job| self.class.job_layer_names(user: @user, node: job.node) }.first
       stacked = listed ? layers.select { |row| listed.include?(row.node.name) } : layers
       # A JOB THAT NAMES NOTHING THIS FOLDER HOLDS FALLS BACK RATHER THAN RENDERING AN EMPTY BOARD.
       # That is the exported-then-renamed case (a maker unzips into a folder and renames the files),

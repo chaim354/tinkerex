@@ -10,7 +10,9 @@
 # map has never been seeded, so their first read seeds the WHOLE table — `pcb` included, from
 # ROLE_BY_EXT — and inserting rows for them here would hand them a partial map that `seed!`'s
 # `exists?` guard then refuses to complete, which is the one state that guard is documented to leave
-# alone. `where(id: Maker::FilingRule.select(:user_id))` is one subselect, not a load.
+# alone. `distinct.pluck(:user_id)` loads one id per seeded user and inserts per user — a loop
+# rather than one statement ON PURPOSE, so the test can pin per-user attribution, and small at any
+# scale this table reaches (one row per user, not per rule).
 #
 # SELF-CONTAINED, LIKE EVERY RE-DERIVE MIGRATION IN THIS DIRECTORY (the five
 # `rederive_*_roles` ones say so at length): a data migration runs against whatever the schema and
@@ -65,13 +67,14 @@ class SeedPcbFilingRules < ActiveRecord::Migration[8.1]
     say "seeded #{added} pcb filing rule#{"s" unless added == 1}"
   end
 
-  # EVERY `pcb` ROW, NOT JUST THE ONES `up` WROTE, and that is the blunt spelling the four
-  # `rederive_*` migrations use with the same justification: `pcb` is a role this arc INTRODUCES, so
-  # before it ran no row in this table could carry that folder — nothing to destroy that this
-  # migration did not create. (A user who has since RENAMED their pcb folder to something else keeps
-  # that row, correctly: it is no longer a `pcb` row.)
+  # ONLY THE ROWS `up` COULD HAVE WRITTEN: the pcb EXTENSIONS filing into the pcb folder. The
+  # folder column is free-form at /settings/filing, so "every row whose folder is pcb" is NOT the
+  # set this migration created — a maker could have mapped `.stp → pcb` by hand before it ran, or
+  # `.xnc → pcb` after it (the extension file_attachment.rb's own comment invites them to add), and
+  # a rollback must not take either (probed by the review: the blunt spelling deleted both). A row
+  # the maker renamed away from pcb is kept, correctly: it is no longer this migration's row.
   def down
-    removed = MigrationFilingRule.where(folder: FOLDER).delete_all
+    removed = MigrationFilingRule.where(folder: FOLDER, ext: PCB_EXTS).delete_all
     say "removed #{removed} pcb filing rule#{"s" unless removed == 1}"
   end
 end

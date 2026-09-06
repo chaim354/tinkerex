@@ -109,6 +109,31 @@ module Maker
       assert_equal "board", board.name, "a job file's stem names the board"
     end
 
+    # ONLY THE FIRST JOB THAT ANSWERS IS READ. Each job read is a port call a public page triggers
+    # anonymously, so a folder holding several job files must not pay for all of them when the
+    # first names the set — the review measured the eager form reading every one.
+    test "with several job files only the first usable one is read through the port" do
+      dir = gerber_dir!(name: "pcb")
+      set = write_gerber_set!(parent_node_id: dir.node_id)
+      first = write_gerber!(name: "a-board.gbrjob", parent_node_id: dir.node_id,
+                            body: gerber_job("board.gtl", "board.gbl", "board.drl"))
+      second = write_gerber!(name: "b-board.gbrjob", parent_node_id: dir.node_id,
+                             body: gerber_job("board.gtl"))
+
+      adapter = FileLayer.current
+      original = adapter.method(:read)
+      reads = []
+      adapter.define_singleton_method(:read) { |user, **kw| reads << kw[:node_id]; original.call(user, **kw) }
+      begin
+        board = boards_for(*set.values, first, second, section: "pcb").first
+      ensure
+        adapter.singleton_class.remove_method(:read)
+      end
+
+      assert_equal [ first.node_id ], reads, "the second job was read although the first named the set"
+      assert_equal %w[board.drl board.gbl board.gtl], board.stacked.map { |r| r.node.name }
+    end
+
     # THE MANIFEST IS NEVER ITSELF STACKED — tracespace's Gerber parser turns JSON into a junk layer
     # rather than raising, so nothing else would report this going wrong.
     test "a job file is never one of its own layers, even when it names itself" do

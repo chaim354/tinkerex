@@ -105,6 +105,24 @@ module Maker
     # purpose (a data migration runs against code that has moved on), and this is the only thing
     # that would notice the copy drifting — the five `rederive_*_roles` migrations each carry the
     # identical pairing for the identical reason.
+    # A ROLLBACK TAKES ONLY WHAT `up` COULD HAVE WRITTEN. The folder column is free-form, so a
+    # maker can map any extension into pcb by hand -- `.stp` before this ran, `.xnc` after it, the
+    # extension file_attachment.rb's own comment invites -- and `down` spelled as "every pcb row"
+    # deleted both (the review probed it). Restricted to the pcb EXTENSIONS, it leaves them alone.
+    test "down leaves a hand-made rule that files into pcb, and takes only the migration's own" do
+      seed_without_pcb!(@user)
+      @user.maker_filing_rules.create!(ext: "xnc", folder: "pcb")
+      @user.maker_filing_rules.find_by!(ext: "stp").update!(folder: "pcb")
+      SeedPcbFilingRules.new.up
+      assert_equal "pcb", @user.maker_filing_rules.find_by!(ext: "gtl").folder
+
+      SeedPcbFilingRules.new.down
+
+      assert_nil @user.maker_filing_rules.find_by(ext: "gtl"), "the migration's own row is gone"
+      assert_equal "pcb", @user.maker_filing_rules.find_by!(ext: "xnc").folder, "a hand-made rule survives"
+      assert_equal "pcb", @user.maker_filing_rules.find_by!(ext: "stp").folder, "an edited rule survives"
+    end
+
     test "the migration's extension list is exactly the pcb role, and its folder is ROLE_FOLDERS'" do
       assert_equal Maker::FileAttachment::ROLE_BY_EXT.select { |_ext, role| role == "pcb" }.keys.sort,
                    SeedPcbFilingRules::PCB_EXTS.sort

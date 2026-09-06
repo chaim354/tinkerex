@@ -1477,7 +1477,10 @@ class FilesController < ApplicationController
     return [ gerber_layer_for(node) ] unless gerber_job?(node.name)
 
     listed = Maker::GerberSets.job_layer_names(user: current_user, node:)
-    siblings = current_user.nodes.present.where(parent_node_id: node.parent_node_id, kind: "file").to_a
+    # BOUNDED, like every directory read on this controller (FLAT_LIMIT): a job file sitting loose
+    # in a very large folder must not load the whole folder into memory to find its layers.
+    siblings = current_user.nodes.present.where(parent_node_id: node.parent_node_id, kind: "file")
+                           .order(:name).limit(FLAT_LIMIT).to_a
                            .select { |n| GERBER_EXTS.include?(File.extname(n.name).downcase.delete(".")) }
                            .reject { |n| gerber_job?(n.name) }
     named = listed ? siblings.select { |n| listed.include?(n.name) } : siblings

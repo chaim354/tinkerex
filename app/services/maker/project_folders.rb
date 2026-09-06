@@ -34,7 +34,7 @@ module Maker
   # is the honest, PER-USER routing spec §5 asks for, not a silently wrong answer to a question
   # with a knowable right one.
   #
-  # THE FOLDER NAMES ARE NOT ROLE_LABELS, even where seven of the eleven happen to match it
+  # THE FOLDER NAMES ARE NOT ROLE_LABELS, even where seven of the twelve happen to match it
   # lowercased (models, images, laser, code, archives, pcb, other) — that agreement is coincidental, not
   # derived, and must stay that way: a UI wording tweak to ROLE_LABELS (capitalization, clarity)
   # must never rename a directory on someone's NAS. The other four folder names are deliberate
