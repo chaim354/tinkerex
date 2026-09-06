@@ -208,6 +208,18 @@ module Maker
                              .sort_by { |row| row.node.name }
     end
 
+    # Every board this folder holds, grouped exactly as the private page groups it —
+    # `Maker::GerberSets` is the ONE definition of what a board is, so the two Fabrication panels
+    # cannot disagree (the pattern `kicad_rows` directly above establishes for the Schematics pair,
+    # where the shared thing is an extension list rather than a grouping).
+    #
+    # IN THE OWNER'S NAME. `GerberSets` reads any `.gbrjob` through the port to learn which layers
+    # the export claims, and a visitor has no library for a node_id to resolve against — the same
+    # rule every other reader in this class follows.
+    def gerber_boards
+      @gerber_boards ||= Maker::GerberSets.for(user: owner, rows: listing.all_rows)
+    end
+
     # Repo cards for every working tree in the folder, keyed by dir node_id (the private page's
     # collect_repo_dirs shape). ONE batched query for every repo on the page, never one per repo —
     # the same argument ProjectsController#show's own comment makes. The card's README links are

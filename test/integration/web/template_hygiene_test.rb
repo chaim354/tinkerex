@@ -149,6 +149,24 @@ module Web
       @user.nodes.create!(node_id: "n-schematic", name: "driver.kicad_sch", kind: "file",
                           parent_node_id: folder.node_id, mtime: 1_000_000_000, size: 5,
                           content_hash: "h-schematic", current_version_id: "v-schematic")
+      # A GERBER SET IN ITS OWN SUBFOLDER, OR projects/_fabrication AND public/projects/_fabrication
+      # never run their populated branch — the `.kicad_sch` argument directly above, applied to the
+      # partial pair the Gerber slice adds. A SUBFOLDER rather than the project root because
+      # `Maker::GerberSets` groups by parent directory and names a board after the folder, so a set
+      # sitting loose would exercise the fallback name instead of the ordinary one.
+      #
+      # NO `.gbrjob`, DELIBERATELY. `Maker::GerberSets` READS a job file through the port to learn
+      # which layers it names, and every node this fixture seeds has no bytes behind it — the read
+      # would take the rescue branch on share and could differ on s3/chunk_remote, which is exactly
+      # the backend-dependence this class's header rules out. The job branch is driven with real
+      # bytes in test/integration/web/gerber_preview_test.rb, which pins share for that reason.
+      pcb = @user.nodes.create!(node_id: "d-pcb", name: "pcb", kind: "dir",
+                                parent_node_id: folder.node_id)
+      %w[driver.gtl driver.gbl driver.drl].each_with_index do |name, i|
+        @user.nodes.create!(node_id: "n-pcb-#{i}", name:, kind: "file", parent_node_id: pcb.node_id,
+                            mtime: 1_000_000_000, size: 5,
+                            content_hash: "h-pcb-#{i}", current_version_id: "v-pcb-#{i}")
+      end
       # ONE GENERATED FILE IN THE FOLDER, OR projects/_generated_group IS NEVER RENDERED: a file with
       # a Maker::AddonState behind it, keyed to the `fixture` addon the sweep's ADDON_SOURCE_PATH
       # already serves (link_for answers nil for a key the source does not know, and the concern

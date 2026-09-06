@@ -19,6 +19,10 @@ module Maker
       "cad_source"     => "CAD source",
       "code"           => "Code",
       "gcode"          => "G-code",
+      # The fabrication outputs of a PCB — Gerber layers, the Excellon drill file, the `.gbrjob`
+      # manifest. "PCB" rather than "Gerber" because the role holds the drill files too, and a
+      # board's set is what a maker thinks of as one thing.
+      "pcb"            => "PCB",
       "source_archive" => "Archives",
       "other"          => "Other"
     }.freeze
@@ -103,7 +107,39 @@ module Maker
       "jsx" => "code", "tsx" => "code", "vue" => "code", "svelte" => "code",
       "bat" => "code", "ps1" => "code", "mk" => "code", "gradle" => "code",
       "asm" => "code", "s" => "code", "v" => "code", "vhd" => "code",
-      "diff" => "code", "patch" => "code"
+      "diff" => "code", "patch" => "code",
+      # PCB FABRICATION OUTPUTS (the Gerber preview slice). Every one of these satisfies `EXT_RE`
+      # (/\A[a-z0-9]{1,8}\z/) — all lowercase alphanumerics, the longest being `gbrjob` at six — so
+      # unlike `kicad_sch`/`kicad_pcb` two paragraphs down they CAN live here, and they must: this
+      # is where a file's role is decided, and a role is what files a board's layer set into one
+      # folder (`pcb/`) instead of scattering it through `other`.
+      #
+      # THREE FAMILIES, ONE ROLE, and the grouping is the decision. The RS-274X layers are the
+      # vendor extensions every CAM export uses — `gbr` (generic), the KiCad/Altium pairs
+      # `gtl`/`gbl` (copper), `gts`/`gbs` (solder mask), `gto`/`gbo` (silkscreen), `gtp`/`gbp`
+      # (solder paste), the outline `gko`, the mechanical/plane layers `gm1 gm2 gm3 gp1 gp2`, the
+      # inner-copper `g1 g2 g3 g4`, and Altium's `gd1`/`gg1` (drill drawing and guide). The DRILL
+      # files are Excellon: `drl` (KiCad, Altium) and `xln` (Eagle). The MANIFEST is `gbrjob`, the
+      # Gerber job file — JSON naming the set, which is why it is `pcb` and not `document`: it is
+      # part of the fabrication package a board house is handed, and filing it away from the layers
+      # it names would split one deliverable in two.
+      #
+      # `gbrjob` IS ALSO WHY THIS ROLE IS NOT `TEXT_ROLES`-ADJACENT. A Gerber layer is plain ASCII
+      # and so is the job file, but the page that matters for all of them is the RENDER, not the
+      # source — `FilesController#preview_kind` returns `:gerber` before it reaches the text
+      # branch, and adding `pcb` to TEXT_ROLES would put a source viewer where the board should be
+      # and register a TextThumb renderer for a file whose thumbnail nobody wants.
+      #
+      # DELIBERATELY ABSENT: `.xnc` — it is a real Excellon extension (KiCad writes one) but it is
+      # also the extension of nothing else, and tracespace identifies a drill layer from the
+      # FILENAME, so adding it later is a one-line edit here with no other consequence. It is left
+      # out only because no fixture or live library in this repo has produced one; add it the day
+      # one does. `.gbp` above is the solder-paste layer, NOT the `.gbp` some backup tools write.
+      "gbr" => "pcb", "gtl" => "pcb", "gbl" => "pcb", "gts" => "pcb", "gbs" => "pcb",
+      "gto" => "pcb", "gbo" => "pcb", "gtp" => "pcb", "gbp" => "pcb", "gko" => "pcb",
+      "gm1" => "pcb", "gm2" => "pcb", "gm3" => "pcb", "gp1" => "pcb", "gp2" => "pcb",
+      "g1" => "pcb", "g2" => "pcb", "g3" => "pcb", "g4" => "pcb",
+      "gd1" => "pcb", "gg1" => "pcb", "drl" => "pcb", "xln" => "pcb", "gbrjob" => "pcb"
     }.freeze
 
     # Roles whose files are TEXT a browser can display as source. Consulted by

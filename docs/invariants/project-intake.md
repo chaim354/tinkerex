@@ -103,7 +103,7 @@
 
 ## Filing
 
-- **THE FOLDER NAMES COME FROM THE USER'S OWN FILING RULES (stage 3, S3-1), SEEDED FROM THE ELEVEN
+- **THE FOLDER NAMES COME FROM THE USER'S OWN FILING RULES (stage 3, S3-1), SEEDED FROM THE TWELVE
   ROLES — NOT FROM `Maker::ProjectFolders::ROLE_FOLDERS` DIRECTLY ANY MORE.**
   `Maker::ProjectFolders.folder_for(user, name)` reads `Maker::FilingRules.for(user)`: one row per
   extension, seeded once from `ROLE_FOLDERS` over `Maker::FileAttachment::ROLE_BY_EXT` on a user's

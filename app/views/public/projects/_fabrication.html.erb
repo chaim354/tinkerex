@@ -1,0 +1,53 @@
+<%#
+  Every Gerber layer, drill file and .gbrjob anywhere in the folder, grouped into boards and each
+  one rendered as a stackup — the private partial's shape (projects/_fabrication.html.erb) with
+  public URLs, the arrangement public/projects/_schematics.html.erb already uses.
+
+  THE GROUPING IS THE SAME SERVICE (Maker::GerberSets, reached through pub.gerber_boards), so a
+  board is the same thing on both pages. What differs is only where the bytes come from.
+
+  NO PER-ROW `permits?`: the rows come from the listing, every one of which is a live, visible file
+  beneath the project folder — which IS the ancestry arm of permits? (Maker::PublicProject#bundle_files
+  makes the identical argument at length). The token rides along on every URL through
+  `file_url_for`, so an unlisted project's links keep working.
+
+  THE LIST LINKS ARE `download: true` FOR THE SCHEMATICS PARTIAL'S REASON: a .gbr is not an
+  inline-safe type, so the delivery concern would attach it anyway, and there is no private file
+  page to send a visitor to instead. The VIEWER's own URLs are not — it fetches them with `fetch`
+  and reads the text, and ?download=1 would only add a Content-Disposition nothing reads.
+
+  Local: pub (Maker::PublicProject).
+%>
+<% if pub.gerber_boards.any? %>
+  <section class="panel fabrication-panel">
+    <h2>Fabrication</h2>
+    <% pub.gerber_boards.each do |board| %>
+      <div class="fabrication-board">
+        <h3><%= board.name %></h3>
+        <ul class="schematics-list">
+          <% board.rows.each do |row| %>
+            <li>
+              <%= link_to row.node.name, pub.file_url_for(row.node_id, download: true) %>
+              <span class="badge"><%= gerber_layer_label(row.node.name) %></span>
+            </li>
+          <% end %>
+        </ul>
+        <div class="gerber-stage"
+             data-controller="gerber"
+             data-gerber-single-value="false"
+             data-gerber-layers-value="<%= board.stacked.map { |row|
+                   { name: row.node.name,
+                     url: pub.file_url_for(row.node_id, filename: row.node.name) } }.to_json %>">
+          <p class="muted" data-gerber-target="status">Loading the viewer…</p>
+          <p class="gerber-sides">
+            <button type="button" class="btn small active" data-gerber-target="side"
+                    data-gerber-side="top" data-action="gerber#top">Top</button>
+            <button type="button" class="btn small" data-gerber-target="side"
+                    data-gerber-side="bottom" data-action="gerber#bottom">Bottom</button>
+          </p>
+          <div data-gerber-target="stage"></div>
+        </div>
+      </div>
+    <% end %>
+  </section>
+<% end %>

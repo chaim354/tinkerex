@@ -51,6 +51,39 @@ class FilesControllerPreviewKindTest < ActiveSupport::TestCase
     assert_equal :model3d, kind("bracket.stl")
   end
 
+  # THE `:gerber` BRANCH (tracespace). Every one of these is plain ASCII and `.gbrjob` is JSON, so
+  # each would read as `:text` if this branch were removed or reordered below the text one — which
+  # is a preview that is correct about the bytes and useless about the board. The three families are
+  # named separately because they arrive from different tools: an RS-274X layer, an Excellon drill
+  # file, and the job manifest.
+  test "Gerber layers, drill files and the job manifest preview as :gerber" do
+    %w[board.gbr top.gtl bottom.gbl mask.gts silk.gto paste.gtp outline.gko
+       mech.gm1 plane.gp1 inner.g1 guide.gg1].each { |name| assert_equal :gerber, kind(name), name }
+    assert_equal :gerber, kind("board.drl"), "Excellon (KiCad, Altium)"
+    assert_equal :gerber, kind("board.xln"), "Excellon (Eagle)"
+    assert_equal :gerber, kind("board.gbrjob"), "the job file is the board's manifest, not a document"
+  end
+
+  # THE BRANCH IS DERIVED FROM THE ONE VOCABULARY, and this is the assertion that says so: adding a
+  # `pcb` extension to `ROLE_BY_EXT` must need no edit to `FilesController`. The size floor keeps it
+  # from going vacuous if the role were ever emptied (§14e).
+  test "every extension with the pcb role reaches the gerber branch" do
+    exts = Maker::FileAttachment::ROLE_BY_EXT.select { |_ext, role| role == "pcb" }.keys
+    assert_operator exts.size, :>, 20, "the sweep needs a subject"
+    assert_equal exts.sort, FilesController::GERBER_EXTS.sort
+    exts.each { |ext| assert_equal :gerber, kind("board.#{ext}"), ext }
+  end
+
+  # THE ROLE IS NOT A TEXT ROLE, AND THAT IS THE BELT BEHIND THE BRANCH'S BRACES. Adding `pcb` to
+  # TEXT_ROLES would register a TextThumb renderer for every layer and put a source viewer one
+  # reordering away from the board — asserted on the CONSTANT because `preview_kind` returns
+  # `:gerber` first and would stay green through exactly that mistake.
+  test "the pcb role is not a text role" do
+    assert_not_includes Maker::FileAttachment::TEXT_ROLES, "pcb"
+    assert_not Maker::FileAttachment.text?("board.gtl")
+    assert_nil Maker::Previews::Registry.for("gtl")
+  end
+
   # `Makefile` WAS THE SECOND CASE HERE AND HAD TO MOVE, which is worth recording rather than
   # quietly swapping: it stood for "no extension, therefore no preview", and since 2026-08-26 that
   # inference is exactly what TEXT_BASENAMES removes — a Makefile is plain text and now previews as

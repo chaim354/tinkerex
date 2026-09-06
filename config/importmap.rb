@@ -121,6 +121,21 @@ pin "codemirror", to: "codemirror.js", preload: false # bundle: see bin/build-co
 # (a dynamic import still resolves through the map); only the preload hint goes.
 # test/integration/web/lazy_bundles_test.rb drives a real page and pins it.
 pin "kicanvas", to: "kicanvas.js", preload: false # bundle: see bin/build-kicanvas for the pinned commit
+
+# tracespace (MIT; notices in vendor/javascript/LICENSE-tracespace.md) — Gerber and Excellon drill
+# files rendered in the browser as SVG, so this app ships NO server-side PCB renderer and no
+# sidecar (gerbv is GPL, §9). ONE vendored build from pinned npm versions (bin/build-tracespace),
+# the CodeMirror/KiCanvas pattern: no npm package at runtime, no CDN.
+#
+# `preload: false` FOR THE REASON KiCANVAS'S PIN ARGUES DIRECTLY ABOVE — the pin stays so a dynamic
+# import resolves, only the modulepreload hint goes. gerber_controller.js is the ONE importer and it
+# imports lazily on connect, so no page without a Gerber pays the 98 KB.
+# test/integration/web/lazy_bundles_test.rb drives a real page and pins it.
+#
+# UNLIKE KiCanvas THIS MODULE HAS EXPORTS AND IS NOT A CUSTOM-ELEMENT REGISTRATION: the controller
+# calls read/plot/renderLayers/renderBoard/stringifySvg itself and puts the resulting markup in the
+# stage, which is why the SVG lands in the LIGHT DOM (KiCanvas paints into a shadow root).
+pin "tracespace", to: "tracespace.js", preload: false # bundle: see bin/build-tracespace for the pinned versions
 # Lexxy (MIT) — the Action Text editor, replacing Trix. Served from the gem's own asset path, so
 # there is nothing vendored under vendor/javascript and no jspm shared-chunk patching (see the
 # jszip notes above). Attachments are disabled at the element, so @rails/activestorage is

@@ -62,9 +62,28 @@ module Maker
     # Pinned independently of ROLE_LABELS on purpose. Asserting ROLES == ROLE_LABELS.keys is
     # tautological — ROLES is DEFINED as those keys — so it cannot catch a typo'd key like
     # "cad_soruce", which is exactly the failure a reader assumes it guards. This literal can.
-    test "the role vocabulary is exactly these eleven values" do
-      assert_equal %w[cad_source code document gcode image instructions laser model other source_archive vector],
+    test "the role vocabulary is exactly these twelve values" do
+      assert_equal %w[cad_source code document gcode image instructions laser model other pcb source_archive vector],
                    Maker::FileAttachment::ROLES.sort
+    end
+
+    # THE `pcb` ROLE (the Gerber preview slice). Three families, one role — RS-274X layers, Excellon
+    # drill files and the `.gbrjob` manifest — because a board house is handed one directory, and a
+    # role is what puts them in one. Named rather than derived: a sweep over ROLE_BY_EXT would
+    # assert the table equals itself.
+    test "the fabrication formats carry the pcb role" do
+      %w[board.gbr top.gtl bottom.gbl mask.gts silk.gbo paste.gtp outline.gko mech.gm1
+         plane.gp2 inner.g3 guide.gg1 drill.drl drill.xln board.gbrjob].each do |name|
+        assert_equal "pcb", Maker::FileAttachment.role_for(name), name
+      end
+    end
+
+    # `.gbrjob` IS JSON AND IS STILL `pcb`, NOT `document`. It is part of the fabrication package,
+    # so filing it into `docs/` would split one deliverable in two — the tripwire for someone
+    # "correcting" it on the grounds that its bytes are JSON.
+    test "the Gerber job file files with the board, not with the documents" do
+      assert_equal "pcb", Maker::FileAttachment.role_for("board.gbrjob")
+      assert_equal "pcb", Maker::ProjectFolders.default_folder_for("board.gbrjob")
     end
 
     test "the two new roles are accepted by the validation" do

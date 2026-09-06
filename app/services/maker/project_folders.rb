@@ -34,8 +34,8 @@ module Maker
   # is the honest, PER-USER routing spec §5 asks for, not a silently wrong answer to a question
   # with a knowable right one.
   #
-  # THE FOLDER NAMES ARE NOT ROLE_LABELS, even where six of the ten happen to match it
-  # lowercased (models, images, laser, code, archives, other) — that agreement is coincidental, not
+  # THE FOLDER NAMES ARE NOT ROLE_LABELS, even where seven of the eleven happen to match it
+  # lowercased (models, images, laser, code, archives, pcb, other) — that agreement is coincidental, not
   # derived, and must stay that way: a UI wording tweak to ROLE_LABELS (capitalization, clarity)
   # must never rename a directory on someone's NAS. The other four folder names are deliberate
   # renames to plainer workflow words: `cnc` (not "G-code"), `design` (not "Vector"), `cad` (not
@@ -80,6 +80,11 @@ module Maker
       "document"       => "docs",
       "image"          => "images",
       "source_archive" => "archives",
+      # The board's fabrication set — Gerber layers, drill files and the `.gbrjob` that names them
+      # — in one folder, which is the whole point of the role: a board house is handed a directory,
+      # not a scattering. `pcb` rather than `gerber` because the folder holds the Excellon drill
+      # files too, and it is the word on the workbench.
+      "pcb"            => "pcb",
       "other"          => "other"
     }.freeze
 
@@ -91,7 +96,7 @@ module Maker
       ROLE_FOLDERS.fetch(Maker::FileAttachment.role_for(name))
     end
 
-    # THE PER-USER LOOKUP (stage 3, S3-1). `Maker::FilingRules.for(user)` seeds the eleven-role map
+    # THE PER-USER LOOKUP (stage 3, S3-1). `Maker::FilingRules.for(user)` seeds the twelve-role map
     # into this user's own rows on first read and answers from the user's own edited map ever
     # after — "other" for an extension with no rule (see the header for why that default is right
     # here and was wrong for `default_folder_for`'s role-keyed fetch).

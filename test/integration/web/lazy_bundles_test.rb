@@ -2,8 +2,9 @@ require "test_helper"
 
 module Web
   # THE LAZY BUNDLES MUST NOT BE MODULE-PRELOADED. The CodeMirror bundle, its two companion
-  # modules and the KiCanvas bundle are dynamic-imported by their Stimulus controllers so that no
-  # page pays for them until a text file or a KiCad file is actually opened -- config/importmap.rb
+  # modules, the KiCanvas bundle and the tracespace bundle are dynamic-imported by their Stimulus
+  # controllers so that no page pays for them until a text, KiCad or Gerber file is actually opened
+  # -- config/importmap.rb
   # says so at each pin. importmap-rails 2.x quietly undoes that: every pin is emitted as
   # <link rel="modulepreload"> by default, and a preload hint makes the browser FETCH the module on
   # every page whatever imports it. Measured on the dev server before the fix: kicanvas.js (477 KB)
@@ -11,7 +12,7 @@ module Web
   # and this drives a real page so the assertion is about what a browser receives, not the config.
   class LazyBundlesTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
-    LAZY = %w[kicanvas codemirror lib/codemirror_languages lib/codemirror_theme].freeze
+    LAZY = %w[kicanvas tracespace codemirror lib/codemirror_languages lib/codemirror_theme].freeze
 
     setup do
       @user = User.create!(email: "lazy-#{SecureRandom.hex(4)}@example.com",
