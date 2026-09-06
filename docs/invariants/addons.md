@@ -559,7 +559,8 @@
   THE FILE IS, AND THERE IS DELIBERATELY NO BYTE-URL HELPER.** Its only caller is
   `host.files.read`, a `fetch` reading `.arrayBuffer()`, and neither header affects a fetch body —
   so this costs nothing and removes the inline case entirely, rather than re-deriving
-  `FilesController#blob`'s SAFE_INLINE_TYPES allowlist for a caller that is not a browser tab.
+  `FileDelivery::SAFE_INLINE_TYPES` (the allowlist `FilesController#blob` and the public file route
+  share since stage 3, S3-4) for a caller that is not a browser tab.
   **Serving Marcel's type instead was a LIVE BUG, found by probing:** a `.js` in the library came
   back `text/javascript`, and `verify_same_origin_request` (an `append_after_action` firing on any
   non-XHR JavaScript response — and `fetch` sets no `X-Requested-With`) raised
@@ -571,8 +572,10 @@
   script-capable types to keep current (§14b's skip-list blind spot). `FilesController#blob` still
   serves Marcel's type and has the same latent shape; out of scope, recorded. A URL here also
   cannot back an `<img src>`, which is why `host.files.blobUrl` does not exist and must not be
-  added. Delivery is consumed exactly as `#blob` consumes it — all three variants, **no `else`**
-  (§14a). On s3 the `Redirect` is cross-origin, so a bundle reading those bytes needs the bucket's
+  added. Delivery is consumed exactly as `FileDelivery#deliver_file` consumes it — all three
+  variants, **no `else`** (§14a). This endpoint keeps its OWN copy of that `case` on purpose: it
+  overrides both the type and the disposition unconditionally, which is the one thing the shared
+  concern's policy must never do. On s3 the `Redirect` is cross-origin, so a bundle reading those bytes needs the bucket's
   CORS to allow this origin; streaming through Rails instead is what §15 forbids.
 - **THAT ENDPOINT'S `NotFound` IS RESCUED IN THE ACTION, NOT LEFT TO THE CLASS-LEVEL ARM.** The
   class arm answers 422 "Your library refused that write." — right for the save door, a lie on a

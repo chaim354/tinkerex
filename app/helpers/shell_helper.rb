@@ -44,11 +44,33 @@ module ShellHelper
 
   def rail_collapsed? = cookies[:rail] == "collapsed"
 
+  # The signed-in shell (rail, tab bar, current-project switcher) renders for a signed-in user on
+  # every page EXCEPT a public one, which renders what a visitor sees (Public::BaseController, stage
+  # 3, S3-4). `respond_to?` on both halves because a public controller stands on
+  # ActionController::Base and has neither helper — and Devise's own pages have no
+  # `public_surface?`.
+  # THE PUBLIC CHECK COMES FIRST, AND THE ORDER IS LOAD-BEARING RATHER THAN A STYLE CHOICE:
+  # `user_signed_in?` is Warden's, so asking it AT ALL reads the session cookie and resolves a
+  # user — which is precisely what a public request must not do. Short-circuiting on
+  # `public_surface?` means a visitor's request never touches Warden; the boolean result is
+  # identical either way, so nothing but the invariant tells the two orders apart.
+  def shell_signed_in?
+    return false if respond_to?(:public_surface?) && public_surface?
+
+    respond_to?(:user_signed_in?) && user_signed_in?
+  end
+
   # `rail--collapsed` only inside the shell: its rules are descendant selectors (`.rail--collapsed
   # .brand-name`), and the auth card renders a `.brand` too — a user who collapsed the rail and
   # signed out landed on a sign-in card with its wordmark hidden (found in review, 2026-09-04).
+  #
+  # READS `shell_signed_in?`, NOT `user_signed_in?`, FOR THE SAME REASON THE LAYOUT DOES.
+  # `body.app-shell` is a two-column grid whose first column is the rail's width (shell.css); a
+  # signed-in owner previewing their own public page renders NO rail, so the class alone would
+  # leave an empty rail-wide column and push the whole page off-centre — and at 375px it is what
+  # the phone sweep's `scrollWidth <= innerWidth` assertion would catch.
   def body_classes
-    signed_in = respond_to?(:user_signed_in?) && user_signed_in?
+    signed_in = shell_signed_in?
     classes = []
     classes << "app-shell" if signed_in
     classes << "rail--collapsed" if signed_in && rail_collapsed?

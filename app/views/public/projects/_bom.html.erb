@@ -1,0 +1,59 @@
+<%#
+  THE BILL OF MATERIALS, PUBLIC (stage 3, S3-4): three columns and nothing else.
+
+  WHAT IS MISSING FROM THIS TABLE IS THE POINT, and each omission is a decision rather than a
+  simplification of the private partial:
+    Stock    — how many the maker has on hand is their inventory, not this project's description.
+    Supplier — who they buy from is a private business relationship.
+    Actions  — Consume and Remove write; a visitor has nothing to write with.
+  Reintroducing any of them by "reusing projects/_bom_lines" would publish the owner's inventory
+  levels; public_project_test.rb seeds an item with 7 on hand and asserts "7 on hand" is absent.
+
+  A FILE LINE LINKS ONLY IF `pub.permits?` SAYS SO. A BOM line may point at any node in the owner's
+  library — including one outside this project entirely — and the file route would refuse it, so a
+  link would 404. Name-as-text is the honest rendering for that case.
+
+  Local: pub (Maker::PublicProject).
+%>
+<% if pub.bom_lines.any? %>
+  <section class="panel bom-panel">
+    <div class="panel-head">
+      <h2>Bill of materials</h2>
+      <span class="mono muted"><%= pluralize(pub.bom_lines.size, "line") %></span>
+    </div>
+    <table class="table public-bom">
+      <thead>
+        <tr>
+          <th class="col-ref">Ref</th>
+          <th class="col-part">Part</th>
+          <th class="num col-qty">Qty</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% pub.bom_lines.each do |line| %>
+          <tr>
+            <td class="col-ref mono"><%= line.reference %></td>
+            <td class="col-part">
+              <% case line.target_kind %>
+              <% when :inventory_item %>
+                <%= line.inventory_item&.name || line.part_name %>
+              <% when :design_file %>
+                <% node = pub.page_nodes[line.node_id] %>
+                <% if node && pub.permits?(node) %>
+                  <%= link_to node.name, pub.file_url_for(node.node_id) %>
+                <% else %>
+                  <%= node&.name || line.part_name %>
+                <% end %>
+              <% when :free_text %>
+                <%= line.part_name %>
+              <% else %>
+                <span class="muted">—</span>
+              <% end %>
+            </td>
+            <td class="num col-qty"><%= number_with_precision(line.quantity, precision: 3, strip_insignificant_zeros: true) %> <%= line.unit %></td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </section>
+<% end %>

@@ -1,0 +1,23 @@
+<%#
+  Every image in the folder plus every live build-log photo, deduped and name-ordered
+  (Maker::PublicProject#photo_rows). An entry photo usually lives OUTSIDE the folder, which is why
+  this list is not simply the image-role rows of the listing.
+
+  Local: pub (Maker::PublicProject).
+%>
+<% if pub.photo_rows.any? %>
+  <section class="panel photos-panel">
+    <div class="panel-head">
+      <h2>Photos</h2>
+      <span class="mono muted"><%= pluralize(pub.photo_rows.size, "photo") %></span>
+    </div>
+    <div class="public-photos">
+      <% pub.photo_rows.each do |row| %>
+        <%= link_to pub.file_url_for(row.node_id), class: "photo-cell file-cell",
+                    title: row.node.name do %>
+          <%= render "files/thumb", thumb: pub.thumbs.thumb(row.node_id), ext_label: "IMG" %>
+        <% end %>
+      <% end %>
+    </div>
+  </section>
+<% end %>

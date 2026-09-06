@@ -1,0 +1,52 @@
+/* The public surface (stage 3, S3-4): a published project's page, a maker's page, /explore.
+
+   Shared components are NOT restyled here — `.markdown`, `.repo-card`, `.log-timeline`,
+   `.tag-chip`, `.panel`, `.table` and `.thumb` come from components.css and pages/projects.css and
+   look the same to a visitor as to the owner, which is the point of reusing the partials at all
+   (§14m rule 3: a component selector is defined once). What follows is this surface's OWN classes,
+   plus the container qualifications a component needs inside them. */
+@layer pages {
+  /* The anonymous layout branch defaults `main` to `.auth-main` (a 440px column for the sign-in
+     card). A public page opts out of that with `content_for :container_class, "public-main"`;
+     `main.container`'s own max-width then applies, so this rule only has to exist, not to do
+     much. */
+  .public-main { max-width: 1360px; }
+
+  .public-head .public-byline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin: 4px 0 0; font-size: 13px; color: var(--fg-muted); }
+  .public-head .public-byline a { color: var(--fg); }
+
+  .public-section { margin: 14px 0 4px; font-size: 13px; font-weight: 600; color: var(--fg-muted); }
+
+  /* 40px, matching `table.files .thumb` — the same row height the owner's file list has. */
+  .public-files .col-thumb .thumb { width: 40px; height: 40px; flex: 0 0 40px; }
+  .public-files .col-thumb { width: 48px; }
+  .public-files .col-dl { width: 1%; white-space: nowrap; text-align: right; }
+  /* A PUBLIC PAGE DOES NOT POLL (files-preview.md): there is no `thumbs` controller on it, so a
+     pending thumbnail's spinner would turn forever. Stopping the animation leaves the same box as
+     a static badge, which is honest — the render is queued, it just will not arrive in this tab. */
+  .public-files .thumb-spinner, .public-photos .thumb-spinner { animation: none; }
+
+  .public-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+  .public-photos .photo-cell .thumb { width: 100%; height: 120px; }
+  .entry-photos .photo-cell .thumb { width: 96px; height: 96px; }
+
+  .project-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px; margin-top: 12px; }
+  .project-card-grid .card-title { font-size: 14px; margin: 0; }
+  .project-card-grid .card-blurb { font-size: 12px; margin: 0; }
+  .project-card-grid .card-time { font: 11px/1.4 var(--font-mono); }
+
+  .explore-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
+  .explore-chips .tag-chip.active { border-color: var(--accent); color: var(--accent); }
+
+  /* COLUMN DROPS, NOT A HORIZONTAL SCROLLER: the phone sweep asserts `scrollWidth <= innerWidth`
+     (test/system/shell_test.rb), and Size is the least useful cell to a visitor on a phone, the
+     thumbnail the next least. Name and Download survive at every width. */
+  @media (max-width: 719px) {
+    .public-files .col-size { display: none; }
+  }
+  @media (max-width: 479px) {
+    .public-files .col-thumb { display: none; }
+  }
+}

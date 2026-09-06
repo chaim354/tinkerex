@@ -18,7 +18,7 @@
     <link rel="apple-touch-icon" href="/icon.png">
 
     <%= stylesheet_link_tag "application", "components", "shell",
-                            "pages/files", "pages/projects", "pages/models", "pages/tools", "pages/preview", "pages/home", "pages/inventory", "pages/settings", "pages/search",
+                            "pages/files", "pages/projects", "pages/models", "pages/tools", "pages/preview", "pages/home", "pages/inventory", "pages/settings", "pages/search", "pages/public",
                             "data-turbo-track": "reload" %>
     <%= stylesheet_link_tag "lexxy", "data-turbo-track": "reload" %>
     <%= stylesheet_link_tag "vendor-overrides", "data-turbo-track": "reload" %>
@@ -26,7 +26,11 @@
   </head>
 
   <body class="<%= body_classes %>">
-    <% if respond_to?(:user_signed_in?) && user_signed_in? %>
+    <%# `shell_signed_in?`, not `user_signed_in?` — a PUBLIC page (Public::BaseController, stage 3,
+        S3-4) renders the visitor's shell even for its signed-in owner: the rail's current-project
+        switcher needs CurrentProject, which that base deliberately lacks, and what a maker wants
+        from their own public URL is an honest preview of what a visitor sees. %>
+    <% if shell_signed_in? %>
       <%= render "layouts/rail" %>
       <div class="shell-main">
         <%= render "layouts/topbar" %>
@@ -40,7 +44,11 @@
       <%= render "layouts/tabbar" %>
     <% else %>
       <%= render "layouts/flash" %>
-      <main class="container auth-main">
+      <%# `auth-main` (a 440px column for the sign-in card) is the DEFAULT here rather than a fixed
+          class: a PUBLIC page (stage 3, S3-4) renders on this same anonymous branch and needs the
+          full width the signed-in pages get. A page opts out by naming its own container class;
+          anything that names none — every Devise page — keeps exactly the auth card's layout. %>
+      <main class="container <%= content_for(:container_class).presence || "auth-main" %>">
         <%= yield %>
       </main>
     <% end %>

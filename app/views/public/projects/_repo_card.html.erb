@@ -1,0 +1,45 @@
+<%#
+  ONE REPOSITORY'S CARD, PUBLIC (stage 3, S3-4): the same facts as projects/_repo_card, minus every
+  link into a private path. The head oid is plain `span.mono` text and there are NO Commits/History
+  links — both of those pages require a signed-in maker, so a link would send a visitor to the
+  sign-in form.
+
+  The card's README links already resolve to THIS page's file route: Maker::PublicProject#repo_cards
+  passes its own `link:` lambda to Maker::RepoCard.for, whose default is the private `/files/:id`.
+
+  Local: card (Maker::RepoCard). `pub` is deliberately NOT passed: the README's links were
+  already resolved against it when the card was built, and this partial reaches for nothing else.
+%>
+<section class="panel repo-panel">
+  <div class="panel-head">
+    <h2><%= card.dir.name %></h2>
+    <span class="mono muted"><%= card.dir.path %></span>
+  </div>
+  <div class="repo-card">
+    <div class="repo-facts">
+      <% if card.head %>
+        <span class="mono"><%= card.head.short_oid %></span>
+        <span class="repo-summary"><%= card.head.summary %></span>
+        <span class="muted">— <%= card.head.author %>, <%= time_ago_in_words(card.head.time) %> ago</span>
+        <% if card.tags.any? %>
+          <% card.tags.each do |tag| %><span class="badge"><%= tag %></span><% end %>
+        <% else %>
+          <span class="muted">no tag</span>
+        <% end %>
+      <% else %>
+        <span class="muted"><%= card.refusal %></span>
+      <% end %>
+    </div>
+    <% if card.readme_html.present? %>
+      <details class="readme" open>
+        <summary>README</summary>
+        <div class="markdown"><%= card.readme_html %></div>
+        <% if card.readme_note %>
+          <p class="muted readme-note"><%= card.readme_note %></p>
+        <% end %>
+      </details>
+    <% elsif card.readme_note %>
+      <p class="muted readme-note"><%= card.readme_note %></p>
+    <% end %>
+  </div>
+</section>

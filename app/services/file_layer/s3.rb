@@ -222,8 +222,9 @@ module FileLayer
     # params to a finished URL, which would 403 every download instead.
     #
     # THE CONTROLLER OWNS THE POLICY, THIS OWNS THE MECHANISM. Which types may render inline is
-    # SAFE_INLINE_TYPES — a web concern that has no business in a storage adapter — so it arrives
-    # as an argument. A nil content_type means "no opinion, serve the object's own type", and the
+    # `FileDelivery::SAFE_INLINE_TYPES` (a controller concern since stage 3, S3-4, shared by the
+    # private and public download routes) — a web concern that has no business in a storage
+    # adapter — so it arrives as an argument. A nil content_type means "no opinion, serve the object's own type", and the
     # SDK omits the param entirely rather than signing an empty string (verified).
     #
     # `disposition:` IS REQUIRED, on all three adapters, and the ArgumentError is the feature.

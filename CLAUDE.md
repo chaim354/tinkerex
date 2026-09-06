@@ -599,12 +599,12 @@ area belongs there too, with a stub here.
   Deployment is kamal-proxy (Go) and `x_sendfile_header` is **nil**, so `Rack::Sendfile`
   no-ops and `Rack::Files` is the only branch that runs. The knob stays **commented** in
   `production.rb`: enabling it would **silently serve empty bodies** for every share download.
-- **`Delivery`'s three variants are three MECHANISMS** — `Redirect(url)` (s3) /
-  `SendFile(path)` (share) / `Stream(enum)` (chunk_remote) — and
-  `FilesController` consumes them **without ever constructing a path**. `disposition:` is
-  **required, not defaulted**: nil makes `ContentDisposition.format` emit a header with no
-  disposition type, which browsers resolve as **inline** — a silent cross-backend
-  divergence, on S3 only, where the value is signed into the URL.
+- **`Delivery`'s three variants are three MECHANISMS** — `Redirect(url)` (s3) / `SendFile(path)`
+  (share) / `Stream(enum)` (chunk_remote) — consumed in ONE place, **`FileDelivery#deliver_file`**,
+  **never constructing a path**; its two callers (`FilesController#blob`, `Public::FilesController`)
+  differ in WHICH node they may hand it, never in the policy. `disposition:` is **required, not
+  defaulted**: nil makes `ContentDisposition.format` emit a header with no disposition type, which
+  browsers resolve as **inline** — a silent cross-backend divergence, on S3 only, signed into the URL.
 - **`stat_all(user, node_ids:) -> Hash keyed by node_id` is a port verb**, and **a missing
   node is an ABSENT KEY, not a raise** — `stat` is asked about one node so `NotFound` is its
   whole answer, but a bulk caller holds a **list**, and a row tombstoned mid-page must not

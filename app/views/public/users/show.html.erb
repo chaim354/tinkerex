@@ -1,0 +1,24 @@
+<%#
+  A MAKER'S PUBLIC PROJECTS (stage 3, S3-4). `publicly_listed`, never `published`: an unlisted
+  project is reachable by its link and must not appear on any list — Public::UsersController's own
+  comment carries the argument, and public_explore_test.rb mutation-checks the substitution.
+%>
+<% content_for :title, "@#{@owner.handle}" %>
+<% content_for :container_class, "public-main" %>
+
+<div class="page-head">
+  <div class="page-title">
+    <h1>@<%= @owner.handle %></h1>
+    <span class="mono muted"><%= pluralize(@projects.size, "public project") %></span>
+  </div>
+</div>
+
+<% if @projects.any? %>
+  <div class="project-card-grid">
+    <% @projects.each do |project| %>
+      <%= render "public/project_card", project: project %>
+    <% end %>
+  </div>
+<% else %>
+  <p class="empty">No public projects yet.</p>
+<% end %>

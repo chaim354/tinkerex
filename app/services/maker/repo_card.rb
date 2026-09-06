@@ -41,12 +41,20 @@ module Maker
     # the query-count guard counts SQL, so an O(repos) DB call for every card would fail it the
     # moment a project holds more than one, and the fixture there already does (a `.git` marker is
     # seeded once per grown row, for an unrelated reason — S3-1's own nesting coverage).
-    def self.for(user:, dir:, root_node:, listing:, capabilities:)
+    # `link:` IS WHERE A RESOLVED RELATIVE HREF IN THE README POINTS, and it is a parameter rather
+    # than the constant it used to be because THE PUBLIC PROJECT PAGE RENDERS THIS SAME CARD
+    # (stage 3, S3-4) for a visitor who has no session and cannot open `/files/:id`. The default is
+    # the private page's answer, so every existing caller is unchanged; `Maker::PublicProject`
+    # passes a lambda onto its own `/u/<handle>/<slug>/files/:id`. A DEFAULT rather than a required
+    # kwarg because the private page is the overwhelmingly common caller and a card whose links
+    # silently pointed nowhere would look exactly like a card with no links.
+    DEFAULT_LINK = ->(id) { Rails.application.routes.url_helpers.file_path(id) }
+
+    def self.for(user:, dir:, root_node:, listing:, capabilities:, link: DEFAULT_LINK)
       head, tags, refusal = git_facts(user:, dir:, root_node:, capabilities:)
       # `dir.path` is the repo dir's FULL library path — the shape `listing.path_index` keys on, and
       # what a relative href in this README resolves against (Maker::Readme's own rule).
-      readme = Maker::Readme.for(user:, rows: dir.files, base_path: dir.path, listing:,
-                                 link: ->(id) { Rails.application.routes.url_helpers.file_path(id) })
+      readme = Maker::Readme.for(user:, rows: dir.files, base_path: dir.path, listing:, link:)
       new(dir:, head:, tags:, readme_html: readme&.html, readme_note: readme&.note, refusal:)
     end
 
