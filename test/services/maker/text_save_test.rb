@@ -28,7 +28,6 @@ module Maker
       @user.nodes.present.find_by!(parent_node_id: @folder.node_id, name:)
     end
 
-    def token_for(node) = FileLayer.current.stat(@user, node_id: node.node_id)&.content_token
 
     test "an existing file is rewritten IN PLACE, keeping its node_id, and the new token comes back" do
       node = write!("README.md", "# Old\n")

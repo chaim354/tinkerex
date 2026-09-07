@@ -26,6 +26,13 @@
 <details class="composer readme-editor" data-controller="readme" data-action="toggle->readme#reveal"
          data-readme-url-value="<%= row ? blob_file_path(row.node_id) : "" %>">
   <summary class="btn small"><%= row ? "Edit README" : "Write a README" %></summary>
+  <% if row %>
+    <%# WITH JAVASCRIPT OFF AN EXISTING README SHOWS A DISABLED, EMPTY TEXTAREA — the bytes are
+        fetched by readme_controller.js and the controls stay disabled until they arrive (a Save
+        before that would blank the file). Silent is safe and still unkind, so say why. The
+        no-README case needs no script: the template is in the textarea and the controls are live. %>
+    <noscript><p class="muted">Editing this README needs JavaScript; without it the file can only be replaced from the Files page.</p></noscript>
+  <% end %>
 
   <%= render "shared/no_history_note" %>
 

@@ -73,7 +73,11 @@ in front of them.
   any other file.
 - **The `base_token` stale check** — a 409 on the file page, an alert on the project page, one
   `Maker::TextSave` result underneath. The editor edited some version; if the port's content token moved
-  under it, the save is refused rather than discarding whatever moved it.
+  under it, the save is refused rather than discarding whatever moved it. **As of the catalog's last
+  observation**: on share and s3 `stat` answers from the row, not the disk, so a desktop edit made
+  after the last scan and before Save is overwritten (measured in S4-4's review). That window is
+  §14b's bounded staleness, the no-history note is what names it to the maker, and closing it is a
+  port question — do not "fix" it with a disk read in the door.
 - **A `.lock` is still refused and never deleted**, and a detached HEAD or a half-finished
   operation still refuses — this door does not touch `Maker::Git::LocalRepo` at all, so it inherits
   those refusals by not having a git path to skip.

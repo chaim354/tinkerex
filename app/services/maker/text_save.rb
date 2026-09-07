@@ -6,31 +6,39 @@ module Maker
   # (§14d). What must not drift between them is exactly what lives here:
   #
   #   * THE STALE CHECK. The caller edited SOME version; if the port's content token has moved
-  #     since, the save would silently discard whatever moved it. 409, never a write.
+  #     since, the save would silently discard whatever moved it. 409, never a write. IT SEES THE
+  #     CATALOG'S TOKEN, NOT THE DISK'S: on share and s3 `stat` answers from the row, so a desktop
+  #     edit or deletion the scan has not observed yet is invisible here until it is (§14b's
+  #     bounded staleness — measured in S4-4's review, a Finder edit made between render and Save
+  #     with no scan in between was overwritten). The no-history note on the editor is what tells
+  #     the maker that; closing the gap is a port question, not a door's.
   #   * `replace: true`, WHICH REUSES THE NODE. A delete-then-create passes any bytes-oriented test
   #     while orphaning every attachment, BOM line and tag on that node — nothing errors and
   #     nothing logs, which is the whole signature (§14a, git-editing.md's opening rule).
-  #   * THE PENDING GIT EDIT, gated on `local_worktree?`. On a backend that does not hold the
-  #     working tree the bytes still land; there is just no commit box on this box to review them
-  #     in.
+  #   * THE PENDING GIT EDIT, recorded only when the caller NAMED a repo root AND the backend
+  #     holds the working tree (`local_worktree?`). On one that does not, the bytes still land;
+  #     there is just no commit box on this box to review them in.
   #
   #   * THE PREVIEW RE-ENQUEUE. A save invalidates the picture of the file (stage 4, S4-3), and
   #     every text extension has a renderer (Registry derives TextThumb), so a saved file kept
   #     serving a thumbnail of bytes it no longer had until the next scan noticed. S4-3 said so in
   #     FilesController#update through its private `enqueue_preview`; a README saved from the
   #     project page would have left the same stale picture on the Files page, and a second door
-  #     calling a helper private to the first is not a shape that lasts. This service already
-  #     stats the node after the write for the token `replace: true` just minted, so the enqueue
-  #     rides THAT stat — one stat, two consumers, not a third copy of stat-then-Enqueue.
-  #     BEST-EFFORT, exactly as FilesController#enqueue_preview is for the two upload doors: a
+  #     calling a helper private to the first is not a shape that lasts. `LibraryOutput
+  #     .enqueue_preview` is the ONE stat-then-enqueue for bytes written server-side, and it hands
+  #     back the token it keyed the thumbnail on — so the token `replace: true` just minted reaches
+  #     the Result from the same stat, one stat, two consumers, no fourth copy. BEST-EFFORT: a
   #     vanished or unmounted library (NotFound, FetchError) leaves `content_token` nil rather than
   #     turning a save that reached the store into an error.
   #
   # WHAT IS DELIBERATELY NOT HERE: the size cap and the FetchError → 503 mapping. Both are the
   # DOOR's, because each door words them differently and §14a maps FetchError once, at the
   # controller. This service raises FileLayer errors to its caller unchanged — including the clobber
-  # refusal (UnsupportedOperation) a create hits when the name is already taken, which is the honest
-  # answer for a file that appeared while the maker was typing.
+  # refusal (UnsupportedOperation) a create hits when the name is already taken. THAT REFUSAL AND
+  # THE STALE ARM ARE TWO HALVES OF ONE RACE, "a file appeared while the maker was typing": once
+  # the catalog has seen the arrival the door resolves it and the save lands in STALE; before it has
+  # (share until the next scan, chunk_remote's mirror lag) the door resolves nothing, the create
+  # reaches the port, and the port refuses the clobber. Both refuse; neither writes.
   class TextSave
     Result = Data.define(:ok, :status, :error, :content_token, :node_id)
 
@@ -46,10 +54,10 @@ module Maker
         # A CREATE THAT CARRIES A TOKEN IS A SAVE AGAINST A FILE THAT HAS SINCE GONE: the token is
         # the door's own render of a file that existed then, and the door resolves no file now.
         # Refused rather than recreated — the maker has not seen that it went, and a create here
-        # would quietly undo whatever removed it. (The opposite race — the door rendered "no file
-        # here", a blank token, and one appeared meanwhile — lands in the arm above: the arriving
-        # file's token is not blank, so it is STALE, and the port's clobber wording is never the
-        # message the maker reads.)
+        # would quietly undo whatever removed it, once the catalog has noticed the removal (before
+        # that the row is still live, the arm above answers, and the write recreates the file — the
+        # same catalog-bounded window the header names). The opposite race — "no file here" was
+        # rendered, a blank token, and one appeared — is the two-halves race in the header.
         return refusal(REMOVED)
       end
 
@@ -60,23 +68,14 @@ module Maker
       Maker::RepoEdit.record!(user:, repo_root_node_id:, node_id:) if
         repo_root_node_id.present? && FileLayer.current.capabilities.local_worktree?
 
-      Result.new(ok: true, status: :ok, error: nil, node_id:,
-                 content_token: enqueue_preview(user:, node_id:, name: node ? node.name : name))
-    end
-
-    # The token the write just minted, with the thumbnail re-enqueued against it. nil — and nothing
-    # enqueued — when the library can no longer answer for the node: the save itself has already
-    # landed, and a preview is not part of its success (see the header).
-    def self.enqueue_preview(user:, node_id:, name:)
-      token = FileLayer.current.stat(user, node_id:)&.content_token
-      Maker::Previews::Enqueue.call(user:, node_id:, name:, version_id: token) if token
-      token
-    rescue FileLayer::NotFound, FileLayer::FetchError
-      nil
+      # The token the write just minted, with the thumbnail re-enqueued against it — nil, and
+      # nothing enqueued, when the library can no longer answer for the node (see the header).
+      token = Maker::Addons::LibraryOutput.enqueue_preview(user, node_id, node ? node.name : name)
+      Result.new(ok: true, status: :ok, error: nil, node_id:, content_token: token)
     end
 
     def self.refusal(message) = Result.new(ok: false, status: :conflict, error: message,
                                            content_token: nil, node_id: nil)
-    private_class_method :refusal, :enqueue_preview
+    private_class_method :refusal
   end
 end

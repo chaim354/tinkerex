@@ -47,7 +47,11 @@ export default class extends Controller {
         this.inputTarget.value = text
       } catch (e) {
         if (this.disconnected) return
-        this.statusTarget.textContent = `Could not load the README: ${e.message}`
+        // NOT LOADED AFTER ALL: `loaded` went true at the top so a second toggle during the fetch
+        // could not start a second one; a failed fetch hands the flag back, so closing and
+        // re-opening the editor retries (an unmounted NAS answers 503 for a while, then not).
+        this.loaded = false
+        this.statusTarget.textContent = `Could not load the README: ${e.message}. Open again to retry.`
         return
       }
     }
