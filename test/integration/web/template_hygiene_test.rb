@@ -321,6 +321,10 @@ module Web
         "projects index" => projects_path,
         "project detail" => project_path(@project),
         "project detail (list)" => project_path(@project, view: "list"),
+        # Stage 4, S4-4: the owner's preview of their public page, the ONE page that reaches
+        # projects/preview and projects/_preview_banner. @user has a handle (setup above), so this
+        # renders the page rather than the no-handle redirect.
+        "project preview" => preview_project_path(@project),
         "project new" => new_project_path,
         "project edit" => edit_project_path(@project),
         "project attachment new" => new_project_attachment_path(@project),

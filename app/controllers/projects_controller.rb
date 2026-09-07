@@ -6,7 +6,7 @@
 # page. This controller stays on the maker side of the FileLayer port — it only READS file
 # metadata (never writes/moves/deletes bytes), so none of the §10 tripwire surfaces are touched.
 class ProjectsController < ApplicationController
-  before_action :set_project, only: %i[show edit update destroy unarchive]
+  before_action :set_project, only: %i[show edit update destroy unarchive preview]
 
   # Exposes the `capabilities` helper the attachments panel's upload control branches on
   # (chunk two-phase vs. share/s3 multipart). Read-only here — no action is capability-gated.
@@ -292,6 +292,35 @@ class ProjectsController < ApplicationController
     # why it rides in the url rather than in the session: the reload navigates to the param-free
     # url and the hint is gone by construction.
     @scan_started = params[:scanning] == "1"
+  end
+
+  # GET /projects/:id/preview — what a visitor sees, at any visibility, for the owner (story 5.1).
+  #
+  # THE SAME OBJECT THE PUBLIC PAGE USES, BUILT DIRECTLY. Maker::PublicProject takes the project
+  # alone, reads `project.user` for every query and port call, and consults no session anywhere —
+  # so building one here needs no change to Public::BaseController and no session-aware branch
+  # inside it. What this route does NOT do is relax the public gate: /u/:handle/:slug still 404s a
+  # private project to everyone, its owner included, and project_preview_test.rb asserts both
+  # halves in the same file so the pair cannot drift.
+  #
+  # THE LINKS ARE THE VISITOR'S, NOT THE OWNER'S. `Maker::PublicProject#file_url_for` is the ONE
+  # answer to "where does this file's link point" — the reason that class exists — so the preview
+  # does not rewrite them to /files/:id. For an unlisted or public project they work identically
+  # for the maker and for a stranger, which is the case a maker previews for; for a private one
+  # they 404, which is precisely what a visitor gets, and the banner says so.
+  #
+  # NO HANDLE, NO PREVIEW. Every URL on the page is /u/<handle>/<slug>, and `public_file_path(nil,
+  # …)` raises UrlGenerationError against the route's own handle constraint. Maker::Project already
+  # refuses to PUBLISH without a handle; refusing to preview is the same rule, and the alert points
+  # at the panel that claims one rather than at a dead end.
+  def preview
+    if current_user.handle.blank?
+      return redirect_to project_path(@project),
+                         alert: "Choose a handle first — a public page lives at /u/<handle>/#{@project.slug}. " \
+                                "You can claim one in the Publish panel."
+    end
+
+    @pub = Maker::PublicProject.new(@project)
   end
 
   def new

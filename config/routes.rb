@@ -145,6 +145,12 @@ Rails.application.routes.draw do
     # Return an archived project to the live list. A member PATCH rather than an update to a
     # `status` field: the web form no longer exposes status at all (spec decision #1).
     patch :unarchive, on: :member
+    # THE OWNER'S PREVIEW OF THEIR PUBLIC PAGE (stage 4, S4-4; story 5.1). A member GET on THIS
+    # controller, not a door into Public:: — spec §7: `Public::` never reads the session, so the
+    # preview is a session-authed route in the private namespace that renders the public partials
+    # with a banner, never a bypass in Public::BaseController. `controller_path` is still
+    # "projects", so ShellHelper::SECTIONS needs no entry and the rail still lights Projects.
+    get :preview, on: :member
     resources :attachments, only: %i[new create destroy], module: :projects, shallow: true do
       # Finish an attach whose auto-move hit a name collision: move the file in under a new name.
       # DELIBERATELY SCOPED TO THE PROJECT rather than a general POST /files/:id/move — the

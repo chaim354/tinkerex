@@ -246,4 +246,13 @@
   .readme-editor .readme-bar { display: flex; align-items: center; gap: 10px; }
   .readme-editor .readme-status { font-size: 12px; }
   .readme-editor .no-history-note { margin: 0 0 8px; font-size: 12px; }
+
+  /* --- The preview banner (stage 4, S4-4): the one thing on the preview that a visitor never
+     sees, so it must not look like part of the page it sits above. --- */
+  .preview-banner { border: 1px solid var(--accent); border-radius: var(--radius-panel);
+                    background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+                    padding: 10px 14px; margin: 0 0 16px;
+                    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+  .preview-banner p { margin: 0; flex: 1 1 320px; font-size: 13px; }
+  .preview-banner p:last-child { flex: 0 0 auto; display: flex; gap: 8px; }
 }

@@ -1,0 +1,23 @@
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Project path">
+    <%= link_to "Projects", projects_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <%= link_to @project.name, project_path(@project) %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page">Preview</span>
+  </nav>
+<% end %>
+
+<%= render "projects/preview_banner", project: @project %>
+<%= render "public/projects/page", pub: @pub %>
+
+<%#
+  THE TITLE IS SET LAST, AND `flush:` IS WHY. `content_for` APPENDS, and the partial above sets no
+  title — but the day it does, an earlier `content_for :title` here would render as the two titles
+  concatenated. The layout is rendered AFTER this template either way (the body becomes
+  content_for(:layout) first), so a title written at the bottom reaches <title> exactly as one
+  written at the top would; only the append order differs. Never write a percent-greater-than
+  sequence inside one of these comments — an ERB comment ends at the first one and the rest of the
+  prose prints into the page (§14d).
+%>
+<% content_for :title, "Preview — #{@project.name} — Tinkerex", flush: true %>

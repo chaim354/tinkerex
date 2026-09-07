@@ -1,0 +1,29 @@
+<%#
+  WHAT THIS PAGE IS (stage 4, S4-4; story 5.1). The preview renders the visitor's page inside the
+  MAKER's shell, so without a banner it is a page that looks published and is not. Three states,
+  and each says what is true of the LINKS on the page below it, because that is the part a maker
+  is about to be surprised by.
+
+  Local: project.
+%>
+<div class="preview-banner">
+  <p>
+    <strong>Preview</strong> — this is what a visitor sees.
+    <% if project.publicly_listed? %>
+      Published: it is listed at <%= link_to "/explore", public_explore_path %> and on your handle page.
+    <% elsif project.unlisted? %>
+      Published as unlisted: anyone with the link can open it; it is listed nowhere.
+    <% else %>
+      <strong>Not published.</strong> Nothing here is reachable yet, so the links on this page do not work.
+    <% end %>
+  </p>
+  <p>
+    <% if project.published? %>
+      <%= link_to "Open the real page",
+                  public_project_path(project.user.handle, project.slug,
+                                      **(project.unlisted? ? { k: project.unlisted_token } : {})),
+                  class: "linkbtn small" %>
+    <% end %>
+    <%= link_to "Back to the project", project_path(project), class: "linkbtn small" %>
+  </p>
+</div>
