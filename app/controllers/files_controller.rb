@@ -424,8 +424,9 @@ class FilesController < ApplicationController
                                                        kind: "geometry")
     # NOTHING CURRENT EXISTS -> TRIGGER A BUILD AND SAY "pending", WITHOUT CONSULTING THE ROW'S
     # STATUS. Enqueue deliberately leaves a `ready` artifact visible through a renderer-only
-    # rebuild, because a thumbnail is a PICTURE of this same file and the detail page does not poll
-    # — blanking it would strand a spinner there. Geometry is the opposite on both counts: it is
+    # rebuild, because a thumbnail is a PICTURE of this same file — blanking it would put a spinner
+    # over a correct picture for the whole render (and, before S4-3's page poll, until someone
+    # reloaded). Geometry is the opposite on both counts: it is
     # the DATA the client measures and draws from, so an older build's payload is wrong rather than
     # merely old, and this endpoint's client polls, so "pending" costs nothing and resolves itself.
     # Reading `preview.status` here instead would hand back the stale blob URL — exactly the bug
@@ -545,9 +546,10 @@ class FilesController < ApplicationController
     @move_conflict = move_conflict_prompt
     # WHERE THIS FILE IS, IN THE LIBRARY'S OWN TERMS (stage 4, S4-3; story 2.10). The SAME reader
     # #index uses for its folder column (#folder_paths_for) — Maker::LibraryTree is ONE pluck of
-    # this user's dir rows and an in-memory walk, so this is constant in the size of the library
-    # and needs no port read at all. Asking `folder_crumbs`-style, one find_by per level, would be
-    # a query per ancestor for the same answer.
+    # this user's dir rows and an in-memory walk: constant in QUERY COUNT and in the number of
+    # FILES, linear in the number of DIRECTORIES (a 10k-folder library materialises 10k tuples per
+    # file page, the same price #index already pays), and no port read at all. Asking
+    # `folder_crumbs`-style, one find_by per level, would be a query per ancestor for the same answer.
     #
     # NIL WHEN THE CHAIN IS BROKEN, AND THE VIEW RENDERS NOTHING THEN. `path_for` answers nil for a
     # tombstoned or missing ancestor (its own contract: "nil IS AN ANSWER, NOT AN ERROR"), and

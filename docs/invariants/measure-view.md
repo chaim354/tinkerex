@@ -278,13 +278,16 @@
   never sees an artifact of the PREVIOUS CONTENT labelled as the current file — a lie the spinner
   honestly replaces. A renderer bump is not that case: the stored artifact still depicts this exact
   file, only the code that built it moved on. Blanking it swapped a correct picture for a spinner
-  on a page that **does not poll**, so it stayed a spinner until someone reloaded, and read as
-  "generating preview is broken".
+  for the whole render — and before stage 4, S4-3 the page did not poll, so it stayed a spinner
+  until someone reloaded — and read as "generating preview is broken". The page now polls a
+  `pending`/`processing` row and reloads once (`thumbs_controller.js`'s reload mode); the decision
+  stands on the first half alone.
 - **A CONSUMER THAT CANNOT TOLERATE AN OLDER BUILD'S OUTPUT SAYS SO ITSELF.**
   `FilesController#geometry` answers `pending` whenever it had to enqueue, **without reading the
   row's status** — geometry is DATA the client measures from (an older build's payload is wrong,
-  not merely old) and its client polls, so pending resolves itself. The thumbnail is a picture on a
-  page that doesn't poll. Same mechanism, opposite right answers; do not unify them.
+  not merely old) and its client polls, so pending resolves itself. The thumbnail is a picture whose
+  `ready` row renders no poll cell at all (S4-3 polls only `pending`/`processing`). Same mechanism,
+  opposite right answers; do not unify them.
 - **A REVISION CHECK IN `Enqueue` IS USELESS UNLESS THE READ PATH ASKS FOR IT — and for thumbnails
   it did not.** `Enqueue` compared revisions correctly from the day it shipped, but only something
   that CALLS it can act on that, and the caller skips any node the read reports a row for. That

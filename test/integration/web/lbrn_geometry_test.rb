@@ -209,7 +209,8 @@ module Web
       assert_equal current, stale.renderer_revision, "the row must be repointed, not served"
       # AND THE OLD PICTURE STAYS UP. A renderer bump does not make the stored artifact a lie —
       # it depicts this exact file, just built by older code — so blanking it to "pending" would
-      # replace a correct image with a spinner on a page that does not poll. Only a CONTENT change
+      # replace a correct image with a spinner for the whole render (the page polls a pending row
+      # and reloads since S4-3, but a spinner over a correct picture is still the wrong trade). Only a CONTENT change
       # earns the spinner. Shipping it the other way read as "generating preview is broken".
       assert_equal "ready", stale.status,
                    "a renderer rebuild must not blank an artifact that is still of this file"
