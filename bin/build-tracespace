@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
-# Rebuild vendor/javascript/tracespace.js — the Gerber/Excellon renderer the browser runs, so this
-# app ships no server-side PCB renderer and no sidecar (gerbv is GPL, §9).
+# Rebuild the Gerber/Excellon renderer — TWICE, from ONE pinned node_modules:
+#
+#   vendor/javascript/tracespace.js   the BROWSER bundle the viewer runs (gerber_controller.js)
+#   tools/gerber-svg/tracespace.mjs   the NODE bundle Maker::Previews::Gerber thumbnails with
+#
+# NO GPL RENDERER AND NO SIDECAR: tracespace is MIT (§9), so it is the ONE Gerber implementation
+# this app has, and it runs in two places from one build — which is the point of building both
+# here. The thumbnail and the viewer can never disagree about a file, because there is no second
+# parser for them to disagree through. (This header read "this app ships no server-side PCB
+# renderer and no sidecar (gerbv is GPL, §9)" until 2026-09-07; that sentence was about GERBV's
+# licence, which never applied to tracespace, and it was reasoning from one renderer's licence to
+# every renderer's absence.) The node bundle is exec'd as a SUBPROCESS exactly like resvg, pdfium,
+# f3d and stl-thumbnailer — nothing links node into Rails.
 #
 # THE CODEMIRROR/KICANVAS PATTERN: one vendored ES module built from PINNED versions, one importmap
 # pin, no npm package at runtime and no CDN. It differs from bin/build-kicanvas only in where the
@@ -113,6 +124,32 @@ echo "bundling…"
 mkdir -p "$ROOT/vendor/javascript"
 cp "$WORK/tracespace.js" "$ROOT/vendor/javascript/tracespace.js"
 
+# THE NODE BUNDLE, FROM THE SAME $WORK — same pinned packages, same entry file, same five exports,
+# checked by the same guard above. Building it here rather than in a second script is the whole
+# guarantee: two builds from two node_modules could resolve different versions and paint the same
+# board differently on the grid tile and in the viewer, with nothing to notice.
+#
+# THE TWO `--external:` FLAGS ARE DROPPED FOR THIS INVOCATION ONLY, and their absence is the
+# interesting half. `--platform=node` resolves `node:fs/promises` and `node:path` itself (a node
+# builtin is external by definition there), so marking them by hand would be redundant — and here
+# they are the branch that actually RUNS: tools/gerber-svg/render.mjs hands `read()` filesystem
+# PATHS, which is upstream's string branch, where the browser only ever passes `File` objects.
+#
+# THE TWO ARTIFACTS ARE BYTE-IDENTICAL TODAY (measured 2026-09-07: both 100126 bytes, `diff` clean)
+# AND THAT IS A COINCIDENCE OF THE FLAGS, NOT A REASON TO SHIP ONE. The only thing the browser
+# invocation asks esbuild to do differently is externalise those two builtins, which
+# `--platform=node` does on its own — so the outputs converge. Change `--target`, add a browser
+# shim, or take a different `--format` and they diverge silently. Keep both writes, and keep them
+# in this one script.
+echo "bundling for node…"
+(cd "$WORK" && npx esbuild entry.js \
+  --bundle --format=esm --platform=node --minify --target=node18 \
+  --legal-comments=none \
+  --outfile=tracespace-node.mjs)
+
+mkdir -p "$ROOT/tools/gerber-svg"
+cp "$WORK/tracespace-node.mjs" "$ROOT/tools/gerber-svg/tracespace.mjs"
+
 # The package name and version at the top, so the notice file says WHAT it covers — the artifact is
 # built bytes, not an upstream file whose provenance is its own filename.
 {
@@ -121,7 +158,20 @@ cp "$WORK/tracespace.js" "$ROOT/vendor/javascript/tracespace.js"
   cat "$WORK/node_modules/@tracespace/core/LICENSE"
 } > "$ROOT/vendor/javascript/LICENSE-tracespace.md"
 
+# THE SAME NOTICE BESIDE THE NODE BUNDLE. It is a second artifact built from the same MIT source
+# and it ships in the RUNTIME image rather than to the browser, so a licence file covering only one
+# of the two copies covers neither honestly (§9).
+{
+  printf '@tracespace/core %s and its @tracespace/* dependencies (MIT).\n' "$TRACESPACE_VERSION"
+  printf 'Bundled into tools/gerber-svg/tracespace.mjs by bin/build-tracespace.\n\n'
+  cat "$WORK/node_modules/@tracespace/core/LICENSE"
+} > "$ROOT/tools/gerber-svg/LICENSE-tracespace.txt"
+
 SIZE=$(wc -c < "$ROOT/vendor/javascript/tracespace.js")
 GZIP=$(gzip -9 -c "$ROOT/vendor/javascript/tracespace.js" | wc -c)
 printf 'wrote vendor/javascript/tracespace.js from @tracespace/core@%s — %d bytes (%d gzipped)\n' \
   "$TRACESPACE_VERSION" "$SIZE" "$GZIP"
+
+NODE_SIZE=$(wc -c < "$ROOT/tools/gerber-svg/tracespace.mjs")
+printf 'wrote tools/gerber-svg/tracespace.mjs from @tracespace/core@%s — %d bytes\n' \
+  "$TRACESPACE_VERSION" "$NODE_SIZE"

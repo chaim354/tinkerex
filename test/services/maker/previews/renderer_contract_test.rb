@@ -32,7 +32,16 @@ module Maker
         # dependency, so `next unless renderer.available?` below is what keeps this graceful on a
         # box without it — the entry is exercised wherever f3d exists and skipped silently where
         # it does not.
-        Maker::Previews::Mesh    => "tetra.obj"
+        Maker::Previews::Mesh    => "tetra.obj",
+        # tracespace under node. `square.gtl` IS GerberFixture::MINIMAL_GERBER verbatim (asserted in
+        # gerber_test.rb), so the one set of bytes stands behind the unit test, the system test and
+        # this contract.
+        Maker::Previews::Gerber  => "square.gtl",
+        # A REAL ARCHIVE, COMMITTED RATHER THAN BUILT PER RUN. `GerberFixture#fusion_zip` produces
+        # it, but rubyzip stamps a DOS timestamp into every entry, so a zip built at test time is
+        # different bytes on every run — which is exactly what a fixture must not be. The two are
+        # asserted to hold the same board in gerber_zip_test.rb.
+        Maker::Previews::GerberZip => "gerber-export.zip"
       }.freeze
 
       # Raster types the web grid can inline safely (FilesController::SAFE_INLINE_TYPES minus svg).

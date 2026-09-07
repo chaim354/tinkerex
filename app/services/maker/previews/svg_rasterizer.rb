@@ -41,39 +41,60 @@ module Maker
       #     visible, while leaving the SHAPE untouched. A presentation-attribute stroke-width is
       #     overridden by this rule (an inline style= would win, an acceptable gap).
       # Applied to `*`, so a fill-only shape (no stroke) is unaffected — nothing to stroke.
+      #
+      # IT EXISTS FOR HAIRLINE VECTOR SOURCES, AND A SOURCE THAT CARRIES REAL WIDTHS MUST OPT OUT
+      # (`stylesheet: nil`, since 2026-09-07). `Maker::Previews::Gerber` is the first: a tracespace
+      # render writes the APERTURE'S OWN DIAMETER onto every path — measured against the vendored
+      # bundle, a 0.5 mm round aperture emits `<path stroke-width="0.5">` (tools/gerber-svg/
+      # render.mjs's header quotes the whole output) — so this rule would flatten a 0.5 mm signal
+      # trace and a 2 mm power trace to one 1.5 px line and throw away the one thing a board
+      # thumbnail is for. Worse on a composed board, whose substrate and mask are `<rect>`s
+      # inheriting `stroke="currentColor"` at `stroke-width="0"`: 1.5 px paints a border on each.
+      # The default stays what it was, so every existing caller is untouched.
       STYLESHEET = "* { vector-effect: non-scaling-stroke; stroke-width: 1.5px; }\n".freeze
 
       # SVG bytes/string -> PNG bytes (a size×size raster; the SVG's preserveAspectRatio fits it).
-      def to_png(svg, size: 512)
+      #
+      # `stylesheet: nil` PASSES NO `--stylesheet` FLAG AT ALL — it does not pass an empty one. An
+      # empty stylesheet would be indistinguishable in the output today and is a different claim:
+      # this is "resvg renders what the SVG says", not "we override it with nothing".
+      def to_png(svg, size: 512, stylesheet: STYLESHEET)
         Tempfile.create([ "resvg-in", ".svg" ]) do |fin|
           fin.binmode
           fin.write(svg.to_s.b)
           fin.flush
 
-          Tempfile.create([ "resvg-css", ".css" ]) do |fcss|
-            fcss.write(STYLESHEET)
-            fcss.flush
+          next rasterize(fin.path, size:, css_path: nil) if stylesheet.nil?
 
-            out_path = "#{fin.path}.png"
-            begin
-              # --background white: render onto an OPAQUE white canvas rather than transparent.
-              # Thumbnails sit on a light card, and a transparent PNG of thin geometry reads as
-              # blank; white gives dark geometry consistent contrast. --stylesheet: see STYLESHEET.
-              _stdout, stderr, status = Open3.capture3(
-                bin, "--width", size.to_s, "--height", size.to_s,
-                "--background", "white", "--stylesheet", fcss.path, fin.path, out_path
-              )
-              unless status.success? && File.exist?(out_path) && File.size?(out_path)
-                raise RasterizeError, "resvg failed (#{status.exitstatus}): #{stderr.to_s[0, 300]}"
-              end
-              File.binread(out_path)
-            ensure
-              File.delete(out_path) if File.exist?(out_path)
-            end
+          Tempfile.create([ "resvg-css", ".css" ]) do |fcss|
+            fcss.write(stylesheet)
+            fcss.flush
+            rasterize(fin.path, size:, css_path: fcss.path)
           end
         end
       rescue Errno::ENOENT, Errno::EACCES => e
         raise RasterizeError, "resvg not runnable: #{e.message}"
+      end
+
+      # ONE resvg INVOCATION. Split out of `to_png` when `stylesheet:` arrived so the two arms
+      # share the argv, the success check and the output cleanup — the alternative (a conditional
+      # inside the css Tempfile block) creates a temp file the flagless arm never names.
+      def rasterize(in_path, size:, css_path:)
+        out_path = "#{in_path}.png"
+        # --background white: render onto an OPAQUE white canvas rather than transparent.
+        # Thumbnails sit on a light card, and a transparent PNG of thin geometry reads as
+        # blank; white gives dark geometry consistent contrast. --stylesheet: see STYLESHEET.
+        argv = [ bin, "--width", size.to_s, "--height", size.to_s, "--background", "white" ]
+        argv.push("--stylesheet", css_path) if css_path
+        argv.push(in_path, out_path)
+
+        _stdout, stderr, status = Open3.capture3(*argv)
+        unless status.success? && File.exist?(out_path) && File.size?(out_path)
+          raise RasterizeError, "resvg failed (#{status.exitstatus}): #{stderr.to_s[0, 300]}"
+        end
+        File.binread(out_path)
+      ensure
+        File.delete(out_path) if out_path && File.exist?(out_path)
       end
     end
   end

@@ -54,7 +54,17 @@ module Maker
         "gif"   => Maker::Previews::ImageThumb,
         "webp"  => Maker::Previews::ImageThumb,
         "bmp"   => Maker::Previews::ImageThumb,
-        "pdf"   => Maker::Previews::Pdf        # page 1 → PNG via pdfium (BSD-3 binary; CLAUDE.md §9)
+        "pdf"   => Maker::Previews::Pdf,       # page 1 → PNG via pdfium (BSD-3 binary; CLAUDE.md §9)
+        # GERBER: tracespace under node (tools/gerber-svg), the SAME pinned bundle the browser's
+        # viewer runs, so the tile and the viewer are one picture. DERIVED FROM THE `pcb` ROLE and
+        # never listed twice — Gerber::EXTENSIONS is `ROLE_BY_EXT`'s pcb keys minus `gbrjob`, whose
+        # picture would need the siblings a renderer handed one file's bytes can never reach.
+        **Maker::Previews::Gerber::EXTENSIONS.index_with { Maker::Previews::Gerber },
+        # A ZIPPED EXPORT IS A BOARD (files-preview.md) and this is the one renderer whose claim is
+        # decided by CONTENT rather than name: a Gerber zip renders its top side, and any other zip
+        # terminates `unsupported` after one bounded read. Every zip therefore gets a preview row,
+        # which is the stated price of a thumbnail on the artefact a fab house is handed.
+        "zip"   => Maker::Previews::GerberZip
       }.freeze
 
       # ext (frozen string) => renderer module/object.

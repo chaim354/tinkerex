@@ -110,10 +110,40 @@ class FilesControllerPreviewKindTest < ActiveSupport::TestCase
   # TEXT_ROLES would register a TextThumb renderer for every layer and put a source viewer one
   # reordering away from the board — asserted on the CONSTANT because `preview_kind` returns
   # `:gerber` first and would stay green through exactly that mistake.
+  #
+  # THE THIRD LINE READ `assert_nil Registry.for("gtl")` UNTIL 2026-09-07, and the weakening is the
+  # point rather than a concession — the same move `.fcstd`'s case above records. Its claim has
+  # always been "no TEXT renderer claims a Gerber layer"; it could say `nil` only because Gerbers
+  # had no renderer at all. They have one now (tracespace under node), so the old spelling asserted
+  # a second, unrelated fact that this slice deliberately changed. Both halves are kept separately,
+  # so neither is lost the next time one moves.
   test "the pcb role is not a text role" do
     assert_not_includes Maker::FileAttachment::TEXT_ROLES, "pcb"
     assert_not Maker::FileAttachment.text?("board.gtl")
-    assert_nil Maker::Previews::Registry.for("gtl")
+    assert_not_equal Maker::Previews::TextThumb, Maker::Previews::Registry.for("gtl"),
+                     "a source thumbnail of a Gerber layer is a picture of its ASCII, not its board"
+    assert_equal Maker::Previews::Gerber, Maker::Previews::Registry.for("gtl")
+  end
+
+  # A GERBER LAYER'S PAGE IS STILL THE VIEWER, NOT THE THUMBNAIL, AND THE ORDER IS WHAT SAYS SO.
+  # `:gerber` returns several branches before `:thumbnail`, so registering a renderer for every pcb
+  # extension (2026-09-07) changed the GRID cell and the poster and left the page's owner alone —
+  # the same "a poster, not a replacement" relationship `:model3d` has with `stl`/`3mf`/`obj`.
+  test "a Gerber layer keeps the :gerber page now that it also has a thumbnail" do
+    assert_equal :gerber, kind("top.gtl")
+    assert_not_nil Maker::Previews::Registry.for("gtl"), "…and the grid cell is no longer blank"
+  end
+
+  # A ZIP REACHES `:thumbnail` BY NAME, AND THE BOARD BRANCH IS A READ. `Maker::Previews::GerberZip`
+  # claims `zip`, so `preview_kind` — which is NAME-ONLY for the whole vocabulary — now answers
+  # `:thumbnail` for every zip. That is not the page a Gerber export gets: `FilesController#show`
+  # overrides `@kind` to `:gerber` after `Maker::GerberArchive` has actually looked inside, which is
+  # the one preview kind decided by content. A zip of firmware keeps the name-only answer, and its
+  # preview row terminates `unsupported` after one bounded read.
+  test "a zip previews as :thumbnail by name, and only a read makes it a board" do
+    assert_equal :thumbnail, kind("firmware.zip")
+    assert_equal :thumbnail, kind("Gerber_board.zip")
+    assert_equal Maker::Previews::GerberZip, Maker::Previews::Registry.for("zip")
   end
 
   # `Makefile` WAS THE SECOND CASE HERE AND HAD TO MOVE, which is worth recording rather than
