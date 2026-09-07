@@ -150,9 +150,17 @@ FROM base
 #                  render fails, which is why libegl1 alone is not enough
 #   libgl1-mesa-dri  the gallium/llvmpipe software rasterizer that does the actual drawing
 # Verified sufficient by rendering both tetra.obj and a real 4.7 MB STEP file to PNG in this image.
+#
+# `nodejs` IS THE GERBER THUMBNAILER'S RUNTIME AND NOTHING ELSE'S. tools/gerber-svg is the pinned
+# tracespace bundle (MIT) under node; Maker::Previews::Gerber exec's it as a SUBPROCESS exactly the
+# way this image's resvg, pdfium, f3d and stl-thumbnailer are exec'd — nothing is linked into Rails
+# and no npm package is installed at runtime, because the bundle is built at development time by
+# bin/build-tracespace and committed. Without it every Gerber layer, drill file and zipped export
+# degrades to `unsupported`, which is the graceful path and not the intended one.
 RUN apt-get update -qq && \
     apt-get install --no-install-recommends -y \
-      libx11-6 libegl1 libegl-mesa0 libgl1-mesa-dri && \
+      libx11-6 libegl1 libegl-mesa0 libgl1-mesa-dri \
+      nodejs && \
     rm -rf /var/lib/apt/lists /var/cache/apt/archives
 
 # Run and own only the runtime files as a non-root user for security

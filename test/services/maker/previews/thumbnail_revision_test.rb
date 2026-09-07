@@ -53,7 +53,9 @@ module Maker
         "a.dxf"   => 3, # Dxf
         "a.3mf"   => 2, # ThreeMf
         "a.lbrn"  => 4, # Lbrn2
-        "a.lbrn2" => 4  # Lbrn2 again — see the delegation note above
+        "a.lbrn2" => 4, # Lbrn2 again — see the delegation note above
+        "a.gtl"   => 1, # Gerber     — every pcb extension but gbrjob (23 of them)
+        "a.zip"   => 1  # GerberZip
       }.freeze
 
       test "a renderer's thumbnail revision moves only when this pin moves with it" do
@@ -77,6 +79,25 @@ module Maker
                      "a renderer is reachable through the Registry with no row in " \
                      "THUMBNAIL_REVISIONS (or vice versa). A new format must be pinned here, or " \
                      "forgetting to bump its thumbnail revision is green."
+      end
+
+      # EVERY PINNED NAME STILL REACHES A RENDERER — and this is the assertion the table's own
+      # header claimed to make and did not. Measured 2026-09-07 by mutation: removing
+      # `"zip" => GerberZip` from the Registry left BOTH tests above GREEN. The first because
+      # `revision_for_name` falls back to `BASE_REVISION` for a name nothing claims, which is 1 and
+      # therefore indistinguishable from a declared 1 — the exact case the header calls out ("the
+      # day a rename makes an extension resolve to nothing — this table is what notices"). The
+      # second because it derives BOTH sides from `RENDERERS`, so an unregistered renderer leaves
+      # the pinned set and the registered set together, the vacuous-shrink shape §14e names.
+      #
+      # It bites for any renderer pinned at 1 — today `TextThumb`, `ImageThumb`, `Mesh`, `Pdf`,
+      # `Svg`, `Mage`, `Gerber` and `GerberZip`, which is most of the table.
+      test "every filename pinned above still resolves to a renderer" do
+        THUMBNAIL_REVISIONS.each_key do |filename|
+          assert_not_nil Registry.for_filename(filename),
+                         "#{filename} no longer resolves to any renderer, so its pinned revision " \
+                         "is BASE_REVISION by accident — which reads exactly like a declared 1"
+        end
       end
 
       # THE SET IS NON-EMPTY, because both assertions above are satisfied by nothing at all.

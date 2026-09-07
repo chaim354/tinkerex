@@ -255,9 +255,9 @@ Deploy OVH only on explicit request. `docs/DEPLOY.md`.
 
 ```
 /                Rails 8 maker app (app/, config/, db/) + docs/ (incl. DEPLOY.md)
-/tools           stl-thumbnailer: a Rust STL→PNG renderer, but a SERVER-side tool (compiled
-                 into the Rails image, exec'd by Maker::Previews::Stl) — not a client crate,
-                 which is why it lives here rather than with the rest of the Rust code.
+/tools           SERVER-side renderers exec'd as subprocesses, never client code — which is why
+                 they live here: stl-thumbnailer (Rust STL→PNG, Maker::Previews::Stl) and
+                 gerber-svg (the pinned tracespace bundle under node, Maker::Previews::Gerber).
 /sidecar         GPL services invoked over HTTP only: boxes (GPL-3.0), openscad (GPL-2.0)
 /ops             Scripts that run ON the box, not in the app — backup-db.sh, installed by
                  bin/backup-cron-install. No gate covers these; invariants in §14i.

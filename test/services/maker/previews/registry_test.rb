@@ -50,6 +50,45 @@ module Maker
         end
       end
 
+      # GERBER — tracespace under node, the same pinned bundle the viewer runs. The three families
+      # are named separately because they arrive from different tools: an RS-274X layer, an
+      # Excellon drill file from KiCad/Altium, and one from Eagle.
+      test "Gerber layers and drill files resolve to the Gerber renderer" do
+        %w[gbr gtl gbl gts gto gko gm1 drl xln].each do |ext|
+          assert_equal Maker::Previews::Gerber, Maker::Previews::Registry.for(ext), ext
+        end
+      end
+
+      # `.gbrjob` HAS NO THUMBNAIL AND MUST NOT ACQUIRE ONE BY SWEEP. It is JSON naming its
+      # siblings, and a renderer handed one file's bytes cannot reach them — registering it would
+      # create a row and a job for a render that can only ever draw the manifest as a junk layer.
+      # It is the one `pcb` extension the derivation subtracts, so this is the assertion that says
+      # the subtraction is still there.
+      test "a .gbrjob has no thumbnail renderer" do
+        assert_nil Maker::Previews::Registry.for("gbrjob")
+        assert_not_includes Maker::Previews::Gerber::EXTENSIONS, "gbrjob"
+      end
+
+      # THE DRIFT PIN. `Gerber::EXTENSIONS` and `FilesController::GERBER_EXTS` are two derivations
+      # of ONE vocabulary (`ROLE_BY_EXT`'s `pcb` role), differing by exactly `gbrjob` — so adding a
+      # Gerber extension is still a one-line edit to ROLE_BY_EXT and BOTH follow. Written as an
+      # equality rather than as two independent lists for the reason §14d gives: the second list is
+      # the drift.
+      test "the Gerber renderer claims every pcb extension but the job manifest" do
+        assert_operator Maker::Previews::Gerber::EXTENSIONS.size, :>, 20, "the sweep needs a subject"
+        assert_equal FilesController::GERBER_EXTS.sort,
+                     (Maker::Previews::Gerber::EXTENSIONS + %w[gbrjob]).sort,
+                     "the renderer and the preview branch disagree about what a board's files are"
+      end
+
+      # A ZIP IS A BOARD WHEN ITS CONTENTS SAY SO. Registering `zip` is what gives a Gerber export
+      # a thumbnail; the price is a preview row and one bounded read for every other zip, which
+      # terminates `unsupported` and is never read again until its content changes.
+      test "a zip resolves to the GerberZip renderer" do
+        assert_equal Maker::Previews::GerberZip, Maker::Previews::Registry.for("zip")
+        assert_equal Maker::Previews::GerberZip, Maker::Previews::Registry.for_filename("board.ZIP")
+      end
+
       test "returns nil for an unsupported extension" do
         assert_nil Maker::Previews::Registry.for("sldprt")
         assert_nil Maker::Previews::Registry.for("dwg")
