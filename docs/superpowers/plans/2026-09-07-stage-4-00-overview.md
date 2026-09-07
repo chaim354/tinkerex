@@ -33,7 +33,7 @@ viewer controllers (S4-5). No new gem. No new JS dependency.
 |---|---|---|---|---|
 | S4-1 | `2026-09-07-stage-4-s1-project-page.md` | hero, photos, README card (root repo included), quiet panels, list-view menu | — | **landed** 2026-09-07, PR #334 |
 | S4-2 | `2026-09-07-stage-4-s2-filing.md` | roles for `.mage` `.lbrn` `.ai`, KiCad rules, board zips → `pcb/`, grouped settings, sweep opt-out and feedback, build-output display rule | — | **landed** 2026-09-07, PR #335 |
-| S4-3 | `2026-09-07-stage-4-s3-round-trip.md` | path + copy, self-refreshing file page, Save-to-library, honest Rescan | — | **landed** 2026-09-07, branch `claude/stage-4-s3-round-trip` |
+| S4-3 | `2026-09-07-stage-4-s3-round-trip.md` | path + copy, self-refreshing file page, Save-to-library, honest Rescan | — | **landed** 2026-09-07, PR #336 |
 | S4-4 | `…-s4-documentation.md` (to write) | README editor anywhere (D3), owner preview, publish panel, anchors | D3; S4-1's README card | **moderate**: flips a git-editing rule for Markdown |
 | S4-5 | `…-s5-public-viewers.md` (to write) | public file page with the viewers (D5), covers, public header | D5 | low: reuse |
 | S4-6 | `…-s6-adopt-anywhere.md` (to write) | adopt in place (D1), status, make-current, New badge, Not-a-project, switch confirmations | D1 | moderate: a folder outside `Projects/` as `folder_node_id` |
