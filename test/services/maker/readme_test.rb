@@ -80,7 +80,7 @@ module Maker
 
       readme = readme_for
 
-      assert_match %r{<h1>Desk Lamp</h1>}, readme.html
+      assert_match %r{<h1 id="desk-lamp">Desk Lamp</h1>}, readme.html
       assert_match %r{<li>a lamp</li>}, readme.html
       assert_nil readme.note
     end
@@ -183,7 +183,7 @@ module Maker
     test "a README just under the read limit is still read" do
       file!("README.md", @folder, body: "# Read me\n", size: Maker::Readme::READ_LIMIT)
 
-      assert_match %r{<h1>Read me</h1>}, readme_for.html
+      assert_match %r{<h1 id="read-me">Read me</h1>}, readme_for.html
     end
 
     test "a README past the render cap is truncated with a note, and what precedes the cut renders" do
@@ -191,7 +191,7 @@ module Maker
 
       readme = readme_for
 
-      assert_match %r{<h1>Desk Lamp</h1>}, readme.html
+      assert_match %r{<h1 id="desk-lamp">Desk Lamp</h1>}, readme.html
       assert_match %r{Showing the first 64 KB}, readme.note
     end
 
