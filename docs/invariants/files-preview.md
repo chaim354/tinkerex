@@ -87,12 +87,13 @@ list in the controller is the drift §14d exists to stop.
 That also means Gerbers behave like every other role and *unlike* KiCad files on the surfaces
 `ROLE_BY_EXT` feeds: they get a type-filter chip, they get a `Type` column value, and `role_for`
 answers `pcb`, which is what files a board's layer set into `pcb/` instead of scattering it through
-`other`. What they do **not** get is a thumbnail: no `Maker::Previews` renderer is registered for
-any of them and none will be, so `Registry.for_filename` answers nil and the grid renders the plain
-extension badge — the same branch any other non-renderable file takes, with nothing taught to skip
-them. **A server-side PCB renderer is out of scope on licensing grounds** (gerbv is GPL, §9); the
-render happens in the browser, from `vendor/javascript/tracespace.js` (MIT), and the file page's
-`:gerber` branch is the only place it is offered.
+`other`. **And since 2026-09-07 they get a thumbnail too** — see the tracespace-under-node paragraph
+at the end of this section. Until then this file said "no `Maker::Previews` renderer is registered
+for any of them and none will be" and gave the reason as **"a server-side PCB renderer is out of
+scope on licensing grounds (gerbv is GPL, §9)"**, which was reasoning from ONE renderer's licence to
+every renderer's absence: tracespace is MIT and was already vendored for the browser, so the licence
+argument never reached it. The browser render is unchanged and remains the only INTERACTIVE one —
+`vendor/javascript/tracespace.js`, offered by the file page's `:gerber` branch and nowhere else.
 
 **The `pcb` role is deliberately NOT in `TEXT_ROLES`, and `preview_kind` returns `:gerber` BEFORE
 the text branch.** Both are true on purpose and each alone would be enough: a Gerber layer is plain
@@ -182,8 +183,8 @@ render would make `Fit` mean "the current picture's box", which for a board with
 is not the board.
 
 **THE VIEWER WEARS THE 3D VIEWER'S CHROME AND FETCHES NOTHING UNTIL LAUNCHED.** The `:gerber`
-branch is a `.model-viewer.gerber-viewer`: at rest a poster (a sentence and the Download button —
-Gerbers have no thumbnail) with a `View layer` / `View board` button, then the same stage and bar as
+branch is a `.model-viewer.gerber-viewer`: at rest a poster (since 2026-09-07 the server-rendered
+thumbnail, plus a sentence and the Download button) with a `View layer` / `View board` button, then the same stage and bar as
 `:model3d` — dims, Fit, Fullscreen, ✕ Image — plus Top/Bottom and one toggle per layer for a
 stackup. The `.model-viewer*` classes are the 3D viewer's because the chrome IS the 3D viewer's,
 defined once in `pages/preview.css`; `.gerber-viewer` adds only what an `<svg>` stage needs
@@ -207,6 +208,74 @@ template because they are known without a parse. The toggle wording ("top copper
 "drill") is the vocabulary the panel's row badges used; the badges went with the panel and the words
 stayed. A Turbo-restored snapshot of an open viewer is reset to the poster on connect — the fresh
 controller holds no render for it.
+
+**THE THUMBNAIL IS TRACESPACE TOO, UNDER NODE, FROM THE SAME BUILD** (2026-09-07). `bin/build-tracespace`
+runs esbuild TWICE over ONE pinned `node_modules` — `vendor/javascript/tracespace.js` for the
+browser, `tools/gerber-svg/tracespace.mjs` for node — so the tile, the poster and the viewer are one
+picture and **there is no second Gerber parser anywhere in this app**. (The two artifacts are
+byte-identical today, measured; that is a coincidence of the flags — `--platform=node` externalises
+the two builtins the browser build marks by hand — and not a reason to ship one.)
+`tools/gerber-svg/render.mjs` takes `layer <file>` or `board <file>…` and writes SVG on stdout; it is
+**exec'd as a subprocess exactly like resvg, pdfium, f3d and stl-thumbnailer**, and nothing links
+node into Rails. **`Maker::Previews::Gerber` claims every `pcb` extension but `.gbrjob`**, derived
+from `ROLE_BY_EXT` and never a second list — a job file is JSON naming its siblings, and a renderer
+is handed ONE file's bytes and can reach no directory, so its picture is unbuildable and it stays
+the one `pcb` extension with no renderer (`registry_test.rb` pins the subtraction and the equality
+with `GERBER_EXTS`).
+
+**`Maker::Previews::GerberZip` claims `zip`, and what a non-Gerber zip costs is stated rather than
+hidden**: every zip in a library now gets a preview row and ONE bounded read, and a zip of firmware
+terminates in the job's ordinary `unsupported` state and is never read again until its content
+changes. That is the price of a thumbnail on the artefact a fab house is actually handed, and it is
+bounded first by the job's own 32 MB `MAX_PREVIEW_BYTES`. `Maker::GerberArchive.listing_from`
+decides which members are the board, so the renderer and the zip's own file page cannot disagree
+about the stack. **Members are extracted UNDER THEIR BASENAME into one subdirectory per member, and
+NEVER under the entry's own path** — a zip's entry names are user data and may say `../` (the
+per-member subdirectory is also what lets two folders' `copper_top.gbr` both keep the basename
+tracespace identifies a layer from), and resolved through **`Maker::GerberArchive.entries_by_name`**
+rather than `zip.find_entry` — the listing reports names SCRUBBED to UTF-8 while an entry's own name
+is ASCII-8BIT as read off the archive, so `Cámara_top.gbr` missed its member and answered
+`unsupported` for a board with nothing wrong with it. Bounded again by `MAX_MEMBERS` (64) and
+`MAX_EXTRACTED_BYTES` (64 MB), both refused as `unsupported`.
+
+**THE BYTE BOUND IS TWO CHECKS AND NEEDS BOTH — the declared sizes are the PRE-CHECK, the capped
+read is the BOUND.** Summing the central directory's DECLARED sizes before inflating anything is
+cheap, honest about the ordinary oversized export, and free (those sizes are already read) — but it
+is not a bound, because a declared size is a claim made by the archive and rubyzip does not hold the
+inflater to it: `Zip::Inflater#read` (3.6.0) never consults `decompressed_size`, and only
+`PassThruDecompressor`, for STORED entries, does. Measured: a hand-built 407 KB zip declaring
+`size: 100` passed the pre-check and inflated **209 MB** into the tempdir, ran 104 s and got node
+OOM-killed. So each member is also READ under a cap against a running total — `read(remaining + 1)`,
+refused before it is written when it comes back longer than the budget. Neither check replaces the
+other.
+
+**THE NODE SUBPROCESS IS THE ONE RENDERER HERE WITH A WALL-CLOCK BOUND** (`GERBER_RENDER_TIMEOUT`,
+default 60 s; `Maker::Previews::Gerber.run_node` kills and raises `RenderError`). Its siblings are
+each handed ONE file the job has already capped; this one's runtime is driven by decompressed,
+user-supplied geometry, and the 104 s probe above held a Solid Queue worker for its whole duration.
+`popen3` with stdout and stderr drained in their own threads, never a single-threaded read: a
+board's SVG is several MB, so one reader deadlocks on the pipe and the timeout then fires on a
+render that was working.
+
+**THE HAIRLINE STYLESHEET IS NOT APPLIED, AND THAT IS WHY `SvgRasterizer.to_png` GREW A
+`stylesheet:` KWARG.** `STYLESHEET` exists for sources that draw in hairlines (a LightBurn file, a
+DXF) and pins every stroke to 1.5 device pixels; a tracespace render carries the APERTURE'S OWN
+DIAMETER (measured: a 0.5 mm round aperture emits `<path stroke-width="0.5">`), so applying it would
+paint a 0.5 mm signal trace and a 2 mm power trace as one line — and on a composed board it would
+put a 1.5 px border around the substrate, mask and drill `<rect>`s, which inherit
+`stroke="currentColor"` at width 0. `stylesheet: nil` passes NO `--stylesheet` flag; the default is
+unchanged, so every other caller is untouched. **A layer that plots nothing is `unsupported`, not
+`failed`** — an empty `.gbo` is what a board with no bottom silkscreen exports, tracespace renders
+it at `viewBox="0 0 0 0"` and resvg refuses that outright, and `failed` is the state `Enqueue`
+treats as "retry me" (so it would be an error badge, re-rendered forever, on a file nothing is wrong
+with). `render.mjs` answers exit 4 for it and `Gerber#run_node` maps that one code.
+
+**`available?` GATES ON NODE **AND** THE VENDORED BUNDLE**, and a box missing either degrades every
+Gerber to `unsupported` — the graceful path `Stl`/`Mesh`/`Pdf` take without their binaries. Both
+halves are needed because each is separately absent on a real box: a dev machine has node and no
+bundle until `bin/build-tracespace` has run; the deploy image had the bundle and no node before
+2026-09-07. **The CI runner image carries node for the reason it carries resvg** — without it every
+render assertion in `gerber_test.rb`/`gerber_zip_test.rb` SKIPS, which is green over nothing.
 
 **"CONVERT THE GERBERS AND USE THE 3D VIEWER" WAS ASKED AND REFUSED** — `docs/roads-not-taken.md`
 §10. A board export is a 2D artefact and the fab house reads exactly what tracespace draws; there

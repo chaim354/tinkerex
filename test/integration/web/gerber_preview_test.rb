@@ -58,6 +58,46 @@ module Web
       assert_select ".gerber-viewer [data-gerber-target=?]", "tools", 0
     end
 
+    # THE POSTER IS THE SERVER-RENDERED THUMBNAIL SINCE 2026-09-07 — tracespace's own picture under
+    # node (Maker::Previews::Gerber), so the resting page, the grid cell and the launched viewer are
+    # one render. Before this the branch's own header said "Gerbers have no thumbnail" and the
+    # poster was a sentence and a Download button.
+    #
+    # THE ROW IS BUILT THROUGH THE PORT'S OWN TOKEN, not off the node's content_hash column:
+    # `FilesController#show` resolves `@thumbnail` by `@info.content_token`, which is the port's
+    # answer, and a row keyed on anything else is simply not the current one (files_flow_test.rb's
+    # ready-poster shape exactly).
+    test "a ready thumbnail becomes the Gerber viewer's poster" do
+      node = write_gerber!(name: "board.gtl")
+      token = FileLayer.current.stat(@user, node_id: node.node_id).content_token
+      preview = Maker::Previews::Enqueue.call(user: @user, node_id: node.node_id,
+                                              name: "board.gtl", version_id: token, kind: "thumbnail")
+      preview.update!(status: "ready")
+      preview.asset.attach(io: StringIO.new("\x89PNG\r\n\x1A\n".b), filename: "t.png",
+                           content_type: "image/png")
+
+      get file_path(node.node_id)
+      assert_response :success
+      assert_select ".gerber-viewer .model-viewer-fallback img.preview-image", 1
+      assert_select ".gerber-viewer .model-viewer-fallback img[alt=?]", "Preview of board.gtl"
+    end
+
+    # AND NOT BEFORE IT IS READY. A pending row must render the sentence alone, never a broken
+    # image — the same guard the :model3d poster carries, and the state every Gerber is in for the
+    # first few seconds after it lands.
+    test "a pending thumbnail leaves the poster as it was" do
+      node = write_gerber!(name: "pending.gtl")
+      token = FileLayer.current.stat(@user, node_id: node.node_id).content_token
+      Maker::Previews::Enqueue.call(user: @user, node_id: node.node_id, name: "pending.gtl",
+                                    version_id: token, kind: "thumbnail")
+
+      get file_path(node.node_id)
+      assert_response :success
+      assert_select ".gerber-viewer .model-viewer-fallback img", 0
+      assert_select ".gerber-viewer .model-viewer-fallback a[href=?]",
+                    blob_file_path(node.node_id, download: 1)
+    end
+
     # THE FILE PAGE IS ABOUT ITS OWN FILE, even when the whole board sits beside it. A file page that
     # quietly pulled in the neighbours would be showing something other than the file it is named
     # for; the board's own pages are the `.gbrjob`'s and a zipped export's.

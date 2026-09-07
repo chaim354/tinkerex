@@ -83,7 +83,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       sqlite3 libsqlite3-dev \
       libvips-tools \
       xz-utils unzip \
+      nodejs \
  && rm -rf /var/lib/apt/lists/*
+# `nodejs` runs the Gerber thumbnailer (tools/gerber-svg — the pinned tracespace bundle, MIT, under
+# node), exec'd as a subprocess like resvg/pdfium/f3d. Here for the same reason resvg is: without
+# it Maker::Previews::Gerber#available? is false and every render assertion in gerber_test.rb /
+# gerber_zip_test.rb SKIPS — green over nothing, which is this repo's dominant failure mode.
+# THE VERSION IS UBUNTU NOBLE'S, NOT DEBIAN BOOKWORM'S — this line named the wrong distribution
+# until 2026-09-07. The base above is `myoung34/github-runner:...-ubuntu-noble`, whose `nodejs`
+# package is 18.19.1; the RAILS image is different again (`ruby:3.4.7-slim` is Debian TRIXIE,
+# nodejs 20.19.2). Both measured in the real containers. That disagreement is fine and must not be
+# "aligned": bin/build-tracespace's `--target=node18` is a FLOOR for the bundle it emits, not a pin
+# on the runtime, and node 20 runs the same bundle. Proved to run rather than merely installed, the
+# way resvg/pdfium/stl-thumbnailer below each are.
+RUN node --version
 
 # ---------------------------------------------------------------------------------------------
 # Ruby, via mise — the same manager the Mac runner used, so `.ruby-version` resolves the same way.

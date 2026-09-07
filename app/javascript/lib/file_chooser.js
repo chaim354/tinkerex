@@ -13,18 +13,41 @@
 //   mode "folder": pick a destination folder. Descending a folder selects it; the root is always a
 //                  valid selection; files are not shown. Footer verb "Choose".
 //   mode "file":   pick an existing file. Folders navigate; a file click is the selection. "Open".
+//   mode "browse": no picking at all — folders descend and a file is a REAL LINK to its file page.
+//                  Hosted INLINE by `mount(container)` rather than in the modal, with no overlay,
+//                  no footer and no promise (2026-09-07: a repository's section on the project
+//                  page, filebrowser_controller.js).
+//
+// WHY BROWSE LIVES HERE AND NOT IN A SECOND MILLER-COLUMNS MODULE. "Walk a folder tree column by
+// column" is one verb two surfaces now perform — the picker's modal and the project page's repo
+// section — and §14d's rule is that such a verb gets ONE module rather than a copy per caller. A
+// second copy would have its own fetch, its own cache, its own crumbs and its own idea of what
+// `/library/children` answers, and the two would drift the first time one of them was fixed.
+//
+// THE MODAL'S BEHAVIOUR IS UNCHANGED BY DESIGN. `open()` still builds the overlay and returns the
+// promise the addon contract (`ctx.chooseFolder` / `ctx.chooseFile`, §14c) is specified in terms
+// of; what changed is that the element the columns are drawn INTO is `this.host` instead of being
+// reached through `this.overlay`, so an inline host can supply one without an overlay existing.
 export const ROOT_LABEL = "/ (library root)"
 
 export class FileChooser {
   // `label` is the CURRENT selection's path, not decoration — see the note in #open.
   constructor({ mode = "folder", childrenUrl, createUrl, rootLabel = ROOT_LABEL, value = "", label = null,
-                extensions = null } = {}) {
+                extensions = null, rootId = null, fileUrlTemplate = null } = {}) {
     this.mode = mode
     this.childrenUrl = childrenUrl
     this.createUrl = createUrl
     this.rootLabel = rootLabel
     this.value = value || ""
     this.label = label
+    // THE NODE ID THE FIRST COLUMN LISTS. null is the library root and is what every existing
+    // caller gets, so the modal is unchanged; `browse` passes a repository's dir node so the
+    // columns start INSIDE it and a maker cannot walk out of the repo they opened.
+    this.rootId = rootId || null
+    // A string containing `__ID__`, which a file row's href is built from. THE SERVER WRITES IT
+    // (projects/_repo_browser.html.erb renders `file_path("__ID__")`) so this module never learns
+    // a route — the same reason the children endpoint arrives as a value rather than a literal.
+    this.fileUrlTemplate = fileUrlTemplate || null
     // FILTERED IN THE BROWSER, NOT BY THE SERVER, AND THAT IS THE DELIBERATE HALF OF `pickFile`.
     // /library/children already answers one folder's children — a bounded list this modal has
     // entirely in hand — so a server-side filter would buy no round trips and no bytes worth
@@ -57,8 +80,39 @@ export class FileChooser {
       ? { nodeId: this.value, kind: "dir", path: this.label || this.rootLabel }
       : null
     this.buildModal()
-    this.render().then(() => this.overlay?.querySelector(".filechooser").focus())
+    this.render().then(() => this.host?.focus())
     return new Promise((resolve) => { this.resolve = resolve })
+  }
+
+  // ---- the inline host (mode "browse") -------------------------------------
+  // The same columns, drawn into a container the page already owns: no overlay, no keydown
+  // listener, no footer and no promise, because nothing here is ever committed — a file row is a
+  // link and following it is a navigation, not a selection.
+  //
+  // `.filechooser` KEEPS ITS CLASS so components.css's one definition of a column, a row and the
+  // narrow-width rule applies unchanged; `--inline` only undoes the modal's positioning
+  // (design-system.md §3: a component is defined in components.css and nowhere else).
+  mount(container) {
+    this.container = container
+    container.innerHTML = `
+      <div class="filechooser filechooser--inline">
+        <div class="filechooser-bar">
+          <button type="button" class="btn ghost filechooser-back" aria-label="Back">← Back</button>
+          <span class="filechooser-crumbs"></span>
+        </div>
+        <div class="filechooser-cols"></div>
+      </div>`
+    this.host = container.querySelector(".filechooser")
+    this.colsEl = this.host.querySelector(".filechooser-cols")
+    this.crumbsEl = this.host.querySelector(".filechooser-crumbs")
+    this.host.querySelector(".filechooser-back").addEventListener("click", () => this.back())
+    this.render()
+  }
+
+  destroy() {
+    if (this.container) this.container.innerHTML = ""
+    this.container = null
+    this.host = this.colsEl = this.crumbsEl = null
   }
 
   // Idempotent: `settle` is nulled on the first call, so a Cancel click that also bubbles to the
@@ -66,7 +120,7 @@ export class FileChooser {
   settle(value) {
     const resolve = this.resolve
     this.resolve = null
-    if (this.overlay) { this.overlay.remove(); this.overlay = null }
+    if (this.overlay) { this.overlay.remove(); this.overlay = null; this.host = null }
     if (this.onKeydown) { document.removeEventListener("keydown", this.onKeydown); this.onKeydown = null }
     if (this.previouslyFocused && this.previouslyFocused.focus) this.previouslyFocused.focus()
     if (resolve) resolve(value)
@@ -99,6 +153,10 @@ export class FileChooser {
       </div>`
     document.body.appendChild(this.overlay)
 
+    // `host` IS THE PANEL, NOT THE OVERLAY — the one element both faces have. `render()` and the
+    // await-guards inside it ask about it rather than about `this.overlay`, so an inline mount
+    // (which has no overlay at all) drives exactly the same render.
+    this.host = this.overlay.querySelector(".filechooser")
     this.colsEl = this.overlay.querySelector(".filechooser-cols")
     this.crumbsEl = this.overlay.querySelector(".filechooser-crumbs")
     this.selEl = this.overlay.querySelector(".filechooser-sel")
@@ -120,7 +178,7 @@ export class FileChooser {
     if (this.cache[key]) return this.cache[key]
     const url = new URL(this.childrenUrl, window.location.origin)
     if (parentId) url.searchParams.set("parent", parentId)
-    if (this.mode === "file") url.searchParams.set("files", "1")
+    if (this.mode === "file" || this.mode === "browse") url.searchParams.set("files", "1")
     let entries = []
     try {
       const res = await fetch(url, { headers: { Accept: "application/json" } })
@@ -132,19 +190,24 @@ export class FileChooser {
 
   // ---- render --------------------------------------------------------------
   async render() {
-    if (!this.overlay) return
+    if (!this.host) return
     this.colsEl.innerHTML = ""
-    const levels = [ { id: null, name: this.rootLabel }, ...this.trail ]
+    // `rootId` IS null FOR EVERY MODAL CALLER, so this is the library root exactly as before; an
+    // inline browse mount passes the repository's own dir node and the first column lists that.
+    const levels = [ { id: this.rootId, name: this.rootLabel }, ...this.trail ]
     for (let k = 0; k < levels.length; k++) {
       const entries = await this.childrenOf(levels[k].id)
-      // Awaiting inside the loop means the modal can be closed mid-render; without this the next
-      // append throws on a null colsEl and the promise never settles.
-      if (!this.overlay) return
+      // Awaiting inside the loop means the chooser can be closed (or unmounted) mid-render;
+      // without this the next append throws on a null colsEl and the promise never settles.
+      if (!this.host) return
       const descendedId = this.trail[k] ? this.trail[k].id : null // folder opened FROM this column
       this.colsEl.appendChild(this.columnEl(entries, k, descendedId))
     }
     this.colsEl.scrollLeft = this.colsEl.scrollWidth
     this.crumbsEl.textContent = [ this.rootLabel, ...this.trail.map((f) => f.name) ].join("  ›  ")
+    // THE FOOTER IS OPTIONAL, because browse mode has none. Guarded on presence rather than on
+    // `mode`, so the two facts stay one: whatever built the host decided which controls exist.
+    if (!this.selEl || !this.chooseBtn) return
     if (this.selection) {
       this.selEl.textContent = "Selected: " + this.selection.path
       this.chooseBtn.disabled = false
@@ -173,7 +236,7 @@ export class FileChooser {
     }
     for (const entry of entries) {
       const isFile = entry.kind !== "dir"
-      const row = document.createElement("div")
+      const row = this.rowEl(entry, isFile)
       row.className = "filechooser-row" + (isFile ? " is-file" : "")
       const selected = (!isFile && entry.node_id === descendedId) ||
         (isFile && this.selection && this.selection.kind === "file" && this.selection.nodeId === entry.node_id)
@@ -181,10 +244,37 @@ export class FileChooser {
       // textContent, never innerHTML: `name` is a user's own filename and this is the one place a
       // library file's bytes-adjacent metadata is drawn into the page.
       row.textContent = (isFile ? "📄 " : "📁 ") + entry.name
-      row.addEventListener("click", () => (isFile ? this.pickFile(depth, entry) : this.descend(depth, entry)))
+      if (this.mode === "browse") {
+        // A FILE ROW IN BROWSE MODE CARRIES NO CLICK HANDLER AT ALL — it is an `<a href>`, so
+        // middle-click, ⌘-click, "Open in new tab" and keyboard focus all work the way a maker
+        // expects of a file link, none of which a `div` with a listener can offer.
+        if (!isFile) row.addEventListener("click", () => this.descend(depth, entry))
+      } else {
+        row.addEventListener("click", () => (isFile ? this.pickFile(depth, entry) : this.descend(depth, entry)))
+      }
       col.appendChild(row)
     }
     return col
+  }
+
+  // The ELEMENT a row is made of. `div` in the picking modes, unchanged. In browse mode a folder
+  // is a `<button>` and a file an `<a>` — real controls, because nothing here is being selected:
+  // the column is navigation, and navigation belongs in elements the browser already knows how to
+  // operate. components.css resets both back to the `div` row's look.
+  rowEl(entry, isFile) {
+    if (this.mode !== "browse") return document.createElement("div")
+    if (!isFile) {
+      const btn = document.createElement("button")
+      btn.type = "button"
+      return btn
+    }
+    const link = document.createElement("a")
+    // `setAttribute`, and only when a template was supplied: an `<a>` with no href is not a link
+    // and is not focusable, which is the honest rendering for a caller that gave us no route.
+    if (this.fileUrlTemplate) {
+      link.setAttribute("href", this.fileUrlTemplate.replace("__ID__", encodeURIComponent(entry.node_id)))
+    }
+    return link
   }
 
   // ---- navigation ----------------------------------------------------------
@@ -192,7 +282,9 @@ export class FileChooser {
     this.trail = this.trail.slice(0, depth).concat([ { id: folder.node_id, name: folder.name } ])
     this.selection = this.mode === "folder"
       ? { nodeId: folder.node_id, kind: "dir", path: this.pathPrefix(this.trail.length) }
-      : null // in file mode, descending leaves nothing selected until a file is clicked
+      // In file mode descending leaves nothing selected until a file is clicked; in browse mode
+      // there is no selection to make at all, so the same `null` is the whole answer.
+      : null
     this.render()
   }
 
@@ -223,6 +315,9 @@ export class FileChooser {
       // answer). The folder arm above is untouched and must stay so — it names the root with the
       // caller's own `rootLabel`, which is a label by design and not the path this file's
       // `pathPrefix` builds.
+      //
+      // BROWSE MODE TAKES THIS ARM TOO, and it is already right there: browse never sets a
+      // selection, so clearing one is a no-op and Back is purely "pop a column".
       this.selection = null
     }
     this.render()
@@ -262,7 +357,11 @@ export class FileChooser {
   async submitNewFolder(form, input) {
     const name = input.value.trim()
     if (!name) return
-    const parentId = this.trail.length ? this.trail[this.trail.length - 1].id : null
+    // FALLS BACK TO `rootId`, NOT TO null. Browse mode never renders New Folder, so this is not
+    // reachable today — but a modal caller that ever passes `rootId` would otherwise create its
+    // folder at the LIBRARY ROOT while the crumbs said otherwise, which is the two-halves-
+    // disagree defect recorded at #open one more time.
+    const parentId = this.trail.length ? this.trail[this.trail.length - 1].id : this.rootId
     const token = document.querySelector('meta[name="csrf-token"]')?.content
     const body = new FormData()
     body.set("name", name)

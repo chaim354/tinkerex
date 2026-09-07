@@ -37,6 +37,8 @@ module Maker
   # `copper_top_l1.gbr` under three directories is identified by exactly the basename (probed).
   # Names are scrubbed to UTF-8 for the JSON attribute; a zip written with a non-UTF-8 name would
   # miss its member in JSZip and fail the board loudly ("could not load") rather than silently.
+  # THE SERVER-SIDE READER MUST LOOK MEMBERS UP BY THE SAME SCRUBBED NAME — `entries_by_name` below
+  # is that one door, and `zip.find_entry` is not it.
   #
   # EVERY FAILURE COLLAPSES TO nil — not a zip, a corrupt zip, an unreadable or unmounted store, a
   # zip with no Gerber member at all — because every caller answers all of them the same way (not
@@ -115,10 +117,7 @@ module Maker
 
       names = []
       job = nil
-      zip.each do |entry|
-        next if entry.directory?
-
-        name = entry.name.dup.force_encoding(Encoding::UTF_8).scrub
+      entries_by_name(zip).each do |name, entry|
         ext = ext_of(name)
         next unless FilesController::GERBER_EXTS.include?(ext)
 
@@ -134,10 +133,28 @@ module Maker
       listed = job && job_layer_names(job)
       stacked = listed ? names.select { |n| listed.include?(File.basename(n)) } : names
       stacked = names if stacked.empty?
-      Listing.new(members: names, stacked:, job_name: job && File.basename(job.name))
+      Listing.new(members: names, stacked:, job_name: job && File.basename(scrub_name(job.name)))
     rescue Zip::Error
       nil
     end
+
+    # THE ONE PLACE A MEMBER NAME IS SCRUBBED, and it is public because TWO readers need the same
+    # answer. `listing_from` above reports scrubbed names, and `Maker::Previews::GerberZip` then has
+    # to find the ENTRY behind one of them: `Zip::Entry#name` is ASCII-8BIT as read off the archive,
+    # so `zip.find_entry(scrubbed)` MISSES on any non-ASCII name — a board holding `Cámara_top.gbr`
+    # answered `unsupported` with nothing wrong with it (probed in review). Scrubbing in two places
+    # is the drift this method exists to prevent: this repo's dominant failure shape is one rule
+    # spelled at one door and not at the next (§14b).
+    #
+    # Directories are dropped here rather than by each caller — `listing_from` skipped them and the
+    # renderer never wants one. LAST WINS on a name collision, which is `index_by`'s rule and not a
+    # decision: two members whose scrubbed names collide are a degenerate archive either way, and
+    # the board still renders from whichever entry the map kept.
+    def self.entries_by_name(zip)
+      zip.entries.reject(&:directory?).index_by { |entry| scrub_name(entry.name) }
+    end
+
+    def self.scrub_name(name) = name.to_s.dup.force_encoding(Encoding::UTF_8).scrub
 
     # THE ARCHIVE IS OPENED IN A RESCUE OF ITS OWN, NARROWER IN SCOPE AND WIDER IN CLASSES than the
     # method's — `Maker::ThreeMfManifest.open_zip` is the same door for the same reason. rubyzip

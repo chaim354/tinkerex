@@ -57,7 +57,25 @@ module Maker
     # marks a working tree: entered rather than stopped at, so its `files` and `children` are
     # exactly like any other folder's, plus the panel's link to its commit/history pages. `files`
     # are this dir's OWN direct files only, backups already diverted out (see `#backups`).
-    Dir = Data.define(:node_id, :name, :path, :repo?, :children, :files)
+    Dir = Data.define(:node_id, :name, :path, :repo?, :children, :files) do
+      # THE WHOLE SUBTREE, NOT THIS DIR'S OWN FILES — the two questions a REPOSITORY asks, and both
+      # exist because a repo renders CLOSED with a browser inside it (2026-09-07) instead of a
+      # section per subdirectory. In memory, over the tree this listing already built: no query, and
+      # nothing to keep in step with the walk.
+      #
+      # `subtree_file_count` is what the section's summary shows for a repo. `visible.size` — this
+      # dir's OWN files — was right while the rest of the repo rendered as nested sections below;
+      # with the browser there instead it reads "(3)" over a repository holding 203 files.
+      #
+      # `subtree_file_ids` is the set ProjectsController#show keeps OUT of its thumbnail map: a
+      # closed repo draws no tiles, so backfilling a preview row and a render job per file is work
+      # for a picture the page cannot show. BACKUPS ARE NOT IN EITHER ANSWER, and that is correct
+      # rather than an oversight — `#bucket` diverts a backup out of `files` into the cross-cutting
+      # `#backups` list, which the panel DOES render as tiles wherever the file physically sits, so
+      # a rescue copy inside a repository must keep its thumbnail.
+      def subtree_file_ids = files.map(&:node_id) + children.flat_map(&:subtree_file_ids)
+      def subtree_file_count = files.size + children.sum(&:subtree_file_count)
+    end
 
     # A FLATTENED, DERIVED VIEW OF `#tree`'s repo dirs — kept as its own list because it is the
     # natural shape for "every repository this folder holds", independent of how deep each one
@@ -155,6 +173,15 @@ module Maker
 
     # Every repository this folder holds, flattened out of the tree. See the Repo class comment.
     def repos = @repos ||= flatten_dirs(tree).select(&:repo?).map { |d| Repo.new(node_id: d.node_id, name: d.name, path: d.path) }
+
+    # Every file node_id anywhere BENEATH a repository in this folder, repo roots included — the
+    # ids the project page renders no tile for since a repo became a closed browser. A Set because
+    # its one caller subtracts and tests membership; a nested repository inside another one lands in
+    # it twice and the Set makes that a non-question. See Dir#subtree_file_ids for what is and is
+    # not in it.
+    def repo_subtree_ids
+      @repo_subtree_ids ||= flatten_dirs(tree).select(&:repo?).flat_map(&:subtree_file_ids).to_set
+    end
 
     # Is this node INSIDE the folder — anywhere beneath it, listed or not? Answered from the tree's
     # ancestor chain, never from `node_ids`: the listing is capped at FILE_CAP, so a file past the

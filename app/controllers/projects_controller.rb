@@ -203,12 +203,26 @@ class ProjectsController < ApplicationController
     # Dead ids never reach either list: @listing only ever holds live nodes, and @attachments has
     # already dropped anything @page_nodes could not find — `stat_all` would answer nothing for a
     # gone id anyway, but it would still spend a slot in the ORDERED walk BACKFILL_LIMIT bounds.
-    tile_ids = @listing.node_ids + @linked_rows.map(&:node_id)
+    #
+    # A CLOSED REPOSITORY'S FILES ARE NOT TILES, SO THEY ARE NOT IN THIS UNION (2026-09-07). Since
+    # `_file_tree_section` stopped drawing tiles inside a repo — the Finder-style browser navigates
+    # it instead — every id beneath one is a thumbnail this page renders nowhere, and
+    # `ThumbnailMap.for` does not merely LOOK: it BACKFILLS, creating a preview row and enqueueing a
+    # render job per missing id. Probed in review: a project whose repository holds 60 files
+    # enqueued 60 GeneratePreviewJobs from a page that shows none of them, spending the bounded
+    # BACKFILL_LIMIT budget the visible tiles are what it exists for. EXCEPT @generated_ids — a
+    # generated file INSIDE a repository still renders as a tile in the Generated group below, so
+    # its thumbnail must stay in the map. The subtree walk is the listing's own
+    # (Maker::ProjectFolderListing#repo_subtree_ids): in memory over the tree it already built, so
+    # this costs no query and page_query_budget_test.rb stays flat.
+    hidden_in_repos = @listing.repo_subtree_ids - @generated_ids
+    tile_ids = @listing.node_ids.reject { |id| hidden_in_repos.include?(id) } +
+               @linked_rows.map(&:node_id)
     @page_thumbs = Maker::Previews::ThumbnailMap.for(
       current_user, tile_ids + entry_photo_ids.select { |id| @page_nodes.key?(id) }
     )
-    # TILE_IDS ONLY, NOT THE BUILD-LOG PHOTOS. Every tile this page can render — a folder section, a
-    # repository's own files, Backups, Generated, Linked — carries `contextmenu->filemenu#open`;
+    # TILE_IDS ONLY, NOT THE BUILD-LOG PHOTOS. Every tile this page can render — a folder section,
+    # Backups, Generated, Linked — carries `contextmenu->filemenu#open`;
     # `_log_entry`'s photos are spans driven by the `thumbs` controller alone, with no menu to add
     # an entry to — so an origin resolved for one would be work nothing reads. That is why entry
     # photos are not merged into this union either.

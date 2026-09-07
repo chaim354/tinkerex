@@ -274,7 +274,20 @@
   .filechooser-crumbs { padding: 8px 16px; border-bottom: 1px solid var(--line); color: var(--fg-muted); font: 12px/1.4 var(--font-mono); white-space: nowrap; overflow-x: auto; }
   .filechooser-cols { display: flex; flex: 1; min-height: 0; overflow-x: auto; }
   .filechooser-col { flex: 0 0 200px; min-height: 0; overflow-y: auto; border-right: 1px solid var(--line); }
-  .filechooser-row { display: block; padding: 7px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* THE INLINE VARIANT (mode "browse", mounted by filebrowser_controller.js into a repository's
+     section on the project page). It only undoes the modal's POSITIONING — a fixed height in the
+     flow instead of a centred panel capped at the viewport — so every column, row, empty-state and
+     the narrow-width rule at the end of this block go on applying unchanged. A separate
+     `.repo-browser` component would have been a second definition of all of them. */
+  .filechooser--inline { position: static; width: 100%; max-height: none; height: 320px; border: 1px solid var(--line); border-radius: var(--radius-panel); }
+  .filechooser-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  /* The crumbs keep their font and take the rest of the bar; the bar already draws the divider, so
+     the crumbs' own bottom border would double it. */
+  .filechooser-bar .filechooser-crumbs { flex: 1; min-width: 0; padding: 0; border-bottom: 0; }
+  /* A ROW IS A `div` IN THE PICKING MODES AND A `button`/`a` IN BROWSE MODE — real controls, so
+     middle-click and the keyboard work on a file link — which means this rule has to flatten a
+     UA-styled button and an anchor back to what the `div` row always looked like. */
+  .filechooser-row { display: block; padding: 7px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; appearance: none; border: 0; background: none; width: 100%; text-align: left; font-family: inherit; color: inherit; text-decoration: none; }
   .filechooser-row:hover { background: var(--raised); }
   .filechooser-row.sel { background: var(--accent); color: var(--accent-ink); }
   .filechooser-row.is-file { color: var(--fg-muted); }
