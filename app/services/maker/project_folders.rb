@@ -103,7 +103,7 @@ module Maker
       ROLE_FOLDERS.fetch(Maker::FileAttachment.role_for(name))
     end
 
-    # THE PER-USER LOOKUP (stage 3, S3-1). `Maker::FilingRules.for(user)` seeds the twelve-role map
+    # THE PER-USER LOOKUP (stage 3, S3-1). `Maker::FilingRules.for(user)` seeds the thirteen-role map
     # into this user's own rows on first read and answers from the user's own edited map ever
     # after — "other" for an extension with no rule (see the header for why that default is right
     # here and was wrong for `default_folder_for`'s role-keyed fetch).

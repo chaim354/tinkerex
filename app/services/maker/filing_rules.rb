@@ -1,6 +1,6 @@
 module Maker
   # THE EXTENSION MAP, PER USER (stage 3, S3-1): which subfolder of Projects/<slug>/ the intake
-  # sweep files each extension into. Seeded ONCE from the twelve-role default
+  # sweep files each extension into. Seeded ONCE from the thirteen-role default
   # (ProjectFolders::ROLE_FOLDERS over FileAttachment::ROLE_BY_EXT) on the first read, then the
   # user's rows are the truth — the seed is a starting point, never a fallback that would silently
   # overrule an edit.
@@ -14,7 +14,7 @@ module Maker
     # a user's own filing, §14f). `exists?` CANNOT tell those two states apart — it reads false in
     # both — so, UNLIKE Shelf, this guard does NOT protect a fully-emptied user from being reseeded
     # on their next read. That is an accepted gap, not an oversight: an emptied filing map recovers
-    # to the same twelve-role default a brand-new user gets, the reasonable, low-stakes outcome
+    # to the same thirteen-role default a brand-new user gets, the reasonable, low-stakes outcome
     # here (a shelf's "I use none of these" is a real product choice; a folder for every extension
     # existing again is not a comparable loss).
     #

@@ -26,7 +26,7 @@ module Maker
     test "every role has a folder" do
       assert_equal Maker::FileAttachment::ROLES.to_set,
                    Maker::ProjectFolders::ROLE_FOLDERS.keys.to_set,
-                   "add the new role to ROLE_FOLDERS — a role with no folder is ever seeded"
+                   "add the new role to ROLE_FOLDERS — a role with no folder is never seeded"
     end
 
     # THE STATIC, ROLE-KEYED VOCABULARY -- default_folder_for is what the seed itself is built
