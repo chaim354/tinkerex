@@ -82,12 +82,20 @@ module Web
     # BOTH ARMS, because they are different scopes: `files=1` widens what is listed and must not
     # widen what is hidden, and the folder-only default has its own `where(kind: "dir")` on top.
     #
+    # BUILD OUTPUT JOINED THE LIST IN STAGE 4, S4-2 (`Library::BuildOutput`) and lands here for
+    # free, because this door asks the shared scope rather than re-listing the rules. `build/` is
+    # deliberately NOT on that list, so it is the negative case here: a chooser that hid every
+    # plausible clutter name would pass with only refusals asserted.
+    #
     # Mutation-checked (§15): `visible_entries` -> `present` turns the `.git`/`.ptr`/`.DS_Store`
     # rows red while every other case in this file stays green.
-    test "children hides the .git marker, .ptr stubs and dot-files" do
+    test "children hides the .git marker, .ptr stubs, dot-files and build-output dirs" do
       folder = node("repo", "dir", nil)
       node(Library::RepoMetadata::DIR_NAME, "dir", folder)
       node(".hidden", "dir", folder)
+      node("node_modules", "dir", folder)
+      node("__pycache__", "dir", folder)
+      node("build", "dir", folder)
       node("src", "dir", folder)
       node("notes.ptr", "file", folder)
       node(".DS_Store", "file", folder)
@@ -95,11 +103,11 @@ module Web
 
       get library_children_path(parent: folder, files: 1)
       assert_response :success
-      assert_equal %w[src main.c], json["entries"].map { |e| e["name"] }
+      assert_equal %w[build src main.c], json["entries"].map { |e| e["name"] }
 
       get library_children_path(parent: folder)
       assert_response :success
-      assert_equal %w[src], json["entries"].map { |e| e["name"] }
+      assert_equal %w[build src], json["entries"].map { |e| e["name"] }
     end
 
     test "a foreign/forged parent falls back to the root, never another user's tree" do

@@ -139,6 +139,32 @@ module Maker
       assert_equal [], listing.repos
     end
 
+    # STORY 4.8: a firmware project's `node_modules/` is not a section, and its objects are not
+    # files in the panel's count. Both halves matter — `files_in` reads `visible_entries(false)`,
+    # so a dir the walk never enters contributes no files either.
+    #
+    # `build/` IS THE NEGATIVE CASE AND IT IS LOAD-BEARING (amendment 1): a lowercase `build/` is a
+    # folder a maker plausibly made themselves, this page has no "Show hidden" control to get it
+    # back with, and widening Library::BuildOutput::NAMES would silently swallow it here. With only
+    # refusals asserted, a `hidden_dir?` that hid every name on any list would pass.
+    test "a build-output directory is neither a section nor counted, while build/ and src/ still are" do
+      _projects, desk_lamp = desk_lamp_folder
+      node_modules = dir("dir-nm", "node_modules", desk_lamp.node_id)
+      file("f-obj", "main.o", node_modules.node_id)
+      pycache = dir("dir-pyc", "__pycache__", desk_lamp.node_id)
+      file("f-pyc", "helper.pyc", pycache.node_id)
+      build = dir("dir-build", "build", desk_lamp.node_id)
+      file("f-photo", "assembly.jpg", build.node_id)
+      src = dir("dir-src", "src", desk_lamp.node_id)
+      file("f-main", "main.cpp", src.node_id)
+
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
+
+      assert_equal %w[build src], listing.tree.map(&:name)
+      assert_equal 2, listing.total
+      assert_equal %w[assembly.jpg main.cpp], listing.all_rows.map { |r| r.node.name }.sort
+    end
+
     test "a subdir holding a .git child is entered as a repo section, its files listed under it, and the root's own files still list even when the root itself looks like a working tree" do
       _projects, desk_lamp = desk_lamp_folder
       file("f-root", "bracket.stl", desk_lamp.node_id)

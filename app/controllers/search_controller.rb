@@ -24,8 +24,11 @@ class SearchController < ApplicationController
     like = "%#{Node.sanitize_sql_like(@q.downcase)}%"
 
     # Files: live, visible nodes only — `.present` excludes tombstones, `visible_entries(false)`
-    # excludes dot-files and the `.git` marker, exactly like a folder view with hidden files off.
-    # `kind: "file"` only: a directory has nowhere useful of its own to preview in a results row.
+    # excludes dot-files, the `.git` marker and, since stage 4, S4-2, build-output directories
+    # (`Library::BuildOutput`), exactly like a folder view with hidden files off.
+    # `kind: "file"` only: a directory has nowhere useful of its own to preview in a results row —
+    # which is also why the build-output rule, a DIRECTORY rule, changes nothing this query returns
+    # and is pinned on the Files page's own flat `?q=` instead (files_search_test.rb).
     files = current_user.nodes.present.where(kind: "file")
                         .visible_entries(false)
                         .where("LOWER(name) LIKE ? ESCAPE '\\'", like)

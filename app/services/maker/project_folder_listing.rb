@@ -10,7 +10,8 @@ module Maker
   #
   # THE WALK IS IN MEMORY OVER ONE PLUCK OF THE USER'S DIRS, then ONE files query and ONE count, so
   # the cost is constant in the number of files and folders (page_query_budget_test.rb pins it).
-  # Two rules shape the walk: a dot-prefixed dir is skipped, the same display rule
+  # Two rules shape the walk: a dir is skipped when it is dot-prefixed OR build output
+  # (`Library::BuildOutput` — `node_modules`, `__pycache__`), the same display rules
   # Node.visible_entries applies to entries (never a scan skip — §14b); and a dir holding a `.git`
   # marker child is a WORKING TREE — flagged, but ENTERED rather than stopped at (stage 3, S3-1):
   # a checked-out firmware repo is a section like any other, expandable in place with its own
@@ -230,7 +231,7 @@ module Maker
 
     def build_dirs(parent_id, by_parent, parent_path)
       @tree.children_of(parent_id)
-           .reject { |d| d.name.start_with?(".") }
+           .reject { |d| hidden_dir?(d.name) }
            .select { |d| @dir_ids_set.include?(d.node_id) } # only dirs the walk actually entered (DIR_CAP)
            .sort_by { |d| d.name.to_s }
            .map do |d|
@@ -257,8 +258,8 @@ module Maker
     #
     # A WORKING TREE IS FLAGGED, NOT STOPPED AT (stage 3, S3-1) — it is entered and queued exactly
     # like any other dir, so its own files and its own subfolders are walked (bounded by DIR_CAP
-    # like everything else); only its `.git` MARKER CHILD is skipped, by the same dot-name check
-    # every dot-dir gets, never observed.
+    # like everything else); only its `.git` MARKER CHILD is skipped, by the same #hidden_dir?
+    # check every dot-dir gets, never observed.
     def collect_dirs(root_id)
       out = [ root_id ]
       queue = [ root_id ]
@@ -267,7 +268,7 @@ module Maker
         parent = queue.shift
         @tree.children_of(parent).each do |child|
           next unless seen.add?(child.node_id)
-          next if child.name.start_with?(".")
+          next if hidden_dir?(child.name)
           @repo_root_ids << child.node_id if working_tree?(child.node_id)
           out << child.node_id
           queue << child.node_id
@@ -283,6 +284,15 @@ module Maker
 
     def working_tree?(dir_id)
       @tree.children_of(dir_id).any? { |d| Library::RepoMetadata.marker?(d.name) }
+    end
+
+    # THE TWO QUESTIONS EVERY DIR-SKIPPING SITE IN THIS WALK ASKS, ASKED ONCE (stage 4, S4-2).
+    # `collect_dirs` and `build_dirs` both had `d.name.start_with?(".")` inline and now both need
+    # the build-output rule too — two copies of a two-part rule is three chances to drift.
+    # The NAMES themselves live in Library::BuildOutput and nowhere else; this composes, it does
+    # not re-list, which is the shape `Library::ReservedNames` already uses for its own union.
+    def hidden_dir?(name)
+      name.to_s.start_with?(".") || Library::BuildOutput.dir?(name)
     end
   end
 end
