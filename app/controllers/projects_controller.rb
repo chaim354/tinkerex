@@ -403,7 +403,7 @@ class ProjectsController < ApplicationController
   # every project save.
   def project_params
     attrs = params.require(:project).permit(:name, :description, :status, :cover_node_id, :tag_list,
-                                            :visibility, :license)
+                                            :visibility, :license, :autofile)
     attrs[:cover_node_id] = nil if params[:project][:cover_clear] == "1"
     attrs
   end

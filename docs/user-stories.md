@@ -59,7 +59,7 @@ bookkeeping.**
 | 1.2 | When I am at the browser with an idea, I want New project to mint the folder on the NAS and make it the current project, so that the next LightBurn save lands in it. | `rough` | Mints `Projects/<slug>` (`project.rb:144-152`). Does not set current (`projects_controller.rb:251-259`). No status field on the form, so planning/active/paused/done are unreachable — share: all 9 projects read "planning". A failed mkdir still says "Project created." (`projects_controller.rb:346-350`). |
 | 1.3 | When I keep laser work in `designs/` and CNC in `cnc/`, I want to say "this folder is a project" without moving it, so that my NAS layout stays mine. | `missing` | Only direct children of `Projects/` are adopted (`project_discovery.rb:112-116`). seed: `designs/tray` silently became a **Model** through the seeded `*` shelf (`shelf.rb:24`). No adopt door; no folder rename or move from the web. share: ~20% of files live outside `Projects/`. |
 | 1.4 | When I clone a firmware repo into `Projects/`, I want the project page to show its README, commits and history and never re-file its files, so that a git project stays a git project. | `rough` | Adopted; files correctly never filed (`attach_to_project.rb:192`). **S4-1:** a project whose root is the repo now gets the repository card, a `repo` badge and Commits/History in the Files head, and the caption says the sweep leaves its files alone (`ProjectFolderListing#root_repo?`, `projects/_attachments.html.erb`). Still rough: no "new" marker when discovery adopts it (S4-6) and build output is indexed (S4-2). |
-| 1.5 | When the app creates a project, moves a file or picks a cover for me, I want to see that it did, so that I trust it with my folders. | `missing` | Discovery, the scheduled sweep and current-project switches report only to the log (`project_intake_job.rb:120-141`, `current_project_controller.rb:6-15`). Filing feedback covers a name collision only (`project_folder_intake.rb:103-107`). |
+| 1.5 | When the app creates a project, moves a file or picks a cover for me, I want to see that it did, so that I trust it with my folders. | `missing` | **S4-2** landed the filing half: the flash names moves and the project page shows the last sweep. Discovery's feedback, the "new" marker and the current-project switch confirmation are S4-6, so the tag stays. |
 | 1.6 | When I rename a project or finish it, I want folder, URL and page to stay in step, and "done" to be a state I can set. | `rough` | Rename never renames the folder or the slug (`project.rb:202-203`). Archive doubles as the undocumented "not a project" dismissal (`docs/invariants/project-intake.md:20-28`). |
 
 ## T2. Each file type: made in a program, saved to the share, worked with on the web, and back
@@ -70,14 +70,14 @@ again, catch up.*
 
 | # | type | tag | what works / what does not |
 |---|---|---|---|
-| 2.1 | LightBurn `.lbrn2` | `works` | Embedded thumbnail, Measure view, laser-settings panel, print to scale, SVG export (`files_controller.rb:1538`, `files/_measure.html.erb`). `.lbrn` (v1) has no role → `other/` (`file_attachment.rb:66`). |
+| 2.1 | LightBurn `.lbrn2` | `works` | Embedded thumbnail, Measure view, laser-settings panel, print to scale, SVG export (`files_controller.rb:1538`, `files/_measure.html.erb`). **S4-2:** `.lbrn` (v1) files beside it as `laser` (`ROLE_BY_EXT`). |
 | 2.2 | `.svg` `.dxf` | `works` | Thumbnails, Measure, print, export. The **box generator writes SVG onto the share** — the one true write-back (`tools/addons_controller.rb:520-536` → `library_output.rb:120-123`). SVG cannot be edited as text (`git-editing.md:485-501`). |
-| 2.3 | `.ai` | `missing` | No role, no thumbnail, no page: "No inline preview." Filed to `other/`. share: 25 files. |
-| 2.4 | MillMage `.mage` | `rough` | Full page — Measure and a CNC operations panel (`show.html.erb:334-336`) — but no `ROLE_BY_EXT` entry, so filed to `other/`. |
+| 2.3 | `.ai` | `rough` | **S4-2:** role `vector` → files into `design/`; a thumbnail through pdfium when the bytes are a PDF (`Maker::Previews::Pdf`, registered by name, retracted by content). Still rough: an `.ai` saved without PDF compatibility has no preview, and there is no in-browser vector view. share: 25 files. |
+| 2.4 | MillMage `.mage` | `works` | **S4-2:** role `cnc_design` → `cnc/` (`ROLE_BY_EXT`, `ROLE_FOLDERS`), beside the Measure view and the CNC operations panel it already had; existing attachments re-derived by migration `20260907120100`. |
 | 2.5 | `.stl` `.3mf` `.step` `.obj` and 15 more (`VIEWABLE_3D_EXTS`) | `works` | Thumbnails, lazy 3D viewer, bounding dims, 3MF slicer colours and units; the OpenSCAD tool writes 3MF back. No measuring. `3dm` `amf` `fcstd` open in the browser with no thumbnail (`registry.rb:36-42`). |
 | 2.6 | OpenSCAD `.scad` | `rough` | Code view; editable in the browser **only inside a git repo** (`files_controller.rb:444`); the OpenSCAD tool reads it and writes 3MF. |
 | 2.7 | firmware `.ino` `.cpp` `.h` `.yml` | `works` in repos | Code view, edit, commit, history, restore. `json`/`txt` file to `docs/` while `yml` files to `code/` (`file_attachment.rb:80-124`). |
-| 2.8 | KiCad + Gerbers | `rough` | Gerber single, zip and `.gbrjob` render as a board; KiCanvas for KiCad. KiCad files **cannot have a filing rule** (`EXT_RE`, `files-preview.md:41-50`) → `other/`; a Gerber zip files to `archives/`, not `pcb/` (`files-preview.md:143-148`). |
+| 2.8 | KiCad + Gerbers | `rough` | Gerber single, zip and `.gbrjob` render as a board; KiCanvas for KiCad. **S4-2:** `kicad_sch`/`kicad_pcb` carry a filing rule (`Maker::FilingRule::KEY_RE`) and file into `pcb/`; a zip the Gerber reader recognises as a board files into the maker's own layer folder, `pcb/` by default (`ProjectIntake#board_folder_for`). Still rough: their ROLE stays `other`, so the type filter offers no KiCad chip and never will (`EXT_RE`). |
 | 2.9 | photos, PDF, README | `rough` | Image inline, PDF in the browser's viewer. **S4-1:** the project-root README renders on the private project page for every project (`projects/_readme_card.html.erb`, `_repo_card` for a root repo). Still rough: the README's own file page shows source, and README links resolve only on the project and public pages. |
 | 2.10 | any file: back to the program | `missing` | The file page shows Name/Size/Type/Modified (`show.html.erb:47-66`), never the library path, never a reveal or open hand-off; actions are Download, Delete, Back. |
 | 2.11 | any file: I saved it again | `rough` | Up to 15 min blind plus render time; the file page never refreshes itself (`thumbs_controller.js` runs only on grids); Rescan guesses a 6 s reload (`scanreload_controller.js:16-23`). |
@@ -100,14 +100,14 @@ again, catch up.*
 
 | # | story | tag | evidence / friction |
 |---|---|---|---|
-| 4.1 | When I drop files at a project root, I want them filed into subfolders I chose, and told when it happened. | `rough` | The sweep works (seed: `design/`, `docs/`). Silent. A working tree is never filed while the caption promises it. |
-| 4.2 | When I change a filing rule, I want existing files re-filed. | `missing` | Rules apply to root files only, on their next arrival (`project_intake.rb:292`); a rule change touches nothing already placed. |
-| 4.3 | When I open Settings → Filing, I want "laser files go to `laser/`", not 130 extension rows. | `rough` | One row per extension (seed screenshot). Rules are per user, never per project (`filing_rule.rb:12,27`). |
+| 4.1 | When I drop files at a project root, I want them filed into subfolders I chose, and told when it happened. | `works` | **S4-2:** the eager flash names the file and the folder off `Result#plan` ("Filed plate.svg into design/."), a collision names the folder actually tried (`Result#conflict_folders`), and the project page's Files panel says what the last sweep filed and when (`last_swept_at`, `last_sweep_moves`, one writer). A working tree's caption stopped promising a sweep in S4-1. |
+| 4.2 | When I change a filing rule, I want existing files re-filed. | `missing` | Rules apply to root files only, on their next arrival; a rule change touches nothing already placed. **Stays missing on purpose** (spec §9): re-filing already-placed files is a move the sweep must not make unasked, and the new per-folder settings page invites edits — so the page says a changed rule applies to files that arrive from now on. |
+| 4.3 | When I open Settings → Filing, I want "laser files go to `laser/`", not 130 extension rows. | `rough` | **S4-2:** one card per folder, its extensions as chips with Remove, one add form per card; a project can switch automatic filing off (`maker_projects.autofile`, the sweep still attaches). Still rough: rules are per user, never per project (spec §9 defers that until this page shows whether one map is still too many). |
 | 4.4 | When I open the app, I want to see what changed on the NAS since I last looked, per project. | `rough` | Home shows eight recent files library-wide; a project shows no "new since". |
 | 4.5 | When I set a current project, I want it obvious and driving uploads, tool output and new files. | `works` | Drives uploads and tool output (`current_project.rb:62-78`); nothing sets it automatically; a switch gives no confirmation. |
 | 4.6 | When I point a fresh install at the same NAS, I want my notes, tasks, log, box parameters, releases and tags to come back. | `missing` | All database rows keyed by node ids a fresh install re-mints (`reconciler.rb:547,606`). Only projects and models re-derive from the folders. **Deferred to its own spec** (stage 4 decision D2). |
 | 4.7 | When a screenshot or a Printables zip lands at the library root, I want a one-step "this belongs to project X". | `rough` | Attach and relocate exist on the project page only; the Files page has no "file into project" action. share: loose screenshots at the root. |
-| 4.8 | When a repo carries build output, I want it out of my library. | `rough` | Dot-prefixed dirs (`.pio`) are hidden by `Node.visible_entries` but still indexed and counted; `build/`, `node_modules/`, `__pycache__/` are not hidden at all. share: ~440 `.o/.d/.a` files. |
+| 4.8 | When a repo carries build output, I want it out of my library. | `rough` | Dot-prefixed dirs (`.pio`) hidden by `Node.visible_entries`. **S4-2:** `node_modules/` and `__pycache__/` join them (`Library::BuildOutput`), out of the folder view, the project panel, its counts and search; `build/` deliberately stays visible (a maker's own folder name). Still rough, by design: the files INSIDE remain indexed and appear in the flat by-extension view — the same recorded limit `.git` carries — and nothing is un-indexed (§14b). share: ~440 `.o/.d/.a` files. |
 
 ## T5. Publishing, with documentation and the files embedded and linked
 
@@ -142,13 +142,15 @@ again, catch up.*
 | theme | stories | works | rough | missing | other |
 |---|---|---|---|---|---|
 | T1 | 6 | 0 | 4 | 2 | |
-| T2 | 13 | 4 | 7 | 2 | |
+| T2 | 13 | 5 | 7 | 1 | |
 | T3 | 7 | 1 | 2 | 3 | 1 built-unused |
-| T4 | 8 | 1 | 5 | 2 | |
+| T4 | 8 | 2 | 4 | 2 | |
 | T5 | 8 | 0 | 4 | 4 | |
 | T6 | 8 | 2 | 3 | 2 | 1 by design |
-| **all** | **50** | **8** | **25** | **15** | **2** |
+| **all** | **50** | **10** | **24** | **14** | **2** |
 
 Re-measured after S4-1 (2026-09-07): 6.6 and 6.8 moved to `works`; 1.4, 2.9, 6.1, 6.2, 6.3 gained new evidence and stay `rough`; 5.3 gained its render half and stays `missing`.
+
+Re-measured after S4-2 (2026-09-07): 2.4 and 4.1 moved to `works`; 2.3 moved from `missing` to `rough`; 2.8, 4.3, 4.8 gained new evidence and stay `rough`; 1.5 gained its filing half and stays `missing`; 4.2 stays `missing` by decision.
 
 Which slice moves which story: the slice table in the stage 4 spec.

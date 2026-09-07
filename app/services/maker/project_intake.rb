@@ -29,7 +29,24 @@ module Maker
     # for to read them correctly. `skips` is the SAME shape for the other outcome — [name,
     # reason] pairs, one per file #file_all did not move — so Task 12's rake task can say which
     # files and why, not just how many.
-    Result = Data.define(:attached, :moved, :skipped, :skips, :plan, :status)
+    Result = Data.define(:attached, :moved, :skipped, :skips, :plan, :status, :conflict_folders) do
+      # `conflict_folders` MAPS A SKIPPED FILE'S NAME TO THE FOLDER #place TRIED, and it exists so a
+      # flash can name that folder without re-deriving it (stage 4, S4-2). ProjectFolderIntake used
+      # to recompute it from the user's rules, which was right for every file whose destination
+      # comes from its NAME and wrong for the one whose destination comes from its CONTENT — a
+      # board zip collides in `pcb/` and the sentence said `archives/`.
+      #
+      # NOT NAMED `conflicts`, AND THAT IS NOT A STYLE CHOICE — DO NOT SHORTEN IT BACK.
+      # `conflicts` is one of the seven ENGINE_ASSOCIATIONS in test/architecture_invariants_test.rb,
+      # matched as a BARE :on_ident token anywhere under `app/`, so a member by that name puts this
+      # file on the "reaching into Sync::" offender list — which is a guard that asserts ZERO with
+      # NO ALLOWLIST (§14d) and must stay that way. Found by running it, not by predicting it.
+      #
+      # A DEFAULT, so the three construction sites in this file and the three in
+      # project_scan_button_test.rb did not have to change — and so a future Result built without
+      # it reads as "no conflicts recorded" rather than raising.
+      def initialize(conflict_folders: {}, **) = super
+    end
 
     # What one USER's whole intake run did. The cap is a property of the RUN, so its refusal lives
     # here rather than on Result: a single project cannot know whether the run as a whole is
@@ -164,6 +181,14 @@ module Maker
     # so what this predicts and what the sweep does cannot disagree as long as the user's rules
     # have not changed in between. Not a second copy of the vocabulary (§14d: add an extension in
     # ROLE_BY_EXT only; stage 3 S3-1: edit a folder at /settings/filing, not here).
+    #
+    # IT CANNOT ANSWER THE BOARD-ZIP QUESTION, AND THAT IS A PROPERTY OF WHEN IT RUNS. #place asks
+    # `Maker::GerberArchive.for` about a node that EXISTS; this method is asked about a file a save
+    # is ABOUT to write, so there are no bytes in the library to read and no node to read them
+    # from. The one caller (Tools::AddonsController#resolve_placements) writes addon output — SVG
+    # and 3MF — so no bundle in this repo or in chaim354/tinkerex-addons can reach the divergence.
+    # WHAT KEEPS THE USER-FACING SENTENCE TRUE ANYWAY is Result#conflict_folders: the flash reports
+    # the folder #place ACTUALLY tried, recorded as it tried it, never re-derived from a name here.
     def self.destination_for(user:, parent_node_id:, name:)
       return nil if parent_node_id.blank?
 
@@ -407,7 +432,27 @@ module Maker
       # must never cost the user a reference they asked for, and the reference is exactly as true
       # with the bytes still sitting at the root.
       attached = attach(files)
+      # AN ATTACH-ONLY PASS IS NOT A SWEEP, AND MUST NOT STAMP (stage 4, S4-2). `move: false` is
+      # .for_node's over-the-eager-cap path: it deliberately declines to file and leaves the work to
+      # the periodic run, so recording "swept, moved 0" here would overwrite a real "filed 3 files"
+      # with a zero every time an upload landed in a busy project. #record_sweep! therefore sits
+      # BELOW this line, not above it — see the two calls further down.
       return Result.new(attached:, moved: 0, skipped: 0, skips: [], plan: [], status: :ok) unless @move
+
+      # THE PER-PROJECT OPT-OUT (stage 4, S4-2; story 4.3). ATTACH STILL RUNS, and the asymmetry is
+      # the whole design: the attach writes a row and moves no bytes, so "don't file my folder" is
+      # a statement about the maker's DIRECTORIES, not about whether the app may know what is in
+      # them — the same durable/best-effort split @move already encodes for the cap. Read HERE, in
+      # the one method every entry point funnels through (.for_user loops .for_project, .for_node
+      # calls .for_project, the rake task and the scan door call .for_project), so no caller has to
+      # remember it and a future one gets it for free.
+      #
+      # IT DOES STAMP, unlike the attach-only return above: this pass WAS allowed to file and chose
+      # not to, which is a sweep with an answer of zero rather than a pass that never asked.
+      unless @project.autofile?
+        record_sweep!(0)
+        return Result.new(attached:, moved: 0, skipped: 0, skips: [], plan: [], status: :ok)
+      end
 
       # THE INBOX IS THE ROOT, AND ONLY THE ROOT. Anything already in a subfolder is the user's
       # filing — including filing we would disagree with — and position is what records that, so
@@ -422,8 +467,9 @@ module Maker
       # so the final head_seq subsumes every seq before it. Batches JOIN, so .for_user's loop over
       # projects collapses to a single nudge for the entire sweep rather than one per project.
       moved, skipped, skips, plan = LibraryBroadcast.batch(@user) { file_all(inbox) }
+      record_sweep!(moved)
 
-      Result.new(attached:, moved:, skipped:, skips:, plan:, status: :ok)
+      Result.new(attached:, moved:, skipped:, skips:, plan:, conflict_folders:, status: :ok)
     end
 
     private
@@ -466,6 +512,40 @@ module Maker
     # memoized-hash fetch around it.
     def folder_for(name)
       filing_rules.fetch(Maker::ProjectFolders.ext_of(name), "other")
+    end
+
+    # A BOARD IN A WRAPPER FILES WITH THE BOARD (stage 4, S4-2; story 2.8). `Maker::GerberArchive
+    # .for` is the SAME reader the zip's own file page and its thumbnail renderer use, so the
+    # sweep and the page cannot disagree about what a board is.
+    #
+    # NAME FIRST, CONTENT ONLY WHERE THE NAME LEAVES IT OPEN — the ONE place in this class where a
+    # filing decision reads bytes, and it is bounded three ways before it does: `archive?` is a
+    # name test, so nothing but a `.zip` is ever opened; `.for` refuses a nil size and anything over
+    # `GerberArchive::READ_LIMIT` (16 MB) off the catalog's own column BEFORE reading; and the
+    # answer is cached by `(node_id, content token)` with NIL CACHED TOO, so a zip of firmware is
+    # opened once and stays known-not-a-board until its bytes change. What that costs on the eager
+    # path is one bounded read per loose zip, inside caps that already bound it (EAGER_MAX_MOVES 25,
+    # or 5 on S3, where a read is a billed GET).
+    #
+    # AN UNREACHABLE LIBRARY ANSWERS "not a board", because `.for` rescues NotFound/FetchError to
+    # nil. That costs nothing: the move that follows raises the same FetchError one line later and
+    # #file_all aborts the sweep, so the zip is never filed to the wrong place — it is not filed.
+    #
+    # A DRY RUN STILL READS. `rake projects:organize DRY_RUN=1` writes nothing, and a bounded,
+    # cached read is not a write; the alternative is a dry run that predicts the wrong folder.
+    #
+    # THE FOLDER IS THE USER'S OWN, ASKED FOR A LAYER. The zip IS a layer set in a wrapper, so
+    # "where does this maker file `.gbr`" is the same question, not a new one — and it is why this
+    # is not a new kind of rule needing a new kind of row. A maker who has REMOVED that rule gets
+    # ROLE_FOLDERS' own `pcb` rather than #folder_for's "other": "other" is the honest answer for
+    # an extension nobody has an opinion about, and a board is not that.
+    BOARD_LAYER_EXT = "gbr".freeze
+
+    def board_folder_for(node)
+      return nil unless Maker::GerberArchive.archive?(node.name)
+      return nil unless Maker::GerberArchive.for(user: @user, node:)
+
+      filing_rules.fetch(BOARD_LAYER_EXT, Maker::ProjectFolders::ROLE_FOLDERS.fetch("pcb"))
     end
 
     # Every live FILE in the folder's subtree, breadth-first — ONE QUERY PER LEVEL, not per node.
@@ -732,7 +812,7 @@ module Maker
       refusal = attach_policy.refusal_for(node, within_own_folder: true)
       return refusal if refusal
 
-      dest = folder_for(node.name)
+      dest = board_folder_for(node) || folder_for(node.name)
       # Before create_child! and Maker::MoveNode.call, so a dry run creates no folder and writes
       # nothing — the reason it is a `dry run` and not a `report`.
       #
@@ -761,6 +841,11 @@ module Maker
       # :conflict, matching Maker::AttachToProject#move — one file away, rescuing the same
       # exception for the same reason. Two names for one condition in sibling classes is
       # exactly the drift this codebase works to avoid.
+      #
+      # THE FOLDER IS RECORDED AS IT COLLIDES, never re-derived downstream: `dest` is what this
+      # sweep ACTUALLY tried, and for a board zip that is not what a name-keyed lookup would answer
+      # (see #board_folder_for). ProjectFolderIntake#conflict_folder reads this map.
+      conflict_folders[node.name] = dest
       skip(node, :conflict, e)
     rescue FileLayer::NotFound => e
       skip(node, :not_found, e)
@@ -783,6 +868,34 @@ module Maker
       Rails.logger.warn("Maker::ProjectIntake: left #{node.name.inspect} at the root of " \
                         "#{@project.slug} — #{error.class}: #{error.message}")
       reason
+    end
+
+    # The name => folder pairs #place recorded as it collided, built lazily because most sweeps
+    # never collide at all. Keyed by NAME for the same reason Result#skips is (see
+    # ProjectFolderIntake#left_unfiled_by_conflict?): a name is all a caller downstream has. See
+    # Result for why this is not spelled `conflicts`.
+    def conflict_folders = @conflict_folders ||= {}
+
+    # WHAT THE LAST SWEEP DID, WRITTEN IN ONE PLACE (stage 4, S4-2; stories 1.5, 4.1). Every path
+    # into this class ends in #call, so ONE writer covers the eager nudge, the recurring job, the
+    # Scan button and the rake task by construction rather than by four callers remembering — which
+    # is the same argument §14f makes for the sweep itself being one reader of `nodes` rather than
+    # a hook on each of seven doors.
+    #
+    # `update_columns`: no validation, no callback, no `updated_at` bump. This runs every 15
+    # minutes forever, and touching `updated_at` would make every project look edited on Home,
+    # which orders by it.
+    #
+    # NEVER ON A DRY RUN, AND NEVER ON AN ATTACH-ONLY PASS — #call's two callers are the only ones,
+    # and both sit below its `unless @move` return on purpose. A pass that was never allowed to file
+    # has nothing to say about filing, and stamping a 0 there would overwrite a real count with a
+    # zero every time an upload landed in a project over the eager cap. STAMPED EVEN WHEN NOTHING
+    # MOVED otherwise, autofile off included: "swept at T, moved 0" is a fact, and a page that shows
+    # a line only when the count is positive is the page's decision, not this method's.
+    def record_sweep!(moved)
+      return if @dry_run
+
+      @project.update_columns(last_swept_at: Time.current, last_sweep_moves: moved)
     end
 
     # Memoized: #refusal_for runs per file and the object holds no per-file state.

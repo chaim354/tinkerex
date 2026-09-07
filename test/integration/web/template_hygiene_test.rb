@@ -258,6 +258,12 @@ module Web
       # fixtures of its own — its panels are all empty, which is the OTHER half of a partial that
       # renders nothing when its collection is empty.
       @unlisted = @user.maker_projects.create!(name: "Hidden Rig", visibility: "unlisted")
+      # STAGE 4, S4-2: OR projects/_attachments' sweep-note NEVER RENDERS — the populated branch
+      # needs both a count and a timestamp. `update_columns`, matching ProjectIntake#record_sweep!:
+      # no `updated_at` bump, so nothing above re-orders. The autofile-off branch is the other arm
+      # of the same `if`, and this sweep's coverage is per TEMPLATE, not per branch — the two
+      # request tests in project_attachments_test.rb are what cover both.
+      @project.update_columns(last_swept_at: 1.hour.ago, last_sweep_moves: 2)
     end
 
     teardown do

@@ -103,11 +103,19 @@
 
 ## Filing
 
-- **THE FOLDER NAMES COME FROM THE USER'S OWN FILING RULES (stage 3, S3-1), SEEDED FROM THE TWELVE
-  ROLES — NOT FROM `Maker::ProjectFolders::ROLE_FOLDERS` DIRECTLY ANY MORE.**
+- **THE FOLDER NAMES COME FROM THE USER'S OWN FILING RULES (stage 3, S3-1), SEEDED FROM THE THIRTEEN
+  ROLES PLUS THE KEYS THE VOCABULARY CANNOT CARRY — NOT FROM `Maker::ProjectFolders::ROLE_FOLDERS`
+  DIRECTLY ANY MORE.**
   `Maker::ProjectFolders.folder_for(user, name)` reads `Maker::FilingRules.for(user)`: one row per
   extension, seeded once from `ROLE_FOLDERS` over `Maker::FileAttachment::ROLE_BY_EXT` on a user's
-  first read and edited from then on at `/settings/filing`. `default_folder_for(name)` stays the
+  first read and edited from then on at `/settings/filing`. Since stage 4, S4-2 (`cnc_design` was
+  the thirteenth role) the seed ALSO writes one row per `Maker::FilingRules::BEYOND_ROLE_BY_EXT`
+  entry — today `kicad_sch`/`kicad_pcb` → `pcb`, a literal folder because there is no role to look one
+  up by — so the count a test asserts is `ROLE_BY_EXT.size + BEYOND_ROLE_BY_EXT.size`, never the first
+  alone. `seed!`'s `exists?` guard stays a whole-batch guard: an existing user's new keys arrive by
+  MIGRATION, once (`20260907120100`), because `/settings/filing` promises a removed rule files into
+  `other` and a per-read top-up would resurrect it. Keep `BEYOND_ROLE_BY_EXT` small — every entry
+  claims a real format the Files page cannot filter by. `default_folder_for(name)` stays the
   OLD pure function of the static, role-keyed vocabulary — kept for the seed itself (which cannot
   ask `FilingRules.for` the very map it is about to build) and for any caller with no user in hand.
   An extension with no rule files into `"other"`, a per-user, expected answer now rather than the
@@ -225,6 +233,43 @@
   `state_id` may land on a node that saved item itself produced, in either check (§14c's own-file
   rule). Naming the state is the consent; "the destination is taken" is still terminal for every
   collision with a file this save did not write.
+- **THE SWEEP DECIDES BY NAME, WITH ONE CONTENT EXCEPTION, AND IT LIVES IN `#place` ALONE (stage 4,
+  S4-2; story 2.8).** A `.zip` that `Maker::GerberArchive.for(user:, node:)` recognises as a board
+  files where this maker files a Gerber *layer* (`filing_rules["gbr"]`, else `ROLE_FOLDERS["pcb"]`),
+  not into `archives/` — the zip IS a layer set in a wrapper, so it is the same question, not a new
+  kind of rule. Bounded three ways before any read: `archive?` is name-only so nothing but a `.zip`
+  is opened; `.for` refuses a nil or over-`READ_LIMIT` (16 MB) size off the catalog's own column; the
+  answer is cached by `(node_id, content token)` with **nil cached too**. An unreachable library
+  answers "not a board" and the move one line later raises the same `FetchError`, so the zip is
+  never filed *wrongly* — it is not filed. A dry run still reads: a bounded cached read is not a
+  write, and the alternative is a dry run that predicts the wrong folder.
+- **`.destination_for` CANNOT ANSWER THE BOARD-ZIP QUESTION, AND "prediction and behaviour cannot
+  disagree" IS SCOPED, NOT BROKEN.** It is asked about a file a save is *about to write* — no bytes
+  in the library, no node to read them from — so it must never grow a `node:` kwarg no caller can
+  fill. Its one caller (`Tools::AddonsController#resolve_placements`) writes SVG and 3MF, so no
+  bundle here or in `chaim354/tinkerex-addons` reaches the divergence. What keeps the user-facing
+  sentence true anyway is `Result#conflict_folders`: the flash names the folder `#place` **actually
+  tried**, recorded as it tried it, never re-derived from a name. `ProjectFolderIntake
+  #conflict_folder` reads that map and falls back to `ProjectFolders.folder_for` only for a Result
+  built without it. **The member is not called `conflicts`** — that is one of
+  `architecture_invariants_test.rb`'s `ENGINE_ASSOCIATIONS`, matched as a bare ident, and the seam
+  guard takes no allowlist.
+- **`maker_projects.autofile` IS A STATEMENT ABOUT DIRECTORIES, NOT ABOUT KNOWING (stage 4, S4-2;
+  story 4.3).** Off, `#call` still **attaches** everything it finds and files nothing — the same
+  durable/best-effort split `@move` already encodes for the cap. Read in `#call`, the one method
+  every entry point funnels through (`.for_user` loops `.for_project`, `.for_node` calls
+  `.for_project`, the rake task and the scan door call `.for_project`), so no caller has to remember
+  it and a future one gets it for free. Default true: every project did this before the column
+  existed.
+- **THE SWEEP RECORD HAS ONE WRITER, AND AN ATTACH-ONLY PASS IS NOT A SWEEP.** `#record_sweep!`
+  stamps `last_swept_at`/`last_sweep_moves` with `update_columns` (no validation, no callback, no
+  `updated_at` bump — this runs every 15 minutes forever and Home orders by `updated_at`). It sits
+  **below** `#call`'s `unless @move` return: `move: false` is `.for_node`'s over-the-eager-cap path,
+  which declines to file, so stamping a 0 there would overwrite a real "filed 3 files" on every
+  upload into a busy project. It **does** stamp when `autofile` is off — that pass was allowed to
+  file and chose not to. `last_sweep_moves` is **nil until a sweep that was allowed to file has
+  finished once**; nil and 0 are different facts (§15's timestamp-at-`.to_i` warning is why the
+  column has no `default: 0`).
 - **THE `state.id`-IN-THE-FILENAME EXEMPTION IS GONE WITH ITS DOOR, AND THAT IS A WIDENING, NOT A
   TIDY-UP.** `Tools::OpenscadController#create` could not reach the collision above because its
   output name embedded `state.id`, a fresh autoincrement per save, so two saves of one design under

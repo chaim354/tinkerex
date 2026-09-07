@@ -2,9 +2,13 @@ require "test_helper"
 
 module Web
   # Stage 3, S3-1: /settings/filing (Settings::FilingRulesController), the per-user extension map
-  # the intake sweep obeys (Maker::ProjectFolders.folder_for, Maker::ProjectIntake). In the shape
-  # settings_reference_test.rb already established for Suppliers/Locations -- a flat list, an
-  # inline add, session-authed (§14d) -- plus an inline per-row edit those two don't have.
+  # the intake sweep obeys (Maker::ProjectFolders.folder_for, Maker::ProjectIntake). Session-authed
+  # (§14d), like the Suppliers/Locations lists settings_reference_test.rb pins.
+  #
+  # STAGE 4, S4-2 REGROUPED THE PAGE (story 4.3): ONE CARD PER FOLDER, not one row per extension.
+  # Same rows, same routes, same actions -- so every create/update/destroy test below is untouched
+  # and only the index tests moved. What changed is the question the page answers: "where does
+  # laser work go" used to be spread over four screens of a 124-row reference list.
   #
   # NO BACKEND IS PINNED HERE, for the same reason settings_reference_test.rb gives: the controller
   # reads only maker_filing_rules, never `nodes` or the port, so there is nothing for
@@ -33,39 +37,74 @@ module Web
 
     # ============================================================ index
 
-    test "the page lists the seeded rules A to Z with their folder" do
+    # STORY 4.3: "laser files go to laser/", not 130 extension rows. ONE CARD PER FOLDER, and the
+    # folder list is DERIVED from ProjectFolders::ROLE_FOLDERS -- a second literal list here is the
+    # drift §14d exists to stop, and it would go stale the first time a role is added (S4-2 added
+    # one).
+    test "the page renders one card per folder, in the seed's own order" do
       get settings_filing_rules_path
 
       assert_response :success
       assert_select "h1", "Filing"
-      exts = css_select(".settings-list .settings-name").map { |el| el.text.strip }
-      assert_equal exts.sort, exts, "the rules are not sorted by extension"
-      assert_equal Maker::FileAttachment::ROLE_BY_EXT.size, @user.maker_filing_rules.count
+      folders = css_select(".filing-card .filing-folder").map { |el| el.text.strip.chomp("/") }
+      assert_equal Maker::ProjectFolders::ROLE_FOLDERS.values.uniq, folders
+    end
+
+    test "each card holds its own extensions as chips" do
+      get settings_filing_rules_path
+
+      models = css_select(".filing-card").find { |c| c.at_css(".filing-folder").text.include?("models") }
+      exts = models.css(".filing-chip .mono").map { |el| el.text.strip }
       assert_includes exts, ".stl"
-      assert_select ".settings-list li", count: Maker::FileAttachment::ROLE_BY_EXT.size
+      assert_includes exts, ".3mf"
+      assert_not_includes exts, ".svg"
+    end
+
+    # A FOLDER THE SEED NEVER NAMED STILL GETS A CARD -- otherwise a maker who typed `prints` could
+    # not see or remove the rule they just made.
+    test "a custom folder a user's rules name gets a card of its own" do
+      Maker::FilingRules.seed!(@user)
+      @user.maker_filing_rules.find_by!(ext: "stl").update!(folder: "prints")
+
+      get settings_filing_rules_path
+
+      folders = css_select(".filing-card .filing-folder").map { |el| el.text.strip.chomp("/") }
+      assert_includes folders, "prints"
     end
 
     # ASSERT THE RENDERED FIELD NAMES (CLAUDE.md §14d) -- Maker::FilingRule's own param_key would
     # be "maker_filing_rule", which the controller does not read; only a real form proves scope:
-    # produced what #filing_rule_params requires.
-    test "the add form and each row's edit form post field names the controller reads" do
+    # produced what #filing_rule_params requires. The add form is per CARD now and carries its
+    # folder as a HIDDEN field, so adding `.lbrn` to `laser/` is one text box rather than two.
+    #
+    # NO PER-CHIP MOVE CONTROL, DELIBERATELY (this plan's amendment 2): a chip carries its extension
+    # and Remove, and moving an extension is Remove on one card then Add on the other. #update and
+    # its route survive untouched (its own tests below drive it directly), so the control a later
+    # slice adds has somewhere to post; what is asserted here is what the PAGE actually renders.
+    test "the per-card add form and each chip's Remove post what the controller reads" do
       get settings_filing_rules_path
 
-      assert_select "form.settings-add input[name=?]", "filing_rule[ext]"
-      assert_select "form.settings-add input[name=?]", "filing_rule[folder]"
+      assert_select "form.filing-add input[name=?]", "filing_rule[ext]"
+      assert_select "form.filing-add input[name=?][type=hidden]", "filing_rule[folder]"
 
       rule = @user.maker_filing_rules.find_by!(ext: "stl")
-      assert_select "li form[action=?] input[name=?]", settings_filing_rule_path(rule), "filing_rule[folder]"
-      assert_select "li form[action=?][method=post] input[name=?][value=patch]",
+      assert_select ".filing-chip form[action=?][method=post] input[name=?][value=delete]",
                     settings_filing_rule_path(rule), "_method"
+      assert_select ".filing-chip form[action=?] select", settings_filing_rule_path(rule), count: 0
     end
 
-    # UNLIKE Suppliers/Locations/Tags, THERE IS NO REACHABLE "EMPTY" STATE THROUGH THIS DOOR TO
-    # PIN: #index calls Maker::FilingRules.seed! before it reads a single row, so destroying every
-    # rule and then visiting the page reseeds all Maker::FileAttachment::ROLE_BY_EXT.size of them
-    # right back -- the `li.empty` branch the view still carries (for symmetry with the other
-    # settings lists, and in case a future caller ever constructs a genuinely ruleless user) is
-    # dead on this specific path, not a gap this file failed to cover.
+    # UNLIKE Suppliers/Locations/Tags, THERE IS NO REACHABLE "NO RULES AT ALL" STATE THROUGH THIS
+    # DOOR TO PIN: #index calls Maker::FilingRules.seed! before it reads a single row, so destroying
+    # every rule and then visiting the page reseeds the lot right back -- every
+    # Maker::FileAttachment::ROLE_BY_EXT extension PLUS Maker::FilingRules::BEYOND_ROLE_BY_EXT's two
+    # KiCad keys since stage 4, S4-2, which is why no count here is spelled as ROLE_BY_EXT.size
+    # alone any more.
+    #
+    # THE `.empty` BRANCH IS NOT DEAD ANY MORE, THOUGH, and that is the change from the flat list:
+    # it is PER CARD, and `other/` reaches it on a freshly seeded user -- no extension in the
+    # vocabulary carries the `other` role (`ProjectFolders::ROLE_FOLDERS` maps it, `ROLE_BY_EXT`
+    # never names it), so that one card renders "Nothing files here yet." on every default page.
+    # template_hygiene_test.rb's sweep therefore renders both of the partial's branches for free.
 
     # ============================================================ create
 
@@ -78,12 +117,37 @@ module Web
       assert_match(/iges added/i, flash[:notice])
     end
 
+    # `tar.gz`, NOT `kicad_pcb`, SINCE STAGE 4, S4-2. This test posted `kicad_pcb` from S3-1 until
+    # Maker::FilingRule::KEY_RE widened to admit an underscore and twelve characters, at which point
+    # it was asserting a refusal that had become a feature. A DOT is what KEY_RE still refuses and
+    # `Maker::ProjectFolders.ext_of` (everything after the LAST dot) can never produce, so `tar.gz`
+    # is the same claim about the same boundary, made where the boundary actually is now.
     test "a bad extension is refused with the model's error, not a 500" do
-      post settings_filing_rules_path, params: { filing_rule: { ext: "kicad_pcb", folder: "cad" } }
+      post settings_filing_rules_path, params: { filing_rule: { ext: "tar.gz", folder: "cad" } }
 
       assert_redirected_to settings_filing_rules_path
       assert_match(/ext is invalid/i, flash[:alert])
-      assert_nil @user.maker_filing_rules.find_by(ext: "kicad_pcb")
+      assert_nil @user.maker_filing_rules.find_by(ext: "tar.gz")
+    end
+
+    # THE OTHER SIDE OF THE SAME WIDENING (stage 4, S4-2; story 2.8). `kicad_sch` can never be a
+    # Maker::FileAttachment::ROLE_BY_EXT key -- it fails FilesController::EXT_RE -- and can now
+    # carry a DESTINATION, which is the whole split KEY_RE exists for.
+    #
+    # BOTH KEYS ON PURPOSE. `kicad_sch` is what Task C put in the seed, and it is free at THIS door
+    # because #create never seeds (#index does), so this asserts the widened validation rather than
+    # the seeded row. `kicad_wks` -- a real KiCad worksheet -- is the same nine-character
+    # underscored shape and one the seed will never hold, so the claim survives #create ever
+    # learning to seed.
+    test "a KiCad extension is a legal rule now, and files where the form says" do
+      post settings_filing_rules_path, params: { filing_rule: { ext: "kicad_sch", folder: "pcb" } }
+
+      assert_redirected_to settings_filing_rules_path
+      assert_equal "pcb", @user.maker_filing_rules.find_by!(ext: "kicad_sch").folder
+
+      post settings_filing_rules_path, params: { filing_rule: { ext: "kicad_wks", folder: "pcb" } }
+
+      assert_equal "pcb", @user.maker_filing_rules.find_by!(ext: "kicad_wks").folder
     end
 
     test "a reserved folder name is refused with the model's error, not a 500" do

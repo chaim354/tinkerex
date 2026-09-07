@@ -89,6 +89,16 @@ module Maker
         assert_equal Maker::Previews::GerberZip, Maker::Previews::Registry.for_filename("board.ZIP")
       end
 
+      # `.ai` RESOLVES TO THE PDF RENDERER, which is a different question from where an Illustrator
+      # file FILES — the split files-preview.md names: a ROLE says where a file lives, a RENDERER
+      # says what picture we can make of it. The role half (`role_for("logo.ai") == "vector"`) is
+      # asserted in `test/models/maker/file_attachment_test.rb`, beside the vocabulary that owns it;
+      # this door resolves by EXTENSION and answers the same whatever role the file carries.
+      test "an Illustrator file resolves to the Pdf renderer" do
+        assert_equal Maker::Previews::Pdf, Maker::Previews::Registry.for("ai")
+        assert_equal Maker::Previews::Pdf, Maker::Previews::Registry.for(".AI")
+      end
+
       test "returns nil for an unsupported extension" do
         assert_nil Maker::Previews::Registry.for("sldprt")
         assert_nil Maker::Previews::Registry.for("dwg")

@@ -41,7 +41,13 @@ module Maker
     # everything a mesh needs or came from: `image` (renders AND texture maps), `instructions`,
     # `cad_source`, `source_archive`, and `other` -- which is where an .obj's .mtl lands, so
     # narrowing this to MODEL_ROLE alone ships a mesh that renders untextured.
-    EXCLUDED_ROLES = %w[code document gcode laser vector].freeze
+    #
+    # `cnc_design` (a MillMage project) joins `laser` and `vector` on the same line those two are
+    # already on: a 2D cut job that merely shares a folder with a mesh is not part of the model.
+    # ADDED IN THE SAME CHANGE AS THE ROLE ITSELF (stage 4, S4-2) — this list is a DENYLIST, so a
+    # new role joins models BY DEFAULT and the omission would have been silent: `Projects/catan/`
+    # holding one `.stl` and twenty `.mage` files would have catalogued all twenty into that model.
+    EXCLUDED_ROLES = %w[cnc_design code document gcode laser vector].freeze
 
     # What one run did. `status` is :ok or :capped -- a caller has to be able to tell "your library
     # is catalogued" from "there is more of it than one run will do".

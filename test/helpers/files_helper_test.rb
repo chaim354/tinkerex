@@ -36,6 +36,15 @@ class FilesHelperTest < ActiveSupport::TestCase
     assert_includes FilesHelper::EXT_FAMILIES["CAD source"], "sldprt"
   end
 
+  # STAGE 4, S4-2. The three formats the bench produces reached the vocabulary, so the dropdown's
+  # optgroups follow for free — `CNC design` is a NEW family here, and a role whose extensions were
+  # all in `other/` had no group at all.
+  test "the bench formats have a filter chip family" do
+    assert_includes FilesHelper::EXT_FAMILIES["Vector"], "ai"
+    assert_includes FilesHelper::EXT_FAMILIES["Laser"],  "lbrn"
+    assert_includes FilesHelper::EXT_FAMILIES["CNC design"], "mage"
+  end
+
   # Every chip extension must be one FilesController will actually accept, or the chip is a control
   # that renders, links and silently does nothing. `markdown` is exactly 8 characters — the bound.
   test "every chip extension satisfies the controller's EXT_RE" do

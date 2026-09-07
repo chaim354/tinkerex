@@ -65,7 +65,10 @@ module Maker
 
       assert_equal 0, @user.maker_filing_rules.count, "an unseeded user must not get a PARTIAL map"
       assert_equal "pcb", Maker::FilingRules.for(@user)["gtl"]
-      assert_equal Maker::FileAttachment::ROLE_BY_EXT.size, @user.maker_filing_rules.count
+      # THE WHOLE TABLE IS BOTH HALVES OF THE SEED since stage 4, S4-2 — ROLE_BY_EXT plus
+      # `Maker::FilingRules::BEYOND_ROLE_BY_EXT`, the keys the vocabulary itself cannot carry.
+      assert_equal Maker::FileAttachment::ROLE_BY_EXT.size + Maker::FilingRules::BEYOND_ROLE_BY_EXT.size,
+                   @user.maker_filing_rules.count
     end
 
     # THE USER WHO ALREADY ADDED `.drl` BY HAND at /settings/filing before this ran: their folder

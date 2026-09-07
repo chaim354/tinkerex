@@ -273,9 +273,9 @@ Rails.application.routes.draw do
     resources :tags, only: %i[index destroy]
     # Stage 3, S3-1: the per-user extension map the intake sweep files by (Maker::FilingRules).
     # `path: "filing"` keeps the URL as /settings/filing while the helpers stay
-    # settings_filing_rule(s)_path; `update` is the inline per-row folder edit, `create` the add
-    # form, `destroy` the Remove button -- the same four Suppliers/Locations use plus the one they
-    # don't need.
+    # settings_filing_rule(s)_path; `create` is the per-folder add form, `destroy` the chip's Remove
+    # (stage 4, S4-2: one card per folder). `update` stays routed with no control on the page since
+    # S4-2 dropped the per-row folder edit -- a future move control lands on it; its tests still run.
     resources :filing_rules, only: %i[index create update destroy], path: "filing"
     # STAGE 3, S3-4: the handle is claimed on the Account page (users/registrations/edit) through
     # its own form, because Devise's update demands the current password and a handle is not a

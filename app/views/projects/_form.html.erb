@@ -89,6 +89,20 @@
     <% end %>
   </div>
 
+  <%#
+    THE SWEEP'S OWN SWITCH (stage 4, S4-2; story 4.3). A checkbox, so `f.check_box` emits the
+    hidden "0" field that makes unchecking reach the controller at all — without it an unchecked
+    box sends nothing and the attribute never changes.
+    NOT A "don't touch my files" MASTER SWITCH: uploads, the addon save door and Move all still
+    write where you tell them. This is only the automatic sort of the folder's own root.
+  %>
+  <label class="field-inline">
+    <%= f.check_box :autofile %>
+    File loose files into subfolders automatically
+    <span class="field-hint muted">Off, the app still lists and links this folder's files — it
+      just leaves them where you put them.</span>
+  </label>
+
   <div class="form-actions">
     <%= f.submit(project.persisted? ? "Save changes" : "Create project", class: "btn primary") %>
     <%= link_to "Cancel", (project.persisted? ? project_path(project) : projects_path), class: "linkbtn" %>

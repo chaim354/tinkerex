@@ -64,9 +64,22 @@ class Node < ApplicationRecord
   # nothing and is trivially reversible, where skipping it at the OBSERVER would be the §14b
   # blind spot a fifth time. `LIKE '%.ptr'` (a suffix, not the whole name) because the stub sits
   # beside its real file under that file's own name plus the suffix, not under a fixed basename.
+  #
+  # BUILD-OUTPUT DIRECTORIES JOIN THE DOT-DIRS (stage 4, S4-2; story 4.8), gated on `show_hidden`
+  # exactly as they are — not unconditional like `.git` or `*.ptr`, because there IS a reason to
+  # open one (a linker map, a generated header) and "Show hidden" is already the way in.
+  # `Library::BuildOutput` holds the names and the whole argument, including why this is a DISPLAY
+  # rule that must never reach an observer or a write guard, and why `build` is not on the list.
   scope :visible_entries, ->(show_hidden = false) {
     scope = outside_repo_metadata.where.not("name LIKE ?", "%.ptr")
-    show_hidden ? scope : scope.where.not("name LIKE ?", ".%")
+    return scope if show_hidden
+
+    # WRITTEN AS A POSITIVE `where("NOT (...)")` rather than `where.not(name: …, kind: "dir")`:
+    # multi-attribute `where.not` builds a NAND, which is correct here and is exactly the kind of
+    # correctness a later reader has to look up. `kind` is NOT NULL (db/schema.rb), so the
+    # predicate has no third answer to leak rows through.
+    scope.where.not("name LIKE ?", ".%")
+         .where("NOT (kind = 'dir' AND name IN (?))", Library::BuildOutput::NAMES)
   }
 
   def dir? = kind == "dir"

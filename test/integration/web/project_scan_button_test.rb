@@ -115,8 +115,11 @@ module Web
       pull = ->(**) { order << :pull }
       file = lambda do |**|
         order << :file
+        # `plan` CARRIES THE MOVE THIS STUB CLAIMS (stage 4, S4-2): the notice reads what was FILED
+        # off Result#plan now, not off `moved`, so a stub asserting "filed 1" has to carry the pair
+        # #place would have built.
         Maker::ProjectIntake::Result.new(attached: 2, moved: 1, skipped: 0,
-                                         skips: [], plan: [], status: :ok)
+                                         skips: [], plan: [ [ "panel.svg", "design" ] ], status: :ok)
       end
       replacing(FileLayer::RemoteChangelogPullJob, :perform_now, pull) do
         replacing(Maker::ProjectIntake, :for_project, file) do

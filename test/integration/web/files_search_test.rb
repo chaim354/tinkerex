@@ -79,6 +79,46 @@ module Web
       assert_select ".files-toolbar form.files-search input[name='q'][value=?]", "a" * 80
     end
 
+    # STAGE 4, S4-2, STORY 4.8 — AND THIS IS THE DOOR WHERE THE DIRECTORY HALF OF THE RULE CAN
+    # ACTUALLY FAIL. The flat `?q=` view lists FOLDERS as well as files (the first test in this
+    # file says so in its name), so a `node_modules` row genuinely reaches this page and is kept
+    # off it by Node.visible_entries and nothing else. The sitewide SearchController filters
+    # `kind: "file"` on top of the same scope, so a build DIRECTORY is excluded there twice over
+    # and that assertion could not go red — which is why it lives here.
+    #
+    # THE ESCAPING RIDES ALONG FOR FREE: `node_modules` and `__pycache__` are full of LIKE
+    # metacharacters, so these queries only find their rows because sanitize_sql_like + ESCAPE is
+    # doing its job (the "LIKE metacharacters are literal" test above owns that rule).
+    test "a build-output directory is not a search result, while build/ still is" do
+      @user.nodes.create!(node_id: "dir-nm", name: "node_modules", kind: "dir")
+      @user.nodes.create!(node_id: "dir-pyc", name: "__pycache__", kind: "dir")
+      @user.nodes.create!(node_id: "dir-build", name: "build", kind: "dir")
+
+      get files_path(q: "node_modules")
+      assert_equal [], listed_names
+      get files_path(q: "__pycache__")
+      assert_equal [], listed_names
+
+      # `build/` IS NOT BUILD OUTPUT (amendment 1) — a maker's own folder, kept.
+      get files_path(q: "build")
+      assert_equal [ "build" ], listed_names
+
+      # A DISPLAY RULE, GATED LIKE A DOT-DIR: the row still exists and "Show hidden" is the way in.
+      get files_path(q: "node_modules", hidden: "1")
+      assert_equal [ "node_modules" ], listed_names
+    end
+
+    # THE RULE ASKS ABOUT DIRECTORIES. A FILE named `node_modules` is somebody's file and lists.
+    # Both rows are created so the assertion distinguishes "the file survived" from "nothing
+    # matched at all": exactly one row comes back, and dropping the `kind` clause makes it zero.
+    test "a FILE named node_modules is still a search result" do
+      @user.nodes.create!(node_id: "dir-nm2", name: "node_modules", kind: "dir")
+      file("node_modules", nil)
+
+      get files_path(q: "node_modules")
+      assert_equal [ "node_modules" ], listed_names
+    end
+
     test "an empty result says what was searched" do
       get files_path(q: "zzz")
       assert_select ".empty", text: /No files match “zzz”/

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_06_140000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_07_120100) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -315,10 +315,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_06_140000) do
 
   create_table "maker_projects", force: :cascade do |t|
     t.datetime "archived_at"
+    t.boolean "autofile", default: true, null: false
     t.string "cover_node_id"
     t.datetime "created_at", null: false
     t.text "description"
     t.string "folder_node_id"
+    t.integer "last_sweep_moves"
+    t.datetime "last_swept_at"
     t.string "license"
     t.string "name", null: false
     t.string "slug", null: false

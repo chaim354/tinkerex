@@ -69,8 +69,9 @@
 - **`EXCLUDED_ROLES` IS A DENYLIST, AND THE DIRECTION IS THE SAFE ONE.** A role added to
   `Maker::FileAttachment::ROLE_LABELS` later joins models by default; an allowlist would drop it
   with nothing going red. The line it draws is *is this the model, or its own artefact* —
-  `vector` (dxf/svg) and `laser` (lbrn2) are 2D cut jobs that merely share a folder, `code` is a
-  firmware tree, `gcode` is sliced OUTPUT, `document` is READMEs and name lists. **`other` and
+  `vector` (dxf/svg, ai), `laser` (lbrn2, lbrn) and `cnc_design` (mage) are 2D cut jobs that merely
+  share a folder, `code` is a firmware tree, `gcode` is sliced OUTPUT, `document` is READMEs and
+  name lists. **`other` and
   `image` STAY, and narrowing this to `model` alone is the tempting wrong fix**: an `.obj` loads
   its material from the `.mtl` (role `other`) and its texture from the image beside it, so a
   model-role-only filter ships a mesh that renders untextured. Membership is pinned against

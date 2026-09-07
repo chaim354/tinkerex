@@ -179,7 +179,9 @@ module Maker
     # `permits?`. Asking again would be a second authority over the same fact, the thing this class
     # exists to prevent. The dot-files and `.git` internals a visitor must never get are already
     # gone — `ProjectFolderListing` filters on `Node.visible_entries` and never descends into a
-    # dot-dir — which is the same reason `#sections` can render its rows without a check.
+    # dot-dir or a build-output dir (`Library::BuildOutput`, stage 4, S4-2, which is why a bundle
+    # no longer carries a `node_modules/` tree) — which is the same reason `#sections` can render
+    # its rows without a check.
     #
     # THE LIST IS THE LISTING'S, SO IT IS CAPPED (FILE_CAP) and the manifest says so with
     # `truncated`. A bundle that silently held the first 300 files of a 900-file folder would be a

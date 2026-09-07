@@ -4,7 +4,8 @@
   inline by filebrowser_controller.js the first time this section is opened. It REPLACES the tiles,
   the list and the nested subfolder sections a plain folder renders — a repository is navigated,
   not unrolled. The data is LibraryBrowseController#children, which hides what the Files page
-  hides (the .git marker, *.ptr stubs, dot-files).
+  hides (the .git marker, *.ptr stubs, dot-files, and build-output directories --
+  Library::BuildOutput).
 
   THE FILE LINK IS A TEMPLATE THE SERVER WRITES HERE, so the module never learns a route: it
   substitutes the node id into `__ID__` and knows nothing else about where a file page lives.

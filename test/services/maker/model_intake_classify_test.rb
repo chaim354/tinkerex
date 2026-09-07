@@ -13,6 +13,7 @@ module Maker
       #     Enclosure/               -> one model
       #       body.stl
       #       manual.pdf
+      #       lid.mage               -> a MillMage CNC project: EXCLUDED_ROLES, so it never joins
       #       parts/
       #         clip.stl
       dir("d-shelf", "3D Models", nil)
@@ -21,6 +22,7 @@ module Maker
       dir("d-enc", "Enclosure", "d-shelf")
       file("f-body",   "body.stl",   "d-enc")
       file("f-manual", "manual.pdf", "d-enc")
+      file("f-mage",   "lid.mage",   "d-enc")
       dir("d-parts", "parts", "d-enc")
       file("f-clip", "clip.stl", "d-parts")
 
@@ -154,6 +156,15 @@ module Maker
     # download layout, and dropping the PDF there is the over-filter this pins against.
     test "a supporting file in the model's own folder joins even when the meshes are one level down" do
       assert_equal %w[f-kitnotes f-kitpart], classify.files_for("d-kit").sort
+    end
+
+    # THE DENYLIST DOES WORK ON A REAL FILE, not only on a constant. Added with `cnc_design` in
+    # stage 4, S4-2 because the membership test below CANNOT catch an omission: it asks whether
+    # every name in EXCLUDED_ROLES is a real role, so dropping one leaves it green. Mutation-checked
+    # by removing `cnc_design` from the denylist -- this goes RED, and so does the "subfolder of a
+    # shelf" case above, which is the same claim stated over the whole folder.
+    test "a MillMage project inside a model folder does not join the model" do
+      refute_includes classify.files_for("d-enc"), "f-mage"
     end
 
     # THE DENYLIST NAMES REAL ROLES. A typo -- "vectors", "documents" -- excludes nothing and every

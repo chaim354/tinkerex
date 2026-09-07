@@ -34,17 +34,19 @@ module Maker
   # is the honest, PER-USER routing spec §5 asks for, not a silently wrong answer to a question
   # with a knowable right one.
   #
-  # THE FOLDER NAMES ARE NOT ROLE_LABELS, even where seven of the twelve happen to match it
+  # THE FOLDER NAMES ARE NOT ROLE_LABELS, even where seven of the thirteen happen to match it
   # lowercased (models, images, laser, code, archives, pcb, other) — that agreement is coincidental, not
   # derived, and must stay that way: a UI wording tweak to ROLE_LABELS (capitalization, clarity)
   # must never rename a directory on someone's NAS. The other four folder names are deliberate
   # renames to plainer workflow words: `cnc` (not "G-code"), `design` (not "Vector"), `cad` (not
-  # "CAD source"), and `docs`, which uniquely folds two roles — `instructions` ("Instructions")
-  # and `document` ("Documents") — into one folder. These become real directories in the user's
-  # Finder and on their NAS, where `cnc` reads better than `G-code`. `Maker::FilingRule`'s own
-  # validation is what keeps a user-edited folder name to the same shape (one lowercase segment,
-  # never reserved) — the totality test also checks every SEED folder passes that same validation,
-  # so the seed can never write a row the settings form would itself refuse.
+  # "CAD source"), and `docs`, which folds two roles — `instructions` ("Instructions") and
+  # `document` ("Documents") — into one folder, and `cnc` now answers for two roles, `gcode` and
+  # `cnc_design`, the same way `docs` answers for `instructions` and `document`. These become real
+  # directories in the user's Finder and on their NAS, where `cnc` reads better than `G-code`.
+  # `Maker::FilingRule`'s own validation is what keeps a user-edited folder name to the same shape
+  # (one lowercase segment, never reserved) — the totality test also checks every SEED folder
+  # passes that same validation, so the seed can never write a row the settings form would itself
+  # refuse.
   module ProjectFolders
     module_function
 
@@ -71,6 +73,11 @@ module Maker
 
     ROLE_FOLDERS = {
       "gcode"          => "cnc",
+      # THE SAME FOLDER AS `gcode`, DELIBERATELY — two roles, one directory, exactly as
+      # `instructions` and `document` both name `docs`. A maker's CNC work is one place on the NAS:
+      # the MillMage project and the toolpath it exports belong side by side. `ROLE_FOLDERS.values
+      # .uniq` is what /settings/filing renders a card per, so this adds no card.
+      "cnc_design"     => "cnc",
       "laser"          => "laser",
       "vector"         => "design",
       "model"          => "models",
@@ -96,7 +103,7 @@ module Maker
       ROLE_FOLDERS.fetch(Maker::FileAttachment.role_for(name))
     end
 
-    # THE PER-USER LOOKUP (stage 3, S3-1). `Maker::FilingRules.for(user)` seeds the twelve-role map
+    # THE PER-USER LOOKUP (stage 3, S3-1). `Maker::FilingRules.for(user)` seeds the thirteen-role map
     # into this user's own rows on first read and answers from the user's own edited map ever
     # after — "other" for an extension with no rule (see the header for why that default is right
     # here and was wrong for `default_folder_for`'s role-keyed fetch).

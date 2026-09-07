@@ -11,7 +11,8 @@ class LibraryBrowseController < ApplicationController
   #
   # `visible_entries` — THE SAME SCOPE THE FILES PAGE HIDES BY, and it is the one door that used
   # not to ask. `.git` (the working-tree marker Node keeps indexed and never renders), `*.ptr`
-  # stubs and dot-files were all offered here as destinations and as pickable files: a chooser that
+  # stubs, dot-files and — since stage 4, S4-2 — build-output directories (`Library::BuildOutput`)
+  # were all offered here as destinations and as pickable files: a chooser that
   # lists `.git` invites a save the write guards then refuse anyway (Library::ReservedNames), which
   # is a refusal the user cannot act on. It is a DISPLAY filter, exactly as it is on the Files page
   # — nothing is skipped at the observer, so no node becomes unpairable (§14b's blind spot).

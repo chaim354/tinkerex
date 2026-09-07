@@ -97,10 +97,13 @@ module Projects
       return "Scanned your library. #{@project.name} has no folder yet, so nothing was filed." if
         result.status == :no_folder
 
+      # THE LEAD NO LONGER COUNTS WHAT WAS FILED — ProjectFolderIntake#project_intake_sentence says
+      # it now, with the FOLDERS, which is strictly more than a number. Two doors saying the same
+      # fact in two shapes is the drift this method's own comment already refuses.
       lead = if result.attached.zero? && result.moved.zero?
         "Scanned your library — nothing new for #{@project.name}"
       else
-        "Scanned your library — attached #{result.attached}, filed #{result.moved}"
+        "Scanned your library — attached #{result.attached}"
       end
       project_intake_sentence(lead, result, unfiled_by_conflict(result, result.skips.map(&:first)))
     end

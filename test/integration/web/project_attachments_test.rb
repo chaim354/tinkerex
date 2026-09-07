@@ -80,6 +80,44 @@ module Web
       user.nodes.create!(node_id:, name:, kind: "dir", parent_node_id: parent || folder.node_id)
     end
 
+    # --- what the last sweep did (stage 4, S4-2) ---------------------------------------------
+
+    # STORY 1.5 — the sweep reports on the page, not only to the log.
+    test "the Files panel says what the last sweep filed" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      project_folder_rows!(user, project)
+      project.update_columns(last_swept_at: 2.hours.ago, last_sweep_moves: 3)
+
+      get project_path(project)
+
+      assert_select "p.sweep-note", /Sweep filed 3 files/
+      assert_select "p.sweep-note", /2 hours ago/
+    end
+
+    test "a sweep that moved nothing says nothing" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      project_folder_rows!(user, project)
+      project.update_columns(last_swept_at: 2.hours.ago, last_sweep_moves: 0)
+
+      get project_path(project)
+
+      assert_select "p.sweep-note", count: 0
+    end
+
+    test "a project with automatic filing off says so where the files are" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      project_folder_rows!(user, project)
+      project.update!(autofile: false)
+
+      get project_path(project)
+
+      assert_select "p.sweep-note", /Automatic filing is off/
+      assert_select "p.sweep-note a[href=?]", edit_project_path(project)
+    end
+
     test "attached files render as tiles linking to the file view" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")

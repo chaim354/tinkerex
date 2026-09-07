@@ -130,6 +130,28 @@ module Web
       assert_select ".result-group--file a", text: ".lamp-hidden.stl", count: 0
     end
 
+    # STAGE 4, S4-2, STORY 4.8. Search reads the SAME `visible_entries(false)` scope a folder view
+    # does, so build output follows for free — driven, not reasoned: a future search that stopped
+    # calling the scope would go red here rather than quietly listing 440 object files.
+    #
+    # THE ASSERTION THAT CARRIES THE WEIGHT IS THE FILE ONE, and that is worth saying plainly.
+    # This controller filters `kind: "file"` before the scope, so a build DIRECTORY is excluded
+    # twice over and its absence here can never fail — the directory half is pinned where it CAN
+    # fail, on the Files page's own flat `?q=`, which lists folders (files_search_test.rb). What is
+    # real here is the other direction: `node_modules.js` and a FILE named `node_modules` are
+    # ordinary results, and dropping the `kind = 'dir'` term from the scope hides the second one.
+    test "build output does not surface, and a file of the same name still does" do
+      @user.nodes.create!(node_id: "s-nm-dir", name: "node_modules", kind: "dir")
+      @user.nodes.create!(node_id: "s-nm-file", name: "node_modules", kind: "file")
+      @user.nodes.create!(node_id: "s-nm-js", name: "node_modules.js", kind: "file")
+
+      get search_path(q: "node_modules")
+      assert_response :success
+      assert_select ".result-group--file a[href=?]", file_path("s-nm-file"), text: "node_modules"
+      assert_select ".result-group--file a[href=?]", file_path("s-nm-js"), text: "node_modules.js"
+      assert_select ".result-group--file a[href=?]", file_path("s-nm-dir"), count: 0
+    end
+
     test "a blank query renders the prompt, never the empty-results message" do
       get search_path
       assert_response :success
