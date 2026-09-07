@@ -32,7 +32,7 @@ viewer controllers (S4-5). No new gem. No new JS dependency.
 | slice | plan | delivers | depends on | risk |
 |---|---|---|---|---|
 | S4-1 | `2026-09-07-stage-4-s1-project-page.md` | hero, photos, README card (root repo included), quiet panels, list-view menu | — | **landed** 2026-09-07, PR #334 |
-| S4-2 | `2026-09-07-stage-4-s2-filing.md` | roles for `.mage` `.lbrn` `.ai`, KiCad rules, board zips → `pcb/`, grouped settings, sweep opt-out and feedback, build-output display rule | — | **moderate**: touches the sweep (§14f) and `ROLE_BY_EXT` (files-preview.md) |
+| S4-2 | `2026-09-07-stage-4-s2-filing.md` | roles for `.mage` `.lbrn` `.ai`, KiCad rules, board zips → `pcb/`, grouped settings, sweep opt-out and feedback, build-output display rule | — | **landed** 2026-09-07, branch `claude/stage-4-s2-filing` |
 | S4-3 | `…-s3-round-trip.md` (to write) | path + copy, self-refreshing file page, Save-to-library, honest Rescan | — | moderate: the write-back rides the upload doors on three backends |
 | S4-4 | `…-s4-documentation.md` (to write) | README editor anywhere (D3), owner preview, publish panel, anchors | D3; S4-1's README card | **moderate**: flips a git-editing rule for Markdown |
 | S4-5 | `…-s5-public-viewers.md` (to write) | public file page with the viewers (D5), covers, public header | D5 | low: reuse |
@@ -166,11 +166,13 @@ role → `cnc/`), `app/services/maker/model_intake.rb` (`EXCLUDED_ROLES` gains t
 `app/services/maker/previews/registry.rb` + `previews/pdf.rb` (`.ai` when bytes start `%PDF-`),
 `app/models/maker/filing_rule.rb` (`KEY_RE`), `app/services/maker/filing_rules.rb` (seed the new
 keys for already-seeded users — a data migration, the `RederiveModelRolesAndSeedFilingRules`
-pattern), `app/services/maker/project_intake.rb` (board zips via `Maker::GerberArchive.archive?`,
-bounded; `autofile`; record `last_swept_at`/`last_sweep_moves`), `app/controllers/concerns/
+pattern), `app/services/maker/project_intake.rb` (board zips via `Maker::GerberArchive.for` — `.archive?` is
+name-only — bounded, in `#place` alone; `autofile`; `Result#conflict_folders`; `record_sweep!`, the one
+writer of `last_swept_at`/`last_sweep_moves`), `app/controllers/concerns/
 project_folder_intake.rb` (a flash that names moves), `app/views/settings/filing_rules/
-index.html.erb` (one card per folder), `app/models/node.rb` (`visible_entries` build dirs),
-`search_controller.rb` (the same exclusion), `app/views/projects/_attachments.html.erb` (the
+index.html.erb` (one card per folder), new `app/services/library/build_output.rb` (`node_modules`, `__pycache__`; `build` deliberately not),
+`app/models/node.rb` (`visible_entries`), `Maker::ProjectFolderListing#hidden_dir?`;
+`search_controller.rb` needed only a comment (it already reads the shared scope), `app/views/projects/_attachments.html.erb` (the
 sweep line), two migrations. Tests: `filing_rule_test.rb`, `filing_rules_test.rb`,
 `project_intake_test.rb`, `settings_filing_test.rb`, `previews/pdf_test.rb`, `node_test.rb`,
 `files_search_test.rb`, the three `docs/invariants/*` files that describe the vocabulary.
