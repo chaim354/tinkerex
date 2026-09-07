@@ -31,7 +31,7 @@ viewer controllers (S4-5). No new gem. No new JS dependency.
 
 | slice | plan | delivers | depends on | risk |
 |---|---|---|---|---|
-| S4-1 | `2026-09-07-stage-4-s1-project-page.md` | hero, photos, README card (root repo included), quiet panels, list-view menu | — | **landed** 2026-09-07, branch `claude/stage-4-s1-project-page` |
+| S4-1 | `2026-09-07-stage-4-s1-project-page.md` | hero, photos, README card (root repo included), quiet panels, list-view menu | — | **landed** 2026-09-07, PR #334 |
 | S4-2 | `…-s2-filing.md` (to write) | roles for `.mage` `.lbrn` `.ai`, KiCad rules, board zips → `pcb/`, grouped settings, sweep opt-out and feedback, build-output display rule | — | **moderate**: touches the sweep (§14f) and `ROLE_BY_EXT` (files-preview.md) |
 | S4-3 | `…-s3-round-trip.md` (to write) | path + copy, self-refreshing file page, Save-to-library, honest Rescan | — | moderate: the write-back rides the upload doors on three backends |
 | S4-4 | `…-s4-documentation.md` (to write) | README editor anywhere (D3), owner preview, publish panel, anchors | D3; S4-1's README card | **moderate**: flips a git-editing rule for Markdown |
