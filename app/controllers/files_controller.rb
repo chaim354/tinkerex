@@ -472,10 +472,9 @@ class FilesController < ApplicationController
     # cannot disagree about whether the page has a Gerber on it.
     #
     # A ZIPPED EXPORT IS ONE ENTRY — the zip's own URL plus the member paths the BROWSER extracts —
-    # built through `FilesHelper#gerber_archive_entry`, the same builder both Fabrication panels
-    # reach through `gerber_layers_for`. A second literal of that shape here is the drift to avoid:
-    # only a browser ever reads those keys, so nothing on the server would report the two spellings
-    # diverging.
+    # built through `FilesHelper#gerber_archive_entry`, the one place that shape is spelled, so that
+    # no second literal of keys only a browser reads can drift: nothing on the server would report
+    # the two spellings diverging.
     @gerber_layers =
       if @gerber_archive
         [ helpers.gerber_archive_entry(name: @node.name,
@@ -1490,15 +1489,16 @@ class FilesController < ApplicationController
   # WHAT gerber_controller.js FETCHES on a file page: `[{ name:, url: }]`, name-ordered.
   #
   # AN ORDINARY LAYER IS ITSELF, AND THAT IS THE WHOLE PAGE. A `.gtl` file page shows the `.gtl`,
-  # even when its folder holds the rest of the board — the project page's Fabrication panel is
-  # where a board is a board, and a file page that quietly rendered the neighbours would be showing
-  # something other than the file it is about.
+  # even when its folder holds the rest of the board — a page that quietly rendered the neighbours
+  # would be showing something other than the file it is named for. The board's own pages are the
+  # `.gbrjob`'s and a zipped export's (since 2026-09-06 there is no project-page panel rendering
+  # a folder as a board; a loose set with no job file is one layer per page).
   #
   # A `.gbrjob` IS THE ONE EXCEPTION, because it is not a layer at all: it is JSON naming the set,
   # so the only honest render of it IS the board. Its layers are the siblings it names — resolved
-  # through `Maker::GerberSets.job_layer_names`, the same reader the panel uses, so the two surfaces
-  # can never disagree about what a manifest says — falling back to every pcb-role sibling when the
-  # job names nothing this folder holds (see that method for why every failure collapses to nil).
+  # through `Maker::GerberSets.job_layer_names`, its one caller — falling back to every pcb-role
+  # sibling when the job names nothing this folder holds (see that method for why every failure
+  # collapses to nil).
   # The manifest itself is never in the list: tracespace's Gerber parser would turn JSON into a junk
   # layer rather than an error.
   #

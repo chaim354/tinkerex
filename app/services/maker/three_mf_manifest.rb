@@ -77,7 +77,7 @@ module Maker
     def self.threemf?(name) = File.extname(name.to_s).downcase.delete(".") == EXT
 
     # nil unless this node is a 3MF we could read something from. `user` is whose library the bytes
-    # are read from — on a public page the OWNER, never the visitor (Maker::GerberSets's rule).
+    # are read from — the file page's current user; nothing public reads a manifest.
     #
     # THE TOKEN IS `content_hash` OR `current_version_id`, the port's own `content_token` spelled
     # from the catalog: a hash on share/s3, a version id on chunk_remote. Read off the two columns

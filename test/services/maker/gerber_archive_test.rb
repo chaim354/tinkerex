@@ -2,11 +2,11 @@ require "test_helper"
 require "support/gerber_fixture"
 
 module Maker
-  # WHAT THE SERVER LEARNS FROM A ZIP WITHOUT EXTRACTING IT — the listing both Fabrication panels
-  # and the zip's own file page read. Tested as a unit for `GerberSetsTest`'s reason: it is a pure
-  # function of the archive's bytes plus one port read, and driving a web page to ask it would be
-  # slower and no more true. The markup is test/integration/web/gerber_preview_test.rb's subject and
-  # the browser half — JSZip really extracting these members — is test/system/gerber_test.rb's.
+  # WHAT THE SERVER LEARNS FROM A ZIP WITHOUT EXTRACTING IT — the listing the zip's own file page
+  # reads. Tested as a unit for `GerberSetsTest`'s reason: it is a pure function of the archive's
+  # bytes plus one port read, and driving a web page to ask it would be slower and no more true.
+  # The markup is test/integration/web/gerber_preview_test.rb's subject and the browser half —
+  # JSZip really extracting these members — is test/system/gerber_test.rb's.
   #
   # SHARE IS PINNED BEFORE ANY NODE IS CREATED, exactly as in GerberSetsTest: `for` really opens the
   # archive through the port, so a fixture with no bytes behind it would answer nil on every leg and
@@ -250,9 +250,9 @@ module Maker
 
     # --- the cache ---------------------------------------------------------------
 
-    # ONE READ PER (node, content token). A project page renders the panel and a visitor reloads it;
-    # re-opening a 10 MB archive each time is exactly the cost this cache exists to avoid — and nil
-    # is cached too, so a zip of firmware stays known-not-a-board.
+    # ONE READ PER (node, content token). A maker reloads the zip's page; re-opening a 10 MB
+    # archive each time is exactly the cost this cache exists to avoid — and nil is cached too, so
+    # a zip of firmware stays known-not-a-board.
     #
     # MUTATION: drop the token from the cache key and the last assertion fails — the re-exported
     # archive would answer from the stale entry.

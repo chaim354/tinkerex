@@ -25,11 +25,12 @@ module Maker
   # on every project-page view to re-learn that would be the cost this cache exists to avoid.
   # (test: null_store, so every test really reads; production: Solid Cache, one query per fetch.)
   #
-  # A `.gbrjob` MEMBER PICKS THE STACK, DOWNWARD ONLY — `Maker::GerberSets`'s rule for a folder,
-  # applied inside the archive: where a job parses and names members this zip holds, those are
-  # stacked; every pcb-role member is still LISTED; a job naming nothing here falls back to every
-  # layer. Matched by basename, never by path, for that class's reason (exporters write any prefix).
-  # The job is never itself a layer (JSON into tracespace is a junk layer, not an error).
+  # A `.gbrjob` MEMBER PICKS THE STACK, DOWNWARD ONLY — `Maker::GerberSets.job_layer_names`'s rule
+  # for a folder's job file, applied inside the archive: where a job parses and names members this
+  # zip holds, those are stacked; every pcb-role member is still LISTED; a job naming nothing here
+  # falls back to every layer. Matched by basename, never by path, for that method's reason
+  # (exporters write any prefix). The job is never itself a layer (JSON into tracespace is a junk
+  # layer, not an error).
   #
   # MEMBER NAMES ARE HANDED TO THE BROWSER AS PATHS AND TO tracespace AS BASENAMES. JSZip looks a
   # member up by its full path; tracespace identifies a layer by its filename, and Fusion's
@@ -42,10 +43,16 @@ module Maker
   # a board). `rescue Zip::Error` beside the port's own two, never a bare rescue: a NoMethodError
   # here is a bug and must stay loud.
   class GerberArchive
-    # `members`: every pcb-role member path in the zip (String, name-ordered), the panel's LIST.
-    # `stacked`: the subset the viewer renders (never the .gbrjob). `job_name`: the job member's
-    # basename, or nil — the board takes the ZIP's stem as its name regardless (the export's own
-    # name is the one the maker recognises; Fusion calls every job `gerber_job.gbrjob`).
+    # `members`: every pcb-role member path in the zip (String, name-ordered) — what the archive
+    # HOLDS. `stacked`: the subset the VIEWER renders (never the .gbrjob), and the one field `app/`
+    # reads (`FilesController#show`, into the browser's one archive entry). `job_name`: the job
+    # member's basename, or nil.
+    #
+    # `members` AND `job_name` HAVE HAD NO READER IN `app/` since the project pages' Fabrication
+    # panels went on 2026-09-06, and are kept deliberately: this class's tests pin the two lists as
+    # DIFFERENT (a job naming a subset stacks that subset while every pcb-role member stays listed),
+    # which is the behaviour a caller of either would depend on, and a member list is the next thing
+    # a zip's own page will want to show.
     Listing = Data.define(:members, :stacked, :job_name)
 
     EXT = "zip".freeze
@@ -58,7 +65,7 @@ module Maker
     def self.archive?(name) = File.extname(name.to_s).downcase.delete(".") == EXT
 
     # nil unless this node is a zip holding at least one Gerber layer. `user` is whose library the
-    # bytes are read from — on the public page the OWNER, never the visitor (GerberSets's rule).
+    # bytes are read from — the file page's current user.
     #
     # THE TOKEN IS `content_hash` OR `current_version_id`, WHICH IS THE PORT'S OWN `content_token`
     # SPELLED FROM THE CATALOG: a hash on share/s3, a version id on chunk_remote — the same value

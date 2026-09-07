@@ -124,7 +124,6 @@
       is a difference in kind rather than a branch (the partial's own header says so). %>
   <%= render "releases", pub: @pub %>
   <%= render "schematics", pub: @pub %>
-  <%= render "fabrication", pub: @pub %>
   <% @pub.repo_cards.each_value do |card| %>
     <%= render "repo_card", card: card %>
   <% end %>
