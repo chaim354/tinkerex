@@ -45,9 +45,14 @@ intended runner home until 2026-08-31; that was wrong.**
 - **Stack:** `ops/ci-runner-stack.yml`, deployed through Portainer as stack `ci-runners`. Portainer
   holds the running copy; the file is the reviewable one, and the two change in the same breath.
 - **Credential:** a fine-grained PAT scoped to `chaim354/tinkerex` with **Administration: read &
-  write and nothing else**, supplied as the Portainer stack variable `RUNNER_ACCESS_TOKEN`. It lives
-  at `op://tinkerex/github runners/credential` (§14g); nothing is `export`ed and the value never
-  enters this repo.
+  write and nothing else**, held in `/mnt/user/appdata/tinkerex-ci/runner.token` on the box
+  (root:root 0400), bind-mounted read-only into each runner as `/run/secrets/runner_token` and
+  named in `ACCESS_TOKEN_FILE`; the image's wrapper entrypoint exports it for the base entrypoint
+  (`ci/runner/Dockerfile`, last block). It lives at `op://tinkerex/github runners/credential`
+  (§14g); nothing is `export`ed and the value never enters this repo. **It was the Portainer stack
+  variable `RUNNER_ACCESS_TOKEN` until 2026-09-07** — Portainer's stack-update API replaces the
+  variables with whatever the request carries (measured), so a stack that holds a secret cannot be
+  updated by anything that cannot see the secret. The stack now carries no variables at all.
 - **Work dirs:** bind-mounted to `/mnt/user/appdata/tinkerex-ci/runner-N/_work` on the array, never
   Docker named volumes — those live in the same loop device the prune step below is about. They must
   exist and be **`chown`ed to `1001:121`** before first boot. That uid:gid is measured, not the
@@ -71,12 +76,18 @@ ssh root@192.168.1.146 'cd /tmp/tinkerex-ci && \
   docker build -t tinkerex-ci-runner:<new-tag> -f ci/runner/Dockerfile . > /tmp/build.log 2>&1; \
   ec=$?; tail -30 /tmp/build.log; exit $ec'
 
-# 3. Reclaim the build cache. Not tidiness — see below.
+# 3. Bump `image:` in ops/ci-runner-stack.yml and push THAT FILE, verbatim, as the stack's content —
+#    the Portainer editor, or the API (`PUT /api/stacks/8?endpointId=3` with the file content and
+#    an empty Env, which the Portainer MCP's StackUpdate does). The stack carries no variables, so
+#    the update is the file and nothing else. Verify: `docker ps` on the box shows the new tag on all
+#    four, `gh api repos/chaim354/tinkerex/actions/runners` lists them online.
+
+# 4. ONLY THEN reclaim the build cache. Not tidiness — see below — but ORDER MATTERS: on 2026-09-07
+#    `docker builder prune -af` run BEFORE the stack switched removed the freshly built, not-yet-used
+#    image (and the pulled base image) along with the cache. A built image no container references
+#    counts as cache to this daemon; one the stack runs does not.
 ssh root@192.168.1.146 'docker builder prune -af'
 ```
-
-Then bump `image:` in `ops/ci-runner-stack.yml`, paste it into the Portainer stack editor, and
-redeploy.
 
 **Piping the build into `tail` over ssh reports `tail`'s exit status, not the build's.** The remote
 shell has no `pipefail`, so a pipeline's status is its LAST command's — probed on the box,
@@ -97,8 +108,10 @@ completely differently:
 
 1. **The PAT expired.** The containers are `running` and registered NOWHERE:
    `gh api repos/chaim354/tinkerex/actions/runners` lists none of them. Fine-grained PATs cannot be
-   renewed in place, so mint a new one with the same scoping, update the Portainer stack variable
-   `RUNNER_ACCESS_TOKEN`, and redeploy the stack.
+   renewed in place, so mint a new one with the same scoping, write it into
+   `/mnt/user/appdata/tinkerex-ci/runner.token` on the box (root, 0400), and
+   `docker restart tinkerex-runner-1 tinkerex-runner-2 tinkerex-runner-3 tinkerex-runner-4` — the
+   wrapper entrypoint re-reads the file on every start. No stack redeploy is needed.
 2. **The box or the stack is down.** The containers are not running at all. Check Portainer, or
    `ssh root@192.168.1.146 'docker ps'`.
 
