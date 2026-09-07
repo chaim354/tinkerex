@@ -46,6 +46,18 @@ module Maker
       assert_equal "code",     Maker::ProjectFolders.default_folder_for("main.cpp")
       assert_equal "pcb",      Maker::ProjectFolders.default_folder_for("board.gtl")
       assert_equal "pcb",      Maker::ProjectFolders.default_folder_for("board.drl")
+      assert_equal "cnc",      Maker::ProjectFolders.default_folder_for("catan.mage")
+      assert_equal "laser",    Maker::ProjectFolders.default_folder_for("tray.lbrn")
+      assert_equal "design",   Maker::ProjectFolders.default_folder_for("logo.ai")
+    end
+
+    # TWO ROLES, ONE FOLDER — the `docs` shape, pinned so a later "tidy-up" that gives cnc_design
+    # its own directory has to argue with a test instead of with a hash.
+    test "the MillMage project and its g-code output share the cnc folder and not the role" do
+      assert_equal Maker::ProjectFolders.default_folder_for("catan.mage"),
+                   Maker::ProjectFolders.default_folder_for("catan.nc")
+      assert_equal "cnc_design", Maker::FileAttachment.role_for("catan.mage")
+      assert_equal "gcode",      Maker::FileAttachment.role_for("catan.nc")
     end
 
     # THE ARGUABLE HALF OF THE `pcb` ROLE, pinned separately for the reason the `code` block below

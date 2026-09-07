@@ -62,8 +62,11 @@ module Maker
     # Pinned independently of ROLE_LABELS on purpose. Asserting ROLES == ROLE_LABELS.keys is
     # tautological — ROLES is DEFINED as those keys — so it cannot catch a typo'd key like
     # "cad_soruce", which is exactly the failure a reader assumes it guards. This literal can.
-    test "the role vocabulary is exactly these twelve values" do
-      assert_equal %w[cad_source code document gcode image instructions laser model other pcb source_archive vector],
+    # `cnc_design` joined in stage 4, S4-2, and this literal going red is what a new role is
+    # SUPPOSED to cost: the count in the test name is part of the claim, so widening the vocabulary
+    # is a decision someone typed here rather than one a derivation absorbed silently.
+    test "the role vocabulary is exactly these thirteen values" do
+      assert_equal %w[cad_source cnc_design code document gcode image instructions laser model other pcb source_archive vector],
                    Maker::FileAttachment::ROLES.sort
     end
 
@@ -203,6 +206,38 @@ module Maker
     # change is every LATER reader of TEXT_ROLES: a pdf handed to a source-code viewer.
     test "instructions is not a text role" do
       assert_not_includes Maker::FileAttachment::TEXT_ROLES, "instructions"
+    end
+
+    # STAGE 4, S4-2 — THE THREE FORMATS THE BENCH ACTUALLY PRODUCES THAT THE VOCABULARY HAD NEVER
+    # HEARD OF. All three had a full page and no role, so all three filed into `other/`: `.mage`
+    # has Measure and a CNC operations panel, `.lbrn` has the LightBurn thumbnail and Measure
+    # (Registry has claimed it since the Lbrn2 renderer landed), and `.ai` had nothing at all.
+    # share, 2026-09-07: 23 .mage, 25 .ai.
+    test "MillMage, LightBurn v1 and Illustrator files have roles" do
+      assert_equal "cnc_design", Maker::FileAttachment.role_for("catan.mage")
+      assert_equal "cnc_design", Maker::FileAttachment.role_for("CATAN5.MAGE")
+      assert_equal "laser",      Maker::FileAttachment.role_for("tray.lbrn")
+      assert_equal "vector",     Maker::FileAttachment.role_for("logo.ai")
+    end
+
+    # `cnc_design` IS NOT `gcode`, AND THE SPLIT IS THE POINT. `.nc`/`.tap`/`.ngc`/`.gcode` are the
+    # machine's OUTPUT — the toolpath you send; a `.mage` is the PROJECT you go back and edit, the
+    # CNC sibling of `.lbrn2`. They share a FOLDER (`cnc/`) because that is where a maker looks for
+    # their CNC work, and they must not share a ROLE, because a role is also what
+    # Maker::ModelIntake denies a model and what a panel heading reads.
+    test "a MillMage project is not g-code" do
+      assert_not_equal Maker::FileAttachment.role_for("catan.mage"),
+                       Maker::FileAttachment.role_for("catan.nc")
+      assert_equal "CNC design", Maker::FileAttachment::ROLE_LABELS.fetch("cnc_design")
+      assert_includes Maker::FileAttachment::ROLES, "cnc_design"
+    end
+
+    # `.mage` IS NOT TEXT, though it is XML — its page is Measure, exactly like `.lbrn2`'s. The
+    # guard is on the CONSTANT because preview_kind's `:measure` branch returns first and would
+    # stay green if the role ever joined TEXT_ROLES (the argument `pcb` already carries here).
+    test "the CNC design role is not a text role" do
+      assert_not_includes Maker::FileAttachment::TEXT_ROLES, "cnc_design"
+      refute Maker::FileAttachment.text?("catan.mage")
     end
   end
 end

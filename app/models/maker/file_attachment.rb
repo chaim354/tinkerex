@@ -19,6 +19,13 @@ module Maker
       "cad_source"     => "CAD source",
       "code"           => "Code",
       "gcode"          => "G-code",
+      # THE CNC PROJECT FILE, AS OPPOSED TO ITS OUTPUT (stage 4, S4-2). `.mage` is MillMage's
+      # editable project — the CNC sibling of `.lbrn2` — and it files into the SAME folder as
+      # g-code (`cnc/`) while keeping its own role, for the reason `vector`/`laser` are two roles
+      # sharing nothing: a role is also what Maker::ModelIntake denies a model and what a panel
+      # heading says. Folding it into `gcode` would make "G-code" the label on a file that is not
+      # g-code; giving it its own folder would scatter one workbench across two directories.
+      "cnc_design"     => "CNC design",
       # The fabrication outputs of a PCB — Gerber layers, the Excellon drill file, the `.gbrjob`
       # manifest. "PCB" rather than "Gerber" because the role holds the drill files too, and a
       # board's set is what a maker thinks of as one thing.
@@ -63,7 +70,16 @@ module Maker
       # anything. That distinction is what lets Maker::ProjectFolders put them in different
       # folders — and the ONE vocabulary is where it has to live, or the panel headings and the
       # folders disagree.
-      "svg" => "vector", "dxf" => "vector", "lbrn2" => "laser",
+      # `.lbrn` IS LIGHTBURN v1 AND IS THE SAME KIND OF FILE AS `.lbrn2` (stage 4, S4-2). It has
+      # had a THUMBNAIL and a Measure page since the Lbrn2 renderer landed (Registry claims both
+      # extensions, and MEASURABLE_EXTS lists both) — the only thing it lacked was a role, so a
+      # v1 file filed into `other/` while the v2 file beside it filed into `laser/`. `.ai` is
+      # Illustrator: `vector` beside `.svg`/`.dxf`, because that is what it is and where a maker
+      # keeps it (share, 2026-09-07: 25 files, every one of them in `other/`).
+      "svg" => "vector", "dxf" => "vector", "ai" => "vector",
+      "lbrn2" => "laser", "lbrn" => "laser",
+      # MillMage. See ROLE_LABELS' own note for why this is not `gcode`.
+      "mage" => "cnc_design",
       # Editable CAD sources, as opposed to the exported meshes above. SolidWorks sits with Fusion
       # here because CLAUDE.md §1 and docs/research-format-processing.md treat them as one category
       # — proprietary, no FOSS parser, you open them in the tool that made them.
@@ -302,9 +318,10 @@ module Maker
     # as one. The cost of the remaining false positive — someone who genuinely names a LightBurn
     # file `..._backup.lbrn2` — is that it renders one section lower, in a group they can open.
     #
-    # `.lbrn` (v1) is included alongside `.lbrn2` even though only `.lbrn2` is in ROLE_BY_EXT: the
-    # question here is "did LightBurn write this as a backup", which the older extension answers the
-    # same way, and getting it wrong costs a stray tile rather than a misfiled role.
+    # `.lbrn` (v1) sits here beside `.lbrn2` and `.mage`, and since stage 4, S4-2 all three are in
+    # ROLE_BY_EXT too — this list predates that and was written when only `.lbrn2` was. It stays a
+    # list of its own regardless: the question here is "did LightBurn/MillMage write this as a
+    # rescue copy", which is about the vendor's naming convention, not about a role.
     BACKUP_EXTS = %w[lbrn lbrn2 mage].freeze
     BACKUP_SUFFIX = "_backup".freeze
 
