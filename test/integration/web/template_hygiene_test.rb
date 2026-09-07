@@ -136,6 +136,13 @@ module Web
       # git repository behind it either.
       @user.nodes.create!(node_id: "n-firmware-readme", name: "README.md", kind: "file",
                           parent_node_id: firmware.node_id)
+      # STAGE 4, S4-1: A README AT THE FOLDER'S OWN ROOT, or `projects/_readme_card` never renders.
+      # The folder is a PLAIN folder (only `firmware` carries a `.git` marker), so the private page
+      # takes the `@readme` branch rather than the root-repository card. Like every other node this
+      # fixture seeds it has no bytes behind it, so Maker::Readme fails closed to its note and the
+      # partial's NOTE branch is what gets swept — the same argument the firmware README two lines
+      # up makes for the repo card's.
+      file!("n-readme", "README.md", parent_node_id: folder.node_id)
       # STAGE 3, S3-2 (Task B): ONE .kicad_sch FILE, OR projects/_schematics's POPULATED branch
       # never runs. Its own doc comment says the partial "renders nothing when the folder holds
       # none" — and show.html.erb calls render UNCONDITIONALLY (the partial decides), so the FILE
@@ -180,6 +187,11 @@ module Web
       entry = @project.build_log_entries.create!(user: @user, body: "Cut the base tonight.",
                                                  logged_at: Time.current)
       entry.file_attachments.create!(user: @user, node_id: photo, role: "image", position: 0)
+      # STAGE 4, S4-1: THE SAME IMAGE ATTACHED TO THE PROJECT, which makes it the DERIVED cover
+      # (Maker::Project#derived_cover_node_id prefers an image) and so drives `projects/_hero`'s
+      # IMAGE branch — the one that renders the picture itself rather than a poll cell. It is
+      # already a folder image, so `projects/_photos` renders it either way.
+      @project.file_attachments.create!(user: @user, node_id: photo, role: "image", position: 3)
       @sheet = @project.sheets.create!(user: @user, name: "Cut list", position: 0,
                                        data: Maker::Sheet.blank_data)
       @model = @user.maker_models.create!(title: "Bracket", slug: "bracket",

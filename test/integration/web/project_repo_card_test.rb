@@ -53,6 +53,29 @@ module Web
       user.nodes.present.find_by!(parent_node_id: folder.node_id, name:, kind: "dir")
     end
 
+    # THE PROJECT'S OWN FOLDER AS THE REPOSITORY (stage 4, S4-1): `git init` at Projects/<slug>
+    # itself — the shape every real repository on the share deployment has, and the one
+    # Maker::ProjectFolderListing#collect_dirs could not see (it flags CHILDREN, so the root
+    # answered repo? nowhere). No FileUtils.mkdir_p: ensure_library_folder! already made the
+    # directory, and init_at is happy to be handed an existing one.
+    def make_root_repo!(user, project, files: { "README.md" => "# Lamp\n\nA lamp.\n" })
+      folder = project.ensure_library_folder!(user)
+      dir = File.join(library_root, "Projects", project.slug)
+      repo = Rugged::Repository.init_at(dir)
+      files.each do |rel, body|
+        FileUtils.mkdir_p(File.dirname(File.join(dir, rel)))
+        File.write(File.join(dir, rel), body)
+      end
+      index = repo.index
+      files.each_key { |rel| index.add(path: rel, oid: Rugged::Blob.from_workdir(repo, rel), mode: 0o100644) }
+      index.write
+      who = { name: "Seed", email: "seed@example.com", time: Time.at(1_700_000_000) }
+      Rugged::Commit.create(repo, tree: index.write_tree(repo), message: "First cut",
+                            parents: [], update_ref: "HEAD", author: who, committer: who)
+      Library::ScanJob.new.perform(user_id: user.id)
+      user.nodes.present.find_by!(node_id: folder.node_id)
+    end
+
     # The house mutation-check helper (project_folder_listing_test.rb and project_scan_button_test.rb
     # carry the same body; there is no shared copy in test_helper.rb, so each suite that needs it
     # defines its own). Replaces a SINGLETON method — a class's own `def self.x`, or (as used
@@ -180,6 +203,43 @@ module Web
       assert_response :success
       assert_select ".repo-card .repo-facts", text: /history is available where the library is a local folder/i
       assert_select ".repo-card .markdown h1", text: "Firmware"
+    end
+
+    # --- the project's OWN folder as the repository (stage 4, S4-1) ---------------
+
+    test "a project whose own folder is the repository gets the card, Commits and History, and an honest caption" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      root = make_root_repo!(user, project)
+
+      get project_path(project)
+
+      assert_response :success
+      assert_select ".attachments-panel .repo-card .repo-summary", text: "First cut"
+      assert_select ".attachments-panel .repo-card .markdown h1", text: "Lamp"
+      assert_select ".attachments-panel .panel-head a[href=?]", repo_commit_path(root.node_id), text: "Commits"
+      assert_select ".attachments-panel .panel-head a[href=?]", repo_history_path(root.node_id), text: "History"
+      assert_select "p.loose-note", text: /This folder is a git repository/
+      assert_select "p.loose-note", text: /filed on the next sweep/, count: 0
+    end
+
+    # A PLAIN FOLDER'S README RENDERS TOO, through the same Maker::Readme reader with no git facts
+    # — until S4-1 a maker with an ordinary project folder could see their own README only by
+    # publishing the project (the public page has rendered one since S3-4).
+    test "a plain folder's README renders on the private page, with no git facts and no Commits link" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Tray")
+      project.ensure_library_folder!(user)
+      File.write(File.join(library_root, "Projects", project.slug, "README.md"), "# Tray\n\nWalnut.\n")
+      Library::ScanJob.new.perform(user_id: user.id)
+
+      get project_path(project)
+
+      assert_response :success
+      assert_select ".attachments-panel .readme-card .markdown h1", text: "Tray"
+      assert_select ".attachments-panel .readme-card .repo-facts", count: 0
+      assert_select ".attachments-panel .panel-head a", text: "Commits", count: 0
+      assert_select "p.loose-note", text: /filed on the next sweep/
     end
   end
 end

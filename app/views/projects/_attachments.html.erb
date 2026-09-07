@@ -30,6 +30,12 @@
   page instead of N instances polling their own slice. `filemenu` rides along on the same element
   for the same reason — one document-level listener, every tile.
 
+  THE PANEL OPENS WITH THE FOLDER'S OWN CARD (stage 4, S4-1): `projects/_repo_card` over
+  ProjectsController#show's @root_card when @listing.root_repo? (the folder IS a working tree —
+  the head also carries a `repo` badge and Commits/History, and the loose caption says the sweep
+  leaves those files alone), else `projects/_readme_card` over @readme when the folder has a plain
+  README. Neither is inside the "no files yet" check below: a README is content.
+
   @view (tiles/list) IS READ BY EVERY GROUP PARTIAL BELOW, NOT BY THIS ONE — this template only
   decides WHICH groups exist and in what order; _attachment_group/_file_tree_section/
   _generated_group each decide tiles vs. _file_rows.html.erb for their own rows, off the same ivar.
@@ -41,7 +47,15 @@
         link to when the folder ensure failed this render (an unmounted NAS, a bucket blip) — the
         upload control below already degrades the same way for the same reason. %>
     <%= link_to @listing.path, files_path(folder: @listing.folder_id), class: "panel-path mono muted" if @listing.available? %>
+    <% if @listing.root_repo? %><span class="badge">repo</span><% end %>
     <div class="panel-actions">
+      <%# THE ROOT'S OWN Commits/History (stage 4, S4-1). A nested repository carries these on its
+          section summary and inside its card; a project whose FOLDER is the working tree has no
+          section of its own to hang them on, so the panel head is where they belong. %>
+      <% if @listing.root_repo? %>
+        <%= link_to "Commits", repo_commit_path(@listing.folder_id), class: "linkbtn" %>
+        <%= link_to "History", repo_history_path(@listing.folder_id), class: "linkbtn" %>
+      <% end %>
       <%# Tiles / List (stage 3, S3-1) — the same view-toggle component the Files page uses
           (components.css), a different cookie and a different default (ProjectsController
           #resolve_project_view): this page starts on tiles, the Files page on list. %>
@@ -74,6 +88,15 @@
           data-scanreload-url-value="<%= project_path(@project) %>"></span>
   <% end %>
 
+  <%# THE ROOT'S CARD (stage 4, S4-1), above the groups, for every project that has one: the
+      repository card when the folder itself is a working tree (README, latest commit, tag), the
+      README alone otherwise. Outside the empty check below on purpose — a README is content. %>
+  <% if @root_card %>
+    <%= render "projects/repo_card", card: @root_card %>
+  <% elsif @readme %>
+    <%= render "projects/readme_card", readme: @readme, editable: false %>
+  <% end %>
+
   <%# BACKUPS COME OUT FIRST, pulled out of the tree wherever they physically sit and keyed on the
       NODE's name rather than any attachment's label — a folder row carries no attachment at all,
       and Row#backup? always reads the node. They keep their own closed section rather than being
@@ -92,7 +115,14 @@
           why these files sit apart from every real section instead of reading as forgotten. %>
       <% if loose.any? %>
         <%= render "attachment_group", key: "loose", label: "Loose", rows: loose, open: true %>
-        <p class="muted loose-note">Loose files are filed on the next sweep; a README stays here.</p>
+        <%# THE CAPTION MUST BE TRUE OF THIS FOLDER (stage 4, S4-1): the sweep does not file a
+            working tree's files, so promising it would be a lie about the one shape most real
+            project folders have. %>
+        <% if @listing.root_repo? %>
+          <p class="muted loose-note">This folder is a git repository, so its files stay where they are.</p>
+        <% else %>
+          <p class="muted loose-note">Loose files are filed on the next sweep; a README stays here.</p>
+        <% end %>
       <% end %>
 
       <%# ONE SECTION PER REAL SUBFOLDER, nested exactly as it sits on disk — a repository renders

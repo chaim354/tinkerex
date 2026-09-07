@@ -116,6 +116,14 @@ module Web
       @user.nodes.create!(node_id: "firmware-readme", name: "README.md", kind: "file",
                           parent_node_id: firmware.node_id, size: 12, mtime: 1_700_000_000_000_000_000,
                           content_hash: "h-firmware-readme", current_version_id: "v-firmware-readme")
+      # STAGE 4, S4-1: A COVER, so the HERO is under measurement. It joins the page's one PageNodes
+      # union and its thumbnail joins the one ThumbnailMap, both of which are exactly the places a
+      # per-cover lookup would hide. `update_column` rather than `update!`, because the derived
+      # fallback (Maker::Project#cover_node_id) would otherwise answer from the attachments this
+      # fixture grows and the cover would change size with N.
+      @user.nodes.create!(node_id: "cover-img", name: "cover.png", kind: "file", parent_node_id: folder.node_id,
+                          size: 1, mtime: 1_700_000_000_000_000_000)
+      project.update_column(:cover_node_id, "cover-img")
       # STAGE 2, S2-4: the BOM panel grows too -- one line per iteration, CYCLING through the
       # three kinds (not all three every time) so the total stays UNDER Projects::BomLinesController
       # ::PANEL_CAP at the small size. The panel caps its table at PANEL_CAP rows, so a seed that
@@ -156,8 +164,17 @@ module Web
           node!(id, "#{id}.stl")
           project.file_attachments.create!(user: @user, node_id: id, role: "model")
           project.tasks.create!(user: @user, title: "task #{id}")
-          project.build_log_entries.create!(user: @user, body: "entry #{id}",
-                                           logged_at: Time.current)
+          # STAGE 4, S4-1: THE ENTRY CARRIES A PHOTO AND THE FOLDER GAINS AN IMAGE, so the Photos
+          # panel (Maker::ProjectPhotos) grows on BOTH of its inputs. The entry photo sits at the
+          # library ROOT — where the upload door really puts one — so it is read out of @page_nodes
+          # rather than the listing, which is precisely the lookup a per-photo `find_by` would
+          # replace; the folder image grows the listing's own half.
+          entry = project.build_log_entries.create!(user: @user, body: "entry #{id}",
+                                                    logged_at: Time.current)
+          node!("#{id}-photo", "#{id}.png")
+          entry.file_attachments.create!(user: @user, node_id: "#{id}-photo", role: "image")
+          @user.nodes.create!(node_id: "#{id}-img", name: "#{id}.jpg", kind: "file", parent_node_id: sub.node_id,
+                              size: 1, mtime: 1_700_000_000_000_000_000)
           # STAGE 3, S3-3: the wiring panel grows too -- one connection per iteration, the same
           # constant-in-N argument as tasks and build-log entries two lines up.
           project.connections.create!(user: @user, from_label: "from-#{id}", to_label: "to-#{id}")

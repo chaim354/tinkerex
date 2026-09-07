@@ -511,6 +511,24 @@ module Web
       assert_select "table.table.project-files"
     end
 
+    # A LIST ROW CARRIES THE TILE'S RIGHT-CLICK MENU (stage 4, S4-1). The two views draw the same
+    # Row through two partials, so the menu's seven-key wire contract (docs/invariants/
+    # files-preview.md) was on the tile alone and switching to List silently lost Note, Download
+    # and "Edit in <addon>" — the same shape file_menu_wiring_test.rb records for the Files grid.
+    # Asserted on the RENDERED attributes rather than on the helper, because a row that builds the
+    # hash and never emits it looks identical to a unit test.
+    test "list rows carry the same context-menu data as tiles" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      folder_file!(user, project, name: "plate.svg", node_id: "f1")
+
+      get project_path(project, view: "list")
+
+      assert_response :success
+      assert_select "table.project-files tr[data-action=?][data-note-url=?][data-download-url=?]",
+                    "contextmenu->filemenu#open", file_notes_path("f1"), blob_file_path("f1", download: 1)
+    end
+
     test "tiles is the default view, and an explicit ?view=tiles switches back" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")

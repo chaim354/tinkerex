@@ -28,8 +28,19 @@
   .project-description { white-space: pre-wrap; margin: 0 0 12px; max-width: 72ch; font-size: 14px; line-height: 1.55; }
   .project-stats { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 20px; font: 12px/1.5 var(--font-mono); color: var(--fg-muted); }
   .project-stats b { color: var(--fg); font-weight: 500; }
+  /* --- The hero (stage 4, S4-1): the cover on the project's own page. An image cover is the
+     picture, capped like the model page's; any other cover is its thumbnail in a poll cell. --- */
+  .project-hero { display: flex; flex-direction: column; gap: 6px; margin: 0 0 20px; }
+  .project-hero-img { display: block; width: 100%; max-height: 50vh; object-fit: contain;
+                      border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--thumb-stage); }
+  .project-hero-thumb { display: block; width: min(100%, 480px); }
+  .project-hero-thumb .thumb { width: 100%; height: 240px; }
+  .project-hero-name { font-size: 12px; }
+  /* --- Photos (stage 4, S4-1): the public gallery's grid, on the private page, full width. --- */
+  .project-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+  .project-photos .thumb { width: 100%; height: 110px; }
   .project-panels { display: grid; grid-template-columns: 1fr; gap: 16px; }
-  @media (min-width: 900px) { .project-panels { grid-template-columns: 1fr 1fr; } .attachments-panel { grid-column: 1 / -1; } }
+  @media (min-width: 900px) { .project-panels { grid-template-columns: 1fr 1fr; } .attachments-panel, .photos-panel { grid-column: 1 / -1; } }
 
   /* --- Files panel: 96px tiles, Detach in the corner on hover --- */
   .attachments-panel .panel-path { font-size: 12px; margin-left: 8px; }

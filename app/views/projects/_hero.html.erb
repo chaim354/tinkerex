@@ -1,0 +1,24 @@
+<%#
+  THE HERO (stage 4, S4-1): the cover on the project's own page — until now `cover_node_id`
+  reached only the index card and Home. Reads @cover_node (a LIVE node from the page's one
+  PageNodes union; nil when the cover is unset or tombstoned) and @page_thumbs. An image-role
+  cover is the picture itself through the blob route; any other cover is its server thumbnail in
+  a poll cell, the model page's hero-poster rule; no cover renders NOTHING — a project page is not
+  a card, and an empty box under the title would read as a broken image.
+%>
+<% if @cover_node %>
+  <% ext = File.extname(@cover_node.name).delete(".").upcase.first(4) %>
+  <div class="project-hero" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+    <% if Maker::FileAttachment.role_for(@cover_node.name) == "image" %>
+      <%= link_to file_path(@cover_node.node_id) do %>
+        <%= image_tag blob_file_path(@cover_node.node_id), class: "project-hero-img", alt: @cover_node.name %>
+      <% end %>
+    <% else %>
+      <%= link_to file_path(@cover_node.node_id), class: "file-cell project-hero-thumb",
+                  data: thumb_cell_data(@cover_node.node_id, ext) do %>
+        <%= render "files/thumb", thumb: @page_thumbs.thumb(@cover_node.node_id), ext_label: ext %>
+      <% end %>
+    <% end %>
+    <span class="project-hero-name mono muted"><%= @cover_node.name %></span>
+  </div>
+<% end %>
