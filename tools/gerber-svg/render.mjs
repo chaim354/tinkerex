@@ -64,8 +64,13 @@ const svg = mode === "layer"
 // output and a Ruby-side string match on it would be a second place that has to know tracespace's
 // markup. Both modes emit `viewBox="0 0 0 0"` when nothing plotted — measured on an empty layer and
 // on a board composed of two empty layers.
-const box = /viewBox="(-?[\d.]+) (-?[\d.]+) ([\d.]+) ([\d.]+)"/.exec(svg)
-if (!box || Number(box[3]) <= 0 || Number(box[4]) <= 0) {
+//
+// A viewBox THIS CANNOT PARSE FALLS THROUGH RATHER THAN REFUSING, and the asymmetry is deliberate:
+// no match means the markup MOVED (a version bump writing commas, or dropping the attribute), which
+// would otherwise turn every Gerber in the library into a silent `unsupported`. Let it reach resvg,
+// which either renders it or fails loudly with a named error. Refuse only what is measurably empty.
+const box = /viewBox="(-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+)"/.exec(svg)
+if (box && (Number(box[3]) <= 0 || Number(box[4]) <= 0)) {
   process.stderr.write("nothing to draw\n")
   process.exit(4)
 }
