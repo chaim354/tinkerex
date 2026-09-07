@@ -32,7 +32,7 @@ viewer controllers (S4-5). No new gem. No new JS dependency.
 | slice | plan | delivers | depends on | risk |
 |---|---|---|---|---|
 | S4-1 | `2026-09-07-stage-4-s1-project-page.md` | hero, photos, README card (root repo included), quiet panels, list-view menu | — | **landed** 2026-09-07, PR #334 |
-| S4-2 | `2026-09-07-stage-4-s2-filing.md` | roles for `.mage` `.lbrn` `.ai`, KiCad rules, board zips → `pcb/`, grouped settings, sweep opt-out and feedback, build-output display rule | — | **landed** 2026-09-07, branch `claude/stage-4-s2-filing` |
+| S4-2 | `2026-09-07-stage-4-s2-filing.md` | roles for `.mage` `.lbrn` `.ai`, KiCad rules, board zips → `pcb/`, grouped settings, sweep opt-out and feedback, build-output display rule | — | **landed** 2026-09-07, PR #335 |
 | S4-3 | `…-s3-round-trip.md` (to write) | path + copy, self-refreshing file page, Save-to-library, honest Rescan | — | moderate: the write-back rides the upload doors on three backends |
 | S4-4 | `…-s4-documentation.md` (to write) | README editor anywhere (D3), owner preview, publish panel, anchors | D3; S4-1's README card | **moderate**: flips a git-editing rule for Markdown |
 | S4-5 | `…-s5-public-viewers.md` (to write) | public file page with the viewers (D5), covers, public header | D5 | low: reuse |
@@ -139,6 +139,9 @@ populated branch of every new partial.
   equal-length restore.
 - **When a change invalidates a documented behaviour, the same task sweeps every file that
   documents it** — template comments, invariants files, this overview.
+- **A slice with a migration regenerates `docs/schema-map.html` in the same task** (`bin/rails
+  schema:map`, then commit it): `test/schema_map_test.rb` fails the full gate when the checked-in map
+  lags `db/schema.rb`, and no per-task test run reaches it — S4-2 learned this at its gate.
 - **Close-out re-tags the stories** the slice named in `docs/user-stories.md`, with the new
   evidence, in the same PR; then `bin/log arc --from-pr <n>` as the PR opens.
 
