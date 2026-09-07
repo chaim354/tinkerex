@@ -29,6 +29,30 @@ the FILING destination that a user may now override afterward. `default_folder_f
 old pure function preserved verbatim (no user, no override) for the seed's own use and for a
 caller with no user in hand.
 
+**Stage 4, S4-2 added the three formats the bench itself produces**: `mage` (MillMage) under a new
+`cnc_design` role, `lbrn` (LightBurn v1) as `laser` beside `lbrn2`, and `ai` (Illustrator) as
+`vector` beside `svg`/`dxf`. `cnc_design` and `gcode` are two ROLES sharing one FOLDER (`cnc/`), the
+shape `instructions`/`document` already had with `docs/` — a role is what
+`Maker::ModelIntake::EXCLUDED_ROLES` denies a model and what a panel heading reads, so the CNC
+*project* and the toolpath it exports must not share one.
+
+**`.ai` IS REGISTERED TO THE PDF RENDERER BY NAME AND RETRACTED BY CONTENT** (stage 4, S4-2).
+Illustrator's "Create PDF Compatible File" has been on by default for two decades, so an `.ai` off a
+maker's disk begins `%PDF-` with Illustrator's private stream appended and pdfium renders page 1 of
+it exactly as it renders any PDF; one saved with that option OFF is a bare PostScript stream nothing
+here can open, and the name cannot tell the two apart. `Maker::Previews::Pdf::MAGIC` is therefore
+checked at byte 0 as the FIRST statement of `render` — **not in `available?`, which takes no
+bytes** — and a miss raises `Maker::GeneratePreviewJob::Unsupported`, because `failed` is what
+`Maker::Previews::Enqueue` re-enqueues and a PostScript `.ai` would then wear an error badge and
+re-render on every scan forever. That makes `Pdf` and `GerberZip` the two renderers whose claim a
+read retracts on IDENTITY (the bytes are another format than the name says); `Gerber` refuses by
+content too, on EMPTINESS, which is a different question. The check is on the BYTES, so a `.pdf`
+that is not a PDF now gets the same terminal `unsupported` instead of pdfium's exit code in an error
+badge — a deliberate behaviour change for `.pdf`. `FilesController#preview_kind` answers
+`:thumbnail` for `.ai` and deliberately **not** `:pdf`: that branch embeds the bytes for the
+browser's own viewer, which a browser handed a file named `.ai` downloads instead of rendering. The
+ROLE stays `vector` — where a file lives and what picture we can make of it remain two questions.
+
 Two consequences of the one table:
 
 - Every extension must satisfy `FilesController::EXT_RE` (`/\A[a-z0-9]{1,8}\z/`) or it renders a
@@ -46,6 +70,19 @@ extension can EARN a `ROLE_BY_EXT` entry, because both fail `EXT_RE` (an undersc
 `kicad_sch`/`kicad_pcb` are 9 characters against an 8-character bound) — the exact failure this
 file's own warning two paragraphs up describes. Adding one anyway would render a filter chip that
 links and does nothing.
+
+**THE FILING MAP HAS ITS OWN, WIDER KEY RULE SINCE STAGE 4, S4-2, AND THE SPLIT IS THE POINT.**
+`Maker::FilingRule::KEY_RE` (`/\A[a-z0-9_]{1,12}\z/`) admits `kicad_sch`/`kicad_pcb` where `EXT_RE`
+cannot, so both extensions now carry a FILING destination (`pcb`, seeded from
+`Maker::FilingRules::BEYOND_ROLE_BY_EXT` for a new user and from `db/migrate/20260907120100` for an
+existing one) while still carrying no ROLE. `EXT_RE` is untouched and `ROLE_BY_EXT` must still meet
+it: a chip that links and does nothing is exactly what an entry there would produce. A filing rule
+renders no chip and grants no role — it answers one question, "which subfolder" — which is what lets
+it carry a key the vocabulary cannot. So "neither extension can EARN a `ROLE_BY_EXT` entry" stays
+true, and "living outside `ROLE_BY_EXT` means the app has no opinion about these two" is now false:
+it has a filing opinion and only a filing opinion. `KEY_RE` is deliberately NOT a second copy of
+`EXT_RE` drifting; it is a different question with a different bound, and `filing_rule_test.rb`
+asserts both directions in one test.
 
 That absence is also what keeps a `.kicad_sch`/`.kicad_pcb` file OFF the thumbnail-poll cell for
 free: `Maker::Previews::Registry.for_filename` (what `_grid.html.erb`/`_list.html.erb` check
@@ -79,7 +116,8 @@ that message (`WebHelpers::KICANVAS_PLACEHOLDER_FETCH`) and nothing wider. The f
 role, where `KICANVAS_EXTS` directly above it is written out — and the difference is a fact about
 the extensions, not a style choice. `kicad_sch`/`kicad_pcb` **cannot** earn a `ROLE_BY_EXT` entry
 (an underscore, nine characters — they fail `EXT_RE`), so a hand list is the only option available
-to them. Every Gerber extension **passes** `EXT_RE` (`gbrjob` is the longest, at six), so it lives
+to them. (They CAN carry a FILING rule since stage 4, S4-2 — `Maker::FilingRule::KEY_RE` is the
+filing map's own, wider key; see the `:kicanvas` section — but a role, never.) Every Gerber extension **passes** `EXT_RE` (`gbrjob` is the longest, at six), so it lives
 in the one vocabulary and the constant reads it. **Add a Gerber extension in `ROLE_BY_EXT` only** —
 the filing rules, the type-filter chips and this branch all follow from it, and a second literal
 list in the controller is the drift §14d exists to stop.
@@ -139,11 +177,14 @@ folder is TWO boards.
 
 The zip's **own file page IS the board** (a stackup, with Top and Bottom, like a `.gbrjob`'s).
 `preview_kind` stays **NAME-ONLY** — the zip branch is decided in `FilesController#show` by a READ,
-the one preview kind that is, beside the `.gbrjob` read that already lives there. **Filing is
-untouched**: `zip` stays role `source_archive`, so a Gerber zip loose at a project's ROOT is still
-filed into the source folder by the intake sweep (the sweep runs before any read and decides by
-name), while one already in a subfolder is never moved — a content-aware refiling is a separate
-decision. The rule is stated beside the code in three places that must sweep together:
+the one preview kind that is, beside the `.gbrjob` read that already lives there. **Filing reads the
+zip, and the vocabulary does not** (stage 4, S4-2; story 2.8): `zip` stays role `source_archive` —
+right for a Printables download, and what `preview_kind`, the badge and `ROLE_BY_EXT` still answer —
+but `Maker::ProjectIntake#place` asks `Maker::GerberArchive.for` about a `.zip` loose at a project's
+ROOT and files a board into the maker's own Gerber-layer folder (`pcb/` by default) instead of the
+source folder. It is the ONE filing decision in that class that reads bytes, and it uses the same
+bounded, cached reader this page does, so the sweep and the file page cannot disagree about what a
+board is. A zip already in a subfolder is still never moved — root = inbox is unchanged. The rule is stated beside the code in three places that must sweep together:
 `Maker::GerberArchive`'s header, `FilesHelper#gerber_archive_entry` (the ONE wire shape, built by
 `FilesController#show`), and `gerber_controller.js`'s `filesFor`.
 
@@ -477,6 +518,17 @@ Hiding a row that still exists, still syncs and still attaches to projects is tr
 `.git` is a **separate rule** and stays hidden even with hidden files shown: `Library::RepoMetadata`
 keeps the marker indexed as the evidence a directory is a working tree, and on share/s3 nothing
 beneath it is observed, so revealing it offers a folder that cannot be opened usefully.
+
+**Build-output directories join the dot-dirs** (stage 4, S4-2): `Node.visible_entries` also hides a
+**directory** named `node_modules` or `__pycache__` unless hidden files are shown —
+`Library::BuildOutput` holds the names, and `Maker::ProjectFolderListing#hidden_dir?` asks the same
+question for the walk. Gated on `show_hidden` like a dot-dir, not unconditional like `.git`, because
+there is a real reason to open one (a linker map, a generated header). `build` is deliberately
+**not** on the list: a lowercase `build/` is a folder a maker plausibly made themselves, it never
+appeared in the measured share library, and the project page has no "Show hidden" control to get it
+back with. Like every rule in this section it is a display filter only — never an observer skip and
+never a write guard — and it hides the **entry**, not its descendants, the same recorded limit
+`.git` carries on chunk_remote.
 
 Both scopes go on `FilesController#index`'s `scope =` assignment, **not** the `.order` chain —
 `@match_count`/`@child_count` read the same object, so one line lower the truncation banner and the
