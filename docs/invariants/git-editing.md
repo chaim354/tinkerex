@@ -71,7 +71,8 @@ in front of them.
   orphan every attachment, BOM line and tag on the node, silently (§14a).
 - **`replace: true`, so the node survives.** A README is attachable, taggable and BOM-linkable like
   any other file.
-- **The `base_token` 409.** The editor edited some version; if the port's content token moved
+- **The `base_token` stale check** — a 409 on the file page, an alert on the project page, one
+  `Maker::TextSave` result underneath. The editor edited some version; if the port's content token moved
   under it, the save is refused rather than discarding whatever moved it.
 - **A `.lock` is still refused and never deleted**, and a detached HEAD or a half-finished
   operation still refuses — this door does not touch `Maker::Git::LocalRepo` at all, so it inherits
