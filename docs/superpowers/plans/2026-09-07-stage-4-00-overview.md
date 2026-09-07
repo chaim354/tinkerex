@@ -33,7 +33,7 @@ viewer controllers (S4-5). No new gem. No new JS dependency.
 |---|---|---|---|---|
 | S4-1 | `2026-09-07-stage-4-s1-project-page.md` | hero, photos, README card (root repo included), quiet panels, list-view menu | — | **landed** 2026-09-07, PR #334 |
 | S4-2 | `2026-09-07-stage-4-s2-filing.md` | roles for `.mage` `.lbrn` `.ai`, KiCad rules, board zips → `pcb/`, grouped settings, sweep opt-out and feedback, build-output display rule | — | **landed** 2026-09-07, PR #335 |
-| S4-3 | `…-s3-round-trip.md` (to write) | path + copy, self-refreshing file page, Save-to-library, honest Rescan | — | moderate: the write-back rides the upload doors on three backends |
+| S4-3 | `2026-09-07-stage-4-s3-round-trip.md` | path + copy, self-refreshing file page, Save-to-library, honest Rescan | — | moderate: the write-back rides the upload doors on three backends |
 | S4-4 | `…-s4-documentation.md` (to write) | README editor anywhere (D3), owner preview, publish panel, anchors | D3; S4-1's README card | **moderate**: flips a git-editing rule for Markdown |
 | S4-5 | `…-s5-public-viewers.md` (to write) | public file page with the viewers (D5), covers, public header | D5 | low: reuse |
 | S4-6 | `…-s6-adopt-anywhere.md` (to write) | adopt in place (D1), status, make-current, New badge, Not-a-project, switch confirmations | D1 | moderate: a folder outside `Projects/` as `folder_node_id` |
@@ -112,10 +112,13 @@ keeps `EXT_RE`; `files-preview.md` records why the two differ.
 # at read time, never by the row.
 ```
 
-The four derived guards a new table owes (memory: `new-table-guard-checklist`): the orphan guard's
-`maker_connections` case is the model to copy; the dead-node reaper sweeps rows whose node is
-`reapable?`; `page_query_budget_test.rb` grows links per file; the template sweep renders the
-populated branch of every new partial.
+The guards a new table owes are SIX here, not the checklist's four, and the S4-8 plan found why:
+`structural_orphan_test.rb` selects only edges whose parent ends in `.id`, so a table keyed by two bare
+`node_id` strings contributes no structural edge at all and its `maker_connections` case is NOT the
+model to copy. The real union: the schema map (`bin/rails schema:map`), tenant cleanup, the dead-node
+reaper (sweeping rows whose node is `reapable?`, from EITHER column), `page_query_budget_test.rb`
+(links grow per file), the template sweep (every new partial's populated branch), and the index-prefix
+guard (no bare `user_id` index beside the unique one).
 
 ---
 
