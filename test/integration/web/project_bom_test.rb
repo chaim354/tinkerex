@@ -112,8 +112,15 @@ module Web
       assert_match(/1 short/, css_select(".bom-rollup").text)
     end
 
+    # ONE LINE, SO THE PANEL IS NOT QUIET. Since stage 4, S4-1 the project page's BOM panel renders
+    # projects/_bom_lines — the table, the rollup AND this composer — only when it has lines; an
+    # empty panel is its heading and Open, and adding the first line happens on the BOM page. That
+    # surface's own composer is asserted by "the page with no BOM renders the empty state and the
+    # composer" below, so the no-BOM-at-all case is still covered; what this test is about is the
+    # rendered field names, which is a §14d rule about the form and not about which page it sits on.
     test "the composer's field names" do
       item = item!(name: "NEMA17")
+      line!(bom!, inventory_item: item, quantity: 1, unit: "each")
       get project_path(@project)
 
       assert_select "details.composer.bom-add summary", text: "Add line"

@@ -1,4 +1,4 @@
-<section class="panel build-log-panel">
+<section class="panel build-log-panel<%= " panel--quiet" if @entries.empty? %>">
   <h2>Build log</h2>
 
   <details class="composer">
@@ -13,9 +13,10 @@
     <% end %>
   </details>
 
-  <% if @entries.empty? %>
-    <p class="muted">No entries yet.</p>
-  <% else %>
+  <%# QUIET AT ZERO (stage 4, S4-1): a build log with nothing in it is the composer alone. The
+      sentence it replaces said only what the empty panel already showed, above an Add entry
+      control that says it better. The class on the section is what pages/projects.css lays out. %>
+  <% if @entries.any? %>
     <ol class="log-timeline">
       <% @entries.each do |entry| %>
         <%= render "log_entry", entry: %>

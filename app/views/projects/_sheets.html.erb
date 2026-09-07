@@ -2,7 +2,7 @@
   Named spreadsheets on this project. The grid itself lives on its own full-width page — a real
   grid inside a panel this size is unusable — so this panel is a list plus a create form.
 %>
-<section class="panel sheets-panel">
+<section class="panel sheets-panel<%= " panel--quiet" if @sheets.empty? %>">
   <div class="panel-head">
     <h2>Sheets</h2>
     <%# text_field_tag, not f.text_field: this form has no model object, and the controller reads
@@ -13,14 +13,13 @@
     <% end %>
   </div>
 
-  <% if @sheets.empty? %>
-    <p class="muted">No sheets yet. Cut lists, cost math, measurements.</p>
-  <% else %>
-    <% @sheets.each do |sheet| %>
-      <div class="sheet-row">
-        <%= link_to sheet.name, sheet_path(sheet) %>
-        <span class="muted"><%= sheet.cells.size %> rows</span>
-      </div>
-    <% end %>
+  <%# QUIET AT ZERO (stage 4, S4-1): no sheets is the heading and the New sheet field, which
+      already says what one is for -- the sentence under it named three uses and took a whole
+      panel to do it. %>
+  <% @sheets.each do |sheet| %>
+    <div class="sheet-row">
+      <%= link_to sheet.name, sheet_path(sheet) %>
+      <span class="muted"><%= sheet.cells.size %> rows</span>
+    </div>
   <% end %>
 </section>

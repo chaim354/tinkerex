@@ -150,5 +150,37 @@ module Web
       assert_select "a.project-card[href=?]", project_path(matched)
       assert_select "a.project-card[href=?]", project_path(other), false
     end
+
+    # --- Quiet empty panels (stage 4, S4-1) -----------------------------------------------------
+    #
+    # A secondary panel with nothing in it is its heading and one add control, not a box saying
+    # "No entries yet." over an open composer. `@project` in `setup` is populated, so these two
+    # tests each build their own project rather than reading it.
+    test "an empty secondary panel is quiet: its heading and one add control, no zero-count groups, no empty sentences" do
+      project = @user.maker_projects.create!(name: "Blank")
+
+      get project_path(project)
+
+      assert_response :success
+      %w[build-log tasks bom wiring releases sheets].each do |name|
+        assert_select "section.panel.#{name}-panel.panel--quiet", 1, "#{name} should be quiet"
+      end
+      assert_select "#project-tasks .tasks-group", count: 0
+      assert_select ".build-log-panel details.composer > summary", text: "Add entry"
+      assert_select "#project-tasks form.task-form input[name='task[title]']"
+      assert_select "p.muted", text: /No (entries|connections|releases|sheets) yet/, count: 0
+    end
+
+    test "a populated panel is not quiet" do
+      project = @user.maker_projects.create!(name: "Busy")
+      project.tasks.create!(user: @user, title: "cut")
+      project.build_log_entries.create!(user: @user, body: "glued", logged_at: Time.current)
+
+      get project_path(project)
+
+      assert_select "section.tasks-panel.panel--quiet", count: 0
+      assert_select "section.build-log-panel.panel--quiet", count: 0
+      assert_select "#project-tasks .tasks-group", count: 3
+    end
   end
 end

@@ -5,7 +5,7 @@
   @bom_rollup / @items / @suppliers and folds the bom's file-line node ids into the page's ONE
   PageNodes union (@page_nodes) — this partial issues no query of its own.
 %>
-<section class="panel bom-panel">
+<section class="panel bom-panel<%= " panel--quiet" if @bom_lines.empty? %>">
   <div class="panel-head">
     <h2>Bill of materials</h2>
     <% if @bom %>
@@ -14,7 +14,12 @@
     <%= link_to "Open", project_bom_path(@project), class: "btn small" %>
   </div>
 
-  <%= render "projects/bom_lines", lines: @bom_lines, shown: @bom_lines_shown, rollup: @bom_rollup,
-             nodes: @page_nodes, project: @project, bom: @bom, items: @items, suppliers: @suppliers,
-             more_path: project_bom_path(@project) %>
+  <%# QUIET AT ZERO (stage 4, S4-1): the empty BOM panel is its heading and Open. The composer
+      lives on the BOM page, one click away, and projects/_bom_lines is SHARED with that page --
+      whose own empty state is the place to invite a first line, so its sentence stays there. %>
+  <% if @bom_lines.any? %>
+    <%= render "projects/bom_lines", lines: @bom_lines, shown: @bom_lines_shown, rollup: @bom_rollup,
+               nodes: @page_nodes, project: @project, bom: @bom, items: @items, suppliers: @suppliers,
+               more_path: project_bom_path(@project) %>
+  <% end %>
 </section>

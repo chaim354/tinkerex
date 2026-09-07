@@ -203,4 +203,19 @@
   .sheet-grid { overflow-x: auto; }
   .sheet-status { font: 11px/1.4 var(--font-mono); }
   .sheet-status-error { color: var(--danger); }
+
+  /* --- Quiet panels (stage 4, S4-1): a secondary panel with nothing in it is its heading and one
+     add control on a single line, not a box saying "No entries yet." over an open composer. The
+     partial sets the class when its collection is empty; a populated panel is exactly what it was.
+     A composer that opens takes the whole row. The panel-head counts are hidden — a zero is not
+     information. A page modifier, not a redeclaration of `.panel` (design-system rule 3). --- */
+  .panel--quiet { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 8px 14px; }
+  .panel--quiet > h2, .panel--quiet > .panel-head { margin: 0; flex: 1 1 auto; }
+  .panel--quiet > .panel-head { display: flex; align-items: center; gap: 10px; }
+  .panel--quiet > .panel-head h2 { margin: 0; }
+  .panel--quiet > h2 { font-size: 13px; }
+  .panel--quiet details.composer { margin: 0; }
+  .panel--quiet details.composer[open] { flex-basis: 100%; }
+  .panel--quiet > form { margin: 0; display: flex; gap: 6px; }
+  .panel--quiet .panel-head .mono.muted { display: none; }
 }
