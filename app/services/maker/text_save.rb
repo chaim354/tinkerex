@@ -14,14 +14,23 @@ module Maker
   #     working tree the bytes still land; there is just no commit box on this box to review them
   #     in.
   #
-  # WHAT IS DELIBERATELY NOT HERE: the size cap, the FetchError → 503 mapping, and the preview
-  # re-enqueue. The first two are the DOOR's, because each door words them differently and §14a
-  # maps FetchError once, at the controller. The third stays with FilesController#update's own
-  # `enqueue_preview` (stage 4, S4-3), the helper its two upload actions already share — moving it
-  # here would be the third copy of stat-then-Enqueue that helper's comment exists to refuse. This
-  # service raises FileLayer errors to its caller unchanged — including the clobber refusal
-  # (UnsupportedOperation) a create hits when the name is already taken, which is the honest answer
-  # for a file that appeared while the maker was typing.
+  #   * THE PREVIEW RE-ENQUEUE. A save invalidates the picture of the file (stage 4, S4-3), and
+  #     every text extension has a renderer (Registry derives TextThumb), so a saved file kept
+  #     serving a thumbnail of bytes it no longer had until the next scan noticed. S4-3 said so in
+  #     FilesController#update through its private `enqueue_preview`; a README saved from the
+  #     project page would have left the same stale picture on the Files page, and a second door
+  #     calling a helper private to the first is not a shape that lasts. This service already
+  #     stats the node after the write for the token `replace: true` just minted, so the enqueue
+  #     rides THAT stat — one stat, two consumers, not a third copy of stat-then-Enqueue.
+  #     BEST-EFFORT, exactly as FilesController#enqueue_preview is for the two upload doors: a
+  #     vanished or unmounted library (NotFound, FetchError) leaves `content_token` nil rather than
+  #     turning a save that reached the store into an error.
+  #
+  # WHAT IS DELIBERATELY NOT HERE: the size cap and the FetchError → 503 mapping. Both are the
+  # DOOR's, because each door words them differently and §14a maps FetchError once, at the
+  # controller. This service raises FileLayer errors to its caller unchanged — including the clobber
+  # refusal (UnsupportedOperation) a create hits when the name is already taken, which is the honest
+  # answer for a file that appeared while the maker was typing.
   class TextSave
     Result = Data.define(:ok, :status, :error, :content_token, :node_id)
 
@@ -52,11 +61,22 @@ module Maker
         repo_root_node_id.present? && FileLayer.current.capabilities.local_worktree?
 
       Result.new(ok: true, status: :ok, error: nil, node_id:,
-                 content_token: FileLayer.current.stat(user, node_id:)&.content_token)
+                 content_token: enqueue_preview(user:, node_id:, name: node ? node.name : name))
+    end
+
+    # The token the write just minted, with the thumbnail re-enqueued against it. nil — and nothing
+    # enqueued — when the library can no longer answer for the node: the save itself has already
+    # landed, and a preview is not part of its success (see the header).
+    def self.enqueue_preview(user:, node_id:, name:)
+      token = FileLayer.current.stat(user, node_id:)&.content_token
+      Maker::Previews::Enqueue.call(user:, node_id:, name:, version_id: token) if token
+      token
+    rescue FileLayer::NotFound, FileLayer::FetchError
+      nil
     end
 
     def self.refusal(message) = Result.new(ok: false, status: :conflict, error: message,
                                            content_token: nil, node_id: nil)
-    private_class_method :refusal
+    private_class_method :refusal, :enqueue_preview
   end
 end
