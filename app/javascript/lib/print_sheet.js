@@ -553,6 +553,41 @@ export function buildPrintFrame(shapes, paper, meta) {
   return frame
 }
 
+// THE SHEETS AS STANDALONE SVG DOCUMENTS, one string per page — the SAVE half of what `printSheets`
+// spools (stage 4, S4-3).
+//
+// PURE, LIKE `renderSheet` AND UNLIKE `buildPrintFrame`, and that split is the whole reason this
+// can exist as three lines. It builds a DETACHED XML document and never touches the host page: no
+// iframe is created, no `.measure-print-frame` is swept, and a save can therefore never disturb a
+// print the user is in the middle of. Going through `buildPrintFrame` and serialising its DOM
+// would have done all three.
+//
+// THE `xmlns` COMES OFF BEFORE SERIALISING, AND WHAT THAT BUYS IS MEASURED RATHER THAN ASSUMED.
+// `renderSheet` both creates the root through `el` (which is `createElementNS(SVG_NS, …)`) AND
+// sets `xmlns` as an ordinary attribute. Per the DOM, that attribute is in the NULL namespace and
+// is not a namespace declaration at all, so a serialiser following the XML serialization algorithm
+// emits its own declaration beside it and the document carries `xmlns` TWICE — not well-formed,
+// and rejected outright by some importers. lib/export_svg.js records the same trap from the other
+// side, which is why it never sets the attribute.
+//
+// BLINK DOES NOT DO THAT, AND THE LINE IS KEPT ANYWAY — measured here, 2026-09-07, not reasoned:
+// with this line deleted the saved sheet still carries exactly ONE `xmlns`, because Blink
+// suppresses its own declaration when the element already has an `xmlns` attribute. So the
+// assertion in measure_export_test.rb ("a doubled xmlns is not well-formed XML") is a claim about
+// the ARTIFACT and cannot fail for this line; it is recorded as such there rather than presented
+// as a guard. The line stays because the serialisation is then the algorithm's answer instead of
+// one engine's, and this file's OUTPUT now leaves the browser — until S4-3 it never did, which is
+// the precondition measure_print_test.rb's own "xmlns is inert" note was written under.
+export function sheetDocuments(shapes, paper, meta) {
+  const { pages } = buildSheets(shapes, paper)
+  const doc = document.implementation.createDocument(null, null, null)
+  return pages.map((page) => {
+    const svg = renderSheet(doc, page, meta)
+    svg.removeAttribute("xmlns")
+    return `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(svg)}`
+  })
+}
+
 // THE DEFAULT SPOOLER, EXPORTED FOR ONE REASON — and it is now the ONLY export here that has this
 // reason, which is worth saying because `el` used to share it. `el` is exported from lib/shape_svg
 // because three modules build their elements through it, and re-exported here so the browser tier's

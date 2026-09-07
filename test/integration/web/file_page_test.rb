@@ -84,5 +84,51 @@ module Web
 
     # ---- END OF S4-3 TASK C's ADDITIONS -------------------------------------------------------
     # Task D (Save to library) appends BELOW this line, so the two tasks' tests never interleave.
+
+    # THE SAVE TWINS, AND THE ASSERTION BRANCHES ON THE DEPLOYMENT (§14a). `port_writable` names
+    # WHICH DOOR the bytes go in, not whether uploads are possible: share and s3 POST them to
+    # FilesController#create, chunk_remote drives begin_upload/finalize_upload. A form-shaped
+    # assertion here would be red on the chunk_remote leg alone, which is the memory
+    # `upload-form-assertions-must-branch-on-port-writable` records twice.
+    #
+    # THE NODE CARRIES BOTH CONTENT COLUMNS, and a bare `nodes.create!` would not do. `@node` above
+    # has a nil `content_token`, which short-circuits the whole preview tree at show.html.erb's
+    # `@info.content_token.nil?` arm — so no measure branch renders at all and every selector below
+    # would be vacuously absent. The idiom is template_hygiene_test.rb:266-276's.
+    test "the Measure bar offers Save to library beside each download, wired to this deployment's door" do
+      node = @user.nodes.create!(node_id: "n-plate", name: "plate.lbrn2", kind: "file",
+                                 mtime: 1_000_000_000, size: 90,
+                                 content_hash: "h-plate", current_version_id: "v-plate")
+
+      get file_path(node.node_id)
+
+      assert_response :success
+      assert_select ".measure-actions button[data-action=?]", "measure#saveSvg", text: "Save SVG"
+      assert_select ".measure-actions button[data-action=?]", "measure#savePrint", text: "Save sheet"
+      # The SOURCE's own parent — a save lands beside the file it came from, never at the root.
+      assert_select ".measure-view[data-measure-parent-node-id-value=?]", ""
+      # `capabilities` is a controller helper_method, so it is NOT in scope in an integration test:
+      # ask the port directly, which is the same object the view's helper resolves to.
+      if FileLayer.current.capabilities.port_writable?
+        assert_select ".measure-view[data-measure-port-writable-value=?]", "true"
+        assert_select ".measure-view[data-measure-create-url-value=?]", files_path
+      else
+        assert_select ".measure-view[data-measure-port-writable-value=?]", "false"
+        assert_select ".measure-view[data-measure-begin-url-value=?]", begin_upload_files_path
+        assert_select ".measure-view[data-measure-finalize-url-value=?]", finalize_upload_files_path
+      end
+    end
+
+    test "the save target is the source file's own folder" do
+      dir = @user.nodes.create!(node_id: "d-design", name: "design", kind: "dir",
+                                mtime: 1_000_000_000, size: 0)
+      node = @user.nodes.create!(node_id: "n-lid2", name: "lid.lbrn2", kind: "file",
+                                 parent_node_id: dir.node_id, mtime: 1_000_000_000, size: 90,
+                                 content_hash: "h-lid2", current_version_id: "v-lid2")
+
+      get file_path(node.node_id)
+
+      assert_select ".measure-view[data-measure-parent-node-id-value=?]", "d-design"
+    end
   end
 end

@@ -1,6 +1,7 @@
 import { Controller } from "@hotwired/stimulus"
-import { PAPERS, printSheets } from "lib/print_sheet"
+import { PAPERS, printSheets, sheetDocuments } from "lib/print_sheet"
 import { exportSvg } from "lib/export_svg"
+import { uploadChunkFile, uploadPortFile } from "lib/chunk_upload"
 import { SVG_NS, shapeElement, unionBox } from "lib/shape_svg"
 import { installPanZoom } from "lib/svg_pan_zoom"
 
@@ -56,8 +57,16 @@ export default class extends Controller {
   // `name` IS REQUIRED, NOT COSMETIC. Stimulus silently ignores a data-*-value attribute the
   // controller does not declare, so `this.nameValue` is `undefined` until it appears here — no
   // error, no warning, just an empty filename on every printed sheet.
-  static values = { url: String, name: String }
-  static targets = ["stage", "dims", "fallback", "paper", "printButton", "svgButton"]
+  static values = {
+    url: String, name: String,
+    portWritable: Boolean, createUrl: String, beginUrl: String, finalizeUrl: String,
+    parentNodeId: String
+  }
+  // EVERY VALUE HERE IS READ. Stimulus silently ignores a `data-*-value` the controller does not
+  // declare — the trap `name` records above — and the converse costs nothing but is still a lie
+  // about what this surface needs, so a value that no method reads does not get declared.
+  static targets = ["stage", "dims", "fallback", "paper", "printButton", "svgButton",
+                    "savePrintButton", "saveSvgButton"]
 
   connect() {
     this.aborted = false
@@ -265,24 +274,11 @@ export default class extends Controller {
     // directly, because nothing else can.
     if (!shapes || !shapes.length) return
     try {
-      // THE `||` IS THE SAME KIND OF BELT, and reachable in the same one state: an unpopulated
-      // select answers `value === ""`, which is no key here. Without it buildSheets gets
-      // `undefined` for its paper and dies in contentBox, so a deployment that ever lost
-      // populatePaper would lose Print with it rather than degrading to the default.
-      printSheets(shapes, PAPERS[this.paperTarget.value] || PAPERS[DEFAULT_PAPER], {
-        name: this.nameValue,
-        // LOCAL, NOT UTC. `toISOString()` gives the same ISO shape and stamps an evening print in
-        // the Americas with TOMORROW's date — on a sheet whose header exists so a page found on a
-        // bench next week can be trusted. "en-CA" is the ISO-shaped locale.
-        date: new Date().toLocaleDateString("en-CA"),
-        // THE CONTROLLER'S OWN sizeLabel, so the paper and the readout have one definition between
-        // them. It reads `d` and `b` — the server's full-resolution numbers — never `p`, the
-        // THINNED drawing points: re-deriving a size from those under-reports every curve, and
-        // a re-derivation loses the ⌀ outright, because THIS SIDE HAS NO CIRCULARITY TEST — `d`
-        // is decided server-side from full-resolution points (CLAUDE.md §14h). Measured: the
-        // mutation prints "10 × 10 mm" where "⌀10 mm" belongs.
-        sizeLabel: (shape) => this.sizeLabel(shape),
-      })
+      // BOTH ARGUMENTS ARE METHODS, NOT LITERALS, SINCE STAGE 4 S4-3. `savePrint()` renders the
+      // SAME sheets through the same renderSheet, so a paper expression and a meta hash spelled
+      // out here would be two copies of each — the drift `targetShapes()`/`targetNoun()` already
+      // exist to prevent for the target set, in a file that records having been bitten by it.
+      printSheets(shapes, this.sheetPaper(), this.sheetMeta())
     } catch (e) {
       // THE SHEET-COUNT REFUSAL LANDS HERE, AND IT HAS TO REACH THE READOUT rather than the
       // console: buildSheets throws before any frame exists, so a swallowed message is a Print
@@ -333,6 +329,94 @@ export default class extends Controller {
       // document, and this view is reachable repeatedly through the ✕ Image -> Measure round trip.
       if (url) URL.revokeObjectURL(url)
     }
+  }
+
+  // --- Save to library (stage 4, S4-3) ---------------------------------------------------
+  //
+  // THE SAME BYTES THE DOWNLOAD BUILDS, THROUGH THE SAME TWO DOORS EVERY OTHER UPLOAD USES.
+  // `exportSvg` and `sheetDocuments` are the pure builders; this half owns the Blob, the name and
+  // the door — the split print_sheet.js draws between renderSheet and buildPrintFrame, and
+  // export_svg.js between the document and the anchor.
+  //
+  // NOT Maker::Addons::LibraryOutput, WHICH WAS THE OTHER CANDIDATE. That is the ADDON save door:
+  // it takes bytes SERVER-side and calls the port's own put_chunk, which is right for a generator
+  // whose output is produced in Rails and has no client to presign for. Here the browser already
+  // holds the bytes, so the upload doors keep them out of Rails entirely on chunk_remote (§15) and
+  // give share/s3 the same multipart write they already use.
+  //
+  // THE NAME IS THE SOURCE'S BASE NAME PLUS THE SAME SUFFIX THE DOWNLOAD USES. Two names for one
+  // set of bytes is two answers to one question: `downloadSvg` writes `<base>-parts.svg`, so this
+  // does too, and a maker who downloaded first and saved second gets one file, not two spellings.
+  saveSvg() {
+    const shapes = this.targetShapes()
+    if (!shapes || !shapes.length) return
+    const base = this.nameValue.replace(/\.[^.]+$/, "")
+    this.saveAll([ { name: `${base}-parts.svg`, body: exportSvg(shapes, { colors: this.colors }) } ],
+                 this.saveSvgButtonTarget)
+  }
+
+  // ONE FILE PER SHEET, AND THE PLURAL CASE IS NOT AN EDGE CASE. A to-scale plan that needs four
+  // tiles IS four pages — that tiling is the whole point of the sheet — so collapsing them into one
+  // document would throw away what the maker asked for. A single sheet keeps the plain name so the
+  // common case reads as one thing.
+  savePrint() {
+    const shapes = this.targetShapes()
+    if (!shapes || !shapes.length) return
+    const base = this.nameValue.replace(/\.[^.]+$/, "")
+    let bodies
+    try {
+      bodies = sheetDocuments(shapes, this.sheetPaper(), this.sheetMeta())
+    } catch (e) {
+      // buildSheets' refusals (nothing selected, MAX_SHEETS) reach the readout, the way print()'s
+      // do — they throw before any file exists, so a swallowed message is a button that does
+      // nothing whatsoever. AND IT LOGS, because this catch cannot tell a refusal from a bug.
+      console.warn("[measure] sheet save refused:", e)
+      return this.setStatus(e.message)
+    }
+    const files = bodies.map((body, i) => ({
+      name: bodies.length === 1 ? `${base}-print.svg`
+                                : `${base}-print-${i + 1}of${bodies.length}.svg`,
+      body
+    }))
+    this.saveAll(files, this.savePrintButtonTarget)
+  }
+
+  // ONE UPLOAD LOOP FOR BOTH BUTTONS, sequential rather than parallel: the doors are the same doors
+  // an ordinary upload uses, and a browser firing four concurrent multipart POSTs at a Puma pool is
+  // the shape §14e records as a stall. A file that refuses (a name already taken on share/s3 — the
+  // port's clobber refusal, 422) is REPORTED BY NAME and stops the run, because the sheets after it
+  // would collide identically and four identical messages say nothing the first did not.
+  async saveAll(files, button) {
+    const previous = button.textContent
+    button.disabled = true
+    button.textContent = "Saving…"
+    try {
+      let last = null
+      for (const file of files) {
+        last = await this.uploadOne(new File([ file.body ], file.name, { type: "image/svg+xml" }))
+      }
+      // THE SERVER'S OWN SENTENCE WHEN IT HAS ONE. Both doors answer with `notice`, built by
+      // ProjectFolderIntake — so when the project-folder sweep could not file the save into its
+      // category folder because a file of that name is already there, the maker is told, in the
+      // wording every other upload door uses. Otherwise: what was written, and how many.
+      this.setStatus(last?.notice || `Saved ${files.length === 1 ? files[0].name : `${files.length} sheets`}.`)
+    } catch (e) {
+      console.warn("[measure] save refused:", e)
+      this.setStatus(e.message)
+    } finally {
+      button.disabled = false
+      button.textContent = previous
+    }
+  }
+
+  // THE TWO-DOOR CHOICE, MADE THE WAY importer_controller.js MAKES IT. `port_writable` is the
+  // deployment's answer to "which door do bytes go in", never "can this deployment take uploads" —
+  // chunk_remote takes uploads all day, through the flow on the false branch (§14a).
+  uploadOne(file) {
+    return this.portWritableValue
+      ? uploadPortFile(file, { createUrl: this.createUrlValue, parentNodeId: this.parentNodeIdValue })
+      : uploadChunkFile(file, { beginUrl: this.beginUrlValue, finalizeUrl: this.finalizeUrlValue,
+                                parentNodeId: this.parentNodeIdValue })
   }
 
   area(s) {
@@ -589,9 +673,38 @@ export default class extends Controller {
     return n ? `${n} part${n === 1 ? "" : "s"}` : "all"
   }
 
-  // NO `hasPrintButtonTarget` GUARD, DELIBERATELY, and the plan's draft had one. All six controls
-  // live in ONE always-rendered <span class="measure-actions">, so the target exists whenever this
-  // controller is connected. A guard that cannot fail asserts a condition that does not exist.
+  // THE SHEET FURNITURE'S FACTS, IN ONE PLACE. `print()` and `savePrint()` render the SAME sheets
+  // and must not disagree about the header, the date or how a size is written — the one-definition
+  // rule targetShapes()/targetNoun() already keeps for the target set.
+  //
+  // sizeLabel READS `d` AND `b`, THE SERVER'S FULL-RESOLUTION NUMBERS, NEVER `p` (the THINNED
+  // drawing points). Re-deriving a size from those under-reports every curve and loses the ⌀
+  // outright, because this side has no circularity test (§14h). Measured: the mutation prints
+  // "10 × 10 mm" where "⌀10 mm" belongs.
+  // THE PAPER IN FORCE, WITH ITS FALLBACK — the belt `print()` carried inline until S4-3, moved
+  // here rather than copied into `savePrint()`. It is reachable in exactly one state: an
+  // unpopulated select answers `value === ""`, which is no key in PAPERS. Without the `||`,
+  // buildSheets gets `undefined` for its paper and dies in contentBox, so a deployment that ever
+  // lost populatePaper would lose Print AND Save sheet rather than degrading to the default.
+  sheetPaper() {
+    return PAPERS[this.paperTarget.value] || PAPERS[DEFAULT_PAPER]
+  }
+
+  sheetMeta() {
+    return {
+      name: this.nameValue,
+      // LOCAL, NOT UTC. `toISOString()` stamps an evening print in the Americas with TOMORROW's
+      // date, on a sheet whose header exists so a page found on a bench next week can be trusted.
+      date: new Date().toLocaleDateString("en-CA"),
+      sizeLabel: (shape) => this.sizeLabel(shape),
+    }
+  }
+
+  // NO `hasPrintButtonTarget` GUARD, DELIBERATELY, and the plan's draft had one. All SEVEN controls
+  // — the paper select and six buttons, two of them the Save twins stage 4 S4-3 added; it read six
+  // until then — live in ONE always-rendered <span class="measure-actions">, so the target exists
+  // whenever this controller is connected. A guard that cannot fail asserts a condition that does
+  // not exist, and that now covers the two save targets this method also writes.
   //
   // THERE ARE FOUR CALLERS NOW, NOT THREE, AND THE FOURTH RETIRED HALF OF THIS ARGUMENT. The
   // original three — toggleMarks, clearMarks, showPoster — are each reachable only once the view
@@ -611,8 +724,9 @@ export default class extends Controller {
   refreshPrintBar() {
     const noun = this.targetNoun()
     this.printButtonTarget.textContent = `Print ${noun}`
-    // THE SVG BUTTON'S TEXT DOES NOT MOVE, SO ITS ACCESSIBLE NAME MUST. Both are written here,
-    // from one targetNoun(), so the two buttons cannot come to describe different sets. Its
+    // THE SVG BUTTON'S TEXT DOES NOT MOVE, SO ITS ACCESSIBLE NAME MUST. All FOUR are written here
+    // since stage 4, S4-3 (it was two), from one targetNoun(), so no two of these buttons can come
+    // to describe different sets. Its
     // visible text reads "Download SVG" as of 2026-09-03 (it was "SVG"), which is still CONSTANT:
     // a second count-bearing label beside "Print 3 parts" is noise, and the count is what the
     // accessible name carries. NO `hasSvgButtonTarget` GUARD, for the reason the comment above
@@ -623,6 +737,15 @@ export default class extends Controller {
     const label = `Download ${noun} as SVG`
     this.svgButtonTarget.setAttribute("aria-label", label)
     this.svgButtonTarget.setAttribute("title", label)
+    // THE SAVE TWINS TRACK THE SAME TARGET. Four labels, one targetNoun(), so a button can never
+    // describe a set a sibling does not act on; the ERB's at-rest literals are these same strings
+    // with `noun` = "all", which is what makes them drift together or not at all.
+    const svgSave = `Save ${noun} as SVG in the library`
+    this.saveSvgButtonTarget.setAttribute("aria-label", svgSave)
+    this.saveSvgButtonTarget.setAttribute("title", svgSave)
+    const sheetSave = `Save ${noun} as a print sheet in the library`
+    this.savePrintButtonTarget.setAttribute("aria-label", sheetSave)
+    this.savePrintButtonTarget.setAttribute("title", sheetSave)
   }
 
   // THE SIZE, PLUS THE ONE PLACE THE APP SAYS ⌥-CLICK EXISTS. `pick` composes this with

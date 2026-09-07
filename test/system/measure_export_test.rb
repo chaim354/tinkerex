@@ -219,7 +219,8 @@ class MeasureExportTest < ApplicationSystemTestCase
   end
 
   # THE BUTTON MUST NOT LIE ABOUT WHAT IT DOES. Its visible text is constant because the bar
-  # already carries four other controls, so the accessible name is what tracks the target — written
+  # already carries six other controls (four until S4-3's Save twins), so the accessible name is
+  # what tracks the target — written
   # by the same refreshPrintBar() that writes the Print label, from the same targetNoun(). The
   # at-rest literal is also in the ERB, so this catches the two drifting apart.
   #
@@ -259,6 +260,109 @@ class MeasureExportTest < ApplicationSystemTestCase
     assert_equal "image/svg+xml", page.evaluate_script("window.__blob.type")
   end
 
+  # ---- Save to library --------------------------------------------------------------------
+
+  # THE ROUND TRIP CLOSING (story 2.12): the same bytes the Download button builds, written into the
+  # SOURCE file's own folder through the deployment's own upload door. This fixture pins SHARE
+  # (`FileLayer.current =` in setup), so it exercises the `port_writable` branch on all three legs —
+  # the chunk_remote branch is a rendered-attribute claim, pinned in file_page_test.rb, because a
+  # browser here has no sync server to commit against.
+  #
+  # A SECOND COPY OF THE FIXTURE, IN A FOLDER, AND THE FOLDER IS THE ASSERTION. The shared
+  # `sample.lbrn2` sits at the library ROOT, where "beside the file it came from" and "at the root"
+  # are the same node — so the parent assertion below would be nil == nil and could not fail for the
+  # reason it exists. `laser/` gives it a parent to be wrong about; the shared fixture is COPIED
+  # rather than moved, because the clobber test one down needs a root-level source to collide at.
+  test "Save SVG writes the selection into the source file's folder and says so" do
+    id = second_copy_in!("laser")
+
+    visit file_path(id)
+    click_on "Measure"
+    assert_selector ".measure-view--ready", wait: 10
+    find(".measure-stage circle.measure-contour").click
+    assert_text "1 part"
+
+    find("[data-measure-target='saveSvgButton']").click
+
+    assert_text "Uploaded sample-parts.svg.", wait: 15
+    node = @user.nodes.present.find_by!(name: "sample-parts.svg")
+    assert_equal @user.nodes.find_by!(node_id: id).parent_node_id, node.parent_node_id,
+                 "a save lands beside the file it came from"
+    # THE BYTES ARE REALLY THERE, AND THEY ARE REALLY THE EXPORT. 20mm is the circle alone — the
+    # 40 x 20 Rect around it would read 40mm, the whole file 100mm.
+    body = File.read(@root.join(node.storage_path))
+    assert_includes body, 'width="20mm"'
+    assert_includes body, "<circle "
+    assert_no_console_errors
+  end
+
+  # A NAME ALREADY TAKEN IS THE PORT'S CLOBBER REFUSAL, AND IT MUST REACH THE READOUT AS WORDS.
+  # FileLayer::Share#write refuses an overwrite with UnsupportedOperation, FilesController maps that
+  # to 422 with `{ error: … }`, and lib/chunk_upload reads the body — before S4-3 it threw away the
+  # message and said "upload failed (422)", which tells a maker nothing about what to do.
+  #
+  # SHARE-SHAPED BY CONSTRUCTION, and that is the plan's amendment 4 rather than an oversight: the
+  # same-name divergence is the PORT's. Share and s3 refuse a clobber; chunk_remote mints a new
+  # version of the same node. No name check was added at the door, so there is nothing
+  # backend-independent here to assert.
+  test "saving over a name that exists refuses in words, not in a status code" do
+    File.binwrite(@root.join("sample-parts.svg"), "<svg/>")
+    Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
+
+    visit file_path(@sample_id)
+    click_on "Measure"
+    assert_selector ".measure-view--ready", wait: 10
+
+    find("[data-measure-target='saveSvgButton']").click
+
+    assert_text(/already exists/i, wait: 15)
+    assert_equal "<svg/>", File.read(@root.join("sample-parts.svg")), "nothing was overwritten"
+  end
+
+  # THE PRINT SHEET AS A FILE. `sheetDocuments` is print_sheet.js's PURE half, so this must produce
+  # a paper-sized document with the header on it and no iframe anywhere — and exactly ONE xmlns,
+  # which is the trap `renderSheet`'s own `xmlns` attribute sets for a serialiser.
+  test "Save sheet writes a paper-sized, well-formed sheet" do
+    visit file_path(@sample_id)
+    click_on "Measure"
+    assert_selector ".measure-view--ready", wait: 10
+    page.execute_script("document.querySelector('.measure-paper').value = 'A4'")
+
+    find("[data-measure-target='savePrintButton']").click
+
+    assert_text(/Uploaded sample-print/, wait: 15)
+    node = @user.nodes.present.find_by!(name: "sample-print.svg")
+    body = File.read(@root.join(node.storage_path))
+    assert_includes body, 'width="210mm"'
+    assert_includes body, 'height="297mm"'
+    # ONE `xmlns`, AND THIS IS A CLAIM ABOUT THE ARTIFACT RATHER THAN A GUARD ON THE LINE THAT
+    # PRODUCES IT. `sheetDocuments` strips the attribute before serialising because a null-namespace
+    # `xmlns` is not a namespace declaration and the XML serialization algorithm writes its own
+    # beside it — but Blink suppresses its own when the attribute is present, so deleting that strip
+    # leaves this assertion green (measured 2026-09-07, with a probe attribute proving the edited
+    # module was the one served). Kept because a malformed sheet is what a maker would find out
+    # about in an importer, and recorded as un-mutatable rather than dressed up as a guard.
+    assert_equal 1, body.scan(/xmlns=/).size, "a doubled xmlns is not well-formed XML"
+    assert_no_console_errors
+  end
+
+  # THE ACCESSIBLE NAMES OF ALL FOUR BUTTONS COME FROM ONE targetNoun(), so a Save can never
+  # describe a set its Download twin does not act on.
+  test "the save buttons' accessible names track the same target the downloads do" do
+    visit file_path(@sample_id)
+    click_on "Measure"
+    assert_selector ".measure-view--ready", wait: 10
+
+    assert_selector "[data-measure-target='saveSvgButton'][aria-label='Save all as SVG in the library']"
+    assert_selector "[data-measure-target='savePrintButton'][aria-label='Save all as a print sheet in the library']"
+
+    find(".measure-stage circle.measure-contour").click
+
+    assert_selector "[data-measure-target='saveSvgButton'][aria-label='Save 1 part as SVG in the library']"
+    assert_selector "[data-measure-target='savePrintButton'][aria-label='Save 1 part as a print sheet in the library']"
+    assert_selector "[data-measure-target='saveSvgButton']", exact_text: "Save SVG"
+  end
+
   private
 
     # Import the exporter and evaluate `body` against it (the module object is bound to `m`). The
@@ -284,6 +388,20 @@ class MeasureExportTest < ApplicationSystemTestCase
     # still being the real pipeline. (Copied from measure_print_test.rb, which copied it from
     # lbrn_measure_test.rb — three system tests need the same bootstrap and none can share a
     # superclass with the rest of the suite.)
+    # THE SAME FIXTURE, A SECOND TIME, INSIDE `dir` — and a COPY rather than a move, deliberately.
+    # `sample.lbrn2` at the root is what the clobber and print tests collide and save against; the
+    # save test needs a source with a real parent so its "beside the file it came from" assertion
+    # has something to be wrong about (plan amendment 6). Returns the new node's id, geometry
+    # already rendered, because the browser cannot wait for the job (see render_geometry!).
+    def second_copy_in!(dir)
+      FileUtils.mkdir_p(@root.join(dir))
+      File.binwrite(@root.join(dir, SAMPLE), File.binread(Rails.root.join("test/fixtures/files", SAMPLE)))
+      Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
+      id = @user.nodes.find_by!(storage_path: "#{dir}/#{SAMPLE}").node_id
+      render_geometry!(id, SAMPLE)
+      id
+    end
+
     def render_geometry!(node_id, filename)
       token = FileLayer.current.stat(@user, node_id: node_id).content_token
       preview = Maker::Previews::Enqueue.call(user: @user, node_id: node_id, name: filename,
