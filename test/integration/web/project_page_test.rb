@@ -171,6 +171,15 @@ module Web
       assert_select "p.muted", text: /No (entries|connections|releases|sheets) yet/, count: 0
     end
 
+test "a quiet BOM panel keeps its revision badge: the hidden span is a count, and rev is not one" do
+  project = @user.maker_projects.create!(name: "Rev")
+  project.boms.create!(user: @user)
+
+  get project_path(project)
+
+  assert_select "section.bom-panel.panel--quiet .panel-head .bom-rev", text: /rev \d+/
+end
+
     test "a populated panel is not quiet" do
       project = @user.maker_projects.create!(name: "Busy")
       project.tasks.create!(user: @user, title: "cut")
