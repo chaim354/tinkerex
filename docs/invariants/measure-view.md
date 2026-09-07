@@ -848,25 +848,35 @@
   is silently the wrong size in an application that will cut it. ONE translate for the whole
   selection, so several selected parts keep their relative positions; and normalizing at all is
   what stops a part pulled out of a 1200 mm sheet importing as a speck in an empty canvas. The root
-  is created IN the SVG namespace so the serialiser writes `xmlns` itself — adding
-  `setAttribute("xmlns", …)` as well emits it TWICE, which is not well-formed XML and which some
-  importers reject outright.
+  is created IN the SVG namespace so the serialiser writes `xmlns` itself; never ALSO
+  `setAttribute("xmlns", …)`. The rule stands on the XML serialization algorithm, which would
+  declare it twice — **measured 2026-09-07 (S4-3): headless Chrome does NOT**, Blink skips its own
+  declaration when the attribute is present, so a doubled `xmlns` cannot be observed in the one
+  browser this repo drives, and `print_sheet.js#sheetDocuments` strips the attribute for the
+  algorithm's sake rather than for an observed doubling. An earlier version of this sentence
+  claimed the doubling as fact; it was reasoning, not a measurement.
 - **THE EXPORT USES THE LAYER COLOUR WHERE THE PRINT SHEET USES BLACK, AND THAT DIVERGENCE IS
   ARGUED.** The sheet is black because a mono printer turns a layer palette into indistinguishable
   greys, on the one artifact whose job is to be measured and cut against. A file has no such
   constraint, and LightBurn maps stroke colour back to layers on import.
 - **`lib/export_svg.js` BUILDS THE DOCUMENT AND THE CONTROLLER BUILDS THE BLOB.** The same split
-  `print_sheet.js` draws between `renderSheet` (pure) and `buildPrintFrame` (not), and it is what
+  `print_sheet.js` draws between `renderSheet`/`sheetDocuments` (pure) and `buildPrintFrame` (not)
+  — three pure builders since S4-3, and the controller owns the Blob, the NAME and the DOOR for all
+  of them: a download, or **Save to library** through the same two-door upload flow every other
+  upload takes (`uploadPortFile` on share/s3, `uploadChunkFile` on chunk_remote), into the source
+  file's own folder as `<base>-parts.svg` / `<base>-print.svg`, never a third door — and it is what
   lets the export be asserted as a STRING: headless Chrome here has no configured download
   directory, so the system test shims `URL.createObjectURL` and `HTMLAnchorElement.prototype.click`
   instead of looking for a file on disk. An empty selection REFUSES rather than writing a 0 × 0 mm
   document — that opens in every viewer showing nothing, which reads as "the export is broken"
   rather than "you selected nothing", and the caller has a readout to put the message in.
 - **THE SVG BUTTON'S VISIBLE TEXT IS CONSTANT AND ITS ACCESSIBLE NAME IS NOT.** The actions bar
-  carries five controls, so a second count-bearing label beside "Print 3 parts" is noise — but a
+  carries seven controls since S4-3 (paper, Print, Save sheet, Download SVG, Save SVG, Reset,
+  ✕ Image), so a second count-bearing label beside "Print 3 parts" is noise — but a
   button must not lie about what it does, so its `aria-label` AND its `title` are written from the
-  same `targetNoun()` the Print label uses, by the same refresh — and the ERB's at-rest literals
-  are that same string with the noun `all`, so all three can only drift together. **The text reads
+  same `targetNoun()` the Print label uses, by the same refresh — four buttons since S4-3, the
+  Download/Save SVG twins and the Print/Save sheet pair — and the ERB's at-rest literals are that
+  same string with the noun `all`, so all of them can only drift together. **The text reads
   "Download SVG" as of 2026-09-03, at the user's request** (it was `SVG`, a one-word button beside a
   paper picker); constant is a claim about the count, not about the wording, so
   `measure_export_test.rb` asserts the text on BOTH sides of a selecting click.

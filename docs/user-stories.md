@@ -79,10 +79,10 @@ again, catch up.*
 | 2.7 | firmware `.ino` `.cpp` `.h` `.yml` | `works` in repos | Code view, edit, commit, history, restore. `json`/`txt` file to `docs/` while `yml` files to `code/` (`file_attachment.rb:80-124`). |
 | 2.8 | KiCad + Gerbers | `rough` | Gerber single, zip and `.gbrjob` render as a board; KiCanvas for KiCad. **S4-2:** `kicad_sch`/`kicad_pcb` carry a filing rule (`Maker::FilingRule::KEY_RE`) and file into `pcb/`; a zip the Gerber reader recognises as a board files into the maker's own layer folder, `pcb/` by default (`ProjectIntake#board_folder_for`). Still rough: their ROLE stays `other`, so the type filter offers no KiCad chip and never will (`EXT_RE`). |
 | 2.9 | photos, PDF, README | `rough` | Image inline, PDF in the browser's viewer. **S4-1:** the project-root README renders on the private project page for every project (`projects/_readme_card.html.erb`, `_repo_card` for a root repo). Still rough: the README's own file page shows source, and README links resolve only on the project and public pages. |
-| 2.10 | any file: back to the program | `missing` | The file page shows Name/Size/Type/Modified (`show.html.erb:47-66`), never the library path, never a reveal or open hand-off; actions are Download, Delete, Back. |
-| 2.11 | any file: I saved it again | `rough` | Up to 15 min blind plus render time; the file page never refreshes itself (`thumbs_controller.js` runs only on grids); Rescan guesses a 6 s reload (`scanreload_controller.js:16-23`). |
-| 2.12 | any file: I exported from the web | `rough` | Every export — Measure SVG, print sheet, sheet CSV, BOM CSV — is a browser download; nothing lands on the share. |
-| 2.13 | any text file: I edited on the web | `rough` | Git repos only, ≤ 200 KB; on share and s3 the save overwrites with git as the only undo (`git-editing.md:28-45`); the thumbnail and page stay stale after Save. |
+| 2.10 | any file: back to the program | `rough` | **S4-3:** the file page's meta list carries the library path as a `Path` row with a Copy button (`FilesController#show` → `Maker::LibraryTree`, `copy_controller.js`), so the maker can find the file on the NAS from the browser. Still rough: opening it in the program is the OS's job — no reveal or open hand-off, by decision (spec §9). |
+| 2.11 | any file: I saved it again | `rough` | **S4-3:** the file page polls its own pending preview and reloads once when it lands (`thumbs_controller.js` reload mode); both Rescan doors poll a real "scan finished" (`users.library_scanned_at`, `GET /files/scan_status`) instead of guessing six seconds. Still rough: up to 15 min blind before Rescan, and a refused scan (`UnsafeScan`) looks like a slow one to the browser. |
+| 2.12 | any file: I exported from the web | `rough` | **S4-3:** Measure's SVG export and its print sheet have **Save to library** beside Download — the same bytes, through the existing two-door upload flow, into the source file's folder as `<base>-parts.svg` / `<base>-print.svg`, filed by the sweep and named in the readout. Still rough: the sheet CSV and the BOM CSV are downloads only. |
+| 2.13 | any text file: I edited on the web | `rough` | Git repos only, ≤ 200 KB; on share and s3 the save overwrites with git as the only undo (`git-editing.md:28-45`). **S4-3:** a Save re-enqueues the preview after the bytes land, so the thumbnail catches up on its own. Markdown editing outside git is S4-4. |
 
 ## T3. Files connect to each other
 
@@ -142,15 +142,17 @@ again, catch up.*
 | theme | stories | works | rough | missing | other |
 |---|---|---|---|---|---|
 | T1 | 6 | 0 | 4 | 2 | |
-| T2 | 13 | 5 | 7 | 1 | |
+| T2 | 13 | 5 | 8 | 0 | |
 | T3 | 7 | 1 | 2 | 3 | 1 built-unused |
 | T4 | 8 | 2 | 4 | 2 | |
 | T5 | 8 | 0 | 4 | 4 | |
 | T6 | 8 | 2 | 3 | 2 | 1 by design |
-| **all** | **50** | **10** | **24** | **14** | **2** |
+| **all** | **50** | **10** | **25** | **13** | **2** |
 
 Re-measured after S4-1 (2026-09-07): 6.6 and 6.8 moved to `works`; 1.4, 2.9, 6.1, 6.2, 6.3 gained new evidence and stay `rough`; 5.3 gained its render half and stays `missing`.
 
 Re-measured after S4-2 (2026-09-07): 2.4 and 4.1 moved to `works`; 2.3 moved from `missing` to `rough`; 2.8, 4.3, 4.8 gained new evidence and stay `rough`; 1.5 gained its filing half and stays `missing`; 4.2 stays `missing` by decision.
+
+Re-measured after S4-3 (2026-09-07): 2.10 moved from `missing` to `rough` (the path is there; the hand-off is the OS's by decision); 2.11, 2.12, 2.13 gained new evidence and stay `rough`.
 
 Which slice moves which story: the slice table in the stage 4 spec.
