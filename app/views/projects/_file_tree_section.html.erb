@@ -49,7 +49,7 @@
         a normal case — the `&&` guard is defensive rather than expected to ever fail. %>
     <% if dir.repo? %>
       <% if (card = @repo_cards[dir.node_id]) %>
-        <%= render "projects/repo_card", card: %>
+        <%= render "projects/repo_card", card:, editable: false %>
       <% end %>
       <%# THE CARD STAYS ABOVE THE BROWSER and the browser replaces everything below it: no tiles,
           no rows, and NO nested file_tree_section collection. Recursing here as well would draw

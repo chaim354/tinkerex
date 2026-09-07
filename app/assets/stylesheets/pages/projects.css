@@ -234,4 +234,16 @@
 
   /* --- The sweep's own line (stage 4, S4-2): under the Files head, above the groups. --- */
   .sweep-note { margin: 0 0 10px; font-size: 11px; }
+
+  /* --- The README editor (stage 4, S4-4): the composer inside a README card. `.composer` itself
+     is a component (components.css) and is only QUALIFIED here, never redeclared — design-system
+     rule 3. The mount and the textarea are two states of one control: CodeMirror renders into the
+     first and hides the second, and with no JS the second is what the maker types into. --- */
+  .readme-editor { margin-top: 10px; }
+  .readme-editor .readme-form { display: flex; flex-direction: column; gap: 8px; }
+  .readme-editor .readme-source { width: 100%; font: 12px/1.5 var(--font-mono); resize: vertical; }
+  .readme-editor .readme-mount .cm-editor { max-height: 60vh; }
+  .readme-editor .readme-bar { display: flex; align-items: center; gap: 10px; }
+  .readme-editor .readme-status { font-size: 12px; }
+  .readme-editor .no-history-note { margin: 0 0 8px; font-size: 12px; }
 }

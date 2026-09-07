@@ -183,6 +183,12 @@ Rails.application.routes.draw do
     # what the redirect and the flash are about, and the door files nothing on a scannable backend
     # (docs/invariants/project-intake.md), so the project is context, not a target.
     resource :scan, only: :create, module: :projects
+    # THE README, AS A DOOR RATHER THAN A FILE (stage 4, S4-4; spec §2 D3). SINGULAR: a project has
+    # one README and the door takes NO node id — it resolves the row from the project's own listing
+    # (Maker::Readme.row_in), which is what confines the git-editing exception to documentation
+    # (docs/invariants/git-editing.md). `update` only: creating README.md is still an update to
+    # "the project's README", and deleting one is the Files page's delete like any other file.
+    resource :readme, only: :update, module: :projects
   end
 
   # NON-NESTED ATTACH. The file page attaches via a <select> of projects, and a <select> cannot

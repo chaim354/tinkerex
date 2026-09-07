@@ -113,11 +113,15 @@
 
   <%# THE ROOT'S CARD (stage 4, S4-1), above the groups, for every project that has one: the
       repository card when the folder itself is a working tree (README, latest commit, tag), the
-      README alone otherwise. Outside the empty check below on purpose — a README is content. %>
+      README alone otherwise. Outside the empty check below on purpose — a README is content.
+      STAGE 4, S4-4: the card renders even with NO README, because it now carries the "Write a
+      README" door (@readme_editable is true whenever the folder is available). %>
   <% if @root_card %>
-    <%= render "projects/repo_card", card: @root_card %>
-  <% elsif @readme %>
-    <%= render "projects/readme_card", readme: @readme, editable: false %>
+    <%= render "projects/repo_card", card: @root_card, project: @project,
+               readme_row: @readme_row, editable: @readme_editable %>
+  <% elsif @readme || @readme_editable %>
+    <%= render "projects/readme_card", readme: @readme, editable: @readme_editable,
+               readme_row: @readme_row, project: @project %>
   <% end %>
 
   <%# BACKUPS COME OUT FIRST, pulled out of the tree wherever they physically sit and keyed on the

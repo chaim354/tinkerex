@@ -1,0 +1,47 @@
+<%#
+  THE README EDITOR (stage 4, S4-4; story 5.3). Mounted inside BOTH cards' `.readme` region —
+  projects/_readme_card for a plain folder, projects/_repo_card for a folder that IS a working
+  tree — so a maker writes documentation the same way whichever shape their project has.
+
+  Locals: project, row (the README's Maker::ProjectFolderListing::Row, or nil when there is none).
+
+  CLOSED, AND LAZY (the modelviewer `lazy` argument): readme_controller.js fetches the README's
+  bytes on the first toggle-open and not before, so a project page nobody edits pays no port read
+  at all and page_query_budget_test.rb is untouched by this feature.
+
+  THE TEXTAREA AND THE BUTTON START DISABLED WHEN THERE IS A README TO FETCH, and are enabled by
+  the controller once the buffer holds the real bytes. Without that, a failed bundle load plus a
+  click on Save posts an EMPTY buffer over a README that took an hour to write. The server refuses
+  a blank body as well (Projects::ReadmesController) — two halves, because a rule that lives only
+  in JavaScript is one curl walks past, which is the same argument FilesController::EDITABLE_MAX_BYTES
+  already makes. With NO README both start live: the textarea already holds the template, there
+  is nothing a blank submit could destroy, and a disabled control is DROPPED from a submission —
+  so this is also what lets "Write a README" work with no JavaScript at all.
+
+  PLAIN TAG HELPERS, NOT `f.text_area`. `form_with url:` with no model has a blank object_name, and
+  a field built through the builder would be named "content" anyway — but `fields_for` on a blank
+  object_name emits the literal bracket key Rack cannot parse (§14d, shipped twice). Flat names,
+  read as params[:content] / params[:base_token], exactly as FilesController#update reads them.
+%>
+<details class="composer readme-editor" data-controller="readme" data-action="toggle->readme#reveal"
+         data-readme-url-value="<%= row ? blob_file_path(row.node_id) : "" %>">
+  <summary class="btn small"><%= row ? "Edit README" : "Write a README" %></summary>
+
+  <%= render "shared/no_history_note" %>
+
+  <%= form_with url: project_readme_path(project), method: :patch, class: "readme-form",
+                data: { action: "submit->readme#sync" } do %>
+    <% if row %>
+      <%= hidden_field_tag :base_token, FileLayer.current.stat(current_user, node_id: row.node_id)&.content_token %>
+    <% end %>
+    <div class="readme-mount" data-readme-target="mount"></div>
+    <%= text_area_tag :content, (row ? "" : Maker::Readme.template_for(project)),
+                      rows: 16, disabled: row.present?, spellcheck: true,
+                      class: "readme-source", data: { readme_target: "input" } %>
+    <div class="readme-bar">
+      <%= submit_tag "Save README", class: "btn small primary", disabled: row.present?,
+                     data: { readme_target: "submit" } %>
+      <span class="muted readme-status" data-readme-target="status"></span>
+    </div>
+  <% end %>
+</details>

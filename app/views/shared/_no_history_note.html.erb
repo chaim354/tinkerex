@@ -1,0 +1,14 @@
+<%#
+  THE TRADE, NAMED WHERE IT IS TAKEN (stage 4, S4-4; spec §2 D3). Saving over a file on a share or
+  an s3 bucket destroys the old bytes — that is exactly why docs/invariants/git-editing.md refuses
+  editing outside a repository, and the one place this app takes that trade anyway is a README,
+  because the alternative measured on the live deployment was no README at all. So the sentence
+  goes on the editor rather than in a document nobody reading it will open.
+
+  ONE PARTIAL SO THE SENTENCE HAS ONE DEFINITION. Asked of `capabilities.versioned?`, never of an
+  adapter class (§14a / git-editing.md): chunk_remote keeps every version regardless, so it says
+  nothing at all rather than a hedge.
+%>
+<% unless capabilities.versioned? %>
+  <p class="muted no-history-note">This library keeps no history for this file; saving replaces it.</p>
+<% end %>

@@ -10,7 +10,14 @@
   its own. Removing them from the summary was not asked for and would touch a test this task does
   not own (project_attachments_test.rb's "a repository inside the folder…" pins them there).
 
-  Local: card (Maker::RepoCard).
+  STAGE 4, S4-4: the ROOT card also carries the README editor. `local_assigns[:editable]` DEFAULTS
+  TO FALSE — projects/_file_tree_section renders this partial for every NESTED repository too, and
+  a nested repo's README is not the project's README (the door writes only the project folder's
+  own). Defaulting to the safe answer is deliberate: an unwritten third caller gets a card with no
+  editor rather than an editor pointed at the wrong file (§14a makes the same argument for
+  finalize_upload's broadcast default).
+
+  Local: card (Maker::RepoCard). Optional: editable, project, readme_row (the root card only).
 %>
 <div class="repo-card">
   <div class="repo-facts">
@@ -36,8 +43,16 @@
       <% if card.readme_note %>
         <p class="muted readme-note"><%= card.readme_note %></p>
       <% end %>
+      <% if local_assigns[:editable] %>
+        <%= render "projects/readme_editor", project: local_assigns[:project], row: local_assigns[:readme_row] %>
+      <% end %>
     </details>
-  <% elsif card.readme_note %>
-    <p class="muted readme-note"><%= card.readme_note %></p>
+  <% else %>
+    <% if card.readme_note %>
+      <p class="muted readme-note"><%= card.readme_note %></p>
+    <% end %>
+    <% if local_assigns[:editable] %>
+      <%= render "projects/readme_editor", project: local_assigns[:project], row: local_assigns[:readme_row] %>
+    <% end %>
   <% end %>
 </div>

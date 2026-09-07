@@ -191,6 +191,18 @@ class ProjectsController < ApplicationController
                                     listing: @listing, link: Maker::RepoCard::DEFAULT_LINK)
       end
     end
+    # THE README THE EDITOR EDITS (stage 4, S4-4), resolved ONCE from the same rows both cards
+    # render — Maker::Readme.row_in is the one definition of the preference order, so the card that
+    # shows a README and the door that saves it cannot disagree about which file that is. In memory
+    # over @listing: no query, no port call.
+    #
+    # `@readme_editable` IS TRUE WITH NO README AT ALL — that is the "Write a README" case, which is
+    # the whole of story 5.3 for the 9 of 9 measured projects that have none. The size cap is read
+    # from FilesController's constant rather than spelled again (git-editing.md: the SERVER is what
+    # enforces it, and two copies of a number is how they drift).
+    @readme_row = @listing.available? ? Maker::Readme.row_in(@listing.loose) : nil
+    @readme_editable = @listing.available? &&
+                       (@readme_row.nil? || @readme_row.node.size.to_i <= FilesController::EDITABLE_MAX_BYTES)
     # RELEASES (stage 3, S3-5). `includes(:files, :rich_text_notes)` because the panel reads both
     # for every release it renders -- :rich_text_notes is the association Action Text gives
     # `has_rich_text :notes`, and without it a page of ten releases costs ten extra round-trips,

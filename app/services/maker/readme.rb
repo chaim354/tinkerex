@@ -42,6 +42,25 @@ module Maker
     # README past this is never read, and the card says so.
     READ_LIMIT = CAP * 4
 
+    # WHAT "WRITE A README" STARTS FROM (stage 4, S4-4). Short on purpose: a template a maker has to
+    # delete half of is worse than a blank page. The two headings are the two things the project
+    # page already has and the README cannot see — the folder's files and the build log — so the
+    # template's job is to say "these are the sections worth writing", not to write them.
+    #
+    # `NAMES.first` IS THE NAME A CREATE USES, read from the preference order rather than spelled
+    # again: the list is the preference order, so the first entry is what this app would rather find.
+    def self.template_for(project)
+      <<~MD
+        # #{project.name}
+
+        #{project.description.presence || "One line about what this is."}
+
+        ## Files
+
+        ## Build log
+      MD
+    end
+
     # `rows` are Maker::ProjectFolderListing::Row objects already in memory — the same rows the
     # caller is about to render as tiles — so finding the README costs no query. nil means "this
     # listing holds no README", which a caller renders as nothing at all rather than as a note.
