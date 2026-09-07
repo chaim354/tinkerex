@@ -55,15 +55,21 @@ module Maker
         "webp"  => Maker::Previews::ImageThumb,
         "bmp"   => Maker::Previews::ImageThumb,
         "pdf"   => Maker::Previews::Pdf,       # page 1 → PNG via pdfium (BSD-3 binary; CLAUDE.md §9)
+        # An Illustrator file, when Illustrator wrote it as a PDF — the renderer decides by reading
+        # the first five bytes and answers the job's terminal `unsupported` when they are not
+        # `%PDF-` (stage 4, S4-2). This is the SECOND renderer whose claim a read can retract, the
+        # first being GerberZip; both are registered by NAME and refuse by CONTENT.
+        "ai"    => Maker::Previews::Pdf,
         # GERBER: tracespace under node (tools/gerber-svg), the SAME pinned bundle the browser's
         # viewer runs, so the tile and the viewer are one picture. DERIVED FROM THE `pcb` ROLE and
         # never listed twice — Gerber::EXTENSIONS is `ROLE_BY_EXT`'s pcb keys minus `gbrjob`, whose
         # picture would need the siblings a renderer handed one file's bytes can never reach.
         **Maker::Previews::Gerber::EXTENSIONS.index_with { Maker::Previews::Gerber },
-        # A ZIPPED EXPORT IS A BOARD (files-preview.md) and this is the one renderer whose claim is
-        # decided by CONTENT rather than name: a Gerber zip renders its top side, and any other zip
-        # terminates `unsupported` after one bounded read. Every zip therefore gets a preview row,
-        # which is the stated price of a thumbnail on the artefact a fab house is handed.
+        # A ZIPPED EXPORT IS A BOARD (files-preview.md) and this is one of the TWO renderers whose
+        # claim is decided by CONTENT rather than name — `.ai` above is the other, and it read as
+        # "the one" until stage 4, S4-2 added it. A Gerber zip renders its top side, and any other
+        # zip terminates `unsupported` after one bounded read. Every zip therefore gets a preview
+        # row, which is the stated price of a thumbnail on the artefact a fab house is handed.
         "zip"   => Maker::Previews::GerberZip
       }.freeze
 

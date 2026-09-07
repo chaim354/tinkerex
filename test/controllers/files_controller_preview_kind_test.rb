@@ -156,6 +156,15 @@ class FilesControllerPreviewKindTest < ActiveSupport::TestCase
     assert_equal :other, kind("firmware")
   end
 
+  # STORY 2.3: `.ai` said "No inline preview for this file type." because nothing claimed it. It
+  # takes the `:thumbnail` branch now — the last branch before `:other`, reached because
+  # Registry.for("ai") finally answers. NOT `:pdf`: that branch embeds the bytes for the browser's
+  # own viewer, which a browser handed a file named `.ai` downloads instead of rendering.
+  test "an Illustrator file previews as a thumbnail rather than as nothing" do
+    assert_equal :thumbnail, kind("logo.ai")
+    assert_equal :other, kind("logo.eps"), "and nothing else moved with it"
+  end
+
   # TEXT_EXTS — ROLE AND CONTENT TYPE ARE DIFFERENT QUESTIONS, AND `.scad` ANSWERS THEM
   # DIFFERENTLY. OpenSCAD source files into `cad/` with the `.f3d` they generate and reads as
   # source code on the page. BOTH HALVES ARE THE TEST: the second one is what a careless fix
