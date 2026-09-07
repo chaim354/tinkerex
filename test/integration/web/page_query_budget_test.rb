@@ -815,5 +815,25 @@ module Web
                               -> { add.call("l", LARGE - SMALL) },
                               "settings/filing_rules#index")
     end
+
+    # STAGE 4, S4-2: THE SAME PAGE ON ITS OTHER AXIS, AND THE ONE THE CARD LAYOUT ADDED. The case
+    # above grows RULES inside a single folder, which the obvious wrong implementation -- a
+    # `where(folder:)` inside the card partial -- survives untouched, because the number of CARDS
+    # never moves there. Eleven cards over one query is the property; a maker who invents folders
+    # is the reader who pays for the other shape. Every row here names a folder of its own, so the
+    # page renders 14 cards small and 26 large, and a per-card query shows as +12.
+    #
+    # Rows are created directly (not through Maker::FilingRules.seed!) BEFORE the first request, so
+    # #index's own `seed!` sees `exists?` true and never runs its insert_all -- the same
+    # steady-state argument the case above and the thumbnail-backfill comment both make.
+    test "settings/filing_rules#index does not grow with the number of folders" do
+      add = lambda do |prefix, count|
+        count.times { |i| @user.maker_filing_rules.create!(ext: "#{prefix}e#{i}", folder: "#{prefix}f#{i}") }
+      end
+      assert_constant_queries(settings_filing_rules_path,
+                              -> { add.call("s", SMALL) },
+                              -> { add.call("l", LARGE - SMALL) },
+                              "settings/filing_rules#index (folders)")
+    end
   end
 end

@@ -1,7 +1,9 @@
 /* The settings pages (stage 2, S2-3 onward): reference lists with an inline add form -- Suppliers,
    Locations; Shelves keeps its own rules in pages/models.css until S2-6 folds them together.
    Same shape as .shelf-list: one row per record, its facts on the line, Remove at the end.
-   Stage 2, S2-6: the hub (.settings-hub, one link + one fact per row) and the theme choice. */
+   Stage 2, S2-6: the hub (.settings-hub, one link + one fact per row) and the theme choice.
+   Stage 4, S4-2: /settings/filing left that shape -- it is a grid of folder cards
+   (.filing-cards) now, and only its add form still borrows .settings-add. */
 @layer pages {
   .settings-list { list-style: none; padding: 0; margin: 0 0 20px; max-width: 640px; }
   .settings-list li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
@@ -15,4 +17,23 @@
   .settings-hub .settings-fact { margin-left: auto; }
   .theme-choice { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
   .theme-choice .theme-option[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+
+  /* --- Filing (stage 4, S4-2): one card per FOLDER, replacing the 124-row reference list.
+     `.chip` and `.empty` are COMPONENTS and are only QUALIFIED here, never redeclared
+     (docs/invariants/design-system.md rule 3; test/css_hygiene_test.rb).
+
+     ONE COLUMN AT 375px, WHICH IS THE PHONE RULE (rule 11) AND IS ARITHMETIC, NOT LUCK: the shell
+     gives `main.container` 12px of side padding below 719px, so the grid has 351px to fill and
+     `auto-fill` fits exactly one 300px-minimum track, stretched to 351px by the 1fr. `.empty` is a
+     40px-padded full-width component, so the card that has no rules is deliberately let out of that
+     size here -- it is a one-line "nothing yet", not an empty page. A custom folder name is a leaf
+     name (up to 255 bytes), so the heading wraps anywhere rather than pushing the track wider. --- */
+  .filing-cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  .filing-card { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px; }
+  .filing-card .filing-folder { font-size: 13px; margin: 0 0 8px; overflow-wrap: anywhere; }
+  .filing-exts { list-style: none; padding: 0; margin: 0 0 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .filing-card .chip { display: inline-flex; align-items: center; gap: 4px; }
+  .filing-card .chip form { display: inline; margin: 0; }
+  .filing-card .empty { padding: 4px 0; text-align: left; border: 0; font-size: 12px; }
+  .filing-card .settings-add { max-width: none; }
 }

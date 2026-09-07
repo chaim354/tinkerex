@@ -6,44 +6,12 @@
 </div>
 
 <p class="muted">
-  When a file lands loose in a project folder, the sweep files it into the subfolder its
-  extension names; an extension with no rule goes to <code>other</code>.
+  One card per subfolder the sweep creates under <code>Projects/&lt;your project&gt;/</code>: when a
+  file lands loose in a project folder it is filed into the folder its extension names here, and an
+  extension with no rule anywhere goes to <code>other</code>.
 </p>
 
-<ul class="settings-list">
-  <% @rules.each do |rule| %>
-    <li>
-      <span class="settings-name mono">.<%= rule.ext %></span>
-      <%# scope: :filing_rule -- Maker::FilingRule's own param_key would be "maker_filing_rule",
-          which FilingRulesController#update does not read; url: is explicit because this
-          namespaced resource's path helper is settings_filing_rule_path, not what form_with would
-          infer from the model's class name alone (CLAUDE.md §14d's form-scope rule). %>
-      <%= form_with model: rule, scope: :filing_rule, url: settings_filing_rule_path(rule),
-                    method: :patch do |f| %>
-        <%= f.text_field :folder, size: 12 %>
-        <%= f.submit "Save", class: "btn ghost small" %>
-      <% end %>
-      <%= button_to "Remove", settings_filing_rule_path(rule), method: :delete,
-                    class: "linkbtn danger small settings-remove",
-                    form: { data: { turbo_confirm: "Remove the filing rule for .#{rule.ext}? " \
-                                                    "It will file into other until you add a new one." } } %>
-    </li>
-  <% end %>
-  <% if @rules.empty? %>
-    <li class="empty muted">No filing rules yet.</li>
-  <% end %>
-</ul>
-
-<%# scope: :filing_rule -- this form has no model object, so scope: is what names the params at
-    all; FilingRulesController#create requires :filing_rule, which scope: here produces. %>
-<%= form_with url: settings_filing_rules_path, scope: :filing_rule, class: "settings-add" do |f| %>
-  <label>
-    <span>Extension</span>
-    <%= f.text_field :ext, required: true, placeholder: "stl" %>
-  </label>
-  <label>
-    <span>Folder</span>
-    <%= f.text_field :folder, required: true, placeholder: "models" %>
-  </label>
-  <%= f.submit "Add rule", class: "btn primary" %>
-<% end %>
+<div class="filing-cards">
+  <%= render partial: "folder_card", collection: @folders, as: :folder,
+             locals: { by_folder: @by_folder } %>
+</div>
