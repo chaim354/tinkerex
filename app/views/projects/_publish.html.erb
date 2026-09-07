@@ -1,0 +1,104 @@
+<%#
+  PUBLISHING, IN ONE PLACE, IN PLAIN LANGUAGE (stage 4, S4-4; stories 5.1, 5.2, 5.8). Until now
+  visibility and licence were two bare selects on the EDIT form and the feedback was "Project
+  updated." — four clicks with a handle, about seven without, and nothing anywhere said that
+  publishing makes every visible file in the folder downloadable.
+
+  THIS IS THE ONLY PLACE EITHER COLUMN IS SET. They were removed from projects/_form.html.erb in
+  the same change: one column with two controls is the shape §14a keeps recording, and only this
+  one can carry the meanings.
+
+  THE LAST PANEL, WITH A LINK IN THE PAGE HEAD. The head already carries the visibility badge and
+  the public link, so that is where a maker looks for publishing state; a settings box above the
+  maker's own content on every render would give prime space to a surface most projects never use
+  (spec §2.3). The `id` is what the head's anchor targets.
+
+  `scope: :project` — form_with over a NAMESPACED model would otherwise name the fields
+  `maker_project[...]`, which ProjectsController's `params.require(:project)` rejects and every
+  save would silently drop (§14d, shipped twice). Asserted as RENDERED in publishing_test.rb.
+
+  Local: project.
+%>
+<section class="panel publish-panel" id="publish">
+  <div class="panel-head">
+    <h2>Publish</h2>
+    <%= link_to "Preview", preview_project_path(project), class: "linkbtn small" %>
+  </div>
+
+  <% if project.user.handle.blank? %>
+    <%# A HANDLE BEFORE A URL: the public page lives at /u/<handle>/<slug>, so with none there is
+        nothing to publish TO and Maker::Project refuses the save. Claimed here rather than on the
+        Account page two navigations away — the same door (Settings::HandlesController), told where
+        to come back to by a project SLUG it resolves itself. %>
+    <p class="muted">Public projects live at <code>/u/&lt;handle&gt;/<%= project.slug %></code>. Choose a handle to publish.</p>
+    <%= form_with url: settings_handle_path, method: :patch, scope: :user, class: "handle-form" do |f| %>
+      <%= hidden_field_tag :project_id, project.slug %>
+      <label class="field">
+        <span>Handle</span>
+        <%= f.text_field :handle, placeholder: "e.g. chaim", autocomplete: "off",
+                         pattern: "[a-z0-9][a-z0-9-]{0,30}[a-z0-9]" %>
+      </label>
+      <%= f.submit "Claim handle", class: "btn small" %>
+    <% end %>
+  <% else %>
+    <%= form_with model: project, scope: :project, url: project_path(project), method: :patch,
+                  class: "publish-form" do |f| %>
+      <%= hidden_field_tag :return_to, "project" %>
+      <fieldset class="publish-options">
+        <legend>Who can see this</legend>
+        <% [ [ "private",  "Private",  "Only you." ],
+             [ "unlisted", "Unlisted", "Anyone with the link. Not listed anywhere." ],
+             [ "public",   "Public",   "Listed at /explore and on your handle page." ] ].each do |value, label, meaning| %>
+          <label class="publish-option">
+            <%= f.radio_button :visibility, value %>
+            <span class="publish-option-label"><%= label %></span>
+            <span class="muted publish-option-meaning"><%= meaning %></span>
+          </label>
+        <% end %>
+      </fieldset>
+
+      <label class="field">
+        <span>License</span>
+        <%= f.select :license,
+                     options_for_select([ [ "None", "" ] ] + Maker::Project::LICENSES.map { |id, l| [ "#{l} (#{id})", id ] },
+                                        project.license) %>
+      </label>
+
+      <%# EVERYTHING IN THE FOLDER, NOT JUST WHAT IS ON THE PAGE. Permission is by ANCESTRY
+          (Maker::PublicProject#permits?), so a file past the listing's cap is still downloadable.
+          Said before the button, not in the flash afterwards. %>
+      <p class="muted publish-warning">Publishing makes every visible file in
+        <span class="mono"><%= Maker::ProjectFolders::ROOT %>/<%= project.slug %></span> downloadable by anyone who can open the page.</p>
+
+      <div class="form-actions">
+        <%= f.submit "Save publishing", class: "btn small primary" %>
+      </div>
+    <% end %>
+
+    <%# `publicly_listed?`, NOT `published?` — which covers unlisted too, and the bare URL is DEAD
+        for an unlisted project: the token IS the credential, so a link without `k` 404s exactly
+        like a wrong one (publishing_test.rb pins that 404). Handing a maker a URL to copy that
+        does not work is worse than showing none; the unlisted block below shows the one that does.
+        The page head's "Public page" link makes the same distinction, the other way round. %>
+    <% if project.publicly_listed? %>
+      <% url = public_project_url(project.user.handle, project.slug) %>
+      <div class="publish-url">
+        <span class="mono"><%= url %></span>
+        <button type="button" class="btn small" data-controller="copy" data-copy-text-value="<%= url %>"
+                data-action="copy#copy">Copy</button>
+      </div>
+    <% end %>
+
+    <% if project.unlisted? %>
+      <% link = public_project_url(project.user.handle, project.slug, k: project.unlisted_token) %>
+      <div class="publish-unlisted">
+        <p class="muted">The link IS the credential — anyone holding it can open the page.</p>
+        <span class="mono"><%= link %></span>
+        <button type="button" class="btn small" data-controller="copy" data-copy-text-value="<%= link %>"
+                data-action="copy#copy">Copy</button>
+        <%= button_to "New link", project_unlisted_token_path(project), method: :post, class: "btn small",
+                      form: { data: { turbo_confirm: "Replace the link? Anyone holding the old one loses access." } } %>
+      </div>
+    <% end %>
+  <% end %>
+</section>

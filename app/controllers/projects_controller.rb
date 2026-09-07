@@ -341,8 +341,17 @@ class ProjectsController < ApplicationController
 
   def update
     if @project.update(project_params)
-      redirect_to project_path(@project), notice: "Project updated."
+      redirect_to project_path(@project), notice: publish_notice
     else
+      # THE PANEL POSTS THE SAME TWO FIELDS AS THE EDIT FORM (stage 4, S4-4), and there is no edit
+      # page behind it — a refusal that re-rendered :edit would bounce a maker off the page they
+      # clicked on, into a form whose visibility field no longer exists. `return_to` is NOT a URL:
+      # it is the literal string "project", resolved here to THIS project's own path, so there is
+      # nothing to sanitise and no open redirect to get wrong (the same reason
+      # ApplicationHelper#back_target_path refuses to take a URL param, §14d).
+      return redirect_to project_path(@project), alert: @project.errors.full_messages.to_sentence if
+        params[:return_to] == "project"
+
       render :edit, status: :unprocessable_entity
     end
   end
@@ -442,6 +451,23 @@ class ProjectsController < ApplicationController
   # foreign id resolves to nothing and the card falls back to its placeholder. Adding a validation
   # would buy a nicer error for a case nobody reaches through the UI, at the price of a query on
   # every project save.
+  # WHAT A VISIBILITY CHANGE ACTUALLY DID, IN THE MAKER'S TERMS (stage 4, S4-4; story 5.2). "Project
+  # updated." was the whole feedback for publishing until now — no URL, and no word about the fact
+  # that EVERY visible file in the project's folder became downloadable by ancestry
+  # (Maker::PublicProject#permits?). A maker cannot consent to what nobody told them.
+  #
+  # `saved_change_to_visibility?` RATHER THAN `published?`: the sentence is about the CHANGE, so a
+  # save that touched the name must not re-announce a publication that happened last week.
+  def publish_notice
+    return "Project updated." unless @project.saved_change_to_visibility?
+    return "#{@project.name} is private again. Its public page is gone." unless @project.published?
+
+    url = public_project_url(@project.user.handle, @project.slug,
+                             **(@project.unlisted? ? { k: @project.unlisted_token } : {}))
+    who = @project.unlisted? ? "anyone with that link" : "anyone"
+    "Published at #{url}. Everything in the project's folder is now downloadable by #{who}."
+  end
+
   def project_params
     attrs = params.require(:project).permit(:name, :description, :status, :cover_node_id, :tag_list,
                                             :visibility, :license, :autofile)

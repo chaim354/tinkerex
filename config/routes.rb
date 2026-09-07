@@ -195,6 +195,11 @@ Rails.application.routes.draw do
     # (docs/invariants/git-editing.md). `update` only: creating README.md is still an update to
     # "the project's README", and deleting one is the Files page's delete like any other file.
     resource :readme, only: :update, module: :projects
+    # A NEW UNLISTED LINK (stage 4, S4-4; story 5.8). SINGULAR and create-only: there is one token,
+    # rotating it is a verb with no id, and there is nothing to GET — the link is on the project
+    # page. `mint_unlisted_token` only ever FILLED a nil column, so until now a link handed out
+    # once worked forever with no way to withdraw it.
+    resource :unlisted_token, only: :create, module: :projects
   end
 
   # NON-NESTED ATTACH. The file page attaches via a <select> of projects, and a <select> cannot

@@ -16,10 +16,22 @@ module Settings
     def update
       current_user.handle = params.require(:user).permit(:handle)[:handle]
       if current_user.save
-        redirect_to edit_user_registration_path, notice: "Your handle is @#{current_user.handle}."
+        redirect_to return_path, notice: "Your handle is @#{current_user.handle}."
       else
-        redirect_to edit_user_registration_path, alert: "Handle #{current_user.errors[:handle].first}."
+        redirect_to return_path, alert: "Handle #{current_user.errors[:handle].first}."
       end
     end
+
+    # WHERE A CLAIM RETURNS TO (stage 4, S4-4). The Publish panel claims a handle inline, and
+    # bouncing a maker to the Account page mid-publish loses the thing they were doing. The param
+    # is a project SLUG, not a path: it is looked up in `current_user`'s own projects and turned
+    # into a route here, so an unknown or someone else's slug falls back to the Account page rather
+    # than redirecting anywhere a caller named. There is no URL in this parameter to sanitise.
+    def return_path
+      slug = params[:project_id].presence
+      project = slug && current_user.maker_projects.find_by(slug:)
+      project ? project_path(project) : edit_user_registration_path
+    end
+    private :return_path
   end
 end
