@@ -82,7 +82,7 @@ again, catch up.*
 | 2.10 | any file: back to the program | `rough` | **S4-3:** the file page's meta list carries the library path as a `Path` row with a Copy button (`FilesController#show` → `Maker::LibraryTree`, `copy_controller.js`), so the maker can find the file on the NAS from the browser. Still rough: opening it in the program is the OS's job — no reveal or open hand-off, by decision (spec §9). |
 | 2.11 | any file: I saved it again | `rough` | **S4-3:** the file page polls its own pending preview and reloads once when it lands (`thumbs_controller.js` reload mode); both Rescan doors poll a real "scan finished" (`users.library_scanned_at`, `GET /files/scan_status`) instead of guessing six seconds. Still rough: up to 15 min blind before Rescan, and a refused scan (`UnsafeScan`) looks like a slow one to the browser. |
 | 2.12 | any file: I exported from the web | `rough` | **S4-3:** Measure's SVG export and its print sheet have **Save to library** beside Download — the same bytes, through the existing two-door upload flow, into the source file's folder as `<base>-parts.svg` / `<base>-print.svg`, filed by the sweep and named in the readout. Still rough: the sheet CSV and the BOM CSV are downloads only. |
-| 2.13 | any text file: I edited on the web | `rough` | Git repos only, ≤ 200 KB; on share and s3 the save overwrites with git as the only undo (`git-editing.md:28-45`). **S4-3:** a Save re-enqueues the preview after the bytes land, so the thumbnail catches up on its own. Markdown editing outside git is S4-4. |
+| 2.13 | any text file: I edited on the web | `rough` | Git repos only, ≤ 200 KB; on share and s3 the save overwrites with git as the only undo (`git-editing.md:28-45`). **S4-3:** a Save re-enqueues the preview after the bytes land, so the thumbnail catches up on its own. **S4-4** landed D3's exception for the project README only (`Projects::ReadmesController`, `docs/invariants/git-editing.md`'s Markdown-exception section); any other text file outside a repository is still refused, and widening that is a second door that needs its own slice. |
 
 ## T3. Files connect to each other
 
@@ -113,14 +113,14 @@ again, catch up.*
 
 | # | story | tag | evidence / friction |
 |---|---|---|---|
-| 5.1 | When I decide to publish, I want to preview the visitor's page first. | `missing` | A private project 404s on the public route, for its owner too (`public/base_controller.rb:33`). |
-| 5.2 | When I flip to public, I want the URL and what became downloadable stated. | `rough` | Four clicks with a handle, about seven without; the flash is "Project updated." (`projects_controller.rb:265`); the whole visible folder becomes downloadable by ancestry (`public_project.rb:303-316`), unstated. The handle is claimed on the Account page and locked once anything is published (`user.rb:185-189`). |
-| 5.3 | When I write the README, I want to do it in the app, from a template, and see it rendered on my own page. | `missing` | Editing only inside git (`files_controller.rb:535-538`); root-only, case-sensitive six names (`readme.rb:37`). **S4-1** landed the "see it rendered on my own page" half; the editor, the template and the preview are S4-4, so the tag stays. |
-| 5.4 | When my README embeds photos and links files, I want them to render and open. | `rough` | Relative links resolve; absolute images are silently dropped to alt text (`markdown.rb:104-107`); an SVG image force-downloads and shows broken; heading ids are stripped so nothing deep-links. |
+| 5.1 | When I decide to publish, I want to preview the visitor's page first. | `works` | **S4-4:** `ProjectsController#preview` renders the visitor's page — the same `public/projects/_page.html.erb` the public route renders — for the owner at any visibility, inside the app shell behind a banner that says what is and is not reachable; the links are the visitor's, dead for a private project by decision. The public route still 404s a private project to everyone, its owner included (`project_preview_test.rb` asserts both in one file). |
+| 5.2 | When I flip to public, I want the URL and what became downloadable stated. | `rough` | **S4-4:** one Publish panel at the foot of the project page (`projects/_publish.html.erb`, a `Publish` link in the head) states each visibility's meaning in a sentence, warns that the whole visible folder becomes downloadable, claims the handle inline and returns to the project, and the flash names the URL it made and who can now open it (`projects_controller.rb#publish_notice`); visibility and licence left the edit form so one question has one control. Still `rough`: the handle stays locked once anything is published (`user.rb`), a separate decision nothing here moves. |
+| 5.3 | When I write the README, I want to do it in the app, from a template, and see it rendered on my own page. | `works` | **S4-1** landed the render half; **S4-4** the rest: the README card carries an editor for ANY project (`projects/_readme_editor.html.erb`, `Projects::ReadmesController` — a door that takes no node id and can write only the folder's own README), a template when there is none, CodeMirror from the one vendored bundle, and the no-history trade named on the editor on share/s3. Save redirects to the project page, so the rendered result is the payoff. Still root-only, six case-sensitive names (`readme.rb:37`), and a save compares the catalog's token (`tinkerex#276`). |
+| 5.4 | When my README embeds photos and links files, I want them to render and open. | `rough` | Relative links resolve. **S4-4:** headings keep an anchor, namespaced `user-content-<slug>` so a README heading can never claim an app id (a `## Project Tasks` heading once took the tasks panel's Turbo target — measured), with in-document `#links` rewritten to match and duplicates suffixed (`markdown.rb#keep_heading_anchors`). Absolute images are still dropped to alt text and an SVG image still force-downloads — unchanged, not this slice's. |
 | 5.5 | When a visitor opens my project, I want the model in 3D, the board and the cut file viewable, not download links. | `missing` | `Public::FilesController#show` is bytes only; no public 3D, Measure or Gerber viewer; KiCanvas for the first KiCad file only (`public/projects/_schematics.html.erb:28`). |
 | 5.6 | When I cut a release, I want visitors to get the files as they were. | `rough` | A release stores references and content tokens (`release_snapshot.rb:7-11`); downloads are the current bytes with a "changed" badge. |
 | 5.7 | When someone lands on `/explore` or my handle page, I want a cover and a way around. | `rough` | No covers on public cards (`public/_project_card.html.erb`); the anonymous layout has no header, logo or nav. |
-| 5.8 | When I share an unlisted link, I want to copy it and later revoke it. | `missing` | The token exists only inside an href and is never rotated (`project.rb:194-199`). |
+| 5.8 | When I share an unlisted link, I want to copy it and later revoke it. | `works` | **S4-4:** the Publish panel shows the unlisted link with Copy, and New link mints a fresh token so the old one 404s at once (`Projects::UnlistedTokensController`, `publishing_test.rb` drives the public route with the old `k`). |
 
 ## T6. A project view that fits the project
 
@@ -145,13 +145,15 @@ again, catch up.*
 | T2 | 13 | 5 | 8 | 0 | |
 | T3 | 7 | 1 | 2 | 3 | 1 built-unused |
 | T4 | 8 | 2 | 4 | 2 | |
-| T5 | 8 | 0 | 4 | 4 | |
+| T5 | 8 | 3 | 4 | 1 | |
 | T6 | 8 | 2 | 3 | 2 | 1 by design |
-| **all** | **50** | **10** | **25** | **13** | **2** |
+| **all** | **50** | **13** | **25** | **10** | **2** |
 
 Re-measured after S4-1 (2026-09-07): 6.6 and 6.8 moved to `works`; 1.4, 2.9, 6.1, 6.2, 6.3 gained new evidence and stay `rough`; 5.3 gained its render half and stays `missing`.
 
 Re-measured after S4-2 (2026-09-07): 2.4 and 4.1 moved to `works`; 2.3 moved from `missing` to `rough`; 2.8, 4.3, 4.8 gained new evidence and stay `rough`; 1.5 gained its filing half and stays `missing`; 4.2 stays `missing` by decision.
+
+Re-measured after S4-4 (2026-09-07): 5.1, 5.3 and 5.8 moved to `works`; 5.2 and 5.4 gained new evidence and stay `rough`; 2.13 records why D3's exception is the README's only.
 
 Re-measured after S4-3 (2026-09-07): 2.10 moved from `missing` to `rough` (the path is there; the hand-off is the OS's by decision); 2.11, 2.12, 2.13 gained new evidence and stay `rough`.
 
