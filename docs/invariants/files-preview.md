@@ -232,8 +232,30 @@ decides which members are the board, so the renderer and the zip's own file page
 about the stack. **Members are extracted UNDER THEIR BASENAME into one subdirectory per member, and
 NEVER under the entry's own path** — a zip's entry names are user data and may say `../` (the
 per-member subdirectory is also what lets two folders' `copper_top.gbr` both keep the basename
-tracespace identifies a layer from). Bounded again before anything is written, on DECLARED sizes:
-`MAX_MEMBERS` (64) and `MAX_EXTRACTED_BYTES` (64 MB), both refused as `unsupported`.
+tracespace identifies a layer from), and resolved through **`Maker::GerberArchive.entries_by_name`**
+rather than `zip.find_entry` — the listing reports names SCRUBBED to UTF-8 while an entry's own name
+is ASCII-8BIT as read off the archive, so `Cámara_top.gbr` missed its member and answered
+`unsupported` for a board with nothing wrong with it. Bounded again by `MAX_MEMBERS` (64) and
+`MAX_EXTRACTED_BYTES` (64 MB), both refused as `unsupported`.
+
+**THE BYTE BOUND IS TWO CHECKS AND NEEDS BOTH — the declared sizes are the PRE-CHECK, the capped
+read is the BOUND.** Summing the central directory's DECLARED sizes before inflating anything is
+cheap, honest about the ordinary oversized export, and free (those sizes are already read) — but it
+is not a bound, because a declared size is a claim made by the archive and rubyzip does not hold the
+inflater to it: `Zip::Inflater#read` (3.6.0) never consults `decompressed_size`, and only
+`PassThruDecompressor`, for STORED entries, does. Measured: a hand-built 407 KB zip declaring
+`size: 100` passed the pre-check and inflated **209 MB** into the tempdir, ran 104 s and got node
+OOM-killed. So each member is also READ under a cap against a running total — `read(remaining + 1)`,
+refused before it is written when it comes back longer than the budget. Neither check replaces the
+other.
+
+**THE NODE SUBPROCESS IS THE ONE RENDERER HERE WITH A WALL-CLOCK BOUND** (`GERBER_RENDER_TIMEOUT`,
+default 60 s; `Maker::Previews::Gerber.run_node` kills and raises `RenderError`). Its siblings are
+each handed ONE file the job has already capped; this one's runtime is driven by decompressed,
+user-supplied geometry, and the 104 s probe above held a Solid Queue worker for its whole duration.
+`popen3` with stdout and stderr drained in their own threads, never a single-threaded read: a
+board's SVG is several MB, so one reader deadlocks on the pipe and the timeout then fires on a
+render that was working.
 
 **THE HAIRLINE STYLESHEET IS NOT APPLIED, AND THAT IS WHY `SvgRasterizer.to_png` GREW A
 `stylesheet:` KWARG.** `STYLESHEET` exists for sources that draw in hairlines (a LightBurn file, a

@@ -20,9 +20,20 @@
   subfolder is a handful of things to see at a glance. Unrolling a working tree into a section per
   directory buries the rest of the project's panel under someone's `src/`.
 
+  THE COUNT IN THE SUMMARY IS THE WHOLE SUBTREE FOR A REPOSITORY AND THIS DIR'S OWN VISIBLE FILES
+  FOR EVERY OTHER SECTION. A plain section shows exactly the tiles it renders and its subfolders
+  carry their own counts beside it, so the direct-child number is the honest one there. A repository
+  renders NO tiles at all since 2026-09-07 — the browser inside it holds every file at every depth —
+  so the same number read "(3)" beside a repository holding 203 files. The recursive count is
+  Maker::ProjectFolderListing::Dir#subtree_file_count, in memory over the tree the listing already
+  built. Generated files are NOT subtracted from a repository's count, unlike a plain section's: the
+  browser lists them like any other file, where a section genuinely does not render them (they are
+  in the Generated group instead).
+
   Local: dir (Maker::ProjectFolderListing::Dir).
 %>
 <% visible = dir.files.reject { |row| @generated_ids.include?(row.node_id) } %>
+<% count = dir.repo? ? dir.subtree_file_count : visible.size %>
 <section class="attachment-group file-tree-section">
   <%# `open` on everything but a repository — see the header. %>
   <details<%= " open" unless dir.repo? %>>
@@ -31,7 +42,7 @@
         badge/link block on its own line leaves a newline-plus-indentation TEXT NODE behind even
         when it renders nothing, which breaks a `text: /name \(N\)/` substring match against the
         rendered summary (found by driving a real request, not by reading the template). %>
-    <summary class="attachment-group-head"><%= dir.name %><% if dir.repo? %> <span class="badge">repo</span><% end %> <span class="muted">(<%= visible.size %>)</span><% if dir.repo? %> <%= link_to "Commits", repo_commit_path(dir.node_id), class: "linkbtn small" %> <%= link_to "History", repo_history_path(dir.node_id), class: "linkbtn small" %><% end %></summary>
+    <summary class="attachment-group-head"><%= dir.name %><% if dir.repo? %> <span class="badge">repo</span><% end %> <span class="muted">(<%= count %>)</span><% if dir.repo? %> <%= link_to "Commits", repo_commit_path(dir.node_id), class: "linkbtn small" %> <%= link_to "History", repo_history_path(dir.node_id), class: "linkbtn small" %><% end %></summary>
     <%# THE CARD (stage 3, S3-2): README rendered, latest commit, current tag — at the top of the
         section, before its files. @repo_cards is keyed by node_id (ProjectsController#show) and
         holds one for every repo? Dir on the page, so a missing entry here would be a real bug, not

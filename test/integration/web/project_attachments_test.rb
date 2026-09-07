@@ -3,6 +3,10 @@ require_relative "../../support/fake_addon_source"
 
 module Web
   class ProjectAttachmentsTest < ActionDispatch::IntegrationTest
+    # A page render ENQUEUES (Maker::Previews::ThumbnailMap backfills), and one case below counts
+    # those jobs. Recorded, never run — the :test adapter is what `assert_enqueued_jobs` reads.
+    include ActiveJob::TestHelper
+
     PASSWORD = "correct horse battery staple".freeze
 
     setup do
@@ -54,6 +58,20 @@ module Web
     def attach_folder_node(user, project, name:, node_id:, role: "model", parent: nil)
       folder_file!(user, project, name:, node_id:, parent:)
       project.file_attachments.create!(user:, node_id:, role:)
+    end
+
+    # A folder file the THUMBNAIL PATH will really act on. `Maker::Previews::ThumbnailMap` asks the
+    # port for a content token and skips any node that has none, so a token-less fixture measures
+    # NOTHING — the trap maker_page_thumbnails_test.rb and page_query_budget_test.rb both record
+    # (the latter was budgeting a path that never executed). Both columns are set, so this reads the
+    # same on every backend: `content_hash` is share's and s3's token, `current_version_id` is
+    # chunk_remote's. The name still has to be one a renderer claims, or the backfill skips it for
+    # that reason instead.
+    def previewable_folder_file!(user, project, name:, node_id:, parent: nil)
+      node = folder_file!(user, project, name:, node_id:, parent:)
+      node.update!(size: 5, mtime: 1_000_000_000,
+                   content_hash: "h-#{node_id}", current_version_id: "v-#{node_id}")
+      node
     end
 
     # A subfolder inside the project's own folder, by name — the unit this page now sections by.
@@ -188,11 +206,18 @@ module Web
       # A SUBDIRECTORY OF THE REPO, which used to render a nested section of its own. It is the
       # half a test asserting only "no tiles" would miss: the recursion is a separate `render`
       # call from the tiles, so dropping one and keeping the other leaves the tree half-unrolled.
-      user.nodes.create!(node_id: "d-src", name: "src", kind: "dir", parent_node_id: firmware.node_id)
+      src = user.nodes.create!(node_id: "d-src", name: "src", kind: "dir", parent_node_id: firmware.node_id)
       folder_file!(user, project, name: "main.c", node_id: "n-mainc", parent: firmware.node_id)
+      folder_file!(user, project, name: "led.c", node_id: "n-ledc", parent: src.node_id)
 
       get project_path(project)
       assert_response :success
+      # THE COUNT IS THE WHOLE SUBTREE FOR A REPOSITORY — 2, not the 1 file at its own root. A plain
+      # section's count matches the tiles it draws and its subfolders carry their own counts; a repo
+      # draws none and its subdirectories have no sections, so a direct-child count reads "(3)" over
+      # a repository holding 203 files. The badge sits between the name and the count, which is why
+      # this regex says `firmware repo (2)` and the `docs (1)` cases above do not.
+      assert_select ".file-tree-section details summary", text: /firmware repo \(2\)/
       assert_select ".file-tree-section details summary", text: /firmware/ do
         assert_select "span.badge", text: "repo"
         assert_select "a[href=?]", repo_commit_path(firmware.node_id)
@@ -499,6 +524,64 @@ module Web
       get project_path(project, view: "tiles")
       assert_select ".view-toggle a.toggle.active", text: "Tiles"
       assert_select "table.project-files", count: 0
+    end
+
+    # --- Thumbnails inside a closed repository (2026-09-07) ---------------------
+
+    # A CLOSED REPOSITORY'S FILES ARE NOT IN THE PAGE'S THUMBNAIL UNION, AND THIS IS A REQUEST TEST
+    # BECAUSE ONLY A REQUEST CAN SEE IT. `Maker::Previews::ThumbnailMap.for` does not merely look:
+    # it BACKFILLS, creating a preview row and enqueueing a render job for every id it is handed
+    # that has none. While a repository rendered tiles that was work the page used; since it became
+    # a browser (the case above) it is a render per file for a picture the page never draws —
+    # probed at 60 jobs from a page showing none of them. The unit underneath, `#repo_subtree_ids`,
+    # can be perfect while the controller still hands the ids over, which is §14h's own lesson about
+    # the 172 stale LightBurn thumbnails.
+    #
+    # TWO CONTROLS, AND WITHOUT THEM THIS PASSES ON A PAGE WHOSE THUMBNAIL PATH STOPPED RUNNING
+    # ALTOGETHER. The loose file outside the repository must still get its row; so must the
+    # GENERATED file INSIDE it, which is the one exception the narrowing carries — a generated file
+    # renders as a tile in the Generated group wherever it physically sits, so dropping it from the
+    # union would blank a thumbnail the page really draws.
+    #
+    # THE FIXTURES CARRY A CONTENT TOKEN (previewable_folder_file!) — without one the port reports
+    # no content and the whole path short-circuits before any of this runs.
+    test "a repository's files enqueue no thumbnails, while a loose and a generated file still do" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      folder = project.ensure_library_folder!(user)
+      firmware = user.nodes.create!(node_id: "d-fw", name: "firmware", kind: "dir",
+                                   parent_node_id: folder.node_id)
+      user.nodes.create!(node_id: "d-fw-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
+                         parent_node_id: firmware.node_id)
+      src = user.nodes.create!(node_id: "d-fw-src", name: "src", kind: "dir",
+                               parent_node_id: firmware.node_id)
+      # FIVE AT THE REPO'S ROOT AND FIVE ONE LEVEL DOWN: the subtree walk and the flat list are
+      # different halves, and a fixture with only root files passes against a walk that never
+      # recurses.
+      repo_ids = (1..5).map { |i| previewable_folder_file!(user, project, name: "root#{i}.stl",
+                                                           node_id: "n-root#{i}", parent: firmware.node_id).node_id } +
+                 (1..5).map { |i| previewable_folder_file!(user, project, name: "deep#{i}.stl",
+                                                           node_id: "n-deep#{i}", parent: src.node_id).node_id }
+      loose = previewable_folder_file!(user, project, name: "bracket.stl", node_id: "n-bracket").node_id
+      generated = previewable_folder_file!(user, project, name: "panel.svg", node_id: "n-panel",
+                                           parent: src.node_id).node_id
+      state = user.maker_addon_states.create!(addon_key: "boxes", name: "front panel", data: {}, revision: 1)
+      state.files.create!(node_id: generated, role: "output", position: 0)
+
+      # EXACTLY TWO — the loose file and the generated one. A count rather than
+      # `assert_no_enqueued_jobs`, which cannot be scoped to a subset of node ids and would be red
+      # on the controls this case needs.
+      assert_enqueued_jobs 2, only: Maker::GeneratePreviewJob do
+        get project_path(project)
+      end
+      assert_response :success
+      assert_equal 0, user.maker_previews.where(node_id: repo_ids).count,
+                   "a closed repository's files were given preview rows by a page that draws no " \
+                   "tile for any of them"
+      assert user.maker_previews.exists?(node_id: loose), "the loose file's thumbnail must still backfill"
+      assert user.maker_previews.exists?(node_id: generated),
+             "a generated file inside a repository renders in the Generated group — its thumbnail " \
+             "has to stay in the map"
     end
 
     # --- Generated (stage 3, S3-1) ----------------------------------------------

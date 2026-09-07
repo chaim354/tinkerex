@@ -1,5 +1,6 @@
 require "test_helper"
 require "support/gerber_fixture"
+require "tmpdir"
 
 module Maker
   module Previews
@@ -140,6 +141,72 @@ module Maker
         end
       ensure
         if original.nil? then ENV.delete("NODE_BIN") else ENV["NODE_BIN"] = original end
+      end
+
+      # THE WALL-CLOCK BOUND, AND IT IS THE ELAPSED-TIME ASSERTION THAT CARRIES IT. "Raises
+      # RenderError" alone is satisfied by a `wait_thr.join` with no timeout at all — that raises
+      # too, twenty seconds later — which is exactly the mutation this case has to catch, so the
+      # clock is read around the call. The script sleeps 20 s against a 1 s bound: long enough that
+      # an unbounded join blows the 5 s assertion by four times over, short enough that the mutation
+      # check costs twenty seconds rather than five minutes.
+      #
+      # A SHELL SCRIPT RATHER THAN REAL NODE, through NODE_BIN — the same door the "cannot be run"
+      # case above uses, and it also means this case runs on a box with no node at all. The sleep is
+      # NOT `exec`ed, deliberately: sh may leave `sleep` as a CHILD, which is the grandchild case
+      # `capture_bounded` kills the process GROUP for. If only the direct child were killed the
+      # orphan would keep the stdout pipe open and the reader thread would block for the full 20 s
+      # — the timeout would fire and then hang anyway.
+      test "a node that never exits is killed and raises RenderError" do
+        original_bin = ENV["NODE_BIN"]
+        original_timeout = ENV["GERBER_RENDER_TIMEOUT"]
+
+        Dir.mktmpdir do |dir|
+          script = File.join(dir, "slow-node")
+          File.write(script, "#!/bin/sh\nsleep 20\n")
+          File.chmod(0o755, script)
+          ENV["NODE_BIN"] = script
+          ENV["GERBER_RENDER_TIMEOUT"] = "1"
+
+          started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          error = assert_raises(Maker::Previews::Gerber::RenderError) do
+            Maker::Previews::Gerber.svg_for(MINIMAL_GERBER, ext: "gtl")
+          end
+          elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+          # THE CLOCK IS ASSERTED FIRST, deliberately: `wait_thr.join(timeout)` reduced to
+          # `wait_thr.join` still raises a RenderError twenty seconds later ("tracespace produced
+          # no SVG"), so a message assertion placed ahead of this one would report the wrong
+          # failure and hide the fact that nothing was bounded.
+          assert_operator elapsed, :<, 5,
+                          "the render took #{elapsed.round(1)}s against a 1s bound — the wait is " \
+                          "not bounded, it just eventually returned"
+          assert_match(/timed out/, error.message)
+          assert_match(/1s/, error.message, "the message names the bound it waited for")
+        end
+      ensure
+        if original_bin.nil? then ENV.delete("NODE_BIN") else ENV["NODE_BIN"] = original_bin end
+        if original_timeout.nil?
+          ENV.delete("GERBER_RENDER_TIMEOUT")
+        else
+          ENV["GERBER_RENDER_TIMEOUT"] = original_timeout
+        end
+      end
+
+      # A MALFORMED TIMEOUT IS THE DEFAULT, NOT ZERO. `to_i` answers 0 for "60s" or "sixty", and a
+      # 0 s bound is not "unbounded" — `join(0)` returns at once, so every Gerber on that deployment
+      # would time out over one typo in an env var.
+      test "a non-numeric render timeout falls back to the default rather than to zero" do
+        original = ENV["GERBER_RENDER_TIMEOUT"]
+        ENV["GERBER_RENDER_TIMEOUT"] = "sixty"
+        assert_equal Maker::Previews::Gerber::TIMEOUT_SECONDS, Maker::Previews::Gerber.timeout_seconds
+        ENV["GERBER_RENDER_TIMEOUT"] = "5"
+        assert_equal 5, Maker::Previews::Gerber.timeout_seconds
+      ensure
+        if original.nil?
+          ENV.delete("GERBER_RENDER_TIMEOUT")
+        else
+          ENV["GERBER_RENDER_TIMEOUT"] = original
+        end
       end
 
       # BYTES THE PARSER CANNOT MAKE A LAYER OF terminate as a RenderError, not as an empty SVG
