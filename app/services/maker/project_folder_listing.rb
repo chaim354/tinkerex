@@ -102,6 +102,11 @@ module Maker
       @backups = []
       @dir_cap_hit = false
       dir_ids = @folder_id ? collect_dirs(@folder_id) : []
+      # THE ROOT ITSELF (stage 4, S4-1). collect_dirs ENTERS the folder but flags only its
+      # children, so a project whose folder IS the working tree — every real repository on the
+      # share deployment, measured 2026-09-07 — answered repo? nowhere on its page: no card, no
+      # Commits, no History. Asked once here, in memory, of the same tree the walk reads.
+      @root_repo = @folder_id ? working_tree?(@folder_id) : false
       @dir_ids_set = dir_ids.to_set
       scope = dir_ids.empty? ? user.nodes.none : files_in(dir_ids)
       @total = dir_ids.empty? ? 0 : scope.count
@@ -121,6 +126,11 @@ module Maker
     end
 
     def available? = !@folder_id.nil?
+
+    # Is the project's folder ITSELF a working tree (a `.git` marker child of folder_node_id)?
+    # False when the folder is not available. S4-4's README editor and S4-6's adoption read this.
+    def root_repo? = @root_repo
+
     def truncated? = @truncated
     # The walk ran out of DIR_CAP before it ran out of tree — the panel words that differently from
     # "more files than tiles", since `total` counts only the dirs that WERE walked.

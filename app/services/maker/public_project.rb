@@ -227,11 +227,11 @@ module Maker
     # Photos: every image-role row in the folder plus every live entry photo, deduped, in name
     # order. An entry photo usually lives OUTSIDE the folder (the upload door puts it wherever the
     # user pointed it), which is why it is fetched from `page_nodes` rather than the listing.
+    # THE DEFINITION MOVED TO Maker::ProjectPhotos when the PRIVATE project page grew the same
+    # gallery (stage 4, S4-1): two pages showing "this project's photos" must not drift about what
+    # counts as one, so this reads the shared answer rather than keeping a second copy of it.
     def photo_rows
-      @photo_rows ||= (listing.all_rows.select { |r| r.role == "image" } +
-                       entries.flat_map(&:file_attachments).filter_map { |a| page_nodes[a.node_id] }
-                              .map { |node| Maker::ProjectFolderListing::Row.new(node:, attachment: nil, linked: true, section: nil) })
-                      .uniq(&:node_id).sort_by { |r| r.node.name }
+      @photo_rows ||= Maker::ProjectPhotos.rows(listing:, entries:, page_nodes:)
     end
 
     # Live nodes for everything the page shows that is not in the listing: entry photos and BOM
