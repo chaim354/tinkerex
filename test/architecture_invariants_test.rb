@@ -1018,7 +1018,8 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # state across lines and keeps whatever follows the terminator on the same line, so real code
   # sharing a line with a comment's end is still scanned.
   #
-  # NON-VACUOUS BY ASSERTION (§14e): the scan is 15 files today (5 controllers, 10 templates) and a
+  # NON-VACUOUS BY ASSERTION (§14e): the scan is 21 files today (8 controllers, 13 templates —
+  # public/projects/_page.html.erb among them since stage 4, S4-4 extracted the page body) and a
   # renamed directory would otherwise retire this invariant with `assert_empty` passing over zero
   # files. 10 is a plausibility floor, not today's count.
   test "the Public namespace stands outside ApplicationController and names no session accessor" do

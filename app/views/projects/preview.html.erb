@@ -1,13 +1,11 @@
-<% content_for :crumbs do %>
-  <nav class="breadcrumb" aria-label="Project path">
-    <%= link_to "Projects", projects_path %>
-    <span class="sep" aria-hidden="true">/</span>
-    <%= link_to @project.name, project_path(@project) %>
-    <span class="sep" aria-hidden="true">/</span>
-    <span aria-current="page">Preview</span>
-  </nav>
-<% end %>
-
+<%#
+  NO `content_for :crumbs` HERE, ON PURPOSE. The visitor's page carries its own breadcrumb
+  (`@handle / Project`, public/projects/_page.html.erb), drawn in the body because the anonymous
+  branch of the layout renders no topbar to yield one. This page IS the signed-in branch, so a
+  crumbs block here rendered a second `nav.breadcrumb` with the same accessible name directly above
+  the first (measured in review). The topbar falls back to the title, the banner below carries "Back
+  to the project", and the visitor's own breadcrumb stays exactly where a visitor sees it.
+%>
 <%= render "projects/preview_banner", project: @project %>
 <%= render "public/projects/page", pub: @pub %>
 

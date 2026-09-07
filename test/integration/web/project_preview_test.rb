@@ -26,6 +26,20 @@ module Web
       assert_select "aside.rail"
       assert_select "nav.tabbar"
       assert_select ".public-files"
+      # ONE breadcrumb landmark, the visitor's own (`@ada / Desk Lamp`). The shell's topbar yields a
+      # `content_for :crumbs` on the signed-in branch, which the public page never takes — so a
+      # crumbs block in preview.html.erb rendered a SECOND `nav.breadcrumb` with the same accessible
+      # name above the first (measured in review: two on the preview, one on the public page).
+      assert_select "nav.breadcrumb", count: 1
+    end
+
+    test "a private project's file link on the preview is a 404 for its owner, as it is for everyone" do
+      # Decision 4: the preview keeps the VISITOR's urls, dead for a private project. The public
+      # page's 404 is pinned by public_project_test; this pins the FILE route's, as the signed-in
+      # owner, which is the link a maker will click on their own preview.
+      get public_file_path("ada", @project.slug, @f[:base].node_id)
+
+      assert_response :not_found
     end
 
     test "the same project is still a 404 on the public route, to its owner too" do
@@ -45,7 +59,9 @@ module Web
 
       get preview_project_path(@project)
 
-      assert_select ".preview-banner", /Published/
+      # The LISTED arm's own sentence, not /Published/ — that also matches "Published as unlisted",
+      # so swapping the two arms' sentences would have stayed green.
+      assert_select ".preview-banner", /Published: it is listed at/
       assert_select ".preview-banner a[href=?]", public_project_path("ada", @project.slug)
     end
 
@@ -54,6 +70,7 @@ module Web
 
       get preview_project_path(@project)
 
+      assert_select ".preview-banner", /Published as unlisted/
       assert_select "a[href=?]", public_file_path("ada", @project.slug, @f[:base].node_id,
                                                   k: @project.reload.unlisted_token)
     end
