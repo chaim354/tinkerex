@@ -15,7 +15,7 @@ module Maker
   # safelist Scrubber — the one that treats `<script>`/`<style>` contents as CDATA to discard
   # outright — so a disallowed tag is UNWRAPPED (the element goes, its text stays as a bare text
   # node) rather than deleted whole (probed: `<script>alert(1)</script>` sanitizes to the bare text
-  # "alert(1)", not to nothing). That is why `rewrite_relative_links` removes the EXECUTABLE
+  # "alert(1)", not to nothing). That is why `rewrite_fragment` removes the EXECUTABLE
   # elements (script, style, iframe, object, embed, noscript, template) WITH their content first —
   # a README's script must not become prose — and leaves every other disallowed tag to the
   # sanitizer's unwrapping, so "raw HTML stripped" means the element a browser would run is gone,
@@ -28,12 +28,25 @@ module Maker
   # stripped even if a highlighter did emit it.
   class Markdown
     ALLOWED_TAGS = %w[p br h1 h2 h3 h4 h5 h6 ul ol li strong em code pre blockquote a img table thead tbody tr th td hr del].freeze
-    ALLOWED_ATTRS = %w[href src alt title].freeze
+    # `id` IS ALLOWED FOR HEADINGS AND FOR NOTHING ELSE, AND THE ALLOWLIST CANNOT SAY SO — Rails'
+    # `sanitize` takes one flat attribute list with no per-tag arm, so `id` here would also permit
+    # one on `<a>`, `<img>`, `<p>` and every other allowed element. `#keep_heading_anchors` below
+    # is the half that makes this narrow: it runs BEFORE the sanitizer and strips every `id` off
+    # anything that is not h1–h6. Adding the attribute here without that pass is the hole.
+    ALLOWED_ATTRS = %w[href src alt title id].freeze
+
+    # WHAT AN ANCHOR MAY CONTAIN. Not decoration: kramdown's own auto_id generator answers
+    # `unicode-ü--symbols` for `## Unicode ü & Symbols!` (probed), a block IAL can hand any block
+    # element any id at all, and RAW HTML passes an `id` through verbatim — so "kramdown already
+    # sanitizes it" is false in all three directions. Anything outside this set collapses to a
+    # single hyphen; an id that survives as empty loses the attribute rather than becoming `id=""`.
+    ANCHOR_ALPHABET = /[^a-z0-9-]+/
+    HEADINGS = %w[h1 h2 h3 h4 h5 h6].freeze
 
     # resolve: ->(href) { url-or-nil }, asked only for a RELATIVE href — no scheme, no leading
     # slash (an absolute URL, a `mailto:`, or a root-relative "/x" never reaches the block, so it
     # never has to recognise those itself: an absolute `<a href>` is left exactly as kramdown wrote
-    # it, an absolute `<img src>` becomes its alt text — see rewrite_relative_links). nil DROPS the
+    # it, an absolute `<img src>` becomes its alt text — see rewrite_fragment). nil DROPS the
     # link: an `<a>`
     # unwraps to its own text (the words stay, the link doesn't), an `<img>` is removed outright —
     # there is no broken-image placeholder to fall back to, and a dangling `src` would just 404 in
@@ -43,14 +56,14 @@ module Maker
       html = Kramdown::Document.new(text.to_s, input: "GFM", hard_wrap: false, syntax_highlighter: nil).to_html
       # ALWAYS rewritten, never skipped when `resolve` is nil — a relative href with nothing to
       # resolve against is exactly the "unresolvable" case, not "leave it as a live link".
-      rewritten = rewrite_relative_links(html) { |href| resolve&.call(href) }
+      rewritten = rewrite_fragment(html) { |href| resolve&.call(href) }
       ActionController::Base.helpers.sanitize(rewritten, tags: ALLOWED_TAGS, attributes: ALLOWED_ATTRS)
     end
 
     class << self
       private
 
-      # "Relative" is defined once, here, rather than left for each caller of #rewrite_relative_links
+      # "Relative" is defined once, here, rather than left for each caller of #rewrite_fragment
       # to reason about: no URI scheme (http:, mailto:, javascript: — the sanitizer's job, not this
       # method's) and no leading "/". Only what's left over is a path the block might resolve
       # against the repo's own subtree; what an ABSOLUTE href gets instead is the element's own
@@ -59,13 +72,33 @@ module Maker
       # this one predicate is the whole test and neither call site adds a second one.
       def absolute_href?(href) = href.to_s.match?(%r{\A(?:[a-zA-Z][a-zA-Z0-9+.\-]*:|/)})
 
-      def rewrite_relative_links(html)
+      # HEADING ANCHORS, AND THE STRIPPING THAT MAKES THEM SAFE (stage 4, S4-4; story 5.4). ONE
+      # pass over the fragment the caller already parsed — never a second Nokogiri parse, which is
+      # what would let the two passes disagree about what the document is.
+      #
+      # AN `id` ON ANYTHING BUT A HEADING IS REMOVED, not normalized: kramdown's block IAL
+      # (`{: #x}`) and raw HTML both put ids on ordinary elements, none of them is an anchor anyone
+      # linked to, and an attacker-chosen `id` on an allowed element is DOM clobbering
+      # (`<img id="attributes">` shadows a property on the form it sits in). The heading case is the
+      # only one with a reason to exist, so it is the only one kept.
+      def keep_heading_anchors(fragment)
+        fragment.css("[id]").each do |el|
+          next el.remove_attribute("id") unless HEADINGS.include?(el.name)
+
+          slug = el["id"].to_s.downcase.gsub(ANCHOR_ALPHABET, "-").gsub(/-+/, "-")
+                   .delete_prefix("-").delete_suffix("-")
+          slug.empty? ? el.remove_attribute("id") : el["id"] = slug
+        end
+      end
+
+      def rewrite_fragment(html)
         fragment = Nokogiri::HTML.fragment(html)
         # EXECUTABLE ELEMENTS GO WITH THEIR CONTENT, here, before the sanitizer sees them: the
         # allowlist `sanitize` below UNWRAPS a disallowed tag (Loofah's PermitScrubber), so on its
         # own it turned `<script>alert(1)</script>` into the prose "alert(1)" in the middle of a
         # README (seen live, 2026-09-05). Safe, and still wrong to show.
         fragment.css("script, style, iframe, object, embed, noscript, template").each(&:remove)
+        keep_heading_anchors(fragment)
 
         fragment.css("a[href]").each do |a|
           href = a["href"].to_s

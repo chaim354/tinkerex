@@ -13,7 +13,8 @@ class Maker::MarkdownTest < ActiveSupport::TestCase
       ```
     MD
 
-    assert_match %r{<h1>Title</h1>}, html
+    # `id="title"` since stage 4, S4-4 — kramdown always emitted it, ALLOWED_ATTRS used to strip it.
+    assert_match %r{<h1 id="title">Title</h1>}, html
     assert_match %r{<li>one</li>}, html
     assert_match %r{<li>two</li>}, html
     assert_match %r{<pre><code>puts 1}, html
@@ -155,5 +156,53 @@ class Maker::MarkdownTest < ActiveSupport::TestCase
 
     assert_no_match %r{<script}, script
     assert_match %r{&lt;script&gt;alert\(1\)&lt;/script&gt;}, script
+  end
+
+  # STAGE 4, S4-4 (story 5.4): a README's headings keep their anchor, so `#build-steps` in a link
+  # — or in the URL a reader was handed — lands somewhere. kramdown has always emitted these ids;
+  # ALLOWED_ATTRS is what dropped them, and the pass this test pins is what makes allowing them
+  # safe rather than a hole for every `id` kramdown can be talked into emitting.
+  test "a heading keeps its id, normalized to a-z 0-9 and hyphens" do
+    html = Maker::Markdown.render(<<~MD)
+      # Desk Lamp
+
+      ## Build steps
+
+      ### Bill of Materials (v2)
+    MD
+
+    assert_match %r{<h1 id="desk-lamp">Desk Lamp</h1>}, html
+    assert_match %r{<h2 id="build-steps">Build steps</h2>}, html
+    assert_match %r{<h3 id="bill-of-materials-v2">}, html
+  end
+
+  test "a heading id kramdown built out of non-ascii is squeezed to the allowed alphabet" do
+    # PROBED, NOT ASSUMED: kramdown answers `id="unicode-ü--symbols"` here — a character outside
+    # [a-z0-9-] AND a double hyphen, both straight from its own auto_id generator.
+    html = Maker::Markdown.render("## Unicode ü & Symbols!\n")
+
+    assert_match %r{<h2 id="unicode-symbols">}, html
+    assert_no_match(/ü"/, html)
+  end
+
+  test "an id on anything that is not a heading is dropped" do
+    # Two ways to get one: kramdown's block IAL, and raw HTML. Both reach the fragment.
+    html = Maker::Markdown.render("Some text\n{: #para-ial}\n\n<p id=\"raw\">raw</p>\n")
+
+    assert_includes html, "Some text"
+    assert_no_match(/id="para-ial"/, html)
+    assert_no_match(/id="raw"/, html)
+  end
+
+  test "a raw-HTML heading's hand-written id is normalized rather than trusted" do
+    html = Maker::Markdown.render(%(<h2 id="Clobber Me!">Raw</h2>\n))
+
+    assert_match %r{<h2 id="clobber-me">Raw</h2>}, html
+  end
+
+  test "a heading whose id normalizes to nothing loses the attribute rather than carrying an empty one" do
+    html = Maker::Markdown.render(%(<h2 id="一二三">Three</h2>\n))
+
+    assert_match %r{<h2>Three</h2>}, html
   end
 end
