@@ -1,429 +1,152 @@
-# File-system user stories + the offline-workshop workflow
+# User stories — the bench maker
 
-**Date:** 2026-06-16 · **Scope:** the file-sync layer only (the maker product layer —
-projects/inventory/BOM/preview — is not built; see `CLAUDE.md` §12 step 9). **Audience:**
-a smart reader who hasn't read the code. **Honesty contract:** every story distinguishes
-three states —
+**Date:** 2026-09-07 · **Persona:** 1 of the four in
+`docs/superpowers/specs/2026-09-07-stage-4-bench-maker-design.md` (the others are stubs there) ·
+**Scope:** the maker web app in this repo. The sync layer's stories are historical, in
+`docs/user-stories-sync-2026-06.md`.
 
-- **Works today** — exercised by code that exists on `main` (cited), verified live or by a
-  hermetic test.
-- **Engine-API exists, no UI** — the capability is implemented as a Rust library/engine
-  function, but **nothing the end user touches** (no Tauri app button, no `maker-syncd`
-  flag, no CLI) calls it. A developer could wire it in an afternoon; a user can't reach it.
-- **Not built** — no code.
+This is a **living document**. A slice that lands re-measures the tags of the stories it names
+(the spec's slice table cites stories by the ids below, so **never renumber**; a story that is
+withdrawn keeps its row and says so). The record (CLAUDE.md §11) carries the arcs; this file
+carries what a maker is trying to do and how far the app gets.
 
-This doc is grounded in the actual capability code, not the marketing. Key sources:
-`client/fs-provider/src/subscriptions.rs` (selective sync), `client/sync-engine/src/lib.rs`
-(`hydrate`/`hydrate_range`/`proactive_hydrate`/`subscribe`), `client/sync-engine/src/daemon.rs`
-(the running loop + `DaemonConfig`), `client/sync-engine/tests/integration.rs` (offline tests),
-`client/maker-app/src-tauri/src/lib.rs` (the 11 Tauri commands the user actually gets),
-`client/fs-fuse/src/lib.rs` (POSIX guardrails), `client/fs-cfapi/src/lib.rs` (Windows pin).
+## Honesty contract
 
-A companion capability map (with verification tiers) is `docs/feature-set-and-workflows.md`;
-the competitive framing is `docs/research-sync-competitors.md` / `docs/parity-roadmap.md`.
+| tag | meaning |
+|---|---|
+| `works` | exercised by code on `main`, confirmed on the seeded app or the share deployment |
+| `rough` | works, with a named friction a maker will hit |
+| `built-unused` | exists; zero real use measured on the share deployment on 2026-09-07 — find out why before investing |
+| `missing` | no code |
+| `by design` | deliberately not built; the reason is cited |
 
-> **Two-line orientation.** The file layer is a **local-first sync engine** (Dropbox/Drive
-> shape), *not* a remote mount: every device holds the **full tree as local SQLite**, so
-> browsing/stat/readdir is instant and offline; file **bytes** are content-defined chunks
-> (FastCDC) fetched on demand ("hydrated") and cached locally. The product surface is a
-> native mount per OS — **Linux FUSE, Windows CfAPI (driverless), macOS WebDAV** — all over
-> the *same* `Provider`.
+**Evidence prefixes.** `share:` the real library on the share deployment (3,232 live files, measured
+2026-09-07). `seed:` a local library seeded to the same shape — a laser project whose folder is a
+git repo, a firmware + PCB project, a 3D-print project, and `designs/`, `cnc/`, `laser/` outside
+`Projects/`. `code:` a file and line from the 2026-09-07 audit.
 
 ---
 
-## 1. User stories — what the file system supports today
+## The persona
 
-Each story is *"As a maker, I want to ___ so that ___"*, with a **Works today** note and a
-precise **Limitation / gap** note.
+**Charles at the bench.** Self-hosts on Unraid; the NAS share is the library. Saves straight from
+desktop programs onto the share and expects the app to notice within minutes.
 
-### 1.1 Sync CAD / 3D / LightBurn files across my devices
-
-> *As a maker, I want a file I save on my workstation to appear on my laptop automatically,
-> so that I always have my current designs wherever I'm working.*
-
-- **Works today.** Saving a file through the mount enqueues an outbox entry; the daemon's
-  background loop (`SyncEngine::push_outbox`, `client/sync-engine/src/lib.rs`) commits it
-  (begin → upload only the *missing* content-addressed chunks → finalize) and the bytes go
-  **client ⇄ object storage via presigned URLs, never through Rails**. The other device gets
-  an ActionCable `{head_seq}` nudge (~39 ms locally, ~130 ms against the deployed server),
-  pulls the changelog delta, and the file appears. Verified live across all three OSes
-  against the Kamal-deployed server (SeaweedFS chunk storage), byte-for-byte. File **content**
-  is format-agnostic — STL/3MF/OBJ, STEP/IGES, native Fusion/FreeCAD/SolidWorks, `.lbrn2` all
-  ride as opaque bytes; a 15-filetype conformance run found no corruption.
-- **Limitation / gap.** The file arrives on the other device as a **placeholder** (metadata
-  only) — its bytes download on first open, not eagerly, *unless* that device's selective-sync
-  default keeps it resident (see §1.4). This is the right default for a 100 GB library on a
-  laptop, but it means "appears on my laptop" = "is listed and openable", not "is already
-  downloaded" — which is exactly the offline-workshop trap (§2). macOS/FUSE-T mounts need an
-  **interactive** session (the mount won't hold from a fully headless process).
-
-### 1.2 Automatic versioning + one-click restore
-
-> *As a maker, I want every save kept as a restorable version, so that I can roll back a CAD
-> file to last week without manually copying "v1/v2/final" files.*
-
-- **Works today.** Versioning is **native**: every commit is an immutable version → a
-  content-addressed manifest; chunks are refcounted and shared, and versions are **kept** (not
-  pruned). The Tauri app has real commands for this: `file_versions` (list every version,
-  newest first, with size + timestamp → `GET /v1/nodes/:id/versions`) and `restore_version`
-  (`POST /v1/nodes/:id/restore`). A restore re-points the node at an old manifest — **zero new
-  chunks uploaded, lossless** — and the sync loop propagates it to other devices.
-- **Limitation / gap.** Restore re-pointing is hermetically tested; the app commands are
-  **built but not verified against a live server demo**. More importantly, **retention is
-  bounded only by a server-side GC** — `Sync::RetentionPolicy` (keep_all / tiered) + a nightly
-  `RetentionJob` + S3 `delete_object` are wired, so history doesn't grow *unbounded*, but the
-  client has **no "pin this version forever" UI** beyond the server's `pinned` flag (which has
-  no app surface yet).
-
-### 1.3 Browse the whole library instantly, even offline
-
-> *As a maker, I want to navigate my entire file tree instantly without waiting on the network,
-> so that finding a design feels like a local disk, not a cloud drive.*
-
-- **Works today.** Every device mirrors the **complete tree** into local SQLite
-  (`fs-provider`). `stat` / `readdir` / `lookup` / `getattr` are pure local SQLite reads — **the
-  WAN is never in the metadata path** — so browsing is instant and works with no network at
-  all. This is the core architectural bet (`CLAUDE.md` §2) and the reason the abandoned
-  remote-mount approach (~1 s/file) was dropped.
-- **Limitation / gap.** "Instant browse" means metadata; the file *contents* may still be
-  online-only placeholders. Listing a folder is local; **opening** a not-yet-downloaded file
-  needs the network (§2). There is no per-folder "X of Y files downloaded" indicator anywhere
-  in the UI.
-
-### 1.4 Selectively sync only a subtree to a space-constrained laptop
-
-> *As a maker, I want my laptop to keep only my "Active Projects" folder resident and leave the
-> 90 GB archive as online-only, so that my laptop SSD isn't swamped by a library it can't hold.*
-
-- **Engine-API exists, no UI.** This is fully implemented in the engine and is the mechanism
-  the whole offline-workshop workflow rests on, so it's worth being precise:
-  - `client/fs-provider/src/subscriptions.rs` stores per-device **subscription rules keyed by
-    stable `node_id`** (survives renames/moves) in a local `subscriptions` table. Each rule is
-    `Include` or `Exclude` and applies to a node **and its whole subtree**; resolution walks up
-    the ancestry to the nearest rule (a recursive CTE), falling back to a **default policy**.
-  - The default is `Include` ("mirror everything") so selective sync is **opt-in** — until you
-    exclude something, every device proactively downloads everything. A device that wants the
-    Dropbox "subscribe to a few folders" shape flips the default to `Exclude` and includes the
-    subtrees it wants (`set_subscription_default`).
-  - The gate is `proactively_hydrate(node_id)`. After every pull, the **running daemon loop**
-    calls `SyncEngine::proactive_hydrate` (via `sync_tick_debounced` in
-    `client/sync-engine/src/daemon.rs`), which hydrates exactly the **in-scope** files that have
-    missing chunks (`proactive_hydration_targets`). Out-of-scope subtrees are left as
-    placeholders and fetched **only on demand** — graceful degradation, the OneDrive online-only
-    model. `SyncEngine::subscribe` subscribes a subtree *and immediately hydrates* it;
-    `unsubscribe` stops proactive hydration **and reclaims disk** by dropping that subtree's
-    cached bytes (`dehydrate_subtree`, dedup-safe — it never drops a chunk an in-scope file
-    still shares).
-- **Limitation / gap (important).** **Nothing the user touches calls any of this.** The Tauri
-  app's commands are `sync_start/sync_stop/sync_status/sync_pair/create_pairing/browse/
-  file_versions/restore_version/conflicts/resolve_conflict_keep/resolve_conflict_split` — there
-  is **no `subscribe`, no `set_default_policy`, no "make this folder available offline"** command.
-  `maker-syncd`/`maker-cfsyncd`/`maker-webdavd` take only `<mnt> <db> <chunks> <url> <token>` —
-  **no `--include`/`--exclude` flag**. So today selective sync is reachable **only from Rust
-  code** (a test, an example, or a custom binary). The `docs/parity-roadmap.md` still lists
-  selective sync among "remaining items" precisely because it needs an app/CLI surface, not new
-  engine work.
-
-### 1.5 Open a huge file and read just its header without downloading gigabytes
-
-> *As a maker, I want to peek at a 2 GB CAD/slicer file's header or metadata without pulling the
-> whole file, so that previewing or indexing doesn't cost me the entire download.*
-
-- **Engine-API exists, no UI.** `SyncEngine::hydrate_range(node_id, offset, size)` fetches only
-  the chunks overlapping `[offset, offset+size)` (the manifest records each chunk's offset/length;
-  `manifest_range_hashes` maps the range → the minimal chunk set), and
-  `hydrate_range_concurrent` does it over a bounded worker pool. The **CfAPI (Windows) read hook
-  already uses range hydration** — `FETCH_DATA` for a byte range pulls only those chunks
-  (`daemon.rs` `cfapi` hydrate closure). On FUSE/WebDAV the read hook currently calls the
-  **whole-file** `hydrate_concurrent` (a `read` triggers a full download of that file).
-- **Limitation / gap.** There's no *policy* that decides whole-vs-range from read intent on
-  FUSE/WebDAV, and no user control over it; it's "first touch hydrates the whole file" on those
-  two backends. Range hydration is proven by integration tests (a header read pulls a strict
-  subset; chunks outside the range stay un-hydrated) but is wired end-to-end **only on CfAPI**.
-
-### 1.6 Edit a 200 MB assembly and upload only what changed
-
-> *As a maker, I want a small tweak to a big CAD file to upload only the changed parts, so that
-> iterating on large assemblies doesn't re-upload hundreds of MB each save.*
-
-- **Works today.** Files are split with **FastCDC content-defined chunking**; a small edit shifts
-  only the chunks around the change (block-delta boundary stability is proptest-covered), and the
-  commit uploads only chunks the server doesn't already have. Identical chunks are stored once
-  (content-addressed dedup). This beats whole-file systems (Nextcloud/ownCloud re-send the file).
-- **Limitation / gap.** Chunk **bandwidth caps** exist in the engine (`DaemonConfig::with_bandwidth`,
-  a shared `RateLimiter` token bucket on up/down transfers) but, like selective sync, there's **no
-  UI/CLI flag** to set them — engine-API only. An opt-in **outbox debounce** (coalesce rapid
-  autosaves into one push, `Debounce::MAKER_DEFAULT`) is built and default-OFF.
-
-### 1.7 Safe concurrent edits — no silent data loss
-
-> *As a maker, I want the system to never silently throw away an edit when I change the same file
-> on two machines, so that I can trust it with the only copy of my work.*
-
-- **Works today.** Each commit sends its `base_version_id`. If that base is no longer current (a
-  concurrent/offline edit slipped in), the server records a **conflict keeping BOTH versions**
-  instead of last-writer-wins. The app surfaces it: `conflicts` lists them, and the user resolves
-  with `resolve_conflict_keep` (keep one side) or `resolve_conflict_split` (the incoming side
-  becomes a sibling `"foo (conflict from …)"`, reusing its manifest — zero new chunks). A base
-  that *is* current is a clean fast-forward. Tested hermetically (`offline_divergent_edit_raises_a_conflict`,
-  keep/split) and the lock path is verified live.
-- **Limitation / gap.** Conflict resolution is **manual** (no auto-merge — correct for binary CAD,
-  which can't be merged). There's a **best-effort** cross-device edit lock (a server TTL lock shows
-  a 🔒 + holder on connected devices) but it **never blocks** — offline edits just proceed and
-  reconcile via conflict detection. Two truly-offline machines editing the same file *will* produce
-  a conflict to resolve on reconnect; that's by design, not a bug.
-
-### 1.8 Atomic application saves don't corrupt the tree
-
-> *As a maker, I want CAD apps that save via write-temp-then-rename to work correctly, so that a
-> save never leaves a half-written or duplicated file.*
-
-- **Works today.** `Provider::rename` POSIX-replaces an existing target and tombstones the
-  displaced node (this was a real bug the conformance suite caught — `rename`-over hit a unique
-  index and broke atomic saves; now fixed). `O_TRUNC` / overwrite-with-shorter leaves **no stale
-  tail** on any OS (`truncate` via FUSE `setattr(size)` / WinFsp `set_file_size` / truncating
-  WebDAV PUT). Torn-write safety is confirmed: finalize is atomic.
-- **Limitation / gap.** None material for the maker save pattern; this is solid.
-
-### 1.9 Preserve the executable bit on scripts
-
-> *As a maker, I want a `chmod +x` build/flash script to stay executable on my other machines, so
-> that my firmware/build tooling runs without re-chmod-ing everywhere.*
-
-- **Works today.** File **mode** (0644/0755, the executable bit) is synced end-to-end across
-  devices (`executable_bit_propagates_across_devices`). Real **mtime** is also preserved verbatim
-  in unix nanoseconds, so `make`/`cargo`/`ninja` incremental builds aren't tricked into rebuilding.
-- **Limitation / gap.** Only the executable bit / basic mode is modeled. **uid/gid ownership,
-  full POSIX permission bits, ctime/atime, ACLs, xattrs are NOT synced** — deliberate non-goals
-  for a personal maker drive (see §3). Symlinks and special files are **rejected** (§3), so a tool
-  that depends on them won't round-trip.
-
----
-
-## 2. THE HEADLINE WORKFLOW — going offline at a workshop
-
-**Scenario.** You're taking a laptop to a workshop / makerspace / client site with **no
-internet**. You need a specific set of files (the STEP files for the job, the slicer profiles,
-the LightBurn cut files) to be **already downloaded** on the laptop so you can open and edit
-them with no network. You'll make changes on the bench, and sync them back when you get home.
-
-This section documents **exactly** how to achieve that with TODAY's capabilities, what works
-offline, what fails, and the gaps that make it rough.
-
-### 2.0 The honest headline
-
-> **The bytes-on-disk machinery all exists and is tested.** As of the make-available-offline
-> batch, the **engine + a cross-platform CLI** now also *target* and *verify* it: a maker can run
-> `maker-offline pin /Jobs/ClientX` to download exactly that folder (and keep it resident across
-> pulls), then `maker-offline offline-status /Jobs/ClientX` to get a "2/2 files local, 100% of
-> chunks — READY for offline ✓" confirmation (exit 0) before disconnecting. The remaining gap is
-> purely **graphical**: the Tauri app has no button/badge for this yet — it would call
-> `SyncEngine::pin` / `ensure_available_offline` + `offline_readiness` (the exact calls the CLI
-> makes). See §2.1 Option B (now reachable) and §2.2.
-
-### 2.1 Pre-downloading the files (three honest options)
-
-**Option A — "download everything" (works today, no targeting).**
-The selective-sync default policy is `Include`, meaning the running daemon's sync loop calls
-`proactive_hydrate` every tick and **eagerly downloads every file** that has missing chunks
-(`sync_tick_debounced` → `proactive_hydrate` → `proactive_hydration_targets`, in
-`client/sync-engine/src/daemon.rs` / `lib.rs`). So: **start the daemon, leave it connected and
-running until the loop has hydrated the whole library, then disconnect.** Everything is now local.
-- *Pros:* requires zero new UI; it's the default behavior.
-- *Cons:* downloads the **entire** library (no good for a 100 GB archive on a laptop SSD), and
-  there's **no signal that it has finished** — you're guessing when "caught up" happened.
-
-**Option B — targeted selective sync (engine-API only, not user-reachable).**
-The correct, targeted mechanism: set the device default to `Exclude`, then `subscribe` exactly the
-folder(s) you need. `SyncEngine::subscribe(provider, client, io, node_id)` records the include rule
-**and immediately hydrates** that subtree; the running loop keeps it resident.
-```text
-provider.set_subscription_default(SubRule::Exclude);   // online-only by default
-SyncEngine::subscribe(&provider, &client, &io, "<node_id of /Jobs/ClientX>");  // download just this
-```
-- *Pros:* downloads only what you asked for; survives renames (keyed by `node_id`); dedup-safe.
-- *Cons (the gap):* **there is no app button, no `maker-syncd --include` flag, no CLI** that calls
-  `subscribe`/`set_subscription_default`. As of `main`, this is reachable **only from Rust code**
-  (a custom binary or an example). A user cannot do this from the shipped app today.
-
-**Option C — Windows only: Explorer "Always keep on this device" (engine wired, OS-native UI).**
-On the Windows CfAPI backend, the OS gives you the pin UI for free: right-click → *Always keep on
-this device* maps to `CF_PIN_STATE_PINNED`, which the adapter turns into a force-hydrate
-(`pin_hydration_action` → `Hydrate`, `client/fs-cfapi/src/lib.rs`); *Free up space* unpins →
-dehydrate. This is a **real, user-facing pre-download control — but only on Windows**, and it's
-per-file/folder via Explorer, not a managed "offline set."
-
-### 2.2 Verifying files are actually local before you disconnect
-
-This is the step most likely to bite you, because **there is no verification UI or command.**
-
-- **What exists (engine primitives):** for any file you can list its chunk hashes
-  (`provider.node_manifest_hashes(node_id)`) and check each is cached (`provider.has_chunk(hash)`).
-  "Fully hydrated" = *all* hashes return `has_chunk == true`. This is exactly what the integration
-  tests assert (`assert!(hashes.iter().all(|h| b.has_chunk(h)))` in `integration.rs`).
-- **What does NOT exist:** any packaged `is_fully_hydrated(node_id)` helper, any "X of Y files
-  available offline" indicator in the app, any `verify` CLI, and any **guard that warns you before
-  you disconnect** that some needed files are still online-only. You assemble the check yourself
-  from the two primitives, or you trust that the loop "looked done."
-- **Practical check today (Linux/macOS):** after the loop has run, you can `find` your mount and
-  `cat`/`sha256sum` the files you care about **while still online** — a successful read forces (and
-  proves) hydration. If a read hangs or errors, that file wasn't local. This is a manual smoke test,
-  not a feature.
-
-### 2.3 What works offline (with no network)
-
-Once the relevant files are hydrated and you pull the plug:
-
-- **Full tree browse / stat / readdir** — every device holds the complete tree in local SQLite, so
-  navigation is fully functional offline (§1.3). You see *all* your files listed, including the ones
-  whose bytes aren't downloaded.
-- **Reading hydrated files** — a hydrated file's chunks live in the local content-addressed cache,
-  so reads serve entirely from disk with **zero network**. This is directly tested:
-  `hydrated_file_stays_readable_offline` points the engine at a **dead server + an erroring chunk
-  transport** and confirms a re-hydrate is a no-op (nothing missing) and the file still reads
-  byte-for-byte (`integration.rs:392`).
-- **Local edits** — creating, writing, renaming, deleting, `chmod`-ing files all work offline. Each
-  change writes the local SQLite tree **and enqueues an outbox entry atomically**; the outbox simply
-  accumulates while there's no network (`offline_writes_reconcile_with_remote_changes_on_reconnect`).
-- **Local advisory locks** — POSIX `setlk`/`getlk` byte-range locks are local and work offline.
-
-### 2.4 What FAILS offline
-
-- **Opening an un-hydrated (online-only) file.** A `read` on a file whose chunks aren't cached
-  triggers the hydrate hook, which needs presigned URLs from the server + bytes from object storage.
-  With no network this **fails** (the read errors / the open can't complete). This is the whole point
-  of §2.1–2.2: anything you didn't pre-download is unreadable at the workshop. There is **no offline
-  pre-flight warning** that you're about to open something that isn't local.
-- **Pushing your edits to the server** — the outbox can't drain; your work is safely queued locally
-  but not yet anywhere else (no second copy until you reconnect).
-- **Cross-device freshness** — you won't see edits made on your other machines, and they won't see
-  yours, until reconnect (no nudge, no delta pull).
-- **Open-for-write on a *partially* hydrated file** — write-open seeds its staging buffer from the
-  committed content, so it calls the **whole-file** `hydrate` (a partial/range hydrate would leave
-  un-fetched regions wrong). Offline, if that file wasn't fully resident, the write-open fails.
-
-### 2.5 Reconnecting — how queued edits sync back
-
-When the laptop is back online and the daemon is running:
-
-1. **Push drains the outbox.** `push_outbox` walks the queued changes in **topological order**
-   (parents before children — a real ordering bug the fault harness caught and fixed), commits each
-   (upload missing chunks → finalize), and the server appends changelog entries + bumps `head_seq`.
-2. **Pull applies what changed elsewhere.** The loop pulls the changelog delta since its cursor and
-   applies it locally. If the device fell so far behind that the server **pruned** the changelog past
-   its cursor, it detects the gap (`cursor < oldest_seq`) and does a **full snapshot resync** instead
-   of silently missing entries.
-3. **Conflicts surface, both sides kept.** If one of your offline edits has a stale `base_version_id`
-   because another device touched the same file while you were away, the server records a **conflict**
-   (both versions kept) rather than dropping either — and you resolve it in the app via keep/split
-   (§1.7). Convergence (both devices end up with both sides' non-conflicting files) is tested.
-
-### 2.6 The gaps that make the offline-workshop rough today, and what closes them
-
-| Gap | Impact | What closes it |
+| work | programs | on the share |
 |---|---|---|
-| **No "make this folder available offline" in the app/CLI** | Targeted pre-download (Option B) is Rust-only; users fall back to "download everything" or Windows Explorer pin | Wire `SyncEngine::subscribe` / `set_subscription_default` to a Tauri command + a folder right-click, and a `maker-syncd --include <path>` flag |
-| **No verification that files are local before disconnect** | You guess whether the loop finished; a missed file is silently unreadable at the workshop | A packaged `is_fully_hydrated(node_id)` + a per-folder "X/Y downloaded" indicator + a "ready for offline ✓" badge |
-| **No progress UI for proactive hydration** | A big pre-download has no progress bar or completion signal | Emit hydration progress events from the loop to the app |
-| **No offline pre-flight / "you're about to open an online-only file" guard** | A confusing hang/error when opening an un-hydrated file offline | A mount-level "online-only" attribute + a warning (CfAPI already shows placeholders natively; FUSE/WebDAV don't surface online-only state) |
-| **Whole-file hydrate on FUSE/WebDAV read** | First open of a big file offline-prep downloads the whole file even if you only needed a slice | Wire read-intent range hydration on FUSE/WebDAV (already done on CfAPI) |
-| **Bandwidth caps not user-settable** | A big pre-download saturates the shop's last good connection | Surface `DaemonConfig::with_bandwidth` in the app/CLI |
+| laser, first | LightBurn, Illustrator, Inkscape | `.lbrn2` 77 · `.svg` 168 · `.dxf` 129 · `.ai` 25 |
+| 3D printing | a slicer, Onshape/Fusion, Printables downloads | `.stl` 118 · `.3mf` 45 · `.step` 39 |
+| CNC | MillMage | `.mage` 23 |
+| electronics + firmware | PlatformIO/Arduino, ESPHome, KiCad | `.ino` 102 · `.cpp/.h/.hpp` ~950 · 3 git repos · Gerbers |
+| docs, photos, notes | Markdown, screenshots, PDFs | `.md` 123 · `.png` 91 · `.pdf` 41 |
 
-**Bottom line:** the offline-workshop scenario is **achievable today** (Option A everywhere; Option C
-on Windows; Option B from Rust), and everything that *runs* offline — full browse, reading hydrated
-files, queuing edits, reconnect-and-reconcile — is real and tested. What's missing is the **thin
-user-facing control + verification layer** on top of a complete engine: a way to *target* the
-pre-download and a way to *confirm* it before you walk out the door.
+Uses the app as a **viewer over the NAS** and as a **box generator** (25 saved boxes, the last five
+days before this was written). Nine projects exist, eight auto-created from folders, all still
+"planning". Tasks, build log, BOM, inventory, print runs, releases and publishing are unused. A
+fifth of the files live outside `Projects/`, in `designs/`, `old catan/`, `cnc/`, `laser/`,
+`3d models/`, and as loose screenshots at the root.
 
----
-
-## 3. Limitations — an honest catalogue of what the FS can't do
-
-These are **as of `main` today (2026-06-16)**. Two sibling efforts are separately probing
-**git-on-mount** and **POSIX conformance**; where those touch the items below, the specifics may be
-improving — treat the POSIX/symlink/git notes as a snapshot, not a verdict.
-
-### POSIX / filesystem-semantics non-goals (deliberate)
-
-- **No uid/gid ownership, no full permission bits, no ACLs/xattrs.** Only the file **mode**'s
-  executable bit (0644/0755) is synced. Ownership and the broader permission model are meaningless
-  for a single-user personal drive and are not modeled.
-- **No ctime/atime sync.** Real **mtime** is preserved verbatim (nanoseconds, end-to-end); ctime and
-  atime are not synced.
-- **No symlinks.** `symlink()` is rejected with **EPERM** (a deliberate guardrail in
-  `client/fs-fuse/src/lib.rs`) — the tree models only `File` and `Dir`. `ln -s`, `cp -a` of a
-  symlink, etc. fail cleanly rather than corrupting.
-- **No hardlinks.** Not modeled; each node is a single tree entry.
-- **No special files** — FIFOs, sockets, block/char device nodes via `mknod` are rejected with
-  **EPERM** (G8 guardrail), rather than the default `ENOSYS` that confuses `cp -a`/`tar`.
-- **Implication for git-on-mount:** git checkouts that materialize symlinks (and some hooks/index
-  edge cases) will hit the EPERM guardrails; a plain text repo without symlinks fares better, but
-  **git-on-mount is not a supported/tested workflow as of `main`** (a sibling agent is probing the
-  specifics — this may be refined).
-
-### Sync / hydration limitations
-
-- **Offline editing of an un-hydrated file is not possible.** Reading or write-opening a file whose
-  chunks aren't cached needs the network (§2.4). There is no "download-on-demand while offline" — by
-  definition.
-- **No automatic targeting of what to keep offline from the app.** Selective sync and bandwidth caps
-  exist in the engine but have **no UI/CLI surface** (§1.4, §1.6) — the central limitation behind the
-  offline-workshop friction.
-- **Whole-file hydrate on FUSE/WebDAV reads.** Range/progressive hydration is wired only on CfAPI
-  (§1.5); on the other two backends a read of any byte hydrates the entire file.
-- **Conflict resolution is manual.** No auto-merge (correct for binary CAD) — you must pick keep or
-  split. The cross-device edit lock is best-effort and never blocks.
-
-### Tenancy / sharing limitations
-
-- **Tenant = user. No sharing with other users.** A library is *your* devices only; there is no way
-  to share a folder with a collaborator/fabricator (no cross-user authz, no changelog scoping). This
-  is a deliberate v1 scope decision, not a bug.
-- **No at-rest / end-to-end chunk encryption (yet).** On the managed service, chunks are stored
-  un-encrypted-by-us; per-user AEAD over content-addressed ciphertext is the explicitly-last roadmap
-  item (`docs/parity-roadmap.md`). For IP-sensitive CAD on a hosted box, that gap matters — self-host
-  sidesteps it.
-
-### Platform limitations
-
-- **macOS uses WebDAV, not a native Finder-integrated sync root.** It works (verified live, rclone
-  conformance clean) but it's a WebDAV mount, not the OneDrive-class placeholder experience. A native
-  **FSKit** backend is a **design sketch only** (no `client/fs-fskit` crate on `main`) and is
-  additionally blocked on a paid Apple Developer membership.
-- **macOS / FUSE-T mounts need an interactive session** — they won't hold a mount from a fully
-  detached/headless process.
-- **Windows CfAPI is the default; WinFsp is behind a cargo feature** for one release. The live CfAPI
-  write-path conformance is an on-demand CI job, not a per-PR gate.
-
-### Product-layer (NOT file-system) limitations
-
-For completeness — these are **not** file-system limits; the sync engine references files by stable
-`node_id` and is ready for them, but the product surface in `CLAUDE.md` §12 step 9 simply isn't built:
-in-browser STL/3MF/CAD **preview**, **inventory**, and **projects/tasks/build-log/BOM**.
+Wants: **save, see it, measure it, generate the next file, keep it together, show it — with no
+bookkeeping.**
 
 ---
 
-## Appendix — capability state at a glance
+## T1. A project comes into being
 
-| Capability | State | Where |
-|---|---|---|
-| Cross-device sync (push/nudge/pull) | **Works today** (verified live, all 3 OSes) | `sync-engine` `push_outbox`/`pull_changes`; ActionCable |
-| On-demand hydration of placeholders | **Works today** (verified live) | `SyncEngine::hydrate`; FUSE/CfAPI/WebDAV hooks |
-| Offline read of hydrated files | **Works today** (tested) | `hydrated_file_stays_readable_offline` |
-| Offline edits queued + reconciled | **Works today** (tested) | `offline_writes_reconcile_…`; topological `push_outbox` |
-| Native versioning + restore | **Works today** (restore tested; app cmds built) | `file_versions`/`restore_version` |
-| Conflict detect + keep/split | **Works today** (tested; lock verified live) | `conflicts`/`resolve_conflict_*` |
-| Block-delta dedup uploads | **Works today** (tested) | FastCDC chunking + dedup |
-| Exec-bit + real-mtime preservation | **Works today** (tested) | `executable_bit_…`, `real_mtime_…` |
-| Selective sync (subtree subscriptions) | **Engine-API exists, no UI** | `fs-provider/src/subscriptions.rs`; `SyncEngine::subscribe` |
-| Range / progressive hydration | **Engine-API exists; wired only on CfAPI** | `SyncEngine::hydrate_range_concurrent` |
-| Client bandwidth caps | **Engine-API exists, no UI** | `DaemonConfig::with_bandwidth` |
-| Windows "Always keep on device" pin | **Works today (Windows, OS-native UI)** | `fs-cfapi` `pin_hydration_action` |
-| "Make folder available offline" (cross-platform) | **Works today (engine + CLI; app button still TODO)** | `SyncEngine::ensure_available_offline` / `pin`; `maker-offline pin <path>` |
-| Pin a subtree resident across pulls | **Works today (engine + CLI)** | `Provider::pin`/`unpin`/`is_pinned`; daemon proactive-hydration honors it |
-| Verify files are local before disconnect | **Works today (engine + CLI; app indicator still TODO)** | `SyncEngine::offline_readiness`; `maker-offline offline-status <path>` |
-| Symlinks / hardlinks / special files | **Not supported (EPERM guardrail)** | `fs-fuse` `symlink`/`mknod` |
-| uid/gid / full perms / ACLs / xattrs | **Not supported (non-goal)** | — |
-| Cross-user sharing | **Not built (tenant = user)** | — |
-| At-rest / E2E encryption | **Not built (roadmap, last)** | — |
-| Native macOS FSKit mount | **Design sketch only** | `docs/plan-macos-fskit-migration.md` |
+| # | story | tag | evidence / friction |
+|---|---|---|---|
+| 1.1 | When I make a folder under `Projects/` on the NAS and start saving into it, I want it to become a project by itself, so that I never fill in a form to start work. | `rough` | Works on scan (≤ 15 min on share, `config/recurring.yml:24`). Zero feedback: no flash, no "new" marker, a log line only (code: `app/jobs/maker/project_discovery_job.rb:38`). Slug and folder name can disagree forever (`project_discovery.rb:66,69`). Cap 50 per run. |
+| 1.2 | When I am at the browser with an idea, I want New project to mint the folder on the NAS and make it the current project, so that the next LightBurn save lands in it. | `rough` | Mints `Projects/<slug>` (`project.rb:144-152`). Does not set current (`projects_controller.rb:251-259`). No status field on the form, so planning/active/paused/done are unreachable — share: all 9 projects read "planning". A failed mkdir still says "Project created." (`projects_controller.rb:346-350`). |
+| 1.3 | When I keep laser work in `designs/` and CNC in `cnc/`, I want to say "this folder is a project" without moving it, so that my NAS layout stays mine. | `missing` | Only direct children of `Projects/` are adopted (`project_discovery.rb:112-116`). seed: `designs/tray` silently became a **Model** through the seeded `*` shelf (`shelf.rb:24`). No adopt door; no folder rename or move from the web. share: ~20% of files live outside `Projects/`. |
+| 1.4 | When I clone a firmware repo into `Projects/`, I want the project page to show its README, commits and history and never re-file its files, so that a git project stays a git project. | `rough` | Adopted; files correctly never filed (`attach_to_project.rb:192`). But a project whose **root is the repo** gets no README card and no Commits/History links — the card exists only for a repo *inside* the folder (`_file_tree_section.html.erb:50-58`; `collect_dirs` never flags the root). seed: jewelry-box. share: all three real repos are project roots. The page still says "Loose files are filed on the next sweep" (`_attachments.html.erb:95`). |
+| 1.5 | When the app creates a project, moves a file or picks a cover for me, I want to see that it did, so that I trust it with my folders. | `missing` | Discovery, the scheduled sweep and current-project switches report only to the log (`project_intake_job.rb:120-141`, `current_project_controller.rb:6-15`). Filing feedback covers a name collision only (`project_folder_intake.rb:103-107`). |
+| 1.6 | When I rename a project or finish it, I want folder, URL and page to stay in step, and "done" to be a state I can set. | `rough` | Rename never renames the folder or the slug (`project.rb:202-203`). Archive doubles as the undocumented "not a project" dismissal (`docs/invariants/project-intake.md:20-28`). |
+
+## T2. Each file type: made in a program, saved to the share, worked with on the web, and back
+
+Every row shares one story: *When I save X from a program onto the share, I want the app to show
+it right, let me do the web thing for it, and hand me back to the program — and when I save
+again, catch up.*
+
+| # | type | tag | what works / what does not |
+|---|---|---|---|
+| 2.1 | LightBurn `.lbrn2` | `works` | Embedded thumbnail, Measure view, laser-settings panel, print to scale, SVG export (`files_controller.rb:1538`, `files/_measure.html.erb`). `.lbrn` (v1) has no role → `other/` (`file_attachment.rb:66`). |
+| 2.2 | `.svg` `.dxf` | `works` | Thumbnails, Measure, print, export. The **box generator writes SVG onto the share** — the one true write-back (`tools/addons_controller.rb:520-536` → `library_output.rb:120-123`). SVG cannot be edited as text (`git-editing.md:485-501`). |
+| 2.3 | `.ai` | `missing` | No role, no thumbnail, no page: "No inline preview." Filed to `other/`. share: 25 files. |
+| 2.4 | MillMage `.mage` | `rough` | Full page — Measure and a CNC operations panel (`show.html.erb:334-336`) — but no `ROLE_BY_EXT` entry, so filed to `other/`. |
+| 2.5 | `.stl` `.3mf` `.step` `.obj` and 15 more (`VIEWABLE_3D_EXTS`) | `works` | Thumbnails, lazy 3D viewer, bounding dims, 3MF slicer colours and units; the OpenSCAD tool writes 3MF back. No measuring. `3dm` `amf` `fcstd` open in the browser with no thumbnail (`registry.rb:36-42`). |
+| 2.6 | OpenSCAD `.scad` | `rough` | Code view; editable in the browser **only inside a git repo** (`files_controller.rb:444`); the OpenSCAD tool reads it and writes 3MF. |
+| 2.7 | firmware `.ino` `.cpp` `.h` `.yml` | `works` in repos | Code view, edit, commit, history, restore. `json`/`txt` file to `docs/` while `yml` files to `code/` (`file_attachment.rb:80-124`). |
+| 2.8 | KiCad + Gerbers | `rough` | Gerber single, zip and `.gbrjob` render as a board; KiCanvas for KiCad. KiCad files **cannot have a filing rule** (`EXT_RE`, `files-preview.md:41-50`) → `other/`; a Gerber zip files to `archives/`, not `pcb/` (`files-preview.md:143-148`). |
+| 2.9 | photos, PDF, README | `rough` | Image inline, PDF in the browser's viewer. A README shows as **source** on its file page and is rendered nowhere on a private project page except inside a sub-folder repo card. |
+| 2.10 | any file: back to the program | `missing` | The file page shows Name/Size/Type/Modified (`show.html.erb:47-66`), never the library path, never a reveal or open hand-off; actions are Download, Delete, Back. |
+| 2.11 | any file: I saved it again | `rough` | Up to 15 min blind plus render time; the file page never refreshes itself (`thumbs_controller.js` runs only on grids); Rescan guesses a 6 s reload (`scanreload_controller.js:16-23`). |
+| 2.12 | any file: I exported from the web | `rough` | Every export — Measure SVG, print sheet, sheet CSV, BOM CSV — is a browser download; nothing lands on the share. |
+| 2.13 | any text file: I edited on the web | `rough` | Git repos only, ≤ 200 KB; on share and s3 the save overwrites with git as the only undo (`git-editing.md:28-45`); the thumbnail and page stay stale after Save. |
+
+## T3. Files connect to each other
+
+| # | story | tag | evidence / friction |
+|---|---|---|---|
+| 3.1 | When a tool generates a file (box → SVG), I want the file to know which tool state made it and the state to list its outputs, so that I can regenerate. | `works` | Generated group and "Edit in tool" (`_generated_group.html.erb`, `Maker::AddonOrigin`). The revision that wrote the file is not recorded; a renamed output leaves a stale row (`library_output.rb:88-97`). |
+| 3.2 | When one file is exported from another (`.lbrn2` → SVG, STEP → STL → 3MF, KiCad → Gerber zip), I want them kept as one lineage, so that I open the source, not the export. | `missing` | No stored file↔file edge exists. The three computed ones: `.gbrjob` → layers, zip → members, README links (all by name, per request). |
+| 3.3 | When I photograph a cut or a print, I want the photo attached to the file or the step it shows. | `rough` | A photo attaches to a build-log entry only (`entry_photos_controller.rb:15-17`); never to a file, never to a print run (`maker_print_runs` has no node column). |
+| 3.4 | When my README links files and images, I want the links to work wherever I read it. | `rough` | Resolved on the public page and in the repo card (`readme.rb:71-77`); the private file page shows source. |
+| 3.5 | When I search, I want notes, README text and folder paths found, not only file names. | `missing` | `search_controller.rb:29-60`: `nodes.name`, project name/description, model title, inventory name, tag name. Notes, log entries, addon names, paths: unsearchable. |
+| 3.6 | When a catalogued model is used in a project, I want the project to show it and its prints. | `missing` | No model↔project edge; print runs hang off Models only (`print_run.rb:12`). |
+| 3.7 | A BOM line points at a design file; a release records every file's version. | `built-unused` | Both exist (`bom_line.rb:22`, `release_file.rb`); share: 0 rows of either. Release downloads are current bytes with a "changed" badge, not snapshots. |
+
+## T4. Organised, low friction, everything in one place
+
+| # | story | tag | evidence / friction |
+|---|---|---|---|
+| 4.1 | When I drop files at a project root, I want them filed into subfolders I chose, and told when it happened. | `rough` | The sweep works (seed: `design/`, `docs/`). Silent. A working tree is never filed while the caption promises it. |
+| 4.2 | When I change a filing rule, I want existing files re-filed. | `missing` | Rules apply to root files only, on their next arrival (`project_intake.rb:292`); a rule change touches nothing already placed. |
+| 4.3 | When I open Settings → Filing, I want "laser files go to `laser/`", not 130 extension rows. | `rough` | One row per extension (seed screenshot). Rules are per user, never per project (`filing_rule.rb:12,27`). |
+| 4.4 | When I open the app, I want to see what changed on the NAS since I last looked, per project. | `rough` | Home shows eight recent files library-wide; a project shows no "new since". |
+| 4.5 | When I set a current project, I want it obvious and driving uploads, tool output and new files. | `works` | Drives uploads and tool output (`current_project.rb:62-78`); nothing sets it automatically; a switch gives no confirmation. |
+| 4.6 | When I point a fresh install at the same NAS, I want my notes, tasks, log, box parameters, releases and tags to come back. | `missing` | All database rows keyed by node ids a fresh install re-mints (`reconciler.rb:547,606`). Only projects and models re-derive from the folders. **Deferred to its own spec** (stage 4 decision D2). |
+| 4.7 | When a screenshot or a Printables zip lands at the library root, I want a one-step "this belongs to project X". | `rough` | Attach and relocate exist on the project page only; the Files page has no "file into project" action. share: loose screenshots at the root. |
+| 4.8 | When a repo carries build output, I want it out of my library. | `rough` | Dot-prefixed dirs (`.pio`) are hidden by `Node.visible_entries` but still indexed and counted; `build/`, `node_modules/`, `__pycache__/` are not hidden at all. share: ~440 `.o/.d/.a` files. |
+
+## T5. Publishing, with documentation and the files embedded and linked
+
+| # | story | tag | evidence / friction |
+|---|---|---|---|
+| 5.1 | When I decide to publish, I want to preview the visitor's page first. | `missing` | A private project 404s on the public route, for its owner too (`public/base_controller.rb:33`). |
+| 5.2 | When I flip to public, I want the URL and what became downloadable stated. | `rough` | Four clicks with a handle, about seven without; the flash is "Project updated." (`projects_controller.rb:265`); the whole visible folder becomes downloadable by ancestry (`public_project.rb:303-316`), unstated. The handle is claimed on the Account page and locked once anything is published (`user.rb:185-189`). |
+| 5.3 | When I write the README, I want to do it in the app, from a template, and see it rendered on my own page. | `missing` | Editing only inside git (`files_controller.rb:535-538`); no render on the private page; root-only, case-sensitive six names (`readme.rb:37`). |
+| 5.4 | When my README embeds photos and links files, I want them to render and open. | `rough` | Relative links resolve; absolute images are silently dropped to alt text (`markdown.rb:104-107`); an SVG image force-downloads and shows broken; heading ids are stripped so nothing deep-links. |
+| 5.5 | When a visitor opens my project, I want the model in 3D, the board and the cut file viewable, not download links. | `missing` | `Public::FilesController#show` is bytes only; no public 3D, Measure or Gerber viewer; KiCanvas for the first KiCad file only (`public/projects/_schematics.html.erb:28`). |
+| 5.6 | When I cut a release, I want visitors to get the files as they were. | `rough` | A release stores references and content tokens (`release_snapshot.rb:7-11`); downloads are the current bytes with a "changed" badge. |
+| 5.7 | When someone lands on `/explore` or my handle page, I want a cover and a way around. | `rough` | No covers on public cards (`public/_project_card.html.erb`); the anonymous layout has no header, logo or nav. |
+| 5.8 | When I share an unlisted link, I want to copy it and later revoke it. | `missing` | The token exists only inside an href and is never rotated (`project.rb:194-199`). |
+
+## T6. A project view that fits the project
+
+| # | story | tag | evidence / friction |
+|---|---|---|---|
+| 6.1 | When I open a laser project, I want the cut file, the photos and the settings first, not BOM, wiring and releases. | `rough` | Seven fixed panels on every project (`projects/show.html.erb:73-89`); four irrelevant to a laser project, each with an empty composer; the three task groups render at zero. |
+| 6.2 | When I open a firmware + PCB project, I want README, board, schematic, commits and wiring at the top. | `rough` | Repo card only for sub-folder repos (see 1.4); no board render on the project page; schematics only for KiCad (`_schematics.html.erb:18-19`). |
+| 6.3 | When I open a 3D-print project, I want the model as the hero and its print history. | `rough` | The page renders no hero at all — `cover_node_id` is shown only on cards (`_card.html.erb:8-15`); print runs live on Models. |
+| 6.4 | I want to pin the important file or choose the hero. | `missing` | Files are peers sorted by name (`project_folder_listing.rb:215`); the chosen cover never reaches the page. |
+| 6.5 | I want to hide, reorder or add panels per project, or pick a project type that presets them. | `missing` | Hard-coded order; no `kind`; no preference storage (`db/schema.rb` `maker_projects`). |
+| 6.6 | I want a photo gallery on my own page. | `missing` | Exists on the public page only (`public/projects/_photos.html.erb`); the private page never calls it. |
+| 6.7 | I want sections named for me, not folder names. | `by design` | The folder is the truth (stage 3 decision 1); an alias would be a table that fights it. |
+| 6.8 | I want the list view to carry the same actions as tiles. | `rough` | `_file_rows.html.erb` emits no context-menu data, so right-click Download / Note / Open-in-tool vanish in list view. |
+
+---
+
+## Coverage
+
+| theme | stories | works | rough | missing | other |
+|---|---|---|---|---|---|
+| T1 | 6 | 0 | 4 | 2 | |
+| T2 | 13 | 4 | 7 | 2 | |
+| T3 | 7 | 1 | 2 | 3 | 1 built-unused |
+| T4 | 8 | 1 | 5 | 2 | |
+| T5 | 8 | 0 | 4 | 4 | |
+| T6 | 8 | 0 | 4 | 3 | 1 by design |
+| **all** | **50** | **6** | **26** | **16** | **2** |
+
+Which slice moves which story: the slice table in the stage 4 spec.
