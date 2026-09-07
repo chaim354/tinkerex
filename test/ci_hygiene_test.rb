@@ -423,6 +423,44 @@ class CiHygieneTest < ActiveSupport::TestCase
   end
 
   # ---------------------------------------------------------------------------------------------
+  # THE RUNNER STACK CARRIES NO SECRET, AND THE IMAGE READS ONE FROM A FILE.
+  #
+  # Until 2026-09-07 the runners' PAT was the Portainer stack variable RUNNER_ACCESS_TOKEN. Portainer's
+  # stack-update API assigns `stack.Env = payload.Env` unconditionally (2.39.6, read and then probed
+  # with a throwaway stack: an update that omitted the variables came back `env: null`), so the
+  # stack could be updated only by something that could re-send the secret — and the MCP client this
+  # repo's agent uses redacts it on read. Every automated image bump was therefore a manual step,
+  # or four runners that register nowhere. The fix is structural: the token is a root-owned file on
+  # the array, bind-mounted read-only, and the image's wrapper entrypoint exports it for myoung34's
+  # own entrypoint. ops/ci-runner-stack.yml and ci/runner/Dockerfile record the argument.
+  #
+  # STATIC READS, like every guard in this file: neither file is loaded by the Rails process, and the
+  # failure — a `${RUNNER_ACCESS_TOKEN}` quietly re-added to one service — is invisible to any run.
+  # Four of each because the anchor cannot carry `environment:` (the merge-key trap the stack file's
+  # header records), so each service repeats the pair; a count of 3 is one runner silently unable
+  # to register.
+  test "the runner stack reads its token from a mounted file, never a stack variable" do
+    stack = File.read(Rails.root.join("ops/ci-runner-stack.yml"))
+
+    assert_no_match(/\$\{RUNNER_ACCESS_TOKEN\}/, stack,
+                    "ops/ci-runner-stack.yml interpolates a stack variable for the token again")
+    assert_equal 4, stack.scan(%r{^\s+ACCESS_TOKEN_FILE: /run/secrets/runner_token$}).size,
+                 "every runner service must name ACCESS_TOKEN_FILE"
+    assert_equal 4, stack.scan(%r{^\s+- /mnt/user/appdata/tinkerex-ci/runner\.token:/run/secrets/runner_token:ro$}).size,
+                 "every runner service must bind-mount the token file read-only"
+  end
+
+  test "the runner image wraps the base entrypoint to read that file" do
+    dockerfile = File.read(Rails.root.join("ci/runner/Dockerfile"))
+
+    assert_includes dockerfile, 'ENTRYPOINT ["/usr/local/bin/tinkerex-runner-entrypoint"]'
+    assert_includes dockerfile, "ACCESS_TOKEN_FILE"
+    # Restated because a new ENTRYPOINT clears the inherited CMD; the capital L is the base image's
+    # own spelling (`docker inspect`, 2026-09-07) and a lowercase one fails every container at start.
+    assert_includes dockerfile, 'CMD ["./bin/Runner.Listener", "run", "--startuptype", "service"]'
+  end
+
+  # ---------------------------------------------------------------------------------------------
   # The scan gate reports on the CODE, never on how current the scanner itself is.
   #
   # THE BUG, probed at main@eb526c0 on 2026-08-12 and isolated by holding the version constant and

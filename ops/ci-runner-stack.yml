@@ -32,16 +32,33 @@
 # And if `RUNNER_UID`/`RUNNER_GID` are ever set on the stack, this chown goes stale SILENTLY and
 # reproduces the same first-boot failure — they are deliberately not set below.
 #
-# THE ONE SECRET IS A PORTAINER STACK ENVIRONMENT VARIABLE, not a value in this file:
-# RUNNER_ACCESS_TOKEN — a FINE-GRAINED PAT scoped to chaim354/tinkerex alone, Administration:
-# read & write, and nothing else. It lives at **`op://tinkerex/github runners/credential`** (§14g),
-# named here the way .kamal/secrets-common names the ghcr.io token so the next person does not have
-# to hunt for it. Nothing is `export`ed and the value never enters this repo.
+# THE ONE SECRET IS A FILE ON THE ARRAY, not a value in this file and NOT a stack variable:
+# /mnt/user/appdata/tinkerex-ci/runner.token, root:root 0400, holding a FINE-GRAINED PAT scoped to
+# chaim354/tinkerex alone, Administration: read & write, and nothing else. It lives at
+# **`op://tinkerex/github runners/credential`** (§14g), named here the way .kamal/secrets-common
+# names the ghcr.io token so the next person does not have to hunt for it. Each service bind-mounts
+# the file read-only and names it in ACCESS_TOKEN_FILE; the image's wrapper entrypoint
+# (ci/runner/Dockerfile, last block) exports it for myoung34's own entrypoint, as root, before the
+# gosu hand-off. Nothing is `export`ed here and the value never enters this repo.
+#
+# IT WAS THE PORTAINER STACK VARIABLE `RUNNER_ACCESS_TOKEN` UNTIL 2026-09-07, AND THAT MADE THE STACK
+# UN-UPDATABLE BY ANYTHING THAT COULD NOT SEE THE SECRET. Portainer's stack-update API assigns
+# `stack.Env = payload.Env` unconditionally (2.39.6, stack_update.go — read, then probed on a
+# throwaway stack: an update that omitted the variables handed back `env: null`). So every automated
+# update of this file had to re-send the token, and a client that redacts secrets on read — the MCP
+# does — could only wipe it, leaving four containers that "register nowhere". A file the daemon
+# bind-mounts is read by nothing but the container, and the stack carries NO variables at all, so an
+# update is the file content and nothing else.
+#
+# ROTATING IT: write the new PAT into the file (root, 0400, no trailing newline needed — the wrapper
+# strips one) and `docker restart tinkerex-runner-1 tinkerex-runner-2 tinkerex-runner-3
+# tinkerex-runner-4` on the box; the entrypoint re-reads the file on every start.
 #
 # DELIBERATELY NOT THE ghcr.io TOKEN, ALTHOUGH THAT ONE WORKS — measured 2026-08-31, it mints a
 # runner registration token fine (HTTP 201). It is a CLASSIC PAT carrying `admin:enterprise`,
-# `admin:org`, `admin:repo_hook`, `repo` and `write:packages`. RUNNER_ACCESS_TOKEN sits in four
-# container environments where any job can read it straight out of `env`, and CI executes branch
+# `admin:org`, `admin:repo_hook`, `repo` and `write:packages`. The token reaches four container
+# entrypoints (the wrapper exports it; myoung34's entrypoint un-exports it before the gosu
+# hand-off, so jobs inherit neither it nor the root-owned file), and CI executes branch
 # code — so reusing it would put an org- and enterprise-admin credential one hostile PR away from
 # exfiltration. The scoped token's blast radius is four CI runners on one repository. Its scoping
 # was verified rather than assumed, the same way the tinkerex-sync deploy key's was:
@@ -86,14 +103,14 @@
 # THE ANCHOR CARRIES NO `environment:`, AND THAT IS DELIBERATE — DO NOT "TIDY" IT BACK.
 # A YAML merge key does NOT deep-merge: a service's own `environment:` block REPLACES the anchor's
 # entirely. Put the five shared values here and give each service only its `RUNNER_NAME`, and three
-# of the four runners silently lose REPO_URL, ACCESS_TOKEN, RUNNER_SCOPE and LABELS — they never
+# of the four runners silently lose REPO_URL, ACCESS_TOKEN_FILE, RUNNER_SCOPE and LABELS — they never
 # register, every job queues, and nothing in this repo can go red for it. So every service below
 # repeats all six. The check that proves it, and its mutation-check (§15) — the anchor form scores 1:
 #   docker compose -f ops/ci-runner-stack.yml config | grep -c "REPO_URL"   # must print 4
 # Scalars and lists (image, restart, mem_limit, cpus, cap_add, security_opt) the merge key handles
 # correctly, so they stay here.
 x-runner: &runner
-  image: tinkerex-ci-runner:2026-09-07
+  image: tinkerex-ci-runner:2026-09-07.2
   restart: unless-stopped
   mem_limit: 8g
   cpus: 8.0
@@ -122,7 +139,7 @@ services:
     container_name: tinkerex-runner-1
     environment:
       REPO_URL: https://github.com/chaim354/tinkerex
-      ACCESS_TOKEN: ${RUNNER_ACCESS_TOKEN}
+      ACCESS_TOKEN_FILE: /run/secrets/runner_token
       RUNNER_SCOPE: repo
       # `linux` is the FAMILY label ci.yml's runs-on matches and ci/preflight.sh greps for;
       # `maker-unraid` is the BOX label. test/ci_hygiene_test.rb treats those as different things on
@@ -135,42 +152,49 @@ services:
     # every container on this box. The path must exist and be runner-writable before first boot.
     volumes:
       - /mnt/user/appdata/tinkerex-ci/runner-1/_work:/_work
+      # THE TOKEN FILE, read-only — see the header. The daemon does the mount, so Portainer's own
+      # filesystem never needs to see the path (an `env_file:` would be resolved inside the Portainer
+      # container, where /mnt/user does not exist).
+      - /mnt/user/appdata/tinkerex-ci/runner.token:/run/secrets/runner_token:ro
 
   runner-2:
     <<: *runner
     container_name: tinkerex-runner-2
     environment:
       REPO_URL: https://github.com/chaim354/tinkerex
-      ACCESS_TOKEN: ${RUNNER_ACCESS_TOKEN}
+      ACCESS_TOKEN_FILE: /run/secrets/runner_token
       RUNNER_SCOPE: repo
       LABELS: self-hosted,linux,X64,maker-unraid
       DISABLE_AUTO_UPDATE: "true"
       RUNNER_NAME: tinkerex-unraid-2
     volumes:
       - /mnt/user/appdata/tinkerex-ci/runner-2/_work:/_work
+      - /mnt/user/appdata/tinkerex-ci/runner.token:/run/secrets/runner_token:ro
 
   runner-3:
     <<: *runner
     container_name: tinkerex-runner-3
     environment:
       REPO_URL: https://github.com/chaim354/tinkerex
-      ACCESS_TOKEN: ${RUNNER_ACCESS_TOKEN}
+      ACCESS_TOKEN_FILE: /run/secrets/runner_token
       RUNNER_SCOPE: repo
       LABELS: self-hosted,linux,X64,maker-unraid
       DISABLE_AUTO_UPDATE: "true"
       RUNNER_NAME: tinkerex-unraid-3
     volumes:
       - /mnt/user/appdata/tinkerex-ci/runner-3/_work:/_work
+      - /mnt/user/appdata/tinkerex-ci/runner.token:/run/secrets/runner_token:ro
 
   runner-4:
     <<: *runner
     container_name: tinkerex-runner-4
     environment:
       REPO_URL: https://github.com/chaim354/tinkerex
-      ACCESS_TOKEN: ${RUNNER_ACCESS_TOKEN}
+      ACCESS_TOKEN_FILE: /run/secrets/runner_token
       RUNNER_SCOPE: repo
       LABELS: self-hosted,linux,X64,maker-unraid
       DISABLE_AUTO_UPDATE: "true"
       RUNNER_NAME: tinkerex-unraid-4
     volumes:
       - /mnt/user/appdata/tinkerex-ci/runner-4/_work:/_work
+      - /mnt/user/appdata/tinkerex-ci/runner.token:/run/secrets/runner_token:ro

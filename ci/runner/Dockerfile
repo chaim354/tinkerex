@@ -278,3 +278,53 @@ RUN chown -R runner:runner /opt/mise
 # Chrome-as-root error by adding --no-sandbox.
 # ---------------------------------------------------------------------------------------------
 ENV RUN_AS_ROOT=false
+
+# ---------------------------------------------------------------------------------------------
+# THE TOKEN COMES FROM A FILE, AND THIS WRAPPER IS WHAT READS IT.
+#
+# myoung34's /entrypoint.sh takes ACCESS_TOKEN from the ENVIRONMENT only — there is no *_FILE
+# variant (grepped in 2.336.0, 2026-09-07). A Portainer stack variable was its home until then, and
+# that home was wrong for an automated stack: Portainer's stack-update API assigns
+# `stack.Env = payload.Env` UNCONDITIONALLY (2.39.6, api/http/handler/stacks/stack_update.go —
+# read, then probed with a throwaway stack whose variable came back null), so every update of
+# ops/ci-runner-stack.yml had to re-send the secret, and a client that redacts it on read could not
+# update the stack at all. The wrapper exports ACCESS_TOKEN from ACCESS_TOKEN_FILE — the
+# bind-mounted /mnt/user/appdata/tinkerex-ci/runner.token, root:root 0400 on the array — and execs
+# the original entrypoint with the original arguments.
+#
+# IT RUNS AS ROOT, BEFORE RUN_AS_ROOT=false's gosu HAND-OFF (the block above says why the entrypoint
+# must start as root), which is what lets the file be unreadable by jobs. The value reaches
+# myoung34's entrypoint through the environment exactly as the stack variable did, and that
+# entrypoint un-exports it before the hand-off (`export -n ACCESS_TOKEN`, its line 9 in 2.336.0),
+# so the runner process and its jobs inherit neither the variable nor the file. `docker inspect`
+# now shows ACCESS_TOKEN_FILE where it used to show the token itself.
+#
+# `Runner.Listener` — CAPITAL L. The first draft of this block wrote `Runner.listener`, which would
+# have failed every container at start with a file-not-found; `docker inspect` on the base is the
+# source, never memory.
+#
+# INLINE, NOT `COPY ci/runner/entrypoint.sh`: .dockerignore excludes /ci/ (the smoke-STL block
+# above records the same trap for /test/), so a COPY of anything under ci/ fails at build time.
+# Written with printf '%s\n' so nothing in it is interpolated here.
+#
+# CMD IS RESTATED BECAUSE A NEW ENTRYPOINT CLEARS THE INHERITED ONE (Dockerfile reference: setting
+# ENTRYPOINT resets CMD to an empty value). It is the base image's own, read with `docker inspect`
+# on the pulled base (2026-09-07) — if the base tag ever moves, re-check it the same way.
+# ---------------------------------------------------------------------------------------------
+RUN printf '%s\n' \
+      '#!/bin/bash' \
+      '# tinkerex: ACCESS_TOKEN from ACCESS_TOKEN_FILE, then the base image entrypoint unchanged.' \
+      'set -euo pipefail' \
+      'if [[ -n "${ACCESS_TOKEN_FILE:-}" ]]; then' \
+      '  if [[ ! -r "${ACCESS_TOKEN_FILE}" ]]; then' \
+      '    echo "tinkerex-runner-entrypoint: ACCESS_TOKEN_FILE=${ACCESS_TOKEN_FILE} is not readable" >&2' \
+      '    exit 78' \
+      '  fi' \
+      '  ACCESS_TOKEN="$(tr -d "\n" < "${ACCESS_TOKEN_FILE}")"' \
+      '  export ACCESS_TOKEN' \
+      'fi' \
+      'exec /entrypoint.sh "$@"' > /usr/local/bin/tinkerex-runner-entrypoint \
+ && chmod 0755 /usr/local/bin/tinkerex-runner-entrypoint \
+ && bash -n /usr/local/bin/tinkerex-runner-entrypoint
+ENTRYPOINT ["/usr/local/bin/tinkerex-runner-entrypoint"]
+CMD ["./bin/Runner.Listener", "run", "--startuptype", "service"]
