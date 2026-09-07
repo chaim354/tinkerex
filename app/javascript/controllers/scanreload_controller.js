@@ -18,8 +18,9 @@ import { Controller } from "@hotwired/stimulus"
 // location.reload() would carry the param forward and reload forever.
 //
 // GIVING UP SAYS SOMETHING TRUE FOR ALL THREE ENDINGS. At the deadline the scan may still be
-// walking, or it may have REFUSED (Library::Scanner::UnsafeScan stamps nothing, by design — see
-// Library::ScanJob#perform), and this page cannot tell those apart. "Still scanning" would be a
+// walking, it may have REFUSED (Library::Scanner::UnsafeScan stamps nothing, by design — see
+// Library::ScanJob#perform), or no poll may have got an answer at all, and this page cannot tell
+// those apart. "Still scanning" would be a
 // guess again; "nothing yet" is what is actually known.
 const NOTHING_YET = "Nothing yet — reload to check again."
 
@@ -33,13 +34,19 @@ export default class extends Controller {
   }
 
   connect() {
+    this.stopped = false
     this.deadline = Date.now() + this.timeoutValue
     this.tick()
   }
 
   // Turbo caches and restores pages, so a poll left running after the user navigates away would
-  // yank them back to a page they had left.
+  // yank them back to a page they had left. CLEARING THE TIMER IS NOT ENOUGH: a tick that is
+  // already awaiting its fetch holds a fired timer id, so the clear is a no-op and the continuation
+  // would still navigate — or schedule the next tick — on a page the user has left (found in
+  // review; the scan job runs inside Puma, so scan_status is slowest during exactly this window).
+  // `stopped` is what the continuation checks after every await.
   disconnect() {
+    this.stopped = true
     clearTimeout(this.timer)
   }
 
@@ -48,8 +55,10 @@ export default class extends Controller {
 
     try {
       const res = await fetch(this.statusUrlValue, { headers: { Accept: "application/json" } })
+      if (this.stopped) return
       if (res.ok) {
         const stamp = (await res.json()).scanned_at
+        if (this.stopped) return
         // PRESENT **AND** DIFFERENT. `stamp` alone would reload on a deployment that has scanned
         // before and has not scanned since; `!==` alone would reload forever on a user who has
         // never scanned at all, because null !== "".
@@ -59,6 +68,7 @@ export default class extends Controller {
       /* transient; ask again below */
     }
 
+    if (this.stopped) return
     this.timer = setTimeout(() => this.tick(), this.intervalValue)
   }
 
