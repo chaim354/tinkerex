@@ -346,6 +346,30 @@ class FilesController < ApplicationController
     render json: out
   end
 
+  # GET /files/scan_status (JSON) — when this user's last library scan FINISHED, or null.
+  #
+  # ONE KEY, AND THE CLIENT OWNS THE COMPARISON. The page renders the stamp it was built with into
+  # `data-scanreload-since-value`; the poller reloads when this answer is present and different.
+  # That is the whole mechanism, and it needs nothing else to be correct: a scan that finished and
+  # changed nothing still advances the stamp, and reloading to see "nothing new" is the honest
+  # outcome of pressing Rescan.
+  #
+  # `running:` IS DELIBERATELY ABSENT, AND BOTH SOURCES FOR IT WERE REJECTED RATHER THAN OVERLOOKED.
+  # (1) Solid Queue's semaphore: Library::ScanJob's `limits_concurrency` duration is ONE HOUR, a
+  # safety valve for a dead worker rather than a runtime, so after a crash it would answer "running"
+  # for an hour — and those tables do not exist under the test adapter, so no assertion here could
+  # ever catch that. (2) A cache flag set at the top of #perform: §14e's rate-limit lesson exactly —
+  # the test env's store would make the flag unfalsifiable, so its guard would pass for the wrong
+  # reason. A key that can lie is worse than a key that is missing; the client bounds its own wait
+  # instead and says something true when it gives up.
+  #
+  # NOT GATED ON `scannable`. require_scannable! answers a browser button with a redirect and a
+  # flash, which is right for #rescan and nonsense for a poller. chunk_remote renders no element
+  # that polls this, and null is its true answer forever.
+  def scan_status
+    render json: { scanned_at: current_user.library_scanned_stamp }
+  end
+
   # GET /files/:id/geometry (JSON) — the coordinate payload behind the .lbrn2 Measure view.
   #
   # Enqueue-and-report, NOT render-and-wait. Parsing means reading the whole file out of the
@@ -548,6 +572,13 @@ class FilesController < ApplicationController
                                               replace: true)
     Maker::RepoEdit.record!(user: current_user, repo_root_node_id: root.node_id, node_id: node.node_id) if
       FileLayer.current.capabilities.local_worktree?
+    # THE PICTURE OF THIS FILE IS NOW WRONG, AND THIS IS WHERE THAT IS SAID (stage 4, S4-3). The
+    # SAME door both upload paths use (#create, #finalize_upload) rather than a third copy of
+    # stat-then-Enqueue: it re-stats for the token `replace: true` just minted, and it swallows a
+    # vanished or unmounted library, because a preview is best-effort and a save that reached the
+    # store has already succeeded. Text files all have a renderer (Registry derives TextThumb), so
+    # this is not a no-op for anything the editor can save.
+    enqueue_preview(node_id: node.node_id, name: node.name)
 
     render json: { ok: true, content_token: FileLayer.current.stat(current_user, node_id: node.node_id)&.content_token }
   rescue FileLayer::FetchError => e
@@ -682,19 +713,25 @@ class FilesController < ApplicationController
     # single port upload -- this format.json branch is what makes the request succeed WITHOUT
     # ever reaching #show.
     #
-    # THE CONFLICT FACT (ProjectFolderIntake#left_unfiled_by_conflict?) IS NOT THREADED INTO THIS
-    # JSON BRANCH, and that is a considered omission, not an oversight: uploadPortFile reads only
-    # `data.node_id` from the response (see lib/chunk_upload.js), and its one caller
-    # (importer_controller.js) always targets a MODEL's bundle folder, never a PROJECT's -- so
-    # #intake_project_folder answers nil on this path today regardless, and the fact this comment
-    # is about cannot arise for it. The HTML branch below is the one door here that a project-folder
-    # upload actually reaches (see project_folder_intake_test.rb's ShareTest), and it is the one
-    # that gets the restored notice.
+    # THE CONFLICT FACT (ProjectFolderIntake#left_unfiled_by_conflict?) IS THREADED INTO THIS JSON
+    # BRANCH AS OF STAGE 4, S4-3, AND THIS COMMENT USED TO ARGUE THE OPPOSITE. Its argument was
+    # sound and its precondition is gone: the omission was justified because `uploadPortFile`'s one
+    # caller (importer_controller.js) always targets a MODEL's bundle folder, so
+    # #intake_project_folder answered nil on this path regardless. Save-to-library (measure_
+    # controller.js) targets the SOURCE FILE'S OWN parent, which is routinely a project folder —
+    # so the sweep really can leave a save at the project root, and a caller with a readout really
+    # can say so. The old comment's own instruction is what this follows: "#left_unfiled_by_conflict?
+    # / #project_intake_notice already exist for it — wire it in here rather than reinventing the
+    # check." ONE sentence, built by the concern, identical to the HTML branch's.
     respond_to do |format|
       format.html do
         redirect_to file_path(info.node_id), notice: project_intake_notice(intake_result, upload.original_filename)
       end
-      format.json { render json: { node_id: info.node_id }, status: :created }
+      format.json do
+        render json: { node_id: info.node_id,
+                       notice: project_intake_notice(intake_result, upload.original_filename) },
+               status: :created
+      end
     end
   end
 
@@ -774,22 +811,18 @@ class FilesController < ApplicationController
     result = FileLayer.current.finalize_upload(
       current_user, commit_id: params.require(:commit_id), verify: true
     )
+    # THE SAME SENTENCE AS #create's, FOR THE SAME REASON AND SINCE THE SAME SLICE (stage 4, S4-3).
+    # This comment previously recorded that the fact was deliberately not surfaced because
+    # `uploadChunkFile` "never reads a single key from its response body" — true then, false now:
+    # Save-to-library reads `notice` off both doors, and lib/chunk_upload.js returns it from both,
+    # so a chunk_remote maker gets the same feedback a share maker gets. Two doors, one wording,
+    # which is what stops them drifting (§14a's one-condition-two-answers).
+    notice = nil
     if result.info
       enqueue_preview(node_id: result.info.node_id, name: result.info.name)
-      # THE SAME CONFLICT FACT AS THE OTHER TWO DOORS (ProjectFolderIntake#left_unfiled_by_conflict?)
-      # IS DELIBERATELY NOT SURFACED IN THE JSON BELOW, checked rather than assumed. This endpoint's
-      # only caller, lib/chunk_upload.js's uploadChunkFile, awaits this POST purely for its side
-      # effect and never reads a single key from its response body -- not even version_id or seq,
-      # which have been here all along (see that function: the result of
-      # `await postJSON(finalizeUrl, ...)` is never assigned to anything). Adding a THIRD key next to
-      # two nobody reads would be inventing a key nobody reads, not restoring feedback anyone would
-      # see -- so #intake_project_folder still runs and still files what it can, but nothing here
-      # asks #left_unfiled_by_conflict? about the result. If a JSON consumer of this endpoint ever
-      # needs the fact, #left_unfiled_by_conflict?/#project_intake_notice already exist for it --
-      # wire it in here rather than reinventing the check.
-      intake_project_folder(result.info.node_id)
+      notice = project_intake_notice(intake_project_folder(result.info.node_id), result.info.name)
     end
-    render json: { version_id: result.version_id, seq: result.seq }
+    render json: { version_id: result.version_id, seq: result.seq, notice: }
   rescue FileLayer::ChunksMissing => e
     render json: { error: "chunks_missing", missing: e.hashes }, status: :unprocessable_entity
   end
@@ -860,7 +893,16 @@ class FilesController < ApplicationController
   def rescan
     Library::ScanJob.enqueue_for(current_user)
     where = { folder: params[:folder].presence, ext: resolve_exts.presence&.join(",") }.compact
-    redirect_to files_path(where), notice: "Rescan started — refresh in a moment."
+    # `scanning: 1` IS WHAT THE PAGE READS to render the poll element, exactly as the project page's
+    # own scan door does (Projects::ScansController#enqueue_scan) — one marker, one meaning, two
+    # doors. The element's own url is this same path WITHOUT the marker, which is what stops the
+    # reloaded page polling again.
+    #
+    # THE FLASH NO LONGER SAYS "refresh in a moment" (stage 4, S4-3): it said that because nothing
+    # here knew when a scan ended. Now something does, and promising a refresh the page will
+    # actually perform is the difference story 2.11 named.
+    redirect_to files_path(where.merge(scanning: 1)),
+                notice: "Scanning your library. This page refreshes when the scan finishes."
   end
 
   private

@@ -200,6 +200,38 @@ module Library
       end
     end
 
+    # THE ONE HONEST "A SCAN FINISHED" MARKER (stage 4, S4-3). The browser polls this through
+    # /files/scan_status, so what it means matters: a pass that completed, INCLUDING the discovery
+    # and intake steps whose results the reloaded page is expected to show.
+    test "a completed scan stamps when it finished" do
+      Dir.mktmpdir do |dir|
+        user = user!
+        File.binwrite(File.join(dir, "j.stl"), "bytes")
+        assert_nil user.library_scanned_at, "nothing has scanned for a fresh user"
+
+        travel_to Time.utc(2026, 9, 7, 12, 0, 0) do
+          Library::ScanJob.perform_now(user_id: user.id, root: dir)
+        end
+
+        assert_equal Time.utc(2026, 9, 7, 12, 0, 0), user.reload.library_scanned_at
+      end
+    end
+
+    # A REFUSAL IS NOT A FINISH, AND THE POLLER MUST NOT BE TOLD IT WAS. Library::Scanner::UnsafeScan
+    # is the reconcile declining (a missing root, a mass-deletion trip); the catalog is untouched, so
+    # a stamp here would send every watching page into a reload showing nothing new and reading as
+    # "the scan worked". The failed-jobs row is the report (this job's own header), and the browser
+    # gives up with a neutral sentence instead.
+    test "a refused scan stamps nothing" do
+      user = user!
+
+      assert_raises(Library::Scanner::UnsafeScan) do
+        Library::ScanJob.perform_now(user_id: user.id, root: "/nonexistent-#{SecureRandom.hex(4)}")
+      end
+
+      assert_nil user.reload.library_scanned_at
+    end
+
     private
 
     # FileLayer.current= rather than ENV, because the fake CLIENT has to be injected and the

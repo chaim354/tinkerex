@@ -4,6 +4,9 @@ require "support/git_repo_fixture"
 
 class RepoEditFlowTest < ActionDispatch::IntegrationTest
   include GitRepoFixture
+  # The editor's Save re-enqueues the thumbnail it just invalidated (stage 4, S4-3),
+  # so these tests assert on the QUEUE. Not previously needed here.
+  include ActiveJob::TestHelper
 
   # `sign_in_as` DOES NOT EXIST IN test_helper.rb. The only method by that name is a Capybara
   # helper in test/system/support/web_helpers.rb, which takes an EMAIL and drives the real form.
@@ -53,6 +56,53 @@ class RepoEditFlowTest < ActionDispatch::IntegrationTest
     assert_response :conflict
     assert_equal "original\n", read_back(node),
                  "last-write-wins would destroy the other edit silently, and on share for good"
+  end
+
+  # THE SAVE INVALIDATES THE PICTURE OF THE FILE, AND UNTIL NOW NOTHING SAID SO (stage 4, S4-3;
+  # story 2.13's "the thumbnail and page stay stale after Save"). Every text extension has a
+  # renderer — Maker::Previews::Registry DERIVES TextThumb for all 37 of them — so a saved .md
+  # kept serving a thumbnail of the bytes it no longer had, on the Files grid, on the project
+  # panel and on its own page, until the next 15-minute scan happened to notice.
+  #
+  # THE SAME DOOR THE TWO UPLOAD PATHS USE, not a third spelling: #enqueue_preview re-stats for the
+  # content token the write just minted and swallows a vanished/unmounted library, because a
+  # preview is best-effort UX and must never turn a successful save into an error.
+  test "saving re-enqueues the thumbnail the save just invalidated" do
+    node = seed_repo_file!("notes.md", "old\n")
+    before_token = token_for(node)
+    # find_or_initialize, NOT create!: seed_repo_file! runs a REAL Library::ScanJob, whose
+    # Reconciler already enqueued a thumbnail for this node, and maker_previews is unique on
+    # (user, node_id, kind). Putting that existing row into the state under test is what the
+    # assertions below are about — a second row is not reachable through any door.
+    preview = @user.maker_previews.find_or_initialize_by(node_id: node.node_id, kind: "thumbnail")
+    preview.update!(version_id: before_token, status: "ready",
+                    renderer_revision: Maker::Previews::Enqueue.revision_for_name("notes.md", "thumbnail"))
+
+    assert_enqueued_with(job: Maker::GeneratePreviewJob) do
+      patch file_path(node.node_id), params: { content: "new\n", base_token: before_token }
+    end
+
+    assert_response :success
+    preview.reload
+    assert_equal "pending", preview.status, "a content repoint blanks the artifact (§14h)"
+    assert_not_equal before_token, preview.version_id, "the row points at the bytes that now exist"
+    assert_equal token_for(node.reload), preview.version_id
+  end
+
+  # A REFUSED SAVE MUST NOT TOUCH THE PREVIEW. The 409 writes nothing, so re-enqueueing there would
+  # blank a correct picture for a save that never happened.
+  test "a stale base_token refuses without disturbing the preview" do
+    node = seed_repo_file!("notes.md", "old\n")
+    preview = @user.maker_previews.find_or_initialize_by(node_id: node.node_id, kind: "thumbnail")
+    preview.update!(version_id: token_for(node), status: "ready",
+                    renderer_revision: Maker::Previews::Enqueue.revision_for_name("notes.md", "thumbnail"))
+
+    assert_no_enqueued_jobs only: Maker::GeneratePreviewJob do
+      patch file_path(node.node_id), params: { content: "new\n", base_token: "stale" }
+    end
+
+    assert_response :conflict
+    assert_equal "ready", preview.reload.status
   end
 
   test "a file outside a working tree is not saveable" do
