@@ -6,6 +6,14 @@ module Maker
 
     STATUSES = %w[planning active paused done archived].freeze
 
+    # `autofile` (stage 4, S4-2; story 4.3): may Maker::ProjectIntake MOVE files inside this
+    # project's folder? Default true — every project did this before the column existed. Off, the
+    # sweep still ATTACHES what it finds; see ProjectIntake#call for why those two halves split.
+    #
+    # `last_swept_at` / `last_sweep_moves` are what the LAST sweep did, written by
+    # ProjectIntake#record_sweep! and read by the Files panel. `last_sweep_moves` is nil until a
+    # sweep that was allowed to file has finished once — nil and 0 are different facts.
+
     # PUBLISHING (stage 3, S3-4; spec §2.5). private is the default and the only state with no
     # public URL; unlisted needs the token; public is listed on /u/:handle and /explore.
     VISIBILITIES = %w[private unlisted public].freeze

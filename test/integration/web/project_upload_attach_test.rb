@@ -30,8 +30,8 @@ module Web
         assert_equal "model", att.role
         assert FileLayer.current.stat(@user, node_id: att.node_id).present?, "bytes must land in the share"
         assert_redirected_to project_path(project)
-        assert_equal "Uploaded cube.stl.", flash[:notice],
-                     "a non-colliding upload gets a clean message, nothing appended"
+        assert_equal "Uploaded cube.stl. Filed cube.stl into models/.", flash[:notice],
+                     "the sweep filed it and the flash says where (stage 4, S4-2)"
       end
 
       test "multipart photo upload writes and attaches to the entry as image" do
@@ -86,7 +86,8 @@ module Web
         post project_uploads_path(project), params: { file: make.call }
         assert_response :redirect
         assert_nil flash[:alert]
-        assert_equal "Uploaded dup.stl.", flash[:notice], "the ordinary, non-colliding case is unchanged"
+        assert_equal "Uploaded dup.stl. Filed dup.stl into models/.", flash[:notice],
+                     "the ordinary, non-colliding case now names the folder the sweep used"
         assert_equal 1, project.file_attachments.count
 
         post project_uploads_path(project), params: { file: make.call }  # same name -> NOT refused now

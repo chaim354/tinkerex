@@ -63,8 +63,34 @@ module Web
         node = @user.nodes.find_by!(node_id: att.node_id)
         assert_equal "vector", att.role
         assert_equal "design", @user.nodes.find_by(node_id: node.parent_node_id).name
-        assert_equal "Uploaded panel.svg.", flash[:notice],
-                     "a non-colliding upload gets a clean message, nothing appended"
+        assert_equal "Uploaded panel.svg. Filed panel.svg into design/.", flash[:notice],
+                     "a non-colliding upload is told where the sweep put it (stage 4, S4-2)"
+      end
+
+      # STORY 4.1: the sweep filed it and the flash says where. The folder comes off Result#plan, so
+      # this asserts the SENTENCE and project_intake_test.rb asserts the MOVE; neither stands in for
+      # the other.
+      test "the flash names the file and the folder the sweep filed it into" do
+        upload("panel.svg", "<svg/>")
+        assert_response :redirect
+        assert_match(/Filed panel\.svg into design\//, flash[:notice].to_s)
+      end
+
+      # THE COLLIDING FOLDER IS THE ONE THE SWEEP TRIED, AND FOR A BOARD ZIP THAT IS NOT WHAT THE
+      # NAME SAYS (stage 4, S4-2; story 2.8). `zip` is role `source_archive` -> `archives/`, but
+      # Maker::ProjectIntake#place reads the bytes and files a Gerber export into `pcb/`. Before
+      # Result#conflicts the sentence re-derived the folder from the NAME and named `archives/` — a
+      # folder the file had never been near. This is the one case that tells the two apart.
+      test "a board zip that collides is told about pcb, the folder the sweep actually tried" do
+        board = File.binread(Rails.root.join("test/fixtures/files/gerber-export.zip"))
+        upload("Gerber_lamp.zip", board)
+        assert_match(/Filed Gerber_lamp\.zip into pcb\//, flash[:notice].to_s,
+                     "the first copy is filed by CONTENT, not by the zip extension")
+
+        upload("Gerber_lamp.zip", board)  # the root is vacant again, so the write succeeds
+        assert_nil flash[:alert]
+        assert_match(/already in pcb\//, flash[:notice].to_s)
+        assert_no_match(/already in archives\//, flash[:notice].to_s)
       end
 
       test "a file uploaded to the library root is untouched" do
@@ -85,7 +111,7 @@ module Web
       test "a duplicate filename via the Files-page uploader is filed apart, and the flash says where the second copy landed" do
         upload("dup.stl")
         assert_response :redirect
-        assert_equal "Uploaded dup.stl.", flash[:notice]
+        assert_equal "Uploaded dup.stl. Filed dup.stl into models/.", flash[:notice]
 
         upload("dup.stl")  # same name -> the first upload's own nudge already vacated the root
         assert_response :redirect
@@ -171,8 +197,8 @@ module Web
         node = @user.nodes.find_by!(node_id: att.node_id)
         assert_equal "vector", att.role
         assert_equal "design", @user.nodes.find_by(node_id: node.parent_node_id).name
-        assert_equal "Uploaded panel.svg.", flash[:notice],
-                     "a non-colliding upload gets a clean message, nothing appended"
+        assert_equal "Uploaded panel.svg. Filed panel.svg into design/.", flash[:notice],
+                     "this door reads the same sentence as the other two (stage 4, S4-2)"
       end
 
       # A build-log-entry upload through this SAME controller lands at the library ROOT

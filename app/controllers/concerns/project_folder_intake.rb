@@ -49,6 +49,13 @@
 # #left_unfiled_by_conflict? and #project_intake_notice below, and
 # project_upload_attach_test.rb's long-standing "duplicate filename" test for the full accounting of
 # the mechanism this restores feedback for, without changing it.
+#
+# THE RETURN VALUE IS NOW READ FOR WHAT THE SWEEP FILED AS WELL AS FOR WHAT IT COULD NOT (stage 4,
+# S4-2; stories 1.5, 4.1): #filed_sentence names the file and the folder off Result#plan, so an
+# upload no longer lands on a page that visibly sorted itself while the flash said nothing.
+# AND THE CONFLICT'S FOLDER COMES OFF THE Result (#conflict_folders) rather than being re-derived
+# here — see
+# #conflict_folder for the one file whose destination the name alone cannot answer.
 module ProjectFolderIntake
   extend ActiveSupport::Concern
 
@@ -113,14 +120,6 @@ module ProjectFolderIntake
   # (CLAUDE.md's rule for a verb more than one caller performs, applied to a sentence here rather
   # than to a branch).
   #
-  # `Maker::ProjectFolders.folder_for(current_user, name)` — NOT A FIELD ON THE Result, WHICH
-  # DOESN'T CARRY ONE — recomputes the destination category folder from the user and the name
-  # alone. That is safe, not a guess: #place (app/services/maker/project_intake.rb) computes that
-  # exact same `dest` from that exact same user's filing rules and that exact same name, via the
-  # same ext-keyed lookup, before the collision it hit ever entered the picture — so asking again
-  # here, after the fact, cannot disagree with what #place already knew (stage 3, S3-1: the
-  # lookup is now per-user, so it takes current_user where it once took the name alone).
-  #
   # WORDED AS SUCCESS, NOT AS A FAILURE — because it is one: the file WAS uploaded and IS attached
   # to the project, exactly as durable as the file that DID get filed (Maker::AttachToProject's
   # rule: attach is durable, filing is best-effort). "but" introduces where it landed, not an
@@ -146,10 +145,47 @@ module ProjectFolderIntake
   # answers nil when a save had no collision, and threading that straight through is what keeps the
   # addon door free of its own `if`.
   def project_intake_sentence(lead, intake_result, filename)
-    return "#{lead}." unless left_unfiled_by_conflict?(intake_result, filename)
+    if left_unfiled_by_conflict?(intake_result, filename)
+      return "#{lead}, but a file of that name is already in " \
+             "#{conflict_folder(intake_result, filename)}/, so this one stayed at the project root."
+    end
 
-    "#{lead}, but a file of that name is already in " \
-      "#{Maker::ProjectFolders.folder_for(current_user, filename)}/, so this one stayed at the project root."
+    filed = filed_sentence(intake_result, filename)
+    filed ? "#{lead}. #{filed}" : "#{lead}."
+  end
+
+  # THE FOLDER THE SWEEP ACTUALLY TRIED. Read off Result#conflict_folders, which
+  # Maker::ProjectIntake#place records as it collides — never re-derived here. The fallback keeps a
+  # Result built without the map (a test double, an older caller) reading exactly as it did before.
+  #
+  # THE RE-DERIVATION WAS RIGHT FOR EVERY FILE WHOSE DESTINATION COMES FROM ITS NAME AND WRONG FOR
+  # THE ONE WHOSE DESTINATION COMES FROM ITS CONTENT: a board zip collides in `pcb/` while
+  # `folder_for` answers `archives/` (stage 4, S4-2).
+  def conflict_folder(intake_result, filename)
+    intake_result.conflict_folders[filename].presence ||
+      Maker::ProjectFolders.folder_for(current_user, filename)
+  end
+
+  # WHAT THE SWEEP JUST DID, IN THE FLASH (stage 4, S4-2; stories 1.5, 4.1). The sweep moved the
+  # maker's file and said nothing, so an upload landed on a page that visibly did not sort and the
+  # only record was a log line. READ OFF Result#plan — the [name, folder] pairs #place BUILT AS IT
+  # MOVED — so what this names and what the sweep did cannot disagree.
+  #
+  # THE UPLOADED FILE BY NAME WHEN IT IS THE ONLY ONE, a count otherwise: a save writes a SET, and
+  # "Filed 3 files into design/, docs/." is what the maker needs to know to go look. `to_sentence`
+  # is ActiveSupport's; the pluralisation is spelled out because `pluralize` is a VIEW helper and
+  # this is a controller concern.
+  def filed_sentence(intake_result, filename)
+    return nil unless intake_result.is_a?(Maker::ProjectIntake::Result)
+
+    plan = intake_result.plan
+    return nil if plan.empty?
+
+    mine = plan.find { |name, _folder| name == filename }
+    return "Filed #{mine.first} into #{mine.last}/." if mine && plan.size == 1
+
+    folders = plan.map(&:last).uniq.sort.map { |f| "#{f}/" }
+    "Filed #{plan.size} file#{"s" unless plan.size == 1} into #{folders.to_sentence}."
   end
 
   # The first of `names` this sweep left at the project root because its destination category folder

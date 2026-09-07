@@ -77,6 +77,23 @@
     </div>
   </div>
 
+  <%# WHAT THE SWEEP DID, ON THE PAGE (stage 4, S4-2; story 1.5). Both branches are facts the maker
+      needs and neither is an error: a project that files itself says when it last did, and one
+      that has been told not to says so where the files are, not only on the edit form. %>
+  <% if @project.autofile? %>
+    <% if @project.last_sweep_moves.to_i.positive? && @project.last_swept_at.present? %>
+      <p class="muted sweep-note">
+        Sweep filed <%= pluralize(@project.last_sweep_moves, "file") %>
+        · <%= time_ago_in_words(@project.last_swept_at) %> ago
+      </p>
+    <% end %>
+  <% else %>
+    <p class="muted sweep-note">
+      Automatic filing is off for this project.
+      <%= link_to "Turn it on", edit_project_path(@project) %>
+    </p>
+  <% end %>
+
   <%# A share/s3 scan is a BACKGROUND job — an unbounded NAS walk or bucket listing — so the page
       that started it cannot show the result. One reload, to the param-free url, which is what
       stops it looping. Rendered only on the async path: chunk_remote finished inside the request.

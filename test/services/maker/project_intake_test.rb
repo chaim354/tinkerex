@@ -405,6 +405,113 @@ module Maker
 
     def parent_name(node) = @user.nodes.find_by(node_id: node.reload.parent_node_id)&.name
 
+    # A FIXTURE WITH REAL BYTES AND A REAL SIZE. `file` writes "x"; Maker::GerberArchive refuses a
+    # nil size before any read and reads through the port, so a board fixture has to be a real zip
+    # on disk with `nodes.size` and `content_hash` matching it (the cache key is the content token).
+    def file_with_bytes(name, bytes, parent: @folder.node_id)
+      node = file(name, parent:)
+      @root.join(node.storage_path).binwrite(bytes)
+      node.update!(size: bytes.bytesize, content_hash: Digest::SHA256.hexdigest(bytes))
+      node
+    end
+
+    def board_zip_bytes = File.binread(Rails.root.join("test/fixtures/files/gerber-export.zip"))
+
+    # STORY 2.8. A `.zip` is `source_archive` BY NAME and that is right for a Printables download.
+    # A CAM export is the artefact a fab house is handed, and `archives/` is where it stops being
+    # findable next to the board it IS.
+    test "a zip the Gerber reader recognises as a board files into pcb, not archives" do
+      zip = file_with_bytes("Gerber_lamp.zip", board_zip_bytes)
+
+      assert_equal 1, intake.moved
+      assert_equal "pcb", parent_name(zip)
+    end
+
+    # THE OTHER HALF, AND WITHOUT IT THE FIRST TEST PASSES FOR A RULE THAT FILES EVERY ZIP INTO
+    # pcb/. The read is what tells them apart, and a zip of firmware is cached as not-a-board.
+    test "an ordinary zip still files into archives" do
+      zip = file_with_bytes("printables_lamp.zip", "PK\x03\x04not-a-board".b)
+
+      intake
+      assert_equal "archives", parent_name(zip)
+    end
+
+    # THE FOLDER IS THE USER'S OWN, ASKED FOR A LAYER — a board zip files where this maker files
+    # `.gbr`, because the zip IS a layer set in a wrapper. Editing the layer rule moves the zip.
+    test "the board folder follows the user's own rule for a Gerber layer" do
+      Maker::FilingRules.seed!(@user)
+      @user.maker_filing_rules.find_by!(ext: "gbr").update!(folder: "boards")
+      zip = file_with_bytes("Gerber_lamp.zip", board_zip_bytes)
+
+      intake
+      assert_equal "boards", parent_name(zip)
+    end
+
+    # --- what the sweep did ------------------------------------------------------
+
+    # ONE WRITER, REACHED FROM EVERY DOOR. Asserted on the COUNT rather than only the timestamp:
+    # §15's recorded near-miss is a guard comparing timestamps that were written in the same
+    # second, and `last_sweep_moves` is nil until something writes it.
+    test "every sweep records what it did, and a dry run records nothing" do
+      file("panel.svg")
+      assert_nil @project.reload.last_sweep_moves
+
+      Maker::ProjectIntake.for_user(user: @user, dry_run: true)
+      assert_nil @project.reload.last_sweep_moves, "a dry run writes nothing, including this"
+
+      Maker::ProjectIntake.for_user(user: @user)
+      assert_equal 1, @project.reload.last_sweep_moves
+      assert_not_nil @project.last_swept_at
+    end
+
+    test "the eager entry point records too" do
+      node = file("pocket.nc")
+      Maker::ProjectIntake.for_node(user: @user, node:)
+      assert_equal 1, @project.reload.last_sweep_moves
+    end
+
+    # AN ATTACH-ONLY PASS IS NOT A SWEEP. `move: false` is .for_node's over-the-eager-cap path — it
+    # declines to file and leaves the work to the periodic run — so stamping a 0 there would
+    # overwrite a real "filed 3 files" with a zero on every upload into a busy project, which is
+    # exactly the fact the page reads.
+    test "an attach-only pass leaves the last sweep's record alone" do
+      @project.update_columns(last_swept_at: 2.hours.ago, last_sweep_moves: 3)
+      file("panel.svg")
+
+      result = Maker::ProjectIntake.for_project(user: @user, project: @project, move: false)
+
+      assert_equal 1, result.attached
+      assert_equal 0, result.moved
+      assert_equal 3, @project.reload.last_sweep_moves
+    end
+
+    # THE OPT-OUT IS ABOUT FOLDERS, NOT ABOUT KNOWING. Attach is durable and moves no bytes.
+    test "autofile off attaches and files nothing" do
+      @project.update!(autofile: false)
+      node = file("panel.svg")
+
+      result = intake
+
+      assert_equal 1, result.attached
+      assert_equal 0, result.moved
+      assert_equal @folder.node_id, node.reload.parent_node_id
+      assert @project.file_attachments.exists?(node_id: node.node_id)
+      assert_equal 0, @project.reload.last_sweep_moves
+    end
+
+    # THE CONFLICT'S FOLDER IS RECORDED AS IT HAPPENS, so the flash cannot re-derive it wrongly for
+    # the one file whose destination comes from its content.
+    test "a conflict records the folder the sweep actually tried" do
+      sub = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", @project.slug, "pcb" ])
+      file_with_bytes("Gerber_lamp.zip", board_zip_bytes, parent: sub.node_id)
+      file_with_bytes("Gerber_lamp.zip", board_zip_bytes)
+
+      result = intake
+
+      assert_equal [ [ "Gerber_lamp.zip", :conflict ] ], result.skips
+      assert_equal({ "Gerber_lamp.zip" => "pcb" }, result.conflict_folders)
+    end
+
     test "a loose file at the root is filed into its category folder" do
       node = file("panel.svg")
       result = intake

@@ -231,4 +231,7 @@
   /* `:not(.bom-rev)`: a BOM present with zero lines is quiet too, and its revision badge is a fact,
      not a count -- hiding it made "rev 3" vanish the moment the last line was removed (review). */
   .panel--quiet .panel-head .mono.muted:not(.bom-rev) { display: none; }
+
+  /* --- The sweep's own line (stage 4, S4-2): under the Files head, above the groups. --- */
+  .sweep-note { margin: 0 0 10px; font-size: 11px; }
 }

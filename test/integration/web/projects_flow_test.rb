@@ -155,6 +155,21 @@ module Web
       assert_response :not_found
     end
 
+    # STAGE 4, S4-2 (story 4.3): the per-project sweep switch. ASSERTED AS RENDERED (§14d's
+    # twice-shipped `scope:` bug) — and the hidden "0" beside it is the half that makes UNCHECKING
+    # reach the controller at all: without it an unchecked box sends nothing and `autofile` could
+    # never be turned off through the form.
+    test "the form offers the sweep switch and the controller reads it" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Sweepable")
+      get edit_project_path(project)
+      assert_select "form.project-form input[name=?][type=checkbox]", "project[autofile]"
+      assert_select "form.project-form input[name=?][type=hidden][value=?]", "project[autofile]", "0"
+
+      patch project_path(project), params: { project: { name: project.name, autofile: "0" } }
+      refute project.reload.autofile?
+    end
+
     test "edit + update changes fields" do
       user = sign_in
       project = user.maker_projects.create!(name: "Old", status: "planning")
