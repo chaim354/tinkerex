@@ -10,21 +10,26 @@
   THE HTML REDIRECT IS STILL THERE, in the controller, as the no-JS path. Everything below is plain
   form markup — nothing here depends on Turbo being loaded.
 %>
-<section class="panel tasks-panel" id="project-tasks">
+<section class="panel tasks-panel<%= " panel--quiet" if @tasks.empty? %>" id="project-tasks">
   <h2>Tasks</h2>
 
-  <% Maker::Task::STATUSES.each do |status| %>
-    <% group = @tasks.select { |t| t.status == status } %>
-    <div class="tasks-group status-<%= status %>">
-      <h3><%= status.capitalize %> <span class="muted">(<%= group.size %>)</span></h3>
-      <%# "projects/task", FULLY QUALIFIED, not "task". A bare name resolves against the RENDERING
-          CONTROLLER's view path, so this partial worked only while ProjectsController was its only
-          caller — rendered from Projects::TasksController it looked for `projects/tasks/_task` and
-          `application/_task` and raised MissingPartial on every turbo_stream response. %>
-      <% group.each do |task| %>
-        <%= render "projects/task", task: %>
-      <% end %>
-    </div>
+  <%# QUIET AT ZERO (stage 4, S4-1): three headed groups reading "(0)" is not information. The
+      turbo-stream target, the error line and the add form below are unchanged, so an Add that
+      creates the first task replaces this element with the three groups as before. %>
+  <% if @tasks.any? %>
+    <% Maker::Task::STATUSES.each do |status| %>
+      <% group = @tasks.select { |t| t.status == status } %>
+      <div class="tasks-group status-<%= status %>">
+        <h3><%= status.capitalize %> <span class="muted">(<%= group.size %>)</span></h3>
+        <%# "projects/task", FULLY QUALIFIED, not "task". A bare name resolves against the RENDERING
+            CONTROLLER's view path, so this partial worked only while ProjectsController was its only
+            caller — rendered from Projects::TasksController it looked for `projects/tasks/_task` and
+            `application/_task` and raised MissingPartial on every turbo_stream response. %>
+        <% group.each do |task| %>
+          <%= render "projects/task", task: %>
+        <% end %>
+      </div>
+    <% end %>
   <% end %>
 
   <%# THE ERROR HAS TO RENDER HERE, not in the layout's flash. A turbo_stream response replaces this

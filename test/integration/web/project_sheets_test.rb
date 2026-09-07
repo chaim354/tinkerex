@@ -241,8 +241,10 @@ module Web
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
       get project_path(project)
+      # QUIET AT ZERO (stage 4, S4-1): the empty panel is its heading and the New sheet field, so
+      # there is no "No sheets yet." sentence left to assert -- the class is what says it.
       assert_select ".sheets-panel .sheet-row", count: 0
-      assert_select ".sheets-panel .muted", text: /No sheets yet/
+      assert_select "section.sheets-panel.panel--quiet"
     end
 
     test "another user's sheets never appear on a project page" do

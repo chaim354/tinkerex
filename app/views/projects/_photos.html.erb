@@ -1,0 +1,26 @@
+<%#
+  PHOTOS (stage 4, S4-1): the gallery the public page has had since S3-4, on the maker's own page.
+  Rows come from Maker::ProjectPhotos (ProjectsController#show → @photo_rows): the folder's image
+  rows plus every live entry photo, deduped, name-ordered. Omitted entirely when there are none — a
+  gallery with no pictures is not a quiet panel, it is no panel.
+
+  Its own `thumbs` controller: this section sits OUTSIDE the Files panel's polling wrapper, the same
+  reason projects/_log_entry carries one. Every row's thumbnail is already in @page_thumbs, so this
+  polls the pending ones and never builds a second ThumbnailMap.
+%>
+<% if @photo_rows.any? %>
+  <section class="panel photos-panel">
+    <div class="panel-head">
+      <h2>Photos</h2>
+      <span class="mono muted"><%= pluralize(@photo_rows.size, "photo") %></span>
+    </div>
+    <div class="project-photos" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+      <% @photo_rows.each do |row| %>
+        <%= link_to file_path(row.node_id), class: "photo-cell file-cell", title: row.node.name,
+                    data: thumb_cell_data(row.node_id, "IMG") do %>
+          <%= render "files/thumb", thumb: @page_thumbs.thumb(row.node_id), ext_label: "IMG" %>
+        <% end %>
+      <% end %>
+    </div>
+  </section>
+<% end %>

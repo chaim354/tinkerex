@@ -69,8 +69,15 @@
   <span><b><%= @sheets.size %></b> <%= "sheet".pluralize(@sheets.size) %></span>
 </p>
 
+<%# Stage 4, S4-1: the cover, on the project's own page at last. The partial itself decides whether
+    there is one to show — an unset or tombstoned cover renders nothing at all. %>
+<%= render "hero" %>
+
 <div class="project-panels">
   <%= render "attachments" %>
+  <%# Stage 4, S4-1: the folder's images and the build log's photos, one gallery, the same
+      definition the public page reads (Maker::ProjectPhotos). Absent when there are none. %>
+  <%= render "photos" %>
   <%# Stage 3, S3-2: KiCad schematics/boards anywhere in the folder. The partial itself decides
       whether there is anything to show — see its own header comment. %>
   <%= render "schematics" %>

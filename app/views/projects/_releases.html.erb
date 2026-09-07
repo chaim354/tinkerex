@@ -25,15 +25,18 @@
   without JS -- so each option's VALUE is "<repo node_id>:<tag>" and Projects::ReleasesController
   splits it on the first colon. Its own comment argues why that is unambiguous.
 %>
-<section class="panel releases-panel">
+<%# QUIET AT ZERO (stage 4, S4-1): no releases is the heading and Create release. The count span
+    goes with the list it counts and the empty sentence with it, for the same reason
+    projects/_wiring drops both -- the composer below, which is what an empty panel is for, stays. %>
+<section class="panel releases-panel<%= " panel--quiet" if releases.empty? %>">
   <div class="panel-head">
     <h2>Releases</h2>
-    <span class="mono muted"><%= pluralize(releases.size, "release") %></span>
+    <% if releases.any? %>
+      <span class="mono muted"><%= pluralize(releases.size, "release") %></span>
+    <% end %>
   </div>
 
-  <% if releases.empty? %>
-    <p class="muted">No releases yet.</p>
-  <% else %>
+  <% if releases.any? %>
     <% releases.each_with_index do |release, index| %>
       <%# `open` ON THE NEWEST ONLY: the one a maker is looking for is almost always the last one
           cut, and a page of expanded file tables is a page nobody reads. %>

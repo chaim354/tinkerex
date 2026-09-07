@@ -6,8 +6,10 @@
   no link into a private path anywhere: a visitor is not the person who would change something,
   and public_project_test.rb asserts the absence directly rather than trusting this comment.
 
-  AN EMPTY PANEL IS OMITTED, NOT RENDERED AS AN EMPTY STATE. "No connections yet." is an invitation
-  to add one, which is exactly what a visitor cannot do; the private page keeps its empty states.
+  AN EMPTY PANEL IS OMITTED HERE, NOT RENDERED AT ALL. An empty state invites someone to add the
+  first one, which is exactly what a visitor cannot do. Since stage 4, S4-1 the private page carries
+  no such sentence either — an empty panel there goes QUIET (its heading and one add control) rather
+  than vanishing, because the maker IS the person who would fill it.
 %>
 <% content_for :title, "#{@project.name} — @#{@pub.handle}" %>
 <% content_for :container_class, "public-main" %>

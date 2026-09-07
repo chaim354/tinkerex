@@ -113,7 +113,15 @@ class ProjectsController < ApplicationController
     @bom_rollup = Maker::BomRollup.new(@bom_lines)
     @items = current_user.maker_inventory_items.order(:name).pluck(:name, :id)
     @suppliers = current_user.maker_suppliers.order(:name).pluck(:name, :id)
-    @page_nodes = live_nodes_for(all_attachments.map(&:node_id) + entry_photo_ids + @bom_lines.filter_map(&:node_id))
+    # THE COVER JOINS THE UNION (stage 4, S4-1): the hero renders it, and liveness is answered by
+    # nodes.present like every other tile — a chosen cover is a raw column nothing validates (see
+    # project_params), so a tombstoned cover renders NOTHING, not a poll cell that spins forever.
+    # Maker::Project#cover_node_id derives one from the attachments when none is chosen: a constant
+    # handful of queries regardless of N.
+    cover_id = @project.cover_node_id
+    @page_nodes = live_nodes_for(all_attachments.map(&:node_id) + entry_photo_ids +
+                                 @bom_lines.filter_map(&:node_id) + [ cover_id ].compact)
+    @cover_node = cover_id && @page_nodes[cover_id]
     @attachments, missing = all_attachments.partition { |a| @page_nodes.key?(a.node_id) }
     # NOT SILENT. The panel says how many left and points at the Trash, because a user who deleted
     # a file by accident and watched their project change otherwise has no thread to pull. It
@@ -152,11 +160,36 @@ class ProjectsController < ApplicationController
     # regression the moment a project holds more than one repository, which it already does by the
     # time this runs at "large".
     repo_dirs = collect_repo_dirs(@listing.tree)
-    repo_roots = current_user.nodes.present.where(node_id: repo_dirs.map(&:node_id), kind: "dir")
+    # THE FOLDER'S OWN NODE RIDES THE SAME BATCHED QUERY (stage 4, S4-1) — the root's card needs
+    # it exactly as a nested repo's card does, and a second `find_by` here would be the O(repos)
+    # shape the comment above forbids, one row bigger.
+    repo_roots = current_user.nodes.present
+                             .where(node_id: repo_dirs.map(&:node_id) + [ @listing.folder_id ].compact, kind: "dir")
                              .index_by(&:node_id)
     @repo_cards = repo_dirs.index_by(&:node_id).transform_values do |dir|
       Maker::RepoCard.for(user: current_user, dir:, root_node: repo_roots[dir.node_id],
                           listing: @listing, capabilities:)
+    end
+    # THE ROOT'S OWN CARD (stage 4, S4-1). A project whose folder IS the working tree had no card
+    # and no Commits/History anywhere on its page — every real repository on the share deployment
+    # is one (measured 2026-09-07). The root is a synthetic Dir: its files are the loose rows, its
+    # children the tree, its path the folder's — exactly what Maker::RepoCard reads to find a README
+    # and resolve its relative links. A plain folder's README renders through the same reader with
+    # no git facts. Neither costs a query: the node came out of the batch above, and the README is a
+    # bounded PORT read (Maker::Readme's own caps), never SQL.
+    @root_card = nil
+    @readme = nil
+    if @listing.available?
+      if @listing.root_repo?
+        root_dir = Maker::ProjectFolderListing::Dir.new(node_id: @listing.folder_id, name: @project.name,
+                                                        path: @listing.path, repo?: true,
+                                                        children: @listing.tree, files: @listing.loose)
+        @root_card = Maker::RepoCard.for(user: current_user, dir: root_dir, root_node: repo_roots[@listing.folder_id],
+                                         listing: @listing, capabilities:)
+      else
+        @readme = Maker::Readme.for(user: current_user, rows: @listing.loose, base_path: @listing.path,
+                                    listing: @listing, link: Maker::RepoCard::DEFAULT_LINK)
+      end
     end
     # RELEASES (stage 3, S3-5). `includes(:files, :rich_text_notes)` because the panel reads both
     # for every release it renders -- :rich_text_notes is the association Action Text gives
@@ -219,8 +252,13 @@ class ProjectsController < ApplicationController
     tile_ids = @listing.node_ids.reject { |id| hidden_in_repos.include?(id) } +
                @linked_rows.map(&:node_id)
     @page_thumbs = Maker::Previews::ThumbnailMap.for(
-      current_user, tile_ids + entry_photo_ids.select { |id| @page_nodes.key?(id) }
+      current_user, tile_ids + entry_photo_ids.select { |id| @page_nodes.key?(id) } + (@cover_node ? [ cover_id ] : [])
     )
+    # PHOTOS (stage 4, S4-1): the public page's own definition, on the maker's page too. In memory
+    # over @listing, @entries and @page_nodes — all already loaded above — so nothing here queries,
+    # and every row's thumbnail is already in @page_thumbs (folder rows through tile_ids, entry
+    # photos through entry_photo_ids).
+    @photo_rows = Maker::ProjectPhotos.rows(listing: @listing, entries: @entries, page_nodes: @page_nodes)
     # TILE_IDS ONLY, NOT THE BUILD-LOG PHOTOS. Every tile this page can render — a folder section,
     # Backups, Generated, Linked — carries `contextmenu->filemenu#open`;
     # `_log_entry`'s photos are spans driven by the `thumbs` controller alone, with no menu to add

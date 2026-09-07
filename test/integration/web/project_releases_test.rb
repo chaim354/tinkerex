@@ -82,9 +82,12 @@ module Web
       get project_path(@project)
       assert_response :success
       assert_select "section.panel.releases-panel h2", text: "Releases"
-      assert_select ".releases-panel .mono.muted", text: "0 releases"
-      assert_select ".releases-panel p.muted", text: "No releases yet."
-      assert_select "details.release", count: 0
+      # QUIET AT ZERO (stage 4, S4-1): no releases is the heading and Create release, so the
+      # "0 releases" count and the "No releases yet." sentence are both gone and their absence is
+      # the assertion. The composer's own field checks below are untouched by that.
+      assert_select "section.releases-panel.panel--quiet"
+      assert_select "section.releases-panel details.release", count: 0
+      assert_select ".releases-panel .panel-head .mono.muted", count: 0
 
       # THE RENDERED FIELD NAMES, not a Ruby hash posted past the form (§14d): a `form_with` missing
       # `scope:` emits `[version]`-shaped params the controller's `require` rejects, and every test

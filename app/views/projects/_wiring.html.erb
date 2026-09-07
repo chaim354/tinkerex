@@ -19,15 +19,19 @@
   HTML `form=` attribute. project_wiring_test.rb asserts that wiring directly (`input[form=?]`
   against "connection-#{id}"), not merely that the fields render.
 %>
-<section class="panel wiring-panel">
+<%# QUIET AT ZERO (stage 4, S4-1): no connections is the heading and Add connection. The count
+    span goes with the table it counts -- "0 connections" beside a heading is not information --
+    and the sentence that stood where the table does said no more than the empty panel already did.
+    The composer below is untouched: it is the one control an empty panel exists to offer. %>
+<section class="panel wiring-panel<%= " panel--quiet" if connections.empty? %>">
   <div class="panel-head">
     <h2>Wiring</h2>
-    <span class="mono muted"><%= pluralize(connections.size, "connection") %></span>
+    <% if connections.any? %>
+      <span class="mono muted"><%= pluralize(connections.size, "connection") %></span>
+    <% end %>
   </div>
 
-  <% if connections.empty? %>
-    <p class="muted">No connections yet.</p>
-  <% else %>
+  <% if connections.any? %>
     <% if editable %>
       <% connections.each do |connection| %>
         <%= form_with model: connection, scope: :connection, url: connection_path(connection),

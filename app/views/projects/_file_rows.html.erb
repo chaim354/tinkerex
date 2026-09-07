@@ -9,6 +9,12 @@
   row, ProjectsController#show for a Linked one) — this partial never walks the tree itself. Blank
   reads as "Loose", the sweep's own name for the folder's root.
 
+  THE ROW CARRIES THE TILE'S RIGHT-CLICK MENU (stage 4, S4-1) — `file_menu_data`, the one builder
+  _file_tile.html.erb uses, emitted on the `<tr>` through `tag.tr` so a nil addon origin is DROPPED
+  rather than rendered as `data-addon-open-url=""` (FilesHelper's own rule). Switching to List used
+  to lose Note, Download and "Edit in <Addon>" silently; filemenu_controller.js#open reads `href`
+  off the cell or its first `<a>`, so Open lands on the file page with no controller change.
+
   ORIGIN READS @addon_origins, THE SAME HASH EVERY TILE ON THIS PAGE ALREADY READS FOR ITS
   right-click menu (AddonOrigins#addon_origins_for, one Registry lookup for the whole page) — never
   a second resolution here. A row with no addon origin answers nil and the cell reads "—"; a
@@ -31,7 +37,7 @@
     <% rows.each do |row| %>
       <% node = row.node %>
       <% origin = @addon_origins[row.node_id] %>
-      <tr>
+      <%= tag.tr(data: file_menu_data(row.node_id, origin)) do %>
         <td class="col-name"><%= link_to node.name, file_path(row.node_id) %></td>
         <td class="muted col-section"><%= row.section.presence || "Loose" %></td>
         <td class="num muted col-size"><%= node.size ? number_to_human_size(node.size) : "—" %></td>
@@ -39,7 +45,7 @@
           <%= node.mtime ? Time.at(node.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M") : "—" %>
         </td>
         <td class="muted col-origin"><%= origin ? origin[:title] : "—" %></td>
-      </tr>
+      <% end %>
     <% end %>
   </tbody>
 </table>

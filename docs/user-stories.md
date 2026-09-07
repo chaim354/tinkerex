@@ -58,7 +58,7 @@ bookkeeping.**
 | 1.1 | When I make a folder under `Projects/` on the NAS and start saving into it, I want it to become a project by itself, so that I never fill in a form to start work. | `rough` | Works on scan (≤ 15 min on share, `config/recurring.yml:24`). Zero feedback: no flash, no "new" marker, a log line only (code: `app/jobs/maker/project_discovery_job.rb:38`). Slug and folder name can disagree forever (`project_discovery.rb:66,69`). Cap 50 per run. |
 | 1.2 | When I am at the browser with an idea, I want New project to mint the folder on the NAS and make it the current project, so that the next LightBurn save lands in it. | `rough` | Mints `Projects/<slug>` (`project.rb:144-152`). Does not set current (`projects_controller.rb:251-259`). No status field on the form, so planning/active/paused/done are unreachable — share: all 9 projects read "planning". A failed mkdir still says "Project created." (`projects_controller.rb:346-350`). |
 | 1.3 | When I keep laser work in `designs/` and CNC in `cnc/`, I want to say "this folder is a project" without moving it, so that my NAS layout stays mine. | `missing` | Only direct children of `Projects/` are adopted (`project_discovery.rb:112-116`). seed: `designs/tray` silently became a **Model** through the seeded `*` shelf (`shelf.rb:24`). No adopt door; no folder rename or move from the web. share: ~20% of files live outside `Projects/`. |
-| 1.4 | When I clone a firmware repo into `Projects/`, I want the project page to show its README, commits and history and never re-file its files, so that a git project stays a git project. | `rough` | Adopted; files correctly never filed (`attach_to_project.rb:192`). But a project whose **root is the repo** gets no README card and no Commits/History links — the card exists only for a repo *inside* the folder (`_file_tree_section.html.erb:50-58`; `collect_dirs` never flags the root). seed: jewelry-box. share: all three real repos are project roots. The page still says "Loose files are filed on the next sweep" (`_attachments.html.erb:95`). |
+| 1.4 | When I clone a firmware repo into `Projects/`, I want the project page to show its README, commits and history and never re-file its files, so that a git project stays a git project. | `rough` | Adopted; files correctly never filed (`attach_to_project.rb:192`). **S4-1:** a project whose root is the repo now gets the repository card, a `repo` badge and Commits/History in the Files head, and the caption says the sweep leaves its files alone (`ProjectFolderListing#root_repo?`, `projects/_attachments.html.erb`). Still rough: no "new" marker when discovery adopts it (S4-6) and build output is indexed (S4-2). |
 | 1.5 | When the app creates a project, moves a file or picks a cover for me, I want to see that it did, so that I trust it with my folders. | `missing` | Discovery, the scheduled sweep and current-project switches report only to the log (`project_intake_job.rb:120-141`, `current_project_controller.rb:6-15`). Filing feedback covers a name collision only (`project_folder_intake.rb:103-107`). |
 | 1.6 | When I rename a project or finish it, I want folder, URL and page to stay in step, and "done" to be a state I can set. | `rough` | Rename never renames the folder or the slug (`project.rb:202-203`). Archive doubles as the undocumented "not a project" dismissal (`docs/invariants/project-intake.md:20-28`). |
 
@@ -78,7 +78,7 @@ again, catch up.*
 | 2.6 | OpenSCAD `.scad` | `rough` | Code view; editable in the browser **only inside a git repo** (`files_controller.rb:444`); the OpenSCAD tool reads it and writes 3MF. |
 | 2.7 | firmware `.ino` `.cpp` `.h` `.yml` | `works` in repos | Code view, edit, commit, history, restore. `json`/`txt` file to `docs/` while `yml` files to `code/` (`file_attachment.rb:80-124`). |
 | 2.8 | KiCad + Gerbers | `rough` | Gerber single, zip and `.gbrjob` render as a board; KiCanvas for KiCad. KiCad files **cannot have a filing rule** (`EXT_RE`, `files-preview.md:41-50`) → `other/`; a Gerber zip files to `archives/`, not `pcb/` (`files-preview.md:143-148`). |
-| 2.9 | photos, PDF, README | `rough` | Image inline, PDF in the browser's viewer. A README shows as **source** on its file page and is rendered nowhere on a private project page except inside a sub-folder repo card. |
+| 2.9 | photos, PDF, README | `rough` | Image inline, PDF in the browser's viewer. **S4-1:** the project-root README renders on the private project page for every project (`projects/_readme_card.html.erb`, `_repo_card` for a root repo). Still rough: the README's own file page shows source, and README links resolve only on the project and public pages. |
 | 2.10 | any file: back to the program | `missing` | The file page shows Name/Size/Type/Modified (`show.html.erb:47-66`), never the library path, never a reveal or open hand-off; actions are Download, Delete, Back. |
 | 2.11 | any file: I saved it again | `rough` | Up to 15 min blind plus render time; the file page never refreshes itself (`thumbs_controller.js` runs only on grids); Rescan guesses a 6 s reload (`scanreload_controller.js:16-23`). |
 | 2.12 | any file: I exported from the web | `rough` | Every export — Measure SVG, print sheet, sheet CSV, BOM CSV — is a browser download; nothing lands on the share. |
@@ -115,7 +115,7 @@ again, catch up.*
 |---|---|---|---|
 | 5.1 | When I decide to publish, I want to preview the visitor's page first. | `missing` | A private project 404s on the public route, for its owner too (`public/base_controller.rb:33`). |
 | 5.2 | When I flip to public, I want the URL and what became downloadable stated. | `rough` | Four clicks with a handle, about seven without; the flash is "Project updated." (`projects_controller.rb:265`); the whole visible folder becomes downloadable by ancestry (`public_project.rb:303-316`), unstated. The handle is claimed on the Account page and locked once anything is published (`user.rb:185-189`). |
-| 5.3 | When I write the README, I want to do it in the app, from a template, and see it rendered on my own page. | `missing` | Editing only inside git (`files_controller.rb:535-538`); no render on the private page; root-only, case-sensitive six names (`readme.rb:37`). |
+| 5.3 | When I write the README, I want to do it in the app, from a template, and see it rendered on my own page. | `missing` | Editing only inside git (`files_controller.rb:535-538`); root-only, case-sensitive six names (`readme.rb:37`). **S4-1** landed the "see it rendered on my own page" half; the editor, the template and the preview are S4-4, so the tag stays. |
 | 5.4 | When my README embeds photos and links files, I want them to render and open. | `rough` | Relative links resolve; absolute images are silently dropped to alt text (`markdown.rb:104-107`); an SVG image force-downloads and shows broken; heading ids are stripped so nothing deep-links. |
 | 5.5 | When a visitor opens my project, I want the model in 3D, the board and the cut file viewable, not download links. | `missing` | `Public::FilesController#show` is bytes only; no public 3D, Measure or Gerber viewer; KiCanvas for the first KiCad file only (`public/projects/_schematics.html.erb:28`). |
 | 5.6 | When I cut a release, I want visitors to get the files as they were. | `rough` | A release stores references and content tokens (`release_snapshot.rb:7-11`); downloads are the current bytes with a "changed" badge. |
@@ -126,14 +126,14 @@ again, catch up.*
 
 | # | story | tag | evidence / friction |
 |---|---|---|---|
-| 6.1 | When I open a laser project, I want the cut file, the photos and the settings first, not BOM, wiring and releases. | `rough` | Seven fixed panels on every project (`projects/show.html.erb:73-89`); four irrelevant to a laser project, each with an empty composer; the three task groups render at zero. |
-| 6.2 | When I open a firmware + PCB project, I want README, board, schematic, commits and wiring at the top. | `rough` | Repo card only for sub-folder repos (see 1.4); no board render on the project page; schematics only for KiCad (`_schematics.html.erb:18-19`). |
-| 6.3 | When I open a 3D-print project, I want the model as the hero and its print history. | `rough` | The page renders no hero at all — `cover_node_id` is shown only on cards (`_card.html.erb:8-15`); print runs live on Models. |
+| 6.1 | When I open a laser project, I want the cut file, the photos and the settings first, not BOM, wiring and releases. | `rough` | **S4-1:** an empty secondary panel is quiet — its heading and one add control, no open composer, no zero-count task groups (`panel--quiet`, the six panel partials); the photos have their own panel. Still rough: the panel order is fixed and nothing pins the cut file (S4-7). |
+| 6.2 | When I open a firmware + PCB project, I want README, board, schematic, commits and wiring at the top. | `rough` | **S4-1:** the repository card, README and Commits/History render for a root-repo project, at the top of Files. Still rough: no board render on the project page; schematics only for KiCad (`_schematics.html.erb:18-19`); wiring sits below the fold. |
+| 6.3 | When I open a 3D-print project, I want the model as the hero and its print history. | `rough` | **S4-1:** the cover is the page's hero — an image inline, any other file as its thumbnail (`projects/_hero.html.erb`); a derived cover means most projects get one without choosing. Still rough: choosing which file is the hero is the edit form's cover chooser only, and print runs live on Models. |
 | 6.4 | I want to pin the important file or choose the hero. | `missing` | Files are peers sorted by name (`project_folder_listing.rb:215`); the chosen cover never reaches the page. |
 | 6.5 | I want to hide, reorder or add panels per project, or pick a project type that presets them. | `missing` | Hard-coded order; no `kind`; no preference storage (`db/schema.rb` `maker_projects`). |
-| 6.6 | I want a photo gallery on my own page. | `missing` | Exists on the public page only (`public/projects/_photos.html.erb`); the private page never calls it. |
+| 6.6 | I want a photo gallery on my own page. | `works` | **S4-1:** `projects/_photos.html.erb` over `Maker::ProjectPhotos.rows`, the one definition the public page uses too — folder images plus build-log photos, once each, by name. |
 | 6.7 | I want sections named for me, not folder names. | `by design` | The folder is the truth (stage 3 decision 1); an alias would be a table that fights it. |
-| 6.8 | I want the list view to carry the same actions as tiles. | `rough` | `_file_rows.html.erb` emits no context-menu data, so right-click Download / Note / Open-in-tool vanish in list view. |
+| 6.8 | I want the list view to carry the same actions as tiles. | `works` | **S4-1:** each list row carries `file_menu_data`, so right-click offers Add note / Open / Download / Edit-in-tool exactly as a tile does (`_file_rows.html.erb`). |
 
 ---
 
@@ -146,7 +146,9 @@ again, catch up.*
 | T3 | 7 | 1 | 2 | 3 | 1 built-unused |
 | T4 | 8 | 1 | 5 | 2 | |
 | T5 | 8 | 0 | 4 | 4 | |
-| T6 | 8 | 0 | 4 | 3 | 1 by design |
-| **all** | **50** | **6** | **26** | **16** | **2** |
+| T6 | 8 | 2 | 3 | 2 | 1 by design |
+| **all** | **50** | **8** | **25** | **15** | **2** |
+
+Re-measured after S4-1 (2026-09-07): 6.6 and 6.8 moved to `works`; 1.4, 2.9, 6.1, 6.2, 6.3 gained new evidence and stay `rough`; 5.3 gained its render half and stays `missing`.
 
 Which slice moves which story: the slice table in the stage 4 spec.

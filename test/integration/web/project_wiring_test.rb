@@ -57,9 +57,12 @@ module Web
     test "the empty state" do
       get project_path(@project)
       assert_response :success
-      assert_select "section.panel.wiring-panel p.muted", text: "No connections yet."
-      assert_select "table.table.wiring", count: 0
-      assert_select ".wiring-panel .mono.muted", text: "0 connections"
+      # QUIET AT ZERO (stage 4, S4-1): the panel says it is empty by being empty. The sentence and
+      # the "0 connections" count span are both gone -- a zero beside a heading is not information
+      # -- so their ABSENCE is what is pinned here, beside the class the partial sets on itself.
+      assert_select "section.panel.wiring-panel.panel--quiet"
+      assert_select "section.wiring-panel table.wiring", count: 0
+      assert_select ".wiring-panel .panel-head .mono.muted", count: 0
       # The composer still renders with nothing to edit yet.
       assert_select "details.composer.wiring-add summary", text: "Add connection"
     end

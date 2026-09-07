@@ -381,5 +381,30 @@ module Maker
       assert_not Maker::ProjectFolderListing.new(@user, project_with_folder(nil, name: "Bare")).contains?(inside_deep),
                  "no folder contains nothing"
     end
+
+    test "root_repo? is true when the folder itself holds a .git marker, and false for a repo nested inside" do
+      project = @user.maker_projects.create!(name: "Root Repo")
+      folder = project_folder_rows!(@user, project)
+      @user.nodes.create!(node_id: "root-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
+                          parent_node_id: folder.node_id, size: 0, mtime: 1_700_000_000_000_000_000)
+
+      assert Maker::ProjectFolderListing.new(@user, project).root_repo?
+
+      other = @user.maker_projects.create!(name: "Nested Repo")
+      other_folder = project_folder_rows!(@user, other)
+      firmware = @user.nodes.create!(node_id: "fw-dir", name: "firmware", kind: "dir",
+                                     parent_node_id: other_folder.node_id, size: 0, mtime: 1_700_000_000_000_000_000)
+      @user.nodes.create!(node_id: "fw-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
+                          parent_node_id: firmware.node_id, size: 0, mtime: 1_700_000_000_000_000_000)
+
+      listing = Maker::ProjectFolderListing.new(@user, other)
+      refute listing.root_repo?, "a repository INSIDE the folder is not the root"
+      assert listing.tree.first.repo?, "…but it is still flagged as a section"
+    end
+
+    test "root_repo? is false when the project has no live folder" do
+      project = @user.maker_projects.create!(name: "Folderless")
+      refute Maker::ProjectFolderListing.new(@user, project).root_repo?
+    end
   end
 end
