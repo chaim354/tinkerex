@@ -19,11 +19,27 @@ module Maker
     normalizes :ext, with: ->(e) { e.to_s.strip.downcase.delete_prefix(".") }
     normalizes :folder, with: ->(f) { f.to_s.strip.downcase }
 
-    # THE SAME BOUND EVERY ROLE_BY_EXT ENTRY ALREADY MEETS (docs/invariants/files-preview.md) —
-    # referencing the controller's own constant, never a second copy of the regex: an extension
-    # this validation accepted but FilesController::EXT_RE rejected would seed a rule the Files
-    # page's own filter chip could never link to.
-    validates :ext, presence: true, format: { with: FilesController::EXT_RE }
+    # THE FILING MAP'S OWN KEY RULE, WIDER THAN `FilesController::EXT_RE` ON PURPOSE (stage 4,
+    # S4-2). A key here is an EXTENSION as `Maker::ProjectFolders.ext_of` reads it — everything
+    # after the last dot, downcased — and two formats a maker actually has, `.kicad_sch` and
+    # `.kicad_pcb`, are nine characters with an underscore. `EXT_RE` (/\A[a-z0-9]{1,8}\z/) is the
+    # FILES PAGE's bound and is right there: an extension it rejects renders a filter chip that
+    # links and silently does nothing, which is why `Maker::FileAttachment::ROLE_BY_EXT` must meet
+    # it (docs/invariants/files-preview.md, and file_attachment_test.rb's own guard).
+    #
+    # A FILING RULE RENDERS NO CHIP AND GRANTS NO ROLE. It answers exactly one question — which
+    # subfolder — so it can carry a key the vocabulary cannot. That is the split, and it is NOT a
+    # second copy of EXT_RE drifting: EXT_RE is untouched, still referenced by ROLE_BY_EXT's own
+    # guard, and nothing here loosens it. A `.kicad_sch` file's ROLE stays `other` and its FOLDER
+    # is `pcb` — two questions, two answers, which is the same shape `.scad` already carries
+    # (`cad_source` for filing, text for viewing).
+    #
+    # 12, NOT UNBOUNDED, AND THE UNDERSCORE IS THE ONLY CHARACTER ADDED. `kicad_sch`/`kicad_pcb`
+    # are 9; 12 leaves headroom without letting a pasted filename become a key. No dot (a dot
+    # would admit `tar.gz`, which `ext_of` can never produce), no dash, no space.
+    KEY_RE = /\A[a-z0-9_]{1,12}\z/
+
+    validates :ext, presence: true, format: { with: KEY_RE }
     validates :ext, uniqueness: { scope: :user_id }
     validates :folder, presence: true
     validate :folder_is_a_plain_segment

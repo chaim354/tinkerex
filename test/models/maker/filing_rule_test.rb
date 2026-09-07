@@ -17,16 +17,31 @@ module Maker
       assert_equal "models", rule.folder
     end
 
-    # THE SAME BOUND EVERY ROLE_BY_EXT ENTRY MEETS -- referencing FilesController::EXT_RE rather
-    # than a second copy, so a rule this validation accepts can never be one the Files page's own
-    # filter chip fails to link to.
-    test "ext must satisfy FilesController::EXT_RE" do
-      assert @user.maker_filing_rules.new(ext: "stl", folder: "models").valid?
-      assert @user.maker_filing_rules.new(ext: "markdown", folder: "docs").valid? # the 8-char bound
+    # THE FILING MAP'S KEY RULE IS WIDER THAN THE VOCABULARY'S, ON PURPOSE (stage 4, S4-2).
+    # `kicad_sch`/`kicad_pcb` are nine characters with an underscore, so they fail
+    # FilesController::EXT_RE and can never earn a ROLE_BY_EXT entry — an entry there renders a
+    # filter chip that links and silently does nothing (docs/invariants/files-preview.md). A
+    # filing rule renders no chip and grants no role: it answers one question, "which subfolder",
+    # so it can carry a key the vocabulary cannot.
+    test "ext satisfies KEY_RE, which admits the KiCad extensions EXT_RE cannot" do
+      %w[stl kicad_sch kicad_pcb markdown gbrjob mage].each do |ext|
+        rule = @user.maker_filing_rules.new(ext:, folder: "pcb")
+        assert rule.valid?, "#{ext} should be a legal filing-rule key: #{rule.errors.full_messages}"
+      end
+      refute_match Maker::FilingRule::KEY_RE, "kicad_sch".upcase
+      assert_no_match FilesController::EXT_RE, "kicad_sch"
+    end
 
-      refute @user.maker_filing_rules.new(ext: "toolongext", folder: "docs").valid? # 9 chars
-      refute @user.maker_filing_rules.new(ext: "kicad_pcb", folder: "docs").valid? # underscore
-      refute @user.maker_filing_rules.new(ext: "", folder: "docs").valid?
+    # `"UPPER"` IS DELIBERATELY ABSENT FROM THIS LIST: `normalizes` downcases before validation
+    # runs, so it lands on the same row as `"upper"` and IS valid — asserting it invalid would be
+    # asserting the normalization away. What stays are the keys `Maker::ProjectFolders.ext_of` can
+    # never produce (a dot), the ones past the bound, and the characters KEY_RE does not admit.
+    test "a key that is not an extension at all is still refused" do
+      [ "tar.gz", "way_too_long_ext", "with space", "", "a-b" ].each do |ext|
+        rule = @user.maker_filing_rules.new(ext:, folder: "pcb")
+        refute rule.valid?, "#{ext.inspect} must not be a legal key"
+        assert_includes rule.errors.attribute_names, :ext
+      end
     end
 
     # THE REJECTIONS ARE THE POINT (test/models/maker/shelf_test.rb's own comment for the

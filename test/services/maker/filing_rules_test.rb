@@ -10,12 +10,39 @@ module Maker
                            confirmed_at: Time.current, omniauth_signup: true)
     end
 
-    test "the first read seeds exactly ROLE_BY_EXT.size rows" do
+    # THE COUNT IS THE VOCABULARY PLUS THE KEYS THE VOCABULARY CANNOT CARRY (stage 4, S4-2) — the
+    # name says both halves because a name reading "exactly ROLE_BY_EXT.size" stopped being true
+    # the moment BEYOND_ROLE_BY_EXT existed.
+    test "the first read seeds one row per ROLE_BY_EXT key plus every key beyond it" do
       assert_empty @user.maker_filing_rules
 
       Maker::FilingRules.for(@user)
 
-      assert_equal Maker::FileAttachment::ROLE_BY_EXT.size, @user.maker_filing_rules.count
+      assert_equal Maker::FileAttachment::ROLE_BY_EXT.size + Maker::FilingRules::BEYOND_ROLE_BY_EXT.size,
+                   @user.maker_filing_rules.count
+    end
+
+    # THE KEYS THE VOCABULARY CANNOT CARRY ARE SEEDED BESIDE IT, NOT INSTEAD OF IT (stage 4, S4-2).
+    # A user seeded today gets a `pcb` destination for their KiCad files; a user seeded before this
+    # gets one from the migration. `Maker::FilingRules.seed!`'s `exists?` guard is untouched — the
+    # top-up is a migration, which runs once, because /settings/filing promises a REMOVED rule
+    # files into `other` and a per-read fill-in would resurrect it.
+    test "a KiCad schematic and board have a destination the vocabulary could never give them" do
+      map = Maker::FilingRules.for(@user)
+      assert_equal "pcb", map["kicad_sch"]
+      assert_equal "pcb", map["kicad_pcb"]
+      assert_equal "pcb", Maker::ProjectFolders.folder_for(@user, "board.kicad_pcb")
+      assert_equal "other", Maker::FileAttachment.role_for("board.kicad_pcb"),
+                   "the ROLE is untouched — EXT_RE still refuses these two"
+    end
+
+    # EVERY EXTRA KEY IS A LEGAL ROW. The seed writes with insert_all, which runs no validation,
+    # so a key the settings form would itself refuse could be seeded and then be uneditable.
+    test "every extra seed key passes the model's own validation" do
+      Maker::FilingRules::BEYOND_ROLE_BY_EXT.each do |ext, folder|
+        rule = @user.maker_filing_rules.new(ext:, folder:)
+        assert rule.valid?, "#{ext} => #{folder}: #{rule.errors.full_messages}"
+      end
     end
 
     # IDEMPOTENT ON THE HAPPY PATH -- the `exists?` guard means the second call's insert_all never
