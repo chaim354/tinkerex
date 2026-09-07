@@ -65,8 +65,8 @@ module Web
       assert_enqueued_jobs 1, only: Library::ScanJob do
         post rescan_files_path
       end
-      assert_redirected_to files_path
-      assert_match(/rescan started/i, flash[:notice])
+      assert_redirected_to files_path(scanning: 1)
+      assert_match(/scanning your library/i, flash[:notice])
     end
 
     # THE ROOT REACHES THE QUEUE, AND THAT IS OPERATOR VISIBILITY, NOT DECORATION. ActiveJob
@@ -95,7 +95,7 @@ module Web
       use_scannable_backend
       create_node!(@user, node_id: "dir-1", name: "cad", kind: "dir")
       post rescan_files_path(folder: "dir-1")
-      assert_redirected_to files_path(folder: "dir-1")
+      assert_redirected_to files_path(folder: "dir-1", scanning: 1)
     end
 
     # The type filter is the other thing a user can be "inside", and the same argument applies:
@@ -106,10 +106,10 @@ module Web
     test "the rescan redirect preserves the type filter, and revalidates it" do
       use_scannable_backend
       post rescan_files_path(ext: "stl,3mf")
-      assert_redirected_to files_path(ext: "stl,3mf")
+      assert_redirected_to files_path(ext: "stl,3mf", scanning: 1)
 
       post rescan_files_path(ext: "../etc")
-      assert_redirected_to files_path
+      assert_redirected_to files_path(scanning: 1)
     end
 
     test "the rescan button carries the filter it was clicked from" do
@@ -149,6 +149,81 @@ module Web
       end
       assert_redirected_to files_path
       assert_match(/doesn't support|not.*support/i, flash[:alert])
+    end
+
+    # --- The status endpoint the Rescan reload polls ---
+
+    # THE WHOLE CONTRACT: one key, an ISO string or null, and the CLIENT decides whether it moved.
+    # `running:` is deliberately NOT in this payload — see the action's own comment for the two
+    # sources that were rejected and why each would lie.
+    test "scan_status reports null before any scan and the stamp after one" do
+      use_scannable_backend
+      get scan_status_files_path, headers: { "Accept" => "application/json" }
+      assert_response :success
+      assert_nil JSON.parse(response.body).fetch("scanned_at")
+
+      at = Time.utc(2026, 9, 7, 12, 0, 0)
+      @user.update_column(:library_scanned_at, at)
+
+      get scan_status_files_path, headers: { "Accept" => "application/json" }
+      assert_equal @user.reload.library_scanned_stamp, JSON.parse(response.body)["scanned_at"]
+      assert_match(/^2026-09-07T12:00:00\.000000/, JSON.parse(response.body)["scanned_at"],
+                   "microseconds, so two scans in one second are two answers")
+    end
+
+    # UNGATED ON `scannable`, ON PURPOSE. require_scannable! redirects with a flash — the right
+    # refusal for a button, and a 302 to an HTML page is nonsense to a JSON poller. chunk_remote
+    # never renders the element that polls this, and `null` is the true answer there anyway.
+    test "scan_status answers on a non-scannable backend too, rather than redirecting" do
+      FileLayer.current = FileLayer::ChunkRemote.new
+      get scan_status_files_path, headers: { "Accept" => "application/json" }
+      assert_response :success
+      assert_nil JSON.parse(response.body).fetch("scanned_at")
+    end
+
+    # ONE USER'S SCAN IS ONE USER'S. The column is on `users` and the action reads current_user;
+    # this is the guard that keeps it that way if the action is ever "optimised" into a global.
+    test "scan_status reports only the signed-in user's scan" do
+      other = User.create!(email: "other-#{SecureRandom.hex(4)}@example.com",
+                           password: PASSWORD, confirmed_at: Time.current)
+      other.update_column(:library_scanned_at, Time.current)
+
+      get scan_status_files_path, headers: { "Accept" => "application/json" }
+      assert_nil JSON.parse(response.body).fetch("scanned_at")
+    end
+
+    # --- The Files page's own Rescan reload element ---
+
+    # THE FILES PAGE GETS THE RELOAD ELEMENT THE PROJECT PAGE HAS HAD (stage 4, S4-3). Before this
+    # its Rescan said "refresh in a moment" and left the refreshing to the user.
+    test "the files page schedules a poll only after a scan started, and points at the param-free url" do
+      use_scannable_backend
+      get files_path
+      assert_select "[data-controller~=?]", "scanreload", false
+
+      get files_path(scanning: 1)
+      assert_select "[data-controller~=?]", "scanreload", 1
+      assert_select "[data-scanreload-url-value=?]", files_path
+      assert_select "[data-scanreload-status-url-value=?]", scan_status_files_path
+      # NEVER SCANNED: an empty `since`, which the controller reads as "any stamp is news".
+      assert_select "[data-scanreload-since-value=?]", ""
+    end
+
+    test "the poll element carries the stamp the page was rendered with, and keeps the folder" do
+      use_scannable_backend
+      create_node!(@user, node_id: "dir-1", name: "cad", kind: "dir")
+      @user.update_column(:library_scanned_at, Time.utc(2026, 9, 7, 12, 0, 0))
+
+      get files_path(folder: "dir-1", scanning: 1)
+
+      assert_select "[data-scanreload-since-value=?]", @user.reload.library_scanned_stamp
+      assert_select "[data-scanreload-url-value=?]", files_path(folder: "dir-1")
+    end
+
+    test "a non-scannable backend schedules no poll even with the marker" do
+      FileLayer.current = FileLayer::ChunkRemote.new
+      get files_path(scanning: 1)
+      assert_select "[data-controller~=?]", "scanreload", false
     end
   end
 end

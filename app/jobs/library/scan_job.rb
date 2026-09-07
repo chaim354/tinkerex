@@ -96,6 +96,22 @@ module Library
       discover_projects(user)
       intake_project_folders(user)
       intake_models(user)
+      # A SCAN FINISHED, AND THIS IS THE ONLY PLACE THAT SAYS SO (stage 4, S4-3). Read by
+      # FilesController#scan_status, polled by scanreload_controller.js, which reloads the page when
+      # it moves — replacing a fixed 6-second guess.
+      #
+      # LAST, NOT AFTER observer.call, AND THAT IS THE POINT OF THE POSITION: the three steps above
+      # are what a maker expects the reloaded page to SHOW (a discovered project, a filed file, a
+      # catalogued model). All three are rescued, so a bug in one still stamps — correct, because
+      # the reconcile above it committed and that is what "the scan finished" claims.
+      #
+      # NOT IN AN `ensure`. Library::Scanner::UnsafeScan propagates from observer.call (this job
+      # deliberately has no retry_on for it), and a stamp on that path would tell every watching
+      # page the scan succeeded while the catalog was never touched.
+      #
+      # update_column: a bookkeeping stamp, not a user edit — no validations, no callbacks, and
+      # `updated_at` left alone so a scan does not look like a profile change.
+      user.update_column(:library_scanned_at, Time.current)
     end
 
     # THE ONE PLACE THAT DECIDES WHAT MAY BE SERIALIZED INTO THE QUEUE. #perform's header states

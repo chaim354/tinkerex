@@ -12,7 +12,7 @@ export default class extends Controller {
     if (!file) return
     try {
       this.setStatus(`Uploading ${file.name}…`)
-      const nodeId = await uploadChunkFile(file, {
+      const { nodeId } = await uploadChunkFile(file, {
         beginUrl: this.beginUrlValue, finalizeUrl: this.finalizeUrlValue, parentNodeId: this.parentNodeIdValue
       })
       if (this.hasAttachUrlValue && this.attachUrlValue) {

@@ -1853,11 +1853,15 @@ class MeasurePrintTest < ApplicationSystemTestCase
   #   `clipId` (`mp-clip-${col}-${row}`) is unique only WITHIN a grid — ASSERTED, twice, by the
   #     own-sheet test and the print-twice test below.
   #   the `xmlns` on the root <svg> is inert only while pages are appended as NODES — VERIFIED AND
-  #     DELIBERATELY NOT ASSERTED. Nothing in the module serializes (no outerHTML, innerHTML,
-  #     srcdoc or XMLSerializer anywhere in it, grepped), and removing the attribute leaves this
-  #     whole file green — so an assertion on it would go red only for a change that is harmless.
-  #     There is therefore no test below that mentions xmlns, and that is the finished answer to
-  #     the flag rather than an omission.
+  #     DELIBERATELY NOT ASSERTED HERE. Removing the attribute leaves this whole file green, so an
+  #     assertion on it would go red only for a change that is harmless to a PRINT.
+  #     ITS PRECONDITION EXPIRED ON 2026-09-07 AND THE CLAUSE IS CORRECTED RATHER THAN LEFT: this
+  #     note used to read "nothing in the module serializes (no outerHTML, innerHTML, srcdoc or
+  #     XMLSerializer anywhere in it, grepped)", and stage 4 S4-3 added `sheetDocuments`, which
+  #     serialises exactly this element into a saved file. The attribute is therefore no longer
+  #     inert everywhere — `sheetDocuments` strips it before serialising, and measure_export_test.rb
+  #     carries what is and is not provable about that. Nothing below changes: a print still
+  #     appends nodes, and no test in THIS file mentions xmlns.
   #
   # AND EVERY TEST HERE CLEARS ITS FRAMES BEFORE IT RETURNS. in_print_sheet re-visits only when the
   # path CHANGES, so the two or three browser round-trips inside one test share a document — a frame
@@ -2472,15 +2476,17 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # absent AND a click selects anyway, since either half alone is satisfied by a broken view.
   #
   # THE BUTTON COUNT IS PART OF THE CLAIM. `assert_no_button` passes just as happily over a bar
-  # that lost every control, which is exactly the way a template edit fails; four is Print,
-  # Download SVG, Reset and ✕ Image, with the paper <select> not a button and the launch button in
-  # a different span.
+  # that lost every control, which is exactly the way a template edit fails; SIX is Print, Save
+  # sheet, Download SVG, Save SVG, Reset and ✕ Image, with the paper <select> not a button and the
+  # launch button in a different span. It was FOUR until stage 4, S4-3 added the two Save twins
+  # beside their download counterparts — the count moved because the bar really did, which is the
+  # only reason it may ever move.
   test "the actions bar carries no select toggle, and a click selects without one" do
     open_measure_view(@nested_id)
 
     assert_no_button "Select parts", visible: :all
     assert_no_selector "[data-measure-target='selectToggle']", visible: :all
-    assert_selector ".measure-actions button", count: 4
+    assert_selector ".measure-actions button", count: 6
 
     click_plate
 

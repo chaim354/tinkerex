@@ -155,20 +155,32 @@ class GerberTest < ApplicationSystemTestCase
     click_button "View board"
 
     assert_selector ".gerber-viewer[data-gerber-state='ready']"
-    home_x, home_y, home_w, home_h = view_box
-
-    wheel_on(delta_y: -100)
-    x, y, w, h = view_box
+    _home_x, _home_y, home_w, home_h = view_box
+    # THE CURSOR IS A WHOLE PIXEL, AND THE FIXED POINT IS READ THROUGH THE BROWSER'S OWN TRANSFORM.
+    # Chrome stores a synthetic WheelEvent's clientX/clientY as whole numbers (measured 2026-09-07,
+    # Chrome 148: `new WheelEvent("wheel", { clientX: 100.5 }).clientX` is 100, where a PointerEvent
+    # keeps the .5), so a wheel "at the element's centre" lands up to half a pixel off it whenever
+    # that centre is fractional — which it became the moment S4-3's Path row made this page tall
+    # enough to scroll and the scrollbar took an odd number of pixels off the stage. The earlier
+    # spelling asserted the viewBox's CENTRE stayed put within 0.001 mm and failed by 0.0011 mm for
+    # exactly that half pixel. This asks the stronger question directly: the user-space point under
+    # the pixel the event really carries, before and after, through `getScreenCTM()` — the browser's
+    # own client→user mapping, which the module's letterbox arithmetic must agree with.
+    cx, cy = wheel_target
+    before = user_point_at(cx, cy)
+    wheel_on(delta_y: -100, at: [ cx, cy ])
+    after = user_point_at(cx, cy)
+    _x, _y, w, h = view_box
 
     assert_operator w, :<, home_w, "a wheel up must narrow the viewBox"
     assert_operator h, :<, home_h, "the aspect ratio must survive a zoom"
     # ZOOMED ABOUT THE CURSOR, WHICH IS THE WHOLE POINT AND THE PART A NAIVE IMPLEMENTATION GETS
-    # WRONG. The wheel lands at the element's centre, and with `xMidYMid meet` that maps exactly to
-    # the viewBox's centre — so the centre must come back unmoved while the box shrinks around it.
-    # Asserting the width alone would pass on a zoom that scaled about the ORIGIN and threw the
-    # board off screen.
-    assert_in_delta home_x + home_w / 2, x + w / 2, 0.001, "the point under the cursor must stay put"
-    assert_in_delta home_y + home_h / 2, y + h / 2, 0.001, "the point under the cursor must stay put"
+    # WRONG: a zoom about the ORIGIN moves this point by a visible distance (mutation-checked: scaling
+    # about the viewBox's corner instead moved it 0.65 mm on this 10 mm fixture, four orders of
+    # magnitude over the tolerance) and throws the board off screen; a correct one moves it by float
+    # noise, hence 1e-4 mm.
+    assert_in_delta before[0], after[0], 1e-4, "the point under the cursor must stay put (x)"
+    assert_in_delta before[1], after[1], 1e-4, "the point under the cursor must stay put (y)"
     assert_no_console_errors
   end
 
@@ -449,15 +461,44 @@ class GerberTest < ApplicationSystemTestCase
     # `clientX` and `clientY` — so this constructs the event the listener actually sees.
     # `cancelable: true` matters: the handler calls `preventDefault()`, and a non-cancelable event
     # makes that a silent no-op plus a console warning the sweep would catch.
-    def wheel_on(selector = ".gerber-viewer", delta_y:)
+    # `at:` is a WHOLE-PIXEL [clientX, clientY]; without it the element's centre is rounded, because
+    # Chrome stores a synthetic WheelEvent's coordinates as whole numbers and an unrounded centre
+    # would silently land half a pixel from where the test believes it did (see the zoom test).
+    def wheel_on(selector = ".gerber-viewer", delta_y:, at: nil)
+      cx, cy = at || wheel_target(selector)
       page.execute_script(<<~JS)
         (() => {
           const el = document.querySelector("#{selector} svg")
-          const r = el.getBoundingClientRect()
           el.dispatchEvent(new WheelEvent("wheel", {
-            deltaY: #{delta_y}, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+            deltaY: #{delta_y}, clientX: #{cx}, clientY: #{cy},
             bubbles: true, cancelable: true
           }))
+        })()
+      JS
+    end
+
+    # The element's centre, rounded to the pixel a WheelEvent can actually carry.
+    def wheel_target(selector = ".gerber-viewer")
+      page.evaluate_script(<<~JS)
+        (() => {
+          const r = document.querySelector("#{selector} svg").getBoundingClientRect()
+          return [ Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2) ]
+        })()
+      JS
+    end
+
+    # THE USER-SPACE POINT UNDER A CLIENT PIXEL, BY THE BROWSER'S OWN TRANSFORM. `getScreenCTM()`
+    # on the root <svg> folds in the viewBox and preserveAspectRatio, so this is the answer the
+    # module's `toUserSpace` must agree with, computed by something that is not the module.
+    def user_point_at(cx, cy, selector = ".gerber-viewer")
+      page.evaluate_script(<<~JS)
+        (() => {
+          const svg = document.querySelector("#{selector} svg")
+          const pt = svg.createSVGPoint()
+          pt.x = #{cx}
+          pt.y = #{cy}
+          const p = pt.matrixTransform(svg.getScreenCTM().inverse())
+          return [ p.x, p.y ]
         })()
       JS
     end

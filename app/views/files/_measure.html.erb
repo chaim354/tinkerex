@@ -13,7 +13,27 @@
 <div class="measure-view"
      data-controller="measure"
      data-measure-url-value="<%= geometry_file_path(@node.node_id) %>"
-     data-measure-name-value="<%= @node.name %>">
+     data-measure-name-value="<%= @node.name %>"
+     <%#
+       SAVE TO LIBRARY (stage 4, S4-3; story 2.12). Everything Measure produced was a browser
+       download and nothing landed on the share, so an exported outline lived in ~/Downloads while
+       the file it came from lived on the NAS.
+
+       THE TWO DOORS, PICKED BY THE DEPLOYMENT AND NOT BY THE USER (§14a). `port_writable` names
+       WHICH DOOR the bytes go in: true (share, s3) means one multipart POST to FilesController
+       #create; false (chunk_remote) means the two-phase presigned flow, where the bytes go browser
+       -> storage and never through Rails (§15). Both are rendered as values rather than one
+       branch, because the controller has to choose in JavaScript anyway and
+       importer_controller.js already picks between the same two functions the same way.
+
+       THE DESTINATION IS THE SOURCE FILE'S OWN PARENT, so an export lands beside the thing it was
+       exported from. Empty at the library root, which lib/chunk_upload reads as "no parent".
+     %>
+     data-measure-port-writable-value="<%= capabilities.port_writable? %>"
+     data-measure-create-url-value="<%= files_path %>"
+     data-measure-begin-url-value="<%= begin_upload_files_path %>"
+     data-measure-finalize-url-value="<%= finalize_upload_files_path %>"
+     data-measure-parent-node-id-value="<%= @node.parent_node_id %>">
   <div class="measure-stage" data-measure-target="stage"></div>
   <div class="measure-bar">
     <span class="measure-dims" data-measure-target="dims"></span>
@@ -38,8 +58,19 @@
       <button type="button" class="btn small" data-action="measure#print"
               data-measure-target="printButton">Print all</button>
       <%#
-        VISIBLE TEXT IS CONSTANT, THE ACCESSIBLE NAME IS NOT. The bar already carries four other
-        controls, so a second count-bearing label beside "Print 3 parts" is noise — but the button
+        SAVE, BESIDE PRINT. Constant text, for the reason the SVG button's is constant: the bar
+        carries seven controls now and a second count-bearing label beside "Print 3 parts" is
+        noise. The accessible name tracks the target, written by the same refreshPrintBar() from
+        the same targetNoun(), so the four labels can only drift together.
+      %>
+      <button type="button" class="btn small ghost" data-action="measure#savePrint"
+              data-measure-target="savePrintButton"
+              aria-label="Save all as a print sheet in the library"
+              title="Save all as a print sheet in the library">Save sheet</button>
+      <%#
+        VISIBLE TEXT IS CONSTANT, THE ACCESSIBLE NAME IS NOT. The bar already carries SIX other
+        controls since stage 4, S4-3 added the two Save twins (it was four), so a second
+        count-bearing label beside "Print 3 parts" is noise — but the button
         must still say what it will do, so refreshPrintBar() writes aria-label/title from the same
         targetNoun() the Print label uses. The literals here are the at-rest state the controller
         writes on draw(); they must agree with it, exactly as "Print all" does above.
@@ -51,6 +82,10 @@
       <button type="button" class="btn small ghost" data-action="measure#downloadSvg"
               data-measure-target="svgButton"
               aria-label="Download all as SVG" title="Download all as SVG">Download SVG</button>
+      <button type="button" class="btn small ghost" data-action="measure#saveSvg"
+              data-measure-target="saveSvgButton"
+              aria-label="Save all as SVG in the library"
+              title="Save all as SVG in the library">Save SVG</button>
       <button type="button" class="btn small ghost" data-action="measure#reset">Reset</button>
       <button type="button" class="btn small ghost" aria-label="Return to image"
               data-action="measure#showPoster">✕ Image</button>

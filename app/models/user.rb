@@ -174,6 +174,16 @@ class User < ApplicationRecord
 
   def handle_locked? = maker_projects.published.exists?
 
+  # THE ONE SPELLING OF "when did a library scan last finish" (stage 4, S4-3). The page renders it
+  # into a data attribute and scanreload_controller.js compares the poll's answer to it as a
+  # STRING, so the two sides must format identically or the comparison is either never equal (a
+  # permanent reload loop) or always equal (a poll that never fires). One method, both callers.
+  #
+  # SIX DIGITS, NOT `.to_i`. §15: "a timestamp compared at .to_i is a guard that usually cannot
+  # fail" — two scans inside one second would read as one, which on this poll means the page never
+  # notices the second. Both Postgres and SQLite keep microseconds here.
+  def library_scanned_stamp = library_scanned_at&.iso8601(6)
+
   # A CLAIMED HANDLE IS FROZEN WHILE ANYTHING IS PUBLISHED -- renaming or clearing it would 404
   # every /u/<handle>/<slug> already handed out. Guarded on `handle_in_database.present?` so the
   # FIRST claim is never blocked, and on :update so a fresh record never queries for projects it

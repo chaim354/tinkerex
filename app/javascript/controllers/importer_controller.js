@@ -116,7 +116,7 @@ export default class extends Controller {
         const parent = this.created.folder_map[f.dir] ?? this.created.folder_map[""]
         this.setStatus(`Uploading ${f.name} (${i + 1}/${this.files.length})…`)
         try {
-          const nodeId = this.portWritableValue
+          const { nodeId } = this.portWritableValue
             ? await uploadPortFile(f.blob, { createUrl: this.portCreateUrlValue, parentNodeId: parent })
             : await uploadChunkFile(f.blob, { beginUrl: this.beginUrlValue, finalizeUrl: this.finalizeUrlValue, parentNodeId: parent })
           await this.postJSON(this.created.attach_url, { node_id: nodeId, cover: i === cover })

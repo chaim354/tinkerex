@@ -5,10 +5,12 @@ require "application_system_test_case"
 # On share/s3 the scan is a background job — an unbounded NAS walk or bucket listing — so the
 # request that starts it cannot show the result. `projects/_attachments.html.erb` therefore renders
 #
-#     <span data-controller="scanreload" data-scanreload-url-value="<%= project_path(@project) %>">
+#     <span data-controller="scanreload" data-scanreload-url-value="…the param-free project path…"
+#           data-scanreload-status-url-value="/files/scan_status" data-scanreload-since-value="…">
 #
-# when `@scan_started && capabilities.scannable?`, and `scanreload_controller.js` navigates the page
-# to that param-FREE url 6000 ms later. Both halves of that are invisible below the browser:
+# when `@scan_started && capabilities.scannable?`, and `scanreload_controller.js` POLLS
+# `/files/scan_status` every 2000 ms until the answer differs from the stamp the page rendered with,
+# then navigates to that param-FREE url. Both halves of that are invisible below the browser:
 #
 #   * `test/stimulus_hygiene_test.rb` proves the identifier RESOLVES TO A FILE, and nothing more.
 #     A controller whose `connect()` throws, or is misspelled, or whose `static values` no longer
@@ -21,10 +23,12 @@ require "application_system_test_case"
 # That is CLAUDE.md §15's recorded dominant failure mode — a green suite over something that never
 # runs — and it is what this file exists to close. It asserts the NAVIGATION, not the attribute.
 #
-# IT COSTS 16.1 s, WHICH IS 17 SYSTEM TESTS' WORTH BY THE README'S OWN ARITHMETIC, and 15 of those
-# seconds are two waits that cannot be shortened from here: the controller's own 6000 ms delay, and
-# NO_LOOP_WATCH below. That is the price of the property — "it fires once" cannot be observed any
-# faster than the timer it is about — and it is why this is ONE test rather than four.
+# IT IS EXPENSIVE, AND MOST OF THAT IS NO_LOOP_WATCH: the only way to observe that a poll does NOT
+# navigate is to outlive several of its intervals. The reload half is now as fast as the scan — the
+# stamp is written in Ruby mid-test and the very next 2000 ms poll sees it — where the 6000 ms guess
+# it replaced had to be waited out in full. Two tests, because "it fires when the scan finished" and
+# "it does not fire when nothing finished" are two claims and the second is the one the guess could
+# not make at all.
 #
 # NO LIBRARY FILES OF ITS OWN. The behaviour under test is a timer and a url; a project with no
 # attachments renders the panel, the button and the flash exactly as one with fifty would. It still
@@ -60,9 +64,21 @@ require "application_system_test_case"
 #      turned that RED back to a full GREEN run — Selenium reports the empty <span> as not
 #      displayed, so the default `visible: :visible` makes the absence assertion true whether or
 #      not the element is there. Do not "tidy" those two kwargs away.
+#
+# MUTATIONS 1, 3 AND 4 ARE INHERITED FROM THE 6000 ms VERSION AND WERE NOT RE-RUN AT S4-3; they are
+# about `connect()`, the view's guard and the kwargs, none of which this change touched. MUTATION 2
+# is likewise unchanged in kind. WHAT S4-3 ADDED ITS OWN MUTATION FOR is the COMPARISON, which is
+# the whole difference from the guess: `if (stamp && stamp !== this.sinceValue)` -> `if (stamp ===
+# undefined)` makes the poll never navigate, and the first test below goes RED with
+# `expected "/projects/desk-lamp?scanning=1" to equal "/projects/desk-lamp"`. The second test
+# ("no scan finishing means no reload") is the guard for the other direction and CANNOT be
+# mutation-checked from the comparison: dropping `&& stamp !== this.sinceValue` leaves it green,
+# because nothing is stamped there and `stamp` is null either way. It is the SECOND test that makes
+# the first one's mid-test stamp load-bearing rather than decorative.
 class ProjectScanReloadTest < ApplicationSystemTestCase
-  # Comfortably past the controller's 6000 ms delay, and the price of asserting that NOTHING
-  # happens: the only way to observe a timer not firing is to outlive the moment it would have.
+  # Comfortably past several of the controller's 2000 ms poll intervals, and the price of asserting
+  # that NOTHING happens: the only way to observe a poll not navigating is to outlive the moments it
+  # would have.
   NO_LOOP_WATCH = 9
 
   setup do
@@ -85,8 +101,8 @@ class ProjectScanReloadTest < ApplicationSystemTestCase
     # The async branch: Library::ScanJob is enqueued and the page says so. Both of these are
     # request-level facts already pinned by project_scan_button_test.rb — they are here as the
     # PRECONDITION for what follows, so a failure further down can be read as "the reload did not
-    # happen" rather than "the button did not work". Both are instant DOM/url reads, with the
-    # controller's whole 6 s to complete before the page moves under them.
+    # happen" rather than "the button did not work". Both are instant DOM/url reads, and nothing can
+    # move the page under them: no scan has stamped anything yet, so every poll answers null.
     assert_current_path project_path(@project, scanning: 1)
     assert_selector ".flash-notice", text: /Scanning your library/i
 
@@ -96,11 +112,17 @@ class ProjectScanReloadTest < ApplicationSystemTestCase
     # `assert_no_selector` twin below pass whether the element is there or not.
     assert_selector "[data-controller~='scanreload']", visible: :all
 
+    # THE SCAN FINISHES — IN RUBY, BECAUSE ActiveJob's test adapter never runs what it queues.
+    # A system test shares its database connection with the server thread, so this row is what the
+    # browser's next poll reads. Stamping it is exactly what Library::ScanJob#perform's last line
+    # does, and pinning that line's EFFECT here rather than re-running the job keeps this test about
+    # the browser half.
+    @user.update_column(:library_scanned_at, Time.current)
+
     # THE ASSERTION THIS FILE EXISTS FOR: nobody drives this navigation. No click, no `visit`, no
     # Turbo submission — the browser leaves `?scanning=1` on its own, which it can only do if the
-    # controller was constructed, `connect()` was called, `urlValue` read the attribute, and the
-    # timer fired. `wait:` is explicit because 6000 ms outlives Capybara's default budget (10 s here
-    # would work; 15 s leaves headroom for a loaded runner, and costs nothing on a green run).
+    # controller was constructed, connect() started the poll, the poll read a stamp different from
+    # the one this page rendered with, and urlValue named where to go.
     #
     # A STRING EXPECTATION IS COMPARED AGAINST `request_uri`, QUERY INCLUDED (Capybara defaults
     # `ignore_query: false`), which is the whole reason this can tell the two urls apart. Adding
@@ -120,6 +142,22 @@ class ProjectScanReloadTest < ApplicationSystemTestCase
     # navigated away, so waiting 10 s for it to come back is 10 s spent confirming a failure.
     assert_current_path project_path(@project), wait: 0
 
+    assert_no_console_errors
+  end
+
+  # THE POLL DOES NOT RELOAD ON A SCAN THAT NEVER FINISHED, which is the whole difference between
+  # this and the 6-second guess it replaced: the old controller navigated whether or not anything
+  # had happened. NO_LOOP_WATCH outlives several poll intervals, so this is a claim about the
+  # comparison rather than about timing.
+  test "no scan finishing means no reload" do
+    visit project_path(@project)
+    click_on "Scan folder"
+    assert_current_path project_path(@project, scanning: 1)
+    assert_selector "[data-controller~='scanreload']", visible: :all
+
+    sleep NO_LOOP_WATCH
+
+    assert_current_path project_path(@project, scanning: 1), wait: 0
     assert_no_console_errors
   end
 end

@@ -641,5 +641,81 @@ module Web
       get file_path(alice_node)
       assert_redirected_to files_path
     end
+
+    # THE JSON DOOR CARRIES THE SWEEP'S OWN SENTENCE (stage 4, S4-3). #create's HTML branch has
+    # always answered with project_intake_notice; its JSON branch answered `{node_id:}` alone,
+    # deliberately, because its only caller was the model importer, which never uploads into a
+    # PROJECT folder. Save-to-library is the second caller and does exactly that — so the fact the
+    # old comment called "not threaded in" is now a fact somebody reads.
+    #
+    # THE WHOLE SENTENCE, FILING CLAUSE INCLUDED, is what makes this a claim about the SHARED
+    # builder rather than about a lead-in: an .svg dropped at a project root is swept into
+    # `design/` in the same request (project_folder_intake_test.rb's ShareTest asserts the
+    # identical string off the HTML branch), so a JSON branch that only said "Uploaded x." would
+    # be a second, quieter wording of one fact — §14a's one-condition-two-answers.
+    test "a port upload's JSON answer carries the same notice its HTML answer would" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      folder = project.ensure_library_folder!(user)
+
+      # StringIO, not fixture_file_upload: this suite's sibling (project_folder_intake_test.rb)
+      # records a real parallel-worker race on a shared tmpdir path, and there is no `sample.svg`
+      # fixture to prefer anyway. `original_filename` is all the role/folder derivation reads.
+      post files_path, params: { parent_node_id: folder.node_id,
+                                 file: Rack::Test::UploadedFile.new(
+                                   StringIO.new("<svg xmlns='http://www.w3.org/2000/svg'/>".b),
+                                   "image/svg+xml", original_filename: "sample.svg"
+                                 ) },
+                       headers: { "Accept" => "application/json" }
+
+      assert_response :created
+      body = JSON.parse(response.body)
+      assert body["node_id"].present?
+      assert_equal "Uploaded sample.svg. Filed sample.svg into design/.", body["notice"]
+    end
+
+    # THE FILE PAGE FINISHES ITS OWN PREVIEW (stage 4, S4-3; story 2.11). Until now only the GRIDS
+    # polled — thumbs_controller.js ran on files/_list and files/_grid and on nothing else — so a
+    # page opened while a render was in flight showed "Generating preview…" until the maker
+    # reloaded it by hand. The poll cell is on the preview ROW, so it covers every branch below it
+    # at once (measure poster, 3D poster, Gerber poster, the plain thumbnail) rather than four
+    # copies of one marker.
+    test "a page whose preview is still rendering polls for it and asks to be reloaded" do
+      sign_in
+      node_id = upload("widget.3mf", "zzz".b)   # #create enqueues; the row is pending
+
+      get file_path(node_id)
+
+      assert_response :success
+      assert_select ".preview-row[data-controller~=?]", "thumbs"
+      assert_select ".preview-row[data-thumbs-url-value=?]", thumbnails_files_path
+      assert_select ".preview-row[data-thumbs-reload-value=?]", "true"
+      assert_select "[data-thumbs-target='cell'][data-node-id=?][data-thumbs-pending='true']", node_id
+    end
+
+    test "a page whose preview is ready declares nothing pending, so it polls nothing" do
+      user = sign_in
+      node_id = upload("widget.3mf", "zzz".b)
+      token = FileLayer.current.stat(user, node_id:).content_token
+      preview = user.maker_previews.find_by!(node_id:, version_id: token, kind: "thumbnail")
+      preview.update!(status: "ready")
+      preview.asset.attach(io: StringIO.new("\x89PNG\r\n\x1A\n".b), filename: "t.png",
+                           content_type: "image/png")
+
+      get file_path(node_id)
+
+      assert_select "img.preview-image"
+      assert_select "[data-thumbs-target='cell']", count: 0
+    end
+
+    # A NAME NOTHING CAN RENDER HAS NOTHING COMING. Maker::Previews::Enqueue creates no row for it
+    # (skip_unrenderable), so @thumbnail is nil and a cell here would poll forever for an answer
+    # the endpoint would only ever call `unsupported`.
+    test "a file no renderer claims declares nothing pending" do
+      sign_in
+      node_id = upload("archive.tar", "zzz".b)
+      get file_path(node_id)
+      assert_select "[data-thumbs-target='cell']", count: 0
+    end
   end
 end

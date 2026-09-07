@@ -108,6 +108,21 @@
   </div>
 </div>
 
+<%# THE RESCAN RELOAD (stage 4, S4-3). Same element, same rules and the same controller as the
+    project page's (projects/_attachments.html.erb): rendered only on the async path, pointed at
+    this page WITHOUT ?scanning=1 so the reloaded page schedules nothing, and carrying the scan
+    stamp this render read so the poll can tell "finished" from "still going". `files_query_base`
+    is the folder/type/query the user was in, so the reload lands where they were.
+    §14d — a data-controller name that resolves to nothing is a SILENT no-op, which is why
+    app/javascript/controllers/scanreload_controller.js must exist and stimulus_hygiene_test
+    guards that it does. %>
+<% if params[:scanning] == "1" && capabilities.scannable? %>
+  <span class="muted" data-controller="scanreload"
+        data-scanreload-url-value="<%= files_path(files_query_base) %>"
+        data-scanreload-status-url-value="<%= scan_status_files_path %>"
+        data-scanreload-since-value="<%= current_user.library_scanned_stamp %>"></span>
+<% end %>
+
 <% if project_upload %>
   <p class="upload-to-project upload-caption muted">Uploads go to <strong><%= current_project.name %></strong> and are attached to it.</p>
 <% end %>

@@ -63,6 +63,21 @@
   <%# FileInfo#mtime is unix NANOSECONDS, the same convention as the nodes column this replaced.
       Reading it as seconds is the nanos-overflow bug this codebase has shipped twice. %>
   <dt>Modified</dt><dd><%= @info.mtime ? Time.at(@info.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M:%S") : "—" %></dd>
+  <%# WHERE IT IS, AND A BUTTON THAT PUTS IT ON THE CLIPBOARD (stage 4, S4-3; story 2.10). The
+      path is root-relative on purpose — see FilesController#show. `dl.meta dd` is already mono
+      (components.css), so the value needs no class of its own for its font; `.file-path-value` is
+      what the copy fallback selects when the clipboard API is unavailable, which is the ordinary
+      case on a self-hosted plain-http box.
+
+      LAST IN THE LIST, because it is the longest value here and the four-column layout above 900px
+      pairs rows: a wrapping path at the end of the grid disturbs nothing above it. %>
+  <% if @library_path %>
+    <dt>Path</dt>
+    <dd class="file-path" data-controller="copy" data-copy-text-value="<%= @library_path %>">
+      <span class="file-path-value" data-copy-target="source"><%= @library_path %></span>
+      <button type="button" class="linkbtn" data-action="copy#copy">Copy</button>
+    </dd>
+  <% end %>
 </dl>
 
 <% if @projects.present? || @attached_projects.present? %>
@@ -110,7 +125,30 @@
   </div>
 <% end %>
 
-<div class="preview-row<%= " has-settings" if @thumbnail&.metadata.present? %>">
+<%# THE PAGE FINISHES ITS OWN PREVIEW (stage 4, S4-3). One `thumbs` controller on the row covers
+    every branch below — the Measure poster, the 3D poster, the Gerber poster and the plain
+    thumbnail all show the same server render, so one poll answers for all four instead of four
+    copies of a marker. It costs a connected controller and ZERO requests on a page with nothing
+    pending: `pendingIds()` is empty, so `poll()` returns before it fetches.
+
+    RELOAD MODE, NOT AN IMAGE SWAP, AND THE REASON IS THAT THE WHOLE PAGE IS STALE. The four
+    posters have four different resting markups (a poster plus a download link, a status paragraph
+    a Gerber controller targets, a bare sentence), so swapping an image in would put the JS in
+    charge of markup the ERB owns, in four shapes. And the picture is not the only thing waiting on
+    that render: the Laser Settings and CNC panels are drawn from @thumbnail.metadata, and Size and
+    Modified come from the same stat. A reload is one mechanism and the honest one. %>
+<div class="preview-row<%= " has-settings" if @thumbnail&.metadata.present? %>"
+     data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>"
+     data-thumbs-reload-value="true">
+  <%# THE POLL SET, DECLARED RATHER THAN INFERRED. Grid cells announce themselves as pending by
+      holding a `.thumb-spinner`; there is no spinner here, so this element says so outright and
+      the controller clears the flag the moment an answer arrives. Rendered ONLY while a render is
+      genuinely in flight: a name with no renderer has no row and nothing coming, and a ready row
+      has arrived. %>
+  <% if %w[pending processing].include?(@thumbnail&.status) %>
+    <span class="preview-poll" hidden data-thumbs-target="cell"
+          data-node-id="<%= @node.node_id %>" data-thumbs-pending="true"></span>
+  <% end %>
   <div class="preview">
   <% if @info.content_token.nil? %>
     <p class="muted">No content yet.</p>

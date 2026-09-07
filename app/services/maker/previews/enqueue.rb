@@ -105,8 +105,10 @@ module Maker
         # current file; that is a lie and the spinner is the honest replacement. A RENDERER bump is
         # not that case: the stored artifact still depicts exactly this file, it was merely built by
         # older code. Blanking it replaces a correct picture with a spinner for as long as the job
-        # takes — and the detail page does not poll, so it stays a spinner until someone reloads.
-        # Shipped that way briefly and it read as "generating preview is broken", which is fair.
+        # takes. Since stage 4, S4-3 the detail page polls a `pending` row and reloads when it lands,
+        # so the spinner is no longer permanent — but it is still a spinner over a picture that was
+        # correct, for the whole render, on every renderer bump. Shipped that way briefly (before the
+        # poll existed) and it read as "generating preview is broken", which is fair.
         #
         # Leaving `ready` alone means the old artifact stays visible until the job swaps it. The
         # job is safe either way: `commit_if_current` compares BOTH axes against what it captured,

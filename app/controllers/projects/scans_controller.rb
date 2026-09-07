@@ -62,12 +62,16 @@ module Projects
     #
     # `scanning: 1` is what the page reads to schedule its one reload; scanreload_controller.js
     # navigates to the param-FREE url, which is what stops it looping.
+    #
+    # THE NOTICE NO LONGER PROMISES A TIMED REFRESH (stage 4, S4-3). It used to say "in a moment —
+    # reload again if nothing has appeared", which was the 6000 ms guess admitting to being one.
+    # The element beside it now polls /files/scan_status until the scan actually stamps
+    # users.library_scanned_at, so "when the scan finishes" is a claim the page can keep.
     def enqueue_scan
       Library::ScanJob.enqueue_for(current_user)
       redirect_to project_path(@project, scanning: 1),
-                  notice: "Scanning your library for new files. This page will refresh in a " \
-                          "moment — a large library takes longer, so reload again if nothing " \
-                          "has appeared yet."
+                  notice: "Scanning your library for new files. This page refreshes when the " \
+                          "scan finishes."
     end
 
     # CHUNK_REMOTE — SYNCHRONOUS, AND THE ASYMMETRY IS THE POINT. There is no scan here, so there is

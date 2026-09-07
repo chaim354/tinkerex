@@ -227,9 +227,12 @@
   .measure-stage { display: none; width: min(100%, 78vh); aspect-ratio: 1; margin: 0 auto; }
   .measure-stage svg { width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
   .measure-stage svg.is-panning { cursor: grabbing; }
-  .measure-bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  /* Seven controls since stage 4, S4-3 (paper, Print, Save sheet, Download SVG, Save SVG, Reset,
+     ✕ Image), so the row WRAPS rather than squashing them: flex items shrink by default, and a
+     nowrap row of seven at 375px pushes the page sideways (design-system rule 11). */
+  .measure-bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
   .measure-launch { display: inline-flex; gap: 8px; }
-  .measure-actions { display: none; gap: 4px; }
+  .measure-actions { display: none; gap: 4px; flex-wrap: wrap; }
   .measure-dims { flex: 1; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
   .measure-fallback { text-align: center; padding: 24px; }
   /* The controller adds --ready on a successful render: reveal the outline stage, hide the poster. */
@@ -355,4 +358,13 @@
   /* --- Schematics section on the project page (projects/_schematics.html.erb) --- */
   .schematics-list { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   .schematics-list li { display: flex; align-items: center; gap: 8px; }
+
+  /* --- The library path row (stage 4, S4-3). `dl.meta dd` is already mono and already wraps
+     anywhere (components.css), so this only lays the value and its button on one line and keeps
+     the button from stretching. A page rule qualified inside `.meta`, never a redeclaration of
+     `dl.meta` (design-system rule 3). --- */
+  .meta .file-path { display: flex; align-items: baseline; gap: 8px; }
+  .meta .file-path-value { min-width: 0; overflow-wrap: anywhere; }
+  .meta .file-path .linkbtn { flex: 0 0 auto; }
+  /* ---- END OF S4-3 TASK C's ADDITIONS. Task D (Save to library) appends below. ---- */
 }

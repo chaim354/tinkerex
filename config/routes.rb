@@ -78,6 +78,11 @@ Rails.application.routes.draw do
       # Current-version thumbnail state for a batch of node ids (JSON), for the grid's
       # poll-until-ready. Session-authed web endpoint, not the device-token v1 previews API.
       get "thumbnails"
+      # "Has a library scan finished since the page I am looking at was rendered?" (stage 4, S4-3).
+      # JSON, polled by scanreload_controller.js after a Rescan, which is what replaced a fixed
+      # 6-second guess at how long a NAS walk takes. Session-authed web endpoint like #thumbnails
+      # beside it, not the device-token v1 API.
+      get "scan_status"
     end
     member do
       get "blob"

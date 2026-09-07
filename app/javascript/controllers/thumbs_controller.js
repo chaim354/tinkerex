@@ -1,14 +1,22 @@
 import { Controller } from "@hotwired/stimulus"
 
-// Polls the web thumbnails endpoint for cells whose thumbnail isn't ready yet, and swaps the
-// spinner for the image when it lands. Stops when nothing is pending (or after a bounded number
-// of tries), so a permanently-unsupported file doesn't poll forever.
+// Polls the web thumbnails endpoint for cells whose thumbnail isn't ready yet. Stops when nothing
+// is pending (or after a bounded number of tries), so a permanently-unsupported file doesn't poll
+// forever.
+//
+// TWO SURFACES, TWO ANSWERS TO "IT LANDED", AND THE MODE IS DECLARED BY THE PAGE. A grid cell holds
+// a `.thumb-spinner` and gets the image swapped in where the spinner was. The FILE PAGE (stage 4,
+// S4-3) has no thumb box at all — its poster is the page's own full-width preview, and the laser/CNC
+// settings panel, Size and Modified all come from the same render — so it sets `reload` and declares
+// its pending cell with `data-thumbs-pending`, and the whole page is fetched again once the answer
+// arrives. Grids set neither and behave exactly as they did before that mode existed.
 export default class extends Controller {
-  static values = { url: String }
+  static values = { url: String, reload: Boolean }
   static targets = ["cell"]
 
   connect() {
     this.tries = 0
+    this.reloaded = false
     this.poll()
   }
 
@@ -16,9 +24,13 @@ export default class extends Controller {
     clearTimeout(this.timer)
   }
 
+  // A CELL IS PENDING IF IT LOOKS IT OR SAYS IT. A grid cell announces itself by holding a
+  // `.thumb-spinner`; the file page's cell has no thumb box at all (its poster is the page's own
+  // full-width preview), so it declares `data-thumbs-pending` instead and the flag is cleared as
+  // soon as an answer arrives — so a page never polls past the answer it was waiting for.
   pendingIds() {
     return this.cellTargets
-      .filter((c) => c.querySelector(".thumb-spinner"))
+      .filter((c) => c.querySelector(".thumb-spinner") || c.dataset.thumbsPending === "true")
       .map((c) => c.dataset.nodeId)
   }
 
@@ -43,11 +55,25 @@ export default class extends Controller {
         for (const cell of this.cellTargets) {
           const entry = data[cell.dataset.nodeId]
           if (!entry) continue
-          if (entry.status === "ready" && entry.url) this.setImage(cell, entry.url)
+          if (entry.status === "ready" && entry.url) {
+            const declared = cell.dataset.thumbsPending === "true"
+            delete cell.dataset.thumbsPending
+            this.setImage(cell, entry.url)
+            // RELOAD MODE (stage 4, S4-3), for a surface whose poster is not a `.thumb` and whose
+            // OTHER content — the laser/CNC settings panel, Size, Modified — came from the same
+            // render. `setImage` above is a no-op there (no `.thumb` to fill), so the reload is
+            // what makes the answer visible. Only for a cell that DECLARED itself pending, so a
+            // grid never reloads: its cells are found by their spinner and behave exactly as
+            // before this mode existed.
+            if (declared && this.reloadValue) return this.reloadOnce()
+          }
           // A terminal non-ready state (no permissive renderer for this file here, or a render
           // error) resolves the spinner to a static icon — otherwise it would spin forever and
           // keep the cell in the poll set.
-          else if (entry.status === "unsupported" || entry.status === "failed") this.setIcon(cell)
+          else if (entry.status === "unsupported" || entry.status === "failed") {
+            delete cell.dataset.thumbsPending
+            this.setIcon(cell)
+          }
         }
       }
     } catch (_e) {
@@ -66,6 +92,17 @@ export default class extends Controller {
     img.alt = ""
     thumb.innerHTML = ""
     thumb.appendChild(img)
+  }
+
+  // ONCE PER CONNECT, WHICH IS WHAT BOUNDS THIS. The reloaded page renders the ready poster, so no
+  // cell declares itself pending, so nothing polls and nothing reloads — the loop closes on the
+  // server's own answer rather than on a counter. The guard is here anyway because a page that
+  // reloaded itself repeatedly would be unusable and unrecoverable by the user.
+  reloadOnce() {
+    if (this.reloaded) return
+    this.reloaded = true
+    clearTimeout(this.timer)
+    window.location.reload()
   }
 
   // Every cell still holding a spinner becomes a static badge. Used when polling gives up.
