@@ -173,7 +173,11 @@ module Web
       assert_select "p.muted", text: /No files in this project yet/, count: 0
     end
 
-    test "a repository inside the folder is a nested section, badged, linking to its commit and history pages, with its files inside it" do
+    # A REPOSITORY IS THE ONE SECTION THAT IS CLOSED AND NOT UNROLLED (2026-09-07, at the user's
+    # request). The summary is unchanged — name, `repo` badge, Commits and History — and everything
+    # BELOW it is now one mount point instead of tiles and a section per subdirectory. The two
+    # `details[open]` cases further down are the non-repo control and stay exactly as they are.
+    test "a repository inside the folder is a nested section, badged, closed by default, browsed rather than unrolled" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
       folder = project.ensure_library_folder!(user)
@@ -181,6 +185,10 @@ module Web
                                     parent_node_id: folder.node_id)
       user.nodes.create!(node_id: "d-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
                          parent_node_id: firmware.node_id)
+      # A SUBDIRECTORY OF THE REPO, which used to render a nested section of its own. It is the
+      # half a test asserting only "no tiles" would miss: the recursion is a separate `render`
+      # call from the tiles, so dropping one and keeping the other leaves the tree half-unrolled.
+      user.nodes.create!(node_id: "d-src", name: "src", kind: "dir", parent_node_id: firmware.node_id)
       folder_file!(user, project, name: "main.c", node_id: "n-mainc", parent: firmware.node_id)
 
       get project_path(project)
@@ -190,7 +198,24 @@ module Web
         assert_select "a[href=?]", repo_commit_path(firmware.node_id)
         assert_select "a[href=?]", repo_history_path(firmware.node_id)
       end
-      assert_select ".attachment-tile .grid-name", text: "main.c"
+      # CLOSED. Asserted as "no OPEN details whose summary names firmware" rather than as
+      # "a details without [open]", because `assert_select` cannot express the absence of an
+      # attribute and the count-0 form of the positive selector says the same thing exactly.
+      assert_select ".file-tree-section details[open] summary", text: /firmware/, count: 0
+
+      # THE BROWSER, and the three values the server has to write for it: without the children URL
+      # it fetches nothing, without the root it lists the LIBRARY root (every project, not this
+      # repo), and without the file template its file rows are unfollowable.
+      assert_select ".file-tree-section .repo-browser[data-controller=?]", "filebrowser"
+      assert_select ".repo-browser[data-filebrowser-children-url-value=?]", library_children_path
+      assert_select ".repo-browser[data-filebrowser-root-value=?]", firmware.node_id
+      assert_select ".repo-browser[data-filebrowser-file-url-template-value=?]", file_path("__ID__")
+
+      # NEITHER HALF OF THE UNROLLED BODY: no tile for the repo's own file, and no section for its
+      # subdirectory. `src` is checked on section SUMMARIES rather than on the whole page, since
+      # the browser is empty markup on the server and names no entry at all.
+      assert_select ".attachment-tile .grid-name", text: "main.c", count: 0
+      assert_select ".file-tree-section details summary", text: /src/, count: 0
       # No standalone Repositories group any more — a repo is a section now.
       assert_select ".attachment-group-head", text: /Repositories/, count: 0
     end

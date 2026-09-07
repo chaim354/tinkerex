@@ -73,6 +73,35 @@ module Web
       assert_equal kinds.sort_by { |k| k == "dir" ? 0 : 1 }, kinds, "all dirs precede all files"
     end
 
+    # THE CHOOSER HIDES WHAT THE FILES PAGE HIDES, and until 2026-09-07 it did not — it offered
+    # `.git` as a destination folder, which every write guard then refuses (Library::ReservedNames),
+    # so the one thing a user could do with that row was earn a refusal. `*.ptr` stubs and dot-files
+    # went the same way. Node.visible_entries is the SAME scope FilesController#index filters by, so
+    # there is one definition of "clutter" and not a second one here (§14d).
+    #
+    # BOTH ARMS, because they are different scopes: `files=1` widens what is listed and must not
+    # widen what is hidden, and the folder-only default has its own `where(kind: "dir")` on top.
+    #
+    # Mutation-checked (§15): `visible_entries` -> `present` turns the `.git`/`.ptr`/`.DS_Store`
+    # rows red while every other case in this file stays green.
+    test "children hides the .git marker, .ptr stubs and dot-files" do
+      folder = node("repo", "dir", nil)
+      node(Library::RepoMetadata::DIR_NAME, "dir", folder)
+      node(".hidden", "dir", folder)
+      node("src", "dir", folder)
+      node("notes.ptr", "file", folder)
+      node(".DS_Store", "file", folder)
+      node("main.c", "file", folder)
+
+      get library_children_path(parent: folder, files: 1)
+      assert_response :success
+      assert_equal %w[src main.c], json["entries"].map { |e| e["name"] }
+
+      get library_children_path(parent: folder)
+      assert_response :success
+      assert_equal %w[src], json["entries"].map { |e| e["name"] }
+    end
+
     test "a foreign/forged parent falls back to the root, never another user's tree" do
       other = User.create!(email: "other-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
