@@ -156,6 +156,21 @@ class ShellTest < ApplicationSystemTestCase
     # ancestry), so the public Schematics panel mounts a KiCanvas that fetches the public named URL
     # for real -- a 404 there would surface at the final assert_no_console_errors.
     kicad = write_kicad_schematic!(name: "shell-sweep.kicad_sch", parent_node_id: folder.node_id)
+    # STAGE 4, S4-1: A REAL IMAGE IN THE FOLDER, ATTACHED, so the project page renders its two new
+    # layouts at 375px -- the hero (an <img> at width 100%; the derived cover is the project's only
+    # image-role attachment) and the Photos panel's grid -- rather than the no-cover / no-photos
+    # branches the sweep otherwise exercises (found by S4-1's review: both layouts were laid out
+    # at phone width nowhere). REAL BYTES (test/fixtures/files/sample.png), the KiCanvas argument
+    # above: Chrome fetches the blob URL for real, and a 404 or an unreadable file would land in
+    # assert_no_console_errors as a resource error that has nothing to do with layout. The public
+    # page below gets the same photo through `permits?`' ancestry, so its gallery is exercised too.
+    png = Rails.root.join("test/fixtures/files/sample.png").binread
+    photo_rel = File.join(folder.storage_path, "lid.png")
+    @root.join(photo_rel).binwrite(png)
+    photo = @user.nodes.create!(node_id: SecureRandom.uuid, name: "lid.png", kind: "file",
+                                parent_node_id: folder.node_id, size: png.bytesize, storage_path: photo_rel,
+                                mtime: 1_000_000_000, content_hash: Digest::SHA256.hexdigest(png))
+    project.file_attachments.create!(user: @user, node_id: photo.node_id, role: "image", position: 0)
     # THE GERBER FILE PAGE, at 375px. Its stackup is an <svg> the browser is told to render at
     # width: 100% — the one element on these pages whose natural size is its PHYSICAL size (a board
     # is millimetres wide), so it is the one most likely to push the page sideways if
@@ -277,6 +292,10 @@ class ShellTest < ApplicationSystemTestCase
           find("summary", text: /firmware/i).click
           assert_selector ".filechooser--inline .filechooser-col", count: 1
           opened_repo = true
+          # STAGE 4, S4-1: the hero and the Photos panel are ON this page, or the overflow check above
+          # measured the no-cover and no-photos branches and said nothing about the two new layouts.
+          assert_selector ".project-hero img.project-hero-img"
+          assert_selector "section.photos-panel .photo-cell", minimum: 1
         end
         # `nav.tabbar` is display:none above 719px, so finding it VISIBLE is the proof that the
         # phone rules are running at all — without it a viewport that never narrowed would satisfy
