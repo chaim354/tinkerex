@@ -119,7 +119,7 @@ module Web
       assert_equal "# Lamp\n\n## Build steps\n", FileLayer.current.read(user, node_id: node.node_id)
 
       follow_redirect!
-      assert_select ".readme-card .markdown h2[id=build-steps]", text: "Build steps"
+      assert_select ".readme-card .markdown h2[id=user-content-build-steps]", text: "Build steps"
     end
 
     test "saving with no README creates README.md at the folder root" do
