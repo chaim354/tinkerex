@@ -581,16 +581,15 @@ class FilesController < ApplicationController
     return render_save_error(:unprocessable_entity, "Only files inside a git repository can be edited.") if root.nil?
     return render_save_error(:unprocessable_entity, "This file is too large to edit here.") unless editable?(node)
 
-    info = FileLayer.current.stat(current_user, node_id: node.node_id)
-    if info&.content_token.to_s != params[:base_token].to_s
-      return render_save_error(:conflict, "This file changed since you opened it. Reload to see the current version.")
-    end
+    # THE SHARED SAVE (stage 4, S4-4). The stale check, the `replace: true` write that REUSES the
+    # node, and the pending git edit all moved to Maker::TextSave when the project page's README
+    # editor became a second door onto the same verb. THIS door keeps its own two rules: the size
+    # cap above (the SERVER is what enforces it — git-editing.md) and the FetchError → 503 below.
+    result = Maker::TextSave.call(user: current_user, node:, parent_node_id: node.parent_node_id,
+                                  name: node.name, body: params[:content], base_token: params[:base_token],
+                                  repo_root_node_id: root.node_id)
+    return render_save_error(result.status, result.error) unless result.ok
 
-    Maker::Addons::LibraryOutput.write_bytes!(current_user, parent_node_id: node.parent_node_id,
-                                              name: node.name, bytes: params[:content].to_s.b,
-                                              replace: true)
-    Maker::RepoEdit.record!(user: current_user, repo_root_node_id: root.node_id, node_id: node.node_id) if
-      FileLayer.current.capabilities.local_worktree?
     # THE PICTURE OF THIS FILE IS NOW WRONG, AND THIS IS WHERE THAT IS SAID (stage 4, S4-3). The
     # SAME door both upload paths use (#create, #finalize_upload) rather than a third copy of
     # stat-then-Enqueue: it re-stats for the token `replace: true` just minted, and it swallows a
@@ -599,7 +598,7 @@ class FilesController < ApplicationController
     # this is not a no-op for anything the editor can save.
     enqueue_preview(node_id: node.node_id, name: node.name)
 
-    render json: { ok: true, content_token: FileLayer.current.stat(current_user, node_id: node.node_id)&.content_token }
+    render json: { ok: true, content_token: result.content_token }
   rescue FileLayer::FetchError => e
     render_save_error(:service_unavailable, e.message)
   end
