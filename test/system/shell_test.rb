@@ -234,6 +234,11 @@ class ShellTest < ApplicationSystemTestCase
                "#{path} scrolls sideways at 375px (scrollWidth #{page.evaluate_script('document.documentElement.scrollWidth')})"
       end
 
+      # THE GERBER LEG IS GATED ON A PATH MATCH, so it can go silently unrun — a renamed helper or a
+      # dropped fixture would leave the sweep measuring the file page's POSTER, which has no viewer
+      # on it to overflow, and nothing here would say so. The flag is what makes the branch's
+      # absence a failure rather than a quieter test (§15).
+      launched_gerber = false
       [ root_path, files_path(view: "list"), files_path(view: "grid"), project_path(project),
         file_path(long.node_id), file_path(kicad.node_id), file_path(gerbers[:gtl].node_id), tools_path, models_path, trash_index_path,
         inventory_items_path, inventory_item_path(item), suppliers_path, locations_path,
@@ -248,6 +253,7 @@ class ShellTest < ApplicationSystemTestCase
         if path == file_path(gerbers[:gtl].node_id)
           click_button "View layer"
           assert_selector ".gerber-viewer[data-gerber-state='ready']"
+          launched_gerber = true
         end
         # `nav.tabbar` is display:none above 719px, so finding it VISIBLE is the proof that the
         # phone rules are running at all — without it a viewport that never narrowed would satisfy
@@ -257,6 +263,7 @@ class ShellTest < ApplicationSystemTestCase
         assert_no_selector "aside.rail .current-project select"
         no_sideways_scroll.call(path)
       end
+      assert launched_gerber, "the sweep never launched the Gerber viewer, so its overflow check measured a poster"
 
       # STAGE 3, S3-4: THE PUBLIC PAGES, IN THEIR OWN LOOP BECAUSE THEIR SHELL IS THE OTHER ONE.
       # The three assertions above are the SIGNED-IN shell's, and this session IS signed in — so

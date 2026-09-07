@@ -96,11 +96,29 @@ export default class extends Controller {
     this.element.classList.add("model-viewer--ready")
     this.state("loading")
     try {
-      if (!this.rendered) await this.render()
-      // A superseded load keeps what it fetched (the render is valid data and the next click will
-      // want it) but must not PAINT: the user has dismissed the viewer, or opened it again and a
-      // newer load owns the stage now.
-      if (gen !== this.generation) return
+      if (!this.rendered) {
+        // ONE IN-FLIGHT RENDER, SHARED — and the assignment BEHIND the generation check. A second
+        // launch while the first fetch is still running joins that fetch rather than starting
+        // another, so ✕ Image mid-fetch and a relaunch cost one fetch and one parse, not two; and
+        // because the render is adopted only by a load that still owns the stage, a superseded one
+        // can never swap `this.rendered` out from under what was PAINTED. Both halves are needed:
+        // the toggles are keyed on layer ids that are fresh per render, so a stage composed from
+        // render A beside a `this.rendered` of B gave a toggle that flipped its own `aria-pressed`
+        // while re-composing B unfiltered — the button said hidden over a layer still drawn, with
+        // no console error (measured: paths 2 -> 2 where the control gives 2 -> 1).
+        //
+        // WHAT KEEPS A DISMISSED LOAD'S WORK IS THAT SHARED PROMISE, not the assignment: while the
+        // fetch is in flight the next click joins it, and once it has resolved with no viewer left
+        // to paint it there is nothing the render belongs to.
+        this.pending ||= this.render().finally(() => { this.pending = null })
+        const result = await this.pending
+        if (gen !== this.generation) return
+        this.ts = result.ts
+        this.rendered = result.rendered
+        // THE BOARD'S SIZE, ONCE PER RENDER, OFF THE RENDER ITSELF — see `sizeFrom`.
+        const properties = this.rendered.rendersById[this.rendered.layers[0]?.id]?.properties
+        this.size = this.sizeFrom(properties?.width, properties?.height)
+      }
       this.compose()
       this.buildTools()
       this.show(this.side)
@@ -115,8 +133,10 @@ export default class extends Controller {
   // read -> plot -> renderLayers is the whole pipeline; renderBoard composes the two sides out of
   // a renderLayers result, so both branches share everything up to that point.
   //
-  // THE RESULT IS KEPT, which is what makes a layer toggle — and a re-open — free: `compose()`
-  // re-composes from this object and never re-fetches, re-reads or re-plots.
+  // IT ASSIGNS NOTHING AND RETURNS THE PAIR. `load()` owns `this.ts`/`this.rendered` and puts the
+  // assignment behind its generation check — see the argument there. The result IS kept, there,
+  // which is what makes a layer toggle — and a re-open — free: `compose()` re-composes from that
+  // object and never re-fetches, re-reads or re-plots.
   async render() {
     const ts = await import("tracespace")
     // FETCHED IN PARALLEL, but a single failure fails the whole board: a stackup missing its
@@ -124,8 +144,7 @@ export default class extends Controller {
     // copper over the holes, either of which is a WRONG picture rather than a partial one.
     // `.flat()` because one entry can be a whole archive — see `filesFor`.
     const files = (await Promise.all(this.layersValue.map((layer) => this.filesFor(layer)))).flat()
-    this.ts = ts
-    this.rendered = ts.renderLayers(ts.plot(await ts.read(files)))
+    return { ts, rendered: ts.renderLayers(ts.plot(await ts.read(files))) }
   }
 
   // ONE LAYER ENTRY IS EITHER A FILE OR A WHOLE ARCHIVE. A loose layer is fetched and named as it
@@ -304,15 +323,17 @@ export default class extends Controller {
     this.panZoom = null
 
     this.stageTarget.innerHTML = svg
-    // THE RENDERED SVG CARRIES `width="10mm" height="10mm"` — its true physical size, which is what
-    // makes tracespace's output printable and what makes it 10 pixels wide in a 700px panel. The
-    // viewBox is already right, so overriding the two attributes and letting the aspect ratio be
-    // preserved scales the board to the stage without touching the geometry. Done HERE rather than
-    // in CSS because `width`/`height` ATTRIBUTES beat a stylesheet's `width` for an SVG's intrinsic
-    // sizing in exactly the case that matters (a percentage against a flexible container).
+    // A SINGLE LAYER'S SVG CARRIES `width="10.5mm" height="10.5mm"` — its true physical size, which
+    // is what makes tracespace's output printable and what makes it 10 pixels wide in a 700px
+    // panel; `renderBoard`'s carries NEITHER attribute and would take the stage's size instead. The
+    // viewBox is already right in both cases, so setting the two attributes to 100% and preserving
+    // the aspect ratio scales the picture to the stage without touching the geometry, and one
+    // branch serves both. Done HERE rather than in CSS because `width`/`height` ATTRIBUTES beat a
+    // stylesheet's `width` for an SVG's intrinsic sizing in exactly the case that matters (a
+    // percentage against a flexible container). THE DIMS THE BAR SHOWS DO NOT COME FROM HERE, for
+    // the reason that asymmetry gives — see `sizeFrom`.
     const el = this.stageTarget.querySelector("svg")
     if (el) {
-      this.size ||= this.sizeOf(el)
       el.setAttribute("width", "100%")
       el.setAttribute("height", "100%")
       el.setAttribute("preserveAspectRatio", "xMidYMid meet")
@@ -333,18 +354,23 @@ export default class extends Controller {
   }
 
   // THE BOARD'S PHYSICAL SIZE, IN MILLIMETRES, for the bar's dims — the 3D viewer shows a model's
-  // and a board's is the number a maker checks against the fab house's quote. tracespace writes
-  // it as the SVG's own `width="355.05mm" height="65mm"` (its units are the Gerber's, `mm` or
-  // `in`), which `show()` overrides to 100% a line later — so it is read HERE, first, and kept:
-  // every side and every re-compose shares the one board shape. Inches are converted so the bar
-  // never shows two units. Anything unparseable shows nothing rather than a wrong number.
-  sizeOf(el) {
-    const dim = (attr) => {
-      const m = /^(-?\d*\.?\d+)(mm|in)$/.exec(el.getAttribute(attr) || "")
+  // and a board's is the number a maker checks against the fab house's quote. IT IS TAKEN OFF THE
+  // RENDER, NEVER OFF THE PAINTED SVG, and that is the whole rule: `renderLayers` writes the size
+  // onto the `<svg>` it emits (`width="355.05mm" height="65mm"`, its units the Gerber's), but
+  // `renderBoard` — what every "View board" page draws — emits an `<svg>` with NO `width` and NO
+  // `height`, so a size read off the element was empty on exactly the pages that say "board". Both
+  // branches DO carry it on the per-layer renders: tracespace computes the board shape once and
+  // places every layer in it, so the FIRST layer's `properties.width`/`.height` are the board's own
+  // extent whichever branch composes them. `load()` reads it once, from the render every side and
+  // every re-compose share. Inches are converted so the bar never shows two units, and anything
+  // unparseable — a missing attribute included — shows nothing rather than a wrong number.
+  sizeFrom(width, height) {
+    const dim = (value) => {
+      const m = /^(-?\d*\.?\d+)(mm|in)$/.exec(value || "")
       return m ? Number(m[1]) * (m[2] === "in" ? 25.4 : 1) : null
     }
-    const w = dim("width")
-    const h = dim("height")
+    const w = dim(width)
+    const h = dim(height)
     return w !== null && h !== null ? [w, h] : null
   }
 

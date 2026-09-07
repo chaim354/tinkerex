@@ -190,15 +190,23 @@ defined once in `pages/preview.css`; `.gerber-viewer` adds only what an `<svg>` 
 (`color`, the grab cursor, `touch-action: none`, a wrapping bar). `model-viewer--ready` goes on
 BEFORE the fetch for the 3D viewer's reason (the stage must have a size when the SVG lands).
 **✕ Image KEEPS the parsed render**, so re-opening is a re-compose and no fetch — pinned by the
-resource timeline in `test/system/gerber_test.rb`. The dims are the board's physical size in mm,
-read off the `width`/`height` tracespace writes (`mm` or `in`, converted) BEFORE the controller
-overrides them to 100%. The layer toggles are still **built by the controller** into the template's
-tools span (their labels are tracespace's `type`/`side`, unknowable before the parse) and read their
-state off the hidden set, so a layer hidden before ✕ Image stays hidden after the re-open; Fit,
-Fullscreen, ✕ Image and the side buttons are in the template because they are known without a
-parse. The toggle wording ("top copper", "top silk", "drill") is the vocabulary the panel's row
-badges used; the badges went with the panel and the words stayed. A Turbo-restored snapshot of an
-open viewer is reset to the poster on connect — the fresh controller holds no render for it.
+resource timeline in `test/system/gerber_test.rb`. **A RELAUNCH DURING THE FIRST FETCH JOINS IT**:
+`load()` shares ONE in-flight promise and adopts `this.ts`/`this.rendered` only behind its
+generation check, so two renders can never race to own the render the stage and the layer toggles
+(ids fresh per render) were built from — the loser's toggle otherwise said "hidden" over a layer
+still drawn, silently. **The dims are the board's physical size in mm, taken off the RENDER and
+never off the painted `<svg>`**: `renderLayers` writes `width`/`height` onto the SVG it emits, but
+`renderBoard` — every "View board" page — writes neither, so a size read off the element was empty
+on exactly the pages that say "board". tracespace places every per-layer render on the one board
+shape, so the FIRST layer's `properties.width`/`.height` are the board's own extent in both branches
+(`mm` or `in`, converted); `load()` reads it once per render. The layer toggles are still **built by
+the controller** into the template's tools span (their labels are tracespace's `type`/`side`,
+unknowable before the parse) and read their state off the hidden set, so a layer hidden before ✕
+Image stays hidden after the re-open; Fit, Fullscreen, ✕ Image and the side buttons are in the
+template because they are known without a parse. The toggle wording ("top copper", "top silk",
+"drill") is the vocabulary the panel's row badges used; the badges went with the panel and the words
+stayed. A Turbo-restored snapshot of an open viewer is reset to the poster on connect — the fresh
+controller holds no render for it.
 
 **"CONVERT THE GERBERS AND USE THE 3D VIEWER" WAS ASKED AND REFUSED** — `docs/roads-not-taken.md`
 §10. A board export is a 2D artefact and the fab house reads exactly what tracespace draws; there

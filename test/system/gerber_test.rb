@@ -102,6 +102,21 @@ class GerberTest < ApplicationSystemTestCase
     # GEOMETRY, NOT MERELY AN <svg> — the copper layers inside the archive supply the paths, which
     # is what proves the members were really extracted and parsed rather than merely fetched.
     assert_selector ".gerber-viewer svg path", minimum: 1
+    # THE BOARD'S SIZE, WHICH ONLY A BOARD PAGE CAN PIN. `renderBoard` emits an <svg> carrying no
+    # `width` and no `height` at all, so a size read off the PAINTED element was empty on exactly
+    # the pages that say "board" while the single-layer case above stayed green — nothing pinned
+    # this until now. The controller takes it off the first layer's RENDER instead
+    # (gerber_controller.js#sizeFrom).
+    #
+    # 10.0, AND EVERY DIGIT OF THAT IS EVIDENCE — measured against the vendored bundle, not derived.
+    # 10.0 rather than the 10.5 above: this archive carries an OUTLINE (`profile.gbr`), and
+    # tracespace sizes a board by its outline's own square — 10 mm on a side, centre line — where a
+    # lone layer with no outline is sized by the stroked copper's extent (a 0.5 mm aperture
+    # overhanging 0.25 mm on each edge). And 10.0 rather than 0.8: the members are name-ordered, so
+    # the FIRST layer here is `drill_1_64.xln`, whose own geometry is one 0.8 mm hit — reading 10.0
+    # off it is what proves tracespace places every per-layer render on the one shared board
+    # viewBox, which is what makes "the first layer's render" the board's extent in both branches.
+    assert_selector ".gerber-viewer .model-viewer-dims", text: "10.0 × 10.0 mm"
     top = find(".gerber-viewer .model-viewer-stage")["innerHTML"]
 
     find("button[data-gerber-side='bottom']").click
@@ -263,6 +278,87 @@ class GerberTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # A RELAUNCH DURING THE FIRST FETCH JOINS IT, AND THE TOGGLES ACT ON THE RENDER THAT WAS PAINTED.
+  # Launch, ✕ Image while the archive is still downloading, launch again: without a shared in-flight
+  # promise that is two fetches, and whichever render resolved LAST owned `this.rendered` while the
+  # stage and the toggles came from the other — a toggle then said "hidden" over a layer still drawn
+  # (measured: paths 2 -> 2 where a plain launch gives 2 -> 1), with nothing in the console.
+  #
+  # THE FETCH IS COUNTED AT THE CALL, NOT ON THE RESOURCE TIMELINE, which is what the ✕ Image case
+  # above can use and this one cannot: the stub DEFERS the archive's request rather than slowing it,
+  # so a request that has been started but not yet sent has no `performance` entry at all and the
+  # count read a superseded second fetch as zero. `window.fetch` being called twice for the archive
+  # is exactly the claim, so the stub counts that. Only the archive's own URL is delayed — handing
+  # the 1500 ms to whatever call came first would give it to a Turbo prefetch on the way to the
+  # button and let the archive arrive at once.
+  #
+  # THE POLL BEFORE THE TOGGLE IS THE PART TO KEEP. A superseded render lands with NO DOM event of
+  # its own — that silence is the bug — so there is nothing for Capybara to wait on, and clicking
+  # the toggle the instant the stage is ready would let a late second render arrive after the
+  # assertions and pass. The loop gives it every chance: it returns the moment the controller's own
+  # render stops being the one the toggles were built from, and otherwise costs its budget once, on
+  # a case already waiting on a 1500 ms fetch. Then the invariant is stated directly, and the path
+  # count is the user-visible half of the same claim.
+  #
+  # THE TOGGLE IS PICKED BY LABEL, not `first(...)`: "top copper" is the one the case above measured
+  # at 2 -> 1, where the drill's toggle hides circles and would leave the path count flat whether or
+  # not the fix is in.
+  #
+  # THE FETCH COUNT COMES LAST ON PURPOSE, and the order is what gives each half of the fix a
+  # failure of its own. Dropping the shared promise breaks BOTH counts — a second fetch AND, when
+  # the assignment also moves back inside `render()`, a clobbered render — so with the count
+  # asserted first every mutation reds there and the toggle assertions would never be shown to
+  # carry weight (§15: mutate to prove each assertion does something). Asserted last, the
+  # no-sharing mutation passes the render and toggle checks and fails on the count, while the
+  # assignment mutation fails on the render before it ever reaches the count.
+  #
+  # MUTATION (§15, test/system/README.md; run for real, output in the PR, then reverted):
+  # gerber_controller.js's `this.pending ||= this.render()…` changed to a bare `await this.render()`
+  # (no sharing) reds this on the fetch count; moving the two assignments back into `render()` ahead
+  # of the generation check reds it on the render the toggles were built from, and on the paths.
+  test "a relaunch during the first fetch shares it, and a toggle still hides its layer" do
+    node = write_gerber_zip!
+
+    visit file_path(node.node_id)
+    page.execute_script(<<~JS)
+      window.__blobFetches = 0
+      const real = window.fetch
+      let delayed = false
+      window.fetch = (...args) => {
+        const url = String(args[0] && args[0].url ? args[0].url : args[0])
+        if (!url.includes("/blob")) return real(...args)
+        window.__blobFetches++
+        const gate = delayed ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, 1500))
+        delayed = true
+        return gate.then(() => real(...args))
+      }
+    JS
+    click_button "View board"
+    assert_selector ".gerber-viewer[data-gerber-state='loading']"
+    click_button "✕ Image"
+    assert_selector ".gerber-viewer .mv-launch button", text: "View board"
+    click_button "View board"
+
+    assert_selector ".gerber-viewer[data-gerber-state='ready']"
+    assert_selector ".gerber-viewer svg path", minimum: 1
+
+    painted = first(".gerber-tools [data-gerber-layer-id]")["data-gerber-layer-id"]
+    deadline = Time.now + 2
+    sleep 0.05 until Time.now > deadline || held_render_id != painted
+    assert_equal painted, held_render_id,
+                 "a superseded render replaced the one the stage and the toggles were built from"
+
+    before = all(".gerber-viewer svg path", visible: :all).size
+    find(".gerber-tools .btn", exact_text: "top copper").click
+
+    assert_selector ".gerber-tools .btn[aria-pressed='false']", exact_text: "top copper"
+    assert_operator all(".gerber-viewer svg path", visible: :all).size, :<, before,
+                    "the toggle said hidden but the layer is still drawn"
+    assert_equal 1, page.evaluate_script("window.__blobFetches"),
+                 "the relaunch started a second fetch instead of joining the first"
+    assert_no_console_errors
+  end
+
   # A SINGLE LAYER GETS THE BAR'S OWN ACTIONS AND NOTHING ELSE. There is one layer, so a toggle for
   # it is a button whose only effect is to blank the stage — and the side buttons are absent for the
   # same reason the template omits them (one render, two buttons showing the same picture).
@@ -318,6 +414,22 @@ class GerberTest < ApplicationSystemTestCase
   end
 
   private
+    # THE ID OF THE FIRST LAYER IN THE RENDER THE CONTROLLER IS HOLDING — the one `compose()` will
+    # filter on the next toggle. The toggles carry the ids of the render they were BUILT from, so
+    # comparing the two is the whole of "the toggles act on what was painted", and it is reachable
+    # only through the live controller: a superseded render swaps `this.rendered` and touches no
+    # DOM. `window.Stimulus` is the application object controllers/application.js exports, already
+    # used this way by o3dv_test.rb and measure_print_test.rb.
+    def held_render_id
+      page.evaluate_script(<<~JS)
+        (() => {
+          const el = document.querySelector(".gerber-viewer")
+          const c = window.Stimulus.getControllerForElementAndIdentifier(el, "gerber")
+          return c && c.rendered && c.rendered.layers[0].id
+        })()
+      JS
+    end
+
     # THE VIEWBOX AS FOUR FLOATS. Split on whitespace AND commas, because the SVG spec allows both
     # and a board's box is routinely negative in y (`viewBox="-0.25 -10.25 10.5 10.5"` on this
     # fixture — measured, and the 0.25 is the drawing aperture's overhang), so a

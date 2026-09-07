@@ -43,10 +43,16 @@ module Maker
   # a board). `rescue Zip::Error` beside the port's own two, never a bare rescue: a NoMethodError
   # here is a bug and must stay loud.
   class GerberArchive
-    # `members`: every pcb-role member path in the zip (String, name-ordered), the panel's LIST.
-    # `stacked`: the subset the viewer renders (never the .gbrjob). `job_name`: the job member's
-    # basename, or nil — the board takes the ZIP's stem as its name regardless (the export's own
-    # name is the one the maker recognises; Fusion calls every job `gerber_job.gbrjob`).
+    # `members`: every pcb-role member path in the zip (String, name-ordered) — what the archive
+    # HOLDS. `stacked`: the subset the VIEWER renders (never the .gbrjob), and the one field `app/`
+    # reads (`FilesController#show`, into the browser's one archive entry). `job_name`: the job
+    # member's basename, or nil.
+    #
+    # `members` AND `job_name` HAVE HAD NO READER IN `app/` since the project pages' Fabrication
+    # panels went on 2026-09-06, and are kept deliberately: this class's tests pin the two lists as
+    # DIFFERENT (a job naming a subset stacks that subset while every pcb-role member stays listed),
+    # which is the behaviour a caller of either would depend on, and a member list is the next thing
+    # a zip's own page will want to show.
     Listing = Data.define(:members, :stacked, :job_name)
 
     EXT = "zip".freeze
