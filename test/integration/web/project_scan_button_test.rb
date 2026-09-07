@@ -234,6 +234,27 @@ module Web
       # The reload target is the param-FREE url. That is what stops it looping: the reloaded page
       # carries no ?scanning=1, renders no scanreload element, and schedules nothing.
       assert_select "[data-scanreload-url-value=?]", project_path(@project)
+      # THE POLL, NOT A GUESS (stage 4, S4-3). The element now carries where to ask and what it
+      # already knew, so the reload fires when the scan actually finished.
+      assert_select "[data-scanreload-status-url-value=?]", scan_status_files_path
+      assert_select "[data-scanreload-since-value=?]", ""
+    ensure
+      FileUtils.remove_entry(@root) if @root&.exist?
+    end
+
+    # THE STAMP IS THE PAGE'S OWN, NOT A LITERAL — and this test exists because NOTHING ELSE SAYS
+    # SO. `rescan_test.rb`'s equivalent assertion is about the FILES page's template; hardcoding
+    # `data-scanreload-since-value=""` in projects/_attachments.html.erb was measured to leave every
+    # other test in both files GREEN, system test included (that one stamps the column mid-test, so
+    # the page it rendered genuinely had no stamp and the literal is indistinguishable). Without
+    # this, the attribute the poll compares against could be a constant and no gate would know.
+    test "the reload element carries the stamp the project page was rendered with" do
+      use_share!
+      @user.update_column(:library_scanned_at, Time.utc(2026, 9, 7, 12, 0, 0))
+
+      get project_path(@project, scanning: 1)
+
+      assert_select "[data-scanreload-since-value=?]", @user.reload.library_scanned_stamp
     ensure
       FileUtils.remove_entry(@root) if @root&.exist?
     end

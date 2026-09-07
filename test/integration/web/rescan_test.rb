@@ -191,5 +191,39 @@ module Web
       get scan_status_files_path, headers: { "Accept" => "application/json" }
       assert_nil JSON.parse(response.body).fetch("scanned_at")
     end
+
+    # --- The Files page's own Rescan reload element ---
+
+    # THE FILES PAGE GETS THE RELOAD ELEMENT THE PROJECT PAGE HAS HAD (stage 4, S4-3). Before this
+    # its Rescan said "refresh in a moment" and left the refreshing to the user.
+    test "the files page schedules a poll only after a scan started, and points at the param-free url" do
+      use_scannable_backend
+      get files_path
+      assert_select "[data-controller~=?]", "scanreload", false
+
+      get files_path(scanning: 1)
+      assert_select "[data-controller~=?]", "scanreload", 1
+      assert_select "[data-scanreload-url-value=?]", files_path
+      assert_select "[data-scanreload-status-url-value=?]", scan_status_files_path
+      # NEVER SCANNED: an empty `since`, which the controller reads as "any stamp is news".
+      assert_select "[data-scanreload-since-value=?]", ""
+    end
+
+    test "the poll element carries the stamp the page was rendered with, and keeps the folder" do
+      use_scannable_backend
+      create_node!(@user, node_id: "dir-1", name: "cad", kind: "dir")
+      @user.update_column(:library_scanned_at, Time.utc(2026, 9, 7, 12, 0, 0))
+
+      get files_path(folder: "dir-1", scanning: 1)
+
+      assert_select "[data-scanreload-since-value=?]", @user.reload.library_scanned_stamp
+      assert_select "[data-scanreload-url-value=?]", files_path(folder: "dir-1")
+    end
+
+    test "a non-scannable backend schedules no poll even with the marker" do
+      FileLayer.current = FileLayer::ChunkRemote.new
+      get files_path(scanning: 1)
+      assert_select "[data-controller~=?]", "scanreload", false
+    end
   end
 end

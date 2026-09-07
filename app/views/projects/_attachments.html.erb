@@ -95,14 +95,20 @@
   <% end %>
 
   <%# A share/s3 scan is a BACKGROUND job — an unbounded NAS walk or bucket listing — so the page
-      that started it cannot show the result. One reload, to the param-free url, which is what
-      stops it looping. Rendered only on the async path: chunk_remote finished inside the request.
+      that started it cannot show the result. The element POLLS for a real "scan finished" (stage 4,
+      S4-3) and then reloads once, to the param-free url, which is what stops it looping: the
+      reloaded page carries no ?scanning=1, renders no element, and polls nothing. `since` is the
+      stamp THIS render read, so the poll can tell "a scan finished after this page was built" from
+      "the last one finished before it". Rendered only on the async path: chunk_remote finished
+      inside the request. `class="muted"` because the give-up sentence lands in this element.
       §14d — a data-controller name that resolves to nothing is a SILENT no-op, which is why
       app/javascript/controllers/scanreload_controller.js must exist and stimulus_hygiene_test
       guards that it does. %>
   <% if @scan_started && capabilities.scannable? %>
-    <span data-controller="scanreload"
-          data-scanreload-url-value="<%= project_path(@project) %>"></span>
+    <span class="muted" data-controller="scanreload"
+          data-scanreload-url-value="<%= project_path(@project) %>"
+          data-scanreload-status-url-value="<%= scan_status_files_path %>"
+          data-scanreload-since-value="<%= current_user.library_scanned_stamp %>"></span>
   <% end %>
 
   <%# THE ROOT'S CARD (stage 4, S4-1), above the groups, for every project that has one: the
