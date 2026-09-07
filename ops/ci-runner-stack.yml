@@ -93,7 +93,7 @@
 # Scalars and lists (image, restart, mem_limit, cpus, cap_add, security_opt) the merge key handles
 # correctly, so they stay here.
 x-runner: &runner
-  image: tinkerex-ci-runner:2026-08-31
+  image: tinkerex-ci-runner:2026-09-07
   restart: unless-stopped
   mem_limit: 8g
   cpus: 8.0
