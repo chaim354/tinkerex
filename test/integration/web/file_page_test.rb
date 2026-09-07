@@ -38,5 +38,51 @@ module Web
       get file_path(bare.node_id)
       assert_select ".page-head .file-badge", count: 0
     end
+
+    # WHERE THE FILE IS ON THE SHARE — story 2.10's whole complaint. The page showed Name, Size,
+    # Type and Modified and never once said where the thing lives, so the way back to LightBurn was
+    # to remember the folder. Root-relative and NOT a URL: this app cannot know the mount's name on
+    # the maker's own machine, and inventing an smb:// would be a guess dressed as a fact.
+    #
+    # THE CONTROLLER AND THE VALUE SIT ON THE `dd` ITSELF, so both selectors below are ATTRIBUTE
+    # QUALIFIERS (`dd[...]`) and not descendant combinators (`dd [...]`). A space there asks for a
+    # child carrying the attribute, which nothing does — it is the shape that passes vacuously in
+    # the other direction, so it is written tightly on purpose.
+    test "the meta list carries the file's library path, with a copy button over it" do
+      cad = @user.nodes.create!(node_id: "d-cad", name: "cad", kind: "dir",
+                                mtime: 1_000_000_000, size: 0)
+      deep = @user.nodes.create!(node_id: "d-lids", name: "lids", kind: "dir",
+                                 parent_node_id: cad.node_id, mtime: 1_000_000_000, size: 0)
+      node = @user.nodes.create!(node_id: "n-lid", name: "lid.lbrn2", kind: "file",
+                                 parent_node_id: deep.node_id, mtime: 1_000_000_000, size: 12)
+
+      get file_path(node.node_id)
+
+      assert_response :success
+      assert_select "dl.meta dt", text: "Path"
+      assert_select "dl.meta dd .file-path-value", text: "cad/lids/lid.lbrn2"
+      assert_select "dl.meta dd[data-controller~=?]", "copy"
+      assert_select "dl.meta dd[data-copy-text-value=?]", "cad/lids/lid.lbrn2"
+      assert_select "dl.meta dd button[data-action=?]", "copy#copy", text: "Copy"
+    end
+
+    test "a file at the library root is its own path" do
+      get file_path(@node.node_id)
+      assert_select "dl.meta dd .file-path-value", text: "coaster.lbrn2"
+    end
+
+    # A BROKEN ANCESTOR CHAIN IS "WE DO NOT KNOW", NOT A ROOT-LEVEL FILE. Maker::LibraryTree
+    # #path_for answers nil for a tombstoned or missing ancestor; rendering the bare name there
+    # would say the file sits at the top of the library, which is a confident lie about where to
+    # find it. No row at all is the honest answer.
+    test "a file whose folder chain is broken shows no path rather than a wrong one" do
+      orphan = @user.nodes.create!(node_id: "n-orphan", name: "stray.svg", kind: "file",
+                                   parent_node_id: "d-gone", mtime: 1_000_000_000, size: 1)
+      get file_path(orphan.node_id)
+      assert_select "dl.meta dt", text: "Path", count: 0
+    end
+
+    # ---- END OF S4-3 TASK C's ADDITIONS -------------------------------------------------------
+    # Task D (Save to library) appends BELOW this line, so the two tasks' tests never interleave.
   end
 end

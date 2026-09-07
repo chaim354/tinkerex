@@ -355,4 +355,13 @@
   /* --- Schematics section on the project page (projects/_schematics.html.erb) --- */
   .schematics-list { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   .schematics-list li { display: flex; align-items: center; gap: 8px; }
+
+  /* --- The library path row (stage 4, S4-3). `dl.meta dd` is already mono and already wraps
+     anywhere (components.css), so this only lays the value and its button on one line and keeps
+     the button from stretching. A page rule qualified inside `.meta`, never a redeclaration of
+     `dl.meta` (design-system rule 3). --- */
+  .meta .file-path { display: flex; align-items: baseline; gap: 8px; }
+  .meta .file-path-value { min-width: 0; overflow-wrap: anywhere; }
+  .meta .file-path .linkbtn { flex: 0 0 auto; }
+  /* ---- END OF S4-3 TASK C's ADDITIONS. Task D (Save to library) appends below. ---- */
 }

@@ -543,6 +543,23 @@ class FilesController < ApplicationController
     # way so the view reads it identically; a file no addon produced is simply an absent key.
     @addon_origins = addon_origins_for([ @node.node_id ])
     @move_conflict = move_conflict_prompt
+    # WHERE THIS FILE IS, IN THE LIBRARY'S OWN TERMS (stage 4, S4-3; story 2.10). The SAME reader
+    # #index uses for its folder column (#folder_paths_for) — Maker::LibraryTree is ONE pluck of
+    # this user's dir rows and an in-memory walk, so this is constant in the size of the library
+    # and needs no port read at all. Asking `folder_crumbs`-style, one find_by per level, would be
+    # a query per ancestor for the same answer.
+    #
+    # NIL WHEN THE CHAIN IS BROKEN, AND THE VIEW RENDERS NOTHING THEN. `path_for` answers nil for a
+    # tombstoned or missing ancestor (its own contract: "nil IS AN ANSWER, NOT AN ERROR"), and
+    # falling back to the bare name would say the file sits at the library root — a confident wrong
+    # answer to the one question this row exists to answer.
+    #
+    # ROOT-RELATIVE, WITH NO SCHEME. `path_for(nil)` is "" for a file at the root, so the join
+    # drops it. This app cannot know what the share is mounted as on the maker's machine, so an
+    # smb:// or file:// here would be a guess printed as a fact; the maker pastes this into
+    # whatever their own Finder/Explorer path is.
+    folder_path = Maker::LibraryTree.new(current_user).path_for(@node.parent_node_id)
+    @library_path = folder_path && [ folder_path.presence, @node.name ].compact.join("/")
   end
 
   # PATCH /files/:id — the editor's Save.
