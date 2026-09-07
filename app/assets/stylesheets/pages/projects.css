@@ -66,6 +66,9 @@
   .attachment-group-head .badge { margin: 0 2px 0 8px; }
   .attachment-group-head .linkbtn.small { margin-left: 8px; font-size: 11px; }
   .loose-note { font-size: 12px; margin: -8px 0 16px; }
+  /* The repository browser's host (projects/_repo_browser, filebrowser_controller.js). The panel
+     itself is `.filechooser--inline` from components.css — this only spaces it under the card. */
+  .repo-browser { margin-top: 8px; }
 
   /* --- Repository card (stage 3, S3-2): the README rendered, the latest commit, the current tag,
      at the top of a repo section, before its files. The tag badges and the Commits/History links

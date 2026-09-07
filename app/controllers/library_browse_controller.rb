@@ -8,9 +8,18 @@ class LibraryBrowseController < ApplicationController
   #   { parent: <id|null>, crumbs: [{node_id,name}…], entries: [{node_id,name,kind}…] }
   # A blank/foreign/stale `parent` resolves to the library root (never another user's tree) — the
   # same guard FilesController#current_folder uses. Folders always; files only when files=1.
+  #
+  # `visible_entries` — THE SAME SCOPE THE FILES PAGE HIDES BY, and it is the one door that used
+  # not to ask. `.git` (the working-tree marker Node keeps indexed and never renders), `*.ptr`
+  # stubs and dot-files were all offered here as destinations and as pickable files: a chooser that
+  # lists `.git` invites a save the write guards then refuse anyway (Library::ReservedNames), which
+  # is a refusal the user cannot act on. It is a DISPLAY filter, exactly as it is on the Files page
+  # — nothing is skipped at the observer, so no node becomes unpairable (§14b's blind spot).
+  # `show_hidden` is not plumbed through: this endpoint's two callers (the form field's modal and
+  # the project page's repo browser) are both places a maker is picking or reading, never auditing.
   def children
     parent  = resolve_dir(params[:parent])
-    scope   = current_user.nodes.present.where(parent_node_id: parent&.node_id)
+    scope   = current_user.nodes.present.visible_entries.where(parent_node_id: parent&.node_id)
     scope   = scope.where(kind: "dir") unless params[:files] == "1"
     entries = scope.to_a.sort_by { |n| [ n.dir? ? 0 : 1, n.name.downcase ] }
                    .map { |n| { node_id: n.node_id, name: n.name, kind: n.kind } }

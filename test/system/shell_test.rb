@@ -168,6 +168,18 @@ class ShellTest < ApplicationSystemTestCase
     # 2026-09-06; there is no panel there to render them.)
     pcb_dir = gerber_dir!(name: "pcb", parent_node_id: folder.node_id)
     gerbers = write_gerber_set!(stem: "shell-sweep", parent_node_id: pcb_dir.node_id)
+    # 2026-09-07: A REPOSITORY IN THE PROJECT FOLDER, so the project page carries the inline
+    # Miller-columns browser (projects/_repo_browser) and this sweep measures it at 375px. It is
+    # the one element on that page whose width is decided in JS after a fetch, and components.css's
+    # narrow rule (`.filechooser-col { flex-basis: 100% }` plus hiding all but the last column) is
+    # what keeps a three-deep trail from being 600px of columns on a phone. ROWS ONLY — the browser
+    # reads `nodes` and fetches no bytes, so nothing here needs the port.
+    repo_dir = @user.nodes.create!(node_id: SecureRandom.uuid, name: "firmware", kind: "dir",
+                                   parent_node_id: folder.node_id)
+    @user.nodes.create!(node_id: SecureRandom.uuid, name: Library::RepoMetadata::DIR_NAME,
+                        kind: "dir", parent_node_id: repo_dir.node_id)
+    @user.nodes.create!(node_id: SecureRandom.uuid, name: "main.c", kind: "file",
+                        parent_node_id: repo_dir.node_id)
     # STAGE 3, S3-5: ONE RELEASE WITH A LONG VERSION AND THREE FILES, so the summary's flex row has
     # something to wrap and the release table has rows to drop columns from at 375px -- the BOM and
     # wiring argument again, an EMPTY panel renders no <details> and no table at all. All three file
@@ -239,6 +251,10 @@ class ShellTest < ApplicationSystemTestCase
       # on it to overflow, and nothing here would say so. The flag is what makes the branch's
       # absence a failure rather than a quieter test (§15).
       launched_gerber = false
+      # THE SAME GATE-ON-A-PATH ARGUMENT AS THE GERBER LEG ABOVE, and the same answer: opening the
+      # repo section is what mounts the browser at all (it is closed by default and mounts lazily),
+      # so a renamed summary would leave this sweep measuring an EMPTY div and nothing would say so.
+      opened_repo = false
       [ root_path, files_path(view: "list"), files_path(view: "grid"), project_path(project),
         file_path(long.node_id), file_path(kicad.node_id), file_path(gerbers[:gtl].node_id), tools_path, models_path, trash_index_path,
         inventory_items_path, inventory_item_path(item), suppliers_path, locations_path,
@@ -255,6 +271,13 @@ class ShellTest < ApplicationSystemTestCase
           assert_selector ".gerber-viewer[data-gerber-state='ready']"
           launched_gerber = true
         end
+        if path == project_path(project)
+          # `/firmware/i` because `.attachment-group-head` is `text-transform: uppercase` and
+          # Selenium reports RENDERED text (repo_browser_test.rb records the same).
+          find("summary", text: /firmware/i).click
+          assert_selector ".filechooser--inline .filechooser-col", count: 1
+          opened_repo = true
+        end
         # `nav.tabbar` is display:none above 719px, so finding it VISIBLE is the proof that the
         # phone rules are running at all — without it a viewport that never narrowed would satisfy
         # the overflow assertion for entirely the wrong reason. It is what caught the 500px floor.
@@ -264,6 +287,7 @@ class ShellTest < ApplicationSystemTestCase
         no_sideways_scroll.call(path)
       end
       assert launched_gerber, "the sweep never launched the Gerber viewer, so its overflow check measured a poster"
+      assert opened_repo, "the sweep never opened the repository section, so its overflow check measured an empty mount point"
 
       # STAGE 3, S3-4: THE PUBLIC PAGES, IN THEIR OWN LOOP BECAUSE THEIR SHELL IS THE OTHER ONE.
       # The three assertions above are the SIGNED-IN shell's, and this session IS signed in — so

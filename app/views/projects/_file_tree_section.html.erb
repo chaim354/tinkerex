@@ -2,24 +2,30 @@
   ONE REAL SUBFOLDER of the project's folder, recursively — a section per subfolder, nested exactly
   as it sits on disk (stage 3, S3-1; "the folder is the truth" replaces the old role-derived
   grouping). A working tree renders here too, entered rather than stopped at
-  (Maker::ProjectFolderListing#tree): its own files list and its own subfolders nest the same as
-  any other folder, plus a link to its commit and history pages — a repository is a section now,
-  and the old standalone Repositories group (_repo_group.html.erb) is gone.
+  (Maker::ProjectFolderListing#tree), with a link to its commit and history pages — a repository is
+  a section now, and the old standalone Repositories group (_repo_group.html.erb) is gone. What is
+  INSIDE that section changed on 2026-09-07: see "ALWAYS OPEN" below.
 
   @generated_ids IS FILTERED OUT HERE, AT EVERY LEVEL of the recursion, so a file with an addon
   origin renders ONCE, in the Generated group below, never inside the folder it happens to sit in
   (ProjectsController#show resolves @generated from @listing.node_ids, which already covers every
   depth of this tree).
 
-  ALWAYS OPEN: S2-2's "closed by default" rule belongs to the synthetic, cross-cutting Backups
-  group alone (_attachment_group.html.erb, unchanged) — a REAL subfolder is not that, whatever a
-  user happens to name it.
+  ALWAYS OPEN, WITH ONE EXCEPTION SINCE 2026-09-07. S2-2's "closed by default" rule belongs to the
+  synthetic, cross-cutting Backups group alone (_attachment_group.html.erb, unchanged) — a REAL
+  subfolder is not that, whatever a user happens to name it. A REPOSITORY is the second exception,
+  at the user's request: it renders CLOSED, and what is inside it is the Finder-style browser
+  (projects/_repo_browser) rather than tiles and nested sections. The reason is what a repo IS — a
+  tree a maker NAVIGATES, whose files are read and edited on their own pages — where a plain
+  subfolder is a handful of things to see at a glance. Unrolling a working tree into a section per
+  directory buries the rest of the project's panel under someone's `src/`.
 
   Local: dir (Maker::ProjectFolderListing::Dir).
 %>
 <% visible = dir.files.reject { |row| @generated_ids.include?(row.node_id) } %>
 <section class="attachment-group file-tree-section">
-  <details open>
+  <%# `open` on everything but a repository — see the header. %>
+  <details<%= " open" unless dir.repo? %>>
     <%# THE NAME AND THE COUNT STAY ON ONE SOURCE LINE, WITH ONE LITERAL SPACE BETWEEN THEM —
         _attachment_group.html.erb's summary does the same, and for the same reason: a conditional
         badge/link block on its own line leaves a newline-plus-indentation TEXT NODE behind even
@@ -30,18 +36,26 @@
         section, before its files. @repo_cards is keyed by node_id (ProjectsController#show) and
         holds one for every repo? Dir on the page, so a missing entry here would be a real bug, not
         a normal case — the `&&` guard is defensive rather than expected to ever fail. %>
-    <% if dir.repo? && (card = @repo_cards[dir.node_id]) %>
-      <%= render "projects/repo_card", card: %>
-    <% end %>
-    <% if visible.any? %>
-      <% if @view == "list" %>
-        <%= render "file_rows", rows: visible %>
-      <% else %>
-        <div class="attachments-grid">
-          <%= render partial: "file_tile", collection: visible, as: :row %>
-        </div>
+    <% if dir.repo? %>
+      <% if (card = @repo_cards[dir.node_id]) %>
+        <%= render "projects/repo_card", card: %>
       <% end %>
+      <%# THE CARD STAYS ABOVE THE BROWSER and the browser replaces everything below it: no tiles,
+          no rows, and NO nested file_tree_section collection. Recursing here as well would draw
+          every subdirectory twice — once as a section and once as a column — and the section copy
+          is the one that cannot answer "what is in src/?" without unrolling the whole tree. %>
+      <%= render "projects/repo_browser", dir: %>
+    <% else %>
+      <% if visible.any? %>
+        <% if @view == "list" %>
+          <%= render "file_rows", rows: visible %>
+        <% else %>
+          <div class="attachments-grid">
+            <%= render partial: "file_tile", collection: visible, as: :row %>
+          </div>
+        <% end %>
+      <% end %>
+      <%= render partial: "file_tree_section", collection: dir.children, as: :dir %>
     <% end %>
-    <%= render partial: "file_tree_section", collection: dir.children, as: :dir %>
   </details>
 </section>
