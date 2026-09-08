@@ -39,7 +39,17 @@
   /* --- Photos (stage 4, S4-1): the public gallery's grid, on the private page, full width. --- */
   .project-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
   .project-photos .thumb { width: 100%; height: 110px; }
+  /* `min-width: 0` ON THE ITEMS IS AN OVERFLOW FIX, NOT TIDINESS. A grid item's automatic minimum
+     size is its content's MIN-CONTENT width, so one descendant that cannot wrap sets the width of
+     the whole column — and `1fr` does not stop it, because `1fr` is `minmax(auto, 1fr)`. The
+     README editor is exactly that descendant: CodeMirror's `.cm-content` is `white-space: pre`, so
+     a 140-character line made `.attachments-panel` 1192px wide inside a 375px viewport and the
+     PAGE scrolled sideways (measured; test/system/shell_test.rb's phone sweep opens the editor for
+     this reason, and nothing lower in the chain is the lever — probed on the live page, only the
+     grid item's own min-width moves it). Zeroing it hands the overflow to `.cm-scroller`, which has
+     its own `overflow-x: auto` and is where a long line belongs. */
   .project-panels { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  .project-panels > .panel { min-width: 0; }
   @media (min-width: 900px) { .project-panels { grid-template-columns: 1fr 1fr; } .attachments-panel, .photos-panel { grid-column: 1 / -1; } }
 
   /* --- Files panel: 96px tiles, Detach in the corner on hover --- */

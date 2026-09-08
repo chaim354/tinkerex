@@ -270,7 +270,18 @@ class ShellTest < ApplicationSystemTestCase
       # repo section is what mounts the browser at all (it is closed by default and mounts lazily),
       # so a renamed summary would leave this sweep measuring an EMPTY div and nothing would say so.
       opened_repo = false
+      # THE SAME GATE-ON-A-PATH ARGUMENT AS THE TWO ABOVE, twice more. The preview is reached only
+      # by its own path match, and the README editor is a <details> that mounts CodeMirror only when
+      # OPENED — an unopened one measures a closed summary and says nothing about the editor's width
+      # at 375px. Renaming either would leave both branches silently unrun.
+      previewed = false
+      opened_readme = false
       [ root_path, files_path(view: "list"), files_path(view: "grid"), project_path(project),
+        # STAGE 4, S4-4: the owner's preview, which is the one page in this sweep that renders the
+        # PUBLIC page's partials inside the SIGNED-IN shell. Both halves are already swept
+        # separately — the public page in the second loop below, the app shell everywhere in this
+        # one — and neither says what happens when they are laid out on top of each other at 375px.
+        preview_project_path(project),
         file_path(long.node_id), file_path(kicad.node_id), file_path(gerbers[:gtl].node_id), tools_path, models_path, trash_index_path,
         inventory_items_path, inventory_item_path(item), suppliers_path, locations_path,
         project_bom_path(project),
@@ -286,6 +297,14 @@ class ShellTest < ApplicationSystemTestCase
           assert_selector ".gerber-viewer[data-gerber-state='ready']"
           launched_gerber = true
         end
+        if path == preview_project_path(project)
+          # THE BANNER IS THIS PAGE'S POSITIVE MARKER, the same argument the public loop below makes
+          # for naming one per path: `visit` does not fail on a redirect, and the preview redirects
+          # to the project page when the maker has no handle — which would leave this branch
+          # measuring the project page a second time and reporting nothing.
+          assert_selector ".preview-banner"
+          previewed = true
+        end
         if path == project_path(project)
           # `/firmware/i` because `.attachment-group-head` is `text-transform: uppercase` and
           # Selenium reports RENDERED text (repo_browser_test.rb records the same).
@@ -296,6 +315,27 @@ class ShellTest < ApplicationSystemTestCase
           # measured the no-cover and no-photos branches and said nothing about the two new layouts.
           assert_selector ".project-hero img.project-hero-img"
           assert_selector "section.photos-panel .photo-cell", minimum: 1
+          # STAGE 4, S4-4: THE PUBLISH PANEL AND THE README EDITOR, both new to this page and both
+          # invisible to the overflow check until they are actually here and actually open. The
+          # editor mounts CodeMirror on toggle, so a closed <details> measures a summary button and
+          # nothing else — and opening it is what caught the real defect this branch shipped with:
+          # a 140-character README line made `.attachments-panel` 1192px wide at 375px, fixed by
+          # `.project-panels > .panel { min-width: 0 }` in pages/projects.css. This folder holds no
+          # README, so the editor opens on the TEMPLATE with no fetch, which is what makes the
+          # `.cm-editor` wait deterministic here.
+          #
+          # THE PANEL ASSERTION IS PRESENCE, NOT WIDTH, AND THE DISTINCTION IS MEASURED. Its public
+          # URL is the page's one unbreakable token, so `overflow-wrap: anywhere` on
+          # `.publish-url .mono` looks like something this sweep covers — it does NOT. Under Capybara
+          # the URL is `http://127.0.0.1:<port>/u/sweep/desk-lamp`: 40 characters, 288px inside the
+          # 306px row, so flipping that rule to `normal` leaves this test GREEN (run, 2026-09-07).
+          # A deployment host and a real handle are what make it wrap; proving the rule here would
+          # need a fixture whose handle and slug are that long, and this comment is the record that
+          # it does not have one rather than a claim that it does.
+          assert_selector "section.publish-panel#publish"
+          find(".readme-editor summary").click
+          assert_selector ".readme-editor .cm-editor"
+          opened_readme = true
         end
         # `nav.tabbar` is display:none above 719px, so finding it VISIBLE is the proof that the
         # phone rules are running at all — without it a viewport that never narrowed would satisfy
@@ -307,6 +347,8 @@ class ShellTest < ApplicationSystemTestCase
       end
       assert launched_gerber, "the sweep never launched the Gerber viewer, so its overflow check measured a poster"
       assert opened_repo, "the sweep never opened the repository section, so its overflow check measured an empty mount point"
+      assert previewed, "the sweep never visited the preview, so its overflow check measured nothing"
+      assert opened_readme, "the sweep never opened the README editor, so its overflow check measured a closed summary"
 
       # STAGE 3, S3-4: THE PUBLIC PAGES, IN THEIR OWN LOOP BECAUSE THEIR SHELL IS THE OTHER ONE.
       # The three assertions above are the SIGNED-IN shell's, and this session IS signed in — so
