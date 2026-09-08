@@ -98,6 +98,10 @@ class User < ApplicationRecord
   has_many :maker_release_files, class_name: "Maker::ReleaseFile", dependent: :destroy
   has_many :maker_addon_states, class_name: "Maker::AddonState", dependent: :destroy
   has_many :maker_notes, class_name: "Maker::Note", dependent: :destroy
+  # Stage 4, S4-8. `:destroy` rather than `:delete_all` to match every sibling here; the model
+  # carries no callbacks, so the two are equivalent in effect and the cheaper one buys nothing at
+  # these row counts. TenantCleanupTest is what proves the line exists at all.
+  has_many :maker_file_links, class_name: "Maker::FileLink", dependent: :destroy
   has_many :maker_sheets, class_name: "Maker::Sheet", dependent: :destroy
   has_many :maker_models, class_name: "Maker::Model", dependent: :destroy
   has_many :maker_print_runs, through: :maker_models, source: :print_runs

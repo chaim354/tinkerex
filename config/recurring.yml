@@ -64,6 +64,9 @@ production:
   # nowhere, a stale attachment is a row the user can see. Four queries per user, so daily is cheap.
   #
   # Backend-neutral (no `command:` gate): a dead node is dead on all three backends.
+  #
+  # Since stage 4, S4-8 it also sweeps `maker_file_links`, whose two node columns can each go dead
+  # independently.
   dead_node_attachment_reaper:
     class: Maker::AttachmentReaperJob
     queue: background

@@ -69,9 +69,12 @@ module SchemaMap
       "tables" => %w[remote_manifest_chunks] },
     # `maker_repo_edits` sits here rather than with the projects: it is a row ABOUT A FILE, keyed
     # on `nodes.node_id` like every other table in this column, and it names no project at all.
+    # `maker_file_links` (stage 4, S4-8) belongs here for the same reason twice over: it is keyed
+    # on `nodes.node_id` at BOTH ends and names no project either.
     { "label" => "Files ↔ maker", "group" => "maker",
       "tables" => %w[maker_file_attachments maker_previews maker_notes maker_addon_files
-                     maker_addon_states maker_addon_state_revisions maker_repo_edits] },
+                     maker_addon_states maker_addon_state_revisions maker_repo_edits
+                     maker_file_links] },
     { "label" => "Library", "group" => "maker",
       "tables" => %w[maker_items maker_collection_items maker_collections maker_taggings
                      maker_tags maker_tasks] },
@@ -135,6 +138,12 @@ module SchemaMap
     # `content_token`, which is precisely the seam that exists to carry it. See Stage 3 boundary
     # design §5 (docs/superpowers/specs/2026-08-20-stage-3-boundary-design.md).
     [ "maker_notes.node_id",               "nodes.node_id",       "app", "note on" ],
+    # Stage 4, S4-8. TWO edges from one table, because a link is a statement about a PAIR: both
+    # ends are `nodes.node_id`, both are bare strings, and neither is enforced by anything. Drawn
+    # for the same reason maker_notes.node_id and maker_file_attachments.node_id are — this map
+    # exists to show the app-level references no constraint would ever notice.
+    [ "maker_file_links.from_node_id", "nodes.node_id", "app", "links from" ],
+    [ "maker_file_links.to_node_id",   "nodes.node_id", "app", "links to" ],
     [ "maker_items.primary_node_id",       "nodes.node_id",       "app", "primary file" ],
     [ "maker_models.cover_node_id",        "nodes.node_id",       "app", "cover" ],
     [ "maker_models.folder_node_id",       "nodes.node_id",       "app", "bundle dir" ],
