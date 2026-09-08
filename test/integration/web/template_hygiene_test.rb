@@ -112,7 +112,10 @@ module Web
       file!("n-src", "firmware.cpp")
       # tag_list: "laser" (stage 2, S2-5) also gives "tags/show" below a non-empty group to render
       # shared/_result_group through -- otherwise that template would need its own fixture.
-      @project = @user.maker_projects.create!(name: "Desk Lamp", tag_list: "laser")
+      # "lamp" AS WELL (tinkerex#286): the TAG arm of shared/_result_group renders only for a tag the
+      # sweep's own query matches, and "laser" is not one. The other four arms that query reaches
+      # get their fixtures below, beside the model and the inventory item.
+      @project = @user.maker_projects.create!(name: "Desk Lamp", tag_list: "laser, lamp")
       @project.file_attachments.create!(user: @user, node_id: "n-stl", role: "model", position: 0)
       @project.file_attachments.create!(user: @user, node_id: "n-bak", role: "laser", position: 1)
       @project.file_attachments.create!(user: @user, node_id: "gone", role: "model",
@@ -205,6 +208,12 @@ module Web
                                        data: Maker::Sheet.blank_data)
       @model = @user.maker_models.create!(title: "Bracket", slug: "bracket",
                                           cover_node_id: "n-stl", folder_node_id: "d-laser")
+      # THE MODEL ARM AND THE FILE ARM OF THE SEARCH PAGE (tinkerex#286): a model and a file whose
+      # names carry the sweep's query, or shared/_result_group's :model and :file branches are
+      # rendered by no page in `pages` — measured by S4-8's Task E, which found only :project,
+      # :folder and :note reached. Named so nothing else in this fixture is asserted about them.
+      @user.maker_models.create!(title: "Lamp shade", slug: "lamp-shade")
+      file!("n-lamp", "lamp-base.stl")
       @model.file_attachments.create!(user: @user, node_id: "n-stl", role: "model", position: 0)
       # ONE ATTACHMENT INSIDE `d-laser`, OR `models/_file_tree` IS NEVER RENDERED. Since 2026-09-02
       # the Files panel intersects the folder walk with the model's attachments (§14k), and `n-stl`
@@ -222,6 +231,8 @@ module Web
       # ledger table both render (an item with no transactions would leave `table.ledger`'s tbody
       # empty and the balance-walk untouched).
       @inventory_item = @user.maker_inventory_items.create!(name: "M3 bolt", unit: "each", min_quantity: 5)
+      # THE INVENTORY ARM of the search page (tinkerex#286) — see the model and file fixtures above.
+      @user.maker_inventory_items.create!(name: "Lamp cord", unit: "m", min_quantity: 0)
       Maker::InventoryTransaction.apply!(item: @inventory_item, user: @user, delta: 3, reason: "initial")
       # STAGE 2, S2-4: a BOM with a line of EACH kind, so both projects/_bom (the panel, on
       # "project detail") and projects/_bom_lines (the shared table + composer, on "projects/boms"
@@ -448,6 +459,20 @@ module Web
       }
     end
 
+    # EVERY ARM OF shared/_result_group, ON THE ONE PAGE THAT RENDERS THEM ALL (tinkerex#286). The
+    # coverage assertion below is per TEMPLATE, so a partial with seven `case` arms counts as swept
+    # the moment one arm renders; S4-8's Task E measured that only :project, :folder and :note ever
+    # did. The fixtures in `setup` give the search query a hit of every kind, and this is what says
+    # so — a fixture that quietly stops matching drops an arm out of the sweep with nothing else
+    # going red. A helper, not a third test: this file stays at exactly two test methods (below).
+    def assert_every_result_group_rendered
+      %w[file folder project model note inventory_item tag].each do |kind|
+        assert_select ".result-group--#{kind}", { minimum: 1 },
+                      "the search page rendered no #{kind} group — its fixture stopped matching " \
+                      "the sweep's query, so that arm of shared/_result_group is no longer swept"
+      end
+    end
+
     # KEEP THIS FILE AT EXACTLY TWO TEST METHODS. Minitest abandons a method at its first failure,
     # so a mutation that breaks two independent guards can only report two failures if the guards
     # live in two methods. Collapsing them costs that signal.
@@ -517,6 +542,7 @@ module Web
             assert_not_includes response.body, phrase,
                                 "#{name} rendered a code comment into the page (found #{phrase.inspect})"
           end
+          assert_every_result_group_rendered if name == "search"
         end
       ensure
         ActiveSupport::Notifications.unsubscribe(sub)
