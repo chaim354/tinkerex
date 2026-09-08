@@ -5,7 +5,9 @@ module Web
   # Licence CONTROLS moved to projects/_publish.html.erb — one column, one control (§14a's
   # one-question-two-answers rule) — and their rendered-field assertions moved with them to
   # publishing_test.rb. What stays here is `project_params` actually permitting the two, the
-  # handle-required refusal on the EDIT form's own path, and the page-head badge.
+  # handle-required refusal on a PATCH that carries no `return_to` (no form in the app produces that
+  # request any more — the panel always sends `return_to=project` — so it is the hand-crafted /
+  # API-shaped path, kept because the arm still exists), and the page-head badge.
   class ProjectPublishingFormTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
@@ -30,7 +32,7 @@ module Web
       assert_match(/\A\h{32}\z/, @project.unlisted_token)
     end
 
-    test "without a handle the form re-renders with the error and the project stays private" do
+    test "without a handle a PATCH with no return_to re-renders the edit form with the error and the project stays private" do
       patch project_path(@project), params: { project: { visibility: "public" } }
 
       assert_response :unprocessable_content

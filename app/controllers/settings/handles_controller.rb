@@ -28,7 +28,12 @@ module Settings
     # into a route here, so an unknown or someone else's slug falls back to the Account page rather
     # than redirecting anywhere a caller named. There is no URL in this parameter to sanitise.
     def return_path
-      slug = params[:project_id].presence
+      # A STRING OR NOTHING. `params[:project_id]` can arrive as a hash or an array; `find_by(slug:)`
+      # on a hash raises TypeError, and this runs AFTER `current_user.save` — so a mis-shaped param
+      # was a 500 on a claim that had already succeeded (found in review). Not a String means "no
+      # project named", the same fallback as an unknown slug.
+      slug = params[:project_id]
+      slug = nil unless slug.is_a?(String) && slug.present?
       project = slug && current_user.maker_projects.find_by(slug:)
       project ? project_path(project) : edit_user_registration_path
     end

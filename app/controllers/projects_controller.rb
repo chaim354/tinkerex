@@ -451,10 +451,19 @@ class ProjectsController < ApplicationController
   # foreign id resolves to nothing and the card falls back to its placeholder. Adding a validation
   # would buy a nicer error for a case nobody reaches through the UI, at the price of a query on
   # every project save.
+
+  def project_params
+    attrs = params.require(:project).permit(:name, :description, :status, :cover_node_id, :tag_list,
+                                            :visibility, :license, :autofile)
+    attrs[:cover_node_id] = nil if params[:project][:cover_clear] == "1"
+    attrs
+  end
+
   # WHAT A VISIBILITY CHANGE ACTUALLY DID, IN THE MAKER'S TERMS (stage 4, S4-4; story 5.2). "Project
   # updated." was the whole feedback for publishing until now — no URL, and no word about the fact
-  # that EVERY visible file in the project's folder became downloadable by ancestry
-  # (Maker::PublicProject#permits?). A maker cannot consent to what nobody told them.
+  # that EVERY visible file in the project's folder — and every file attached to the project or its
+  # build log, wherever it lives — became downloadable (Maker::PublicProject#permits?). A maker
+  # cannot consent to what nobody told them.
   #
   # `saved_change_to_visibility?` RATHER THAN `published?`: the sentence is about the CHANGE, so a
   # save that touched the name must not re-announce a publication that happened last week.
@@ -465,13 +474,6 @@ class ProjectsController < ApplicationController
     url = public_project_url(@project.user.handle, @project.slug,
                              **(@project.unlisted? ? { k: @project.unlisted_token } : {}))
     who = @project.unlisted? ? "anyone with that link" : "anyone"
-    "Published at #{url}. Everything in the project's folder is now downloadable by #{who}."
-  end
-
-  def project_params
-    attrs = params.require(:project).permit(:name, :description, :status, :cover_node_id, :tag_list,
-                                            :visibility, :license, :autofile)
-    attrs[:cover_node_id] = nil if params[:project][:cover_clear] == "1"
-    attrs
+    "Published at #{url}. Everything in the project's folder, and every file attached to it, is now downloadable by #{who}."
   end
 end

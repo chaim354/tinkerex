@@ -17,7 +17,11 @@
   `maker_project[...]`, which ProjectsController's `params.require(:project)` rejects and every
   save would silently drop (§14d, shipped twice). Asserted as RENDERED in publishing_test.rb.
 
-  Local: project.
+  Locals: project; folder_path — the project folder's path from the LISTING (nil when the project
+  has no folder yet), named in the warning because permission is granted from the folder NODE
+  (Maker::PublicProject#permits?) and a path rebuilt from ROOT + slug can name a folder that is
+  not it: Maker::ProjectDiscovery keeps the folder's own name (`Projects/Desk Lamp`) and slugifies
+  the slug (`desk-lamp`) — project_folders.rb records the same trap for ProjectIntake#place.
 %>
 <section class="panel publish-panel" id="publish">
   <div class="panel-head">
@@ -64,11 +68,15 @@
                                         project.license) %>
       </label>
 
-      <%# EVERYTHING IN THE FOLDER, NOT JUST WHAT IS ON THE PAGE. Permission is by ANCESTRY
-          (Maker::PublicProject#permits?), so a file past the listing's cap is still downloadable.
+      <%# EVERYTHING IN THE FOLDER, NOT JUST WHAT IS ON THE PAGE — AND THE ATTACHMENTS OUTSIDE IT.
+          Permission is by ANCESTRY of the folder node plus every file attached to the project or
+          to a build-log entry (Maker::PublicProject#permits?), so a file past the listing's cap is
+          downloadable and so is an attachment that lives elsewhere in the library. A consent
+          sentence that named only the folder asked consent for part of it (found in review).
           Said before the button, not in the flash afterwards. %>
       <p class="muted publish-warning">Publishing makes every visible file in
-        <span class="mono"><%= Maker::ProjectFolders::ROOT %>/<%= project.slug %></span> downloadable by anyone who can open the page.</p>
+        <% if folder_path.present? %><span class="mono"><%= folder_path %></span><% else %>the project's library folder<% end %>,
+        and every file attached to the project or its build log, downloadable by anyone who can open the page.</p>
 
       <div class="form-actions">
         <%= f.submit "Save publishing", class: "btn small primary" %>
@@ -82,20 +90,22 @@
         The page head's "Public page" link makes the same distinction, the other way round. %>
     <% if project.publicly_listed? %>
       <% url = public_project_url(project.user.handle, project.slug) %>
-      <div class="publish-url">
-        <span class="mono"><%= url %></span>
-        <button type="button" class="btn small" data-controller="copy" data-copy-text-value="<%= url %>"
-                data-action="copy#copy">Copy</button>
+      <%# THE CONTROLLER WRAPS THE VALUE AND THE BUTTON, AND THE VALUE IS THE `source` TARGET —
+          S4-3's mount (files/show.html.erb). copy_controller.js's last resort, when the clipboard
+          API and execCommand both refuse (plain-http self-hosting), SELECTS that target so the
+          maker can copy by hand; a button-only mount had no source and failed silently there. %>
+      <div class="publish-url" data-controller="copy" data-copy-text-value="<%= url %>">
+        <span class="mono" data-copy-target="source"><%= url %></span>
+        <button type="button" class="btn small" data-action="copy#copy">Copy</button>
       </div>
     <% end %>
 
     <% if project.unlisted? %>
       <% link = public_project_url(project.user.handle, project.slug, k: project.unlisted_token) %>
-      <div class="publish-unlisted">
+      <div class="publish-unlisted" data-controller="copy" data-copy-text-value="<%= link %>">
         <p class="muted">The link IS the credential — anyone holding it can open the page.</p>
-        <span class="mono"><%= link %></span>
-        <button type="button" class="btn small" data-controller="copy" data-copy-text-value="<%= link %>"
-                data-action="copy#copy">Copy</button>
+        <span class="mono" data-copy-target="source"><%= link %></span>
+        <button type="button" class="btn small" data-action="copy#copy">Copy</button>
         <%= button_to "New link", project_unlisted_token_path(project), method: :post, class: "btn small",
                       form: { data: { turbo_confirm: "Replace the link? Anyone holding the old one loses access." } } %>
       </div>

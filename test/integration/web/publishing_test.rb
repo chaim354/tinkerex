@@ -71,7 +71,7 @@ module Web
       get project_path(@project)
 
       url = public_project_url(@project.user.handle, @project.slug)
-      assert_select ".publish-url [data-controller~=?][data-copy-text-value=?]", "copy", url
+      assert_select ".publish-url[data-controller~=?][data-copy-text-value=?]", "copy", url
       assert_select ".publish-url button[data-action=?]", "copy#copy", text: "Copy"
       assert_select ".publish-panel a[href=?]", preview_project_path(@project), text: "Preview"
     end
@@ -83,7 +83,7 @@ module Web
       get project_path(@project)
 
       url = public_project_url("chaim", @project.slug, k: @project.reload.unlisted_token)
-      assert_select ".publish-unlisted [data-controller~=?][data-copy-text-value=?]", "copy", url
+      assert_select ".publish-unlisted[data-controller~=?][data-copy-text-value=?]", "copy", url
       assert_select "form[action=?]", project_unlisted_token_path(@project)
     end
 
@@ -173,6 +173,45 @@ module Web
 
       assert_redirected_to project_path(@project)
       assert_match(/Handle/, flash[:alert])
+    end
+
+    test "a hash-shaped project_id cannot 500 a claim that already saved" do
+      # FOUND IN REVIEW: `params[:project_id]` reached `find_by(slug:)` untyped, so `project_id[a]=1`
+      # raised TypeError from return_path — AFTER `current_user.save` had committed the handle. The
+      # maker saw a 500 for a claim that in fact succeeded.
+      patch settings_handle_path, params: { user: { handle: "chaim" }, project_id: { a: "1" } }
+
+      assert_redirected_to edit_user_registration_path
+      assert_equal "chaim", @user.reload.handle
+    end
+
+    test "each Copy button sits in a copy controller that also marks the value as its selection fallback" do
+      # copy_controller.js's last resort (no clipboard API, execCommand refused — the plain-http
+      # self-hosted case its header is written for) SELECTS the `source` target so the maker can
+      # copy by hand. A button-only mount has no source and fails silently there.
+      @user.update!(handle: "chaim")
+      @project.update!(visibility: "public")
+      get project_path(@project)
+      assert_select ".publish-url[data-controller~=copy] .mono[data-copy-target=source]", 1
+
+      @project.update!(visibility: "unlisted")
+      get project_path(@project)
+      assert_select ".publish-unlisted[data-controller~=copy] .mono[data-copy-target=source]", 1
+    end
+
+    test "the warning names the project's ACTUAL folder, not a path rebuilt from its slug" do
+      # A discovered project (Maker::ProjectDiscovery) keeps the folder's own name and gets a
+      # slugified slug: folder `Projects/Desk Lamp`, slug `desk-lamp`. Permission is granted from
+      # the folder NODE (Maker::PublicProject#permits?), so the sentence must name that folder.
+      @user.update!(handle: "chaim")
+      folder = project_folder_rows!(@user, @project)
+      folder.update!(name: "Desk Lamp")
+
+      get project_path(@project)
+
+      assert_select ".publish-warning .mono", text: "Projects/Desk Lamp"
+      assert_select ".publish-warning .mono", text: "Projects/desk-lamp", count: 0
+      assert_select ".publish-warning", /attached to the project/
     end
 
     test "another maker's slug in project_id falls back to the account page" do

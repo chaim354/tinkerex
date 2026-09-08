@@ -100,5 +100,5 @@
   <%= render "sheets" %>
   <%# Stage 4, S4-4: visibility, licence, the URL and the unlisted link — see the partial's header
       for why it is last and why the page head links to it. %>
-  <%= render "publish", project: @project %>
+  <%= render "publish", project: @project, folder_path: (@listing.path if @listing&.available?) %>
 </div>
