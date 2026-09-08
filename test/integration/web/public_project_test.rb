@@ -162,8 +162,9 @@ module Web
     test "the photos panel shows the folder's image and the entry photo living outside it" do
       get path
 
-      assert_select ".photos-panel a[href=?]", public_file_path("ada", @project.slug, @f[:pic].node_id)
-      assert_select ".photos-panel a[href=?]", public_file_path("ada", @project.slug, @f[:entry_photo].node_id)
+      # THE VIEW PAGE since stage 4, S4-5 (the file names in the Files panel link there too).
+      assert_select ".photos-panel a[href=?]", public_file_view_path("ada", @project.slug, @f[:pic].node_id)
+      assert_select ".photos-panel a[href=?]", public_file_view_path("ada", @project.slug, @f[:entry_photo].node_id)
     end
 
     # --- 7. the BOM: three columns, and what is absent ------------------------------

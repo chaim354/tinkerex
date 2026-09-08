@@ -170,11 +170,28 @@ module Web
       assert_select "section.history-panel", count: 0
     end
 
+    # AN UNMOUNTED LIBRARY IS A 503, NOT A 500 — the same mapping FilesController makes once for
+    # the maker's page (§14a: FetchError is the retryable answer), made once here for every public
+    # page by Public::BaseController (found in review: the public byte route and this page both
+    # answered 500). `use_fresh_share_library!` hands this test its own Share instance, so a
+    # singleton stub on it outlives nothing.
+    test "a library that cannot answer makes the public file page a 503, not a 500" do
+      FileLayer.current.define_singleton_method(:stat) { |*_a, **_k| raise FileLayer::FetchError, "unmounted" }
+
+      get view_path_for(@f[:base].node_id)
+
+      assert_response :service_unavailable
+    end
+
     # THE PERMISSION IS `permits?`'S, NOT A SECOND ONE. Same matrix public_file_test.rb pins for the
     # bytes: if the view page could reach a node the byte route refuses, the page and the route
     # would disagree — which is the one thing Maker::PublicProject exists to prevent.
     test "a sibling of the folder, a dot-file, a directory and another maker's file are all 404" do
-      [ @f[:outsider].node_id, @f[:dotfile].node_id, @f[:models].node_id, "no-such-node" ].each do |id|
+      # ANOTHER MAKER'S FILE, DRIVEN AND NOT ONLY NAMED (found in review): `deliverable!` resolves in
+      # the OWNER's library, so a foreign node id is unfindable there before `permits?` is even asked.
+      theirs = make_owner!(handle: "bob").nodes.create!(node_id: SecureRandom.uuid, name: "theirs.stl",
+                                                         kind: "file", mtime: 1, size: 1)
+      [ @f[:outsider].node_id, @f[:dotfile].node_id, @f[:models].node_id, theirs.node_id, "no-such-node" ].each do |id|
         get view_path_for(id)
         assert_response :not_found, "#{id} must not have a public page"
       end

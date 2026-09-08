@@ -6,6 +6,13 @@ module Public
   class BaseController < ActionController::Base
     layout "application"
     helper_method :public_surface?
+    # AN UNMOUNTED OR UNREACHABLE LIBRARY IS A 503 ON EVERY PUBLIC PAGE, MAPPED ONCE HERE — the
+    # answer §14a gives for FetchError (retryable, never "gone") and the one FilesController makes
+    # once for the maker's pages. Without it a public byte route or file page answered a bare 500
+    # (stage 4, S4-5, found in review). Nothing about the visitor is read; the status is the port's.
+    rescue_from FileLayer::FetchError do
+      head :service_unavailable
+    end
 
     # The layout renders the anonymous shell for a public page EVEN FOR A SIGNED-IN OWNER: the
     # rail's current-project switcher needs CurrentProject, which this base deliberately lacks,

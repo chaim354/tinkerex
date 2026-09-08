@@ -80,6 +80,23 @@ module Web
     # three legs each pin their own answer: the s3 leg must carry the adapter's origin, and the
     # other two must carry nothing but 'self' — a store address hand-written into the initializer
     # fails on those two, and a dropped source fails on s3.
+    # THE SAME QUESTION FOR A PUBLIC PAGE, ON THE AMBIENT LEG (stage 4, S4-5, found in review). Every
+    # public suite pins a fresh SHARE library for its bytes, so a presignable-arm assertion written
+    # there is dead on all three legs; /explore needs no fixture at all, and Public::BaseController is
+    # where the anonymous-nonce path and the policy meet. The s3 leg is the one that carries the origin.
+    test "a public page's connect-src names the presigned origin on a presignable backend and only 'self' elsewhere" do
+      get public_explore_path
+      assert_response :success
+      sources = response.headers["Content-Security-Policy-Report-Only"][/connect-src ([^;]+)/, 1]
+      port = FileLayer.current
+
+      if port.capabilities.presignable?
+        assert_equal "'self' #{port.presigned_origin}", sources
+      else
+        assert_equal "'self'", sources
+      end
+    end
+
     test "connect-src names the presigned origin on a presignable backend and only 'self' elsewhere" do
       get files_path
       csp = response.headers["Content-Security-Policy-Report-Only"]
