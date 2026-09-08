@@ -30,7 +30,15 @@
   browser lists them like any other file, where a section genuinely does not render them (they are
   in the Generated group instead).
 
-  Local: dir (Maker::ProjectFolderListing::Dir).
+  A SECTION IS A NESTED FOLDER ONLY, SINCE 2026-09-08. A DEPTH-ONE subfolder of the project's
+  folder is a PANEL now (projects/_folder_panel), so this partial is reached from that panel's
+  `children` and from its own recursion — never from projects/_attachments, which no longer renders
+  a section at all.
+
+  Locals: dir (Maker::ProjectFolderListing::Dir), view (one of Maker::Project::VIEWS) — the
+  enclosing PANEL's view, passed down and passed on through the recursion. It was `@view`, one
+  page-wide cookie, until the view became per panel (spec decision 6): an ivar cannot say which
+  panel is asking.
 %>
 <% visible = dir.files.reject { |row| @generated_ids.include?(row.node_id) } %>
 <% count = dir.repo? ? dir.subtree_file_count : visible.size %>
@@ -58,7 +66,7 @@
       <%= render "projects/repo_browser", dir: %>
     <% else %>
       <% if visible.any? %>
-        <% if @view == "list" %>
+        <% if view == "list" %>
           <%= render "file_rows", rows: visible %>
         <% else %>
           <div class="attachments-grid">
@@ -66,7 +74,8 @@
           </div>
         <% end %>
       <% end %>
-      <%= render partial: "file_tree_section", collection: dir.children, as: :dir %>
+      <%= render partial: "file_tree_section", collection: dir.children, as: :dir,
+                 locals: { view: } %>
     <% end %>
   </details>
 </section>

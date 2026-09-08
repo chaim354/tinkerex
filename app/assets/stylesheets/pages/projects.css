@@ -50,7 +50,28 @@
      its own `overflow-x: auto` and is where a long line belongs. */
   .project-panels { display: grid; grid-template-columns: 1fr; gap: 16px; }
   .project-panels > .panel { min-width: 0; }
-  @media (min-width: 900px) { .project-panels { grid-template-columns: 1fr 1fr; } .attachments-panel, .photos-panel { grid-column: 1 / -1; } }
+  @media (min-width: 900px) { .project-panels { grid-template-columns: 1fr 1fr; } .attachments-panel, .photos-panel, .folder-panel { grid-column: 1 / -1; } }
+
+  /* --- Folder panels (2026-09-08): one per depth-one subfolder of the project's folder, each with
+     its own view. FULL WIDTH, with Files and Photos, because a folder panel holds the same content
+     a Files section held — a 96px tile grid, a nested section, or the Miller-columns browser — and
+     half a column is where the browser stops being usable.
+
+     THE VIEW TOGGLE IS THREE `button_to` FORMS, NOT LINKS, because choosing a view is a WRITE now.
+     Two consequences the component sheet cannot know about: each button arrives wrapped in its own
+     <form>, so the forms are `display: contents` to put the buttons back in `.view-toggle`'s flex
+     row; and `.view-toggle .toggle + .toggle`'s divider can never match, because the buttons are
+     not siblings in the DOM whatever their boxes do — the divider is redrawn on the FORM's
+     adjacency instead. The reset below deliberately stays at two classes plus an element, BELOW
+     `.view-toggle .toggle.active`'s three classes, so the component keeps the last word on the
+     active state; naming `button.toggle` here would win instead and silently flatten it. */
+  .project-panels .view-toggle form.button_to { display: contents; }
+  .project-panels .view-toggle button { border: 0; background: none; cursor: pointer; }
+  .project-panels .view-toggle form.button_to + form.button_to button { border-left: 1px solid var(--line); }
+  .folder-panel .panel-path { font-size: 12px; margin-left: 8px; }
+  /* Quiet (S4-1): the heading, the badge and one sentence on one line. `.panel--quiet` already
+     zeroes the head's margin and hides the `.mono.muted` count; the sentence needs its own. */
+  .folder-panel.panel--quiet > p { margin: 0; }
 
   /* --- Files panel: 96px tiles, Detach in the corner on hover --- */
   .attachments-panel .panel-path { font-size: 12px; margin-left: 8px; }

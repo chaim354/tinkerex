@@ -179,16 +179,17 @@ module Web
       assert_select "p.muted", text: "No files attached yet.", count: 0
     end
 
-    # --- the folder as a tree (stage 3, S3-1) -----------------------------------
+    # --- the folder as a tree (stage 3, S3-1; folder panels 2026-09-08) ---------
 
-    # THE HEADLINE SCENARIO: sections are the folder's REAL subfolders, nested exactly as they sit
-    # on disk — no role vocabulary anywhere in this panel any more. Loose (root) files come first.
-    test "loose files come first, then one nested section per real subfolder" do
+    # THE HEADLINE SCENARIO: the Files panel holds the folder's ROOT, each DEPTH-ONE subfolder is
+    # its own panel, and anything deeper nests inside its parent's panel exactly as it sits on
+    # disk. No role vocabulary anywhere, at either level.
+    test "loose files stay in Files, each subfolder is a panel, and a nested one is a section inside it" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      models = subfolder!(user, project, name: "models")
-      docs = subfolder!(user, project, name: "docs")
-      wiring = subfolder!(user, project, name: "wiring", parent: docs.node_id)
+      models = subfolder!(user, project, name: "models", node_id: "d-models")
+      docs = subfolder!(user, project, name: "docs", node_id: "d-docs")
+      wiring = subfolder!(user, project, name: "wiring", node_id: "d-wiring", parent: docs.node_id)
       folder_file!(user, project, name: "notes.txt", node_id: "n-notes")
       folder_file!(user, project, name: "bracket.stl", node_id: "n-bracket", parent: models.node_id)
       folder_file!(user, project, name: "manual.pdf", node_id: "n-manual", parent: docs.node_id)
@@ -197,48 +198,52 @@ module Web
       get project_path(project)
       assert_response :success
 
-      # Loose first, and it names why these files sit apart.
-      assert_select ".attachment-group-head", text: /Loose \(1\)/
-      assert_select ".attachment-group .grid-name", text: "notes.txt"
-      assert_select "p.loose-note", text: /Loose files are filed on the next sweep/
+      # Loose stays in Files, and it names why these files sit apart.
+      assert_select ".attachments-panel .attachment-group-head", text: /Loose \(1\)/
+      assert_select ".attachments-panel .attachment-group .grid-name", text: "notes.txt"
+      assert_select ".attachments-panel p.loose-note", text: /Loose files are filed on the next sweep/
 
-      assert_select ".file-tree-section details summary", text: /models \(1\)/
-      assert_select ".file-tree-section details summary", text: /docs \(1\)/
-      # docs NESTS wiring — a nested .file-tree-section INSIDE docs' own <details>, not merely
-      # somewhere else on the page. `> details > summary` picks each section's OWN summary
-      # (a summary's only children here are its badge/links, never a nested section — that sits
-      # beside it, inside the same <details> — so a block-scoped assert_select on the summary
-      # itself cannot see a child section; this walks the DOM directly instead.
-      docs_section = css_select(".file-tree-section").find { |el| el.at_css("> details > summary")&.text.to_s =~ /docs \(1\)/ }
-      assert docs_section, "expected to find the docs section"
-      assert_match(/wiring \(1\)/, docs_section.at_css(".file-tree-section details summary")&.text.to_s,
-                   "docs must nest wiring")
+      assert_select "section.folder-panel[id=?] .panel-head", "folder:d-models" do
+        assert_select "h2", text: "models"
+        assert_select ".mono.muted", text: "1 file"
+      end
+      # docs NESTS wiring — a .file-tree-section INSIDE the docs PANEL, and the count in the panel
+      # head is the whole subtree (its own manual.pdf plus wiring/pinout.pdf).
+      assert_select "section.folder-panel[id=?] .panel-head .mono.muted", "folder:d-docs", text: "2 files"
+      assert_select "section.folder-panel[id=?]", "folder:d-docs" do
+        assert_select ".file-tree-section details summary", text: /wiring \(1\)/
+        assert_select ".file-tree-section .attachment-tile .grid-name", text: "pinout.pdf"
+      end
+      assert_select "section.folder-panel[id=?] > div > .attachments-grid .grid-name", "folder:d-docs",
+                    text: "manual.pdf"
       assert_select ".attachment-tile .grid-name", text: "bracket.stl"
-      assert_select ".attachment-tile .grid-name", text: "manual.pdf"
-      assert_select ".attachment-tile .grid-name", text: "pinout.pdf"
     end
 
-    test "an empty subfolder still renders its own section, with no files" do
+    test "an empty subfolder is a quiet panel of its own, and the project is not called empty" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      subfolder!(user, project, name: "empty")
+      subfolder!(user, project, name: "empty", node_id: "d-empty")
 
       get project_path(project)
       assert_response :success
-      assert_select ".file-tree-section details summary", text: /empty \(0\)/
+      assert_select "section.folder-panel.panel--quiet[id=?] .panel-head h2", "folder:d-empty", text: "empty"
+      assert_select "section.folder-panel[id=?] p.muted", "folder:d-empty", text: "Empty folder."
       assert_select "p.muted", text: /No files in this project yet/, count: 0
     end
 
-    # A REPOSITORY IS THE ONE SECTION THAT IS CLOSED AND NOT UNROLLED (2026-09-07, at the user's
-    # request). The summary is unchanged — name, `repo` badge, Commits and History — and everything
-    # BELOW it is now one mount point instead of tiles and a section per subdirectory. The two
-    # `details[open]` cases further down are the non-repo control and stay exactly as they are.
-    test "a repository inside the folder is a nested section, badged, closed by default, browsed rather than unrolled" do
+    # A NESTED REPOSITORY IS THE ONE SECTION THAT IS CLOSED AND NOT UNROLLED (2026-09-07, at the
+    # user's request). The summary is unchanged — name, `repo` badge, Commits and History — and
+    # everything BELOW it is one mount point instead of tiles and a section per subdirectory.
+    #
+    # NESTED IS THE WHOLE FIXTURE SINCE 2026-09-08: at DEPTH ONE a repository is a PANEL now (the
+    # case below), so `code/firmware` is what still reaches _file_tree_section's repo branch. The
+    # two `details[open]` cases further down are the non-repo control and stay as they are.
+    test "a nested repository is a section, badged, closed by default, browsed rather than unrolled" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      folder = project.ensure_library_folder!(user)
+      code = subfolder!(user, project, name: "code", node_id: "d-code")
       firmware = user.nodes.create!(node_id: "d-firmware", name: "firmware", kind: "dir",
-                                    parent_node_id: folder.node_id)
+                                    parent_node_id: code.node_id)
       user.nodes.create!(node_id: "d-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
                          parent_node_id: firmware.node_id)
       # A SUBDIRECTORY OF THE REPO, which used to render a nested section of its own. It is the
@@ -281,6 +286,36 @@ module Web
       assert_select ".file-tree-section details summary", text: /src/, count: 0
       # No standalone Repositories group any more — a repo is a section now.
       assert_select ".attachment-group-head", text: /Repositories/, count: 0
+    end
+
+    # A REPOSITORY AT DEPTH ONE IS A PANEL (2026-09-08; spec decisions 3 and 6), and its DEFAULT
+    # VIEW is the browser — which is the same page the closed section drew, with the panel head
+    # carrying the badge and the Commits/History links the summary used to.
+    test "a depth-one repository is a panel that opens in the browser, badged, with Commits and History" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      folder = project.ensure_library_folder!(user)
+      firmware = user.nodes.create!(node_id: "d-firmware", name: "firmware", kind: "dir",
+                                    parent_node_id: folder.node_id)
+      user.nodes.create!(node_id: "d-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
+                         parent_node_id: firmware.node_id)
+      src = user.nodes.create!(node_id: "d-src", name: "src", kind: "dir", parent_node_id: firmware.node_id)
+      folder_file!(user, project, name: "main.c", node_id: "n-mainc", parent: firmware.node_id)
+      folder_file!(user, project, name: "led.c", node_id: "n-ledc", parent: src.node_id)
+
+      get project_path(project)
+      assert_response :success
+      assert_select "section.folder-panel[id=?]", "folder:d-firmware" do
+        assert_select ".panel-head h2", text: "firmware"
+        assert_select ".panel-head span.badge", text: "repo"
+        assert_select ".panel-head .mono.muted", text: "2 files"
+        assert_select ".panel-head a[href=?]", repo_commit_path(firmware.node_id)
+        assert_select ".panel-head a[href=?]", repo_history_path(firmware.node_id)
+        assert_select ".repo-browser[data-filebrowser-root-value=?]", firmware.node_id
+      end
+      # NOT UNROLLED: no tile for its own file, and no section for its subdirectory.
+      assert_select ".attachment-tile .grid-name", text: "main.c", count: 0
+      assert_select ".file-tree-section", count: 0
     end
 
     test "folder files do not get Detach" do
@@ -454,17 +489,20 @@ module Web
 
     # --- collapsible sections + LightBurn/MillMage backups ----------------------
 
-    # Native <details>, so this works with no JavaScript at all. `open` on an ordinary subfolder
-    # section is what keeps the panel readable by default — Backups is the one group that starts
-    # closed (see below).
-    test "a real subfolder's section is a collapsible details, open by default" do
+    # Native <details>, so this works with no JavaScript at all. `open` on an ordinary NESTED
+    # subfolder section is what keeps its panel readable by default — Backups is the one group that
+    # starts closed (see below). NESTED since 2026-09-08: `models` itself is a panel, and a panel
+    # has no <details> to open; `models/old` is the section this rule is now about.
+    test "a nested subfolder's section is a collapsible details, open by default" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      models = subfolder!(user, project, name: "models")
-      folder_file!(user, project, name: "arm.stl", node_id: "n-arm", parent: models.node_id)
+      models = subfolder!(user, project, name: "models", node_id: "d-models")
+      old = subfolder!(user, project, name: "old", node_id: "d-old", parent: models.node_id)
+      folder_file!(user, project, name: "arm.stl", node_id: "n-arm", parent: old.node_id)
 
       get project_path(project)
-      assert_select ".file-tree-section details[open] summary", text: /models \(1\)/
+      assert_select "section.folder-panel[id=?] .file-tree-section details[open] summary",
+                    "folder:d-models", text: /old \(1\)/
     end
 
     # LightBurn and MillMage drop a `<stem>_backup.<ext>` rescue copy beside every project file, so
@@ -474,24 +512,27 @@ module Web
     test "LightBurn backups move to a collapsed Backups section, out of their own subfolder" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      laser = subfolder!(user, project, name: "laser")
+      laser = subfolder!(user, project, name: "laser", node_id: "d-laser")
       # Backup detection (Row#backup?) reads the node's own name, wherever it sits in the tree.
       folder_file!(user, project, name: "sign.lbrn2", node_id: "n-sign", parent: laser.node_id)
       folder_file!(user, project, name: "sign_backup.lbrn2", node_id: "n-bak", parent: laser.node_id)
 
       get project_path(project)
-      assert_select ".file-tree-section details summary", text: /laser \(1\)/
-      assert_select ".attachment-group-head", text: /Backups \(1\)/
+      # THE LASER PANEL COUNTS ONE FILE, not two: the backup was diverted out of the tree entirely,
+      # so it is neither in the panel's count nor among its tiles.
+      assert_select "section.folder-panel[id=?] .panel-head .mono.muted", "folder:d-laser", text: "1 file"
+      # Backups stays a CROSS-CUTTING group in Files, wherever its files physically sit.
+      assert_select ".attachments-panel .attachment-group-head", text: /Backups \(1\)/
       # CLOSED, which is the whole of "don't show the backups" — one click away, not gone (its
       # tile is still IN the markup, same as any other <details> content, just not the default
       # open state — assert_select sees it either way).
       assert_select ".attachment-group details:not([open]) summary", text: /Backups/
-      assert_select ".file-tree-section details[open] summary", text: /laser/
-      # THE FILE ITSELF RENDERS EXACTLY ONCE, and NOT inside the laser section it physically sits
+      # THE FILE ITSELF RENDERS EXACTLY ONCE, and NOT inside the laser panel it physically sits
       # in -- Backups pulls it out rather than duplicating it.
       assert_select ".attachment-tile .grid-name", text: "sign_backup.lbrn2", count: 1
-      laser_section = css_select(".file-tree-section").find { |el| el.at_css("> details > summary")&.text.to_s =~ /laser/ }
-      assert_no_match(/sign_backup\.lbrn2/, laser_section.text, "the backup must not also render inside laser")
+      laser_panel = css_select("section.folder-panel[id='folder:d-laser']").first
+      assert laser_panel, "expected a panel for the laser folder"
+      assert_no_match(/sign_backup\.lbrn2/, laser_panel.text, "the backup must not also render inside laser")
     end
 
     # THE NARROWNESS IS THE POINT. A user's own `battery_backup.stl` is not a LightBurn rescue copy,
@@ -529,24 +570,31 @@ module Web
       assert_select ".attachment-group-head", text: /Loose \(1\)/
     end
 
-    # --- the list view (stage 3, S3-1) ------------------------------------------
+    # --- the list view (stage 3, S3-1; per panel since 2026-09-08) --------------
 
-    test "the list view renders a table with Section and Origin cells and the choice is remembered" do
+    # THE CHOICE IS PERSISTED ON THE ROW, NOT IN A COOKIE (spec decision 6): the page-wide
+    # `project_view` cookie and its `?view=` link retired with the page-wide toggle, so the stored
+    # view is what this drives — and it is remembered across a bare request by construction.
+    test "a panel in list view renders a table with Section and Origin cells, and the choice is remembered" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      models = subfolder!(user, project, name: "models")
+      models = subfolder!(user, project, name: "models", node_id: "d-models")
       folder_file!(user, project, name: "bracket.stl", node_id: "n-bracket", parent: models.node_id)
+      project.update!(panels: { "views" => { "folder:d-models" => "list" } })
 
-      get project_path(project, view: "list")
-      assert_response :success
-      assert_select "table.table.project-files"
-      assert_select "table.project-files td.col-section", text: "models"
-      assert_select "table.project-files td.col-origin", text: "—"
-      assert_select ".view-toggle a.toggle.active", text: "List"
-
-      # The cookie remembers list across a bare request with no ?view= at all.
       get project_path(project)
-      assert_select "table.table.project-files"
+      assert_response :success
+      assert_select "section.folder-panel[id=?]", "folder:d-models" do
+        assert_select "table.table.project-files"
+        assert_select "table.project-files td.col-section", text: "models"
+        assert_select "table.project-files td.col-origin", text: "—"
+        assert_select ".view-toggle button.toggle.active", text: "List"
+      end
+
+      # A BARE `?view=list` IS INERT NOW. The old url survived in bookmarks and would otherwise
+      # half-work — it must change nothing at all, not switch the page one last time.
+      get project_path(project, view: "list")
+      assert_select "section.attachments-panel table.project-files", count: 0
     end
 
     # A LIST ROW CARRIES THE TILE'S RIGHT-CLICK MENU (stage 4, S4-1). The two views draw the same
@@ -559,27 +607,33 @@ module Web
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
       folder_file!(user, project, name: "plate.svg", node_id: "f1")
+      project.update!(panels: { "views" => { "attachments" => "list" } })
 
-      get project_path(project, view: "list")
+      get project_path(project)
 
       assert_response :success
       assert_select "table.project-files tr[data-action=?][data-note-url=?][data-download-url=?]",
                     "contextmenu->filemenu#open", file_notes_path("f1"), blob_file_path("f1", download: 1)
     end
 
-    test "tiles is the default view, and an explicit ?view=tiles switches back" do
+    # TILES IS THE DEFAULT AND THE TOGGLE IS A WRITE. Two buttons on the Files panel — `browser`
+    # is not offered here (projects/_attachments' header says why) — each posting `view[attachments]`
+    # to the panels door, which is the field name a browser will really send.
+    test "tiles is the default view, and the Files toggle posts view[attachments] to the panels door" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
       folder_file!(user, project, name: "bracket.stl", node_id: "n-bracket")
 
       get project_path(project)
-      assert_select ".view-toggle a.toggle.active", text: "Tiles"
-      assert_select ".attachments-grid .attachment-tile"
+      assert_select ".attachments-panel .view-toggle button.toggle.active", text: "Tiles"
+      assert_select ".attachments-panel .attachments-grid .attachment-tile"
+      assert_select ".attachments-panel .view-toggle form[action=?]", project_panels_path(project), 2
+      assert_select ".attachments-panel input[type=hidden][name=?][value=?]", "view[attachments]", "list"
 
-      get project_path(project, view: "list")
-      get project_path(project, view: "tiles")
-      assert_select ".view-toggle a.toggle.active", text: "Tiles"
-      assert_select "table.project-files", count: 0
+      patch project_panels_path(project), params: { view: { "attachments" => "list" } }
+      get project_path(project)
+      assert_select ".attachments-panel table.project-files"
+      assert_select ".attachments-panel .view-toggle button.toggle.active", text: "List"
     end
 
     # --- Thumbnails inside a closed repository (2026-09-07) ---------------------
@@ -648,7 +702,7 @@ module Web
     test "a generated file appears once in Generated, with its tool, item and revision, and never in its section" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      models = subfolder!(user, project, name: "models")
+      models = subfolder!(user, project, name: "models", node_id: "d-models")
       node = folder_file!(user, project, name: "box.svg", node_id: "n-box", parent: models.node_id)
       state = user.maker_addon_states.create!(addon_key: "boxes", name: "shelf box", data: {}, revision: 3)
       state.files.create!(node_id: node.node_id, role: "output", position: 0)
@@ -665,12 +719,15 @@ module Web
       assert_select ".generated-group .generated-meta", text: /shelf box/
       assert_select ".generated-group .generated-meta", text: /rev 3/
       assert_select ".generated-group a", text: "Edit in Box Generator"
-      # NOT repeated inside its own section.
-      assert_select ".file-tree-section details summary", text: /models \(0\)/
+      # NOT repeated inside its own folder's panel, which holds nothing else and is therefore quiet.
+      assert_select "section.folder-panel.panel--quiet[id=?] .panel-head h2", "folder:d-models", text: "models"
+      assert_select "section.folder-panel[id=?] .grid-name", "folder:d-models", count: 0
 
       # THE LIST VIEW'S ORIGIN COLUMN IS THE TOOL'S TITLE, read from the origin hash's own key —
       # not a prefix stripped off the menu label, which a rewording would silently break (review).
-      get project_path(project, view: "list")
+      # Generated is a Files-panel group, so it is the FILES panel's view that switches it.
+      project.update!(panels: { "views" => { "attachments" => "list" } })
+      get project_path(project)
       assert_select ".generated-group td.col-origin", text: "Box Generator"
     ensure
       Maker::Addons::Source.reset!

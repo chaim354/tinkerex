@@ -89,11 +89,47 @@ class ProjectsController < ApplicationController
     # project ever, and page_query_budget_test.rb's warm-up render absorbs it.
     @project.update_column(:opened_at, Time.current) if @project.opened_at.nil?
 
-    # THE PAGE'S PANEL LIST, FIRST (stage 4, S4-7; story 6.5): this project's kind's preset with its
-    # own overrides on top. Zero queries — it reads two columns off the row `set_project` already
-    # loaded — and it is read before the loads below because three of them are SKIPPED when their
-    # panel is hidden.
-    @panel_layout = @project.panel_layout
+    # The folder project-view uploads go into. Best-effort (re-ensured here so a folder the user
+    # deleted is recreated); nil → uploads fall back to the library root rather than 500 the page.
+    # AND IT RUNS BEFORE THE LISTING BELOW, which reads the folder_node_id this (re)writes —
+    # looking at a folder must never be what mints it (docs/invariants/project-intake.md).
+    # `&.` BECAUSE nil IS AN ANSWER NOW (decision 2, stage 4, S4-6): a project whose folder is in
+    # the trash gets nil here, on purpose, and the rescue below is for PORT failures — found in
+    # review: without the safe navigation the routine case rode through that rescue, which would
+    # have gone on swallowing any real NoMethodError in this block.
+    @upload_parent_node_id = begin
+      @project.ensure_library_folder!(current_user)&.node_id
+    rescue StandardError
+      nil
+    end
+
+    # THE FOLDER IS WHAT THE PANEL SHOWS; @attachments stay the file→project RELATION (detach,
+    # cover, addon origin, the missing count). Maker::ProjectFolderListing reads folder_node_id and
+    # never mints a folder — the ensure above is the one writer, and it runs first. An attachment
+    # whose node is not among the listing's own (capped) ids is Linked: attached to this project but
+    # living somewhere else in the library, so it gets its own group with Detach and a move-in
+    # button instead of the plain folder tile.
+    #
+    # THE LISTING NOW COMES BEFORE THE PANEL LAYOUT, AND THAT ORDER IS LOAD-BEARING (2026-09-08,
+    # folder panels): every direct subfolder is a PANEL, so the layout cannot be computed until the
+    # tree that names them exists. It used to be the first thing #show did; it is still read before
+    # every load that a hidden panel skips (@bom/@releases/@connections below), which is the
+    # property that mattered about being early — being FIRST was never the point.
+    @listing = Maker::ProjectFolderListing.new(current_user, @project)
+
+    # THE PAGE'S PANEL LIST (stage 4, S4-7; story 6.5): this project's kind's preset with its own
+    # overrides on top, over a vocabulary that now includes this folder's own depth-one subfolders
+    # (Maker::ProjectKind's header). Zero queries — two columns off the row `set_project` already
+    # loaded, plus `panel_folders`, which is one `map` over the tree above.
+    @panel_layout = @project.panel_layout(folders: @listing.panel_folders)
+    # WHAT THE CHOOSER CALLS EACH PANEL. The ten fixed labels plus one per folder — its own name,
+    # which is the only label a folder key could honestly carry. Built here rather than in the
+    # chooser because the chooser has no listing of its own, and a label map assembled in a view
+    # would be a second definition the panels door could not reuse. A key with no entry cannot
+    # reach the chooser: the layout is total against exactly these folders.
+    @panel_labels = Maker::Project::PANEL_LABELS.merge(
+      @listing.tree.to_h { |dir| [ Maker::ProjectKind.folder_key(dir.node_id), dir.name ] }
+    )
 
     # A FILE DELETED FROM THE LIBRARY LEAVES THE PROJECT, IMMEDIATELY. It used to sit here forever
     # as a "⚠️ (file unavailable)" tile with a per-file Remove button: `Library::Reconciler`
@@ -170,28 +206,6 @@ class ProjectsController < ApplicationController
     # a file by accident and watched their project change otherwise has no thread to pull. It
     # disappears on its own when the reaper clears the rows.
     @missing_attachment_count = missing.size
-
-    # The folder project-view uploads go into. Best-effort (re-ensured here so a folder the user
-    # deleted is recreated); nil → uploads fall back to the library root rather than 500 the page.
-    # AND IT RUNS BEFORE THE LISTING BELOW, which reads the folder_node_id this (re)writes —
-    # looking at a folder must never be what mints it (docs/invariants/project-intake.md).
-    # `&.` BECAUSE nil IS AN ANSWER NOW (decision 2, stage 4, S4-6): a project whose folder is in
-    # the trash gets nil here, on purpose, and the rescue below is for PORT failures — found in
-    # review: without the safe navigation the routine case rode through that rescue, which would
-    # have gone on swallowing any real NoMethodError in this block.
-    @upload_parent_node_id = begin
-      @project.ensure_library_folder!(current_user)&.node_id
-    rescue StandardError
-      nil
-    end
-
-    # THE FOLDER IS WHAT THE PANEL SHOWS; @attachments stay the file→project RELATION (detach,
-    # cover, addon origin, the missing count). Maker::ProjectFolderListing reads folder_node_id and
-    # never mints a folder — the ensure above is the one writer, and it runs first. An attachment
-    # whose node is not among the listing's own (capped) ids is Linked: attached to this project but
-    # living somewhere else in the library, so it gets its own group with Detach and a move-in
-    # button instead of the plain folder tile.
-    @listing = Maker::ProjectFolderListing.new(current_user, @project)
     # THE REPOSITORY CARD (stage 3, S3-2): one per repo Dir anywhere in the folder's tree — the
     # README rendered, the latest commit, the current tag, links to the commit/history pages.
     # Keyed by node_id so `_file_tree_section.html.erb` (recursive, one call per Dir) can look its
@@ -275,10 +289,6 @@ class ProjectsController < ApplicationController
     # Reuses the dirs and root nodes the repository cards above already collected, so a folder full
     # of repositories still costs the one batched `nodes` query it already paid.
     @release_repos = releases_shown && capabilities.local_worktree? ? release_repo_tags(repo_dirs, repo_roots) : []
-    # Tiles or list (stage 3, S3-1) — the same whitelist-and-cookie idiom FilesController#resolve_view
-    # uses, with its own values and its own cookie: this page's default is tiles, the Files page's
-    # is list, and the two toggles must not read each other's choice.
-    @view = resolve_project_view
     # GENERATED (stage 3, S3-1): a file inside the folder that an addon produced is listed ONCE, in
     # its own group below, never repeated inside the section it happens to sit in. Scoped to
     # @listing.node_ids ONLY — never `tile_ids` a few lines down, which also carries Linked rows:
@@ -453,23 +463,12 @@ class ProjectsController < ApplicationController
     @project = current_user.maker_projects.find_by!(slug: params[:id])
   end
 
-  # Tiles or list (stage 3, S3-1) — the same whitelist-and-cookie idiom as
-  # FilesController#resolve_view: an explicit `?view=` wins and is remembered for a year; otherwise
-  # the last remembered choice; otherwise tiles. A DIFFERENT cookie (`project_view`, not
-  # `files_view`) and a DIFFERENT default (tiles, not list) — this page and the Files page must not
-  # read each other's remembered choice, and tiles is what the panel has always defaulted to.
-  PROJECT_VIEWS = %w[tiles list].freeze
-  DEFAULT_PROJECT_VIEW = "tiles".freeze
-
-  def resolve_project_view
-    requested = params[:view].presence
-    if PROJECT_VIEWS.include?(requested)
-      cookies[:project_view] = { value: requested, expires: 1.year }
-      return requested
-    end
-    saved = cookies[:project_view]
-    PROJECT_VIEWS.include?(saved) ? saved : DEFAULT_PROJECT_VIEW
-  end
+  # THE PAGE-WIDE VIEW COOKIE IS GONE (2026-09-08, folder panels; spec decision 6). `project_view`
+  # answered for every section at once, so a maker could not have their models as tiles and their
+  # firmware checkout as the Finder browser; the view is now per PANEL and persisted in
+  # `panels["views"]` (Maker::Project::VIEWS, written by Projects::PanelsController#update's
+  # `view[<key>]` branch and read through Layout#view_for). `?view=` on this action is inert, and
+  # the cookie is simply never read again — nothing has to clear it.
 
   # Every repo? Dir anywhere in the tree, at any depth — mirrors
   # Maker::ProjectFolderListing#flatten_dirs (private there, and rightly so: that walk is the

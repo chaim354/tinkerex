@@ -1,11 +1,11 @@
 <%#
-  The project's FOLDER, shown as the Files panel — the folder as a TREE (stage 3, S3-1): loose
-  root files first (the sweep's inbox), then one section per real subfolder, nested exactly as it
-  sits on disk (a working tree is a section too, expandable in place), then Generated (tool
-  output, once, never repeated in its section), then every attachment that points OUTSIDE the
-  folder ("Linked from elsewhere"). Maker::ProjectFolderListing (@listing) computes the tree, the
-  loose files and the cross-cutting Backups list; ProjectsController#show computes Generated
-  (Maker::AddonOrigin.for) and Linked (diffing @attachments against @listing's own tree).
+  The project folder's ROOT, shown as the Files panel (stage 3, S3-1; folder panels 2026-09-08):
+  loose root files first (the sweep's inbox), then Generated (tool output, once, never repeated in
+  the folder it sits in), Backups, and every attachment that points OUTSIDE the folder ("Linked
+  from elsewhere"). Each real SUBFOLDER is its own panel now — see the note below.
+  Maker::ProjectFolderListing (@listing) computes the tree, the loose files and the cross-cutting
+  Backups list; ProjectsController#show computes Generated (Maker::AddonOrigin.for) and Linked
+  (diffing @attachments against @listing's own tree).
 
   THE FOLDER AND THE RELATION ARE TWO DIFFERENT THINGS, AND THE PANEL SHOWS BOTH. `@attachments` is
   the file→project RELATION ProjectsController#show has always computed (detach, cover, addon
@@ -25,10 +25,11 @@
   listing as much as for the Linked rows — ThumbnailMap rescues FetchError to {}, so an unmounted
   NAS would otherwise empty this panel and report every file deleted. Pinned by page_nodes_test.rb.
 
-  ONE `thumbs` controller wraps every group rather than one per grid: Stimulus finds targets
-  anywhere in the controller element's subtree, so a single instance polls all pending cells on the
-  page instead of N instances polling their own slice. `filemenu` rides along on the same element
-  for the same reason — one document-level listener, every tile.
+  ONE `thumbs` controller wraps every group in THIS panel rather than one per grid: Stimulus finds
+  targets anywhere in the controller element's subtree, so a single instance polls all pending
+  cells beneath it instead of N instances polling their own slice. `filemenu` rides along on the
+  same element for the same reason — one document-level listener, every tile. A folder panel is a
+  SIBLING subtree and carries its own pair; there is no element that could cover both.
 
   THE PANEL OPENS WITH THE FOLDER'S OWN CARD (stage 4, S4-1): `projects/_repo_card` over
   ProjectsController#show's @root_card when @listing.root_repo? (the folder IS a working tree —
@@ -36,10 +37,21 @@
   leaves those files alone), else `projects/_readme_card` over @readme when the folder has a plain
   README. Neither is inside the "no files yet" check below: a README is content.
 
-  @view (tiles/list) IS READ BY EVERY GROUP PARTIAL BELOW, NOT BY THIS ONE — this template only
-  decides WHICH groups exist and in what order; _attachment_group/_file_tree_section/
-  _generated_group each decide tiles vs. _file_rows.html.erb for their own rows, off the same ivar.
+  THE PANEL IS THE FOLDER'S ROOT NOW, NOT THE WHOLE TREE (2026-09-08, folder panels; spec
+  decision 4). Every DEPTH-ONE subfolder is its own panel (projects/_folder_panel), so the
+  `file_tree_section` collection render that used to sit between Loose and Generated is gone from
+  here — deleting it is what stops a folder rendering twice. What stays is everything that is NOT
+  a subfolder: the root's card, Loose, and the cross-cutting Generated, Backups and Linked groups,
+  plus the truncation and missing-attachment notes.
+
+  `view` IS THIS PANEL'S OWN, read once here off @panel_layout and passed DOWN as a required local
+  — the page-wide `project_view` cookie retired with the toggle that set it (spec decision 6), so
+  there is no ivar for a group partial to read any more. `browser` is not offered: there is no Dir
+  for the folder's own root to hand projects/_repo_browser unless the folder IS a working tree, and
+  a control that does nothing is worse than one that is absent. A `browser` value stored by hand
+  renders as tiles, which is what every group already does with anything that is not "list".
 %>
+<% view = @panel_layout.view_for("attachments") %>
 <section class="panel attachments-panel">
   <div class="panel-head">
     <h2>Files</h2>
@@ -56,14 +68,18 @@
         <%= link_to "Commits", repo_commit_path(@listing.folder_id), class: "linkbtn" %>
         <%= link_to "History", repo_history_path(@listing.folder_id), class: "linkbtn" %>
       <% end %>
-      <%# Tiles / List (stage 3, S3-1) — the same view-toggle component the Files page uses
-          (components.css), a different cookie and a different default (ProjectsController
-          #resolve_project_view): this page starts on tiles, the Files page on list. %>
+      <%# Tiles / List, FOR THIS PANEL (2026-09-08, folder panels). The same view-toggle component
+          the Files page uses (components.css), but the choice is a WRITE now — it persists on the
+          project row under this panel's key — so these are button_to forms, not links, and the
+          door redirects back to this panel's anchor. projects/_folder_panel.html.erb carries the
+          same markup over all three of Maker::Project::VIEWS; see its header for why Files omits
+          `browser`. %>
       <div class="view-toggle" role="group" aria-label="View">
-        <%= link_to "Tiles", project_path(@project, view: "tiles"),
-                    class: "toggle#{' active' if @view == 'tiles'}" %>
-        <%= link_to "List", project_path(@project, view: "list"),
-                    class: "toggle#{' active' if @view == 'list'}" %>
+        <% %w[tiles list].each do |value| %>
+          <%= button_to value.capitalize, project_panels_path(@project), method: :patch,
+                        params: { view: { "attachments" => value } },
+                        class: "toggle#{' active' if view == value}" %>
+        <% end %>
       </div>
       <%# "Look at my library NOW", instead of waiting on library_scan's 15 minutes (share/s3) or
           remote_changelog_pull's 2 (chunk_remote). It scans the LIBRARY, not this folder — a scan
@@ -154,47 +170,51 @@
   <% loose = @listing.loose.reject { |r| @generated_ids.include?(r.node_id) } %>
   <% if @listing.tree.empty? && loose.empty? && backups.empty? && @linked_rows.empty? &&
         @generated.empty? && @missing_attachment_count.zero? && !@listing.truncated? %>
+    <%# THE TREE STAYS IN THIS TEST THOUGH ITS SECTIONS LEFT: the sentence is about the PROJECT,
+        not about this panel, and a project whose folder holds nothing but subfolders has files —
+        they are in the panels below. Saying "no files in this project yet" over three full folder
+        panels would be the flat lie the folder-missing note above exists to avoid. %>
     <p class="muted">No files in this project yet.<% if @listing.available? %> Upload one, or drop files into <span class="mono"><%= @listing.path %></span>.<% end %></p>
   <% else %>
-    <div data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
-      <%# LOOSE FIRST — the sweep's inbox. Shown only when there is something in it; the note says
-          why these files sit apart from every real section instead of reading as forgotten. %>
-      <% if loose.any? %>
-        <%= render "attachment_group", key: "loose", label: "Loose", rows: loose, open: true %>
-        <%# THE CAPTION MUST BE TRUE OF THIS FOLDER (stage 4, S4-1): the sweep does not file a
-            working tree's files, so promising it would be a lie about the one shape most real
-            project folders have. %>
-        <% if @listing.root_repo? %>
-          <p class="muted loose-note">This folder is a git repository, so its files stay where they are.</p>
-        <% else %>
-          <p class="muted loose-note">Loose files are filed on the next sweep; a README stays here.</p>
+    <%# THE WRAPPER IS CONDITIONAL because this panel's groups are, all four of them: with the
+        subfolder sections gone, a folder holding only subfolders leaves nothing here to poll or
+        right-click, and an empty `thumbs` div would be a controller instance over no cells. %>
+    <% if loose.any? || @generated.any? || backups.any? || @linked_rows.any? %>
+      <div data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
+        <%# LOOSE FIRST — the sweep's inbox. Shown only when there is something in it; the note says
+            why these files sit apart from every real section instead of reading as forgotten. %>
+        <% if loose.any? %>
+          <%= render "attachment_group", key: "loose", label: "Loose", rows: loose, open: true, view: %>
+          <%# THE CAPTION MUST BE TRUE OF THIS FOLDER (stage 4, S4-1): the sweep does not file a
+              working tree's files, so promising it would be a lie about the one shape most real
+              project folders have. %>
+          <% if @listing.root_repo? %>
+            <p class="muted loose-note">This folder is a git repository, so its files stay where they are.</p>
+          <% else %>
+            <p class="muted loose-note">Loose files are filed on the next sweep; a README stays here.</p>
+          <% end %>
         <% end %>
-      <% end %>
 
-      <%# ONE SECTION PER REAL SUBFOLDER, nested exactly as it sits on disk — a repository renders
-          here too, expandable in place, never as a separate group (S3-1 retired the old
-          standalone Repositories group). %>
-      <%= render partial: "file_tree_section", collection: @listing.tree, as: :dir %>
+        <%# TOOL OUTPUT, once, never repeated inside whichever section it sits in. %>
+        <% if @generated.any? %>
+          <%= render "generated_group", view: %>
+        <% end %>
 
-      <%# TOOL OUTPUT, once, never repeated inside whichever section it sits in. %>
-      <% if @generated.any? %>
-        <%= render "generated_group" %>
-      <% end %>
+        <%# COLLAPSED, and that is the whole of "don't show the backups": they are one click away
+            rather than gone, so nothing about the project's folder is hidden from someone looking
+            for it. %>
+        <% if backups.any? %>
+          <%= render "attachment_group", key: "backups", label: "Backups", rows: backups, open: false, view: %>
+        <% end %>
 
-      <%# COLLAPSED, and that is the whole of "don't show the backups": they are one click away
-          rather than gone, so nothing about the project's folder is hidden from someone looking
-          for it. %>
-      <% if backups.any? %>
-        <%= render "attachment_group", key: "backups", label: "Backups", rows: backups, open: false %>
-      <% end %>
-
-      <%# ATTACHED, BUT LIVING ELSEWHERE. Not a folder row and not counted in @listing.total — its
-          own section, always open, so it reads as "these still need your attention" rather than
-          being buried among the folder's own files. %>
-      <% if @linked_rows.any? %>
-        <%= render "attachment_group", key: "linked", label: "Linked from elsewhere", rows: @linked_rows, open: true %>
-      <% end %>
-    </div>
+        <%# ATTACHED, BUT LIVING ELSEWHERE. Not a folder row and not counted in @listing.total — its
+            own section, always open, so it reads as "these still need your attention" rather than
+            being buried among the folder's own files. %>
+        <% if @linked_rows.any? %>
+          <%= render "attachment_group", key: "linked", label: "Linked from elsewhere", rows: @linked_rows, open: true, view: %>
+        <% end %>
+      </div>
+    <% end %>
 
     <% if @missing_attachment_count.positive? %>
       <p class="muted attachments-missing">

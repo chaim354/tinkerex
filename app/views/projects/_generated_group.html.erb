@@ -16,6 +16,10 @@
   its revision, and an "Open in <tool>" link when this deployment still serves that addon (nil when
   it does not — the same rule the file page's own button follows, docs/invariants/addons.md). LIST:
   _file_rows.html.erb, whose Origin column is never blank for a row that reached this group.
+
+  Local: view (one of Maker::Project::VIEWS) — the FILES panel's, since that is the only panel this
+  cross-cutting group renders in. Required since 2026-09-08: the page-wide `@view` cookie retired
+  when the view became per panel (spec decision 6).
 %>
 <section class="attachment-group generated-group">
   <details open>
@@ -30,7 +34,7 @@
          row = @listing.row_for(node_id)
          [ row, state ] if row
        } %>
-    <% if @view == "list" %>
+    <% if view == "list" %>
       <%= render "file_rows", rows: rows.map(&:first) %>
     <% else %>
       <div class="attachments-grid">
