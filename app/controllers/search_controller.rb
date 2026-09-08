@@ -34,6 +34,27 @@ class SearchController < ApplicationController
                         .where("LOWER(name) LIKE ? ESCAPE '\\'", like)
     add_group("Files", :file, files.order(:name), files_path(q: @q))
 
+    # Folders: the DIRECTORY rows the Files group deliberately excludes, as their own kind. This is
+    # story 3.5's "folder paths" half, in the only spelling all three backends can answer:
+    # `nodes.storage_path` -- the obvious one -- is written by FileLayer::Share and FileLayer::S3
+    # ONLY (chunk_remote mirrors a remote tree and never writes it), so a LIKE over it would be
+    # structurally empty on the product's main deployment: one condition with two answers across
+    # backends, which §14a forbids and which no test leg could pin identically. A folder row links
+    # into the Files page's own folder view, which is the thing the maker was looking for.
+    #
+    # `visible_entries(false)`: the same display filter the Files group applies, so a dot-dir, the
+    # `.git` marker and a build-output directory are as absent here as they are on a folder page.
+    # KNOWN LIMITATION, INHERITED VERBATIM FROM THAT SCOPE AND NOT WORSENED HERE: `.git` is
+    # excluded BY NAME, so on chunk_remote -- where the desktop client syncs the marker's contents
+    # and they exist as rows -- a directory INSIDE `.git` still matches by its own name. Node's own
+    # comment records why closing that needs a recursive CTE this page must not pay for; on share
+    # and s3 nothing beneath the marker is observed, so there are no rows to match at all.
+    folders = current_user.nodes.present.where(kind: "dir")
+                          .visible_entries(false)
+                          .where("LOWER(name) LIKE ? ESCAPE '\\'", like)
+    # No "See all": the Files index has no folder-only listing to send a remainder to.
+    add_group("Folders", :folder, folders.order(:name), nil)
+
     # Projects: name OR description. Archived projects are the user's own and are not excluded
     # here — only the "See all" destination (the projects index) hides them by default; said
     # once, not re-litigated per row.
@@ -46,6 +67,37 @@ class SearchController < ApplicationController
     # Models index itself applies.
     models = current_user.maker_models.catalogued.where("LOWER(title) LIKE ? ESCAPE '\\'", like)
     add_group("Models", :model, models.order(:title), models_path(q: @q))
+
+    # Notes: the note BODY, which is the one thing a maker writes that this app keeps and could not
+    # find (story 3.5). It lives in `action_text_rich_texts`, reached through the `rich_text_body`
+    # association `has_rich_text :body` already declares -- `joins(:rich_text_body)` emits both
+    # `record_type = 'Maker::Note'` and `name = 'body'` itself (probed), so a hand-written ON clause
+    # here would be a second spelling that can drift from the association.
+    #
+    # ONLY NOTES ON A LIVE FILE, because the row's whole content is a link to that file's page. The
+    # `.present` subquery is one statement and adapter-agnostic; a boolean literal inside a JOIN
+    # condition is not.
+    #
+    # README TEXT IS DELIBERATELY NOT HERE, and the reason is a measurement rather than a
+    # preference: Maker::Readme reads a README through the PORT at request time from an in-memory
+    # ProjectFolderListing, so searching them costs one listing plus one port read PER PROJECT --
+    # on chunk_remote a WAN stream each. page_query_budget_test.rb's search#index case grows
+    # projects and asserts constancy in N, so that shape fails a guard by construction. README
+    # search needs a stored, scan-maintained index; that is a design, not a group. Story 3.5
+    # records it as remaining friction.
+    notes = current_user.maker_notes
+                        .joins(:rich_text_body)
+                        .where(node_id: current_user.nodes.present.select(:node_id))
+                        .where("LOWER(action_text_rich_texts.body) LIKE ? ESCAPE '\\'", like)
+                        .includes(:rich_text_body)
+                        .order(created_at: :desc)
+    if (group = add_group("Notes", :note, notes, nil))
+      # THE FILE NAMES FOR THE ROWS THAT WILL ACTUALLY RENDER -- one query over at most PER_GROUP
+      # ids, after the cap. Doing it in the scope instead would need a `select`, and a relation
+      # carrying select values breaks `add_group`'s own `.count` (`COUNT(a, b)` is not SQL).
+      group[:node_names] = current_user.nodes.where(node_id: group[:records].map(&:node_id))
+                                       .pluck(:node_id, :name).to_h
+    end
 
     # Inventory: name OR part number, mirroring InventoryItemsController#index's own clause.
     # `includes(:location)`: a result row says where the item lives; five rows, five lookups without it.
@@ -69,9 +121,21 @@ class SearchController < ApplicationController
   # `.result-group--<kind>` shell. `total` (not `records.size`) is what "See all N" reads --
   # the count is a second, unbounded query, but it is ONE per kind, same shape as the Files page's
   # own @match_count.
+  #
+  # RETURNS THE GROUP, OR nil WHEN THERE WERE NO MATCHES. The Notes group needs one more query
+  # after the cap is applied (the file names for the five rows it will actually render), and that
+  # query must see the CAPPED set, not the whole match set -- so the caller needs the hash back.
+  # Every other caller ignores the return value, exactly as before.
+  #
+  # A SCOPE HANDED IN HERE MUST CARRY NO `select` VALUES: `.count` on such a relation builds
+  # `COUNT(a, b)`, which is not SQL. That is why the Notes group's file names are a second query
+  # over the capped ids rather than a column on the scope itself.
   def add_group(title, kind, scope, more_path)
     total = scope.count
     return if total.zero?
-    @groups << { title:, kind:, records: scope.limit(PER_GROUP).to_a, total:, more_path: }
+
+    group = { title:, kind:, records: scope.limit(PER_GROUP).to_a, total:, more_path: }
+    @groups << group
+    group
   end
 end
