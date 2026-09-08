@@ -145,6 +145,15 @@ Rails.application.routes.draw do
     # Return an archived project to the live list. A member PATCH rather than an update to a
     # `status` field: the web form no longer exposes status at all (spec decision #1).
     patch :unarchive, on: :member
+    # ADOPT IN PLACE (stage 4, S4-6; spec decision D1). A folder ANYWHERE in the library becomes a
+    # project without moving: the row's folder_node_id simply points there. A COLLECTION route
+    # because there is no project yet — the FOLDER is the subject, and it rides as params[:node_id].
+    #
+    # Under `projects/` so ShellHelper::SECTIONS lights the Projects rail item off
+    # controller_path's first segment (design-system rule 8) with no map edit. It is a POST and
+    # always redirects, so the rail is never actually rendered for it — stated so the next reader
+    # does not go looking for a missing SECTIONS entry.
+    post :adopt, on: :collection, to: "projects/adoptions#create"
     # THE OWNER'S PREVIEW OF THEIR PUBLIC PAGE (stage 4, S4-4; story 5.1). A member GET on THIS
     # controller, not a door into Public:: — spec §7: `Public::` never reads the session, so the
     # preview is a session-authed route in the private namespace that renders the public partials

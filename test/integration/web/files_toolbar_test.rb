@@ -118,5 +118,60 @@ module Web
       assert_select ".files-grid .grid-card:not(.file-cell):not(.grid-folder) .grid-sub", text: "2.34 KB · BIN"
       assert_select ".files-grid .grid-folder .grid-sub", count: 0
     end
+
+    # STORY 1.3 / 4.7 — the one door onto adoption. It renders on the FOLDER view only: the flat
+    # view and the root are questions about the library, and there is no folder there to adopt.
+    test "a folder view offers 'Make this folder a project', and the root does not" do
+      get files_path(folder: "dir-cad")
+      assert_select ".page-actions details.menu form[action=?] button.menu-item",
+                    adopt_projects_path, text: /make this folder a project/i
+      assert_select ".page-actions details.menu form[action=?] input[name=?][value=?]",
+                    adopt_projects_path, "node_id", "dir-cad"
+
+      get files_path
+      assert_select "form[action=?]", adopt_projects_path, count: 0
+    end
+
+    # THE MENU MUST NOT OFFER WHAT THE DOOR WOULD REFUSE for a reason the page can see for free.
+    # The expensive refusals (an ancestor's claim, a working tree) stay in the controller; these
+    # two are a string test and a nil test on a row the page already holds.
+    test "the adopt item is absent for a dot-folder and for the Projects root" do
+      projects = @user.nodes.create!(node_id: "dir-projects", name: Maker::ProjectFolders::ROOT,
+                                     kind: "dir")
+      dot = @user.nodes.create!(node_id: "dir-dot", name: ".hidden", kind: "dir")
+
+      # `?hidden=` is not needed: it filters which CHILDREN are listed, and FilesController
+      # #current_folder resolves params[:folder] by node_id regardless of the dot rule.
+      [ projects, dot ].each do |folder|
+        get files_path(folder: folder.node_id)
+        # BRACES ON THE EQUALITY HASH. `assert_select sel, arg, count: 0, "msg"` is a Ruby SYNTAX
+        # ERROR — a positional argument cannot follow a braceless hash — and rails-dom-testing's
+        # signature is (selector, *substitutions, equality, message). Every other assertion in this
+        # plan puts the hash last and needs no braces; this one carries a message.
+        assert_select "form[action=?]", adopt_projects_path, { count: 0 }, "for #{folder.name}"
+      end
+    end
+
+    # A CLAIMED FOLDER OFFERS THE PROJECT, NOT THE VERB. Unscoped on status, like every other
+    # reader of this claim: an archived project still owns its folder, and the page saying nothing
+    # about it is how a maker ends up with two projects for one folder.
+    test "a folder a project already claims links to that project instead" do
+      project = @user.maker_projects.create!(name: "Cad Build")
+      project.update_column(:folder_node_id, "dir-cad")
+
+      get files_path(folder: "dir-cad")
+
+      assert_select ".page-actions details.menu a.menu-item[href=?]", project_path(project),
+                    text: /Cad Build/
+      assert_select "form[action=?]", adopt_projects_path, count: 0
+    end
+
+    # The menu itself must appear on a folder view even where it would otherwise be empty —
+    # chunk_remote is not scannable and has no current project here, so before this slice the
+    # `details.menu` did not render at all and the item would have had nowhere to go.
+    test "the overflow menu renders on a folder view on every backend" do
+      get files_path(folder: "dir-cad")
+      assert_select ".page-actions details.menu[data-controller='menu'] summary.btn", count: 1
+    end
   end
 end
