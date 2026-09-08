@@ -82,10 +82,14 @@ module Public
     # ANYTHING THAT IS NOT A POSITIVE INTEGER IS PAGE 1, never an error and never a 404: `?page=`,
     # `?page=abc` and `?page=0` are what a hand-edited URL, a truncated link and an off-by-one
     # client produce, and the honest answer to all three is the first page. `to_i` is the whole
-    # parse — it answers 0 for junk, which this floors to 1. It is `params[:page]`, not the
-    # session: nothing on a public page may read who is asking (§14d).
+    # parse — it answers 0 for junk, which this floors to 1 — and the `to_s` in front of it is
+    # load-bearing, not tidiness: Rack hands `?page[]=2` over as an Array and `?page[a]=2` as
+    # Parameters, neither of which has `to_i`, so without it a bracketed param any crawler can emit
+    # was an anonymous 500 on the very page this bound exists to harden (found in review,
+    # 2026-09-08). It is `params[:page]`, not the session: nothing on a public page may read who
+    # is asking (§14d).
     def requested_page
-      n = params[:page].to_i
+      n = params[:page].to_s.to_i
       n < 1 ? 1 : n
     end
   end

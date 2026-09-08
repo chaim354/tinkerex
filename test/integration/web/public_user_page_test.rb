@@ -125,8 +125,11 @@ module Web
       assert_response :not_found
     end
 
+    # THE TWO NON-SCALAR SPELLINGS ARE THE ONES THAT BITE: `?page[]=2` arrives as an Array and
+    # `?page[a]=2` as Parameters, and `to_i` on either is a NoMethodError — an anonymous 500 until
+    # review caught it. They ride the same loop as the scalar junk because the answer is the same.
     test "a page that is not a positive integer reads as page 1" do
-      [ "0", "-4", "abc", "", "1.5" ].each do |junk|
+      [ "0", "-4", "abc", "", "1.5", [ "2" ], { a: "2" } ].each do |junk|
         get public_user_path("ada", page: junk)
 
         assert_response :success, "?page=#{junk.inspect} must render, not error"
