@@ -1,0 +1,6 @@
+<%# locals: (name:, blob_url:) %>
+<%# The picture itself, served inline from the byte route — FileDelivery's allowlist is what makes
+    that safe (raster types plus PDF; SVG and HTML are forced to an attachment). Shared by the
+    maker's file page and a visitor's (stage 4, S4-5): `blob_url` is /files/:id/blob for the owner
+    and /u/:handle/:slug/files/:id for a visitor. %>
+<img src="<%= blob_url %>" alt="<%= name %>" class="preview-image">

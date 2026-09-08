@@ -1,0 +1,5 @@
+<%# locals: (name:, blob_url:) %>
+<%# Full PDF preview via the browser's own viewer (served inline from the byte route). SAME-ORIGIN
+    IFRAME, WHICH IS WHY THE CSP's frame-ancestors IS 'self' AND NOT 'none' (§14e) — and it stays
+    true on the public page, which frames the same app's endpoint. %>
+<iframe src="<%= blob_url %>" class="preview-pdf" title="<%= name %> (PDF)"></iframe>

@@ -1018,10 +1018,12 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # state across lines and keeps whatever follows the terminator on the same line, so real code
   # sharing a line with a comment's end is still scanned.
   #
-  # NON-VACUOUS BY ASSERTION (§14e): the scan is 21 files today (8 controllers, 13 templates —
-  # public/projects/_page.html.erb among them since stage 4, S4-4 extracted the page body) and a
-  # renamed directory would otherwise retire this invariant with `assert_empty` passing over zero
-  # files. 10 is a plausibility floor, not today's count.
+  # NON-VACUOUS BY ASSERTION (§14e): the scan is 29 files today (8 controllers, 13 templates —
+  # public/projects/_page.html.erb among them since stage 4, S4-4 extracted the page body — and the
+  # 8 shared viewer partials under app/views/files/viewers, which S4-5 added because a PUBLIC page
+  # renders them from OUTSIDE this namespace) and a renamed directory would otherwise retire this
+  # invariant with `assert_empty` passing over zero files. 18 is a plausibility floor, not today's
+  # count.
   test "the Public namespace stands outside ApplicationController and names no session accessor" do
     Rails.application.eager_load!
 
@@ -1038,11 +1040,19 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
              # EVERY TEMPLATE KIND, not `*.erb`: the namespace's first non-ERB template was the Atom
              # builder (stage 3, S3-6), and a `*.erb` glob let `session[:who]` sit in it with this
              # guard green (mutation-proven by S3-6's review). A template is a template.
-             Dir.glob(ROOT.join("app", "views", "public", "**", "*.{erb,builder,jbuilder}"))).sort
-    assert_operator files.size, :>=, 10,
+             Dir.glob(ROOT.join("app", "views", "public", "**", "*.{erb,builder,jbuilder}")) +
+             # STAGE 4, S4-5: THE VIEWER PARTIALS ARE SHARED, SO THE SCAN HAS TO REACH THEM. A
+             # visitor's file page renders app/views/files/viewers/*, which live OUTSIDE this
+             # namespace — a `current_user` or a private route helper in one of them would reach a
+             # visitor with this guard green. They take every URL as a strict local precisely so
+             # they need not know which page they are on; this is what checks that they don't.
+             Dir.glob(ROOT.join("app", "views", "files", "viewers", "*.erb"))).sort
+    assert_operator files.size, :>=, 18,
                     "the Public scan matched #{files.size} file(s), below the plausibility floor " \
-                    "of 10 — so `assert_empty` below cannot fail for the reason it exists " \
-                    "(CLAUDE.md §14e). A renamed or moved directory is the usual cause"
+                    "of 18 — so `assert_empty` below cannot fail for the reason it exists " \
+                    "(CLAUDE.md §14e). A renamed or moved directory is the usual cause, and the " \
+                    "eight shared viewer partials (files/viewers/_image _pdf _kicanvas _gerber " \
+                    "_code _model3d _measure _static) are half of what the floor now counts"
 
     offenders = files.flat_map do |file|
       erb_open = false
@@ -1176,5 +1186,22 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
                  "pass `index: false` there instead. If you believe one must STAY, it needs a " \
                  "measured query plan showing SQLite's appended-rowid seek is load-bearing for a " \
                  "real query — then add it to PREFIX_INDEX_EXEMPTIONS citing that measurement."
+  end
+  # THE THREE EXTENSION LISTS ARE ONE OBJECT, NOT TWO EQUAL ONES (stage 4, S4-5). FilePreview owns
+  # them because constant lookup inside a module method is lexical; FilesController re-exposes them
+  # because places outside that file cite `FilesController::KICANVAS_EXTS` and friends —
+  # FilesHelper#kicad?, Maker::GerberArchive, Maker::PublicProject and three test suites. An
+  # `assert_equal` here would pass over a re-literal, which is exactly the drift the alias exists to
+  # prevent — so this asserts IDENTITY. `SAFE_INLINE_TYPES` gets the same treatment for the same
+  # reason (files_controller.rb argues it in prose; this is the guard behind the prose).
+  test "the file-preview vocabularies are re-exposed on FilesController, never re-declared" do
+    { MEASURABLE_EXTS: FilePreview::MEASURABLE_EXTS,
+      KICANVAS_EXTS: FilePreview::KICANVAS_EXTS,
+      GERBER_EXTS: FilePreview::GERBER_EXTS }.each do |name, owned|
+      assert_same owned, FilesController.const_get(name),
+                  "FilesController::#{name} is a SECOND list, not the concern's own — a re-literal " \
+                  "passes assert_equal and drifts on the next edit"
+    end
+    assert_same FileDelivery::SAFE_INLINE_TYPES, FilesController::SAFE_INLINE_TYPES
   end
 end

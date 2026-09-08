@@ -1,0 +1,68 @@
+<%# locals: (layers:, single:, thumbnail:, download_url:, name:) %>
+<%# A Gerber layer, an Excellon drill file, a .gbrjob or a zipped export, rendered in the browser
+    by tracespace (the vendored module in vendor/javascript/tracespace.js, gerber_controller.js).
+
+    THIS IS THE 3D VIEWER'S CHROME, ON PURPOSE (_model3d.html.erb, 2026-09-06 at the user's
+    request): a poster with a launch button at rest, and once launched the same stage and bar —
+    Fit, Fullscreen, ✕ Image — plus what only a board has, Top/Bottom and one toggle per layer.
+    The .model-viewer* classes are the 3D viewer's because the chrome IS the 3D viewer's
+    (pages/preview.css defines them once); .gerber-viewer adds only what an SVG stage needs.
+    NOTHING IS FETCHED UNTIL THE BUTTON IS CLICKED — the module, the layer bytes, a zip — which
+    is the _model3d rule, and it is why the project pages' Fabrication panels could go: a board
+    on a project page cost every visitor its parse whether or not they looked.
+
+    THE LAYER LIST IS THE CONTROLLER'S (FilePreview#gerber_layers_for), never rebuilt here: for an
+    ordinary layer it is this one file; for a .gbrjob it is the siblings the job names; for a
+    zip it is ONE archive entry carrying the zip's URL and the member paths the browser extracts
+    with JSZip (FilesHelper#gerber_archive_entry). Each entry's URL carries the layer's real
+    filename for the KiCanvas comment's reason: the trailing extension is what tracespace reads
+    off the File object and what a download from the same link should arrive under.
+
+    THE SIDE BUTTONS AND THE LAYER TOGGLES ARE A STACKUP'S ONLY. A single layer has one render,
+    so Top/Bottom would be two buttons showing the same picture, and a toggle for it would be a
+    button whose only effect is to blank the stage. The toggles are BUILT BY THE CONTROLLER into
+    the tools span: their labels are tracespace's own type/side and cannot exist before the
+    parse; everything else in the bar is known without one and lives here. %>
+<% if layers.empty? %>
+  <p class="muted">No Gerber layers sit beside this job file.</p>
+<% else %>
+  <div class="model-viewer gerber-viewer"
+       data-controller="gerber"
+       data-gerber-single-value="<%= single %>"
+       data-gerber-layers-value="<%= layers.to_json %>">
+    <div class="model-viewer-stage" data-gerber-target="stage"></div>
+    <div class="model-viewer-bar">
+      <span class="model-viewer-dims" data-gerber-target="dims"></span>
+      <span class="mv-launch">
+        <button type="button" class="btn small" data-action="gerber#load"><%= single ? "View layer" : "View board" %></button>
+      </span>
+      <span class="mv-actions">
+        <% unless single %>
+          <span class="gerber-sides">
+            <button type="button" class="btn small active" data-gerber-target="side"
+                    data-gerber-side="top" data-action="gerber#top">Top</button>
+            <button type="button" class="btn small" data-gerber-target="side"
+                    data-gerber-side="bottom" data-action="gerber#bottom">Bottom</button>
+          </span>
+          <span class="gerber-tools" data-gerber-target="tools"></span>
+        <% end %>
+        <button type="button" class="btn small ghost" data-action="gerber#fit">Fit</button>
+        <button type="button" class="btn small ghost" data-action="gerber#fullscreen">Fullscreen</button>
+        <button type="button" class="btn small ghost" aria-label="Return to image" data-action="gerber#showPoster">✕ Image</button>
+      </span>
+    </div>
+    <div class="model-viewer-fallback">
+      <%# THE POSTER IS A REAL PICTURE SINCE 2026-09-07 — the server-rendered thumbnail, which is
+          tracespace's own render under node (Maker::Previews::Gerber), so it is the same picture
+          the button below paints interactively. _model3d's exact shape, and the same
+          relationship: a poster, not a replacement. Absent while the job is still running, on a
+          box with no node, and for a .gbrjob — which has no renderer, because a manifest's
+          picture needs siblings a renderer handed one file's bytes cannot reach. %>
+      <% if thumbnail&.status == "ready" && thumbnail.asset.attached? %>
+        <img src="<%= url_for(thumbnail.asset) %>" alt="Preview of <%= name %>" class="preview-image">
+      <% end %>
+      <p class="muted" data-gerber-target="status">Click <strong><%= single ? "View layer" : "View board" %></strong> to render <%= single ? "this layer" : "the board" %> in the browser, or download the file.</p>
+      <%= link_to "Download #{name}", download_url, class: "btn" %>
+    </div>
+  </div>
+<% end %>

@@ -12,6 +12,11 @@
   content_token, not size, is the "has content" test: it is nil exactly when there is nothing to
   show -- no version yet in chunk mode, a directory in any mode -- whereas a size of 0 is a real
   empty file the user created.
+
+  THE PREVIEW ITSELF IS EIGHT PARTIALS UNDER files/viewers/ (stage 4, S4-5), and this page is one
+  of TWO that render them: Public::FilesController#view renders the same eight for a visitor,
+  pointed at public URLs. Each takes every URL as a strict local for that reason, so nothing below
+  the branch chain knows which page it is on.
 %>
 
 <%# The saved addon item this file came out of, or nil. Read ONCE into a local because two places
@@ -150,131 +155,29 @@
           data-node-id="<%= @node.node_id %>" data-thumbs-pending="true"></span>
   <% end %>
   <div class="preview">
+  <%# EIGHT BRANCHES, EIGHT PARTIALS UNDER files/viewers/ (stage 4, S4-5). Each takes every URL as
+      a STRICT local, so the same eight render on a visitor's public file page pointed at public
+      routes — a viewer that built its own URLs would be one condition with two answers across two
+      pages, the shape §14a forbids. The chain itself stays here because the branch ORDER is this
+      page's, and so does everything that is a fact about the OWNER rather than about the file: the
+      repo banner below, the recipe panels, History and Notes. %>
   <% if @info.content_token.nil? %>
     <p class="muted">No content yet.</p>
   <% elsif @kind == :image %>
-    <img src="<%= blob_file_path(@node.node_id) %>" alt="<%= @node.name %>" class="preview-image">
+    <%= render "files/viewers/image", name: @node.name, blob_url: blob_file_path(@node.node_id) %>
   <% elsif @kind == :pdf %>
-    <%# Full PDF preview via the browser's own viewer (served inline from the blob endpoint). %>
-    <iframe src="<%= blob_file_path(@node.node_id) %>" class="preview-pdf" title="<%= @node.name %> (PDF)"></iframe>
+    <%= render "files/viewers/pdf", name: @node.name, blob_url: blob_file_path(@node.node_id) %>
   <% elsif @kind == :kicanvas %>
-    <%# KiCad schematic/board, rendered in the browser by KiCanvas (stage 3, S3-2; the vendored
-        module in vendor/javascript/kicanvas.js, kicanvas_controller.js). Imported LAZILY on
-        connect, so nothing downloads it on a page with no KiCad file. controls="full" gives the
-        file page KiCanvas's own toolbar (zoom, pan, layer toggles); the project page's Schematics
-        section asks for "basic" instead — see projects/_schematics.html.erb.
-
-        named_blob_file_path, NOT blob_file_path -- KiCanvas identifies a schematic/board from the
-        URL IT FETCHES, not from the bytes it receives: its own FetchFileSystem reads the trailing
-        extension off the fetched URL's path to decide what it just downloaded, so pointed at the
-        plain blob route (no extension anywhere in the path) it never recognises this as a
-        .kicad_sch/.kicad_pcb at all and renders nothing but its own placeholder background,
-        logging "No vaild root schematic was found." — measured against the vendored module, not
-        guessed. :filename in that route is decorative to the SERVER (never looked up; #blob still
-        resolves the node from :id alone) and load-bearing to the CLIENT.
-
-        ON S3 the embed's fetch follows a presigned redirect to the bucket — cross-origin, so it
-        reads only under the bucket's CORS rule (docs/DEPLOY.md) and the connect-src the port
-        names for the CSP (FileLayer#presigned_origin), exactly as modelviewer_controller.js's
-        model fetch does. %>
-    <div class="kicanvas-stage"
-         data-controller="kicanvas"
-         data-kicanvas-url-value="<%= named_blob_file_path(@node.node_id, filename: @node.name) %>"
-         data-kicanvas-controls-value="full">
-      <p class="muted" data-kicanvas-target="status">Loading the viewer…</p>
-      <div data-kicanvas-target="stage"></div>
-    </div>
+    <%= render "files/viewers/kicanvas", controls: "full",
+               named_url: named_blob_file_path(@node.node_id, filename: @node.name) %>
   <% elsif @kind == :gerber %>
-    <%# A Gerber layer, an Excellon drill file, a .gbrjob or a zipped export, rendered in the browser
-        by tracespace (the vendored module in vendor/javascript/tracespace.js, gerber_controller.js).
-
-        THIS IS THE 3D VIEWER'S CHROME, ON PURPOSE (the :model3d branch below, 2026-09-06 at the
-        user's request): a poster with a launch button at rest, and once launched the same stage and
-        bar — Fit, Fullscreen, ✕ Image — plus what only a board has, Top/Bottom and one toggle per
-        layer. The .model-viewer* classes are the 3D viewer's because the chrome IS the 3D viewer's
-        (pages/preview.css defines them once); .gerber-viewer adds only what an SVG stage needs.
-        NOTHING IS FETCHED UNTIL THE BUTTON IS CLICKED — the module, the layer bytes, a zip — which
-        is the :model3d rule, and it is why the project pages' Fabrication panels could go: a board
-        on a project page cost every visitor its parse whether or not they looked.
-
-        THE LAYER LIST IS THE CONTROLLER'S (FilesController#show), never rebuilt here: for an
-        ordinary layer it is this one file; for a .gbrjob it is the siblings the job names; for a
-        zip it is ONE archive entry carrying the zip's URL and the member paths the browser extracts
-        with JSZip (FilesHelper#gerber_archive_entry). named_blob_file_path for the KiCanvas
-        comment's reason: the trailing extension is the file's real name, which tracespace reads
-        off the File object and a download from the same link should arrive under.
-
-        THE SIDE BUTTONS AND THE LAYER TOGGLES ARE A STACKUP'S ONLY. A single layer has one render,
-        so Top/Bottom would be two buttons showing the same picture, and a toggle for it would be a
-        button whose only effect is to blank the stage. The toggles are BUILT BY THE CONTROLLER into
-        the tools span: their labels are tracespace's own type/side and cannot exist before the
-        parse; everything else in the bar is known without one and lives here. %>
-    <% if @gerber_layers.empty? %>
-      <p class="muted">No Gerber layers sit beside this job file.</p>
-    <% else %>
-      <div class="model-viewer gerber-viewer"
-           data-controller="gerber"
-           data-gerber-single-value="<%= @gerber_single %>"
-           data-gerber-layers-value="<%= @gerber_layers.to_json %>">
-        <div class="model-viewer-stage" data-gerber-target="stage"></div>
-        <div class="model-viewer-bar">
-          <span class="model-viewer-dims" data-gerber-target="dims"></span>
-          <span class="mv-launch">
-            <button type="button" class="btn small" data-action="gerber#load"><%= @gerber_single ? "View layer" : "View board" %></button>
-          </span>
-          <span class="mv-actions">
-            <% unless @gerber_single %>
-              <span class="gerber-sides">
-                <button type="button" class="btn small active" data-gerber-target="side"
-                        data-gerber-side="top" data-action="gerber#top">Top</button>
-                <button type="button" class="btn small" data-gerber-target="side"
-                        data-gerber-side="bottom" data-action="gerber#bottom">Bottom</button>
-              </span>
-              <span class="gerber-tools" data-gerber-target="tools"></span>
-            <% end %>
-            <button type="button" class="btn small ghost" data-action="gerber#fit">Fit</button>
-            <button type="button" class="btn small ghost" data-action="gerber#fullscreen">Fullscreen</button>
-            <button type="button" class="btn small ghost" aria-label="Return to image" data-action="gerber#showPoster">✕ Image</button>
-          </span>
-        </div>
-        <div class="model-viewer-fallback">
-          <%# THE POSTER IS A REAL PICTURE SINCE 2026-09-07 — the server-rendered thumbnail, which is
-              tracespace's own render under node (Maker::Previews::Gerber), so it is the same picture
-              the button below paints interactively. The :model3d branch's exact shape, and the same
-              relationship: a poster, not a replacement. Absent while the job is still running, on a
-              box with no node, and for a .gbrjob — which has no renderer, because a manifest's
-              picture needs siblings a renderer handed one file's bytes cannot reach. %>
-          <% if @thumbnail&.status == "ready" && @thumbnail.asset.attached? %>
-            <img src="<%= url_for(@thumbnail.asset) %>" alt="Preview of <%= @node.name %>" class="preview-image">
-          <% end %>
-          <p class="muted" data-gerber-target="status">Click <strong><%= @gerber_single ? "View layer" : "View board" %></strong> to render <%= @gerber_single ? "this layer" : "the board" %> in the browser, or download the file.</p>
-          <%= link_to "Download #{@node.name}", blob_file_path(@node.node_id, download: 1), class: "btn" %>
-        </div>
-      </div>
-    <% end %>
+    <%= render "files/viewers/gerber", layers: @gerber_layers, single: @gerber_single,
+               thumbnail: @thumbnail, name: @node.name,
+               download_url: blob_file_path(@node.node_id, download: 1) %>
   <% elsif @kind == :text %>
-    <%# Source viewer — CodeMirror 6, loaded dynamically so the bundle ships only on a page that
-        actually has a text file on it. The inner preformatted block is the FALLBACK and the
-        resting state at once: the controller fetches the bytes into it first and removes it only
-        once the editor has mounted, so a failed bundle load degrades to exactly the plain preview
-        this branch used to be. Never write a percent-greater-than sequence inside one of these
-        comments — an ERB comment ends at the first one and the rest of the prose prints into the
-        page (§14d).
-
-        TWO CONTROLLERS, ONE BRANCH, AND THE READ-ONLY ONE IS STILL THE DEFAULT. `editor` mounts
-        only where FilesController#show found the file inside a working tree and under the size
-        cap; every other text file keeps `codeview`, which sets BOTH EditorState.readOnly and
-        EditorView.editable. Swapping the CONTROLLER rather than passing `codeview` a flag is the
-        point: a page that is sometimes editable needs a different mount, not a mutated one.
-
-        BOTH IDENTIFIERS ARE WRITTEN OUT LITERALLY, and the duplicated div is the price of that.
-        The obvious spelling interpolates one attribute — data-controller with a ternary inside —
-        and it is exactly what test/stimulus_hygiene_test.rb cannot read: that guard scans the
-        literal attribute, so an interpolated name resolves to nothing it can check, on the one
-        attribute whose failure mode is a SILENT no-op with no console warning (§14d, nine days
-        once). Measured: with the ternary inlined, the guard reported this view as declaring three
-        controllers named after the pieces of the expression — the output tag, the ivar and the
-        question mark. Do not collapse these two branches back into one. %>
+    <%# THE BANNER IS NOT PART OF THE VIEWER and stays on this page: it is a fact about a
+        REPOSITORY and about who is looking at it (whether this box can commit, how many edits are
+        pending), neither of which a visitor's page has or should have. %>
     <% if @repo_root %>
       <div class="repo-banner">
         <% if @committable_here %>
@@ -289,80 +192,36 @@
       </div>
     <% end %>
 
-    <% if @editable %>
-      <div class="preview-code"
-           data-controller="editor"
-           data-editor-url-value="<%= blob_file_path(@node.node_id) %>"
-           data-editor-ext-value="<%= File.extname(@node.name).downcase.delete(".") %>"
-           data-editor-save-url-value="<%= file_path(@node.node_id) %>"
-           data-editor-base-token-value="<%= @info.content_token %>">
-        <pre class="preview-text" data-editor-target="fallback">Loading…</pre>
-      </div>
-    <% else %>
-      <div class="preview-code"
-           data-controller="codeview"
-           data-codeview-url-value="<%= blob_file_path(@node.node_id) %>"
-           data-codeview-ext-value="<%= File.extname(@node.name).downcase.delete(".") %>">
-        <pre class="preview-text" data-codeview-target="fallback">Loading…</pre>
-      </div>
-    <% end %>
+    <%= render "files/viewers/code", blob_url: blob_file_path(@node.node_id),
+               ext: File.extname(@node.name).downcase.delete("."), editable: @editable,
+               save_url: file_path(@node.node_id), base_token: @info.content_token %>
   <% elsif @kind == :model3d %>
-    <%# Interactive client-side 3D viewer (Online3DViewer), see modelviewer_controller.js. `lazy`
-        gates the byte fetch AND the ~1 MB engine download behind the "View in 3D" button, so
-        nothing heavy loads unless the user asks. The fallback (thumbnail poster + download) is the
-        resting state and also the graceful-degradation target if the viewer can't boot.
-
-        THE NAMED BLOB ROUTE, NOT THE PLAIN ONE, and it is load-bearing exactly as it is for the
-        KiCanvas embed a hundred lines up: Online3DViewer chooses an importer from the URL'S OWN
-        trailing extension, never from the bytes or a Content-Type, so a path with no extension in
-        it reaches no importer at all. %>
-    <div class="model-viewer"
-         data-controller="modelviewer"
-         data-modelviewer-lazy-value="true"
-         data-modelviewer-url-value="<%= named_blob_file_path(@node.node_id, filename: @node.name) %>"
-         data-modelviewer-format-value="<%= File.extname(@node.name).downcase.delete('.') %>"
-         <%# WHAT THE IMPORTER CANNOT READ FOR ITSELF, from Maker::ThreeMfManifest: one slicer
-             filament colour per imported mesh, and the millimetre factor for the model's declared
-             unit (three's 3MFLoader ignores it, so an Onshape part in metres measures 1000x short).
-             Empty and 1 for every other format, which is the no-op the controller checks for. %>
-         data-modelviewer-colors-value="<%= (@viewer_manifest&.colors || []).to_json %>"
-         data-modelviewer-unit-factor-value="<%= @viewer_manifest&.unit_factor || 1.0 %>">
-      <div class="model-viewer-stage" data-modelviewer-target="canvas"></div>
-      <div class="model-viewer-bar">
-        <span class="model-viewer-dims" data-modelviewer-target="dims"></span>
-        <span class="mv-launch">
-          <button type="button" class="btn small" data-action="modelviewer#load">View in 3D</button>
-        </span>
-        <span class="mv-actions">
-          <button type="button" class="btn small ghost" data-action="modelviewer#reset">Reset view</button>
-          <button type="button" class="btn small ghost" data-action="modelviewer#fullscreen">Fullscreen</button>
-          <button type="button" class="btn small ghost" aria-label="Return to image" data-action="modelviewer#showPoster">✕ Image</button>
-        </span>
-      </div>
-      <div class="model-viewer-fallback" data-modelviewer-target="fallback">
-        <% if @thumbnail&.status == "ready" && @thumbnail.asset.attached? %>
-          <img src="<%= url_for(@thumbnail.asset) %>" alt="Preview of <%= @node.name %>" class="preview-image">
-        <% end %>
-        <p class="muted">Click <strong>View in 3D</strong> to load an interactive preview, or download the file.</p>
-        <%= link_to "Download #{@node.name}", blob_file_path(@node.node_id, download: 1), class: "btn" %>
-      </div>
-    </div>
+    <%= render "files/viewers/model3d", name: @node.name,
+               named_url: named_blob_file_path(@node.node_id, filename: @node.name),
+               format: File.extname(@node.name).downcase.delete("."),
+               colors: (@viewer_manifest&.colors || []),
+               unit_factor: (@viewer_manifest&.unit_factor || 1.0),
+               thumbnail: @thumbnail,
+               download_url: blob_file_path(@node.node_id, download: 1) %>
   <% elsif @kind == :measure %>
     <%# .lbrn/.lbrn2, .mage, .dxf, .svg — a picture at rest, with a button that swaps in a
-        measurable outline view built from the geometry payload. See _measure.html.erb. %>
-    <%= render "measure" %>
-  <% elsif @kind == :thumbnail && @thumbnail&.status == "ready" && @thumbnail.asset.attached? %>
-    <%# A server-rendered PNG thumbnail for a 3D/CAD/vector file the browser can't show raw. %>
-    <img src="<%= url_for(@thumbnail.asset) %>" alt="Preview of <%= @node.name %>" class="preview-image">
-  <% elsif @kind == :thumbnail && %w[pending processing].include?(@thumbnail&.status) %>
-    <div class="preview-fallback muted">
-      <p>Generating preview…</p>
-    </div>
+        measurable outline view built from the geometry payload. The four save URLs are the
+        maker's own doors (stage 4, S4-3): an export lands beside the file it came from, through
+        whichever of the two upload flows this deployment uses. %>
+    <%= render "files/viewers/measure", name: @node.name,
+               geometry_url: geometry_file_path(@node.node_id),
+               blob_url: blob_file_path(@node.node_id), thumbnail: @thumbnail,
+               download_url: blob_file_path(@node.node_id, download: 1),
+               port_writable: capabilities.port_writable?, create_url: files_path,
+               begin_url: begin_upload_files_path, finalize_url: finalize_upload_files_path,
+               parent_node_id: @node.parent_node_id %>
   <% else %>
-    <div class="preview-fallback muted">
-      <p>No inline preview for this file type.</p>
-      <%= link_to "Download #{@node.name}", blob_file_path(@node.node_id, download: 1), class: "btn" %>
-    </div>
+    <%# THE TAIL: the ready thumbnail, the "still generating" while its job runs, and the download
+        fallback. THREE elsifs COLLAPSED INTO ONE else, which is behaviour-preserving rather than a
+        simplification — the partial re-tests `kind == :thumbnail` internally and the chain's final
+        arm was already the catch-all. %>
+    <%= render "files/viewers/static", kind: @kind, thumbnail: @thumbnail, name: @node.name,
+               download_url: blob_file_path(@node.node_id, download: 1) %>
   <% end %>
   </div>
   <%# Which recipe panel: MillMage writes "operations" (an endmill, feeds, depths), LightBurn
