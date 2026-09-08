@@ -2311,6 +2311,28 @@ module Tools
       assert_equal 1, state.reload.files.count, "the revision rewrote the same node"
     end
 
+    # THE SOURCE CAN BE ONE OF THIS SAVE'S OWN OUTPUTS. The openscad bundle saves the .scad it is
+    # editing back beside its renders, so on a re-save `data["node_id"]` names a node this very save
+    # rewrites (owned_destinations makes that a legal replace onto the same node). The writer's
+    # `next if f.node_id == source_id` is what keeps that from being a self-link, and it is not a
+    # cosmetic skip: Maker::FileLink refuses a self-link by VALIDATION (RecordInvalid), which the
+    # RecordNotUnique arm does not catch, so without the line the re-save answers 422 on a request
+    # whose bytes have already landed. Found in review by removing it — the four cases above stayed
+    # green — which is why this case exists (§15).
+    test "a re-save whose source is one of its own outputs writes no self-link and still lands" do
+      file = "gear-#{SecureRandom.hex(4)}.svg"
+      save_with_data({ source_name: "gear.scad" }, file:, name: "gear")
+      assert_redirected_to tools_addon_path(FIXTURE_KEY)
+      state = @user.maker_addon_states.order(:id).last
+      own = state.files.sole
+
+      save_with_data({ node_id: own.node_id }, file:, name: "gear", state_id: state.id, overwrite: "1")
+      assert_redirected_to tools_addon_path(FIXTURE_KEY)
+
+      assert_equal 0, @user.maker_file_links.count, "a file is not derived from itself"
+      assert_equal own.node_id, state.reload.files.sole.node_id, "the revision rewrote the same node"
+    end
+
     private
 
     # Mirrors test/integration/web/page_query_budget_test.rb's own helper. SCHEMA/TRANSACTION and

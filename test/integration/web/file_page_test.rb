@@ -294,10 +294,14 @@ module Web
 
     # ---- the Measure save's own lineage (stage 4, S4-8, Task C) --------------------------
     #
-    # THE REQUEST-LEVEL CLAIM ABOUT AN ATTRIBUTE THE BROWSER TEST CANNOT PIN. measure_export_test
-    # drives the real save and reads the row back, so it passes whether or not the ATTRIBUTE is
-    # present — it would simply record no link and fail one assertion later, on a different
-    # subject. This asserts the two values reach the DOM, which is what the writer reads.
+    # THE REQUEST-LEVEL CLAIM ABOUT THE TWO VALUES, ON EVERY LEG. measure_export_test drives the
+    # real save and reads the row back, and it ALSO goes red without the attribute (recordSources
+    # returns early with no source id, no row is written, `.sole` raises) — measured in review, so
+    # this is not a blind spot of the browser test. This case earns its place twice over anyway:
+    # the `system` gate runs on share alone, so this is the one assertion about the values that
+    # runs on all three backend legs; and it fails ON the attribute, where the browser test fails
+    # one assertion later on a different subject. It asserts the two values reach the DOM, which is
+    # what the writer reads.
     #
     # `__ID__` IS A TEMPLATE THE SERVER WRITES: the new node's id does not exist until the upload
     # answers, and the Stimulus controller must not learn a route (the viewer partials take every
