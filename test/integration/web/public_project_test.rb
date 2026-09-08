@@ -360,7 +360,10 @@ module Web
     # the project through Maker::PublicProject, so the two pages cannot disagree about what is
     # hidden — a maker who hid Wiring did not hide it only from themselves. The fixture already
     # seeds two connections, which is what makes the panel present in the first place.
-    test "a hidden panel is hidden from a visitor too" do
+    # THE PAGE, NOT EVERY PUBLIC DOOR (found in review): the Atom feed, the bundle manifest and the
+    # BOM CSV never consult the layout, so a hidden Build log or BOM is still one click away from
+    # this page through them. Recorded as open work rather than widened here.
+    test "a hidden panel is hidden from the visitor's page too" do
       get path
       assert_select "section.wiring-panel", 1
 

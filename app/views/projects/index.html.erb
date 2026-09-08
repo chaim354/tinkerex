@@ -18,9 +18,12 @@
     change this stage keeps removing. `other` is absent from @project_kinds by construction
     (ProjectsController#index): it is the column default, and a chip for "everything nobody typed"
     filters nothing. %>
-<% if @project_tags.any? || @project_kinds.any? %>
+<% if @project_tags.any? || @project_kinds.any? || @kind.present? %>
   <div class="toolbar projects-toolbar">
-    <% if @project_kinds.any? %>
+    <%# THE ROW RENDERS WHENEVER A KIND FILTER IS SET, EVEN WITH NO SURVIVORS (found in review):
+        `/projects?kind=laser` for a maker whose last laser project was retyped showed the empty
+        state with no "All types" to clear it — the tag row's "All" keeps the kind. %>
+    <% if @project_kinds.any? || @kind.present? %>
       <span class="chips">
         <%= link_to "All types", projects_path(tag: @tag, archived: (@archived_view ? 1 : nil)),
                     class: "filter chip#{' active' if @kind.blank?}" %>

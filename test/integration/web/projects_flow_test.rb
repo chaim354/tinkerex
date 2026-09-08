@@ -711,6 +711,18 @@ module Web
       assert_select ".projects-toolbar a.chip.active", text: "Laser cutting"
     end
 
+    # A FILTER WITH NO SURVIVORS STILL OFFERS ITS WAY OUT (found in review): the type row used to
+    # render only when the maker HAD typed projects, so a stale `?kind=` — a bookmark, Back after
+    # retyping the last laser project — showed the empty state with no "All types" chip.
+    test "a kind filter with no matching project still renders the chip that clears it" do
+      @user.maker_projects.create!(name: "Untyped")
+
+      get projects_path(kind: "laser")
+
+      assert_response :success
+      assert_select ".filter.chip", text: "All types"
+    end
+
     test "an unknown kind filters nothing rather than emptying the page" do
       user = sign_in
       user.maker_projects.create!(name: "Cut Box", kind: "laser")

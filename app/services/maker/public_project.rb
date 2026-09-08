@@ -88,7 +88,7 @@ module Maker
     # WHICH OF THESE HAVE A PUBLIC FACE IS THE TEMPLATE'S QUESTION, not this one's — see
     # public/projects/_page.html.erb's partial map, whose absent keys (tasks, sheets, publish) are
     # the whole definition of "private only".
-    def visible_panels = project.panel_layout.visible
+    def visible_panels = project.visible_panels
 
     # The FOLDER's own README, rendered, or nil when it holds none. `defined?` rather than `||=`
     # because nil is a real answer here and `||=` would re-read the port on every call for a folder
