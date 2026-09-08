@@ -298,6 +298,20 @@ module Web
       assert_select ".photos-panel a[href=?]", public_file_view_path("ada", @project.slug, @f[:entry_photo].node_id)
     end
 
+    # A HIDDEN FOLDER'S IMAGES LEAVE THE VISITOR'S PHOTOS PANEL TOO (folder panels, decision 2): the
+    # Photos panel cannot be hidden, so a hidden `photos/` folder would otherwise keep showing its
+    # pictures one panel down. The entry photo lives outside the folder and stays.
+    test "a hidden folder's images are not in the visitor's Photos panel" do
+      photos_dir = @user.nodes.present.find_by!(name: "photos", kind: "dir")
+      @project.update!(panels: { "hidden" => [ Maker::ProjectKind.folder_key(photos_dir.node_id) ] })
+
+      get path
+
+      assert_select ".photos-panel a[href=?]", public_file_view_path("ada", @project.slug, @f[:pic].node_id),
+                    { count: 0 }, "the hidden folder's image must leave the gallery"
+      assert_select ".photos-panel a[href=?]", public_file_view_path("ada", @project.slug, @f[:entry_photo].node_id)
+    end
+
     # --- 7. the BOM: three columns, and what is absent ------------------------------
 
     test "the public BOM has exactly Ref, Part and Qty" do

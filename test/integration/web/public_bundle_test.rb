@@ -296,6 +296,21 @@ module Web
       assert_url_delivers(public_file_path("ada", @project.slug, @f[:base].node_id, download: 1))
     end
 
+    # A BOM ROW INTO A HIDDEN FOLDER NAMES NO ZIP PATH (decision 2, found in Task C's report): the
+    # bundle leaves the file out, so a `file` cell naming `models/base.stl` would point at an entry
+    # the visitor's zip does not carry. It names the BARE file instead — what the CSV already writes
+    # for a permitted file the listing does not hold — because hidden is not unpermitted: the file
+    # still delivers on its own link and its name is not a secret.
+    test "a BOM line pointing into a hidden folder names the file, not a path the zip lacks" do
+      @project.update!(panels: { "hidden" => [ Maker::ProjectKind.folder_key(@f[:models].node_id) ] })
+
+      get public_bom_path("ada", @project.slug, format: :csv)
+      assert_response :success
+      row = CSV.parse(response.body, headers: true).find { |r| r["part"] == "base.stl" }
+      assert row, "the design-file line is still in the CSV"
+      assert_equal "base.stl", row["file"], "a hidden folder's file has no path in the zip, only its name"
+    end
+
     # THE BUTTON, THE MANIFEST AND THE ZIP AGREE BY CONSTRUCTION — all three are
     # `Maker::PublicProject#bundle_files`, so this is the one assertion that says the count a
     # visitor reads is the list they will get.

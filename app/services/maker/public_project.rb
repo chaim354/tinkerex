@@ -285,6 +285,12 @@ module Maker
     # the folder, past FILE_CAP, or in a repository DIR_CAP never entered). `Maker::BomCsv` names
     # it in the `file` column so a row of the CSV points at a file in the same zip.
     def bundle_path_for(node_id)
+      # A HIDDEN FOLDER'S FILE HAS NO PATH IN THE ZIP (folder panels, decision 2): `bundle_files`
+      # leaves it out, so a BOM row naming its path would point at an entry the visitor's bundle
+      # does not carry. nil is what a file outside the listing answers already, and Maker::BomCsv
+      # then writes the bare name — hidden is not unpermitted, and the name is not a secret.
+      return nil if hidden_file_ids.include?(node_id)
+
       row = listing.row_for(node_id)
       row && bundle_path(row)
     end
@@ -321,7 +327,13 @@ module Maker
     # gallery (stage 4, S4-1): two pages showing "this project's photos" must not drift about what
     # counts as one, so this reads the shared answer rather than keeping a second copy of it.
     def photo_rows
+      # MINUS THE HIDDEN FOLDERS' IMAGES, ON THE VISITOR'S PAGE ONLY (folder panels, decision 2). The
+      # Photos panel cannot be hidden (`ALWAYS`), so without this a folder the maker hid would keep
+      # showing its pictures one panel down; the maker's own page keeps every photo, since hiding a
+      # panel there arranges the page rather than publishing it. Entry photos live outside the
+      # folder and are never in `hidden_file_ids`, so they stay.
       @photo_rows ||= Maker::ProjectPhotos.rows(listing:, entries:, page_nodes:)
+                                          .reject { |row| hidden_file_ids.include?(row.node_id) }
     end
 
     # THE COVER, PERMITTED (stage 4, S4-5; story 5.7). `Maker::Project#cover_node_id` derives one
