@@ -89,10 +89,10 @@ again, catch up.*
 | # | story | tag | evidence / friction |
 |---|---|---|---|
 | 3.1 | When a tool generates a file (box → SVG), I want the file to know which tool state made it and the state to list its outputs, so that I can regenerate. | `works` | Generated group and "Edit in tool" (`_generated_group.html.erb`, `Maker::AddonOrigin`). The revision that wrote the file is not recorded; a renamed output leaves a stale row (`library_output.rb:88-97`). |
-| 3.2 | When one file is exported from another (`.lbrn2` → SVG, STEP → STL → 3MF, KiCad → Gerber zip), I want them kept as one lineage, so that I open the source, not the export. | `missing` | No stored file↔file edge exists. The three computed ones: `.gbrjob` → layers, zip → members, README links (all by name, per request). |
-| 3.3 | When I photograph a cut or a print, I want the photo attached to the file or the step it shows. | `rough` | A photo attaches to a build-log entry only (`entry_photos_controller.rb:15-17`); never to a file, never to a print run (`maker_print_runs` has no node column). |
-| 3.4 | When my README links files and images, I want the links to work wherever I read it. | `rough` | Resolved on the public page and in the repo card (`readme.rb:71-77`); the private file page shows source. |
-| 3.5 | When I search, I want notes, README text and folder paths found, not only file names. | `missing` | `search_controller.rb:29-60`: `nodes.name`, project name/description, model title, inventory name, tag name. Notes, log entries, addon names, paths: unsearchable. |
+| 3.2 | When one file is exported from another (`.lbrn2` → SVG, STEP → STL → 3MF, KiCad → Gerber zip), I want them kept as one lineage, so that I open the source, not the export. | `rough` | **S4-8:** `maker_file_links` holds a `derived_from` edge — written automatically by Measure's Save-to-library and by an OpenSCAD save whose data names the `.scad` it read, and settable by hand from "This came from…" on any file page; both directions render in the file page's Connected panel, and a link dies with either end. Still rough: the three computed lineages (`.gbrjob` → layers, zip → members, README links) stay computed, and a slicer's export saved by hand from another program is a hand link. |
+| 3.3 | When I photograph a cut or a print, I want the photo attached to the file or the step it shows. | `rough` | A photo attaches to a build-log entry (`entry_photos_controller.rb`). **S4-8:** `photo_of` attaches a picture to a FILE from that file's own page (images only, by role), and the picture's page says what it shows. Still rough: a print run has no node column, so a photo cannot attach to a print (`maker_print_runs`, out of this stage). |
+| 3.4 | When my README links files and images, I want the links to work wherever I read it. | `rough` | Resolved on the public page and in the repo card (`readme.rb`); the private file page shows source. **S4-8** adds a stored file↔file edge and deliberately does not touch the computed README link resolution, which stays `Maker::Readme`'s. |
+| 3.5 | When I search, I want notes, README text and folder paths found, not only file names. | `rough` | **S4-8:** a Notes group over `action_text_rich_texts.body` joined through `maker_notes` and scoped to live files, and a Folders group by name (S4-8). Still rough, each with its reason: README text is not searched — it is read through the port at request time with no index, so a per-project read per search fails §14a's local-first rule; folder PATHS are not searched — `storage_path` is share/s3's only, so a path match would answer differently per backend. |
 | 3.6 | When a catalogued model is used in a project, I want the project to show it and its prints. | `missing` | No model↔project edge; print runs hang off Models only (`print_run.rb:12`). |
 | 3.7 | A BOM line points at a design file; a release records every file's version. | `built-unused` | Both exist (`bom_line.rb:22`, `release_file.rb`); share: 0 rows of either. Release downloads are current bytes with a "changed" badge, not snapshots. |
 
@@ -143,11 +143,11 @@ again, catch up.*
 |---|---|---|---|---|---|
 | T1 | 6 | 1 | 5 | 0 | |
 | T2 | 13 | 5 | 8 | 0 | |
-| T3 | 7 | 1 | 2 | 3 | 1 built-unused |
+| T3 | 7 | 1 | 4 | 1 | 1 built-unused |
 | T4 | 8 | 2 | 4 | 2 | |
 | T5 | 8 | 4 | 4 | 0 | |
 | T6 | 8 | 3 | 4 | 0 | 1 by design |
-| **all** | **50** | **16** | **27** | **5** | **2** |
+| **all** | **50** | **16** | **29** | **3** | **2** |
 
 Re-measured after S4-1 (2026-09-07): 6.6 and 6.8 moved to `works`; 1.4, 2.9, 6.1, 6.2, 6.3 gained new evidence and stay `rough`; 5.3 gained its render half and stays `missing`.
 
@@ -162,5 +162,7 @@ Re-measured after S4-6 (2026-09-07): 1.2 moved to `works`; 1.3 and 1.5 moved fro
 Re-measured after S4-7 (2026-09-07): 6.5 moved to `works`; 6.4 moved from `missing` to `rough`; 6.1, 6.2 and 6.3 gained new evidence and stay `rough`.
 
 Re-measured after S4-3 (2026-09-07): 2.10 moved from `missing` to `rough` (the path is there; the hand-off is the OS's by decision); 2.11, 2.12, 2.13 gained new evidence and stay `rough`.
+
+Re-measured after S4-8 (2026-09-07): 3.2 and 3.5 moved from `missing` to `rough`; 3.3 gained the file photo and stays `rough`; 3.4 is unchanged by design.
 
 Which slice moves which story: the slice table in the stage 4 spec.
