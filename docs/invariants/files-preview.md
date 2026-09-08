@@ -195,9 +195,24 @@ a board of its own, the list and the stack two different lists) — are gone, an
 them; `git show 2addf8f:app/services/maker/gerber_sets.rb` holds it. What remains of `GerberSets` is
 `job_layer_names`, the `.gbrjob` reader behind a job file's page. A layer's page shows that layer; a
 `.gbrjob`'s and a zip's page show the board; **a loose set with no job file is one layer per page**
-— the one thing the panel could do that the file page cannot, deliberately not rebuilt. A public
-project therefore has **no board render**: the public page lists the layers as files a visitor can
-download, and there is no public file page to mount a viewer on.
+— the one thing the panel could do that the file page cannot, deliberately not rebuilt.
+
+**A PUBLIC PROJECT GETS THE BOARD TOO SINCE STAGE 4, S4-5**, on exactly those terms: the layer's,
+the job file's or the zip's OWN page, at `/u/:handle/:slug/files/:id/view`. Until then this file
+recorded "a public project therefore has no board render … there is no public file page to mount a
+viewer on" — true of the pages that existed, false of the pages that exist, and the reason to state
+a rule's *condition* rather than its conclusion.
+
+**A `.gbrjob`'s SIBLING WALK IS ONE ANSWER AND THE URL IS THE CALLING PAGE'S.**
+`FilePreview#gerber_layers_for` takes a `url:` lambda, so the two pages cannot disagree about which
+layers a board HAS — only about how to address one. The private lambda never refuses; the public one
+is `Maker::PublicProject#layer_url_for`, which asks the same `permits?` that `deliverable!` asks and
+answers **nil** for a sibling this project does not publish. **BOTH arms drop the refusal** — the
+job arm `filter_map`s, the single-layer arm `.compact`s — so a board renders WITHOUT an unpublished
+layer instead of pointing a visitor at a URL the byte route would refuse, and **a board built
+entirely of unpublished layers is no board**, not board chrome drawn around a null layer. The
+single-layer arm shipped returning `[nil]`, which is not empty; a refusal must reach the viewer as
+an absent layer on both arms or on neither.
 
 **THE STAGE'S PAN, ZOOM AND FIT ARE `app/javascript/lib/svg_pan_zoom.js`, SHARED WITH THE MEASURE
 VIEW — never a second copy.** The maths was `measure_controller.js`'s (the wheel-zoom-about-the-
@@ -380,6 +395,29 @@ broken: the viewer simply never recognises the file, and the page falls back to 
 nothing in the console pointing at the URL. Both templates and the model page's `data-url` options
 use the named route.
 
+**IT BINDS ON TWO URL BUILDERS SINCE STAGE 4, S4-5, AND ON ONE PARTIAL.** `named_blob_file_path` is
+the maker's; `Maker::PublicProject#file_url_for(id, filename:)` is a visitor's, and its `filename:`
+rides the public route's optional glob for this rule's sake and KiCanvas's (which is also why that
+route is `format: false`). Both pages hand the result to `files/viewers/_model3d.html.erb` as the
+strict local `named_url:`, so the partial cannot pick a builder: there is ONE place the rule can be
+broken, not one per page.
+
+**THE EIGHT VIEWER PARTIALS ARE SHARED BY A SESSION-AUTHED PAGE AND A SESSIONLESS ONE, SO EVERY URL
+AND EVERY USER-SCOPED OBJECT ARRIVES AS A STRICT LOCAL** (`app/views/files/viewers/_image _pdf
+_kicanvas _gerber _code _model3d _measure _static`, rendered by `files/show.html.erb` and by
+`public/files/view.html.erb`; the branch that picks one is `FilePreview#preview_kind`, a CONCERN
+rather than a shared superclass because the two controllers deliberately have none — §14d). **No
+route helper and no `current_user`/`capabilities` call is permitted inside one.** A partial must not
+be able to tell which page it is on; that is the whole reason one copy can serve both, and it is
+what a maker-only fact (the repo banner, History, Notes, the commit link) stays on `show.html.erb`
+for. Break it and a PRIVATE route renders in a visitor's DOM with a 200 and nothing red —
+`blob_file_path("id")` planted in `_static` was measured doing exactly that, because the Public
+scan's `SESSION_ACCESSOR` has no route-helper arm and the `public/` templates call `public_*_path`
+legitimately. `test/architecture_invariants_test.rb`'s Public scan now globs this directory and
+enforces BOTH arms: the session accessors, and any `*_path`/`*_url` identifier the partial's own
+`locals:` line does not declare — read off the partial, so the allowlist cannot drift from the
+signature.
+
 **`VIEWABLE_3D_EXTS` AND THE RENDERER REGISTRY ARE TWO LISTS, AND THEY DO NOT MATCH.** The browser
 list is the engine's importers minus four stated absences (`ifc` unshipped, `svg` owned by the
 Measure branch which returns first, `bim` not a maker format, `brp` a second spelling of `brep`).
@@ -501,6 +539,35 @@ themselves.
 Collapsing them trades a hung spinner for a **wrong** one, which is worse because it looks correct.
 `thumbs_controller` also resolves stragglers to badges when polling gives up, so "forever" is not
 reachable even if the endpoint is wrong.
+
+**NO PUBLIC SURFACE POLLS, BECAUSE THIS ENDPOINT IS SESSION-AUTHED** — so a visitor's poster is
+whatever is READY at render time, and every public page says so honestly: the ready thumbs, and for
+the rest either `files/_thumb`'s spinner markup with its animation stopped (`pages/public.css`) or
+`files/viewers/_static`'s "Generating preview…", **a statement a reload resolves rather than a
+promise the page can keep**. What makes that statement true is the RENDER, not a poll:
+`Maker::Previews::ThumbnailMap.for` backfills on an anonymous GET — the public project page has done
+that since S3-4, and the public file page does it for its one node. Do not answer a missing public
+poster by opening the poll to visitors; the write-on-render is the sanctioned mechanism and it is
+bounded per `(node, content token, renderer build)`.
+
+**S4-5 ADDED ONE ASYMMETRY DELIBERATELY: `FilesController#geometry` ENQUEUES AND
+`Public::FilesController#geometry` NEVER WRITES.** The visitor's enqueue moved to the page render
+(`#view`, once, guarded by `Maker::Previews::Enqueue.current_preview`) because `Enqueue.call` resets
+a `failed` row to `pending` and re-enqueues on EVERY call (§14h): on a door a stranger can issue,
+an unguarded poll is a doomed render every two seconds for as long as a tab is open. The guard is
+load-bearing, not politeness — dropping it leaves the suite green, since `Enqueue.call` is already
+self-idempotent for a `pending` row and only a `failed` one shows the cost. This is
+`ThumbnailMap`'s required `backfill:` flag drawn a second time: the render self-heals, the polled
+door must not write.
+
+**THE MEASURE BAR'S SAVE CONTROLS EXIST ONLY WHERE THERE IS A LIBRARY TO SAVE INTO.**
+`files/viewers/_measure.html.erb` takes a required `save:` local; the public page passes **false**
+and renders neither the two Save twins NOR the four upload URLs behind them — not a disabled pair,
+and not a private write path sitting in a stranger's DOM for nothing. Print and Download SVG stay on
+both pages, being client-side work over a payload the visitor has already fetched, and withholding
+them would cost a visitor the one thing the public Measure view is for. Absent targets are what
+`measure_controller.js#refreshPrintBar`'s `has*Target` guards are for: unguarded, the throw comes
+out of `draw()` and Measure is dead on that page, which no integration test can see.
 
 ## Dot-files are a DISPLAY filter, never a scan skip
 
