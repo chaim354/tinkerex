@@ -497,8 +497,26 @@ module Web
           id = "#{prefix}#{i}"
           owner = User.create!(email: "explore-#{id}@example.com", password: PASSWORD,
                                confirmed_at: Time.current, handle: "explore-#{id}")
-          owner.maker_projects.create!(name: "Lamp #{id}", description: "A lamp.", status: "active",
-                                       visibility: "public", tag_list: "tag-#{id}")
+          project = owner.maker_projects.create!(name: "Lamp #{id}", description: "A lamp.",
+                                                 status: "active", visibility: "public",
+                                                 tag_list: "tag-#{id}")
+          # STAGE 4, S4-5: A COVER PER PROJECT, ON A SEED THAT MINTS ONE OWNER PER PROJECT — which
+          # is what /explore is. This is not decoration: it is what makes this test ABLE to fail if
+          # the cards ever start resolving covers here. Maker::Previews::ThumbnailMap is PER-USER
+          # (the row belongs to its owner, the port is asked in the owner's name — §14a), so a cover
+          # map on a cross-user list is two statements per distinct maker and this assertion goes
+          # red. S4-5 gave covers to /u/:handle for exactly that reason; see that plan's Amendment 9
+          # and open question 1, which prices the two ways to give /explore covers.
+          #
+          # THE NODE IS MINTED ON `owner` RATHER THAN THROUGH `node!`, which is @user-scoped — with
+          # the same two content columns it sets, because without a content token the port reports
+          # no content and the naive per-card spelling short-circuits before its second query,
+          # pricing half of what this seed exists to price.
+          owner.nodes.create!(node_id: "#{id}-cover", name: "#{id}.png", kind: "file", size: 1,
+                              mtime: 1_700_000_000_000_000_000,
+                              content_hash: "h-#{id}-cover", current_version_id: "v-#{id}-cover")
+          project.file_attachments.create!(user: owner, node_id: "#{id}-cover", role: "image",
+                                          position: 0)
         end
       end
       assert_constant_queries(public_explore_path,
@@ -935,6 +953,37 @@ module Web
                               -> { add.call("s", SMALL) },
                               -> { add.call("l", LARGE - SMALL) },
                               "settings/filing_rules#index (folders)")
+    end
+
+    # STAGE 4, S4-5: /u/:handle GREW PER-CARD WORK (a cover thumbnail and the maker's handle), so it
+    # earns a budget of its own — it had none. `includes(:user, :file_attachments)` is what makes it
+    # constant: the card renders `project.user.handle` twice, and Maker::Project#cover_node_id falls
+    # back to #derived_cover_node_id, which reads the attachments. Dropping either is a query per
+    # card, and each is mutation-checked on its own — a single combined mutation cannot show that
+    # both halves carry weight.
+    #
+    # ONE OWNER, WHICH IS THE WHOLE REASON THIS PAGE HAS COVERS AT ALL. Maker::Previews::ThumbnailMap
+    # is per-user, so this page resolves them in ONE map however many cards it renders; the
+    # explore#index case above seeds a cover per project across DIFFERENT owners precisely so that
+    # the cross-user version of this cost is measured rather than assumed.
+    test "public users#show does not grow with the number of projects" do
+      delete destroy_user_session_path
+      # A project cannot leave `private` without a handle (Maker::Project's own validation), so the
+      # handle is set before the first one is created rather than beside the request.
+      @user.update!(handle: "cardbudget")
+      add = lambda do |prefix, count|
+        count.times do |i|
+          id = "#{prefix}#{i}"
+          project = @user.maker_projects.create!(name: "P#{id}", visibility: "public", status: "active")
+          node!("#{id}-cover", "#{id}.png")
+          project.file_attachments.create!(user: @user, node_id: "#{id}-cover", role: "image",
+                                           position: 0)
+        end
+      end
+      assert_constant_queries(public_user_path("cardbudget"),
+                              -> { add.call("us", SMALL) },
+                              -> { add.call("ul", LARGE - SMALL) },
+                              "public users#show")
     end
   end
 end

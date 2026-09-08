@@ -283,13 +283,15 @@ module Web
       assert_select "[data-controller=?]", "thumbs", 0
     end
 
-    test "the public project page leads with its cover" do
+    test "the public project page leads with its cover, linking to the file's own page" do
       @project.update_column(:cover_node_id, @f[:pic].node_id)
 
       get path
 
       assert_select ".project-hero img[src=?]",
                     public_file_path("ada", @project.slug, @f[:pic].node_id)
+      assert_select ".project-hero a[href=?]",
+                    public_file_view_path("ada", @project.slug, @f[:pic].node_id)
     end
 
     test "a cover the project does not permit renders no hero at all" do

@@ -99,13 +99,15 @@
     honest answer on a page that cannot poll. %>
 <% if (cover = pub.cover_node) %>
   <div class="project-hero">
-    <% if Maker::FileAttachment.role_for(cover.name) == "image" %>
-      <%= image_tag pub.file_url_for(cover.node_id), class: "project-hero-img", alt: cover.name %>
-    <% else %>
-      <% cover_thumb = pub.thumbs.thumb(cover.node_id) %>
-      <% if cover_thumb&.status == "ready" && cover_thumb.asset.attached? %>
-        <%= image_tag url_for(cover_thumb.asset), class: "project-hero-img",
-                      alt: "Preview of #{cover.name}" %>
+    <%= link_to pub.view_url_for(cover.node_id) do %>
+      <% if Maker::FileAttachment.role_for(cover.name) == "image" %>
+        <%= image_tag pub.file_url_for(cover.node_id), class: "project-hero-img", alt: cover.name %>
+      <% else %>
+        <% cover_thumb = pub.thumbs.thumb(cover.node_id) %>
+        <% if cover_thumb&.status == "ready" && cover_thumb.asset.attached? %>
+          <%= image_tag url_for(cover_thumb.asset), class: "project-hero-img",
+                        alt: "Preview of #{cover.name}" %>
+        <% end %>
       <% end %>
     <% end %>
     <span class="project-hero-name mono muted"><%= cover.name %></span>

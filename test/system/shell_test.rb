@@ -171,6 +171,27 @@ class ShellTest < ApplicationSystemTestCase
                                 parent_node_id: folder.node_id, size: png.bytesize, storage_path: photo_rel,
                                 mtime: 1_000_000_000, content_hash: Digest::SHA256.hexdigest(png))
     project.file_attachments.create!(user: @user, node_id: photo.node_id, role: "image", position: 0)
+    # STAGE 4, S4-5: A TEXT FILE INSIDE THE FOLDER, so the PUBLIC file page in the second loop below
+    # renders the SOURCE viewer at 375px. It is the one viewer in this sweep whose content is
+    # `white-space: pre` (CodeMirror's `.cm-content`), which is the descendant that sets a parent's
+    # width — the exact shape pages/projects.css's `min-width: 0` comment records for the README
+    # editor. Nothing else in this fixture reaches `:text`: `long` is a .stl AT THE LIBRARY ROOT and
+    # the release rows below depend on it staying unpermitted, `main.c` is a row with no bytes, and
+    # the folder's other files are a schematic, an image and Gerbers.
+    #
+    # REAL BYTES AND A content_hash, the photo's argument one block up and then some: without a
+    # content token the port reports no content and the page renders "No content yet." instead of
+    # the viewer, and `codeview_controller.js` fetches these for real in a live Chrome, so a 404 or
+    # an unreadable file would land in assert_no_console_errors. ONE UNBREAKABLE LINE, because a
+    # paragraph that can wrap cannot overflow anything. NOT a README name (Maker::Readme::NAMES),
+    # which would give the README editor above a fetch and cost that branch its determinism.
+    notes_body = "# Notes\n\n    #{'sudo-make-install --with-a-very-long-flag-that-cannot-wrap ' * 6}\n"
+    notes_rel = File.join(folder.storage_path, "notes.md")
+    @root.join(notes_rel).binwrite(notes_body)
+    notes = @user.nodes.create!(node_id: SecureRandom.uuid, name: "notes.md", kind: "file",
+                                parent_node_id: folder.node_id, size: notes_body.bytesize,
+                                storage_path: notes_rel, mtime: 1_000_000_000,
+                                content_hash: Digest::SHA256.hexdigest(notes_body))
     # THE GERBER FILE PAGE, at 375px. Its stackup is an <svg> the browser is told to render at
     # width: 100% — the one element on these pages whose natural size is its PHYSICAL size (a board
     # is millimetres wide), so it is the one most likely to push the page sideways if
@@ -371,11 +392,22 @@ class ShellTest < ApplicationSystemTestCase
       # reaching `ready`, which is the strongest of the three: it proves the controller mounted and
       # started fetching the PUBLIC named URL, so `assert_no_console_errors` at the end is covering
       # a real fetch rather than a div nothing ever asked for.
+      #
+      # STAGE 4, S4-5 ADDS THE FOURTH ENTRY AND THE HEADER ASSERTION. The file page's marker is
+      # `.preview-code .cm-editor`, NOT `.preview-code`: the div is server-rendered around a
+      # `<pre>Loading…</pre>` that codeview replaces only once its fetch and its dynamic CodeMirror
+      # import have both landed, so waiting on the div alone would measure a one-line placeholder —
+      # the same "measured a poster" hazard the Gerber leg's flag above exists for. `header
+      # .public-header` is the visitor's only chrome and is asserted on every entry: it renders on
+      # the anonymous branch of the layout for a public surface alone, so its absence here would
+      # mean the layout stopped asking `public_shell?`.
       { public_project_path(@user.handle, project.slug) => ".kicanvas-stage[data-kicanvas-state='ready']",
+        public_file_view_path(@user.handle, project.slug, notes.node_id) => ".preview-code .cm-editor",
         public_user_path(@user.handle) => "main.public-main .project-card-grid",
         public_explore_path => "main.public-main .project-card-grid" }.each do |path, marker|
         visit path
         assert_selector marker
+        assert_selector "header.public-header"
         assert_no_selector "nav.tabbar"
         assert_no_selector "aside.rail"
         no_sideways_scroll.call(path)
