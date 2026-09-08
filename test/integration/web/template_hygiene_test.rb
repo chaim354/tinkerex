@@ -184,6 +184,15 @@ module Web
       # renders the entry's own). `.png`, not the `.svg` two blocks up: `role_for` answers "vector"
       # for svg and only an "image" role reaches the photos panel.
       photo = file!("n-photo", "shot.png", parent_node_id: folder.node_id)
+      # STAGE 4, S4-5: TWO MORE FILE PAGES, because eight viewer branches that used to be inline in
+      # files/show.html.erb are now eight TEMPLATES — and the coverage assertion below counts
+      # templates, not branches. `n-photo` directly above already reaches files/viewers/_image and
+      # `n-pcb-0` already exists for _gerber; these two are the ones with no node behind them. The
+      # `.bin` is in no ROLE_BY_EXT entry and no renderer Registry, so its page takes _static's
+      # `else` arm — measured with `FilesController.new.send(:preview_kind, "telemetry.bin")`, which
+      # answers `:other`; pick another extension if a later slice claims this one.
+      file!("n-pdf", "manual.pdf", parent_node_id: folder.node_id)
+      file!("n-other", "telemetry.bin", parent_node_id: folder.node_id)
       entry = @project.build_log_entries.create!(user: @user, body: "Cut the base tonight.",
                                                  logged_at: Time.current)
       entry.file_attachments.create!(user: @user, node_id: photo, role: "image", position: 0)
@@ -325,6 +334,12 @@ module Web
         "file detail (measure, mage)" => file_path("n-mill"),
         "file detail (text)" => file_path("n-src"),
         "file detail (kicanvas)" => file_path("n-schematic"),
+        # Stage 4, S4-5: one page per viewer partial. The three above already reach
+        # files/viewers/_model3d, _measure and _code; these four are the rest of the eight.
+        "file detail (image)" => file_path("n-photo"),
+        "file detail (pdf)" => file_path("n-pdf"),
+        "file detail (gerber)" => file_path("n-pcb-0"),
+        "file detail (other)" => file_path("n-other"),
         "projects index" => projects_path,
         "project detail" => project_path(@project),
         "project detail (list)" => project_path(@project, view: "list"),
@@ -375,6 +390,13 @@ module Web
         "public project (unlisted)" => public_project_path(@unlisted.user.handle, @unlisted.slug,
                                                            k: @unlisted.unlisted_token),
         "public user" => public_user_path(@user.handle),
+        # STAGE 4, S4-5: the visitor's file page, and the MEASURE branch of it — the one viewer whose
+        # public render differs from the private one at all (`save: false` drops the two library
+        # saves). `n-stl` and `n-bak` sit OUTSIDE the project folder in this fixture, so they are
+        # permitted only through the attachment arm of `Maker::PublicProject#permits?` — and they
+        # are, by the two `@project.file_attachments.create!` rows in setup.
+        "public file (3d)" => public_file_view_path(@user.handle, @project.slug, "n-stl"),
+        "public file (measure)" => public_file_view_path(@user.handle, @project.slug, "n-bak"),
         "explore" => public_explore_path,
         # The tag chip's own destination, which is the filtered branch of the same page — its
         # "All" chip renders only when a filter is on.

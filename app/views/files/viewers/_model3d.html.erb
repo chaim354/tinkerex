@@ -1,0 +1,42 @@
+<%# locals: (named_url:, format:, colors:, unit_factor:, thumbnail:, download_url:, name:) %>
+<%# Interactive client-side 3D viewer (Online3DViewer), see modelviewer_controller.js. `lazy`
+    gates the byte fetch AND the ~1 MB engine download behind the "View in 3D" button, so
+    nothing heavy loads unless the user asks. The fallback (thumbnail poster + download) is the
+    resting state and also the graceful-degradation target if the viewer can't boot.
+
+    A NAMED URL, NOT A PLAIN ONE, and it is load-bearing exactly as it is for the KiCanvas embed:
+    Online3DViewer chooses an importer from the URL'S OWN trailing extension, never from the bytes
+    or a Content-Type, so a path with no extension in it reaches no importer at all
+    (docs/invariants/files-preview.md). `named_url` is the caller's, because the maker's page names
+    /files/:id/blob/:name and a visitor's /u/:handle/:slug/files/:id/:name (stage 4, S4-5). %>
+<div class="model-viewer"
+     data-controller="modelviewer"
+     data-modelviewer-lazy-value="true"
+     data-modelviewer-url-value="<%= named_url %>"
+     data-modelviewer-format-value="<%= format %>"
+     <%# WHAT THE IMPORTER CANNOT READ FOR ITSELF, from Maker::ThreeMfManifest: one slicer
+         filament colour per imported mesh, and the millimetre factor for the model's declared
+         unit (three's 3MFLoader ignores it, so an Onshape part in metres measures 1000x short).
+         Empty and 1 for every other format, which is the no-op the controller checks for. %>
+     data-modelviewer-colors-value="<%= colors.to_json %>"
+     data-modelviewer-unit-factor-value="<%= unit_factor %>">
+  <div class="model-viewer-stage" data-modelviewer-target="canvas"></div>
+  <div class="model-viewer-bar">
+    <span class="model-viewer-dims" data-modelviewer-target="dims"></span>
+    <span class="mv-launch">
+      <button type="button" class="btn small" data-action="modelviewer#load">View in 3D</button>
+    </span>
+    <span class="mv-actions">
+      <button type="button" class="btn small ghost" data-action="modelviewer#reset">Reset view</button>
+      <button type="button" class="btn small ghost" data-action="modelviewer#fullscreen">Fullscreen</button>
+      <button type="button" class="btn small ghost" aria-label="Return to image" data-action="modelviewer#showPoster">✕ Image</button>
+    </span>
+  </div>
+  <div class="model-viewer-fallback" data-modelviewer-target="fallback">
+    <% if thumbnail&.status == "ready" && thumbnail.asset.attached? %>
+      <img src="<%= url_for(thumbnail.asset) %>" alt="Preview of <%= name %>" class="preview-image">
+    <% end %>
+    <p class="muted">Click <strong>View in 3D</strong> to load an interactive preview, or download the file.</p>
+    <%= link_to "Download #{name}", download_url, class: "btn" %>
+  </div>
+</div>

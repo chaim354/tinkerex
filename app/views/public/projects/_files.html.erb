@@ -9,6 +9,12 @@
   for anything else, the spinner markup `files/_thumb` emits with its animation stopped
   (pages/public.css) — a static badge rather than a promise the page will never keep.
 
+  THE NAME OPENS THE FILE'S OWN PAGE SINCE STAGE 4, S4-5; DOWNLOAD IS UNCHANGED. Until then both
+  cells pointed at the BYTES, so clicking an .stl downloaded it and there was nowhere on the public
+  side to look at it — which is what S4-5 gives a visitor: the same 3D viewer, Measure view, Gerber
+  stage and KiCanvas embed the maker sees, at `pub.view_url_for`. The two cells now answer two
+  different questions (show me this / give me this) rather than one question twice.
+
   Local: pub (Maker::PublicProject).
 %>
 <% if pub.sections.any? %>
@@ -38,9 +44,10 @@
                   <%= render "files/thumb", thumb: pub.thumbs.thumb(row.node_id), ext_label: ext %>
                 </span>
               </td>
-              <%# Inline for images and PDF, an attachment for everything else — FileDelivery
-                  decides, exactly as it does for the owner's own /files/:id/blob. %>
-              <td class="col-name"><%= link_to row.node.name, pub.file_url_for(row.node_id) %></td>
+              <%# The file's own PAGE (stage 4, S4-5), not its bytes — the header above says why.
+                  The Download cell below is where FileDelivery still decides inline-vs-attachment,
+                  exactly as it does for the owner's own /files/:id/blob. %>
+              <td class="col-name"><%= link_to row.node.name, pub.view_url_for(row.node_id) %></td>
               <td class="col-size num"><%= number_to_human_size(row.node.size) %></td>
               <td class="col-dl">
                 <%= link_to "Download", pub.file_url_for(row.node_id, download: true), class: "linkbtn small" %>

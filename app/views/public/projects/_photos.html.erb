@@ -13,7 +13,11 @@
     </div>
     <div class="public-photos">
       <% pub.photo_rows.each do |row| %>
-        <%= link_to pub.file_url_for(row.node_id), class: "photo-cell file-cell",
+        <%# THE VIEW PAGE, NOT THE BYTES, since stage 4, S4-5 — the same answer _files.html.erb's name
+            cell gives: a visitor clicking a picture wants to LOOK at it, and the file page has the
+            image viewer and the Download button both. Found in review: the names opened the viewer
+            while the photos still downloaded. %>
+        <%= link_to pub.view_url_for(row.node_id), class: "photo-cell file-cell",
                     title: row.node.name do %>
           <%= render "files/thumb", thumb: pub.thumbs.thumb(row.node_id), ext_label: "IMG" %>
         <% end %>

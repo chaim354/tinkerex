@@ -16,7 +16,9 @@
 <% if @projects.any? %>
   <div class="project-card-grid">
     <% @projects.each do |project| %>
-      <%= render "public/project_card", project: project %>
+      <%# ONE map for the whole page — `#thumb(nil)` answers nil, so a project with no cover needs
+          no branch here (stage 4, S4-5). %>
+      <%= render "public/project_card", project: project, thumb: @covers.thumb(@cover_ids[project.id]) %>
     <% end %>
   </div>
 <% else %>

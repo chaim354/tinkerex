@@ -43,6 +43,10 @@
       </div>
       <%= render "layouts/tabbar" %>
     <% else %>
+      <%# STAGE 4, S4-5: THE VISITOR'S ONLY CHROME, ON A PUBLIC SURFACE ALONE. Devise's pages share
+          this branch and must not get a site nav under their sign-in card, which is what the guard
+          says — and `public_shell?` is the same question `shell_signed_in?` asked one line up. %>
+      <%= render "layouts/public_header" if public_shell? %>
       <%= render "layouts/flash" %>
       <%# `auth-main` (a 440px column for the sign-in card) is the DEFAULT here rather than a fixed
           class: a PUBLIC page (stage 3, S3-4) renders on this same anonymous branch and needs the

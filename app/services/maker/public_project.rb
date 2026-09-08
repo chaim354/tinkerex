@@ -236,6 +236,20 @@ module Maker
       @photo_rows ||= Maker::ProjectPhotos.rows(listing:, entries:, page_nodes:)
     end
 
+    # THE COVER, PERMITTED (stage 4, S4-5; story 5.7). `Maker::Project#cover_node_id` derives one
+    # from the attachments when none is chosen, and a CHOSEN cover is a raw column nothing
+    # validates (ProjectsController#project_params) — so it can name a node outside the folder, a
+    # tombstone, or a file this project has no claim on at all. `permits?` is the ONE answer to "is
+    # this file public" and it answers here too: an unpermitted cover renders NOTHING rather than
+    # becoming the page's largest picture. nil is a real answer, hence `defined?` and not `||=`.
+    def cover_node
+      return @cover_node if defined?(@cover_node)
+
+      id = project.cover_node_id
+      node = id && owner.nodes.present.find_by(node_id: id)
+      @cover_node = (node if node && permits?(node))
+    end
+
     # Live nodes for everything the page shows that is not in the listing: entry photos and BOM
     # file targets. ONE query, regardless of how many of either there are.
     def page_nodes
@@ -306,15 +320,59 @@ module Maker
       return false unless node && node.kind == "file" && !node.deleted
       return false unless visible_entry?(node)
 
-      if listing.available?
-        # The parent itself first, then its ancestors: `ancestors_of` may or may not include its
-        # argument, and a file DIRECTLY inside `.git/` must fail the name check either way.
+      self.class.claimed?(node, tree:, folder_node_id: project.folder_node_id, attached: attached_ids)
+    end
+
+    # THE FOLDER-OR-ATTACHED RULE, WRITTEN ONCE, for `permits?` (one node against this project) and
+    # for `permitted_cover_ids` (one cover per project across a whole page). Stage 4, S4-5's review
+    # found the two surfaces disagreeing: the project page's hero asked `permits?` and refused a
+    # cover chosen from outside the folder, while /u/:handle's card asked nobody and rendered it. A
+    # second spelling of this rule is how that happens again.
+    #
+    # The parent itself first, then its ancestors: `ancestors_of` may or may not include its
+    # argument, and a file DIRECTLY inside `.git/` must fail the name check either way. The folder
+    # arm applies only when the project HAS a folder the tree knows (`ProjectFolderListing#available?`
+    # is the same two checks); a project with none falls to its attachments alone.
+    def self.claimed?(node, tree:, folder_node_id:, attached:)
+      if folder_node_id && tree.dir?(folder_node_id)
         lineage = [ node.parent_node_id, *Array(tree.ancestors_of(node.parent_node_id)) ].compact.uniq
         return false if lineage.any? { |id| tree.name_of(id) == Library::RepoMetadata::DIR_NAME }
-        return true if lineage.include?(project.folder_node_id)
+        return true if lineage.include?(folder_node_id)
       end
 
-      attached_ids.include?(node.node_id)
+      attached.include?(node.node_id)
+    end
+
+    # EVERY PROJECT'S PERMITTED COVER ON ONE OWNER'S PAGE, IN A CONSTANT NUMBER OF QUERIES. One
+    # PublicProject per card would ask `cover_node` at a tree, a listing and two attachment queries
+    # PER PROJECT — the growth /u/:handle's budget forbids — so the page asks once: the cover nodes
+    # in one query, their visibility in one, one tree for the owner, and the attachments of every
+    # project and every build-log entry in two more (the entry query runs even when there are no
+    # entries, so the count is the same for a maker with one project and one with fifty). Returns
+    # `project.id => node_id` for the covers `claimed?` admits, and nothing for the rest — the view
+    # renders the placeholder for an absent key, never the picture.
+    def self.permitted_cover_ids(owner, projects)
+      wanted = projects.filter_map { |p| [ p.id, p.cover_node_id ] if p.cover_node_id }.to_h
+      return {} if wanted.empty?
+
+      ids = wanted.values.uniq
+      nodes = owner.nodes.present.where(node_id: ids, kind: "file").index_by(&:node_id)
+      visible = owner.nodes.visible_entries.where(node_id: ids).pluck(:node_id).to_set
+      tree = Maker::LibraryTree.new(owner)
+      attached = Hash.new { |h, k| h[k] = Set.new }
+      Maker::FileAttachment.where(user: owner, attachable_type: "Maker::Project", attachable_id: wanted.keys, node_id: ids)
+                           .pluck(:attachable_id, :node_id).each { |pid, nid| attached[pid] << nid }
+      entry_project = Maker::BuildLogEntry.where(project_id: wanted.keys).pluck(:id, :project_id).to_h
+      Maker::FileAttachment.where(user: owner, attachable_type: "Maker::BuildLogEntry", attachable_id: entry_project.keys, node_id: ids)
+                           .pluck(:attachable_id, :node_id).each { |eid, nid| attached[entry_project[eid]] << nid }
+
+      projects.each_with_object({}) do |project, out|
+        node = nodes[wanted[project.id]]
+        next unless node && visible.include?(node.node_id)
+
+        out[project.id] = node.node_id if claimed?(node, tree:, folder_node_id: project.folder_node_id,
+                                                         attached: attached[project.id])
+      end
     end
 
     # The file route's whole authorization: resolve in the OWNER's library, then ask `permits?`.
@@ -334,6 +392,27 @@ module Maker
       params = link_params
       params = params.merge(download: 1) if download
       Rails.application.routes.url_helpers.public_file_path(handle, project.slug, node_id, filename:, **params)
+    end
+
+    # THE VIEW PAGE'S URL, beside #file_url_for's byte URL (stage 4, S4-5). Same link_params, same
+    # reason: on an unlisted project the token IS the credential and a link without it is a 404.
+    # SEPARATE FROM #file_url_for RATHER THAN A FLAG ON IT, because the two answer different
+    # questions and one of them is load-bearing elsewhere — Maker::Readme resolves a README's `<a>`
+    # AND its `<img src>` through #file_url_for, so a flag defaulting the wrong way would point
+    # every inline README image at an HTML page.
+    def view_url_for(node_id)
+      Rails.application.routes.url_helpers.public_file_view_path(handle, project.slug, node_id,
+                                                                 **link_params)
+    end
+
+    # ONE LAYER'S FETCH URL FOR A .gbrjob's BOARD, filtered by THIS project's permission (stage 4,
+    # S4-5). The sibling walk itself is FilePreview's, shared with the maker's own page; what is
+    # public here is only the URL builder, which answers nil for a sibling the project does not
+    # permit — so a job file sitting next to a layer that is somehow outside the folder renders the
+    # board WITHOUT it rather than handing a visitor a URL the byte route would refuse. `permits?`
+    # is the same call #deliverable! makes, which is what keeps the two from disagreeing.
+    def layer_url_for(node)
+      permits?(node) ? file_url_for(node.node_id, filename: node.name) : nil
     end
 
     private

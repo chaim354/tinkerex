@@ -272,6 +272,38 @@ module Web
                               "public projects#show")
     end
 
+    # A VISITOR'S FILE PAGE COSTS THE SAME ON A BIG PROJECT AS ON A SMALL ONE (stage 4, S4-5). What
+    # could grow it: `Maker::PublicProject` builds a LibraryTree and a ProjectFolderListing in its
+    # constructor, so a folder with more files must not cost more queries; a .gbrjob's sibling walk
+    # is ONE bounded query; and `page_nodes` — the build log, the BOM, every release — must never be
+    # loaded at all, which is exactly what a `permits?` answered by ancestry avoids (its own comment
+    # says the file route never reaches `visible_page_ids`; this page must not either).
+    test "public files#view does not grow with the project's files, entries or releases" do
+      delete destroy_user_session_path
+      @user.update!(handle: "viewbudget")
+      project = @user.maker_projects.create!(name: "Viewed", status: "active", visibility: "public")
+      folder = project_folder_rows!(@user, project)
+      subject = node!("view-subject", "hero.stl")
+      subject.update!(parent_node_id: folder.node_id)
+      add = lambda do |prefix, count|
+        count.times do |i|
+          id = "#{prefix}#{i}"
+          @user.nodes.create!(node_id: id, name: "#{id}.stl", kind: "file", parent_node_id: folder.node_id,
+                              size: 1, mtime: 1_700_000_000_000_000_000,
+                              content_hash: "h-#{id}", current_version_id: "v-#{id}")
+          entry = project.build_log_entries.create!(user: @user, body: "e#{id}", logged_at: Time.current)
+          entry.file_attachments.create!(user: @user, node_id: id, role: "image", position: 0)
+          release = project.releases.create!(user: @user, version: "v#{id}", published_at: Time.current)
+          release.files.create!(user: @user, node_id: id, name: "#{id}.stl", path: "#{id}.stl",
+                                content_token: "h-#{id}", size: 1)
+        end
+      end
+      assert_constant_queries(public_file_view_path(@user.handle, project.slug, "view-subject"),
+                              -> { add.call("vs", SMALL) },
+                              -> { add.call("vl", LARGE - SMALL) },
+                              "public files#view")
+    end
+
     # STAGE 4, S4-4: THE OWNER'S PREVIEW, SIGNED IN — which is the difference worth measuring. It
     # renders the same partials over the same object, plus the app shell (the rail, the
     # current-project switcher, the flash) that a visitor never pays for. That shell cost is a
@@ -465,8 +497,26 @@ module Web
           id = "#{prefix}#{i}"
           owner = User.create!(email: "explore-#{id}@example.com", password: PASSWORD,
                                confirmed_at: Time.current, handle: "explore-#{id}")
-          owner.maker_projects.create!(name: "Lamp #{id}", description: "A lamp.", status: "active",
-                                       visibility: "public", tag_list: "tag-#{id}")
+          project = owner.maker_projects.create!(name: "Lamp #{id}", description: "A lamp.",
+                                                 status: "active", visibility: "public",
+                                                 tag_list: "tag-#{id}")
+          # STAGE 4, S4-5: A COVER PER PROJECT, ON A SEED THAT MINTS ONE OWNER PER PROJECT — which
+          # is what /explore is. This is not decoration: it is what makes this test ABLE to fail if
+          # the cards ever start resolving covers here. Maker::Previews::ThumbnailMap is PER-USER
+          # (the row belongs to its owner, the port is asked in the owner's name — §14a), so a cover
+          # map on a cross-user list is three statements per distinct maker (measured 14/50 against 5) and this assertion goes
+          # red. S4-5 gave covers to /u/:handle for exactly that reason; see that plan's Amendment 9
+          # and open question 1, which prices the two ways to give /explore covers.
+          #
+          # THE NODE IS MINTED ON `owner` RATHER THAN THROUGH `node!`, which is @user-scoped — with
+          # the same two content columns it sets, because without a content token the port reports
+          # no content and the naive per-card spelling short-circuits before its second query,
+          # pricing half of what this seed exists to price.
+          owner.nodes.create!(node_id: "#{id}-cover", name: "#{id}.png", kind: "file", size: 1,
+                              mtime: 1_700_000_000_000_000_000,
+                              content_hash: "h-#{id}-cover", current_version_id: "v-#{id}-cover")
+          project.file_attachments.create!(user: owner, node_id: "#{id}-cover", role: "image",
+                                          position: 0)
         end
       end
       assert_constant_queries(public_explore_path,
@@ -903,6 +953,37 @@ module Web
                               -> { add.call("s", SMALL) },
                               -> { add.call("l", LARGE - SMALL) },
                               "settings/filing_rules#index (folders)")
+    end
+
+    # STAGE 4, S4-5: /u/:handle GREW PER-CARD WORK (a cover thumbnail and the maker's handle), so it
+    # earns a budget of its own — it had none. `includes(:user, :file_attachments)` is what makes it
+    # constant: the card renders `project.user.handle` twice, and Maker::Project#cover_node_id falls
+    # back to #derived_cover_node_id, which reads the attachments. Dropping either is a query per
+    # card, and each is mutation-checked on its own — a single combined mutation cannot show that
+    # both halves carry weight.
+    #
+    # ONE OWNER, WHICH IS THE WHOLE REASON THIS PAGE HAS COVERS AT ALL. Maker::Previews::ThumbnailMap
+    # is per-user, so this page resolves them in ONE map however many cards it renders; the
+    # explore#index case above seeds a cover per project across DIFFERENT owners precisely so that
+    # the cross-user version of this cost is measured rather than assumed.
+    test "public users#show does not grow with the number of projects" do
+      delete destroy_user_session_path
+      # A project cannot leave `private` without a handle (Maker::Project's own validation), so the
+      # handle is set before the first one is created rather than beside the request.
+      @user.update!(handle: "cardbudget")
+      add = lambda do |prefix, count|
+        count.times do |i|
+          id = "#{prefix}#{i}"
+          project = @user.maker_projects.create!(name: "P#{id}", visibility: "public", status: "active")
+          node!("#{id}-cover", "#{id}.png")
+          project.file_attachments.create!(user: @user, node_id: "#{id}-cover", role: "image",
+                                           position: 0)
+        end
+      end
+      assert_constant_queries(public_user_path("cardbudget"),
+                              -> { add.call("us", SMALL) },
+                              -> { add.call("ul", LARGE - SMALL) },
+                              "public users#show")
     end
   end
 end

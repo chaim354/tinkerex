@@ -1,0 +1,96 @@
+<%#
+  ONE FILE OF A PUBLISHED PROJECT, READ-ONLY, FOR ANYONE (stage 4, S4-5; spec §2 D5, story 5.5).
+
+  THE SAME EIGHT PARTIALS THE MAKER'S OWN PAGE RENDERS (app/views/files/viewers/), which is D5 in
+  one sentence: the viewers were never session-aware, only their URLs were. Every local below is a
+  PUBLIC url off `@pub`, so nothing here can reach /files/:id — and the seam guard in
+  test/architecture_invariants_test.rb scans those partials for exactly that.
+
+  NOTHING A VISITOR CANNOT DO: no notes panel, no attach control, no history panel, no editor mount,
+  no Delete. `editable: false` is what keeps the text branch on `codeview`, which sets both
+  EditorState.readOnly and EditorView.editable, and `save: false` is what keeps the Measure bar's
+  two library saves off a page with nowhere to save to.
+
+  MEASURE OTHERWISE SHIPS WHOLE. Print-to-scale and Download SVG are client-side work over a payload
+  the visitor has already fetched, so withholding them would cost a visitor the one thing story 5.5
+  asks for and save nothing. There has never been a note control in that bar to drop.
+%>
+<% content_for :title, "#{@node.name} — #{@pub.project.name} — @#{@pub.handle}" %>
+<% content_for :container_class, "public-main" %>
+
+<%# A REAL BREADCRUMB IN THE PAGE, NOT `content_for :crumbs` — the layout renders layouts/topbar
+    (which consumes :crumbs) only on the signed-in branch. public/projects/show.html.erb's own rule. %>
+<nav class="breadcrumb" aria-label="File path">
+  <%= link_to "@#{@pub.handle}", public_user_path(@pub.handle) %>
+  <span class="sep" aria-hidden="true">/</span>
+  <%= link_to @pub.project.name, public_project_path(@pub.handle, @pub.project.slug, **@pub.link_params) %>
+  <span class="sep" aria-hidden="true">/</span>
+  <span aria-current="page"><%= @node.name %></span>
+</nav>
+
+<div class="page-head public-head">
+  <div class="page-title">
+    <h1><%= @node.name %></h1>
+    <% ext = File.extname(@node.name).delete(".").upcase %>
+    <% if ext.present? %><span class="badge file-badge"><%= ext %></span><% end %>
+  </div>
+  <div class="page-actions">
+    <%= link_to "Download", @pub.file_url_for(@node.node_id, download: true), class: "btn" %>
+  </div>
+</div>
+
+<dl class="meta">
+  <dt>Name</dt><dd><%= @node.name %></dd>
+  <dt>Size</dt><dd><%= @info&.content_token ? number_to_human_size(@info.size) : "—" %></dd>
+  <dt>Type</dt><dd class="mono"><%= Marcel::MimeType.for(name: @node.name) %></dd>
+  <%# FileInfo#mtime is unix NANOSECONDS — reading it as seconds is the overflow bug this codebase
+      has shipped twice. No "Current version" row: `capabilities.versioned?` is a deployment fact a
+      visitor has no use for, and this page carries no owner-facing metadata at all. %>
+  <dt>Modified</dt>
+  <dd><%= @info&.mtime ? Time.at(@info.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M") : "—" %></dd>
+</dl>
+
+<div class="preview-row">
+  <div class="preview">
+  <% blob = @pub.file_url_for(@node.node_id) %>
+  <% named = @pub.file_url_for(@node.node_id, filename: @node.name) %>
+  <% download = @pub.file_url_for(@node.node_id, download: true) %>
+  <% if @info&.content_token.nil? %>
+    <p class="muted">No content yet.</p>
+  <% elsif @kind == :image %>
+    <%= render "files/viewers/image", name: @node.name, blob_url: blob %>
+  <% elsif @kind == :pdf %>
+    <%= render "files/viewers/pdf", name: @node.name, blob_url: blob %>
+  <% elsif @kind == :kicanvas %>
+    <%= render "files/viewers/kicanvas", named_url: named, controls: "full" %>
+  <% elsif @kind == :gerber %>
+    <%= render "files/viewers/gerber", layers: @gerber_layers, single: @gerber_single,
+               thumbnail: @thumbnail, name: @node.name, download_url: download %>
+  <% elsif @kind == :text %>
+    <%= render "files/viewers/code", blob_url: blob, editable: false, save_url: nil, base_token: nil,
+               ext: File.extname(@node.name).downcase.delete(".") %>
+  <% elsif @kind == :model3d %>
+    <%= render "files/viewers/model3d", name: @node.name, named_url: named,
+               format: File.extname(@node.name).downcase.delete("."),
+               colors: (@viewer_manifest&.colors || []),
+               unit_factor: (@viewer_manifest&.unit_factor || 1.0),
+               thumbnail: @thumbnail, download_url: download %>
+  <% elsif @kind == :measure %>
+    <%# THE FIVE SAVE LOCALS ARE NIL AND `save` IS FALSE, WHICH IS ONE DECISION, NOT SIX: the two
+        Save twins write an export into the MAKER's library through the upload doors, and a visitor
+        has neither a library nor a session. The partial drops the buttons AND the four write URLs
+        rather than disabling them — two dead controls would be worse than none. %>
+    <%= render "files/viewers/measure", name: @node.name, blob_url: blob, thumbnail: @thumbnail,
+               geometry_url: public_file_geometry_path(@pub.handle, @pub.project.slug,
+                                                       @node.node_id, **@pub.link_params),
+               download_url: download, save: false, port_writable: nil, create_url: nil,
+               begin_url: nil, finalize_url: nil, parent_node_id: nil %>
+  <% else %>
+    <%= render "files/viewers/static", kind: @kind, thumbnail: @thumbnail, name: @node.name,
+               download_url: download %>
+  <% end %>
+  </div>
+  <%# NO RECIPE PANEL. files/_lbrn_settings and _mage_settings render a laser's speed/power table and
+      a mill's operations — the maker's own settings, not documentation of the design. Out of D5's
+      "the existing viewers as they are"; add one only when a story asks. %>
+</div>

@@ -7,7 +7,35 @@ module Public
   class UsersController < BaseController
     def show
       @owner = owner!
-      @projects = @owner.maker_projects.publicly_listed.includes(:tags).order(updated_at: :desc).to_a
+      # `:file_attachments` IS LOAD-BEARING (stage 4, S4-5): Maker::Project#cover_node_id falls back
+      # to #derived_cover_node_id, which reads them, so without it the cover slot is a query per
+      # card — MEASURED at 8 small / 20 large against a constant 6, by "public users#show does not
+      # grow with the number of projects" in page_query_budget_test.rb.
+      #
+      # `:user` IS DELIBERATELY NOT HERE, AND THAT IS A MEASUREMENT RATHER THAN A PREFERENCE. The
+      # card renders `project.user.handle` twice, so an eager load looks obviously right — but these
+      # projects are loaded THROUGH `@owner`'s own association, whose automatic `inverse_of` has
+      # already set `user` on every row, so `includes(:user)` preloads nothing and dropping it moved
+      # neither number (6/6 either way, mutation-checked). An eager load that buys nothing is the
+      # same thing Public::ExploreController's comment refuses. If this list is ever rebuilt from
+      # `Maker::Project.where(user: @owner)` the inverse goes with it and this becomes a query per
+      # card — which that budget is what would say.
+      @projects = @owner.maker_projects.publicly_listed.includes(:tags, :file_attachments)
+                        .order(updated_at: :desc).to_a
+      # ONE ThumbnailMap FOR THE WHOLE PAGE, and it CAN be one because this page has exactly one
+      # owner — which is the whole reason /explore does not get covers (S4-5's Amendment 9: a
+      # cross-user list is one map per maker). `.for` backfills, which is what starts the render
+      # for a project nobody has opened; the public project page has done the same on an anonymous
+      # visit since S3-4. READY rows only at the view: nothing here polls, because
+      # /files/thumbnails is session-authed.
+      #
+      # ONLY THE COVERS THE PROJECT MAY SHOW (S4-5 review): `cover_node_id` is a raw column a maker
+      # fills from a chooser that browses the WHOLE library, so it can name a file outside the
+      # folder and unattached — which the project page's hero refuses through `permits?`. The card
+      # asks the same rule, once for the page: `permitted_cover_ids` is `claimed?` batched, constant
+      # in the number of projects, and a project it omits renders the placeholder.
+      @cover_ids = Maker::PublicProject.permitted_cover_ids(@owner, @projects)
+      @covers = Maker::Previews::ThumbnailMap.for(@owner, @cover_ids.values.uniq)
     end
   end
 end

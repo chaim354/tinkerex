@@ -126,5 +126,50 @@ module Web
       assert_response :success
       assert_select "h1", text: "@ada"
     end
+
+    # --- Stage 4, S4-5: the cover slot and the visitor's header ---------------------------
+
+    # NO COVER FIXTURE HERE, AND THAT IS THIS SUITE'S OWN RULE, NOT AN OMISSION: a ready cover needs
+    # real bytes behind it, which means `use_fresh_share_library!`, which is exactly the share pin
+    # this file's header refuses. The READY branch is asserted in public_project_test.rb, which
+    # already owns a share library. What belongs here is the branch that needs nothing — and the
+    # absence of the poll, which no share-pinned test would notice.
+    test "a public card carries a cover slot, with the placeholder when there is no cover and never a poll" do
+      get public_explore_path
+
+      assert_response :success
+      assert_select ".project-card .card-cover", minimum: 1
+      assert_select ".project-card .project-thumb-empty", minimum: 1
+      # /files/thumbnails is session-authed, so a visitor's spinner has nothing that could ever
+      # resolve it. The controller must not be on this page at all.
+      assert_select "[data-controller=?]", "thumbs", 0
+    end
+
+    test "the anonymous header names the site and, on a maker's page, the maker" do
+      get public_explore_path
+      assert_select "header.public-header a[href=?]", public_explore_path
+      assert_select "header.public-header p.public-intro"
+
+      get public_user_path("ada")
+      assert_select "header.public-header a[href=?]", public_user_path("ada")
+      assert_select "header.public-header p.public-intro", 0
+    end
+
+    test "a signed-in visitor still gets the visitor's header and no rail" do
+      sign_in_as(@ada)
+      get public_explore_path
+
+      assert_select "header.public-header", 1
+      assert_select "aside.rail", 0
+    end
+
+    # DEVISE'S PAGES SHARE THE ANONYMOUS BRANCH AND ARE A DIFFERENT SURFACE: a sign-in form under an
+    # Explore link reads as a site nav on a page that has none.
+    test "the sign-in page gets no public header" do
+      get new_user_session_path
+
+      assert_response :success
+      assert_select "header.public-header", 0
+    end
   end
 end

@@ -240,6 +240,17 @@ Rails.application.routes.draw do
     get "explore",                                to: "explore#index",  as: :explore
     get "u/:handle",                              to: "users#show",     as: :user,    constraints: { handle: /[a-z0-9][a-z0-9-]*/i }
     get "u/:handle/:slug",                        to: "projects#show",  as: :project, constraints: { handle: /[a-z0-9][a-z0-9-]*/i }
+    # STAGE 4, S4-5: THE VISITOR'S FILE PAGE AND ITS GEOMETRY POLL. BOTH MUST BE DECLARED ABOVE THE
+    # BYTE ROUTE BELOW AND THE ORDER IS THE WHOLE GUARD: `files/:id(/*filename)` matches
+    # `/files/abc/view` with `filename: "view"`, and `:filename` is decorative to the server (#show
+    # resolves the node from :id alone), so declared the other way round this URL would serve THE
+    # BYTES with a 200 and nothing anywhere to say so. Pinned by assert_recognizes in
+    # public_file_view_test.rb.
+    get "u/:handle/:slug/files/:id/view",         to: "files#view",     as: :file_view, constraints: { handle: /[a-z0-9][a-z0-9-]*/i }
+    # The Measure view's coordinate payload, REPORT-ONLY: unlike FilesController#geometry this never
+    # enqueues, because a poll a stranger can issue must not be a write (§14h's own rule for a
+    # `failed` row, and ThumbnailMap's required `backfill:` flag). #view enqueues on the RENDER.
+    get "u/:handle/:slug/files/:id/geometry",     to: "files#geometry", as: :file_geometry, constraints: { handle: /[a-z0-9][a-z0-9-]*/i }
     get "u/:handle/:slug/files/:id(/*filename)",  to: "files#show",     as: :file,    constraints: { handle: /[a-z0-9][a-z0-9-]*/i }, format: false
     # STAGE 3, S3-6. These three DO parse a format, which is why `format: false` is deliberately
     # absent here and present one line up: `/feed.atom`, `/bundle.json` and `/bom.csv` are how a

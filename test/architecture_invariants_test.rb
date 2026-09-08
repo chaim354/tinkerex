@@ -1018,10 +1018,12 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # state across lines and keeps whatever follows the terminator on the same line, so real code
   # sharing a line with a comment's end is still scanned.
   #
-  # NON-VACUOUS BY ASSERTION (§14e): the scan is 21 files today (8 controllers, 13 templates —
-  # public/projects/_page.html.erb among them since stage 4, S4-4 extracted the page body) and a
-  # renamed directory would otherwise retire this invariant with `assert_empty` passing over zero
-  # files. 10 is a plausibility floor, not today's count.
+  # NON-VACUOUS BY ASSERTION (§14e): the scan is 30 files today (8 controllers, 13 templates —
+  # public/projects/_page.html.erb among them since stage 4, S4-4 extracted the page body — and the
+  # 8 shared viewer partials under app/views/files/viewers, which S4-5 added because a PUBLIC page
+  # renders them from OUTSIDE this namespace) and a renamed directory would otherwise retire this
+  # invariant with `assert_empty` passing over zero files. 18 is a plausibility floor, not today's
+  # count.
   test "the Public namespace stands outside ApplicationController and names no session accessor" do
     Rails.application.eager_load!
 
@@ -1038,11 +1040,24 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
              # EVERY TEMPLATE KIND, not `*.erb`: the namespace's first non-ERB template was the Atom
              # builder (stage 3, S3-6), and a `*.erb` glob let `session[:who]` sit in it with this
              # guard green (mutation-proven by S3-6's review). A template is a template.
-             Dir.glob(ROOT.join("app", "views", "public", "**", "*.{erb,builder,jbuilder}"))).sort
-    assert_operator files.size, :>=, 10,
+             Dir.glob(ROOT.join("app", "views", "public", "**", "*.{erb,builder,jbuilder}")) +
+             # STAGE 4, S4-5: THE VIEWER PARTIALS ARE SHARED, SO THE SCAN HAS TO REACH THEM. A
+             # visitor's file page renders app/views/files/viewers/*, which live OUTSIDE this
+             # namespace — a `current_user` in one of them would reach a visitor with this guard
+             # green (a private ROUTE HELPER too, which the second arm below is for). They take
+             # every URL as a strict local precisely so they need not know which page they are on;
+             # this is what checks that they don't.
+             Dir.glob(ROOT.join("app", "views", "files", "viewers", "*.erb")) +
+             # STAGE 4, S4-5: THE VISITOR'S HEADER lives under layouts/ because the layout's anonymous
+             # branch renders it, and a public controller's view context DOES resolve `current_user`
+             # (probed in review) — so a session read there would render silently, not raise.
+             Dir.glob(ROOT.join("app", "views", "layouts", "_public_header.html.erb"))).sort
+    assert_operator files.size, :>=, 18,
                     "the Public scan matched #{files.size} file(s), below the plausibility floor " \
-                    "of 10 — so `assert_empty` below cannot fail for the reason it exists " \
-                    "(CLAUDE.md §14e). A renamed or moved directory is the usual cause"
+                    "of 18 — so `assert_empty` below cannot fail for the reason it exists " \
+                    "(CLAUDE.md §14e). A renamed or moved directory is the usual cause, and the " \
+                    "eight shared viewer partials (files/viewers/_image _pdf _kicanvas _gerber " \
+                    "_code _model3d _measure _static) are half of what the floor now counts"
 
     offenders = files.flat_map do |file|
       erb_open = false
@@ -1059,6 +1074,32 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
                  "A public page is a 404 to everyone for a private project — including its own " \
                  "signed-in owner — precisely because it cannot know who is looking. A template " \
                  "that branches on the visitor makes the page disagree with the file route."
+
+    # THE VIEWER PARTIALS GET A SECOND ARM, FOR ROUTE HELPERS (stage 4, S4-5, found in review).
+    # SESSION_ACCESSOR has no route-helper pattern — the namespace's own templates call
+    # `public_*_path` legitimately — so a shared viewer partial that called `blob_file_path("id")`,
+    # a PRIVATE byte route, rendered `<a href="/files/…/blob">` on a visitor's page with the scan
+    # above green (mutation-proven). Strict locals are the design that stops it: every URL a viewer
+    # needs arrives as a local, so NO `*_path`/`*_url` identifier may appear in one except the locals
+    # its own `locals:` line declares — read off the partial itself, so the allowlist cannot drift
+    # from the signature. `url_for(thumbnail.asset)` (Active Storage) is not matched: the pattern
+    # wants the `_path`/`_url` SUFFIX a route helper carries.
+    viewer_files = files.select { |f| f.include?("/app/views/files/viewers/") }
+    assert_operator viewer_files.size, :>=, 8, "the viewer-partial scan matched #{viewer_files.size} file(s)"
+    viewer_offenders = viewer_files.flat_map do |file|
+      lines = File.readlines(file, chomp: true)
+      declared = lines.first.to_s.scan(/(\w+):/).flatten
+      erb_open = false
+      lines.each_with_index.filter_map do |line, idx|
+        code, erb_open = strip_erb_comment(line, erb_open)
+        helpers = code.scan(/\b([a-z_]+_(?:path|url))\b/).flatten.uniq - declared
+        next if helpers.empty?
+        "#{Pathname.new(file).relative_path_from(ROOT)}:#{idx + 1} (#{helpers.join(', ')})"
+      end
+    end
+    assert_empty viewer_offenders,
+                 "a shared viewer partial calls a route helper instead of taking the URL as a strict " \
+                 "local — a private route would reach a visitor's page:\n  #{viewer_offenders.join("\n  ")}"
   end
 
   SESSION_ACCESSOR = /\b(current_user|current_project|user_signed_in\?|web_device)\b|\bsession\s*[\[.]|\bcookies\s*[\[.]/
@@ -1176,5 +1217,22 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
                  "pass `index: false` there instead. If you believe one must STAY, it needs a " \
                  "measured query plan showing SQLite's appended-rowid seek is load-bearing for a " \
                  "real query — then add it to PREFIX_INDEX_EXEMPTIONS citing that measurement."
+  end
+  # THE THREE EXTENSION LISTS ARE ONE OBJECT, NOT TWO EQUAL ONES (stage 4, S4-5). FilePreview owns
+  # them because constant lookup inside a module method is lexical; FilesController re-exposes them
+  # because places outside that file cite `FilesController::KICANVAS_EXTS` and friends —
+  # FilesHelper#kicad?, Maker::GerberArchive, Maker::PublicProject and three test suites. An
+  # `assert_equal` here would pass over a re-literal, which is exactly the drift the alias exists to
+  # prevent — so this asserts IDENTITY. `SAFE_INLINE_TYPES` gets the same treatment for the same
+  # reason (files_controller.rb argues it in prose; this is the guard behind the prose).
+  test "the file-preview vocabularies are re-exposed on FilesController, never re-declared" do
+    { MEASURABLE_EXTS: FilePreview::MEASURABLE_EXTS,
+      KICANVAS_EXTS: FilePreview::KICANVAS_EXTS,
+      GERBER_EXTS: FilePreview::GERBER_EXTS }.each do |name, owned|
+      assert_same owned, FilesController.const_get(name),
+                  "FilesController::#{name} is a SECOND list, not the concern's own — a re-literal " \
+                  "passes assert_equal and drifts on the next edit"
+    end
+    assert_same FileDelivery::SAFE_INLINE_TYPES, FilesController::SAFE_INLINE_TYPES
   end
 end

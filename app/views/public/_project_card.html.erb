@@ -3,9 +3,29 @@
   from drifting about what a project looks like. Every link is public: the project page, the
   maker's page, and each tag's /explore filter.
 
-  Local: project (Maker::Project, publicly listed).
+  Locals: project (Maker::Project, publicly listed), thumb (Maker::Preview or nil).
 %>
 <article class="grid-card project-card">
+  <%#
+    THE COVER (stage 4, S4-5; story 5.7). `thumb` is a Maker::Preview or nil — the private
+    projects/_card's shape, minus the poll: /files/thumbnails is session-authed, so a visitor's
+    spinner has nothing that could ever resolve it. A card with no cover node gets the same neutral
+    placeholder the private card uses, never a forever-spinner.
+
+    `thumb` IS ALLOWED TO BE nil AND /explore ALWAYS PASSES nil (this slice's Amendment 9).
+    Maker::Previews::ThumbnailMap is PER-USER, so a cross-user list would cost three statements per
+    distinct maker — measured by page_query_budget_test.rb, whose explore seed mints one owner per
+    project because that is what /explore is. This is ONE condition (does this card have a ready
+    cover thumbnail?) answered from whatever each caller actually holds, not two answers to one
+    condition.
+  %>
+  <%= link_to public_project_path(project.user.handle, project.slug), class: "card-cover" do %>
+    <% if thumb&.status == "ready" && thumb.asset.attached? %>
+      <span class="thumb"><img src="<%= url_for(thumb.asset) %>" alt="" loading="lazy"></span>
+    <% else %>
+      <span class="thumb project-thumb-empty" aria-hidden="true">📦</span>
+    <% end %>
+  <% end %>
   <h3 class="card-title">
     <%= link_to project.name, public_project_path(project.user.handle, project.slug) %>
   </h3>

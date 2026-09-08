@@ -700,11 +700,19 @@ export default class extends Controller {
     }
   }
 
-  // NO `hasPrintButtonTarget` GUARD, DELIBERATELY, and the plan's draft had one. All SEVEN controls
-  // — the paper select and six buttons, two of them the Save twins stage 4 S4-3 added; it read six
-  // until then — live in ONE always-rendered <span class="measure-actions">, so the target exists
-  // whenever this controller is connected. A guard that cannot fail asserts a condition that does
-  // not exist, and that now covers the two save targets this method also writes.
+  // NO `hasPrintButtonTarget` GUARD, DELIBERATELY, and the plan's draft had one. FIVE of the seven
+  // controls — the paper select, Print, Download SVG, Reset and ✕ Image — live in ONE
+  // always-rendered <span class="measure-actions">, so those targets exist whenever this controller
+  // is connected. A guard that cannot fail asserts a condition that does not exist.
+  //
+  // THE TWO SAVE TWINS ARE THE EXCEPTION SINCE STAGE 4, S4-5, AND THEIR GUARDS BELOW ARE REAL. This
+  // comment used to say the same "cannot fail" of them; that stopped being true the moment a SECOND
+  // page rendered this partial. `files/viewers/_measure.html.erb` takes a `save:` local and a
+  // VISITOR's public file page passes false — there is no library for an export to land in and no
+  // session to write it with — so those two targets are genuinely absent there, and an unguarded
+  // `this.saveSvgButtonTarget` here throws "Missing target element" out of draw(), which would break
+  // Measure on that page entirely. Measured against the partial, not reasoned: this method runs off
+  // draw(), toggleMarks, clearMarks and showPoster, and draw() is the launch button's own path.
   //
   // THERE ARE FOUR CALLERS NOW, NOT THREE, AND THE FOURTH RETIRED HALF OF THIS ARGUMENT. The
   // original three — toggleMarks, clearMarks, showPoster — are each reachable only once the view
@@ -740,12 +748,16 @@ export default class extends Controller {
     // THE SAVE TWINS TRACK THE SAME TARGET. Four labels, one targetNoun(), so a button can never
     // describe a set a sibling does not act on; the ERB's at-rest literals are these same strings
     // with `noun` = "all", which is what makes them drift together or not at all.
-    const svgSave = `Save ${noun} as SVG in the library`
-    this.saveSvgButtonTarget.setAttribute("aria-label", svgSave)
-    this.saveSvgButtonTarget.setAttribute("title", svgSave)
-    const sheetSave = `Save ${noun} as a print sheet in the library`
-    this.savePrintButtonTarget.setAttribute("aria-label", sheetSave)
-    this.savePrintButtonTarget.setAttribute("title", sheetSave)
+    if (this.hasSaveSvgButtonTarget) {
+      const svgSave = `Save ${noun} as SVG in the library`
+      this.saveSvgButtonTarget.setAttribute("aria-label", svgSave)
+      this.saveSvgButtonTarget.setAttribute("title", svgSave)
+    }
+    if (this.hasSavePrintButtonTarget) {
+      const sheetSave = `Save ${noun} as a print sheet in the library`
+      this.savePrintButtonTarget.setAttribute("aria-label", sheetSave)
+      this.savePrintButtonTarget.setAttribute("title", sheetSave)
+    }
   }
 
   // THE SIZE, PLUS THE ONE PLACE THE APP SAYS ⌥-CLICK EXISTS. `pick` composes this with

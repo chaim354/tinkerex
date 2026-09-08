@@ -12,6 +12,22 @@
   .brand:hover { text-decoration: none; }
   .brand-mark { width: 18px; height: 18px; flex: 0 0 auto; border-radius: 4px; background: var(--accent); }
 
+  /* --- The visitor's header (stage 4, S4-5). The anonymous branch's only chrome: the wordmark and,
+     on a maker's page, the maker. Not the rail — a visitor has no library to navigate. It reuses
+     `.brand` rather than restyling it, which is why it lives here beside it and not in
+     pages/public.css: that sheet is about page CONTENT, and a `pages`-layer rule would outrank
+     `shell` and start a cascade fight over the wordmark.
+     THE `.brand-name` OVERRIDE IS NOT TIDINESS: the ≤1099px block below hides `.brand-name`
+     UNQUALIFIED, because the RAIL narrows to icons at that width. This header does not narrow, and
+     a visitor's only wordmark must not vanish with the rail's. Higher specificity, so it wins from
+     here rather than needing to sit after the media query. --- */
+  .public-header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+                   max-width: 1360px; margin: 0 auto; padding: 10px 16px;
+                   border-bottom: 1px solid var(--line); }
+  .public-header .brand-name { display: inline; }
+  .public-header .public-author { color: var(--fg-muted); font-size: 12px; }
+  .public-header .public-intro { margin: 0; font-size: 12px; }
+
   .current-project-form { margin: 0; }
   .current-project {
     display: flex; flex-direction: column; gap: 2px; padding: 10px 10px 8px;

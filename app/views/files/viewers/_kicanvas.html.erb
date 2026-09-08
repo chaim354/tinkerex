@@ -1,0 +1,28 @@
+<%# locals: (named_url:, controls:) %>
+<%# KiCad schematic/board, rendered in the browser by KiCanvas (stage 3, S3-2; the vendored
+    module in vendor/javascript/kicanvas.js, kicanvas_controller.js). Imported LAZILY on
+    connect, so nothing downloads it on a page with no KiCad file. controls="full" gives the
+    file page KiCanvas's own toolbar (zoom, pan, layer toggles); the project page's Schematics
+    section asks for "basic" instead — see projects/_schematics.html.erb.
+
+    A NAMED URL, NOT A PLAIN ONE -- KiCanvas identifies a schematic/board from the URL IT FETCHES,
+    not from the bytes it receives: its own FetchFileSystem reads the trailing extension off the
+    fetched URL's path to decide what it just downloaded, so pointed at a route with no extension
+    anywhere in the path it never recognises this as a .kicad_sch/.kicad_pcb at all and renders
+    nothing but its own placeholder background, logging "No vaild root schematic was found." —
+    measured against the vendored module, not guessed. The filename segment is decorative to the
+    SERVER (never looked up; the byte route still resolves the node from :id alone) and
+    load-bearing to the CLIENT. `named_url` is the caller's, because the maker's page names
+    /files/:id/blob/:name and a visitor's /u/:handle/:slug/files/:id/:name (stage 4, S4-5).
+
+    ON S3 the embed's fetch follows a presigned redirect to the bucket — cross-origin, so it
+    reads only under the bucket's CORS rule (docs/DEPLOY.md) and the connect-src the port
+    names for the CSP (FileLayer#presigned_origin), exactly as modelviewer_controller.js's
+    model fetch does. %>
+<div class="kicanvas-stage"
+     data-controller="kicanvas"
+     data-kicanvas-url-value="<%= named_url %>"
+     data-kicanvas-controls-value="<%= controls %>">
+  <p class="muted" data-kicanvas-target="status">Loading the viewer…</p>
+  <div data-kicanvas-target="stage"></div>
+</div>
