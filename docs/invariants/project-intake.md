@@ -17,6 +17,18 @@
   column would be a second source of truth for the same fact, and the two would drift the day
   anything writes to only one of them.
 
+- **`discovered_at` IS THIS SWEEP'S OWN MARK, AND IT IS NOT THE SEEN-COLUMN THE BULLET ABOVE
+  FORBIDS** (stage 4, S4-6). One `Time.current` for the whole run — these folders were discovered
+  together, and a per-row clock read would make that legible nowhere while costing the same — and
+  **nothing else in the app writes it**: not the web form, not `Projects::AdoptionsController`
+  (which passes `discovered_at: nil` explicitly and says why at its own `create!`), not the v1 API,
+  whose permit list does not name it. That is what lets `projects/_card` read
+  `discovered_at.present?` as "the app made this, I did not" rather than as a proxy for it, and it
+  is half of the **New** badge (`discovered_at` set, `opened_at` still nil). **It is never read to
+  decide whether to adopt.** `adoptable` still asks `nodes` and the claim and nothing else, so
+  statelessness is untouched — a mark the sweep WRITES for a page and a mark the sweep READS to skip
+  work are different things, and only the second would be the second source of truth.
+
 - **THE CLAIM LOOKUP IS UNSCOPED, AND THAT IS THE ENTIRE DISMISSAL MECHANISM.** `adoptable` reads
   `user.maker_projects.where.not(folder_node_id: nil)` with no `archived_at` filter, so an archived
   project keeps its `folder_node_id` and the sweep passes over its folder forever. Filtering
@@ -28,6 +40,14 @@
   the folder was never the thing that got deleted. The web UI is unaffected —
   `ProjectsController#destroy` calls `archive!`, which only touches `status`/`archived_at`, so the
   row and its claim on the folder survive either way.
+  **SINCE STAGE 4, S4-6 THE MECHANISM HAS A NAMED BUTTON, AND THAT IS A SENTENCE, NOT A SECOND
+  WRITE.** `ProjectsController#destroy` takes `dismiss=1`, which changes the **flash and nothing
+  else** — both paths call `archive!`, so the write is identical by construction rather than by two
+  callers agreeing, and a second route performing it would be the drift this codebase refuses. The
+  "Not a project" button renders on `projects/show` only when `discovered_at` is present: a project
+  made by hand was never adopted, so the phrase means nothing there. Archive's own `turbo_confirm`
+  says the previously-undocumented half out loud for a discovered project — its folder stays in the
+  library, and the app will not adopt it again.
 
 - **IT NEVER MINTS `Projects/` AND NEVER CALLS `ensure_library_folder!`.** `projects_root` looks
   the folder up with `find_by`, never find-or-create, so a user with no `Projects/` folder at all
@@ -36,12 +56,80 @@
   `Projects::AttachmentsController#relocate` once shipped ("the endpoint created `Projects/<slug>`
   as a side effect of being POSTed to"), now at library-sweep scale, on every user, every run.
 
+- **`Maker::Project#ensure_library_folder!` MINTS ONLY WHEN `folder_node_id` IS NIL, AND A
+  TOMBSTONED FOLDER IS NEVER SILENTLY RE-MINTED — FOR ANY PROJECT, NOT ONLY AN ADOPTED ONE**
+  (stage 4, S4-6, decision 2). It used to re-mint whenever the column named a missing or tombstoned
+  node, so deleting a project's folder in Finder — **the maker's own act** — was answered by a new
+  empty `Projects/<slug>` appearing behind their back on the next page view, while the files they
+  deleted sat in the trash under the OLD `node_id` where `undelete` could still find them (§14a's
+  two tombstone kinds). Since a project's folder can now be a folder ANYWHERE, re-minting would
+  additionally put a SECOND folder somewhere the maker never chose. **NIL IS PART OF THE CONTRACT,
+  NOT A FAILURE**, and every caller answers it rather than raising: the Files panel renders "This
+  project's folder is in the trash or was removed" with a link to Trash,
+  `Projects::UploadsController#upload_parent` falls back to the library root (the `&.` is what
+  keeps that from being a 500 on every upload), `Maker::AttachToProject#move` returns
+  `:unavailable` and leaves the bytes where they are, and `Maker::ProjectFolderListing` answers
+  `available? == false`. A project whose `folder_node_id` was never set — the form path — still
+  mints, which is what `ProjectsController#create` depends on. **THE THREE DOOR TESTS IN
+  `projects_flow_test.rb` NEED THEIR REAL-SHARE FIXTURE AND MUST NOT BE "SIMPLIFIED" TO
+  `project_folder_rows!`:** measured, with rows alone `Projects/` has no `storage_path`, so
+  restoring the re-minting branch raised `FileLayer::NotFound` into each caller's rescue and all
+  three guards stayed GREEN over the regression they exist for — §15's green-suite shape, masked by
+  the fixture rather than caught by the assertion.
+
 - **DIRECT CHILDREN ONLY, AND DOT-FOLDERS ARE SKIPPED.** `adoptable` scopes to
   `parent_node_id: root.node_id` and rejects any name starting with `.`. Without the depth limit,
   `Projects/desk-lamp/models/` — a category folder this app created for an already-adopted project
   — would itself be adopted as a project named "models". Without the dot-folder rule: `.git` KEEPS
   ITS NODE on purpose (§14b — the marker is the evidence a directory is a working tree), so a repo
   checked out at the `Projects/` root would become a project literally titled `.git`.
+
+- **`Maker::ProjectDiscovery.adoptable_name?` IS THE ONE DEFINITION OF THAT NAME RULE, AND IT HAS
+  THREE CALLERS SINCE STAGE 4, S4-6.** The sweep's own `adoptable`,
+  `Projects::AdoptionsController#refusal_for` (the second door, below) and the folder view's menu
+  gate in `app/views/files/index.html.erb` (the control that opens that door) all ask it. A door or
+  a control that spells the rule itself is the second copy §14d names a service to end, and one
+  definition is also what keeps the control from OFFERING what the door would refuse. **It refuses a
+  BLANK name too, and that arm is the door's, not the sweep's:** `Node` validates `name` presence so
+  `adoptable` can never see one, but the door hands it whatever a row holds — and
+  `nil.to_s.start_with?(".")` is FALSE, so the dot rule alone answers "yes, adoptable" for nil and
+  mints a project that then fails `Maker::Project`'s own presence validation, a `RecordInvalid` at
+  the user instead of a sentence.
+
+- **A SECOND DOOR: `Projects::AdoptionsController` ADOPTS ONE FOLDER, ANYWHERE IN THE LIBRARY — AND
+  IT IS A DOOR, NEVER A SWEEP** (stage 4, S4-6; spec decision D1). It writes ONE `maker_projects`
+  row whose `folder_node_id` points at a live directory node, and nothing else: no mkdir, no move,
+  no rename, and `Projects/` is never minted as a side effect. It shares this sweep's name rule
+  (`adoptable_name?`) and its can't-fail slug (`Maker::Project.available_slug`) rather than spelling
+  either, and **it never calls the port and never calls `ensure_library_folder!`** — which is what
+  makes its whole test file rows-only and identical on all three CI legs. It refuses seven ways,
+  cheapest first, each naming the ACTION that would work instead of merely the failure: no
+  `node_id`; a node that is not a live directory of this maker's (a file, a tombstone, another
+  user's row and a typo are ONE answer, deliberately — telling them apart discloses that an id
+  exists); a dot or blank name; the `Projects/` root itself (adopting it would make one project
+  holding every other project's folder, and would then claim the root against discovery, which reads
+  the same column — silently switching this whole feature off); a folder any project already claims
+  — **UNSCOPED ON STATUS, so archiving still dismisses**, and filtering archived rows out HERE is
+  precisely how a dismissed folder comes back, with a button on it; a folder inside another
+  project's folder; and a folder **strictly** inside a git working tree. An ancestor chain that
+  cannot be resolved is refused as well, rather than adopted into a tree the app cannot describe.
+  **THE STRICTNESS IS THE POINT IN BOTH DIRECTIONS:** `Library::WorkingTree#root_for` starts its
+  walk at the node's PARENT, so a repository ROOT answers nil and IS adoptable, while `firmware/src`
+  is refused — adopting it makes a project whose README, commits and history all sit OUTSIDE its own
+  folder, so S4-1's repository card answers about a tree the project does not contain. A folder
+  INSIDE `.git` falls under the same working-tree refusal, and is reachable only on `chunk_remote`:
+  share and s3 index the `.git` marker but never its contents (§14b), so there is no node to post.
+
+- **AN ADOPTED PROJECT IS CREATED WITH `autofile: false`; A DISCOVERED ONE KEEPS THE `true`
+  DEFAULT, AND THE ASYMMETRY IS THE WHOLE POINT OF ADOPTING IN PLACE.** A folder the maker put under
+  `Projects/` asked for the app's filing by being there; `designs/tray` did not, and saying "this is
+  a project" is a statement about what it IS, not a request to rearrange it. Left on, the sweep
+  moves `tray.svg` into `design/` and `notes.md` into `docs/` within fifteen minutes, unasked and
+  unattended — the fight-the-user failure this file forbids one directory level down, arriving
+  through a new door. The adoption flash says so in the same breath ("its files stay where they are,
+  and automatic filing is off, so nothing moves"); the edit form's switch (S4-2) is where a maker
+  turns it on. **`discovered_at` STAYS NIL ON AN ADOPTED PROJECT ON PURPOSE**: the maker made this
+  one, so it is never "new to you" and never wears the badge.
 
 - **DISCOVERY RUNS STRICTLY BEFORE THE FILING SWEEP, AND THE ORDER CHANGES THE ANSWER, NOT THE
   TIMING.** A newly-discovered project's loose files sitting at its folder's root have no shelf
@@ -57,15 +145,48 @@
   because a second, unsequenced filer there is the identical scan-overlap hazard the Filing section
   below already records (a move racing the Scanner's own observations).
 
+- **THE SCAN BUTTON IS A SECOND SYNCHRONOUS CALLER OF DISCOVERY, ON `chunk_remote` ONLY, AND IT SITS
+  BETWEEN THE PULL AND THE INTAKE** (`Projects::ScansController#pull_and_file`, stage 4, S4-6). Same
+  ordering rule as the bullet above and for the same reason — it changes the ANSWER, not the timing:
+  the pull is what makes a folder another device pushed visible at all, and a newly discovered
+  project's loose files have no shelf nearer than `Projects` itself, so filing before adopting hands
+  the whole folder to the model catalog, permanently. **It calls the JOB with `perform_now`, not
+  `Maker::ProjectDiscovery` directly** — the idiom `Library::ScanJob` already uses, and for the same
+  two reasons: the job is the only place a run is LOGGED, and `#chain_intake` is what sweeps a
+  project this call has just created (`.for_project` below it sweeps THAT project only). **`perform_now`
+  creates no job row, so `limits_concurrency` does not engage here** (the bullet at the end of this
+  section); what bounds the door is its own `rate_limit to: 3, within: 1.minute, by: current_user.id`.
+  **On share/s3 the door ENQUEUES AND STOPS** — the scan-overlap race the Filing section records — so
+  what discovery created is not knowable in-request there and **the New badge is the surface
+  instead**, which is also how the unattended 15-minute sweep reports on every backend. A capped run
+  says so in the same sentence ("N of M folders under `Projects/`; the rest on the next scan")
+  rather than letting `created` read as "that was all of them" and sending a maker looking for
+  folders the cap deferred.
+
 - **THE SWEEP NEVER CALLS THE PORT.** `ProjectDiscovery.for_user` writes `maker_projects` rows and
   nothing else — no mkdir, no move, no bytes — which is what makes it identical on all three
   backends and testable without a library on disk.
 
-- **ONE CAP, NOT TWO — AND WHOEVER ADDS A NUDGE OWES THE SECOND.** `MAX_PROJECTS` (50) bounds an
-  unattended run's churn and is absolute, not a percentage: the intended first run adopts 100% of
-  what is sitting under `Projects/`, so a percentage would be guarding against success. Nothing
-  here has an entry point inside a browser request the way `Maker::ProjectIntake`'s eager nudge
-  does, so there is no second, smaller cap to keep in step — yet. A nonsense override falls back
+- **`RunResult#names` IS WHAT THE RUN CREATED, IN THE SAME `ORDER BY node_id` ORDER `candidates`
+  ITSELF USES** (stage 4, S4-6) — the determinism that makes a capped run reproducible and lets the
+  next run continue where this one stopped instead of re-rolling the dice. It exists because a door
+  can have a user in front of it, and `created` is a number: a number cannot answer "which
+  folders?", the only question a maker watching a scan actually has. **It defaults to `[]`**, so the
+  `:no_projects_folder` construction — and any `RunResult` a test builds by hand — reads as "created
+  nothing" rather than raising. **Every member is spelled in the `Data.define`'s `initialize`**
+  (`Library::Observation` is this repo's precedent for the shape), because an anonymous `**`
+  forwarded through zsuper is a subtlety nobody should have to check.
+
+- **THE CAP IS ABSOLUTE, NOT A PERCENTAGE — AND THE SECOND, SMALLER CAP BELONGS TO THE ONE ENTRY
+  POINT INSIDE A REQUEST.** `MAX_PROJECTS` (50) bounds an unattended run's churn: the intended first
+  run adopts 100% of what is sitting under `Projects/`, so a percentage would be guarding against
+  success. This bullet used to read "ONE CAP, NOT TWO — AND WHOEVER ADDS A NUDGE OWES THE SECOND",
+  on the grounds that nothing here had an entry point inside a browser request the way
+  `Maker::ProjectIntake`'s eager nudge does. **Stage 4, S4-6 added one:**
+  `Projects::ScansController#pull_and_file` runs a sweep synchronously inside a POST on
+  `chunk_remote`. That door is where the second, smaller ceiling belongs — what bounds an unattended
+  run is the wrong number for one that happens between a click and a redirect, and fifty adoptions
+  plus fifty chained intakes is not a request. A nonsense override falls back
   rather than crashing the job: `Integer("-5")` SUCCEEDS, so an unguarded rescue never sees a
   negative — it reaches `candidates.first(-5)` and raises "negative array size" from inside a
   recurring job, far from the typo that caused it.
@@ -100,6 +221,14 @@
   `Library::ScanJob`'s OWN `limits_concurrency`, keyed the same way. Do not delete either as
   redundant with the other — they cover disjoint paths, and removing either reopens the
   duplicate-adoption race it alone prevents on the backends the other cannot reach.
+  **THERE IS A THIRD PATH SINCE STAGE 4, S4-6, AND IT IS OUTSIDE BOTH SEMAPHORES:**
+  `Projects::ScansController#pull_and_file` calls this job with `perform_now` on `chunk_remote`, so
+  it can race the recurring `sweep_all!` tick and mint two projects for one folder. What bounds it
+  is that controller's `rate_limit`, which is not a semaphore and does not pretend to be. **Extend
+  this bullet rather than adding a fourth beside it**, and note that the durable fix is a partial
+  unique index on `(user_id, folder_node_id)` — filed as open work, because a `unique:` migration
+  over an existing duplicate raises and takes the deploy down, so it needs a read-only probe of the
+  three live databases before it is written.
 
 ## Filing
 

@@ -87,6 +87,23 @@
   user who DELETES the project releases the folder, which is the row-is-the-memory rule again.
   **The claim is applied BEFORE `existing` is looked up**, so a row the old rule already wrote
   stops accreting too rather than only new folders being spared.
+  **THERE ARE TWO WAYS A PROJECT COMES TO CLAIM A FOLDER SINCE STAGE 4, S4-6 — the sweep and
+  `Projects::AdoptionsController`, which adopts one folder ANYWHERE — AND THE RULE ABOVE IS
+  UNCHANGED BY THAT**, precisely because it asks WHO CLAIMS and never where the folder sits. What
+  the door adds is the repair the sweep cannot do: in the SAME TRANSACTION as the `maker_projects`
+  row it **dismisses** the `origin: "auto"` model whose `auto_node_id` is that folder. `for_user`
+  drops a claimed key before `existing` is looked up, so accretion stops the instant that row
+  exists — but the ROW SURVIVES (that method's own comment says clearing it is `Prune`'s job), so
+  without the dismissal `designs/tray` is a project AND a model at once, with the model's card
+  offering Delete for a thing that is now a build. **DISMISSED, NOT DESTROYED, and it is the same
+  write `ModelsController#destroy` already makes for an auto model**: the row is the memory in both
+  directions, and destroying it lets the next sweep recreate it the moment the project is deleted
+  and releases the folder. **Keyed on `auto_node_id`** — the sweep's own identity for the row, and
+  the column carrying the partial unique index on `(user_id, auto_node_id)`, so it is one indexed
+  lookup and not a scan; the `origin: "auto"` clause beside it is belt-and-braces, since
+  `Maker::ModelIntake` is the only writer of `auto_node_id` and always writes `origin: "auto"` with
+  it. **AUTO ONLY**: nothing recreates an IMPORT-origin model, so a dismissal there has nothing to
+  say to the sweep, and that folder's row is left alone on the same look-do-not-take terms.
 - **`models/show`'S FILES PANEL SHOWS THE MODEL'S FILES WITH THE FOLDER'S SHAPE — IT IS NOT A
   FOLDER BROWSER.** `build_file_tree` walks `folder_node_id`'s subtree for the NESTING an imported
   zip had, then keeps only what `@attachments` claims. The two were the same set while a folder
