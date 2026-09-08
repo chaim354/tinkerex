@@ -19,6 +19,11 @@ module Web
       file("notes.pdf", "dir-cad")
     end
 
+    # The two tests that select a backend assign FileLayer.current directly, which sets no pin for
+    # test_helper's own teardown to unwind (see pin_file_layer_backend's comment) -- so the reset is
+    # this file's, or an adapter leaks into the next test in this forked worker.
+    teardown { FileLayer.reset! }
+
     # BOTH content columns, and both are load-bearing: the tile prints a size only when stat_all
     # reports a content token, and that token is `content_hash` on share/s3 but `current_version_id`
     # on chunk_remote. Setting one would render the size on two legs and not the third.
@@ -172,6 +177,44 @@ module Web
     test "the overflow menu renders on a folder view on every backend" do
       get files_path(folder: "dir-cad")
       assert_select ".page-actions details.menu[data-controller='menu'] summary.btn", count: 1
+    end
+
+    # AND IT STILL MUST NOT RENDER EMPTY — the rule two tests up, asked on the folder view, where a
+    # gate reading "is there a folder at all" escaped it. chunk_remote EXPLICITLY (the idiom
+    # rescan_test.rb records: constructing the adapter needs no sync server, and its reads answer
+    # from the local mirror), with no current project, so the folder arm is the only possible item:
+    # a dot-folder and the Projects root have none to offer, an ordinary folder has exactly one.
+    test "on a non-scannable backend the folder menu renders only when it has an item" do
+      FileLayer.current = FileLayer::ChunkRemote.new
+      @user.nodes.create!(node_id: "dir-dot2", name: ".config", kind: "dir")
+      @user.nodes.create!(node_id: "dir-projects2", name: Maker::ProjectFolders::ROOT, kind: "dir")
+
+      %w[dir-dot2 dir-projects2].each do |folder|
+        get files_path(folder:)
+        assert_response :success
+        assert_select ".page-actions details.menu", { count: 0 }, "for #{folder}"
+      end
+
+      get files_path(folder: "dir-cad")
+      assert_select ".page-actions details.menu", count: 1
+      assert_select ".page-actions details.menu .menu-item", count: 1
+      assert_select ".page-actions details.menu form[action=?] button.menu-item",
+                    adopt_projects_path, text: /make this folder a project/i
+    end
+
+    # THE OTHER HALF OF THE SAME GATE, and Task E's phone sweep depends on it: a folder a project
+    # claims offers "Open project" on every backend, so the folder arm must contribute for a
+    # CLAIMED folder as well as an adoptable one.
+    test "a claimed folder still renders the menu on a non-scannable backend" do
+      FileLayer.current = FileLayer::ChunkRemote.new
+      project = @user.maker_projects.create!(name: "Cad Build")
+      project.update_column(:folder_node_id, "dir-cad")
+
+      get files_path(folder: "dir-cad")
+
+      assert_select ".page-actions details.menu", count: 1
+      assert_select ".page-actions details.menu a.menu-item[href=?]", project_path(project),
+                    text: /Cad Build/
     end
   end
 end

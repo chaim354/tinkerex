@@ -5,8 +5,9 @@ module Web
   # library becomes a project by one POST that moves nothing.
   #
   # PORT-FREE ON PURPOSE, and that is what makes it identical on all three CI legs: the door reads
-  # `nodes`, writes one `maker_projects` row and at most one `dismissed_at`, and never touches
-  # FileLayer — the same property docs/invariants/project-intake.md records for the discovery sweep.
+  # `nodes`, writes one `maker_projects` row, destroys at most one auto Maker::Model, and never
+  # touches FileLayer — the same property docs/invariants/project-intake.md records for the
+  # discovery sweep, and the property Maker::ModelIntake::Prune states for the destroy itself.
   # Fixtures are therefore bare `nodes.create!` rows; ensure_library_folder! must never appear here.
   class ProjectAdoptionsTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
@@ -69,6 +70,9 @@ module Web
 
       refute @user.maker_projects.order(:id).last.autofile?
       assert_match(/automatic filing is off/i, flash[:notice].to_s)
+      # AND IT SAYS WHERE THE SWITCH IS. A flash is escaped text, so the sentence has to NAME the
+      # surface -- it shipped naming none while the controller's comment claimed it pointed at one.
+      assert_match(/turn it on under Edit project/i, flash[:notice].to_s)
     end
 
     # An adopted project is one the MAKER made, so it must never wear the "New" badge.
@@ -174,6 +178,64 @@ module Web
       assert_match(/inside Desk Lamp/, flash[:alert].to_s)
     end
 
+    # THE SAME NESTING, REACHED FROM ABOVE. The upward walk cannot see this: `designs` has no
+    # project over it, so before the downward check a maker viewing `designs/` could adopt it while
+    # `designs/tray` was already a project -- building, through one door, exactly the state the
+    # refusal above exists to prevent.
+    test "a folder that contains a project's folder is refused and names that project" do
+      designs = dir("d-designs", "designs")
+      tray = dir("d-tray", "tray", designs.node_id)
+      @user.maker_projects.create!(name: "Tray", slug: "tray", folder_node_id: tray.node_id)
+
+      assert_no_difference "Maker::Project.count" do
+        post adopt_projects_path, params: { node_id: designs.node_id }
+      end
+      assert_match(/“designs” contains Tray's folder/, flash[:alert].to_s)
+      assert_match(/can't hold another project's folder/, flash[:alert].to_s)
+    end
+
+    # A GRANDCHILD COUNTS TOO -- the walk is the whole chain, not one hop -- and an ARCHIVED
+    # project still claims its folder here for the same reason it does on the way up.
+    test "a project's folder deeper down, archived, is still contained" do
+      designs = dir("d-designs", "designs")
+      inner = dir("d-inner", "2026", designs.node_id)
+      lamp = dir("d-lamp", "lamp", inner.node_id)
+      @user.maker_projects.create!(name: "Lamp", slug: "lamp", folder_node_id: lamp.node_id,
+                                   status: "archived", archived_at: Time.current)
+
+      assert_no_difference "Maker::Project.count" do
+        post adopt_projects_path, params: { node_id: designs.node_id }
+      end
+      assert_match(/contains Lamp's folder/, flash[:alert].to_s)
+    end
+
+    # A SIBLING IS NOT A DESCENDANT, and this is the negative half: without it, a check that
+    # answered "some project exists" rather than "one lives under this folder" would pass every
+    # assertion above while refusing the ordinary adoption the feature is for.
+    test "a project elsewhere in the library does not block an unrelated folder" do
+      designs = dir("d-designs", "designs")
+      elsewhere = dir("d-lamp", "Desk Lamp")
+      @user.maker_projects.create!(name: "Desk Lamp", slug: "desk-lamp",
+                                   folder_node_id: elsewhere.node_id)
+
+      assert_difference "Maker::Project.count", 1 do
+        post adopt_projects_path, params: { node_id: designs.node_id }
+      end
+    end
+
+    # A BROKEN CHAIN IS AN ANSWER, NOT AN ERROR (library_tree.rb's :broken sentinel): the parent
+    # names a node that is not a live dir, so the walk cannot describe where this folder sits.
+    # Refusing is right; refusing without naming an act was not.
+    test "a folder whose chain cannot be resolved is refused, and names the repair" do
+      orphan = dir("d-orphan", "orphan", "d-vanished")
+
+      assert_no_difference "Maker::Project.count" do
+        post adopt_projects_path, params: { node_id: orphan.node_id }
+      end
+      assert_match(/place in the library can't be resolved/i, flash[:alert].to_s)
+      assert_match(/rescan the library and try again/i, flash[:alert].to_s)
+    end
+
     # Adopting a repository's `src/` makes a project whose folder git owns but whose ROOT is
     # somewhere else — the README, the commits and the history all sit outside it, so S4-1's whole
     # repository card answers about the wrong tree. Point the maker at the root instead.
@@ -194,18 +256,68 @@ module Web
     # `designs/tray` had already become a MODEL. Maker::ModelIntake stops accreting the moment a
     # project claims the folder (model_intake.rb:87-95), but the ROW SURVIVES — its own comment says
     # clearing it is Prune's job — so without this the folder is a project AND a model, forever.
-    test "an auto model over the adopted folder is dismissed, and the flash says so" do
-      tray = dir("d-tray", "tray", dir("d-designs", "designs").node_id)
+    #
+    # THE DOOR DOES WHAT PRUNE DOES: `destroy!`, the same call prune.rb makes for this exact row (an
+    # auto model whose folder a project claims). It shipped as a dismissal, which gave one state two
+    # answers and was irreversible into the bargain — see the reversibility test below.
+    #
+    # THE FIXTURE PINS THE KEY. `auto_node_id` is the adopted node and `folder_node_id` is its
+    # PARENT, which the earlier fixture set to the same node: with both equal, keying the lookup on
+    # folder_node_id stayed green over a column that answers a different question.
+    test "an auto model over the adopted folder is destroyed, and the flash says so" do
+      designs = dir("d-designs", "designs")
+      tray = dir("d-tray", "tray", designs.node_id)
       model = @user.maker_models.create!(title: "tray", slug: "tray", origin: "auto",
-                                         auto_node_id: tray.node_id, folder_node_id: tray.node_id)
+                                         auto_node_id: tray.node_id, folder_node_id: designs.node_id)
 
       post adopt_projects_path, params: { node_id: tray.node_id }
 
-      assert_not_nil model.reload.dismissed_at
+      refute Maker::Model.exists?(model.id)
       assert_match(/no longer listed as a model/i, flash[:notice].to_s)
-      # DISMISSED, NOT DESTROYED: the row is the memory, and destroying it makes the next sweep
-      # recreate it the moment the project is deleted (docs/invariants/model-intake.md).
-      assert Maker::Model.exists?(model.id)
+    end
+
+    # THE ATTACHMENTS GO WITH THE ROW, through `dependent: :destroy` — Prune's own arrangement, and
+    # the reason it deletes attachment rows only for the models it KEEPS. No node is touched.
+    test "the destroyed model's attachments go with it, and its files do not" do
+      tray = dir("d-tray", "tray")
+      stl = file("n-stl", "tray.stl", tray.node_id)
+      model = @user.maker_models.create!(title: "tray", slug: "tray", origin: "auto",
+                                         auto_node_id: tray.node_id, folder_node_id: tray.node_id)
+      att = model.file_attachments.create!(user: @user, node_id: stl.node_id,
+                                          role: Maker::FileAttachment.role_for("tray.stl"))
+
+      post adopt_projects_path, params: { node_id: tray.node_id }
+
+      refute Maker::FileAttachment.exists?(att.id)
+      assert @user.nodes.exists?(node_id: stl.node_id), "the library file is untouched"
+    end
+
+    # THE REVERSIBILITY RULE, DRIVEN END TO END (docs/invariants/model-intake.md: a dismissal is
+    # permanent, and a user who DELETES the project releases the folder). Destroying is what makes
+    # those two agree: the sweep drops a CLAIMED key before `existing` is looked up, so nothing
+    # accretes while the project holds the folder, and the folder is catalogued again the moment it
+    # lets go. With a dismissal the row came back to a `dismissed_at` nobody set and the folder was
+    # uncataloguable forever.
+    test "deleting the project releases the folder, and the sweep catalogues it again" do
+      designs = dir("d-designs", "designs")
+      tray = dir("d-tray", "tray", designs.node_id)
+      file("n-stl", "tray.stl", tray.node_id)
+      Maker::ModelIntake.for_user(user: @user)
+      assert @user.maker_models.exists?(origin: "auto", auto_node_id: tray.node_id),
+             "the sweep catalogues designs/tray before anyone adopts it"
+
+      post adopt_projects_path, params: { node_id: tray.node_id }
+      refute @user.maker_models.exists?(auto_node_id: tray.node_id)
+      assert_no_difference "Maker::Model.count", "a claimed folder is not re-catalogued" do
+        Maker::ModelIntake.for_user(user: @user)
+      end
+
+      @user.maker_projects.order(:id).last.destroy!
+      Maker::ModelIntake.for_user(user: @user)
+
+      model = @user.maker_models.find_by(origin: "auto", auto_node_id: tray.node_id)
+      assert model, "releasing the folder re-catalogues it"
+      assert_nil model.dismissed_at, "and it comes back LISTED, which a dismissal made impossible"
     end
 
     test "an import model over the adopted folder is left alone" do
@@ -215,7 +327,8 @@ module Web
 
       post adopt_projects_path, params: { node_id: tray.node_id }
 
-      assert_nil model.reload.dismissed_at, "nothing recreates an import model, so there is nothing to dismiss"
+      assert Maker::Model.exists?(model.id), "nothing recreates an import model, so destroying one is a deletion nobody asked for"
+      assert_nil model.reload.dismissed_at
       refute_match(/no longer listed as a model/i, flash[:notice].to_s)
     end
 

@@ -38,7 +38,15 @@
 <% adoptable_folder = @folder && @folder_project.nil? &&
                       Maker::ProjectDiscovery.adoptable_name?(@folder.name) &&
                       !(@folder.parent_node_id.nil? && @folder.name == Maker::ProjectFolders::ROOT) %>
-<% menu_items = capabilities.scannable? || current_project.present? || @folder.present? %>
+<%# THE MENU RENDERS ONLY WHEN IT WILL HOLD AN ITEM, and the folder arm therefore asks what the
+    folder arm actually offers, never merely "is there a folder". `@folder.present?` over-shot on a
+    non-scannable backend with no current project: a dot-folder or the `Projects` root has neither
+    an "Open project" nor an adopt button to show, so the menu rendered EMPTY -- the exact state
+    files_toolbar_test.rb's "no menu renders when it would be empty" pins, escaping through the
+    folder view. `adoptable_folder` already carries the two cheap refusals, so this reuses it
+    rather than asking them a second time. %>
+<% menu_items = capabilities.scannable? || current_project.present? ||
+                @folder_project.present? || adoptable_folder %>
 <div class="page-head">
   <h1>Files</h1>
   <div class="page-actions">
