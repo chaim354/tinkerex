@@ -117,9 +117,9 @@ again, catch up.*
 | 5.2 | When I flip to public, I want the URL and what became downloadable stated. | `rough` | **S4-4:** one Publish panel at the foot of the project page (`projects/_publish.html.erb`, a `Publish` link in the head) states each visibility's meaning in a sentence, warns that the whole visible folder becomes downloadable, claims the handle inline and returns to the project, and the flash names the URL it made and who can now open it (`projects_controller.rb#publish_notice`); visibility and licence left the edit form so one question has one control. Still `rough`: the handle stays locked once anything is published (`user.rb`), a separate decision nothing here moves. |
 | 5.3 | When I write the README, I want to do it in the app, from a template, and see it rendered on my own page. | `works` | **S4-1** landed the render half; **S4-4** the rest: the README card carries an editor for ANY project (`projects/_readme_editor.html.erb`, `Projects::ReadmesController` — a door that takes no node id and can write only the folder's own README), a template when there is none, CodeMirror from the one vendored bundle, and the no-history trade named on the editor on share/s3. Save redirects to the project page, so the rendered result is the payoff. Still root-only, six case-sensitive names (`readme.rb:37`), and a save compares the catalog's token (`tinkerex#276`). |
 | 5.4 | When my README embeds photos and links files, I want them to render and open. | `rough` | Relative links resolve. **S4-4:** headings keep an anchor, namespaced `user-content-<slug>` so a README heading can never claim an app id (a `## Project Tasks` heading once took the tasks panel's Turbo target — measured), with in-document `#links` rewritten to match and duplicates suffixed (`markdown.rb#keep_heading_anchors`). Absolute images are still dropped to alt text and an SVG image still force-downloads — unchanged, not this slice's. |
-| 5.5 | When a visitor opens my project, I want the model in 3D, the board and the cut file viewable, not download links. | `missing` | `Public::FilesController#show` is bytes only; no public 3D, Measure or Gerber viewer; KiCanvas for the first KiCad file only (`public/projects/_schematics.html.erb:28`). |
+| 5.5 | When a visitor opens my project, I want the model in 3D, the board and the cut file viewable, not download links. | `works` | **S4-5:** a public file page (`/u/:handle/:slug/files/:id/view`) renders the same eight viewer partials the maker's own page does (`app/views/files/viewers/`) — 3D, Measure read-only (print and SVG export kept, no Save), the Gerber stage with a job's published siblings, KiCanvas, images, PDF and source — over `Maker::PublicProject`, with an unlisted project's token on every URL; the public project page's file names link to it. The geometry poll never writes; the page enqueues one render when none is current. |
 | 5.6 | When I cut a release, I want visitors to get the files as they were. | `rough` | A release stores references and content tokens (`release_snapshot.rb:7-11`); downloads are the current bytes with a "changed" badge. |
-| 5.7 | When someone lands on `/explore` or my handle page, I want a cover and a way around. | `rough` | No covers on public cards (`public/_project_card.html.erb`); the anonymous layout has no header, logo or nav. |
+| 5.7 | When someone lands on `/explore` or my handle page, I want a cover and a way around. | `rough` | **S4-5:** the anonymous layout carries a header — the site name to `/explore`, the maker's handle on a project or file page (`layouts/_public_header`); `/u/:handle`'s cards show each project's cover as a ready thumbnail and the project page leads with its hero. Still `rough`: `/explore` keeps the placeholder by measurement — `ThumbnailMap` is per-user and `/explore` is one owner per card, so covers there need a per-owner map (a separate decision, not this slice's). |
 | 5.8 | When I share an unlisted link, I want to copy it and later revoke it. | `works` | **S4-4:** the Publish panel shows the unlisted link with Copy, and New link mints a fresh token so the old one 404s at once (`Projects::UnlistedTokensController`, `publishing_test.rb` drives the public route with the old `k`). |
 
 ## T6. A project view that fits the project
@@ -145,15 +145,17 @@ again, catch up.*
 | T2 | 13 | 5 | 8 | 0 | |
 | T3 | 7 | 1 | 2 | 3 | 1 built-unused |
 | T4 | 8 | 2 | 4 | 2 | |
-| T5 | 8 | 3 | 4 | 1 | |
+| T5 | 8 | 4 | 4 | 0 | |
 | T6 | 8 | 2 | 3 | 2 | 1 by design |
-| **all** | **50** | **13** | **25** | **10** | **2** |
+| **all** | **50** | **14** | **25** | **9** | **2** |
 
 Re-measured after S4-1 (2026-09-07): 6.6 and 6.8 moved to `works`; 1.4, 2.9, 6.1, 6.2, 6.3 gained new evidence and stay `rough`; 5.3 gained its render half and stays `missing`.
 
 Re-measured after S4-2 (2026-09-07): 2.4 and 4.1 moved to `works`; 2.3 moved from `missing` to `rough`; 2.8, 4.3, 4.8 gained new evidence and stay `rough`; 1.5 gained its filing half and stays `missing`; 4.2 stays `missing` by decision.
 
 Re-measured after S4-4 (2026-09-07): 5.1, 5.3 and 5.8 moved to `works`; 5.2 and 5.4 gained new evidence and stay `rough`; 2.13 records why D3's exception is the README's only.
+
+Re-measured after S4-5 (2026-09-07): 5.5 moved to `works`; 5.7 gained the header, the hero and covers on a maker's page and stays `rough`.
 
 Re-measured after S4-3 (2026-09-07): 2.10 moved from `missing` to `rough` (the path is there; the hand-off is the OS's by decision); 2.11, 2.12, 2.13 gained new evidence and stay `rough`.
 
