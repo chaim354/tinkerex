@@ -96,6 +96,16 @@ module Public
                                                               kind: params[:kind])
       raise ActiveRecord::RecordNotFound unless row&.status == "ready" && row.asset.attached?
 
+      # ONE MINUTE OF PRIVATE CACHE ON THE REDIRECT (tinkerex#291). Each image request costs the byte
+      # route's whole permission path plus three queries, and a page of sixty covers is sixty of them
+      # per view; a browser that may keep the 302 for a minute skips all of that on a reload. The
+      # bound is what makes it safe: the target URL itself expires in `service_urls_expire_in` (five
+      # minutes), so a cached redirect can never outlive the URL it names — the test below pins that
+      # ordering — and a project that goes private is stale in a browser for at most a minute, the
+      # same window the target already allowed. `private`, not `public`: nothing here is per-visitor,
+      # but no shared cache on the deployment needs it and a CDN keeping redirects is a decision to
+      # make deliberately, not by default.
+      expires_in 1.minute
       redirect_to row.asset.url, allow_other_host: true
     end
 

@@ -131,6 +131,15 @@ module Web
 
       get files_path(page: "not-a-number")
       assert_equal PER, listed_names.size
+
+      # THE TWO NON-SCALAR SPELLINGS (tinkerex#290): `?page[]=2` arrives as an Array and `?page[a]=2`
+      # as Parameters, and `to_i` on either was a NoMethodError — a 500 for a hand-edited URL, where
+      # every other kind of garbage above clamps to page 1. Same answer, same loop.
+      [ [ "2" ], { a: "2" } ].each do |junk|
+        get files_path(page: junk)
+        assert_response :success, "?page=#{junk.inspect} must render, not error"
+        assert_equal PER, listed_names.size, "?page=#{junk.inspect} must be page 1"
+      end
     end
 
     # The pager links must carry sort and dir. Those are omitted from in-page links elsewhere
