@@ -1,0 +1,93 @@
+<%#
+  ONE OF THE PROJECT FOLDER'S SUBFOLDERS, AS A PANEL ON A VISITOR'S PAGE (2026-09-08, folder
+  panels; spec §5). The maker's own page renders the same folder through projects/_folder_panel
+  with tiles, list or the Finder browser and a toggle to change it; this one is READ-ONLY — there
+  is nothing here to post to, and the view is whatever the maker chose.
+
+  A VISITOR GETS A LIST WHERE THE MAKER CHOSE THE BROWSER (spec decision 7). The Miller-columns
+  browser reads LibraryBrowseController#children, which is session-authed and answers in the
+  SIGNED-IN user's library — a visitor has none, so mounting it here would be a panel that fetches
+  a 404 forever. A public children endpoint is a separate design; until it exists, `browser` reads
+  as the list, which shows the same files with the same links. That is why the branch below asks
+  only whether the view is `tiles`.
+
+  NESTED FOLDERS ARE SUB-HEADINGS, NOT PANELS (spec decision 3): depth one is a panel and
+  everything under it renders inside its parent, which is `pub.folder_sections`' walk — the dir's
+  own files first with no heading (the panel head already names the folder), then each nested
+  subfolder that holds files, labelled relative to THIS folder.
+
+  AN EMPTY FOLDER IS OMITTED, unlike the maker's own quiet panel: an empty heading on a public page
+  invites the reader to add the first file, which is the one thing a visitor cannot do (S3-4's
+  rule, stated in public/projects/_page.html.erb's header).
+
+  Locals: pub (Maker::PublicProject), key (the layout key, "folder:<node_id>"), dir
+  (Maker::ProjectFolderListing::Dir), view (one of Maker::Project::VIEWS).
+%>
+<% sections = pub.folder_sections(dir) %>
+<% if sections.any? %>
+  <section class="panel folder-panel" id="<%= key %>">
+    <div class="panel-head">
+      <h2><%= dir.name %></h2>
+      <%# THE WHOLE SUBTREE, matching what this panel renders — Dir#subtree_file_count, the same
+          number the maker's panel head shows. This dir's own files alone would read "(1)" over a
+          folder whose nested sections list twenty. %>
+      <span class="mono muted"><%= pluralize(dir.subtree_file_count, "file") %></span>
+    </div>
+
+    <% sections.each do |name, rows| %>
+      <% if name %>
+        <h3 class="public-section"><%= name %></h3>
+      <% end %>
+      <% if view == "tiles" %>
+        <div class="public-tiles">
+          <% rows.each do |row| %>
+            <%# THE FILE'S OWN PAGE, never its bytes — the same answer _files.html.erb's name cell
+                and _photos.html.erb's picture give: a visitor clicking a tile wants to LOOK at the
+                file, and that page carries the viewer and the Download button both.
+                `pub.preview_url_for` is the thumbnail's URL and the ONLY spelling allowed here: a
+                blob URL is unauthenticated and never expires (tinkerex#278, the seam guard's third
+                arm), so files/_thumb takes it as a strict local. %>
+            <% ext = File.extname(row.node.name).delete(".").upcase.first(4) %>
+            <%= link_to pub.view_url_for(row.node_id), class: "grid-card file-cell",
+                        title: row.node.name do %>
+              <%= render "files/thumb", thumb: pub.thumbs.thumb(row.node_id), ext_label: ext,
+                         url: pub.preview_url_for(row.node_id) %>
+              <span class="grid-name"><%= row.node.name %></span>
+            <% end %>
+          <% end %>
+        </div>
+      <% else %>
+        <%# `list` AND `browser` BOTH LAND HERE — the header says why the browser cannot mount for a
+            visitor. The four cells are the same ones public/projects/_files draws for the root. %>
+        <table class="table public-files">
+          <thead>
+            <tr>
+              <th class="col-thumb"></th>
+              <th class="col-name">File</th>
+              <th class="col-size">Size</th>
+              <th class="col-dl"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <% rows.each do |row| %>
+              <% ext = File.extname(row.node.name).delete(".").upcase %>
+              <tr>
+                <td class="col-thumb">
+                  <span class="file-cell">
+                    <%= render "files/thumb", thumb: pub.thumbs.thumb(row.node_id), ext_label: ext,
+                               url: pub.preview_url_for(row.node_id) %>
+                  </span>
+                </td>
+                <td class="col-name"><%= link_to row.node.name, pub.view_url_for(row.node_id) %></td>
+                <td class="col-size num"><%= number_to_human_size(row.node.size) %></td>
+                <td class="col-dl">
+                  <%= link_to "Download", pub.file_url_for(row.node_id, download: true), class: "linkbtn small" %>
+                </td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
+      <% end %>
+    <% end %>
+  </section>
+<% end %>

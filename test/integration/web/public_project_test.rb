@@ -147,17 +147,23 @@ module Web
                     "an absolute image would be a request to another origin from this page"
     end
 
-    # --- 5. files ------------------------------------------------------------------
+    # --- 5. files: the folder root, plus one panel per subfolder --------------------
+    #
+    # 2026-09-08, FOLDER PANELS (spec §5): the Files panel was the whole folder, section by
+    # section; it is now the ROOT alone (decision 4) and each DEPTH-ONE subfolder is a panel of its
+    # own, in the maker's order, with the view the maker chose. The fixture already holds all three
+    # shapes this needs — `firmware` (a working tree), `models` (with `deep` nested inside it) and
+    # `photos` — so nothing here has to build a second project folder.
 
-    test "the files panel groups by section and offers a download link per row" do
+    test "the files panel lists the folder's root files only, with a download link per row" do
       get path
 
-      sections = css_select("h3.public-section").map(&:text)
-      assert_includes sections, "Desk Lamp"
-      assert_includes sections, "models" # folder-relative, never the library path
+      names = css_select("section.files-panel table.public-files td.col-name").map(&:text)
+      assert_equal [ "README.md", "driver.kicad_sch" ], names,
+                   "the root is the Files panel; a subfolder's files belong to its own panel now"
+      assert_select "section.files-panel", text: /base\.stl/, count: 0
 
-      row = css_select("table.public-files tr").find { |tr| tr.text.include?("base.stl") }
-      assert row, "base.stl must be listed"
+      row = css_select("section.files-panel table.public-files tr").find { |tr| tr.text.include?("README.md") }
       dl = row.css("td.col-dl a").first
       assert_match(/download=1\z/, dl["href"])
       assert_match(/\d/, row.css("td.col-size").text, "the size cell shows a size")
@@ -166,6 +172,120 @@ module Web
     test "a dot-file in the folder is not listed" do
       get path
       assert_select "table.public-files", text: /\.env/, count: 0
+    end
+
+    # THE ORDER IS THE MAKER'S OWN, AND THE DEFAULT PUTS THE FOLDERS AFTER FILES IN DISK ORDER —
+    # the arrangement a maker who has never touched the chooser gets (Maker::ProjectKind's
+    # after-Files rule), read here off the rendered page rather than off the layout.
+    test "each depth-one subfolder is its own panel, after Files and in disk order" do
+      get path
+
+      assert_equal %w[firmware models photos], css_select("section.folder-panel h2").map(&:text)
+
+      classes = css_select("div.project-panels > section.panel").map { |s| s["class"] }
+      assert_operator classes.index { |c| c.include?("files-panel") }, :<,
+                      classes.index { |c| c.include?("folder-panel") },
+                      "the folder root reads first, then its subfolders"
+      assert_select "section.folder-panel .panel-head .mono", { text: "2 files", count: 1 },
+                    "models holds base.stl and deep/x.stl — the whole subtree, not this dir's own files"
+    end
+
+    # DEPTH ONE IS THE WHOLE RULE (spec decision 3): `models/deep` renders INSIDE the models panel
+    # as a sub-heading, never as a panel of its own.
+    test "a nested folder is a sub-heading inside its parent's panel, not a panel" do
+      get path
+
+      panel = css_select("section.folder-panel").find { |s| s.css("h2").text == "models" }
+      assert_equal [ "deep" ], panel.css("h3.public-section").map(&:text),
+                   "folder-relative, never the library path and never `models/deep`"
+      assert_select "section.folder-panel h2", text: "deep", count: 0
+      assert panel.css("a[href='#{public_file_view_path("ada", @project.slug, @f[:deep_file].node_id)}']").any?,
+             "the nested folder's own file renders inside that panel"
+    end
+
+    # TILES ARE THE DEFAULT FOR A PLAIN FOLDER (spec decision 6), and a tile's thumbnail goes
+    # through the public preview route — never a blob URL, which is what `assert_no_private_urls`
+    # sweeps for (tinkerex#278).
+    test "a plain folder renders tiles linking to each file's own page" do
+      get path
+
+      panel = css_select("section.folder-panel").find { |s| s.css("h2").text == "models" }
+      assert panel.css("div.public-tiles .thumb").any?, "tiles is the default view for a plain folder"
+      assert panel.css("a.grid-card[href='#{public_file_view_path("ada", @project.slug, @f[:base].node_id)}']").any?
+      assert_empty panel.css("table.public-files"), "tiles, not the list"
+      assert_no_private_urls
+    end
+
+    # SPEC DECISION 7: the Miller-columns browser reads a session-authed endpoint, so a visitor gets
+    # the LIST wherever the maker chose the browser — asserted twice over, because `firmware` is a
+    # working tree and defaults to `browser` with nothing stored at all.
+    test "a folder the maker views in the browser reads as a list for a visitor" do
+      get path
+      firmware = css_select("section.folder-panel").find { |s| s.css("h2").text == "firmware" }
+      assert firmware.css("table.public-files").any?, "the repo folder's default view is `browser`"
+      assert_select ".repo-browser", count: 0
+      assert_select "[data-controller*=filebrowser]", count: 0
+
+      @project.update!(panels: { "views" => { Maker::ProjectKind.folder_key(@f[:models].node_id) => "browser" } })
+
+      get path
+      models = css_select("section.folder-panel").find { |s| s.css("h2").text == "models" }
+      assert models.css("table.public-files").any?, "a stored `browser` reads as the list too"
+      assert_select ".repo-browser", count: 0
+      assert_select "[data-controller*=filebrowser]", count: 0
+    end
+
+    test "a stored view of list renders that panel as a table and leaves the others as tiles" do
+      @project.update!(panels: { "views" => { Maker::ProjectKind.folder_key(@f[:models].node_id) => "list" } })
+
+      get path
+
+      models = css_select("section.folder-panel").find { |s| s.css("h2").text == "models" }
+      photos = css_select("section.folder-panel").find { |s| s.css("h2").text == "photos" }
+      assert models.css("table.public-files").any?
+      assert_empty models.css("div.public-tiles")
+      assert photos.css("div.public-tiles").any?, "the view is per panel, not per page"
+    end
+
+    # SPEC DECISION 2: a hidden folder leaves the visitor's page (and the bundle — public_bundle_test).
+    # The FILES go with it, nested ones included; the direct link still delivers, which is that
+    # suite's half.
+    test "a hidden folder panel and its whole subtree are absent from the visitor's page" do
+      @project.update!(panels: { "hidden" => [ Maker::ProjectKind.folder_key(@f[:models].node_id) ] })
+
+      get path
+
+      assert_equal %w[firmware photos], css_select("section.folder-panel h2").map(&:text)
+      [ @f[:base], @f[:deep_file] ].each do |node|
+        assert_select "a[href=?]", public_file_view_path("ada", @project.slug, node.node_id), count: 0
+      end
+    end
+
+    test "a stored order can lift a folder panel above the build log" do
+      key = Maker::ProjectKind.folder_key(@f[:firmware].node_id)
+      @project.update!(panels: { "order" => [ key, "build_log", "attachments" ] })
+
+      get path
+
+      classes = css_select("div.project-panels > section.panel").map { |s| s["class"] }
+      assert_operator classes.index { |c| c.include?("folder-panel") }, :<,
+                      classes.index { |c| c.include?("build-log-panel") }
+    end
+
+    # AN EMPTY FOLDER IS OMITTED HERE, unlike the maker's own page, where it stays as a quiet panel
+    # (S3-4's rule: an empty state invites someone to add the first file, which a visitor cannot
+    # do). A folder holding only a rescue copy is empty by the same measure — the public page drops
+    # backups wherever they sit.
+    test "a folder with nothing a visitor may see renders no panel at all" do
+      make_dir!(@user, "notes", @f[:folder])
+      rescued = make_dir!(@user, "rescued", @f[:folder])
+      make_file!(@user, "sign_backup.lbrn2", rescued, body: "backup")
+
+      get path
+
+      names = css_select("section.folder-panel h2").map(&:text)
+      assert_equal %w[firmware models photos], names, "an empty folder is not a heading over nothing"
+      assert_not_includes response.body, "sign_backup.lbrn2"
     end
 
     # --- 6. photos -----------------------------------------------------------------

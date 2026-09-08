@@ -60,24 +60,44 @@ module Maker
     # every subfolder in tree order by its path. Backups are left out: a public page is not a
     # recovery tool, and a LightBurn rescue copy is noise to everyone but the maker.
     # Rows are Maker::ProjectFolderListing::Row.
+    #
+    # NO TEMPLATE RENDERS THIS SINCE FOLDER PANELS (2026-09-08; spec §5): each depth-one subfolder
+    # is now its own panel (`#folder_sections`) and public/projects/_files renders `#loose_rows`
+    # alone. It is kept rather than deleted because it is still the honest answer to "what does this
+    # folder hold, section by section" for a caller that wants the WHOLE folder in one list, and
+    # test/services/maker/public_project_test.rb pins that order; the walk beneath it is shared with
+    # #folder_sections, so the two cannot drift about what a section is.
     def sections
-      @sections ||= begin
-        out = []
-        out << [ project.name, listing.loose ] if listing.loose.any?
-        # FOLDER-RELATIVE NAMES: `dir.path` is the LIBRARY path ("Projects/desk-lamp/models/deep"),
-        # which is the owner's filing, not the visitor's vocabulary -- seen live on the dev server
-        # as a column of "Projects/desk-lamp/…" headings. Strip the folder's own path once.
-        prefix = "#{listing.path}/"
-        walk = lambda do |dirs|
-          dirs.each do |dir|
-            out << [ dir.path.delete_prefix(prefix), dir.files ] if dir.files.any?
-            walk.call(dir.children)
-          end
-        end
-        walk.call(listing.tree)
-        out
-      end
+      @sections ||= (listing.loose.any? ? [ [ project.name, listing.loose ] ] : []) +
+                    sections_under(listing.tree, prefix: "#{listing.path}/")
     end
+
+    # ONE FOLDER PANEL'S CONTENT (2026-09-08, folder panels; spec §5): the dir's OWN files under a
+    # nil label — the panel head already names the folder — then every nested subfolder that holds
+    # files, labelled RELATIVE TO THIS PANEL ("deep", never "models/deep" and never the library
+    # path). Depth one is a panel, everything below it is a sub-heading inside that panel (spec
+    # decision 3), which is what this walk draws.
+    #
+    # An EMPTY answer is what makes the panel omit itself (public/projects/_folder_panel): a folder
+    # holding nothing but backups counts as empty here, because `#bucket` already diverted those
+    # out of `Dir#files` and a public page does not render them at all.
+    #
+    # Memoised per dir: the partial asks once for the emptiness test and once to render, and both
+    # must be the same list.
+    def folder_sections(dir)
+      (@folder_sections ||= {})[dir.node_id] ||=
+        (dir.files.any? ? [ [ nil, dir.files ] ] : []) + sections_under(dir.children, prefix: "#{dir.path}/")
+    end
+
+    # The folder's OWN root files — what the Files panel shows now that every subfolder is a panel
+    # of its own (spec decision 4: the Files panel keeps the folder ROOT).
+    def loose_rows = listing.loose
+
+    # The Dir behind one `folder:<node_id>` key. NEVER nil for a key this page renders: `#layout`
+    # is built from `listing.panel_folders`, which is this same `listing.tree`, and the layout
+    # drops every key outside that vocabulary (Maker::ProjectKind's totality rule) — so a branch
+    # here would be dead code standing in for an argument.
+    def folder_dir(key) = listing.tree.find { |dir| dir.node_id == layout.folder_id(key) }
 
     # THE OWNER'S OWN PANEL LAYOUT, HONOURED FOR A VISITOR (stage 4, S4-7; story 6.5). Delegated
     # rather than recomputed, so the maker's page and a visitor's cannot disagree about what is
@@ -88,7 +108,32 @@ module Maker
     # WHICH OF THESE HAVE A PUBLIC FACE IS THE TEMPLATE'S QUESTION, not this one's — see
     # public/projects/_page.html.erb's partial map, whose absent keys (tasks, sheets, publish) are
     # the whole definition of "private only".
-    def visible_panels = project.visible_panels
+    #
+    # ONE LAYOUT PER PAGE, MEMOISED, AND IT KNOWS THE FOLDERS (2026-09-08, folder panels). Every
+    # question this object answers about the arrangement — which panels render, which folders are
+    # hidden, which view a folder opens in, whether a side document exists — comes off this one
+    # value, so the page, the manifest, the feed and the CSV cannot disagree about an arrangement
+    # the maker saved once. `listing.panel_folders` is in memory over the tree the constructor
+    # already built (no query), which is what makes asking here free.
+    def layout = @layout ||= project.panel_layout(folders: listing.panel_folders)
+
+    def visible_panels = layout.visible
+
+    # THE FOLDERS THE MAKER HID, AS NODE IDS. A hidden folder leaves the visitor's page AND the
+    # bundle (spec decision 2) — the page because `visible_panels` never yields its key, the bundle
+    # because `#bundle_files` rejects every row beneath one of these.
+    def hidden_folder_ids
+      @hidden_folder_ids ||= layout.hidden.select { |key| layout.folder?(key) }.map { |key| layout.folder_id(key) }.to_set
+    end
+
+    # Every file id beneath a hidden folder, IN MEMORY over the tree the listing already walked —
+    # `Dir#subtree_file_ids` is recursive, so hiding a folder hides what nests inside it too, which
+    # is the same subtree the panel would have rendered. Backups are not in it and need not be: the
+    # bundle already drops every backup, wherever it sits.
+    def hidden_file_ids
+      @hidden_file_ids ||= listing.tree.select { |dir| hidden_folder_ids.include?(dir.node_id) }
+                                  .flat_map(&:subtree_file_ids).to_set
+    end
 
     # The FOLDER's own README, rendered, or nil when it holds none. `defined?` rather than `||=`
     # because nil is a real answer here and `||=` would re-read the port on every call for a folder
@@ -215,8 +260,22 @@ module Maker
     # protection the layout does not actually offer. IF `attachments` EVER LEAVES `ALWAYS`, ADD THE
     # GATE HERE AND TO the manifest's `truncated` — public_bundle_test.rb asserts that membership
     # directly so this comment goes red rather than quietly becoming wrong.
+    #
+    # A HIDDEN FOLDER'S FILES ARE NOT IN IT (2026-09-08, folder panels; spec decision 2). That IS a
+    # panel gate, and it does not contradict the paragraph above: `attachments` cannot be hidden, a
+    # SUBFOLDER can, and a maker who took a folder off their public page did not mean to leave it in
+    # the zip that page's own button builds. `#hidden_file_ids` is a Set over the tree the listing
+    # already walked, so the rejection costs nothing per row.
+    #
+    # THE FILE ITSELF STILL ANSWERS ITS DIRECT LINK, and that is the same decision: permission is by
+    # folder claim (`#permits?`), never by panel, so `#deliverable!` is untouched and a URL a README
+    # or a BOM row already handed out keeps working. What changes is only what this page ADVERTISES.
+    # One wrinkle rides along and is deliberate: Maker::BomCsv's `file` column names
+    # `#bundle_path_for`, so a BOM line pointing INTO a hidden folder still names a path the zip no
+    # longer carries — the CSV is untouched by decision 2, and naming a path is not delivering one.
     def bundle_files
       @bundle_files ||= listing.all_rows.reject(&:backup?)
+                               .reject { |row| hidden_file_ids.include?(row.node_id) }
                                .map { |row| BundleFile.new(path: bundle_path(row), size: row.node.size.to_i,
                                                            url: file_url_for(row.node_id, download: true)) }
                                .sort_by(&:path)
@@ -449,7 +508,7 @@ module Maker
     # beside the page: the feed (build_log, releases), the bundle manifest (attachments, bom) and the
     # BOM CSV (bom). A panel the maker hid is hidden from those too, or it is one click away from the
     # page that hides it.
-    def panel_visible?(key) = project.panel_layout.visible?(key.to_s)
+    def panel_visible?(key) = layout.visible?(key.to_s)
 
     # ONE LAYER'S FETCH URL FOR A .gbrjob's BOARD, filtered by THIS project's permission (stage 4,
     # S4-5). The sibling walk itself is FilePreview's, shared with the maker's own page; what is
@@ -462,6 +521,22 @@ module Maker
     end
 
     private
+
+    # THE ONE SECTION WALK, for `#sections` (the whole folder) and `#folder_sections` (one panel).
+    # Depth-first, a dir before its children, dirs with no files of their own skipped — the order
+    # both readers publish.
+    #
+    # FOLDER-RELATIVE NAMES: `dir.path` is the LIBRARY path ("Projects/desk-lamp/models/deep"),
+    # which is the owner's filing, not the visitor's vocabulary — seen live on the dev server as a
+    # column of "Projects/desk-lamp/…" headings. The caller says what to strip, which is the only
+    # difference between the two: the project folder for `#sections`, the panel's own dir for
+    # `#folder_sections`.
+    def sections_under(dirs, prefix:)
+      dirs.flat_map do |dir|
+        (dir.files.any? ? [ [ dir.path.delete_prefix(prefix), dir.files ] ] : []) +
+          sections_under(dir.children, prefix:)
+      end
+    end
 
     # THE FEED'S OWN TWO READERS, extracted only so `#feed_items` can put each behind its panel gate
     # on one line (hardening, 2026-09-08; tinkerex#283). Each is a RELATION and each stays lazy: the

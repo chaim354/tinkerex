@@ -66,9 +66,17 @@ module Web
     # THE HERO, FROM A NON-IMAGE COVER. An image-role cover is the picture itself through the byte
     # route and never reaches a preview row at all, so the thumbnail arm needs a cover that is not
     # one — which is also the arm that carried the page's LARGEST never-expiring picture.
-    test "the project page's hero, photos and file rows all name the preview route" do
+    # BOTH FILE SURFACES SINCE FOLDER PANELS (2026-09-08): the Files panel's table is the folder
+    # ROOT alone, and a subfolder's files render as TILES in that folder's own panel — two
+    # `files/_thumb` callers where there was one, and the tile is the new one, so a `url_for` left
+    # in it would reach a visitor with the table assertion still green.
+    test "the project page's hero, photos and both file surfaces name the preview route" do
       ready_preview!(@user, @f[:base])
       ready_preview!(@user, @f[:pic])
+      # `@cad` SITS AT THE FOLDER ROOT, which is what the Files panel is now — and it is one of the
+      # nodes this suite's setup stamps a content token onto, without which no preview row of it
+      # could ever be current (that setup's own comment).
+      ready_preview!(@user, @cad)
       @project.update_column(:cover_node_id, @f[:base].node_id)
 
       get public_project_path("ada", @project.slug)
@@ -76,7 +84,8 @@ module Web
       assert_response :success
       assert_select ".project-hero img[src=?]", preview_path_for(@f[:base].node_id)
       assert_select ".public-photos .thumb img[src=?]", preview_path_for(@f[:pic].node_id)
-      assert_select "table.public-files .col-thumb img[src=?]", preview_path_for(@f[:base].node_id)
+      assert_select "table.public-files .col-thumb img[src=?]", preview_path_for(@cad.node_id)
+      assert_select ".public-tiles .thumb img[src=?]", preview_path_for(@f[:base].node_id)
       assert_no_private_urls
     end
 

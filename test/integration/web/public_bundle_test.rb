@@ -263,5 +263,51 @@ module Web
       get public_project_path("ada", @project.slug)
       assert_select ".bundle button", 1
     end
+
+    # --- 6. a hidden FOLDER does leave the bundle (2026-09-08, folder panels; spec decision 2) ----
+    #
+    # THE ONE PANEL GATE THE BUNDLE HAS, AND IT DOES NOT CONTRADICT THE TEST ABOVE: `attachments` —
+    # the folder ROOT — cannot be hidden, a SUBFOLDER can, and a maker who took a folder off their
+    # public page did not mean to leave it in the zip that page's own button builds.
+
+    test "hiding a folder takes its whole subtree out of the manifest, and nothing else" do
+      assert_includes manifest["files"].map { |f| f["path"] }, "models/base.stl",
+                      "the visible arm, so the assertions below are a CHANGE and not the status quo"
+
+      @project.update!(panels: { "hidden" => [ Maker::ProjectKind.folder_key(@f[:models].node_id) ] })
+
+      json = manifest
+      assert_equal %w[README.md driver.kicad_sch firmware/README.md photos/pic.png],
+                   json["files"].map { |f| f["path"] },
+                   "`models/deep/x.stl` goes too — hiding a folder hides what nests inside it"
+      # THE REST OF THE MANIFEST IS UNTOUCHED: the cap is the LISTING's, which still walked the
+      # whole folder, and the README sits at the root where no folder key can reach it.
+      assert_equal false, json["truncated"]
+      assert_equal "README.md", json["readme_path"]
+      assert_equal public_bom_path("ada", @project.slug), json["bom_csv_url"]
+    end
+
+    # PERMISSION IS BY FOLDER CLAIM, NEVER BY PANEL (spec decision 2) — `#deliverable!` is untouched,
+    # so a URL the README or a BOM row already handed out keeps working. What a hidden folder
+    # changes is only what the page and the manifest ADVERTISE.
+    test "a hidden folder's file still delivers on its own link" do
+      @project.update!(panels: { "hidden" => [ Maker::ProjectKind.folder_key(@f[:models].node_id) ] })
+
+      assert_url_delivers(public_file_path("ada", @project.slug, @f[:base].node_id, download: 1))
+    end
+
+    # THE BUTTON, THE MANIFEST AND THE ZIP AGREE BY CONSTRUCTION — all three are
+    # `Maker::PublicProject#bundle_files`, so this is the one assertion that says the count a
+    # visitor reads is the list they will get.
+    test "the button's count follows the manifest when a folder is hidden" do
+      @project.update!(panels: { "hidden" => [ Maker::ProjectKind.folder_key(@f[:models].node_id) ] })
+
+      # THE MANIFEST FIRST: `manifest` issues its own request, so reading it after the page would
+      # assert against the JSON response rather than the page that carries the button.
+      assert_equal 4, manifest["files"].size
+
+      get public_project_path("ada", @project.slug)
+      assert_select ".bundle button", text: /4 files/
+    end
   end
 end

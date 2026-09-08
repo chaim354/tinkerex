@@ -257,6 +257,15 @@ module Web
       assert_response :success
       assert_select "[data-controller=?]", "gerber", 0
       assert_select "a[href=?]", public_file_view_path("gerber", project.slug, set[:gtl].node_id)
+
+      # THE LAYERS SIT IN `pcb/`, AND A SUBFOLDER IS ITS OWN PANEL SINCE 2026-09-08 (folder panels)
+      # — tiles by default, where the tile opens the layer's own page and the bytes are one click
+      # further on, exactly as the Photos panel's pictures have been since S4-5. The Download cell
+      # this test has always asserted belongs to the LIST view, which is one of the three the maker
+      # picks per folder, so it is asserted there rather than deleted.
+      project.update!(panels: { "views" => { Maker::ProjectKind.folder_key(dir.node_id) => "list" } })
+
+      get public_project_path("gerber", project.slug)
       assert_select "a[href=?]", public_file_path("gerber", project.slug, set[:gtl].node_id, download: 1)
     end
 
