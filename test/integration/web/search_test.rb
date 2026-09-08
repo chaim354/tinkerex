@@ -135,11 +135,11 @@ module Web
     # calling the scope would go red here rather than quietly listing 440 object files.
     #
     # THE ASSERTION THAT CARRIES THE WEIGHT IS THE FILE ONE, and that is worth saying plainly.
-    # This controller filters `kind: "file"` before the scope, so a build DIRECTORY is excluded
-    # twice over and its absence here can never fail — the directory half is pinned where it CAN
-    # fail, on the Files page's own flat `?q=`, which lists folders (files_search_test.rb). What is
-    # real here is the other direction: `node_modules.js` and a FILE named `node_modules` are
-    # ordinary results, and dropping the `kind = 'dir'` term from the scope hides the second one.
+    # A BUILD DIRECTORY IS EXCLUDED FROM THE FOLDERS GROUP BY `visible_entries(false)` — the same
+    # display filter the Files page applies (Library::BuildOutput) — and since stage 4, S4-8 that is a
+    # live assertion rather than a vacuous one: this suite used to say the directory "can never fail"
+    # because the controller filtered `kind: "file"` first, which stopped being true the day search
+    # gained a Folders group (found in review: dropping the scope left this test green).
     test "build output does not surface, and a file of the same name still does" do
       @user.nodes.create!(node_id: "s-nm-dir", name: "node_modules", kind: "dir")
       @user.nodes.create!(node_id: "s-nm-file", name: "node_modules", kind: "file")
@@ -150,6 +150,8 @@ module Web
       assert_select ".result-group--file a[href=?]", file_path("s-nm-file"), text: "node_modules"
       assert_select ".result-group--file a[href=?]", file_path("s-nm-js"), text: "node_modules.js"
       assert_select ".result-group--file a[href=?]", file_path("s-nm-dir"), count: 0
+      assert_select ".result-group--folder a[href=?]", files_path(folder: "s-nm-dir"), count: 0,
+                    "a build directory must not surface as a folder either"
     end
 
     test "a blank query renders the prompt, never the empty-results message" do
@@ -242,8 +244,9 @@ module Web
       assert_select ".result-group--folder a", text: "lamps-old", count: 0
     end
 
-    # THE SAME ESCAPE RULE AS EVERY OTHER GROUP. SQLite has no default escape character, so
-    # `sanitize_sql_like` alone is inert there and `%` would be a wildcard on self-host.
+    # THE SAME ESCAPE RULE AS EVERY OTHER GROUP, AND BOTH HALVES CARRY WEIGHT (measured in review):
+    # without `ESCAPE` SQLite reads the sanitizer's backslash literally and the pattern matches
+    # NOTHING; without the sanitizer `%` is a wildcard and the decoy matches. Two mutations, two reds.
     test "the two new groups escape LIKE metacharacters too" do
       node = @user.nodes.create!(node_id: "n-pct", name: "pct.stl", kind: "file")
       @user.maker_notes.create!(node_id: node.node_id, body: "<div>done at 100% power</div>")

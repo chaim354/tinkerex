@@ -88,7 +88,12 @@ class SearchController < ApplicationController
     notes = current_user.maker_notes
                         .joins(:rich_text_body)
                         .where(node_id: current_user.nodes.present.select(:node_id))
-                        .where("LOWER(action_text_rich_texts.body) LIKE ? ESCAPE '\\'", like)
+                        # OVER THE STORED MARKUP, NOT THE TEXT (measured in review): the column holds Action
+                        # Text's HTML, so a query can match a tag name or an href and the excerpt will not show
+                        # why. A text-only index is the same design question story 3.5 records for README
+                        # text. The header total counts more than the five rows shown and there is no
+                        # note-only page to be the "more"; the count is honest about that.
+                        .where("LOWER(action_text_rich_texts.body) LIKE ? ESCAPE '\'", like)
                         .includes(:rich_text_body)
                         .order(created_at: :desc)
     if (group = add_group("Notes", :note, notes, nil))
