@@ -253,23 +253,19 @@ module Web
       assert_response :not_found
     end
 
-    # AN UNKNOWN KIND FALLS THROUGH TO THE BYTE ROUTE, AND THIS IS THE ONE PLACE THAT SAYS SO
-    # (measured, not assumed — the plan predicted a routing 404 and it is not one). The `kind`
-    # constraint `/thumbnail|geometry/` keeps `/preview/other` off THIS action, but the byte route
-    # one line below it is `files/:id(/*filename)` and `:filename` is decorative to the server, so
-    # the path matches with `filename: "preview/other"` and serves the file's own bytes with a 200.
-    #
-    # THAT IS SURPRISING AND IT IS NOT A LEAK, which is what the second half pins: the byte route
-    # asks the SAME `Maker::PublicProject#deliverable!` this action asks, so the worst an unknown
-    # kind can produce is the file the URL already names — never another node's derived asset, and
-    # never anything on a project that does not permit it. Tightening it belongs to the route (the
-    # `view`/`geometry` ordering comment in config/routes.rb is the same trap), not here.
-    test "an unknown kind falls through to the byte route, still behind the same permission" do
+    # AN UNKNOWN KIND IS A 404, AND THE BYTE ROUTE'S `filename` CONSTRAINT IS WHAT MAKES IT ONE
+    # (found in Task A, measured: without it, `files/:id(/*filename)` one line below the preview route
+    # matched `/preview/other` as `filename: "preview/other"` and served the file's own bytes with a
+    # 200 — behind the same `deliverable!`, so a surprise rather than a leak, but a URL that says
+    # "preview" and answers with the file is the trap config/routes.rb's `view`/`geometry` ordering
+    # comment exists to prevent, one segment deeper). A filename is a leaf name and never holds a
+    # slash, so the constraint costs nothing a real URL needs. Both nodes, so the 404 is the route's
+    # and not `deliverable!`'s.
+    test "an unknown kind is a 404, not the file's bytes" do
       ready_preview!(@f[:base])
 
       get "/u/ada/#{@project.slug}/files/#{@f[:base].node_id}/preview/other"
-      assert_response :success
-      assert_equal "solid base", response.body
+      assert_response :not_found
 
       get "/u/ada/#{@project.slug}/files/#{@f[:outsider].node_id}/preview/other"
       assert_response :not_found

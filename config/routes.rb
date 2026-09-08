@@ -281,7 +281,12 @@ Rails.application.routes.draw do
     # vocabulary, so an unknown kind is a routing 404 rather than a query.
     get "u/:handle/:slug/files/:id/preview/:kind", to: "files#preview", as: :file_preview,
         constraints: { handle: /[a-z0-9][a-z0-9-]*/i, kind: /thumbnail|geometry/ }
-    get "u/:handle/:slug/files/:id(/*filename)",  to: "files#show",     as: :file,    constraints: { handle: /[a-z0-9][a-z0-9-]*/i }, format: false
+    # `filename` IS ONE SEGMENT (hardening, 2026-09-08; found in Task A). Unconstrained, the glob
+    # swallowed `preview/other` — a kind the route above refuses — as `filename: "preview/other"` and
+    # served the file's own BYTES with a 200 behind a URL that says "preview": the same trap the
+    # `view`/`geometry` ordering comment describes, one segment deeper. A filename is a leaf name and
+    # never holds a slash, so nothing a real URL needs is lost; public_preview_test.rb pins the 404.
+    get "u/:handle/:slug/files/:id(/*filename)",  to: "files#show",     as: :file,    constraints: { handle: /[a-z0-9][a-z0-9-]*/i, filename: /[^\/]+/ }, format: false
     # STAGE 3, S3-6. These three DO parse a format, which is why `format: false` is deliberately
     # absent here and present one line up: `/feed.atom`, `/bundle.json` and `/bom.csv` are how a
     # reader, a fetch and a spreadsheet each name what they want, and the `defaults:` makes the
