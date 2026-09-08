@@ -151,15 +151,27 @@ module Maker
       update!(status: "active", archived_at: nil)
     end
 
-    # Return the project's library folder node, (re)creating `Projects/<slug>` if folder_node_id is
-    # nil or points at a tombstoned/missing node (the user deleted it in the Files browser). Called
-    # best-effort at create time (the controller rescues) and authoritatively at upload time, so it
-    # must be idempotent — Maker::LibraryFolder.ensure_path! is.
+    # Return the project's library folder node, or NIL. Idempotent — Maker::LibraryFolder.ensure_path!
+    # is — and called best-effort at create time (the controller rescues) and authoritatively at
+    # upload time.
+    #
+    # IT MINTS `Projects/<slug>` ONLY WHEN `folder_node_id` IS NIL (stage 4, S4-6; decision 2), and
+    # A TOMBSTONED FOLDER IS NEVER SILENTLY RE-MINTED, for any project. It used to re-mint whenever
+    # the column named a missing or tombstoned node, which meant deleting a project's folder in
+    # Finder — the maker's own act — was answered by a new empty `Projects/<slug>` appearing behind
+    # their back on the next page view, and the files they deleted were still in the trash under the
+    # OLD node_id where `undelete` could still find them (§14a's two tombstone kinds). Since S4-6 a
+    # project's folder can also be a folder ANYWHERE in the library, so re-minting would additionally
+    # mint a SECOND folder in a place the maker never chose.
+    #
+    # NIL IS PART OF THE CONTRACT, not a failure: every caller answers it as "no folder yet" —
+    # ProjectsController#show renders the Files panel's "in the trash or was removed" sentence,
+    # Maker::ProjectFolderListing answers `available? == false`, and an upload falls back to the
+    # library root. A project whose folder_node_id was never set (the form path) still mints, which
+    # is what #create depends on.
     def ensure_library_folder!(acting_user)
-      if folder_node_id.present?
-        live = acting_user.nodes.present.find_by(node_id: folder_node_id, kind: "dir")
-        return live if live
-      end
+      return acting_user.nodes.present.find_by(node_id: folder_node_id, kind: "dir") if folder_node_id.present?
+
       folder = Maker::LibraryFolder.ensure_path!(acting_user, [ Maker::ProjectFolders::ROOT, slug ])
       update_column(:folder_node_id, folder.node_id)
       folder

@@ -20,6 +20,27 @@
     <%= f.text_area :description, rows: 5, placeholder: "What are you building?" %>
   </label>
 
+  <%#
+    STATUS, BACK ON THE FORM (stage 4, S4-6; stories 1.2 and 1.6). Stage 3's decision #1 removed it
+    because nothing read it; the measured library then showed all nine projects reading "planning"
+    forever, with "done" unreachable from the web at all. The v1 API and the desktop app have
+    always seen the full vocabulary, so this exposes what the column already holds.
+
+    `archived` IS NOT AN OPTION, and it must not become one. Archiving is a button that also stamps
+    archived_at; a select value would set the column without the timestamp. On an archived project
+    the whole field is omitted rather than rendered with nothing selected — a browser then picks the
+    first option, and saving any other field would silently unarchive the project. See
+    ProjectsController#project_params, which drops the value even if one is hand-posted.
+  %>
+  <% unless project.status == "archived" %>
+    <label class="field">
+      <span>Status</span>
+      <%= f.select :status,
+                   options_for_select((Maker::Project::STATUSES - [ "archived" ]).map { |s| [ s.humanize, s ] },
+                                      project.status) %>
+    </label>
+  <% end %>
+
   <label class="field">
     <span>Tags</span>
     <%= f.text_field :tag_list, value: project.tag_list, placeholder: "laser, firmware" %>
@@ -92,6 +113,29 @@
     <span class="field-hint muted">Off, the app still lists and links this folder's files — it
       just leaves them where you put them.</span>
   </label>
+
+  <% unless project.persisted? %>
+    <%#
+      MAKE IT CURRENT (stage 4, S4-6; story 1.2). "New project" minted the folder and then left the
+      maker's next LightBurn save going somewhere else. Default ON, because a project you just
+      created is the one you are about to work in.
+
+      `check_box_tag`, NOT `f.check_box`, and STRIPPED IN project_params rather than permitted —
+      the shape the cover_clear box above already uses. There is no `make_current` attribute on
+      Maker::Project and inventing one for a form is a model change nothing else would read. It
+      emits no hidden "0" companion, which is correct here: absent means no, the box exists only on
+      `new`, and there is no stored value an unchecked box has to clear.
+
+      ON `new` ONLY. The edit page's header already carries a "Set as current" button, and an edit
+      submit that switched the current project as a side effect would be exactly the silent change
+      story 1.5 is about.
+    %>
+    <label class="field-inline">
+      <%= check_box_tag "project[make_current]", "1", true %>
+      Make this the current project
+      <span class="field-hint muted">Uploads and tool output will land here.</span>
+    </label>
+  <% end %>
 
   <div class="form-actions">
     <%= f.submit(project.persisted? ? "Save changes" : "Create project", class: "btn primary") %>

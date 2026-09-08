@@ -325,13 +325,18 @@ module Web
 
     # --- status badge/select removal --------------------------------------------
 
-    test "the detail page shows no status badge for a live project" do
+    # STAGE 4, S4-6: `planning` (the column default) is still badged nowhere — badging a default is
+    # noise. The fixture was `paused` and asserted only the ABSENCE of `.status-archived`, which now
+    # passes over a page that badges: the assertion has to be about this page's whole badge set, on
+    # the one status that carries no badge at all.
+    test "the detail page shows no status badge for a project in the default status" do
       user = sign_in
-      project = user.maker_projects.create!(name: "Desk Lamp", status: "paused")
+      project = user.maker_projects.create!(name: "Desk Lamp", status: "planning")
       get project_path(project)
       assert_response :success
       assert_select "h1", "Desk Lamp"
       assert_select ".badge.status-archived", count: 0
+      assert_select ".page-title .badge", count: 0
     end
 
     test "the detail page badges an archived project" do
@@ -341,11 +346,102 @@ module Web
       assert_select ".badge.status-archived", text: "Archived"
     end
 
-    test "the project form offers no status select" do
+    # STORY 1.2 / 1.6: "no status field on the form, so planning/active/paused/done are
+    # unreachable — share: all 9 projects read planning". ASSERT THE RENDERED FIELD NAME, which is
+    # §14d's twice-shipped `scope:` bug: a nested-hash POST bypasses the form entirely and cannot
+    # see `maker_project[status]`.
+    test "the project form offers a status select carrying the four live statuses" do
       sign_in
       get new_project_path
       assert_response :success
+      assert_select "form.project-form select[name=?]", "project[status]"
+      assert_select "form.project-form select[name='project[status]'] option[value=?]", "done"
+      assert_select "form.project-form select[name='project[status]'] option[value=?]", "archived",
+                    count: 0
+      assert_select "select[name=?]", "maker_project[status]", count: 0
+    end
+
+    # ARCHIVING IS A BUTTON, AND THE SELECT MUST NOT BECOME A SECOND WAY OUT OF IT. With `archived`
+    # absent from the options, a rendered select on an archived project would show nothing selected,
+    # the browser would pick the first option, and saving any other field would silently unarchive
+    # the project while leaving archived_at set.
+    test "an archived project's form has no status select, and saving it leaves the status alone" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Old Rig", status: "archived",
+                                            archived_at: Time.current)
+
+      get edit_project_path(project)
       assert_select "select[name=?]", "project[status]", count: 0
+
+      patch project_path(project), params: { project: { name: "Old Rig II" } }
+      assert_equal "archived", project.reload.status
+      assert_not_nil project.archived_at
+    end
+
+    # A hand-posted `archived` would set the column WITHOUT archived_at, so the archived list would
+    # show a project the unarchive flow cannot reason about. The form never offers it; this closes
+    # the door behind it.
+    test "a hand-posted archived status is dropped rather than applied" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Desk Lamp", status: "active")
+
+      patch project_path(project), params: { project: { name: "Desk Lamp", status: "archived" } }
+
+      assert_equal "active", project.reload.status
+    end
+
+    # STORY 1.2: "Does not set current." The box is on `new` only — the edit page already has a
+    # "Set as current" button, and an edit submit that silently switched the current project would
+    # be a side effect nobody asked for.
+    test "the new form offers make-current, checked, and the edit form does not" do
+      user = sign_in
+      get new_project_path
+      assert_select "form.project-form input[type=checkbox][name=?][checked=?]",
+                    "project[make_current]", "checked"
+
+      get edit_project_path(user.maker_projects.create!(name: "Desk Lamp"))
+      assert_select "input[name=?]", "project[make_current]", count: 0
+    end
+
+    test "creating with make-current sets it, and the flash names the folder and the destination" do
+      sign_in
+      post projects_path, params: { project: { name: "Smart Lamp", status: "active",
+                                               make_current: "1" } }
+
+      project = Maker::Project.find_by!(slug: "smart-lamp")
+      assert_equal project.id, session[:current_project_id]
+      assert_match(%r{Its folder is Projects/smart-lamp\.}, flash[:notice].to_s)
+      assert_match(/Current project: Smart Lamp/, flash[:notice].to_s)
+    end
+
+    # `check_box_tag` emits NO hidden "0" companion, so an unchecked box sends nothing at all —
+    # which is the right meaning here (absent = no) and is why this needs no hidden field.
+    test "creating without make-current leaves the current project alone" do
+      sign_in
+      post projects_path, params: { project: { name: "Quiet Build", status: "planning" } }
+      assert_nil session[:current_project_id]
+      refute_match(/Current project/, flash[:notice].to_s)
+    end
+
+    # STORY 1.2: "A failed mkdir still says 'Project created.'" — the one flash a maker cannot act
+    # on, over a project whose folder does not exist. The error CLASS is named because
+    # FileLayer::FetchError (an unmounted NAS) and FileLayer::UnsupportedOperation (a refused name)
+    # are different problems with different answers. The broken-port fixture is the one "project
+    # create still succeeds if the library backend can't make the folder" already uses, above —
+    # a second mechanism (define_method on the model) would prove the same thing twice.
+    test "a project whose folder could not be made says so, and names the error class" do
+      sign_in
+      broken = Object.new
+      def broken.capabilities = Object.new.tap { |c| def c.port_writable? = true }
+      def broken.mkdir(*) = raise(FileLayer::FetchError, "down")
+      FileLayer.current = broken
+
+      post projects_path, params: { project: { name: "No Folder" } }
+
+      assert_predicate Maker::Project.find_by(slug: "no-folder"), :present?
+      assert_match(/could not be made \(FileLayer::FetchError\)/, flash[:notice].to_s)
+    ensure
+      FileLayer.reset!
     end
 
     # --- the detail page's action bar tracks the archived state ---
@@ -387,6 +483,156 @@ module Web
       # status rather than passing because the selector never matches anything.
       get project_path(live)
       assert_select ".head-actions form[action=?]", current_project_path
+    end
+
+    # --- the New badge, first open, and "Not a project" (stage 4, S4-6) ----------
+
+    # STORY 1.1: "no 'new' marker". The badge is the surface on every backend, including for the
+    # unattended sweep, which is the only way discovery runs on share/s3.
+    test "an auto-created project wears a New badge until its owner opens it" do
+      user = sign_in
+      auto = user.maker_projects.create!(name: "Tray")
+      auto.update_columns(discovered_at: 1.hour.ago)
+      user.maker_projects.create!(name: "By Hand")
+
+      get projects_path
+      assert_select ".project-tile .badge.project-new", count: 1
+
+      get project_path(auto)
+      assert_not_nil auto.reload.opened_at
+
+      get projects_path
+      assert_select ".badge.project-new", count: 0
+    end
+
+    # `update_column`, so opening a project must NOT reorder the lists that sort by updated_at.
+    # Compared with a three-day gap rather than at second resolution: §15 records that a timestamp
+    # asserted at `.to_i` was written in the same second as the thing it feared, so the mutation
+    # stayed green.
+    test "opening a project does not touch updated_at" do
+      user = sign_in
+      project = travel_to(3.days.ago) { user.maker_projects.create!(name: "Tray") }
+      before = project.reload.updated_at
+
+      get project_path(project)
+
+      assert_equal before.to_f, project.reload.updated_at.to_f
+      assert_not_nil project.opened_at
+    end
+
+    test "the status is badged on the page unless it is the default" do
+      user = sign_in
+      get project_path(user.maker_projects.create!(name: "A", status: "planning"))
+      assert_select ".page-title .badge", text: "Planning", count: 0
+
+      get project_path(user.maker_projects.create!(name: "B", status: "done"))
+      assert_select ".page-title .badge.status-done", text: "Done"
+    end
+
+    # STORY 1.6: "Archive doubles as the undocumented 'not a project' dismissal."
+    test "a discovered project offers Not a project, and it archives with its own sentence" do
+      user = sign_in
+      auto = user.maker_projects.create!(name: "Tray")
+      auto.update_columns(discovered_at: 1.hour.ago)
+
+      get project_path(auto)
+      assert_select ".head-actions form[action=?] button", project_path(auto, dismiss: 1),
+                    text: "Not a project"
+      assert_select ".head-actions form[data-turbo-confirm*=?]", "won't adopt it as a project again"
+
+      delete project_path(auto, dismiss: 1)
+      assert_equal "archived", auto.reload.status
+      assert_match(/is not a project/i, flash[:notice].to_s)
+      assert_match(/folder stays in your library/i, flash[:notice].to_s)
+    end
+
+    test "a hand-made project offers Archive only, with the plain confirm" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "By Hand")
+
+      get project_path(project)
+      assert_select "form[action=?]", project_path(project, dismiss: 1), count: 0
+      assert_select ".head-actions form[data-turbo-confirm=?]", "Archive By Hand?"
+
+      delete project_path(project)
+      assert_match(/\AArchived By Hand\./, flash[:notice].to_s)
+    end
+
+    # --- a folder that is in the trash is never re-minted (stage 4, S4-6; decision 2) -----------
+    #
+    # ONE TEST PER DOOR that calls Maker::Project#ensure_library_folder!, because "it returns nil
+    # now" is a claim about the model and each of these is a claim about a REQUEST (§15: drive the
+    # real request). Deleting a project's folder in Finder is the maker's own act; a new empty
+    # `Projects/<slug>` appearing behind their back on the next page view was the surprise, and
+    # since S4-6 a project's folder can be a folder ANYWHERE, so re-minting would put a second one
+    # in a place they never chose.
+    #
+    # THE FIXTURE IS A REAL SHARE, NOT `project_folder_rows!`, AND THAT IS WHAT MAKES THESE GUARDS
+    # WORK. Measured: with rows alone, restoring the old re-minting branch left the page and attach
+    # tests GREEN — `Projects/` has no storage_path in a rows-only fixture, so the re-mint raised
+    # FileLayer::NotFound and each caller's rescue swallowed it, and the mutation was masked by the
+    # fixture rather than caught by the assertion (§15's "a green suite over something that never
+    # worked"). Here `Projects/` is a real directory, so a re-mint would SUCCEED — which is the only
+    # state in which "it minted nothing" is a claim with weight.
+
+    # A project whose folder the maker deleted in Finder: the bytes are gone from the share and the
+    # scan has tombstoned the row, while `Projects/` itself is untouched and writable.
+    def folder_in_the_trash!(user, project)
+      projects = create_node!(user, node_id: "d-projects", name: Maker::ProjectFolders::ROOT,
+                              kind: "dir", mtime: 1, size: 0)
+      folder = create_node!(user, node_id: "d-folder", name: project.slug, kind: "dir",
+                            parent_node_id: projects.node_id, mtime: 1, size: 0)
+      project.update_column(:folder_node_id, folder.node_id)
+      FileUtils.remove_entry(@root.join(folder.storage_path))
+      folder.update!(deleted: true)
+      folder
+    end
+
+    test "the project page says the folder is in the trash, and mints nothing" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Tray")
+      folder = folder_in_the_trash!(user, project)
+      before = user.nodes.count
+
+      get project_path(project)
+
+      assert_response :success
+      assert_equal before, user.nodes.count, "looking at a project must not re-mint its folder"
+      assert_equal folder.node_id, project.reload.folder_node_id, "and must not repoint it"
+      assert_select ".attachments-panel .folder-missing", text: /in the trash or was removed/
+      assert_select ".attachments-panel .folder-missing a[href=?]", trash_index_path
+    end
+
+    test "an upload to that project lands at the library root rather than minting a folder" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Tray")
+      folder_in_the_trash!(user, project)
+      before = user.nodes.count
+      file = Rack::Test::UploadedFile.new(StringIO.new("solid cube".b),
+                                          "application/octet-stream", original_filename: "cube.stl")
+
+      post project_uploads_path(project), params: { file: }
+
+      assert_response :redirect
+      node = user.nodes.present.find_by!(name: "cube.stl")
+      assert_nil node.parent_node_id, "the fallback destination is the library root"
+      assert_equal before + 1, user.nodes.count, "the upload must add its own node and nothing else"
+    end
+
+    test "an attach into that project attaches the row and leaves the bytes where they are" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Tray")
+      folder_in_the_trash!(user, project)
+      node = create_node!(user, node_id: "n-loose", name: "loose.stl", kind: "file",
+                          mtime: 1_000_000_000, size: 10)
+      before = user.nodes.count
+
+      post project_attachments_path(project), params: { node_id: node.node_id }
+
+      assert_response :redirect
+      assert_equal 1, project.file_attachments.count, "the ROW is the attachment; the move is separate"
+      assert_nil node.reload.parent_node_id, "nothing moved"
+      assert_equal before, user.nodes.count, "and no folder was minted to move it into"
     end
 
     test "unarchiving from the detail page restores the project" do

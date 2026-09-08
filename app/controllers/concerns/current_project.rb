@@ -35,6 +35,24 @@ module CurrentProject
     nil
   end
 
+  # WHAT A SWITCH JUST DID, IN ONE SENTENCE, IN ONE PLACE (stage 4, S4-6; stories 1.5 and 4.5).
+  # Setting the current project changes where the next upload and the next tool save LAND, and the
+  # app said nothing at all — no flash on any branch of CurrentProjectController, on a control that
+  # sits in the rail, the top bar and the project page. Three doors set it, so the sentence has one
+  # definition rather than three that drift, which is the same reading
+  # ProjectFolderIntake#project_intake_sentence records for the collision clause.
+  #
+  # `nil` IS THE CLEARED CASE and gets its own half, because "no current project" is a destination
+  # too — the library root — and a maker who cleared it needs to know that is where uploads go now.
+  #
+  # NOT A `helper_method`: no view builds this sentence today, only the three controller doors, and
+  # exposing it to every template would invite a fourth copy of the wording in markup.
+  def current_project_notice(project)
+    return "No current project — uploads go to the library root." if project.nil?
+
+    "Current project: #{project.name} — uploads and tool output land there."
+  end
+
   # [name, id] pairs for the top-bar select — this user's non-archived projects, A→Z. One indexed
   # query; only when signed in.
   def current_project_choices
