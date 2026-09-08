@@ -150,7 +150,7 @@ module Web
       assert_select ".result-group--file a[href=?]", file_path("s-nm-file"), text: "node_modules"
       assert_select ".result-group--file a[href=?]", file_path("s-nm-js"), text: "node_modules.js"
       assert_select ".result-group--file a[href=?]", file_path("s-nm-dir"), count: 0
-      assert_select ".result-group--folder a[href=?]", files_path(folder: "s-nm-dir"), count: 0,
+      assert_select ".result-group--folder a[href=?]", files_path(folder: "s-nm-dir"), { count: 0 },
                     "a build directory must not surface as a folder either"
     end
 
