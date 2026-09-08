@@ -111,7 +111,11 @@ module Maker
     # while one with six SVGs and six STLs is genuinely both. Half the leader is the line.
     MIXED_SHARE = 0.5
 
-    # The kind this folder looks like. Reads at most ProjectFolderListing::FILE_CAP rows (300),
+    # The kind this folder looks like. Reads at most ProjectFolderListing::FILE_CAP rows (300) —
+    # the 300 ALPHABETICALLY-FIRST visible files of the whole subtree, not a sample, so a folder
+    # whose kind-bearing files all sort after three hundred others reads `other` (measured in
+    # review). Acceptable: the guess is one click to change, decision 5 forbids re-suggesting, and
+    # `other`'s preset hides nothing — the cap fails toward today's page. Otherwise read
     # in memory, no query of its own.
     def self.suggest(listing)
       rows = listing.all_rows

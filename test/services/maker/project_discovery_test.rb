@@ -360,6 +360,25 @@ module Maker
     # THE SWEEP STILL TOUCHES NO PORT (the class's own header claim). The suggestion reads `nodes`,
     # which every backend populates — so this test passes identically on the three legs and needs
     # no library on disk. Driven, not reasoned: FileLayer.current is never constructed here.
+    # THE STEADY STATE PAYS NOTHING FOR THE TREE (found in review): a run that creates nothing must
+    # not pluck the user's directories for a suggestion it never makes — on chunk_remote that run
+    # is every fifteen minutes per user. The tree's pluck is the one that selects parent_node_id
+    # AND name off nodes; nothing else in the sweep does.
+    test "a run that adopts nothing builds no tree" do
+      lamp = dir("d-lamp", "Desk Lamp", "d-projects")
+      @user.maker_projects.create!(name: "Desk Lamp", slug: "desk-lamp", folder_node_id: lamp.node_id)
+      tree_plucks = 0
+      counter = ->(_n, _s, _f, _id, payload) {
+        tree_plucks += 1 if payload[:sql].include?('"nodes"."parent_node_id", "nodes"."name"')
+      }
+      ActiveSupport::Notifications.subscribed(counter, "sql.active_record") do
+        run = Maker::ProjectDiscovery.for_user(user: @user)
+        assert_equal 0, run.created
+      end
+
+      assert_equal 0, tree_plucks, "a sweep that created nothing plucked the directory tree anyway"
+    end
+
     test "the suggestion reads the catalog and nothing else" do
       lamp = dir("d-lamp", "Desk Lamp", "d-projects")
       file("f-0", "main.c", lamp.node_id)

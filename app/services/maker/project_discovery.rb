@@ -85,10 +85,14 @@ module Maker
       # build a LibraryTree per candidate — one dirs pluck each, fifty of them at the cap. Shared,
       # the run pays that pluck once plus TWO queries per project it actually creates (the
       # listing's files query and its count), which is 100 in a first run and ZERO in the steady
-      # state, where `created` is 0. Built here rather than at the top of the method so a
-      # :no_projects_folder run still builds nothing.
-      tree = Maker::LibraryTree.new(user)
+      # state, where `created` is 0. BUILT LAZILY, ON THE FIRST CREATE: LibraryTree plucks eagerly
+      # in its constructor, so a tree built before the loop cost the steady state a dirs pluck it
+      # never read — every fifteen minutes per user on chunk_remote, once per scan on share and s3
+      # (found in review). `||=` inside the loop keeps the sharing and makes a run that creates
+      # nothing pay nothing; project_discovery_test.rb pins the steady state at zero tree plucks.
+      tree = nil
       candidates.first(cap).each do |node_id, name|
+        tree ||= Maker::LibraryTree.new(user)
         user.maker_projects.create!(
           name:,
           # NOT #ensure_slug's derivation. A collision or a blank raises RecordInvalid inside a
