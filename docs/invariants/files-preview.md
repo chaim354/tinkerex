@@ -569,6 +569,19 @@ them would cost a visitor the one thing the public Measure view is for. Absent t
 `measure_controller.js#refreshPrintBar`'s `has*Target` guards are for: unguarded, the throw comes
 out of `draw()` and Measure is dead on that page, which no integration test can see.
 
+## A file's connections are rows, not a computation
+
+**A FILE'S CONNECTIONS ARE ROWS, NOT A COMPUTATION (stage 4, S4-8).** `maker_file_links` holds two
+kinds — `derived_from` (from the derived file to its source) and `photo_of` (from the picture to
+the file it shows) — as **bare node-id strings with no foreign key**, and **liveness is answered
+at read time by `nodes.present`, never by the row**: `FilesController#show` drops a link whose
+partner is a tombstone, and `Maker::AttachmentReaper` destroys it once that node's undo window
+closes, from **either** column. That is deliberately unlike the three lineages this page already
+computes by NAME per request (`.gbrjob` → its layers, a Gerber zip → its members, a README's
+links), which stay computed because they are properties of the bytes rather than statements a
+maker made. The direction of a link is decided in `Files::LinksController` from `kind`, never
+posted, so no door can write one backwards.
+
 ## Dot-files are a DISPLAY filter, never a scan skip
 
 `Node.visible_entries(show_hidden)` hides dot-prefixed names; `FilesController#resolve_hidden`
