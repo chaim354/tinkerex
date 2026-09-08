@@ -14,6 +14,12 @@ module Maker
     # ProjectIntake#record_sweep! and read by the Files panel. `last_sweep_moves` is nil until a
     # sweep that was allowed to file has finished once — nil and 0 are different facts.
 
+    # `discovered_at` / `opened_at` (stage 4, S4-6): see the migration for the full argument.
+    # WRITTEN BY EXACTLY TWO PLACES AND NOWHERE ELSE — Maker::ProjectDiscovery stamps the first as
+    # it creates a row, ProjectsController#show stamps the second once. Projects::AdoptionsController
+    # leaves discovered_at nil ON PURPOSE and says so at its own create!: an adopted project is one
+    # the maker made, so it is never "new to you" and never wears the badge.
+
     # PUBLISHING (stage 3, S3-4; spec §2.5). private is the default and the only state with no
     # public URL; unlisted needs the token; public is listed on /u/:handle and /explore.
     VISIBILITIES = %w[private unlisted public].freeze
