@@ -390,6 +390,13 @@ module Web
         "public project (unlisted)" => public_project_path(@unlisted.user.handle, @unlisted.slug,
                                                            k: @unlisted.unlisted_token),
         "public user" => public_user_path(@user.handle),
+        # STAGE 4, S4-5: the visitor's file page, and the MEASURE branch of it — the one viewer whose
+        # public render differs from the private one at all (`save: false` drops the two library
+        # saves). `n-stl` and `n-bak` sit OUTSIDE the project folder in this fixture, so they are
+        # permitted only through the attachment arm of `Maker::PublicProject#permits?` — and they
+        # are, by the two `@project.file_attachments.create!` rows in setup.
+        "public file (3d)" => public_file_view_path(@user.handle, @project.slug, "n-stl"),
+        "public file (measure)" => public_file_view_path(@user.handle, @project.slug, "n-bak"),
         "explore" => public_explore_path,
         # The tag chip's own destination, which is the filtered branch of the same page — its
         # "All" chip renders only when a filter is on.

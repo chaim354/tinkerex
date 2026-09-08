@@ -272,6 +272,38 @@ module Web
                               "public projects#show")
     end
 
+    # A VISITOR'S FILE PAGE COSTS THE SAME ON A BIG PROJECT AS ON A SMALL ONE (stage 4, S4-5). What
+    # could grow it: `Maker::PublicProject` builds a LibraryTree and a ProjectFolderListing in its
+    # constructor, so a folder with more files must not cost more queries; a .gbrjob's sibling walk
+    # is ONE bounded query; and `page_nodes` — the build log, the BOM, every release — must never be
+    # loaded at all, which is exactly what a `permits?` answered by ancestry avoids (its own comment
+    # says the file route never reaches `visible_page_ids`; this page must not either).
+    test "public files#view does not grow with the project's files, entries or releases" do
+      delete destroy_user_session_path
+      @user.update!(handle: "viewbudget")
+      project = @user.maker_projects.create!(name: "Viewed", status: "active", visibility: "public")
+      folder = project_folder_rows!(@user, project)
+      subject = node!("view-subject", "hero.stl")
+      subject.update!(parent_node_id: folder.node_id)
+      add = lambda do |prefix, count|
+        count.times do |i|
+          id = "#{prefix}#{i}"
+          @user.nodes.create!(node_id: id, name: "#{id}.stl", kind: "file", parent_node_id: folder.node_id,
+                              size: 1, mtime: 1_700_000_000_000_000_000,
+                              content_hash: "h-#{id}", current_version_id: "v-#{id}")
+          entry = project.build_log_entries.create!(user: @user, body: "e#{id}", logged_at: Time.current)
+          entry.file_attachments.create!(user: @user, node_id: id, role: "image", position: 0)
+          release = project.releases.create!(user: @user, version: "v#{id}", published_at: Time.current)
+          release.files.create!(user: @user, node_id: id, name: "#{id}.stl", path: "#{id}.stl",
+                                content_token: "h-#{id}", size: 1)
+        end
+      end
+      assert_constant_queries(public_file_view_path(@user.handle, project.slug, "view-subject"),
+                              -> { add.call("vs", SMALL) },
+                              -> { add.call("vl", LARGE - SMALL) },
+                              "public files#view")
+    end
+
     # STAGE 4, S4-4: THE OWNER'S PREVIEW, SIGNED IN — which is the difference worth measuring. It
     # renders the same partials over the same object, plus the app shell (the rail, the
     # current-project switcher, the flash) that a visitor never pays for. That shell cost is a

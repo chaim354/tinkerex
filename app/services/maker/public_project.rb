@@ -350,6 +350,27 @@ module Maker
       Rails.application.routes.url_helpers.public_file_path(handle, project.slug, node_id, filename:, **params)
     end
 
+    # THE VIEW PAGE'S URL, beside #file_url_for's byte URL (stage 4, S4-5). Same link_params, same
+    # reason: on an unlisted project the token IS the credential and a link without it is a 404.
+    # SEPARATE FROM #file_url_for RATHER THAN A FLAG ON IT, because the two answer different
+    # questions and one of them is load-bearing elsewhere — Maker::Readme resolves a README's `<a>`
+    # AND its `<img src>` through #file_url_for, so a flag defaulting the wrong way would point
+    # every inline README image at an HTML page.
+    def view_url_for(node_id)
+      Rails.application.routes.url_helpers.public_file_view_path(handle, project.slug, node_id,
+                                                                 **link_params)
+    end
+
+    # ONE LAYER'S FETCH URL FOR A .gbrjob's BOARD, filtered by THIS project's permission (stage 4,
+    # S4-5). The sibling walk itself is FilePreview's, shared with the maker's own page; what is
+    # public here is only the URL builder, which answers nil for a sibling the project does not
+    # permit — so a job file sitting next to a layer that is somehow outside the folder renders the
+    # board WITHOUT it rather than handing a visitor a URL the byte route would refuse. `permits?`
+    # is the same call #deliverable! makes, which is what keeps the two from disagreeing.
+    def layer_url_for(node)
+      permits?(node) ? file_url_for(node.node_id, filename: node.name) : nil
+    end
+
     private
 
     # FOLDER-RELATIVE, from the row's OWN `section` — the display path the listing computed while

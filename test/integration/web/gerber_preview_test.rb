@@ -239,9 +239,14 @@ module Web
       assert_select "a[href=?]", file_path(zip.node_id)
     end
 
-    # THE PUBLIC PAGE HAS NO BOARD RENDER AT ALL — there is no public FILE page to mount one on —
-    # and it still lists every layer for a visitor to download through the public file route.
-    test "the public page mounts no board viewer and lists the layers as public files" do
+    # THE PROJECT PAGE MOUNTS NO BOARD RENDER, and since stage 4, S4-5 that is because the render
+    # lives ON THE LAYER'S OWN PUBLIC PAGE rather than because a visitor cannot have one. The
+    # sentence this comment used to end on — "there is no public FILE page to mount one on" — was
+    # true until S4-5 and is deleted rather than left to be relied on: the two cells now answer two
+    # questions, the NAME opening `public_file_view_path` (where the viewer is) and Download still
+    # naming the bytes. What stays true is that a board on a project page costs no visitor a parse
+    # they did not ask for, which is why the Fabrication panel went in the first place.
+    test "the public page mounts no board viewer and links each layer to its own page" do
       project = @user.maker_projects.create!(name: "Driver", visibility: "public")
       folder = make_project_folder!(@user, project)
       dir = gerber_dir!(name: "pcb", parent_node_id: folder.node_id)
@@ -251,7 +256,8 @@ module Web
       get public_project_path("gerber", project.slug)
       assert_response :success
       assert_select "[data-controller=?]", "gerber", 0
-      assert_select "a[href=?]", public_file_path("gerber", project.slug, set[:gtl].node_id)
+      assert_select "a[href=?]", public_file_view_path("gerber", project.slug, set[:gtl].node_id)
+      assert_select "a[href=?]", public_file_path("gerber", project.slug, set[:gtl].node_id, download: 1)
     end
 
     private

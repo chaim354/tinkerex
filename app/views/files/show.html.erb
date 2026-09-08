@@ -207,11 +207,14 @@
     <%# .lbrn/.lbrn2, .mage, .dxf, .svg — a picture at rest, with a button that swaps in a
         measurable outline view built from the geometry payload. The four save URLs are the
         maker's own doors (stage 4, S4-3): an export lands beside the file it came from, through
-        whichever of the two upload flows this deployment uses. %>
+        whichever of the two upload flows this deployment uses. `save: true` is what renders those
+        two controls at all — a VISITOR's file page passes false and gets the same bar without them
+        (stage 4, S4-5), because there is no library for an export to land in. %>
     <%= render "files/viewers/measure", name: @node.name,
                geometry_url: geometry_file_path(@node.node_id),
                blob_url: blob_file_path(@node.node_id), thumbnail: @thumbnail,
                download_url: blob_file_path(@node.node_id, download: 1),
+               save: true,
                port_writable: capabilities.port_writable?, create_url: files_path,
                begin_url: begin_upload_files_path, finalize_url: finalize_upload_files_path,
                parent_node_id: @node.parent_node_id %>

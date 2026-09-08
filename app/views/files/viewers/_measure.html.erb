@@ -1,4 +1,4 @@
-<%# locals: (geometry_url:, name:, blob_url:, thumbnail:, download_url:, port_writable:, create_url:, begin_url:, finalize_url:, parent_node_id:) %>
+<%# locals: (geometry_url:, name:, blob_url:, thumbnail:, download_url:, save:, port_writable:, create_url:, begin_url:, finalize_url:, parent_node_id:) %>
 <%#
   The interactive Measure view — .lbrn/.lbrn2, .mage, .dxf, .svg. See measure_controller.js.
 
@@ -17,6 +17,16 @@
   accident (test/architecture_invariants_test.rb scans this directory). Read-only in the only sense
   that matters — Measure has never had a write control over the file it is measuring; the four save
   URLs below write an EXPORT, and a page with no session has nowhere to put one.
+
+  WHICH IS WHAT `save` IS FOR, AND WHY IT DROPS THE CONTROLS RATHER THAN DISABLING THEM. The two
+  Save twins (stage 4, S4-3) write that export into the MAKER's library through the two upload
+  doors; a visitor has no library, so `save: false` renders neither the buttons nor the four write
+  URLs — a disabled pair would be two dead controls, and rendering the URLs alone would put a
+  private write path in a stranger's DOM for nothing. Print and Download SVG stay on both pages:
+  both are client-side work over a payload the visitor has already fetched, and withholding them
+  would cost story 5.5 the one thing it asks for. `measure_controller.js#refreshPrintBar` asks
+  `hasSaveSvgButtonTarget` for exactly this branch — the guard is real here, unlike the ones its
+  own comment refuses for the always-rendered controls beside them.
 %>
 <div class="measure-view"
      data-controller="measure"
@@ -36,12 +46,17 @@
 
        THE DESTINATION IS THE SOURCE FILE'S OWN PARENT, so an export lands beside the thing it was
        exported from. Empty at the library root, which lib/chunk_upload reads as "no parent".
+
+       ALL FIVE ARE INSIDE THE `save` BRANCH (stage 4, S4-5): the two buttons below are what reads
+       them, and a page that renders neither must not carry an upload door either.
      %>
+     <% if save %>
      data-measure-port-writable-value="<%= port_writable %>"
      data-measure-create-url-value="<%= create_url %>"
      data-measure-begin-url-value="<%= begin_url %>"
      data-measure-finalize-url-value="<%= finalize_url %>"
-     data-measure-parent-node-id-value="<%= parent_node_id %>">
+     data-measure-parent-node-id-value="<%= parent_node_id %>"
+     <% end %>>
   <div class="measure-stage" data-measure-target="stage"></div>
   <div class="measure-bar">
     <span class="measure-dims" data-measure-target="dims"></span>
@@ -71,10 +86,12 @@
         noise. The accessible name tracks the target, written by the same refreshPrintBar() from
         the same targetNoun(), so the four labels can only drift together.
       %>
-      <button type="button" class="btn small ghost" data-action="measure#savePrint"
-              data-measure-target="savePrintButton"
-              aria-label="Save all as a print sheet in the library"
-              title="Save all as a print sheet in the library">Save sheet</button>
+      <% if save %>
+        <button type="button" class="btn small ghost" data-action="measure#savePrint"
+                data-measure-target="savePrintButton"
+                aria-label="Save all as a print sheet in the library"
+                title="Save all as a print sheet in the library">Save sheet</button>
+      <% end %>
       <%#
         VISIBLE TEXT IS CONSTANT, THE ACCESSIBLE NAME IS NOT. The bar already carries SIX other
         controls since stage 4, S4-3 added the two Save twins (it was four), so a second
@@ -90,10 +107,12 @@
       <button type="button" class="btn small ghost" data-action="measure#downloadSvg"
               data-measure-target="svgButton"
               aria-label="Download all as SVG" title="Download all as SVG">Download SVG</button>
-      <button type="button" class="btn small ghost" data-action="measure#saveSvg"
-              data-measure-target="saveSvgButton"
-              aria-label="Save all as SVG in the library"
-              title="Save all as SVG in the library">Save SVG</button>
+      <% if save %>
+        <button type="button" class="btn small ghost" data-action="measure#saveSvg"
+                data-measure-target="saveSvgButton"
+                aria-label="Save all as SVG in the library"
+                title="Save all as SVG in the library">Save SVG</button>
+      <% end %>
       <button type="button" class="btn small ghost" data-action="measure#reset">Reset</button>
       <button type="button" class="btn small ghost" aria-label="Return to image"
               data-action="measure#showPoster">✕ Image</button>
