@@ -115,5 +115,43 @@ module Maker
       refute_predicate duplicate, :valid?
       assert_includes duplicate.errors[:slug], "has already been taken"
     end
+
+    # STAGE 4, S4-7: the column defaults are what make the migration invisible (spec §4).
+    test "a new project is other, with no overrides and today's panel list" do
+      project = @user.maker_projects.create!(name: "Fresh")
+
+      assert_equal "other", project.kind
+      assert_nil project[:panels]
+      assert_equal Maker::Project::PANELS, project.visible_panels
+    end
+
+    test "kind is validated against KINDS" do
+      project = @user.maker_projects.new(name: "Bad", kind: "wormhole")
+
+      refute project.valid?
+      assert_includes project.errors[:kind].join, "not included"
+    end
+
+    # THE PRESET IS A GUESS; A CHOSEN COVER IS AN ANSWER. Asserted through #cover_node_id (the
+    # reader every card and the hero use), not through #derived_cover_node_id, because the ordering
+    # of those two is the rule.
+    test "a print project prefers a model for its hero, and a chosen cover still wins" do
+      project = @user.maker_projects.create!(name: "Bracket", kind: "print")
+      project.file_attachments.create!(user: @user, node_id: "img", role: "image", position: 0)
+      project.file_attachments.create!(user: @user, node_id: "mdl", role: "model", position: 1)
+
+      assert_equal "mdl", project.cover_node_id
+
+      project.update!(cover_node_id: "img")
+      assert_equal "img", project.cover_node_id
+    end
+
+    test "an other project's hero is the image, exactly as before the kind existed" do
+      project = @user.maker_projects.create!(name: "Tray")
+      project.file_attachments.create!(user: @user, node_id: "mdl", role: "model", position: 0)
+      project.file_attachments.create!(user: @user, node_id: "img", role: "image", position: 1)
+
+      assert_equal "img", project.cover_node_id
+    end
   end
 end

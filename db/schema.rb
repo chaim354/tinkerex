@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_07_140000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_07_160000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -321,11 +321,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_07_140000) do
     t.text "description"
     t.datetime "discovered_at"
     t.string "folder_node_id"
+    t.string "kind", default: "other", null: false
     t.integer "last_sweep_moves"
     t.datetime "last_swept_at"
     t.string "license"
     t.string "name", null: false
     t.datetime "opened_at"
+    t.json "panels"
     t.string "slug", null: false
     t.string "status", default: "planning", null: false
     t.string "unlisted_token"

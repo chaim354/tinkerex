@@ -37,6 +37,43 @@ module Maker
       "GPL-3.0-or-later" => "GNU GPL v3 or later"
     }.freeze
 
+    # THE PROJECT'S TYPE (stage 4, S4-7; decision D4). Suggested from what the folder holds when
+    # the app creates the project (Maker::ProjectDiscovery, S4-6's adoption door), editable on the
+    # edit form, and never re-derived afterwards — re-suggesting would silently rearrange a page
+    # the maker may have arranged themselves, and nothing could tell the two apart.
+    KINDS = %w[laser print cnc electronics mixed other].freeze
+
+    # THE PROJECT PAGE'S PANEL LIST, AS DATA (stage 4, S4-7; story 6.5). This order IS `other`'s
+    # preset, and `other` is the column default, so a migration alone changes no page (spec §4).
+    #
+    # ADD A PANEL HERE OR IT RENDERS FOR NOBODY. projects/show.html.erb loops over
+    # `Maker::Project#visible_panels` and renders `projects/_<key>`; a tenth partial dropped into
+    # the view directory with no entry here is a file no page reaches, and a `render` appended
+    # under the loop is a panel the chooser cannot list — one question with two answers (§14a).
+    # The key IS the partial's basename; keep them equal.
+    #
+    # `publish` IS THE TENTH AND LAST MEMBER because S4-4 landed `projects/_publish.html.erb`
+    # (amendment 9's first branch, checked by `ls` at Task A step 1): the panel exists, so it goes
+    # through the loop rather than being rendered under it.
+    #
+    # NOTHING OUTSIDE THIS CONSTANT MAY REACH THE LOOP. Maker::ProjectKind.layout_for intersects
+    # every stored override with it and Projects::PanelsController intersects every write, so a
+    # crafted request cannot put an unknown key in the `panels` column and `render` can never be
+    # handed a partial name that does not exist.
+    PANELS = %w[attachments photos schematics build_log tasks bom wiring releases sheets publish].freeze
+
+    # What the chooser calls each one. Its own map rather than `key.humanize`, because three of the
+    # ten disagree with what humanize would say: `attachments` is "Files" (the panel has been
+    # headed Files since S2-2 — the key is the partial's name, and renaming the partial would touch
+    # eight call sites), `bom` is "Bill of materials", and `build_log` is "Build log", not
+    # "Build Log". A chooser whose labels differ from the headings above them is a chooser nobody
+    # trusts. Totality pinned in project_kind_test.rb.
+    PANEL_LABELS = {
+      "attachments" => "Files", "photos" => "Photos", "schematics" => "Schematics",
+      "build_log" => "Build log", "tasks" => "Tasks", "bom" => "Bill of materials",
+      "wiring" => "Wiring", "releases" => "Releases", "sheets" => "Sheets", "publish" => "Publish"
+    }.freeze
+
     has_many :build_log_entries, -> { order(:logged_at) },
              class_name: "Maker::BuildLogEntry", dependent: :destroy
     has_many :file_attachments, -> { order(:position) },
@@ -82,6 +119,10 @@ module Maker
     validates :slug, presence: true, uniqueness: { scope: :user_id }
     validates :status, inclusion: { in: STATUSES }
     validates :visibility, inclusion: { in: VISIBILITIES }
+    # NO VALIDATION ON `panels`, AND THAT IS DELIBERATE: the READ is what has to be safe, and
+    # Maker::ProjectKind.layout_for is total (its own comment says why). A write-time validation
+    # could be bypassed by the v1 API, a console or a later migration; the read cannot.
+    validates :kind, inclusion: { in: KINDS }
     validates :license, inclusion: { in: LICENSES.keys }, allow_nil: true
     validate :publishing_needs_a_handle
 
@@ -119,15 +160,29 @@ module Maker
       self[:cover_node_id].presence || derived_cover_node_id
     end
 
-    # First image, else first model, else the first attachment by position, else nil. Reads the
+    # The kind's preferred roles first, then the first attachment by position, else nil. Reads the
     # loaded/queried file_attachments; callers that render many cards should
     # include(:file_attachments).
+    #
+    # THE KIND ONLY REORDERS THE PREFERENCE; IT ADDS NO QUERY AND NO NEW SOURCE (stage 4, S4-7;
+    # story 6.3). `hero_roles("other")` is `%w[image model]`, which is exactly what this method did
+    # before — first image, else first model, else the first attachment — so every existing project
+    # picks the cover it always picked. A 3D-print project prefers a model and an electronics
+    # project a board.
+    #
+    # IT STILL READS THE RELATION, NEVER THE FOLDER, and must keep doing so: #cover_node_id is
+    # called once per card on the index, and the comment above forbids a query here for that
+    # reason. A discovered project's folder files ARE attachments (Maker::ProjectIntake attaches
+    # everything it finds), so the preference has real material to choose from.
+    #
+    # A STORED `cover_node_id` STILL WINS, because #cover_node_id checks the column first: a preset
+    # is a guess about a project, a chosen cover is an answer to the same question, and a guess must
+    # never overrule an answer. The stored one is also stable while this one moves as attachments
+    # change — which is the asymmetry the column exists to give.
     def derived_cover_node_id
       atts = file_attachments.sort_by { |a| [ a.position, a.id ] }
-      pick = atts.find { |a| a.role == "image" } ||
-             atts.find { |a| a.role == "model" } ||
-             atts.first
-      pick&.node_id
+      pick = Maker::ProjectKind.hero_roles(kind).filter_map { |role| atts.find { |a| a.role == role } }.first
+      (pick || atts.first)&.node_id
     end
 
     # THE BOM ON THE WEB: the latest revision, or nil if the project has none yet. ONE query
@@ -138,6 +193,17 @@ module Maker
     def current_bom
       boms.order(revision: :desc, id: :desc).first
     end
+
+    # THE PAGE'S LAYOUT: this kind's preset with this project's own overrides on top (stage 4,
+    # S4-7). ProjectsController#show, projects/_panel_chooser and Maker::PublicProject all read
+    # THIS, so the maker's page and a visitor's cannot disagree about what is hidden.
+    #
+    # NOT MEMOIZED. It is array arithmetic over ten strings, and a memo on a mutable attribute is a
+    # stale read waiting for the first caller that writes `panels` and reads the layout back in the
+    # same request — which is exactly what Projects::PanelsController does.
+    def panel_layout = Maker::ProjectKind.layout_for(kind:, overrides: self[:panels])
+
+    def visible_panels = panel_layout.visible
 
     def archive!
       update!(status: "archived", archived_at: Time.current)
