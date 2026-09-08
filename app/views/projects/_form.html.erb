@@ -120,8 +120,9 @@
       maker's next LightBurn save going somewhere else. Default ON, because a project you just
       created is the one you are about to work in.
 
-      `check_box_tag`, NOT `f.check_box`, and STRIPPED IN project_params rather than permitted —
-      the shape the cover_clear box above already uses. There is no `make_current` attribute on
+      `check_box_tag`, NOT `f.check_box`, and NEVER PERMITTED — #create reads it straight off
+      `params[:project]`, so project_params neither permits nor has to strip it (the cover_clear box
+      above is the same shape). There is no `make_current` attribute on
       Maker::Project and inventing one for a form is a model change nothing else would read. It
       emits no hidden "0" companion, which is correct here: absent means no, the box exists only on
       `new`, and there is no stored value an unchecked box has to clear.

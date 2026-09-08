@@ -146,8 +146,12 @@ class ProjectsController < ApplicationController
     # deleted is recreated); nil → uploads fall back to the library root rather than 500 the page.
     # AND IT RUNS BEFORE THE LISTING BELOW, which reads the folder_node_id this (re)writes —
     # looking at a folder must never be what mints it (docs/invariants/project-intake.md).
+    # `&.` BECAUSE nil IS AN ANSWER NOW (decision 2, stage 4, S4-6): a project whose folder is in
+    # the trash gets nil here, on purpose, and the rescue below is for PORT failures — found in
+    # review: without the safe navigation the routine case rode through that rescue, which would
+    # have gone on swallowing any real NoMethodError in this block.
     @upload_parent_node_id = begin
-      @project.ensure_library_folder!(current_user).node_id
+      @project.ensure_library_folder!(current_user)&.node_id
     rescue StandardError
       nil
     end
@@ -486,7 +490,14 @@ class ProjectsController < ApplicationController
     else
       "Project created. Its folder is #{Maker::ProjectFolders::ROOT}/#{project.slug}."
     end
-    session[:current_project_id] == project.id ? "#{lead} #{current_project_notice(project)}" : lead
+    return lead unless session[:current_project_id] == project.id
+    # A CURRENT PROJECT WITH NO FOLDER CANNOT PROMISE "uploads land there" — they fall back to the
+    # library root until the folder exists (Projects::UploadsController#upload_parent). Found in
+    # review: ticking "make current" on a create whose mkdir failed read the failure sentence and
+    # then the promise, in one flash.
+    return "#{lead} It is your current project; until its folder exists, uploads go to the library root." if failure
+
+    "#{lead} #{current_project_notice(project)}"
   end
 
   def make_current(project)

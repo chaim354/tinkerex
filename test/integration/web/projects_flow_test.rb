@@ -429,6 +429,27 @@ module Web
     # are different problems with different answers. The broken-port fixture is the one "project
     # create still succeeds if the library backend can't make the folder" already uses, above —
     # a second mechanism (define_method on the model) would prove the same thing twice.
+    # THE CROSSING (found in review): "make current" ticked AND the mkdir failed. The flash used to
+    # read the failure sentence and then "uploads and tool output land there" — false in exactly the
+    # case the first sentence describes, since uploads fall back to the library root.
+    test "a current project whose folder could not be made does not promise uploads will land there" do
+      sign_in
+      broken = Object.new
+      def broken.capabilities = Object.new.tap { |c| def c.port_writable? = true }
+      def broken.mkdir(*) = raise(FileLayer::FetchError, "down")
+      FileLayer.current = broken
+
+      post projects_path, params: { project: { name: "No Folder Yet", make_current: "1" } }
+
+      created = Maker::Project.find_by!(slug: "no-folder-yet")
+      assert_equal created.id, session[:current_project_id]
+      assert_match(/could not be made/, flash[:notice].to_s)
+      assert_match(/until its folder exists, uploads go to the library root/, flash[:notice].to_s)
+      assert_no_match(/land there/, flash[:notice].to_s)
+    ensure
+      FileLayer.reset!
+    end
+
     test "a project whose folder could not be made says so, and names the error class" do
       sign_in
       broken = Object.new

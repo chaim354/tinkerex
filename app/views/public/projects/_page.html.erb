@@ -26,7 +26,12 @@
   </div>
   <p class="public-byline">
     by <%= link_to "@#{pub.handle}", public_user_path(pub.handle) %>
-    <span class="badge status-<%= project.status %>"><%= project.status.humanize %></span>
+    <%# THE SAME RULE AS THE MAKER'S OWN PAGE (stage 4, S4-6): `planning` is the column default and
+        badging a default is noise; a status the maker SET is worth a badge. Found in review: the
+        status variants were restyled in components.css and this page went on badging the default. %>
+    <% unless project.status == "planning" %>
+      <span class="badge status-<%= project.status %>"><%= project.status.humanize %></span>
+    <% end %>
     <% if project.license_label %>
       <span class="badge license"><%= project.license_label %></span>
     <% end %>
