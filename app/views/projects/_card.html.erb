@@ -15,6 +15,20 @@
     <% end %>
     <span class="project-name"><%= project.name %></span>
   <% end %>
+  <%#
+    NEW (stage 4, S4-6; story 1.1). An auto-created project the owner has not opened yet — the only
+    feedback discovery has ever had, and the one that works on every backend and for the unattended
+    15-minute sweep, which is how discovery actually runs. Both columns come off the row this card
+    already holds, so the badge costs no query on the index or on Home.
+
+    `discovered_at.present?` IS the definition of auto-created: Maker::ProjectDiscovery is the only
+    writer, and Projects::AdoptionsController leaves it nil on purpose (a project you made is never
+    new to you). It clears itself on the first open — ProjectsController#show stamps `opened_at` —
+    so nothing has to be dismissed and no state accumulates.
+  %>
+  <% if project.discovered_at.present? && project.opened_at.nil? %>
+    <span class="badge project-new">New</span>
+  <% end %>
   <% if project.status == "archived" %>
     <%= button_to "Unarchive", unarchive_project_path(project), method: :patch, class: "linkbtn" %>
   <% end %>

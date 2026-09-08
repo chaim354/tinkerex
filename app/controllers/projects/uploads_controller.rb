@@ -85,9 +85,17 @@ module Projects
 
     # Project uploads go into the project's Projects/<slug> folder; build-log entry-photo uploads
     # stay at the library root (v1 scope — spec Out of scope).
+    #
+    # `&.`, BECAUSE ensure_library_folder! ANSWERS NIL FOR A FOLDER IN THE TRASH (stage 4, S4-6;
+    # decision 2) rather than silently minting a fresh one. nil already means the library root on
+    # the line above, so the upload lands there and the attach below still runs — the file is in
+    # the library and linked to the project, which is the same fallback the project page's own
+    # upload control already degrades to when the ensure fails. Without the `&.` this is a
+    # NoMethodError and a 500 on every upload to a project whose folder the maker deleted in
+    # Finder; the project page says the folder is in the trash and points at Trash.
     def upload_parent(target)
       return nil if target.is_a?(Maker::BuildLogEntry)
-      project_of(target).ensure_library_folder!(current_user).node_id
+      project_of(target).ensure_library_folder!(current_user)&.node_id
     end
 
     # A build-log photo is always "image"; a project attachment infers from the extension.

@@ -84,6 +84,17 @@ module Web
       assert_select ".home-files a[href=?]", files_path, text: "See all"
     end
 
+    # The same partial, so Home gets discovery's feedback for free — and this is what Home gets
+    # from S4-6 instead of an adopt door (there is no folder on this page to adopt).
+    test "Home badges an auto-created project the owner has not opened" do
+      project = @user.maker_projects.create!(name: "Tray")
+      project.update_columns(discovered_at: 1.hour.ago)
+
+      get root_path
+
+      assert_select ".home-projects .project-tile .badge.project-new", text: "New"
+    end
+
     test "recent and failed prints show with their model, and a failed one lands in attention" do
       node = file("benchy.stl", at: 1.day.ago)
       model = @user.maker_models.create!(title: "Benchy", print_status: "failed")

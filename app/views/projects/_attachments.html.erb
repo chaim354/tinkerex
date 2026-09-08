@@ -77,6 +77,25 @@
     </div>
   </div>
 
+  <%#
+    THE FOLDER IS IN THE TRASH, AND THE PAGE SAYS SO (stage 4, S4-6; decision 2). Deleting a
+    project's folder in Finder or from the Files page is the maker's own act, so
+    Maker::Project#ensure_library_folder! no longer mints a replacement behind their back — it
+    answers nil, this panel loses its listing, and the maker is told which of the two things
+    happened and what to do about either. Without the sentence the panel is simply empty, which
+    reads as "this project has no files" — a lie about a folder full of them sitting in the trash.
+
+    `folder_node_id.present?` IS WHAT SPLITS THE TWO CASES: a project that never had a folder (the
+    ensure failed at create time, an unmounted NAS) has nothing in the trash to restore, and the
+    empty state below already speaks for it.
+  %>
+  <% if @project.folder_node_id.present? && !@listing.available? %>
+    <p class="muted folder-missing">
+      This project's folder is in the trash or was removed.
+      <%= link_to "Restore it", trash_index_path %>, or make another folder a project.
+    </p>
+  <% end %>
+
   <%# WHAT THE SWEEP DID, ON THE PAGE (stage 4, S4-2; story 1.5). Both branches are facts the maker
       needs and neither is an error: a project that files itself says when it last did, and one
       that has been told not to says so where the files are, not only on the edit form. %>

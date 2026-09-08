@@ -35,7 +35,18 @@
     upload (?upload=library) without clearing the current project. When no project is current, or
     the override is active, the plain two-flow upload renders exactly as before. %>
 <% project_upload = current_project && params[:upload] != "library" %>
-<% menu_items = capabilities.scannable? || current_project.present? %>
+<% adoptable_folder = @folder && @folder_project.nil? &&
+                      Maker::ProjectDiscovery.adoptable_name?(@folder.name) &&
+                      !(@folder.parent_node_id.nil? && @folder.name == Maker::ProjectFolders::ROOT) %>
+<%# THE MENU RENDERS ONLY WHEN IT WILL HOLD AN ITEM, and the folder arm therefore asks what the
+    folder arm actually offers, never merely "is there a folder". `@folder.present?` over-shot on a
+    non-scannable backend with no current project: a dot-folder or the `Projects` root has neither
+    an "Open project" nor an adopt button to show, so the menu rendered EMPTY -- the exact state
+    files_toolbar_test.rb's "no menu renders when it would be empty" pins, escaping through the
+    folder view. `adoptable_folder` already carries the two cheap refusals, so this reuses it
+    rather than asking them a second time. %>
+<% menu_items = capabilities.scannable? || current_project.present? ||
+                @folder_project.present? || adoptable_folder %>
 <div class="page-head">
   <h1>Files</h1>
   <div class="page-actions">
@@ -92,6 +103,24 @@
             %>
             <%= button_to "Rescan library", rescan_files_path(files_query_base),
                           class: "menu-item", data: { turbo: false } %>
+          <% end %>
+          <% if @folder_project %>
+            <%= link_to "Open project “#{@folder_project.name}”", project_path(@folder_project),
+                        class: "menu-item" %>
+          <% elsif adoptable_folder %>
+            <%#
+              ADOPT IN PLACE (stage 4, S4-6; decision D1, stories 1.3 and 4.7). One POST turns the
+              folder being viewed into a project that keeps its path — the answer to "a fifth of my
+              files live outside Projects/" that does not ask the maker to move anything.
+
+              THE TWO CHEAP REFUSALS ARE ASKED HERE TOO, and only those two: a dot-folder and the
+              Projects root are a string test and a nil test on the row this page already holds.
+              The expensive ones — an ancestor's claim, a working tree — stay in the controller,
+              which is the only place that may be the authority; this just declines to offer a
+              button whose answer the page already knows.
+            %>
+            <%= button_to "Make this folder a project", adopt_projects_path,
+                          params: { node_id: @folder.node_id }, class: "menu-item" %>
           <% end %>
           <% if current_project %>
             <% if project_upload %>

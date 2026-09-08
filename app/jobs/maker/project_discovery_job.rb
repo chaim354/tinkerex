@@ -31,9 +31,13 @@ module Maker
     limits_concurrency to: 1, key: ->(args) { args[:user_id] },
                        duration: 15.minutes, on_conflict: :discard
 
-    def perform(user_id:)
+    # `cap:` IS THE REQUEST PATH'S KNOB (stage 4, S4-6). The recurring sweep and Library::ScanJob
+    # pass none and get MAX_PROJECTS (or the env override); Projects::ScansController#pull_and_file
+    # runs this synchronously inside a POST and passes EAGER_MAX_PROJECTS, the second cap the
+    # service's own comment demands of any nudge.
+    def perform(user_id:, cap: nil)
       user = User.find(user_id)
-      run = Maker::ProjectDiscovery.for_user(user:)
+      run = Maker::ProjectDiscovery.for_user(user:, cap:)
       if run.created.positive? || run.status == :capped
         Rails.logger.info("Maker::ProjectDiscoveryJob: user #{user.id} created #{run.created} " \
                           "of #{run.candidates} candidates, status #{run.status}")

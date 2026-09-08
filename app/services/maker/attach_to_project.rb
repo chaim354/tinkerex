@@ -355,6 +355,14 @@ module Maker
     # short-circuited.
     def move(node, new_name: nil)
       folder = @project.ensure_library_folder!(@user)
+      # NO FOLDER, NO MOVE — and it is :unavailable, not a raise. ensure_library_folder! answers nil
+      # when the project's folder is in the trash (stage 4, S4-6; decision 2) instead of minting a
+      # replacement behind the maker's back, and "couldn't move it into the project folder right
+      # now" is exactly true: restoring the folder makes the same action work. The attachment ROW is
+      # already committed by #call at this point, so raising would 500 a request whose durable half
+      # succeeded — the identical argument the rescue below makes for NotFound.
+      return :unavailable if folder.nil?
+
       same_name = new_name.nil? || new_name == node.name
       return :already_there if same_name && node.parent_node_id == folder.node_id
 

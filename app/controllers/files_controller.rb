@@ -214,6 +214,9 @@ class FilesController < ApplicationController
     if @flat
       @folder = nil
       @crumbs = []
+      # NO FOLDER, SO NOTHING TO ADOPT AND NOBODY TO NAME — set beside @folder/@crumbs so the view
+      # never reads an undefined ivar in this branch (stage 4, S4-6).
+      @folder_project = nil
       # `.outside_repo_metadata` ON THE SCOPE, NOT ON THE `.order` BELOW, so @match_count is taken
       # from the same query as the rows and the banner cannot claim a file the page never shows.
       # A `.git` row reaches THIS scope only as a file — a `gitdir:` pointer, since flat mode
@@ -242,6 +245,22 @@ class FilesController < ApplicationController
     else
       @folder = current_folder
       @crumbs = folder_crumbs(@folder)
+      # WHO, IF ANYONE, ALREADY CLAIMS THIS FOLDER (stage 4, S4-6). ONE query, constant in N, and
+      # only on the folder view — the flat view is a question about the library and has no folder
+      # to adopt. It buys two things at once: the menu offers "Open project X" instead of a verb
+      # that would 302 straight back with "already a project", and the same row names the project
+      # in that refusal if a stale page posts anyway.
+      #
+      # UNSCOPED ON STATUS, like every other reader of this claim (Maker::ProjectDiscovery#adoptable,
+      # Maker::ModelIntake.claimed_folders): an ARCHIVED project still owns its folder, and a page
+      # that pretended otherwise would offer to make a second project for it.
+      #
+      # THE COST IS NAMED RATHER THAN WAVED AT: this is the app's busiest page (§12.8 tracks its
+      # render cost), and `folder_node_id` carries no index — but the scan is over the user's own
+      # projects, of which the measured real library has nine. page_query_budget_test.rb's folder
+      # view asserts constancy in N and now actually visits a folder, so a per-row version of this
+      # could not hide.
+      @folder_project = @folder && current_user.maker_projects.find_by(folder_node_id: @folder.node_id)
       # `.outside_repo_metadata` here for the same reason it is on the flat scope above, and on
       # the scope rather than the orders below so @child_count paginates what is actually shown.
       scope = current_user.nodes.present.where(parent_node_id: @folder&.node_id)

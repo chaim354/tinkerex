@@ -63,6 +63,20 @@ class ProjectsController < ApplicationController
   end
 
   def show
+    # FIRST OPEN (stage 4, S4-6; stories 1.1 and 4.4). Stamped once, here, because this action is
+    # already scoped to `current_user.maker_projects` — the owner is the only person who can reach
+    # it, so there is no "whose view was this" to ask. Paired with `discovered_at`, it is the "New"
+    # badge: the app made this and I have not looked at it yet.
+    #
+    # `update_column`: no validation, no callback, and NO `updated_at` BUMP — deliberately. Both
+    # projects#index and Home order by `updated_at`, so bumping it would make merely OPENING a
+    # project reorder every list, which is a change nobody asked for wearing a feature.
+    #
+    # A WRITE ON A GET, and an established one here: ensure_library_folder! below already writes
+    # folder_node_id on this same render, and ThumbnailMap backfills. It runs at most once per
+    # project ever, and page_query_budget_test.rb's warm-up render absorbs it.
+    @project.update_column(:opened_at, Time.current) if @project.opened_at.nil?
+
     # A FILE DELETED FROM THE LIBRARY LEAVES THE PROJECT, IMMEDIATELY. It used to sit here forever
     # as a "⚠️ (file unavailable)" tile with a per-file Remove button: `Library::Reconciler`
     # TOMBSTONES rather than destroys (deliberately — it is what makes a NAS reorganisation
@@ -132,8 +146,12 @@ class ProjectsController < ApplicationController
     # deleted is recreated); nil → uploads fall back to the library root rather than 500 the page.
     # AND IT RUNS BEFORE THE LISTING BELOW, which reads the folder_node_id this (re)writes —
     # looking at a folder must never be what mints it (docs/invariants/project-intake.md).
+    # `&.` BECAUSE nil IS AN ANSWER NOW (decision 2, stage 4, S4-6): a project whose folder is in
+    # the trash gets nil here, on purpose, and the rescue below is for PORT failures — found in
+    # review: without the safe navigation the routine case rode through that rescue, which would
+    # have gone on swallowing any real NoMethodError in this block.
     @upload_parent_node_id = begin
-      @project.ensure_library_folder!(current_user).node_id
+      @project.ensure_library_folder!(current_user)&.node_id
     rescue StandardError
       nil
     end
@@ -330,8 +348,9 @@ class ProjectsController < ApplicationController
   def create
     @project = current_user.maker_projects.new(project_params)
     if @project.save
-      ensure_project_folder(@project)
-      redirect_to project_path(@project), notice: "Project created."
+      failure = ensure_project_folder(@project)
+      make_current(@project) if params[:project][:make_current] == "1"
+      redirect_to project_path(@project), notice: created_notice(@project, failure)
     else
       render :new, status: :unprocessable_entity
     end
@@ -358,9 +377,24 @@ class ProjectsController < ApplicationController
 
   # Soft archive — the model's lifecycle op (keeps the record + its history). Hard delete is a
   # deliberately deferred secondary affordance.
+  #
+  # "NOT A PROJECT" AND "ARCHIVE" ARE ONE WRITE AND TWO SENTENCES (stage 4, S4-6; story 1.6).
+  # Archiving IS the dismissal mechanism — the claim lookup in Maker::ProjectDiscovery#adoptable is
+  # unscoped, so an archived project keeps folder_node_id and the sweep passes over its folder
+  # forever (docs/invariants/project-intake.md). That was true and undocumented; the maker had to
+  # discover that "Archive" also meant "stop offering me this folder". A SECOND ROUTE performing
+  # the same write would be the drift this codebase refuses, so `dismiss` changes the FLASH and
+  # nothing else — the write is identical by construction, not by two callers agreeing.
   def destroy
+    dismissing = params[:dismiss] == "1"
     @project.archive!
-    redirect_to projects_path, notice: "Archived #{@project.name}."
+    notice = if dismissing
+      "“#{@project.name}” is not a project. Its folder stays in your library, and the app " \
+      "won't adopt it again."
+    else
+      "Archived #{@project.name}."
+    end
+    redirect_to projects_path, notice:
   end
 
   # The inverse of #destroy (which archives). Redirects to the live list, where the project has
@@ -431,10 +465,43 @@ class ProjectsController < ApplicationController
   # Best-effort: a project MUST save even if the library backend can't make its folder right now
   # (unmounted NAS, bucket blip). The folder is re-ensured on the next upload. Never fail creation
   # on a folder hiccup — hence the broad rescue.
+  #
+  # IT RETURNS THE FAILURE NOW RATHER THAN SWALLOWING IT (stage 4, S4-6; story 1.2). "Project
+  # created." over a folder that was never made is the one flash a maker cannot act on: the next
+  # save from LightBurn goes to a directory that does not exist, and the only record was a log
+  # line. The CLASS NAME is what the sentence carries, because FileLayer::FetchError (try again)
+  # and FileLayer::UnsupportedOperation (never succeeds on retry) are different problems.
   def ensure_project_folder(project)
     project.ensure_library_folder!(current_user)
+    nil
   rescue StandardError => e
     Rails.logger.warn("[projects] folder ensure failed for #{project.slug}: #{e.class} #{e.message}")
+    e.class.name
+  end
+
+  # THE FOLDER IS NAMED FROM THE SLUG, NOT LOOKED UP — and that is exact rather than approximate
+  # HERE and only here: #create always reaches ensure_library_folder!'s minting branch (a brand-new
+  # project has no folder_node_id), and that branch builds [ROOT, slug] literally. A project ADOPTED
+  # in place never comes through this action, so no sentence built here can name the wrong path.
+  def created_notice(project, failure)
+    lead = if failure
+      "Project created, but its folder could not be made (#{failure}). It will be retried the " \
+      "next time you upload."
+    else
+      "Project created. Its folder is #{Maker::ProjectFolders::ROOT}/#{project.slug}."
+    end
+    return lead unless session[:current_project_id] == project.id
+    # A CURRENT PROJECT WITH NO FOLDER CANNOT PROMISE "uploads land there" — they fall back to the
+    # library root until the folder exists (Projects::UploadsController#upload_parent). Found in
+    # review: ticking "make current" on a create whose mkdir failed read the failure sentence and
+    # then the promise, in one flash.
+    return "#{lead} It is your current project; until its folder exists, uploads go to the library root." if failure
+
+    "#{lead} #{current_project_notice(project)}"
+  end
+
+  def make_current(project)
+    session[:current_project_id] = project.id
   end
 
   # `cover_clear` is the form's way back to the automatic pick — see `_form.html.erb`. It is NOT a
@@ -456,6 +523,11 @@ class ProjectsController < ApplicationController
     attrs = params.require(:project).permit(:name, :description, :status, :cover_node_id, :tag_list,
                                             :visibility, :license, :autofile)
     attrs[:cover_node_id] = nil if params[:project][:cover_clear] == "1"
+    # ARCHIVING IS A BUTTON, NOT A FORM VALUE (stage 4, S4-6). #archive! also stamps archived_at,
+    # and the form's own select never offers `archived` — so a hand-posted one would set the column
+    # WITHOUT the timestamp, leaving a row in the archived list that #unarchive cannot reason about.
+    # Stripped rather than un-permitted, because the other four values are legitimate.
+    attrs.delete(:status) if attrs[:status] == "archived"
     attrs
   end
 

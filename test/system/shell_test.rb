@@ -297,7 +297,16 @@ class ShellTest < ApplicationSystemTestCase
       # at 375px. Renaming either would leave both branches silently unrun.
       previewed = false
       opened_readme = false
-      [ root_path, files_path(view: "list"), files_path(view: "grid"), project_path(project),
+      # THE SAME GATE-ON-A-PATH ARGUMENT ONCE MORE (stage 4, S4-6). The Files page's overflow menu
+      # renders on the FOLDER view and nowhere else once `@folder` is what opens it, so a renamed
+      # helper or a fixture whose folder stopped resolving would leave this sweep measuring the
+      # flat view a third time and saying nothing about the menu at 375px.
+      visited_folder_view = false
+      [ root_path, files_path(view: "list"), files_path(view: "grid"),
+        # STAGE 4, S4-6: THE FOLDER VIEW, which the two `view:` entries above are not — they are the
+        # flat library, where `@folder` is nil and the overflow menu's project items never render.
+        files_path(folder: folder.node_id),
+        project_path(project),
         # STAGE 4, S4-4: the owner's preview, which is the one page in this sweep that renders the
         # PUBLIC page's partials inside the SIGNED-IN shell. Both halves are already swept
         # separately — the public page in the second loop below, the app shell everywhere in this
@@ -317,6 +326,16 @@ class ShellTest < ApplicationSystemTestCase
           click_button "View layer"
           assert_selector ".gerber-viewer[data-gerber-state='ready']"
           launched_gerber = true
+        end
+        if path == files_path(folder: folder.node_id)
+          # STAGE 4, S4-6: the folder view's own head, with the overflow menu the adopt door lives
+          # in. This folder IS a project's, so the menu offers "Open project “Desk Lamp”" rather
+          # than the verb — the arm that renders the LONGER label, and therefore the one worth
+          # measuring at 375px. `details.menu` is closed by default, so what is asserted is that its
+          # summary is reachable; the panel behind it is the same `.menu-list` every other page's
+          # overflow uses.
+          assert_selector ".page-actions details.menu summary.btn", visible: true
+          visited_folder_view = true
         end
         if path == preview_project_path(project)
           # THE BANNER IS THIS PAGE'S POSITIVE MARKER, the same argument the public loop below makes
@@ -370,6 +389,7 @@ class ShellTest < ApplicationSystemTestCase
       assert opened_repo, "the sweep never opened the repository section, so its overflow check measured an empty mount point"
       assert previewed, "the sweep never visited the preview, so its overflow check measured nothing"
       assert opened_readme, "the sweep never opened the README editor, so its overflow check measured a closed summary"
+      assert visited_folder_view, "the sweep never reached the Files folder view, so its overflow menu was never measured"
 
       # STAGE 3, S3-4: THE PUBLIC PAGES, IN THEIR OWN LOOP BECAUSE THEIR SHELL IS THE OTHER ONE.
       # The three assertions above are the SIGNED-IN shell's, and this session IS signed in — so

@@ -43,4 +43,42 @@ class CurrentProjectControllerTest < ActionDispatch::IntegrationTest
     patch current_project_path, params: { project_id: 1 }
     assert_redirected_to new_user_session_path
   end
+
+  # STORY 1.5 / 4.5: "a switch gives no confirmation". Every branch, because the branch that says
+  # nothing is the one a maker will hit and misread.
+  test "every switch says what it did" do
+    project = @user.maker_projects.create!(name: "Lamp")
+
+    patch current_project_path, params: { project_id: project.id }
+    assert_match(/Current project: Lamp — uploads and tool output land there\./, flash[:notice].to_s)
+
+    patch current_project_path, params: { project_id: "" }
+    assert_match(/No current project — uploads go to the library root\./, flash[:notice].to_s)
+
+    delete current_project_path
+    assert_match(/No current project/, flash[:notice].to_s)
+  end
+
+  # NOT A 500, NOT A SILENT CLEAR, AND NOT A DISCLOSURE. The session must survive untouched.
+  test "an id that resolves to nothing alerts and leaves the choice alone" do
+    mine = @user.maker_projects.create!(name: "Lamp")
+    patch current_project_path, params: { project_id: mine.id }
+
+    other = User.create!(email: "cp-x-#{SecureRandom.hex(4)}@example.com",
+                         password: PASSWORD, confirmed_at: Time.current)
+    foreign = other.maker_projects.create!(name: "Theirs")
+
+    patch current_project_path, params: { project_id: foreign.id }
+
+    assert_equal mine.id, session[:current_project_id], "a foreign id must not clear a real choice"
+    assert_match(/isn't available/i, flash[:alert].to_s)
+    refute_match(/Theirs/, flash[:alert].to_s + flash[:notice].to_s)
+  end
+
+  test "an archived project cannot become current and says so" do
+    archived = @user.maker_projects.create!(name: "Old Rig", status: "archived")
+    patch current_project_path, params: { project_id: archived.id }
+    assert_nil session[:current_project_id]
+    assert_match(/isn't available/i, flash[:alert].to_s)
+  end
 end

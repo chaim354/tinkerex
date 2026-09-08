@@ -91,6 +91,17 @@ module Web
       assert_select ".tag-chips a[href=?]", public_explore_path(tag: "lamp"), text: "lamp"
     end
 
+    # THE SAME BADGE RULE AS THE MAKER'S PAGE (stage 4, S4-6, found in review): `planning` is the
+    # default and is not badged; a status the maker set is.
+    test "the byline badges a set status and not the planning default" do
+      get path
+      assert_select ".public-byline .badge[class*=status-]", count: 0
+
+      @project.update_column(:status, "active")
+      get path
+      assert_select ".public-byline .badge.status-active", text: "Active"
+    end
+
     test "the page is read-only: no private links, no form and no button anywhere in main" do
       get path
 

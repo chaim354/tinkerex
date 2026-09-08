@@ -624,11 +624,21 @@ module Web
                               "models#show")
     end
 
+    # A REAL FOLDER, NOT THE ROOT. This test has always been named for the folder view and has
+    # always measured the root, where `@folder` is nil — so the folder branch's own reads (the
+    # breadcrumb walk, and since S4-6 the project-claim lookup) were never under measurement at
+    # all. The root's flat branch is still covered by "files#index does not grow with the number of
+    # addon-produced files" below.
     test "files#index folder view does not grow with the number of nodes" do
+      folder = @user.nodes.create!(node_id: "budget-dir", name: "cad", kind: "dir",
+                                   mtime: 1, size: 0)
       add = lambda do |prefix, count|
-        count.times { |i| node!("#{prefix}#{i}", "#{prefix}#{i}.stl") }
+        count.times do |i|
+          node!("#{prefix}#{i}", "#{prefix}#{i}.stl")
+          @user.nodes.find_by!(node_id: "#{prefix}#{i}").update!(parent_node_id: folder.node_id)
+        end
       end
-      assert_constant_queries(files_path,
+      assert_constant_queries(files_path(folder: folder.node_id),
                               -> { add.call("fs", SMALL) },
                               -> { add.call("fl", LARGE - SMALL) },
                               "files#index (folder)")

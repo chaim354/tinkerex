@@ -168,6 +168,14 @@
     font: 600 11px/1.6 var(--font-ui); background: var(--raised); color: var(--fg-muted); text-transform: capitalize;
   }
   .badge.status-archived { background: var(--raised); color: var(--fg-muted); }
+  /* --- Project status and the new-project mark (stage 4, S4-6). Variants of `.badge`, so they
+     live HERE and nowhere else: a component selector is defined in components.css alone
+     (design-system rule 3), and `pages/projects.css` may qualify one inside a container but never
+     redeclare it. `planning` has no rule because it is the default and is never badged. --- */
+  .badge.status-active { background: var(--accent-soft); color: var(--accent); }
+  .badge.status-paused { background: var(--raised); color: var(--fg-muted); }
+  .badge.status-done { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+  .badge.project-new { background: var(--accent-soft); color: var(--accent); text-transform: none; }
   .badge.mstatus-want_to_print { background: var(--accent-soft); color: var(--accent); }
   .badge.mstatus-printed { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
   .badge.mstatus-failed { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }

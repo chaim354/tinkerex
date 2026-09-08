@@ -90,16 +90,50 @@ module Projects
     # The journey test that pins a plain read as NOT seeing a server-side node is untouched.
     def pull_and_file
       FileLayer::RemoteChangelogPullJob.perform_now(user_id: current_user.id)
+      # DISCOVERY BETWEEN THE PULL AND THE FILE (stage 4, S4-6; story 1.1). The pull is what makes
+      # a folder another device pushed visible at all; discovery must run BEFORE the intake for the
+      # reason Library::ScanJob#discover_projects gives at length — a newly adopted project's loose
+      # files have no shelf nearer than `Projects` itself, so the wrong order hands the whole folder
+      # to the model catalog, permanently.
+      #
+      # THE JOB, NOT Maker::ProjectDiscovery — the idiom Library::ScanJob already uses, and for the
+      # same two reasons: the job is the only place a run is LOGGED, and #chain_intake is what
+      # sweeps a project this call has just created (`.for_project` below sweeps THIS project only).
+      # `perform_now` creates no job row, so ProjectDiscoveryJob's `limits_concurrency` does not
+      # engage here — the same gap that job's own header records for Library::ScanJob's call. What
+      # bounds it here is this controller's `rate_limit to: 3, within: 1.minute, by: user`. A
+      # partial unique index on (user_id, folder_node_id) is the durable fix and is open work.
+      #
+      # EAGER_MAX_PROJECTS, NOT THE SWEEP'S CAP: this is a sweep inside a request, the entry point
+      # Maker::ProjectDiscovery's cap comment said would owe a second cap (found in review — it
+      # shipped without one). A capped run tells the maker "N of M; the rest on the next scan".
+      run = Maker::ProjectDiscoveryJob.perform_now(user_id: current_user.id,
+                                                   cap: Maker::ProjectDiscovery::EAGER_MAX_PROJECTS)
       result = Maker::ProjectIntake.for_project(user: current_user, project: @project)
-      redirect_to project_path(@project), notice: scan_notice(result)
+      redirect_to project_path(@project), notice: scan_notice(result, run)
     end
+
+    # How many created folders the flash will NAME before it starts counting. MAX_PROJECTS is 50,
+    # and a flash listing fifty folder names is not a sentence.
+    SCAN_NAMES_SHOWN = 3
 
     # The lead-in is this door's own; everything after it belongs to ProjectFolderIntake, so the
     # four doors cannot drift about how they phrase one collision. NO TRAILING PUNCTUATION on the
     # lead — the conflict form turns the period into a comma.
-    def scan_notice(result)
-      return "Scanned your library. #{@project.name} has no folder yet, so nothing was filed." if
-        result.status == :no_folder
+    #
+    # THE DISCOVERY SENTENCE IS APPENDED, NOT WOVEN IN (stage 4, S4-6): what the intake did to THIS
+    # project and what discovery did to the LIBRARY are two facts, and joining them into one clause
+    # would make either one unreadable when the other is absent.
+    def scan_notice(result, run)
+      # DISCOVERY IS REPORTED ON EVERY BRANCH, THE NO-FOLDER ONE INCLUDED (found in review): the
+      # early return below is about THIS project's folder, and discovery ran over the whole library
+      # regardless — with decision 2 making a trashed folder the mainline, a maker whose project had
+      # no folder was the one most likely to have just had ten projects created and told nothing.
+      discovery = discovery_sentence(run)
+      if result.status == :no_folder
+        return [ "Scanned your library. #{@project.name} has no folder yet, so nothing was filed.",
+                 discovery ].compact.join(" ")
+      end
 
       # THE LEAD NO LONGER COUNTS WHAT WAS FILED — ProjectFolderIntake#project_intake_sentence says
       # it now, with the FOLDERS, which is strictly more than a number. Two doors saying the same
@@ -109,7 +143,35 @@ module Projects
       else
         "Scanned your library — attached #{result.attached}"
       end
-      project_intake_sentence(lead, result, unfiled_by_conflict(result, result.skips.map(&:first)))
+      [ project_intake_sentence(lead, result, unfiled_by_conflict(result, result.skips.map(&:first))),
+        discovery_sentence(run) ].compact.join(" ")
+    end
+
+    # WHAT DISCOVERY CREATED, BY NAME (stage 4, S4-6; story 1.1). Discovery reported to the log and
+    # nowhere else — a folder became a project and the only witness was a log line the maker never
+    # reads. NIL WHEN IT CREATED NOTHING, because "already claimed" is the steady state and a
+    # sentence on every click meaning nothing happened is noise, which is the argument
+    # Maker::ProjectDiscovery::RunResult's own header makes for having no skips breakdown at all.
+    #
+    # `respond_to?` RATHER THAN A NIL CHECK: the value comes back from ActiveJob's `perform_now`,
+    # which answers whatever #perform returned — nil if a callback ever halts the job — so this
+    # asks what it can do rather than assuming what it is.
+    #
+    # A CAPPED RUN SAYS SO IN THE SAME SENTENCE (orchestrator decision 4). `created` alone reads as
+    # "that was all of them", and a maker would go looking for the folders the cap deferred
+    # believing the app had refused them. `candidates` and `cap` were already on the RunResult for
+    # exactly this.
+    def discovery_sentence(run)
+      return nil unless run.respond_to?(:created) && run.created.positive?
+
+      shown = run.names.first(SCAN_NAMES_SHOWN)
+      rest  = run.names.size - shown.size
+      tail  = rest.positive? ? "#{shown.join(", ")} and #{rest} more" : shown.to_sentence
+      found = "Found #{run.created} new #{"project".pluralize(run.created)}: #{tail}."
+      return found unless run.status == :capped
+
+      "#{found} That is #{run.created} of #{run.candidates} folders under " \
+      "#{Maker::ProjectFolders::ROOT}/; the rest on the next scan."
     end
   end
 end
