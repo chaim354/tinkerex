@@ -36,7 +36,7 @@ viewer controllers (S4-5). No new gem. No new JS dependency.
 | S4-3 | `2026-09-07-stage-4-s3-round-trip.md` | path + copy, self-refreshing file page, Save-to-library, honest Rescan | — | **landed** 2026-09-07, PR #336 |
 | S4-4 | `2026-09-07-stage-4-s4-documentation.md` | README editor for any project (D3, the README door only), owner preview, publish panel, namespaced anchors | D3; S4-1's README card | **landed** 2026-09-07, PR #337 |
 | S4-5 | `2026-09-07-stage-4-s5-public-viewers.md` | public file page with the eight shared viewer partials (D5), covers on `/u/:handle`, hero, public header | D5 | **landed** 2026-09-07, PR #338 |
-| S4-6 | `2026-09-07-stage-4-s6-adopt-anywhere.md` | adopt in place (D1), status, make-current, New badge, Not-a-project, switch confirmations | D1 | **in progress** 2026-09-07; moderate: a folder outside `Projects/` as `folder_node_id` |
+| S4-6 | `2026-09-07-stage-4-s6-adopt-anywhere.md` | adopt in place (D1), status, make-current, New badge, Not-a-project, switch confirmations | D1 | **landed** 2026-09-07, PR #339 |
 | S4-7 | `…-s7-kinds.md` (to write) | `kind` + presets, per-project panel overrides | D4; S4-1's quiet panels | moderate: the panel list becomes data |
 | S4-8 | `…-s8-connections.md` (to write) | `maker_file_links`, lineage on file pages, search over notes/README | S4-3's Save-to-library (a writer of links) | moderate: new table, needs the four derived guards (see below) |
 
@@ -49,8 +49,9 @@ build the loop over panels that still shout when empty, then rebuild it.
 Files. **S4-8 after S4-3**, because Save-to-library is the first automatic writer of a
 `derived_from` link and the table should land with a writer, not before one.
 
-S4-2, S4-3, S4-5 and S4-6 are independent of each other and of S4-1; they may run in any order or
-in parallel worktrees, subject to one full-suite run at a time.
+S4-2, S4-3 and S4-5 are independent of each other and of S4-1; **S4-6 depends on S4-2** (adoption
+creates its project with `autofile: false`, S4-2's column — its plan's amendment 1). Otherwise they
+may run in any order or in parallel worktrees, subject to one full-suite run at a time.
 
 ---
 
@@ -101,6 +102,12 @@ state decides how an **empty rendered** panel looks. They must stay two question
 `Maker::FilingRule::KEY_RE = /\A[a-z0-9_]{1,12}\z/` — the rule table's own key rule, wider than
 `FilesController::EXT_RE` on purpose so `kicad_sch`/`kicad_pcb` can carry a rule. `ROLE_BY_EXT`
 keeps `EXT_RE`; `files-preview.md` records why the two differ.
+
+### `Maker::ProjectDiscovery.adoptable_name?(name)` (S4-6 creates; the sweep and the adoption door share it)
+
+The ONE rule for which folder names may become a project — the sweep's and the adoption door's. A second
+spelling of it is how the two doors drift; S4-7 or anything else that mints a project from a folder name
+asks it rather than re-deriving it.
 
 ### `Maker::FileLink` (S4-8 creates)
 
