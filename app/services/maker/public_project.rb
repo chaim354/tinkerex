@@ -416,6 +416,23 @@ module Maker
                                                                  **link_params)
     end
 
+    # A DERIVED ASSET'S URL — the thumbnail by default, or the Measure payload — beside the byte and
+    # view URLs above (hardening, 2026-09-08; tinkerex#278). It names Public::FilesController#preview,
+    # which asks `deliverable!` and then redirects to a service URL that expires, so the picture of a
+    # file dies with the project's publication instead of outliving it the way `url_for(asset)` did.
+    # Same link_params, same reason as its two siblings.
+    def preview_url_for(node_id, kind: "thumbnail")
+      Rails.application.routes.url_helpers.public_file_preview_path(handle, project.slug, node_id, kind,
+                                                                    **link_params)
+    end
+
+    # WHETHER ONE PANEL HAS A PUBLIC FACE ON THIS PROJECT (hardening, 2026-09-08; tinkerex#283) — the
+    # same layout `visible_panels` renders from, asked one key at a time by the documents that ride
+    # beside the page: the feed (build_log, releases), the bundle manifest (attachments, bom) and the
+    # BOM CSV (bom). A panel the maker hid is hidden from those too, or it is one click away from the
+    # page that hides it.
+    def panel_visible?(key) = project.panel_layout.visible?(key.to_s)
+
     # ONE LAYER'S FETCH URL FOR A .gbrjob's BOARD, filtered by THIS project's permission (stage 4,
     # S4-5). The sibling walk itself is FilePreview's, shared with the maker's own page; what is
     # public here is only the URL builder, which answers nil for a sibling the project does not
