@@ -156,6 +156,21 @@ module Web
       # three kinds added every iteration (9 lines at SMALL=3, already past PANEL_CAP=8), a
       # deliberately reintroduced per-row node lookup in the view stayed GREEN here.
       bom = project.boms.create!(user: @user)
+      # STAGE 5, THE FOLDER PANELS (2026-09-08): ONE FOLDER HELD AT THE `list` VIEW, whose ROWS grow
+      # with N below. The three views are three different bodies — `browser` is one empty div,
+      # `tiles` is a cell per file, `list` is projects/_file_rows — and only a stored override
+      # reaches the third, because a plain folder defaults to tiles and a repository to the browser
+      # (Maker::ProjectKind.default_view). Without this panel `_file_rows` renders on this page in
+      # no view at all and a per-row lookup inside it would be invisible here. ONE folder growing in
+      # FILES rather than one per iteration: what a row partial can cost is per ROW, and the number
+      # of list PANELS is already covered by the tiles ones below.
+      #
+      # `views` HIDES NOTHING, so the hidden-panel budget below is untouched by it: layout_for reads
+      # `order` and `hidden` off the overrides and this sets neither.
+      listed = @user.nodes.create!(node_id: "listed-dir", name: "listed", kind: "dir",
+                                   parent_node_id: folder.node_id, size: 0,
+                                   mtime: 1_700_000_000_000_000_000)
+      project.update!(panels: { "views" => { "folder:listed-dir" => "list" } })
       add = lambda do |prefix, count|
         count.times do |i|
           id = "#{prefix}#{i}"
@@ -195,6 +210,32 @@ module Web
           @user.nodes.create!(node_id: "#{id}-loose", name: "#{id}-loose.txt", kind: "file",
                               parent_node_id: folder.node_id, size: 1, mtime: 1_700_000_000_000_000_000,
                               content_hash: "h-#{id}-loose", current_version_id: "v-#{id}-loose")
+          # STAGE 5, THE FOLDER PANELS (2026-09-08): A PLAIN DEPTH-ONE FOLDER PER ITERATION, AND IT
+          # IS WHAT MAKES N THE NUMBER OF PANELS ON THIS PAGE. `sub` above carries a `.git` marker,
+          # so every panel IT grows opens in the BROWSER — one empty div, no tiles, no rows, no
+          # nested section — and a per-folder query in projects/_folder_panel would grow with it
+          # while every branch below the panel head stayed unmeasured. This folder is plain: it
+          # opens in TILES, draws a cell per file through projects/_file_tile, and recurses into its
+          # own nested subfolder through projects/_file_tree_section. TWO FILES rather than one, so
+          # a per-tile lookup is a cost that differs from a per-panel one.
+          plain = @user.nodes.create!(node_id: "#{id}-plain", name: "plain-#{id}", kind: "dir",
+                                      parent_node_id: folder.node_id, size: 0,
+                                      mtime: 1_700_000_000_000_000_000)
+          2.times do |j|
+            @user.nodes.create!(node_id: "#{id}-plain-#{j}", name: "#{id}-plain-#{j}.stl", kind: "file",
+                                parent_node_id: plain.node_id, size: 1, mtime: 1_700_000_000_000_000_000,
+                                content_hash: "h-#{id}-plain-#{j}", current_version_id: "v-#{id}-plain-#{j}")
+          end
+          plain_sub = @user.nodes.create!(node_id: "#{id}-plain-sub", name: "rev", kind: "dir",
+                                          parent_node_id: plain.node_id, size: 0,
+                                          mtime: 1_700_000_000_000_000_000)
+          @user.nodes.create!(node_id: "#{id}-plain-nested", name: "#{id}-nested.stl", kind: "file",
+                              parent_node_id: plain_sub.node_id, size: 1, mtime: 1_700_000_000_000_000_000,
+                              content_hash: "h-#{id}-nested", current_version_id: "v-#{id}-nested")
+          # ONE MORE ROW IN THE `list` PANEL created before this lambda — see its comment.
+          @user.nodes.create!(node_id: "#{id}-listed", name: "#{id}-listed.stl", kind: "file",
+                              parent_node_id: listed.node_id, size: 1, mtime: 1_700_000_000_000_000_000,
+                              content_hash: "h-#{id}-listed", current_version_id: "v-#{id}-listed")
           # THE LINKED CASE: an attachment to a node OUTSIDE the folder, growing @linked_rows.
           node!(id, "#{id}.stl")
           project.file_attachments.create!(user: @user, node_id: id, role: "model")
@@ -419,6 +460,30 @@ module Web
           # holds a subfolder of them — a shape the tree section renders and must not query per row.
           @user.nodes.create!(node_id: "#{id}-gtl", name: "#{id}.gtl", kind: "file",
                               parent_node_id: sub.node_id, size: 1, mtime: 1_700_000_000_000_000_000)
+          # STAGE 5, THE FOLDER PANELS (2026-09-08): A PLAIN DEPTH-ONE FOLDER PER ITERATION, so N is
+          # the number of PANELS on the visitor's page too, and BOTH arms of
+          # public/projects/_folder_panel are under measurement. `sub` above is a repository, whose
+          # view is `browser` — which a visitor reads as the LIST table (spec decision 7) — so the
+          # repo folders grow the list arm and these grow the TILES arm, a `files/_thumb` cell per
+          # file through `pub.thumbs`. Each cell asks that memoised ThumbnailMap and `permits?`,
+          # which are exactly the two places a per-row query hides on this page.
+          plain = @user.nodes.create!(node_id: "#{id}-plain", name: "plain-#{id}", kind: "dir",
+                                      parent_node_id: folder.node_id, size: 0,
+                                      mtime: 1_700_000_000_000_000_000)
+          2.times do |j|
+            @user.nodes.create!(node_id: "#{id}-plain-#{j}", name: "#{id}-plain-#{j}.stl", kind: "file",
+                                parent_node_id: plain.node_id, size: 1, mtime: 1_700_000_000_000_000_000,
+                                content_hash: "h-#{id}-plain-#{j}", current_version_id: "v-#{id}-plain-#{j}")
+          end
+          # NESTED, because a folder panel renders its subfolders as sub-headings inside itself
+          # (`pub.folder_sections`' walk) rather than as panels of their own — a walk that grows
+          # with N and must cost no query per level.
+          plain_sub = @user.nodes.create!(node_id: "#{id}-plain-sub", name: "rev", kind: "dir",
+                                          parent_node_id: plain.node_id, size: 0,
+                                          mtime: 1_700_000_000_000_000_000)
+          @user.nodes.create!(node_id: "#{id}-plain-nested", name: "#{id}-nested.stl", kind: "file",
+                              parent_node_id: plain_sub.node_id, size: 1, mtime: 1_700_000_000_000_000_000,
+                              content_hash: "h-#{id}-nested", current_version_id: "v-#{id}-nested")
           # AN IMAGE IN THE FOLDER AND ANOTHER OUTSIDE IT, ATTACHED TO AN ENTRY: the photos panel
           # unions the two, and only the second reaches `page_nodes` -- the map every entry photo and
           # every BOM file target is resolved through, in one query for the page rather than one per

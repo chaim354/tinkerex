@@ -250,6 +250,12 @@ class ShellTest < ApplicationSystemTestCase
     # narrow rule (`.filechooser-col { flex-basis: 100% }` plus hiding all but the last column) is
     # what keeps a three-deep trail from being 600px of columns on a phone. ROWS ONLY — the browser
     # reads `nodes` and fetches no bytes, so nothing here needs the port.
+    #
+    # 2026-09-08: IT IS A PANEL NOW, WHICH IS WHY THE LOOP BELOW CLICKS NOTHING TO REACH IT. A
+    # DEPTH-ONE subfolder of the project folder is its own `section.folder-panel`, and a repository
+    # at depth one defaults to the browser view — so the columns are laid out at 375px on arrival,
+    # where they used to need a <details> opened first. `pcb` above is the other one: two folder
+    # panels sit on this page, which is also what puts two folder ROWS in the chooser the loop opens.
     repo_dir = @user.nodes.create!(node_id: SecureRandom.uuid, name: "firmware", kind: "dir",
                                    parent_node_id: folder.node_id)
     @user.nodes.create!(node_id: SecureRandom.uuid, name: Library::RepoMetadata::DIR_NAME,
@@ -327,10 +333,14 @@ class ShellTest < ApplicationSystemTestCase
       # on it to overflow, and nothing here would say so. The flag is what makes the branch's
       # absence a failure rather than a quieter test (§15).
       launched_gerber = false
-      # THE SAME GATE-ON-A-PATH ARGUMENT AS THE GERBER LEG ABOVE, and the same answer: opening the
-      # repo section is what mounts the browser at all (it is closed by default and mounts lazily),
-      # so a renamed summary would leave this sweep measuring an EMPTY div and nothing would say so.
-      opened_repo = false
+      # THE SAME GATE-ON-A-PATH ARGUMENT AS THE GERBER LEG ABOVE, and the same answer — but what the
+      # flag now guards is a MOUNT rather than a click (2026-09-08, folder panels). The repository is
+      # a depth-one folder panel and its browser mounts on connect, so there is no summary to open;
+      # the columns are still built in JS after a fetch, so a browser that failed to mount would
+      # still leave this sweep measuring an EMPTY div. It did exactly that when the panels landed —
+      # `filebrowser_controller.js` waited on an enclosing <details> that a panel does not have — and
+      # repo_browser_test.rb is where that is pinned in full.
+      saw_repo_columns = false
       # THE SAME GATE-ON-A-PATH ARGUMENT AS THE TWO ABOVE, twice more. The preview is reached only
       # by its own path match, and the README editor is a <details> that mounts CodeMirror only when
       # OPENED — an unopened one measures a closed summary and says nothing about the editor's width
@@ -347,6 +357,10 @@ class ShellTest < ApplicationSystemTestCase
       # helper or a fixture whose folder stopped resolving would leave this sweep measuring the
       # flat view a third time and saying nothing about the menu at 375px.
       visited_folder_view = false
+      # 2026-09-08: THE FOLDER PANELS, THE SAME GATE-ON-A-PATH ARGUMENT ONCE MORE. A fixture whose
+      # subfolders stopped resolving would leave this sweep measuring a project page with no folder
+      # panel on it and reporting nothing.
+      saw_folder_panels = false
       # STAGE 4, S4-8: THE SAME GATE-ON-A-PATH ARGUMENT AGAIN, TWICE. The plan for this slice
       # proposed these two as bare `if`s "because the paths are literals in the same list" — so
       # are the folder view and the preview above, and both carry a flag for the reason this file
@@ -399,11 +413,21 @@ class ShellTest < ApplicationSystemTestCase
           previewed = true
         end
         if path == project_path(project)
-          # `/firmware/i` because `.attachment-group-head` is `text-transform: uppercase` and
-          # Selenium reports RENDERED text (repo_browser_test.rb records the same).
-          find("summary", text: /firmware/i).click
-          assert_selector ".filechooser--inline .filechooser-col", count: 1
-          opened_repo = true
+          # STAGE 5, THE FOLDER PANELS (2026-09-08): every DEPTH-ONE subfolder of the project folder
+          # is its own `section.folder-panel` on this page — `firmware` and `pcb` here — each with a
+          # heading, a path link, a count and a three-button view toggle in its head. That head is
+          # the widest row a folder panel asks a 375px viewport to lay out, and it is new markup no
+          # other page in this sweep carries, so its absence must be a failure rather than a quieter
+          # test. `minimum: 2` rather than a literal for the reason `count:` is derived below: the
+          # number of panels is the number of folders this fixture happens to hold.
+          assert_selector "section.folder-panel", minimum: 2
+          assert_selector "section.folder-panel .panel-head .view-toggle .toggle", minimum: 3
+          saw_folder_panels = true
+          # THE BROWSER MOUNTS WITH NO CLICK, because the repository is one of those panels and its
+          # default view is `browser`. Waiting for the column is what makes the overflow measurement
+          # below measure the columns rather than an empty mount point.
+          assert_selector ".folder-panel .filechooser--inline .filechooser-col", count: 1
+          saw_repo_columns = true
           # STAGE 4, S4-1: the hero and the Photos panel are ON this page, or the overflow check above
           # measured the no-cover and no-photos branches and said nothing about the two new layouts.
           assert_selector ".project-hero img.project-hero-img"
@@ -444,8 +468,15 @@ class ShellTest < ApplicationSystemTestCase
           # before the row can push anything out. So the wrap buys the label and the arrows a
           # SECOND LINE on a narrower phone or a longer label, not overflow safety here. What this
           # branch does cover is that the subtree is laid out at all rather than measured collapsed.
+          #
+          # THE COUNT IS THE FIXED PANELS PLUS THIS PROJECT'S FOLDERS since 2026-09-08: a depth-one
+          # subfolder is a first-class row in the chooser, with the same checkbox and the same two
+          # arrows, labelled with the folder's own name. Derived from both halves rather than
+          # written as twelve — a literal would pin today's panel count AND today's fixture.
           find("details.panel-chooser > summary").click
-          assert_selector "li.panel-choice", count: Maker::Project::PANELS.size
+          folder_rows = @user.nodes.where(parent_node_id: folder.node_id, kind: "dir").count
+          assert_operator folder_rows, :>=, 2, "the chooser's folder rows need folders to list"
+          assert_selector "li.panel-choice", count: Maker::Project::PANELS.size + folder_rows
           assert_selector "li.panel-choice input[type=checkbox]", minimum: 1
           assert_selector "li.panel-choice .panel-choice-moves form", minimum: 2
           assert_selector ".panel-chooser-actions input[type=submit][value='Save panels']"
@@ -480,7 +511,8 @@ class ShellTest < ApplicationSystemTestCase
         no_sideways_scroll.call(path)
       end
       assert launched_gerber, "the sweep never launched the Gerber viewer, so its overflow check measured a poster"
-      assert opened_repo, "the sweep never opened the repository section, so its overflow check measured an empty mount point"
+      assert saw_folder_panels, "the sweep never reached a folder panel, so its head and view toggle were never laid out at 375px"
+      assert saw_repo_columns, "the repository panel's browser never mounted, so its overflow check measured an empty mount point"
       assert previewed, "the sweep never visited the preview, so its overflow check measured nothing"
       assert opened_readme, "the sweep never opened the README editor, so its overflow check measured a closed summary"
       assert opened_panels, "the sweep never opened the panel chooser, so its overflow check measured a closed <details>"
