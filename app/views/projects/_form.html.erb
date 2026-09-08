@@ -47,6 +47,30 @@
     <span class="field-hint muted">Comma-separated</span>
   </label>
 
+  <%#
+    THE PROJECT'S TYPE (stage 4, S4-7; decision D4; story 6.5). Suggested from the folder when the
+    app created the project and changeable here — the ONE place it changes after creation, because
+    nothing re-derives it (a sweep that re-suggested would silently rearrange a page the maker may
+    have arranged themselves, and nothing could tell the two apart).
+
+    IT PRESETS, IT DOES NOT OVERWRITE: an explicit show/hide/reorder is stored separately in
+    `panels` and keeps winning, so changing the type here rearranges only the panels the maker has
+    not spoken about. The chooser at the foot of the project page is where those live.
+
+    `f.select` UNDER THE FORM'S `scope: :project` IS WHAT MAKES THE NAME `project[kind]`, which is
+    the key ProjectsController#project_params permits — a namespaced model would otherwise scope to
+    `maker_project[...]` and every save would silently drop the type (§14d). Asserted on the
+    RENDERED field name in projects_flow_test.rb, not through a nested-hash POST.
+  %>
+  <label class="field">
+    <span>Type</span>
+    <%= f.select :kind,
+                 options_for_select(Maker::Project::KINDS.map { |k| [ Maker::ProjectKind.label(k), k ] },
+                                    project.kind) %>
+    <span class="field-hint muted">Presets which panels this project's page shows, and which file
+      its hero prefers.</span>
+  </label>
+
   <%# VISIBILITY AND LICENCE MOVED TO THE PUBLISH PANEL (stage 4, S4-4), on the project page, where
       the three states can carry their meanings and a handle can be claimed inline. They are not
       duplicated here: one column with two controls is the shape §14a keeps recording, and

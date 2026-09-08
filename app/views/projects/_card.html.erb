@@ -29,6 +29,16 @@
   <% if project.discovered_at.present? && project.opened_at.nil? %>
     <span class="badge project-new">New</span>
   <% end %>
+  <%# THE KIND, WHERE THE PROJECT IS LISTED (stage 4, S4-7). A NON-DEFAULT kind only: `other` is
+      the column default, and badging a default is noise -- the same rule the New badge above and
+      S4-6's public status badge follow. Beside the New badge rather than inside the link_to, so
+      the tile's badges are one group and none of them is part of the card's own click target.
+      `.badge` is a component (design-system rule 3); `project-kind` is a qualifier, and
+      components.css is not touched. The label comes from Maker::ProjectKind, never `kind.humanize`
+      -- "Cnc" is not a word. %>
+  <% unless project.kind == Maker::ProjectKind::DEFAULT %>
+    <span class="badge project-kind"><%= Maker::ProjectKind.label(project.kind) %></span>
+  <% end %>
   <% if project.status == "archived" %>
     <%= button_to "Unarchive", unarchive_project_path(project), method: :patch, class: "linkbtn" %>
   <% end %>

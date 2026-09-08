@@ -119,28 +119,49 @@
   </div>
 <% end %>
 
-<%# EVERY PARTIAL BELOW IS NAMED WITH ITS FULL PATH, AND MUST STAY THAT WAY. A bare `render "photos"`
-    resolves against the CONTROLLER's prefixes, not this file's directory — under
-    Public::ProjectsController that is public/projects/_photos, but under ProjectsController#preview
-    it is projects/_photos, the maker's OWN panel with its composer, rendered into the preview with
-    nothing going red. `files` has no private twin and would raise; the other six would silently
-    render the wrong page. Qualified so both callers reach the same seven partials. %>
+<%#
+  THE PANELS, IN THE OWNER'S OWN ORDER (stage 4, S4-7; story 6.5). The visitor sees the page the
+  maker arranged: a panel they hid is hidden here too, and a panel they moved is moved here too --
+  one layout, read off the project through Maker::PublicProject#visible_panels, so the maker's page
+  and a visitor's cannot disagree about what is hidden.
+
+  THE MAP IS THE WHOLE DEFINITION OF "HAS A PUBLIC FACE". `tasks`, `sheets` and `publish` are
+  absent from it and are therefore absent from a visitor's page WHATEVER the order says, which is
+  exactly what they were before this loop existed -- there is no second list to keep in step, and a
+  maker who drags Tasks to the top does not publish their task list.
+
+  EVERY PARTIAL IS NAMED WITH ITS FULL PATH, AND MUST STAY THAT WAY -- including `repo_card` below.
+  A bare `render "photos"` resolves against the CONTROLLER's prefixes, not this file's directory:
+  under Public::ProjectsController that is public/projects/_photos, but under
+  ProjectsController#preview it is projects/_photos, the maker's OWN panel with its composer,
+  rendered into the preview with nothing going red. `files` has no private twin and would raise;
+  the others would silently render the wrong page.
+
+  WIRING IS THE ONE SPECIAL CASE and it is not new: the shared projects/_wiring partial is what the
+  visitor gets, with `editable: false`, and it has always been wrapped in a check for any
+  connections at all -- read-only, its empty state is a heading and nothing else, which is a panel
+  rather than the absence the rest of this page uses.
+
+  AN EMPTY PANEL IS STILL OMITTED. Each partial below decides that for itself, exactly as before:
+  the layout decides whether a panel is RENDERED, the partial decides whether it has anything to
+  render. Two questions, the same pair the private page keeps as hidden versus quiet.
+%>
+<% public_panels = { "attachments" => "public/projects/files",
+                     "photos"      => "public/projects/photos",
+                     "schematics"  => "public/projects/schematics",
+                     "build_log"   => "public/projects/build_log",
+                     "bom"         => "public/projects/bom",
+                     "releases"    => "public/projects/releases" } %>
 <div class="project-panels">
-  <%= render "public/projects/files", pub: pub %>
-  <%= render "public/projects/photos", pub: pub %>
-  <%= render "public/projects/build_log", pub: pub %>
-  <%= render "public/projects/bom", pub: pub %>
-  <%# The S3-3 wiring partial's read-only branch — its first real caller. `editable: false` is what
-      renders plain cells and no composer; drop it and the public page grows text inputs and a
-      Remove button posting at a private route. %>
-  <% if pub.connections.any? %>
-    <%= render "projects/wiring", project: project, connections: pub.connections, editable: false %>
+  <% pub.visible_panels.each do |key| %>
+    <% if key == "wiring" %>
+      <% if pub.connections.any? %>
+        <%= render "projects/wiring", project: project, connections: pub.connections, editable: false %>
+      <% end %>
+    <% elsif (partial = public_panels[key]) %>
+      <%= render partial, pub: pub %>
+    <% end %>
   <% end %>
-  <%# Stage 3, S3-5: releases. Its own partial rather than projects/_releases with `editable:
-      false` -- the download is a public file URL gated on `permits?`, not /files/:id/blob, which
-      is a difference in kind rather than a branch (the partial's own header says so). %>
-  <%= render "public/projects/releases", pub: pub %>
-  <%= render "public/projects/schematics", pub: pub %>
   <% pub.repo_cards.each_value do |card| %>
     <%= render "public/projects/repo_card", card: card %>
   <% end %>

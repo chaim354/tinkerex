@@ -8,17 +8,39 @@
 <%# Tag filter chips (stage 2, S2-5) -- only when the user has at least one tagged project, same
     "only when there's something to filter by" rule models/index.html.erb's own tag select
     follows. "All" keeps the current archived view (its own toggle is the note/link below, not
-    this row) and simply drops the tag param. %>
-<% if @project_tags.any? %>
+    this row) and simply drops the tag param.
+
+    TYPE CHIPS BESIDE THEM (stage 4, S4-7; story 6.5), on the same "only when there is something to
+    filter by" rule and in their OWN row rather than mixed into the tags: a tag is the maker's own
+    word and a kind is one of six the app knows, and a single "All" that cleared both would make
+    each filter unreachable while the other was on. For the same reason every link in either row
+    carries the OTHER filter -- a tag click that silently dropped the type is the kind of quiet
+    change this stage keeps removing. `other` is absent from @project_kinds by construction
+    (ProjectsController#index): it is the column default, and a chip for "everything nobody typed"
+    filters nothing. %>
+<% if @project_tags.any? || @project_kinds.any? %>
   <div class="toolbar projects-toolbar">
-    <span class="chips">
-      <%= link_to "All", projects_path(archived: (@archived_view ? 1 : nil)),
-                  class: "filter chip#{' active' if @tag.blank?}" %>
-      <% @project_tags.each do |t| %>
-        <%= link_to t, projects_path(tag: t, archived: (@archived_view ? 1 : nil)),
-                    class: "filter chip#{' active' if @tag == t}" %>
-      <% end %>
-    </span>
+    <% if @project_kinds.any? %>
+      <span class="chips">
+        <%= link_to "All types", projects_path(tag: @tag, archived: (@archived_view ? 1 : nil)),
+                    class: "filter chip#{' active' if @kind.blank?}" %>
+        <% @project_kinds.each do |k| %>
+          <%= link_to Maker::ProjectKind.label(k),
+                      projects_path(kind: k, tag: @tag, archived: (@archived_view ? 1 : nil)),
+                      class: "filter chip#{' active' if @kind == k}" %>
+        <% end %>
+      </span>
+    <% end %>
+    <% if @project_tags.any? %>
+      <span class="chips">
+        <%= link_to "All", projects_path(kind: @kind, archived: (@archived_view ? 1 : nil)),
+                    class: "filter chip#{' active' if @tag.blank?}" %>
+        <% @project_tags.each do |t| %>
+          <%= link_to t, projects_path(tag: t, kind: @kind, archived: (@archived_view ? 1 : nil)),
+                      class: "filter chip#{' active' if @tag == t}" %>
+        <% end %>
+      </span>
+    <% end %>
   </div>
 <% end %>
 

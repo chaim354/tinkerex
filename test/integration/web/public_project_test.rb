@@ -353,5 +353,64 @@ module Web
                            content_type: "image/png")
       preview
     end
+
+    # --- 10. the owner's own panel layout, honoured for a visitor (stage 4, S4-7) ---
+
+    # STAGE 4, S4-7 (story 6.5): THE VISITOR SEES THE PAGE THE MAKER ARRANGED. One layout, read off
+    # the project through Maker::PublicProject, so the two pages cannot disagree about what is
+    # hidden — a maker who hid Wiring did not hide it only from themselves. The fixture already
+    # seeds two connections, which is what makes the panel present in the first place.
+    test "a hidden panel is hidden from a visitor too" do
+      get path
+      assert_select "section.wiring-panel", 1
+
+      @project.update!(panels: { "hidden" => %w[wiring] })
+      get path
+      assert_select "section.wiring-panel", count: 0
+    end
+
+    test "a stored order reorders the visitor's page as well" do
+      @project.update!(panels: { "order" => %w[build_log attachments] })
+
+      get path
+
+      panels = css_select("div.project-panels > section.panel").map { |s| s["class"] }
+      assert_operator panels.index { |c| c.include?("build-log-panel") }, :<,
+                      panels.index { |c| c.include?("files-panel") }
+    end
+
+    # A PRIVATE-ONLY PANEL HAS NO PUBLIC FACE, AND THE MAP IS THE WHOLE DEFINITION OF THAT. Tasks,
+    # Sheets and Publish are absent from a visitor's page today and must stay absent whatever the
+    # order says — a maker who moved Tasks to the top must not publish their task list.
+    test "tasks, sheets and publish never reach a visitor, whatever the order says" do
+      @project.tasks.create!(user: @user, title: "cut")
+      @project.sheets.create!(user: @user, name: "Cut list")
+      @project.update!(panels: { "order" => %w[tasks sheets publish] })
+
+      get path
+
+      assert_response :success
+      assert_select "section.tasks-panel", count: 0
+      assert_select "section.sheets-panel", count: 0
+      assert_select "section.publish-panel", count: 0
+      # AND NOTHING ELSE RENDERED IN THEIR PLACE. The three assertions above ask about the classes
+      # those panels WOULD wear, which cannot see a key that leaks into the map pointing at some
+      # OTHER partial — mutation-checked: adding `"tasks" => "public/projects/build_log"` left all
+      # three green while the visitor's page grew a second build log. Counting the one panel a
+      # stray key would most plausibly duplicate is what makes the absent-key rule load-bearing
+      # rather than a coincidence of which partials happen to exist.
+      assert_select "section.build-log-panel", 1,
+                    "a key the map does not name must render NOTHING, not something else's partial"
+    end
+
+    # AN EMPTY PANEL IS STILL OMITTED for a visitor — the public page's own rule (its header says
+    # why: an empty state invites someone to add the first one, which is what a visitor cannot do).
+    # The layout decides whether a panel is RENDERED; each public partial still decides whether it
+    # has anything to render. Two questions here as well.
+    test "a visible panel with nothing in it is still omitted" do
+      get path
+
+      assert_select "section.releases-panel", count: 0
+    end
   end
 end
