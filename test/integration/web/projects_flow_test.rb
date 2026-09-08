@@ -666,5 +666,84 @@ module Web
       assert_redirected_to projects_path
       assert_equal "active", project.reload.status
     end
+
+    # STAGE 4, S4-7 (story 6.5): the type is chosen here, and ASSERTED ON THE RENDERED FIELD NAME
+    # (§14d) rather than through a nested-hash POST, which would pass whatever the form emitted.
+    test "the edit form offers the project type under the name the controller permits" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Desk Lamp")
+
+      get edit_project_path(project)
+
+      assert_select "form.project-form select[name=?]", "project[kind]"
+      assert_select "form.project-form select[name='project[kind]'] option[value=laser]",
+                    text: "Laser cutting"
+      assert_select "form.project-form select[name='project[kind]'] option[selected=selected][value=other]"
+    end
+
+    test "saving the type changes the page's panels" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Desk Lamp")
+
+      patch project_path(project), params: { project: { name: "Desk Lamp", kind: "laser" } }
+
+      assert_equal "laser", project.reload.kind
+      get project_path(project)
+      assert_select "section.bom-panel", count: 0
+    end
+
+    # THE CHIPS ARE DERIVED FROM WHAT THE USER HAS, and `other` is dropped because it is the column
+    # default — a chip for "everything nobody typed" filters nothing.
+    test "the index filters by kind, with chips for the kinds this user actually has" do
+      user = sign_in
+      user.maker_projects.create!(name: "Cut Box", kind: "laser")
+      user.maker_projects.create!(name: "Bracket", kind: "print")
+      user.maker_projects.create!(name: "Untyped")
+
+      get projects_path
+      assert_select ".projects-toolbar a.chip", text: "Laser cutting"
+      assert_select ".projects-toolbar a.chip", text: "3D printing"
+      assert_select ".projects-toolbar a.chip", text: "Other", count: 0
+
+      get projects_path(kind: "laser")
+      assert_select ".project-card .project-name", text: "Cut Box"
+      assert_select ".project-card .project-name", text: "Bracket", count: 0
+      assert_select ".projects-toolbar a.chip.active", text: "Laser cutting"
+    end
+
+    # A FILTER WITH NO SURVIVORS STILL OFFERS ITS WAY OUT (found in review): the type row used to
+    # render only when the maker HAD typed projects, so a stale `?kind=` — a bookmark, Back after
+    # retyping the last laser project — showed the empty state with no "All types" chip.
+    test "a kind filter with no matching project still renders the chip that clears it" do
+      user = sign_in
+      user.maker_projects.create!(name: "Untyped")
+
+      get projects_path(kind: "laser")
+
+      assert_response :success
+      assert_select ".filter.chip", text: "All types"
+    end
+
+    test "an unknown kind filters nothing rather than emptying the page" do
+      user = sign_in
+      user.maker_projects.create!(name: "Cut Box", kind: "laser")
+
+      get projects_path(kind: "wormhole")
+
+      assert_select ".project-card .project-name", text: "Cut Box"
+    end
+
+    # BADGE A NON-DEFAULT KIND ONLY (S4-6's own rule: a field you can set and never see is worse
+    # than no field, and badging a default is noise).
+    test "a card badges its kind, and an untyped project's card carries none" do
+      user = sign_in
+      user.maker_projects.create!(name: "Cut Box", kind: "laser")
+      user.maker_projects.create!(name: "Untyped")
+
+      get projects_path
+
+      assert_select ".project-tile .badge.project-kind", 1
+      assert_select ".project-tile .badge.project-kind", text: "Laser cutting"
+    end
   end
 end

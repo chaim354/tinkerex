@@ -198,6 +198,13 @@ Rails.application.routes.draw do
     # what the redirect and the flash are about, and the door files nothing on a scannable backend
     # (docs/invariants/project-intake.md), so the project is context, not a target.
     resource :scan, only: :create, module: :projects
+    # WHICH PANELS THIS PROJECT'S PAGE SHOWS (stage 4, S4-7; story 6.5). SINGULAR: there is one
+    # layout per project and nothing to identify. PATCH writes it — a reorder (`move`) and a
+    # show/hide Save are two shapes on the one verb, because both edit the same one thing — and
+    # DELETE resets it by REMOVING the override, never by writing the current preset into the row.
+    # `controller_path` is "projects/panels", whose first segment is "projects", so
+    # ShellHelper::SECTIONS needs no entry and the rail still lights Projects.
+    resource :panels, only: %i[update destroy], module: :projects
     # THE README, AS A DOOR RATHER THAN A FILE (stage 4, S4-4; spec §2 D3). SINGULAR: a project has
     # one README and the door takes NO node id — it resolves the row from the project's own listing
     # (Maker::Readme.row_in), which is what confines the git-editing exception to documentation

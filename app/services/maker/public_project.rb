@@ -79,6 +79,17 @@ module Maker
       end
     end
 
+    # THE OWNER'S OWN PANEL LAYOUT, HONOURED FOR A VISITOR (stage 4, S4-7; story 6.5). Delegated
+    # rather than recomputed, so the maker's page and a visitor's cannot disagree about what is
+    # hidden — the same argument #photo_rows makes for delegating to Maker::ProjectPhotos. Reads two
+    # columns off a row this object already holds: no query, and no session (Public::BaseController
+    # stands on ActionController::Base and has none to read).
+    #
+    # WHICH OF THESE HAVE A PUBLIC FACE IS THE TEMPLATE'S QUESTION, not this one's — see
+    # public/projects/_page.html.erb's partial map, whose absent keys (tasks, sheets, publish) are
+    # the whole definition of "private only".
+    def visible_panels = project.visible_panels
+
     # The FOLDER's own README, rendered, or nil when it holds none. `defined?` rather than `||=`
     # because nil is a real answer here and `||=` would re-read the port on every call for a folder
     # that has no README at all.

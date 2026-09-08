@@ -249,6 +249,59 @@ module Web
       Maker::Addons::Source.reset!
     end
 
+    # STAGE 4, S4-7: A HIDDEN PANEL COSTS NO QUERIES. `assert_constant_queries` cannot see this —
+    # it compares one page against itself at two sizes, and both sizes would pay the same skipped
+    # loads — so the guard is a comparison between two LAYOUTS of one page at one size. A strict
+    # inequality rather than a literal for the same reason every other budget here avoids one: the
+    # counts differ per LIBRARY_BACKEND (§14e), and what is asserted is that the skip HAPPENS.
+    #
+    # THREE PANELS AND NO MORE. @tasks and @sheets are counted by the page's stats line and
+    # @entries is read by Maker::ProjectPhotos, so skipping any of those three would change a
+    # surface other than its own panel — ProjectsController#show says so at each site.
+    test "hiding bom, wiring and releases skips their controller loads" do
+      project = @user.maker_projects.create!(name: "Skippable", status: "active")
+      project_folder_rows!(@user, project)
+      bom = project.boms.create!(user: @user)
+      3.times do |i|
+        bom.lines.create!(user: @user, part_name: "part #{i}", quantity: 1, unit: "each")
+        project.connections.create!(user: @user, from_label: "a#{i}", to_label: "b#{i}")
+        release = project.releases.create!(user: @user, version: "v#{i}", published_at: Time.current)
+        node!("rel-#{i}", "rel-#{i}.stl")
+        release.files.create!(user: @user, node_id: "rel-#{i}", name: "rel-#{i}.stl",
+                              path: "rel-#{i}.stl", content_token: "h-rel-#{i}", size: 1)
+      end
+
+      get project_path(project)
+      shown = count_queries { get project_path(project) }
+
+      project.update!(panels: { "hidden" => %w[bom wiring releases] })
+      get project_path(project)
+      hidden = count_queries { get project_path(project) }
+
+      assert_operator hidden, :<, shown,
+                      "a hidden panel still paid for its loads: #{hidden} queries hidden against " \
+                      "#{shown} shown. ProjectsController#show gates @bom/@bom_lines/@items/" \
+                      "@suppliers, @releases/@release_repos and @connections on @panel_layout."
+
+      # ONE PANEL AT A TIME, BECAUSE THE ASSERTION ABOVE IS AN AGGREGATE AND AN AGGREGATE CANNOT
+      # SEE ONE GATE GO. Measured rather than reasoned: with `bom_shown = true` restored in
+      # ProjectsController#show — the single mutation this guard was written against — the three
+      # hidden panels still saved the wiring and releases loads, so `hidden < shown` held and the
+      # guard stayed GREEN over a gate that had stopped working. Each key below is compared against
+      # the same `shown`, so each of the three gates carries weight on its own; a strict inequality
+      # for the same reason as above, never a literal (§14e).
+      %w[bom wiring releases].each do |key|
+        project.update!(panels: { "hidden" => [ key ] })
+        get project_path(project)
+        alone = count_queries { get project_path(project) }
+
+        assert_operator alone, :<, shown,
+                        "hiding #{key} alone changed nothing: #{alone} queries with it hidden " \
+                        "against #{shown} with every panel shown. Its load in " \
+                        "ProjectsController#show is no longer gated on @panel_layout."
+      end
+    end
+
     # STAGE 3, S3-4: THE SAME PROJECT, READ BY A STRANGER. Not a duplicate of the budget above: the
     # public page is a DIFFERENT reader over the same rows (Maker::PublicProject, not
     # ProjectsController#show's ivars), and the two share no eager load — every panel it renders is

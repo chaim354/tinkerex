@@ -258,6 +258,22 @@ module Web
                             content_token: "t-stale", size: 5)
       release.files.create!(user: @user, node_id: "n-vanished", name: "old.stl",
                             path: "models/old.stl", content_token: "t-old", size: 5)
+      # STAGE 4, S4-7: `kind` STAYS `other` ON BOTH PROJECTS THIS FILE CREATES — @project here and
+      # @unlisted below — because `other`'s preset hides nothing and reorders nothing, which is
+      # what keeps this sweep rendering every panel partial through the loop in
+      # projects/show.html.erb. A kind (or a `panels` override) hides panels from the only sweep
+      # that can see a leaked comment in them, and the coverage assertion below then reports them
+      # as rendered by no page rather than as hidden.
+      #
+      # BOTH, NOT EITHER, AND THAT IS MEASURED RATHER THAN REASONED: `pages` visits two project
+      # detail pages, so setting `kind: "laser"` on @project ALONE left every panel partial still
+      # covered by @unlisted's page and this sweep stayed GREEN. With it on both, the assertion
+      # goes red naming projects/_bom, _wiring, _releases and _sheets — and public/projects/_bom
+      # and _releases with them, because the visitor's page reads the SAME layout off the project
+      # (Maker::PublicProject#visible_panels), which is the other half of this fixture's coverage.
+      # projects/_panel_chooser renders on a project detail page whatever the kind, so it is
+      # covered either way.
+      #
       # STAGE 3, S3-4: PUBLISHED LAST, once every panel above has something to render — the public
       # page shows the SAME fixtures through ten new templates, so nothing here is seeded twice.
       # `license:` renders the head's licence badge, one of the two branches that badge has.

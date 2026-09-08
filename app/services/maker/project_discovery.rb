@@ -8,8 +8,9 @@ module Maker
   # Hooking each is N sites that must agree, and an N+1th silently skips the rule. This reads
   # `nodes`, the catalog ALL THREE BACKENDS populate, so it covers every door and any future one.
   #
-  # IT NEVER TOUCHES THE PORT. It writes maker_projects rows and nothing else — no mkdir, no move,
-  # no bytes — which is what makes it identical on all three backends and testable without a
+  # IT NEVER TOUCHES THE PORT. It writes maker_projects rows and READS `nodes` — the catalog all
+  # three backends populate — to suggest each new project's kind (stage 4, S4-7); no mkdir, no
+  # move, no bytes. That is what makes it identical on all three backends and testable without a
   # library on disk.
   #
   # Rules and reasoning: docs/invariants/project-intake.md.
@@ -80,7 +81,18 @@ module Maker
       # ONE MOMENT FOR THE WHOLE RUN. These folders were discovered together, and a per-row
       # Time.current would make that legible nowhere while costing the same.
       now = Time.current
+      # ONE TREE FOR THE WHOLE RUN (stage 4, S4-7). Maker::ProjectKind.suggest_for would otherwise
+      # build a LibraryTree per candidate — one dirs pluck each, fifty of them at the cap. Shared,
+      # the run pays that pluck once plus TWO queries per project it actually creates (the
+      # listing's files query and its count), which is 100 in a first run and ZERO in the steady
+      # state, where `created` is 0. BUILT LAZILY, ON THE FIRST CREATE: LibraryTree plucks eagerly
+      # in its constructor, so a tree built before the loop cost the steady state a dirs pluck it
+      # never read — every fifteen minutes per user on chunk_remote, once per scan on share and s3
+      # (found in review). `||=` inside the loop keeps the sharing and makes a run that creates
+      # nothing pay nothing; project_discovery_test.rb pins the steady state at zero tree plucks.
+      tree = nil
       candidates.first(cap).each do |node_id, name|
+        tree ||= Maker::LibraryTree.new(user)
         user.maker_projects.create!(
           name:,
           # NOT #ensure_slug's derivation. A collision or a blank raises RecordInvalid inside a
@@ -92,7 +104,16 @@ module Maker
           folder_node_id: node_id,
           # THE MARK THIS SWEEP OWNS (stage 4, S4-6). Nothing else writes it, so a page reading
           # `discovered_at.present?` is reading "the app made this" and not a proxy for it.
-          discovered_at: now
+          discovered_at: now,
+          # WHAT THE FOLDER LOOKS LIKE (stage 4, S4-7; decision D4). Suggested ONCE, here, from the
+          # files that are already in the folder — this sweep is the only door that has files in
+          # front of it at creation time, since the web form mints an empty folder and has nothing
+          # to read. Never re-derived afterwards: re-suggesting would silently rearrange a page the
+          # maker may have arranged themselves, and nothing could tell the two apart.
+          #
+          # PART OF THE CREATE, not an update after it, which is what `suggest_for` taking a FOLDER
+          # rather than a project is for — the project is never momentarily `other`.
+          kind: Maker::ProjectKind.suggest_for(user:, folder_node_id: node_id, tree:)
         )
         created << name
       end

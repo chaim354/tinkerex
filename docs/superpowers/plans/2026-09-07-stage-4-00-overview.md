@@ -37,7 +37,7 @@ viewer controllers (S4-5). No new gem. No new JS dependency.
 | S4-4 | `2026-09-07-stage-4-s4-documentation.md` | README editor for any project (D3, the README door only), owner preview, publish panel, namespaced anchors | D3; S4-1's README card | **landed** 2026-09-07, PR #337 |
 | S4-5 | `2026-09-07-stage-4-s5-public-viewers.md` | public file page with the eight shared viewer partials (D5), covers on `/u/:handle`, hero, public header | D5 | **landed** 2026-09-07, PR #338 |
 | S4-6 | `2026-09-07-stage-4-s6-adopt-anywhere.md` | adopt in place (D1), status, make-current, New badge, Not-a-project, switch confirmations | D1 | **landed** 2026-09-07, PR #339 |
-| S4-7 | `…-s7-kinds.md` (to write) | `kind` + presets, per-project panel overrides | D4; S4-1's quiet panels | moderate: the panel list becomes data |
+| S4-7 | `2026-09-07-stage-4-s7-kinds.md` | `kind` + presets, per-project panel overrides | D4; S4-1's quiet panels | **landed** 2026-09-07, PR #340 |
 | S4-8 | `…-s8-connections.md` (to write) | `maker_file_links`, lineage on file pages, search over notes/README | S4-3's Save-to-library (a writer of links) | moderate: new table, needs the four derived guards (see below) |
 
 **S4-1 first, and S4-7 after it**, because S4-7 turns the seven hard-coded `render` calls into a
@@ -91,6 +91,16 @@ above the groups. For a root repository the full `projects/_repo_card` renders i
 same `.readme` details inside it — S4-4 mounts the editor on `.readme` in both.
 
 ### The quiet-panel contract (S4-1 creates; S4-7 reads)
+
+**The other half, as of S4-7.** `Maker::Project::PANELS` is the canonical key list — the loop in
+`projects/show.html.erb` renders it and nothing else, so **a panel not in `PANELS` renders for
+nobody**. `Maker::Project#panel_layout` is the ONE reader both the maker's page and the visitor's
+(`Maker::PublicProject`) use: the kind's preset (`Maker::ProjectKind::PRESETS`) under the
+project's own `panels` override. `Maker::ProjectKind::ALWAYS` names the three panels no override
+may hide (Files, Photos, Publish); `LEAD` is a different question — what opens every page — and
+the two agree on two members by coincidence, not identity. There is no `panels` Stimulus
+controller: the chooser is `projects/_panel_chooser.html.erb` with `Projects::PanelsController`
+behind it, no JavaScript.
 
 A secondary panel is `section.panel.<name>-panel.panel--quiet` when it has nothing to show: the
 `h2` and exactly one add control (`details.composer > summary.btn` or a one-field form), nothing
@@ -258,10 +268,25 @@ folder menu and Home, `app/views/projects/_form.html.erb` (status, make-current)
 
 ### S4-7 — project kinds and panel choices
 
-Files: `Maker::Project` (`kind`, `panels`, `KINDS`, `PANELS`), `Maker::ProjectKind.suggest(listing)`,
-`app/views/projects/show.html.erb` (the loop), new `_panel_chooser.html.erb`, `_form.html.erb`
-(kind), `_card.html.erb`, one migration. Tests: `project_kind_test.rb`, `project_page_test.rb`
-(order and hiding), the query budget.
+**As landed (2026-09-07).** Files: one migration (`maker_projects.kind` string default `other`,
+`maker_projects.panels` JSON, no index — neither is a predicate the page reads); `Maker::Project`
+(`KINDS`, `PANELS`, `PANEL_LABELS`, `#panel_layout`, the kind readers, `#derived_cover_node_id`
+preferring the kind's hero roles over the RELATION, never the folder); `Maker::ProjectKind`
+(`PRESETS`, `ALWAYS`, `LEAD`, `hero_roles`, `suggest_for` — reads the catalog through one
+`Maker::LibraryTree`, never the port); the suggestion wired into `Maker::ProjectDiscovery.for_user`
+and `Projects::AdoptionsController#create!` (once, at creation — never re-derived); the loop in
+`projects/show.html.erb` over `PANELS` (Publish included, rendered through the loop);
+`projects/_panel_chooser.html.erb` at the foot of the page in a closed `<details>` with
+`Projects::PanelsController` behind it (`PATCH` for a move or a save, `DELETE` for reset = remove
+the override; **no `panels` Stimulus controller, no JavaScript** — amendment 3, and spec §7's
+sentence anticipating one is a recorded divergence, not a spec edit); `_form.html.erb` (kind),
+`_card.html.erb` and `index.html.erb` (`?kind=` chips over the already-loaded set),
+`home/_project_hero.html.erb`; `Maker::PublicProject#panel_layout` and
+`public/projects/_page.html.erb` honouring the same layout for the visitor. Tests:
+`project_kind_test.rb`, `project_discovery_test.rb`, `project_adoptions_test.rb`,
+`project_page_test.rb` (order, hiding, the skip's own query guard), `project_panels_test.rb`,
+`projects_flow_test.rb`, the budgets, the template sweep (every panel + the chooser), the phone
+sweep opening the chooser.
 
 ### S4-8 — connections and search
 

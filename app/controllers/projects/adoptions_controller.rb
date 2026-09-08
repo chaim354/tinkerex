@@ -170,7 +170,12 @@ module Projects
           # keeps the `true` default: a folder placed under `Projects/` asked for filing by being
           # there. The edit form is where a maker turns it on (S4-2), and the flash NAMES that
           # form in words — it is escaped text, so it cannot link to it (see #adopted_notice).
-          autofile: false
+          autofile: false,
+          # THE FOLDER SAYS WHAT IT IS (stage 4, S4-7). Adoption reads the same suggestion
+          # discovery does, from the same door, because "make this folder a project" hands the app
+          # a folder that is already full — which is exactly the case a suggestion is for. No tree
+          # is passed: this is one folder in one request, not a capped sweep.
+          kind: Maker::ProjectKind.suggest_for(user: current_user, folder_node_id: node.node_id)
         )
         @model_delisted = destroy_auto_model(node)
       end

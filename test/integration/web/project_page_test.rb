@@ -241,5 +241,94 @@ end
       assert_select "section.photos-panel .photo-cell[href=?]", file_path("p-z")
       assert_select "section.photos-panel .panel-head .mono", text: "3 photos"
     end
+
+    # STAGE 4, S4-7 (story 6.5): the panel list is data, and `other` — the column default — is
+    # exactly the page this project had before the column existed.
+    # THE LOOP RENDERS WHAT THE HARD-CODED LIST RENDERED, IN THE SAME ORDER. Asserted as a
+    # SUBSEQUENCE of the canonical list rather than as an equal array: which panels this fixture
+    # reaches depends on what it seeds (no image, so no Photos; no KiCad, so no Schematics), and a
+    # test that had to enumerate that would go red whenever an unrelated fixture line changed.
+    # What must hold is that nothing is out of order and nothing unknown appears.
+    test "an other project renders its panels in the canonical order" do
+      get project_path(@project)
+
+      assert_response :success
+      expected = Maker::Project::PANELS.map { |k| "#{k.tr("_", "-")}-panel" }
+      rendered = css_select("div.project-panels > section.panel")
+                 .map { |s| s["class"].split.find { |c| c.end_with?("-panel") } }
+
+      assert_equal rendered, expected & rendered,
+                   "the loop rendered #{rendered.inspect}, which is not in PANELS order"
+      assert_includes rendered, "attachments-panel"
+      assert_includes rendered, "build-log-panel"
+      assert_includes rendered, "tasks-panel"
+      assert_includes rendered, "sheets-panel"
+    end
+
+    test "a hidden panel is not rendered at all — not quiet, absent" do
+      @project.update!(panels: { "hidden" => %w[tasks bom wiring] })
+
+      get project_path(@project)
+
+      assert_select "section.tasks-panel", count: 0
+      assert_select "section.bom-panel", count: 0
+      assert_select "section.wiring-panel", count: 0
+      assert_select "section.build-log-panel", 1, "an unhidden panel is untouched"
+      assert_select "section.attachments-panel", 1
+    end
+
+    # HIDDEN AND EMPTY ARE TWO QUESTIONS (the overview's quiet-panel contract). An empty panel that
+    # is NOT hidden still renders, quiet — S4-1's state — and a hidden one is gone whether it is
+    # empty or full. Both halves in one test, because it is the pair that must not collapse.
+    test "hidden and quiet are different states" do
+      empty = @user.maker_projects.create!(name: "Blank")
+
+      get project_path(empty)
+      assert_select "section.wiring-panel.panel--quiet", 1
+
+      empty.update!(panels: { "hidden" => %w[wiring] })
+      get project_path(empty)
+      assert_select "section.wiring-panel", count: 0
+    end
+
+    test "a stored order reorders the DOM, and a preset does too" do
+      @project.update!(panels: { "order" => %w[tasks build_log] })
+
+      get project_path(@project)
+      panels = css_select("div.project-panels > section.panel").map { |s| s["class"] }
+      assert_operator panels.index { |c| c.include?("tasks-panel") }, :<,
+                      panels.index { |c| c.include?("build-log-panel") },
+                      "the stored order must move Tasks above Build log"
+
+      @project.update!(panels: nil, kind: "electronics")
+      @project.connections.create!(user: @user, from_label: "A", to_label: "B")
+      get project_path(@project)
+      panels = css_select("div.project-panels > section.panel").map { |s| s["class"] }
+      assert_operator panels.index { |c| c.include?("wiring-panel") }, :<,
+                      panels.index { |c| c.include?("build-log-panel") },
+                      "electronics lifts Wiring above the build log (story 6.2)"
+    end
+
+    # THE THREE PANELS NOBODY MAY HIDE (Maker::ProjectKind::ALWAYS). Driven through a real request
+    # rather than asserted on the constant, because the thing that must hold is what the PAGE does
+    # with a column someone wrote by hand.
+    test "Files stays on the page however hard the column tries to hide it" do
+      @project.update!(panels: { "hidden" => Maker::Project::PANELS })
+
+      get project_path(@project)
+
+      assert_select "section.attachments-panel", 1
+    end
+
+    # A KEY THAT IS NOT A PANEL MUST NOT REACH `render` — it would be a MissingPartial, i.e. a 500
+    # on the maker's own page, and the column is JSON nothing validates on the way in.
+    test "junk in the panels column renders the page rather than raising" do
+      @project.update_column(:panels, { "order" => [ "attachments", "../../etc/passwd" ], "hidden" => "nope" })
+
+      get project_path(@project)
+
+      assert_response :success
+      assert_select "section.attachments-panel", 1
+    end
   end
 end

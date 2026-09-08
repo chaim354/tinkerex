@@ -149,5 +149,19 @@ module Web
       get root_path
       assert_select ".home-attention .attention-row.attention-row--warn", count: HomeController::ATTENTION_STOCK
     end
+
+    # STAGE 4, S4-7: Home's hero says what kind of project it is holding, on the same rule the
+    # cards follow — a non-default kind only.
+    test "the current-project hero badges a typed project and says nothing for an untyped one" do
+      project = @user.maker_projects.create!(name: "Desk Lamp", kind: "electronics")
+      patch current_project_path, params: { project_id: project.id }
+
+      get root_path
+      assert_select ".home-hero .panel-head .badge.project-kind", text: "Electronics & firmware"
+
+      project.update!(kind: "other")
+      get root_path
+      assert_select ".home-hero .badge.project-kind", count: 0
+    end
   end
 end

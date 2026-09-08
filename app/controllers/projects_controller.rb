@@ -45,8 +45,13 @@ class ProjectsController < ApplicationController
     # Files toolbar owns that); this exists so SearchController's "See all" link into
     # projects_path(q:) narrows the same way the results preview did.
     @q = params[:q].to_s.strip.first(QUERY_MAX).presence
+    # `?kind=` (stage 4, S4-7): the same whitelist-and-filter shape `@tag` uses one line up, over a
+    # closed vocabulary rather than the user's own rows -- `presence_in` is what makes an unknown
+    # value read as "no filter" rather than as an empty page.
+    @kind = params[:kind].presence_in(Maker::Project::KINDS)
     scope = current_user.maker_projects.includes(:file_attachments)
     scope = scope.tagged_with(@tag) if @tag
+    scope = scope.where(kind: @kind) if @kind
     if @q
       scope = scope.where("LOWER(name) LIKE ? ESCAPE '\\'", "%#{Maker::Project.sanitize_sql_like(@q.downcase)}%")
     end
@@ -60,6 +65,13 @@ class ProjectsController < ApplicationController
     @project_tags = current_user.maker_tags.joins(:taggings)
                                 .where(maker_taggings: { taggable_type: "Maker::Project" })
                                 .distinct.order(:name).pluck(:name)
+    # THE KINDS THIS USER ACTUALLY HAS, for the filter chips -- ONE query, constant in N, and the
+    # same "only when there is something to filter by" rule @project_tags follows. `other` is
+    # dropped because it is the column default and a chip for "everything nobody typed" filters
+    # nothing useful (S4-6's own rule: badging a default is noise). Asked of the user's own
+    # projects rather than of `scope`, or filtering by one kind would leave one chip and no way
+    # back.
+    @project_kinds = current_user.maker_projects.distinct.order(:kind).pluck(:kind) - [ "other" ]
   end
 
   def show
@@ -76,6 +88,12 @@ class ProjectsController < ApplicationController
     # folder_node_id on this same render, and ThumbnailMap backfills. It runs at most once per
     # project ever, and page_query_budget_test.rb's warm-up render absorbs it.
     @project.update_column(:opened_at, Time.current) if @project.opened_at.nil?
+
+    # THE PAGE'S PANEL LIST, FIRST (stage 4, S4-7; story 6.5): this project's kind's preset with its
+    # own overrides on top. Zero queries — it reads two columns off the row `set_project` already
+    # loaded — and it is read before the loads below because three of them are SKIPPED when their
+    # panel is hidden.
+    @panel_layout = @project.panel_layout
 
     # A FILE DELETED FROM THE LIBRARY LEAVES THE PROJECT, IMMEDIATELY. It used to sit here forever
     # as a "⚠️ (file unavailable)" tile with a per-file Remove button: `Library::Reconciler`
@@ -121,12 +139,23 @@ class ProjectsController < ApplicationController
     # rollup and the cap can never disagree about which lines exist. Maker::Project#current_bom is
     # the one definition of "latest revision" -- Projects::BomLinesController and
     # Projects::BomsController both call it too rather than repeating the ORDER clause.
-    @bom = @project.current_bom
+    #
+    # SKIPPED WHEN THE PANEL IS HIDDEN (stage 4, S4-7) — four queries: the bom, its lines, the item
+    # names and the supplier names, the last two of which exist only for the panel's composer.
+    #
+    # WHY THIS ONE IS SAFE TO SKIP AND `@tasks`/`@sheets`/`@entries` ARE NOT: `@bom_lines` does feed
+    # the page's ONE PageNodes union below, but ONLY so projects/_bom_lines can resolve a file
+    # line's node — nothing else on the page reads a BOM node id out of that union, so an empty
+    # list narrows it and changes no other panel. `@tasks` and `@sheets` are counted by the STATS
+    # LINE and `@entries` is read by Maker::ProjectPhotos through entry_photo_ids, so skipping any
+    # of those three would change a surface other than its own panel.
+    bom_shown = @panel_layout.visible?("bom")
+    @bom = bom_shown ? @project.current_bom : nil
     @bom_lines = @bom ? @bom.lines.includes(:inventory_item, :supplier).to_a : []
     @bom_lines_shown = @bom_lines.first(Projects::BomLinesController::PANEL_CAP)
     @bom_rollup = Maker::BomRollup.new(@bom_lines)
-    @items = current_user.maker_inventory_items.order(:name).pluck(:name, :id)
-    @suppliers = current_user.maker_suppliers.order(:name).pluck(:name, :id)
+    @items = bom_shown ? current_user.maker_inventory_items.order(:name).pluck(:name, :id) : []
+    @suppliers = bom_shown ? current_user.maker_suppliers.order(:name).pluck(:name, :id) : []
     # THE COVER JOINS THE UNION (stage 4, S4-1): the hero renders it, and liveness is answered by
     # nodes.present like every other tile — a chosen cover is a raw column nothing validates (see
     # project_params), so a tombstoned cover renders NOTHING, not a poll cell that spins forever.
@@ -225,7 +254,14 @@ class ProjectsController < ApplicationController
     # for every release it renders -- :rich_text_notes is the association Action Text gives
     # `has_rich_text :notes`, and without it a page of ten releases costs ten extra round-trips,
     # the exact regression page_query_budget_test.rb exists for.
-    @releases = @project.releases.includes(:files, :rich_text_notes).to_a
+    #
+    # SKIPPED WHEN HIDDEN (stage 4, S4-7), and this is the most expensive of the three: the
+    # releases query, the ONE `stat_all` over every file of every release — a PORT round trip, and
+    # a WAN one on chunk_remote — and, where the library is a local folder, a git tag read per
+    # repository in the folder. `release_node_ids` is empty when @releases is, so `stat_all` already
+    # short-circuits; only @release_repos needs the gate spelled out.
+    releases_shown = @panel_layout.visible?("releases")
+    @releases = releases_shown ? @project.releases.includes(:files, :rich_text_notes).to_a : []
     # ONE `stat_all` OVER EVERY FILE OF EVERY RELEASE SHOWN, never one `stat` per file: "changed
     # since this release" is a comparison against what the port reports NOW, and asking per row is
     # how that panel becomes linear in the number of files a project has ever released. An absent
@@ -238,7 +274,7 @@ class ProjectsController < ApplicationController
     # Elsewhere the composer takes a tag as free text and the snapshot records it unverified.
     # Reuses the dirs and root nodes the repository cards above already collected, so a folder full
     # of repositories still costs the one batched `nodes` query it already paid.
-    @release_repos = capabilities.local_worktree? ? release_repo_tags(repo_dirs, repo_roots) : []
+    @release_repos = releases_shown && capabilities.local_worktree? ? release_repo_tags(repo_dirs, repo_roots) : []
     # Tiles or list (stage 3, S3-1) — the same whitelist-and-cookie idiom FilesController#resolve_view
     # uses, with its own values and its own cookie: this page's default is tiles, the Files page's
     # is list, and the two toggles must not read each other's choice.
@@ -299,7 +335,9 @@ class ProjectsController < ApplicationController
     @sheets = @project.sheets.to_a
     # THE WIRING TABLE (stage 3, S3-3). ONE query -- Maker::Project#connections already orders by
     # position, like #sheets above, so no further .order() is needed here.
-    @connections = @project.connections.to_a
+    #
+    # SKIPPED WHEN HIDDEN (stage 4, S4-7) — one query, and projects/_wiring is its only reader.
+    @connections = @panel_layout.visible?("wiring") ? @project.connections.to_a : []
     # The entry form binds to a real object: `rich_text_area` reads its value from the form's
     # object, and Action Text's form helper is not built for the object-less `fields_for` the plain
     # textarea used.
@@ -310,6 +348,11 @@ class ProjectsController < ApplicationController
     # why it rides in the url rather than in the session: the reload navigates to the param-free
     # url and the hint is gone by construction.
     @scan_started = params[:scanning] == "1"
+    # THE CHOOSER'S RE-OPEN HINT (stage 4, S4-7). Every write to the panel layout redirects back
+    # here with `?panels=open`, so a maker clicking Up four times does not have to reopen the
+    # <details> between clicks. A one-shot RENDER HINT, not state — which is why it rides in the
+    # url exactly as @scan_started does, and is gone the moment they navigate away.
+    @panels_open = params[:panels] == "open"
   end
 
   # GET /projects/:id/preview — what a visitor sees, at any visibility, for the owner (story 5.1).
@@ -521,7 +564,7 @@ class ProjectsController < ApplicationController
 
   def project_params
     attrs = params.require(:project).permit(:name, :description, :status, :cover_node_id, :tag_list,
-                                            :visibility, :license, :autofile)
+                                            :visibility, :license, :autofile, :kind)
     attrs[:cover_node_id] = nil if params[:project][:cover_clear] == "1"
     # ARCHIVING IS A BUTTON, NOT A FORM VALUE (stage 4, S4-6). #archive! also stamps archived_at,
     # and the form's own select never offers `archived` — so a hand-posted one would set the column

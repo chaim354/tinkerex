@@ -297,6 +297,11 @@ class ShellTest < ApplicationSystemTestCase
       # at 375px. Renaming either would leave both branches silently unrun.
       previewed = false
       opened_readme = false
+      # STAGE 4, S4-7: the chooser is a row of ten panels with a checkbox and two arrows each,
+      # closed by default — so a sweep that only VISITED this page would measure a collapsed
+      # <details> and say nothing about the one layout on it most likely to overflow at 375px. The
+      # flag is this file's own rule for a branch gated on a path match: absence must be a failure.
+      opened_panels = false
       # THE SAME GATE-ON-A-PATH ARGUMENT ONCE MORE (stage 4, S4-6). The Files page's overflow menu
       # renders on the FOLDER view and nowhere else once `@folder` is what opens it, so a renamed
       # helper or a fixture whose folder stopped resolving would leave this sweep measuring the
@@ -376,6 +381,27 @@ class ShellTest < ApplicationSystemTestCase
           find(".readme-editor summary").click
           assert_selector ".readme-editor .cm-editor"
           opened_readme = true
+          # STAGE 4, S4-7: THE PANEL CHOOSER, OPENED. One row per panel, each carrying a label (or
+          # a checkbox) and two arrow buttons that are `button_to`s — i.e. a <form> apiece — so the
+          # row is the widest thing this page asks a 375px viewport to lay out. `count:` is derived
+          # from Maker::Project::PANELS rather than written as ten, because the chooser lists the
+          # WHOLE order whatever the kind hides, and a literal would pin today's panel count.
+          #
+          # WHAT THIS COVERS AND WHAT IT DOES NOT, measured the way the public file table's column
+          # drops are measured above: deleting `flex-wrap: wrap` from `.panel-choice` in
+          # pages/projects.css leaves this GREEN. With the chooser open the document is 360px wide
+          # inside a 375px viewport and the widest row is 336px against a 336px client box, every
+          # row one 28px line — identical with the rule and without it, because
+          # `.panel-choice-name` is `flex: 1 1 auto` with `overflow-wrap: anywhere` and shrinks
+          # before the row can push anything out. So the wrap buys the label and the arrows a
+          # SECOND LINE on a narrower phone or a longer label, not overflow safety here. What this
+          # branch does cover is that the subtree is laid out at all rather than measured collapsed.
+          find("details.panel-chooser > summary").click
+          assert_selector "li.panel-choice", count: Maker::Project::PANELS.size
+          assert_selector "li.panel-choice input[type=checkbox]", minimum: 1
+          assert_selector "li.panel-choice .panel-choice-moves form", minimum: 2
+          assert_selector ".panel-chooser-actions input[type=submit][value='Save panels']"
+          opened_panels = true
         end
         # `nav.tabbar` is display:none above 719px, so finding it VISIBLE is the proof that the
         # phone rules are running at all — without it a viewport that never narrowed would satisfy
@@ -389,6 +415,7 @@ class ShellTest < ApplicationSystemTestCase
       assert opened_repo, "the sweep never opened the repository section, so its overflow check measured an empty mount point"
       assert previewed, "the sweep never visited the preview, so its overflow check measured nothing"
       assert opened_readme, "the sweep never opened the README editor, so its overflow check measured a closed summary"
+      assert opened_panels, "the sweep never opened the panel chooser, so its overflow check measured a closed <details>"
       assert visited_folder_view, "the sweep never reached the Files folder view, so its overflow menu was never measured"
 
       # STAGE 3, S3-4: THE PUBLIC PAGES, IN THEIR OWN LOOP BECAUSE THEIR SHELL IS THE OTHER ONE.
