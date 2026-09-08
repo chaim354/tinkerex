@@ -846,6 +846,41 @@ module Web
                    "or the memo is gone."
     end
 
+    # STAGE 4, S4-8: THE CONNECTED PANEL IS A FIXED NUMBER OF QUERIES FOR ANY NUMBER OF LINKS —
+    # one `touching` read of maker_file_links, one `nodes.present` lookup resolving EVERY partner
+    # of every link at once, and one ThumbnailMap for the photo cells. The obvious spelling is the
+    # one this guards against: a `nodes.find_by(node_id:)` inside the view's loop, or a second
+    # `touching` query per direction, is invisible on a two-link fixture and is a query per photo
+    # on a real one.
+    #
+    # BOTH SHAPES OF ROW GROW, because the four lists come off ONE query but two DIFFERENT columns:
+    # a `derived_from` written FROM the subject fills @derived_from, and a `photo_of` written TO it
+    # fills @photos — the only list with thumbnail cells behind it. Growing only one column would
+    # leave `touching`'s OR half, and the ThumbnailMap, unmeasured.
+    #
+    # `node!`, not `nodes.create!`: the photo cells resolve through Maker::Previews::ThumbnailMap,
+    # which short-circuits on a node the port reports no content for — see that helper's own
+    # header. Without the content token this case would budget a path that never executes.
+    #
+    # CONSTANCY, NEVER A LITERAL (this class's header): the counts differ per LIBRARY_BACKEND leg,
+    # so a number here would pin one leg and fail the other two.
+    test "files#show does not grow with the number of connected files" do
+      subject = node!("cn-subject", "lid.stl")
+      path = file_path(subject.node_id)
+      add = lambda do |prefix, count|
+        count.times do |i|
+          src = node!("#{prefix}s#{i}", "#{prefix}s#{i}.lbrn2")
+          pic = node!("#{prefix}p#{i}", "#{prefix}p#{i}.png")
+          @user.maker_file_links.create!(from_node_id: subject.node_id, to_node_id: src.node_id,
+                                         kind: "derived_from")
+          @user.maker_file_links.create!(from_node_id: pic.node_id, to_node_id: subject.node_id,
+                                         kind: "photo_of")
+        end
+      end
+      assert_constant_queries(path, -> { add.call("cs", SMALL) }, -> { add.call("cl", LARGE - SMALL) },
+                              "files#show (connections)")
+    end
+
     # THE REVERSE LOOKUP MUST NOT BE PER ROW. `Maker::AddonOrigin.for` resolves a whole page at a
     # fixed cost; written as a per-node (or per-state) lookup it is invisible on a three-file fixture
     # and fatal on a real library, which has never had pagination in flat mode and was measured at
@@ -923,8 +958,9 @@ module Web
                               -> { add.call("ll", LARGE - SMALL) },
                               "locations#index")
     end
-    # SEARCH READS FIVE KINDS, EACH ONE CAPPED QUERY PLUS ONE COUNT (S2-5). The seed grows every
-    # kind under the one query the page runs, so a per-row read in any group would show.
+    # SEARCH READS SEVEN KINDS, EACH ONE CAPPED QUERY PLUS ONE COUNT (S2-5; Notes and Folders
+    # added by stage 4, S4-8). The seed grows every kind under the one query the page runs, so a
+    # per-row read in any group would show.
     test "search#index does not grow with matches of any kind" do
       add = lambda do |prefix, count|
         count.times do |i|
@@ -937,6 +973,14 @@ module Web
           tag = @user.maker_tags.create!(name: "lamp-#{id}")
           Maker::Tagging.create!(user: @user, tag:, taggable: project)
           Maker::Tagging.create!(user: @user, tag:, taggable: item)
+          # STAGE 4, S4-8: a note on a LIVE file, and a folder — the two groups that slice added.
+          # The Notes group is the one carrying a SECOND query after its cap (the file names for
+          # the five rows it renders, over the capped ids), so growing it is what would show that
+          # lookup written per row instead. The folder is `kind: "dir"` and its name matches the
+          # same query, which is the whole of what the Folders group reads.
+          noted = @user.nodes.create!(node_id: "search-n-#{id}", name: "lamp-noted-#{id}.stl", kind: "file")
+          @user.maker_notes.create!(node_id: noted.node_id, body: "<div>lamp note #{id}</div>")
+          @user.nodes.create!(node_id: "search-d-#{id}", name: "lamps #{id}", kind: "dir")
         end
       end
       assert_constant_queries(search_path(q: "lamp"),

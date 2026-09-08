@@ -296,6 +296,34 @@ module Web
       # of the same `if`, and this sweep's coverage is per TEMPLATE, not per branch — the two
       # request tests in project_attachments_test.rb are what cover both.
       @project.update_columns(last_swept_at: 1.hour.ago, last_sweep_moves: 2)
+      # STAGE 4, S4-8: THE CONNECTED PANEL'S FOUR POPULATED BRANCHES, or `files/_connections`
+      # renders only its two doors and none of the four lists' markup is ever swept. The partial
+      # itself is rendered unconditionally by files/show, so the coverage assertion below was
+      # already satisfied by the EMPTY panel — which is exactly the gap these rows close, the same
+      # argument projects/_schematics' fixture makes for a partial that "renders nothing when the
+      # folder holds none".
+      #
+      # `n-stl` is the page `pages` visits as "file detail (3d)", and it sits at BOTH ends of a
+      # derived_from plus the far end of a photo_of, so its page renders three of the four:
+      # "This came from" (to n-bak), "Made from this" (from n-generated) and "Photos of this file"
+      # (from n-photo). The FOURTH, "This is a photo of", renders on the PHOTO's own page — which
+      # `pages` already visits as "file detail (image)" (S4-5), so no page is added here.
+      @user.maker_file_links.create!(from_node_id: "n-stl", to_node_id: "n-bak", kind: "derived_from")
+      @user.maker_file_links.create!(from_node_id: "n-generated", to_node_id: "n-stl", kind: "derived_from")
+      @user.maker_file_links.create!(from_node_id: "n-photo", to_node_id: "n-stl", kind: "photo_of")
+      # A NOTE MATCHING THE SWEEP'S OWN SEARCH QUERY ("lamp"), so the search page renders the NOTE
+      # arm of shared/_result_group. Coverage here is per TEMPLATE, so that partial already counted
+      # as swept — but a leaked comment lives in ONE `case` arm, and counting which of the seven
+      # this sweep actually reaches says: `:project` (the search page's Desk Lamp and the tag
+      # page's one group) and, with these two rows, `:folder` and `:note`. `:file`, `:model`,
+      # `:inventory_item` and `:tag` are still reached by no page here — a pre-existing gap this
+      # slice neither widens nor closes, recorded so the next reader does not have to re-derive it.
+      #
+      # THE FOLDER ARM NEEDS NO FIXTURE OF ITS OWN: `project_folder_rows!` above minted a dir named
+      # after @project's slug, `desk-lamp`, which the same query matches and `visible_entries(false)`
+      # keeps (it is neither a dot-dir, the `.git` marker, nor a Library::BuildOutput name).
+      # Verified by a rendered assertion when this landed, not by reading the slug.
+      @user.maker_notes.create!(node_id: "n-stl", body: "<div>Cut on the lamp jig.</div>")
     end
 
     teardown do
