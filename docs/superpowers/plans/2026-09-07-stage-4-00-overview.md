@@ -36,7 +36,7 @@ viewer controllers (S4-5). No new gem. No new JS dependency.
 | S4-3 | `2026-09-07-stage-4-s3-round-trip.md` | path + copy, self-refreshing file page, Save-to-library, honest Rescan | — | **landed** 2026-09-07, PR #336 |
 | S4-4 | `2026-09-07-stage-4-s4-documentation.md` | README editor for any project (D3, the README door only), owner preview, publish panel, namespaced anchors | D3; S4-1's README card | **landed** 2026-09-07, PR #337 |
 | S4-5 | `2026-09-07-stage-4-s5-public-viewers.md` | public file page with the eight shared viewer partials (D5), covers on `/u/:handle`, hero, public header | D5 | **landed** 2026-09-07, PR #338 |
-| S4-6 | `…-s6-adopt-anywhere.md` (to write) | adopt in place (D1), status, make-current, New badge, Not-a-project, switch confirmations | D1 | moderate: a folder outside `Projects/` as `folder_node_id` |
+| S4-6 | `2026-09-07-stage-4-s6-adopt-anywhere.md` | adopt in place (D1), status, make-current, New badge, Not-a-project, switch confirmations | D1 | **in progress** 2026-09-07; moderate: a folder outside `Projects/` as `folder_node_id` |
 | S4-7 | `…-s7-kinds.md` (to write) | `kind` + presets, per-project panel overrides | D4; S4-1's quiet panels | moderate: the panel list becomes data |
 | S4-8 | `…-s8-connections.md` (to write) | `maker_file_links`, lineage on file pages, search over notes/README | S4-3's Save-to-library (a writer of links) | moderate: new table, needs the four derived guards (see below) |
 
