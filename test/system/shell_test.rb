@@ -189,14 +189,14 @@ class ShellTest < ApplicationSystemTestCase
     # spelled `shade-bracket-revision-…` it stays GREEN, which is why the fixture reads the way it
     # does rather than reusing a name from further up this method.
     #
-    # AND IT MUST NOT MATCH THIS SWEEP'S OWN SEARCH QUERY. Named `lampshade…` first, it landed in
-    # the Files group on `search_path(q: "lamp")` below and pushed THAT page to scrollWidth 434 at
-    # 375px — `pages/search.css`'s `.result-row` has no `overflow-wrap`, so an unbreakable file
-    # name overflows a search result today (recorded as a finding, not fixed here: this file may
-    # not edit stylesheets). Keeping the name off the query keeps this fixture measuring the
-    # Connected panel, which is what it is for.
+    # AND IT MATCHES THIS SWEEP'S OWN SEARCH QUERY ON PURPOSE, so the same unbreakable name is also a
+    # row in the Files group on `search_path(q: "lamp")` below. Named off the query it measured the
+    # Connected panel alone; named onto it, it found `pages/search.css`'s `.result-row` had no
+    # `overflow-wrap` and pushed THAT page to scrollWidth 434 at 375px (S4-8). One fixture now pins
+    # both rules — drop `overflow-wrap: anywhere` from either `.connection-row` or `.result-row` and
+    # this sweep names the page that overflowed.
     link_source = create_node!(@user, node_id: SecureRandom.uuid, kind: "file",
-                               name: "shadebracketrevisionthreeexportedfortheworkshopcnc.lbrn2")
+                               name: "lampshadebracketrevisionthreeexportedfortheworkshopcnc.lbrn2")
     # A SEPARATE NODE FROM `photo` ABOVE, which is the project's cover and lives in the folder:
     # this one is the far end of a `photo_of`, and giving the two one row would make the Photos
     # panel and the Connected panel share a fixture that either could quietly stop needing.
