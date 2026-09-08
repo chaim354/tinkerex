@@ -102,7 +102,7 @@
   no rename, and `Projects/` is never minted as a side effect. It shares this sweep's name rule
   (`adoptable_name?`) and its can't-fail slug (`Maker::Project.available_slug`) rather than spelling
   either, and **it never calls the port and never calls `ensure_library_folder!`** — which is what
-  makes its whole test file rows-only and identical on all three CI legs. It refuses seven ways,
+  makes its whole test file rows-only and identical on all three CI legs. It refuses eight ways,
   cheapest first, each naming the ACTION that would work instead of merely the failure: no
   `node_id`; a node that is not a live directory of this maker's (a file, a tombstone, another
   user's row and a typo are ONE answer, deliberately — telling them apart discloses that an id
