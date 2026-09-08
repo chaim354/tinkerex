@@ -10,13 +10,15 @@ module Web
   # property that actually matters is a different one, and it is the one asserted — a page that costs
   # 12 queries is fine forever; a page that costs one query per row is a page that dies on real data.
   #
-  # NOT "THE COUNTS DIFFER PER LIBRARY_BACKEND", WHICH IS WHAT THIS COMMENT SAID FROM PR #108 UNTIL
-  # 2026-08-13 AND IS FALSE IN THIS FILE. `setup` calls `pin_file_layer_backend("chunk")`, so every
-  # test in this class resolves the Chunk adapter on all three legs and measures the same thing three
-  # times. Measured with an N+1 deliberately introduced into Maker::AddonOrigin: 11 small / 23 large
-  # on the default leg, on share and on s3 — identical, because all three ran chunk. The per-backend
-  # argument is real where the adapter is the subject (test/services/file_layer/adapter_contract.rb
-  # makes it at length); it is inert in a class that pins one.
+  # AND THE COUNTS DO DIFFER PER LIBRARY_BACKEND, WHICH IS WHAT MAKES CONSTANCY LOAD-BEARING RATHER
+  # THAN MERELY PRUDENT. This paragraph has been wrong in both directions: from PR #108 to
+  # 2026-08-13 it said the counts differ while `setup` pinned `pin_file_layer_backend("chunk")` and
+  # all three legs measured the same adapter (11 small / 23 large with an N+1 deliberately
+  # introduced into Maker::AddonOrigin, identical on every leg); then embedded chunk was retired
+  # (2026-08-25, §14a: `chunk` is REFUSED), the pin went with it, and until 2026-09-07 this text
+  # still described it. `setup` now only creates and signs in a user, so each leg measures ITS OWN
+  # adapter — chunk_remote's `stat_all` is two queries where share and s3's is one (§14a) — and a
+  # literal here would pin one leg and fail the other two. Noticed stale in S4-8's Task E.
   #
   # THIS FILE EXISTS BECAUSE projects#show REGRESSED TO LINEAR AND NOTHING NOTICED. Rich text
   # bodies arrived with the project-page overhaul and the eager load was never extended, so the
