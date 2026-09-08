@@ -1,11 +1,23 @@
 import { Controller } from "@hotwired/stimulus"
 import { FileChooser } from "lib/file_chooser"
 
-// A REPOSITORY'S FILES, BROWSED FINDER-STYLE INSIDE ITS OWN <details> on the project page — the
-// Miller-columns module the boxes addon's folder picker uses (lib/file_chooser.js), mounted inline
-// in `browse` mode: folders descend, files are links to their file page. Mounted LAZILY on the first
-// open of the enclosing <details>, because a repo section is closed by default (2026-09-07, at the
-// user's request) and a browser nobody opened should cost no request.
+// A FOLDER'S FILES, BROWSED FINDER-STYLE — the Miller-columns module the boxes addon's folder
+// picker uses (lib/file_chooser.js), mounted inline in `browse` mode: folders descend, files are
+// links to their file page.
+//
+// IT HAS TWO HOSTS AND THE LAZINESS BELONGS TO ONE OF THEM (2026-09-08, folder panels). A
+// repository NESTED below depth one is a closed <details> inside its parent panel
+// (projects/_file_tree_section), so its browser mounts LAZILY on the first open — a browser nobody
+// opened should cost no request. A DEPTH-ONE folder is a PANEL now (projects/_folder_panel), and a
+// panel has no <details> around it at all: it is on screen the moment the page is, so it mounts on
+// `connect`.
+//
+// THE ENCLOSING <details> IS WHAT DECIDES, AND ITS ABSENCE MEANS "MOUNT", NEVER "WAIT". Written as
+// `if (this.details?.open)` alone — which is how this shipped — a browser with no <details> above it
+// evaluates `undefined`, returns, and mounts NOTHING: the server writes the div, Stimulus connects
+// the controller, and the panel is permanently empty with no error and no console warning. That is
+// §14d's silent-no-op shape exactly, and it is why `hostOpen()` names the two cases rather than
+// leaning on optional chaining to mean one of them.
 //
 // THE <details> IS AN ANCESTOR, WHICH STIMULUS ACTIONS CANNOT TARGET — `data-action` binds on the
 // controller element and its descendants — so the toggle listener is attached by hand here and
@@ -25,8 +37,11 @@ export default class extends Controller {
     this.details = this.element.closest("details")
     this.onToggle = () => this.reveal()
     this.details?.addEventListener("toggle", this.onToggle)
-    if (this.details?.open) this.reveal()
+    if (this.hostOpen()) this.reveal()
   }
+
+  // No <details> above it — a folder panel — is ALWAYS open; one that is there answers for itself.
+  hostOpen() { return this.details ? this.details.open : true }
 
   disconnect() {
     this.details?.removeEventListener("toggle", this.onToggle)
@@ -39,7 +54,7 @@ export default class extends Controller {
   // avoid). The columns are NOT torn down on close — reopening a section a maker collapsed by
   // accident should not re-fetch what is already on screen.
   reveal() {
-    if (this.chooser || !this.details?.open) return
+    if (this.chooser || !this.hostOpen()) return
     this.chooser = new FileChooser({
       mode: "browse",
       childrenUrl: this.childrenUrlValue,
