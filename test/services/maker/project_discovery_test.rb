@@ -27,6 +27,35 @@ module Maker
       assert_equal "d-lamp", project.folder_node_id
     end
 
+    # THE RACE THE INDEX EXISTS FOR (tinkerex#281), from the sweep's side: a folder adopted by hand
+    # between this run's candidate list and its create!. The insert hits the partial unique index;
+    # the run skips that folder and still adopts the rest, rather than raising out of a recurring
+    # job. Reproduced by claiming the folder from inside the slug derivation — the last read before
+    # the insert — and only for the first candidate.
+    test "a folder claimed during the run is skipped, and the run still adopts the others" do
+      dir("d-alpha", "Alpha", "d-projects")
+      dir("d-beta", "Beta", "d-projects")
+      real = Maker::Project.method(:available_slug)
+      raced = false
+      Maker::Project.define_singleton_method(:available_slug) do |user, from:|
+        unless raced
+          raced = true
+          user.maker_projects.create!(name: "Alpha by hand", slug: "alpha-by-hand", folder_node_id: "d-alpha")
+        end
+        real.call(user, from:)
+      end
+      begin
+        result = Maker::ProjectDiscovery.for_user(user: @user)
+      ensure
+        Maker::Project.define_singleton_method(:available_slug, real)
+      end
+
+      assert_equal 1, result.created, "only Beta was adopted by the sweep"
+      assert_equal %w[Beta], result.names
+      assert_equal [ "Alpha by hand" ], @user.maker_projects.where(folder_node_id: "d-alpha").pluck(:name)
+      assert_equal 1, @user.maker_projects.where(folder_node_id: "d-beta").count
+    end
+
     test "the run reports its own delta and the candidate count" do
       dir("d-lamp", "Desk Lamp", "d-projects")
       dir("d-rack", "Rack", "d-projects")

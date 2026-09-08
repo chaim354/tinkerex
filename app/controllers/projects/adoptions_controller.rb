@@ -29,7 +29,9 @@ module Projects
   # serialises that read against the insert — so the loser's `create!` raises
   # ActiveRecord::RecordNotUnique on the (user_id, slug) unique index, which nothing here maps: a
   # 500 on a door whose every other failure is a flash. The fix is a bounded retry around the
-  # create, not a wider transaction. Same class of residual as tinkerex#281.
+  # create, not a wider transaction. The SAME race on the FOLDER — two adoptions of one folder —
+  # is mapped since tinkerex#281 (the partial unique index on (user_id, folder_node_id), and the
+  # rescue in #create that looks again); the two are told apart by what a second #refusal_for finds.
   class AdoptionsController < ApplicationController
     def create
       node_id = params[:node_id].to_s.presence
@@ -44,7 +46,17 @@ module Projects
       refusal = refusal_for(node)
       return refusal if refusal
 
-      project = adopt!(node)
+      project = begin
+        adopt!(node)
+      rescue ActiveRecord::RecordNotUnique
+        # THE FOLDER RACE, MAPPED (tinkerex#281): two adoptions of one folder can both pass
+        # #claim_on, and the partial unique index on (user_id, folder_node_id) now refuses the
+        # loser's insert. A second look through the same refusals finds the winner and answers what
+        # #claim_on would have — a redirect onto that project — so the maker sees a flash, not a
+        # 500. The SLUG race (two folders with one name) still raises: `refusal_for` has nothing to
+        # say about it, and the header names the bounded retry that would.
+        return (refusal_for(node) || raise)
+      end
       redirect_to project_path(project), notice: adopted_notice(node, project, @model_delisted)
     end
 

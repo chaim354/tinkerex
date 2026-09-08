@@ -26,6 +26,31 @@ module Web
       @user.nodes.create!(node_id:, name:, kind: "file", parent_node_id: parent, mtime: 1, size: 1)
     end
 
+    # THE RACE THE INDEX EXISTS FOR (tinkerex#281): two adoptions of one folder passing #claim_on
+    # together, so both reach create! and the loser hits the partial unique index on
+    # (user_id, folder_node_id). Reproduced by letting the FIRST claim check answer nil on a folder
+    # another project already holds — the replacement answers nil once, then hands back to the real
+    # method, which is the second look the rescue takes. Without the rescue this is a 500.
+    test "a folder claimed between the check and the insert redirects to its project, not a 500" do
+      dir("d-race", "Race")
+      winner = @user.maker_projects.create!(name: "Race", folder_node_id: "d-race")
+      calls = 0
+      klass = Projects::AdoptionsController
+      real = klass.instance_method(:claim_on)
+      klass.define_method(:claim_on) { |node| (calls += 1) == 1 ? nil : real.bind_call(self, node) }
+      begin
+        post adopt_projects_path, params: { node_id: "d-race" }
+      ensure
+        klass.define_method(:claim_on, real)
+        klass.send(:private, :claim_on)
+      end
+
+      assert_equal 2, calls, "the rescue's second look must have run"
+      assert_redirected_to project_path(winner)
+      assert_match(/already the folder for Race/, flash[:alert])
+      assert_equal 1, @user.maker_projects.where(folder_node_id: "d-race").count
+    end
+
     # --- the happy path -------------------------------------------------------
 
     test "a folder outside Projects becomes a project that keeps its path" do
