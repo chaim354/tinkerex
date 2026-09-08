@@ -258,6 +258,13 @@ module Web
       # fixtures of its own — its panels are all empty, which is the OTHER half of a partial that
       # renders nothing when its collection is empty.
       @unlisted = @user.maker_projects.create!(name: "Hidden Rig", visibility: "unlisted")
+      # STAGE 4, S4-4: A FOLDER WITH NO README, or projects/_readme_editor's "Write a README" branch
+      # (the template in the textarea, the enabled controls) is rendered by no page here — @project's
+      # folder holds a README, so its editor takes the other arm. Coverage is per TEMPLATE, so the
+      # sweep stayed green over the gap; a comment terminator leaked into that branch would have been
+      # invisible. `project_folder_rows!` is rows only, no mkdir (§ test_helper), so the listing is
+      # available on every leg and the project page renders the card with its editor.
+      project_folder_rows!(@user, @unlisted)
       # STAGE 4, S4-2: OR projects/_attachments' sweep-note NEVER RENDERS — the populated branch
       # needs both a count and a timestamp. `update_columns`, matching ProjectIntake#record_sweep!:
       # no `updated_at` bump, so nothing above re-orders. The autofile-off branch is the other arm
@@ -321,6 +328,7 @@ module Web
         "projects index" => projects_path,
         "project detail" => project_path(@project),
         "project detail (list)" => project_path(@project, view: "list"),
+        "project detail (no README)" => project_path(@unlisted),
         # Stage 4, S4-4: the owner's preview of their public page, the ONE page that reaches
         # projects/preview and projects/_preview_banner. @user has a handle (setup above), so this
         # renders the page rather than the no-handle redirect.
