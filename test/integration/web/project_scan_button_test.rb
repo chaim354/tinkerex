@@ -184,7 +184,7 @@ module Web
         end
       end
       # THREE NAMES THEN A COUNT — a flash listing fifty folder names is not a sentence.
-      assert_match(/Found 4 new projects: Alpha, Beta, and Gamma and 1 more\./, flash[:notice].to_s)
+      assert_match(/Found 4 new projects: Alpha, Beta, Gamma and 1 more\./, flash[:notice].to_s)
       assert_match(%r{4 of 9 folders under Projects/; the rest on the next scan\.},
                    flash[:notice].to_s)
     end

@@ -154,7 +154,7 @@ module Projects
 
       shown = run.names.first(SCAN_NAMES_SHOWN)
       rest  = run.names.size - shown.size
-      tail  = rest.positive? ? "#{shown.to_sentence} and #{rest} more" : shown.to_sentence
+      tail  = rest.positive? ? "#{shown.join(", ")} and #{rest} more" : shown.to_sentence
       found = "Found #{run.created} new #{"project".pluralize(run.created)}: #{tail}."
       return found unless run.status == :capped
 
