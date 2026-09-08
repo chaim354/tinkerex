@@ -38,7 +38,7 @@ viewer controllers (S4-5). No new gem. No new JS dependency.
 | S4-5 | `2026-09-07-stage-4-s5-public-viewers.md` | public file page with the eight shared viewer partials (D5), covers on `/u/:handle`, hero, public header | D5 | **landed** 2026-09-07, PR #338 |
 | S4-6 | `2026-09-07-stage-4-s6-adopt-anywhere.md` | adopt in place (D1), status, make-current, New badge, Not-a-project, switch confirmations | D1 | **landed** 2026-09-07, PR #339 |
 | S4-7 | `2026-09-07-stage-4-s7-kinds.md` | `kind` + presets, per-project panel overrides | D4; S4-1's quiet panels | **landed** 2026-09-07, PR #340 |
-| S4-8 | `…-s8-connections.md` (to write) | `maker_file_links`, lineage on file pages, search over notes/README | S4-3's Save-to-library (a writer of links) | moderate: new table, needs the four derived guards (see below) |
+| S4-8 | `2026-09-07-stage-4-s8-connections.md` | `maker_file_links`, lineage on file pages, search over notes/README | S4-3's Save-to-library (a writer of links) | **in progress** 2026-09-07; moderate: new table, needs the four derived guards (see below) |
 
 **S4-1 first, and S4-7 after it**, because S4-7 turns the seven hard-coded `render` calls into a
 loop over a panel list with per-project overrides, and the quiet-when-empty state S4-1 introduces
