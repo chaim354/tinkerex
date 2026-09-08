@@ -63,6 +63,24 @@ module PublicFixture
                     "goes through public_file_preview (tinkerex#278)")
   end
 
+  # A READY, CURRENT PREVIEW ROW WITH AN ATTACHED ASSET, for any node and either kind (hardening,
+  # 2026-09-08). Both halves of "current" are asked of the code that owns them rather than written
+  # as literals: `renderer_revision` from Enqueue — a row at the wrong build is not current, renders
+  # the placeholder, and fails a test for the wrong reason — and `version_id` from the PORT, which
+  # on share IS the `content_hash` column a suite stamps first. Here rather than in one suite so
+  # the file-view suite can render a viewer's READY branch too: without a ready row its
+  # `assert_no_private_urls` blob arm could never fire (measured in review — `url_for(thumbnail.asset)`
+  # restored in two viewers left that suite green).
+  def ready_preview!(owner, node, kind: "thumbnail", body: PNG_BYTES, content_type: "image/png")
+    preview = owner.maker_previews.create!(
+      node_id: node.node_id, kind:, status: "ready",
+      version_id: FileLayer.current.stat(owner, node_id: node.node_id).content_token,
+      renderer_revision: Maker::Previews::Enqueue.revision_for_name(node.name, kind)
+    )
+    preview.asset.attach(io: StringIO.new(body), filename: node.name, content_type:)
+    preview
+  end
+
   def make_owner!(handle:, email: nil)
     User.create!(email: email || "#{handle}-#{SecureRandom.hex(4)}@example.com",
                  password: PASSWORD, confirmed_at: Time.current, handle:)

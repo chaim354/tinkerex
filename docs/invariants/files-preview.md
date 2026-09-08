@@ -439,12 +439,18 @@ partials that poster a thumbnail (`_static`, `_model3d`, `_measure`, `_gerber`) 
 local (`url:`, `thumbnail_url:`), built by the maker's page with `ApplicationHelper#preview_src`
 (the one private spelling, nil for any non-ready row) and by a visitor's with
 `Maker::PublicProject#preview_url_for`, which carries `link_params` so an unlisted project's hero
-keeps its `k`. **A THIRD ARM of the Public seam guard** refuses `\burl_for\b` outside ERB comments in
-those nine files, and it exists precisely because the second arm cannot see this: that pattern wants
-the `_path`/`_url` SUFFIX a route helper carries, and its own comment says `url_for(thumbnail.asset)`
-is not matched. `assert_no_private_urls` (`test/support/public_fixture.rb`, so every public suite
-sweeps) refuses `/rails/active_storage/` in a public response body beside the private `/files/` URLs
-it already refused. **The MAKER's own page still emits a blob URL and that is the decision, not an
+keeps its `k`. **A THIRD ARM of the Public seam guard** refuses `\burl_for\b` AND `\bpreview_src\b`
+outside ERB comments in those nine files and in EVERY PUBLIC TEMPLATE, and it exists precisely
+because the second arm cannot see this: that pattern wants the `_path`/`_url` SUFFIX a route helper
+carries, and its own comment says `url_for(thumbnail.asset)` is not matched. The public templates
+are in the scan because `ApplicationHelper` is in a public view context too, so `preview_src` is
+callable there — measured in review: a public panel swapped to it rendered a blob URL with the
+partial-only arm green. `assert_no_private_urls` (one definition, `test/support/public_fixture.rb`)
+refuses `/rails/active_storage/` in a public response body beside the private `/files/` URLs it
+already refused — **where a suite CALLS it on a page with a ready picture** (the preview suite and
+the file-view suite, which seeds one ready thumbnail for exactly that reason); the structural fence
+is the guard arm, the behavioural one is those calls, and a suite that calls neither proves nothing
+about blob URLs. **The MAKER's own page still emits a blob URL and that is the decision, not an
 oversight** — it is session-authed — which is what makes this a split rather than a global
 replacement, pinned by its own test in `public_preview_test.rb`.
 

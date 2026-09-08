@@ -34,6 +34,11 @@ module Web
       [ @f[:base], @f[:pic], @f[:kicad], @f[:readme], @laser, @gtl, @doc ].each do |node|
         node.update!(content_hash: "h-#{node.node_id}", current_version_id: "v-#{node.node_id}")
       end
+      # ONE READY THUMBNAIL, so the 3D viewer's poster takes its READY branch on the page this suite
+      # sweeps and `assert_no_private_urls`'s blob arm has something to catch (hardening, 2026-09-08;
+      # found in review: without it, `url_for(thumbnail.asset)` restored in two viewers left every
+      # test here green).
+      ready_preview!(@user, @f[:base])
     end
 
     teardown { FileLayer.reset! }

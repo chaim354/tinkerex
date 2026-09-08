@@ -1111,9 +1111,17 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     # page with `preview_src` and by a visitor's with `Maker::PublicProject#preview_url_for` — so
     # the check is simply that neither kind of partial builds one at all.
     #
-    # `files/_thumb.html.erb` JOINS THE EIGHT even though it is not a viewer: it is rendered by ten
-    # private surfaces AND by three public ones, which is the same sharing for the same reason, and
-    # it was the emitter that shipped the never-expiring cover.
+    # `files/_thumb.html.erb` JOINS THE EIGHT even though it is not a viewer: it is rendered by
+    # eleven private surfaces AND by three public ones, which is the same sharing for the same
+    # reason, and it was the emitter that shipped the never-expiring cover.
+    #
+    # AND EVERY PUBLIC TEMPLATE JOINS TOO, FOR `url_for` AND FOR `preview_src` (found in review,
+    # 2026-09-08). Public::BaseController stands on ActionController::Base, but Rails still puts
+    # ApplicationHelper in its view context, so `preview_src` — the ONE private spelling, `url_for`
+    # over the asset — is callable from a public template; measured, swapping one public call site
+    # to it rendered a blob URL into the Photos panel with this guard and the whole project-page
+    # suite green. Scanning only the shared partials guarded the emitters that shipped and not the
+    # next one a public panel would copy.
     #
     # ERB COMMENTS ARE STRIPPED, so the several comments naming `url_for(asset)` as the thing NOT to
     # write are not offenders — the same stripper both arms above use, carrying its open state
@@ -1121,23 +1129,28 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     thumb_partial = ROOT.join("app", "views", "files", "_thumb.html.erb").to_s
     assert File.exist?(thumb_partial),
            "app/views/files/_thumb.html.erb is gone — a moved file must not retire this arm silently"
-    url_for_files = viewer_files + [ thumb_partial ]
-    assert_operator url_for_files.size, :>=, 9,
-                    "the url_for scan matched #{url_for_files.size} file(s), below the floor of 9 " \
-                    "(8 viewer partials + files/_thumb) — `assert_empty` below cannot fail for the " \
-                    "reason it exists (CLAUDE.md §14e)"
+    # Every TEMPLATE the first arm scans (the public namespace's own, the viewers, the visitor's
+    # header) plus `_thumb`; the controllers are left out because `url_for` in one is a redirect,
+    # not a URL in a visitor's document.
+    url_for_files = (files.reject { |f| f.end_with?(".rb") } + [ thumb_partial ]).uniq
+    assert_operator url_for_files.size, :>=, 20,
+                    "the url_for scan matched #{url_for_files.size} file(s), below the floor of 20 " \
+                    "(the public templates, 8 viewer partials, the public header and files/_thumb) " \
+                    "— `assert_empty` below cannot fail for the reason it exists (CLAUDE.md §14e)"
     url_for_offenders = url_for_files.flat_map do |file|
       erb_open = false
       File.readlines(file, chomp: true).each_with_index.filter_map do |line, idx|
         code, erb_open = strip_erb_comment(line, erb_open)
-        next unless code.match?(/\burl_for\b/)
+        next unless code.match?(/\b(url_for|preview_src)\b/)
         "#{Pathname.new(file).relative_path_from(ROOT)}:#{idx + 1}"
       end
     end
     assert_empty url_for_offenders,
-                 "a shared partial builds an Active Storage URL instead of taking it as a strict " \
-                 "local — a blob URL is unauthenticated and never expires, so a public page's " \
-                 "picture outlives the project's publication:\n  #{url_for_offenders.join("\n  ")}"
+                 "a shared partial or a public template builds an Active Storage URL (`url_for`) or " \
+                 "names the private spelling of one (`preview_src`) instead of taking the URL as a " \
+                 "strict local or asking Maker::PublicProject#preview_url_for — a blob URL is " \
+                 "unauthenticated and never expires, so a public page's picture outlives the " \
+                 "project's publication:\n  #{url_for_offenders.join("\n  ")}"
   end
 
   SESSION_ACCESSOR = /\b(current_user|current_project|user_signed_in\?|web_device)\b|\bsession\s*[\[.]|\bcookies\s*[\[.]/

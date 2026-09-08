@@ -41,22 +41,7 @@ module Web
 
     teardown { FileLayer.reset! }
 
-    # A READY, CURRENT ROW WITH AN ATTACHED ASSET, for any node and either kind. Both halves of
-    # "current" are asked of the code that owns them rather than written as literals
-    # (public_project_test.rb's `ready_cover!` is this, thumbnail-only): `renderer_revision` from
-    # Enqueue — a row at the wrong build is not current, renders the placeholder, and would fail
-    # these tests for the wrong reason — and `version_id` from the PORT, which on share IS the
-    # `content_hash` column stamped above.
-    def ready_preview!(node, kind: "thumbnail", body: PublicFixture::PNG_BYTES,
-                       content_type: "image/png")
-      preview = @user.maker_previews.create!(
-        node_id: node.node_id, kind:, status: "ready",
-        version_id: FileLayer.current.stat(@user, node_id: node.node_id).content_token,
-        renderer_revision: Maker::Previews::Enqueue.revision_for_name(node.name, kind)
-      )
-      preview.asset.attach(io: StringIO.new(body), filename: node.name, content_type:)
-      preview
-    end
+    # `ready_preview!` is PublicFixture's (shared with public_file_view_test.rb since review).
 
     def preview_path_for(node_id, kind: "thumbnail", **opts)
       public_file_preview_path("ada", @project.slug, node_id, kind, **opts)
@@ -68,7 +53,7 @@ module Web
     # public template, so a public route helper is what it is allowed to name (the seam guard's
     # arms are about the SHARED partials), and `thumb` is a Maker::Preview carrying the node_id.
     test "a maker's page renders each cover through the public preview route" do
-      ready_preview!(@f[:pic])
+      ready_preview!(@user, @f[:pic])
       @project.update_column(:cover_node_id, @f[:pic].node_id)
 
       get public_user_path("ada")
@@ -82,8 +67,8 @@ module Web
     # route and never reaches a preview row at all, so the thumbnail arm needs a cover that is not
     # one — which is also the arm that carried the page's LARGEST never-expiring picture.
     test "the project page's hero, photos and file rows all name the preview route" do
-      ready_preview!(@f[:base])
-      ready_preview!(@f[:pic])
+      ready_preview!(@user, @f[:base])
+      ready_preview!(@user, @f[:pic])
       @project.update_column(:cover_node_id, @f[:base].node_id)
 
       get public_project_path("ada", @project.slug)
@@ -100,7 +85,7 @@ module Web
     # ATTACHMENT arm rather than by ancestry — the arm most likely to be dropped by a "simplifying"
     # rewrite of the door below.
     test "a build-log photo's thumbnail names the preview route" do
-      ready_preview!(@f[:entry_photo])
+      ready_preview!(@user, @f[:entry_photo])
 
       get public_project_path("ada", @project.slug)
 
@@ -110,8 +95,8 @@ module Web
     end
 
     test "a visitor's file page posters the :thumbnail and :model3d viewers through the route" do
-      ready_preview!(@cad)
-      ready_preview!(@f[:base])
+      ready_preview!(@user, @cad)
+      ready_preview!(@user, @f[:base])
 
       get public_file_view_path("ada", @project.slug, @cad.node_id)
       assert_response :success
@@ -129,7 +114,7 @@ module Web
     # <img> and not a smaller one: measure_controller.js fetches it later, and a blob URL there is
     # the whole Measure payload behind a link that never expires.
     test "the geometry poll answers the public preview route, never a blob URL" do
-      ready_preview!(@laser, kind: "geometry", body: GEOMETRY_JSON, content_type: "application/json")
+      ready_preview!(@user, @laser, kind: "geometry", body: GEOMETRY_JSON, content_type: "application/json")
 
       get public_file_geometry_path("ada", @project.slug, @laser.node_id)
 
@@ -146,7 +131,7 @@ module Web
     # carries a token minted with `ActiveStorage.service_urls_expire_in` (5 minutes), where
     # `/rails/active_storage/blobs/redirect/<signed_id>` carries a signed id with no expiry at all.
     test "the route redirects to an EXPIRING service URL that serves the asset's bytes" do
-      ready_preview!(@f[:base])
+      ready_preview!(@user, @f[:base])
 
       get preview_path_for(@f[:base].node_id)
 
@@ -159,7 +144,7 @@ module Web
     end
 
     test "the Measure payload comes through the same door" do
-      ready_preview!(@laser, kind: "geometry", body: GEOMETRY_JSON, content_type: "application/json")
+      ready_preview!(@user, @laser, kind: "geometry", body: GEOMETRY_JSON, content_type: "application/json")
 
       get preview_path_for(@laser.node_id, kind: "geometry")
 
@@ -171,7 +156,7 @@ module Web
     # THE HEADLINE. The picture is what a visitor keeps a copy of, so the URL outliving the
     # publication is the failure the whole slice exists to close.
     test "the same URL stops answering the moment the project goes private" do
-      ready_preview!(@f[:base])
+      ready_preview!(@user, @f[:base])
       url = preview_path_for(@f[:base].node_id)
 
       get url
@@ -187,7 +172,7 @@ module Web
     # `preview_url_for` carries `link_params` for exactly this reason, so the page's own <img> tags
     # keep working while a token-less guess does not.
     test "an unlisted project's preview needs its k token" do
-      ready_preview!(@f[:base])
+      ready_preview!(@user, @f[:base])
       @project.update!(visibility: "unlisted")
 
       get preview_path_for(@f[:base].node_id)
@@ -209,7 +194,7 @@ module Web
     test "a node the project does not permit is a 404, ready row and all" do
       @f[:outsider].update!(content_hash: "h-#{@f[:outsider].node_id}",
                             current_version_id: "v-#{@f[:outsider].node_id}")
-      row = ready_preview!(@f[:outsider])
+      row = ready_preview!(@user, @f[:outsider])
       assert_predicate row.version_id, :present?,
                        "the row must be CURRENT, or the 404 below proves nothing about permission"
 
@@ -244,7 +229,7 @@ module Web
     # renderer build" rule the page rendered from, so this route cannot serve a picture of content
     # the file no longer holds.
     test "a row for superseded content is a 404" do
-      ready_preview!(@f[:base])
+      ready_preview!(@user, @f[:base])
       @f[:base].update!(content_hash: "h-moved-on")
       @root.join(@f[:base].storage_path).binwrite("solid different")
 
@@ -262,7 +247,7 @@ module Web
     # slash, so the constraint costs nothing a real URL needs. Both nodes, so the 404 is the route's
     # and not `deliverable!`'s.
     test "an unknown kind is a 404, not the file's bytes" do
-      ready_preview!(@f[:base])
+      ready_preview!(@user, @f[:base])
 
       get "/u/ada/#{@project.slug}/files/#{@f[:base].node_id}/preview/other"
       assert_response :not_found
@@ -279,7 +264,7 @@ module Web
     # rather than a global replacement — and it is what would go red if someone "tidied" the two
     # spellings into one.
     test "the maker's own file page still renders its thumbnail as a blob URL" do
-      ready_preview!(@cad)
+      ready_preview!(@user, @cad)
       sign_in_as(@user)
 
       get file_path(@cad.node_id)
