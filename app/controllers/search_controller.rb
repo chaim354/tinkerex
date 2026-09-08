@@ -93,7 +93,7 @@ class SearchController < ApplicationController
                         # why. A text-only index is the same design question story 3.5 records for README
                         # text. The header total counts more than the five rows shown and there is no
                         # note-only page to be the "more"; the count is honest about that.
-                        .where("LOWER(action_text_rich_texts.body) LIKE ? ESCAPE '\'", like)
+                        .where("LOWER(action_text_rich_texts.body) LIKE ? ESCAPE '\\'", like)
                         .includes(:rich_text_body)
                         .order(created_at: :desc)
     if (group = add_group("Notes", :note, notes, nil))
