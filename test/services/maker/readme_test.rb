@@ -80,7 +80,7 @@ module Maker
 
       readme = readme_for
 
-      assert_match %r{<h1>Desk Lamp</h1>}, readme.html
+      assert_match %r{<h1 id="user-content-desk-lamp">Desk Lamp</h1>}, readme.html
       assert_match %r{<li>a lamp</li>}, readme.html
       assert_nil readme.note
     end
@@ -183,7 +183,7 @@ module Maker
     test "a README just under the read limit is still read" do
       file!("README.md", @folder, body: "# Read me\n", size: Maker::Readme::READ_LIMIT)
 
-      assert_match %r{<h1>Read me</h1>}, readme_for.html
+      assert_match %r{<h1 id="user-content-read-me">Read me</h1>}, readme_for.html
     end
 
     test "a README past the render cap is truncated with a note, and what precedes the cut renders" do
@@ -191,7 +191,7 @@ module Maker
 
       readme = readme_for
 
-      assert_match %r{<h1>Desk Lamp</h1>}, readme.html
+      assert_match %r{<h1 id="user-content-desk-lamp">Desk Lamp</h1>}, readme.html
       assert_match %r{Showing the first 64 KB}, readme.note
     end
 
@@ -220,6 +220,18 @@ module Maker
       assert_same Maker::Readme::NAMES, Maker::RepoCard::README_NAMES
       assert_same Maker::Readme::CAP, Maker::RepoCard::README_CAP
       assert_same Maker::Readme::READ_LIMIT, Maker::RepoCard::README_READ_LIMIT
+    end
+
+    test "the template names the project and uses its description when there is one" do
+      user = User.create!(email: "tpl-#{SecureRandom.hex(4)}@example.com",
+                          password: "correct horse battery staple", confirmed_at: Time.current)
+      plain = user.maker_projects.create!(name: "Desk Lamp")
+      described = user.maker_projects.create!(name: "Sign", description: "A backlit sign.")
+
+      assert_match(/\A# Desk Lamp\n\nOne line about what this is\./, Maker::Readme.template_for(plain))
+      assert_match(/\A# Sign\n\nA backlit sign\./, Maker::Readme.template_for(described))
+      assert_match(/## Files/, Maker::Readme.template_for(plain))
+      assert_match(/## Build log/, Maker::Readme.template_for(plain))
     end
   end
 end

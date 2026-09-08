@@ -1,10 +1,13 @@
 require "test_helper"
 
 module Web
-  # THE PROJECT FORM'S publishing controls (stage 3, S3-4): the Visibility and License selects, the
-  # "choose a handle first" hint, and `project_params` actually permitting the two. Field names are
-  # asserted as RENDERED (§14d): the form is `scope: :project` over a NAMESPACED model, so without
-  # it the selects would be named `maker_project[...]` and every save would silently drop them.
+  # THE PUBLISHING SAVE (stage 3, S3-4; the panel arrived in stage 4, S4-4). The Visibility and
+  # Licence CONTROLS moved to projects/_publish.html.erb — one column, one control (§14a's
+  # one-question-two-answers rule) — and their rendered-field assertions moved with them to
+  # publishing_test.rb. What stays here is `project_params` actually permitting the two, the
+  # handle-required refusal on a PATCH that carries no `return_to` (no form in the app produces that
+  # request any more — the panel always sends `return_to=project` — so it is the hand-crafted /
+  # API-shaped path, kept because the arm still exists), and the page-head badge.
   class ProjectPublishingFormTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
@@ -13,35 +16,6 @@ module Web
                            password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
       @project = @user.maker_projects.create!(name: "Desk Lamp")
-    end
-
-    # --- the rendered form ---------------------------------------------------------------------
-
-    test "the edit form renders both selects under the names the controller permits" do
-      get edit_project_path(@project)
-      assert_response :success
-
-      assert_select "select[name=?]", "project[visibility]" do
-        assert_select "option", 3
-        assert_select "option[value=private]"
-        assert_select "option[value=unlisted]"
-        assert_select "option[value=public]"
-      end
-      assert_select "select[name=?]", "project[license]" do
-        assert_select "option[value=?]", "MIT"
-        assert_select "option[value=?]", "CERN-OHL-S-2.0"
-      end
-    end
-
-    test "without a handle the form points at the account page" do
-      get edit_project_path(@project)
-      assert_select "a[href=?]", edit_user_registration_path, text: "choose a handle"
-    end
-
-    test "with a handle the hint is gone" do
-      @user.update!(handle: "chaim")
-      get edit_project_path(@project)
-      assert_select "a[href=?]", edit_user_registration_path, false
     end
 
     # --- the save ------------------------------------------------------------------------------
@@ -58,7 +32,7 @@ module Web
       assert_match(/\A\h{32}\z/, @project.unlisted_token)
     end
 
-    test "without a handle the form re-renders with the error and the project stays private" do
+    test "without a handle a PATCH with no return_to re-renders the edit form with the error and the project stays private" do
       patch project_path(@project), params: { project: { visibility: "public" } }
 
       assert_response :unprocessable_content

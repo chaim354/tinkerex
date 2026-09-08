@@ -145,6 +145,12 @@ Rails.application.routes.draw do
     # Return an archived project to the live list. A member PATCH rather than an update to a
     # `status` field: the web form no longer exposes status at all (spec decision #1).
     patch :unarchive, on: :member
+    # THE OWNER'S PREVIEW OF THEIR PUBLIC PAGE (stage 4, S4-4; story 5.1). A member GET on THIS
+    # controller, not a door into Public:: — spec §7: `Public::` never reads the session, so the
+    # preview is a session-authed route in the private namespace that renders the public partials
+    # with a banner, never a bypass in Public::BaseController. `controller_path` is still
+    # "projects", so ShellHelper::SECTIONS needs no entry and the rail still lights Projects.
+    get :preview, on: :member
     resources :attachments, only: %i[new create destroy], module: :projects, shallow: true do
       # Finish an attach whose auto-move hit a name collision: move the file in under a new name.
       # DELIBERATELY SCOPED TO THE PROJECT rather than a general POST /files/:id/move — the
@@ -183,6 +189,17 @@ Rails.application.routes.draw do
     # what the redirect and the flash are about, and the door files nothing on a scannable backend
     # (docs/invariants/project-intake.md), so the project is context, not a target.
     resource :scan, only: :create, module: :projects
+    # THE README, AS A DOOR RATHER THAN A FILE (stage 4, S4-4; spec §2 D3). SINGULAR: a project has
+    # one README and the door takes NO node id — it resolves the row from the project's own listing
+    # (Maker::Readme.row_in), which is what confines the git-editing exception to documentation
+    # (docs/invariants/git-editing.md). `update` only: creating README.md is still an update to
+    # "the project's README", and deleting one is the Files page's delete like any other file.
+    resource :readme, only: :update, module: :projects
+    # A NEW UNLISTED LINK (stage 4, S4-4; story 5.8). SINGULAR and create-only: there is one token,
+    # rotating it is a verb with no id, and there is nothing to GET — the link is on the project
+    # page. `mint_unlisted_token` only ever FILLED a nil column, so until now a link handed out
+    # once worked forever with no way to withdraw it.
+    resource :unlisted_token, only: :create, module: :projects
   end
 
   # NON-NESTED ATTACH. The file page attaches via a <select> of projects, and a <select> cannot

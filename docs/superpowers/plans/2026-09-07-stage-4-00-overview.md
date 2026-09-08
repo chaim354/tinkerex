@@ -34,7 +34,7 @@ viewer controllers (S4-5). No new gem. No new JS dependency.
 | S4-1 | `2026-09-07-stage-4-s1-project-page.md` | hero, photos, README card (root repo included), quiet panels, list-view menu | — | **landed** 2026-09-07, PR #334 |
 | S4-2 | `2026-09-07-stage-4-s2-filing.md` | roles for `.mage` `.lbrn` `.ai`, KiCad rules, board zips → `pcb/`, grouped settings, sweep opt-out and feedback, build-output display rule | — | **landed** 2026-09-07, PR #335 |
 | S4-3 | `2026-09-07-stage-4-s3-round-trip.md` | path + copy, self-refreshing file page, Save-to-library, honest Rescan | — | **landed** 2026-09-07, PR #336 |
-| S4-4 | `…-s4-documentation.md` (to write) | README editor anywhere (D3), owner preview, publish panel, anchors | D3; S4-1's README card | **moderate**: flips a git-editing rule for Markdown |
+| S4-4 | `2026-09-07-stage-4-s4-documentation.md` | README editor for any project (D3, the README door only), owner preview, publish panel, namespaced anchors | D3; S4-1's README card | **landed** 2026-09-07, PR #337 |
 | S4-5 | `…-s5-public-viewers.md` (to write) | public file page with the viewers (D5), covers, public header | D5 | low: reuse |
 | S4-6 | `…-s6-adopt-anywhere.md` (to write) | adopt in place (D1), status, make-current, New badge, Not-a-project, switch confirmations | D1 | moderate: a folder outside `Projects/` as `folder_node_id` |
 | S4-7 | `…-s7-kinds.md` (to write) | `kind` + presets, per-project panel overrides | D4; S4-1's quiet panels | moderate: the panel list becomes data |
@@ -196,16 +196,27 @@ source's parent), `app/jobs/library/scan_job.rb` (stamp `users.library_scanned_a
 
 ### S4-4 — documentation on your own page
 
-Files: `app/views/projects/_readme_card.html.erb` (`editable: true`), new
-`app/javascript/controllers/readme_controller.js` over the vendored CodeMirror bundle,
-`app/controllers/projects/readmes_controller.rb` (`PUT` → `LibraryOutput.write_bytes!(replace: true)`,
-create-at-root when absent, the template body), `ProjectsController#preview` +
-`app/views/projects/preview.html.erb` rendering the `public/projects` partials with a banner,
-new `app/views/projects/_publish.html.erb` (visibility with meanings, license, inline handle,
-URL + copy, unlisted rotate → `Projects::UnlistedTokensController#create`),
-`app/services/maker/markdown.rb` (`id` on headings, sanitized). Tests: `readme_edit_test.rb`,
-`project_preview_test.rb`, `publishing_test.rb`, `markdown_test.rb`, `docs/invariants/git-editing.md`
-(the Markdown exception, argued).
+**As landed (2026-09-07).** Files: `app/views/projects/_readme_editor.html.erb` mounted from both
+README cards (`_readme_card`, `_repo_card`) with `shared/_no_history_note.html.erb` gated on
+`capabilities.versioned?`; new `app/javascript/controllers/readme_controller.js` over the vendored
+CodeMirror bundle (no new pin); `app/controllers/projects/readmes_controller.rb` (`PATCH
+/projects/:id/readme`, no node id from the client — the row comes from `Maker::Readme.row_in` over
+the project's own listing) calling **`Maker::TextSave`**, the one save `FilesController#update` also
+calls (stale check, `replace: true`, the pending git edit, the preview re-enqueue through
+`LibraryOutput.enqueue_preview`); `ProjectsController#preview` + `projects/preview.html.erb` +
+`_preview_banner.html.erb` over **`public/projects/_page.html.erb`**, extracted from the public
+page as a pure move (`Public::BaseController` untouched); `projects/_publish.html.erb` (visibility
+with meanings, licence, inline handle claim via `Settings::HandlesController#return_path`, URL +
+Copy, unlisted link + Copy + New link → `Projects::UnlistedTokensController#create`) with visibility
+and licence removed from `_form.html.erb`; `app/services/maker/markdown.rb` (heading ids kept,
+**namespaced `user-content-<slug>`** — a bare `id="project-tasks"` collided with the tasks panel's
+Turbo target — in-document `#links` rewritten through the same slug function, duplicates suffixed).
+Tests: `readme_edit_test.rb`, `readme_editor_test.rb` (system: the copy-back), `text_save_test.rb`,
+`project_preview_test.rb`, `publishing_test.rb`, `markdown_test.rb` (+ a static guard keeping
+`user-content-` out of app views and JS), the preview's query budget, the phone sweep opening the
+editor (which found and fixed a grid min-content overflow), `docs/invariants/git-editing.md` (the
+Markdown exception, argued; story 2.13 deliberately not moved). Open work filed: `tinkerex#276`
+(the stale check compares the catalog's token).
 
 ### S4-5 — visitors see what you see
 

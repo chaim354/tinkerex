@@ -1,24 +1,32 @@
 <%#
   THE README CARD FOR A PLAIN FOLDER (stage 4, S4-1): the project's root README rendered on the
-  maker's own page. Until now a README was rendered only inside a repository's card
+  maker's own page. Until S4-1 a README was rendered only inside a repository's card
   (projects/_repo_card) and on the PUBLIC page — a maker with a plain folder saw their own
   documentation only by publishing it. Same reader (Maker::Readme), same `.markdown` rendering,
-  same `.readme` details S4-4 mounts its editor on; no git facts, because there is no git. Shares
-  `.repo-card`'s frame on purpose — one card look for "what this folder says about itself".
+  same `.readme` details; no git facts, because there is no git. Shares `.repo-card`'s frame on
+  purpose — one card look for "what this folder says about itself".
 
-  Locals: readme (Maker::Readme — html and/or note; the caller passes nothing when the folder has no
-  README, so this partial never renders empty), editable (false until S4-4).
+  SINCE STAGE 4, S4-4 IT ALSO RENDERS WITH NO README AT ALL. That is not an empty card: it is the
+  "Write a README" door, and it is the case 9 of the 9 measured real projects were in. `readme` is
+  nil then, and this partial renders the editor alone.
+
+  Locals: readme (a Maker::Readme, or nil when the folder holds none), editable (S4-4: may this
+  maker write it here?), readme_row (the README's row, or nil), project.
 %>
 <div class="repo-card readme-card">
-  <% if readme.html.present? %>
+  <% if readme&.html.present? %>
     <details class="readme" open>
       <summary>README</summary>
       <div class="markdown"><%= readme.html %></div>
       <% if readme.note %>
         <p class="muted readme-note"><%= readme.note %></p>
       <% end %>
+      <% if editable %><%= render "projects/readme_editor", project:, row: readme_row %><% end %>
     </details>
-  <% elsif readme.note %>
-    <p class="muted readme-note"><%= readme.note %></p>
+  <% else %>
+    <% if readme&.note %>
+      <p class="muted readme-note"><%= readme.note %></p>
+    <% end %>
+    <% if editable %><%= render "projects/readme_editor", project:, row: readme_row %><% end %>
   <% end %>
 </div>

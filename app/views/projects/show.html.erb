@@ -23,6 +23,10 @@
                                       **(@project.unlisted? ? { k: @project.unlisted_token } : {})),
                   class: "linkbtn small public-link" %>
     <% end %>
+    <%# THE DOOR TO THE PANEL (stage 4, S4-4). A plain in-page anchor: the panel is the LAST panel
+        so it does not displace the maker's own content, and the head is where a maker already
+        looks for publishing state. %>
+    <%= link_to (@project.published? ? "Publishing" : "Publish"), "#publish", class: "linkbtn small publish-link" %>
   </div>
   <div class="head-actions">
     <% if current_project == @project %>
@@ -94,4 +98,7 @@
   <%= render "releases", project: @project, releases: @releases, current_tokens: @release_tokens,
              repos: @release_repos, editable: true %>
   <%= render "sheets" %>
+  <%# Stage 4, S4-4: visibility, licence, the URL and the unlisted link — see the partial's header
+      for why it is last and why the page head links to it. %>
+  <%= render "publish", project: @project, folder_path: (@listing.path if @listing&.available?) %>
 </div>

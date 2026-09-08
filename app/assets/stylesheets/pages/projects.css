@@ -39,7 +39,17 @@
   /* --- Photos (stage 4, S4-1): the public gallery's grid, on the private page, full width. --- */
   .project-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
   .project-photos .thumb { width: 100%; height: 110px; }
+  /* `min-width: 0` ON THE ITEMS IS AN OVERFLOW FIX, NOT TIDINESS. A grid item's automatic minimum
+     size is its content's MIN-CONTENT width, so one descendant that cannot wrap sets the width of
+     the whole column — and `1fr` does not stop it, because `1fr` is `minmax(auto, 1fr)`. The
+     README editor is exactly that descendant: CodeMirror's `.cm-content` is `white-space: pre`, so
+     a 140-character line made `.attachments-panel` 1192px wide inside a 375px viewport and the
+     PAGE scrolled sideways (measured; test/system/shell_test.rb's phone sweep opens the editor for
+     this reason, and nothing lower in the chain is the lever — probed on the live page, only the
+     grid item's own min-width moves it). Zeroing it hands the overflow to `.cm-scroller`, which has
+     its own `overflow-x: auto` and is where a long line belongs. */
   .project-panels { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  .project-panels > .panel { min-width: 0; }
   @media (min-width: 900px) { .project-panels { grid-template-columns: 1fr 1fr; } .attachments-panel, .photos-panel { grid-column: 1 / -1; } }
 
   /* --- Files panel: 96px tiles, Detach in the corner on hover --- */
@@ -234,4 +244,40 @@
 
   /* --- The sweep's own line (stage 4, S4-2): under the Files head, above the groups. --- */
   .sweep-note { margin: 0 0 10px; font-size: 11px; }
+
+  /* --- The README editor (stage 4, S4-4): the composer inside a README card. `.composer` itself
+     is a component (components.css) and is only QUALIFIED here, never redeclared — design-system
+     rule 3. The mount and the textarea are two states of one control: CodeMirror renders into the
+     first and hides the second, and with no JS the second is what the maker types into. --- */
+  .readme-editor { margin-top: 10px; }
+  .readme-editor .readme-form { display: flex; flex-direction: column; gap: 8px; }
+  .readme-editor .readme-source { width: 100%; font: 12px/1.5 var(--font-mono); resize: vertical; }
+  .readme-editor .readme-mount .cm-editor { max-height: 60vh; }
+  .readme-editor .readme-bar { display: flex; align-items: center; gap: 10px; }
+  .readme-editor .readme-status { font-size: 12px; }
+  .readme-editor .no-history-note { margin: 0 0 8px; font-size: 12px; }
+
+  /* --- The preview banner (stage 4, S4-4): the one thing on the preview that a visitor never
+     sees, so it must not look like part of the page it sits above. --- */
+  .preview-banner { border: 1px solid var(--accent); border-radius: var(--radius-panel);
+                    background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+                    padding: 10px 14px; margin: 0 0 16px;
+                    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+  .preview-banner p { margin: 0; flex: 1 1 320px; font-size: 13px; }
+  .preview-banner p:last-child { flex: 0 0 auto; display: flex; gap: 8px; }
+
+  /* --- The Publish panel (stage 4, S4-4): three visibility rows that carry their own meaning,
+     then the URLs. `.btn` and `.field` are components and are only used here, never redeclared
+     (design-system rule 3). --- */
+  .publish-panel .publish-options { border: 0; padding: 0; margin: 0 0 12px; display: flex; flex-direction: column; gap: 6px; }
+  .publish-panel .publish-options legend { padding: 0; font-size: 13px; font-weight: 600; }
+  .publish-option { display: grid; grid-template-columns: auto auto 1fr; align-items: baseline; gap: 4px 8px; }
+  .publish-option-label { font-weight: 600; font-size: 13px; }
+  .publish-option-meaning { font-size: 12px; }
+  .publish-warning { font-size: 12px; }
+  .publish-url, .publish-unlisted { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+                                    margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .publish-url .mono, .publish-unlisted .mono { font-size: 12px; overflow-wrap: anywhere; }
+  .publish-unlisted p { flex-basis: 100%; margin: 0; font-size: 12px; }
+  .publish-unlisted form { margin: 0; }
 }

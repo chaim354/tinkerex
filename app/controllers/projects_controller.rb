@@ -6,7 +6,7 @@
 # page. This controller stays on the maker side of the FileLayer port — it only READS file
 # metadata (never writes/moves/deletes bytes), so none of the §10 tripwire surfaces are touched.
 class ProjectsController < ApplicationController
-  before_action :set_project, only: %i[show edit update destroy unarchive]
+  before_action :set_project, only: %i[show edit update destroy unarchive preview]
 
   # Exposes the `capabilities` helper the attachments panel's upload control branches on
   # (chunk two-phase vs. share/s3 multipart). Read-only here — no action is capability-gated.
@@ -191,6 +191,18 @@ class ProjectsController < ApplicationController
                                     listing: @listing, link: Maker::RepoCard::DEFAULT_LINK)
       end
     end
+    # THE README THE EDITOR EDITS (stage 4, S4-4), resolved ONCE from the same rows both cards
+    # render — Maker::Readme.row_in is the one definition of the preference order, so the card that
+    # shows a README and the door that saves it cannot disagree about which file that is. In memory
+    # over @listing: no query, no port call.
+    #
+    # `@readme_editable` IS TRUE WITH NO README AT ALL — that is the "Write a README" case, which is
+    # the whole of story 5.3 for the 9 of 9 measured projects that have none. The size cap is read
+    # from FilesController's constant rather than spelled again (git-editing.md: the SERVER is what
+    # enforces it, and two copies of a number is how they drift).
+    @readme_row = @listing.available? ? Maker::Readme.row_in(@listing.loose) : nil
+    @readme_editable = @listing.available? &&
+                       (@readme_row.nil? || @readme_row.node.size.to_i <= FilesController::EDITABLE_MAX_BYTES)
     # RELEASES (stage 3, S3-5). `includes(:files, :rich_text_notes)` because the panel reads both
     # for every release it renders -- :rich_text_notes is the association Action Text gives
     # `has_rich_text :notes`, and without it a page of ten releases costs ten extra round-trips,
@@ -282,6 +294,35 @@ class ProjectsController < ApplicationController
     @scan_started = params[:scanning] == "1"
   end
 
+  # GET /projects/:id/preview — what a visitor sees, at any visibility, for the owner (story 5.1).
+  #
+  # THE SAME OBJECT THE PUBLIC PAGE USES, BUILT DIRECTLY. Maker::PublicProject takes the project
+  # alone, reads `project.user` for every query and port call, and consults no session anywhere —
+  # so building one here needs no change to Public::BaseController and no session-aware branch
+  # inside it. What this route does NOT do is relax the public gate: /u/:handle/:slug still 404s a
+  # private project to everyone, its owner included, and project_preview_test.rb asserts both
+  # halves in the same file so the pair cannot drift.
+  #
+  # THE LINKS ARE THE VISITOR'S, NOT THE OWNER'S. `Maker::PublicProject#file_url_for` is the ONE
+  # answer to "where does this file's link point" — the reason that class exists — so the preview
+  # does not rewrite them to /files/:id. For an unlisted or public project they work identically
+  # for the maker and for a stranger, which is the case a maker previews for; for a private one
+  # they 404, which is precisely what a visitor gets, and the banner says so.
+  #
+  # NO HANDLE, NO PREVIEW. Every URL on the page is /u/<handle>/<slug>, and `public_file_path(nil,
+  # …)` raises UrlGenerationError against the route's own handle constraint. Maker::Project already
+  # refuses to PUBLISH without a handle; refusing to preview is the same rule, and the alert points
+  # at the panel that claims one rather than at a dead end.
+  def preview
+    if current_user.handle.blank?
+      return redirect_to project_path(@project),
+                         alert: "Choose a handle first — a public page lives at /u/<handle>/#{@project.slug}. " \
+                                "You can claim one in the Publish panel."
+    end
+
+    @pub = Maker::PublicProject.new(@project)
+  end
+
   def new
     @project = current_user.maker_projects.new(status: "planning")
   end
@@ -300,8 +341,17 @@ class ProjectsController < ApplicationController
 
   def update
     if @project.update(project_params)
-      redirect_to project_path(@project), notice: "Project updated."
+      redirect_to project_path(@project), notice: publish_notice
     else
+      # THE PANEL POSTS THE SAME TWO FIELDS AS THE EDIT FORM (stage 4, S4-4), and there is no edit
+      # page behind it — a refusal that re-rendered :edit would bounce a maker off the page they
+      # clicked on, into a form whose visibility field no longer exists. `return_to` is NOT a URL:
+      # it is the literal string "project", resolved here to THIS project's own path, so there is
+      # nothing to sanitise and no open redirect to get wrong (the same reason
+      # ApplicationHelper#back_target_path refuses to take a URL param, §14d).
+      return redirect_to project_path(@project), alert: @project.errors.full_messages.to_sentence if
+        params[:return_to] == "project"
+
       render :edit, status: :unprocessable_entity
     end
   end
@@ -401,10 +451,29 @@ class ProjectsController < ApplicationController
   # foreign id resolves to nothing and the card falls back to its placeholder. Adding a validation
   # would buy a nicer error for a case nobody reaches through the UI, at the price of a query on
   # every project save.
+
   def project_params
     attrs = params.require(:project).permit(:name, :description, :status, :cover_node_id, :tag_list,
                                             :visibility, :license, :autofile)
     attrs[:cover_node_id] = nil if params[:project][:cover_clear] == "1"
     attrs
+  end
+
+  # WHAT A VISIBILITY CHANGE ACTUALLY DID, IN THE MAKER'S TERMS (stage 4, S4-4; story 5.2). "Project
+  # updated." was the whole feedback for publishing until now — no URL, and no word about the fact
+  # that EVERY visible file in the project's folder — and every file attached to the project or its
+  # build log, wherever it lives — became downloadable (Maker::PublicProject#permits?). A maker
+  # cannot consent to what nobody told them.
+  #
+  # `saved_change_to_visibility?` RATHER THAN `published?`: the sentence is about the CHANGE, so a
+  # save that touched the name must not re-announce a publication that happened last week.
+  def publish_notice
+    return "Project updated." unless @project.saved_change_to_visibility?
+    return "#{@project.name} is private again. Its public page is gone." unless @project.published?
+
+    url = public_project_url(@project.user.handle, @project.slug,
+                             **(@project.unlisted? ? { k: @project.unlisted_token } : {}))
+    who = @project.unlisted? ? "anyone with that link" : "anyone"
+    "Published at #{url}. Everything in the project's folder, and every file attached to it, is now downloadable by #{who}."
   end
 end

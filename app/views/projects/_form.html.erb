@@ -26,20 +26,10 @@
     <span class="field-hint muted">Comma-separated</span>
   </label>
 
-  <label class="field">
-    <span>Visibility</span>
-    <%= f.select :visibility,
-                 options_for_select(Maker::Project::VISIBILITIES.map { |v| [ v.humanize, v ] }, project.visibility) %>
-  </label>
-  <% if project.user.handle.blank? %>
-    <p class="muted field-hint">To publish, first <%= link_to "choose a handle", edit_user_registration_path %>.</p>
-  <% end %>
-  <label class="field">
-    <span>License</span>
-    <%= f.select :license,
-                 options_for_select([ [ "None", "" ] ] + Maker::Project::LICENSES.map { |id, label| [ "#{label} (#{id})", id ] },
-                                    project.license) %>
-  </label>
+  <%# VISIBILITY AND LICENCE MOVED TO THE PUBLISH PANEL (stage 4, S4-4), on the project page, where
+      the three states can carry their meanings and a handle can be claimed inline. They are not
+      duplicated here: one column with two controls is the shape §14a keeps recording, and
+      `project_params` still permits both because the panel posts to this same #update. %>
 
   <%#
     THE COVER IMAGE, choosable here rather than only inferred. `Maker::Project#cover_node_id` falls

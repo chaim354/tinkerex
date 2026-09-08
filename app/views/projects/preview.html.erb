@@ -1,0 +1,21 @@
+<%#
+  NO `content_for :crumbs` HERE, ON PURPOSE. The visitor's page carries its own breadcrumb
+  (`@handle / Project`, public/projects/_page.html.erb), drawn in the body because the anonymous
+  branch of the layout renders no topbar to yield one. This page IS the signed-in branch, so a
+  crumbs block here rendered a second `nav.breadcrumb` with the same accessible name directly above
+  the first (measured in review). The topbar falls back to the title, the banner below carries "Back
+  to the project", and the visitor's own breadcrumb stays exactly where a visitor sees it.
+%>
+<%= render "projects/preview_banner", project: @project %>
+<%= render "public/projects/page", pub: @pub %>
+
+<%#
+  THE TITLE IS SET LAST, AND `flush:` IS WHY. `content_for` APPENDS, and the partial above sets no
+  title — but the day it does, an earlier `content_for :title` here would render as the two titles
+  concatenated. The layout is rendered AFTER this template either way (the body becomes
+  content_for(:layout) first), so a title written at the bottom reaches <title> exactly as one
+  written at the top would; only the append order differs. Never write a percent-greater-than
+  sequence inside one of these comments — an ERB comment ends at the first one and the rest of the
+  prose prints into the page (§14d).
+%>
+<% content_for :title, "Preview — #{@project.name} — Tinkerex", flush: true %>

@@ -116,6 +116,28 @@ module Web
       @user.nodes.create!(node_id: "firmware-readme", name: "README.md", kind: "file",
                           parent_node_id: firmware.node_id, size: 12, mtime: 1_700_000_000_000_000_000,
                           content_hash: "h-firmware-readme", current_version_id: "v-firmware-readme")
+      # STAGE 4, S4-4: A README AT THE FOLDER'S OWN ROOT, WHICH IS THE READ-THE-README BRANCH.
+      # `projects/_readme_editor` renders on every project page, but with NO root README both it and
+      # the README card take their empty branches and touch nothing — so a page seeded without this
+      # row measures the feature's cheapest shape and says nothing about its real one.
+      #
+      # MEASURED: adding it moves this page 34 -> 36 queries, and the two are named rather than
+      # absorbed. Both are single-node lookups and both are CONSTANT — one for the page, not one per
+      # row, which is the only property this file asserts:
+      #   * `Maker::Readme.for` reads the README through the port for the card, and on share a read
+      #     resolves the node first (FileLayer::Share#live_node!).
+      #   * `projects/_readme_editor` stats the same node for the form's `base_token`, likewise one
+      #     `nodes` query on share (FileLayer::Share#stat).
+      # The row is created HERE, once, never inside `add` below — an editor that started stating per
+      # listed row instead of per page would show up as growth, which is the whole point of putting
+      # it under measurement.
+      #
+      # No bytes behind it, like every other node this fixture creates, so Maker::Readme.for fails
+      # closed to its note exactly as the repo card's README does — the same failure path, and the
+      # port read still happens, which is what is being budgeted.
+      @user.nodes.create!(node_id: "root-readme", name: "README.md", kind: "file",
+                          parent_node_id: folder.node_id, size: 12, mtime: 1_700_000_000_000_000_000,
+                          content_hash: "h-root-readme", current_version_id: "v-root-readme")
       # STAGE 4, S4-1: A COVER, so the HERO is under measurement. It joins the page's one PageNodes
       # union and its thumbnail joins the one ThumbnailMap, both of which are exactly the places a
       # per-cover lookup would hide. `update_column` rather than `update!`, because the derived
@@ -160,6 +182,17 @@ module Web
                               parent_node_id: sub.node_id, size: 0, mtime: 1_700_000_000_000_000_000)
           state = @user.maker_addon_states.create!(addon_key: "fixture", name: "gen #{id}", data: {}, revision: 1)
           state.files.create!(node_id: "#{id}-file", role: "output", position: 0)
+          # STAGE 4, S4-4: A LOOSE FILE AT THE FOLDER'S OWN ROOT, so `@listing.loose` GROWS. Every
+          # other file this lambda creates lands in a SUBFOLDER, which left the root holding two
+          # rows at both sizes — and `@readme_row` is resolved by scanning exactly that list, so a
+          # per-row lookup in place of `Maker::Readme.row_in`'s in-memory `find` was CONSTANT here
+          # and this guard could not see it (measured: 36 -> 38 at both sizes, green). With this row
+          # the same mutation costs one query per loose file and goes red, which is what makes the
+          # "in memory over the listing" claim an assertion rather than a comment. It grows the
+          # loose-files section of the panel too, an axis nothing else here moved.
+          @user.nodes.create!(node_id: "#{id}-loose", name: "#{id}-loose.txt", kind: "file",
+                              parent_node_id: folder.node_id, size: 1, mtime: 1_700_000_000_000_000_000,
+                              content_hash: "h-#{id}-loose", current_version_id: "v-#{id}-loose")
           # THE LINKED CASE: an attachment to a node OUTSIDE the folder, growing @linked_rows.
           node!(id, "#{id}.stl")
           project.file_attachments.create!(user: @user, node_id: id, role: "model")
@@ -227,12 +260,51 @@ module Web
     # ActionController::Base and `shell_signed_in?` asks `public_surface?` FIRST), and measuring as
     # the owner would budget a session lookup no real visitor pays.
     #
-    # THE OWNER NEEDS A HANDLE BEFORE THE PROJECT CAN LEAVE `private` — Maker::Project refuses
-    # otherwise, and the handle then locks. That ordering is the fixture, not a preference.
+    # THE SEED IS `public_page_seed!` BELOW, SHARED WITH projects#preview (stage 4, S4-4). The two
+    # pages render the SAME partials over the SAME Maker::PublicProject, so they must be budgeted
+    # against the same shape or the second one drifts away from the first.
     test "public projects#show does not grow with files, entries, BOM lines or connections" do
       delete destroy_user_session_path
-      @user.update!(handle: "budgeted")
-      project = @user.maker_projects.create!(name: "Published", status: "active", visibility: "public")
+      project, add = public_page_seed!(handle: "budgeted", name: "Published")
+      assert_constant_queries(public_project_path(@user.handle, project.slug),
+                              -> { add.call("ps", SMALL) },
+                              -> { add.call("pl", LARGE - SMALL) },
+                              "public projects#show")
+    end
+
+    # STAGE 4, S4-4: THE OWNER'S PREVIEW, SIGNED IN — which is the difference worth measuring. It
+    # renders the same partials over the same object, plus the app shell (the rail, the
+    # current-project switcher, the flash) that a visitor never pays for. That shell cost is a
+    # CONSTANT and must stay one: a preview that grew with the project would grow with it on a page
+    # the maker opens to check their work, not on a page a stranger opens once.
+    #
+    # NOT SIGNED OUT, unlike the budget above and every other public one in this file: this route IS
+    # session-authed (ProjectsController#preview, `current_user.maker_projects`), so measuring it as
+    # a visitor would measure a redirect to the sign-in page.
+    #
+    # PRIVATE ON PURPOSE. The preview answers at any visibility — that is its whole point, seeing
+    # the page before anyone else can — and an unpublished project is the state a maker previews
+    # from. Its links are the visitor's and are dead, which is what the banner says and what
+    # project_preview_test.rb asserts; none of that changes what this page COSTS.
+    test "projects#preview does not grow with files, entries, BOM lines or connections" do
+      project, add = public_page_seed!(handle: "previewed", name: "Previewed", visibility: "private")
+      assert_constant_queries(preview_project_path(project),
+                              -> { add.call("vs", SMALL) },
+                              -> { add.call("vl", LARGE - SMALL) },
+                              "projects#preview")
+    end
+
+    # THE PUBLIC PAGE'S SEED, SHARED BY TWO BUDGETS (stage 4, S4-4). A second copy of this fixture
+    # is a pair that drifts, and the preview would then be budgeted against a shape the public page
+    # no longer has. Returns [project, add] — the project to build a path from, and the growth
+    # lambda both budgets step twice.
+    #
+    # THE OWNER NEEDS A HANDLE BEFORE THE PROJECT CAN LEAVE `private` — Maker::Project refuses
+    # otherwise, and the handle then locks. That ordering is the fixture, not a preference, and it
+    # is why the handle is an argument: two tests in one class cannot both claim one.
+    def public_page_seed!(handle:, name:, visibility: "public")
+      @user.update!(handle:)
+      project = @user.maker_projects.create!(name:, status: "active", visibility:)
       folder = project_folder_rows!(@user, project)
       bom = project.boms.create!(user: @user)
       add = lambda do |prefix, count|
@@ -301,10 +373,7 @@ module Web
           end
         end
       end
-      assert_constant_queries(public_project_path(@user.handle, project.slug),
-                              -> { add.call("ps", SMALL) },
-                              -> { add.call("pl", LARGE - SMALL) },
-                              "public projects#show")
+      [ project, add ]
     end
 
     # STAGE 3, S3-6: THE FEED AND THE MANIFEST ARE TWO MORE READERS OVER THE SAME ROWS, and neither
