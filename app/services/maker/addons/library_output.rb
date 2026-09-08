@@ -71,10 +71,25 @@ module Maker
       # put that claim and §14d's count in question to save an awkward namespace. The second caller
       # is recorded there instead — an invariant that silently acquires an exception is worse than
       # one that names it.
-      def write_bytes!(user, parent_node_id:, name:, bytes:, replace: false)
+      # `expect_token:` — WHAT THE CALLER BELIEVES THE STORE HOLDS, threaded to the port so the
+      # ADAPTER can compare against the STORE rather than the catalog (FileLayer::Share#write). nil
+      # means no check, which is what every addon save passes and what keeps their behaviour
+      # unchanged; Maker::TextSave is the one caller that opts in.
+      #
+      # ONLY THE port_writable BRANCH TAKES IT, AND chunk_remote NEEDS NOTHING — its upload is not
+      # missing this check, it already has a stronger one. #write_chunk commits against the existing
+      # node with `base_version_id: existing&.current_version_id`, and the sync server answers a
+      # STALE base with a recorded CONFLICT rather than a silent overwrite (§6; docs/sync-protocol.md,
+      # "Last-writer-wins was false"). So the mirror's staleness costs a conflict row, never a lost
+      # edit — where share and s3 have no version to conflict against and would simply overwrite.
+      # Passing a token down there would be a second, weaker guard keyed on the very mirror that
+      # lags.
+      def write_bytes!(user, parent_node_id:, name:, bytes:, replace: false, expect_token: nil)
         f = { name:, bytes: }
         caps = FileLayer.current.capabilities
-        caps.port_writable? ? write_port(user, parent_node_id, f, replace) : write_chunk(user, parent_node_id, f, replace)
+        return write_chunk(user, parent_node_id, f, replace) unless caps.port_writable?
+
+        write_port(user, parent_node_id, f, replace, expect_token)
       end
 
       # UPSERT, NOT CREATE, BECAUSE A REPLACE KEEPS THE NODE. `maker_addon_files` is unique on
@@ -117,9 +132,9 @@ module Maker
       end
 
       # --- share / s3 -----------------------------------------------------------
-      def write_port(user, parent_node_id, f, replace = false)
+      def write_port(user, parent_node_id, f, replace = false, expect_token = nil)
         info = FileLayer.current.write(user, parent_node_id:, name: f[:name],
-                                       io: StringIO.new(f[:bytes].b), replace:)
+                                       io: StringIO.new(f[:bytes].b), replace:, expect_token:)
         info.node_id
       end
 

@@ -58,6 +58,29 @@ class RepoEditFlowTest < ActionDispatch::IntegrationTest
                  "last-write-wins would destroy the other edit silently, and on share for good"
   end
 
+  # THE SAME 409, FOR THE HALF THE CATALOG CANNOT SEE. The token above is nonsense, so the row arm
+  # of Maker::TextSave's check catches it; here the token is the REAL one the page rendered and the
+  # row still agrees with it, because the file changed on disk with no scan behind it. That is the
+  # ordinary shape of the failure — a maker editing the same repository from their desktop — and it
+  # reached the port and overwrote until `expect_token:` existed (§14a).
+  #
+  # DRIVEN THROUGH THE DOOR rather than the service, because the response CODE is the door's: the
+  # port raises FileLayer::StaleContent, TextSave turns it into the same :conflict the row arm
+  # answers, and render_save_error turns that into the 409 the editor's JS reads. Three hops that a
+  # service test does not cover.
+  test "a save racing a desktop edit the scan has not seen is refused and keeps the desktop bytes" do
+    node = seed_repo_file!("notes.md", "original\n")
+    on_disk = File.join(library_root, node.storage_path)
+    File.write(on_disk, "from the desktop\n")
+
+    patch file_path(node.node_id), params: { content: "from the browser\n",
+                                             base_token: token_for(node) }
+
+    assert_response :conflict
+    assert_equal "from the desktop\n", File.read(on_disk),
+                 "the edit the catalog had not observed must survive the save that raced it"
+  end
+
   # THE SAVE INVALIDATES THE PICTURE OF THE FILE, AND UNTIL NOW NOTHING SAID SO (stage 4, S4-3;
   # story 2.13's "the thumbnail and page stay stale after Save"). Every text extension has a
   # renderer — Maker::Previews::Registry DERIVES TextThumb for all 37 of them — so a saved .md

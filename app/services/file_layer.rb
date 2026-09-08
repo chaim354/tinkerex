@@ -73,6 +73,23 @@ module FileLayer
   # The suffix says which of the two is unsupported: the OPERATION, not the file.
   UnsupportedOperation = Class.new(StandardError)
 
+  # A `write(replace: true, expect_token:)` found the STORE holding content the caller did not name
+  # — someone changed the file between the editor rendering it and Save. Refused with nothing
+  # written, which is the same answer a clobber gets and for the same reason: on a current-state-only
+  # backend the overwritten bytes are gone for good.
+  #
+  # A SUBCLASS RATHER THAN A SIBLING, which is §14a's rule for exactly this shape ("if a caller must
+  # branch, the answer is a subclass"). A caller that does not branch — every door that passes no
+  # `expect_token`, plus any future one that forgets — still gets the port's ordinary
+  # UnsupportedOperation mapping (422, "the request is wrong for this node"), so a missed rescue
+  # degrades to a refusal rather than to a 500. Maker::TextSave is the caller that MUST branch: it
+  # has a stale answer of its own (409 + "reload to see the current version"), and rescuing the
+  # PARENT there would swallow the create-path clobber refusal that means something else.
+  #
+  # NOT FetchError, though both leave the store untouched: FetchError is the RETRYABLE answer and
+  # this never succeeds on retry — the caller has to re-read the file first.
+  StaleContent = Class.new(UnsupportedOperation)
+
   # A `#finalize_upload` was asked to seal a commit whose manifest names chunks storage never
   # received — the browser's presigned PUTs didn't all land (or, for a server-side caller, a bug
   # skipped one) before finalize was called. Task 8: `Chunk#finalize_upload` re-raises

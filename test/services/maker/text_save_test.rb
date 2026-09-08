@@ -53,6 +53,32 @@ module Maker
       assert_equal "# Old\n", FileLayer.current.read(@user, node_id: node.node_id)
     end
 
+    # THE GAP THE CATALOG ARM CANNOT SEE, AND THE ONE THIS SERVICE'S HEADER USED TO CONCEDE. The row
+    # arm compares the editor's token against `stat`, which answers from `nodes` — so a Finder save
+    # made between render and Save, with no scan in between, agreed with it and was silently
+    # overwritten (measured in S4-4's review). Bytes straight to the disk here, deliberately no
+    # scan: that is what makes the catalog agree, and what makes this test fail the moment the check
+    # goes back to asking the row instead of the store.
+    #
+    # THE SAME REFUSAL EITHER ARM CATCHES IT ON — status, and the STALE sentence, not merely "not
+    # ok". One condition, one answer (§14a): a maker who raced the scan must not get a different
+    # message from one who did not.
+    test "a desktop edit the catalog has not observed yet is refused, not overwritten" do
+      node = write!("README.md", "# Old\n")
+      rendered = token_for(node)
+      on_disk = @library.join(node.storage_path)
+      File.binwrite(on_disk, "# From the desktop\n")
+
+      result = Maker::TextSave.call(user: @user, node:, parent_node_id: @folder.node_id,
+                                    name: node.name, body: "# From the browser\n", base_token: rendered)
+
+      refute result.ok
+      assert_equal :conflict, result.status
+      assert_equal Maker::TextSave::STALE, result.error
+      assert_equal "# From the desktop\n", File.read(on_disk),
+                   "the other edit must survive — on share there is no version to restore it from"
+    end
+
     test "no node creates the file at the folder root" do
       result = Maker::TextSave.call(user: @user, node: nil, parent_node_id: @folder.node_id,
                                     name: "README.md", body: "# Fresh\n", base_token: nil)

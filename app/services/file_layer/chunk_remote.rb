@@ -64,7 +64,12 @@ module FileLayer
     # and a 501 here would be factually wrong: the caller used the wrong door (§14a).
     WRITE_MSG = "chunk_remote uploads go through begin_upload/finalize_upload, not write"
 
-    def write(_user, parent_node_id: nil, name: nil, io: nil, replace: false)
+    # `expect_token:` is accepted AND IGNORED, for the same reason the whole signature is: a
+    # refusal that ArgumentError'd on one keyword would answer a wrong-door call with a stack trace
+    # instead of WRITE_MSG. Nothing is lost by ignoring it — this backend's staleness answer is the
+    # `base_version_id` its two-phase upload already carries, which the sync server turns into a
+    # recorded CONFLICT rather than an overwrite (§6; Maker::Addons::LibraryOutput#write_bytes!).
+    def write(_user, parent_node_id: nil, name: nil, io: nil, replace: false, expect_token: nil)
       raise NotImplementedError, WRITE_MSG
     end
 

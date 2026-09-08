@@ -5,13 +5,21 @@ module Maker
   # a verb more than one controller performs gets a named service rather than being re-inlined
   # (§14d). What must not drift between them is exactly what lives here:
   #
-  #   * THE STALE CHECK. The caller edited SOME version; if the port's content token has moved
-  #     since, the save would silently discard whatever moved it. 409, never a write. IT SEES THE
-  #     CATALOG'S TOKEN, NOT THE DISK'S: on share and s3 `stat` answers from the row, so a desktop
-  #     edit or deletion the scan has not observed yet is invisible here until it is (§14b's
-  #     bounded staleness — measured in S4-4's review, a Finder edit made between render and Save
-  #     with no scan in between was overwritten). The no-history note on the editor is what tells
-  #     the maker that; closing the gap is a port question, not a door's.
+  #   * THE STALE CHECK. The caller edited SOME version; if the content token has moved since, the
+  #     save would silently discard whatever moved it. 409, never a write. IT ASKS THE CATALOG
+  #     FIRST, THEN THE STORE, ON SHARE AND S3. The catalog arm below is `stat`, which answers from
+  #     the row and so cannot see a desktop edit the scan has not observed yet (§14b's bounded
+  #     staleness — measured in S4-4's review, a Finder edit made between render and Save with no
+  #     scan in between was overwritten). Closing that was a port question rather than a door's, and
+  #     it is closed in the port: the write below carries `expect_token:`, and the ADAPTER compares
+  #     the STORE's own identity against it — Share re-hashes the file, S3 HEADs the object through
+  #     the identity ladder — raising FileLayer::StaleContent with nothing written. That subclass is
+  #     what this service rescues into the same STALE refusal the row arm gives, so one condition
+  #     gets one answer whichever half of the check catches it. On chunk_remote there is no second
+  #     arm and none is wanted: that upload carries `base_version_id` and the sync server records a
+  #     CONFLICT on a stale base instead of overwriting (§6), so the mirror's lag costs a conflict
+  #     row, never an edit. The no-history note on the editor still tells the maker there is no
+  #     undo behind any of this.
   #   * `replace: true`, WHICH REUSES THE NODE. A delete-then-create passes any bytes-oriented test
   #     while orphaning every attachment, BOM line and tag on that node — nothing errors and
   #     nothing logs, which is the whole signature (§14a, git-editing.md's opening rule).
@@ -61,10 +69,27 @@ module Maker
         return refusal(REMOVED)
       end
 
-      node_id = Maker::Addons::LibraryOutput.write_bytes!(
-        user, parent_node_id: node ? node.parent_node_id : parent_node_id,
-        name: node ? node.name : name, bytes: body.to_s.b, replace: node.present?
-      )
+      # THE SECOND ARM OF THE ONE STALE CHECK (see the header): the row agreed, now the STORE has to
+      # agree too, and only the adapter can ask it. The rescue is NARROW ON PURPOSE — StaleContent
+      # and never its parent. `write` raises UnsupportedOperation for a clobber as well, which the
+      # CREATE path above can genuinely hit ("a README appeared while you were writing"), and that
+      # one belongs to the door: it is a different sentence, a different remedy, and it is raised to
+      # the caller unchanged (see the header's last paragraph). Rescuing the parent here would
+      # convert it into this service's own STALE message about a file the maker never opened.
+      #
+      # SCOPED TO THE WRITE ITSELF, not written as a method-level rescue: after this call the bytes
+      # ARE on the store, and a later line answering a refusal would report a save that happened as
+      # one that did not.
+      node_id =
+        begin
+          Maker::Addons::LibraryOutput.write_bytes!(
+            user, parent_node_id: node ? node.parent_node_id : parent_node_id,
+            name: node ? node.name : name, bytes: body.to_s.b, replace: node.present?,
+            expect_token: base_token
+          )
+        rescue FileLayer::StaleContent
+          return refusal(STALE)
+        end
       Maker::RepoEdit.record!(user:, repo_root_node_id:, node_id:) if
         repo_root_node_id.present? && FileLayer.current.capabilities.local_worktree?
 

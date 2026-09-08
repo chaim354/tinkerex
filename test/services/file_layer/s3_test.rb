@@ -109,6 +109,15 @@ module FileLayer
       Library::S3Observer.call(@user, adapter:, max_delete_pct:)
     end
 
+    # The write contract's `change_store_content!` hook: another tool putting different bytes at
+    # this key -- rclone, the S3 console, the maker's own desktop client. Straight to the fake's
+    # object, with no scan behind it, so the catalog still names the old identity. `seed!` re-derives
+    # the ETag from the new body, which is what the store itself would do.
+    def change_store_content!(node_id, bytes)
+      @fake.seed!("#{PREFIX}/#{@user.nodes.find_by!(node_id:).storage_path}", bytes,
+                  last_modified: Time.now)
+    end
+
     # An attachment is WHY node_id stability is the port's promise: it is a bare string column
     # with no foreign key (maker_file_attachments.node_id), so a node_id that changes does not
     # error — it silently resolves to nothing. That is what "orphaned" means below, concretely.

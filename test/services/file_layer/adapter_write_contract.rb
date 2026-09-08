@@ -13,7 +13,17 @@
 # that is the point. The read contract's hooks (adapter, @user) are assumed; include this
 # alongside it.
 #
-# One ADDITIONAL hook the including test case must define:
+# TWO ADDITIONAL hooks the including test case must define:
+#   change_store_content!(node_id, bytes) -> put different bytes at this node's location IN THE
+#                                    STORE, BEHIND THE CATALOG — no scan, no port call, so the row
+#                                    still names the old content. This is the whole premise of the
+#                                    `expect_token:` pair below: it models the desktop edit the
+#                                    catalog has not observed yet, which is the case a door
+#                                    comparing tokens against `stat` structurally cannot see. It is
+#                                    a hook rather than a shared body because "the store" is a
+#                                    mounted directory on one backend and a bucket on the other,
+#                                    and this module does not encode either layout (see the note
+#                                    below about `.trash/<node_id>/<name>`).
 #   with_transient_write_failure { } -> make the WRITE transport fail temporarily and not the
 #                                    file's fault (a PUT 5xx; a full or unmounted share), then
 #                                    yield. Restore on the way out.
@@ -116,6 +126,57 @@ module FileLayerWritableContract
                  "a replace must leave ONE live node at that path, not a second alongside it"
     assert_equal "v2-longer".bytesize, @user.nodes.find_by!(node_id: first.node_id).size,
                  "the node's indexed size must follow the new content, or the next scan disagrees"
+  end
+
+  # `expect_token:` — A REPLACE MAY NAME THE CONTENT IT IS REPLACING, and naming the current one
+  # changes nothing. Beside the pair above for the reason they are beside each other: the claim is
+  # that each opt-in leaves the previous behaviour exactly where it was. Every existing caller
+  # passes no token and none of the tests above changed.
+  #
+  # In the CONTRACT because the ANSWER is the port's while the MECHANISM is each backend's — Share
+  # re-hashes the file, S3 HEADs the object through the identity ladder — which is the same split
+  # the clobber and replace tests are here for.
+  def test_write_contract_a_replace_naming_the_current_content_writes_in_place
+    first = adapter.write(@user, parent_node_id: nil, name: "named.md", io: StringIO.new("v1"))
+
+    second = adapter.write(@user, parent_node_id: nil, name: "named.md", io: StringIO.new("v2"),
+                           replace: true, expect_token: first.content_token)
+
+    assert_equal first.node_id, second.node_id,
+                 "naming the current content is an ordinary replace — it must still reuse the node"
+    assert_equal "v2", adapter.read(@user, node_id: first.node_id)
+  end
+
+  # AND NAMING CONTENT THE STORE NO LONGER HOLDS IS REFUSED WITH NOTHING WRITTEN. This is the test
+  # the whole `expect_token:` pair exists for, and the fixture is what gives it teeth: the bytes are
+  # changed IN THE STORE with no scan, so the CATALOG still names the caller's token. An adapter
+  # that compared against `existing.content_hash` — the row — would find agreement and clobber, and
+  # would pass a version of this test written with a made-up token. Only asking the store answers.
+  #
+  # That gap is not hypothetical: it is what Maker::TextSave's own stale check does, correctly, and
+  # cannot close from where it stands (§14b's bounded staleness — a Finder edit made between render
+  # and Save with no scan in between was overwritten, measured). The port is where "current" is
+  # knowable, so this is where the refusal is.
+  #
+  # StaleContent, AND IT IS AN UnsupportedOperation — asserted rather than assumed, because the
+  # subclass is what lets a caller that does NOT branch (every door passing no token, plus any
+  # future one that forgets) keep the port's 422 instead of falling to a 500. Both halves of
+  # "refused" are pinned: the class, and the store's own bytes still being there afterwards.
+  def test_write_contract_a_replace_naming_stale_content_is_refused
+    first = adapter.write(@user, parent_node_id: nil, name: "raced.md", io: StringIO.new("mine"))
+    change_store_content!(first.node_id, "a desktop edit the scan has not seen")
+
+    err = assert_raises(FileLayer::StaleContent) do
+      adapter.write(@user, parent_node_id: nil, name: "raced.md", io: StringIO.new("clobber"),
+                    replace: true, expect_token: first.content_token)
+    end
+
+    assert_kind_of FileLayer::UnsupportedOperation, err,
+                   "a caller that does not branch must still get the port's ordinary refusal"
+    assert_match(/changed since it was read/, err.message,
+                 "the refusal must say WHY — this message is what a door turns into a sentence")
+    assert_equal "a desktop edit the scan has not seen", adapter.read(@user, node_id: first.node_id),
+                 "nothing may have been written: on a current-state-only backend there is no restore"
   end
 
   # THE SAME CONDITION MUST GET THE SAME ANSWER FROM EVERY VERB THAT CAN MEET IT, which is why

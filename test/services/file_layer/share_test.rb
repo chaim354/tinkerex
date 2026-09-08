@@ -41,6 +41,13 @@ module FileLayer
       @user.nodes.find_by!(storage_path: name).node_id
     end
 
+    # The write contract's `change_store_content!` hook: the maker's OTHER machine saving over this
+    # file in Finder. Straight to the disk, with no scan behind it, which is exactly the state that
+    # makes the catalog's token a stale answer.
+    def change_store_content!(node_id, bytes)
+      File.binwrite(@root.join(@user.nodes.find_by!(node_id:).storage_path), bytes)
+    end
+
     # Share's "delete" is the user removing the file from the indexed tree; the next scan
     # tombstones the node.
     #
