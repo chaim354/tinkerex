@@ -18,7 +18,8 @@
       <% @photo_rows.each do |row| %>
         <%= link_to file_path(row.node_id), class: "photo-cell file-cell", title: row.node.name,
                     data: thumb_cell_data(row.node_id, "IMG") do %>
-          <%= render "files/thumb", thumb: @page_thumbs.thumb(row.node_id), ext_label: "IMG" %>
+          <%= render "files/thumb", thumb: @page_thumbs.thumb(row.node_id), ext_label: "IMG",
+                     url: preview_src(@page_thumbs.thumb(row.node_id)) %>
         <% end %>
       <% end %>
     </div>

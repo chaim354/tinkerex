@@ -34,6 +34,26 @@ module ApplicationHelper
     referer
   end
 
+  # THE PRIVATE SPELLING OF "the URL of a derived asset", AND THE ONLY ONE (hardening, 2026-09-08;
+  # tinkerex#278). `url_for(preview.asset)` is a signed blob URL that never expires and asks nothing
+  # about who is looking — fine on a session-authed page, which is the only place this may be
+  # called. A PUBLIC page's counterpart is `Maker::PublicProject#preview_url_for`, which goes
+  # through the project's own permission and hands out a service URL that expires in five minutes.
+  #
+  # IT EXISTS SO THE SHARED PARTIALS BUILD NO URL AT ALL. `files/_thumb` and the four viewer
+  # partials that render a thumbnail are rendered by BOTH pages, so each takes the URL as a strict
+  # local: the maker's page passes this, a visitor's passes the public builder, and neither partial
+  # can tell — the same design `named_url:` already uses (docs/invariants/files-preview.md), now
+  # enforced by a third arm of the Public seam guard that refuses `url_for` in those files.
+  #
+  # NIL IS THE ANSWER FOR EVERY NON-READY STATE, which is what lets a caller pass it unconditionally
+  # beside a `thumb&.status == "ready"` branch without a second condition to keep in step.
+  def preview_src(preview)
+    return nil unless preview&.status == "ready" && preview.asset.attached?
+
+    url_for(preview.asset)
+  end
+
   private
 
   # The referer as a root-relative path, or nil when there isn't a usable same-origin one.

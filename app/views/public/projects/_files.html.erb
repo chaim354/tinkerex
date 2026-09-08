@@ -41,7 +41,8 @@
             <tr>
               <td class="col-thumb">
                 <span class="file-cell">
-                  <%= render "files/thumb", thumb: pub.thumbs.thumb(row.node_id), ext_label: ext %>
+                  <%= render "files/thumb", thumb: pub.thumbs.thumb(row.node_id), ext_label: ext,
+                             url: pub.preview_url_for(row.node_id) %>
                 </span>
               </td>
               <%# The file's own PAGE (stage 4, S4-5), not its bytes — the header above says why.

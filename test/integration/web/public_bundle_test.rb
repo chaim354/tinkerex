@@ -203,5 +203,65 @@ module Web
       assert_equal [ "X1", nil, "1.0", "each", nil ], rows.find { |r| r.first == "X1" },
                    "the line's own free text or nothing — never the node's name"
     end
+
+    # --- 5. the panel layout reaches these documents (hardening, 2026-09-08; tinkerex#283) ------
+    #
+    # A HIDDEN PANEL'S DOCUMENT IS ABSENT, NOT EMPTY-BUT-PRESENT. A header-only CSV says "no parts",
+    # which is a different and untrue answer from "the maker did not publish this"; and a manifest
+    # that still advertised the URL would send every visitor's browser at a 404 halfway through a
+    # bundle they had already waited for.
+
+    test "hiding the BOM panel takes the CSV out of the manifest and answers 404 at the CSV itself" do
+      assert_equal public_bom_path("ada", @project.slug), manifest["bom_csv_url"],
+                   "the visible-panel arm, so the assertions below are a CHANGE and not the status quo"
+      get bom_path_for
+      assert_response :success
+
+      @project.update!(panels: { "hidden" => %w[bom] })
+
+      assert_nil manifest["bom_csv_url"], "the key is there and null — the script tests for it"
+      get bom_path_for
+      assert_response :not_found
+
+      # THE REST OF THE MANIFEST IS UNTOUCHED. Only the BOM panel was hidden, and a gate written
+      # over the whole document rather than the one key would pass a "no bom_csv_url" assertion
+      # while emptying the bundle.
+      assert_equal 6, manifest["files"].size
+      assert_equal "README.md", manifest["readme_path"]
+    end
+
+    # THE FEED'S GATE AND THE CSV'S ARE SEPARATE, and hiding one panel must not reach the other's
+    # document. Driven because the two gates read the same layout and a `hidden.any?` spelling would
+    # satisfy either test alone.
+    test "hiding the build log leaves the CSV and the manifest alone" do
+      @project.update!(panels: { "hidden" => %w[build_log] })
+
+      assert_equal public_bom_path("ada", @project.slug), manifest["bom_csv_url"]
+      get bom_path_for
+      assert_response :success
+    end
+
+    # THE BUNDLE HAS NO PANEL GATE, AND THIS IS THE TRIPWIRE ON THE REASON WHY. `attachments` is in
+    # Maker::ProjectKind::ALWAYS, so `layout_for` subtracts it from `hidden` and no override can
+    # hide the folder panel — which is why Maker::PublicProject#bundle_files carries a comment
+    # instead of a gate the plan asked for and nothing could ever drive false. The constant is
+    # asserted DIRECTLY beside the behaviour: removing `attachments` from ALWAYS makes this test red
+    # at the line that names the rule, rather than silently converting the manifest into a way
+    # around a panel the maker just hid.
+    test "the folder panel cannot be hidden, which is why the bundle carries no gate" do
+      assert_includes Maker::ProjectKind::ALWAYS, "attachments",
+                      "if this is gone, gate Maker::PublicProject#bundle_files and the manifest's " \
+                      "`truncated` on panel_visible?(\"attachments\") — see that method's comment"
+
+      @project.update!(panels: { "hidden" => %w[attachments] })
+
+      refute_includes @project.reload.panel_layout.hidden, "attachments"
+      json = manifest
+      assert_equal 6, json["files"].size, "the folder is the truth (spec §7) and stays in the zip"
+      assert_equal false, json["truncated"]
+
+      get public_project_path("ada", @project.slug)
+      assert_select ".bundle button", 1
+    end
   end
 end

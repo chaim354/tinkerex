@@ -44,6 +44,10 @@
   .project-card-grid .card-title { font-size: 14px; margin: 0; }
   .project-card-grid .card-blurb { font-size: 12px; margin: 0; }
   .project-card-grid .card-time { font: 11px/1.4 var(--font-mono); }
+  /* The pager sits BELOW the grid here, where files/index.html.erb puts it above its list, so the
+     component's bottom margin is the wrong side: a qualified override (design-system.md rule 3),
+     not a second component. */
+  .public-main .pager { margin: 16px 0 0; }
   /* THE COVER SLOT (stage 4, S4-5). `width: 100%` IS THE WHOLE RULE, AND IT IS NOT DECORATION:
      `.project-card` is `align-items: center` (pages/projects.css), which sizes a block child to
      shrink-to-fit in the cross axis — so `.project-card .thumb`'s own `width: 100%` would resolve

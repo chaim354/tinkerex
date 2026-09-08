@@ -418,6 +418,51 @@ enforces BOTH arms: the session accessors, and any `*_path`/`*_url` identifier t
 `locals:` line does not declare — read off the partial, so the allowlist cannot drift from the
 signature.
 
+**A DERIVED ASSET OF A PUBLIC FILE IS SERVED THROUGH `public_file_preview`, NEVER `url_for(asset)`**
+(hardening, 2026-09-08; tinkerex#278). An Active Storage blob URL
+(`/rails/active_storage/blobs/redirect/<signed_id>/…`) is **unauthenticated and never expires** —
+`ActiveStorage.urls_expire_in` is nil — so a cover thumbnail lifted off a public page kept answering
+after the project went private, and kept answering forever. `Public::FilesController#preview` asks
+the SAME permission the byte route asks (`Maker::PublicProject#deliverable!`, and `current_preview`
+for "current content, current renderer build") and then redirects to a **service** URL, which
+carries `ActiveStorage.service_urls_expire_in` (5 minutes). It needs `include
+ActiveStorage::SetCurrent` — a public controller stands on `ActionController::Base` (§14d) so it
+inherits nothing of Active Storage's own, and `blob.url` raises without `Current.url_options`. A
+global `urls_expire_in` was the alternative and is worse: it breaks a `loading="lazy"` image a
+visitor scrolls to after the window, and still checks nothing about the project. **Every non-ready
+state and every unpermitted node is the same 404**, because an `<img>` cannot use a status and
+because a stranger must not be able to tell the two apart.
+
+**THE SHARED PARTIALS THEREFORE BUILD NO ASSET URL EITHER.** `files/_thumb.html.erb` — fourteen
+render sites, eleven private and three under `app/views/public/projects/` — and the four viewer
+partials that poster a thumbnail (`_static`, `_model3d`, `_measure`, `_gerber`) take it as a strict
+local (`url:`, `thumbnail_url:`), built by the maker's page with `ApplicationHelper#preview_src`
+(the one private spelling, nil for any non-ready row) and by a visitor's with
+`Maker::PublicProject#preview_url_for`, which carries `link_params` so an unlisted project's hero
+keeps its `k`. **A THIRD ARM of the Public seam guard** refuses `\burl_for\b` AND `\bpreview_src\b`
+outside ERB comments in those nine files and in EVERY PUBLIC TEMPLATE, and it exists precisely
+because the second arm cannot see this: that pattern wants the `_path`/`_url` SUFFIX a route helper
+carries, and its own comment says `url_for(thumbnail.asset)` is not matched. The public templates
+are in the scan because `ApplicationHelper` is in a public view context too, so `preview_src` is
+callable there — measured in review: a public panel swapped to it rendered a blob URL with the
+partial-only arm green. `assert_no_private_urls` (one definition, `test/support/public_fixture.rb`)
+refuses `/rails/active_storage/` in a public response body beside the private `/files/` URLs it
+already refused — **where a suite CALLS it on a page with a ready picture** (the preview suite and
+the file-view suite, which seeds one ready thumbnail for exactly that reason); the structural fence
+is the guard arm, the behavioural one is those calls, and a suite that calls neither proves nothing
+about blob URLs. **The MAKER's own page still emits a blob URL and that is the decision, not an
+oversight** — it is session-authed — which is what makes this a split rather than a global
+replacement, pinned by its own test in `public_preview_test.rb`.
+
+**KNOWN AND NOT FIXED HERE, TWICE.** The OWNER's preview of a **private** project already renders
+dead public URLs (`file_url_for` names the public route, which 404s while the project is private);
+thumbnails now behave the same way, and the proposed fix is `Maker::PublicProject.new(project, urls:
+:owner)` — filed as open work. And an **unknown `kind`** (`/preview/other`) does not 404: the `kind:
+/thumbnail|geometry/` constraint keeps it off this action, but `files/:id(/*filename)` one line below
+matches with a decorative `filename`, so it serves the file's own bytes with a 200. Behind the same
+`deliverable!`, so it is surprising rather than a leak — pinned in both directions by
+`public_preview_test.rb`.
+
 **`VIEWABLE_3D_EXTS` AND THE RENDERER REGISTRY ARE TWO LISTS, AND THEY DO NOT MATCH.** The browser
 list is the engine's importers minus four stated absences (`ifc` unshipped, `svg` owned by the
 Measure branch which returns first, `bim` not a maker format, `brp` a second spelling of `brep`).

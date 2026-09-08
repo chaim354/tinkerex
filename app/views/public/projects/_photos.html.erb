@@ -19,7 +19,8 @@
             while the photos still downloaded. %>
         <%= link_to pub.view_url_for(row.node_id), class: "photo-cell file-cell",
                     title: row.node.name do %>
-          <%= render "files/thumb", thumb: pub.thumbs.thumb(row.node_id), ext_label: "IMG" %>
+          <%= render "files/thumb", thumb: pub.thumbs.thumb(row.node_id), ext_label: "IMG",
+                       url: pub.preview_url_for(row.node_id) %>
         <% end %>
       <% end %>
     </div>

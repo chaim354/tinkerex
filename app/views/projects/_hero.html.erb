@@ -16,7 +16,8 @@
     <% else %>
       <%= link_to file_path(@cover_node.node_id), class: "file-cell project-hero-thumb",
                   data: thumb_cell_data(@cover_node.node_id, ext) do %>
-        <%= render "files/thumb", thumb: @page_thumbs.thumb(@cover_node.node_id), ext_label: ext %>
+        <%= render "files/thumb", thumb: @page_thumbs.thumb(@cover_node.node_id), ext_label: ext,
+                   url: preview_src(@page_thumbs.thumb(@cover_node.node_id)) %>
       <% end %>
     <% end %>
     <span class="project-hero-name mono muted"><%= @cover_node.name %></span>

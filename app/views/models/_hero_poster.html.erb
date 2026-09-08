@@ -15,7 +15,8 @@
   <span class="thumb file-cell model-hero-thumb"
         data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>"
         data-thumbs-target="cell" data-node-id="<%= @model.cover_node_id %>" data-ext="">
-    <%= render "files/thumb", thumb: @covers.thumb(@model.cover_node_id), ext_label: "" %>
+    <%= render "files/thumb", thumb: @covers.thumb(@model.cover_node_id), ext_label: "",
+               url: preview_src(@covers.thumb(@model.cover_node_id)) %>
   </span>
 <% else %>
   <span class="model-hero-empty" aria-hidden="true">🧊</span>

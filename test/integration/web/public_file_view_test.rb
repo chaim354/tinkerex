@@ -34,25 +34,23 @@ module Web
       [ @f[:base], @f[:pic], @f[:kicad], @f[:readme], @laser, @gtl, @doc ].each do |node|
         node.update!(content_hash: "h-#{node.node_id}", current_version_id: "v-#{node.node_id}")
       end
+      # ONE READY THUMBNAIL, so the 3D viewer's poster takes its READY branch on the page this suite
+      # sweeps and `assert_no_private_urls`'s blob arm has something to catch (hardening, 2026-09-08;
+      # found in review: without it, `url_for(thumbnail.asset)` restored in two viewers left every
+      # test here green).
+      ready_preview!(@user, @f[:base])
     end
 
     teardown { FileLayer.reset! }
 
     def view_path_for(node_id, **opts) = public_file_view_path("ada", @project.slug, node_id, **opts)
 
-    # NOT A PRIVATE ROUTE ANYWHERE IN THE DOCUMENT, and this is a stronger fence than the seam
-    # guard's. That guard greps the shared partials for `current_user` and friends; it cannot see a
-    # `blob_file_path` that a CALLER passed in as a local, because the local is what the partial
-    # renders. The public byte route contains "/files/" too (/u/ada/desk-lamp/files/:id), so the
-    # match is anchored on the quote that opens the attribute — only a root-relative private URL
-    # starts that way.
-    def assert_no_private_urls
-      assert_select "[href^='/files/']", count: 0
-      assert_select "[src^='/files/']", count: 0
-      assert_no_match(%r{["']/files/}, response.body,
-                      "a public page built a private /files/ URL — the seam a public template " \
-                      "must never cross (CLAUDE.md §14d)")
-    end
+    # `assert_no_private_urls` IS PublicFixture's, NOT A LOCAL COPY. This file carried its own
+    # until 2026-09-08; when the fixture's version gained the `/rails/active_storage/` arm
+    # (hardening, tinkerex#278) the local one SHADOWED it, so this suite alone kept the weaker
+    # fence with nothing anywhere going red. One definition, in the module every public suite
+    # includes — the argument for it (why the match is anchored on the attribute's opening quote)
+    # lives there now.
 
     test "a permitted model file gets the 3D viewer, pointed at the PUBLIC named byte route" do
       get view_path_for(@f[:base].node_id)

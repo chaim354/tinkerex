@@ -14,7 +14,8 @@
         <% photos.each do |att| %>
           <span class="entry-photo file-cell" data-thumbs-target="cell"
                 data-node-id="<%= att.node_id %>" data-ext="IMG">
-            <%= render "files/thumb", thumb: @page_thumbs.thumb(att.node_id), ext_label: "IMG" %>
+            <%= render "files/thumb", thumb: @page_thumbs.thumb(att.node_id), ext_label: "IMG",
+                       url: preview_src(@page_thumbs.thumb(att.node_id)) %>
           </span>
         <% end %>
       </div>

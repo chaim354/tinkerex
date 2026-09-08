@@ -20,8 +20,17 @@
     condition.
   %>
   <%= link_to public_project_path(project.user.handle, project.slug), class: "card-cover" do %>
+    <%# THE PUBLIC PREVIEW ROUTE, NEVER `url_for(thumb.asset)` (hardening, 2026-09-08;
+        tinkerex#278). A blob URL is unauthenticated and never expires, so this card's cover kept
+        answering after its project went private — the route asks `Maker::PublicProject#deliverable!`
+        per request instead and redirects to a service URL that lives five minutes. `thumb` is a
+        Maker::Preview, which carries the `node_id` the route needs, so no extra local. NO `k`
+        TOKEN: a card only ever renders for a `publicly_listed` project, and an unlisted one is
+        excluded from both lists by the scope above this partial. %>
     <% if thumb&.status == "ready" && thumb.asset.attached? %>
-      <span class="thumb"><img src="<%= url_for(thumb.asset) %>" alt="" loading="lazy"></span>
+      <span class="thumb"><img src="<%= public_file_preview_path(project.user.handle, project.slug,
+                                                                 thumb.node_id, "thumbnail") %>"
+                               alt="" loading="lazy"></span>
     <% else %>
       <span class="thumb project-thumb-empty" aria-hidden="true">📦</span>
     <% end %>

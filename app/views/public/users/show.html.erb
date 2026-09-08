@@ -9,7 +9,11 @@
 <div class="page-head">
   <div class="page-title">
     <h1>@<%= @owner.handle %></h1>
-    <span class="mono muted"><%= pluralize(@projects.size, "public project") %></span>
+    <%# THE TOTAL, NOT THIS PAGE'S SIZE (hardening, 2026-09-08; tinkerex#279). `@projects.size` is
+        at most Public::UsersController::PAGE now, so a maker with 200 public projects would read
+        "60 public projects" on every page — the controller buys one COUNT precisely so this line
+        can stay true. %>
+    <span class="mono muted"><%= pluralize(@total, "public project") %></span>
   </div>
 </div>
 
@@ -21,6 +25,35 @@
       <%= render "public/project_card", project: project, thumb: @covers.thumb(@cover_ids[project.id]) %>
     <% end %>
   </div>
+  <%#
+    THE PAGER, ONLY WHEN THERE IS MORE THAN ONE PAGE (hardening, 2026-09-08; tinkerex#279). It
+    reuses `.pager` / `.pager-status` / `.pager-prev` / `.pager-next` from files/index.html.erb —
+    the component is defined once in components.css and a second spelling of a paged list is what
+    the design system's rule 3 refuses.
+
+    NEWER AND OLDER RATHER THAN PREVIOUS AND NEXT: this list is ordered newest-first, so "previous"
+    means "the more recent ones" to one reader and "the page I came from" to another. Each link is
+    rendered only when the page it names exists, so an edge page carries no link to a 404.
+
+    PAGE 1 IS `/u/:handle` WITH NO PARAM: the maker's page has one canonical URL and the pager must
+    not mint a second one for it (`?page=1`), which a crawler would index as a duplicate of it.
+  %>
+  <% if @pages > 1 %>
+    <nav class="pager" aria-label="Project pages">
+      <% if @page > 1 %>
+        <%= link_to "‹ Newer",
+                    (@page == 2 ? public_user_path(@owner.handle) : public_user_path(@owner.handle, page: @page - 1)),
+                    rel: "prev", class: "pager-prev" %>
+      <% end %>
+      <span class="pager-status">
+        Page <%= number_with_delimiter(@page) %> of <%= number_with_delimiter(@pages) %>
+      </span>
+      <% if @page < @pages %>
+        <%= link_to "Older ›", public_user_path(@owner.handle, page: @page + 1),
+                    rel: "next", class: "pager-next" %>
+      <% end %>
+    </nav>
+  <% end %>
 <% else %>
   <p class="empty">No public projects yet.</p>
 <% end %>

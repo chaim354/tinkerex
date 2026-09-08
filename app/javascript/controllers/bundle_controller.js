@@ -42,8 +42,17 @@ export default class extends Controller {
       }
       // BEST-EFFORT, UNLIKE THE FILES ABOVE: a project with no BOM still bundles, and a bom.csv
       // that failed to fetch is not worth discarding a hundred megabytes of models over.
-      const bom = await fetch(manifest.bom_csv_url)
-      if (bom.ok) zip.file("bom.csv", await bom.blob())
+      //
+      // NO URL AT ALL MEANS THE MAKER HID THE BOM PANEL (hardening, 2026-09-08; tinkerex#283), and
+      // the key is then ABSENT rather than pointing at a 404. Fetching it anyway would work — the
+      // refusal is a 404 and `bom.ok` is false — but `fetch(undefined)` requests the string
+      // "undefined" against the page's own origin, so every visitor bundling such a project would
+      // put a spurious 404 in the tab's network log and in the server's. The file count in the
+      // status line is `manifest.files.length` and never counted this row, so it is unchanged.
+      if (manifest.bom_csv_url) {
+        const bom = await fetch(manifest.bom_csv_url)
+        if (bom.ok) zip.file("bom.csv", await bom.blob())
+      }
       this.say("Compressing…")
       const blob = await zip.generateAsync({ type: "blob" })
       const a = document.createElement("a")

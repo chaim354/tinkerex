@@ -86,20 +86,60 @@ class PublicBundleTest < ApplicationSystemTestCase
     URL.createObjectURL = (blob) => { window.__bundleBlobSize = blob.size; return original(blob) }
   JS
 
+  # EVERY URL THE SCRIPT HANDS `fetch` (hardening, 2026-09-08; tinkerex#283). The manifest's
+  # `bom_csv_url` is null when the BOM panel is hidden, and the request tier pins that null on the
+  # wire — but only the browser can show whether the script then STAYS AWAY, and the blob size
+  # above cannot tell a zip with bom.csv from one without. A probe on the global `fetch`, which the
+  # controller calls by name: the original still runs, the URLs are recorded.
+  RECORD_FETCHES = <<~JS.freeze
+    window.__fetched = []
+    const originalFetch = window.fetch.bind(window)
+    window.fetch = (input, init) => {
+      window.__fetched.push(String(input instanceof Request ? input.url : input))
+      return originalFetch(input, init)
+    }
+  JS
+
   test "a visitor builds the bundle in the browser" do
     visit public_project_path(@user.handle, @project.slug)
 
     assert_selector ".bundle button", text: "Download bundle (2 files"
     page.execute_script(CAPTURE_BLOB_SIZE)
+    page.execute_script(RECORD_FETCHES)
     click_on "Download bundle"
 
     assert_selector ".bundle .muted", text: "Bundled 2 files"
+    # THE MANIFEST, THE TWO FILES AND bom.csv: four fetches, the last the truthy arm of the script's
+    # `bom_csv_url` guard, whose falsy arm the next test pins.
+    fetched = page.evaluate_script("window.__fetched")
+    assert_equal 4, fetched.size, "manifest + 2 files + bom.csv expected: #{fetched.inspect}"
+    assert fetched.any? { |u| u.include?("/bom") }, "the visible BOM must be fetched: #{fetched.inspect}"
     # THE COUNT PROVES BOTH FETCHES RAN; THE SIZE PROVES JSZIP RECEIVED BYTES. A zip of two empty
     # entries still reports "2 files" (this file's second mutation), so the status alone would pass
     # over an archive with nothing in it. A zip holding a README, an STL and bom.csv is a few
     # hundred bytes even compressed; 200 is a floor, not a measurement.
     size = page.evaluate_script("window.__bundleBlobSize")
     assert_operator size.to_i, :>, 200, "the archive handed to the visitor was #{size.inspect} bytes"
+    assert_no_console_errors
+  end
+
+  # THE FALSY ARM: a hidden BOM panel makes the manifest's `bom_csv_url` null, and the script must
+  # then fetch NOTHING for it — three fetches, not four, and none of them `/bom`. Without the guard
+  # the script fetched `null` (the page's own URL plus "/null", a 404 Chrome logs as SEVERE), which
+  # is why `assert_no_console_errors` is a second detector here. Mutation-checked: `if (true)` in
+  # place of the guard is red on the count and on the console.
+  test "a hidden BOM panel keeps bom.csv out of the bundle, and the script never asks for it" do
+    @project.update!(panels: { "hidden" => %w[bom] })
+    visit public_project_path(@user.handle, @project.slug)
+
+    assert_selector ".bundle button", text: "Download bundle (2 files"
+    page.execute_script(RECORD_FETCHES)
+    click_on "Download bundle"
+
+    assert_selector ".bundle .muted", text: "Bundled 2 files"
+    fetched = page.evaluate_script("window.__fetched")
+    assert_equal 3, fetched.size, "manifest + 2 files and nothing else expected: #{fetched.inspect}"
+    assert fetched.none? { |u| u.include?("/bom") }, "a hidden BOM was still fetched: #{fetched.inspect}"
     assert_no_console_errors
   end
 end

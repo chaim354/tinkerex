@@ -162,10 +162,17 @@ module Maker
     # Text bodies included, and then kept fifty (S3-6's review). Each side takes the newest
     # FEED_CAP, so the merge can never need more than that from either, and the query count stays
     # what the budget test pins.
+    #
+    # A HIDDEN PANEL'S ITEMS ARE ABSENT FROM THE FEED, NOT MERELY OFF THE PAGE (hardening,
+    # 2026-09-08; tinkerex#283). The feed is one click from the page that hides them — a maker who
+    # hid the build log and still fed every entry to any reader who subscribed would have published
+    # exactly what they said not to publish, and a feed is the surface that keeps a copy. Each kind
+    # is gated separately because the two panels are hidden separately: hiding `releases` must not
+    # take the build log with it. An empty relation rather than a branch around the map, so the
+    # merge, the sort and the cap below stay one path with one shape.
     def feed_items(page_url:)
-      newest_entries = project.build_log_entries.includes(:rich_text_body)
-                              .reorder(logged_at: :desc, id: :desc).limit(FEED_CAP)
-      newest_releases = project.releases.includes(:files, :rich_text_notes).limit(FEED_CAP)
+      newest_entries = panel_visible?("build_log") ? feed_entries : []
+      newest_releases = panel_visible?("releases") ? feed_releases : []
       items = newest_entries.map do |entry|
         FeedItem.new(kind: :entry, id: entry.id, time: entry.logged_at, html: entry.body.to_s,
                      title: "Build log — #{entry.logged_at.strftime("%Y-%m-%d")}",
@@ -197,6 +204,17 @@ module Maker
     # THE LIST IS THE LISTING'S, SO IT IS CAPPED (FILE_CAP) and the manifest says so with
     # `truncated`. A bundle that silently held the first 300 files of a 900-file folder would be a
     # lie the visitor cannot detect; one that says "first 300" is a partial answer they can.
+    #
+    # NO `panel_visible?("attachments")` GATE HERE, AND ITS ABSENCE IS THE ARGUMENT (hardening,
+    # 2026-09-08; tinkerex#283). The rule the feed and the BOM CSV follow — a hidden panel's
+    # document is absent, not empty-but-present — has nothing to bite on for the bundle, because
+    # `attachments` is in Maker::ProjectKind::ALWAYS: no preset and no override may hide the folder
+    # panel (`layout_for` subtracts ALWAYS from `hidden`), so `panel_visible?("attachments")` is
+    # true for every project that can exist and a gate on it could never be false. Writing one
+    # anyway would be a guard no mutation can drive red (§15) that reads to the next person as
+    # protection the layout does not actually offer. IF `attachments` EVER LEAVES `ALWAYS`, ADD THE
+    # GATE HERE AND TO the manifest's `truncated` — public_bundle_test.rb asserts that membership
+    # directly so this comment goes red rather than quietly becoming wrong.
     def bundle_files
       @bundle_files ||= listing.all_rows.reject(&:backup?)
                                .map { |row| BundleFile.new(path: bundle_path(row), size: row.node.size.to_i,
@@ -416,6 +434,23 @@ module Maker
                                                                  **link_params)
     end
 
+    # A DERIVED ASSET'S URL — the thumbnail by default, or the Measure payload — beside the byte and
+    # view URLs above (hardening, 2026-09-08; tinkerex#278). It names Public::FilesController#preview,
+    # which asks `deliverable!` and then redirects to a service URL that expires, so the picture of a
+    # file dies with the project's publication instead of outliving it the way `url_for(asset)` did.
+    # Same link_params, same reason as its two siblings.
+    def preview_url_for(node_id, kind: "thumbnail")
+      Rails.application.routes.url_helpers.public_file_preview_path(handle, project.slug, node_id, kind,
+                                                                    **link_params)
+    end
+
+    # WHETHER ONE PANEL HAS A PUBLIC FACE ON THIS PROJECT (hardening, 2026-09-08; tinkerex#283) — the
+    # same layout `visible_panels` renders from, asked one key at a time by the documents that ride
+    # beside the page: the feed (build_log, releases), the bundle manifest (attachments, bom) and the
+    # BOM CSV (bom). A panel the maker hid is hidden from those too, or it is one click away from the
+    # page that hides it.
+    def panel_visible?(key) = project.panel_layout.visible?(key.to_s)
+
     # ONE LAYER'S FETCH URL FOR A .gbrjob's BOARD, filtered by THIS project's permission (stage 4,
     # S4-5). The sibling walk itself is FilePreview's, shared with the maker's own page; what is
     # public here is only the URL builder, which answers nil for a sibling the project does not
@@ -427,6 +462,17 @@ module Maker
     end
 
     private
+
+    # THE FEED'S OWN TWO READERS, extracted only so `#feed_items` can put each behind its panel gate
+    # on one line (hardening, 2026-09-08; tinkerex#283). Each is a RELATION and each stays lazy: the
+    # gate above decides whether it is ever loaded, so a hidden panel costs no query rather than
+    # loading fifty rows and discarding them.
+    def feed_entries
+      project.build_log_entries.includes(:rich_text_body)
+             .reorder(logged_at: :desc, id: :desc).limit(FEED_CAP)
+    end
+
+    def feed_releases = project.releases.includes(:files, :rich_text_notes).limit(FEED_CAP)
 
     # FOLDER-RELATIVE, from the row's OWN `section` — the display path the listing computed while
     # it built the tree, never re-derived by walking node_id chains a second time (that class's own

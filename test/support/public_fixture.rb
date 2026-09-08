@@ -38,6 +38,49 @@ module PublicFixture
 
   PNG_BYTES = "\x89PNG\r\n\x1a\n".b.freeze
 
+  # NOT A PRIVATE URL ANYWHERE IN THE DOCUMENT, and this is a stronger fence than the seam guard's.
+  # That guard greps the shared partials for `current_user`, a route helper and `url_for`; it cannot
+  # see a `blob_file_path` that a CALLER passed in as a local, because the local is what the partial
+  # renders. The public byte route contains "/files/" too (/u/ada/desk-lamp/files/:id), so the match
+  # is anchored on the quote that opens the attribute — only a root-relative private URL starts that
+  # way.
+  #
+  # `/rails/active_storage/` JOINED IT ON 2026-09-08 (hardening; tinkerex#278). A blob URL is not a
+  # private ROUTE — it is worse: unauthenticated, and it never expires
+  # (`ActiveStorage.urls_expire_in` is nil), so the cover of a project that has since gone private
+  # keeps answering to anyone who saved the URL. A derived asset reaches a visitor through
+  # `public_file_preview` or not at all. It lives HERE, in the fixture every public suite includes,
+  # so the sweep is one definition rather than one per suite.
+  def assert_no_private_urls
+    assert_select "[href^='/files/']", count: 0
+    assert_select "[src^='/files/']", count: 0
+    assert_no_match(%r{["']/files/}, response.body,
+                    "a public page built a private /files/ URL — the seam a public template " \
+                    "must never cross (CLAUDE.md §14d)")
+    assert_no_match(%r{/rails/active_storage/}, response.body,
+                    "a public page emitted an Active Storage blob URL — unauthenticated and " \
+                    "with no expiry, so the picture outlives the publication. A derived asset " \
+                    "goes through public_file_preview (tinkerex#278)")
+  end
+
+  # A READY, CURRENT PREVIEW ROW WITH AN ATTACHED ASSET, for any node and either kind (hardening,
+  # 2026-09-08). Both halves of "current" are asked of the code that owns them rather than written
+  # as literals: `renderer_revision` from Enqueue — a row at the wrong build is not current, renders
+  # the placeholder, and fails a test for the wrong reason — and `version_id` from the PORT, which
+  # on share IS the `content_hash` column a suite stamps first. Here rather than in one suite so
+  # the file-view suite can render a viewer's READY branch too: without a ready row its
+  # `assert_no_private_urls` blob arm could never fire (measured in review — `url_for(thumbnail.asset)`
+  # restored in two viewers left that suite green).
+  def ready_preview!(owner, node, kind: "thumbnail", body: PNG_BYTES, content_type: "image/png")
+    preview = owner.maker_previews.create!(
+      node_id: node.node_id, kind:, status: "ready",
+      version_id: FileLayer.current.stat(owner, node_id: node.node_id).content_token,
+      renderer_revision: Maker::Previews::Enqueue.revision_for_name(node.name, kind)
+    )
+    preview.asset.attach(io: StringIO.new(body), filename: node.name, content_type:)
+    preview
+  end
+
   def make_owner!(handle:, email: nil)
     User.create!(email: email || "#{handle}-#{SecureRandom.hex(4)}@example.com",
                  password: PASSWORD, confirmed_at: Time.current, handle:)
