@@ -24,6 +24,13 @@ module Maker
   # `Maker::Previews::DeadNodeReaper` applies the same one to thumbnails.
   #
   # NOT gated on any capability: a dead node is dead on chunk, share and s3 alike.
+  #
+  # SINCE STAGE 4, S4-8 IT SWEEPS `maker_file_links` TOO, and from BOTH of its node columns. A link
+  # is a statement about a PAIR, so it stops being true the moment ONE end is gone for good —
+  # waiting for the second would leave a "Derived from: (missing)" row on the surviving file's page
+  # forever, which is the same "⚠️ (file unavailable)" tile this sweep was written to end. The
+  # grace window is Maker::DeadNodes' and is therefore identical for all three subjects: a
+  # tombstone is one undo away from returning with the same node_id, and the link is keyed on it.
   module AttachmentReaper
     module_function
 
@@ -40,9 +47,10 @@ module Maker
       end
     end
 
-    # -> the number of rows changed (attachments destroyed + covers cleared).
+    # -> the number of rows changed (attachments destroyed + covers cleared + links destroyed).
     def reap!(user, grace: GRACE, dry_run: false)
       attachments = user.maker_file_attachments.to_a
+      links       = user.maker_file_links.to_a
       # A project or MODEL whose cover was CHOSEN. A derived cover needs nothing here — it is
       # computed from the attachments, so reaping those moves it on its own.
       #
@@ -58,9 +66,11 @@ module Maker
       # the class, or reaching for something only `Project` has, breaks the model half SILENTLY.
       covered = user.maker_projects.where.not(cover_node_id: [ nil, "" ]).to_a +
                 user.maker_models.where.not(cover_node_id: [ nil, "" ]).to_a
-      return 0 if attachments.empty? && covered.empty?
+      return 0 if attachments.empty? && covered.empty? && links.empty?
 
-      nodes  = Maker::DeadNodes.index(user, attachments.map(&:node_id) + covered.map { |p| p[:cover_node_id] })
+      nodes  = Maker::DeadNodes.index(user, attachments.map(&:node_id) +
+                                            covered.map { |p| p[:cover_node_id] } +
+                                            links.flat_map { |l| [ l.from_node_id, l.to_node_id ] })
       cutoff = grace.ago
 
       doomed = attachments.select { |a| Maker::DeadNodes.reapable?(nodes[a.node_id], cutoff) }
@@ -76,7 +86,13 @@ module Maker
       # reports it as work done. That is what the two `never chose a cover…` tests pin. The raw read
       # stays because it says what this line means without depending on the filter above to be right.
       stale_covers = covered.select { |p| Maker::DeadNodes.reapable?(nodes[p[:cover_node_id]], cutoff) }
-      return doomed.size + stale_covers.size if dry_run
+      # EITHER END, NOT BOTH — see the class comment. `||`, and the mutation check for it is
+      # turning it into `&&`.
+      dead_links = links.select { |l|
+        Maker::DeadNodes.reapable?(nodes[l.from_node_id], cutoff) ||
+          Maker::DeadNodes.reapable?(nodes[l.to_node_id], cutoff)
+      }
+      return doomed.size + stale_covers.size + dead_links.size if dry_run
 
       doomed.each(&:destroy!)
       # update_column, not update!: this is a sweep touching rows nobody asked to modify, and
@@ -84,7 +100,8 @@ module Maker
       # index, whose default sort is the same `updated_at: :desc` — as a side effect of a file they
       # deleted weeks ago being cleaned up.
       stale_covers.each { |p| p.update_column(:cover_node_id, nil) }
-      doomed.size + stale_covers.size
+      dead_links.each(&:destroy!)
+      doomed.size + stale_covers.size + dead_links.size
     end
   end
 end

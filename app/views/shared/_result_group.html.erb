@@ -7,12 +7,15 @@
 
   Locals:
     title       String   -- the group's heading ("Projects", "Files", ...)
-    kind        Symbol   -- :project | :model | :inventory_item | :file | :tag
+    kind        Symbol   -- :project | :model | :inventory_item | :file | :folder | :note | :tag
     records     Array    -- the (possibly capped) rows to render
     total       Integer  -- optional, defaults to records.size. May exceed it when capped.
     more_path   String   -- optional, defaults to nil. A link into that kind's own, already
                             tag/query-filterable index.
     more_label  String   -- optional, defaults to "See all".
+    node_names  Hash     -- optional, defaults to {}. THE :note ARM ONLY: node_id => file name,
+                            built by SearchController#index over the CAPPED rows, because a note
+                            has no page of its own and the row is a link to the file it is on.
 
   A FILE ROW IS A PLAIN NAME LINK, DELIBERATELY NOT thumb_cell_data — this list has no polling
   cell to seed (docs/invariants/files-preview.md), just a name and an extension label.
@@ -48,6 +51,28 @@
           <% when :file %>
             <%= link_to record.name, file_path(record.node_id) %>
             <span class="result-sub"><%= File.extname(record.name).delete(".").upcase.first(4) %></span>
+          <% when :folder %>
+            <%#
+              A FOLDER IS A DESTINATION, NOT A FILE, so it links into the Files page's folder view
+              rather than to a /files/:id page it does not have. No extension label: `.result-sub`
+              says what it is instead, since a bare name in a list of files would read as a file
+              with no type.
+            %>
+            <%= link_to record.name, files_path(folder: record.node_id) %>
+            <span class="result-sub">Folder</span>
+          <% when :note %>
+            <%#
+              THE ROW IS THE FILE THE NOTE IS ON, because that is where the note is readable -- a
+              note has no page of its own. `node_names` is this group's own local, built by
+              SearchController#index over the CAPPED rows; a missing key cannot happen (the scope
+              filters to live nodes) but the fallback is there rather than a nil link text.
+
+              `to_plain_text`, NOT the stored body: an Action Text body is HTML, and rendering it
+              raw here would escape every tag into noise in the result row.
+            %>
+            <% names = local_assigns.fetch(:node_names, {}) %>
+            <%= link_to names[record.node_id] || "this file", file_path(record.node_id) %>
+            <span class="result-sub"><%= truncate(record.body.to_plain_text, length: 80) %></span>
           <% when :tag %>
             <%= link_to record.name, tag_path(record.name), class: "tag-chip" %>
           <% end %>

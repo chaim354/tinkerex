@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_07_160000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_07_170000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -177,6 +177,17 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_07_160000) do
     t.string "version_id"
     t.index ["user_id", "attachable_type", "attachable_id", "node_id"], name: "index_maker_file_attachments_uniqueness", unique: true
     t.index ["user_id", "node_id"], name: "index_maker_file_attachments_on_user_id_and_node_id"
+  end
+
+  create_table "maker_file_links", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "from_node_id", null: false
+    t.string "kind", null: false
+    t.string "to_node_id", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "from_node_id", "to_node_id", "kind"], name: "index_maker_file_links_uniqueness", unique: true
+    t.index ["user_id", "to_node_id"], name: "index_maker_file_links_on_user_id_and_to_node_id"
   end
 
   create_table "maker_filing_rules", force: :cascade do |t|

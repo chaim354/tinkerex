@@ -17,6 +17,10 @@ export default class extends Controller {
     rootLabel: { type: String, default: ROOT_LABEL },
     value: String,
     label: String,
+    // WHICH FILES THE PICKER OFFERS, forwarded to lib/file_chooser.js, which has always accepted it
+    // (the addon SDK's `pickFile` passes one). Stimulus parses an Array value from JSON, so the
+    // partial writes `[...].to_json`. Absent means no filtering, which is every existing caller.
+    extensions: Array,
   }
   static targets = [ "button", "input" ]
 
@@ -35,6 +39,9 @@ export default class extends Controller {
       // local: after one choose-and-reopen the input has moved on and the local has not.
       value: (this.hasInputTarget && this.inputTarget.value) || "",
       label: this.currentLabel(),
+      // null, NOT an empty array, for "no filtering": normalizeExtensions treats an empty list as
+      // no filter anyway, but saying so here keeps the two spellings from having to agree.
+      extensions: this.hasExtensionsValue && this.extensionsValue.length ? this.extensionsValue : null,
     })
     const selection = await this.chooser.open()
     this.chooser = null

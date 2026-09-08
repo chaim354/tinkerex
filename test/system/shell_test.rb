@@ -171,6 +171,46 @@ class ShellTest < ApplicationSystemTestCase
                                 parent_node_id: folder.node_id, size: png.bytesize, storage_path: photo_rel,
                                 mtime: 1_000_000_000, content_hash: Digest::SHA256.hexdigest(png))
     project.file_attachments.create!(user: @user, node_id: photo.node_id, role: "image", position: 0)
+    # STAGE 4, S4-8: THE CONNECTED PANEL, POPULATED, on a file page this sweep already visits — or
+    # the overflow check measures the panel's EMPTY state (a heading and two closed composers) and
+    # says nothing about the two layouts this slice adds. The same argument the BOM, wiring and
+    # release seeds above make: an empty panel renders none of the markup worth measuring.
+    #
+    # THE PARTNER'S NAME IS WHAT A `.connection-row` HAS TO WRAP, NOT THE SUBJECT'S, and that is
+    # measured rather than assumed. A row renders the OTHER end's name beside a Remove button, so
+    # the long name has to be on the SOURCE. `long` above is the wrong shape for it twice over:
+    # it is the page, not the row, and its name is hyphenated — a hyphen is a line-break
+    # opportunity (UAX #14), so that name wraps at 375px with no CSS rule at all. Only ONE
+    # UNBROKEN RUN measures `.connection-row`'s `overflow-wrap: anywhere`, which is the rule that
+    # reduces a word's MIN-CONTENT width and so the only one that can keep a flex row inside the
+    # viewport. Deleting both of that rule's declarations is what this fixture makes fail; with the
+    # hyphenated name it did NOT: measured 2026-09-07, both arms. Unbroken, deleting the two
+    # declarations puts this page at scrollWidth 391 against a 375px viewport; with the same words
+    # spelled `shade-bracket-revision-…` it stays GREEN, which is why the fixture reads the way it
+    # does rather than reusing a name from further up this method.
+    #
+    # AND IT MATCHES THIS SWEEP'S OWN SEARCH QUERY ON PURPOSE, so the same unbreakable name is also a
+    # row in the Files group on `search_path(q: "lamp")` below. Named off the query it measured the
+    # Connected panel alone; named onto it, it found `pages/search.css`'s `.result-row` had no
+    # `overflow-wrap` and pushed THAT page to scrollWidth 434 at 375px (S4-8). One fixture now pins
+    # both rules — drop `overflow-wrap: anywhere` from either `.connection-row` or `.result-row` and
+    # this sweep names the page that overflowed.
+    link_source = create_node!(@user, node_id: SecureRandom.uuid, kind: "file",
+                               name: "lampshadebracketrevisionthreeexportedfortheworkshopcnc.lbrn2")
+    # A SEPARATE NODE FROM `photo` ABOVE, which is the project's cover and lives in the folder:
+    # this one is the far end of a `photo_of`, and giving the two one row would make the Photos
+    # panel and the Connected panel share a fixture that either could quietly stop needing.
+    link_photo = create_node!(@user, node_id: SecureRandom.uuid, kind: "file",
+                              name: "workshop bench photo, second attempt.png")
+    @user.maker_file_links.create!(from_node_id: long.node_id, to_node_id: link_source.node_id,
+                                   kind: "derived_from")
+    @user.maker_file_links.create!(from_node_id: link_photo.node_id, to_node_id: long.node_id,
+                                   kind: "photo_of")
+    # STAGE 4, S4-8: A NOTE ON A LIVE FILE MATCHING THE SWEEP'S OWN SEARCH QUERY, so
+    # `search_path(q: "lamp")` below renders the Notes group. The Folders group needs no fixture:
+    # `project_folder_rows!` above minted a dir named after the project's slug, `desk-lamp`, which
+    # the same query matches — checked by the assertion in the loop, not by reading the slug.
+    @user.maker_notes.create!(node_id: long.node_id, body: "<div>Second lamp attempt, 40% power.</div>")
     # STAGE 4, S4-5: A TEXT FILE INSIDE THE FOLDER, so the PUBLIC file page in the second loop below
     # renders the SOURCE viewer at 375px. It is the one viewer in this sweep whose content is
     # `white-space: pre` (CodeMirror's `.cm-content`), which is the descendant that sets a parent's
@@ -307,6 +347,14 @@ class ShellTest < ApplicationSystemTestCase
       # helper or a fixture whose folder stopped resolving would leave this sweep measuring the
       # flat view a third time and saying nothing about the menu at 375px.
       visited_folder_view = false
+      # STAGE 4, S4-8: THE SAME GATE-ON-A-PATH ARGUMENT AGAIN, TWICE. The plan for this slice
+      # proposed these two as bare `if`s "because the paths are literals in the same list" — so
+      # are the folder view and the preview above, and both carry a flag for the reason this file
+      # states each time: a fixture that stops resolving, or a path dropped from the list, leaves
+      # the branch unrun and nothing says so. The assertions inside them are what prove the two
+      # new layouts were laid out at 375px rather than measured empty.
+      saw_connections = false
+      saw_search_groups = false
       [ root_path, files_path(view: "list"), files_path(view: "grid"),
         # STAGE 4, S4-6: THE FOLDER VIEW, which the two `view:` entries above are not — they are the
         # flat library, where `@folder` is nil and the overflow menu's project items never render.
@@ -403,6 +451,26 @@ class ShellTest < ApplicationSystemTestCase
           assert_selector ".panel-chooser-actions input[type=submit][value='Save panels']"
           opened_panels = true
         end
+        if path == file_path(long.node_id)
+          # STAGE 4, S4-8: BOTH LIST BRANCHES AND THE PHOTO GRID ARE ON THIS PAGE, or the overflow
+          # check above measured a panel holding only its two closed composers. The `a` inside
+          # `.connections-derived-from` is the unbroken source name from the fixture — the one
+          # string on this page that `.connection-row`'s `overflow-wrap: anywhere` has to break —
+          # and `.photo-cell` is the grid, whose 96px cells are the only thumbnails on a file page
+          # outside the preview row.
+          assert_selector ".connections-derived-from a"
+          assert_selector ".connections-photos .photo-cell"
+          saw_connections = true
+        end
+        if path == search_path(q: "lamp")
+          # STAGE 4, S4-8: the two groups that slice added, rendered rather than absent. Both are
+          # `shared/_result_group` arms with markup no other group has — the note's excerpt line
+          # and the folder's Files-view link — so an empty search page would leave this sweep
+          # measuring the five groups S2-5 already covered.
+          assert_selector ".result-group--note .result-sub"
+          assert_selector ".result-group--folder a"
+          saw_search_groups = true
+        end
         # `nav.tabbar` is display:none above 719px, so finding it VISIBLE is the proof that the
         # phone rules are running at all — without it a viewport that never narrowed would satisfy
         # the overflow assertion for entirely the wrong reason. It is what caught the 500px floor.
@@ -417,6 +485,8 @@ class ShellTest < ApplicationSystemTestCase
       assert opened_readme, "the sweep never opened the README editor, so its overflow check measured a closed summary"
       assert opened_panels, "the sweep never opened the panel chooser, so its overflow check measured a closed <details>"
       assert visited_folder_view, "the sweep never reached the Files folder view, so its overflow menu was never measured"
+      assert saw_connections, "the sweep never reached the connected file page, so the Connected panel's two layouts were never measured"
+      assert saw_search_groups, "the sweep never reached the search page, so the Notes and Folders groups were never measured"
 
       # STAGE 3, S3-4: THE PUBLIC PAGES, IN THEIR OWN LOOP BECAUSE THEIR SHELL IS THE OTHER ONE.
       # The three assertions above are the SIGNED-IN shell's, and this session IS signed in — so

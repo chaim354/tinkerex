@@ -157,6 +157,13 @@ module Web
       assert_select "[data-measure-create-url-value]", 0, "no upload door on a page with no session"
       assert_select "[data-measure-begin-url-value]", 0
       assert_select "[data-measure-finalize-url-value]", 0
+      # STAGE 4, S4-8: the two lineage values the Save path reads. An EMPTY attribute is not absence
+      # to Stimulus — `hasLinkUrlValue` is true for `""` — so if these ever left the partial's
+      # `if save` block, `recordSources` would POST to "" (the page's own URL, with no CSRF token)
+      # on a visitor's save path. Pinned like the three write URLs above; found missing in review by
+      # hoisting them out of that block, which left every test green.
+      assert_select "[data-measure-source-node-id-value]", 0, "no lineage source on a page with no session"
+      assert_select "[data-measure-link-url-value]", 0, "no link door on a page with no session"
       assert_no_private_urls
     end
 

@@ -135,11 +135,11 @@ module Web
     # calling the scope would go red here rather than quietly listing 440 object files.
     #
     # THE ASSERTION THAT CARRIES THE WEIGHT IS THE FILE ONE, and that is worth saying plainly.
-    # This controller filters `kind: "file"` before the scope, so a build DIRECTORY is excluded
-    # twice over and its absence here can never fail — the directory half is pinned where it CAN
-    # fail, on the Files page's own flat `?q=`, which lists folders (files_search_test.rb). What is
-    # real here is the other direction: `node_modules.js` and a FILE named `node_modules` are
-    # ordinary results, and dropping the `kind = 'dir'` term from the scope hides the second one.
+    # A BUILD DIRECTORY IS EXCLUDED FROM THE FOLDERS GROUP BY `visible_entries(false)` — the same
+    # display filter the Files page applies (Library::BuildOutput) — and since stage 4, S4-8 that is a
+    # live assertion rather than a vacuous one: this suite used to say the directory "can never fail"
+    # because the controller filtered `kind: "file"` first, which stopped being true the day search
+    # gained a Folders group (found in review: dropping the scope left this test green).
     test "build output does not surface, and a file of the same name still does" do
       @user.nodes.create!(node_id: "s-nm-dir", name: "node_modules", kind: "dir")
       @user.nodes.create!(node_id: "s-nm-file", name: "node_modules", kind: "file")
@@ -150,6 +150,8 @@ module Web
       assert_select ".result-group--file a[href=?]", file_path("s-nm-file"), text: "node_modules"
       assert_select ".result-group--file a[href=?]", file_path("s-nm-js"), text: "node_modules.js"
       assert_select ".result-group--file a[href=?]", file_path("s-nm-dir"), count: 0
+      assert_select ".result-group--folder a[href=?]", files_path(folder: "s-nm-dir"), { count: 0 },
+                    "a build directory must not surface as a folder either"
     end
 
     test "a blank query renders the prompt, never the empty-results message" do
@@ -185,6 +187,90 @@ module Web
       # @user owns no "lamp" tag here, so the group must be wholly ABSENT even though `other`
       # does -- proof the tags query is user-scoped, not merely silent by coincidence.
       assert_select ".result-group--tag", count: 0
+    end
+
+    # A NOTE IS THE ONE THING A MAKER WRITES THAT THE APP KEEPS AND COULD NOT FIND (story 3.5).
+    # The body is Action Text, so the match is over `action_text_rich_texts.body` reached through
+    # the `rich_text_body` association `has_rich_text :body` declares — the association carries
+    # `record_type` and `name = 'body'` itself, so there is no hand-written ON clause to drift.
+    test "a note body is searchable and its row links to the file the note is on" do
+      node = @user.nodes.create!(node_id: "n-noted", name: "shade.stl", kind: "file")
+      @user.maker_notes.create!(node_id: node.node_id, body: "<div>Cut this one on the LAMP jig.</div>")
+      @user.maker_notes.create!(node_id: node.node_id, body: "<div>Nothing to do with it.</div>")
+
+      get search_path(q: "lamp")
+      assert_response :success
+      assert_select ".result-group--note", count: 1
+      assert_select ".result-group--note a[href=?]", file_path(node.node_id), text: "shade.stl"
+      # THE SNIPPET IS PLAIN TEXT, NOT THE STORED HTML. `to_plain_text` is what keeps the markup
+      # out of a results row — a raw body would render the tags as escaped noise on every hit.
+      #
+      assert_select ".result-group--note .result-sub", text: "Cut this one on the LAMP jig."
+      # AND NO ELEMENT INSIDE THE SPAN — THIS IS THE ASSERTION THAT CATCHES A RAW BODY, and which
+      # one it is cost a mutation check to learn. `truncate` on an Action Text body neither
+      # escapes NOR truncates it: the value arrives html_safe, so the note's own tags and Action
+      # Text's `<div class="lexxy-content">` wrapper are injected into the row as REAL DOM. The
+      # rendered TEXT is then identical either way, so every `text:` assertion above — exact or
+      # regex — stays green over a row carrying an un-truncated block element. The structure is
+      # what differs, so the structure is what is asserted. Mutation-checked with
+      # `record.body.to_s` in the partial: the two lines above stay GREEN, this one goes red.
+      assert_select ".result-group--note .result-sub *", count: 0
+      assert_select ".result-group--note .result-sub", text: /Nothing to do with it/, count: 0
+    end
+
+    # A NOTE WHOSE FILE IS GONE HAS NOWHERE TO LINK. `.present` is the same filter every other
+    # file-facing surface applies; without it the row renders a link to a dead /files/:id.
+    test "a note on a tombstoned or absent file does not surface" do
+      dead = @user.nodes.create!(node_id: "n-dead", name: "lamp-old.stl", kind: "file", deleted: true)
+      @user.maker_notes.create!(node_id: dead.node_id, body: "<div>lamp notes</div>")
+      @user.maker_notes.create!(node_id: "never-existed", body: "<div>lamp notes</div>")
+
+      get search_path(q: "lamp")
+      assert_select ".result-group--note", count: 0
+    end
+
+    # FOLDERS, BY NAME — the only spelling of "find my folder path" all three backends can answer.
+    # `nodes.storage_path` is written by the Share and S3 adapters ONLY, so a LIKE over it is
+    # structurally empty on chunk_remote (the plan's Amendment 5).
+    test "a folder is a result of its own, linking into the Files page's folder view" do
+      dir = @user.nodes.create!(node_id: "d-lamps", name: "lamps", kind: "dir")
+      @user.nodes.create!(node_id: "d-hidden", name: ".lamps", kind: "dir")
+      @user.nodes.create!(node_id: "d-gone", name: "lamps-old", kind: "dir", deleted: true)
+
+      get search_path(q: "lamp")
+      assert_select ".result-group--folder", count: 1
+      assert_select ".result-group--folder a[href=?]", files_path(folder: dir.node_id), text: "lamps"
+      assert_select ".result-group--folder a", text: ".lamps", count: 0
+      assert_select ".result-group--folder a", text: "lamps-old", count: 0
+    end
+
+    # THE SAME ESCAPE RULE AS EVERY OTHER GROUP, AND BOTH HALVES CARRY WEIGHT (measured in review):
+    # without `ESCAPE` SQLite reads the sanitizer's backslash literally and the pattern matches
+    # NOTHING; without the sanitizer `%` is a wildcard and the decoy matches. Two mutations, two reds.
+    test "the two new groups escape LIKE metacharacters too" do
+      node = @user.nodes.create!(node_id: "n-pct", name: "pct.stl", kind: "file")
+      @user.maker_notes.create!(node_id: node.node_id, body: "<div>done at 100% power</div>")
+      @user.maker_notes.create!(node_id: node.node_id, body: "<div>100-decoy</div>")
+      @user.nodes.create!(node_id: "d-pct", name: "100% jobs", kind: "dir")
+      @user.nodes.create!(node_id: "d-decoy", name: "100-decoy", kind: "dir")
+
+      get search_path(q: "100%")
+      assert_select ".result-group--note .result-sub", text: /100% power/
+      assert_select ".result-group--note .result-sub", text: /100-decoy/, count: 0
+      assert_select ".result-group--folder a", text: "100% jobs"
+      assert_select ".result-group--folder a", text: "100-decoy", count: 0
+    end
+
+    test "tenancy: another user's note and folder never appear" do
+      other = User.create!(email: "other-#{SecureRandom.hex(4)}@example.com", password: PASSWORD,
+                           confirmed_at: Time.current)
+      node = other.nodes.create!(node_id: "n-theirs", name: "lamp.stl", kind: "file")
+      other.maker_notes.create!(node_id: node.node_id, body: "<div>their lamp note</div>")
+      other.nodes.create!(node_id: "d-theirs", name: "lamps", kind: "dir")
+
+      get search_path(q: "lamp")
+      assert_select ".result-group--note", count: 0
+      assert_select ".result-group--folder", count: 0
     end
   end
 end

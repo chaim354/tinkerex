@@ -130,5 +130,189 @@ module Web
 
       assert_select ".measure-view[data-measure-parent-node-id-value=?]", "d-design"
     end
+
+    # ---- the Connected panel (stage 4, S4-8) --------------------------------------------
+    # Task B appends BELOW this line. @node above is a bare row with a nil content_token, which
+    # short-circuits the preview tree — these cases never reach it, so it is the right fixture here.
+
+    def link_file!(id, name)
+      @user.nodes.create!(node_id: id, name:, kind: "file", mtime: 1_000_000_000, size: 10)
+    end
+
+    def link!(from, to, kind)
+      @user.maker_file_links.create!(from_node_id: from, to_node_id: to, kind:)
+    end
+
+    test "with no links the panel still renders, carrying both hand doors and no rows" do
+      get file_path(@node.node_id)
+      assert_response :success
+      assert_select "section.connections-panel", count: 1
+      assert_select ".connections-panel .connection-row", count: 0
+      # THE DOORS ARE THE POINT OF AN EMPTY PANEL. A file with no lineage is exactly the file whose
+      # page has to offer "This came from …"; hiding the panel until a link exists would make the
+      # first link unreachable from the app.
+      assert_select ".connections-panel details.composer > summary", text: "This came from…"
+      assert_select ".connections-panel details.composer > summary", text: "Add a photo of this"
+    end
+
+    test "both directions of derived_from render, each naming the other file" do
+      source = link_file!("n-src-lbrn", "coaster.lbrn2")
+      export = link_file!("n-out-svg", "coaster-parts.svg")
+      link!(export.node_id, source.node_id, "derived_from")
+
+      get file_path(export.node_id)
+      assert_select ".connections-derived-from a[href=?]", file_path(source.node_id), text: "coaster.lbrn2"
+
+      get file_path(source.node_id)
+      assert_select ".connections-derived a[href=?]", file_path(export.node_id), text: "coaster-parts.svg"
+    end
+
+    test "a photo renders on the file it shows, and the file renders on the photo" do
+      subject = link_file!("n-lid", "lid.stl")
+      photo = link_file!("n-shot", "cut.png")
+      link!(photo.node_id, subject.node_id, "photo_of")
+
+      get file_path(subject.node_id)
+      assert_select ".connections-photos a[href=?]", file_path(photo.node_id)
+      assert_select ".connections-photos [data-thumbs-target='cell'][data-node-id=?]", photo.node_id
+
+      get file_path(photo.node_id)
+      assert_select ".connections-depicts a[href=?]", file_path(subject.node_id), text: "lid.stl"
+    end
+
+    # LIVENESS IS THE READER'S QUESTION (§14a). The row survives until Maker::AttachmentReaper's
+    # window closes; the page must stop showing it the moment the file is gone.
+    test "a link whose other end is a tombstone or absent is dropped from the render" do
+      subject = link_file!("n-live", "live.stl")
+      dead = @user.nodes.create!(node_id: "n-tomb", name: "gone.stl", kind: "file",
+                                 mtime: 1_000_000_000, size: 1, deleted: true)
+      link!(subject.node_id, dead.node_id, "derived_from")
+      link!(subject.node_id, "never-existed", "derived_from")
+
+      get file_path(subject.node_id)
+      assert_select ".connections-panel .connection-row", count: 0
+      assert_equal 2, @user.maker_file_links.count, "the rows survive; only the render drops them"
+    end
+
+    # §14d: a form_with with no model:/scope: has a blank object_name. These fields are FLAT and
+    # must stay flat — Files::LinksController reads params[:kind] and params[:other_node_id], and a
+    # nested-hash test could not see the difference. Assert the RENDERED field name.
+    test "the hand doors post flat field names to this file's links endpoint" do
+      get file_path(@node.node_id)
+      assert_select "form.link-form[action=?]", file_links_path(@node.node_id), count: 2
+      # THE NAME ONLY. Which door writes which VALUE is the next test's subject, and it has to be
+      # asked inside a door: a page-wide pair of value assertions is satisfied by two doors that
+      # have SWAPPED their kinds, which is a live bug rather than a cosmetic one.
+      assert_select "form.link-form input[type=hidden][name='kind']", count: 2
+      assert_select "form.link-form input[type=hidden][name='other_node_id']", count: 2
+    end
+
+    # The picker is the EXISTING chooser in file mode (shared/_folder_field), filtered for the
+    # photo door from ROLE_BY_EXT and not from a second list.
+    test "the photo door's picker is filtered to the image vocabulary" do
+      get file_path(@node.node_id)
+      assert_select ".folder-field[data-filechooser-mode-value='file']", count: 2
+      assert_select ".folder-field[data-filechooser-extensions-value=?]",
+                    Maker::FileAttachment::IMAGE_EXTS.to_json, count: 1
+    end
+
+    # WHICH DOOR WRITES WHICH KIND, ASKED INSIDE THE DOOR. Asserting each value "somewhere on the
+    # page" cannot fail for the reason it exists: SWAP the two hidden kinds in _connections.html.erb
+    # and both values are still present, still one each, still in a form.link-form — green. The swap
+    # is not cosmetic. It points the UNFILTERED source picker at `photo_of`, so every non-image
+    # source is refused by Files::LinksController with "Only an image can be a photo of a file.",
+    # and the image-filtered picker at `derived_from`, which silently records the wrong lineage.
+    #
+    # Nokogiri's CSS has no `:contains`, so the doors are told apart by walking `details.composer`
+    # and reading each summary — the label the user actually clicked. Each door is then asserted to
+    # carry exactly ONE kind, so it cannot pass by gaining a second hidden input beside the wrong
+    # one, and each is pinned to its own picker (the photo door is the filtered one, §14a's
+    # convenience-not-a-refusal filter) so the two halves cannot drift apart either.
+    test "each hand door writes its own kind, asserted inside that door" do
+      get file_path(@node.node_id)
+
+      doors = css_select(".connections-panel details.composer")
+              .index_by { |door| door.at_css("summary").text.strip }
+      assert_equal [ "Add a photo of this", "This came from…" ], doors.keys.sort
+
+      source_door = doors.fetch("This came from…")
+      assert_select source_door, "form.link-form input[type=hidden][name='kind']", { count: 1 },
+                    "the 'This came from…' door must carry exactly one kind"
+      assert_select source_door, "form.link-form input[type=hidden][name='kind'][value=?]",
+                    "derived_from", { count: 1 },
+                    "the 'This came from…' door must write derived_from"
+      assert_select source_door, ".folder-field[data-filechooser-extensions-value]", { count: 0 },
+                    "the 'This came from…' door's picker offers every file, unfiltered"
+
+      photo_door = doors.fetch("Add a photo of this")
+      assert_select photo_door, "form.link-form input[type=hidden][name='kind']", { count: 1 },
+                    "the 'Add a photo of this' door must carry exactly one kind"
+      assert_select photo_door, "form.link-form input[type=hidden][name='kind'][value=?]",
+                    "photo_of", { count: 1 },
+                    "the 'Add a photo of this' door must write photo_of"
+      assert_select photo_door, ".folder-field[data-filechooser-extensions-value=?]",
+                    Maker::FileAttachment::IMAGE_EXTS.to_json, { count: 1 },
+                    "the 'Add a photo of this' door is the image-filtered picker"
+    end
+
+    # THE REMOVE CONTROL, ASSERTED WHERE IT RENDERS. `method: :delete` is a HIDDEN INPUT inside the
+    # form, never an attribute on it — a button_to form is a POST either way — so dropping it from
+    # the four button_to calls changes nothing a row-shaped assertion can see: the × still renders,
+    # still carries its confirm and its label, and every Remove button POSTs /file_links/:id, which
+    # no route answers. One row per list, each asserted against its OWN link id, because a
+    # page-wide "there is a delete form somewhere" is satisfied by one working button out of four.
+    test "each Remove control is a DELETE form naming its own link and this page" do
+      source   = link!(@node.node_id, link_file!("n-src", "source.lbrn2").node_id, "derived_from")
+      output   = link!(link_file!("n-out", "output.svg").node_id, @node.node_id, "derived_from")
+      photo    = link!(link_file!("n-photo", "shot.png").node_id, @node.node_id, "photo_of")
+      depicted = link!(@node.node_id, link_file!("n-dep", "lid.stl").node_id, "photo_of")
+
+      get file_path(@node.node_id)
+      assert_select ".connections-panel .connection-row", { count: 4 },
+                    "all four lists must render, or this test covers fewer than it claims"
+
+      { ".connections-derived-from" => [ source,   "Unlink source.lbrn2?", "Unlink source.lbrn2" ],
+        ".connections-derived"      => [ output,   "Unlink output.svg?", "Unlink output.svg" ],
+        ".connections-photos"       => [ photo, "Remove this photo link?", "Remove the link to shot.png" ],
+        ".connections-depicts"      => [ depicted, "Unlink lid.stl?", "Unlink lid.stl" ]
+      }.each do |group, (link, confirm, label)|
+        assert_select "#{group} .connection-row form[action=?][data-turbo-confirm=?]",
+                      file_link_path(link), confirm, { count: 1 },
+                      "#{group} must render one remove form, for its own link, with its confirm" do
+          assert_select "input[type=hidden][name='_method'][value='delete']", { count: 1 },
+                        "#{group}'s remove control must be a DELETE, not a bare POST"
+          # `from` IS THE PAGE THE BUTTON WAS ON. Either end of a pair renders the row, and
+          # Files::LinksController#destroy falls back to link.from_node_id without it — which sends
+          # the user to the OTHER file for three of these four lists.
+          assert_select "input[type=hidden][name='from'][value=?]", @node.node_id, { count: 1 },
+                        "#{group}'s remove control must carry this page's node as `from`"
+          assert_select "button[type='submit'][aria-label=?]", label, { count: 1 },
+                        "#{group}'s remove control must name the file it unlinks"
+        end
+      end
+    end
+
+    # ---- the Measure save's own lineage (stage 4, S4-8, Task C) --------------------------
+    #
+    # THE REQUEST-LEVEL CLAIM ABOUT THE TWO VALUES, ON EVERY LEG. measure_export_test drives the
+    # real save and reads the row back, and it ALSO goes red without the attribute (recordSources
+    # returns early with no source id, no row is written, `.sole` raises) — measured in review, so
+    # this is not a blind spot of the browser test. This case earns its place twice over anyway:
+    # the `system` gate runs on share alone, so this is the one assertion about the values that
+    # runs on all three backend legs; and it fails ON the attribute, where the browser test fails
+    # one assertion later on a different subject. It asserts the two values reach the DOM, which is
+    # what the writer reads.
+    #
+    # `__ID__` IS A TEMPLATE THE SERVER WRITES: the new node's id does not exist until the upload
+    # answers, and the Stimulus controller must not learn a route (the viewer partials take every
+    # URL as a strict local — architecture_invariants_test.rb scans that directory).
+    test "the Measure view carries the source node and the links endpoint for its save" do
+      node = @user.nodes.create!(node_id: "n-plate2", name: "plate.lbrn2", kind: "file",
+                                 mtime: 1_000_000_000, size: 90,
+                                 content_hash: "h-plate2", current_version_id: "v-plate2")
+      get file_path(node.node_id)
+      assert_select ".measure-view[data-measure-source-node-id-value=?]", node.node_id
+      assert_select ".measure-view[data-measure-link-url-value=?]", file_links_path("__ID__")
+    end
   end
 end

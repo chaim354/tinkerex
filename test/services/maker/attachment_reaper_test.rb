@@ -179,6 +179,51 @@ module Maker
       assert_equal 0, Maker::AttachmentReaper.reap_all!(grace: 0.seconds)
     end
 
+    # ---- file links (stage 4, S4-8) ------------------------------------------------------
+
+    def link(from, to, kind: "derived_from")
+      @user.maker_file_links.create!(from_node_id: from, to_node_id: to, kind:)
+    end
+
+    test "a link is reaped when EITHER end is gone for good, and not while both are live" do
+      node("live-a"); node("live-b")
+      link("live-a", "live-b")
+      assert_equal 0, Maker::AttachmentReaper.reap_all!, "a link between two live files is never touched"
+
+      node("live-c")
+      link("live-c", "never-existed")
+      assert_equal 1, Maker::AttachmentReaper.reap_all!
+      assert_equal 1, @user.maker_file_links.count
+
+      link("never-existed-either", "live-c")
+      assert_equal 1, Maker::AttachmentReaper.reap_all!, "the FROM end counts as much as the TO end"
+      assert_equal 1, @user.maker_file_links.count
+    end
+
+    test "a link to a fresh tombstone is spared and one past the window is reaped" do
+      node("live-d")
+      node("tomb", deleted: true, updated_at: 2.days.ago)
+      link("live-d", "tomb")
+      assert_equal 0, Maker::AttachmentReaper.reap_all!, "an undo would bring the file back with the same id"
+
+      @user.nodes.find_by!(node_id: "tomb").update_column(:updated_at, 31.days.ago)
+      assert_equal 1, Maker::AttachmentReaper.reap_all!
+      assert_equal 0, @user.maker_file_links.count
+    end
+
+    test "dry_run counts links without destroying them" do
+      link("gone-1", "gone-2")
+      assert_equal 1, Maker::AttachmentReaper.reap_all!(dry_run: true)
+      assert_equal 1, @user.maker_file_links.count
+    end
+
+    test "another user's links are never reaped by this user's sweep" do
+      other = User.create!(email: "other-#{SecureRandom.hex(4)}@example.com")
+      other.maker_file_links.create!(from_node_id: "x", to_node_id: "y", kind: "photo_of")
+      assert_equal 0, Maker::AttachmentReaper.reap!(@user)
+      assert_equal 1, other.maker_file_links.count
+    end
+
     # --- the shared window -----------------------------------------------------
 
     # ONE definition, two reapers. They ask the identical question about the identical rows, so a

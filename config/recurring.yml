@@ -61,9 +61,12 @@ production:
   # DAILY, WHERE dead_node_preview_reaper ABOVE IS WEEKLY, and not by inheritance: both are DB-only
   # and both wait out the same 30-day grace, so cadence buys neither cost nor timeliness against the
   # window. The difference is what a late sweep leaves visible — a stale preview row renders
-  # nowhere, a stale attachment is a row the user can see. Four queries per user, so daily is cheap.
+  # nowhere, a stale attachment is a row the user can see. Five queries per user since S4-8 added links (measured), so daily is cheap.
   #
   # Backend-neutral (no `command:` gate): a dead node is dead on all three backends.
+  #
+  # Since stage 4, S4-8 it also sweeps `maker_file_links`, whose two node columns can each go dead
+  # independently.
   dead_node_attachment_reaper:
     class: Maker::AttachmentReaperJob
     queue: background

@@ -11,6 +11,7 @@
     value:        initial node_id (default nil)
     label:        initial button text (default root_label)
     root_label:   text for the library root (default "/ (library root)")
+    extensions:   optional Array of extensions the picker offers ("svg" or ".SVG"; default: all)
 %>
 <%
   name         = local_assigns.fetch(:name)
@@ -20,6 +21,7 @@
   value        = local_assigns.fetch(:value, nil)
   root_label   = local_assigns.fetch(:root_label, "/ (library root)")
   label        = local_assigns.fetch(:label, root_label)
+  extensions   = local_assigns.fetch(:extensions, nil)
 %>
 <%= tag.span class: "folder-field",
       data: {
@@ -29,7 +31,11 @@
         filechooser_create_url_value: create_url,
         filechooser_root_label_value: root_label,
         filechooser_value_value: value,
-        filechooser_label_value: label
+        filechooser_label_value: label,
+        # A CONVENIENCE FOR THE HUMAN PICKING, NEVER A REFUSAL (lib/file_chooser.js says so in as
+        # many words). `tag.span` drops a nil data value, so every caller that passes none renders
+        # byte-identically to before.
+        filechooser_extensions_value: extensions&.to_json
       } do %>
   <button type="button" class="folder-field-btn" data-action="filechooser#open"
           data-filechooser-target="button">

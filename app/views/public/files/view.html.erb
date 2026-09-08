@@ -76,15 +76,18 @@
                unit_factor: (@viewer_manifest&.unit_factor || 1.0),
                thumbnail: @thumbnail, download_url: download %>
   <% elsif @kind == :measure %>
-    <%# THE FIVE SAVE LOCALS ARE NIL AND `save` IS FALSE, WHICH IS ONE DECISION, NOT SIX: the two
+    <%# THE SEVEN SAVE LOCALS ARE NIL AND `save` IS FALSE, WHICH IS ONE DECISION, NOT EIGHT: the two
         Save twins write an export into the MAKER's library through the upload doors, and a visitor
         has neither a library nor a session. The partial drops the buttons AND the four write URLs
-        rather than disabling them — two dead controls would be worse than none. %>
+        rather than disabling them — two dead controls would be worse than none. THE TWO LINEAGE
+        LOCALS (stage 4, S4-8) join them for the same reason and one more: a link is a fact about
+        the OWNER's library, and its far end may be a file no visitor may see. %>
     <%= render "files/viewers/measure", name: @node.name, blob_url: blob, thumbnail: @thumbnail,
                geometry_url: public_file_geometry_path(@pub.handle, @pub.project.slug,
                                                        @node.node_id, **@pub.link_params),
                download_url: download, save: false, port_writable: nil, create_url: nil,
-               begin_url: nil, finalize_url: nil, parent_node_id: nil %>
+               begin_url: nil, finalize_url: nil, parent_node_id: nil,
+               source_node_id: nil, link_url: nil %>
   <% else %>
     <%= render "files/viewers/static", kind: @kind, thumbnail: @thumbnail, name: @node.name,
                download_url: download %>

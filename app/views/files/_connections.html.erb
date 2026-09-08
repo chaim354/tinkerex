@@ -1,0 +1,122 @@
+<%#
+  WHERE THIS FILE CAME FROM AND WHAT CAME OUT OF IT (stage 4, S4-8; stories 3.2 and 3.3). Four
+  lists off ONE query in FilesController#show, each already reduced to live partners — a link whose
+  other end is a tombstone is not rendered here and is destroyed later by Maker::AttachmentReaper
+  (§14a: liveness is a read-time question, never a property of the row).
+
+  THE PANEL RENDERS EVEN WITH NOTHING IN IT, unlike projects/_photos. A file with no lineage is
+  exactly the file whose page has to offer "This came from …"; the two doors ARE the panel's
+  content in that state, and hiding them until a link exists would make the first link unreachable
+  from the app.
+
+  section.connections-panel, not section.panel — the file page's own sections (.notes-panel,
+  .history-panel) are page classes, and .panel is a COMPONENT whose selector belongs to
+  components.css alone (design-system.md rule 3).
+
+  PRIVATE PAGE ONLY. Public::FilesController#view renders the viewers under files/viewers/ and
+  never this partial: a link is a fact about the owner's library, and both ends of one may be
+  files no visitor may see.
+%>
+<section class="connections-panel">
+  <h2>Connected</h2>
+
+  <% if @derived_from.any? %>
+    <div class="connection-group connections-derived-from">
+      <h3 class="muted">This came from</h3>
+      <% @derived_from.each do |link, node| %>
+        <div class="connection-row">
+          <%= link_to node.name, file_path(node.node_id) %>
+          <%= button_to "×", file_link_path(link), method: :delete,
+                params: { from: @node.node_id }, class: "chip-x",
+                form: { data: { turbo_confirm: "Unlink #{node.name}?" } },
+                "aria-label": "Unlink #{node.name}" %>
+        </div>
+      <% end %>
+    </div>
+  <% end %>
+
+  <% if @derived.any? %>
+    <div class="connection-group connections-derived">
+      <h3 class="muted">Made from this</h3>
+      <% @derived.each do |link, node| %>
+        <div class="connection-row">
+          <%= link_to node.name, file_path(node.node_id) %>
+          <%= button_to "×", file_link_path(link), method: :delete,
+                params: { from: @node.node_id }, class: "chip-x",
+                form: { data: { turbo_confirm: "Unlink #{node.name}?" } },
+                "aria-label": "Unlink #{node.name}" %>
+        </div>
+      <% end %>
+    </div>
+  <% end %>
+
+  <% if @photos.any? %>
+    <%# Its own `thumbs` controller, the same reason projects/_photos carries one: this grid sits
+        outside the preview row's polling wrapper, which polls only this page's own node. %>
+    <div class="connection-group connections-photos" data-controller="thumbs"
+         data-thumbs-url-value="<%= thumbnails_files_path %>">
+      <h3 class="muted">Photos of this file</h3>
+      <% @photos.each do |link, node| %>
+        <div class="connection-row">
+          <%= link_to file_path(node.node_id), class: "photo-cell file-cell", title: node.name,
+                      data: thumb_cell_data(node.node_id, "IMG") do %>
+            <%= render "files/thumb", thumb: @link_thumbs.thumb(node.node_id), ext_label: "IMG" %>
+          <% end %>
+          <%= button_to "×", file_link_path(link), method: :delete,
+                params: { from: @node.node_id }, class: "chip-x",
+                form: { data: { turbo_confirm: "Remove this photo link?" } },
+                "aria-label": "Remove the link to #{node.name}" %>
+        </div>
+      <% end %>
+    </div>
+  <% end %>
+
+  <% if @depicts.any? %>
+    <div class="connection-group connections-depicts">
+      <h3 class="muted">This is a photo of</h3>
+      <% @depicts.each do |link, node| %>
+        <div class="connection-row">
+          <%= link_to node.name, file_path(node.node_id) %>
+          <%= button_to "×", file_link_path(link), method: :delete,
+                params: { from: @node.node_id }, class: "chip-x",
+                form: { data: { turbo_confirm: "Unlink #{node.name}?" } },
+                "aria-label": "Unlink #{node.name}" %>
+        </div>
+      <% end %>
+    </div>
+  <% end %>
+
+  <%#
+    THE TWO DOORS. Both post to the same endpoint with a different `kind`, and the DIRECTION is
+    Files::LinksController's to decide — see its class comment.
+
+    form_with url: WITH NO model: OR scope: HAS A BLANK object_name, which is safe for the flat
+    fields below and would NOT be for a fields_for (§14d: it interpolates brackets and Rack parses
+    the result to a literal "[x]" key). Keep these flat, and keep file_page_test.rb's assertion on
+    the rendered field names.
+  %>
+  <details class="composer">
+    <summary class="btn small">This came from…</summary>
+    <%= form_with url: file_links_path(@node.node_id), method: :post, class: "link-form",
+                  data: { turbo: false } do |f| %>
+      <%= f.hidden_field :kind, value: "derived_from" %>
+      <%= render "shared/folder_field", name: "other_node_id", mode: "file",
+                 children_url: library_children_path, create_url: library_folders_path,
+                 root_label: "Choose the source file…" %>
+      <%= f.submit "Link", class: "btn small" %>
+    <% end %>
+  </details>
+
+  <details class="composer">
+    <summary class="btn small">Add a photo of this</summary>
+    <%= form_with url: file_links_path(@node.node_id), method: :post, class: "link-form",
+                  data: { turbo: false } do |f| %>
+      <%= f.hidden_field :kind, value: "photo_of" %>
+      <%= render "shared/folder_field", name: "other_node_id", mode: "file",
+                 extensions: Maker::FileAttachment::IMAGE_EXTS,
+                 children_url: library_children_path, create_url: library_folders_path,
+                 root_label: "Choose a photo…" %>
+      <%= f.submit "Add photo", class: "btn small" %>
+    <% end %>
+  </details>
+</section>

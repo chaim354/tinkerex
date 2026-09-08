@@ -1,4 +1,4 @@
-<%# locals: (geometry_url:, name:, blob_url:, thumbnail:, download_url:, save:, port_writable:, create_url:, begin_url:, finalize_url:, parent_node_id:) %>
+<%# locals: (geometry_url:, name:, blob_url:, thumbnail:, download_url:, save:, port_writable:, create_url:, begin_url:, finalize_url:, parent_node_id:, source_node_id:, link_url:) %>
 <%#
   The interactive Measure view — .lbrn/.lbrn2, .mage, .dxf, .svg. See measure_controller.js.
 
@@ -47,8 +47,10 @@
        THE DESTINATION IS THE SOURCE FILE'S OWN PARENT, so an export lands beside the thing it was
        exported from. Empty at the library root, which lib/chunk_upload reads as "no parent".
 
-       ALL FIVE ARE INSIDE THE `save` BRANCH (stage 4, S4-5): the two buttons below are what reads
-       them, and a page that renders neither must not carry an upload door either.
+       ALL SEVEN ARE INSIDE THE `save` BRANCH (stage 4, S4-5): the two buttons below are what reads
+       them, and a page that renders neither must not carry an upload door either. The two lineage
+       values joined them in S4-8 for the same reason — a visitor writes nothing, so a link door in
+       a stranger's DOM would be a private write path rendered for nobody.
      %>
      <% if save %>
      data-measure-port-writable-value="<%= port_writable %>"
@@ -56,6 +58,19 @@
      data-measure-begin-url-value="<%= begin_url %>"
      data-measure-finalize-url-value="<%= finalize_url %>"
      data-measure-parent-node-id-value="<%= parent_node_id %>"
+     <%#
+       LINEAGE FOR A SAVE (stage 4, S4-8; story 3.2). Everything Measure saves is DERIVED from this
+       file, so the save records that as it lands — the maker who opens the export a month later is
+       one click from the .lbrn2 it came out of, and the panel's `×` on that page is what withdraws
+       the link again (plan decision 2).
+
+       `__ID__` IS A TEMPLATE THE SERVER WRITES, and the id is substituted in the browser: the new
+       node does not exist until the upload answers, and this partial must not learn a route —
+       every URL it needs arrives as a strict local, which is what keeps a private path off a
+       visitor's page (architecture_invariants_test.rb scans this directory for `*_path`/`*_url`).
+     %>
+     data-measure-source-node-id-value="<%= source_node_id %>"
+     data-measure-link-url-value="<%= link_url %>"
      <% end %>>
   <div class="measure-stage" data-measure-target="stage"></div>
   <div class="measure-bar">
