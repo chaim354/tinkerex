@@ -139,6 +139,12 @@ Rails.application.routes.draw do
   post "files/:node_id/notes", to: "notes#create", as: :file_notes
   resources :notes, only: %i[destroy]
 
+  # --- Per-file links (stage 4, S4-8; keyed by node_id, session auth) ---
+  # THE SAME SHAPE THE NOTES ROUTES ABOVE TAKE, for the same reason: the subject of a create is a
+  # node_id, which is a string the library owns, while the subject of a destroy is a row id.
+  post "files/:node_id/links", to: "files/links#create", as: :file_links
+  resources :file_links, only: %i[destroy], controller: "files/links"
+
   # --- Maker: Projects (server-rendered web UI, session auth) ---
   # The maker product hub. Uses Maker::* models directly (NOT the device-token /v1/maker API).
   resources :projects do

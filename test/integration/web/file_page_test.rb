@@ -130,5 +130,88 @@ module Web
 
       assert_select ".measure-view[data-measure-parent-node-id-value=?]", "d-design"
     end
+
+    # ---- the Connected panel (stage 4, S4-8) --------------------------------------------
+    # Task B appends BELOW this line. @node above is a bare row with a nil content_token, which
+    # short-circuits the preview tree — these cases never reach it, so it is the right fixture here.
+
+    def link_file!(id, name)
+      @user.nodes.create!(node_id: id, name:, kind: "file", mtime: 1_000_000_000, size: 10)
+    end
+
+    def link!(from, to, kind)
+      @user.maker_file_links.create!(from_node_id: from, to_node_id: to, kind:)
+    end
+
+    test "with no links the panel still renders, carrying both hand doors and no rows" do
+      get file_path(@node.node_id)
+      assert_response :success
+      assert_select "section.connections-panel", count: 1
+      assert_select ".connections-panel .connection-row", count: 0
+      # THE DOORS ARE THE POINT OF AN EMPTY PANEL. A file with no lineage is exactly the file whose
+      # page has to offer "This came from …"; hiding the panel until a link exists would make the
+      # first link unreachable from the app.
+      assert_select ".connections-panel details.composer > summary", text: "This came from…"
+      assert_select ".connections-panel details.composer > summary", text: "Add a photo of this"
+    end
+
+    test "both directions of derived_from render, each naming the other file" do
+      source = link_file!("n-src-lbrn", "coaster.lbrn2")
+      export = link_file!("n-out-svg", "coaster-parts.svg")
+      link!(export.node_id, source.node_id, "derived_from")
+
+      get file_path(export.node_id)
+      assert_select ".connections-derived-from a[href=?]", file_path(source.node_id), text: "coaster.lbrn2"
+
+      get file_path(source.node_id)
+      assert_select ".connections-derived a[href=?]", file_path(export.node_id), text: "coaster-parts.svg"
+    end
+
+    test "a photo renders on the file it shows, and the file renders on the photo" do
+      subject = link_file!("n-lid", "lid.stl")
+      photo = link_file!("n-shot", "cut.png")
+      link!(photo.node_id, subject.node_id, "photo_of")
+
+      get file_path(subject.node_id)
+      assert_select ".connections-photos a[href=?]", file_path(photo.node_id)
+      assert_select ".connections-photos [data-thumbs-target='cell'][data-node-id=?]", photo.node_id
+
+      get file_path(photo.node_id)
+      assert_select ".connections-depicts a[href=?]", file_path(subject.node_id), text: "lid.stl"
+    end
+
+    # LIVENESS IS THE READER'S QUESTION (§14a). The row survives until Maker::AttachmentReaper's
+    # window closes; the page must stop showing it the moment the file is gone.
+    test "a link whose other end is a tombstone or absent is dropped from the render" do
+      subject = link_file!("n-live", "live.stl")
+      dead = @user.nodes.create!(node_id: "n-tomb", name: "gone.stl", kind: "file",
+                                 mtime: 1_000_000_000, size: 1, deleted: true)
+      link!(subject.node_id, dead.node_id, "derived_from")
+      link!(subject.node_id, "never-existed", "derived_from")
+
+      get file_path(subject.node_id)
+      assert_select ".connections-panel .connection-row", count: 0
+      assert_equal 2, @user.maker_file_links.count, "the rows survive; only the render drops them"
+    end
+
+    # §14d: a form_with with no model:/scope: has a blank object_name. These fields are FLAT and
+    # must stay flat — Files::LinksController reads params[:kind] and params[:other_node_id], and a
+    # nested-hash test could not see the difference. Assert the RENDERED field name.
+    test "the hand doors post flat field names to this file's links endpoint" do
+      get file_path(@node.node_id)
+      assert_select "form.link-form[action=?]", file_links_path(@node.node_id), count: 2
+      assert_select "form.link-form input[type=hidden][name='kind'][value='derived_from']"
+      assert_select "form.link-form input[type=hidden][name='kind'][value='photo_of']"
+      assert_select "form.link-form input[type=hidden][name='other_node_id']", count: 2
+    end
+
+    # The picker is the EXISTING chooser in file mode (shared/_folder_field), filtered for the
+    # photo door from ROLE_BY_EXT and not from a second list.
+    test "the photo door's picker is filtered to the image vocabulary" do
+      get file_path(@node.node_id)
+      assert_select ".folder-field[data-filechooser-mode-value='file']", count: 2
+      assert_select ".folder-field[data-filechooser-extensions-value=?]",
+                    Maker::FileAttachment::IMAGE_EXTS.to_json, count: 1
+    end
   end
 end

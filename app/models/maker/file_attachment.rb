@@ -172,6 +172,17 @@ module Maker
       "gd1" => "pcb", "gg1" => "pcb", "drl" => "pcb", "xln" => "pcb", "gbrjob" => "pcb"
     }.freeze
 
+    # WHICH EXTENSIONS ARE PICTURES, DERIVED FROM THE ONE VOCABULARY (stage 4, S4-8). Read by the
+    # `photo_of` door's file picker so a maker is offered pictures and not their whole library.
+    # Derived rather than written out for the reason §14d gives about every extension list in this
+    # app: a second copy is a second thing to forget when a format is added, and this one would
+    # silently offer nothing new.
+    #
+    # THE PICKER'S FILTER IS A CONVENIENCE, NEVER THE REFUSAL — lib/file_chooser.js says so in as
+    # many words. Files::LinksController asks `role_for` again on the server, through this same
+    # hash, so a hand-posted node id is refused whatever the picker showed.
+    IMAGE_EXTS = ROLE_BY_EXT.filter_map { |ext, role| ext if role == "image" }.freeze
+
     # EVERY EXTENSION THE 3D VIEWER CAN OPEN — the ONE list, read by BOTH doors that offer it
     # (`FilesController#preview_kind`'s `:model3d` branch and `ModelsController#show`'s hero
     # switcher). Each controller carried its own copy of `%w[stl 3mf obj]` until 2026-09-06, which

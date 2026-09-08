@@ -53,6 +53,30 @@
     font-size: 15px; line-height: 1; padding: 0 4px; }
   .chip-x:hover { color: var(--fg); }
 
+  /* --- Connected files (stage 4, S4-8), on files/show. `.connections-panel` follows
+     `.notes-panel` above: a PAGE class, because `.panel` is a component and components.css owns
+     that selector alone (design-system.md rule 3). `.chip-x` above is REUSED rather than copied,
+     which is why this block sits beside it. The rows WRAP rather than squashing, which is rule
+     11's requirement at 375px — a long library name plus a Remove button has no business pushing
+     the page sideways. */
+  .connections-panel { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 16px; }
+  .connections-panel h2 { font-size: 16px; margin: 0 0 12px; }
+  .connections-panel h3 { font-size: 13px; font-weight: 500; margin: 0 0 6px; }
+  .connection-group { margin-bottom: 14px; }
+  .connection-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    overflow-wrap: anywhere; margin-bottom: 4px; }
+  /* The photo rows sit side by side rather than stacking; the cells are the only thumbnails on
+     this page outside the preview row. `.thumb` is a component with NO intrinsic size (every
+     tenant sizes it inside its own container — table.files .thumb, .files-grid .thumb), so this
+     one is qualified the same way rather than left to collapse to nothing. */
+  .connections-photos .connection-row { display: inline-flex; vertical-align: top; margin-right: 8px; }
+  .connections-photos .photo-cell { display: block; width: 96px; }
+  .connections-photos .photo-cell .thumb { width: 96px; height: 96px; }
+  .connections-panel details.composer { margin-top: 10px; }
+  .connections-panel details.composer > summary { min-height: 24px; padding: 0 8px; font-size: 12px; }
+  .connections-panel .link-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin: 8px 0 0; }
+
   /* --- The one toolbar row (spec §8). .toolbar is the component; these are its Files tenants. */
   .files-toolbar { margin-bottom: 14px; }
   .files-toolbar .ext-filter { margin: 0; }

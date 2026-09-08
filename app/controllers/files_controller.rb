@@ -581,6 +581,29 @@ class FilesController < ApplicationController
     @projects = scope.to_a.sort_by { |p| name_key(p) }
     @notes = current_user.maker_notes.where(node_id: @node.node_id).order(created_at: :desc).to_a
     @new_note = current_user.maker_notes.new(node_id: @node.node_id)
+    # THE CONNECTED PANEL, BOTH DIRECTIONS IN ONE QUERY (stage 4, S4-8). `touching` is
+    # `from_node_id = :n OR to_node_id = :n`; asking twice would be two queries for one panel, and
+    # both halves are indexed (the unique index leads on from_node_id, a second index covers
+    # to_node_id).
+    links = current_user.maker_file_links.touching(@node.node_id).order(:created_at).to_a
+    # LIVENESS IS ANSWERED HERE AND NEVER BY THE ROW (§14a). ONE `nodes.present` lookup over every
+    # other end; a link whose partner is a tombstone has no entry and the four filter_maps drop it.
+    # Maker::AttachmentReaper destroys those rows once the partner's undo window closes — hiding is
+    # instant because hiding is reversible, destroying waits because it is not (Maker::DeadNodes).
+    partners = current_user.nodes.present
+                           .where(node_id: links.flat_map { |l| [ l.from_node_id, l.to_node_id ] }.uniq)
+                           .index_by(&:node_id)
+    # FOUR LISTS, ONE PER SENTENCE THE PANEL SAYS — resolved here rather than in the template,
+    # because the direction rule (Maker::FileLink's KINDS comment) has one home and a view that
+    # re-derived it could disagree with the door that wrote the row.
+    @derived_from = pick_links(links, partners, "derived_from", :from) # this file's sources
+    @derived      = pick_links(links, partners, "derived_from", :to)   # what came out of this file
+    @photos       = pick_links(links, partners, "photo_of",     :to)   # pictures OF this file
+    @depicts      = pick_links(links, partners, "photo_of",     :from) # what this picture shows
+    # ONE ThumbnailMap FOR THE PHOTO CELLS, the shape projects/_photos already uses. `for`
+    # backfills on a GET, bounded at BACKFILL_LIMIT — its documented door contract, not a new
+    # liberty — and this list is at most the number of photos of one file.
+    @link_thumbs = Maker::Previews::ThumbnailMap.for(current_user, @photos.map { |_l, n| n.node_id })
     # The same lookup #index makes for a whole page, asked about one node. Keyed by node_id either
     # way so the view reads it identically; a file no addon produced is simply an absent key.
     @addon_origins = addon_origins_for([ @node.node_id ])
@@ -964,6 +987,18 @@ class FilesController < ApplicationController
   # the Ruby sort matches what a reader expects from Postgres' default collation, with the raw
   # name as the tie-break so "beta"/"Beta" still order deterministically.
   def name_key(project) = [ project.name.downcase, project.name ]
+
+  # The live partner nodes of `links` for one kind, where `@node` is the named END of the pair.
+  # `end_` is :from when @node is the link's from_node_id (so the partner is its `to`), and :to
+  # when it is the to_node_id. Nothing here queries — `partners` is the one lookup #show made, so
+  # the panel costs ONE link query and ONE node query however many links a file has.
+  def pick_links(links, partners, kind, end_)
+    mine, theirs = end_ == :from ? %i[from_node_id to_node_id] : %i[to_node_id from_node_id]
+    links.filter_map { |l|
+      partners[l.public_send(theirs)] && [ l, partners[l.public_send(theirs)] ] if
+        l.kind == kind && l.public_send(mine) == @node.node_id
+    }
+  end
 
   # The thumbnail for THIS content AND this build of its renderer, enqueueing when there is none.
   #
