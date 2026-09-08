@@ -126,11 +126,11 @@ again, catch up.*
 
 | # | story | tag | evidence / friction |
 |---|---|---|---|
-| 6.1 | When I open a laser project, I want the cut file, the photos and the settings first, not BOM, wiring and releases. | `rough` | **S4-1:** an empty secondary panel is quiet — its heading and one add control, no open composer, no zero-count task groups (`panel--quiet`, the six panel partials); the photos have their own panel. Still rough: the panel order is fixed and nothing pins the cut file (S4-7). |
-| 6.2 | When I open a firmware + PCB project, I want README, board, schematic, commits and wiring at the top. | `rough` | **S4-1:** the repository card, README and Commits/History render for a root-repo project, at the top of Files. Still rough: no board render on the project page; schematics only for KiCad (`_schematics.html.erb:18-19`); wiring sits below the fold. |
-| 6.3 | When I open a 3D-print project, I want the model as the hero and its print history. | `rough` | **S4-1:** the cover is the page's hero — an image inline, any other file as its thumbnail (`projects/_hero.html.erb`); a derived cover means most projects get one without choosing. Still rough: choosing which file is the hero is the edit form's cover chooser only, and print runs live on Models. |
-| 6.4 | I want to pin the important file or choose the hero. | `missing` | Files are peers sorted by name (`project_folder_listing.rb:215`); the chosen cover never reaches the page. |
-| 6.5 | I want to hide, reorder or add panels per project, or pick a project type that presets them. | `missing` | Hard-coded order; no `kind`; no preference storage (`db/schema.rb` `maker_projects`). |
+| 6.1 | When I open a laser project, I want the cut file, the photos and the settings first, not BOM, wiring and releases. | `rough` | **S4-1:** an empty secondary panel is quiet. **S4-7:** a laser project's page no longer carries BOM, Wiring, Releases or Sheets (`Maker::ProjectKind::PRESETS`), and the kind is suggested once, from the folder's own files, by discovery and adoption. Still rough: which file comes first *inside* the Files panel is still name order (`project_folder_listing.rb`), which is 6.4's other half. |
+| 6.2 | When I open a firmware + PCB project, I want README, board, schematic, commits and wiring at the top. | `rough` | **S4-1:** the repository card, README and Commits render for a root-repo project, at the top of Files. **S4-7:** an electronics project lifts Schematics and Wiring above the build log (the story's own list), and a firmware repo is suggested `electronics` from its `.git` marker and its sources. Still rough: no board render on the project page; schematics are KiCad-only. |
+| 6.3 | When I open a 3D-print project, I want the model as the hero and its print history. | `rough` | **S4-1:** the cover is the page's hero. **S4-7:** a `print` project's hero prefers a model over a photo (`Maker::ProjectKind.hero_roles`), so the model is the hero without anyone choosing one. Still rough: print history lives on Models. |
+| 6.4 | I want to pin the important file or choose the hero. | `rough` | **S4-7:** the kind picks the hero's preferred role among the project's attachments, and a chosen `cover_node_id` still wins over it. Still missing: pinning a file to the top of the Files panel — files stay peers sorted by name (`project_folder_listing.rb`). |
+| 6.5 | I want to hide, reorder or add panels per project, or pick a project type that presets them. | `works` | **S4-7:** `kind` with six values, suggested once from the folder at creation and editable on the form (never re-suggested: a later "this looks like a laser project" is a prompt, not a write); per-kind presets for order and visibility; per-project show/hide/reorder with no JavaScript (`projects/_panel_chooser`, `Projects::PanelsController`); Reset removes the override; the visitor's page honours the same layout. |
 | 6.6 | I want a photo gallery on my own page. | `works` | **S4-1:** `projects/_photos.html.erb` over `Maker::ProjectPhotos.rows`, the one definition the public page uses too — folder images plus build-log photos, once each, by name. |
 | 6.7 | I want sections named for me, not folder names. | `by design` | The folder is the truth (stage 3 decision 1); an alias would be a table that fights it. |
 | 6.8 | I want the list view to carry the same actions as tiles. | `works` | **S4-1:** each list row carries `file_menu_data`, so right-click offers Add note / Open / Download / Edit-in-tool exactly as a tile does (`_file_rows.html.erb`). |
@@ -146,8 +146,8 @@ again, catch up.*
 | T3 | 7 | 1 | 2 | 3 | 1 built-unused |
 | T4 | 8 | 2 | 4 | 2 | |
 | T5 | 8 | 4 | 4 | 0 | |
-| T6 | 8 | 2 | 3 | 2 | 1 by design |
-| **all** | **50** | **15** | **26** | **7** | **2** |
+| T6 | 8 | 3 | 4 | 0 | 1 by design |
+| **all** | **50** | **16** | **27** | **5** | **2** |
 
 Re-measured after S4-1 (2026-09-07): 6.6 and 6.8 moved to `works`; 1.4, 2.9, 6.1, 6.2, 6.3 gained new evidence and stay `rough`; 5.3 gained its render half and stays `missing`.
 
@@ -158,6 +158,8 @@ Re-measured after S4-4 (2026-09-07): 5.1, 5.3 and 5.8 moved to `works`; 5.2 and 
 Re-measured after S4-5 (2026-09-07): 5.5 moved to `works`; 5.7 gained the header, the hero and covers on a maker's page and stays `rough`.
 
 Re-measured after S4-6 (2026-09-07): 1.2 moved to `works`; 1.3 and 1.5 moved from `missing` to `rough`; 1.1, 1.6, 4.5 and 4.7 gained new evidence and keep their tags.
+
+Re-measured after S4-7 (2026-09-07): 6.5 moved to `works`; 6.4 moved from `missing` to `rough`; 6.1, 6.2 and 6.3 gained new evidence and stay `rough`.
 
 Re-measured after S4-3 (2026-09-07): 2.10 moved from `missing` to `rough` (the path is there; the hand-off is the OS's by decision); 2.11, 2.12, 2.13 gained new evidence and stay `rough`.
 
