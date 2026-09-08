@@ -715,7 +715,8 @@ module Web
     # render only when the maker HAD typed projects, so a stale `?kind=` — a bookmark, Back after
     # retyping the last laser project — showed the empty state with no "All types" chip.
     test "a kind filter with no matching project still renders the chip that clears it" do
-      @user.maker_projects.create!(name: "Untyped")
+      user = sign_in
+      user.maker_projects.create!(name: "Untyped")
 
       get projects_path(kind: "laser")
 
