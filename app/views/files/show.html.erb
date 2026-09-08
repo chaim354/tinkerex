@@ -209,7 +209,13 @@
         maker's own doors (stage 4, S4-3): an export lands beside the file it came from, through
         whichever of the two upload flows this deployment uses. `save: true` is what renders those
         two controls at all — a VISITOR's file page passes false and gets the same bar without them
-        (stage 4, S4-5), because there is no library for an export to land in. %>
+        (stage 4, S4-5), because there is no library for an export to land in.
+
+        `source_node_id`/`link_url` ARE WHERE A SAVED EXPORT CAME FROM (stage 4, S4-8): this file,
+        and the door that records the fact. `__ID__` is a template measure_controller.js substitutes
+        once the upload has answered with the new node's id — the partial takes the URL as a strict
+        local rather than building one, like every other URL it needs (a shared viewer must not
+        reach a private route helper; architecture_invariants_test.rb scans that directory). %>
     <%= render "files/viewers/measure", name: @node.name,
                geometry_url: geometry_file_path(@node.node_id),
                blob_url: blob_file_path(@node.node_id), thumbnail: @thumbnail,
@@ -217,7 +223,8 @@
                save: true,
                port_writable: capabilities.port_writable?, create_url: files_path,
                begin_url: begin_upload_files_path, finalize_url: finalize_upload_files_path,
-               parent_node_id: @node.parent_node_id %>
+               parent_node_id: @node.parent_node_id,
+               source_node_id: @node.node_id, link_url: file_links_path("__ID__") %>
   <% else %>
     <%# THE TAIL: the ready thumbnail, the "still generating" while its job runs, and the download
         fallback. THREE elsifs COLLAPSED INTO ONE else, which is behaviour-preserving rather than a

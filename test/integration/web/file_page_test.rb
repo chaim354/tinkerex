@@ -213,5 +213,24 @@ module Web
       assert_select ".folder-field[data-filechooser-extensions-value=?]",
                     Maker::FileAttachment::IMAGE_EXTS.to_json, count: 1
     end
+
+    # ---- the Measure save's own lineage (stage 4, S4-8, Task C) --------------------------
+    #
+    # THE REQUEST-LEVEL CLAIM ABOUT AN ATTRIBUTE THE BROWSER TEST CANNOT PIN. measure_export_test
+    # drives the real save and reads the row back, so it passes whether or not the ATTRIBUTE is
+    # present — it would simply record no link and fail one assertion later, on a different
+    # subject. This asserts the two values reach the DOM, which is what the writer reads.
+    #
+    # `__ID__` IS A TEMPLATE THE SERVER WRITES: the new node's id does not exist until the upload
+    # answers, and the Stimulus controller must not learn a route (the viewer partials take every
+    # URL as a strict local — architecture_invariants_test.rb scans that directory).
+    test "the Measure view carries the source node and the links endpoint for its save" do
+      node = @user.nodes.create!(node_id: "n-plate2", name: "plate.lbrn2", kind: "file",
+                                 mtime: 1_000_000_000, size: 90,
+                                 content_hash: "h-plate2", current_version_id: "v-plate2")
+      get file_path(node.node_id)
+      assert_select ".measure-view[data-measure-source-node-id-value=?]", node.node_id
+      assert_select ".measure-view[data-measure-link-url-value=?]", file_links_path("__ID__")
+    end
   end
 end

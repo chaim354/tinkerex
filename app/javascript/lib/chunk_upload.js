@@ -10,7 +10,11 @@ function csrfToken() {
   return document.querySelector('meta[name="csrf-token"]')?.content || ""
 }
 
-async function postJSON(url, body) {
+// EXPORTED SINCE STAGE 4, S4-8, so a caller that must POST one more JSON request alongside an
+// upload reuses this CSRF header and this error-body reading rather than writing a second `fetch`
+// with its own spelling of both. Its FIRST such caller is measure_controller.js#recordSources,
+// which records where a saved export came from; the two upload doors below are unchanged.
+export async function postJSON(url, body) {
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Accept": "application/json", "X-CSRF-Token": csrfToken() },

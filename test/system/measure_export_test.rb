@@ -346,6 +346,35 @@ class MeasureExportTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # THE ROUND TRIP REMEMBERING ITSELF (stage 4, S4-8; story 3.2): the export knows the file it came
+  # out of, and the source's page lists it back. BOTH DIRECTIONS OFF ONE ROW, which is the point of
+  # the table — nothing writes a second, reversed link.
+  #
+  # THE STATUS SENTENCE IS THE SYNCHRONISATION POINT, not the filename: `saveAll` awaits
+  # recordSources BEFORE it writes the notice, so by the time "Uploaded sample-parts.svg." is on the
+  # page the link POST has already answered. Asserting the bare filename would race it.
+  test "a saved export records where it came from, and both pages say so" do
+    visit file_path(@sample_id)
+    click_on "Measure"
+    assert_selector ".measure-view--ready", wait: 10
+    find(".measure-stage circle.measure-contour").click
+    assert_text "1 part"
+
+    find("[data-measure-target='saveSvgButton']").click
+    assert_text "Uploaded sample-parts.svg.", wait: 15
+
+    export = @user.nodes.present.find_by!(name: "sample-parts.svg")
+    link = @user.maker_file_links.sole
+    assert_equal [ export.node_id, @sample_id, "derived_from" ],
+                 [ link.from_node_id, link.to_node_id, link.kind ]
+
+    visit file_path(export.node_id)
+    assert_selector ".connections-derived-from a", text: SAMPLE
+    visit file_path(@sample_id)
+    assert_selector ".connections-derived a", text: "sample-parts.svg"
+    assert_no_console_errors
+  end
+
   # THE ACCESSIBLE NAMES OF ALL FOUR BUTTONS COME FROM ONE targetNoun(), so a Save can never
   # describe a set its Download twin does not act on.
   test "the save buttons' accessible names track the same target the downloads do" do

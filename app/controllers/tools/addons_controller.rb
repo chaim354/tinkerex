@@ -536,6 +536,7 @@ module Tools
         )
       end
       attach_addon_files_to_current_project(addon_files)
+      record_source_links(state, addon_files)
 
       # THE EAGER NUDGE, and this door was the last browser-facing one without it. §14f names seven
       # ways a file reaches `Projects/<slug>/`; the three web upload doors call this inline and a
@@ -805,6 +806,46 @@ module Tools
       current_user.nodes.present.where(node_id: node_ids)
                   .pluck(:parent_node_id, :name, :node_id)
                   .to_h { |parent, name, node_id| [ [ parent, name ], node_id ] }
+    end
+
+    # THE LINEAGE OF A GENERATED FILE (stage 4, S4-8; story 3.2). Until now a tool's output knew
+    # which SAVED ITEM produced it (maker_addon_files) and nothing knew which of the maker's OWN
+    # files it was generated from — so a .scad and its 3MF sat in the library as strangers.
+    #
+    # ONE DOCUMENTED CONVENTION, PROBED RATHER THAN ASSUMED. `data` is opaque JSON this app stores
+    # unexamined (#parse_data), and the openscad bundle writes the node id of the .scad the maker
+    # picked as `data["node_id"]`, beside `source_name` (chaim354/tinkerex-addons,
+    # addons/openscad/editor.js#stateData, 2026-09-07). The boxes and generators bundles write
+    # `{generator, params}` and no node id at all, so this key cannot collide with theirs — a
+    # bundled generator is a CATALOG KEY, not a file, and writes no link (plan decision 3). This is
+    # the FIRST server-side reader of any bundle key — §14c's compatibility promise is why it reads
+    # one key and refuses nothing.
+    #
+    # THE VALUE IS RESOLVED, NEVER TRUSTED: it arrives as user-supplied JSON, so a link is written
+    # only when it names a LIVE FILE THIS USER OWNS. One query. A bundle that starts spelling
+    # `node_id` differently therefore writes no links rather than wrong ones — the safe direction
+    # for a fact a page will present as true.
+    #
+    # THE LINK IS WRITTEN UNASKED (plan decision 2): the panel's `×` on the output's own page is
+    # what withdraws it, and an opt-in would live in the bundle repo rather than here.
+    def record_source_links(state, addon_files)
+      source_id = state.data.is_a?(Hash) ? state.data["node_id"].to_s : ""
+      return if source_id.blank?
+      return unless current_user.nodes.present.exists?(node_id: source_id, kind: "file")
+
+      addon_files.each do |f|
+        next if f.node_id == source_id
+
+        current_user.maker_file_links.create!(from_node_id: f.node_id, to_node_id: source_id,
+                                              kind: "derived_from")
+      rescue ActiveRecord::RecordNotUnique
+        # A REVISION REWRITES THE SAME NODE (LibraryOutput#upsert_file!), so the second save of one
+        # design meets its own link — the ORDINARY case, since this writer fires on every save.
+        # Maker::FileLink carries no uniqueness VALIDATION (only the index), so without this arm
+        # that second save is a 500 on a request whose bytes already landed. The row already states
+        # the fact; there is nothing to add and nothing to report. Rescued per file rather than
+        # around the loop so one collision does not skip the outputs after it.
+      end
     end
 
     # ALL THE NAMES, CHECKED BEFORE ANY BYTE IS WRITTEN — which closes two different defects.

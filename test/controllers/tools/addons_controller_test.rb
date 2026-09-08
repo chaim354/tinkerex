@@ -2232,6 +2232,85 @@ module Tools
       assert_equal mine.id, body.first["id"]
     end
 
+    # ---- lineage: a generated file records the file it was generated from (stage 4, S4-8) ----
+    #
+    # THE SAVE DOOR IS `post tools_addon_path(key)`, THE SPELLING EVERY OTHER SAVE TEST IN THIS
+    # FILE USES — `save_box` above is not reused because these cases need `data` to carry a
+    # `node_id`, which its `{generator:, params:}` shape deliberately does not.
+    #
+    # THE OUTPUT NAME IS UNIQUE PER SAVE for the reason `save_box` states: FileLayer::Share#write
+    # puts a REAL file under LIBRARY_PATH, and the test transaction rolls back the `nodes` row but
+    # cannot roll back the file, so a fixed name collides on the share leg only.
+
+    def save_with_data(data, file: "lineage-#{SecureRandom.hex(4)}.svg", name: "lineage box", **extra)
+      post tools_addon_path(FIXTURE_KEY), params: {
+        name:, data: data.to_json,
+        files: [ { name: file, content_type: "image/svg+xml", body: "<svg/>" } ].to_json, **extra
+      }
+    end
+
+    # LINEAGE FROM A GENERATOR (story 3.2). A bundle's `data` is opaque JSON this app stores
+    # unexamined, with ONE documented convention: the openscad bundle writes the node id of the
+    # .scad the maker picked as `data["node_id"]` (chaim354/tinkerex-addons,
+    # addons/openscad/editor.js#stateData — probed 2026-09-07). The boxes and generators bundles
+    # write `{generator, params}` and no node id, so the key cannot collide with theirs.
+    test "a save whose data names a source file links every output to it" do
+      source = @user.nodes.create!(node_id: "n-scad", name: "washer.scad", kind: "file",
+                                   mtime: 1_000_000_000, size: 20)
+
+      save_with_data({ node_id: source.node_id, source_name: "washer.scad" }, name: "washer")
+      assert_redirected_to tools_addon_path(FIXTURE_KEY)
+
+      output = @user.maker_addon_states.last.files.sole
+      link = @user.maker_file_links.sole
+      assert_equal [ output.node_id, source.node_id, "derived_from" ],
+                   [ link.from_node_id, link.to_node_id, link.kind ]
+    end
+
+    # THE VALUE IS USER-SUPPLIED JSON AND IS RESOLVED, NEVER TRUSTED. A bundle that starts writing
+    # `node_id` to mean something else therefore writes NO links rather than wrong ones.
+    test "a data node_id that is not this user's live file writes no link" do
+      other = User.create!(email: "x-#{SecureRandom.hex(4)}@example.com")
+      other.nodes.create!(node_id: "n-theirs", name: "theirs.scad", kind: "file")
+      @user.nodes.create!(node_id: "n-tomb", name: "old.scad", kind: "file", deleted: true)
+      @user.nodes.create!(node_id: "d-dir", name: "dir", kind: "dir")
+
+      [ "n-theirs", "n-tomb", "d-dir", "never-existed", "" ].each_with_index do |id, i|
+        save_with_data({ node_id: id }, name: "w#{i}")
+        assert_redirected_to tools_addon_path(FIXTURE_KEY)
+      end
+      assert_equal 0, @user.maker_file_links.count
+    end
+
+    # A BOXES SAVE CARRIES `generator`, NOT `node_id`, AND MUST BE UNAFFECTED (plan decision 3: a
+    # catalog key is not a file, and it is not a second kind of link either).
+    test "a save whose data names a bundled generator writes no link" do
+      save_with_data({ generator: "hex_cell_holder", params: { n: 3 } }, name: "box")
+      assert_redirected_to tools_addon_path(FIXTURE_KEY)
+      assert_equal 0, @user.maker_file_links.count
+    end
+
+    # A REVISION REWRITES THE SAME NODE (Maker::Addons::LibraryOutput#upsert_file!), so the second
+    # save of one design meets its OWN link — an ordinary event, since the openscad save writes its
+    # link unasked on every save. The unique index refuses the duplicate and the writer treats that
+    # as the fact already being recorded; without the rescue this is a 500 on the second save.
+    test "re-saving the same design does not raise on its own link" do
+      source = @user.nodes.create!(node_id: "n-scad2", name: "plate.scad", kind: "file",
+                                   mtime: 1_000_000_000, size: 20)
+      file = "plate-#{SecureRandom.hex(4)}.3mf"
+
+      save_with_data({ node_id: source.node_id }, file:, name: "plate")
+      assert_redirected_to tools_addon_path(FIXTURE_KEY)
+      state = @user.maker_addon_states.order(:id).last
+
+      save_with_data({ node_id: source.node_id }, file:, name: "plate",
+                     state_id: state.id, overwrite: "1")
+      assert_redirected_to tools_addon_path(FIXTURE_KEY)
+
+      assert_equal 1, @user.maker_file_links.count
+      assert_equal 1, state.reload.files.count, "the revision rewrote the same node"
+    end
+
     private
 
     # Mirrors test/integration/web/page_query_budget_test.rb's own helper. SCHEMA/TRANSACTION and

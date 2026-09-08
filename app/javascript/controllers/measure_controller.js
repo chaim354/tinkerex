@@ -1,7 +1,7 @@
 import { Controller } from "@hotwired/stimulus"
 import { PAPERS, printSheets, sheetDocuments } from "lib/print_sheet"
 import { exportSvg } from "lib/export_svg"
-import { uploadChunkFile, uploadPortFile } from "lib/chunk_upload"
+import { postJSON, uploadChunkFile, uploadPortFile } from "lib/chunk_upload"
 import { SVG_NS, shapeElement, unionBox } from "lib/shape_svg"
 import { installPanZoom } from "lib/svg_pan_zoom"
 
@@ -60,7 +60,11 @@ export default class extends Controller {
   static values = {
     url: String, name: String,
     portWritable: Boolean, createUrl: String, beginUrl: String, finalizeUrl: String,
-    parentNodeId: String
+    parentNodeId: String,
+    // WHERE A SAVED EXPORT CAME FROM (stage 4, S4-8). Both are rendered only inside the partial's
+    // `save` branch, so a visitor's page declares neither and `hasSourceNodeIdValue` is false —
+    // which is what `recordSources` asks before it posts anything.
+    sourceNodeId: String, linkUrl: String
   }
   // EVERY VALUE HERE IS READ. Stimulus silently ignores a `data-*-value` the controller does not
   // declare — the trap `name` records above — and the converse costs nothing but is still a lie
@@ -392,9 +396,12 @@ export default class extends Controller {
     button.textContent = "Saving…"
     try {
       let last = null
+      const saved = []
       for (const file of files) {
         last = await this.uploadOne(new File([ file.body ], file.name, { type: "image/svg+xml" }))
+        saved.push(last.nodeId)
       }
+      await this.recordSources(saved)
       // THE SERVER'S OWN SENTENCE WHEN IT HAS ONE. Both doors answer with `notice`, built by
       // ProjectFolderIntake — so when the project-folder sweep could not file the save into its
       // category folder because a file of that name is already there, the maker is told, in the
@@ -406,6 +413,37 @@ export default class extends Controller {
     } finally {
       button.disabled = false
       button.textContent = previous
+    }
+  }
+
+  // THE LINEAGE, WRITTEN BY THE SAVE THAT CREATED IT (stage 4, S4-8; story 3.2). Everything this
+  // view saves is DERIVED from the file being measured, so the save records that as it lands —
+  // unasked, which is the feature (plan decision 2); the Connected panel's `×` on the export's own
+  // page is what withdraws it again.
+  //
+  // A SECOND REQUEST RATHER THAN A PARAMETER ON THE UPLOAD DOORS. Those two doors serve every
+  // uploader in the app, and one extra POST to the endpoint the file page's own "This came from…"
+  // control already uses is smaller than a link concern threaded through two general write paths.
+  //
+  // IT CANNOT FAIL THE SAVE, AND THAT IS DELIBERATE. The bytes are already in the library; a link
+  // that did not land is repairable with the hand control on that very file's page, so this logs
+  // and says nothing. Reporting it would tell a maker their save failed when it did not — which is
+  // why the try/catch is INSIDE the loop rather than around the `await` in saveAll, where a throw
+  // would reach saveAll's own catch and overwrite the success sentence with an error.
+  //
+  // "ALREADY LINKED" IS A SUCCESS, WITH NOTHING TO DO. Files::LinksController rescues the unique
+  // index's RecordNotUnique into `head :ok` for a JSON request — a 2xx — so `postJSON` returns
+  // rather than throwing, and re-saving one export over another lands here silently.
+  async recordSources(nodeIds) {
+    if (!this.hasSourceNodeIdValue || !this.hasLinkUrlValue) return
+    for (const id of nodeIds) {
+      if (!id) continue
+      try {
+        await postJSON(this.linkUrlValue.replace("__ID__", encodeURIComponent(id)),
+                       { kind: "derived_from", other_node_id: this.sourceNodeIdValue })
+      } catch (e) {
+        console.warn("[measure] could not record where this came from:", e)
+      }
     }
   }
 
