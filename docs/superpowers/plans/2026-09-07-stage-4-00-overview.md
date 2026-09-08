@@ -38,7 +38,7 @@ viewer controllers (S4-5). No new gem. No new JS dependency.
 | S4-5 | `2026-09-07-stage-4-s5-public-viewers.md` | public file page with the eight shared viewer partials (D5), covers on `/u/:handle`, hero, public header | D5 | **landed** 2026-09-07, PR #338 |
 | S4-6 | `2026-09-07-stage-4-s6-adopt-anywhere.md` | adopt in place (D1), status, make-current, New badge, Not-a-project, switch confirmations | D1 | **landed** 2026-09-07, PR #339 |
 | S4-7 | `2026-09-07-stage-4-s7-kinds.md` | `kind` + presets, per-project panel overrides | D4; S4-1's quiet panels | **landed** 2026-09-07, PR #340 |
-| S4-8 | `2026-09-07-stage-4-s8-connections.md` | `maker_file_links`, lineage on file pages, search over notes/README | S4-3's Save-to-library (a writer of links) | **in progress** 2026-09-07; moderate: new table, needs the four derived guards (see below) |
+| S4-8 | `2026-09-07-stage-4-s8-connections.md` | `maker_file_links`, lineage on file pages, search over notes/README | S4-3's Save-to-library (a writer of links) | **landed** 2026-09-07, PR #341 |
 
 **S4-1 first, and S4-7 after it**, because S4-7 turns the seven hard-coded `render` calls into a
 loop over a panel list with per-project overrides, and the quiet-when-empty state S4-1 introduces
@@ -290,8 +290,18 @@ sweep opening the chooser.
 
 ### S4-8 — connections and search
 
-Files: `Maker::FileLink` + migration, writers in `tools/addons_controller.rb` (OpenSCAD output),
-the Save-to-library door (S4-3), `Files::LinksController`, the file page's "Connected files" panel,
-`SearchController` (notes, README text — bounded `LIKE` over `action_text_rich_texts` scoped by
-user through the owning records), the orphan guard and reaper cases. Tests: `file_link_test.rb`,
-`file_links_test.rb`, `search_test.rb`, `architecture_invariants_test.rb` (the new table's cases).
+**As landed (2026-09-07).** Files: `Maker::FileLink` + `maker_file_links` (migration
+`20260907170000`; bare node-id strings, no foreign key, liveness answered at read time by
+`nodes.present`; indexes `(user_id, from_node_id, to_node_id, kind)` UNIQUE and `(user_id, to_node_id)`,
+no bare `user_id` index); the six derived guards a new table owes here — the schema map, tenant
+cleanup, the reaper (a link is destroyed when EITHER end is reaped), the reaper's tests, the query
+budget, the template sweep — and **no orphan-guard case**, which that guard's own rule says a
+table without a structural edge does not owe; `Files::LinksController` with the file page's
+Connected panel and its two hand doors ("This came from…", "Add a photo of this" — images only, by
+role); the two automatic writers — the OpenSCAD save keyed on `data["node_id"]` and Measure's
+Save-to-library posting to the same door the hand control uses; `SearchController`'s Notes group
+(`action_text_rich_texts.body` through `maker_notes`, scoped to live files) and a Folders group by
+NAME — **README text is not searched** (read through the port at request time, no index) and
+**folder paths are not searched** (`storage_path` is share/s3's only), both recorded in story 3.5.
+Tests: `file_link_test.rb`, `file_links_test.rb`, `file_page_test.rb`, `search_test.rb`,
+`addons_controller_test.rb`, `measure_export_test.rb`, the budgets, the template sweep, the phone sweep.
