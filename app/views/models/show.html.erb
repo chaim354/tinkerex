@@ -102,8 +102,22 @@
     <% if images.size > 1 %>
       <div class="image-gallery">
         <% images.each do |a| %>
+          <% node = @page_nodes[a.node_id] %>
           <%= link_to file_path(a.node_id) do %>
-            <%= image_tag blob_file_path(a.node_id), alt: @page_nodes[a.node_id].name, loading: "lazy" %>
+            <%# `inline_image?`, NOT the role (tinkerex#285, found in review): a .heic is an image by
+                role and a broken picture as raw bytes, so it gets the same thumbnail cell the hero
+                poster falls back to — fed by @covers, which ModelsController#show widens to these. %>
+            <% if Maker::FileAttachment.inline_image?(node.name) %>
+              <%= image_tag blob_file_path(a.node_id), alt: node.name, loading: "lazy" %>
+            <% else %>
+              <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
+              <span class="thumb file-cell gallery-thumb" data-controller="thumbs"
+                    data-thumbs-url-value="<%= thumbnails_files_path %>" data-thumbs-target="cell"
+                    data-node-id="<%= a.node_id %>" data-ext="<%= ext %>">
+                <%= render "files/thumb", thumb: @covers.thumb(a.node_id), ext_label: ext,
+                           url: preview_src(@covers.thumb(a.node_id)) %>
+              </span>
+            <% end %>
           <% end %>
         <% end %>
       </div>

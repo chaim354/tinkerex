@@ -94,6 +94,15 @@ module Maker
       # says what picture we can make of it. The role half (`role_for("logo.ai") == "vector"`) is
       # asserted in `test/models/maker/file_attachment_test.rb`, beside the vocabulary that owns it;
       # this door resolves by EXTENSION and answers the same whatever role the file carries.
+      # tinkerex#285: the two rasters a phone and a scanner produce, through the same libvips path
+      # as png — and never inline on the file page, which is Maker::FileAttachment's split to pin.
+      test "iPhone and scanner rasters resolve to the image thumbnailer" do
+        %w[heic heif tif tiff HEIC].each do |ext|
+          assert_equal Maker::Previews::ImageThumb, Maker::Previews::Registry.for(ext),
+                       ".#{ext} must thumbnail through libvips"
+        end
+      end
+
       test "an Illustrator file resolves to the Pdf renderer" do
         assert_equal Maker::Previews::Pdf, Maker::Previews::Registry.for("ai")
         assert_equal Maker::Previews::Pdf, Maker::Previews::Registry.for(".AI")

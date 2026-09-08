@@ -9,6 +9,19 @@ module Maker
       assert project.valid?
     end
 
+    # ONE PROJECT PER FOLDER PER USER (tinkerex#281): the partial unique index, driven rather than
+    # read. A NULL folder is not a claim and may repeat (the form path creates projects with none);
+    # another user may claim the same node id, since ids are per library and never cross users.
+    test "two projects cannot claim one folder for one user, while no folder and another user may" do
+      @user.maker_projects.create!(name: "A", folder_node_id: "d-x")
+      assert_raises(ActiveRecord::RecordNotUnique) do
+        @user.maker_projects.create!(name: "B", folder_node_id: "d-x")
+      end
+      assert_nothing_raised { 2.times { |i| @user.maker_projects.create!(name: "No folder #{i}") } }
+      other = User.create!(email: "proj-other@example.com")
+      assert_nothing_raised { other.maker_projects.create!(name: "A", folder_node_id: "d-x") }
+    end
+
     test "name is required" do
       project = @user.maker_projects.build(name: nil)
       assert_not project.valid?

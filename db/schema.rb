@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_07_170000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_08_120100) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -346,6 +346,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_07_170000) do
     t.integer "user_id", null: false
     t.string "visibility", default: "private", null: false
     t.index ["unlisted_token"], name: "index_maker_projects_on_unlisted_token", unique: true
+    t.index ["user_id", "folder_node_id"], name: "index_maker_projects_on_user_id_and_folder_node_id", unique: true, where: "folder_node_id IS NOT NULL"
     t.index ["user_id", "slug"], name: "index_maker_projects_on_user_id_and_slug", unique: true
     t.index ["user_id", "status"], name: "index_maker_projects_on_user_id_and_status"
     t.index ["visibility", "updated_at"], name: "index_maker_projects_on_visibility_and_updated_at"

@@ -64,7 +64,12 @@ class ModelsController < ApplicationController
     # `_file_tree` is plain link_to's — so merging the way projects#show does would save no query
     # (there is no second call here) while spending ThumbnailMap::BACKFILL_LIMIT on up to 100 rows
     # and 100 jobs per view for images nothing renders. Pinned as a budget in page_nodes_test.rb.
-    @covers = Maker::Previews::ThumbnailMap.for(current_user, [ @model.cover_node_id ].compact)
+    # PLUS THE GALLERY'S NON-INLINE IMAGES (tinkerex#285): a .heic photo renders as a thumbnail cell
+    # there, not as bytes, and the cell reads this map. Bounded by the model's own photos.
+    gallery = Array(@by_role["image"]).filter_map do |a|
+      a.node_id unless Maker::FileAttachment.inline_image?(@page_nodes[a.node_id]&.name.to_s)
+    end
+    @covers = Maker::Previews::ThumbnailMap.for(current_user, ([ @model.cover_node_id ] + gallery).compact.uniq)
     # The model's browser-viewable 3D files, in position order, for the hero's "View in 3D"
     # switcher. Default selection = the cover file if it's viewable, else the first one.
     #

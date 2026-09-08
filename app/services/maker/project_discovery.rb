@@ -93,6 +93,12 @@ module Maker
       tree = nil
       candidates.first(cap).each do |node_id, name|
         tree ||= Maker::LibraryTree.new(user)
+        # THE FOLDER WAS CLAIMED SINCE THIS RUN LISTED IT (tinkerex#281): an adoption by hand can land
+        # between #adoptable's claim set and this insert, and the partial unique index on
+        # (user_id, folder_node_id) now refuses the second claim where two rows used to sit side by
+        # side. SKIPPED, NOT RAISED — this is a recurring job with nobody there to read an error, the
+        # folder has exactly the project it should, and the next run lists it as claimed anyway. The
+        # `rescue` sits on the block so the folders after it are still adopted.
         user.maker_projects.create!(
           name:,
           # NOT #ensure_slug's derivation. A collision or a blank raises RecordInvalid inside a
@@ -116,6 +122,8 @@ module Maker
           kind: Maker::ProjectKind.suggest_for(user:, folder_node_id: node_id, tree:)
         )
         created << name
+      rescue ActiveRecord::RecordNotUnique
+        next
       end
 
       RunResult.new(created: created.size, candidates: candidates.size,

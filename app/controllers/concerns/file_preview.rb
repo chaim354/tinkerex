@@ -136,7 +136,9 @@ module FilePreview
     # own render is (LightBurn's and MillMage's are in colour; ours are outlines).
     return :measure if MEASURABLE_EXTS.include?(ext)
 
-    return :image if %w[png jpg jpeg gif webp bmp ico].include?(ext)
+    # THE BROWSER'S LIST, NOT THE ROLE (tinkerex#285): a `.heic` is an image by role and falls
+    # through to :thumbnail here, because Chrome cannot show its bytes and libvips can thumbnail them.
+    return :image if Maker::FileAttachment.inline_image?(name)
     # PDF before the :thumbnail branch: the detail view EMBEDS the whole PDF for the browser's own
     # viewer (a full, scrollable preview), while pdf is ALSO in Registry for a page-1 grid thumbnail.
     return :pdf   if ext == "pdf"

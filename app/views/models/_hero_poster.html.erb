@@ -9,7 +9,10 @@
     poll cell for a tombstone — /files/thumbnails omits a node with no row, so thumbs_controller's
     `if (!entry) continue` runs 40 times and the spinner never resolves. The empty placeholder is
     the honest answer. %>
-<% if @cover_att&.role == "image" %>
+<%# `inline_image?` ON THE NODE'S NAME, NOT THE ATTACHMENT'S ROLE (tinkerex#285): a .heic cover is
+    an image by role and a broken picture as raw bytes; the thumb branch below shows it. The node
+    comes from @page_nodes, the same live map the elsif reads, so a dead cover still falls through. %>
+<% if @cover_att && Maker::FileAttachment.inline_image?(@page_nodes[@model.cover_node_id]&.name.to_s) %>
   <%= image_tag blob_file_path(@model.cover_node_id), class: "model-hero-img", alt: @model.title %>
 <% elsif @page_nodes.key?(@model.cover_node_id) %>
   <span class="thumb file-cell model-hero-thumb"

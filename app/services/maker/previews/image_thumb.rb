@@ -3,10 +3,12 @@ require "tempfile"
 
 module Maker
   module Previews
-    # Raster image (png/jpg/gif/webp/bmp) → a downscaled PNG grid thumbnail via the `vipsthumbnail`
-    # binary (libvips-tools). These already preview verbatim in the DETAIL view (SAFE_INLINE_TYPES
-    # inlines them); the GRID wants one uniform, size-bounded raster instead of shipping full-res
-    # photos into the cards.
+    # Raster image (png/jpg/gif/webp/bmp, and since tinkerex#285 heic/heif/tif/tiff) → a downscaled
+    # PNG grid thumbnail via the `vipsthumbnail` binary (libvips-tools). The first six already preview
+    # verbatim in the DETAIL view (SAFE_INLINE_TYPES inlines them) and the GRID wants one uniform,
+    # size-bounded raster instead of full-res photos in the cards; the last four are NOT inline
+    # anywhere — no browser this app targets renders them — so this thumbnail IS the picture every
+    # page shows of them (Maker::FileAttachment::INLINE_IMAGE_EXTS is the split).
     #
     # Deliberately a SUBPROCESS, not the ruby-vips FFI binding: in-process libvips spins up a thread
     # pool, and Rails' parallel test runner fork()s workers → libvips-in-a-forked-process deadlocks
@@ -20,7 +22,10 @@ module Maker
 
       RenderError = Class.new(StandardError)
 
-      EXTENSIONS = %w[png jpg jpeg gif webp bmp].freeze
+      # heic/heif/tif/tiff since 2026-09-08 (tinkerex#285): decoded by libvips through libheif and
+      # libtiff, both present in the shipped image; the fixtures in image_thumb_test.rb are what
+      # proves the decoders are wired on the box that runs the suite.
+      EXTENSIONS = %w[png jpg jpeg gif webp bmp heic heif tif tiff].freeze
 
       BIN = ENV.fetch("VIPSTHUMBNAIL_BIN", "vipsthumbnail").freeze
 
