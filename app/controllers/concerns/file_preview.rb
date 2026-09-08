@@ -91,7 +91,10 @@ module FilePreview
   def gerber_job?(name) = File.extname(name).downcase.delete(".") == "gbrjob"
 
   def gerber_layers_for(user:, node:, url:)
-    return [ gerber_layer_for(node, url) ] unless gerber_job?(node.name)
+    # `.compact` FOR THE SAME REASON THE JOB ARM `filter_map`s: `url` may refuse this node (the
+    # public side's `permits?` arm answers nil), and `[nil]` is not empty — the viewer would draw
+    # the board chrome around a null layer instead of saying there are none (found in review).
+    return [ gerber_layer_for(node, url) ].compact unless gerber_job?(node.name)
 
     listed = Maker::GerberSets.job_layer_names(user:, node:)
     # BOUNDED, like every directory read on the file controller (FLAT_LIMIT): a job file sitting
@@ -179,7 +182,7 @@ module FilePreview
     return :model3d if Maker::FileAttachment::VIEWABLE_3D_EXTS.include?(ext)
     # A file we can render a server-side thumbnail for (step, stp, iges, igs, ...) but
     # that the browser can't display raw. The :thumbnail branch in files/viewers/_static.html.erb
-    # reads @thumbnail.
+    # reads the strict local `thumbnail`.
     return :thumbnail if Maker::Previews::Registry.for(ext)
     :other
   end

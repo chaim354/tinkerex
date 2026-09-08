@@ -1043,9 +1043,10 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
              Dir.glob(ROOT.join("app", "views", "public", "**", "*.{erb,builder,jbuilder}")) +
              # STAGE 4, S4-5: THE VIEWER PARTIALS ARE SHARED, SO THE SCAN HAS TO REACH THEM. A
              # visitor's file page renders app/views/files/viewers/*, which live OUTSIDE this
-             # namespace — a `current_user` or a private route helper in one of them would reach a
-             # visitor with this guard green. They take every URL as a strict local precisely so
-             # they need not know which page they are on; this is what checks that they don't.
+             # namespace — a `current_user` in one of them would reach a visitor with this guard
+             # green (a private ROUTE HELPER too, which the second arm below is for). They take
+             # every URL as a strict local precisely so they need not know which page they are on;
+             # this is what checks that they don't.
              Dir.glob(ROOT.join("app", "views", "files", "viewers", "*.erb"))).sort
     assert_operator files.size, :>=, 18,
                     "the Public scan matched #{files.size} file(s), below the plausibility floor " \
@@ -1069,6 +1070,32 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
                  "A public page is a 404 to everyone for a private project — including its own " \
                  "signed-in owner — precisely because it cannot know who is looking. A template " \
                  "that branches on the visitor makes the page disagree with the file route."
+
+    # THE VIEWER PARTIALS GET A SECOND ARM, FOR ROUTE HELPERS (stage 4, S4-5, found in review).
+    # SESSION_ACCESSOR has no route-helper pattern — the namespace's own templates call
+    # `public_*_path` legitimately — so a shared viewer partial that called `blob_file_path("id")`,
+    # a PRIVATE byte route, rendered `<a href="/files/…/blob">` on a visitor's page with the scan
+    # above green (mutation-proven). Strict locals are the design that stops it: every URL a viewer
+    # needs arrives as a local, so NO `*_path`/`*_url` identifier may appear in one except the locals
+    # its own `locals:` line declares — read off the partial itself, so the allowlist cannot drift
+    # from the signature. `url_for(thumbnail.asset)` (Active Storage) is not matched: the pattern
+    # wants the `_path`/`_url` SUFFIX a route helper carries.
+    viewer_files = files.select { |f| f.include?("/app/views/files/viewers/") }
+    assert_operator viewer_files.size, :>=, 8, "the viewer-partial scan matched #{viewer_files.size} file(s)"
+    viewer_offenders = viewer_files.flat_map do |file|
+      lines = File.readlines(file, chomp: true)
+      declared = lines.first.to_s.scan(/(\w+):/).flatten
+      erb_open = false
+      lines.each_with_index.filter_map do |line, idx|
+        code, erb_open = strip_erb_comment(line, erb_open)
+        helpers = code.scan(/\b([a-z_]+_(?:path|url))\b/).flatten.uniq - declared
+        next if helpers.empty?
+        "#{Pathname.new(file).relative_path_from(ROOT)}:#{idx + 1} (#{helpers.join(', ')})"
+      end
+    end
+    assert_empty viewer_offenders,
+                 "a shared viewer partial calls a route helper instead of taking the URL as a strict " \
+                 "local — a private route would reach a visitor's page:\n  #{viewer_offenders.join("\n  ")}"
   end
 
   SESSION_ACCESSOR = /\b(current_user|current_project|user_signed_in\?|web_device)\b|\bsession\s*[\[.]|\bcookies\s*[\[.]/
