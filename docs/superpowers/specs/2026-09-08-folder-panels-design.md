@@ -35,9 +35,13 @@ The owner asked for each group to be its own panel so its view can be chosen per
 4. **The Files panel keeps the folder ROOT**: the README or repository card, Loose, and the
    cross-cutting Generated, Backups and Linked groups, plus the truncation and missing-attachment
    notes. Those three groups are not folders and do not become panels.
-5. **Panel keys are `folder:<node_id>`.** A node id survives a rename (the scan pairs by content,
-   §14b's headline promise) where a path does not; a folder that is deleted and recreated gets a
-   new id and its arrangement falls back to the default, which is the honest answer.
+5. **Panel keys are `folder:<node_id>`.** On chunk_remote the id is the sync server's and a rename
+   arrives as a move, so the arrangement survives; on share and s3 the scan pairs renamed FILES by
+   content and never directories, so a renamed subfolder gets a NEW id (measured in review) — its
+   placement, view and hidden state reset to the defaults, which returns a hidden folder to the
+   visitor's page and the bundle until it is hidden again. A path key would break on that rename
+   too, and on every chunk_remote move besides, so the id is still the better key; the reset is the
+   documented cost. A folder deleted and recreated resets the same way.
 6. **Three views, per panel, persisted per project**: `tiles`, `list`, `browser`. The page-wide
    `project_view` cookie and its toggle retire. Defaults reproduce today's page exactly: a
    repository opens in the browser, everything else in tiles; the Files panel defaults to tiles.

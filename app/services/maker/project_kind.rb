@@ -53,8 +53,10 @@ module Maker
       "electronics" => "Electronics & firmware", "mixed" => "Mixed", "other" => "Other"
     }.freeze
 
-    # The panels that open EVERY project page whatever its kind: the folder, then its pictures.
-    # A preset may lift panels to sit AFTER these, never before them.
+    # The panels that open EVERY project page whatever its kind: the folder first, its pictures
+    # next — with the project's folder panels spliced BETWEEN the two since folder panels exist, so
+    # these two are no longer adjacent on a project that has subfolders. A preset may lift panels to
+    # sit AFTER these, never before them.
     LEAD = %w[attachments photos].freeze
 
     # The panels no preset and no override may hide — A DIFFERENT QUESTION FROM `LEAD`, which the
@@ -184,8 +186,16 @@ module Maker
     # --- the layout -----------------------------------------------------------------------------
 
     # `folder:<node_id>` — a panel that is one of the project folder's own subfolders rather than
-    # one of the ten fixed keys. The NODE ID and not the path, because a rename keeps the id and
-    # moves the path (§14b), so an arrangement survives the maker reorganizing their NAS.
+    # one of the ten fixed keys. THE NODE ID AND NOT THE PATH, AND THE HONEST REASON IS NARROWER
+    # THAN "A RENAME KEEPS THE ID": it does on chunk_remote, where the id is the sync server's and a
+    # rename arrives as a move; on share and s3 the scan pairs renamed FILES by content and never
+    # DIRECTORIES (Library::Reconciler#vanished_nodes is `kind: "file"`), so a Finder rename of a
+    # subfolder mints a NEW dir id — measured in review: the file kept its id, the dir did not. A
+    # path key would break on that rename too, and on chunk_remote on every move besides, so the id
+    # is still the better key. What follows, and is worth knowing: on share/s3 a renamed subfolder
+    # is a NEW folder to this layout — its placement, its view and its HIDDEN state all reset to the
+    # defaults, which puts a folder the maker had hidden back on the visitor's page and into the
+    # bundle until they hide it again. Totality is what makes that a reset rather than a stale key.
     FOLDER_PREFIX = "folder:".freeze
 
     # One project page's panel list. `order` is a permutation of the vocabulary (Maker::Project::
@@ -195,8 +205,9 @@ module Maker
     # `visible` is what the loop renders.
     Layout = Data.define(:order, :hidden, :views, :repo_ids) do
       def visible = order - hidden
-      def visible?(key) = order.include?(key) && !hidden.include?(key)
-      def hidden?(key) = hidden.include?(key)
+      # `to_s` like `folder?` and `view_for` below, so a Symbol asks the same question a String does.
+      def visible?(key) = order.include?(key.to_s) && !hidden.include?(key.to_s)
+      def hidden?(key) = hidden.include?(key.to_s)
       def folder?(key) = key.to_s.start_with?(FOLDER_PREFIX)
       def folder_id(key) = key.to_s.delete_prefix(FOLDER_PREFIX)
 

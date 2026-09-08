@@ -324,7 +324,11 @@ module Maker
     # `folders: []` IS THE DEFAULT, which is what lets every caller holding no listing keep working
     # unchanged. Asserted against the expectations the cases ABOVE make, over the matrix of kinds
     # and the override shapes those cases use — not against a fresh guess at what they should be.
-    test "with no folders every kind and override reproduces the pre-folder layout" do
+    # NAMED FOR WHAT IT CHECKS (review of Task A): `folders:` DEFAULTS to `[]`, so this compares the
+    # default against an explicit empty list — it pins the default, not the pre-change layout. The
+    # pre-change layouts are pinned by the literal-order tests above (they went red when the default
+    # was mutated to a folder list); a 102-pair old-versus-new comparison in review found 0 differences.
+    test "the folders default is an empty list, so a caller with no listing gets the fixed keys alone" do
       [ nil, { "order" => %w[tasks build_log] }, { "hidden" => [] }, { "hidden" => %w[tasks] } ].each do |overrides|
         Maker::Project::KINDS.each do |kind|
           layout = Maker::ProjectKind.layout_for(kind:, overrides:, folders: [])
