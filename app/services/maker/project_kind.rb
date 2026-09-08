@@ -88,10 +88,22 @@ module Maker
       "electronics" => %w[code pcb]
     }.freeze
 
-    # A `.git` marker at the folder's own root is EVIDENCE, not a verdict. All three real
-    # repositories on the share deployment are firmware, so it counts toward electronics — and it
-    # counts for TWO files' worth, which is enough to name a checkout holding only a README and not
-    # nearly enough to outvote five laser files. Both halves are pinned in project_kind_test.rb.
+    # KICAD FILES COUNT TOWARD ELECTRONICS BY NAME, because `ROLE_BY_EXT` deliberately does not
+    # know them (they fail `FilesController::EXT_RE`, so `role_for` answers "other") — and a board
+    # project that has not yet exported Gerbers or written firmware is exactly the shape the
+    # `electronics` preset exists for (found in review: `b.kicad_pcb b.kicad_sch` suggested `other`).
+    # The vocabulary is FilePreview's, aliased rather than re-spelled, and the read stays catalog-only.
+    KICAD_EXTS = FilePreview::KICANVAS_EXTS
+
+    # A `.git` marker at the folder's own root is EVIDENCE, not a verdict — and WEAK evidence,
+    # measured: a read-only probe of the share deployment (2026-09-07, S4-7's close-out) found a
+    # `.git` in six of its nine project folders, spanning laser, print and electronics. So the bonus
+    # is an AMPLIFIER, never a vote of its own: it applies only when the folder already holds code
+    # or board files, and it counts for two files' worth — enough to tip a firmware checkout with a
+    # few sources, not enough to outvote five laser files, and nothing at all for a checkout holding
+    # only a README (that one reads `other`, the honest answer to "nothing was there to read"). An
+    # earlier version voted unconditionally, which made an EMPTY checkout `electronics` and flipped
+    # any four-file leader to `mixed`. All of this is pinned in project_kind_test.rb.
     REPO_WEIGHT = 2
 
     # A SECOND STRONG FAMILY MAKES IT `mixed`, and "strong" is measured against the LEADER rather
@@ -104,7 +116,8 @@ module Maker
     def self.suggest(listing)
       rows = listing.all_rows
       counts = FAMILIES.transform_values { |roles| rows.count { |row| roles.include?(row.role) } }
-      counts["electronics"] += REPO_WEIGHT if listing.root_repo?
+      counts["electronics"] += rows.count { |row| KICAD_EXTS.include?(File.extname(row.node.name).downcase.delete(".")) }
+      counts["electronics"] += REPO_WEIGHT if listing.root_repo? && counts["electronics"].positive?
 
       # Deterministic: by count, then by FAMILIES' own order, so the same folder always answers the
       # same kind. A tie goes to `mixed` below in any case — this only keeps the sort stable.

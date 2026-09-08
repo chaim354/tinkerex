@@ -47,21 +47,37 @@ module Maker
       end
     end
 
-    # THE WORKING TREE IS EVIDENCE, NOT A VERDICT. All three real repositories on the share
-    # deployment are firmware, so a `.git` at the folder root counts toward electronics — but only
-    # REPO_WEIGHT worth, so a laser project someone keeps in git is still a laser project.
-    test "a bare working tree with nothing recognisable in it reads as electronics" do
+    # THE WORKING TREE IS WEAK EVIDENCE, MEASURED: a read-only probe of the share deployment found a
+    # `.git` in six of nine project folders, across laser, print and electronics. So the bonus is an
+    # amplifier for a folder that already holds code or board files, never a vote of its own.
+    test "a bare working tree with nothing recognisable in it reads as other" do
       file("README.md")
+      dir(Library::RepoMetadata::DIR_NAME)
+
+      assert_equal "other", suggest
+    end
+
+    test "a working tree with a few sources tips to electronics on the repository's weight" do
+      # One source against one model is a tie (mixed) without the bonus; the repository breaks it.
+      %w[main.c enclosure.stl].each { |n| file(n) }
       dir(Library::RepoMetadata::DIR_NAME)
 
       assert_equal "electronics", suggest
     end
 
-    test "a working tree full of laser files is still laser" do
-      %w[box.lbrn2 lid.lbrn panel.svg tray.dxf cut.svg].each { |n| file(n) }
+    test "a working tree full of laser files is still laser, and so is one with only four" do
+      %w[box.lbrn2 lid.lbrn panel.svg tray.dxf].each { |n| file(n) }
       dir(Library::RepoMetadata::DIR_NAME)
 
       assert_equal "laser", suggest
+    end
+
+    # KICAD BY NAME (found in review): the role map does not know .kicad_* on purpose, so without
+    # this a board project with no Gerbers and no firmware suggested `other`.
+    test "a KiCad-only folder reads as electronics" do
+      %w[board.kicad_pcb board.kicad_sch shot.png].each { |n| file(n) }
+
+      assert_equal "electronics", suggest
     end
 
     test "a project with no live folder suggests other rather than raising" do
