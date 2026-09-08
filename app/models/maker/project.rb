@@ -62,6 +62,18 @@ module Maker
     # handed a partial name that does not exist.
     PANELS = %w[attachments photos schematics build_log tasks bom wiring releases sheets publish].freeze
 
+    # HOW ONE PANEL DRAWS WHAT IT HOLDS (2026-09-08, folder panels; spec decision 6). Per panel and
+    # persisted in `panels["views"]`, which is what retired the page-wide `project_view` cookie: a
+    # maker who wants their models as tiles and their firmware checkout as the Finder browser could
+    # not have both while one cookie answered for every section.
+    #
+    # `browser` IS THE MILLER-COLUMNS BROWSER AND IT NEEDS A SESSION (LibraryBrowseController), so
+    # the visitor's page reads it as `list` (spec decision 7) rather than mounting a control that
+    # would ask for a route no anonymous request may take. Maker::ProjectKind.default_view says
+    # which of the three a panel opens in when the maker has not chosen; this list is the whole
+    # vocabulary, and layout_for drops any value outside it.
+    VIEWS = %w[tiles list browser].freeze
+
     # What the chooser calls each one. Its own map rather than `key.humanize`, because three of the
     # ten disagree with what humanize would say: `attachments` is "Files" (the panel has been
     # headed Files since S2-2 — the key is the partial's name, and renaming the partial would touch
@@ -201,9 +213,15 @@ module Maker
     # NOT MEMOIZED. It is array arithmetic over ten strings, and a memo on a mutable attribute is a
     # stale read waiting for the first caller that writes `panels` and reads the layout back in the
     # same request — which is exactly what Projects::PanelsController does.
-    def panel_layout = Maker::ProjectKind.layout_for(kind:, overrides: self[:panels])
+    # `folders:` IS THE PROJECT'S CURRENT DEPTH-ONE FOLDERS — Maker::ProjectFolderListing
+    # #panel_folders, `[[node_id, repo?], …]` — and it DEFAULTS TO `[]` so a caller holding no
+    # listing keeps the fixed-key layout it has always had. A caller that HAS one passes it: the
+    # layout's totality is against the folders that exist NOW (Maker::ProjectKind's header), so a
+    # page that renders folder panels and a chooser that lists them must both say which folders
+    # they are, or the folder keys drop out as stale and the panels vanish.
+    def panel_layout(folders: []) = Maker::ProjectKind.layout_for(kind:, overrides: self[:panels], folders:)
 
-    def visible_panels = panel_layout.visible
+    def visible_panels(folders: []) = panel_layout(folders:).visible
 
     def archive!
       update!(status: "archived", archived_at: Time.current)

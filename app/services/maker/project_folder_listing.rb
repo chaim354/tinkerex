@@ -143,6 +143,16 @@ module Maker
     # Files at the folder's OWN root — the sweep's inbox.
     def loose = @loose
 
+    # THE PANEL LAYOUT'S VOCABULARY OF FOLDERS: `[[node_id, repo?], …]` for the DEPTH-ONE
+    # subfolders, in `tree`'s order (by name — the disk order the page renders). Depth one is the
+    # whole rule (2026-09-08, folder panels; spec decision 3): a nested folder renders inside its
+    # parent's panel, so a key for one must never reach the layout, and this reader is where that
+    # is decided — `tree` and not `flatten_dirs(tree)`.
+    #
+    # In memory over the tree the listing already built: no query, which is what lets
+    # ProjectsController#show and Projects::PanelsController both ask without a budget of their own.
+    def panel_folders = tree.map { |d| [ d.node_id, d.repo? ] }
+
     # Every backup-flagged Row anywhere in the folder (root or any depth of subfolder), pulled out
     # of `tree`/`loose` so the panel can fold them into one closed section instead of scattering
     # rescue copies across every folder that happens to hold one. Each still carries its OWN

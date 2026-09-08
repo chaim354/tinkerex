@@ -138,6 +138,25 @@ module Maker
       assert_equal Maker::Project::PANELS, project.visible_panels
     end
 
+    # FOLDER PANELS (2026-09-08; spec decision 3). The model's whole job is to THREAD `folders:`
+    # through to Maker::ProjectKind.layout_for — the layout RULES are pinned in
+    # project_kind_test.rb — and the `[]` default is what keeps every caller that holds no listing
+    # (Home, the chooser before it builds one) on the page it already had.
+    test "panel_layout threads the folders it is given, and with none reads the fixed keys alone" do
+      project = @user.maker_projects.create!(name: "Threaded",
+                                             panels: { "views" => { "folder:d-fw" => "list" } })
+
+      assert_equal Maker::Project::PANELS, project.visible_panels
+      assert_equal({}, project.panel_layout.views, "with no folders, a folder key is not in the vocabulary")
+
+      folders = [ [ "d-fw", true ] ]
+      layout = project.panel_layout(folders:)
+
+      assert_equal [ "attachments", "folder:d-fw", "photos" ], layout.order.first(3)
+      assert_equal "list", layout.view_for("folder:d-fw")
+      assert_includes project.visible_panels(folders:), "folder:d-fw"
+    end
+
     test "kind is validated against KINDS" do
       project = @user.maker_projects.new(name: "Bad", kind: "wormhole")
 

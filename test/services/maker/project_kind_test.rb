@@ -189,6 +189,162 @@ module Maker
       Maker::ProjectKind::ALWAYS.each { |key| assert layout.visible?(key), key }
     end
 
+    # --- the folders ----------------------------------------------------------------------------
+    #
+    # FOLDER PANELS (2026-09-08; spec decisions 3, 5, 6). `folders:` is `[[node_id, repo?], …]` in
+    # disk order — Maker::ProjectFolderListing#panel_folders — and the vocabulary is PANELS plus a
+    # `folder:<node_id>` for each. Pure arithmetic like the cases above, so most of these pass the
+    # pairs directly; the first drives the real listing, because "depth one" is the LISTING's half
+    # of the contract and a layout test cannot see a nested folder it is never handed.
+
+    # A pair of plain ids, in the disk order a listing would report them.
+    MODELS = "d-models".freeze
+    FIRMWARE = "d-firmware".freeze
+    FOLDERS = [ [ FIRMWARE, true ], [ MODELS, false ] ].freeze
+
+    def key(id) = Maker::ProjectKind.folder_key(id)
+
+    test "panel_folders reports the DEPTH-ONE folders with their repo flags, and a nested folder never enters the vocabulary" do
+      models = dir("models")
+      firmware = dir("firmware")
+      dir(".git", parent: firmware.node_id)
+      nested = dir("old", parent: models.node_id)
+
+      folders = Maker::ProjectFolderListing.new(@user, @project).panel_folders
+
+      assert_equal [ [ firmware.node_id, true ], [ models.node_id, false ] ], folders,
+                   "depth one, in disk order, with the working tree flagged"
+
+      layout = Maker::ProjectKind.layout_for(kind: "other", overrides: { "order" => [ key(nested.node_id) ] },
+                                             folders:)
+      refute_includes layout.order, key(nested.node_id), "a nested folder is a section inside its parent, never a panel"
+      assert_includes layout.order, key(models.node_id)
+    end
+
+    test "a folder the stored order does not name lands immediately after Files, in disk order" do
+      [ nil, { "hidden" => %w[tasks] }, { "order" => Maker::Project::PANELS } ].each do |overrides|
+        order = Maker::ProjectKind.layout_for(kind: "other", overrides:, folders: FOLDERS).order
+
+        assert_equal [ "attachments", key(FIRMWARE), key(MODELS), "photos" ], order.first(4), overrides.inspect
+        assert_equal (Maker::Project::PANELS + [ key(FIRMWARE), key(MODELS) ]).sort, order.sort, overrides.inspect
+      end
+    end
+
+    test "a stored order that interleaves a folder among the fixed panels is honoured" do
+      stored = %w[attachments photos] + [ key(FIRMWARE) ] + %w[build_log tasks]
+
+      layout = Maker::ProjectKind.layout_for(kind: "other", overrides: { "order" => stored }, folders: FOLDERS)
+
+      assert_equal [ "attachments", key(MODELS), "photos", key(FIRMWARE) ], layout.order.first(4),
+                   "the maker's placement of firmware wins; the folder they did not name lands after Files"
+      assert_equal %w[build_log tasks], layout.order[4, 2]
+    end
+
+    # TOTALITY AGAINST THE FOLDERS THAT EXIST NOW. A folder can be deleted between two page views,
+    # so this is the case no write-time validation could have caught, and an order carrying its key
+    # would hand `render` a panel with no Dir behind it.
+    test "a stored key for a folder that is gone drops out of order, hidden and views" do
+      gone = key("d-vanished")
+      layout = Maker::ProjectKind.layout_for(
+        kind: "other",
+        overrides: { "order" => [ "attachments", gone, "photos" ], "hidden" => [ gone ],
+                     "views" => { gone => "list", key(MODELS) => "list" } },
+        folders: FOLDERS
+      )
+
+      refute_includes layout.order, gone
+      refute_includes layout.hidden, gone
+      refute layout.views.key?(gone)
+      assert_equal "list", layout.views[key(MODELS)], "a key whose folder IS there survives"
+      assert_equal "tiles", layout.view_for(gone), "and the stale key still answers, never raises"
+    end
+
+    test "a folder can be hidden, and the always-shown panels still cannot be" do
+      layout = Maker::ProjectKind.layout_for(kind: "other",
+                                             overrides: { "hidden" => [ key(MODELS), "attachments", "bom" ] },
+                                             folders: FOLDERS)
+
+      assert layout.hidden?(key(MODELS))
+      refute layout.visible?(key(MODELS))
+      assert layout.visible?(key(FIRMWARE))
+      Maker::ProjectKind::ALWAYS.each { |k| assert layout.visible?(k), k }
+      assert_equal [ key(MODELS), "bom" ].to_set, layout.hidden.to_set
+    end
+
+    test "views keeps only vocabulary keys with values in VIEWS, stringified" do
+      layout = Maker::ProjectKind.layout_for(
+        kind: "other",
+        overrides: { "views" => { key(MODELS) => "list", key("d-gone") => "tiles", "attachments" => "browser",
+                                  "nope" => "list", "bom" => "gallery", "photos" => nil, :tasks => :list } },
+        folders: FOLDERS
+      )
+
+      assert_equal({ key(MODELS) => "list", "attachments" => "browser", "tasks" => "list" }, layout.views)
+    end
+
+    test "junk in views is filtered rather than raised on, exactly as the order and hidden keys are" do
+      [ nil, "browser", [], { "views" => "browser" }, 7 ].each do |junk|
+        layout = Maker::ProjectKind.layout_for(kind: "other", overrides: { "views" => junk }, folders: FOLDERS)
+
+        assert_equal({}, layout.views, junk.inspect)
+        assert_equal "tiles", layout.view_for(key(MODELS)), junk.inspect
+      end
+    end
+
+    # TODAY'S PAGE, WRITTEN DOWN: a working tree opened in the browser and everything else in tiles
+    # before folder panels existed, and a maker who has chosen nothing must still see that.
+    test "view_for defaults to the browser for a working tree and tiles for everything else, and a stored view wins" do
+      layout = Maker::ProjectKind.layout_for(kind: "other", overrides: nil, folders: FOLDERS)
+
+      assert_equal "browser", layout.view_for(key(FIRMWARE))
+      assert_equal "tiles", layout.view_for(key(MODELS))
+      assert_equal "tiles", layout.view_for("attachments")
+      assert_equal "tiles", layout.view_for("photos")
+
+      chosen = Maker::ProjectKind.layout_for(
+        kind: "other",
+        overrides: { "views" => { key(FIRMWARE) => "tiles", key(MODELS) => "browser", "attachments" => "list" } },
+        folders: FOLDERS
+      )
+
+      assert_equal "tiles", chosen.view_for(key(FIRMWARE)), "the maker's answer beats the repository default"
+      assert_equal "browser", chosen.view_for(key(MODELS))
+      assert_equal "list", chosen.view_for("attachments")
+    end
+
+    test "folder? and folder_id name the same key the vocabulary was built from" do
+      layout = Maker::ProjectKind.layout_for(kind: "other", overrides: nil, folders: FOLDERS)
+
+      assert layout.folder?(key(MODELS))
+      assert_equal MODELS, layout.folder_id(key(MODELS))
+      Maker::Project::PANELS.each { |k| refute layout.folder?(k), k }
+      assert_equal [ FIRMWARE ], layout.repo_ids
+    end
+
+    # `folders: []` IS THE DEFAULT, which is what lets every caller holding no listing keep working
+    # unchanged. Asserted against the expectations the cases ABOVE make, over the matrix of kinds
+    # and the override shapes those cases use — not against a fresh guess at what they should be.
+    test "with no folders every kind and override reproduces the pre-folder layout" do
+      [ nil, { "order" => %w[tasks build_log] }, { "hidden" => [] }, { "hidden" => %w[tasks] } ].each do |overrides|
+        Maker::Project::KINDS.each do |kind|
+          layout = Maker::ProjectKind.layout_for(kind:, overrides:, folders: [])
+
+          assert_equal Maker::ProjectKind.layout_for(kind:, overrides:).order, layout.order, "#{kind} #{overrides.inspect}"
+          assert_equal Maker::Project::PANELS.sort, layout.order.sort, "#{kind} #{overrides.inspect}"
+          assert_operator Maker::Project::PANELS.to_set, :superset?, layout.hidden.to_set, "#{kind} #{overrides.inspect}"
+          assert_equal({}, layout.views)
+          assert_equal [], layout.repo_ids
+        end
+      end
+
+      other = Maker::ProjectKind.layout_for(kind: "other", overrides: nil, folders: [])
+      assert_equal Maker::Project::PANELS, other.order
+      assert_equal [], other.hidden
+      assert_equal Maker::Project::PANELS, other.visible
+      assert_equal %w[attachments photos schematics wiring build_log],
+                   Maker::ProjectKind.layout_for(kind: "electronics", overrides: nil, folders: []).visible.first(5)
+    end
+
     # --- the hero -----------------------------------------------------------------------------
 
     test "hero_roles is a preference list per kind, and other's is today's derivation" do
