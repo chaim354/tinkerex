@@ -1,16 +1,22 @@
-<%# locals: (kind:, thumbnail:, download_url:, name:) %>
+<%# locals: (kind:, thumbnail:, thumbnail_url:, download_url:, name:) %>
 <%# THE TAIL BOTH FILE PAGES SHARE: a server-rendered PNG for a format the browser cannot show raw,
     the honest "still generating" while its job runs, and the download fallback for everything else.
     Extracted with the seven interactive viewers (stage 4, S4-5) rather than left inline, because a
     second copy on the public page is one condition with two answers (§14a) — and the answer that
     would drift is what a .step file's public page shows.
 
+    THE THUMBNAIL'S URL ARRIVES AS `thumbnail_url`, LIKE EVERY OTHER URL HERE (hardening,
+    2026-09-08; tinkerex#278). It was `url_for(thumbnail.asset)` — a signed blob URL that never
+    expires and asks nothing about the project — so a visitor's page handed out a picture that
+    outlived the publication. The maker's page passes `preview_src(@thumbnail)`, a visitor's passes
+    `@pub.preview_url_for(@node.node_id)`, and the seam guard refuses `url_for` in this directory.
+
     ON A PUBLIC PAGE NOTHING POLLS, and "Generating preview…" is therefore a statement rather than a
     promise: the sentence is honest (a job IS running — the page render enqueued it) and a reload
     resolves it. The same trade public/projects/_files makes by rendering files/_thumb's spinner
     with its animation stopped (pages/public.css). %>
 <% if kind == :thumbnail && thumbnail&.status == "ready" && thumbnail.asset.attached? %>
-  <img src="<%= url_for(thumbnail.asset) %>" alt="Preview of <%= name %>" class="preview-image">
+  <img src="<%= thumbnail_url %>" alt="Preview of <%= name %>" class="preview-image">
 <% elsif kind == :thumbnail && %w[pending processing].include?(thumbnail&.status) %>
   <div class="preview-fallback muted">
     <p>Generating preview…</p>

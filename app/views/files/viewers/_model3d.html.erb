@@ -1,4 +1,4 @@
-<%# locals: (named_url:, format:, colors:, unit_factor:, thumbnail:, download_url:, name:) %>
+<%# locals: (named_url:, format:, colors:, unit_factor:, thumbnail:, thumbnail_url:, download_url:, name:) %>
 <%# Interactive client-side 3D viewer (Online3DViewer), see modelviewer_controller.js. `lazy`
     gates the byte fetch AND the ~1 MB engine download behind the "View in 3D" button, so
     nothing heavy loads unless the user asks. The fallback (thumbnail poster + download) is the
@@ -33,8 +33,11 @@
     </span>
   </div>
   <div class="model-viewer-fallback" data-modelviewer-target="fallback">
+    <%# THE POSTER'S URL IS A STRICT LOCAL TOO (hardening, 2026-09-08; tinkerex#278), for
+        `named_url`'s reason one comment up plus one of its own: `url_for(thumbnail.asset)` is a blob
+        URL with no expiry, so a visitor's poster kept answering after the project went private. %>
     <% if thumbnail&.status == "ready" && thumbnail.asset.attached? %>
-      <img src="<%= url_for(thumbnail.asset) %>" alt="Preview of <%= name %>" class="preview-image">
+      <img src="<%= thumbnail_url %>" alt="Preview of <%= name %>" class="preview-image">
     <% end %>
     <p class="muted">Click <strong>View in 3D</strong> to load an interactive preview, or download the file.</p>
     <%= link_to "Download #{name}", download_url, class: "btn" %>

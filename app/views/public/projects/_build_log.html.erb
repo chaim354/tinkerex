@@ -28,7 +28,8 @@
             <div class="entry-photos">
               <% photos.each do |att| %>
                 <%= link_to pub.file_url_for(att.node_id), class: "photo-cell file-cell" do %>
-                  <%= render "files/thumb", thumb: pub.thumbs.thumb(att.node_id), ext_label: "IMG" %>
+                  <%= render "files/thumb", thumb: pub.thumbs.thumb(att.node_id), ext_label: "IMG",
+                             url: pub.preview_url_for(att.node_id) %>
                 <% end %>
               <% end %>
             </div>

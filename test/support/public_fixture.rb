@@ -38,6 +38,31 @@ module PublicFixture
 
   PNG_BYTES = "\x89PNG\r\n\x1a\n".b.freeze
 
+  # NOT A PRIVATE URL ANYWHERE IN THE DOCUMENT, and this is a stronger fence than the seam guard's.
+  # That guard greps the shared partials for `current_user`, a route helper and `url_for`; it cannot
+  # see a `blob_file_path` that a CALLER passed in as a local, because the local is what the partial
+  # renders. The public byte route contains "/files/" too (/u/ada/desk-lamp/files/:id), so the match
+  # is anchored on the quote that opens the attribute — only a root-relative private URL starts that
+  # way.
+  #
+  # `/rails/active_storage/` JOINED IT ON 2026-09-08 (hardening; tinkerex#278). A blob URL is not a
+  # private ROUTE — it is worse: unauthenticated, and it never expires
+  # (`ActiveStorage.urls_expire_in` is nil), so the cover of a project that has since gone private
+  # keeps answering to anyone who saved the URL. A derived asset reaches a visitor through
+  # `public_file_preview` or not at all. It lives HERE, in the fixture every public suite includes,
+  # so the sweep is one definition rather than one per suite.
+  def assert_no_private_urls
+    assert_select "[href^='/files/']", count: 0
+    assert_select "[src^='/files/']", count: 0
+    assert_no_match(%r{["']/files/}, response.body,
+                    "a public page built a private /files/ URL — the seam a public template " \
+                    "must never cross (CLAUDE.md §14d)")
+    assert_no_match(%r{/rails/active_storage/}, response.body,
+                    "a public page emitted an Active Storage blob URL — unauthenticated and " \
+                    "with no expiry, so the picture outlives the publication. A derived asset " \
+                    "goes through public_file_preview (tinkerex#278)")
+  end
+
   def make_owner!(handle:, email: nil)
     User.create!(email: email || "#{handle}-#{SecureRandom.hex(4)}@example.com",
                  password: PASSWORD, confirmed_at: Time.current, handle:)

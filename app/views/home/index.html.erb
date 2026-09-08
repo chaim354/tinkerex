@@ -35,7 +35,8 @@
         <% if Maker::Previews::Registry.for_filename(node.name).present? %>
           <%= link_to file_path(node.node_id), class: "grid-card file-cell",
                       data: thumb_cell_data(node.node_id, ext_label).merge(file_menu_data(node.node_id, @addon_origins[node.node_id])) do %>
-            <%= render "files/thumb", thumb: @covers.thumb(node.node_id), ext_label: %>
+            <%= render "files/thumb", thumb: @covers.thumb(node.node_id), ext_label:,
+                       url: preview_src(@covers.thumb(node.node_id)) %>
             <span class="grid-name"><%= node.name %></span>
           <% end %>
         <% else %>

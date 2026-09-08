@@ -42,7 +42,7 @@
               <%= link_to file_path(node.node_id), class: "file-cell",
                           data: thumb_cell_data(node.node_id, ext_label)
                                   .merge(file_menu_data(node.node_id, @addon_origins[node.node_id])) do %>
-                <%= render "thumb", thumb:, ext_label: %>
+                <%= render "thumb", thumb:, ext_label:, url: preview_src(thumb) %>
                 <span class="file-name"><%= node.name %></span>
               <% end %>
             <% else %>

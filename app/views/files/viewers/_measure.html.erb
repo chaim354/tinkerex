@@ -1,4 +1,4 @@
-<%# locals: (geometry_url:, name:, blob_url:, thumbnail:, download_url:, save:, port_writable:, create_url:, begin_url:, finalize_url:, parent_node_id:, source_node_id:, link_url:) %>
+<%# locals: (geometry_url:, name:, blob_url:, thumbnail:, thumbnail_url:, download_url:, save:, port_writable:, create_url:, begin_url:, finalize_url:, parent_node_id:, source_node_id:, link_url:) %>
 <%#
   The interactive Measure view — .lbrn/.lbrn2, .mage, .dxf, .svg. See measure_controller.js.
 
@@ -146,12 +146,14 @@
       file's own markup.
 
       Every other format posts its server-rendered thumbnail, reproducing ALL THREE states the
-      :thumbnail branch handles, because these extensions no longer reach it.
+      :thumbnail branch handles, because these extensions no longer reach it. Its URL is the strict
+      local `thumbnail_url`, never `url_for(thumbnail.asset)` (hardening, 2026-09-08; tinkerex#278):
+      a blob URL never expires, so a visitor's poster outlived the project's publication.
     %>
     <% if File.extname(name).downcase == ".svg" %>
       <img src="<%= blob_url %>" alt="<%= name %>" class="preview-image">
     <% elsif thumbnail&.status == "ready" && thumbnail.asset.attached? %>
-      <img src="<%= url_for(thumbnail.asset) %>" alt="Preview of <%= name %>" class="preview-image">
+      <img src="<%= thumbnail_url %>" alt="Preview of <%= name %>" class="preview-image">
     <% elsif %w[pending processing].include?(thumbnail&.status) %>
       <p class="muted">Generating preview…</p>
     <% else %>

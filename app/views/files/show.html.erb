@@ -172,7 +172,7 @@
                named_url: named_blob_file_path(@node.node_id, filename: @node.name) %>
   <% elsif @kind == :gerber %>
     <%= render "files/viewers/gerber", layers: @gerber_layers, single: @gerber_single,
-               thumbnail: @thumbnail, name: @node.name,
+               thumbnail: @thumbnail, thumbnail_url: preview_src(@thumbnail), name: @node.name,
                download_url: blob_file_path(@node.node_id, download: 1) %>
   <% elsif @kind == :text %>
     <%# THE BANNER IS NOT PART OF THE VIEWER and stays on this page: it is a fact about a
@@ -201,7 +201,7 @@
                format: File.extname(@node.name).downcase.delete("."),
                colors: (@viewer_manifest&.colors || []),
                unit_factor: (@viewer_manifest&.unit_factor || 1.0),
-               thumbnail: @thumbnail,
+               thumbnail: @thumbnail, thumbnail_url: preview_src(@thumbnail),
                download_url: blob_file_path(@node.node_id, download: 1) %>
   <% elsif @kind == :measure %>
     <%# .lbrn/.lbrn2, .mage, .dxf, .svg — a picture at rest, with a button that swaps in a
@@ -219,6 +219,7 @@
     <%= render "files/viewers/measure", name: @node.name,
                geometry_url: geometry_file_path(@node.node_id),
                blob_url: blob_file_path(@node.node_id), thumbnail: @thumbnail,
+               thumbnail_url: preview_src(@thumbnail),
                download_url: blob_file_path(@node.node_id, download: 1),
                save: true,
                port_writable: capabilities.port_writable?, create_url: files_path,
@@ -231,6 +232,7 @@
         simplification — the partial re-tests `kind == :thumbnail` internally and the chain's final
         arm was already the catch-all. %>
     <%= render "files/viewers/static", kind: @kind, thumbnail: @thumbnail, name: @node.name,
+               thumbnail_url: preview_src(@thumbnail),
                download_url: blob_file_path(@node.node_id, download: 1) %>
   <% end %>
   </div>

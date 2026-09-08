@@ -1100,6 +1100,44 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     assert_empty viewer_offenders,
                  "a shared viewer partial calls a route helper instead of taking the URL as a strict " \
                  "local — a private route would reach a visitor's page:\n  #{viewer_offenders.join("\n  ")}"
+
+    # A THIRD ARM, FOR `url_for` — WHICH THE ARM ABOVE DELIBERATELY DOES NOT MATCH and says so
+    # (hardening, 2026-09-08; tinkerex#278). That pattern wants the `_path`/`_url` SUFFIX a route
+    # helper carries, so `url_for(thumbnail.asset)` sailed past it — and an Active Storage blob URL
+    # is worse than a private route helper on a public page, not better: it is UNAUTHENTICATED and
+    # it NEVER EXPIRES (`ActiveStorage.urls_expire_in` is nil), so a cover thumbnail kept answering
+    # after its project went private, and forever. The fix is the same design the arm above
+    # enforces — the URL arrives as a strict local (`thumbnail_url:`, `url:`), built by the maker's
+    # page with `preview_src` and by a visitor's with `Maker::PublicProject#preview_url_for` — so
+    # the check is simply that neither kind of partial builds one at all.
+    #
+    # `files/_thumb.html.erb` JOINS THE EIGHT even though it is not a viewer: it is rendered by ten
+    # private surfaces AND by three public ones, which is the same sharing for the same reason, and
+    # it was the emitter that shipped the never-expiring cover.
+    #
+    # ERB COMMENTS ARE STRIPPED, so the several comments naming `url_for(asset)` as the thing NOT to
+    # write are not offenders — the same stripper both arms above use, carrying its open state
+    # across lines.
+    thumb_partial = ROOT.join("app", "views", "files", "_thumb.html.erb").to_s
+    assert File.exist?(thumb_partial),
+           "app/views/files/_thumb.html.erb is gone — a moved file must not retire this arm silently"
+    url_for_files = viewer_files + [ thumb_partial ]
+    assert_operator url_for_files.size, :>=, 9,
+                    "the url_for scan matched #{url_for_files.size} file(s), below the floor of 9 " \
+                    "(8 viewer partials + files/_thumb) — `assert_empty` below cannot fail for the " \
+                    "reason it exists (CLAUDE.md §14e)"
+    url_for_offenders = url_for_files.flat_map do |file|
+      erb_open = false
+      File.readlines(file, chomp: true).each_with_index.filter_map do |line, idx|
+        code, erb_open = strip_erb_comment(line, erb_open)
+        next unless code.match?(/\burl_for\b/)
+        "#{Pathname.new(file).relative_path_from(ROOT)}:#{idx + 1}"
+      end
+    end
+    assert_empty url_for_offenders,
+                 "a shared partial builds an Active Storage URL instead of taking it as a strict " \
+                 "local — a blob URL is unauthenticated and never expires, so a public page's " \
+                 "picture outlives the project's publication:\n  #{url_for_offenders.join("\n  ")}"
   end
 
   SESSION_ACCESSOR = /\b(current_user|current_project|user_signed_in\?|web_device)\b|\bsession\s*[\[.]|\bcookies\s*[\[.]/

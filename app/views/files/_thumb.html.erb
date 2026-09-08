@@ -1,13 +1,23 @@
+<%# locals: (thumb:, ext_label:, url:) %>
 <%#
   Shared thumbnail box for a renderable file, used by both the list and grid views. The poll
   controller (thumbs_controller.js) finds `.thumb` inside a `.file-cell` and swaps the spinner for
   the <img> once ready, or a static badge on unsupported/failed. Sizing comes from the ancestor
   container (table.files .thumb vs .files-grid .thumb), so this markup is size-agnostic.
-  Locals: `thumb` (a Maker::Preview or nil), `ext_label` (String).
+
+  Locals: `thumb` (a Maker::Preview or nil), `ext_label` (String), `url` (String or nil).
+
+  `url` IS A STRICT LOCAL BECAUSE THIS PARTIAL IS SHARED BY A SESSION-AUTHED PAGE AND A SESSIONLESS
+  ONE (hardening, 2026-09-08; tinkerex#278) — the same design the eight viewer partials already use
+  for every URL they need. The maker's pages pass `preview_src(thumb)` (`url_for(asset)`, unchanged
+  behaviour); a visitor's pass `pub.preview_url_for(node_id)`, which goes through the project's own
+  permission and expires. Building the URL here instead is what made a public cover keep answering
+  after its project went private, so `url_for` is refused in this file by the Public seam guard's
+  third arm (test/architecture_invariants_test.rb) — pass it in, never derive it.
 %>
 <span class="thumb" data-thumbs-target="thumb">
   <% if thumb&.status == "ready" && thumb.asset.attached? %>
-    <img src="<%= url_for(thumb.asset) %>" alt="" loading="lazy">
+    <img src="<%= url %>" alt="" loading="lazy">
   <% elsif thumb.nil? || %w[pending processing].include?(thumb&.status) %>
     <span class="thumb-spinner" aria-hidden="true"></span>
   <% else %>

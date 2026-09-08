@@ -24,7 +24,7 @@
       <%= link_to file_path(node.node_id), class: "grid-card file-cell",
                   data: thumb_cell_data(node.node_id, ext_label)
                           .merge(file_menu_data(node.node_id, @addon_origins[node.node_id])) do %>
-        <%= render "thumb", thumb:, ext_label: %>
+        <%= render "thumb", thumb:, ext_label:, url: preview_src(thumb) %>
         <span class="grid-name"><%= node.name %></span>
         <span class="grid-sub"><%= [ (info.content_token ? number_to_human_size(info.size) : nil), File.extname(node.name).delete(".").upcase.presence ].compact.join(" · ") %></span>
         <%= render "note_badge", count: @note_counts[node.node_id] %>

@@ -60,7 +60,8 @@
         <div class="connection-row">
           <%= link_to file_path(node.node_id), class: "photo-cell file-cell", title: node.name,
                       data: thumb_cell_data(node.node_id, "IMG") do %>
-            <%= render "files/thumb", thumb: @link_thumbs.thumb(node.node_id), ext_label: "IMG" %>
+            <%= render "files/thumb", thumb: @link_thumbs.thumb(node.node_id), ext_label: "IMG",
+                       url: preview_src(@link_thumbs.thumb(node.node_id)) %>
           <% end %>
           <%= button_to "×", file_link_path(link), method: :delete,
                 params: { from: @node.node_id }, class: "chip-x",

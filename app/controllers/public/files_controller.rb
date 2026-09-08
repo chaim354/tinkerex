@@ -24,6 +24,13 @@ module Public
   class FilesController < BaseController
     include FileDelivery
     include FilePreview
+    # WHAT LETS `blob.url` BUILD AN ABSOLUTE DISK-SERVICE URL FROM THIS REQUEST (hardening,
+    # 2026-09-08; tinkerex#278): it sets ActiveStorage::Current.url_options from the request in a
+    # before_action, and the Disk service reads exactly that. Without it `#preview` raises
+    # ArgumentError ("Cannot generate URL … without ActiveStorage::Current.url_options") — the
+    # controllers that ship with Active Storage include it for the same reason, and this one cannot
+    # inherit theirs because a public controller stands on ActionController::Base (§14d).
+    include ActiveStorage::SetCurrent
 
     def show
       pub = public_project!
@@ -67,6 +74,31 @@ module Public
       enqueue_geometry(owner) if @kind == :measure
     end
 
+    # GET /u/:handle/:slug/files/:id/preview/:kind — a file's DERIVED ASSET: its thumbnail, or the
+    # Measure payload (hardening, 2026-09-08; tinkerex#278). THE SAME PERMISSION AS THE BYTES
+    # (`deliverable!`), then a redirect to a service URL that EXPIRES
+    # (ActiveStorage.service_urls_expire_in, 5 minutes) — where `url_for(preview.asset)` handed out a
+    # signed blob URL with NO expiry at all, so a cover thumbnail kept answering after the project
+    # went private, and forever. A global `urls_expire_in` was the alternative and is worse: it
+    # breaks a `loading="lazy"` image a visitor scrolls to after the window, and still checks
+    # nothing about the project.
+    #
+    # `current_preview` IS THE SAME "current content, current renderer build" RULE THE PAGE RENDERED
+    # FROM, so this route cannot serve a picture of content the file no longer holds. A row that is
+    # not ready is a 404 exactly as an unpermitted node is, because an <img> cannot use a status —
+    # and because the two must be indistinguishable to a stranger for #deliverable!'s reason.
+    def preview
+      pub = public_project!
+      node = pub.deliverable!(params[:id])
+      token = FileLayer.current.stat(pub.owner, node_id: node.node_id)&.content_token
+      row = token && Maker::Previews::Enqueue.current_preview(user: pub.owner, node_id: node.node_id,
+                                                              name: node.name, version_id: token,
+                                                              kind: params[:kind])
+      raise ActiveRecord::RecordNotFound unless row&.status == "ready" && row.asset.attached?
+
+      redirect_to row.asset.url, allow_other_host: true
+    end
+
     # THE POLL, AND IT NEVER WRITES. FilesController#geometry enqueues when it finds no current row,
     # which is right for a door only the file's owner can open and wrong for one anybody can: a
     # `failed` row is re-enqueued by `Enqueue.call` on EVERY call (§14h), so a stranger reloading a
@@ -91,7 +123,13 @@ module Public
 
       case preview.status
       when "ready"
-        render json: { status: "ready", url: (url_for(preview.asset) if preview.asset.attached?) }
+        # THE PUBLIC PREVIEW ROUTE, NOT `url_for(preview.asset)` (hardening, 2026-09-08;
+        # tinkerex#278). The URL this poller hands measure_controller.js outlives the response, so
+        # a blob URL here is the same never-expiring, permission-free link the thumbnails were —
+        # and this one is the whole Measure payload. #preview re-asks `deliverable!` when it is
+        # fetched, which is what makes a payload stop answering when its project stops being public.
+        render json: { status: "ready",
+                       url: (pub.preview_url_for(node.node_id, kind: "geometry") if preview.asset.attached?) }
       when "failed", "unsupported"
         render json: { status: preview.status, error: preview.error }
       else

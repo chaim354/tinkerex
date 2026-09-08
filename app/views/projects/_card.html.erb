@@ -8,7 +8,7 @@
     <% if project.cover_node_id %>
       <span class="thumb file-cell" data-thumbs-target="cell"
             data-node-id="<%= project.cover_node_id %>" data-ext="">
-        <%= render "files/thumb", thumb:, ext_label: "" %>
+        <%= render "files/thumb", thumb:, ext_label: "", url: preview_src(thumb) %>
       </span>
     <% else %>
       <span class="thumb project-thumb-empty" aria-hidden="true">📦</span>
