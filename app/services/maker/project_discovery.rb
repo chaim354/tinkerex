@@ -29,7 +29,17 @@ module Maker
     # every branch, never sentinels, so a caller that reads `candidates: 0` without checking
     # `status` cannot tell "there is nothing to adopt" from "there is nowhere to look" — and only
     # the second is worth an operator's attention.
-    RunResult = Data.define(:created, :candidates, :status, :cap)
+    RunResult = Data.define(:created, :candidates, :status, :cap, :names) do
+      # `names` IS WHAT THIS RUN CREATED, in creation order — for a door that has a user in front
+      # of it (stage 4, S4-6; story 1.1). `created` is a number and a number cannot answer "which
+      # folders?", which is the only question a maker watching a scan actually has.
+      #
+      # A DEFAULT, so the :no_projects_folder construction below and any Result a test builds by
+      # hand read as "created nothing" rather than raising. Library::Observation (observation.rb:53)
+      # is this repo's precedent for the spelling; every member is named, because an anonymous
+      # `**` forwarded through zsuper is a subtlety nobody should have to check.
+      def initialize(created:, candidates:, status:, cap:, names: []) = super
+    end
 
     # The ceiling on projects created in one run. ABSOLUTE, NOT A PERCENTAGE, for the reason
     # Maker::ProjectIntake::MAX_MOVES gives at length: the intended first run adopts 100% of what is
@@ -60,7 +70,10 @@ module Maker
       candidates = adoptable(user, root)
       capped = candidates.size > cap
 
-      created = 0
+      created = []
+      # ONE MOMENT FOR THE WHOLE RUN. These folders were discovered together, and a per-row
+      # Time.current would make that legible nowhere while costing the same.
+      now = Time.current
       candidates.first(cap).each do |node_id, name|
         user.maker_projects.create!(
           name:,
@@ -70,12 +83,16 @@ module Maker
           # THE FOLDER ALREADY EXISTS; this claims it. Calling #ensure_library_folder! would mint
           # `Projects/<slug>` as a side effect of merely looking — Projects::AttachmentsController
           # #relocate's recorded bug, at library-sweep scale.
-          folder_node_id: node_id
+          folder_node_id: node_id,
+          # THE MARK THIS SWEEP OWNS (stage 4, S4-6). Nothing else writes it, so a page reading
+          # `discovered_at.present?` is reading "the app made this" and not a proxy for it.
+          discovered_at: now
         )
-        created += 1
+        created << name
       end
 
-      RunResult.new(created:, candidates: candidates.size, status: capped ? :capped : :ok, cap:)
+      RunResult.new(created: created.size, candidates: candidates.size,
+                    status: capped ? :capped : :ok, cap:, names: created)
     end
 
     # NEVER MINTS `Projects/`. Calling Maker::LibraryFolder.ensure_path! here would create it on
@@ -89,6 +106,24 @@ module Maker
                                  kind: "dir")
     end
     private_class_method :projects_root
+
+    # MAY A FOLDER WITH THIS NAME BECOME A PROJECT? PUBLIC because Projects::AdoptionsController is
+    # its second caller (stage 4, S4-6) and a door that spells the rule itself is a second copy —
+    # the shape §14d names a service to end. #adoptable calls it too, so there is one definition
+    # and the two doors cannot drift.
+    #
+    # THE DOT RULE IS THE WHOLE RULE, and its reason is `.git`: Library::OsClutter stops .DS_Store
+    # and friends from ever becoming nodes, but `.git` IS THE ONE SKIP THAT KEEPS ITS ENTRY (§14b),
+    # so without this a repository checked out at the Projects/ root — or picked in the folder view
+    # — becomes a project literally titled ".git".
+    #
+    # A BLANK NAME IS REFUSED TOO, and that arm is the DOOR's, not the sweep's: `Node` validates
+    # `name` presence, so `adoptable` can never see one, but Projects::AdoptionsController hands
+    # this whatever a node row holds and a project named "" would fail Maker::Project's own
+    # presence validation — a RecordInvalid at the user instead of a sentence. Refusing here keeps
+    # the answer in one place. (Written this way because `nil.to_s.start_with?(".")` is FALSE, so
+    # the dot rule alone answers "yes, adoptable" for nil.)
+    def self.adoptable_name?(name) = name.to_s.present? && !name.to_s.start_with?(".")
 
     # [[node_id, name], ...] in DETERMINISTIC order, so a capped run is reproducible and the next
     # run continues where this one stopped instead of re-rolling the dice.
@@ -104,16 +139,15 @@ module Maker
       # Maker::ProjectFolders created, and adopting it would mint a project named "models" inside a
       # project. A project folder is `Projects/<name>` and nothing deeper.
       #
-      # DOT-FOLDERS ARE SKIPPED. Library::OsClutter already stops `.DS_Store` and friends from ever
-      # becoming nodes, but `.git` is THE ONE SKIP THAT KEEPS ITS ENTRY (§14b — the marker is the
-      # evidence a directory is a working tree, which Maker::AttachToProject's :in_working_tree asks
-      # the database for). Without this rule a repo checked out at the Projects/ root becomes a
-      # project literally titled ".git".
+      # DOT-FOLDERS ARE SKIPPED, VIA `.adoptable_name?` — the ONE definition of that rule, which
+      # Projects::AdoptionsController shares (stage 4, S4-6). Its reason (`.git` keeps its node)
+      # lives there rather than being restated here, so a change to the rule cannot leave a stale
+      # argument behind in this method.
       user.nodes.present
           .where(parent_node_id: root.node_id, kind: "dir")
           .order(:node_id)
           .pluck(:node_id, :name)
-          .reject { |node_id, name| claimed.include?(node_id) || name.to_s.start_with?(".") }
+          .reject { |node_id, name| claimed.include?(node_id) || !adoptable_name?(name) }
     end
     private_class_method :adoptable
   end

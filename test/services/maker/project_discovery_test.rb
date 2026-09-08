@@ -267,5 +267,57 @@ module Maker
     ensure
       ENV.delete("PROJECT_DISCOVERY_MAX")
     end
+
+    # STORY 1.1 — "zero feedback: no flash, no 'new' marker". The marker is a column, and it is
+    # written by THIS sweep and by nothing else, which is what lets a page read `discovered_at`
+    # as "the app made this, I did not".
+    test "a discovered project is stamped, and the whole run shares one moment" do
+      dir("d-lamp", "Desk Lamp", @root.node_id)
+      dir("d-tray", "Tray", @root.node_id)
+
+      Maker::ProjectDiscovery.for_user(user: @user)
+
+      stamps = @user.maker_projects.order(:name).pluck(:discovered_at)
+      assert_equal 2, stamps.compact.size, "every row this sweep created carries the mark"
+      assert_equal 1, stamps.uniq.size, "one run is one moment, not one moment per row"
+    end
+
+    # A hand-made project must NOT wear the badge, or the badge means nothing. Asserted here
+    # rather than only in the web suite because the column's meaning is this class's to keep.
+    test "a project created any other way is not stamped" do
+      assert_nil @user.maker_projects.create!(name: "By Hand", slug: "by-hand").discovered_at
+    end
+
+    # THE RUN NAMES WHAT IT MADE, so a door with a user in front of it can say more than a count.
+    # `names` follows the same DETERMINISTIC order `candidates` does (ORDER BY node_id), which is
+    # what makes a capped run reproducible — see #adoptable.
+    test "the run reports the names it created, in the order it created them" do
+      dir("d-b", "Beta", @root.node_id)
+      dir("d-a", "Alpha", @root.node_id)
+
+      run = Maker::ProjectDiscovery.for_user(user: @user)
+
+      assert_equal %w[Alpha Beta], run.names
+      assert_equal 2, run.created
+    end
+
+    test "a run that creates nothing names nothing, and a run with nowhere to look does too" do
+      assert_equal [], Maker::ProjectDiscovery.for_user(user: @user).names
+      @root.update!(deleted: true)
+      run = Maker::ProjectDiscovery.for_user(user: @user)
+      assert_equal :no_projects_folder, run.status
+      assert_equal [], run.names, "a Result built without names reads as none, never nil"
+    end
+
+    # ONE NAME RULE, TWO DOORS. Projects::AdoptionsController must refuse the names this sweep
+    # refuses, or the two doors disagree about what a project folder may be called — and a `.git`
+    # folder adopted by hand is a project literally titled ".git", the exact case #adoptable's own
+    # dot rule exists to stop.
+    test "the name rule is public, and it is the one the sweep itself applies" do
+      assert Maker::ProjectDiscovery.adoptable_name?("Desk Lamp")
+      refute Maker::ProjectDiscovery.adoptable_name?(".git")
+      refute Maker::ProjectDiscovery.adoptable_name?(".hidden")
+      refute Maker::ProjectDiscovery.adoptable_name?(nil)
+    end
   end
 end

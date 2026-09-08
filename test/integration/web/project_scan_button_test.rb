@@ -107,12 +107,20 @@ module Web
       FileUtils.remove_entry(@root) if @root&.exist?
     end
 
-    # ORDER IS THE ASSERTION, not merely that both ran: filing before the pull would report on a
-    # stale mirror, which is the whole failure this button exists to end.
-    test "on chunk_remote the pull runs first and the intake second" do
+    # ORDER IS THE ASSERTION, and it is now THREE steps. The pull first, because a folder another
+    # device pushed exists only after it. DISCOVERY SECOND, because Library::ScanJob sequences
+    # discover -> file for a reason that changes the ANSWER and not the timing: a newly discovered
+    # project's loose files have no shelf nearer than `Projects` itself, so filing before adopting
+    # leaves them for the model catalog to swallow whole (docs/invariants/project-intake.md).
+    test "on chunk_remote the pull runs first, discovery second and the intake third" do
       FileLayer.current = FileLayer::ChunkRemote.new
       order = []
       pull = ->(**) { order << :pull }
+      discover = lambda do |**|
+        order << :discover
+        Maker::ProjectDiscovery::RunResult.new(created: 1, candidates: 1, status: :ok, cap: 50,
+                                               names: [ "Tray" ])
+      end
       file = lambda do |**|
         order << :file
         # `plan` CARRIES THE MOVE THIS STUB CLAIMS (stage 4, S4-2): the notice reads what was FILED
@@ -122,14 +130,76 @@ module Web
                                          skips: [], plan: [ [ "panel.svg", "design" ] ], status: :ok)
       end
       replacing(FileLayer::RemoteChangelogPullJob, :perform_now, pull) do
-        replacing(Maker::ProjectIntake, :for_project, file) do
-          post project_scan_path(@project)
+        replacing(Maker::ProjectDiscoveryJob, :perform_now, discover) do
+          replacing(Maker::ProjectIntake, :for_project, file) do
+            post project_scan_path(@project)
+          end
         end
       end
-      assert_equal %i[pull file], order
+      assert_equal %i[pull discover file], order
       assert_redirected_to project_path(@project)
       assert_match(/attached 2/i, flash[:notice].to_s)
       assert_match(/filed 1/i, flash[:notice].to_s)
+      # STORY 1.1: the door says WHICH folders became projects, not merely how many.
+      assert_match(/Found 1 new project: Tray\./, flash[:notice].to_s)
+    end
+
+    # A STEADY-STATE SCAN SAYS NOTHING ABOUT DISCOVERY. Discovery's dominant outcome is "already
+    # claimed", and a sentence printed on every click meaning nothing happened is the noise
+    # Maker::ProjectDiscovery::RunResult's own header refuses for its skips breakdown.
+    #
+    # THE STUB PASSES NO `names:` ON PURPOSE — that is this suite's exercise of RunResult's default,
+    # the arm that keeps a Result built by hand reading as "created nothing" rather than raising.
+    test "on chunk_remote a scan that discovers nothing says nothing about discovery" do
+      FileLayer.current = FileLayer::ChunkRemote.new
+      none = Maker::ProjectDiscovery::RunResult.new(created: 0, candidates: 0, status: :ok, cap: 50)
+      quiet = Maker::ProjectIntake::Result.new(attached: 0, moved: 0, skipped: 0, skips: [],
+                                               plan: [], status: :ok)
+      replacing(FileLayer::RemoteChangelogPullJob, :perform_now, ->(**) { }) do
+        replacing(Maker::ProjectDiscoveryJob, :perform_now, ->(**) { none }) do
+          replacing(Maker::ProjectIntake, :for_project, ->(**) { quiet }) do
+            post project_scan_path(@project)
+          end
+        end
+      end
+      refute_match(/new project/i, flash[:notice].to_s)
+    end
+
+    # A CAPPED RUN SAYS SO, IN THE SAME SENTENCE (orchestrator decision 4). `created` alone reads as
+    # "that was all of them", and the maker would go looking for the folders the cap left behind
+    # believing the app had refused them rather than deferred them.
+    test "on chunk_remote a capped discovery run names what it made and says the rest are coming" do
+      FileLayer.current = FileLayer::ChunkRemote.new
+      capped = Maker::ProjectDiscovery::RunResult.new(
+        created: 4, candidates: 9, status: :capped, cap: 4,
+        names: [ "Alpha", "Beta", "Gamma", "Delta" ]
+      )
+      quiet = Maker::ProjectIntake::Result.new(attached: 0, moved: 0, skipped: 0, skips: [],
+                                               plan: [], status: :ok)
+      replacing(FileLayer::RemoteChangelogPullJob, :perform_now, ->(**) { }) do
+        replacing(Maker::ProjectDiscoveryJob, :perform_now, ->(**) { capped }) do
+          replacing(Maker::ProjectIntake, :for_project, ->(**) { quiet }) do
+            post project_scan_path(@project)
+          end
+        end
+      end
+      # THREE NAMES THEN A COUNT — a flash listing fifty folder names is not a sentence.
+      assert_match(/Found 4 new projects: Alpha, Beta, and Gamma and 1 more\./, flash[:notice].to_s)
+      assert_match(%r{4 of 9 folders under Projects/; the rest on the next scan\.},
+                   flash[:notice].to_s)
+    end
+
+    # SHARE/S3 ENQUEUES AND STOPS (§14f's race), so there is nothing in-request to report — and
+    # this asserts that the door did not grow a synchronous discovery call to get a sentence.
+    test "a scannable backend does NOT run discovery in the request either" do
+      use_share!
+      called = false
+      replacing(Maker::ProjectDiscoveryJob, :perform_now, ->(**) { called = true }) do
+        post project_scan_path(@project)
+      end
+      assert_not called, "the scan door must not sweep on a scannable backend — the badge is the surface there"
+    ensure
+      FileUtils.remove_entry(@root) if @root&.exist?
     end
 
     test "on chunk_remote a project with no folder is told so, and no folder is created" do
