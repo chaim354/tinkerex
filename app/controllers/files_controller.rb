@@ -1237,8 +1237,11 @@ class FilesController < ApplicationController
   # Clamped, never trusted: a page number out of range must land on a real page rather than an
   # empty one, so `?page=999` on a two-page folder shows page 2 and `?page=0`/garbage shows page 1.
   # An out-of-range page rendering blank is how a paged list gets reported as "my files vanished".
+  # `to_s` FIRST (tinkerex#290): Rack hands `?page[]=2` over as an Array and `?page[a]=2` as
+  # Parameters, and `to_i` on either is a NoMethodError — a 500 for a hand-edited URL. The same
+  # shape Public::UsersController#requested_page fixed for the anonymous page in PR #342.
   def resolve_page(pages)
-    params[:page].to_i.clamp(1, pages)
+    params[:page].to_s.to_i.clamp(1, pages)
   end
 
   def sort_key(node, info, key)

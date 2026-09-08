@@ -137,6 +137,14 @@ module Web
 
       assert_response :redirect
       assert_match(%r{/rails/active_storage/disk/}, response.location)
+      # THE REDIRECT MAY BE KEPT FOR A MINUTE, AND A MINUTE IS SHORTER THAN ITS TARGET LIVES
+      # (tinkerex#291): the second assertion is what makes the first safe — a cached 302 that
+      # outlived the service URL it names would hand a browser a dead picture, and a project that
+      # goes private is stale for at most the cache's minute.
+      assert_match(/max-age=60/, response.headers["Cache-Control"].to_s, "the 302 carries a one-minute cache")
+      assert_match(/private/, response.headers["Cache-Control"].to_s, "the cache is the browser's, not a shared one")
+      assert_operator 1.minute, :<, ActiveStorage.service_urls_expire_in,
+                      "the cached redirect must expire before the URL it points at"
 
       follow_redirect!
       assert_response :success
