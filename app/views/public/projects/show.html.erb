@@ -28,11 +28,20 @@
     unrelated things (that block is about indexing an unlisted page, this one is a subscription).
     The href carries `k` through link_params like every other link on the page: an unlisted feed
     without the token is a 404, and a reader that saved a credential-less URL would poll one
-    forever. %>
-<% content_for :head do %>
-  <link rel="alternate" type="application/atom+xml"
-        title="<%= "#{@project.name} — @#{@pub.handle}" %>"
-        href="<%= public_feed_path(@pub.handle, @project.slug, **@pub.link_params) %>">
+    forever.
+
+    NOT ADVERTISED WHEN BOTH OF THE FEED'S KINDS ARE HIDDEN (hardening, 2026-09-08; tinkerex#283).
+    The feed carries build-log entries and releases and nothing else, so a maker who hid both
+    panels has a document that can never say anything -- and this <link> is how a reader FINDS a
+    feed, which makes it the more consequential of the two advertisements. The visible "Feed"
+    anchor in public/projects/_page.html.erb is gated on the same pair; the pair must stay in step,
+    or a page shows no link while every reader auto-discovers one. %>
+<% if @pub.panel_visible?("build_log") || @pub.panel_visible?("releases") %>
+  <% content_for :head do %>
+    <link rel="alternate" type="application/atom+xml"
+          title="<%= "#{@project.name} — @#{@pub.handle}" %>"
+          href="<%= public_feed_path(@pub.handle, @project.slug, **@pub.link_params) %>">
+  <% end %>
 <% end %>
 
 <%# A REAL BREADCRUMB IN THE PAGE, NOT `content_for :crumbs`. The layout renders `layouts/topbar`

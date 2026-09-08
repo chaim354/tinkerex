@@ -38,7 +38,16 @@
     <% if project.unlisted? %>
       <span class="badge visibility-unlisted">Unlisted link</span>
     <% end %>
-    <%= link_to "Feed", public_feed_path(pub.handle, project.slug, **pub.link_params), class: "feed-link" %>
+    <%# NO LINK TO A FEED WITH NOTHING IN IT (hardening, 2026-09-08; tinkerex#283). The feed carries
+        exactly two kinds, and a maker who hid both panels publishes neither -- so the document is
+        still valid Atom with zero entries, and advertising it here would invite a reader to
+        subscribe to a stream that can never say anything. EITHER panel is enough: one visible kind
+        is a feed worth following. The Atom <link rel="alternate"> in public/projects/show.html.erb
+        is gated on the same pair and must stay in step -- a reader finds the feed through that
+        <link> as readily as through this anchor. %>
+    <% if pub.panel_visible?("build_log") || pub.panel_visible?("releases") %>
+      <%= link_to "Feed", public_feed_path(pub.handle, project.slug, **pub.link_params), class: "feed-link" %>
+    <% end %>
   </p>
 
   <%# STAGE 3, S3-6: THE BUNDLE, BUILT IN THE VISITOR'S BROWSER. The button hands
@@ -48,7 +57,15 @@
       status line is where a refused fetch is reported -- on the s3 deployment the public file
       route redirects to a presigned URL at the bucket, a cross-origin fetch that reads only
       under the bucket's CORS rule (docs/DEPLOY.md) and the connect-src the port names for the
-      CSP, so the button must SAY it failed rather than sit there having done nothing. %>
+      CSP, so the button must SAY it failed rather than sit there having done nothing.
+
+      `bundle.any?` IS THE ONLY CONDITION AND NO PANEL GATE JOINS IT (hardening, 2026-09-08;
+      tinkerex#283). The three other side documents are gated on the panel they belong to; this one
+      has no panel to be hidden by, because `attachments` is in Maker::ProjectKind::ALWAYS and no
+      override may hide the folder. So the empty test covers the one case that exists -- a folder
+      with nothing to zip -- and a second condition here would be a branch nothing can take (the
+      argument in full at Maker::PublicProject#bundle_files). The BOM inside the zip IS gated: the
+      manifest's `bom_csv_url` is null when that panel is hidden and the script skips it. %>
   <% bundle = pub.bundle_files %>
   <% if bundle.any? %>
     <div class="bundle" data-controller="bundle"
@@ -109,8 +126,12 @@
         <%= image_tag pub.file_url_for(cover.node_id), class: "project-hero-img", alt: cover.name %>
       <% else %>
         <% cover_thumb = pub.thumbs.thumb(cover.node_id) %>
+        <%# THE PUBLIC PREVIEW ROUTE, NEVER `url_for(cover_thumb.asset)` (hardening, 2026-09-08;
+            tinkerex#278): a blob URL is unauthenticated and never expires, so the page's LARGEST
+            picture was the one that outlived the publication longest. `pub.preview_url_for` carries
+            this project's link_params, so an unlisted project's hero keeps its `k`. %>
         <% if cover_thumb&.status == "ready" && cover_thumb.asset.attached? %>
-          <%= image_tag url_for(cover_thumb.asset), class: "project-hero-img",
+          <%= image_tag pub.preview_url_for(cover.node_id), class: "project-hero-img",
                         alt: "Preview of #{cover.name}" %>
         <% end %>
       <% end %>

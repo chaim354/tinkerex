@@ -220,5 +220,73 @@ module Web
                      "the feed links ##{fragment} and the page renders no such element"
       end
     end
+
+    # --- 8. the panel layout reaches the feed (hardening, 2026-09-08; tinkerex#283) ---------
+    #
+    # A HIDDEN PANEL'S ITEMS ARE ABSENT FROM THE DOCUMENT, NOT MERELY OFF THE PAGE. The feed is one
+    # click from the page that hides them and it is the surface a reader KEEPS, so a build log that
+    # is hidden on the page and complete in the feed is the leak, not a cosmetic mismatch. The two
+    # kinds are gated separately, so both single-hidden cases are driven: a gate written as one
+    # condition over both panels passes whichever of the two you write on its own.
+
+    test "hiding the build log drops its entries from the feed and leaves the releases" do
+      add_release!("v1.0", Time.zone.local(2026, 6, 1, 9, 0, 0))
+      @project.update!(panels: { "hidden" => %w[build_log] })
+
+      get path
+
+      assert_response :success
+      assert_equal [ "Release v1.0" ], entry_titles(feed),
+                   "the fixture's build-log entry is hidden on the page and must be gone here too"
+    end
+
+    test "hiding releases drops them from the feed and leaves the build log" do
+      add_release!("v1.0", Time.zone.local(2026, 6, 1, 9, 0, 0))
+      @project.update!(panels: { "hidden" => %w[releases] })
+
+      get path
+
+      assert_response :success
+      assert_equal [ "Build log — 2026-05-01" ], entry_titles(feed)
+    end
+
+    # STILL A FEED, JUST AN EMPTY ONE. The document is not 404 and not malformed: a reader that
+    # already subscribed keeps polling whatever we do, and a broken document is a reader error
+    # forever where an empty one is simply nothing new. What changes is that the page stops
+    # ADVERTISING it, on both surfaces at once — the visible anchor and the <link> a reader
+    # auto-discovers — which is the pair that must not drift.
+    test "hiding both kinds leaves valid Atom with no entries and a page that advertises no feed" do
+      add_release!("v1.0", Time.zone.local(2026, 6, 1, 9, 0, 0))
+      @project.update!(panels: { "hidden" => %w[build_log releases] })
+
+      get path
+
+      assert_response :success
+      assert_equal "application/atom+xml", response.media_type
+      doc = feed
+      assert_equal "feed", doc.root.name, "still a parseable feed, not a truncated document"
+      assert_equal "http://www.w3.org/2005/Atom", doc.root.namespace.href
+      assert_equal 0, doc.xpath("//xmlns:entry").size
+      assert doc.at_xpath("/xmlns:feed/xmlns:id"), "an empty feed still identifies itself"
+
+      get public_project_path("ada", @project.slug)
+      assert_equal 0, css_select("a.feed-link").size
+      assert_equal 0, css_select("link[rel='alternate'][type='application/atom+xml']").size
+    end
+
+    # ONE VISIBLE KIND IS A FEED WORTH FOLLOWING, which is what makes the page's gate an OR rather
+    # than an AND. Asserted on both halves of the pair, and with the OTHER panel hidden, so a gate
+    # that accidentally reads "both visible" is red here while the all-visible test above stays
+    # green.
+    test "either kind on its own still advertises the feed on the page" do
+      [ %w[build_log], %w[releases] ].each do |hidden|
+        @project.update!(panels: { "hidden" => hidden })
+
+        get public_project_path("ada", @project.slug)
+
+        assert_equal 1, css_select("a.feed-link").size, "hiding #{hidden.first} left no feed link"
+        assert_equal 1, css_select("link[rel='alternate'][type='application/atom+xml']").size
+      end
+    end
   end
 end

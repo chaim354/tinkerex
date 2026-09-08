@@ -9,6 +9,13 @@ module Public
   class BomsController < BaseController
     def show
       pub = public_project!
+      # A HIDDEN BOM PANEL HAS NO CSV AT ALL (hardening, 2026-09-08; tinkerex#283). 404, not a
+      # header-only document: a maker who hid the panel hid the parts list, and this URL is one
+      # guess away from the page that hides it — an empty CSV would say "no parts", which is a
+      # different and untrue answer. The same door the visibility rule uses, so the two refusals are
+      # indistinguishable from outside and neither discloses which one fired.
+      return head :not_found unless pub.panel_visible?("bom")
+
       send_data Maker::BomCsv.render(pub.bom_lines, pub),
                 type: "text/csv", disposition: "attachment",
                 filename: "#{pub.project.slug}-bom.csv"
