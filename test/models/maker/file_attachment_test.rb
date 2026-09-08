@@ -35,6 +35,22 @@ module Maker
     # lbrn2 moved to the laser role (see "lbrn2 is laser, not vector" below); svg/dxf stay vector.
     # Kept as its own test for the coverage the newer, plainer tests don't have: case-insensitivity
     # on the extension and a filename with a space.
+    # THE ROLE AND THE BROWSER'S LIST ARE TWO LISTS (tinkerex#285): heic/tiff are images by role and
+    # not inline; ico is inline and nobody's image; png is both. `preview_kind` is where the split
+    # reaches the file page — a .heic gets the server thumbnail, a .png its own bytes.
+    test "an iPhone original is an image by role and not a browser-inline image" do
+      %w[IMG_0001.heic scan.tiff scan.tif shot.heif].each do |name|
+        assert_equal "image", Maker::FileAttachment.role_for(name), "#{name} files as an image"
+        assert_not Maker::FileAttachment.inline_image?(name), "#{name} is not browser-inline"
+      end
+      assert Maker::FileAttachment.inline_image?("lid.PNG")
+      assert Maker::FileAttachment.inline_image?("favicon.ico")
+      assert_equal "other", Maker::FileAttachment.role_for("favicon.ico")
+      kind = Class.new { include FilePreview }.new
+      assert_equal :thumbnail, kind.send(:preview_kind, "IMG_0001.heic")
+      assert_equal :image, kind.send(:preview_kind, "lid.png")
+    end
+
     test "vector and laser extensions derive their distinct roles" do
       assert_equal "vector", Maker::FileAttachment.role_for("panel.svg")
       assert_equal "vector", Maker::FileAttachment.role_for("Panel.DXF")

@@ -20,7 +20,10 @@ module Maker
 
       RenderError = Class.new(StandardError)
 
-      EXTENSIONS = %w[png jpg jpeg gif webp bmp].freeze
+      # heic/heif/tif/tiff since 2026-09-08 (tinkerex#285): decoded by libvips through libheif and
+      # libtiff, both present in the shipped image; the fixtures in image_thumb_test.rb are what
+      # proves the decoders are wired on the box that runs the suite.
+      EXTENSIONS = %w[png jpg jpeg gif webp bmp heic heif tif tiff].freeze
 
       BIN = ENV.fetch("VIPSTHUMBNAIL_BIN", "vipsthumbnail").freeze
 

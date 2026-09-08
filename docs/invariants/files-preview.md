@@ -36,6 +36,18 @@ shape `instructions`/`document` already had with `docs/` — a role is what
 `Maker::ModelIntake::EXCLUDED_ROLES` denies a model and what a panel heading reads, so the CNC
 *project* and the toolpath it exports must not share one.
 
+**`.heic`, `.heif`, `.tif` AND `.tiff` ARE `image` BY ROLE AND NOT INLINE, AND THE TWO LISTS ARE
+DIFFERENT ON PURPOSE (2026-09-08, tinkerex#285).** An iPhone original and a scanner's TIFF file into
+`images/`, the photo door takes them and libvips thumbnails them (libheif is in the shipped image —
+`vips --vips-config` in the running container says so, verified before the extension was added) — and
+no browser this app targets renders either as `<img>` bytes. `Maker::FileAttachment::INLINE_IMAGE_EXTS`
+(`inline_image?`) is the browser's list; `FilesController#preview_kind`'s `:image` branch and every
+hero that embeds raw bytes (`projects/_hero`, `public/projects/_page`, `models/_hero_poster`) ask it,
+not the role — a role-keyed check there rendered a broken picture for a `.heic` cover, which the
+thumbnail branch shows correctly. `ico` is inline and not a role for the same reason in reverse.
+Existing users got the four filing rules and their `other`-role attachments re-derived by
+`SeedImageFilingRulesAndRederiveRoles`, the S4-2 shape.
+
 **`.ai` IS REGISTERED TO THE PDF RENDERER BY NAME AND RETRACTED BY CONTENT** (stage 4, S4-2).
 Illustrator's "Create PDF Compatible File" has been on by default for two decades, so an `.ai` off a
 maker's disk begins `%PDF-` with Illustrator's private stream appended and pdfium renders page 1 of

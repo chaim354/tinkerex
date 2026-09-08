@@ -39,6 +39,19 @@ module Web
                    [ link.from_node_id, link.to_node_id, link.kind ]
     end
 
+    # AN iPHONE ORIGINAL IS AN IMAGE TO THIS DOOR (tinkerex#285): `.heic` carries the image role
+    # since 2026-09-08, so story 3.3's headline user — someone photographing a finished part — can
+    # attach the file the phone actually wrote.
+    test "an iPhone original is accepted as a photo" do
+      original = file!("n-heic", "IMG_0001.heic")
+      post file_links_path(@subject.node_id),
+           params: { kind: "photo_of", other_node_id: original.node_id }
+      assert_redirected_to file_path(@subject.node_id)
+      link = @user.maker_file_links.sole
+      assert_equal [ original.node_id, @subject.node_id, "photo_of" ],
+                   [ link.from_node_id, link.to_node_id, link.kind ]
+    end
+
     test "a photo_of whose target is not an image is refused by name, not silently accepted" do
       assert_no_difference "Maker::FileLink.count" do
         post file_links_path(@subject.node_id),

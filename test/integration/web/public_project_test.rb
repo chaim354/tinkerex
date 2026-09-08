@@ -324,6 +324,23 @@ module Web
                     public_file_view_path("ada", @project.slug, @f[:pic].node_id)
     end
 
+    # THE SAME SPLIT ON THE VISITOR'S PAGE (tinkerex#285): a `.heic` cover is an image by role and
+    # shows through its READY thumbnail via the public preview route, never as raw bytes the
+    # browser cannot render.
+    test "a HEIC cover leads with its thumbnail, not its bytes" do
+      original = make_file!(@user, "IMG_0001.heic", @f[:folder], body: "x")
+      original.update!(content_hash: "h-heic", current_version_id: "v-heic")
+      ready_preview!(@user, original)
+      @project.update_column(:cover_node_id, original.node_id)
+
+      get path
+
+      assert_select ".project-hero img[src=?]",
+                    public_file_preview_path("ada", @project.slug, original.node_id, "thumbnail")
+      assert_select ".project-hero img[src=?]", public_file_path("ada", @project.slug, original.node_id),
+                    { count: 0 }, "a .heic must not be embedded as raw bytes"
+    end
+
     test "a cover the project does not permit renders no hero at all" do
       @project.update_column(:cover_node_id, @f[:outsider].node_id)
 

@@ -54,6 +54,13 @@ module Maker
         "gif"   => Maker::Previews::ImageThumb,
         "webp"  => Maker::Previews::ImageThumb,
         "bmp"   => Maker::Previews::ImageThumb,
+        # iPhone originals and scanner TIFFs (tinkerex#285): libvips decodes both (libheif is in the
+        # shipped image, verified in the running container). Not inline on the file page — see
+        # Maker::FileAttachment::INLINE_IMAGE_EXTS — so the thumbnail IS the picture the page shows.
+        "heic"  => Maker::Previews::ImageThumb,
+        "heif"  => Maker::Previews::ImageThumb,
+        "tif"   => Maker::Previews::ImageThumb,
+        "tiff"  => Maker::Previews::ImageThumb,
         "pdf"   => Maker::Previews::Pdf,       # page 1 → PNG via pdfium (BSD-3 binary; CLAUDE.md §9)
         # An Illustrator file, when Illustrator wrote it as a PDF — the renderer decides by reading
         # the first five bytes and answers the job's terminal `unsupported` when they are not

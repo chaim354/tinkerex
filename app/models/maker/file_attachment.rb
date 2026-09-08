@@ -59,6 +59,10 @@ module Maker
       "wrl" => "model", "3ds" => "model", "fbx" => "model", "3dm" => "model", "amf" => "model",
       "iges" => "model", "igs" => "model", "brep" => "model",
       "png" => "image", "jpg" => "image", "jpeg" => "image", "gif" => "image", "webp" => "image", "bmp" => "image",
+      # An iPhone original and a scanner's TIFF (2026-09-08, tinkerex#285): images by ROLE — they file
+      # into images/, the photo door takes them, libvips thumbnails them — and NOT in
+      # INLINE_IMAGE_EXTS below, because no browser this app targets renders either as <img> bytes.
+      "heic" => "image", "heif" => "image", "tif" => "image", "tiff" => "image",
       "pdf" => "instructions", "zip" => "source_archive",
       # CNC. `nc`/`tap`/`ngc` are the router/mill dialects; without them a CNC-heavy project is
       # entirely "Other". They join `gcode` rather than getting a role of their own because they
@@ -182,6 +186,18 @@ module Maker
     # many words. Files::LinksController asks `role_for` again on the server, through this same
     # hash, so a hand-posted node id is refused whatever the picker showed.
     IMAGE_EXTS = ROLE_BY_EXT.filter_map { |ext, role| ext if role == "image" }.freeze
+
+    # WHAT A BROWSER CAN SHOW AS `<img>` BYTES — NOT THE `image` ROLE, and since 2026-09-08
+    # (tinkerex#285) the two lists differ: `.heic`/`.heif`/`.tif`/`.tiff` are images by role and no
+    # browser this app targets renders them inline, while `ico` renders inline and is nobody's image.
+    # Every hero that embeds raw bytes and the file page's :image branch ask THIS predicate; a
+    # role-keyed check there rendered a broken picture for a `.heic` cover, where the thumbnail
+    # branch (libvips decodes both) shows it correctly.
+    INLINE_IMAGE_EXTS = %w[png jpg jpeg gif webp bmp ico].freeze
+
+    def self.inline_image?(name)
+      INLINE_IMAGE_EXTS.include?(File.extname(name.to_s).downcase.delete("."))
+    end
 
     # EVERY EXTENSION THE 3D VIEWER CAN OPEN — the ONE list, read by BOTH doors that offer it
     # (`FilesController#preview_kind`'s `:model3d` branch and `ModelsController#show`'s hero

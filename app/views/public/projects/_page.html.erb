@@ -122,7 +122,8 @@
 <% if (cover = pub.cover_node) %>
   <div class="project-hero">
     <%= link_to pub.view_url_for(cover.node_id) do %>
-      <% if Maker::FileAttachment.role_for(cover.name) == "image" %>
+      <%# `inline_image?`, NOT the role (tinkerex#285): the same split projects/_hero makes. %>
+      <% if Maker::FileAttachment.inline_image?(cover.name) %>
         <%= image_tag pub.file_url_for(cover.node_id), class: "project-hero-img", alt: cover.name %>
       <% else %>
         <% cover_thumb = pub.thumbs.thumb(cover.node_id) %>

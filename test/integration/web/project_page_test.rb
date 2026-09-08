@@ -219,6 +219,23 @@ end
       assert_select ".project-hero", count: 0
     end
 
+    # AN IMAGE BY ROLE THAT NO BROWSER SHOWS INLINE (tinkerex#285): a `.heic` cover takes the
+    # THUMBNAIL branch, never the raw bytes — the role-keyed check it replaces rendered a broken
+    # picture. Red when the hero asks the role again.
+    test "a HEIC cover is a thumbnail cell, never inline bytes" do
+      project = @user.maker_projects.create!(name: "Phone")
+      folder = project_folder_rows!(@user, project)
+      @user.nodes.create!(node_id: "cover-heic", name: "IMG_0001.heic", kind: "file",
+                          parent_node_id: folder.node_id, size: 1, mtime: 1_700_000_000_000_000_000)
+      project.update!(cover_node_id: "cover-heic")
+
+      get project_path(project)
+
+      assert_select ".project-hero .project-hero-thumb[data-node-id=?]", "cover-heic"
+      assert_select ".project-hero img.project-hero-img", { count: 0 },
+                    "a .heic must not be embedded as raw bytes"
+    end
+
     # PHOTOS (stage 4, S4-1): the public page's gallery, on the maker's own page, over the ONE
     # definition (Maker::ProjectPhotos) both pages read. `p-a` is BOTH a folder image and an entry
     # photo and must be counted once; `p-z` lives outside the folder, which is where the upload
