@@ -319,5 +319,53 @@ module Maker
       refute Maker::ProjectDiscovery.adoptable_name?(".hidden")
       refute Maker::ProjectDiscovery.adoptable_name?(nil)
     end
+
+    # STAGE 4, S4-7 (decision D4): the sweep names what it adopted. A discovered folder is the ONE
+    # case where the app has files in front of it at creation time, so it is where a kind can be
+    # suggested at all — the web form mints an empty folder and has nothing to read.
+    test "a discovered folder is created with the kind its files suggest" do
+      lamp = dir("d-lamp", "Desk Lamp", "d-projects")
+      %w[box.lbrn2 lid.lbrn panel.svg tray.dxf].each_with_index { |n, i| file("f-#{i}", n, lamp.node_id) }
+
+      Maker::ProjectDiscovery.for_user(user: @user)
+
+      assert_equal "laser", @user.maker_projects.sole.kind
+    end
+
+    # THE DEFAULT IS STILL THE DEFAULT. A folder with nothing recognisable in it must not be
+    # guessed at, and `other`'s preset is today's page (spec §4).
+    test "a folder with nothing to read is created as other" do
+      dir("d-empty", "Empty", "d-projects")
+
+      Maker::ProjectDiscovery.for_user(user: @user)
+
+      assert_equal "other", @user.maker_projects.sole.kind
+    end
+
+    # ONE WRITE, NEVER A CREATE-THEN-UPDATE: a project is never momentarily `other`, so nothing
+    # that watches maker_projects (the eager intake chain, a device push) can observe a kind that
+    # was never true. Asserted on the row's own updated_at against its created_at rather than by
+    # counting statements, which no public API here exposes.
+    test "the kind is part of the create, not an update after it" do
+      lamp = dir("d-lamp", "Desk Lamp", "d-projects")
+      %w[base.stl body.step].each_with_index { |n, i| file("f-#{i}", n, lamp.node_id) }
+
+      Maker::ProjectDiscovery.for_user(user: @user)
+
+      project = @user.maker_projects.sole
+      assert_equal "print", project.kind
+      assert_equal project.created_at, project.updated_at
+    end
+
+    # THE SWEEP STILL TOUCHES NO PORT (the class's own header claim). The suggestion reads `nodes`,
+    # which every backend populates — so this test passes identically on the three legs and needs
+    # no library on disk. Driven, not reasoned: FileLayer.current is never constructed here.
+    test "the suggestion reads the catalog and nothing else" do
+      lamp = dir("d-lamp", "Desk Lamp", "d-projects")
+      file("f-0", "main.c", lamp.node_id)
+      file("f-1", "board.gtl", lamp.node_id)
+
+      assert_equal "electronics", Maker::ProjectKind.suggest_for(user: @user, folder_node_id: lamp.node_id)
+    end
   end
 end

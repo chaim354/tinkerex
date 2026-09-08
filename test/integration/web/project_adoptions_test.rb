@@ -81,6 +81,31 @@ module Web
       assert_nil @user.maker_projects.order(:id).last.discovered_at
     end
 
+    # STAGE 4, S4-7: adopting a full folder reads it, exactly as discovery does. This door is the
+    # OTHER one that has files in front of it at creation time — the maker points at a folder that
+    # already holds work — so it asks the same question through the same door, and answers it as
+    # part of the create rather than an update after it.
+    test "an adopted folder is created with the kind its files suggest" do
+      tray = dir("d-tray", "tray")
+      %w[base.stl body.step clip.stl].each_with_index { |n, i| file("a-#{i}", n, tray.node_id) }
+
+      post adopt_projects_path, params: { node_id: tray.node_id }
+
+      assert_equal "print", @user.maker_projects.find_by!(folder_node_id: tray.node_id).kind
+    end
+
+    # AND A FOLDER WITH NOTHING TO READ IS STILL `other` — the column default, whose preset is
+    # today's page (spec §4). Without this the assertion above is satisfied by a door that guesses
+    # `print` at everything.
+    test "an adopted folder with nothing recognisable in it stays other" do
+      tray = dir("d-empty", "empty")
+      file("a-note", "notes.md", tray.node_id)
+
+      post adopt_projects_path, params: { node_id: tray.node_id }
+
+      assert_equal "other", @user.maker_projects.find_by!(folder_node_id: tray.node_id).kind
+    end
+
     # A folder DIRECTLY under Projects/ is adoptable through this door too — it is what discovery
     # would have done on its next tick, and doing it now is not a different act. The claim the row
     # takes is what makes the sweep pass over it afterwards (the row is the memory).
