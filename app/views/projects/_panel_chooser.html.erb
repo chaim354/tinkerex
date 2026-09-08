@@ -57,12 +57,14 @@
           </label>
         <% end %>
         <span class="panel-choice-moves">
+          <%# THE LABEL IS THE BUTTON'S, NOT THE FORM'S (found in review): on the form it named twenty
+              landmarks and left each button's accessible name as its glyph. %>
           <%= button_to "▲", project_panels_path(@project), method: :patch,
                         params: { move: "up", panel: key }, class: "linkbtn small",
-                        form: { "aria-label" => "Move #{Maker::Project::PANEL_LABELS.fetch(key)} up" } %>
+                        "aria-label": "Move #{Maker::Project::PANEL_LABELS.fetch(key)} up" %>
           <%= button_to "▼", project_panels_path(@project), method: :patch,
                         params: { move: "down", panel: key }, class: "linkbtn small",
-                        form: { "aria-label" => "Move #{Maker::Project::PANEL_LABELS.fetch(key)} down" } %>
+                        "aria-label": "Move #{Maker::Project::PANEL_LABELS.fetch(key)} down" %>
         </span>
       </li>
     <% end %>

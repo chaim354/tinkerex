@@ -102,10 +102,49 @@ module Web
       patch project_panels_path(@project), params: { move: "up", panel: Maker::Project::PANELS.first }
       assert_response :redirect
       assert_equal Maker::Project::PANELS, @project.reload.panel_layout.order
+      assert_nil @project[:panels], "a move that moved nothing must write nothing"
 
       patch project_panels_path(@project), params: { move: "down", panel: Maker::Project::PANELS.last }
       assert_equal Maker::Project::PANELS, @project.reload.panel_layout.order
     end
+
+# A MOVE MUST NOT FREEZE THE KIND'S PRESET ONTO THE ROW (found in review). The first version
+# wrote `layout.hidden` beside the order, which for a project with no override IS the kind's
+# preset — so one reorder click on a laser project pinned BOM/Wiring/Releases/Sheets hidden,
+# and switching the kind to electronics on the form changed nothing on the page.
+test "a move writes the order only, so the project keeps following its kind" do
+  @project.update!(kind: "laser")
+
+  patch project_panels_path(@project), params: { move: "up", panel: "tasks" }
+
+  refute @project.reload.panels.key?("hidden"), "a move must not copy the preset's hidden set"
+  @project.update!(kind: "electronics")
+  assert_equal %w[sheets], @project.panel_layout.hidden, "the new kind's preset must apply"
+  get project_path(@project)
+  assert_select "section.bom-panel", 1
+end
+
+test "a stored hidden override survives a move unchanged, empty included" do
+  @project.update!(kind: "laser", panels: { "hidden" => [] })
+
+  patch project_panels_path(@project), params: { move: "up", panel: "tasks" }
+
+  assert_equal [], @project.reload.panels["hidden"], "an explicit 'hide nothing' must ride along"
+end
+
+test "a direction the buttons never send moves nothing and writes nothing" do
+  patch project_panels_path(@project), params: { move: "sideways", panel: "tasks" }
+
+  assert_response :redirect
+  assert_nil @project.reload[:panels]
+end
+
+test "each move button carries its accessible name on the button itself" do
+  get project_path(@project, panels: "open")
+
+  assert_select ".panel-choice-moves button[aria-label=?]", "Move Tasks up", 1
+  assert_select "form[aria-label]", count: 0
+end
 
     # THE DOOR WRITES ONLY KNOWN KEYS. Structural, not a validation: this is the guard that stops a
     # crafted request from putting a partial name in the column that `render` would then be handed.

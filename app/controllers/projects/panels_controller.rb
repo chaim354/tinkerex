@@ -20,7 +20,11 @@ module Projects
     before_action :set_project
 
     def update
-      @project.update!(panels: params[:move].present? ? moved : chosen)
+      attrs = params[:move].present? ? moved : chosen
+      # A MOVE THAT MOVED NOTHING WRITES NOTHING (found in review): an edge move or a direction the
+      # buttons never send used to materialise the column as today's layout, which is harmless for
+      # `other` and the freezing mechanism below for every other kind.
+      @project.update!(panels: attrs) if attrs
       redirect_to back_to_panels, notice: "Panels updated."
     end
 
@@ -52,10 +56,20 @@ module Projects
       layout = @project.panel_layout
       order = layout.order.dup
       from = order.index(params[:panel].to_s)
-      to = from && (params[:move] == "up" ? from - 1 : from + 1)
-      order[from], order[to] = order[to], order[from] if from && to&.between?(0, order.size - 1)
+      # "up" and "down" are the only directions; anything else is a hand-made request and moves
+      # nothing (found in review: any other value read as "down").
+      step = { "up" => -1, "down" => 1 }[params[:move].to_s]
+      to = from && step && from + step
+      return nil unless from && to&.between?(0, order.size - 1)
 
-      { "order" => order, "hidden" => layout.hidden }
+      order[from], order[to] = order[to], order[from]
+      # ONLY THE QUESTION THAT WAS ASKED. A move writes the ORDER; the hidden set rides along only
+      # when the row already carries one. Copying the kind's preset into the column would freeze it
+      # there — a maker who later changes the kind on the edit form would keep the OLD kind's hidden
+      # panels (found in review: one reorder click on a laser project did exactly that, and
+      # switching to electronics left BOM and Wiring hidden). #destroy's rule, applied to moves.
+      stored = @project.panels.is_a?(Hash) ? @project.panels : {}
+      { "order" => order }.merge(stored.slice("hidden"))
     end
 
     # THE FORM SENDS THE COMPLETE PICTURE: `order` is every panel in the order they were shown, and
