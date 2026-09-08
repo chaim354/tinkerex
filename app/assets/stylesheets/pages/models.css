@@ -24,6 +24,8 @@
                       aspect-ratio: 4/3; font-size: 48px; background: var(--raised); border-radius: var(--radius-panel); }
 
   .image-gallery { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+  /* A thumbnail cell (a .heic, tinkerex#285) sits beside the inline pictures at their size. */
+  .image-gallery .gallery-thumb, .image-gallery .gallery-thumb .thumb { width: 84px; height: 66px; display: inline-flex; align-items: center; justify-content: center; }
   .image-gallery img { width: 84px; height: 66px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); }
 
   .model-instructions, .model-notes { margin-top: 20px; }

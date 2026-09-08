@@ -42,7 +42,7 @@ DIFFERENT ON PURPOSE (2026-09-08, tinkerex#285).** An iPhone original and a scan
 `vips --vips-config` in the running container says so, verified before the extension was added) — and
 no browser this app targets renders either as `<img>` bytes. `Maker::FileAttachment::INLINE_IMAGE_EXTS`
 (`inline_image?`) is the browser's list; `FilesController#preview_kind`'s `:image` branch and every
-hero that embeds raw bytes (`projects/_hero`, `public/projects/_page`, `models/_hero_poster`) ask it,
+surface that embeds raw bytes (`projects/_hero`, `public/projects/_page`, `models/_hero_poster` and the models page gallery) ask it,
 not the role — a role-keyed check there rendered a broken picture for a `.heic` cover, which the
 thumbnail branch shows correctly. `ico` is inline and not a role for the same reason in reverse.
 Existing users got the four filing rules and their `other`-role attachments re-derived by

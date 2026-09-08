@@ -235,6 +235,31 @@ module Web
       assert_select "[data-action~=?]", "modelviewer#load", count: 0
     end
 
+    # AN IMAGE BY ROLE THAT NO BROWSER SHOWS INLINE (tinkerex#285): a .heic cover takes the hero
+    # poster's THUMBNAIL branch, and a .heic photo in the gallery is a thumbnail cell — neither is
+    # ever an <img> of raw bytes. Found in review: the hero's change shipped with no test behind it
+    # and the gallery had not been changed at all. Red when either asks the role again.
+    test "a HEIC cover and a HEIC gallery photo are thumbnails, never inline bytes" do
+      user = sign_in
+      m = user.maker_models.create!(title: "Phone shots")
+      folder = m.ensure_library_folder!(user)
+      user.nodes.create!(node_id: "img-png", name: "cover.png", kind: "file", parent_node_id: folder.node_id)
+      user.nodes.create!(node_id: "img-heic", name: "IMG_0001.heic", kind: "file", parent_node_id: folder.node_id)
+      m.file_attachments.create!(user:, node_id: "img-png", role: "image")
+      m.file_attachments.create!(user:, node_id: "img-heic", role: "image")
+      m.update!(cover_node_id: "img-heic")
+
+      get model_path(m)
+      assert_response :success
+
+      assert_select ".model-hero img.model-hero-img", { count: 0 }, "a .heic cover must not be embedded as bytes"
+      assert_select ".model-hero .model-hero-thumb[data-node-id=?]", "img-heic"
+      assert_select ".image-gallery img[src=?]", blob_file_path("img-png")
+      assert_select ".image-gallery img[src=?]", blob_file_path("img-heic"), { count: 0 },
+                    "a .heic gallery photo must not be embedded as bytes"
+      assert_select ".image-gallery .gallery-thumb[data-node-id=?]", "img-heic"
+    end
+
     test "show renders a print-settings panel when present, hides it otherwise" do
       user = sign_in
       m = user.maker_models.create!(title: "P", print_settings: { "material" => "PET", "layer_height" => "0.2 mm" })

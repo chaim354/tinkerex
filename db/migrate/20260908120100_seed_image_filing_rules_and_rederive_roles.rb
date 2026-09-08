@@ -14,6 +14,18 @@
 # SELF-CONTAINED: it names its own lists rather than reading the app's constants, because it runs
 # against whatever the code looks like months from now; its test pins the copy against today's
 # vocabulary.
+#
+# `down` TAKES ONLY WHAT `up` COULD HAVE WRITTEN — the folder column is free-form, so a maker who
+# mapped `.heic` into `photos` by hand must survive a rollback (`where(ext:, folder:)`, never
+# `where(ext:)`; SeedPcbFilingRules' recorded lesson). And `down` cannot tell a row `up` re-derived
+# from one that was `image` all along: an attachment created after this migration by ordinary
+# `role_for` derivation is returned to `other` too — the accepted cost of a reversible data
+# migration, the S4-2 precedent's as well, recorded rather than hidden.
+#
+# TWO GUARDS ON ONE FACT in `up`, and neither alone is provable by this migration's test: the outer
+# `where(role: "other")` narrows the scan, and `att.role != prior` states the pairing PER KEY, which
+# is the one that would still be right if a later RULES entry carried a prior other than "other".
+# Every prior here is "other", so each guard subsumes the other today.
 class SeedImageFilingRulesAndRederiveRoles < ActiveRecord::Migration[8.1]
   # ext => [folder, prior role, new role]
   RULES = {

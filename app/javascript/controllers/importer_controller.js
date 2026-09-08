@@ -5,7 +5,7 @@ import { uploadChunkFile, uploadPortFile } from "lib/chunk_upload"
 // Import a downloaded model bundle from ONE selection. Unzips any .zip in the browser, classifies
 // entries by extension, then creates the Model (+ folder map) and uploads every file through the
 // existing per-backend flow, attaching each. No zip bytes ever reach Rails; §15/§10 untouched.
-const IMAGE_EXT = ["png", "jpg", "jpeg", "gif", "webp", "bmp"]
+const IMAGE_EXT = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif", "tif", "tiff"]
 const MODEL_EXT = ["stl", "3mf", "obj", "step", "stp"]
 const roleFor = (name) => {
   const ext = name.split(".").pop().toLowerCase()

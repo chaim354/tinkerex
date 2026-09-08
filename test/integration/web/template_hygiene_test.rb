@@ -459,23 +459,27 @@ module Web
       }
     end
 
+    # KEEP THIS FILE AT EXACTLY THREE TEST METHODS. Minitest abandons a method at its first failure,
+    # so a mutation that breaks independent guards can only report each failure if the guards live
+    # in their own methods. Collapsing them costs that signal — which is why the seven-arm check
+    # below is a method of its own and not a line inside the page loop (found in review).
+
     # EVERY ARM OF shared/_result_group, ON THE ONE PAGE THAT RENDERS THEM ALL (tinkerex#286). The
-    # coverage assertion below is per TEMPLATE, so a partial with seven `case` arms counts as swept
-    # the moment one arm renders; S4-8's Task E measured that only :project, :folder and :note ever
-    # did. The fixtures in `setup` give the search query a hit of every kind, and this is what says
-    # so — a fixture that quietly stops matching drops an arm out of the sweep with nothing else
-    # going red. A helper, not a third test: this file stays at exactly two test methods (below).
-    def assert_every_result_group_rendered
+    # coverage assertion in the sweep below is per TEMPLATE, so a partial with seven `case` arms
+    # counts as swept the moment one arm renders; S4-8's Task E measured that only :project,
+    # :folder and :note ever did. The fixtures in `setup` give the search query a hit of every
+    # kind, and this is what says so — a fixture that quietly stops matching drops an arm out of the
+    # sweep with nothing else going red. Its own method for the reason the comment above gives: a
+    # prose leak on a page ordered before `search` must not abort this check unseen.
+    test "the search page renders every arm of the shared result group" do
+      get search_path(q: "lamp")
+      assert_response :success
       %w[file folder project model note inventory_item tag].each do |kind|
         assert_select ".result-group--#{kind}", { minimum: 1 },
                       "the search page rendered no #{kind} group — its fixture stopped matching " \
                       "the sweep's query, so that arm of shared/_result_group is no longer swept"
       end
     end
-
-    # KEEP THIS FILE AT EXACTLY TWO TEST METHODS. Minitest abandons a method at its first failure,
-    # so a mutation that breaks two independent guards can only report two failures if the guards
-    # live in two methods. Collapsing them costs that signal.
 
     test "no page renders an ERB delimiter into its output" do
       # STATIC AND FIRST, because it needs no fixtures, covers every template on disk including the
@@ -542,7 +546,6 @@ module Web
             assert_not_includes response.body, phrase,
                                 "#{name} rendered a code comment into the page (found #{phrase.inspect})"
           end
-          assert_every_result_group_rendered if name == "search"
         end
       ensure
         ActiveSupport::Notifications.unsubscribe(sub)
