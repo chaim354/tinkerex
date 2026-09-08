@@ -47,6 +47,23 @@ module Maker
 
     # THE CHAIN. Without it a chunk_remote user waits a SECOND 15-minute tick between "the folder
     # became a project" and "its files got attached and filed".
+    # THE EAGER CAP REACHES THE SERVICE THROUGH THE JOB (stage 4, S4-6): the scan door runs this
+    # synchronously and passes EAGER_MAX_PROJECTS; a `cap:` the job dropped on the floor would let
+    # one click adopt fifty folders again with the door's own test still green (it stubs the job).
+    test "perform honours an explicit cap and reports the run as capped" do
+      pin_file_layer_backend("share")
+      use_fresh_share_library!
+      dir("d-projects", "Projects", nil)
+      dir("d-a", "Alpha", "d-projects")
+      dir("d-b", "Beta", "d-projects")
+
+      run = Maker::ProjectDiscoveryJob.perform_now(user_id: @user.id, cap: 1)
+
+      assert_equal 1, run.created
+      assert_equal :capped, run.status
+      assert_equal 1, @user.maker_projects.count
+    end
+
     test "a run that created something chains the intake on a non-scannable backend" do
       FileLayer.current = FileLayer::ChunkRemote.new
       dir("d-projects", "Projects", nil)

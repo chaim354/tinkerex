@@ -45,11 +45,17 @@ module Maker
     # Maker::ProjectIntake::MAX_MOVES gives at length: the intended first run adopts 100% of what is
     # there, so a percentage would be guarding against success.
     #
-    # ONE CAP, NOT TWO. Maker::ProjectIntake carries EAGER_MAX_MOVES beside MAX_MOVES because it has
-    # an entry point inside a browser request. Nothing here does — the web doors' eager nudge calls
-    # Maker::ProjectIntake.for_node directly and never routes through a job. WHOEVER ADDS A NUDGE
-    # OWES THE SECOND CAP.
+    # TWO CAPS SINCE STAGE 4, S4-6, FOR THE REASON Maker::ProjectIntake CARRIES EAGER_MAX_MOVES
+    # BESIDE MAX_MOVES: there is now an entry point inside a browser request. Until S4-6 nothing here
+    # had one and this comment said "WHOEVER ADDS A NUDGE OWES THE SECOND CAP"; the chunk_remote
+    # scan button (Projects::ScansController#pull_and_file) is that nudge — it runs a sweep
+    # synchronously between the pull and the intake — and it pays with EAGER_MAX_PROJECTS below.
+    # Found in review: the door shipped passing no cap, so one POST could create fifty projects and
+    # enqueue fifty intakes inside the request. The recurring sweep and Library::ScanJob keep
+    # MAX_PROJECTS; a capped eager run says "N of M; the rest on the next scan" and the next scan
+    # is the sweep's, which finishes the job at its own ceiling.
     MAX_PROJECTS = 50
+    EAGER_MAX_PROJECTS = 10
 
     # A BAD OVERRIDE FALLS BACK; IT DOES NOT CRASH THE JOB. `Integer("-5")` SUCCEEDS, so the rescue
     # below never sees a negative — and a negative reaches `first(-5)`, which raises
@@ -107,10 +113,11 @@ module Maker
     end
     private_class_method :projects_root
 
-    # MAY A FOLDER WITH THIS NAME BECOME A PROJECT? PUBLIC because Projects::AdoptionsController is
-    # its second caller (stage 4, S4-6) and a door that spells the rule itself is a second copy —
-    # the shape §14d names a service to end. #adoptable calls it too, so there is one definition
-    # and the two doors cannot drift.
+    # MAY A FOLDER WITH THIS NAME BECOME A PROJECT? PUBLIC because it has THREE callers (stage 4,
+    # S4-6): #adoptable (the sweep), Projects::AdoptionsController (the door) and the folder view's
+    # menu gate in app/views/files/index.html.erb (the control that opens the door). A door or a
+    # control that spells the rule itself is a second copy — the shape §14d names a service to end —
+    # and one definition is what keeps the control from offering what the door refuses.
     #
     # THE DOT RULE IS THE WHOLE RULE, and its reason is `.git`: Library::OsClutter stops .DS_Store
     # and friends from ever becoming nodes, but `.git` IS THE ONE SKIP THAT KEEPS ITS ENTRY (§14b),

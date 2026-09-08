@@ -191,6 +191,25 @@ module Web
 
     # SHARE/S3 ENQUEUES AND STOPS (§14f's race), so there is nothing in-request to report — and
     # this asserts that the door did not grow a synchronous discovery call to get a sentence.
+    # THE SECOND CAP (found in review). A sweep inside a POST is the entry point
+    # Maker::ProjectDiscovery's cap comment said would owe one; the door shipped passing none, so
+    # one click could create fifty projects and enqueue fifty intakes in the request.
+    test "on chunk_remote the request-path sweep carries the eager cap, never the sweep's" do
+      FileLayer.current = FileLayer::ChunkRemote.new
+      quiet = Maker::ProjectIntake::Result.new(attached: 0, moved: 0, skipped: 0, skips: [], plan: [], status: :ok)
+      none = Maker::ProjectDiscovery::RunResult.new(created: 0, candidates: 0, status: :ok, cap: 10)
+      seen = :unset
+      replacing(FileLayer::RemoteChangelogPullJob, :perform_now, ->(**) { }) do
+        replacing(Maker::ProjectDiscoveryJob, :perform_now, ->(**kw) { seen = kw[:cap]; none }) do
+          replacing(Maker::ProjectIntake, :for_project, ->(**) { quiet }) do
+            post project_scan_path(@project)
+          end
+        end
+      end
+      assert_equal Maker::ProjectDiscovery::EAGER_MAX_PROJECTS, seen
+      assert_operator Maker::ProjectDiscovery::EAGER_MAX_PROJECTS, :<, Maker::ProjectDiscovery::MAX_PROJECTS
+    end
+
     test "a scannable backend does NOT run discovery in the request either" do
       use_share!
       called = false
@@ -206,12 +225,19 @@ module Web
       FileLayer.current = FileLayer::ChunkRemote.new
       none = Maker::ProjectIntake::Result.new(attached: 0, moved: 0, skipped: 0, skips: [],
                                               plan: [], status: :no_folder)
+      # DISCOVERY STILL SPEAKS ON THIS BRANCH (found in review: the early return dropped it, and a
+      # project with no folder is exactly the maker most likely to have just had folders adopted).
+      found = Maker::ProjectDiscovery::RunResult.new(created: 1, candidates: 1, status: :ok, cap: 10,
+                                                     names: [ "Alpha" ])
       replacing(FileLayer::RemoteChangelogPullJob, :perform_now, ->(**) { }) do
-        replacing(Maker::ProjectIntake, :for_project, ->(**) { none }) do
-          post project_scan_path(@project)
+        replacing(Maker::ProjectDiscoveryJob, :perform_now, ->(**) { found }) do
+          replacing(Maker::ProjectIntake, :for_project, ->(**) { none }) do
+            post project_scan_path(@project)
+          end
         end
       end
       assert_match(/no folder yet/i, flash[:notice].to_s)
+      assert_match(/Found 1 new project: Alpha\./, flash[:notice].to_s)
       assert_nil @project.reload.folder_node_id,
                  "the scan door must never call ensure_library_folder! — a folder minted as a " \
                  "side effect of merely looking is the bug #relocate shipped"

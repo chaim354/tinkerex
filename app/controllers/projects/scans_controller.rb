@@ -103,7 +103,12 @@ module Projects
       # engage here — the same gap that job's own header records for Library::ScanJob's call. What
       # bounds it here is this controller's `rate_limit to: 3, within: 1.minute, by: user`. A
       # partial unique index on (user_id, folder_node_id) is the durable fix and is open work.
-      run = Maker::ProjectDiscoveryJob.perform_now(user_id: current_user.id)
+      #
+      # EAGER_MAX_PROJECTS, NOT THE SWEEP'S CAP: this is a sweep inside a request, the entry point
+      # Maker::ProjectDiscovery's cap comment said would owe a second cap (found in review — it
+      # shipped without one). A capped run tells the maker "N of M; the rest on the next scan".
+      run = Maker::ProjectDiscoveryJob.perform_now(user_id: current_user.id,
+                                                   cap: Maker::ProjectDiscovery::EAGER_MAX_PROJECTS)
       result = Maker::ProjectIntake.for_project(user: current_user, project: @project)
       redirect_to project_path(@project), notice: scan_notice(result, run)
     end
@@ -120,8 +125,15 @@ module Projects
     # project and what discovery did to the LIBRARY are two facts, and joining them into one clause
     # would make either one unreadable when the other is absent.
     def scan_notice(result, run)
-      return "Scanned your library. #{@project.name} has no folder yet, so nothing was filed." if
-        result.status == :no_folder
+      # DISCOVERY IS REPORTED ON EVERY BRANCH, THE NO-FOLDER ONE INCLUDED (found in review): the
+      # early return below is about THIS project's folder, and discovery ran over the whole library
+      # regardless — with decision 2 making a trashed folder the mainline, a maker whose project had
+      # no folder was the one most likely to have just had ten projects created and told nothing.
+      discovery = discovery_sentence(run)
+      if result.status == :no_folder
+        return [ "Scanned your library. #{@project.name} has no folder yet, so nothing was filed.",
+                 discovery ].compact.join(" ")
+      end
 
       # THE LEAD NO LONGER COUNTS WHAT WAS FILED — ProjectFolderIntake#project_intake_sentence says
       # it now, with the FOLDERS, which is strictly more than a number. Two doors saying the same
