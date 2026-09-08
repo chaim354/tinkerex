@@ -284,6 +284,24 @@ module Web
       assert_select "[data-controller=?]", "thumbs", 0
     end
 
+    # THE CARD ASKS THE SAME QUESTION THE HERO ASKS. Found in S4-5's review: it did not — a cover
+    # chosen from anywhere in the library (the chooser browses the whole library on purpose),
+    # outside the folder and unattached, rendered its thumbnail on /u/:handle while the project
+    # page's hero refused the very same node. One rule, `Maker::PublicProject.claimed?`, on both
+    # surfaces, asked ONCE for the whole page (`permitted_cover_ids`) so the page's budget stays
+    # constant in the number of projects (page_query_budget_test.rb).
+    test "a maker's page shows no cover the project does not permit" do
+      ready_cover!(@f[:outsider])
+      @project.update_column(:cover_node_id, @f[:outsider].node_id)
+
+      get public_user_path("ada")
+
+      assert_response :success
+      assert_select ".project-card .card-cover img", 0,
+                    "an unpermitted cover must not become a public picture on the list either"
+      assert_select ".project-card .card-cover", 1
+    end
+
     test "the public project page leads with its cover, linking to the file's own page" do
       @project.update_column(:cover_node_id, @f[:pic].node_id)
 

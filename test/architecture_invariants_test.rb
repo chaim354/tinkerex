@@ -1018,7 +1018,7 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # state across lines and keeps whatever follows the terminator on the same line, so real code
   # sharing a line with a comment's end is still scanned.
   #
-  # NON-VACUOUS BY ASSERTION (§14e): the scan is 29 files today (8 controllers, 13 templates —
+  # NON-VACUOUS BY ASSERTION (§14e): the scan is 30 files today (8 controllers, 13 templates —
   # public/projects/_page.html.erb among them since stage 4, S4-4 extracted the page body — and the
   # 8 shared viewer partials under app/views/files/viewers, which S4-5 added because a PUBLIC page
   # renders them from OUTSIDE this namespace) and a renamed directory would otherwise retire this
@@ -1047,7 +1047,11 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
              # green (a private ROUTE HELPER too, which the second arm below is for). They take
              # every URL as a strict local precisely so they need not know which page they are on;
              # this is what checks that they don't.
-             Dir.glob(ROOT.join("app", "views", "files", "viewers", "*.erb"))).sort
+             Dir.glob(ROOT.join("app", "views", "files", "viewers", "*.erb")) +
+             # STAGE 4, S4-5: THE VISITOR'S HEADER lives under layouts/ because the layout's anonymous
+             # branch renders it, and a public controller's view context DOES resolve `current_user`
+             # (probed in review) — so a session read there would render silently, not raise.
+             Dir.glob(ROOT.join("app", "views", "layouts", "_public_header.html.erb"))).sort
     assert_operator files.size, :>=, 18,
                     "the Public scan matched #{files.size} file(s), below the plausibility floor " \
                     "of 18 — so `assert_empty` below cannot fail for the reason it exists " \

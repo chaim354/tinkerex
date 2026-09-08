@@ -13,7 +13,7 @@
     placeholder the private card uses, never a forever-spinner.
 
     `thumb` IS ALLOWED TO BE nil AND /explore ALWAYS PASSES nil (this slice's Amendment 9).
-    Maker::Previews::ThumbnailMap is PER-USER, so a cross-user list would cost two statements per
+    Maker::Previews::ThumbnailMap is PER-USER, so a cross-user list would cost three statements per
     distinct maker — measured by page_query_budget_test.rb, whose explore seed mints one owner per
     project because that is what /explore is. This is ONE condition (does this card have a ready
     cover thumbnail?) answered from whatever each caller actually holds, not two answers to one

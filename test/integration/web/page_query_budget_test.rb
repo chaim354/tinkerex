@@ -504,7 +504,7 @@ module Web
           # is what /explore is. This is not decoration: it is what makes this test ABLE to fail if
           # the cards ever start resolving covers here. Maker::Previews::ThumbnailMap is PER-USER
           # (the row belongs to its owner, the port is asked in the owner's name — §14a), so a cover
-          # map on a cross-user list is two statements per distinct maker and this assertion goes
+          # map on a cross-user list is three statements per distinct maker (measured 14/50 against 5) and this assertion goes
           # red. S4-5 gave covers to /u/:handle for exactly that reason; see that plan's Amendment 9
           # and open question 1, which prices the two ways to give /explore covers.
           #

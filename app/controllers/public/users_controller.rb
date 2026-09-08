@@ -28,7 +28,14 @@ module Public
       # for a project nobody has opened; the public project page has done the same on an anonymous
       # visit since S3-4. READY rows only at the view: nothing here polls, because
       # /files/thumbnails is session-authed.
-      @covers = Maker::Previews::ThumbnailMap.for(@owner, @projects.filter_map(&:cover_node_id))
+      #
+      # ONLY THE COVERS THE PROJECT MAY SHOW (S4-5 review): `cover_node_id` is a raw column a maker
+      # fills from a chooser that browses the WHOLE library, so it can name a file outside the
+      # folder and unattached — which the project page's hero refuses through `permits?`. The card
+      # asks the same rule, once for the page: `permitted_cover_ids` is `claimed?` batched, constant
+      # in the number of projects, and a project it omits renders the placeholder.
+      @cover_ids = Maker::PublicProject.permitted_cover_ids(@owner, @projects)
+      @covers = Maker::Previews::ThumbnailMap.for(@owner, @cover_ids.values.uniq)
     end
   end
 end
