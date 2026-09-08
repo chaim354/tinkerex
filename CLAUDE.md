@@ -672,7 +672,7 @@ area belongs there too, with a stub here.
   because chunk_remote nodes have no `storage_path` at all. A test fixture built with `nodes.create!`
   has a NULL `storage_path`, which cannot exist on share/s3: the lookup misses, a second node is
   created, and the leg splits chunk-green / share-red. **A replace may also NAME what it replaces:
-  `expect_token:` is compared against the STORE, not the catalog, a mismatch raising
+  `expect_token:` is compared against the STORE (content AND existence), not the catalog, raising
   `FileLayer::StaleContent < UnsupportedOperation` with nothing written**; nil means no check.
 - **THE IDENTITY LADDER** (`FileLayer::S3::ObjectIdentity`). One namespaced value answers
   two different questions: `content_token` need only be an opaque content-*state* token, but

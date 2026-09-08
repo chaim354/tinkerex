@@ -118,6 +118,13 @@ module FileLayer
                   last_modified: Time.now)
     end
 
+    # The contract's `vanish_store_content!` hook: the object deleted by another tool, no scan
+    # behind it — through the fake's own stubbed client, the way that tool would.
+    def vanish_store_content!(node_id)
+      @fake.client.delete_object(bucket: adapter.instance_variable_get(:@bucket),
+                                 key: "#{PREFIX}/#{@user.nodes.find_by!(node_id:).storage_path}")
+    end
+
     # An attachment is WHY node_id stability is the port's promise: it is a bare string column
     # with no foreign key (maker_file_attachments.node_id), so a node_id that changes does not
     # error — it silently resolves to nothing. That is what "orphaned" means below, concretely.

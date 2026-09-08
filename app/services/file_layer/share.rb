@@ -234,9 +234,23 @@ module FileLayer
       # BEFORE read_capped!, so a refused save neither reads the caller's IO nor touches the temp
       # file: this leaves the store exactly as it found it, which is the half of "refused" the
       # message alone does not prove.
-      if replace && expect_token.present? && File.exist?(dest) &&
-         Digest::SHA256.file(dest).hexdigest != expect_token
-        raise StaleContent, "#{rel.inspect} changed since it was read"
+      if replace && expect_token.present?
+        # THE STORE MUST STILL HOLD WHAT THE TOKEN NAMES — CONTENT AND EXISTENCE (found in review). A
+        # file that vanished from the disk behind the catalog is not "an ordinary create" when the
+        # caller named content: recreating it silently is the deletion half of the very race this
+        # check exists for. Refused; the door says so. A plain `replace: true` with no token keeps
+        # the vacant-path create above.
+        raise StaleContent, "#{rel.inspect} is gone since it was read" unless File.exist?(dest)
+        # THE HASH IS INSIDE A RESCUE LIKE THE WRITE BELOW IT: an unreadable destination (the SMB/NFS
+        # ACLs §14b names) or a directory where the row says file is FetchError — retryable, never
+        # a raw Errno no door names (measured in review: a bare EACCES was a 500 on a save that used
+        # to succeed, since temp-then-rename needs no read permission on its destination).
+        current = begin
+          Digest::SHA256.file(dest).hexdigest
+        rescue SystemCallError => e
+          raise FetchError, "#{rel.inspect}: #{e.class} (#{e.message})"
+        end
+        raise StaleContent, "#{rel.inspect} changed since it was read" if current != expect_token
       end
 
       bytes = read_capped!(io)

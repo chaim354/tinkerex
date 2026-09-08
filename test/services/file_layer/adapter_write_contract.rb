@@ -14,6 +14,9 @@
 # alongside it.
 #
 # TWO ADDITIONAL hooks the including test case must define:
+#   vanish_store_content!(node_id)        -> remove this node's bytes from the STORE with no scan
+#                                            behind it, the row still live (the deletion half of
+#                                            the same race).
 #   change_store_content!(node_id, bytes) -> put different bytes at this node's location IN THE
 #                                    STORE, BEHIND THE CATALOG — no scan, no port call, so the row
 #                                    still names the old content. This is the whole premise of the
@@ -177,6 +180,21 @@ module FileLayerWritableContract
                  "the refusal must say WHY — this message is what a door turns into a sentence")
     assert_equal "a desktop edit the scan has not seen", adapter.read(@user, node_id: first.node_id),
                  "nothing may have been written: on a current-state-only backend there is no restore"
+  end
+
+  # THE DELETION HALF OF THE SAME RACE (found in review): the row is live, the store has nothing,
+  # and a save naming a token must NOT quietly recreate the file — the maker is saving over
+  # something that is gone. A plain `replace: true` with no token keeps the vacant-path create.
+  def test_write_contract_a_replace_naming_a_vanished_file_is_refused_not_recreated
+    first = adapter.write(@user, parent_node_id: nil, name: "gone.md", io: StringIO.new("mine"))
+    vanish_store_content!(first.node_id)
+
+    err = assert_raises(FileLayer::StaleContent) do
+      adapter.write(@user, parent_node_id: nil, name: "gone.md", io: StringIO.new("resurrected"),
+                    replace: true, expect_token: first.content_token)
+    end
+    assert_match(/gone since it was read/, err.message)
+    assert_raises(FileLayer::FetchError, FileLayer::NotFound) { adapter.read(@user, node_id: first.node_id) }
   end
 
   # THE SAME CONDITION MUST GET THE SAME ANSWER FROM EVERY VERB THAT CAN MEET IT, which is why

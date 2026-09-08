@@ -13,7 +13,8 @@ module Maker
   #     scan in between was overwritten). Closing that was a port question rather than a door's, and
   #     it is closed in the port: the write below carries `expect_token:`, and the ADAPTER compares
   #     the STORE's own identity against it — Share re-hashes the file, S3 HEADs the object through
-  #     the identity ladder — raising FileLayer::StaleContent with nothing written. That subclass is
+  #     the identity ladder, and a file that has VANISHED from the store is refused the same way
+  #     rather than recreated — raising FileLayer::StaleContent with nothing written. That subclass is
   #     what this service rescues into the same STALE refusal the row arm gives, so one condition
   #     gets one answer whichever half of the check catches it. On chunk_remote there is no second
   #     arm and none is wanted: that upload carries `base_version_id` and the sync server records a

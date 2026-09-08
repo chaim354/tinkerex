@@ -283,8 +283,9 @@ module FileLayer
     # has not. That failure is self-healing — the next scan indexes the object.
     #
     # COST, stated rather than hidden: one HEAD (the clobber check) + one PUT + one HEAD (the
-    # mtime — see below). Two billed HEADs per write. The first is what the write contract
-    # requires; the second is what the store's own clock costs.
+    # mtime — see below). Two billed HEADs per write, three when a replace names its content
+    # (`expect_token:` — see `stale_content!`). The first is what the write contract requires; the
+    # second is what the store's own clock costs.
     # `replace: true` — see FileLayer::Share#write's header for the full argument; it is the port's
     # contract, not this adapter's, and adapter_write_contract.rb pins that the two answer alike.
     # The short version: it is the opt-in the clobber refusal is the default for, it MUST reuse the
@@ -1007,26 +1008,33 @@ module FileLayer
     # here and a store that answers FULL_OBJECT hands back `sha256:…` where every stored token says
     # `md5:…`, so every save on that store refuses forever — one condition, two spellings.
     #
-    # A MISSING OBJECT IS NOT STALE, it is a vacant destination: `replace: true` on one is an
-    # ordinary create on both adapters (see the headers), and Share reaches the same answer through
-    # its `File.exist?(dest)` term.
+    # A MISSING OBJECT IS STALE WHEN A TOKEN WAS NAMED (found in review): the caller is saving over
+    # content that is GONE, and recreating it silently is the deletion half of the race this check
+    # exists for. Share answers the same through its `File.exist?(dest)` term. A plain `replace: true`
+    # with no token keeps the vacant-path create.
     #
     # A BLANK ETAG SKIPS THE CHECK rather than refusing, which is the direction #move and
     # #restored_stat already take for the same store being unhelpful. ObjectIdentity.for RAISES on
-    # one, and the alternative — treating "we cannot tell" as stale — makes every save against such
-    # a store a permanent conflict the user can do nothing about, where skipping is exactly the
-    # behaviour every caller that passes no token already gets.
+    # one — including the literally quoted-empty `""`, which is `present?` (found in review) — and
+    # the alternative, treating "we cannot tell" as stale, makes every save against such a store a
+    # permanent conflict the user can do nothing about, where skipping is exactly the behaviour
+    # every caller that passes no token already gets. The raise is rescued rather than the string
+    # inspected: unquoting it here to test blankness would be the second place quotes come off.
     def stale_content!(rel, key, expect_token)
       current = store_identity(key)
+      raise StaleContent, "#{rel.inspect} is gone since it was read" if current == :missing
       return if current.nil? || current == expect_token
-
       raise StaleContent, "#{rel.inspect} changed since it was read"
     end
 
     def store_identity(key)
       head = @client.head_object(bucket: @bucket, key:)
-      ObjectIdentity.for(etag: head.etag) if head.etag.present?
+      return nil unless head.etag.present?
+
+      ObjectIdentity.for(etag: head.etag)
     rescue ::Aws::S3::Errors::NotFound, ::Aws::S3::Errors::NoSuchKey
+      :missing
+    rescue ArgumentError
       nil
     end
 

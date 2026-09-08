@@ -48,6 +48,31 @@ module FileLayer
       File.binwrite(@root.join(@user.nodes.find_by!(node_id:).storage_path), bytes)
     end
 
+    # The contract's `vanish_store_content!` hook: the file deleted in Finder, no scan behind it.
+    def vanish_store_content!(node_id)
+      File.delete(@root.join(@user.nodes.find_by!(node_id:).storage_path))
+    end
+
+    # AN UNREADABLE DESTINATION IS RETRYABLE, NOT A RAW Errno (found in review): the token check
+    # has to READ the file where temp-then-rename never did, so an ACL that denies reading — the
+    # SMB/NFS shape §14b names — used to turn a save that succeeded into a bare EACCES 500. Skipped
+    # as root, who reads anything.
+    test "a replace naming a token over an unreadable file is a FetchError, never a raw Errno" do
+      skip "root reads regardless of mode bits" if Process.uid.zero?
+      first = adapter.write(@user, parent_node_id: nil, name: "locked.md", io: StringIO.new("mine"))
+      path = @root.join(@user.nodes.find_by!(node_id: first.node_id).storage_path)
+      File.chmod(0o000, path)
+      begin
+        assert_raises(FileLayer::FetchError) do
+          adapter.write(@user, parent_node_id: nil, name: "locked.md", io: StringIO.new("new"),
+                        replace: true, expect_token: first.content_token)
+        end
+      ensure
+        File.chmod(0o644, path)
+      end
+      assert_equal "mine", File.read(path), "nothing may have been written"
+    end
+
     # Share's "delete" is the user removing the file from the indexed tree; the next scan
     # tombstones the node.
     #
