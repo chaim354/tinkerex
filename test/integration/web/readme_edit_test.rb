@@ -146,6 +146,49 @@ module Web
       assert_equal "# Old\n", FileLayer.current.read(user, node_id: node.node_id)
     end
 
+    # THE SAME REFUSAL, FOR THE HALF THE CATALOG CANNOT SEE. The token above is nonsense, so the row
+    # arm of Maker::TextSave's check catches it; here the token is the REAL one the card rendered
+    # and the row still agrees with it, because the README changed on disk with no scan behind it.
+    # That was an overwrite until `expect_token:` reached the port (§14a) — and on a share there is
+    # no version to restore the lost text from.
+    #
+    # THIS DOOR ANSWERS WITH A REDIRECT AND AN ALERT, NOT A 409, which is not an inconsistency to
+    # tidy: it always redirects (see the controller's header — the point of the feature is landing
+    # back on the project page), and the message is the one the stale test above asserts, because
+    # both arms of the check produce the same refusal.
+    test "a README save racing a desktop edit the scan has not seen keeps the desktop bytes" do
+      user = sign_in
+      project = project_with_folder!(user, readme: "# Old\n")
+      node = readme_node(user, project)
+      on_disk = File.join(library_root, "Projects", project.slug, "README.md")
+      File.write(on_disk, "# From the desktop\n")
+
+      patch project_readme_path(project), params: { content: "# From the browser\n",
+                                                    base_token: token_for(user, node) }
+
+      assert_redirected_to project_path(project)
+      assert_match(/changed since you opened it/, flash[:alert])
+      assert_equal "# From the desktop\n", File.read(on_disk),
+                   "the edit the catalog had not observed must survive the save that raced it"
+    end
+
+    # THE DOOR'S OWN CLOBBER ARM (found in review: it had no test, so a TextSave that rescued the
+    # parent class would have shipped past this suite). A README written on disk between the
+    # render and the Save, with no scan behind it, is a name the CREATE finds taken at the port;
+    # the door turns that refusal into its own sentence and the disk keeps what appeared.
+    test "a README that appeared on disk while writing is refused by the door's own sentence" do
+      user = sign_in
+      project = project_with_folder!(user)
+      on_disk = File.join(library_root, "Projects", project.slug, "README.md")
+      File.write(on_disk, "# Appeared from the desktop\n")
+
+      patch project_readme_path(project), params: { content: "# From the browser\n", base_token: "" }
+
+      assert_redirected_to project_path(project)
+      assert_match(/A README appeared while you were writing/, flash[:alert])
+      assert_equal "# Appeared from the desktop\n", File.read(on_disk)
+    end
+
     test "a blank body is refused rather than emptying the README" do
       user = sign_in
       project = project_with_folder!(user, readme: "# Old\n")

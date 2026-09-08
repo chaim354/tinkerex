@@ -659,21 +659,21 @@ area belongs there too, with a stub here.
   earlier. A port that cannot be CONSTRUCTED is not a scannable one — `Library::RepoMetadataPurge`
   declines with a `reason`, rescuing `LibraryBackendCheck::Error` alone, never `KeyError` (too
   broad) and never around the sweep (§15's silent-success shape).
-- **`write(..., replace: true)` IS AN OPT-IN BESIDE THE CLOBBER REFUSAL, NOT A RELAXATION OF IT.**
-  The refusal is still the default on both writable adapters and every existing caller omits the
-  kwarg; `replace:` exists for a door that has just asked a user "this would replace `design/x.svg`
-  — overwrite?" and been told yes. **It MUST reuse the existing node.** A replace written as
-  delete-then-create passes any bytes-oriented test while orphaning every attachment, BOM link and
-  tag — the landmine two bullets down, whose signature is that nothing errors and nothing logs.
-  Pinned in `adapter_write_contract.rb` beside the clobber test, asserting **`node_id` survives**,
-  not merely the content. Cheap on both backends because each already had the hard part: Share's
-  temp-then-rename is atomic over an existing destination and `put_object` overwrites by definition,
-  so a replace **skips** work rather than adding it. **The two adapters resolve "the file being
-  replaced" DIFFERENTLY and must keep doing so** — the port asks by `storage_path` (what it derived
-  the destination from), chunk_remote's `LibraryOutput#existing_at` asks by `(parent, name)` because
-  chunk_remote nodes have no `storage_path` at all. A test fixture built with `nodes.create!` has a NULL
-  `storage_path`, which cannot exist on share/s3: the lookup misses, a second node is created, and
-  the leg splits chunk-green / share-red.
+- **`write(..., replace: true)` IS AN OPT-IN BESIDE THE CLOBBER REFUSAL, NOT A RELAXATION OF IT.** The
+  refusal is still the default on both writable adapters and every existing caller omits the kwarg;
+  `replace:` exists for a door that has just asked a user "this would replace `design/x.svg` —
+  overwrite?" and been told yes. **It MUST reuse the existing node.** A replace written as
+  delete-then-create passes any bytes-oriented test while orphaning every attachment, BOM link and tag —
+  the landmine two bullets down: nothing errors and nothing logs. Pinned in `adapter_write_contract.rb`:
+  **`node_id` survives**, not merely the content. Cheap on both backends: Share's temp-then-rename is
+  atomic over an existing destination and `put_object` overwrites by definition, so a replace **skips**
+  work. **The two adapters resolve "the file being replaced" DIFFERENTLY and must keep doing so** — the
+  port asks by `storage_path`, chunk_remote's `LibraryOutput#existing_at` asks by `(parent, name)`
+  because chunk_remote nodes have no `storage_path` at all. A test fixture built with `nodes.create!`
+  has a NULL `storage_path`, which cannot exist on share/s3: the lookup misses, a second node is
+  created, and the leg splits chunk-green / share-red. **A replace may also NAME what it replaces:
+  `expect_token:` is compared against the STORE (content AND existence), not the catalog, raising
+  `FileLayer::StaleContent < UnsupportedOperation` with nothing written**; nil means no check.
 - **THE IDENTITY LADDER** (`FileLayer::S3::ObjectIdentity`). One namespaced value answers
   two different questions: `content_token` need only be an opaque content-*state* token, but
   `content_hash` must be content-*determined* for move-pairing — and **a multipart ETag is

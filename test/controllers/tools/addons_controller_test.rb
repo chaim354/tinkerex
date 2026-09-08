@@ -1311,11 +1311,13 @@ module Tools
                                     local_worktree: false)
       end
 
-      # `replace:` MIRRORS THE REAL SIGNATURE and is deliberately ignored: this fake exists to fail
-      # a write part-way through a multi-file save, and a replace changes nothing about that. What
-      # it must NOT do is omit the kwarg — a fake whose arity has drifted from the port's turns
-      # every caller into an ArgumentError that says nothing about the behaviour under test.
-      def write(_user, parent_node_id:, name:, io:, replace: false)
+      # `replace:` AND `expect_token:` MIRROR THE REAL SIGNATURE and are deliberately ignored: this
+      # fake exists to fail a write part-way through a multi-file save, and neither changes anything
+      # about that. What it must NOT do is omit a kwarg — a fake whose arity has drifted from the
+      # port's turns every caller into an ArgumentError that says nothing about the behaviour under
+      # test. That is not hypothetical: adding `expect_token:` to the port did exactly this here,
+      # and the ArgumentError named this line rather than anything about addon saves.
+      def write(_user, parent_node_id:, name:, io:, replace: false, expect_token: nil)
         @writes += 1
         raise FileLayer::UnsupportedOperation, "#{name.inspect} already exists" if @writes == @fail_on
 

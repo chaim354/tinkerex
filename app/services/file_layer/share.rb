@@ -207,13 +207,51 @@ module FileLayer
     # intent about a collision, not asserting one exists, and a door that raced the file's deletion
     # should still write. The same is true when the bytes are there but unindexed: `existing` is
     # nil, a node is created, and that is exactly what the next scan would have done.
-    def write(user, parent_node_id: nil, name: nil, io: nil, replace: false)
+    #
+    # `expect_token:` — WHAT THE CALLER BELIEVES IS THERE, ASKED OF THE DISK AND NOT OF THE CATALOG.
+    # A door that rendered a file for editing holds the token it rendered; on a share the catalog
+    # lags the disk until the next scan (§14b's bounded staleness), so a door comparing its token
+    # against `stat` sees the ROW and a Finder edit made in between is silently overwritten —
+    # measured. The comparison has to happen here because only the adapter knows what "current"
+    # means on its store, and on this one that is the same sha256 the scan computes
+    # (Library::Reconciler#hash_for's own `Digest::SHA256.file`, streaming — a 2GB file must not be
+    # read into memory to answer this).
+    #
+    # HASHED EVERY TIME, WITH NO mtime FAST PATH. A second definition of "changed" beside the scan's
+    # is how the two drift, and an editor save is small and user-initiated: this costs one read of a
+    # file the user is looking at, not a sweep.
+    #
+    # nil MEANS "NO CHECK", so every existing caller keeps today's behaviour, and a create ignores
+    # it — `replace: true` on a vacant path is an ordinary create (above), and there is nothing on
+    # disk to have changed.
+    def write(user, parent_node_id: nil, name: nil, io: nil, replace: false, expect_token: nil)
       leaf!(name)
       rel = join_rel(parent_dir_rel!(user, parent_node_id), name)
       observable!(rel)
       dest = resolve_inside!(rel)
       existing = (user.nodes.present.find_by(storage_path: rel, kind: "file") if replace)
       raise UnsupportedOperation, "#{rel.inspect} already exists" if File.exist?(dest) && !replace
+      # BEFORE read_capped!, so a refused save neither reads the caller's IO nor touches the temp
+      # file: this leaves the store exactly as it found it, which is the half of "refused" the
+      # message alone does not prove.
+      if replace && expect_token.present?
+        # THE STORE MUST STILL HOLD WHAT THE TOKEN NAMES — CONTENT AND EXISTENCE (found in review). A
+        # file that vanished from the disk behind the catalog is not "an ordinary create" when the
+        # caller named content: recreating it silently is the deletion half of the very race this
+        # check exists for. Refused; the door says so. A plain `replace: true` with no token keeps
+        # the vacant-path create above.
+        raise StaleContent, "#{rel.inspect} is gone since it was read" unless File.exist?(dest)
+        # THE HASH IS INSIDE A RESCUE LIKE THE WRITE BELOW IT: an unreadable destination (the SMB/NFS
+        # ACLs §14b names) or a directory where the row says file is FetchError — retryable, never
+        # a raw Errno no door names (measured in review: a bare EACCES was a 500 on a save that used
+        # to succeed, since temp-then-rename needs no read permission on its destination).
+        current = begin
+          Digest::SHA256.file(dest).hexdigest
+        rescue SystemCallError => e
+          raise FetchError, "#{rel.inspect}: #{e.class} (#{e.message})"
+        end
+        raise StaleContent, "#{rel.inspect} changed since it was read" if current != expect_token
+      end
 
       bytes = read_capped!(io)
       FileUtils.mkdir_p(dest.dirname)

@@ -283,8 +283,9 @@ module FileLayer
     # has not. That failure is self-healing — the next scan indexes the object.
     #
     # COST, stated rather than hidden: one HEAD (the clobber check) + one PUT + one HEAD (the
-    # mtime — see below). Two billed HEADs per write. The first is what the write contract
-    # requires; the second is what the store's own clock costs.
+    # mtime — see below). Two billed HEADs per write, three when a replace names its content
+    # (`expect_token:` — see `stale_content!`). The first is what the write contract requires; the
+    # second is what the store's own clock costs.
     # `replace: true` — see FileLayer::Share#write's header for the full argument; it is the port's
     # contract, not this adapter's, and adapter_write_contract.rb pins that the two answer alike.
     # The short version: it is the opt-in the clobber refusal is the default for, it MUST reuse the
@@ -294,7 +295,12 @@ module FileLayer
     # CHEAPER HERE THAN ON SHARE, not more dangerous: put_object is atomic and overwrites by
     # definition, so a replace skips the head-then-put CHECK and adds nothing. There is no
     # temp-key dance to add either — §14a records why S3#write has none.
-    def write(user, parent_node_id: nil, name: nil, io: nil, replace: false)
+    #
+    # `expect_token:` — see Share#write's header for what it is for; the port's contract, answered
+    # here in this store's own terms. ONE HEAD PER REPLACE, and that is what makes it affordable:
+    # §14a refuses a HEAD per object per SCAN (2M billed requests every 15 minutes on a 2M-object
+    # bucket), and this is one billed request per save a user clicked. nil means no check.
+    def write(user, parent_node_id: nil, name: nil, io: nil, replace: false, expect_token: nil)
       leaf!(name)
       rel = join_rel(parent_dir_rel!(user, parent_node_id), name)
       observable!(rel)
@@ -327,6 +333,12 @@ module FileLayer
         # waives only the file it was told about; destination_vacant! carries the whole argument,
         # including the fail-safe rule for a HEAD that fails for some OTHER reason.
         destination_vacant!(user, rel, key, kind: "file", replace:)
+        # AND IS IT STILL THE CONTENT THE CALLER NAMED? Share hashes the file; here the store's own
+        # identity comes off a HEAD through the SAME ladder that minted the row's value (#store_
+        # identity below), so the two are comparable. Inside the begin/rescue deliberately: a HEAD
+        # that fails for a transport reason is FetchError, the retryable answer, exactly as a failed
+        # PUT is — while StaleContent, a StandardError that no rescue here names, propagates.
+        stale_content!(rel, key, expect_token) if replace && expect_token.present?
 
         put = @client.put_object(bucket: @bucket, key:, body: bytes)
         # The ONLY source of the object's mtime. put_object's response carries no last_modified
@@ -983,6 +995,47 @@ module FileLayer
       true
     rescue ::Aws::S3::Errors::NotFound, ::Aws::S3::Errors::NoSuchKey
       false
+    end
+
+    # IS THE OBJECT STILL THE ONE THE CALLER NAMED? Share#write's twin, in this store's terms.
+    #
+    # THE ETAG ALONE, NEVER THE CHECKSUM RUNGS, and that is a comparability rule rather than
+    # frugality. `ObjectIdentity.for` also accepts checksum_sha256/checksum_type, which a HEAD does
+    # return — but the value we are comparing AGAINST was minted from an ETag and nothing else
+    # (#write's put, #move's copy result, and Library::S3Observer's listing, which has no checksum
+    # to pass and no HEAD to get one from: §14a records that LIBRARY_S3_HEAD_FOR_CHECKSUM is not
+    # implemented, so the sha256 rung is unreachable from any production path). Pass the checksums
+    # here and a store that answers FULL_OBJECT hands back `sha256:…` where every stored token says
+    # `md5:…`, so every save on that store refuses forever — one condition, two spellings.
+    #
+    # A MISSING OBJECT IS STALE WHEN A TOKEN WAS NAMED (found in review): the caller is saving over
+    # content that is GONE, and recreating it silently is the deletion half of the race this check
+    # exists for. Share answers the same through its `File.exist?(dest)` term. A plain `replace: true`
+    # with no token keeps the vacant-path create.
+    #
+    # A BLANK ETAG SKIPS THE CHECK rather than refusing, which is the direction #move and
+    # #restored_stat already take for the same store being unhelpful. ObjectIdentity.for RAISES on
+    # one — including the literally quoted-empty `""`, which is `present?` (found in review) — and
+    # the alternative, treating "we cannot tell" as stale, makes every save against such a store a
+    # permanent conflict the user can do nothing about, where skipping is exactly the behaviour
+    # every caller that passes no token already gets. The raise is rescued rather than the string
+    # inspected: unquoting it here to test blankness would be the second place quotes come off.
+    def stale_content!(rel, key, expect_token)
+      current = store_identity(key)
+      raise StaleContent, "#{rel.inspect} is gone since it was read" if current == :missing
+      return if current.nil? || current == expect_token
+      raise StaleContent, "#{rel.inspect} changed since it was read"
+    end
+
+    def store_identity(key)
+      head = @client.head_object(bucket: @bucket, key:)
+      return nil unless head.etag.present?
+
+      ObjectIdentity.for(etag: head.etag)
+    rescue ::Aws::S3::Errors::NotFound, ::Aws::S3::Errors::NoSuchKey
+      :missing
+    rescue ArgumentError
+      nil
     end
 
     # prefix + storage_path, and the guard that makes that concatenation safe.
