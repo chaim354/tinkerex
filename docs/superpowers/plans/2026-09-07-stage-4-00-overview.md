@@ -35,7 +35,7 @@ viewer controllers (S4-5). No new gem. No new JS dependency.
 | S4-2 | `2026-09-07-stage-4-s2-filing.md` | roles for `.mage` `.lbrn` `.ai`, KiCad rules, board zips → `pcb/`, grouped settings, sweep opt-out and feedback, build-output display rule | — | **landed** 2026-09-07, PR #335 |
 | S4-3 | `2026-09-07-stage-4-s3-round-trip.md` | path + copy, self-refreshing file page, Save-to-library, honest Rescan | — | **landed** 2026-09-07, PR #336 |
 | S4-4 | `2026-09-07-stage-4-s4-documentation.md` | README editor for any project (D3, the README door only), owner preview, publish panel, namespaced anchors | D3; S4-1's README card | **landed** 2026-09-07, PR #337 |
-| S4-5 | `2026-09-07-stage-4-s5-public-viewers.md` | public file page with the viewers (D5), covers on `/u/:handle`, public header | D5 | **in progress** 2026-09-07; low: reuse |
+| S4-5 | `2026-09-07-stage-4-s5-public-viewers.md` | public file page with the eight shared viewer partials (D5), covers on `/u/:handle`, hero, public header | D5 | **landed** 2026-09-07, PR #338 |
 | S4-6 | `…-s6-adopt-anywhere.md` (to write) | adopt in place (D1), status, make-current, New badge, Not-a-project, switch confirmations | D1 | moderate: a folder outside `Projects/` as `folder_node_id` |
 | S4-7 | `…-s7-kinds.md` (to write) | `kind` + presets, per-project panel overrides | D4; S4-1's quiet panels | moderate: the panel list becomes data |
 | S4-8 | `…-s8-connections.md` (to write) | `maker_file_links`, lineage on file pages, search over notes/README | S4-3's Save-to-library (a writer of links) | moderate: new table, needs the four derived guards (see below) |
@@ -220,11 +220,24 @@ Markdown exception, argued; story 2.13 deliberately not moved). Open work filed:
 
 ### S4-5 — visitors see what you see
 
-Files: `Public::FilesController#view` + `app/views/public/files/show.html.erb` reusing the
-viewer partials with `named_blob` public URLs, `app/views/public/_project_card.html.erb`
-(cover), `app/views/layouts/application.html.erb` (the anonymous branch's header),
-`config/initializers/content_security_policy.rb` if a viewer needs a source it lacks publicly.
-Tests: `public_files_test.rb`, `public_explore_test.rb`, the public query budget, the phone sweep.
+**As landed (2026-09-07).** Files: `app/controllers/concerns/file_preview.rb` (`preview_kind`, the
+Gerber layer walk and the three extension vocabularies, which `FilesController` re-exposes by
+identity-asserted ALIAS) and the eight strict-locals viewer partials `app/views/files/viewers/_image
+_pdf _kicanvas _gerber _code _model3d _measure _static`, rendered by `files/show.html.erb` and by the
+new `app/views/public/files/view.html.erb` (named after the action; `Public::FilesController#view`,
+plus `#geometry`, a poll that never writes — the page enqueues one geometry job when none is
+current); the `/view` and `/geometry` routes sit ABOVE `files#show` because `(/*filename)` would
+otherwise swallow them; `Maker::PublicProject#view_url_for`, `#layer_url_for` (a job's published
+siblings only) and `#cover_node`; `_measure.html.erb`'s required `save:` local (false publicly: no
+Save controls, no upload URLs) with `measure_controller.js`'s `has*Target` guards; covers on
+`public/_project_card.html.erb` resolved in `Public::UsersController` only (Amendment 9 — `/explore`
+keeps the placeholder, measured by the budget test); the hero on `public/projects/_page.html.erb`;
+`layouts/_public_header.html.erb` on the anonymous branch with one `ShellHelper` definition;
+`.public-header` in `shell.css`. Guards: the seam guard scans the viewer partials for session
+accessors AND undeclared route helpers; the constant-identity guard; budgets for `public files#view`,
+`explore#index` and `public users#show`; the phone sweep visits the public file page. Tests:
+`public_file_view_test.rb`, `public_explore_test.rb`, `public_project_test.rb`, the budget file, the
+template sweep (four viewer branches + the public file pages), `docs/invariants/files-preview.md`.
 
 ### S4-6 — a project can live anywhere
 
