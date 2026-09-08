@@ -110,28 +110,35 @@
     there is one to show — an unset or tombstoned cover renders nothing at all. %>
 <%= render "hero" %>
 
+<%#
+  THE PANELS, AS DATA (stage 4, S4-7; story 6.5). Ten hard-coded renders became one loop over
+  Maker::ProjectKind::Layout#visible — this project's kind's preset with its own overrides on top.
+  The key IS the partial's basename, and Maker::Project::PANELS is the only place a key may come
+  from: Maker::ProjectKind.layout_for intersects the stored column with it and
+  Projects::PanelsController intersects every write, so this render can never be handed a partial
+  name that does not exist.
+
+  HIDDEN IS NOT QUIET. A panel this loop skips is absent from the page; an empty panel it DOES
+  render is quiet (S4-1's panel--quiet) — its heading and one add control. Two questions, and the
+  overview's quiet-panel contract is what keeps them two.
+
+  THE LOCALS MAP EXISTS BECAUSE THREE PARTIALS TAKE LOCALS AND SEVEN READ IVARS, and neither group
+  may be converted: projects/_wiring, projects/_releases and projects/_publish take locals so the
+  PUBLIC page can render the same markup without aliasing its own ivars to this page's names --
+  each of those partials says so in its own header. Every value here is an ivar
+  ProjectsController#show has already loaded, so building the map costs nothing, including for a
+  panel this loop is about to skip.
+%>
+<% panel_locals = {
+     "wiring"   => { project: @project, connections: @connections, editable: true },
+     "releases" => { project: @project, releases: @releases, current_tokens: @release_tokens,
+                     repos: @release_repos, editable: true },
+     "publish"  => { project: @project, folder_path: (@listing.path if @listing&.available?) }
+   } %>
 <div class="project-panels">
-  <%= render "attachments" %>
-  <%# Stage 4, S4-1: the folder's images and the build log's photos, one gallery, the same
-      definition the public page reads (Maker::ProjectPhotos). Absent when there are none. %>
-  <%= render "photos" %>
-  <%# Stage 3, S3-2: KiCad schematics/boards anywhere in the folder. The partial itself decides
-      whether there is anything to show — see its own header comment. %>
-  <%= render "schematics" %>
-  <%= render "build_log" %>
-  <%= render "tasks" %>
-  <%= render "bom" %>
-  <%# Stage 3, S3-3: the wiring table. Locals, not @project/@connections -- the same partial is
-      read-only on the public page later (S3-4), which has no reason to alias its own ivars to
-      this partial's names. %>
-  <%= render "wiring", project: @project, connections: @connections, editable: true %>
-  <%# Stage 3, S3-5: releases. Locals for the same reason wiring takes them -- the public page
-      renders its own partial over the same records, and neither has any business aliasing the
-      other's ivars. %>
-  <%= render "releases", project: @project, releases: @releases, current_tokens: @release_tokens,
-             repos: @release_repos, editable: true %>
-  <%= render "sheets" %>
-  <%# Stage 4, S4-4: visibility, licence, the URL and the unlisted link — see the partial's header
-      for why it is last and why the page head links to it. %>
-  <%= render "publish", project: @project, folder_path: (@listing.path if @listing&.available?) %>
+  <% @panel_layout.visible.each do |key| %>
+    <%= render "projects/#{key}", **panel_locals.fetch(key, {}) %>
+  <% end %>
 </div>
+
+<%= render "panel_chooser" %>

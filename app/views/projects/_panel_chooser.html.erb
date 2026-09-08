@@ -1,0 +1,79 @@
+<%#
+  WHICH PANELS THIS PROJECT'S PAGE SHOWS, AND IN WHAT ORDER (stage 4, S4-7; story 6.5). On the page
+  the choice is about, closed by default, below the panels — so a settings box never displaces the
+  maker's own content, which is the argument S4-4's Publish panel already makes for sitting last.
+  Each click re-renders this page with the panels where they now are, which is the whole reason it
+  is not on the edit form.
+
+  NO JAVASCRIPT AND NO STIMULUS CONTROLLER. Show/hide is one form of checkboxes with a Save; Up and
+  Down are one button_to each. Naming a data-controller that does not exist is a SILENT no-op
+  (CLAUDE.md section 14d), so this names none.
+
+  A form CANNOT CONTAIN A button_to's OWN FORM, so the checkbox form is declared EMPTY above the
+  list and every checkbox, every hidden order field and the Save button point back at it by id
+  through the HTML `form` attribute -- the idiom projects/_wiring.html.erb already uses because a
+  form cannot span table cells. project_panels_test.rb asserts that wiring directly.
+
+  EVERY KEY IS LISTED, hidden ones included and unchecked: reordering has to reach a panel you
+  cannot currently see, and a move rewrites the FULL order so a hidden panel keeps its slot instead
+  of collapsing to the end the moment it is shown again. The three in Maker::ProjectKind::ALWAYS
+  carry a hidden field instead of a checkbox, so the Save that follows cannot ask for something the
+  layout would refuse anyway.
+
+  check_box_tag EMITS NO HIDDEN "0" COMPANION, and here that is correct rather than the gap
+  CLAUDE.md section 14d records for a form builder's check_box against a persisted column. An
+  unchecked box sends nothing at all, which is precisely why the panels[order][] hidden fields
+  carry the COMPLETE list: the door computes hidden as order minus visible, so "unchecked" and
+  "not offered" are the same fact, and neither can silently drop a panel out of the order.
+
+  Reads @project, @panel_layout and @panels_open (ProjectsController#show). No locals.
+%>
+<details class="panel-chooser" id="panels" <%= "open" if @panels_open %>>
+  <summary class="btn small">Panels</summary>
+
+  <p class="muted panel-chooser-note">
+    This project is <b><%= Maker::ProjectKind.label(@project.kind) %></b>.
+    <%= link_to "Change its type", edit_project_path(@project) %>
+  </p>
+
+  <%# The EMPTY form every field below points at. `scope:` is not needed and would be wrong: the
+      fields are named by hand (panels[order][] and panels[visible][]) so the controller reads one
+      array of keys and one array of the checked subset, and a form builder is not involved. %>
+  <%= form_with url: project_panels_path(@project), method: :patch, id: "panel-visibility" do %><% end %>
+
+  <ol class="panel-choices">
+    <% @panel_layout.order.each do |key| %>
+      <li class="panel-choice">
+        <%= hidden_field_tag "panels[order][]", key, form: "panel-visibility", id: "panel-order-#{key}" %>
+        <% if Maker::ProjectKind::ALWAYS.include?(key) %>
+          <%= hidden_field_tag "panels[visible][]", key, form: "panel-visibility", id: "panel-show-#{key}" %>
+          <span class="panel-choice-name"><%= Maker::Project::PANEL_LABELS.fetch(key) %></span>
+          <span class="muted panel-choice-always">always shown</span>
+        <% else %>
+          <label class="panel-choice-name">
+            <%= check_box_tag "panels[visible][]", key, @panel_layout.visible?(key),
+                              form: "panel-visibility", id: "panel-show-#{key}" %>
+            <%= Maker::Project::PANEL_LABELS.fetch(key) %>
+          </label>
+        <% end %>
+        <span class="panel-choice-moves">
+          <%= button_to "▲", project_panels_path(@project), method: :patch,
+                        params: { move: "up", panel: key }, class: "linkbtn small",
+                        form: { "aria-label" => "Move #{Maker::Project::PANEL_LABELS.fetch(key)} up" } %>
+          <%= button_to "▼", project_panels_path(@project), method: :patch,
+                        params: { move: "down", panel: key }, class: "linkbtn small",
+                        form: { "aria-label" => "Move #{Maker::Project::PANEL_LABELS.fetch(key)} down" } %>
+        </span>
+      </li>
+    <% end %>
+  </ol>
+
+  <div class="panel-chooser-actions">
+    <%= submit_tag "Save panels", form: "panel-visibility", class: "btn small primary" %>
+    <%# DELETE, because reset means REMOVE THE OVERRIDE — writing today's preset into the column
+        instead would freeze this release's defaults onto the row and stop the project tracking its
+        own kind for ever. %>
+    <%= button_to "Reset to #{Maker::ProjectKind.label(@project.kind)} defaults",
+                  project_panels_path(@project), method: :delete, class: "linkbtn small" %>
+  </div>
+</details>
