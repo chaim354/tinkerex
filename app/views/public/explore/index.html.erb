@@ -32,7 +32,14 @@
 <% if @projects.any? %>
   <div class="project-card-grid">
     <% @projects.each do |project| %>
-      <%= render "public/project_card", project: project %>
+      <%# `thumb: nil` — THE COVER SLOT IS DELIBERATELY EMPTY ON THIS PAGE (stage 4, S4-5;
+          Amendment 9 and open question 1 of the S4-5 plan). Maker::Previews::ThumbnailMap is
+          per-user: a preview row belongs to its owner and the port is asked in the owner's name
+          (§14a), so resolving covers on a list whose every card is a DIFFERENT maker costs two
+          statements per distinct maker — linear in N, which is what page_query_budget_test.rb's
+          "explore#index does not grow with public projects or tags" measures over a seed that
+          mints one owner per project. /u/:handle is single-owner and does pass a real map. %>
+      <%= render "public/project_card", project: project, thumb: nil %>
     <% end %>
   </div>
 <% else %>

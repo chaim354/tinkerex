@@ -86,6 +86,32 @@
   <p class="muted readme-note"><%= readme.note %></p>
 <% end %>
 
+<%# THE HERO (stage 4, S4-5; story 5.7): the same picture the private page has led with since S4-1,
+    in the same place on it, on the page a visitor sees. An image-role cover is the picture itself
+    through the public BYTE route; any other cover is its READY server thumbnail. NO POLL and NO
+    placeholder box — /files/thumbnails is session-authed, so a spinner here would turn forever, and
+    a page with no cover simply has no hero, exactly as the private one.
+
+    `pub.cover_node` is the PERMITTED cover: a chosen cover is a raw column nothing validates, so an
+    unpermitted one renders nothing rather than becoming the page's largest picture.
+    `pub.thumbs` is already memoised for the page, so the hero costs no query of its own; a cover
+    outside the listing is simply not in that map and falls through to no picture, which is the
+    honest answer on a page that cannot poll. %>
+<% if (cover = pub.cover_node) %>
+  <div class="project-hero">
+    <% if Maker::FileAttachment.role_for(cover.name) == "image" %>
+      <%= image_tag pub.file_url_for(cover.node_id), class: "project-hero-img", alt: cover.name %>
+    <% else %>
+      <% cover_thumb = pub.thumbs.thumb(cover.node_id) %>
+      <% if cover_thumb&.status == "ready" && cover_thumb.asset.attached? %>
+        <%= image_tag url_for(cover_thumb.asset), class: "project-hero-img",
+                      alt: "Preview of #{cover.name}" %>
+      <% end %>
+    <% end %>
+    <span class="project-hero-name mono muted"><%= cover.name %></span>
+  </div>
+<% end %>
+
 <%# EVERY PARTIAL BELOW IS NAMED WITH ITS FULL PATH, AND MUST STAY THAT WAY. A bare `render "photos"`
     resolves against the CONTROLLER's prefixes, not this file's directory — under
     Public::ProjectsController that is public/projects/_photos, but under ProjectsController#preview

@@ -44,6 +44,14 @@ module ShellHelper
 
   def rail_collapsed? = cookies[:rail] == "collapsed"
 
+  # IS THIS A PUBLIC SURFACE? `respond_to?` because a public controller stands on
+  # ActionController::Base and Devise's own pages have neither helper. Extracted from
+  # #shell_signed_in? (stage 4, S4-5) so the LAYOUT can ask it directly for the visitor's header
+  # without a second copy of the `respond_to?` dance — and so the ORDER argument below stays in one
+  # place. One definition, read by both, is what keeps the header and the shell from disagreeing
+  # about which surface this is.
+  def public_shell? = respond_to?(:public_surface?) && public_surface?
+
   # The signed-in shell (rail, tab bar, current-project switcher) renders for a signed-in user on
   # every page EXCEPT a public one, which renders what a visitor sees (Public::BaseController, stage
   # 3, S3-4). `respond_to?` on both halves because a public controller stands on
@@ -55,7 +63,7 @@ module ShellHelper
   # `public_surface?` means a visitor's request never touches Warden; the boolean result is
   # identical either way, so nothing but the invariant tells the two orders apart.
   def shell_signed_in?
-    return false if respond_to?(:public_surface?) && public_surface?
+    return false if public_shell?
 
     respond_to?(:user_signed_in?) && user_signed_in?
   end

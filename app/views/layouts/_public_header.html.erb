@@ -1,0 +1,33 @@
+<%#
+  THE VISITOR'S HEADER (stage 4, S4-5; story 5.7). The anonymous branch of the layout carried no
+  chrome at all: a visitor who landed on a project page had nothing naming the site and no way to
+  the maker's other work but the breadcrumb.
+
+  RENDERED ONLY ON A PUBLIC SURFACE, never on the auth card. Devise's pages share the anonymous
+  branch and are a different surface — a sign-in form under an Explore link reads as a site nav on
+  a page that has none. `public_shell?` is the same question `shell_signed_in?` asks first, and it
+  is ONE definition (ShellHelper) rather than a second copy here.
+
+  NO SESSION, THEREFORE NO ACCOUNT LINK. This partial renders identically for a signed-in owner
+  previewing their own public page (Public::BaseController#public_surface? is true whatever the
+  session says), which is the honest preview; adding "signed in as…" here would be the session read
+  §14d forbids on this surface. It lives under app/views/layouts/ rather than app/views/public/, so
+  the seam guard's Public scan does not reach it — what keeps it honest is that it names no session
+  helper at all: `public_shell?` and the two ivars the public controllers set.
+
+  `.brand` IS THE RAIL'S OWN MARKUP, reused rather than restyled — shell.css defines it once.
+%>
+<header class="public-header">
+  <%= link_to public_explore_path, class: "brand", "aria-label": "Tinkerex — explore" do %>
+    <span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span>
+  <% end %>
+  <%# THE AUTHOR, when the page has one. @owner on /u/:handle, @pub on a project page — both are
+      set by the controller that renders them, and `defined?` is what keeps this partial usable on
+      /explore, which has neither. %>
+  <% author = (@pub&.handle if defined?(@pub)) || (@owner&.handle if defined?(@owner)) %>
+  <% if author %>
+    <%= link_to "@#{author}", public_user_path(author), class: "public-author" %>
+  <% else %>
+    <p class="public-intro muted">Projects makers have published — the files, the photos and the build log.</p>
+  <% end %>
+</header>

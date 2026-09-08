@@ -236,6 +236,20 @@ module Maker
       @photo_rows ||= Maker::ProjectPhotos.rows(listing:, entries:, page_nodes:)
     end
 
+    # THE COVER, PERMITTED (stage 4, S4-5; story 5.7). `Maker::Project#cover_node_id` derives one
+    # from the attachments when none is chosen, and a CHOSEN cover is a raw column nothing
+    # validates (ProjectsController#project_params) — so it can name a node outside the folder, a
+    # tombstone, or a file this project has no claim on at all. `permits?` is the ONE answer to "is
+    # this file public" and it answers here too: an unpermitted cover renders NOTHING rather than
+    # becoming the page's largest picture. nil is a real answer, hence `defined?` and not `||=`.
+    def cover_node
+      return @cover_node if defined?(@cover_node)
+
+      id = project.cover_node_id
+      node = id && owner.nodes.present.find_by(node_id: id)
+      @cover_node = (node if node && permits?(node))
+    end
+
     # Live nodes for everything the page shows that is not in the listing: entry photos and BOM
     # file targets. ONE query, regardless of how many of either there are.
     def page_nodes

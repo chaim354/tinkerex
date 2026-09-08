@@ -260,5 +260,66 @@ module Web
       get public_project_path("ada", theirs.slug)
       assert_response :not_found
     end
+
+    # --- 13. Stage 4, S4-5: the cover, on the card and as the page's hero ----------------
+
+    # THE READY COVER, ON THE MAKER'S OWN PAGE. /u/:handle is SINGLE-OWNER, which is the whole
+    # reason it gets covers and /explore does not: Maker::Previews::ThumbnailMap is per-user (a
+    # preview row belongs to its owner, and the port is asked in the owner's name — §14a), so one
+    # map serves this page and a cross-user list would need one per maker. This suite can assert the
+    # READY branch because it pins share and has real bytes; public_explore_test.rb, which is
+    # deliberately port-free, asserts the placeholder branch instead.
+    #
+    # `renderer_revision` IS ASKED, NEVER HARD-CODED. A row that is silently not current renders the
+    # placeholder, and this test would then fail for a reason that has nothing to do with the cover.
+    test "a maker's page shows each project's cover as a ready thumbnail" do
+      ready_cover!(@f[:pic])
+      @project.update_column(:cover_node_id, @f[:pic].node_id)
+
+      get public_user_path("ada")
+
+      assert_response :success
+      assert_select ".project-card .card-cover img"
+      assert_select "[data-controller=?]", "thumbs", 0
+    end
+
+    test "the public project page leads with its cover" do
+      @project.update_column(:cover_node_id, @f[:pic].node_id)
+
+      get path
+
+      assert_select ".project-hero img[src=?]",
+                    public_file_path("ada", @project.slug, @f[:pic].node_id)
+    end
+
+    test "a cover the project does not permit renders no hero at all" do
+      @project.update_column(:cover_node_id, @f[:outsider].node_id)
+
+      get path
+
+      assert_select ".project-hero", 0, "an unpermitted cover must not become a public picture"
+    end
+
+    # A READY, CURRENT THUMBNAIL FOR ONE NODE. Both halves are asked of the code that owns them
+    # rather than written as literals: `renderer_revision` from Enqueue (a row at the wrong build is
+    # not current, renders the placeholder, and would fail this test for the wrong reason) and
+    # `version_id` from the PORT.
+    #
+    # THE `content_hash` STAMP IS LOAD-BEARING. On share the port's content token IS that column
+    # (FileLayer::Share#file_info) and `create_node!` leaves it NULL, so without this line the token
+    # is nil, `Enqueue.current_preview?` refuses a blank version_id — deliberately, since `nil ==
+    # nil` would serve a coincidence of representation as an answer about content — and the map
+    # answers nil for a row that looks perfectly good in the database.
+    def ready_cover!(node)
+      node.update!(content_hash: "h-#{node.node_id}")
+      preview = @user.maker_previews.create!(
+        node_id: node.node_id, kind: "thumbnail", status: "ready",
+        version_id: FileLayer.current.stat(@user, node_id: node.node_id).content_token,
+        renderer_revision: Maker::Previews::Enqueue.revision_for_name(node.name, "thumbnail")
+      )
+      preview.asset.attach(io: StringIO.new(PublicFixture::PNG_BYTES), filename: node.name,
+                           content_type: "image/png")
+      preview
+    end
   end
 end
