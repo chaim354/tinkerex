@@ -56,7 +56,7 @@
     is worse than no panel (Maker::ProjectKind's own argument for ALWAYS; found in review). %>
 <section class="panel attachments-panel" id="attachments">
   <div class="panel-head">
-    <h2>Files</h2>
+    <h2><%= panel_title(@panel_layout, "attachments") %></h2>
     <%# The folder's own path, so the panel says WHERE it is showing, not just what. Nothing to
         link to when the folder ensure failed this render (an unmounted NAS, a bucket blip) — the
         upload control below already degrades the same way for the same reason. %>
@@ -94,6 +94,7 @@
                  parent_node_id: @upload_parent_node_id %>
     </div>
   </div>
+  <%= panel_intro(@panel_layout, "attachments") %>
 
   <%#
     THE FOLDER IS IN THE TRASH, AND THE PAGE SAYS SO (stage 4, S4-6; decision 2). Deleting a

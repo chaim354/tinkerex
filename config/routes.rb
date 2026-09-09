@@ -204,13 +204,25 @@ Rails.application.routes.draw do
     # what the redirect and the flash are about, and the door files nothing on a scannable backend
     # (docs/invariants/project-intake.md), so the project is context, not a target.
     resource :scan, only: :create, module: :projects
-    # WHICH PANELS THIS PROJECT'S PAGE SHOWS (stage 4, S4-7; story 6.5). SINGULAR: there is one
-    # layout per project and nothing to identify. PATCH writes it — a reorder (`move`) and a
-    # show/hide Save are two shapes on the one verb, because both edit the same one thing — and
-    # DELETE resets it by REMOVING the override, never by writing the current preset into the row.
-    # `controller_path` is "projects/panels", whose first segment is "projects", so
-    # ShellHelper::SECTIONS needs no entry and the rail still lights Projects.
+    # THE PAGE'S LAYOUT (stage 4, S4-7; story 6.5; the page editor 2026-09-09, spec
+    # docs/superpowers/specs/2026-09-09-page-editor-design.md). SINGULAR: one layout per project.
+    # PATCH writes it — `view[<key>]` is the inline toggle, `layout=<draft JSON>` is the editor's
+    # Save — and DELETE resets it by REMOVING the override, never by writing the current preset
+    # into the row. `controller_path` is "projects/panels", so ShellHelper::SECTIONS needs no entry.
     resource :panels, only: %i[update destroy], module: :projects
+    # THE EDITOR IS THE PAGE. `layout` renders projects#show in EDIT MODE — the same action, the
+    # same loads, one flag from these defaults — so page_query_budget_test.rb pins both renders with
+    # one budget. `layout/panel` renders ONE panel's body for a view the draft has chosen but not
+    # saved, through the same action for the same reason: the Files panel reads a dozen ivars
+    # #show loads, and nothing else can render it honestly.
+    get :layout, on: :member, to: "projects#show", defaults: { editing: "1" }, as: :edit_layout
+    get "layout/panel", on: :member, to: "projects#show", defaults: { editing: "1" }, as: :layout_panel
+    # THE DRAWER'S TWO CONVERSIONS, read-only and owner-scoped: draft in, YAML out; YAML in, draft
+    # with notes and errors out. Neither writes; Save is the panels door above.
+    resource :layout, only: [], module: :projects do
+      post :yaml
+      post :parse
+    end
     # THE README, AS A DOOR RATHER THAN A FILE (stage 4, S4-4; spec §2 D3). SINGULAR: a project has
     # one README and the door takes NO node id — it resolves the row from the project's own listing
     # (Maker::Readme.row_in), which is what confines the git-editing exception to documentation

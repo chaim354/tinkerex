@@ -1,0 +1,23 @@
+<%#
+  THE YAML DRAWER (2026-09-09; spec §2, §4). Hidden until "Edit as YAML"; beside the page, never
+  over it, so a drag on the left is watched on the right. The text is whatever the server rendered
+  for the current draft (Projects::LayoutsController#yaml); Apply posts it back (#parse) and the
+  controller adopts the draft that returns. Copy is the shared copy controller with its text
+  value kept current by the editor.
+%>
+<aside class="layout-drawer" hidden data-layout-editor-target="drawer" aria-label="Layout as YAML">
+  <div class="layout-drawer-head">
+    <b>Layout as YAML</b>
+    <span>
+      <button type="button" class="btn small" data-controller="copy" data-copy-text-value=""
+              data-action="copy#copy" data-layout-editor-target="copy">Copy</button>
+      <button type="button" class="btn small primary" data-action="layout-editor#apply">Apply</button>
+    </span>
+  </div>
+  <%# `input->yamlTyped` keeps Copy honest against hand-typed text: the copy value would otherwise be
+      the server's last render, not what is on screen (found in review). %>
+  <textarea class="layout-yaml" rows="24" spellcheck="false" aria-label="Layout YAML"
+            data-layout-editor-target="yaml" data-action="input->layout-editor#yamlTyped"></textarea>
+  <div class="layout-drawer-notes" data-layout-editor-target="notes" aria-live="polite"></div>
+  <p class="muted">Apply updates the page behind this drawer; nothing is saved until Save. A layout naming a folder this project lacks is applied without that entry, and says so here.</p>
+</aside>

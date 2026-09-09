@@ -359,6 +359,87 @@ module Maker
       assert_empty Maker::ProjectKind.offered_views(nil)
     end
 
+    # --- widths, titles, intros (2026-09-09, the page editor; spec §3) -------------------------
+
+    test "default_width: Files, Photos and every folder are full, the rest half — today's CSS rule as data" do
+      assert_equal "full", Maker::ProjectKind.default_width("attachments")
+      assert_equal "full", Maker::ProjectKind.default_width("photos")
+      assert_equal "full", Maker::ProjectKind.default_width(key(MODELS))
+      %w[schematics build_log tasks bom wiring releases sheets publish].each do |k|
+        assert_equal "half", Maker::ProjectKind.default_width(k), k
+      end
+    end
+
+    test "width_for answers the stored width, else the default, and filters junk" do
+      layout = Maker::ProjectKind.layout_for(
+        kind: "other",
+        overrides: { "widths" => { "tasks" => "full", "photos" => "half", key(MODELS) => "wide",
+                                   "nope" => "full", :bom => :full } },
+        folders: FOLDERS
+      )
+
+      assert_equal "full", layout.width_for("tasks")
+      assert_equal "half", layout.width_for("photos")
+      assert_equal "full", layout.width_for(:bom), "symbol keys and values are stringified"
+      assert_equal "full", layout.width_for(key(MODELS)), "a value outside WIDTHS falls back to the default"
+      refute layout.widths.key?("nope"), "a key outside the vocabulary is dropped"
+      assert_equal "half", layout.width_for("wiring")
+    end
+
+    test "titles and intros are plain one-line text, capped, and blank means absent" do
+      long = "x" * 100
+      layout = Maker::ProjectKind.layout_for(
+        kind: "other",
+        overrides: { "titles" => { key(MODELS) => "  Prints ", "tasks" => "", "nope" => "Gone", "bom" => long },
+                     "intros" => { key(MODELS) => "Line one\nline two", "photos" => "   " } },
+        folders: FOLDERS
+      )
+
+      assert_equal "Prints", layout.title_for(key(MODELS), "models")
+      assert_equal "Tasks", layout.title_for("tasks", "Tasks"), "an empty title is no title"
+      assert_equal "Prints", layout.titles[key(MODELS)]
+      refute layout.titles.key?("nope")
+      assert_equal Maker::ProjectKind::TITLE_MAX, layout.title_for("bom", "BOM").length
+      assert_equal "Line one line two", layout.intro_for(key(MODELS)), "newlines collapse to one line"
+      assert_nil layout.intro_for("photos")
+      assert_nil layout.intro_for("tasks")
+    end
+
+    test "junk in widths, titles and intros is filtered rather than raised on" do
+      layout = Maker::ProjectKind.layout_for(kind: "other",
+                                             overrides: { "widths" => "full", "titles" => [ 1 ], "intros" => 7 },
+                                             folders: FOLDERS)
+      assert_equal({}, layout.widths)
+      assert_equal({}, layout.titles)
+      assert_equal({}, layout.intros)
+    end
+
+    test "a stored key for a folder that is gone drops out of widths, titles and intros too" do
+      gone = key("d-vanished")
+      layout = Maker::ProjectKind.layout_for(kind: "other",
+                                             overrides: { "widths" => { gone => "full" }, "titles" => { gone => "X" },
+                                                          "intros" => { gone => "Y" } },
+                                             folders: FOLDERS)
+      refute layout.widths.key?(gone)
+      refute layout.titles.key?(gone)
+      refute layout.intros.key?(gone)
+      assert_equal "full", layout.width_for(gone), "the stale key still answers a default, never raises"
+    end
+
+    # PUBLISH IS ALWAYS LAST (2026-09-09, the page editor; spec decision 11). The page head's
+    # `#publish` anchor targets it and the editor pins it there, so an order stored by the retired
+    # chooser — which could move it anywhere — is normalised on the way OUT like every other stored
+    # oddity here, rather than left to render a pinned panel in the middle of the page.
+    test "publish is always last, whatever a stored order says" do
+      layout = Maker::ProjectKind.layout_for(kind: "other",
+                                             overrides: { "order" => %w[publish tasks attachments] },
+                                             folders: FOLDERS)
+
+      assert_equal "publish", layout.order.last
+      assert_equal 1, layout.order.count("publish"), "normalising must not duplicate it"
+      assert_equal (Maker::Project::PANELS + [ key(FIRMWARE), key(MODELS) ]).sort, layout.order.sort
+    end
+
     # --- the hero -----------------------------------------------------------------------------
 
     test "hero_roles is a preference list per kind, and other's is today's derivation" do

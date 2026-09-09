@@ -11,9 +11,10 @@
 <% if pub.entries.any? %>
   <section class="panel build-log-panel">
     <div class="panel-head">
-      <h2>Build log</h2>
+      <h2><%= panel_title(pub.layout, "build_log") %></h2>
       <span class="mono muted"><%= pluralize(pub.entries.size, "entry") %></span>
     </div>
+    <%= panel_intro(pub.layout, "build_log") %>
     <ol class="log-timeline">
       <% pub.entries.each do |entry| %>
         <%# THE ANCHOR THE FEED POINTS AT (stage 3, S3-6). Every feed item's link is this page plus

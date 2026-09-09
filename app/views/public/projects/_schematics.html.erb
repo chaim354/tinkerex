@@ -18,7 +18,8 @@
 %>
 <% if pub.kicad_rows.any? %>
   <section class="panel schematics-panel">
-    <h2>Schematics</h2>
+    <h2><%= panel_title(pub.layout, "schematics") %></h2>
+    <%= panel_intro(pub.layout, "schematics") %>
     <ul class="schematics-list">
       <% pub.kicad_rows.each do |row| %>
         <% ext = File.extname(row.node.name).downcase.delete(".") %>

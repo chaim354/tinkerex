@@ -29,9 +29,10 @@
 <% if rows.any? %>
   <section class="panel files-panel">
     <div class="panel-head">
-      <h2>Files</h2>
+      <h2><%= panel_title(pub.layout, "attachments") %></h2>
       <span class="mono muted"><%= pluralize(rows.size, "file") %></span>
     </div>
+    <%= panel_intro(pub.layout, "attachments") %>
 
     <table class="table public-files">
       <thead>

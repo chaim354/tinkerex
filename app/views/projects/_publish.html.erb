@@ -25,9 +25,10 @@
 %>
 <section class="panel publish-panel" id="publish">
   <div class="panel-head">
-    <h2>Publish</h2>
+    <h2><%= panel_title(@panel_layout, "publish") %></h2>
     <%= link_to "Preview", preview_project_path(project), class: "linkbtn small" %>
   </div>
+  <%= panel_intro(@panel_layout, "publish") %>
 
   <% if project.user.handle.blank? %>
     <%# A HANDLE BEFORE A URL: the public page lives at /u/<handle>/<slug>, so with none there is

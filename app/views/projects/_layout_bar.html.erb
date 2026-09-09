@@ -1,0 +1,26 @@
+<%#
+  THE EDIT MODE'S TOP BAR (2026-09-09; spec §2). Save is the ONE write: a real form to the panels
+  door whose hidden `layout` field the controller fills with the draft on submit. Cancel is a link
+  (nothing to undo server-side). Reset is the existing DELETE, after a confirm, because it removes
+  the override rather than editing the draft. The noscript line is the whole of the no-JavaScript
+  story (spec decision 8).
+%>
+<div class="layout-bar">
+  <div class="layout-bar-text">
+    <b>Editing page layout</b>
+    <span class="muted">Drag panels by their handle. Half-width panels pair up on wide screens. Nothing is saved until you click Save.</span>
+    <noscript><span class="layout-bar-noscript">The page editor needs JavaScript.</span></noscript>
+  </div>
+  <div class="layout-bar-actions">
+    <button type="button" class="btn small" data-action="layout-editor#toggleDrawer" aria-expanded="false">Edit as YAML</button>
+    <%= button_to "Reset to #{Maker::ProjectKind.label(@project.kind)} defaults", project_panels_path(@project),
+                  method: :delete, class: "linkbtn small",
+                  form: { data: { turbo_confirm: "Reset the page to its type's defaults? Order, hidden panels, views, widths, titles and intros all go back." } } %>
+    <%= link_to "Cancel", project_path(@project), class: "btn small" %>
+    <%= form_with url: project_panels_path(@project), method: :patch, class: "layout-save",
+                  data: { layout_editor_target: "form", action: "submit->layout-editor#save" } do %>
+      <%= hidden_field_tag :layout, "", data: { layout_editor_target: "draft" }, id: "layout-draft" %>
+      <%= submit_tag "Save", class: "btn small primary" %>
+    <% end %>
+  </div>
+</div>

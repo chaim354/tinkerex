@@ -4,7 +4,7 @@
 %>
 <section class="panel sheets-panel<%= " panel--quiet" if @sheets.empty? %>">
   <div class="panel-head">
-    <h2>Sheets</h2>
+    <h2><%= panel_title(@panel_layout, "sheets") %></h2>
     <%# text_field_tag, not f.text_field: this form has no model object, and the controller reads
         params.dig(:sheet, :name), so the field needs that exact nested name. %>
     <%= form_with url: project_sheets_path(@project), method: :post, class: "sheet-new-form" do %>
@@ -12,6 +12,7 @@
       <%= submit_tag "Add", class: "btn small" %>
     <% end %>
   </div>
+  <%= panel_intro(@panel_layout, "sheets") %>
 
   <%# QUIET AT ZERO (stage 4, S4-1): no sheets is the heading and the New sheet field, which
       already says what one is for -- the sentence under it named three uses and took a whole

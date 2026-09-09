@@ -182,7 +182,7 @@ module Web
 
       assert_equal %w[firmware models photos], css_select("section.folder-panel h2").map(&:text)
 
-      classes = css_select("div.project-panels > section.panel").map { |s| s["class"] }
+      classes = css_select("div.project-panels > div.panel-slot > section.panel").map { |s| s["class"] }
       assert_operator classes.index { |c| c.include?("files-panel") }, :<,
                       classes.index { |c| c.include?("folder-panel") },
                       "the folder root reads first, then its subfolders"
@@ -267,7 +267,7 @@ module Web
 
       get path
 
-      classes = css_select("div.project-panels > section.panel").map { |s| s["class"] }
+      classes = css_select("div.project-panels > div.panel-slot > section.panel").map { |s| s["class"] }
       assert_operator classes.index { |c| c.include?("folder-panel") }, :<,
                       classes.index { |c| c.include?("build-log-panel") }
     end
@@ -563,7 +563,7 @@ module Web
 
       get path
 
-      panels = css_select("div.project-panels > section.panel").map { |s| s["class"] }
+      panels = css_select("div.project-panels > div.panel-slot > section.panel").map { |s| s["class"] }
       assert_operator panels.index { |c| c.include?("build-log-panel") }, :<,
                       panels.index { |c| c.include?("files-panel") }
     end
@@ -600,6 +600,46 @@ module Web
       get path
 
       assert_select "section.releases-panel", count: 0
+    end
+
+    # --- the arrangement travels (2026-09-09, the page editor; spec §2) ---------------------------
+    #
+    # ITS OWN PROJECT, NOT THE SHARED FIXTURE. `seed_public_project!` seeds a photo in the folder AND
+    # an entry photo at the library root, so its Photos panel is never empty — and "no photos, no
+    # slot" is half of what this test exists to prove. A folder holding one file, one build-log
+    # entry and no image anywhere is exactly the shape that leaves Photos with nothing to render,
+    # built out of the same fixture helpers so it is still a real share library with real bytes.
+    test "a visitor sees the maker's titles, intros and widths, inside slots, and no slot for an empty panel" do
+      project = @user.maker_projects.create!(name: "Bench Rig", visibility: "public")
+      folder = make_project_folder!(@user, project)
+      models = make_dir!(@user, "models", folder)
+      make_file!(@user, "base.stl", models, body: "solid base")
+      project.build_log_entries.create!(user: @user, body: "Cut the base tonight.",
+                                        logged_at: Time.zone.local(2026, 5, 1, 12, 0, 0))
+      folder_key = Maker::ProjectKind.folder_key(models.node_id)
+      # BOTH WIDTHS ARE THE OPPOSITE OF THEIR DEFAULT (ProjectKind.default_width: a folder is full,
+      # build_log is half), so each assertion below fails if the width class is written from the
+      # default rather than from the maker's own layout.
+      project.update!(panels: { "titles" => { folder_key => "Prints", "build_log" => "Diary" },
+                                "intros" => { folder_key => "Sliced." },
+                                "widths" => { folder_key => "half", "build_log" => "full" } })
+
+      get public_project_path("ada", project.slug)
+
+      assert_response :success
+      assert_select "div.project-panels > div.panel-slot.panel--half > section.folder-panel h2", text: "Prints"
+      assert_select "section.folder-panel p.panel-intro", text: "Sliced."
+      assert_select "div.panel-slot.panel--full > section.build-log-panel h2", text: "Diary"
+      assert_select "div.panel-slot > section.photos-panel", { count: 0 }, "no photos, no slot"
+      # NOT `div.panel-slot:empty` (the plan's spelling): CSS `:empty` matches an element with no
+      # child NODES AT ALL, and a slot wrapping a partial that rendered nothing still holds the
+      # whitespace between its own tags — so that assertion passes whatever the page does. Counting
+      # slots against slots that hold a panel is the assertion with weight, which is the idiom
+      # project_layout_editor_test.rb already uses for the maker's page.
+      slots = css_select("div.project-panels > div.panel-slot")
+      assert_equal slots.size, css_select("div.project-panels > div.panel-slot > section.panel").size,
+                   "a panel that renders nothing must render no slot"
+      assert_operator slots.size, :>, 0, "and the count is not vacuously zero"
     end
   end
 end

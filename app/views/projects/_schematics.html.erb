@@ -18,7 +18,8 @@
 <% kicad_rows = @listing.all_rows.select { |row| kicad?(row.node.name) }.sort_by { |row| row.node.name } %>
 <% if kicad_rows.any? %>
   <section class="panel schematics-panel">
-    <h2>Schematics</h2>
+    <h2><%= panel_title(@panel_layout, "schematics") %></h2>
+    <%= panel_intro(@panel_layout, "schematics") %>
     <ul class="schematics-list">
       <% kicad_rows.each do |row| %>
         <% ext = File.extname(row.node.name).downcase.delete(".") %>

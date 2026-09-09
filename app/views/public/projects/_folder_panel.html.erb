@@ -27,12 +27,16 @@
 <% if sections.any? %>
   <section class="panel folder-panel" id="<%= key %>">
     <div class="panel-head">
-      <h2><%= dir.name %></h2>
+      <%# THE MAKER'S OWN TITLE, WITH THE FOLDER'S NAME AS THE DEFAULT (2026-09-09, the page
+          editor) — the same call projects/_folder_panel makes, so the two pages cannot disagree
+          about what this panel is called. %>
+      <h2><%= panel_title(pub.layout, key, dir.name) %></h2>
       <%# THE WHOLE SUBTREE, matching what this panel renders — Dir#subtree_file_count, the same
           number the maker's panel head shows. This dir's own files alone would read "(1)" over a
           folder whose nested sections list twenty. %>
       <span class="mono muted"><%= pluralize(dir.subtree_file_count, "file") %></span>
     </div>
+    <%= panel_intro(pub.layout, key) %>
 
     <% sections.each do |name, rows| %>
       <% if name %>

@@ -1,0 +1,15 @@
+<%#
+  THE PANEL ITSELF, BY KEY (2026-09-09, the page editor). The fixed branch is the interpolated
+  render projects/show.html.erb has always done, reached only for keys in Maker::Project::PANELS;
+  a folder key renders projects/_folder_panel with the Dir it names. Also what `layout/panel`
+  renders alone, for a view the draft has chosen — ProjectsController#show overrides
+  @panel_layout's view for that one key before rendering this.
+
+  Locals: key; extra (the locals map for wiring/releases/publish, an empty hash for every other key).
+%>
+<% if @panel_layout.folder?(key) %>
+  <%= render "projects/folder_panel", key:, view: @panel_layout.view_for(key),
+             dir: @listing.tree.find { |d| d.node_id == @panel_layout.folder_id(key) } %>
+<% else %>
+  <%= render "projects/#{key}", **extra %>
+<% end %>

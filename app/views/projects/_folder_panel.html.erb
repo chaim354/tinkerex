@@ -3,7 +3,7 @@
   decisions 1, 3 and 6). Until now every subfolder was a <details> section inside the Files panel
   and the whole page shared ONE tiles/list cookie, so a maker could not have their models as tiles
   and their firmware checkout as the Finder browser. A folder is a first-class panel now: the
-  chooser can hide it and move it (projects/_panel_chooser), and its VIEW is its own, persisted in
+  page editor can hide it, move it and size it (projects/_panel_slot), and its VIEW is its own, persisted in
   `panels["views"]` under this panel's key.
 
   Locals: dir (Maker::ProjectFolderListing::Dir), key ("folder:<node_id>"), view (one of
@@ -33,7 +33,10 @@
 <% empty = visible.empty? && dir.children.empty? %>
 <section class="panel folder-panel<%= " panel--quiet" if empty %>" id="<%= key %>">
   <div class="panel-head">
-    <h2><%= dir.name %></h2>
+    <%# THE FOLDER'S OWN NAME IS THE DEFAULT, NOT THE TITLE (2026-09-09, the page editor): only this
+        caller knows it — Layout holds node ids and PANEL_LABELS names no folder — so it is passed
+        in, and the maker's own title wins over it when there is one. %>
+    <h2><%= panel_title(@panel_layout, key, dir.name) %></h2>
     <span class="mono muted"><%= pluralize(count, "file") %></span>
     <%# WHERE IT IS, not just what — the Files panel head's own `panel-path` link, per folder. %>
     <%= link_to dir.path, files_path(folder: dir.node_id), class: "panel-path mono muted" %>
@@ -58,6 +61,7 @@
       </div>
     </div>
   </div>
+  <%= panel_intro(@panel_layout, key) %>
 
   <% if empty %>
     <%# QUIET, NOT OMITTED (S4-1's quiet-panel rule). The maker put this folder in the layout — it

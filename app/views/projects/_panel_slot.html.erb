@@ -1,0 +1,51 @@
+<%#
+  ONE PANEL'S SLOT (2026-09-09, the page editor; spec §3, §5). The grid item is this div, not the
+  panel's own section, so the width class comes from the layout without ten partials learning
+  about widths, and so edit mode can hang a control strip and a ghost state on any panel without
+  touching what the panel renders.
+
+  THE BODY IS CAPTURED FIRST. Photos and Schematics render NOTHING when they have nothing to show;
+  on the normal page an empty slot would still occupy a grid cell, so a blank body renders no slot
+  at all — exactly the page before slots existed. In edit mode the same blank body renders a
+  PLACEHOLDER instead, because a panel that cannot be seen cannot be arranged.
+
+  THE DATA ATTRIBUTES ARE THE DRAFT. layout_editor_controller.js reads its state off these slots
+  and writes changes back to them; there is no second copy of the layout in the page.
+  `data-view` is present only for a panel that offers views (Maker::ProjectKind.offered_views).
+
+  Locals: key; extra (passed through to projects/_panel_body).
+
+  EVERY LOCAL IS SPELLED `name: name`, NEVER THE `name:` SHORTHAND, when it is the LAST argument on
+  its line. Ruby's value-omitted shorthand keeps looking for a value across the newline, so a render
+  ending in a bare `extra:` swallowed the NEXT ERB line — the width assignment below — as that
+  argument's value: measured here, the panel body was handed the string "full" as its locals map.
+  It fails loudly in this shape and would pass silently in others.
+%>
+<% body = render "projects/panel_body", key: key, extra: extra %>
+<% width = @panel_layout.width_for(key) %>
+<% if @editing %>
+  <% hidden = @panel_layout.hidden?(key) %>
+  <% offered = Maker::ProjectKind.offered_views(key) %>
+  <div class="panel-slot panel--<%= width %><%= " panel-slot--hidden" if hidden %><%= " panel-slot--pinned" if key == "publish" %>"
+       data-layout-editor-target="slot" data-key="<%= key %>" data-hidden="<%= hidden %>" data-width="<%= width %>"
+       <% if offered.any? %>data-view="<%= @panel_layout.view_for(key) %>"<% end %>
+       data-title="<%= @panel_layout.titles[key] %>" data-intro="<%= @panel_layout.intros[key] %>"
+       data-always="<%= Maker::ProjectKind::ALWAYS.include?(key) %>">
+    <%= render "projects/panel_strip", key: key, hidden: hidden, width: width, offered: offered %>
+    <div class="panel-slot-body" data-layout-editor-target="body">
+      <% if body.blank? %>
+        <section class="panel panel--placeholder">
+          <h2><%= @panel_layout.title_for(key, @panel_labels.fetch(key)) %></h2>
+          <%# The intro too, where the maker set one, so the placeholder reads like the panel it
+              stands in for and the live edit has a line to update rather than one to invent. %>
+          <% if (intro = @panel_layout.intro_for(key)) %><p class="panel-intro muted"><%= intro %></p><% end %>
+          <p class="muted">Nothing here yet. This panel appears on the page once it has something to show.</p>
+        </section>
+      <% else %>
+        <%= body %>
+      <% end %>
+    </div>
+  </div>
+<% elsif body.present? %>
+  <div class="panel-slot panel--<%= width %>"><%= body %></div>
+<% end %>

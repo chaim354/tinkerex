@@ -24,9 +24,10 @@
 <% if pub.releases.any? %>
   <section class="panel releases-panel">
     <div class="panel-head">
-      <h2>Releases</h2>
+      <h2><%= panel_title(pub.layout, "releases") %></h2>
       <span class="mono muted"><%= pluralize(pub.releases.size, "release") %></span>
     </div>
+    <%= panel_intro(pub.layout, "releases") %>
 
     <% pub.releases.each_with_index do |release, index| %>
       <%# THE ANCHOR THE FEED POINTS AT (stage 3, S3-6) -- public/projects/_build_log carries the

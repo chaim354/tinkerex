@@ -57,6 +57,9 @@
                     params: { project_id: @project.id }, class: "btn small outline" %>
     <% end %>
     <%= link_to "Edit", edit_project_path(@project), class: "btn small" %>
+    <%# THE PAGE EDITOR (2026-09-09): the same page with the chrome on. A link, because entering
+        edit mode changes nothing until Save. %>
+    <%= link_to "Customise page", edit_layout_project_path(@project), class: "btn small customise-link" %>
     <% if @project.status == "archived" %>
       <%= button_to "Unarchive", unarchive_project_path(@project), method: :patch, class: "btn small" %>
     <% else %>
@@ -140,22 +143,42 @@
   each of those partials says so in its own header. Every value here is an ivar
   ProjectsController#show has already loaded, so building the map costs nothing, including for a
   panel this loop is about to skip.
+
+  THE SLOT (2026-09-09): see projects/_panel_slot.html.erb.
 %>
 <% panel_locals = {
-     "wiring"   => { project: @project, connections: @connections, editable: true },
+     "wiring"   => { project: @project, connections: @connections, editable: true, layout: @panel_layout },
      "releases" => { project: @project, releases: @releases, current_tokens: @release_tokens,
                      repos: @release_repos, editable: true },
      "publish"  => { project: @project, folder_path: (@listing.path if @listing&.available?) }
    } %>
-<div class="project-panels">
-  <% @panel_layout.visible.each do |key| %>
-    <% if @panel_layout.folder?(key) %>
-      <%= render "projects/folder_panel", key:, view: @panel_layout.view_for(key),
-                 dir: @listing.tree.find { |d| d.node_id == @panel_layout.folder_id(key) } %>
-    <% else %>
-      <%= render "projects/#{key}", **panel_locals.fetch(key, {}) %>
-    <% end %>
-  <% end %>
-</div>
+<%#
+  EVERY PANEL RENDERS INSIDE A SLOT (2026-09-09, the page editor; spec §3 and §5): projects/
+  _panel_slot wraps the panel in `div.panel-slot.panel--<width>` on the normal page, and in edit
+  mode adds the strip and the data attributes the layout_editor controller reads its draft from.
+  The width used to be a stylesheet rule naming three panel classes; it is the layout's answer now.
 
-<%= render "panel_chooser" %>
+  IN EDIT MODE THE LOOP IS `order`, NOT `visible`: a hidden panel renders ghosted in its place so
+  it can be dragged and shown again. Its data was not loaded (the controller skips a hidden
+  panel's queries), so it renders quiet — which is the honest ghost.
+%>
+<% if @editing %>
+  <div class="layout-editor" data-controller="layout-editor"
+       data-layout-editor-yaml-url-value="<%= yaml_project_layout_path(@project) %>"
+       data-layout-editor-parse-url-value="<%= parse_project_layout_path(@project) %>"
+       data-layout-editor-panel-url-value="<%= layout_panel_project_path(@project) %>">
+    <%= render "projects/layout_bar" %>
+    <div class="project-panels layout-editing" data-layout-editor-target="grid">
+      <% @panel_layout.order.each do |key| %>
+        <%= render "projects/panel_slot", key:, extra: panel_locals.fetch(key, {}) %>
+      <% end %>
+    </div>
+    <%= render "projects/layout_drawer" %>
+  </div>
+<% else %>
+  <div class="project-panels">
+    <% @panel_layout.visible.each do |key| %>
+      <%= render "projects/panel_slot", key:, extra: panel_locals.fetch(key, {}) %>
+    <% end %>
+  </div>
+<% end %>

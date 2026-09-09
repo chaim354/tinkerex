@@ -207,7 +207,7 @@ module Maker
     end
 
     # THE PAGE'S LAYOUT: this kind's preset with this project's own overrides on top (stage 4,
-    # S4-7). ProjectsController#show, projects/_panel_chooser and Maker::PublicProject all read
+    # S4-7). ProjectsController#show, projects/_panel_slot and Maker::PublicProject all read
     # THIS, so the maker's page and a visitor's cannot disagree about what is hidden.
     #
     # NOT MEMOIZED. It is array arithmetic over ten strings, and a memo on a mutable attribute is a

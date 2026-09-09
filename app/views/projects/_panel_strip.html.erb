@@ -1,0 +1,63 @@
+<%#
+  THE CONTROL STRIP ALONG A PANEL'S TOP EDGE, IN EDIT MODE (2026-09-09; spec §2). Every control is
+  a plain button the layout_editor controller handles — no forms, because nothing here writes:
+  the draft lives in the slot's data attributes until Save. Up/Down are always present, quiet, so
+  ordering is never mouse-only. An always-shown panel says so where the eye would be; Publish has
+  no Up/Down because it is always last (spec decision 11). The view switch renders only the views
+  THIS panel offers, from the same list the door validates against.
+
+  Locals: key, hidden, width, offered (Maker::ProjectKind.offered_views(key)).
+%>
+<% label = @panel_labels.fetch(key) %>
+<% always = Maker::ProjectKind::ALWAYS.include?(key) %>
+<div class="panel-strip">
+  <%# PUBLISH HAS NO HANDLE: it is always last (spec decision 11), so there is nothing to grab. The
+      controller's Sortable `filter` on the pinned slot is the second lock (found in review: with a
+      handle rendered, the filter was the only thing keeping Publish in place, and nothing pinned it). %>
+  <% unless key == "publish" %>
+    <span class="panel-strip-handle" title="Drag to move" aria-hidden="true">⋮⋮</span>
+  <% end %>
+  <span class="panel-strip-name">
+    <b data-layout-editor-target="name"><%= @panel_layout.title_for(key, label) %></b>
+    <% if @panel_layout.folder?(key) %><span class="mono muted"><%= label %>/</span><% end %>
+  </span>
+  <span class="panel-strip-controls">
+    <% unless key == "publish" %>
+      <button type="button" class="linkbtn small" data-action="layout-editor#up" aria-label="Move <%= label %> up">▲</button>
+      <button type="button" class="linkbtn small" data-action="layout-editor#down" aria-label="Move <%= label %> down">▼</button>
+    <% end %>
+    <% if always %>
+      <span class="muted panel-strip-always">always shown</span>
+    <% else %>
+      <button type="button" class="linkbtn small" data-action="layout-editor#toggleHidden"
+              data-layout-editor-target="eye"><%= hidden ? "Show" : "Hide" %></button>
+    <% end %>
+    <span class="view-toggle" role="group" aria-label="Width of <%= label %>">
+      <% Maker::ProjectKind::WIDTHS.each do |w| %>
+        <button type="button" class="toggle<%= " active" if width == w %>" data-action="layout-editor#width" data-width="<%= w %>"><%= w.capitalize %></button>
+      <% end %>
+    </span>
+    <%# Below the two-column breakpoint every panel stacks, so the switch still WORKS but shows
+        nothing until the window is wide — said here rather than left to be discovered (spec §2).
+        Hidden at 900px and up by components.css. %>
+    <span class="muted panel-strip-narrow">on wide screens</span>
+    <% if offered.any? %>
+      <span class="view-toggle" role="group" aria-label="View of <%= label %>">
+        <% offered.each do |v| %>
+          <button type="button" class="toggle<%= " active" if @panel_layout.view_for(key) == v %>" data-action="layout-editor#view" data-view="<%= v %>"><%= v.capitalize %></button>
+        <% end %>
+      </span>
+    <% end %>
+    <details class="panel-strip-edit">
+      <summary class="linkbtn small" aria-label="Rename <%= label %>">✎</summary>
+      <div class="panel-strip-popover">
+        <label class="field"><span>Title</span>
+          <input type="text" maxlength="<%= Maker::ProjectKind::TITLE_MAX %>" value="<%= @panel_layout.titles[key] %>"
+                 placeholder="<%= label %>" data-action="input->layout-editor#title"></label>
+        <label class="field"><span>Intro</span>
+          <input type="text" maxlength="<%= Maker::ProjectKind::INTRO_MAX %>" value="<%= @panel_layout.intros[key] %>"
+                 placeholder="One line under the heading" data-action="input->layout-editor#intro"></label>
+      </div>
+    </details>
+  </span>
+</div>

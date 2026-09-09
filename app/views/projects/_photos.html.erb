@@ -11,9 +11,10 @@
 <% if @photo_rows.any? %>
   <section class="panel photos-panel">
     <div class="panel-head">
-      <h2>Photos</h2>
+      <h2><%= panel_title(@panel_layout, "photos") %></h2>
       <span class="mono muted"><%= pluralize(@photo_rows.size, "photo") %></span>
     </div>
+    <%= panel_intro(@panel_layout, "photos") %>
     <div class="project-photos" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
       <% @photo_rows.each do |row| %>
         <%= link_to file_path(row.node_id), class: "photo-cell file-cell", title: row.node.name,
