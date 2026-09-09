@@ -33,6 +33,7 @@ class CssHygieneTest < ActiveSupport::TestCase
     .btn .linkbtn .chip .view-toggle .toolbar .breadcrumb .pager .page-head .panel .thumb
     .grid-card .badge dl.meta .empty .flash .file-menu .note-popover .filechooser
     table.files .folder-field-btn details.menu .tag-chips .tag-chip
+    .panel-slot .panel-strip .layout-bar .layout-drawer
   ].freeze
 
   def read(name) = SHEETS_DIR.join(name).read

@@ -32,6 +32,15 @@ pin "process" # @2.1.0
 # path. Without this, `import JSZip from "jszip"` 404s in the browser via buffer.js's dead import.
 pin "jszip-buffer-chunk" # jspm.io internal chunk for @jspm/core@2.1.0's browser buffer shim
 
+# SortableJS 1.15.7 — MIT — https://github.com/SortableJS/Sortable. Drag-to-reorder for the page
+# editor (layout_editor_controller.js). Vendored via `bin/importmap pin sortablejs@1.15.7`, which
+# jspm resolves to the package's own `modular/sortable.esm.js` — an ES module with a default export
+# and NO bare imports, so there is no transitive pin and no jspm shared chunk to patch (the jszip
+# notes above are the counterexample). Licence in vendor/javascript/LICENSE-sortablejs.md.
+# Hand-rolled pointer dragging was rejected for touch, auto-scroll and drop placement in a
+# two-column grid (spec 2026-09-09-page-editor §5).
+pin "sortablejs" # @1.15.7
+
 pin "lib/chunk_upload", to: "lib/chunk_upload.js"
 # The chooser modal, imported by BOTH filechooser_controller (the form field) and addon_controller
 # (which hands it to a bundle as ctx.chooseFolder). A host pin, so it is drawn into every addon's

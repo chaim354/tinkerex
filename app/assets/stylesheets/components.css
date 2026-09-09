@@ -114,6 +114,51 @@
   .panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin-bottom: 8px; }
   .panel-head h2 { margin: 0; }
   .panel-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+  /* --- The page editor (2026-09-09, spec 2026-09-09-page-editor §5): the slot, the strip along
+     a panel's top edge, the ghost state, the top bar and the YAML drawer. Components, so they hold
+     in both themes and the page sheet keeps only the grid rule (design-system rules 2 and 3).
+     `panel--full` / `panel--half` stay in pages/projects.css: they are the GRID's business (a
+     column span inside `.project-panels`' own media query), not a component's. --- */
+  .panel-slot { min-width: 0; }
+  .panel-intro { margin: -4px 0 10px; font-size: 13px; }
+  .panel-slot-body > .panel { border-top-left-radius: 0; border-top-right-radius: 0; }
+  .panel--placeholder p { margin: 0; }
+  .panel-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 4px 8px;
+                 border: 1px dashed var(--line-strong); border-bottom: 0;
+                 border-radius: var(--radius-panel) var(--radius-panel) 0 0; background: var(--raised); font-size: 12px; }
+  .panel-strip-handle { cursor: grab; color: var(--fg-muted); font-size: 14px; letter-spacing: -2px; user-select: none; }
+  .panel-strip-name { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .panel-strip-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-left: auto; }
+  .panel-strip .view-toggle .toggle { padding: 2px 8px; }
+  .panel-strip-narrow { font-size: 11px; }
+  @media (min-width: 900px) { .panel-strip-narrow { display: none; } }
+  .panel-strip-edit { position: relative; }
+  .panel-strip-edit > summary { list-style: none; cursor: pointer; }
+  .panel-strip-edit > summary::-webkit-details-marker { display: none; }
+  .panel-strip-popover { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; width: min(320px, 80vw); display: grid; gap: 8px;
+                         padding: 10px; background: var(--surface); border: 1px solid var(--line-strong);
+                         border-radius: var(--radius-panel); box-shadow: var(--shadow-float); }
+  .panel-slot--hidden .panel-slot-body { opacity: .45; }
+  .panel-slot--hidden .panel-strip { border-style: dotted; }
+  .panel-slot--ghost { opacity: .35; }
+  .layout-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px;
+                padding: 10px 12px; margin: 0 0 12px; border: 1px solid var(--accent); border-radius: var(--radius-panel); background: var(--accent-soft); }
+  .layout-bar-text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13px; }
+  .layout-bar-noscript { color: var(--danger); }
+  .layout-bar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .layout-bar-actions form { display: contents; }
+  .layout-editor--drawer { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; align-items: start; }
+  .layout-editor--drawer .layout-bar { grid-column: 1 / -1; }
+  .layout-drawer { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 8px; padding: 12px;
+                   border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
+  .layout-drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .layout-yaml { width: 100%; min-height: 320px; resize: vertical; font: 12px/1.45 var(--font-mono); color: var(--fg);
+                 background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-control); padding: 8px; }
+  .layout-note { margin: 0; font-size: 12px; }
+  .layout-note--error { color: var(--danger); }
+  .layout-note--ok { color: var(--ok); }
+  @media (max-width: 899px) { .layout-editor--drawer { grid-template-columns: 1fr; } .layout-drawer { position: static; } }
   .attachment-group-head, .tasks-group h3, .group-head {
     margin: 0 0 8px; font: 600 11px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted);
   }

@@ -347,10 +347,11 @@ class ShellTest < ApplicationSystemTestCase
       # at 375px. Renaming either would leave both branches silently unrun.
       previewed = false
       opened_readme = false
-      # STAGE 4, S4-7: the chooser is a row of ten panels with a checkbox and two arrows each,
-      # closed by default — so a sweep that only VISITED this page would measure a collapsed
-      # <details> and say nothing about the one layout on it most likely to overflow at 375px. The
-      # flag is this file's own rule for a branch gated on a path match: absence must be a failure.
+      # 2026-09-09, THE PAGE EDITOR (it was the panel chooser until then, and the argument survives
+      # the swap unchanged): the control strips live on a page of their own, so a sweep that only
+      # VISITED the project page would say nothing about the layout on it most likely to overflow at
+      # 375px. The flag is this file's own rule for a branch gated on a path match: absence must be
+      # a failure.
       opened_panels = false
       # THE SAME GATE-ON-A-PATH ARGUMENT ONCE MORE (stage 4, S4-6). The Files page's overflow menu
       # renders on the FOLDER view and nowhere else once `@folder` is what opens it, so a renamed
@@ -453,34 +454,20 @@ class ShellTest < ApplicationSystemTestCase
           find(".readme-editor summary").click
           assert_selector ".readme-editor .cm-editor"
           opened_readme = true
-          # STAGE 4, S4-7: THE PANEL CHOOSER, OPENED. One row per panel, each carrying a label (or
-          # a checkbox) and two arrow buttons that are `button_to`s — i.e. a <form> apiece — so the
-          # row is the widest thing this page asks a 375px viewport to lay out. `count:` is derived
-          # from Maker::Project::PANELS rather than written as ten, because the chooser lists the
-          # WHOLE order whatever the kind hides, and a literal would pin today's panel count.
-          #
-          # WHAT THIS COVERS AND WHAT IT DOES NOT, measured the way the public file table's column
-          # drops are measured above: deleting `flex-wrap: wrap` from `.panel-choice` in
-          # pages/projects.css leaves this GREEN. With the chooser open the document is 360px wide
-          # inside a 375px viewport and the widest row is 336px against a 336px client box, every
-          # row one 28px line — identical with the rule and without it, because
-          # `.panel-choice-name` is `flex: 1 1 auto` with `overflow-wrap: anywhere` and shrinks
-          # before the row can push anything out. So the wrap buys the label and the arrows a
-          # SECOND LINE on a narrower phone or a longer label, not overflow safety here. What this
-          # branch does cover is that the subtree is laid out at all rather than measured collapsed.
-          #
-          # THE COUNT IS THE FIXED PANELS PLUS THIS PROJECT'S FOLDERS since 2026-09-08: a depth-one
-          # subfolder is a first-class row in the chooser, with the same checkbox and the same two
-          # arrows, labelled with the folder's own name. Derived from both halves rather than
-          # written as twelve — a literal would pin today's panel count AND today's fixture.
-          find("details.panel-chooser > summary").click
+          # THE PAGE EDITOR, AT PHONE WIDTH (2026-09-09): the strip is the widest thing a project
+          # page asks a 375px viewport to lay out — a handle, two arrows, an eye, two segmented
+          # controls and the pencil, all on one wrapping flex row per panel. `count:` is derived
+          # from PANELS plus this project's folders, because edit mode renders the WHOLE order.
+          visit edit_layout_project_path(project)
           folder_rows = @user.nodes.where(parent_node_id: folder.node_id, kind: "dir").count
-          assert_operator folder_rows, :>=, 2, "the chooser's folder rows need folders to list"
-          assert_selector "li.panel-choice", count: Maker::Project::PANELS.size + folder_rows
-          assert_selector "li.panel-choice input[type=checkbox]", minimum: 1
-          assert_selector "li.panel-choice .panel-choice-moves form", minimum: 2
-          assert_selector ".panel-chooser-actions input[type=submit][value='Save panels']"
+          assert_operator folder_rows, :>=, 2, "the strips need folder panels to list"
+          assert_selector "div.panel-slot .panel-strip", count: Maker::Project::PANELS.size + folder_rows
+          assert_selector ".layout-bar input[type=submit][value='Save']"
           opened_panels = true
+          # BACK TO THE PAGE UNDER SWEEP: `no_sideways_scroll.call(path)` and the three shell
+          # assertions below run on whatever page this branch leaves behind, and the edit page is
+          # not the one this iteration is measuring.
+          visit path
         end
         if path == file_path(long.node_id)
           # STAGE 4, S4-8: BOTH LIST BRANCHES AND THE PHOTO GRID ARE ON THIS PAGE, or the overflow
@@ -515,7 +502,7 @@ class ShellTest < ApplicationSystemTestCase
       assert saw_repo_columns, "the repository panel's browser never mounted, so its overflow check measured an empty mount point"
       assert previewed, "the sweep never visited the preview, so its overflow check measured nothing"
       assert opened_readme, "the sweep never opened the README editor, so its overflow check measured a closed summary"
-      assert opened_panels, "the sweep never opened the panel chooser, so its overflow check measured a closed <details>"
+      assert opened_panels, "the sweep never reached the page editor, so the control strips were never laid out at 375px"
       assert visited_folder_view, "the sweep never reached the Files folder view, so its overflow menu was never measured"
       assert saw_connections, "the sweep never reached the connected file page, so the Connected panel's two layouts were never measured"
       assert saw_search_groups, "the sweep never reached the search page, so the Notes and Folders groups were never measured"
