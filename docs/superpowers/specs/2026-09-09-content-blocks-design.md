@@ -260,9 +260,18 @@ Every guard mutation-checked.
      `test/system/page_blocks_test.rb`'s `drag` resolves the target twice for that reason. A person
      never meets it: they watch the ghost move and release when it looks right.
 
+   - **Block Markdown resolves relative links and images against the project folder by the
+     README's rule**, through the one `Maker::Markdown.folder_resolver` (found in task C's review:
+     without it every relative link in a block silently became text, while the README beside it
+     linked). §11 used to list this as out of scope; it is in.
+   - **Save asks the server's block rules in the browser first** (`blockProblem` in
+     `layout_editor_controller.js`), because a refused draft re-renders the editor from the row and
+     every other unsaved change in the session goes with it. The server keeps its rules; the client
+     copy exists so the refusal names the block and loses nothing (found in task D's review). The
+     body is byte-counted like the server, not in the UTF-16 units `maxlength` would count.
+
 ## 11. Out of scope
 
 Video embeds (CSP work); reusing a block across projects; block text in the download bundle;
-resolving relative links inside block Markdown against the folder (the README does; blocks link as
-written); per-visitor visibility beyond hidden; a block picker for files outside the folder; undo
+per-visitor visibility beyond hidden; a block picker for files outside the folder; undo
 beyond Cancel; slices 3 to 6.
