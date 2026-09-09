@@ -410,6 +410,47 @@ module Maker
       assert_match(/more than #{Maker::ProjectBlock::CAP} blocks/, result.errors.join(" "))
     end
 
+    test "a duplicated entry that also misspells an attribute reports both, as slice 1 did" do
+      result = doc.parse("layout: 1\npanels:\n  - panel: tasks\n  - panel: tasks\n    hiden: true\n")
+      refute result.ok?
+      assert_includes result.errors, "Entry 2: unknown attribute “hiden”."
+      assert_includes result.errors, "Entry 2 names Tasks a second time."
+    end
+
+    test "an image block whose picture is not in the folder is left out of the text and said so in the header" do
+      d = Maker::LayoutDocument.new(blocks_layout, NAMES, blocks: rows, images: { IMG_FRONT => "photos/lamp-front.jpg" }, page: {})
+      text = d.to_yaml(project_name: "Lamp")
+      refute_includes text, "- block: image"
+      assert_includes text, "# image block cccccccccccc: its picture is outside the project folder or gone; left out of this text\n"
+      assert d.parse(text).ok?, "what it exports it can read back"
+    end
+
+    test "a block's width and hidden are applied and checked like a panel's" do
+      result = bdoc.parse("layout: 1\npanels:\n  - block: text\n    id: aaaaaaaaaaaa\n    width: half\n    hidden: true\n")
+      assert result.ok?, result.errors.inspect
+      assert_equal [ "half", true ], entry(result, bkey("aaaaaaaaaaaa")).values_at("width", "hidden")
+      assert_match(/width must be full or half/, bdoc.parse("layout: 1\npanels:\n  - block: text\n    id: aaaaaaaaaaaa\n    width: wide\n").errors.join(" "))
+      assert_match(/hidden must be true or false/, bdoc.parse("layout: 1\npanels:\n  - block: text\n    id: aaaaaaaaaaaa\n    hidden: yes please\n").errors.join(" "))
+    end
+
+    test "an unsaved block exports without an id, and a known id under another kind creates rather than converts" do
+      base = bdoc.from_draft("layout" => 1, "panels" => [ { "key" => "block:new-1", "kind" => "text", "body" => "unsaved", "hidden" => false, "width" => "full" } ]).draft
+      text = bdoc.to_yaml(base, project_name: "Lamp")
+      assert_includes text, "- block: text\n  body: unsaved\n"
+      refute_includes text, "id: new-1"
+
+      result = bdoc.parse("layout: 1\npanels:\n  - block: link\n    id: aaaaaaaaaaaa\n    url: https://a.example\n    title: A\n")
+      assert result.ok?, result.errors.inspect
+      assert_equal "text", entry(result, bkey("aaaaaaaaaaaa"))["kind"], "the text block is untouched"
+      assert result.draft["panels"].any? { |e| e["kind"] == "link" && e["key"].start_with?("block:new-") }, "a new link was created instead"
+    end
+
+    test "from_draft refuses a page that is not a mapping, and names a strange block key as a block" do
+      refute bdoc.from_draft("layout" => 1, "page" => "nope", "panels" => []).ok?
+      result = bdoc.from_draft("layout" => 1, "panels" => [ { "key" => "block:dddddddddddd", "kind" => "text", "body" => "x" } ])
+      assert_match(/unknown block “block:dddddddddddd”/, result.errors.join(" "))
+    end
+
     test "from_draft accepts new-keyed blocks and validates them like YAML" do
       result = bdoc.from_draft("layout" => 1, "page" => { "description" => " Two  lines\nhere ", "cover" => nil },
                                "panels" => [ { "key" => "block:new-1", "kind" => "link", "url" => "https://a.example", "title" => "A", "hidden" => false, "width" => "half" } ])

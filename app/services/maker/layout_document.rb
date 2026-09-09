@@ -44,6 +44,7 @@ module Maker
     BLOCK_FIELDS = { "text" => %w[heading body], "link" => %w[url title line], "image" => %w[file caption] }.freeze
     PAGE_KEYS = %w[description cover].freeze
     COVER_OUTSIDE_NOTE = "# cover: set from a file outside the project folder; the picker cannot name it".freeze
+    IMAGE_OUTSIDE_NOTE = "# image block %s: its picture is outside the project folder or gone; left out of this text".freeze
 
     Result = Data.define(:draft, :notes, :errors) do
       def ok? = errors.empty?
@@ -71,6 +72,7 @@ module Maker
     # --- export ------------------------------------------------------------------------------
 
     def to_yaml(draft = self.draft, project_name:)
+      dropped = []
       panels = draft["panels"].filter_map do |e|
         out = {}
         if e["kind"]
@@ -83,15 +85,21 @@ module Maker
             out["heading"] = e["heading"] if e["heading"]
             out["body"] = e["body"] if e["body"]
           when "link"
-            out["url"] = e["url"]
-            out["title"] = e["title"]
+            # GUARDED LIKE THE OTHER TWO ARMS (found in review): a row gone between two reads leaves
+            # a kind-less entry with no url, and a bare `url:` null re-applies as an error.
+            out["url"] = e["url"] if e["url"]
+            out["title"] = e["title"] if e["title"]
             out["line"] = e["line"] if e["line"]
           when "image"
             # TOTAL like the folder branch below: an image whose file has left the project folder
             # has no shareable name, so it is left out of the text rather than exported as a node
-            # id another project could not resolve.
+            # id another project could not resolve — and SAID in the header, like the cover, because
+            # a silent drop re-applied to this same page moved the block to the end (found in review).
             path = @images[e["file"].to_s]
-            next unless path
+            unless path
+              dropped << e["key"]
+              next
+            end
 
             out["file"] = path
             out["caption"] = e["caption"] if e["caption"]
@@ -131,6 +139,9 @@ module Maker
       # outside the project folder (a hero chosen before the folder moved), so there is no path to
       # write, and a reader who pastes this text elsewhere should know why their cover did not come.
       header += "#{COVER_OUTSIDE_NOTE}\n" if cover && !cover_path
+      dropped.each do |key|
+        header += format(IMAGE_OUTSIDE_NOTE, new_key?(key) ? "new" : key.delete_prefix(Maker::ProjectKind::BLOCK_PREFIX)) + "\n"
+      end
       header + body
     end
 
@@ -280,19 +291,24 @@ module Maker
         key, kind = source == :yaml ? key_from_yaml(raw, n, notes, errors, current, -> { next_new += 1 }) : key_from_draft(raw, n, notes, errors)
         next unless key
 
+        # THE ATTRIBUTE CHECK COMES BEFORE THE DUPLICATE GUARD, as it did in slice 1: an entry that
+        # is both a repeat and misspelled reports both, not one reason per round trip (found in
+        # review — the block branch had put it after the `next`).
+        allowed = if kind
+          (source == :yaml ? %w[block id] : %w[key kind]) + BLOCK_COMMON + BLOCK_FIELDS.fetch(kind)
+        else
+          (source == :yaml ? %w[panel folder] : %w[key]) + ATTRIBUTES
+        end
+        unknown = raw.keys - allowed
+        errors << "Entry #{n}: unknown attribute “#{unknown.first}”." if unknown.any?
         if listed.any? { |k, _| k == key }
           errors << "Entry #{n} names #{label(key)} a second time."
           next
         end
         base_entry = current[key] || { "key" => key, "kind" => kind, "hidden" => false, "width" => Maker::ProjectKind.default_width(key, block_kind: kind) }
         if kind
-          allowed = (source == :yaml ? %w[block id] : %w[key kind]) + BLOCK_COMMON + BLOCK_FIELDS.fetch(kind)
-          unknown = raw.keys - allowed
-          errors << "Entry #{n}: unknown attribute “#{unknown.first}”." if unknown.any?
           listed << [ key, apply_block(base_entry, raw, kind, n, notes, errors, new_block: current[key].nil?) ]
         else
-          unknown = raw.keys - (source == :yaml ? %w[panel folder] : %w[key]) - ATTRIBUTES
-          errors << "Entry #{n}: unknown attribute “#{unknown.first}”." if unknown.any?
           listed << [ key, apply(base_entry, raw, key, n, notes, errors) ]
         end
       end
@@ -367,7 +383,7 @@ module Maker
         # than created, so the draft can never name a row the layout does not know.
         return [ key, kind ] if new_key?(key) || @layout.block_kind(key) == kind
 
-        errors << "Entry #{n}: unknown panel “#{key}”."
+        errors << "Entry #{n}: unknown block “#{key}”."
         return nil
       end
       return [ key, nil ] if @layout.order.include?(key)
