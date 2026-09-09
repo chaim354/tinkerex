@@ -52,7 +52,10 @@ module Projects
     def document
       Maker::LayoutDocument.new(current_layout, @listing.tree.to_h { |dir| [ dir.node_id, dir.name ] },
                                 blocks: blocks, images: folder_images,
-                                page: { "description" => @project.description, "cover" => @project.cover_node_id })
+                                # THE STORED COLUMN, NOT THE READER: `Maker::Project#cover_node_id` derives a
+                                # cover from the attachments when none is chosen, and drafting that value
+                                # would write the guess back as an answer on every Save (found in review).
+                                page: { "description" => @project.description, "cover" => @project[:cover_node_id] })
     end
 
     def kind_label = Maker::ProjectKind.label(@project.kind)

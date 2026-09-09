@@ -24,7 +24,12 @@
     <% case block.kind %>
     <% when "text" %>
       <% if block.heading.present? %><h2><%= block.heading %></h2><% end %>
-      <div class="markdown"><%= Maker::Markdown.render(block.body.to_s) %></div>
+      <%# RELATIVE LINKS RESOLVE AGAINST THE PROJECT FOLDER THROUGH THE PUBLIC SEAM — the README's own
+          rule and its own lambda (`pub.file_url_for`), so a block links to a file exactly as the
+          README does; an unresolvable path is plain text (found in review). %>
+      <% base = Pathname.new(pub.listing.path.to_s) %>
+      <% index = pub.listing.path_index %>
+      <div class="markdown"><%= Maker::Markdown.render(block.body.to_s) { |href| (id = index[base.join(href).cleanpath.to_s]) && pub.file_url_for(id) } %></div>
     <% when "link" %>
       <%= link_to block.url, class: "block-link-card", rel: "noopener nofollow", target: "_blank" do %>
         <span class="block-link-title"><%= block.heading %></span>

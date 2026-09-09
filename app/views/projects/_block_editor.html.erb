@@ -49,7 +49,8 @@
       <span class="block-link-host mono muted"><%= block&.url.present? ? link_host(block.url) : "" %></span>
     </a>
   <% when "image" %>
-    <div class="image-picker" role="group" aria-label="Pick an image from the project folder">
+    <div class="image-picker" role="group" aria-label="Pick an image from the project folder"
+         data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
       <% if @folder_images.empty? %>
         <p class="muted">No images in the project folder yet.</p>
       <% end %>

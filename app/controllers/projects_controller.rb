@@ -518,7 +518,6 @@ class ProjectsController < ApplicationController
     @project = current_user.maker_projects.find_by!(slug: params[:id])
   end
 
-
   # THE PAGE-WIDE VIEW COOKIE IS GONE (2026-09-08, folder panels; spec decision 6). `project_view`
   # answered for every section at once, so a maker could not have their models as tiles and their
   # firmware checkout as the Finder browser; the view is now per PANEL and persisted in

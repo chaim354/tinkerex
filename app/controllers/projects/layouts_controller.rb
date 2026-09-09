@@ -15,6 +15,10 @@ module Projects
   # project-scoped for the same reason they are: the door must be the owner's alone.
   class LayoutsController < ApplicationController
     include LayoutScoped
+    # PREVIEW NEEDS THE PROJECT AND NOTHING ELSE: the shared filter also builds the folder listing,
+    # a files query a Markdown render does not want to pay per keystroke (found in review).
+    skip_before_action :set_project, only: :preview
+    before_action :set_project_only, only: :preview
 
     def yaml
       doc = document
@@ -46,6 +50,10 @@ module Projects
     end
 
     private
+
+    def set_project_only
+      @project = current_user.maker_projects.find_by!(slug: params[:project_id])
+    end
 
     # `params[:draft]` IS A STRING FROM A FORM FIELD AND Parameters FROM A JSON POST, and both must
     # work: the editor posts JSON, the integration test posts a form field.

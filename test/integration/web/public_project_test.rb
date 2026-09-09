@@ -665,6 +665,11 @@ module Web
       assert_response :success
       assert_select "div.panel-slot.panel--full > section.block-panel.block--text h2", text: "Why"
       assert_select "section.block-panel.block--text .markdown strong", text: "shade"
+      # A RELATIVE LINK RESOLVES THROUGH THE SEAM (found in review): the README's rule, the README's lambda.
+      linked = project.blocks.create!(user: @user, kind: "text", body: "See [side](photos/side.jpg) and [gone](photos/nope.jpg).")
+      get public_project_path(@user.handle, project.slug)
+      assert_select "section.block-panel[id=?] .markdown a[href=?]", linked.layout_key, public_file_path(@user.handle, project.slug, side.node_id), text: "side"
+      assert_select "section.block-panel[id=?] .markdown a", linked.layout_key, count: 1
       assert_select "section.block-panel.block--link a.block-link-card[href=?][rel='noopener nofollow']", "https://p.example"
       assert_select "section.block-panel.block--image[id=?] figure img", shown.layout_key, 1
       # AN IMAGE BLOCK INSIDE A HIDDEN FOLDER RENDERS NOTHING AT ALL, which is the derived-content

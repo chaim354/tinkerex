@@ -22,7 +22,13 @@
     <% case block.kind %>
     <% when "text" %>
       <% if block.heading.present? %><h2><%= block.heading %></h2><% end %>
-      <div class="markdown"><%= Maker::Markdown.render(block.body.to_s) %></div>
+      <%# RELATIVE LINKS RESOLVE AGAINST THE PROJECT FOLDER, the README's own rule with the folder's
+          root as the base: `[base](models/base.stl)` becomes the file's page, an unresolvable one
+          plain text — never a dangling href (found in review: with no resolver every relative link
+          silently became text, which was neither resolved nor "as written"). %>
+      <% base = Pathname.new(@listing.path.to_s) %>
+      <% index = @listing.path_index %>
+      <div class="markdown"><%= Maker::Markdown.render(block.body.to_s) { |href| (id = index[base.join(href).cleanpath.to_s]) && file_path(id) } %></div>
     <% when "link" %>
       <%# `target: "_blank"` WITH `rel: "noopener"`: a link block points off this site, and an
           off-site page opened without noopener can reach back through `window.opener`. The
@@ -35,7 +41,9 @@
       <% end %>
     <% when "image" %>
       <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
-      <figure class="block-figure">
+      <%# ITS OWN `thumbs` CONTROLLER, like the hero: the thumb-cell arm below polls a pending
+          preview, and nothing above this section mounts one (found in review). %>
+      <figure class="block-figure" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
         <%# `inline_image?`, NOT the role, and it is the hero's own split (tinkerex#285): a .heic is
             an image by role and a broken picture as raw bytes, so it takes the thumbnail branch. %>
         <% if Maker::FileAttachment.inline_image?(node.name) %>

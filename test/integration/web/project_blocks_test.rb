@@ -169,7 +169,7 @@ module Web
       draft = draft_with(
         { key: "block:new-1", kind: "link", hidden: false, width: "half", url: "https://p.example/x", title: "P", line: "l" },
         { key: keep.layout_key, kind: "text", hidden: true, width: "half", heading: "Kept", body: "new body" },
-        { key: "block:new-2", kind: "image", hidden: false, width: "full", file: @side.node_id, caption: "c" },
+        { key: "block:new-2", kind: "image", hidden: true, width: "full", file: @side.node_id, caption: "c" },
         page: { description: "Rewritten.", cover: @front.node_id }
       )
 
@@ -189,7 +189,7 @@ module Web
       assert_equal [ new_link.layout_key, keep.layout_key, new_image.layout_key, "attachments" ], order.first(4)
       refute order.any? { |k| k.include?("new-") }, "no placeholder key survives Save"
       refute_includes order, gone.layout_key, "and the destroyed block leaves the order with it"
-      assert_equal [ keep.layout_key ], @project.panels["hidden"]
+      assert_equal [ keep.layout_key, new_image.layout_key ].sort, @project.panels["hidden"].sort, "a hidden NEW block's key is rewritten in hidden too"
       assert_equal "half", @project.panels["widths"][new_link.layout_key]
       assert_equal "Rewritten.", @project.description
       assert_equal @front.node_id, @project.cover_node_id
@@ -245,6 +245,33 @@ module Web
       delete project_panels_path(@project)
       assert_equal 1, @project.blocks.count
       assert_equal "A lamp.", @project.reload.description
+    end
+
+    # THE COVER FREEZE (found in review): `Maker::Project#cover_node_id` derives a cover from the
+    # attachments when none is chosen. Drafting THAT and writing it back would turn the guess into a
+    # choice on every Save, and the hero would stop following the attachments.
+    test "a Save that says nothing new about the cover leaves a derived cover derived" do
+      @project.file_attachments.create!(user: @user, node_id: @front.node_id, role: "image", position: 0)
+      assert_nil @project.reload[:cover_node_id]
+      assert_equal @front.node_id, @project.cover_node_id, "derived from the attachment"
+
+      get edit_layout_project_path(@project)
+      assert_select "div.page-intro[data-cover='']", 1, "the draft carries the stored column, not the derived pick"
+      assert_select "div.page-intro .cover-current", text: "front.png"
+      assert_select "div.page-intro button.cover-pick.active[data-node-id=?]", @front.node_id, 1
+
+      patch project_panels_path(@project), params: { layout: draft_with(page: { description: "A lamp.", cover: nil }).to_json }
+      assert_redirected_to project_path(@project)
+      assert_nil @project.reload[:cover_node_id], "the column stays unset"
+      assert_equal @front.node_id, @project.cover_node_id, "and the cover keeps following"
+    end
+
+    test "a text block's relative link resolves against the project folder, and an unresolvable one is plain text" do
+      block!(kind: "text", body: "See [side](photos/side.jpg) and [gone](photos/nope.jpg).")
+      get project_path(@project)
+      assert_select "section.block--text .markdown a[href=?]", file_path(@side.node_id), text: "side"
+      assert_select "section.block--text .markdown a", count: 1
+      assert_select "section.block--text .markdown", text: /gone/
     end
 
     test "Save refuses a draft over the cap" do
