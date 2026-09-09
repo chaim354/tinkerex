@@ -81,7 +81,7 @@ module SchemaMap
     { "label" => "Models & projects", "group" => "maker",
       "tables" => %w[maker_models maker_print_runs maker_projects maker_build_log_entries
                      maker_sheets maker_shelves maker_filing_rules maker_connections
-                     maker_releases maker_release_files] },
+                     maker_project_blocks maker_releases maker_release_files] },
     { "label" => "Inventory & BOM", "group" => "maker",
       "tables" => %w[maker_boms maker_bom_lines maker_inventory_items
                      maker_inventory_transactions maker_suppliers maker_locations] },
@@ -171,6 +171,11 @@ module SchemaMap
     # and the content token the port reported at release time. Soft like every arrow into `nodes`
     # above — a file deleted after a release keeps its row, and the page says so.
     [ "maker_release_files.node_id",        "nodes.node_id",      "app", "released file" ],
+    # AN IMAGE BLOCK POINTS AT THE PICTURE IT SHOWS (2026-09-09, content blocks), and the pointer
+    # is a bare string like every one above it: the file can be deleted after the block was made,
+    # and the block KEEPS ITS ROW and renders nothing (spec §8) rather than being swept — the same
+    # softness `maker_file_links` and `maker_notes` rely on.
+    [ "maker_project_blocks.node_id",       "nodes.node_id",      "app", "pictures" ],
     # --- maker layer internals ----------------------------------------------------
     [ "maker_boms.project_id",                        "maker_projects.id",        "app", "BOM for" ],
     [ "maker_bom_lines.bom_id",                       "maker_boms.id",            "app", "line of" ],
@@ -179,6 +184,14 @@ module SchemaMap
     [ "maker_build_log_entries.project_id",           "maker_projects.id",        "app", "logs" ],
     [ "maker_sheets.project_id",                      "maker_projects.id",        "app", "sheet of" ],
     [ "maker_connections.project_id",                 "maker_projects.id",        "app", "wired in" ],
+    # A CONTENT BLOCK NAMES ITS PROJECT AND, IF IT IS AN IMAGE, ONE NODE (2026-09-09, content
+    # blocks). The project pointer is structural — the row is meaningless without it, and
+    # Maker::Project's `dependent: :destroy` is what test/models/structural_orphan_test.rb checks.
+    # The node pointer is SOFT like every arrow into `nodes` above: a tombstoned picture leaves the
+    # block's row alone and the page renders nothing for it (spec §8), which is why it is drawn
+    # here (the map exists to show references no constraint would notice) and NOT registered as a
+    # structural case — the orphan guard derives its set from edges whose parent is a real `.id`.
+    [ "maker_project_blocks.project_id",              "maker_projects.id",        "app", "placed on" ],
     [ "maker_releases.project_id",                    "maker_projects.id",        "app", "released from" ],
     [ "maker_releases.bom_id",                        "maker_boms.id",            "app", "BOM revision recorded" ],
     [ "maker_release_files.release_id",               "maker_releases.id",        "app", "file of" ],

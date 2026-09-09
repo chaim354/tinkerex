@@ -94,6 +94,10 @@ class User < ApplicationRecord
   has_many :maker_boms, class_name: "Maker::Bom", dependent: :destroy
   has_many :maker_bom_lines, class_name: "Maker::BomLine", dependent: :destroy
   has_many :maker_connections, class_name: "Maker::Connection", dependent: :destroy
+  # Content blocks (2026-09-09): the text, link and image blocks on a project's page. Destroyed
+  # with the project too (Maker::Project#blocks); this is the tenant sweep's own door, the one
+  # test/models/tenant_cleanup_test.rb asks for.
+  has_many :maker_project_blocks, class_name: "Maker::ProjectBlock", dependent: :destroy
   has_many :maker_releases, class_name: "Maker::Release", dependent: :destroy
   has_many :maker_release_files, class_name: "Maker::ReleaseFile", dependent: :destroy
   has_many :maker_addon_states, class_name: "Maker::AddonState", dependent: :destroy

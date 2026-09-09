@@ -127,6 +127,10 @@ class TenantCleanupTest < ActiveSupport::TestCase
       u.maker_projects.first.connections.create!(user: u, from_label: "Driver", to_label: "Motor")
     },
 
+    "maker_project_blocks" => ->(u) {
+      u.maker_project_blocks.create!(project: u.maker_projects.first, kind: "text", body: "x")
+    },
+
     "maker_releases" => ->(u) {
       u.maker_projects.first.releases.create!(user: u, version: "v0.1.0", published_at: Time.current)
     },
@@ -146,7 +150,7 @@ class TenantCleanupTest < ActiveSupport::TestCase
     maker_addon_states
     maker_print_runs maker_taggings maker_file_attachments maker_collection_items maker_repo_edits
     maker_build_log_entries maker_sheets maker_boms maker_inventory_items
-    maker_inventory_transactions maker_bom_lines maker_connections
+    maker_inventory_transactions maker_bom_lines maker_connections maker_project_blocks
     maker_releases maker_release_files
   ].freeze
 

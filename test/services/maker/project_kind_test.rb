@@ -440,6 +440,57 @@ module Maker
       assert_equal (Maker::Project::PANELS + [ key(FIRMWARE), key(MODELS) ]).sort, layout.order.sort
     end
 
+    # --- blocks (2026-09-09, content blocks; spec §4) --------------------------------------------
+
+    BLOCKS = [ [ "aaaaaaaaaaaa", "text" ], [ "bbbbbbbbbbbb", "link" ] ].freeze
+    def bkey(id) = Maker::ProjectKind.block_key(id)
+
+    test "block keys join the vocabulary, a block the stored order does not name lands FIRST, and kinds are kept" do
+      layout = Maker::ProjectKind.layout_for(kind: "other", overrides: nil, folders: FOLDERS, blocks: BLOCKS)
+      assert_equal [ bkey("aaaaaaaaaaaa"), bkey("bbbbbbbbbbbb"), "attachments" ], layout.order.first(3)
+      assert layout.block?(bkey("aaaaaaaaaaaa"))
+      refute layout.block?("attachments")
+      assert_equal "text", layout.block_kind(bkey("aaaaaaaaaaaa"))
+      assert_nil layout.block_kind("tasks")
+
+      stored = [ "attachments", bkey("bbbbbbbbbbbb"), "photos" ]
+      layout = Maker::ProjectKind.layout_for(kind: "other", overrides: { "order" => stored }, folders: FOLDERS, blocks: BLOCKS)
+      assert_equal bkey("aaaaaaaaaaaa"), layout.order.first, "the unnamed block goes first"
+      assert_equal [ "attachments", key(FIRMWARE), key(MODELS), bkey("bbbbbbbbbbbb"), "photos" ], layout.order[1, 5],
+                   "the named block keeps its stored place; folders splice after Files as before"
+    end
+
+    test "a block key whose row is gone drops out of every map, and default widths follow the kind" do
+      gone = bkey("cccccccccccc")
+      layout = Maker::ProjectKind.layout_for(kind: "other",
+                                             overrides: { "order" => [ gone, "attachments" ], "hidden" => [ gone ], "widths" => { gone => "half" } },
+                                             folders: FOLDERS, blocks: BLOCKS)
+      refute_includes layout.order, gone
+      refute_includes layout.hidden, gone
+      refute layout.widths.key?(gone)
+      assert_equal "full", layout.width_for(bkey("aaaaaaaaaaaa")), "text defaults to full"
+      assert_equal "half", layout.width_for(bkey("bbbbbbbbbbbb")), "link defaults to half"
+      assert_equal "full", Maker::ProjectKind.default_width(bkey("x"), block_kind: "image")
+      # THE FALLBACK ARM NEEDS ITS OWN ASSERTIONS OR NOTHING CARRIES IT (§15): every kind above is a
+      # HIT in BLOCK_DEFAULT_WIDTHS, so `fetch`'s default is only reached by a block key this layout
+      # has no kind for — the stale key three lines up, and any key asked about outside a layout.
+      # Mutation-checked: without these two lines, swapping that default to "half" leaves the whole
+      # file green.
+      assert_equal "full", Maker::ProjectKind.default_width(bkey("x")), "no kind at all falls back to full"
+      assert_equal "full", layout.width_for(gone), "a stale block key still answers a default, never raises"
+      assert_equal [], Maker::ProjectKind.offered_views(bkey("aaaaaaaaaaaa"))
+      assert layout.hidden?(bkey("aaaaaaaaaaaa")) == false
+    end
+
+    test "a block can be hidden and sized like a panel, and blocks default to an empty list" do
+      layout = Maker::ProjectKind.layout_for(kind: "other",
+                                             overrides: { "hidden" => [ bkey("aaaaaaaaaaaa") ], "widths" => { bkey("aaaaaaaaaaaa") => "half" } },
+                                             folders: FOLDERS, blocks: BLOCKS)
+      assert layout.hidden?(bkey("aaaaaaaaaaaa"))
+      assert_equal "half", layout.width_for(bkey("aaaaaaaaaaaa"))
+      assert_equal({}, Maker::ProjectKind.layout_for(kind: "other", overrides: nil).block_kinds)
+    end
+
     # --- the hero -----------------------------------------------------------------------------
 
     test "hero_roles is a preference list per kind, and other's is today's derivation" do

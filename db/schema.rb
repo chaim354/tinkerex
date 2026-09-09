@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_08_120100) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_09_200000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -324,6 +324,23 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_08_120100) do
     t.index ["user_id"], name: "index_maker_print_runs_on_user_id"
   end
 
+  create_table "maker_project_blocks", force: :cascade do |t|
+    t.text "body"
+    t.string "caption"
+    t.datetime "created_at", null: false
+    t.string "heading"
+    t.string "key", null: false
+    t.string "kind", null: false
+    t.string "line"
+    t.string "node_id"
+    t.integer "project_id", null: false
+    t.datetime "updated_at", null: false
+    t.string "url"
+    t.integer "user_id", null: false
+    t.index ["project_id", "key"], name: "index_maker_project_blocks_on_project_id_and_key", unique: true
+    t.index ["user_id", "project_id"], name: "index_maker_project_blocks_on_user_id_and_project_id"
+  end
+
   create_table "maker_projects", force: :cascade do |t|
     t.datetime "archived_at"
     t.boolean "autofile", default: true, null: false
@@ -545,6 +562,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_08_120100) do
   add_foreign_key "maker_addon_states", "users"
   add_foreign_key "maker_connections", "users"
   add_foreign_key "maker_filing_rules", "users"
+  add_foreign_key "maker_project_blocks", "users"
   add_foreign_key "maker_release_files", "users"
   add_foreign_key "maker_releases", "users"
   add_foreign_key "maker_repo_edits", "users"
