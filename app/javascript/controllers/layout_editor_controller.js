@@ -18,12 +18,35 @@ import Sortable from "sortablejs"
 // by Selenium, so the browser suite could not prove dragging at all with them, and the fallback is
 // also what makes touch work the same on every platform. The pinned Publish slot is filtered out
 // of dragging and refused as a drop target (spec decision 11).
+//
+// CONTENT BLOCKS EXTEND THE SAME IDEA AND ADD NO SECOND STORE (2026-09-09, content blocks; spec §2,
+// §3). A block's heading, body, URL, line, picture and caption are data attributes on its slot,
+// exactly as a panel's width and title are, so `draft()` is still one read over the slots and Save
+// still posts one thing. Two consequences worth stating because they are easy to undo:
+//
+//   * `entry()` EMITS EVERY FIELD OF A BLOCK'S KIND, empty ones included. Maker::LayoutDocument
+//     merges the posted entry into what the ROW holds, so an omitted attribute means "keep what is
+//     stored" — which is right for a paste and wrong for a maker who has just emptied the heading
+//     box. Stating the whole set is what makes clearing a field clear it. The empties cost nothing
+//     downstream: `apply_block` deletes an empty string, so the YAML drawer never shows `line: ''`.
+//   * `draft()` EMITS EVERY BLOCK SLOT. Save treats the draft as the whole truth of blocks (spec
+//     decision 3) and DESTROYS a row no entry names, so a block skipped here is a block deleted.
+//
+// A NEW BLOCK'S MARKUP IS THE SERVER'S: "Add block" clones one of projects/_block_templates'
+// `<template>`s rather than building a slot with `createElement`, so there is no second copy of the
+// slot, the strip and the editor to drift from the ones a saved block renders.
 const YAML_DEBOUNCE_MS = 200
 const TOAST_MS = 6000
+const NEW_KEY = /^block:new-(\d+)$/
+const TEMPLATE_KEY = "block:new-__N__"
 
 export default class extends Controller {
-  static targets = ["grid", "slot", "form", "draft", "drawer", "yaml", "notes", "copy"]
-  static values = { yamlUrl: String, parseUrl: String, panelUrl: String }
+  static targets = ["grid", "slot", "form", "draft", "drawer", "yaml", "notes", "copy",
+                    "addMenu", "blockTemplate", "page", "coverName", "preview", "linkCard"]
+  static values = {
+    yamlUrl: String, parseUrl: String, panelUrl: String, previewUrl: String,
+    blockCap: { type: Number, default: 40 }
+  }
 
   connect() {
     this.sortable = Sortable.create(this.gridTarget, {
@@ -47,12 +70,25 @@ export default class extends Controller {
   // --- the draft, read off the slots ---------------------------------------------------------
 
   draft() {
-    return { layout: 1, panels: this.slotTargets.map((slot) => this.entry(slot)) }
+    const d = { layout: 1, panels: this.slotTargets.map((slot) => this.entry(slot)) }
+    // The page intro is rendered in edit mode only, and a draft with no `page` mapping leaves the
+    // description and the cover exactly as they are (Maker::LayoutDocument#page_from answers nil).
+    if (this.hasPageTarget) {
+      d.page = { description: this.pageTarget.dataset.description || null, cover: this.pageTarget.dataset.cover || null }
+    }
+    return d
   }
 
   entry(slot) {
     const d = slot.dataset
     const e = { key: d.key, hidden: d.hidden === "true", width: d.width }
+    if (d.kind) {
+      e.kind = d.kind
+      if (d.kind === "text") { e.heading = d.heading || ""; e.body = d.body || "" }
+      if (d.kind === "link") { e.url = d.url || ""; e.title = d.linkTitle || ""; e.line = d.line || "" }
+      if (d.kind === "image") { e.file = d.file || ""; e.caption = d.caption || "" }
+      return e
+    }
     if (d.view) e.view = d.view
     if (d.title) e.title = d.title
     if (d.intro) e.intro = d.intro
@@ -182,6 +218,128 @@ export default class extends Controller {
     }
   }
 
+  // --- blocks ------------------------------------------------------------------------------------
+
+  // ADD LANDS THE BLOCK FIRST, WITH ITS EDITOR OPEN (spec §2 and decision 5): first is where the
+  // maker is looking, and dragging is how it gets anywhere else. The menu is closed by hand because
+  // a <details> stays open on a click inside itself, and menu_controller only closes it on a click
+  // OUTSIDE — which this one is not.
+  addBlock(event) {
+    const kind = event.currentTarget.dataset.kind
+    // THE CAP IS NEVER THIS NUMBER'S ALONE TO KEEP: projects/_layout_bar renders these buttons
+    // `disabled` at Maker::ProjectBlock::CAP, the document refuses a draft over it and Save refuses
+    // again. This is the third lock, so a drift between the two spellings costs nothing.
+    if (this.slotTargets.filter((s) => s.dataset.kind).length >= this.blockCapValue) return
+
+    // THE COUNTER TAKES THE HIGHEST KEY ON THE PAGE INTO ACCOUNT EVERY TIME, not only on the first
+    // add: an Apply mints its own `block:new-N` keys from the server (Maker::LayoutDocument's
+    // `next_new_index`), so a counter that only ever counted its own adds would hand the next one a
+    // key already on the page — two slots with one key, which Save refuses as a repeat.
+    this.newCounter = Math.max(this.newCounter || 0, this.highestNew()) + 1
+    const slot = this.mintSlot(kind, `block:new-${this.newCounter}`)
+    if (!slot) return
+
+    this.gridTarget.prepend(slot)
+    this.addMenuTarget.removeAttribute("open")
+    slot.querySelector("input, textarea")?.focus()
+    this.changed()
+  }
+
+  // One empty slot for this kind, cloned from the server's own template with the placeholder key
+  // substituted. Returns null when no template is on the page (read mode has none).
+  mintSlot(kind, key) {
+    const tpl = this.blockTemplateTargets.find((t) => t.dataset.kind === kind)
+    if (!tpl) return null
+
+    const wrapper = document.createElement("div")
+    wrapper.innerHTML = tpl.innerHTML.trim().replaceAll(TEMPLATE_KEY, key)
+    return wrapper.firstElementChild
+  }
+
+  highestNew() {
+    return Math.max(0, ...this.slotTargets.map((s) => Number((s.dataset.key.match(NEW_KEY) || [])[1] || 0)))
+  }
+
+  // A DRAFT EDIT, NOT A WRITE: Cancel (a reload) brings the block back and only Save makes it final.
+  deleteBlock(event) {
+    this.slotOf(event).remove()
+    this.changed()
+  }
+
+  // Every input in a block's editor names its field; the slot's data attribute IS the draft.
+  field(event) {
+    const slot = this.slotOf(event)
+    slot.dataset[event.currentTarget.dataset.field] = event.currentTarget.value
+    if (slot.dataset.kind === "link") this.drawLinkCard(slot)
+    this.changed()
+  }
+
+  // The card is pure arrangement of what was just typed, so it is drawn here rather than fetched —
+  // unlike the Markdown preview, which must be the server's renderer or it lies (spec §2).
+  drawLinkCard(slot) {
+    const card = slot.querySelector("[data-layout-editor-target=linkCard]")
+    if (!card) return
+
+    const url = slot.dataset.url || ""
+    card.href = /^https?:\/\//i.test(url) ? url : "#"
+    card.querySelector(".block-link-title").textContent = slot.dataset.linkTitle || "Title"
+    card.querySelector(".block-link-line").textContent = slot.dataset.line || ""
+    let host = ""
+    try { host = new URL(url).host } catch (_e) { host = "" }
+    card.querySelector(".block-link-host").textContent = host
+  }
+
+  pickImage(event) {
+    const slot = this.slotOf(event)
+    slot.dataset.file = event.currentTarget.dataset.nodeId
+    slot.querySelectorAll(".image-pick").forEach((b) => b.classList.toggle("active", b === event.currentTarget))
+    // The "picture is not in the folder any more" line has just stopped being true.
+    slot.querySelector(".block-missing")?.remove()
+    this.changed()
+  }
+
+  // THE TEXT IS KEPT WHATEVER THE PREVIEW DOES, the same rule a failed panel preview follows: the
+  // draft is the slot's `data-body`, the preview only shows it.
+  async previewMarkdown(event) {
+    const slot = this.slotOf(event)
+    const box = slot.querySelector("[data-layout-editor-target=preview]")
+    if (!box) return
+
+    try {
+      const res = await this.post(this.previewUrlValue, { markdown: slot.dataset.body || "" })
+      box.innerHTML = await res.text()
+      box.hidden = false
+    } catch (_e) {
+      this.toast("The preview did not render; the text is kept and applies on Save.")
+    }
+  }
+
+  // --- the page intro ------------------------------------------------------------------------------
+
+  // STRIPPED, NEVER COLLAPSED, and not even stripped here: the description's line breaks are
+  // content (the page renders it as the column holds it), so the raw value goes to the draft and
+  // Maker::LayoutDocument does the one strip.
+  description(event) {
+    this.pageTarget.dataset.description = event.currentTarget.value
+    this.changed()
+  }
+
+  pickCover(event) {
+    this.setCover(event.currentTarget.dataset.nodeId, event.currentTarget.title)
+    this.changed()
+  }
+
+  removeCover() {
+    this.setCover("", "No cover")
+    this.changed()
+  }
+
+  setCover(nodeId, name) {
+    this.pageTarget.dataset.cover = nodeId
+    this.pageTarget.querySelectorAll(".cover-pick").forEach((b) => b.classList.toggle("active", b.dataset.nodeId === nodeId))
+    if (this.hasCoverNameTarget) this.coverNameTarget.textContent = name
+  }
+
   // --- the drawer --------------------------------------------------------------------------------
 
   toggleDrawer(event) {
@@ -236,18 +394,61 @@ export default class extends Controller {
   async adopt(draft) {
     const byKey = new Map(this.slotTargets.map((s) => [s.dataset.key, s]))
     for (const e of draft.panels) {
-      const slot = byKey.get(e.key)
+      let slot = byKey.get(e.key)
+      // A BLOCK ENTRY WITH NO SLOT IS ONE THE PASTED TEXT CREATED: Maker::LayoutDocument mints
+      // `block:new-N` for a `block:` entry whose `id:` names no row of this project, so Apply has to
+      // be able to put a block on the page that was not there a moment ago — the same slot Add mints.
+      if (!slot && e.kind) {
+        slot = this.mintSlot(e.kind, e.key)
+        if (slot) byKey.set(e.key, slot)
+      }
       if (!slot) continue
+
       this.gridTarget.appendChild(slot)
       this.setHidden(slot, Boolean(e.hidden))
       this.setWidth(slot, e.width)
+      if (e.kind) {
+        this.adoptBlock(slot, e)
+        continue
+      }
       slot.dataset.title = e.title || ""
       slot.dataset.intro = e.intro || ""
       this.applyTitle(slot, slot.dataset.title)
       this.applyIntro(slot, slot.dataset.intro)
       if (e.view) await this.setView(slot, e.view)
     }
+    if (this.hasPageTarget && draft.page) this.adoptPage(draft.page)
     this.refreshYaml(true)
+  }
+
+  // THE INPUTS ARE REFILLED FROM THE DRAFT, not the other way round: the slot's data attributes are
+  // the state, and a box still showing what the maker typed before an Apply would be a second copy
+  // of the block disagreeing with the one Save posts.
+  adoptBlock(slot, e) {
+    const d = slot.dataset
+    d.heading = e.heading || ""
+    d.body = e.body || ""
+    d.url = e.url || ""
+    d.linkTitle = e.title || ""
+    d.line = e.line || ""
+    d.file = e.file || ""
+    d.caption = e.caption || ""
+    slot.querySelectorAll("[data-field]").forEach((input) => { input.value = d[input.dataset.field] || "" })
+    slot.querySelectorAll(".image-pick").forEach((b) => b.classList.toggle("active", b.dataset.nodeId === d.file))
+    if (d.kind === "link") this.drawLinkCard(slot)
+  }
+
+  adoptPage(page) {
+    const description = page.description || ""
+    this.pageTarget.dataset.description = description
+    const box = this.pageTarget.querySelector("textarea")
+    if (box) box.value = description
+    const cover = page.cover || ""
+    const picked = cover ? this.pageTarget.querySelector(`.cover-pick[data-node-id="${cover}"]`) : null
+    // A COVER FROM OUTSIDE THE FOLDER HAS NO BUTTON HERE AND NO NAME TO READ (spec §3): it keeps
+    // working and the card keeps saying what it already said, rather than inventing a name.
+    const current = this.hasCoverNameTarget ? this.coverNameTarget.textContent : ""
+    this.setCover(cover, cover ? (picked ? picked.title : current) : "No cover")
   }
 
   note(errors, notes) {
@@ -277,7 +478,9 @@ export default class extends Controller {
       credentials: "same-origin",
       headers: {
         "Content-Type": "application/json",
-        Accept: "application/json, text/plain",
+        // TEXT/HTML IS THE MARKDOWN PREVIEW'S ANSWER (Projects::LayoutsController#preview renders
+        // `html:`); the other two doors answer JSON and plain text.
+        Accept: "application/json, text/plain, text/html",
         "X-CSRF-Token": document.querySelector("meta[name=csrf-token]")?.content ?? ""
       },
       body: JSON.stringify(body)

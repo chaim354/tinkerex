@@ -231,6 +231,34 @@ Every guard mutation-checked.
 7. **No gaps by measured row spans, one mechanism on all three renders**, degrading to today's
    grid without JavaScript.
 8. **40 blocks, 20 KB a body**, caps stated and tested.
+9. **Settled in execution (2026-09-09):**
+   - **Save filters the merged draft to the blocks the BROWSER posted**
+     (`Projects::PanelsController#held_by_browser`). `Maker::LayoutDocument#merge` deliberately
+     KEEPS an entry the document does not name — that is decision 3's "never deleted by omission",
+     and it is what lets a layout pasted from a smaller project leave this one's panels alone. The
+     editor's Save is the opposite rule: it posts every slot it holds, so a block that is absent is
+     one whose slot was deleted. The two meet at the door, and only a BLOCK's absence carries that
+     meaning; a panel or folder the draft omits is untouched.
+   - **The export names a dropped image block in its header** (`IMAGE_OUTSIDE_NOTE`), as it already
+     did for a cover from outside the folder. An image whose file has left the folder has no
+     shareable path, and a silent drop re-applied to the same page moved that block to the end.
+   - **An `id:` updates only when the KIND matches too**; otherwise it creates. A pasted layout's id
+     can collide with an unrelated block here, and updating across kinds would rewrite it.
+   - **The editor's draft states every field of a block's kind, empty ones included**, so emptying
+     the heading box empties the heading. The document merges an ABSENT attribute into what the row
+     holds — right for a paste, wrong for a maker who has just cleared a box. Empty strings cost
+     nothing downstream: the merge deletes them, so the YAML drawer never shows `line: ''`.
+   - **`.page-intro` was already taken** — the trash and repository pages' one-line explanation in
+     `pages/preview.css` — and that one is `.head-note` now. Two meanings for one class name is the
+     pre-2026-09 `.btn` bug with a new face, and this one would have been silent and one-directional:
+     `pages` is declared after `components`, so the older rule's 72ch cap would have squeezed the new
+     card and nothing would have changed in the other direction. For the same layer reason, a text
+     block's `.markdown` drops the README's 360px scroll cap in `pages/projects.css` rather than
+     beside the other block rules in `components.css`.
+   - **The pack moves the grid under a drag in progress.** Lifting a slot re-spans every one below
+     it, so a browser test that drops onto coordinates resolved before the lift misses — silently.
+     `test/system/page_blocks_test.rb`'s `drag` resolves the target twice for that reason. A person
+     never meets it: they watch the ghost move and release when it looks right.
 
 ## 11. Out of scope
 
