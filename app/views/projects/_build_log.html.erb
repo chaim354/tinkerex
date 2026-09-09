@@ -1,5 +1,6 @@
 <section class="panel build-log-panel<%= " panel--quiet" if @entries.empty? %>">
-  <h2>Build log</h2>
+  <h2><%= panel_title(@panel_layout, "build_log") %></h2>
+  <%= panel_intro(@panel_layout, "build_log") %>
 
   <details class="composer">
     <summary class="btn small">Add entry</summary>

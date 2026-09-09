@@ -12,6 +12,11 @@
                    loads this in ONE query; this partial issues none of its own
     editable    -- true on the project page (this user's own project); false renders plain cells
                    and no composer
+    layout      -- the Maker::ProjectKind::Layout the page renders from (titles, intros). A LOCAL
+                   for the same reason `project` and `connections` are: this partial is the ONE
+                   panel both pages render, and each holds its layout under a different name --
+                   @panel_layout on the maker's page, `pub.layout` on the visitor's (2026-09-09,
+                   the page editor)
 
   A <form> CANNOT SPAN TABLE CELLS, so each row's <form> sits OUTSIDE the table -- one empty
   form_with per row (nothing inside the block but the CSRF/method-override hidden fields Rails
@@ -25,11 +30,12 @@
     The composer below is untouched: it is the one control an empty panel exists to offer. %>
 <section class="panel wiring-panel<%= " panel--quiet" if connections.empty? %>">
   <div class="panel-head">
-    <h2>Wiring</h2>
+    <h2><%= panel_title(layout, "wiring") %></h2>
     <% if connections.any? %>
       <span class="mono muted"><%= pluralize(connections.size, "connection") %></span>
     <% end %>
   </div>
+  <%= panel_intro(layout, "wiring") %>
 
   <% if connections.any? %>
     <% if editable %>

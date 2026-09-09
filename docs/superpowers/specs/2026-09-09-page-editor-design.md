@@ -171,7 +171,7 @@ a silently ignored misspelling is how a hand-typed `hiden: true` does nothing fo
 **Export** (draft → text) writes a two-line comment header naming the project, then every panel of
 the current layout in order, hidden ones included: `width` always (it is the thing people most
 want to share), `view` where the panel offers one, and `title`, `intro` and `hidden` only when set.
-Strings that need it are double-quoted.
+Strings are quoted where YAML needs it.
 
 **Apply** (text → draft) merges into the current draft rather than replacing it:
 
@@ -257,9 +257,8 @@ unaffected.
 - **Two tabs editing:** the last Save wins, whole. The column has no optimistic lock today and this
   slice adds none; a lost arrangement is recoverable by redoing it, and the YAML makes redoing
   cheap. Recorded, not solved.
-- **A failed panel re-render** (network, 5xx): the strip's view switch returns to the previous
-  value, a toast says the preview failed, and Save is still allowed — the draft holds the view
-  the maker chose.
+- **A failed panel re-render** (network, 5xx): the strip keeps the chosen view, the old body stays
+  on screen, a toast says the preview did not load, and Save writes the view the maker chose.
 - **Save fails validation** (a crafted or stale document): the edit page re-renders with the
   errors in the top bar and the draft intact.
 - **Security.** Titles and intros are plain text, escaped on both pages; the draft JSON is embedded
@@ -324,6 +323,15 @@ seen red before the slice is called done.
     was designed and offered; the owner chose the in-editor YAML for this slice. The file remains
     the natural mechanism for slice 5, and this format is written so the file can hold it
     unchanged.
+13. **Settled in execution (2026-09-09):** the strip sits along the TOP EDGE of the panel card, in the
+    slot wrapper, not inside the panel head — ten partials own their heads and the wrapper touches
+    none of them. A Save that fails validation returns to the editor with the errors as an alert
+    and does not retain the draft; the only reachable cause, a folder renamed mid-edit, is handled
+    by dropping the entry with a notice. A failed panel preview keeps the CHOSEN view in the draft
+    and says the preview did not load. Export quotes strings where YAML needs it, in Psych's own
+    style. The draft is read off the slots' data attributes rather than an embedded JSON blob.
+    Publish is normalised last on the way out of `layout_for`, so a row the retired chooser wrote
+    with Publish mid-page renders it last from now on.
 
 ## 9. Out of scope
 

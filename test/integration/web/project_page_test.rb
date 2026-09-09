@@ -578,5 +578,52 @@ end
       assert_response :success
       assert_select "section.attachments-panel", 1
     end
+
+    # --- titles and intros (2026-09-09, the page editor; spec §3) -----------------------------
+    #
+    # `folder_panel_project!` RATHER THAN `@project`: the setup's project has no subfolder at all,
+    # and half of what these two assert is that a FOLDER panel takes a title from the layout the
+    # same way a fixed one does — the case that needs the caller-supplied default (the folder's own
+    # name), which is the whole reason ProjectKind::Layout#title_for takes one.
+
+    test "a custom title replaces the heading and an intro renders under it, on fixed and folder panels" do
+      project = folder_panel_project!
+      models_key = folder_key("d-models")
+      project.update!(panels: { "titles" => { "tasks" => "To do", models_key => "Prints" },
+                                "intros" => { models_key => "Sliced for 0.2 mm." } })
+
+      get project_path(project)
+
+      assert_select "section.tasks-panel h2", text: "To do"
+      assert_select "section.folder-panel h2", text: "Prints"
+      assert_select "section.folder-panel p.panel-intro", text: "Sliced for 0.2 mm."
+      assert_select "section.tasks-panel p.panel-intro", count: 0
+      # THE PATH LINE IS UNTOUCHED BY A RETITLE: a folder panel says WHERE it is as well as what it
+      # is called, and a maker who renames the panel has not renamed the folder.
+      assert_select "section.folder-panel a.panel-path", text: /models/, minimum: 1
+    end
+
+    test "a title is escaped, never markup" do
+      @project.update!(panels: { "titles" => { "tasks" => "<b>x</b>" } })
+
+      get project_path(@project)
+
+      assert_select "section.tasks-panel h2 b", count: 0
+      assert_select "section.tasks-panel h2", text: "<b>x</b>"
+    end
+
+    # THE TURBO-STREAM REPLACE RE-RENDERS projects/_tasks WITH NO PAGE BEHIND IT (found here, not in
+    # the plan): Projects::TasksController#render_tasks sets @project/@tasks and nothing else, so
+    # @panel_layout is nil in that render and a partial reading it alone would either raise or
+    # quietly hand the heading back its default label — the maker adds a task and watches "To do"
+    # turn into "Tasks". Driven through the real door rather than reasoned about.
+    test "the tasks panel keeps the maker's title when a task add replaces it over turbo_stream" do
+      @project.update!(panels: { "titles" => { "tasks" => "To do" } })
+
+      post project_tasks_path(@project), params: { task: { title: "Print the base" } }, as: :turbo_stream
+
+      assert_response :success
+      assert_match(/<h2>To do<\/h2>/, response.body)
+    end
   end
 end

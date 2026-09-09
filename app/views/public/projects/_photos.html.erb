@@ -8,9 +8,10 @@
 <% if pub.photo_rows.any? %>
   <section class="panel photos-panel">
     <div class="panel-head">
-      <h2>Photos</h2>
+      <h2><%= panel_title(pub.layout, "photos") %></h2>
       <span class="mono muted"><%= pluralize(pub.photo_rows.size, "photo") %></span>
     </div>
+    <%= panel_intro(pub.layout, "photos") %>
     <div class="public-photos">
       <% pub.photo_rows.each do |row| %>
         <%# THE VIEW PAGE, NOT THE BYTES, since stage 4, S4-5 — the same answer _files.html.erb's name

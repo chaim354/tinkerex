@@ -177,9 +177,14 @@ module Web
     test "editable: false renders plain cells with no form, input or composer" do
       connection!(from_label: "Driver", to_label: "Motor", wire: "22 AWG", note: "twisted pair")
 
+      # `layout:` JOINED THE LOCALS ON 2026-09-09 (the page editor): the panel's heading is the
+      # maker's own title now, and this partial is the ONE panel both pages render, so the layout
+      # arrives as a local rather than off an ivar neither caller shares. A direct render is the
+      # third caller and has no page to take it from — `Maker::Project#panel_layout` is the same
+      # answer with no folders in the vocabulary, which is all a fixed key needs.
       html = ApplicationController.render(partial: "projects/wiring",
                                           locals: { project: @project, connections: @project.connections.to_a,
-                                                    editable: false })
+                                                    editable: false, layout: @project.panel_layout })
       doc = Nokogiri::HTML.fragment(html)
       assert_equal 0, doc.css("form, input, details.composer").size
       assert_equal [ "Driver", "Motor", "22 AWG", "twisted pair" ],

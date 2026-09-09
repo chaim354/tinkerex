@@ -10,8 +10,20 @@
   THE HTML REDIRECT IS STILL THERE, in the controller, as the no-JS path. Everything below is plain
   form markup — nothing here depends on Turbo being loaded.
 %>
+<%#
+  THE ONE PANEL THAT IS ALSO RENDERED WITH NO PAGE BEHIND IT (2026-09-09, the page editor).
+  Projects::TasksController#render_tasks replaces this element over turbo_stream and sets
+  @project/@tasks alone, so @panel_layout is nil in THAT render and this heading would lose the
+  maker's own title on every add — the panel says "To do" until the first task, then flips back to
+  "Tasks" with nothing going red. The layout is two columns off the row this partial already holds
+  (Maker::Project#panel_layout: no query, no listing, and `folders:` defaults to none, which is
+  every folder key dropped and no fixed key touched), so asking for it here keeps the two
+  renderings identical — the property render_tasks' own comment exists to protect.
+%>
+<% layout = @panel_layout || @project.panel_layout %>
 <section class="panel tasks-panel<%= " panel--quiet" if @tasks.empty? %>" id="project-tasks">
-  <h2>Tasks</h2>
+  <h2><%= panel_title(layout, "tasks") %></h2>
+  <%= panel_intro(layout, "tasks") %>
 
   <%# QUIET AT ZERO (stage 4, S4-1): three headed groups reading "(0)" is not information. The
       turbo-stream target, the error line and the add form below are unchanged, so an Add that

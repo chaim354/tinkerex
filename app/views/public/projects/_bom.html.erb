@@ -18,9 +18,10 @@
 <% if pub.bom_lines.any? %>
   <section class="panel bom-panel">
     <div class="panel-head">
-      <h2>Bill of materials</h2>
+      <h2><%= panel_title(pub.layout, "bom") %></h2>
       <span class="mono muted"><%= pluralize(pub.bom_lines.size, "line") %></span>
     </div>
+    <%= panel_intro(pub.layout, "bom") %>
     <table class="table public-bom">
       <thead>
         <tr>
