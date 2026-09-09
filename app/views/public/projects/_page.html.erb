@@ -170,6 +170,13 @@
   folder panel joins the OMITTED side rather than the maker's quiet one, because an empty heading
   invites someone to add the first file, which is exactly what a visitor cannot do.
 
+  A BLOCK KEY IS THE FOURTH BRANCH (2026-09-09, content blocks; spec §6), and it is the one that is
+  not in the map below for the opposite reason to `tasks`: a block IS published — it is what the
+  maker wrote for this page — but its key names a row rather than a partial, so it resolves through
+  `pub.blocks_by_key` exactly as a folder key resolves through `pub.folder_dir`. A HIDDEN block
+  never reaches this loop (`visible_panels`), and an image block whose picture is not permitted or
+  sits under a hidden folder renders nothing, so its slot is omitted like every other empty panel.
+
   A FOLDER KEY IS THE THIRD BRANCH (2026-09-08, folder panels; spec §5). Every DEPTH-ONE subfolder
   of the project folder is a panel of its own, in the maker's own order, with the view the maker
   chose — so `attachments` above is the folder ROOT alone (spec decision 4) and a hidden folder
@@ -192,13 +199,15 @@
   key, no width and no place in the order — so it stays a direct child of the grid, which
   pages/projects.css already sizes (`.project-panels > .panel, .project-panels > .panel-slot`).
 %>
-<div class="project-panels">
+<div class="project-panels" data-controller="masonry">
   <% pub.visible_panels.each do |key| %>
     <% body = capture do %>
       <% if key == "wiring" %>
         <% if pub.connections.any? %>
           <%= render "projects/wiring", project: project, connections: pub.connections, editable: false, layout: pub.layout %>
         <% end %>
+      <% elsif pub.layout.block?(key) %>
+        <%= render "public/projects/block_panel", pub: pub, key: key, block: pub.blocks_by_key[key] %>
       <% elsif pub.layout.folder?(key) %>
         <%= render "public/projects/folder_panel", pub: pub, key: key, dir: pub.folder_dir(key),
                    view: pub.layout.view_for(key) %>

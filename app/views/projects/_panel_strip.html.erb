@@ -6,9 +6,17 @@
   no Up/Down because it is always last (spec decision 11). The view switch renders only the views
   THIS panel offers, from the same list the door validates against.
 
-  Locals: key, hidden, width, offered (Maker::ProjectKind.offered_views(key)).
+  A BLOCK'S STRIP IS THE SAME STRIP MINUS TWO CONTROLS (2026-09-09, content blocks; spec §2): no
+  pencil, because a block's title and intro ARE its content and its own editor holds them, and no
+  view switch, because a block has no views to offer. It gains Delete, the one control a panel has
+  no use for — a panel can only be hidden, a block can be gone.
+
+  Locals: key, hidden, width, offered (Maker::ProjectKind.offered_views(key)); optionally label and
+  blockish, which projects/_block_templates passes because a TEMPLATE's key (`block:new-__N__`)
+  names no row — @panel_labels cannot answer for it and @panel_layout has never heard of it.
 %>
-<% label = @panel_labels.fetch(key) %>
+<% label = local_assigns.fetch(:label) { @panel_labels.fetch(key) } %>
+<% blockish = local_assigns.fetch(:blockish) { @panel_layout.block?(key) } %>
 <% always = Maker::ProjectKind::ALWAYS.include?(key) %>
 <div class="panel-strip">
   <%# PUBLISH HAS NO HANDLE: it is always last (spec decision 11), so there is nothing to grab. The
@@ -48,6 +56,14 @@
         <% end %>
       </span>
     <% end %>
+    <% if blockish %>
+      <%# DELETE IS A DRAFT EDIT, NOT A WRITE: the slot leaves the page at once, Cancel (a reload)
+          brings it back, and only Save makes it final — the same rule every other control on this
+          strip follows, which is why it is a plain button and not a button_to. %>
+      <button type="button" class="linkbtn small danger" data-action="layout-editor#deleteBlock"
+              aria-label="Delete <%= label %>">Delete</button>
+    <% end %>
+    <% unless blockish %>
     <details class="panel-strip-edit">
       <summary class="linkbtn small" aria-label="Rename <%= label %>">✎</summary>
       <div class="panel-strip-popover">
@@ -59,5 +75,6 @@
                  placeholder="One line under the heading" data-action="input->layout-editor#intro"></label>
       </div>
     </details>
+    <% end %>
   </span>
 </div>

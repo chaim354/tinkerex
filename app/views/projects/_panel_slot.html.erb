@@ -29,6 +29,16 @@
   <div class="panel-slot panel--<%= width %><%= " panel-slot--hidden" if hidden %><%= " panel-slot--pinned" if key == "publish" %>"
        data-layout-editor-target="slot" data-key="<%= key %>" data-hidden="<%= hidden %>" data-width="<%= width %>"
        <% if offered.any? %>data-view="<%= @panel_layout.view_for(key) %>"<% end %>
+       <%# A BLOCK'S CONTENT IS DRAFT STATE LIKE EVERY OTHER FIELD (2026-09-09, content blocks):
+           its text, its link and its picture live on the slot, so layout_editor_controller.js still
+           reads the whole document off these divs and Save posts one thing. `data-title` and
+           `data-intro` stay empty for a block — the strip offers neither, and a link's title is
+           `data-link-title`, its own content rather than a panel heading. %>
+       <% if (b = @panel_layout.block?(key) && @blocks_by_key[key]) %>
+         data-kind="<%= b.kind %>" data-heading="<%= b.heading %>" data-body="<%= b.body %>"
+         data-url="<%= b.url %>" data-link-title="<%= b.kind == "link" ? b.heading : "" %>"
+         data-line="<%= b.line %>" data-file="<%= b.node_id %>" data-caption="<%= b.caption %>"
+       <% end %>
        data-title="<%= @panel_layout.titles[key] %>" data-intro="<%= @panel_layout.intros[key] %>"
        data-always="<%= Maker::ProjectKind::ALWAYS.include?(key) %>">
     <%= render "projects/panel_strip", key: key, hidden: hidden, width: width, offered: offered %>

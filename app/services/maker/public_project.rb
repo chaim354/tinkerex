@@ -99,7 +99,29 @@ module Maker
     # value, so the page, the manifest, the feed and the CSV cannot disagree about an arrangement
     # the maker saved once. `listing.panel_folders` is in memory over the tree the constructor
     # already built (no query), which is what makes asking here free.
-    def layout = @layout ||= project.panel_layout(folders: listing.panel_folders)
+    #
+    # AND IT KNOWS THE BLOCKS (2026-09-09, content blocks): a block is a panel of the layout, so its
+    # key has to be in the vocabulary here or the maker's own order would be filtered down to the
+    # panels alone on the page a visitor sees — every block dropped, silently, by the totality rule.
+    def layout = @layout ||= project.panel_layout(folders: listing.panel_folders,
+                                                  blocks: blocks.map { |b| [ b.key, b.kind ] })
+
+    # THE PROJECT'S CONTENT BLOCKS, ONE QUERY, memoised for the page like everything else here. Read
+    # BEFORE `layout` needs them and indexed for the loop, one read for both — a block created
+    # between two reads would otherwise reach the template as a key with no row.
+    def blocks = @blocks ||= project.blocks.to_a
+
+    def blocks_by_key = @blocks_by_key ||= blocks.index_by(&:layout_key)
+
+    # AN IMAGE BLOCK IS DERIVED CONTENT (spec §6), so it answers to all three of the page's rules
+    # at once: the node must be LIVE, PERMITTED (`permits?` is the one answer to "is this file
+    # public"), and OUTSIDE a folder the maker hid — hiding a folder takes its pictures off this
+    # page, and an image block naming one would be the Photos leak with a caption under it. nil is
+    # the whole answer: the block then renders nothing at all, like a cover that is not permitted.
+    def block_image_node(block)
+      node = page_nodes[block.node_id]
+      node if node && permits?(node) && !hidden_file_ids.include?(node.node_id)
+    end
 
     def visible_panels = layout.visible
 
@@ -373,7 +395,13 @@ module Maker
               # of that is the batching -- `permits?` answers `visible_entry?` from
               # `visible_page_ids` for a node it finds here and with its own one-row query for one
               # it does not, the per-line cost the BOM's own comment records above.
-              releases.flat_map { |r| r.files.map(&:node_id) }
+              releases.flat_map { |r| r.files.map(&:node_id) } +
+              # AN IMAGE BLOCK'S PICTURE JOINS FOR THE SAME REASON A RELEASE FILE DOES (2026-09-09,
+              # content blocks): `block_image_node` resolves the node HERE and only then asks
+              # `permits?`, so a block left out of this list renders nothing at all — and the file
+              # is usually IN the listing, which is exactly what makes the omission invisible until
+              # someone looks at the page.
+              blocks.filter_map(&:node_id)
         ids.empty? ? {} : owner.nodes.present.where(node_id: ids.uniq).index_by(&:node_id)
       end
     end

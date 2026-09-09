@@ -641,5 +641,46 @@ module Web
                    "a panel that renders nothing must render no slot"
       assert_operator slots.size, :>, 0, "and the count is not vacuously zero"
     end
+
+    # --- content blocks travel too (2026-09-09; spec §6) ------------------------------------------
+    #
+    # ITS OWN PROJECT, for the reason the test above states, plus one of its own: this one needs a
+    # HIDDEN folder holding an image, which the shared fixture has no reason to carry.
+    test "a visitor sees text and link blocks, an image block only when its file is public, and never a hidden one" do
+      project = @user.maker_projects.create!(name: "Blocks Rig", visibility: "public")
+      folder = make_project_folder!(@user, project)
+      photos = make_dir!(@user, "photos", folder)
+      side = make_file!(@user, "side.jpg", photos, body: "x")
+      secret = make_dir!(@user, "secret", folder)
+      hidden_img = make_file!(@user, "hidden.jpg", secret, body: "x")
+      project.blocks.create!(user: @user, kind: "text", heading: "Why", body: "**shade**")
+      project.blocks.create!(user: @user, kind: "link", heading: "P", url: "https://p.example", line: "l")
+      shown = project.blocks.create!(user: @user, kind: "image", node_id: side.node_id, caption: "c")
+      in_hidden = project.blocks.create!(user: @user, kind: "image", node_id: hidden_img.node_id)
+      hidden_block = project.blocks.create!(user: @user, kind: "text", body: "hidden")
+      project.update!(panels: { "hidden" => [ hidden_block.layout_key, Maker::ProjectKind.folder_key(secret.node_id) ] })
+
+      get public_project_path("ada", project.slug)
+
+      assert_response :success
+      assert_select "div.panel-slot.panel--full > section.block-panel.block--text h2", text: "Why"
+      assert_select "section.block-panel.block--text .markdown strong", text: "shade"
+      # A RELATIVE LINK RESOLVES THROUGH THE SEAM (found in review): the README's rule, the README's lambda.
+      linked = project.blocks.create!(user: @user, kind: "text", body: "See [side](photos/side.jpg) and [gone](photos/nope.jpg).")
+      get public_project_path(@user.handle, project.slug)
+      assert_select "section.block-panel[id=?] .markdown a[href=?]", linked.layout_key, public_file_path(@user.handle, project.slug, side.node_id), text: "side"
+      assert_select "section.block-panel[id=?] .markdown a", linked.layout_key, count: 1
+      assert_select "section.block-panel.block--link a.block-link-card[href=?][rel='noopener nofollow']", "https://p.example"
+      assert_select "section.block-panel.block--image[id=?] figure img", shown.layout_key, 1
+      # AN IMAGE BLOCK INSIDE A HIDDEN FOLDER RENDERS NOTHING AT ALL, which is the derived-content
+      # rule the hero already follows: hiding a folder takes its pictures off this page, and a
+      # block naming one would be the Photos leak with a caption under it.
+      assert_select "section.block-panel.block--image[id=?]", in_hidden.layout_key, count: 0
+      assert_select "section.block-panel[id=?]", hidden_block.layout_key, count: 0
+      slots = css_select("div.project-panels > div.panel-slot")
+      assert_equal slots.size, css_select("div.project-panels > div.panel-slot > section.panel").size
+      assert_operator slots.size, :>, 0, "and the count is not vacuously zero"
+      assert_no_private_urls
+    end
   end
 end

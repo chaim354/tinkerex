@@ -1,0 +1,59 @@
+<%#
+  A CONTENT BLOCK, AS A VISITOR SEES IT (2026-09-09, content blocks; spec §6). The maker's own
+  projects/_block_panel renders the same three kinds; this is its twin on the other side of the
+  public seam, and the differences are the whole reason it is a second file rather than a shared
+  partial with a flag:
+
+    * THE LINK CARRIES `nofollow` AS WELL AS `noopener`. A published page is a page strangers reach
+      from the internet, and an unmoderated outbound link on one is exactly what a search engine
+      reads as an endorsement the maker never made. On the maker's own page there is nobody to
+      endorse anything to.
+    * THE PICTURE COMES THROUGH THE PUBLIC SEAM — `pub.file_url_for` and `pub.preview_url_for`,
+      never `blob_file_path` or `preview_src`. A blob URL is unauthenticated and never expires
+      (tinkerex#278), so the picture would outlive the publication; the seam guard's third arm
+      (test/architecture_invariants_test.rb) refuses both spellings in this namespace.
+    * THE NODE COMES FROM `pub.block_image_node`, which is live, permitted AND outside a hidden
+      folder — three conditions the maker's page has no reason to ask. It renders NOTHING when the
+      answer is nil, and public/projects/_page's captured body then leaves no slot either.
+
+  Locals: pub (Maker::PublicProject), key (the section's id), block (a Maker::ProjectBlock).
+%>
+<% node = block.kind == "image" ? pub.block_image_node(block) : nil %>
+<% unless block.kind == "image" && node.nil? %>
+  <section class="panel block-panel block--<%= block.kind %>" id="<%= key %>">
+    <% case block.kind %>
+    <% when "text" %>
+      <% if block.heading.present? %><h2><%= block.heading %></h2><% end %>
+      <%# RELATIVE LINKS RESOLVE AGAINST THE PROJECT FOLDER THROUGH THE PUBLIC SEAM — the README's own
+          rule and its own lambda (`pub.file_url_for`), so a block links to a file exactly as the
+          README does; an unresolvable path is plain text (found in review). %>
+      <div class="markdown"><%= Maker::Markdown.render(block.body.to_s, &Maker::Markdown.folder_resolver(pub.listing.path, pub.listing.path_index) { |id| pub.file_url_for(id) }) %></div>
+    <% when "link" %>
+      <%= link_to block.url, class: "block-link-card", rel: "noopener nofollow", target: "_blank" do %>
+        <span class="block-link-title"><%= block.heading %></span>
+        <% if block.line.present? %><span class="block-link-line muted"><%= block.line %></span><% end %>
+        <span class="block-link-host mono muted"><%= link_host(block.url) %></span>
+      <% end %>
+    <% when "image" %>
+      <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
+      <figure class="block-figure">
+        <%# `inline_image?`, NOT the role, the same split the hero makes: a .heic is an image by
+            role and a broken picture as raw bytes, so it takes the thumbnail branch. NO POLL here —
+            /files/thumbnails is session-authed, so a pending thumbnail reads as a static badge
+            (files/_thumb plus pages/public.css) rather than a spinner that turns forever. %>
+        <% if Maker::FileAttachment.inline_image?(node.name) %>
+          <%= link_to pub.view_url_for(node.node_id) do %>
+            <%= image_tag pub.file_url_for(node.node_id), class: "block-image",
+                          alt: block.caption.presence || node.name %>
+          <% end %>
+        <% else %>
+          <%= link_to pub.view_url_for(node.node_id), class: "block-thumb" do %>
+            <%= render "files/thumb", thumb: pub.thumbs.thumb(node.node_id), ext_label: ext,
+                       url: pub.preview_url_for(node.node_id) %>
+          <% end %>
+        <% end %>
+        <% if block.caption.present? %><figcaption class="muted"><%= block.caption %></figcaption><% end %>
+      </figure>
+    <% end %>
+  </section>
+<% end %>

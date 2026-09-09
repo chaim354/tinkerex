@@ -54,7 +54,20 @@
      ::Layout#width_for) rather than this sheet naming three panel classes. `.panel` stays in the
      rule for the public page's repo cards, which render outside a slot. */
   .project-panels > .panel, .project-panels > .panel-slot { min-width: 0; }
-  @media (min-width: 900px) { .project-panels { grid-template-columns: 1fr 1fr; } .project-panels > .panel-slot.panel--full { grid-column: 1 / -1; } }
+  @media (min-width: 900px) {
+    .project-panels { grid-template-columns: 1fr 1fr; }
+    .project-panels > .panel-slot.panel--full { grid-column: 1 / -1; }
+    /* NO GAPS (2026-09-09, content blocks; spec §7). masonry_controller.js adds `.masonry` and
+       gives every child a row span of its measured height plus the gap, so a short half-width
+       panel's neighbour below starts right under it instead of waiting for the tall column.
+       THREE DECLARATIONS AND NOTHING ELSE, and each is load-bearing: one-pixel rows are the unit
+       the spans count in; the row gap goes to zero because the spans already include it; and
+       `align-items: start` is what stops a child stretching to fill its span — without it the
+       stretched height would feed the next measurement and every panel would grow without end.
+       The rule lives INSIDE the breakpoint, so below it the controller clears the class and the
+       grid is exactly today's single column. */
+    .project-panels.masonry { grid-auto-rows: 1px; row-gap: 0; align-items: start; }
+  }
 
   /* --- Folder panels (2026-09-08): one per depth-one subfolder of the project's folder, each with
      its own view. Full width by default — Maker::ProjectKind.default_width, since the page editor.
@@ -136,6 +149,14 @@
   .markdown pre { padding: 8px 10px; border-radius: var(--radius-control); background: var(--raised); overflow-x: auto; }
   .markdown code { font-family: var(--font-mono); font-size: 0.9em; }
   .markdown img { max-width: 100%; }
+  /* A TEXT BLOCK IS THE PAGE'S OWN PROSE, NOT A README PREVIEW (2026-09-09, content blocks): the
+     360px cap and its scrollbar are right for a repository's README inside a card and wrong for
+     something the maker wrote to be read here. It lives in THIS sheet, not beside the other block
+     rules in components.css, and that is not a slip: across cascade LAYERS specificity is never
+     consulted and `pages` is declared after `components`, so `.block-panel .markdown` there would
+     lose to the bare `.markdown` above however specific it looked (the same trap the folder-panel
+     view toggle records). */
+  .block-panel .markdown, .block-preview.markdown { max-height: none; overflow: visible; margin-top: 0; }
 
   /* --- Generated (stage 3, S3-1): the tile keeps its own thumbnail's shape; the meta line below
      it is always visible (unlike a Linked tile's hover corner), because naming the tool and

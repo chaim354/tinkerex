@@ -159,6 +159,53 @@
   .layout-note--error { color: var(--danger); }
   .layout-note--ok { color: var(--ok); }
   @media (max-width: 899px) { .layout-editor--drawer { grid-template-columns: 1fr; } .layout-drawer { position: static; } }
+
+  /* --- Content blocks (2026-09-09, spec 2026-09-09-content-blocks §2, §3): the three kinds as both
+     pages draw them, the editors edit mode puts in their place, and the page-intro card above the
+     grid. Components, not page rules, because the visitor's page renders the same block markup from
+     its own partials — a rule in pages/projects.css would style the maker's copy only.
+
+     `.image-pick` IS ONE CONTROL WITH TWO CALLERS: an image block's picker and the cover's picker
+     (which adds `.cover-pick` to carry a different action, not a different look). Its `.active` is
+     the accent outline, so "which picture is this block's" is answerable at a glance. --- */
+  .layout-add .menu-list { min-width: 160px; }
+  .layout-add-cap { max-width: 200px; margin: 4px 6px 2px; font-size: 11px; white-space: normal; }
+  .block-panel { display: flex; flex-direction: column; gap: 8px; }
+  .block-panel > h2 { margin: 0; }
+  .block-link-card { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; color: var(--fg);
+                     background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel);
+                     text-decoration: none; }
+  .block-link-card:hover { border-color: var(--accent); text-decoration: none; }
+  .block-link-title { font-weight: 600; }
+  .block-link-line { font-size: 12px; }
+  .block-link-host { font-size: 11px; font-family: var(--font-mono); overflow-wrap: anywhere; }
+  .block-figure { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: 0; }
+  .block-image { max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: var(--radius-panel); }
+  .block-thumb { display: inline-flex; }
+  .block-thumb .thumb { width: 160px; height: 160px; }
+  .block-figure figcaption { font-size: 12px; }
+  /* The editor's inputs run the full width of the slot: `.field`'s 480px cap is a FORM PAGE's
+     measure, and a block's editor is as wide as the panel it will become. */
+  .block-editor { display: grid; gap: 8px; }
+  .block-editor .field { margin-bottom: 0; }
+  .block-editor .field input, .block-editor .field textarea { max-width: none; }
+  .block-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .block-preview { padding: 8px 10px; border: 1px dashed var(--line-strong); border-radius: var(--radius-panel); }
+  .block-missing { margin: 0; font-size: 12px; color: var(--danger); }
+  .image-picker { display: flex; flex-wrap: wrap; gap: 8px; }
+  .image-pick { display: flex; flex-direction: column; gap: 4px; width: 96px; padding: 4px; color: var(--fg);
+                font: 12px/1.4 var(--font-ui); background: none; border: 1px solid transparent;
+                border-radius: var(--radius-panel); cursor: pointer; }
+  .image-pick:hover { border-color: var(--line-strong); }
+  .image-pick.active { border-color: var(--accent); background: var(--accent-soft); }
+  .image-pick .thumb { width: 100%; height: 72px; }
+  .image-pick-name { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+  .page-intro { display: grid; gap: 12px; margin: 0 0 12px; }
+  .page-intro-cover { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+  .cover-current { font-size: 12px; color: var(--fg-muted); }
+  .page-intro-description { margin-bottom: 0; }
+  .page-intro-description textarea { max-width: none; }
+  @media (min-width: 900px) { .page-intro { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
   .attachment-group-head, .tasks-group h3, .group-head {
     margin: 0 0 8px; font: 600 11px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted);
   }

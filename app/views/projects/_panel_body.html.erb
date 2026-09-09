@@ -5,9 +5,20 @@
   renders alone, for a view the draft has chosen — ProjectsController#show overrides
   @panel_layout's view for that one key before rendering this.
 
+  A KEY IS FIXED, A FOLDER OR A BLOCK (2026-09-09, content blocks; spec §6). A block key renders
+  the block itself — the READ partial on the page, its EDITOR in edit mode, which is the one place
+  in this app where edit mode changes a panel's BODY rather than only the chrome around it: a
+  block's content is its own editor, so there is nothing else for the slot to show.
+
   Locals: key; extra (the locals map for wiring/releases/publish, an empty hash for every other key).
 %>
-<% if @panel_layout.folder?(key) %>
+<% if @panel_layout.block?(key) %>
+  <% if @editing %>
+    <%= render "projects/block_editor", key: key, block: @blocks_by_key[key] %>
+  <% else %>
+    <%= render "projects/block_panel", key: key, block: @blocks_by_key[key] %>
+  <% end %>
+<% elsif @panel_layout.folder?(key) %>
   <%= render "projects/folder_panel", key:, view: @panel_layout.view_for(key),
              dir: @listing.tree.find { |d| d.node_id == @panel_layout.folder_id(key) } %>
 <% else %>

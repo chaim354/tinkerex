@@ -297,8 +297,13 @@
      radius, the same mono meta line — and a reader comparing them should not have to hold three
      screens apart. Each selector is still declared exactly once in this file. */
   /* The trash and repository pages' one-line explanation under the head. Capped in ch rather than
-     px because it is prose: a measure that long stops being readable, whatever the viewport. */
-  .page-intro { max-width: 72ch; margin: -8px 0 16px; font-size: 13px; }
+     px because it is prose: a measure that long stops being readable, whatever the viewport.
+     WAS `.page-intro` UNTIL 2026-09-09 (content blocks), when the project page's own page-intro
+     CARD — the cover and description, spec §3 — claimed that name as a component. Two meanings for
+     one class name is the pre-2026-09 `.btn` bug with a new face, and this one would have been
+     silent AND one-directional: `pages` is declared after `components`, so this rule's 72ch cap
+     would have squeezed the card and nothing here would have changed at all. */
+  .head-note { max-width: 72ch; margin: -8px 0 16px; font-size: 13px; }
   .commit-group + .commit-group { margin-top: 12px; }
   /* The disclosure triangle is drawn here, not left to the browser: `display: flex` on a <summary>
      drops the native marker in WebKit only, so a group would carry a triangle in Firefox and none

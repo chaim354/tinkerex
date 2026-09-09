@@ -21,12 +21,42 @@ module Projects
 
     def set_project
       @project = current_user.maker_projects.find_by!(slug: params[:project_id])
-      @listing = Maker::ProjectFolderListing.new(current_user, @project, load_files: false)
+      # WITH FILES SINCE CONTENT BLOCKS (2026-09-09): the document names an image by its PATH under
+      # the project folder, so the file rows are what `folder_images` needs — `load_files: false`
+      # answers `total` and the dirs alone, and an image block would then have no name to export
+      # and no picture to resolve. One capped files query; the page itself pays it on every render.
+      @listing = Maker::ProjectFolderListing.new(current_user, @project)
     end
 
-    def current_layout = @project.panel_layout(folders: @listing.panel_folders)
+    # ONE READ, TWO USES (2026-09-09, content blocks): the layout's `blocks:` pairs and the
+    # document's block ROWS come from the same array. Read twice, a block created between them
+    # would reach the layout with no kind — and `render "projects/#{key}"` with a `block:` key.
+    def blocks = @blocks ||= @project.blocks.to_a
 
-    def document = Maker::LayoutDocument.new(current_layout, @listing.tree.to_h { |dir| [ dir.node_id, dir.name ] })
+    def current_layout
+      @project.panel_layout(folders: @listing.panel_folders, blocks: blocks.map { |b| [ b.key, b.kind ] })
+    end
+
+    # THE FOLDER'S IMAGE FILES, BY PATH RELATIVE TO THE FOLDER — what an image block or the cover
+    # may name in the YAML (spec §2). `Row#role` is the filing role the listing already answers.
+    # THE PATH COMES OFF `path_index`, NEVER REBUILT HERE: that map is the listing's ONE definition
+    # of "this row's full library path", the same one a README's relative links resolve through, and
+    # a second spelling is how the exported `file:` and the resolved one drift. The folder's own
+    # path comes off the front; what is left is what a reader of the text can find in the folder.
+    def folder_images
+      prefix = "#{@listing.path}/"
+      images = @listing.all_rows.select { |row| row.role == "image" }.map(&:node_id).to_set
+      @listing.path_index.filter_map { |path, id| [ id, path.delete_prefix(prefix) ] if images.include?(id) }.to_h
+    end
+
+    def document
+      Maker::LayoutDocument.new(current_layout, @listing.tree.to_h { |dir| [ dir.node_id, dir.name ] },
+                                blocks: blocks, images: folder_images,
+                                # THE STORED COLUMN, NOT THE READER: `Maker::Project#cover_node_id` derives a
+                                # cover from the attachments when none is chosen, and drafting that value
+                                # would write the guess back as an answer on every Save (found in review).
+                                page: { "description" => @project.description, "cover" => @project[:cover_node_id] })
+    end
 
     def kind_label = Maker::ProjectKind.label(@project.kind)
   end

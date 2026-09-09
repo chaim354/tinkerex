@@ -1,0 +1,77 @@
+<%#
+  A BLOCK'S OWN EDITOR, IN THE SLOT BODY (2026-09-09, content blocks; spec §2). Every input writes
+  the SLOT's data attributes through layout_editor_controller.js (`field`), which is where the draft
+  lives — there is no second copy of a block's content in the page and nothing here posts. Save is
+  the one write, and it is the bar's.
+
+  THE FORM SUBMITS NOWHERE. `onsubmit="return false"` is what stops implicit submission: a text
+  block's editor holds exactly one text input and no submit button, which is precisely the shape
+  the HTML spec submits on Enter — it would navigate away from the editor and lose the draft. The
+  same spelling `this.form.requestSubmit()` uses on the Files toolbar, and the CSP is report-only.
+
+  TEXT GETS A PREVIEW THAT ASKS THE SERVER (Projects::LayoutsController#preview), because the page
+  renders Markdown with Maker::Markdown and a second renderer in the browser is a preview that
+  lies. The LINK CARD and the IMAGE FIGURE are drawn live instead: both are pure arrangement of what
+  the maker just typed, so a round trip would only add latency.
+
+  Locals: key; block (a Maker::ProjectBlock, or nil for a slot minted from a template);
+  kind (defaults to the block's — a template has no block to ask).
+%>
+<% kind = local_assigns.fetch(:kind) { block.kind } %>
+<form class="block-editor block-editor--<%= kind %>" onsubmit="return false">
+  <% case kind %>
+  <% when "text" %>
+    <label class="field"><span>Heading</span>
+      <input type="text" maxlength="<%= Maker::ProjectBlock::HEADING_MAX %>" value="<%= block&.heading %>"
+             placeholder="Optional" data-field="heading" data-action="input->layout-editor#field"></label>
+    <label class="field"><span>Text (Markdown)</span>
+      <textarea rows="6" maxlength="<%= Maker::ProjectBlock::BODY_MAX %>" data-field="body"
+                data-action="input->layout-editor#field"><%= block&.body %></textarea></label>
+    <div class="block-editor-actions">
+      <button type="button" class="btn small" data-action="layout-editor#previewMarkdown">Preview</button>
+    </div>
+    <div class="block-preview markdown" data-layout-editor-target="preview" hidden></div>
+  <% when "link" %>
+    <label class="field"><span>URL</span>
+      <input type="url" value="<%= block&.url %>" placeholder="https://"
+             maxlength="<%= Maker::ProjectBlock::URL_MAX %>"
+             data-field="url" data-action="input->layout-editor#field"></label>
+    <label class="field"><span>Title</span>
+      <input type="text" maxlength="<%= Maker::ProjectBlock::HEADING_MAX %>" value="<%= block&.heading %>"
+             data-field="linkTitle" data-action="input->layout-editor#field"></label>
+    <label class="field"><span>One line</span>
+      <input type="text" maxlength="<%= Maker::ProjectBlock::LINE_MAX %>" value="<%= block&.line %>"
+             placeholder="Optional" data-field="line" data-action="input->layout-editor#field"></label>
+    <a class="block-link-card" href="<%= block&.url %>" rel="noopener" target="_blank"
+       data-layout-editor-target="linkCard">
+      <span class="block-link-title"><%= block&.heading.presence || "Title" %></span>
+      <span class="block-link-line muted"><%= block&.line %></span>
+      <span class="block-link-host mono muted"><%= block&.url.present? ? link_host(block.url) : "" %></span>
+    </a>
+  <% when "image" %>
+    <div class="image-picker" role="group" aria-label="Pick an image from the project folder"
+         data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+      <% if @folder_images.empty? %>
+        <p class="muted">No images in the project folder yet.</p>
+      <% end %>
+      <% @folder_images.each do |row| %>
+        <% ext = File.extname(row.node.name).delete(".").upcase.first(4) %>
+        <button type="button" class="image-pick<%= " active" if block&.node_id == row.node_id %>"
+                data-node-id="<%= row.node_id %>" data-action="layout-editor#pickImage" title="<%= row.node.name %>">
+          <%= render "files/thumb", thumb: @page_thumbs.thumb(row.node_id), ext_label: ext,
+                     url: preview_src(@page_thumbs.thumb(row.node_id)) %>
+          <span class="image-pick-name"><%= row.node.name %></span>
+        </button>
+      <% end %>
+    </div>
+    <%# THE ONE PLACE A MISSING PICTURE IS SAID OUT LOUD. The read partial renders nothing at all
+        for this block (projects/_block_panel's own header says why); here the maker can fix it, so
+        here is where the sentence belongs. %>
+    <% if block&.node_id.present? && @page_nodes[block.node_id].nil? %>
+      <p class="muted block-missing">This block's picture is not in the folder any more; pick another.</p>
+    <% end %>
+    <label class="field"><span>Caption</span>
+      <input type="text" maxlength="<%= Maker::ProjectBlock::LINE_MAX %>" value="<%= block&.caption %>"
+             placeholder="Optional" data-field="caption" data-action="input->layout-editor#field"></label>
+  <% end %>
+</form>

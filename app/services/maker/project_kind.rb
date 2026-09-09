@@ -41,6 +41,9 @@ module Maker
   #   * `publish` IS MOVED TO THE END of `order` whatever the stored column says (2026-09-09, spec
   #     decision 11): the page head's `#publish` anchor targets it and the editor pins it there, so
   #     an order the retired chooser saved with it half way up is normalised on the way out.
+  #   * A BLOCK (`block:<key>`) IS THE THIRD KIND OF KEY (2026-09-09, content blocks): the caller
+  #     supplies `blocks:` as [key, kind] pairs the way it supplies `folders:`; an unnamed block
+  #     lands first; a key whose row is gone drops out.
   #
   # `folders:` DEFAULTS TO `[]`, so a caller holding no listing — Home, the chooser before it
   # builds one, a test — gets the fixed-key layout it has always got, unchanged.
@@ -204,20 +207,30 @@ module Maker
     # bundle until they hide it again. Totality is what makes that a reset rather than a stale key.
     FOLDER_PREFIX = "folder:".freeze
 
+    # `block:<key>` — a content block (2026-09-09, content blocks; spec §4). The key is the row's own
+    # twelve-hex `key`, minted by Maker::ProjectBlock, never its id.
+    BLOCK_PREFIX = "block:".freeze
+    BLOCK_DEFAULT_WIDTHS = { "text" => "full", "link" => "half", "image" => "full" }.freeze
+
     # One project page's panel list. `order` is a permutation of the vocabulary (Maker::Project::
-    # PANELS plus the current folder keys); `hidden` is a subset of it with ALWAYS removed; `views`
+    # PANELS plus the current folder keys plus the project's block keys); `hidden` is a subset of it
+    # with ALWAYS removed; `views`
     # holds only vocabulary keys with values in Maker::Project::VIEWS; `widths` only vocabulary keys
     # with values in WIDTHS; `titles` and `intros` only vocabulary keys with non-empty one-line text
     # under their caps (2026-09-09, the page editor; spec §3); `repo_ids` are the node ids of the
-    # folders that are working trees, which is all #view_for needs to pick a default. `visible` is
-    # what the loop renders.
-    Layout = Data.define(:order, :hidden, :views, :widths, :titles, :intros, :repo_ids) do
+    # folders that are working trees, which is all #view_for needs to pick a default;
+    # `block_kinds` maps each block key to its kind, which is all #width_for and the editor's strip
+    # need (2026-09-09, content blocks). `visible` is what the loop renders.
+    Layout = Data.define(:order, :hidden, :views, :widths, :titles, :intros, :repo_ids, :block_kinds) do
       def visible = order - hidden
       # `to_s` like `folder?` and `view_for` below, so a Symbol asks the same question a String does.
       def visible?(key) = order.include?(key.to_s) && !hidden.include?(key.to_s)
       def hidden?(key) = hidden.include?(key.to_s)
       def folder?(key) = key.to_s.start_with?(FOLDER_PREFIX)
       def folder_id(key) = key.to_s.delete_prefix(FOLDER_PREFIX)
+      def block?(key) = key.to_s.start_with?(BLOCK_PREFIX)
+      # The kind of a block key, nil for anything else — what `width_for` and the strip ask.
+      def block_kind(key) = block_kinds[key.to_s]
 
       # The maker's choice, else the default for what this panel IS. The `folder?` guard is not
       # decoration: without it a fixed key is asked whether `repo_ids` holds the string
@@ -230,7 +243,7 @@ module Maker
       # `.attachments-panel, .photos-panel, .folder-panel` as the panels that span both columns.
       # Both pages now render `panel--<width>` from this answer, so a layout can carry a width and
       # be shared as YAML, and every existing project renders exactly as it did.
-      def width_for(key) = widths[key.to_s] || ProjectKind.default_width(key)
+      def width_for(key) = widths[key.to_s] || ProjectKind.default_width(key, block_kind: block_kinds[key.to_s])
 
       # THE CALLER SUPPLIES THE DEFAULT because only the caller knows it: PANEL_LABELS for a fixed
       # key, the folder's own name for a folder key — this struct holds node ids, never names.
@@ -246,6 +259,10 @@ module Maker
     # The panel key for one of the project folder's subfolders. THE ONE PLACE THE PREFIX IS SPELLED
     # beside Layout#folder?/#folder_id, so a controller, a view and a test cannot disagree about it.
     def self.folder_key(node_id) = "#{FOLDER_PREFIX}#{node_id}"
+
+    # The panel key for one of the project's content blocks — the same one-place rule folder_key
+    # states above, for the second prefix.
+    def self.block_key(key) = "#{BLOCK_PREFIX}#{key}"
 
     # The view a panel opens in when the maker has not chosen one — today's page, written down: a
     # working tree opens in the Finder browser (2026-09-07), everything else in tiles, the Files
@@ -273,8 +290,10 @@ module Maker
     # and half a column is where the browser stops being usable.
     FULL_BY_DEFAULT = %w[attachments photos].freeze
 
-    def self.default_width(key)
+    def self.default_width(key, block_kind: nil)
       k = key.to_s
+      return BLOCK_DEFAULT_WIDTHS.fetch(block_kind.to_s, "full") if k.start_with?(BLOCK_PREFIX)
+
       k.start_with?(FOLDER_PREFIX) || FULL_BY_DEFAULT.include?(k) ? "full" : "half"
     end
 
@@ -293,14 +312,19 @@ module Maker
     # AN UNKNOWN KIND FALLS BACK TO `other`'s PRESET rather than raising: `kind` is validated on the
     # way in, but a row written before a kind was retired, or by a future version, must still
     # render a page.
-    def self.layout_for(kind:, overrides:, folders: [])
+    def self.layout_for(kind:, overrides:, folders: [], blocks: [])
       preset = PRESETS.fetch(kind.to_s, PRESETS.fetch(DEFAULT))
       over = overrides.is_a?(Hash) ? overrides : {}
       folder_keys = Array(folders).map { |id, _repo| folder_key(id) }
       repo_ids = Array(folders).filter_map { |id, repo| id.to_s if repo }
-      vocabulary = Maker::Project::PANELS + folder_keys
+      block_keys = Array(blocks).map { |k, _kind| block_key(k) }
+      block_kinds = Array(blocks).to_h { |k, kind| [ block_key(k), kind.to_s ] }
+      vocabulary = Maker::Project::PANELS + folder_keys + block_keys
 
       order = stored_order(known(over["order"], vocabulary), folder_keys) + preset_order(preset, folder_keys)
+      # A BLOCK THE STORED ORDER DOES NOT NAME LANDS FIRST (content blocks, spec §4): it is what
+      # "Add block" did a moment ago, and first is where the editor puts a new one.
+      order = (block_keys - order) + order
       hidden = (over.key?("hidden") ? known(over["hidden"], vocabulary) : preset[:hidden]) - ALWAYS
       # PUBLISH IS ALWAYS LAST (2026-09-09, the page editor; spec decision 11): the head's anchor
       # targets it and the editor pins it, so a stored order from the retired chooser that moved it
@@ -310,7 +334,7 @@ module Maker
                  widths: stored_widths(over["widths"], vocabulary),
                  titles: stored_text(over["titles"], vocabulary, TITLE_MAX),
                  intros: stored_text(over["intros"], vocabulary, INTRO_MAX),
-                 repo_ids:)
+                 repo_ids:, block_kinds:)
     end
 
     # `Array#&` FILTERS, DEDUPS AND KEEPS THE RECEIVER'S ORDER in one operation, which is all three

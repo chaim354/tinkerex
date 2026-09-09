@@ -63,6 +63,14 @@ class StructuralOrphanTest < ActiveSupport::TestCase
       p = u.maker_projects.create!(name: "Lamp")
       [ p, p.connections.create!(user: u, from_label: "Driver board", to_label: "Stepper motor") ]
     },
+    # A CONTENT BLOCK GOES WITH ITS PROJECT (2026-09-09). Its OTHER pointer, `node_id`, is not
+    # here and must not be: it names `nodes.node_id`, so EDGES above excludes it exactly as it
+    # excludes `maker_file_links.from_node_id` — an image block whose picture is tombstoned KEEPS
+    # its row (spec §8), which is the softness this file's own header reserves for node columns.
+    "maker_project_blocks.project_id" => ->(u) {
+      p = u.maker_projects.create!(name: "Lamp")
+      [ p, p.blocks.create!(user: u, kind: "text", body: "Why a printed shade") ]
+    },
     "maker_releases.project_id" => ->(u) {
       p = u.maker_projects.create!(name: "Lamp")
       [ p, p.releases.create!(user: u, version: "v0.1.0", published_at: Time.current) ]

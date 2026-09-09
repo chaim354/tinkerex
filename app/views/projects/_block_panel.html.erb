@@ -1,0 +1,63 @@
+<%#
+  A CONTENT BLOCK, READ (2026-09-09, content blocks; spec §2, §6). Three kinds, one section, so a
+  block sits in the page's order exactly as a panel does and the slot around it needs to know
+  nothing about which kind it holds.
+
+  MARKDOWN GOES THROUGH Maker::Markdown, WHICH SANITISES — the same renderer the README uses, so a
+  block can do what a README can do and nothing more. Nothing in `body` is trusted as HTML, on
+  every render rather than once at Save: the column is a raw store a console can write.
+
+  AN IMAGE WHOSE NODE IS NOT LIVE RENDERS NOTHING AT ALL — no section, so projects/_panel_slot's
+  blank-body rule leaves no slot either. That is the derived-content rule the hero already follows:
+  a file dragged out of the folder leaves the page rather than becoming a box that never resolves.
+  The EDITOR is where the maker learns the picture is gone (projects/_block_editor says so and
+  offers the picker), because that is where they can do something about it.
+
+  Locals: key (the layout key, which is the section's id so the page head can anchor at it),
+  block (a Maker::ProjectBlock).
+%>
+<% node = block.kind == "image" ? @page_nodes[block.node_id] : nil %>
+<% unless block.kind == "image" && node.nil? %>
+  <section class="panel block-panel block--<%= block.kind %>" id="<%= key %>">
+    <% case block.kind %>
+    <% when "text" %>
+      <% if block.heading.present? %><h2><%= block.heading %></h2><% end %>
+      <%# RELATIVE LINKS RESOLVE AGAINST THE PROJECT FOLDER, the README's own rule with the folder's
+          root as the base: `[base](models/base.stl)` becomes the file's page, an unresolvable one
+          plain text — never a dangling href (found in review: with no resolver every relative link
+          silently became text, which was neither resolved nor "as written"). %>
+      <div class="markdown"><%= Maker::Markdown.render(block.body.to_s, &Maker::Markdown.folder_resolver(@listing.path, @listing.path_index) { |id| file_path(id) }) %></div>
+    <% when "link" %>
+      <%# `target: "_blank"` WITH `rel: "noopener"`: a link block points off this site, and an
+          off-site page opened without noopener can reach back through `window.opener`. The
+          visitor's copy of this partial adds `nofollow` besides — see public/projects/_block_panel
+          for why that difference is deliberate rather than an oversight here. %>
+      <%= link_to block.url, class: "block-link-card", rel: "noopener", target: "_blank" do %>
+        <span class="block-link-title"><%= block.heading %></span>
+        <% if block.line.present? %><span class="block-link-line muted"><%= block.line %></span><% end %>
+        <span class="block-link-host mono muted"><%= link_host(block.url) %></span>
+      <% end %>
+    <% when "image" %>
+      <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
+      <%# ITS OWN `thumbs` CONTROLLER, like the hero: the thumb-cell arm below polls a pending
+          preview, and nothing above this section mounts one (found in review). %>
+      <figure class="block-figure" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+        <%# `inline_image?`, NOT the role, and it is the hero's own split (tinkerex#285): a .heic is
+            an image by role and a broken picture as raw bytes, so it takes the thumbnail branch. %>
+        <% if Maker::FileAttachment.inline_image?(node.name) %>
+          <%= link_to file_path(node.node_id) do %>
+            <%= image_tag blob_file_path(node.node_id), class: "block-image",
+                          alt: block.caption.presence || node.name %>
+          <% end %>
+        <% else %>
+          <%= link_to file_path(node.node_id), class: "file-cell block-thumb",
+                      data: thumb_cell_data(node.node_id, ext) do %>
+            <%= render "files/thumb", thumb: @page_thumbs.thumb(node.node_id), ext_label: ext,
+                       url: preview_src(@page_thumbs.thumb(node.node_id)) %>
+          <% end %>
+        <% end %>
+        <% if block.caption.present? %><figcaption class="muted"><%= block.caption %></figcaption><% end %>
+      </figure>
+    <% end %>
+  </section>
+<% end %>

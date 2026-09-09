@@ -100,6 +100,10 @@ module Maker
     # THE WIRING TABLE (stage 3, S3-3): connections between two labelled ends, in position order.
     has_many :connections, -> { order(:position, :id) },
              class_name: "Maker::Connection", foreign_key: :project_id, dependent: :destroy
+    # CONTENT BLOCKS (2026-09-09): text, link and image blocks the page editor arranges beside the
+    # panels. Row order is creation order; the LAYOUT orders them on the page.
+    has_many :blocks, -> { order(:id) },
+             class_name: "Maker::ProjectBlock", foreign_key: :project_id, dependent: :destroy
     # RELEASES (stage 3, S3-5), newest first — the order both panels read, stated once here rather
     # than in each. `:destroy` rather than `:nullify`: a release names the project in its own
     # `project_belongs_to_user` validation, so a nulled pointer would be an unsaveable row (§14d).
@@ -219,9 +223,15 @@ module Maker
     # layout's totality is against the folders that exist NOW (Maker::ProjectKind's header), so a
     # page that renders folder panels and a chooser that lists them must both say which folders
     # they are, or the folder keys drop out as stale and the panels vanish.
-    def panel_layout(folders: []) = Maker::ProjectKind.layout_for(kind:, overrides: self[:panels], folders:)
+    # `blocks:` IS THE SAME DEAL AS `folders:` (2026-09-09, content blocks): `[[key, kind], …]` for
+    # this project's Maker::ProjectBlock rows, defaulting to `[]` so a caller that renders no
+    # blocks keeps exactly the layout it has always had. The block keys are part of the vocabulary,
+    # so a caller that does render them must say which they are or they drop out as stale — the
+    # totality rule the folder keys already run on.
+    def panel_layout(folders: [], blocks: []) =
+      Maker::ProjectKind.layout_for(kind:, overrides: self[:panels], folders:, blocks:)
 
-    def visible_panels(folders: []) = panel_layout(folders:).visible
+    def visible_panels(folders: [], blocks: []) = panel_layout(folders:, blocks:).visible
 
     def archive!
       update!(status: "archived", archived_at: Time.current)
