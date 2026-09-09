@@ -222,6 +222,8 @@ Rails.application.routes.draw do
     resource :layout, only: [], module: :projects do
       post :yaml
       post :parse
+      # THE TEXT BLOCK'S PREVIEW (content blocks): Markdown in, sanitised HTML out, read-only.
+      post :preview
     end
     # THE README, AS A DOOR RATHER THAN A FILE (stage 4, S4-4; spec §2 D3). SINGULAR: a project has
     # one README and the door takes NO node id — it resolves the row from the project's own listing

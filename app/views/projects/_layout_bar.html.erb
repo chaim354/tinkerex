@@ -12,6 +12,31 @@
     <noscript><span class="layout-bar-noscript">The page editor needs JavaScript.</span></noscript>
   </div>
   <div class="layout-bar-actions">
+    <%#
+      ADD BLOCK (2026-09-09, content blocks; spec §2). The new block lands FIRST in the grid with
+      its editor open, which is why this sits in the BAR rather than as an insertion point between
+      panels: one control, one destination, and dragging is how it gets anywhere else.
+
+      DISABLED AT THE CAP, SAID OUT LOUD. Maker::LayoutDocument refuses a document over
+      Maker::ProjectBlock::CAP and Save refuses again — but a button that silently does nothing is
+      the worse failure, so the door's own number is rendered here rather than spelled a second time.
+
+      `details.menu` IS THE APP'S OVERFLOW MENU and its `.menu-list`/`.menu-item` classes are
+      components.css's; `data-controller="menu"` is what closes it on an outside click.
+    %>
+    <% at_cap = @blocks.size >= Maker::ProjectBlock::CAP %>
+    <details class="menu layout-add" data-controller="menu" data-layout-editor-target="addMenu">
+      <summary class="btn small">Add block ▾</summary>
+      <div class="menu-list">
+        <% { "text" => "Text", "link" => "Link", "image" => "Image" }.each do |kind, name| %>
+          <button type="button" class="menu-item" data-action="layout-editor#addBlock"
+                  data-kind="<%= kind %>" <%= "disabled" if at_cap %>><%= name %></button>
+        <% end %>
+        <% if at_cap %>
+          <p class="muted layout-add-cap">This page has <%= Maker::ProjectBlock::CAP %> blocks, the most it can hold.</p>
+        <% end %>
+      </div>
+    </details>
     <button type="button" class="btn small" data-action="layout-editor#toggleDrawer" aria-expanded="false">Edit as YAML</button>
     <%= button_to "Reset to #{Maker::ProjectKind.label(@project.kind)} defaults", project_panels_path(@project),
                   method: :delete, class: "linkbtn small",

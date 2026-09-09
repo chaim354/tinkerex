@@ -48,11 +48,19 @@ module Web
         assert_select "aside.layout-drawer[hidden] textarea[data-layout-editor-target=yaml]", 1
         # THE DRAFT IS READ OFF THESE TARGETS (layout_editor_controller.js): drop one and Save posts
         # an empty document. Pinned here because the markup is this task's output.
-        assert_select "div.panel-slot[data-layout-editor-target=slot]", order.size
+        #
+        # SCOPED TO THE GRID SINCE CONTENT BLOCKS (2026-09-09): projects/_block_templates renders one
+        # complete slot per kind inside a `<template>`, and a template's contents are INERT in a
+        # browser (Stimulus sees no target in one) but ordinary elements to Nokogiri — so an
+        # unscoped count here reads 3 too many and would have to be written as a sum that says
+        # nothing. The grid is what the draft is read off in any case.
+        assert_select "div.project-panels div.panel-slot[data-layout-editor-target=slot]", order.size
         assert_select "form.layout-save input[name=layout][data-layout-editor-target=draft]", 1
         assert_select "div.panel-slot[data-key=tasks][data-view]", { count: 0 }, "a panel with no views carries no data-view at all"
         assert_select "div.panel-slot[data-key=attachments][data-view=tiles]", 1
       end
+      # THE PAGE INTRO IS EDIT MODE'S ONLY ADDITION ABOVE THE GRID (2026-09-09, content blocks).
+      assert_select "div.page-intro[data-layout-editor-target=page]", 1
       assert_select "section.tasks-panel", 1, "a hidden panel is rendered, ghosted, in edit mode"
       assert_select "section.bom-panel", 1, "and one whose data the controller skipped renders too"
       assert_select "section.wiring-panel", 1
@@ -123,6 +131,10 @@ module Web
       assert_select ".layout-bar", count: 0
       assert_select "details.panel-chooser", count: 0
       assert_select "#panel-visibility", count: 0
+      # NOR THE PAGE INTRO, NOR THE TEMPLATES (2026-09-09, content blocks): the description and the
+      # cover render as the page's own prose here, not as a card with a picker in it.
+      assert_select "div.page-intro", count: 0
+      assert_select "template[data-layout-editor-target=blockTemplate]", count: 0
       assert_select "a.customise-link[href=?]", edit_layout_project_path(@project), text: "Customise page"
     end
 

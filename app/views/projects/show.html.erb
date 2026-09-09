@@ -162,21 +162,30 @@
   it can be dragged and shown again. Its data was not loaded (the controller skips a hidden
   panel's queries), so it renders quiet — which is the honest ghost.
 %>
+<%#
+  THE GRID PACKS ON WIDE SCREENS (2026-09-09, content blocks; spec §7). `masonry` is on ALL THREE
+  renders — this page, edit mode, and the visitor's — because a gap under a short half-width panel
+  is the same gap wherever it is drawn. Below the two-column breakpoint, and with no JavaScript at
+  all, the grid is exactly today's: the controller measures nothing and adds no class.
+%>
 <% if @editing %>
   <div class="layout-editor" data-controller="layout-editor"
        data-layout-editor-yaml-url-value="<%= yaml_project_layout_path(@project) %>"
        data-layout-editor-parse-url-value="<%= parse_project_layout_path(@project) %>"
-       data-layout-editor-panel-url-value="<%= layout_panel_project_path(@project) %>">
+       data-layout-editor-panel-url-value="<%= layout_panel_project_path(@project) %>"
+       data-layout-editor-preview-url-value="<%= preview_project_layout_path(@project) %>">
     <%= render "projects/layout_bar" %>
-    <div class="project-panels layout-editing" data-layout-editor-target="grid">
+    <%= render "projects/page_intro" %>
+    <div class="project-panels layout-editing" data-controller="masonry" data-layout-editor-target="grid">
       <% @panel_layout.order.each do |key| %>
         <%= render "projects/panel_slot", key:, extra: panel_locals.fetch(key, {}) %>
       <% end %>
     </div>
     <%= render "projects/layout_drawer" %>
+    <%= render "projects/block_templates" %>
   </div>
 <% else %>
-  <div class="project-panels">
+  <div class="project-panels" data-controller="masonry">
     <% @panel_layout.visible.each do |key| %>
       <%= render "projects/panel_slot", key:, extra: panel_locals.fetch(key, {}) %>
     <% end %>

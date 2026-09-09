@@ -374,6 +374,63 @@ module Web
       assert_equal small, large, "the edit page must not grow with folders (#{small} → #{large})"
     end
 
+    # CONTENT BLOCKS ARE ONE QUERY PER RENDER, WHATEVER THEIR NUMBER (2026-09-09; spec §8), on all
+    # THREE renders that draw them — and the three are budgeted in one test because they are three
+    # different readers of the same rows: ProjectsController#show's ivars, the same action with the
+    # editors and the pickers on, and Maker::PublicProject, which shares no eager load with either.
+    #
+    # WHAT COULD GROW: the blocks themselves; an image block's picture, which must join the page's
+    # ONE PageNodes union and its ONE ThumbnailMap rather than being looked up per block; the
+    # PICKERS, which render the folder's images once per image BLOCK in edit mode; and, on the
+    # visitor's page, `permits?`, which answers per node and costs a query of its own for anything
+    # `page_nodes` does not hold — the exact per-line shape the BOM's own comment records above.
+    #
+    # ONE PROJECT, MEASURED SIGNED OUT AND SIGNED IN AT BOTH SIZES: a visitor's request must never
+    # touch Warden, so the public leg is measured with no session, and the two private legs need one.
+    test "blocks do not grow the project page, the edit page or the visitor's page" do
+      @user.update!(handle: "blockbudget")
+      project = @user.maker_projects.create!(name: "Blocked", visibility: "public")
+      folder = project_folder_rows!(@user, project)
+      photos = @user.nodes.create!(node_id: "blk-photos", name: "photos", kind: "dir",
+                                   parent_node_id: folder.node_id, size: 0, mtime: 1_700_000_000_000_000_000)
+      add = lambda do |prefix, count|
+        count.times do |i|
+          id = "#{prefix}-#{i}"
+          @user.nodes.create!(node_id: "#{id}-img", name: "#{id}.png", kind: "file",
+                              parent_node_id: photos.node_id, size: 1, mtime: 1_700_000_000_000_000_000,
+                              content_hash: "h-#{id}", current_version_id: "v-#{id}")
+          project.blocks.create!(user: @user, kind: "text", heading: "Heading #{id}", body: "A **#{id}** shade.")
+          project.blocks.create!(user: @user, kind: "link", heading: "Link #{id}", url: "https://e.example/#{id}")
+          project.blocks.create!(user: @user, kind: "image", node_id: "#{id}-img", caption: "Caption #{id}")
+        end
+      end
+      sign_out = -> { delete destroy_user_session_path }
+      sign_in = -> { post user_session_path, params: { user: { email: @user.email, password: PASSWORD } } }
+      public_path = public_project_path("blockbudget", project.slug)
+
+      measure = lambda do
+        sign_out.call
+        get public_path
+        assert_response :success, "the visitor's page must render before it can be budgeted"
+        pub = count_queries { get public_path }
+        sign_in.call
+        get project_path(project)
+        assert_response :success
+        page = count_queries { get project_path(project) }
+        get edit_layout_project_path(project)
+        [ pub, page, count_queries { get edit_layout_project_path(project) } ]
+      end
+
+      add.call("s", 1)
+      pub_small, page_small, edit_small = measure.call
+      add.call("l", 5)
+      pub_large, page_large, edit_large = measure.call
+
+      assert_equal page_small, page_large, "projects#show grew with blocks (#{page_small} → #{page_large})"
+      assert_equal edit_small, edit_large, "the edit page grew with blocks (#{edit_small} → #{edit_large})"
+      assert_equal pub_small, pub_large, "the visitor's page grew with blocks (#{pub_small} → #{pub_large})"
+    end
+
     # STAGE 3, S3-4: THE SAME PROJECT, READ BY A STRANGER. Not a duplicate of the budget above: the
     # public page is a DIFFERENT reader over the same rows (Maker::PublicProject, not
     # ProjectsController#show's ivars), and the two share no eager load — every panel it renders is

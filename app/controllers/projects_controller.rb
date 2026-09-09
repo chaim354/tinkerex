@@ -121,15 +121,26 @@ class ProjectsController < ApplicationController
     # overrides on top, over a vocabulary that now includes this folder's own depth-one subfolders
     # (Maker::ProjectKind's header). Zero queries — two columns off the row `set_project` already
     # loaded, plus `panel_folders`, which is one `map` over the tree above.
-    @panel_layout = @project.panel_layout(folders: @listing.panel_folders)
+    # CONTENT BLOCKS (2026-09-09; spec §2). ONE query, and ONE read: the layout's `blocks:` pairs
+    # and the index the partials render from come from the same array, so a block created between
+    # two reads can never reach the loop as a key with no kind — which `render "projects/#{key}"`
+    # would then be handed. Read here, above the layout that orders them and above the union that
+    # answers their pictures' liveness.
+    @blocks = @project.blocks.to_a
+    @blocks_by_key = @blocks.index_by(&:layout_key)
+    @panel_layout = @project.panel_layout(folders: @listing.panel_folders,
+                                          blocks: @blocks.map { |b| [ b.key, b.kind ] })
     # WHAT THE CHOOSER CALLS EACH PANEL. The ten fixed labels plus one per folder — its own name,
     # which is the only label a folder key could honestly carry. Built here rather than in the
     # chooser because the chooser has no listing of its own, and a label map assembled in a view
     # would be a second definition the panels door could not reuse. A key with no entry cannot
     # reach the chooser: the layout is total against exactly these folders.
+    # A BLOCK'S LABEL IS WHAT IT IS PLUS WHAT IT SAYS (content blocks): the strip has no folder name
+    # and no fixed label to fall back on, and "Text block" alone on eight of them names none of
+    # them. The heading, where there is one, is the only thing that tells two apart at a glance.
     @panel_labels = Maker::Project::PANEL_LABELS.merge(
       @listing.tree.to_h { |dir| [ Maker::ProjectKind.folder_key(dir.node_id), dir.name ] }
-    )
+    ).merge(@blocks.to_h { |b| [ b.layout_key, helpers.block_label(b) ] })
 
     # EDIT MODE (2026-09-09, the page editor; spec §5). `editing` arrives only as the DEFAULT of the
     # two `layout` routes; it turns on the chrome and nothing else — every load below is the same,
@@ -221,8 +232,13 @@ class ProjectsController < ApplicationController
     # Maker::Project#cover_node_id derives one from the attachments when none is chosen: a constant
     # handful of queries regardless of N.
     cover_id = @project.cover_node_id
+    # AN IMAGE BLOCK'S PICTURE JOINS THE UNION TOO (content blocks): the block renders NOTHING when
+    # its node is not live, which is the same derived-content rule the cover follows one line up —
+    # a file dragged out of the folder must leave the page, not become a poll cell that never
+    # resolves. Asked of the SAME index, so the page still asks `nodes` once.
     @page_nodes = live_nodes_for(all_attachments.map(&:node_id) + entry_photo_ids +
-                                 @bom_lines.filter_map(&:node_id) + [ cover_id ].compact)
+                                 @bom_lines.filter_map(&:node_id) + @blocks.filter_map(&:node_id) +
+                                 [ cover_id ].compact)
     @cover_node = cover_id && @page_nodes[cover_id]
     @attachments, missing = all_attachments.partition { |a| @page_nodes.key?(a.node_id) }
     # NOT SILENT. The panel says how many left and points at the Trash, because a user who deleted
@@ -358,8 +374,19 @@ class ProjectsController < ApplicationController
     hidden_in_repos = @listing.repo_subtree_ids - @generated_ids - unrolled
     tile_ids = @listing.node_ids.reject { |id| hidden_in_repos.include?(id) } +
                @linked_rows.map(&:node_id)
+    # THE PICKERS' OWN ROWS, IN EDIT MODE ONLY (content blocks; spec §2): the image block's picker
+    # and the page intro's cover picker both draw the FOLDER'S images as thumbnails, and a row this
+    # map never backfilled shows a spinner that never resolves — worst on chunk_remote, where
+    # nothing but a backfill creates a preview row. Every one of these ids is already in
+    # `@listing.node_ids`, so on a project with no repository this adds nothing; what it rescues is
+    # an image inside one, which `hidden_in_repos` above has just taken out of `tile_ids`.
+    @folder_images = @editing ? @listing.all_rows.select { |row| row.role == "image" } : []
+    # AN IMAGE BLOCK'S PICTURE, ONLY WHERE IT IS LIVE: `@page_nodes` has already answered that, and
+    # a dead id here would spend a slot in the backfill budget for a block that renders nothing.
+    block_thumb_ids = @blocks.filter_map(&:node_id).select { |id| @page_nodes.key?(id) }
     @page_thumbs = Maker::Previews::ThumbnailMap.for(
-      current_user, tile_ids + entry_photo_ids.select { |id| @page_nodes.key?(id) } + (@cover_node ? [ cover_id ] : [])
+      current_user, tile_ids + entry_photo_ids.select { |id| @page_nodes.key?(id) } +
+                    block_thumb_ids + @folder_images.map(&:node_id) + (@cover_node ? [ cover_id ] : [])
     )
     # PHOTOS (stage 4, S4-1): the public page's own definition, on the maker's page too. In memory
     # over @listing, @entries and @page_nodes — all already loaded above — so nothing here queries,
@@ -490,6 +517,7 @@ class ProjectsController < ApplicationController
   def set_project
     @project = current_user.maker_projects.find_by!(slug: params[:id])
   end
+
 
   # THE PAGE-WIDE VIEW COOKIE IS GONE (2026-09-08, folder panels; spec decision 6). `project_view`
   # answered for every section at once, so a maker could not have their models as tiles and their

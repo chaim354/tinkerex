@@ -1,0 +1,30 @@
+<%#
+  ONE EMPTY SLOT PER KIND, FOR THE BROWSER TO CLONE (2026-09-09, content blocks; spec §2). "Add
+  block" mints a slot by substituting a number for `__N__` in one of these and prepending it to the
+  grid, so a new block's markup is THE SERVER'S — the same slot, the same strip, the same editor
+  the saved blocks render. The alternative is a second copy of all three built with `createElement`
+  in layout_editor_controller.js, which is the pair that drifts: a class renamed here would restyle
+  every saved block and leave a newly added one wrong until someone noticed.
+
+  `block:new-__N__` IS A PLACEHOLDER KEY AND NAMES NOTHING. It is the browser's own handle until
+  Save mints a real one (Maker::LayoutDocument's `new_key?`), which is why the strip is handed its
+  `label:` and `blockish:` as locals: @panel_labels holds a label per ROW and there is no row.
+
+  A `<template>` IS INERT — its contents are a DocumentFragment, so nothing inside registers as a
+  Stimulus target until the browser clones it into the grid.
+%>
+<% Maker::ProjectBlock::KINDS.each do |kind| %>
+  <% key = Maker::ProjectKind.block_key("new-__N__") %>
+  <% width = Maker::ProjectKind.default_width(key, block_kind: kind) %>
+  <template data-layout-editor-target="blockTemplate" data-kind="<%= kind %>"><div class="panel-slot panel--<%= width %>"
+       data-layout-editor-target="slot" data-key="<%= key %>" data-hidden="false" data-width="<%= width %>"
+       data-kind="<%= kind %>" data-heading="" data-body="" data-url="" data-link-title=""
+       data-line="" data-file="" data-caption=""
+       data-title="" data-intro="" data-always="false">
+    <%= render "projects/panel_strip", key: key, hidden: false, width: width, offered: [],
+               label: ProjectsHelper::BLOCK_LABELS.fetch(kind), blockish: true %>
+    <div class="panel-slot-body" data-layout-editor-target="body">
+      <%= render "projects/block_editor", key: key, block: nil, kind: kind %>
+    </div>
+  </div></template>
+<% end %>

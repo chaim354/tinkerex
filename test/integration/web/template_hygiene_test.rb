@@ -233,6 +233,18 @@ module Web
       # IMAGE branch — the one that renders the picture itself rather than a poll cell. It is
       # already a folder image, so `projects/_photos` renders it either way.
       @project.file_attachments.create!(user: @user, node_id: photo, role: "image", position: 3)
+      # 2026-09-09, CONTENT BLOCKS: ONE BLOCK OF EACH KIND, or five templates are rendered by no
+      # page here — projects/_block_panel and public/projects/_block_panel on the two detail pages,
+      # projects/_block_editor, _block_templates and _page_intro on the edit-mode entry. The IMAGE
+      # block names `n-photo`, which is already a live file inside the folder, so it renders the
+      # picture on the maker's page and passes `Maker::PublicProject#permits?` on the visitor's —
+      # an image block whose node is not live renders NOTHING at all, which would leave that
+      # partial's populated arm unswept while the coverage assertion still counted the file.
+      @project.blocks.create!(user: @user, kind: "text", heading: "Why a printed shade",
+                              body: "A paper shade **yellows**.")
+      @project.blocks.create!(user: @user, kind: "link", heading: "Printables page",
+                              url: "https://www.printables.com/model/1", line: "Sliced files.")
+      @project.blocks.create!(user: @user, kind: "image", node_id: photo, caption: "Side on.")
       @sheet = @project.sheets.create!(user: @user, name: "Cut list", position: 0,
                                        data: Maker::Sheet.blank_data)
       @model = @user.maker_models.create!(title: "Bracket", slug: "bracket",

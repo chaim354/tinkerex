@@ -1,0 +1,46 @@
+<%#
+  THE PAGE INTRO, IN EDIT MODE (2026-09-09, content blocks; spec §3). The cover and the description
+  are the two things above the grid that a maker could not change from this page, and they are
+  drafted here like everything else: layout_editor_controller.js reads `data-cover` and
+  `data-description` off this card into the draft's `page` mapping, and the ONE Save writes them
+  beside the layout. Outside edit mode nothing changes — the description paragraph and
+  projects/_hero render exactly as they did.
+
+  THE PICKER LISTS THE FOLDER'S IMAGES AND NOTHING ELSE (spec decision 4), the same set an image
+  block picks from: the YAML names a picture by its path UNDER the project folder, and a file
+  elsewhere in the library has no such path. A cover set from a file's own page from outside the
+  folder KEEPS WORKING — it is a raw column and this card never clears it — the picker simply
+  cannot choose one, and the export says so rather than dropping it silently
+  (Maker::LayoutDocument::COVER_OUTSIDE_NOTE).
+
+  Reads @project, @page_nodes (for the cover's own name — a tombstoned cover has none, and "No
+  cover" is the honest word for a picture that is not there), @folder_images and @page_thumbs.
+%>
+<% cover_id = @project.cover_node_id %>
+<% cover_node = cover_id && @page_nodes[cover_id] %>
+<div class="page-intro panel" data-layout-editor-target="page"
+     data-cover="<%= cover_id %>" data-description="<%= @project.description %>">
+  <div class="page-intro-cover">
+    <b>Cover</b>
+    <div class="cover-current" data-layout-editor-target="coverName"><%= cover_node ? cover_node.name : "No cover" %></div>
+    <div class="image-picker" role="group" aria-label="Pick a cover from the project folder">
+      <% if @folder_images.empty? %>
+        <p class="muted">No images in the project folder yet.</p>
+      <% end %>
+      <% @folder_images.each do |row| %>
+        <% ext = File.extname(row.node.name).delete(".").upcase.first(4) %>
+        <button type="button" class="cover-pick image-pick<%= " active" if cover_id == row.node_id %>"
+                data-node-id="<%= row.node_id %>" data-action="layout-editor#pickCover" title="<%= row.node.name %>">
+          <%= render "files/thumb", thumb: @page_thumbs.thumb(row.node_id), ext_label: ext,
+                     url: preview_src(@page_thumbs.thumb(row.node_id)) %>
+          <span class="image-pick-name"><%= row.node.name %></span>
+        </button>
+      <% end %>
+    </div>
+    <button type="button" class="linkbtn small" data-action="layout-editor#removeCover">Remove cover</button>
+  </div>
+  <%# PLAIN TEXT, AND ITS LINE BREAKS ARE CONTENT: Maker::LayoutDocument strips the description but
+      never collapses it, and the page renders it as the column holds it. %>
+  <label class="field page-intro-description"><span>Description</span>
+    <textarea rows="4" data-action="input->layout-editor#description"><%= @project.description %></textarea></label>
+</div>

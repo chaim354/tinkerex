@@ -8,6 +8,11 @@ module Projects
   # 4xx would read as the endpoint failing rather than the text. `yaml` for a draft that does not
   # validate answers the CURRENT layout's text rather than an error, because the only way to send
   # one is by hand, and the honest answer to "show me the YAML" is still some YAML.
+  #
+  # A THIRD READ-ONLY HELPER JOINED THEM (2026-09-09, content blocks; spec §6): `preview` renders a
+  # text block's Markdown. It is here rather than in a controller of its own because it is the same
+  # thing the other two are — a conversion the editor asks for and nothing writes — and it is
+  # project-scoped for the same reason they are: the door must be the owner's alone.
   class LayoutsController < ApplicationController
     include LayoutScoped
 
@@ -26,6 +31,18 @@ module Projects
       base = doc.from_draft(parsed_draft)
       result = doc.parse(params[:yaml].to_s, base: base.ok? ? base.draft : nil)
       render json: { draft: result.draft, notes: result.notes, errors: result.errors }
+    end
+
+    # THE TEXT BLOCK'S PREVIEW (2026-09-09, content blocks; spec §6): the SAME Maker::Markdown both
+    # pages render a block with, so what the maker sees while typing is what the page will show —
+    # a second renderer here would be a preview that lies. 422 over the body cap rather than a
+    # truncated render, for the same reason: a truncated preview says the block is shorter than it
+    # is. Read-only, owner-scoped by LayoutScoped's `find_by!`, and it writes nothing.
+    def preview
+      markdown = params[:markdown].to_s
+      return head :unprocessable_entity if markdown.bytesize > Maker::ProjectBlock::BODY_MAX
+
+      render html: Maker::Markdown.render(markdown), content_type: "text/html"
     end
 
     private
