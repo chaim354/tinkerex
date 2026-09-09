@@ -238,7 +238,8 @@ module Maker
           errors << "Entry #{n}: width must be full or half."
         end
       end
-      # A nil `view` IS SKIPPED, NOT AN ERROR, because the browser's draft carries `"view": null`
+      # A nil `view` IS SKIPPED, NOT AN ERROR, because a browser draft may carry `"view": null` (ours
+      # omits the key — layout_editor_controller.js's `entry` — but the tolerance costs nothing)
       # for a panel that offers none. The cost, accepted: a hand-typed bare `view:` with no value
       # does nothing, silently — the one blank this grammar lets through, where every misspelling
       # is an error.

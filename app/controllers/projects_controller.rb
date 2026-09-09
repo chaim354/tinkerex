@@ -134,7 +134,9 @@ class ProjectsController < ApplicationController
     # EDIT MODE (2026-09-09, the page editor; spec §5). `editing` arrives only as the DEFAULT of the
     # two `layout` routes; it turns on the chrome and nothing else — every load below is the same,
     # which is what lets page_query_budget_test.rb pin the edit page with the page's own budget.
-    @editing = params[:editing] == "1"
+    # `path_parameters`, NOT `params`: route defaults land in the path parameters and a query string
+    # never does, so `?editing=1` on the plain URL cannot switch the chrome on (found in review).
+    @editing = request.path_parameters[:editing] == "1"
     # ONE PANEL FOR A VIEW THE DRAFT CHOSE BUT HAS NOT SAVED (`layout/panel`). The layout is
     # overridden IN MEMORY for this render alone — Data#with, never a write — and only for a panel
     # that offers views and a view it offers; anything else is a 404, because the only client is

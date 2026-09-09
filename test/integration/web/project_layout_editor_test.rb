@@ -46,6 +46,12 @@ module Web
         assert_select "div.panel-slot[data-key=?][data-width=full]", models_key, 1
         assert_select "div.panel-slot[data-key=tasks][data-width=half]", 1
         assert_select "aside.layout-drawer[hidden] textarea[data-layout-editor-target=yaml]", 1
+        # THE DRAFT IS READ OFF THESE TARGETS (layout_editor_controller.js): drop one and Save posts
+        # an empty document. Pinned here because the markup is this task's output.
+        assert_select "div.panel-slot[data-layout-editor-target=slot]", order.size
+        assert_select "form.layout-save input[name=layout][data-layout-editor-target=draft]", 1
+        assert_select "div.panel-slot[data-key=tasks][data-view]", { count: 0 }, "a panel with no views carries no data-view at all"
+        assert_select "div.panel-slot[data-key=attachments][data-view=tiles]", 1
       end
       assert_select "section.tasks-panel", 1, "a hidden panel is rendered, ghosted, in edit mode"
       assert_select "section.bom-panel", 1, "and one whose data the controller skipped renders too"
@@ -77,6 +83,11 @@ module Web
       get edit_layout_project_path(@project)
       assert_select "div.panel-slot[data-key=photos] section.panel--placeholder h2", text: "Photos"
 
+      @project.update!(panels: { "titles" => { "photos" => "Gallery" } })
+      get edit_layout_project_path(@project)
+      assert_select "div.panel-slot[data-key=photos] section.panel--placeholder h2", text: "Gallery",
+                    count: 1
+
       get project_path(@project)
       assert_select "div.panel-slot[data-key=photos]", count: 0
       assert_select "section.photos-panel", count: 0
@@ -102,6 +113,16 @@ module Web
       assert_select "details.panel-chooser", count: 0
       assert_select "#panel-visibility", count: 0
       assert_select "a.customise-link[href=?]", edit_layout_project_path(@project), text: "Customise page"
+    end
+
+    # THE FLAG IS THE ROUTE'S, NOT THE QUERY STRING'S (found in review): the chrome must come only
+    # from the two `layout` routes' defaults.
+    test "the plain project URL ignores ?editing=1" do
+      get project_path(@project, editing: "1")
+
+      assert_response :success
+      assert_select ".layout-bar", count: 0
+      assert_select ".panel-strip", count: 0
     end
 
     test "the edit page and the doors are the owner's alone" do

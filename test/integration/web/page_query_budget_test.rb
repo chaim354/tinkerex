@@ -360,6 +360,9 @@ module Web
 
       seed.call(1)
       get edit_layout_project_path(project) # warm-up
+      # KEPT, like the file's other warm-ups: with show_exceptions :rescuable a 404 renders instead
+      # of raising, so a broken edit route would otherwise count queries on a page that never drew.
+      assert_response :success
       get project_path(project)
       page = count_queries { get project_path(project) }
       small = count_queries { get edit_layout_project_path(project) }
