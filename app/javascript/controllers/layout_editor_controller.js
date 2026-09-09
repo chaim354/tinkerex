@@ -285,7 +285,9 @@ export default class extends Controller {
     card.querySelector(".block-link-title").textContent = slot.dataset.linkTitle || "Title"
     card.querySelector(".block-link-line").textContent = slot.dataset.line || ""
     let host = ""
-    try { host = new URL(url).host } catch (_e) { host = "" }
+    // `hostname`, not `host`: the saved card's host comes from Ruby's URI#host, which carries no port, and
+    // the live card must say the same thing on `https://x.example:8080/a` (found in review).
+    try { host = new URL(url).hostname } catch (_e) { host = "" }
     card.querySelector(".block-link-host").textContent = host
   }
 
