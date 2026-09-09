@@ -274,6 +274,16 @@ module Web
       assert_select "section.block--text .markdown", text: /gone/
     end
 
+    test "the drawer's YAML says when the page holds an entry it cannot save, and the editor renders the cap" do
+      draft = { layout: 1, panels: [ { key: "block:new-1", kind: "text", hidden: false, width: "full" } ] }
+      post yaml_project_layout_path(@project), params: { draft: draft.to_json }
+      assert_response :success
+      assert_match(/\A# The page holds an entry that cannot be saved yet \(Entry 1: a text block needs a heading or a body\.\); this is the last saved layout\.\n/, response.body)
+
+      get edit_layout_project_path(@project)
+      assert_select "div.layout-editor[data-layout-editor-block-cap-value=?]", Maker::ProjectBlock::CAP.to_s, 1
+    end
+
     test "Save refuses a draft over the cap" do
       Maker::ProjectBlock::CAP.times { |i| block!(kind: "text", body: "b#{i}") }
       entries = @project.blocks.map { |b| { key: b.layout_key, kind: "text", hidden: false, width: "full", body: b.body } }

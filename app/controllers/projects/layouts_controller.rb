@@ -24,6 +24,9 @@ module Projects
       doc = document
       result = doc.from_draft(parsed_draft)
       text = doc.to_yaml(result.ok? ? result.draft : doc.draft, project_name: @project.name)
+      # A DRAFT THE DOCUMENT REFUSES STILL GETS SOME YAML, BUT NOT SILENTLY (found in review): the
+      # text is the last saved layout, and its first line says why it is not the page on screen.
+      text = "# The page holds an entry that cannot be saved yet (#{result.errors.first}); this is the last saved layout.\n#{text}" unless result.ok?
       render plain: text, content_type: "text/plain"
     end
 

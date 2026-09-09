@@ -173,7 +173,8 @@
        data-layout-editor-yaml-url-value="<%= yaml_project_layout_path(@project) %>"
        data-layout-editor-parse-url-value="<%= parse_project_layout_path(@project) %>"
        data-layout-editor-panel-url-value="<%= layout_panel_project_path(@project) %>"
-       data-layout-editor-preview-url-value="<%= preview_project_layout_path(@project) %>">
+       data-layout-editor-preview-url-value="<%= preview_project_layout_path(@project) %>"
+       data-layout-editor-block-cap-value="<%= Maker::ProjectBlock::CAP %>">
     <%= render "projects/layout_bar" %>
     <%= render "projects/page_intro" %>
     <div class="project-panels layout-editing" data-controller="masonry" data-layout-editor-target="grid">

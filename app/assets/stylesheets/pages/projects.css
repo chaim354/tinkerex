@@ -156,7 +156,7 @@
      consulted and `pages` is declared after `components`, so `.block-panel .markdown` there would
      lose to the bare `.markdown` above however specific it looked (the same trap the folder-panel
      view toggle records). */
-  .block-panel .markdown { max-height: none; overflow: visible; margin-top: 0; }
+  .block-panel .markdown, .block-preview.markdown { max-height: none; overflow: visible; margin-top: 0; }
 
   /* --- Generated (stage 3, S3-1): the tile keeps its own thumbnail's shape; the meta line below
      it is always visible (unlike a Linked tile's hover corner), because naming the tool and

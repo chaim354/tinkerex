@@ -102,7 +102,7 @@ class PageBlocksTest < ApplicationSystemTestCase
     assert_selector "section.block--image figcaption", text: "Side on."
   end
 
-  test "Delete removes a block and Save persists the removal; a dragged block lands where dropped" do
+  test "Delete removes a block and Save persists the removal; a dragged block lands below Files" do
     gone = @project.blocks.create!(user: @user, kind: "text", body: "gone")
     kept = @project.blocks.create!(user: @user, kind: "text", body: "kept")
     open_editor
@@ -154,6 +154,23 @@ class PageBlocksTest < ApplicationSystemTestCase
         .move_by(0, 10)
         .release
         .perform
+  end
+
+  # THE GATE ON SAVE (found in review): without it an empty block made the server refuse the whole
+  # draft and reload the editor from the row — every other unsaved change in the session gone.
+  test "Save refuses to leave with an empty block and keeps the rest of the session's changes" do
+    open_editor
+    within("div.panel-slot[data-key='tasks']") { click_on "Hide" }
+    add("text")
+    click_on "Save"
+    assert_selector ".flash-notice", text: "Not saved: a text block needs a heading or a body"
+    assert_current_path edit_layout_project_path(@project)
+    assert_no_selector ".flash-alert"
+    assert_selector "div.panel-slot[data-key='tasks'].panel-slot--hidden"
+    within(new_slot("text")) { click_on "Delete" }
+    click_on "Save"
+    assert_selector ".flash-notice", text: "Page layout saved."
+    assert_includes @project.reload.panels["hidden"], "tasks"
   end
 
   test "the page intro changes the description and the cover" do

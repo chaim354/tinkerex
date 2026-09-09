@@ -229,7 +229,13 @@ export default class extends Controller {
     // THE CAP IS NEVER THIS NUMBER'S ALONE TO KEEP: projects/_layout_bar renders these buttons
     // `disabled` at Maker::ProjectBlock::CAP, the document refuses a draft over it and Save refuses
     // again. This is the third lock, so a drift between the two spellings costs nothing.
-    if (this.slotTargets.filter((s) => s.dataset.kind).length >= this.blockCapValue) return
+    if (this.slotTargets.filter((s) => s.dataset.kind).length >= this.blockCapValue) {
+      // SAID, NOT SWALLOWED (found in review): the bar's `disabled` reflects the SAVED count, so
+      // blocks added within a session reach this lock with the buttons still live.
+      this.addMenuTarget.removeAttribute("open")
+      this.toast(`This page has ${this.blockCapValue} blocks, the most it can hold.`)
+      return
+    }
 
     // THE COUNTER TAKES THE HIGHEST KEY ON THE PAGE INTO ACCOUNT EVERY TIME, not only on the first
     // add: an Apply mints its own `block:new-N` keys from the server (Maker::LayoutDocument's
@@ -311,8 +317,12 @@ export default class extends Controller {
       const res = await this.post(this.previewUrlValue, { markdown: slot.dataset.body || "" })
       box.innerHTML = await res.text()
       box.hidden = false
-    } catch (_e) {
-      this.toast("The preview did not render; the text is kept and applies on Save.")
+    } catch (e) {
+      // A 422 IS THE BODY CAP, and Save will refuse that body too — say so rather than promise it
+      // applies (found in review).
+      this.toast(/422/.test(String(e?.message))
+        ? "The text is over the 20 KB limit; Save will refuse it too."
+        : "The preview did not render; the text is kept and applies on Save.")
     }
   }
 
@@ -468,7 +478,39 @@ export default class extends Controller {
 
   // --- Save ----------------------------------------------------------------------------------------
 
-  save(_event) {
+  // WHAT SAVE REFUSES TO POST (found in review): an empty block makes the server refuse the whole
+  // draft and reload the editor from the row, which throws away every OTHER unsaved change in the
+  // session. The server's own rules, asked here first; the toast names the block, the slot is
+  // scrolled into view, and nothing is lost. The body is byte-counted like the server, not in the
+  // UTF-16 units `maxlength` counts.
+  blockProblem(slot) {
+    const d = slot.dataset
+    switch (d.kind) {
+      case "text":
+        if (!d.heading && !d.body) return "a text block needs a heading or a body"
+        if (new TextEncoder().encode(d.body || "").length > 20 * 1024) return "a text block's body is over 20 KB"
+        return null
+      case "link":
+        if (!/^https?:\/\/\S+$/i.test(d.url || "")) return "a link needs an http or https URL"
+        if (!d.linkTitle) return "a link needs a title"
+        return null
+      case "image":
+        return d.file ? null : "an image block needs a picture from the project folder"
+      default:
+        return null
+    }
+  }
+
+  save(event) {
+    const problems = this.slotTargets.filter((s) => s.dataset.kind).map((s) => [s, this.blockProblem(s)]).filter(([, p]) => p)
+    if (problems.length) {
+      event.preventDefault()
+      const [slot, problem] = problems[0]
+      slot.scrollIntoView({ block: "center" })
+      slot.querySelector("input, textarea")?.focus()
+      this.toast(`Not saved: ${problem}. Fill it in or delete the block; nothing else was lost.`)
+      return
+    }
     this.draftTarget.value = JSON.stringify(this.draft())
   }
 
