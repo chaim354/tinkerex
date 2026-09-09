@@ -1,0 +1,96 @@
+<%#
+  ONE OF THE PROJECT FOLDER'S DEPTH-ONE SUBFOLDERS, AS A PANEL (2026-09-08, folder panels; spec
+  decisions 1, 3 and 6). Until now every subfolder was a <details> section inside the Files panel
+  and the whole page shared ONE tiles/list cookie, so a maker could not have their models as tiles
+  and their firmware checkout as the Finder browser. A folder is a first-class panel now: the
+  chooser can hide it and move it (projects/_panel_chooser), and its VIEW is its own, persisted in
+  `panels["views"]` under this panel's key.
+
+  Locals: dir (Maker::ProjectFolderListing::Dir), key ("folder:<node_id>"), view (one of
+  Maker::Project::VIEWS). Reads @project, @generated_ids, @page_thumbs, @addon_origins and
+  @repo_cards off ProjectsController#show, exactly as the section partial it replaces always did.
+
+  NESTING IS UNCHANGED AND DELIBERATE: only DEPTH ONE is a panel, so a subfolder of a subfolder
+  still renders through projects/_file_tree_section inside this panel, nested as it sits on disk.
+  A repository at depth one is a panel like any other; one nested deeper stays a closed section
+  with its browser inside it (spec decision 3).
+
+  THE COUNT IS THE WHOLE SUBTREE, which is _file_tree_section's rule for a REPOSITORY applied to
+  every folder here — and for the same reason: a panel holds its nested sections, so its heading
+  must count what is inside them too, or a folder of folders reads "(0)". Generated files are
+  subtracted for a plain folder because they render in the Files panel's Generated group instead
+  and this panel really does not draw them; a repository's browser lists everything at every
+  depth, so nothing is subtracted there (_file_tree_section makes the same split).
+
+  ITS OWN `thumbs filemenu` PAIR. The Files panel wraps its groups in one instance because they
+  share a subtree; a panel is a sibling subtree, so a controller mounted over there would not find
+  these cells at all. Every tile id here is already in @page_thumbs — tile_ids is built from
+  @listing.node_ids, which is every row of the whole tree — so this polls, and never builds a
+  second ThumbnailMap.
+%>
+<% visible = dir.files.reject { |row| @generated_ids.include?(row.node_id) } %>
+<% count = dir.repo? ? dir.subtree_file_count : dir.subtree_file_ids.count { |id| !@generated_ids.include?(id) } %>
+<% empty = visible.empty? && dir.children.empty? %>
+<section class="panel folder-panel<%= " panel--quiet" if empty %>" id="<%= key %>">
+  <div class="panel-head">
+    <h2><%= dir.name %></h2>
+    <span class="mono muted"><%= pluralize(count, "file") %></span>
+    <%# WHERE IT IS, not just what — the Files panel head's own `panel-path` link, per folder. %>
+    <%= link_to dir.path, files_path(folder: dir.node_id), class: "panel-path mono muted" %>
+    <% if dir.repo? %><span class="badge">repo</span><% end %>
+    <div class="panel-actions">
+      <% if dir.repo? %>
+        <%= link_to "Commits", repo_commit_path(dir.node_id), class: "linkbtn" %>
+        <%= link_to "History", repo_history_path(dir.node_id), class: "linkbtn" %>
+      <% end %>
+      <%# THREE BUTTONS, NOT LINKS, because this is a WRITE: the choice is persisted on the project
+          row (Projects::PanelsController#update's `view` branch), not remembered in a cookie. Each
+          posts `view[<key>]=<value>` and the door redirects back to this panel's own anchor.
+          A SECOND COPY OF THIS MARKUP LIVES IN projects/_attachments.html.erb, offering two of the
+          three: Files has no browser to mount (there is no Dir for the folder's own root unless it
+          is a working tree), and a control that does nothing is worse than one that is absent. %>
+      <div class="view-toggle" role="group" aria-label="View">
+        <% Maker::ProjectKind.offered_views(key).each do |value| %>
+          <%= button_to value.capitalize, project_panels_path(@project), method: :patch,
+                        params: { view: { key => value } },
+                        class: "toggle#{' active' if view == value}" %>
+        <% end %>
+      </div>
+    </div>
+  </div>
+
+  <% if empty %>
+    <%# QUIET, NOT OMITTED (S4-1's quiet-panel rule). The maker put this folder in the layout — it
+        is a real folder on disk — so the honest render is its heading and one sentence, the same
+        answer an empty Tasks panel gives. Omitting it is the VISITOR's page's rule, not this one. %>
+    <p class="muted">Empty folder.</p>
+  <% else %>
+    <div data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
+      <%# THE CARD COMES FIRST IN EVERY VIEW — the README rendered, the latest commit, the current
+          tag — which is the order _file_tree_section already puts it in for a nested repository.
+          @repo_cards holds one for every repo? Dir on the page (ProjectsController#show), so a
+          missing entry would be a real bug rather than a normal case; the `&&` is defensive. %>
+      <% if dir.repo? && (card = @repo_cards[dir.node_id]) %>
+        <%= render "projects/repo_card", card:, editable: false %>
+      <% end %>
+      <% if view == "browser" %>
+        <%# THE FINDER-STYLE BROWSER (2026-09-07), which takes any Dir — a plain folder switched to
+            this view browses exactly as a repository does, and it REPLACES the tiles, the rows and
+            the nested sections rather than sitting above them. %>
+        <%= render "projects/repo_browser", dir: %>
+      <% else %>
+        <% if visible.any? %>
+          <% if view == "list" %>
+            <%= render "file_rows", rows: visible %>
+          <% else %>
+            <div class="attachments-grid">
+              <%= render partial: "file_tile", collection: visible, as: :row %>
+            </div>
+          <% end %>
+        <% end %>
+        <%= render partial: "file_tree_section", collection: dir.children, as: :dir,
+                   locals: { view: } %>
+      <% end %>
+    </div>
+  <% end %>
+</section>

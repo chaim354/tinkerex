@@ -26,7 +26,19 @@
   carry the COMPLETE list: the door computes hidden as order minus visible, so "unchecked" and
   "not offered" are the same fact, and neither can silently drop a panel out of the order.
 
-  Reads @project, @panel_layout and @panels_open (ProjectsController#show). No locals.
+  A FOLDER IS A ROW LIKE ANY OTHER (2026-09-08, folder panels; spec decision 1), labelled with the
+  folder's own name and badged `folder` (or `repo`) so it reads as a place on disk rather than as
+  an eleventh feature panel. The field names, the checkbox and the two arrows are IDENTICAL to a
+  fixed panel's — the door widened its vocabulary (Projects::PanelsController), the form did not
+  change shape, which is why hiding and moving a folder needed no new markup at all.
+
+  LABELS COME FROM @panel_labels, NOT FROM Maker::Project::PANEL_LABELS. A folder's label is its
+  name, which only the listing knows, so ProjectsController#show merges the two into one map and
+  this template `fetch`es from it — a raise here would mean the layout admitted a key the labels
+  do not cover, i.e. that the two were built from different listings.
+
+  Reads @project, @panel_layout, @panel_labels and @panels_open (ProjectsController#show). No
+  locals.
 %>
 <details class="panel-chooser" id="panels" <%= "open" if @panels_open %>>
   <summary class="btn small">Panels</summary>
@@ -47,24 +59,31 @@
         <%= hidden_field_tag "panels[order][]", key, form: "panel-visibility", id: "panel-order-#{key}" %>
         <% if Maker::ProjectKind::ALWAYS.include?(key) %>
           <%= hidden_field_tag "panels[visible][]", key, form: "panel-visibility", id: "panel-show-#{key}" %>
-          <span class="panel-choice-name"><%= Maker::Project::PANEL_LABELS.fetch(key) %></span>
+          <span class="panel-choice-name"><%= @panel_labels.fetch(key) %></span>
           <span class="muted panel-choice-always">always shown</span>
         <% else %>
           <label class="panel-choice-name">
             <%= check_box_tag "panels[visible][]", key, @panel_layout.visible?(key),
                               form: "panel-visibility", id: "panel-show-#{key}" %>
-            <%= Maker::Project::PANEL_LABELS.fetch(key) %>
+            <%= @panel_labels.fetch(key) %>
           </label>
+        <% end %>
+        <%# WHICH ROWS ARE FOLDERS. Two folders can share a name at different depths only in
+            principle here — these are depth one, so the names are unique — but a maker whose
+            project holds a `photos/` folder needs to see which row is the panel and which is the
+            directory, and the badge is the whole of that answer. %>
+        <% if @panel_layout.folder?(key) %>
+          <span class="badge"><%= @panel_layout.repo_ids.include?(@panel_layout.folder_id(key)) ? "repo" : "folder" %></span>
         <% end %>
         <span class="panel-choice-moves">
           <%# THE LABEL IS THE BUTTON'S, NOT THE FORM'S (found in review): on the form it named twenty
               landmarks and left each button's accessible name as its glyph. %>
           <%= button_to "▲", project_panels_path(@project), method: :patch,
                         params: { move: "up", panel: key }, class: "linkbtn small",
-                        "aria-label": "Move #{Maker::Project::PANEL_LABELS.fetch(key)} up" %>
+                        "aria-label": "Move #{@panel_labels.fetch(key)} up" %>
           <%= button_to "▼", project_panels_path(@project), method: :patch,
                         params: { move: "down", panel: key }, class: "linkbtn small",
-                        "aria-label": "Move #{Maker::Project::PANEL_LABELS.fetch(key)} down" %>
+                        "aria-label": "Move #{@panel_labels.fetch(key)} down" %>
         </span>
       </li>
     <% end %>

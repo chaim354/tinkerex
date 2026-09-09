@@ -26,11 +26,12 @@ require "application_system_test_case"
 #   - Deleting `.lexxy-content { color: inherit; }` from vendor-overrides.css reddens test 5:
 #     `lexxy-content.css's own colour survived: oklch(0.2 0 0) inside a rgb(228, 231, 236) parent`
 #     — the vendor near-black is back inside the page's light text (2026-09-04).
-#   - Dropping `cookies[:project_view] = { value: requested, ... }` from
-#     ProjectsController#resolve_project_view (so an explicit ?view= still switches the render for
-#     ONE request but nothing is written to remember it) reddens test 6 at its second visit:
-#     `expected to find css "table.project-files" but there were no matches`, because a bare
-#     revisit with no ?view= falls back to the tiles default with nothing left to read.
+#   - Dropping the write from `Projects::PanelsController#update_view` (so the PATCH still
+#     redirects to the panel's anchor but `panels["views"]` is never merged) reddens test 6 at its
+#     first assertion after the click: `expected to find css "table.project-files" but there were
+#     no matches`. That is the mutation the 2026-09-08 rewrite of this test replaced the old one
+#     with — the old bullet named `ProjectsController#resolve_project_view`, a method the folder
+#     panels deleted along with the page-wide `project_view` cookie it wrote.
 class ProjectsModelsPagesTest < ApplicationSystemTestCase
   setup do
     @root = use_fresh_share_library!
@@ -115,23 +116,38 @@ class ProjectsModelsPagesTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  # THE TILES/LIST TOGGLE (stage 3, S3-1) — a real click, not a driven ?view= request, so this is
-  # the one place that proves the link in the panel head actually works and that the choice
-  # survives a fresh visit through the cookie (ProjectsController#resolve_project_view), not just
-  # for the lifetime of one page load.
-  test "the tiles/list toggle switches the panel and remembers the choice across a visit" do
+  # THE FILES PANEL'S OWN VIEW TOGGLE (stage 3, S3-1; rebuilt 2026-09-08 for the folder panels) — a
+  # real click, so this is the one place that proves the control in the panel head works end to end.
+  #
+  # IT IS A `button_to` NOW, NOT A LINK, AND THE CHOICE LIVES ON THE PROJECT ROW. Until the folder
+  # panels landed the toggle was an `?view=list` link and the answer was remembered in a page-wide
+  # `project_view` COOKIE that ProjectsController#resolve_project_view read and rewrote; every panel
+  # on the page shared it. A view is a WRITE now — three buttons per panel, each POSTing
+  # `view[<key>]=<value>` to Projects::PanelsController#update_view, which merges the pair into
+  # `panels["views"]` under that panel's own key and redirects to its anchor. So "remembers the
+  # choice" is a database assertion here, not a cookie one, and it is made directly on the row as
+  # well as through a second visit: a redirect that rendered the list for one request while writing
+  # nothing would satisfy the render assertions alone.
+  #
+  # THE FILES PANEL'S KEY IS `attachments`, the folder ROOT — the loose file below sits there, not
+  # in a subfolder, so this drives the panel that has no folder key at all. A depth-one subfolder's
+  # own toggle (including its third value, the browser, which Files does not offer) is
+  # repo_browser_test.rb's.
+  test "the Files panel's List button switches it and the choice is stored on the project" do
     folder = project_folder_rows!(@user, @project)
     create_node!(@user, node_id: SecureRandom.uuid, name: "bracket.stl", kind: "file",
                 parent_node_id: folder.node_id)
     visit project_path(@project)
-    assert_selector ".attachments-grid .attachment-tile .grid-name", text: "bracket.stl"
+    assert_selector ".attachments-panel .attachments-grid .attachment-tile .grid-name", text: "bracket.stl"
     assert_no_selector "table.project-files"
 
-    click_on "List"
+    within(".attachments-panel .view-toggle") { click_on "List" }
     assert_selector "table.project-files td.col-name", text: "bracket.stl"
-    assert_no_selector ".attachments-grid .attachment-tile"
+    assert_no_selector ".attachments-panel .attachments-grid .attachment-tile"
+    assert_equal "list", @project.reload.panels.dig("views", "attachments")
 
-    # The cookie must remember the list choice across a fresh visit with no ?view= at all.
+    # A FRESH VISIT WITH NO PARAMS AT ALL. The row is the only thing left that could carry the
+    # answer, so the table rendering here is what says the write is what the page reads.
     visit project_path(@project)
     assert_selector "table.project-files"
     assert_no_console_errors

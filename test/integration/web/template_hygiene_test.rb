@@ -172,6 +172,35 @@ module Web
                             mtime: 1_000_000_000, size: 5,
                             content_hash: "h-pcb-#{i}", current_version_id: "v-pcb-#{i}")
       end
+      # A FOLDER INSIDE A FOLDER, OR projects/_file_tree_section IS RENDERED BY NO PAGE HERE
+      # (2026-09-08, folder panels). Every DEPTH-ONE subfolder is a PANEL now, so that partial is
+      # reached ONLY from a panel's `children` and from its own recursion — with `d-firmware` and
+      # `d-pcb` both at depth one and nothing below them, this fixture nested nothing and the
+      # coverage assertion named the file. `d-pcb` stays at its TILES default, so what is swept is
+      # the section's tiles arm; its list arm is `d-models` below.
+      gerber_rev = @user.nodes.create!(node_id: "d-pcb-rev-b", name: "rev-b", kind: "dir",
+                                       parent_node_id: pcb.node_id)
+      @user.nodes.create!(node_id: "n-pcb-rev", name: "driver-rev-b.gtl", kind: "file",
+                          parent_node_id: gerber_rev.node_id, mtime: 1_000_000_000, size: 5,
+                          content_hash: "h-pcb-rev", current_version_id: "v-pcb-rev")
+      # A THIRD DEPTH-ONE FOLDER, HELD AT THE `list` VIEW, AND IT IS WHAT SWEEPS TWO PARTIALS' LIST
+      # ARMS AT ONCE. A folder panel has three views and this fixture has to render all of them from
+      # one page, because the view is stored on the project ROW now — there is no `?view=` a second
+      # entry in `pages` could ask for (see the retired "project detail (list)" entry below). The
+      # defaults cover two: `d-firmware` is a working tree and opens in the BROWSER, `d-pcb` is
+      # plain and opens in TILES. Only an override reaches the third, and it is the arm that renders
+      # projects/_file_rows — swept by no page at all once the page-wide view cookie retired. The
+      # visitor's public/projects/_folder_panel takes the same three keys and splits them two ways
+      # (`browser` reads as `list` there), so this one override covers its list arm too while
+      # `d-pcb` covers its tiles arm.
+      #
+      # `views` HIDES NOTHING, which is what keeps it compatible with the `kind: "other"` rule
+      # stated further down: Maker::ProjectKind.layout_for reads `order` and `hidden` off the
+      # overrides and neither is set here, so every panel this sweep needs still renders.
+      models_dir = @user.nodes.create!(node_id: "d-models", name: "models", kind: "dir",
+                                       parent_node_id: folder.node_id)
+      file!("n-models-base", "base.stl", parent_node_id: models_dir.node_id)
+      @project.update!(panels: { "views" => { "folder:d-models" => "list" } })
       # ONE GENERATED FILE IN THE FOLDER, OR projects/_generated_group IS NEVER RENDERED: a file with
       # a Maker::AddonState behind it, keyed to the `fixture` addon the sweep's ADDON_SOURCE_PATH
       # already serves (link_for answers nil for a key the source does not know, and the concern
@@ -396,8 +425,14 @@ module Web
         "file detail (gerber)" => file_path("n-pcb-0"),
         "file detail (other)" => file_path("n-other"),
         "projects index" => projects_path,
+        # ONE ENTRY, NOT TWO. `project detail (list)` used to sit here as
+        # `project_path(@project, view: "list")` and was the only page that swept
+        # projects/_file_rows. The folder panels retired the page-wide `?view=`/cookie pair
+        # (2026-09-08, spec decision 6): the view is stored per PANEL on the project row, so that
+        # URL now renders byte for byte what the line above renders and the two entries were the
+        # same page visited twice. `_file_rows` is swept by `d-models`' stored `list` view in setup
+        # instead — which is a stronger claim, since it is the arm a real maker's page takes.
         "project detail" => project_path(@project),
-        "project detail (list)" => project_path(@project, view: "list"),
         "project detail (no README)" => project_path(@unlisted),
         # Stage 4, S4-4: the owner's preview of their public page, the ONE page that reaches
         # projects/preview and projects/_preview_banner. @user has a handle (setup above), so this

@@ -113,10 +113,22 @@
 <%#
   THE PANELS, AS DATA (stage 4, S4-7; story 6.5). Ten hard-coded renders became one loop over
   Maker::ProjectKind::Layout#visible — this project's kind's preset with its own overrides on top.
-  The key IS the partial's basename, and Maker::Project::PANELS is the only place a key may come
-  from: Maker::ProjectKind.layout_for intersects the stored column with it and
+  The key IS the partial's basename, and Maker::Project::PANELS is the only place a FIXED key may
+  come from: Maker::ProjectKind.layout_for intersects the stored column with it and
   Projects::PanelsController intersects every write, so this render can never be handed a partial
   name that does not exist.
+
+  A KEY IS EITHER FIXED OR A FOLDER (2026-09-08, folder panels; spec decisions 3 and 5). A
+  `folder:<node_id>` key renders projects/_folder_panel with the Dir it names — one of the
+  project folder's own DEPTH-ONE subfolders, which is why Files no longer renders a section per
+  subfolder itself. The interpolated render is reached only by the fixed branch, so widening the
+  vocabulary did not widen what `render "projects/#{key}"` can be handed.
+
+  THE `find` IS IN MEMORY over at most DIR_CAP dirs and CANNOT ANSWER NIL: the layout's folder
+  keys were built from `@listing.panel_folders`, i.e. from this same `@listing.tree`, one
+  statement earlier in ProjectsController#show. A `dir:` guard here would be a branch for a state
+  no request can reach, and it would hide the real bug (a layout built from a different listing)
+  behind a silently missing panel.
 
   HIDDEN IS NOT QUIET. A panel this loop skips is absent from the page; an empty panel it DOES
   render is quiet (S4-1's panel--quiet) — its heading and one add control. Two questions, and the
@@ -137,7 +149,12 @@
    } %>
 <div class="project-panels">
   <% @panel_layout.visible.each do |key| %>
-    <%= render "projects/#{key}", **panel_locals.fetch(key, {}) %>
+    <% if @panel_layout.folder?(key) %>
+      <%= render "projects/folder_panel", key:, view: @panel_layout.view_for(key),
+                 dir: @listing.tree.find { |d| d.node_id == @panel_layout.folder_id(key) } %>
+    <% else %>
+      <%= render "projects/#{key}", **panel_locals.fetch(key, {}) %>
+    <% end %>
   <% end %>
 </div>
 

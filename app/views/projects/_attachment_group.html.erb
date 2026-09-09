@@ -5,7 +5,8 @@
   filename).
 
   Locals: key (a stable slug for the section, unused below but kept for a caller that wants one),
-  label, rows (Maker::ProjectFolderListing::Row), open (Boolean).
+  label, rows (Maker::ProjectFolderListing::Row), open (Boolean), view (one of
+  Maker::Project::VIEWS — the ENCLOSING PANEL's, passed down; see below).
 
   A ROW IS A FOLDER FILE OR A LINKED ATTACHMENT, AND row.linked? IS THE ONLY BRANCH IN THIS
   PARTIAL (inside _file_tile.html.erb, which owns it). A folder row's node comes straight from the
@@ -16,12 +17,16 @@
   Move into project (Maker::AttachToProject#relocate under the file's own name — the same door the
   collision prompt's "Move it in as…" button posts to, in _move_conflict.html.erb).
 
-  TILES OR LIST, LIKE EVERY OTHER GROUP ON THE PAGE (@view) — _file_rows.html.erb draws the same
-  rows as a table when the panel is in list mode, so Loose/Backups/Linked switch exactly the way a
-  real subfolder section does. `open` is a real HTML attribute either way, so a closed section
-  costs nothing at render time and the browser keeps the toggle state for the life of the page. It
-  is NOT persisted across loads: that would need a cookie per section per project, and the panel's
-  default (everything open but Backups) is the answer for almost every visit.
+  TILES OR LIST, AS THE ENCLOSING PANEL WAS TOLD (`view`, a REQUIRED local since 2026-09-08) —
+  _file_rows.html.erb draws the same rows as a table when the panel is in list mode, so
+  Loose/Backups/Linked switch exactly the way a folder panel's own files do. It was `@view`, one
+  page-wide cookie, until the view became per panel (spec decision 6): an ivar cannot say WHICH
+  panel is asking, and a group renders inside exactly one.
+
+  `open` is a real HTML attribute either way, so a closed section costs nothing at render time and
+  the browser keeps the toggle state for the life of the page. It is NOT persisted across loads:
+  that would need a cookie per section per project, and the panel's default (everything open but
+  Backups) is the answer for almost every visit.
 
   NATIVE <details>, NOT A STIMULUS CONTROLLER: collapsing is what the element is for, it works
   before any JavaScript loads, and `models/_file_tree.html.erb` already uses it for exactly this.
@@ -31,7 +36,7 @@
     <summary class="attachment-group-head">
       <%= label %> <span class="muted">(<%= rows.size %>)</span>
     </summary>
-    <% if @view == "list" %>
+    <% if view == "list" %>
       <%= render "file_rows", rows: rows %>
     <% else %>
       <div class="attachments-grid">

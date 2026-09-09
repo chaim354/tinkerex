@@ -170,6 +170,160 @@ end
       refute @project.panel_layout.visible?("bom"), "the laser preset is back"
     end
 
+    # --- folder panels (2026-09-08; spec decisions 1 and 6) -------------------------------------
+
+    # Two depth-one subfolders, one of them a working tree. Bare `nodes.create!` rows under
+    # `project_folder_rows!` — no port write anywhere, so this reads the same on all three legs.
+    def seed_folders!(project = @project)
+      folder = project_folder_rows!(@user, project)
+      models = @user.nodes.create!(node_id: "d-models", name: "models", kind: "dir",
+                                   parent_node_id: folder.node_id)
+      firmware = @user.nodes.create!(node_id: "d-firmware", name: "firmware", kind: "dir",
+                                     parent_node_id: folder.node_id)
+      @user.nodes.create!(node_id: "d-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
+                          parent_node_id: firmware.node_id)
+      @user.nodes.create!(node_id: "f-base", name: "base.stl", kind: "file",
+                          parent_node_id: models.node_id, size: 10, mtime: 1_000_000_000)
+      # A FILE INSIDE THE WORKING TREE, or its panel is EMPTY and renders quiet instead of the
+      # browser — the browser is what the repo assertions below are about.
+      @user.nodes.create!(node_id: "f-main", name: "main.c", kind: "file",
+                          parent_node_id: firmware.node_id, size: 10, mtime: 1_000_000_000)
+      [ Maker::ProjectKind.folder_key("d-models"), Maker::ProjectKind.folder_key("d-firmware") ]
+    end
+
+    # THE SAME FIELD NAMES AS A FIXED PANEL, which is what makes hiding and moving a folder work
+    # with no new markup at all. Asserted on the RENDERED names (CLAUDE.md section 14d), and the
+    # LABEL is the folder's own name — the one thing @panel_labels adds that PANEL_LABELS cannot.
+    test "the chooser lists a folder row per subfolder, with its name and the same field names" do
+      models, firmware = seed_folders!
+
+      get project_path(@project)
+
+      assert_select "details.panel-chooser#panels" do
+        assert_select "li.panel-choice", Maker::Project::PANELS.size + 2
+        assert_select "input[name=?][value=?]", "panels[order][]", models
+        assert_select "input[type=checkbox][name=?][value=?]", "panels[visible][]", firmware
+        assert_select "label.panel-choice-name", text: /models/
+        assert_select "button[aria-label=?]", "Move models up", 1
+      end
+      # A folder row says which kind of place it is: `repo` for a working tree, `folder` otherwise.
+      assert_select "li.panel-choice:has(input[value='#{firmware}']) span.badge", text: "repo"
+      assert_select "li.panel-choice:has(input[value='#{models}']) span.badge", text: "folder"
+    end
+
+    test "a folder can be hidden through the same Save the fixed panels use" do
+      models, firmware = seed_folders!
+
+      # THE FORM SENDS THE COMPLETE PICTURE — every key in `order`, the checked ones in `visible`
+      # — so "hidden" is the difference. Leaving `firmware` out of `order` here would hide it too,
+      # which is the door's own rule and not what this test is about.
+      patch project_panels_path(@project),
+            params: { panels: { order: Maker::Project::PANELS + [ models, firmware ],
+                                visible: Maker::Project::PANELS + [ firmware ] } }
+
+      assert_equal [ models ], @project.reload.panels["hidden"]
+      get project_path(@project)
+      assert_select "section.folder-panel[id=?]", models, count: 0
+    end
+
+    # --- the view toggle ------------------------------------------------------------------------
+
+    test "a view toggle writes that panel's view, keeps the others, and lands on the panel" do
+      models, firmware = seed_folders!
+
+      patch project_panels_path(@project), params: { view: { models => "list" } }
+
+      assert_redirected_to project_path(@project, anchor: models)
+      assert_equal({ models => "list" }, @project.reload.panels["views"])
+
+      get project_path(@project)
+      assert_select "section.folder-panel[id=?] table.project-files td.col-name", models, text: "base.stl"
+      assert_select "section.folder-panel[id=?] .repo-browser", firmware, 1
+
+      # A SECOND TOGGLE MERGES rather than replaces: one click is about one panel.
+      patch project_panels_path(@project), params: { view: { "attachments" => "list" } }
+      assert_equal({ models => "list", "attachments" => "list" }, @project.reload.panels["views"])
+    end
+
+    # AN UNKNOWN KEY OR VALUE WRITES NOTHING, for the reason every other array on this door is
+    # intersected: `view` is hand-writable, and a value outside Maker::Project::VIEWS would reach
+    # the partial's own branch. Neither may echo into the redirect's anchor either.
+    test "a view outside the vocabulary writes nothing" do
+      models, = seed_folders!
+      @project.update!(panels: { "views" => { models => "list" } })
+
+      patch project_panels_path(@project), params: { view: { models => "sideways" } }
+      assert_redirected_to project_path(@project)
+      assert_equal({ models => "list" }, @project.reload.panels["views"])
+
+      patch project_panels_path(@project), params: { view: { "folder:not-a-folder" => "tiles" } }
+      assert_equal({ models => "list" }, @project.reload.panels["views"])
+
+      patch project_panels_path(@project), params: { view: { "../../etc/passwd" => "tiles" } }
+      assert_equal({ models => "list" }, @project.reload.panels["views"])
+
+      # The RETIRED page-wide toggle's shape — a bare `?view=list` — is a String, not a pair, and
+      # answers nothing rather than half-working.
+      patch project_panels_path(@project), params: { view: "list" }
+      assert_equal({ models => "list" }, @project.reload.panels["views"])
+    end
+
+    # THE THREE OTHER DOORS MUST CARRY `views` FORWARD, or the first arrow click or Save would
+    # silently reset every panel's view — the same "only the question that was asked" rule the
+    # hidden set already follows.
+    # THE DOOR TAKES ONLY WHAT THE PANEL OFFERS, AND ONLY ONE PAIR (found in review): `browser` for
+    # Files stored a state no button could show, a fixed panel with no view took one anyway, and
+    # two pairs wrote the first. Each writes nothing now.
+    test "a view the panel does not offer, a panel with no view, and two pairs all write nothing" do
+      seed_folders!
+      # A STORED VIEW FIRST, so "writes nothing" is asserted against a real hash rather than nil —
+      # and so a door that merged a refused pair over an existing map would be seen doing it.
+      @project.update!(panels: { "views" => { "folder:d-firmware" => "tiles" } })
+      before = @project.reload.panels
+
+      patch project_panels_path(@project), params: { view: { "attachments" => "browser" } }
+      assert_equal before, @project.reload.panels, "Files offers no browser"
+
+      patch project_panels_path(@project), params: { view: { "tasks" => "list" } }
+      assert_equal before, @project.reload.panels, "Tasks has no view"
+
+      patch project_panels_path(@project), params: { view: { "folder:d-models" => "list", "attachments" => "list" } }
+      assert_equal before, @project.reload.panels, "two pairs are not one"
+      assert_response :redirect
+    end
+
+    test "Save and a move keep the chosen views, and Reset clears them" do
+      models, = seed_folders!
+      @project.update!(panels: { "views" => { models => "list" } })
+
+      patch project_panels_path(@project),
+            params: { panels: { order: Maker::Project::PANELS + [ models ],
+                                visible: Maker::Project::PANELS + [ models ] } }
+      assert_equal({ models => "list" }, @project.reload.panels["views"], "Save must not drop the views")
+
+      patch project_panels_path(@project), params: { move: "up", panel: models }
+      assert_equal({ models => "list" }, @project.reload.panels["views"], "a move must not drop the views")
+      assert_includes @project.panels["order"], models
+
+      delete project_panels_path(@project)
+      assert_nil @project.reload[:panels], "Reset clears the views with the rest of the arrangement"
+    end
+
+    # A FOLDER KEY MUST SURVIVE A SAVE. The door's `known` filter used to be `& PANELS`, which
+    # would drop every folder key on the way in: a maker who opened the chooser once would lose
+    # their folder panels' arrangement with no error anywhere.
+    test "Save keeps a folder key in the stored order" do
+      models, firmware = seed_folders!
+
+      patch project_panels_path(@project),
+            params: { panels: { order: [ "attachments", firmware, models ] + Maker::Project::PANELS,
+                                visible: Maker::Project::PANELS + [ models, firmware ] } }
+
+      order = @project.reload.panels["order"]
+      assert_equal [ "attachments", firmware, models ], order.first(3)
+      assert_empty @project.panels["hidden"]
+    end
+
     test "the door is another user's 404 and a signed-out visitor's redirect" do
       other = User.create!(email: "other-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)

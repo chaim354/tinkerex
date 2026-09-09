@@ -54,6 +54,21 @@ module Web
       assert_select "a[href=?]", public_file_path("ada", @project.slug, @f[:base].node_id)
     end
 
+    # THE FOLDER PANELS ARE PART OF "what a visitor sees" (2026-09-08, folder panels; spec §5), so
+    # the preview renders them through the SAME public/projects/_folder_panel — the whole reason the
+    # page body was extracted (its header: two templates claiming to show a visitor's page are a
+    # pair that drifts, invisibly, until a maker publishes something the preview never showed them).
+    # This is also the one place the partial renders under a SESSION-AUTHED controller, where a
+    # `current_user` or a private route helper in it would work rather than raise.
+    test "the preview renders the same folder panels, with the visitor's own links" do
+      get preview_project_path(@project)
+
+      assert_equal %w[firmware models photos], css_select("section.folder-panel h2").map(&:text)
+      assert_select "section.folder-panel .public-tiles a[href=?]",
+                    public_file_view_path("ada", @project.slug, @f[:base].node_id)
+      assert_no_private_urls
+    end
+
     test "a published project's banner says so and names the URL" do
       @project.update!(visibility: "public")
 

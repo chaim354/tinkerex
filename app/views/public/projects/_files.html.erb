@@ -1,7 +1,15 @@
 <%#
-  THE FOLDER'S FILES, SECTION BY SECTION (stage 3, S3-4). `pub.sections` is the order: the folder's
-  own loose files first under the project's name, then every subfolder by its path. Backups are
-  already left out — a public page is not a recovery tool.
+  THE PROJECT FOLDER'S OWN ROOT FILES (stage 3, S3-4; narrowed 2026-09-08 by folder panels). This
+  panel WAS the whole folder, section by section; each depth-one subfolder is now a panel of its
+  own (public/projects/_folder_panel) and this one keeps the ROOT — the README, the loose files a
+  visitor meets first (spec decision 4). `pub.loose_rows` is that list, name-ordered, with backups
+  and dot-files already gone: a public page is not a recovery tool, and Node.visible_entries is the
+  same display rule the owner's own page applies.
+
+  ITS FOUR-CELL ROW IS ALSO _folder_panel's, deliberately in two places rather than a third
+  partial: each copy sits in the panel that renders it, and what must not drift between them — the
+  thumb's `url:`, the name's view URL, the download's `download: true` — is asserted on both panels
+  in public_project_test.rb. A third caller is when to extract it.
 
   NO `data-controller="thumbs"` AND THAT IS DELIBERATE, not an omission. The poll exists to turn a
   spinner into an image while the owner watches their own upload render; a visitor has no such
@@ -17,46 +25,44 @@
 
   Local: pub (Maker::PublicProject).
 %>
-<% if pub.sections.any? %>
+<% rows = pub.loose_rows %>
+<% if rows.any? %>
   <section class="panel files-panel">
     <div class="panel-head">
       <h2>Files</h2>
-      <span class="mono muted"><%= pluralize(pub.sections.sum { |_name, rows| rows.size }, "file") %></span>
+      <span class="mono muted"><%= pluralize(rows.size, "file") %></span>
     </div>
 
-    <% pub.sections.each do |name, rows| %>
-      <h3 class="public-section"><%= name %></h3>
-      <table class="table public-files">
-        <thead>
+    <table class="table public-files">
+      <thead>
+        <tr>
+          <th class="col-thumb"></th>
+          <th class="col-name">File</th>
+          <th class="col-size">Size</th>
+          <th class="col-dl"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <% rows.each do |row| %>
+          <% ext = File.extname(row.node.name).delete(".").upcase %>
           <tr>
-            <th class="col-thumb"></th>
-            <th class="col-name">File</th>
-            <th class="col-size">Size</th>
-            <th class="col-dl"></th>
+            <td class="col-thumb">
+              <span class="file-cell">
+                <%= render "files/thumb", thumb: pub.thumbs.thumb(row.node_id), ext_label: ext,
+                           url: pub.preview_url_for(row.node_id) %>
+              </span>
+            </td>
+            <%# The file's own PAGE (stage 4, S4-5), not its bytes — the header above says why.
+                The Download cell below is where FileDelivery still decides inline-vs-attachment,
+                exactly as it does for the owner's own /files/:id/blob. %>
+            <td class="col-name"><%= link_to row.node.name, pub.view_url_for(row.node_id) %></td>
+            <td class="col-size num"><%= number_to_human_size(row.node.size) %></td>
+            <td class="col-dl">
+              <%= link_to "Download", pub.file_url_for(row.node_id, download: true), class: "linkbtn small" %>
+            </td>
           </tr>
-        </thead>
-        <tbody>
-          <% rows.each do |row| %>
-            <% ext = File.extname(row.node.name).delete(".").upcase %>
-            <tr>
-              <td class="col-thumb">
-                <span class="file-cell">
-                  <%= render "files/thumb", thumb: pub.thumbs.thumb(row.node_id), ext_label: ext,
-                             url: pub.preview_url_for(row.node_id) %>
-                </span>
-              </td>
-              <%# The file's own PAGE (stage 4, S4-5), not its bytes — the header above says why.
-                  The Download cell below is where FileDelivery still decides inline-vs-attachment,
-                  exactly as it does for the owner's own /files/:id/blob. %>
-              <td class="col-name"><%= link_to row.node.name, pub.view_url_for(row.node_id) %></td>
-              <td class="col-size num"><%= number_to_human_size(row.node.size) %></td>
-              <td class="col-dl">
-                <%= link_to "Download", pub.file_url_for(row.node_id, download: true), class: "linkbtn small" %>
-              </td>
-            </tr>
-          <% end %>
-        </tbody>
-      </table>
-    <% end %>
+        <% end %>
+      </tbody>
+    </table>
   </section>
 <% end %>

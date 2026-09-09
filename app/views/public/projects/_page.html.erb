@@ -166,7 +166,15 @@
 
   AN EMPTY PANEL IS STILL OMITTED. Each partial below decides that for itself, exactly as before:
   the layout decides whether a panel is RENDERED, the partial decides whether it has anything to
-  render. Two questions, the same pair the private page keeps as hidden versus quiet.
+  render. Two questions, the same pair the private page keeps as hidden versus quiet — and the
+  folder panel joins the OMITTED side rather than the maker's quiet one, because an empty heading
+  invites someone to add the first file, which is exactly what a visitor cannot do.
+
+  A FOLDER KEY IS THE THIRD BRANCH (2026-09-08, folder panels; spec §5). Every DEPTH-ONE subfolder
+  of the project folder is a panel of its own, in the maker's own order, with the view the maker
+  chose — so `attachments` above is the folder ROOT alone (spec decision 4) and a hidden folder
+  leaves this page entirely, along with the bundle. The key carries the node id, `pub.folder_dir`
+  resolves it against the same listing the layout was built from, and the map below never sees it.
 %>
 <% public_panels = { "attachments" => "public/projects/files",
                      "photos"      => "public/projects/photos",
@@ -180,6 +188,9 @@
       <% if pub.connections.any? %>
         <%= render "projects/wiring", project: project, connections: pub.connections, editable: false %>
       <% end %>
+    <% elsif pub.layout.folder?(key) %>
+      <%= render "public/projects/folder_panel", pub: pub, key: key, dir: pub.folder_dir(key),
+                 view: pub.layout.view_for(key) %>
     <% elsif (partial = public_panels[key]) %>
       <%= render partial, pub: pub %>
     <% end %>

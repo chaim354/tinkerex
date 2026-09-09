@@ -337,6 +337,237 @@ end
       assert_select "section.attachments-panel", 1
     end
 
+    # --- Folder panels (2026-09-08; spec decisions 1, 3, 4, 6) ----------------------------------
+    #
+    # THREE SHAPES, ONE FIXTURE: a plain subfolder holding a NESTED one, a working tree (a `.git`
+    # marker child), and an empty folder. Every row is a bare `nodes.create!` under
+    # `project_folder_rows!` — no `ensure_library_folder!`, no port write — so this reads the same
+    # on share, s3 and chunk_remote.
+    def folder_panel_project!
+      project = @user.maker_projects.create!(name: "Rig")
+      folder = project_folder_rows!(@user, project)
+      dir = lambda { |id, name, parent| @user.nodes.create!(node_id: id, name:, kind: "dir", parent_node_id: parent) }
+      models = dir.call("d-models", "models", folder.node_id)
+      firmware = dir.call("d-firmware", "firmware", folder.node_id)
+      dir.call("d-notes", "notes", folder.node_id)
+      old = dir.call("d-old", "old", models.node_id)
+      # THE MARKER IS WHAT MAKES IT A WORKING TREE (Library::RepoMetadata) — and it is a dot-dir, so
+      # the walk skips the entry itself and only the flag survives.
+      dir.call("d-git", Library::RepoMetadata::DIR_NAME, firmware.node_id)
+      # `f-loose` SITS AT THE FOLDER'S OWN ROOT, and it is load-bearing rather than decoration: the
+      # Files panel renders its groups only when it HAS one, so without a loose file the panel is a
+      # heading and the "Files renders no subfolder section" assertion below passes over an empty
+      # element (found by mutation-checking — putting the section render back stayed green).
+      { "f-base" => [ "base.stl", models ], "f-shade" => [ "shade.stl", models ],
+        "f-mk1" => [ "mk1.stl", old ], "f-main" => [ "main.c", firmware ],
+        "f-loose" => [ "sketch.txt", folder ] }.each do |node_id, (name, parent)|
+        @user.nodes.create!(node_id:, name:, kind: "file", parent_node_id: parent.node_id,
+                            size: 10, mtime: 1_000_000_000)
+      end
+      project
+    end
+
+    def folder_key(node_id) = Maker::ProjectKind.folder_key(node_id)
+
+    def panel_ids = css_select("div.project-panels > section.panel").map { |s| s["id"].to_s }
+
+    def panel_classes = css_select("div.project-panels > section.panel").map { |s| s["class"].to_s }
+
+    # THE HEADLINE: a panel per DEPTH-ONE subfolder, immediately after Files, in disk order — the
+    # placement Maker::ProjectKind's after-Files rule exists for, driven through a real request.
+    test "each depth-one subfolder is its own panel, after Files, in disk order, named and counted" do
+      get project_path(folder_panel_project!)
+
+      assert_response :success
+      files_at = panel_classes.index { |c| c.include?("attachments-panel") }
+      folders = panel_ids.select { |id| id.start_with?("folder:") }
+      assert_equal %w[folder:d-firmware folder:d-models folder:d-notes], folders
+      assert_equal files_at + 1, panel_ids.index("folder:d-firmware"), "folder panels start right after Files"
+
+      assert_select "section.folder-panel[id=?]", folder_key("d-models") do
+        assert_select ".panel-head h2", text: "models"
+        # THE WHOLE SUBTREE: two of its own plus old/mk1.stl. A direct-child count would read
+        # "2 files" over a panel that renders three.
+        assert_select ".panel-head .mono.muted", text: "3 files"
+        assert_select ".panel-head a.panel-path[href=?]", files_path(folder: "d-models")
+      end
+      assert_select "section.folder-panel[id=?] .panel-head .mono.muted", folder_key("d-firmware"), text: "1 file"
+    end
+
+    # THE DEFAULT VIEW IS WHAT THE PANEL IS (Maker::ProjectKind.default_view): a working tree opens
+    # in the Finder browser, everything else in tiles. Both halves in one test, because the pair is
+    # what "defaults reproduce today's page" means.
+    # A REPOSITORY PANEL OFF THE BROWSER RENDERS TILES, SO ITS FILES MUST REACH THE THUMBNAIL MAP
+    # (found in review): the map's repo exclusion predates folder panels, and a tile it never
+    # backfilled spins for 41 polls and then reads "Preview not supported" over a file that renders
+    # fine. The default browser view keeps the exclusion — a repository's files must not cost a
+    # render job each from a page that shows none of them.
+    test "a repository panel switched to tiles gets its thumbnails backfilled; in the browser it does not" do
+      project = folder_panel_project!
+      # BOTH CONTENT COLUMNS, or the map has no token to key a row on and skips the node in every
+      # view — which would make both halves of this test pass for nothing (§14a: content_token is
+      # content_hash on share/s3 and current_version_id on chunk_remote).
+      @user.nodes.create!(node_id: "f-case", name: "case.stl", kind: "file", parent_node_id: "d-firmware",
+                          size: 10, mtime: 1_000_000_000, content_hash: "h-case", current_version_id: "v-case")
+
+      get project_path(project)
+      assert_not Maker::Preview.exists?(user: @user, node_id: "f-case"),
+                 "the browser view shows no tile for it, so nothing is enqueued"
+
+      project.update!(panels: { "views" => { "folder:d-firmware" => "tiles" } })
+      get project_path(project)
+      assert_select "section.folder-panel[id='folder:d-firmware'] .attachment-tile", { minimum: 1 }
+      assert Maker::Preview.exists?(user: @user, node_id: "f-case"),
+             "a tile on the page must have a row the poll can resolve"
+    end
+
+    test "the Files panel carries the anchor its own view toggle redirects to" do
+      project = folder_panel_project!
+      get project_path(project)
+      assert_select "section.attachments-panel#attachments", count: 1
+      assert_select "section.attachments-panel .view-toggle form[action=?]", project_panels_path(project)
+    end
+
+    test "a repo folder opens in the browser and a plain one in tiles" do
+      get project_path(folder_panel_project!)
+
+      assert_select "section.folder-panel[id=?]", folder_key("d-firmware") do
+        assert_select ".repo-browser[data-controller=?]", "filebrowser"
+        assert_select ".repo-browser[data-filebrowser-root-value=?]", "d-firmware"
+        assert_select ".attachments-grid", count: 0
+      end
+      # `> div > .attachments-grid >` IS THE PANEL'S OWN GRID. The nested old/ section renders its
+      # own grid inside this panel, so an unanchored `.attachment-tile` count here answers 3 and
+      # would pass just as happily if the panel drew the whole subtree flat.
+      assert_select "section.folder-panel[id=?] > div > .attachments-grid > .attachment-tile",
+                    folder_key("d-models"), 2
+      assert_select "section.folder-panel[id=?] .repo-browser", folder_key("d-models"), count: 0
+    end
+
+    # QUIET, NOT OMITTED (S4-1's rule): the maker put this folder in the layout and it is a real
+    # folder on disk. Omitting an empty panel is the VISITOR's page's answer, not this one's.
+    test "an empty folder panel is quiet: its heading and one sentence" do
+      get project_path(folder_panel_project!)
+
+      assert_select "section.folder-panel.panel--quiet[id=?]", folder_key("d-notes") do
+        assert_select ".panel-head h2", text: "notes"
+        assert_select "p.muted", text: "Empty folder."
+        assert_select ".attachments-grid", count: 0
+      end
+      assert_select "section.folder-panel.panel--quiet[id=?]", folder_key("d-models"), count: 0
+    end
+
+    # DEPTH ONE IS THE WHOLE RULE (spec decision 3). `models/old` renders INSIDE the models panel
+    # as the nested section it has always been, and its key reaches neither the page nor the layout.
+    test "a nested folder is a section inside its parent's panel, never a panel" do
+      project = folder_panel_project!
+
+      get project_path(project)
+
+      assert_select "section.folder-panel[id=?]", folder_key("d-old"), count: 0
+      assert_select "section.folder-panel[id=?]", folder_key("d-models") do
+        assert_select ".file-tree-section details summary", text: /old \(1\)/
+        assert_select ".file-tree-section .attachment-tile .grid-name", text: "mk1.stl"
+      end
+      refute_includes project.reload.panel_layout(folders: [ [ "d-models", false ] ]).order, folder_key("d-old")
+    end
+
+    # THE FILES PANEL IS THE FOLDER'S ROOT NOW (spec decision 4). The `file_tree_section` collection
+    # render is gone from it; leaving it in would draw every folder twice, once as a section and
+    # once as a panel.
+    test "the Files panel keeps the root and renders no subfolder section" do
+      get project_path(folder_panel_project!)
+
+      assert_select "section.attachments-panel .attachment-group-head", text: /Loose \(1\)/
+      assert_select "section.attachments-panel .attachment-tile .grid-name", text: "sketch.txt"
+      assert_select "section.attachments-panel .file-tree-section", count: 0
+      assert_select "section.attachments-panel .attachment-tile", { count: 1 },
+                    "only the loose file — a subfolder's files belong to its own panel"
+      assert_select ".file-tree-section", 1, "only the nested old/ section is left, inside models"
+    end
+
+    # A FOLDER MOVES LIKE ANY OTHER PANEL, above the build log if the maker says so — which is the
+    # first half of "a first-class member of the chooser" (spec decision 1).
+    test "a stored order lifts a folder panel above the build log" do
+      project = folder_panel_project!
+      project.update!(panels: { "order" => [ "attachments", folder_key("d-firmware"), "build_log" ] })
+
+      get project_path(project)
+
+      classes = panel_classes
+      assert_operator panel_ids.index("folder:d-firmware"), :<,
+                      classes.index { |c| c.include?("build-log-panel") },
+                      "the stored order must lift firmware above the build log"
+      # The two folders the stored order does not name are still there, after Files.
+      assert_includes panel_ids, "folder:d-models"
+    end
+
+    test "a hidden folder panel is absent, and only that one" do
+      project = folder_panel_project!
+      project.update!(panels: { "hidden" => [ folder_key("d-models") ] })
+
+      get project_path(project)
+
+      assert_select "section.folder-panel[id=?]", folder_key("d-models"), count: 0
+      assert_select "section.folder-panel[id=?]", folder_key("d-firmware"), 1
+      assert_select "section.folder-panel[id=?]", folder_key("d-notes"), 1
+      assert_select ".attachment-tile .grid-name", { text: "base.stl", count: 0 },
+                    "a hidden folder's files leave the page with it"
+    end
+
+    # THE VIEW IS PER PANEL, which is the whole point (spec decision 6): one panel switched to list
+    # must not switch the others, and the repo next door keeps its browser.
+    test "a stored view renders list rows in that panel and nowhere else" do
+      project = folder_panel_project!
+      project.update!(panels: { "views" => { folder_key("d-models") => "list" } })
+
+      get project_path(project)
+
+      assert_select "section.folder-panel[id=?]", folder_key("d-models") do
+        assert_select "table.table.project-files td.col-name", text: "base.stl"
+        assert_select ".attachments-grid", count: 0
+      end
+      # WHICH PANELS HOLD A TABLE, not how many tables there are: the nested old/ section inherits
+      # this panel's view and draws a second one, so a count would pin the nesting rather than the
+      # thing under test.
+      listed = css_select("div.project-panels > section.panel").select { |s| s.css("table.project-files").any? }
+      assert_equal [ folder_key("d-models") ], listed.map { |s| s["id"] }, "only the models panel is a list"
+      assert_select "section.folder-panel[id=?] .repo-browser", folder_key("d-firmware"), 1
+    end
+
+    # THE TOGGLE IS A WRITE, so it is a form per button rather than a link, and the params are what
+    # Projects::PanelsController reads. ASSERT THE RENDERED FIELD NAME (CLAUDE.md section 14d) —
+    # a controller test posting a nested hash would pass whatever the markup emitted.
+    test "each folder panel head carries a three-way view toggle posting view[<key>]" do
+      get project_path(folder_panel_project!)
+
+      assert_select "section.folder-panel[id=?]", folder_key("d-models") do
+        assert_select ".view-toggle form[action=?]", project_panels_path(@user.maker_projects.find_by(name: "Rig")), 3
+        Maker::Project::VIEWS.each do |value|
+          assert_select "input[type=hidden][name=?][value=?]", "view[folder:d-models]", value
+        end
+        assert_select ".view-toggle button.toggle.active", text: "Tiles"
+      end
+      # The Files panel gets its own two-button toggle, under its own key.
+      assert_select "section.attachments-panel input[type=hidden][name=?][value=?]", "view[attachments]", "list"
+      assert_select "section.attachments-panel input[name=?][value=?]", "view[attachments]", "browser", count: 0
+    end
+
+    # THE LAYOUT IS TOTAL ABOUT VIEWS TOO. `views` is a JSON sub-hash nothing validates on the way
+    # in, and a value outside Maker::Project::VIEWS would reach the partial's branch.
+    test "junk in the views map renders the page in the defaults" do
+      project = folder_panel_project!
+      project.update_column(:panels, { "views" => { "folder:gone" => "list", folder_key("d-models") => "nonsense",
+                                                    "attachments" => 5 } })
+
+      get project_path(project)
+
+      assert_response :success
+      assert_select "section.folder-panel[id=?] > div > .attachments-grid > .attachment-tile",
+                    folder_key("d-models"), 2
+      assert_select "div.project-panels table.project-files", count: 0
+    end
+
     # A KEY THAT IS NOT A PANEL MUST NOT REACH `render` — it would be a MissingPartial, i.e. a 500
     # on the maker's own page, and the column is JSON nothing validates on the way in.
     test "junk in the panels column renders the page rather than raising" do

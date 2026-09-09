@@ -22,17 +22,22 @@ module Maker
 
     # --- shape ------------------------------------------------------------------
 
-    test "sections list the folder's loose files under the project name, then each subfolder by path" do
-      names = pub.sections.map(&:first)
-
-      # FOLDER-RELATIVE, not the library path: a visitor reads "models/deep", never
-      # "Projects/desk-lamp/models/deep" (seen live on the dev server before this was fixed).
-      assert_equal [ "Desk Lamp", "firmware", "models", "models/deep", "photos" ], names
-      loose = pub.sections.first.last.map { |r| r.node.name }
+    # `sections` IS GONE (folder panels): the visitor's Files panel is the folder ROOT and each
+    # subfolder is a panel, so the readers the page uses are `loose_rows` and `folder_sections`.
+    test "loose_rows are the folder's own files, and folder_sections name a panel's subfolders relative to it" do
+      loose = pub.loose_rows.map { |r| r.node.name }
       # The dot-file is in the folder and NOT in the listing: Maker::ProjectFolderListing applies
       # Node.visible_entries, the same display rule the owner's own page uses.
       assert_includes loose, "README.md"
       assert_not_includes loose, ".env"
+
+      models = pub.folder_dir(Maker::ProjectKind.folder_key(@f[:models].node_id))
+      names = pub.folder_sections(models).map(&:first)
+      # FOLDER-RELATIVE, not the library path: a visitor never reads "Projects/desk-lamp/…".
+      assert_equal 2, names.size, "the panel's own rows, then its nested deep/"
+      assert_nil names.first, "a panel's own files carry no sub-heading"
+      assert names.compact.none? { |n| n.start_with?("Projects/") }, names.inspect
+      assert names.last.to_s.end_with?("deep"), names.inspect
     end
 
     test "link_params carries the token for an unlisted project and nothing for a public one" do
