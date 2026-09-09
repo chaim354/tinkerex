@@ -165,4 +165,6 @@ Re-measured after S4-3 (2026-09-07): 2.10 moved from `missing` to `rough` (the p
 
 Re-measured after S4-8 (2026-09-07): 3.2 and 3.5 moved from `missing` to `rough`; 3.3 gained the file photo and stays `rough`; 3.4 is unchanged by design.
 
+Re-measured after folder panels (2026-09-08): 6.5 stays `works` with new evidence — each subfolder of the project folder is its own panel (hide, move, and tiles/list/browser per panel, persisted per project), on the maker's page and mirrored for a visitor; 6.1–6.4 unchanged.
+
 Which slice moves which story: the slice table in the stage 4 spec.

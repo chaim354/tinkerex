@@ -50,6 +50,22 @@ The owner asked for each group to be its own panel so its view can be chosen per
 8. **No migration.** `panels` is a JSON column; every existing project renders identically until a
    toggle or the chooser is touched.
 
+**Decided in execution (recorded here so the spec matches the code):**
+
+9. **The Files panel offers tiles and list, not the browser.** The folder root has no `Dir` of its
+   own to hand the browser unless the folder is itself a working tree, and a control that does
+   nothing is worse than one that is absent. `Maker::ProjectKind.offered_views(key)` is the one
+   definition: a folder panel offers all three, Files two, a fixed panel with no view none — the
+   toggles render it and the panels door validates against it, one pair per request.
+10. **A hidden folder leaves every DERIVED surface on the visitor's page, not only its panel and the
+    bundle**: the Photos panel, the repo cards, the Schematics panel and the hero all drop its files
+    (review found the first three leaking). AUTHORED prose does not filter — a README's own links
+    and a BOM line's file still point at the file, which still delivers, because hidden is not
+    unpermitted. The rule is written on `Maker::PublicProject#hidden_file_ids`.
+11. **A repository panel switched off the browser gets its thumbnails backfilled.** The thumbnail
+    map's exclusion of repository files predates folder panels; a depth-one repository whose view is
+    tiles or list keeps its subtree in the map, a nested one stays a closed browser section.
+
 ## 3. Data
 
 `maker_projects.panels` (JSON, nullable) gains folder keys and a views map:
