@@ -34,11 +34,24 @@ module Maker
       refute block(kind: "video", body: "x").valid?
     end
 
-    test "a link URL is http or https, nothing else" do
-      %w[https://a.example/p?q=1 http://b.example].each { |u| assert block(kind: "link", url: u, heading: "t").valid?, u }
-      [ "javascript:alert(1)", "ftp://x", "example.com", "https://", "https://x y" ].each do |u|
-        refute block(kind: "link", url: u, heading: "t").valid?, u
+    test "a link URL is http or https, nothing else, in either case, under 2 KB" do
+      %w[https://a.example/p?q=1 http://b.example HTTPS://EXAMPLE.COM].each { |u| assert block(kind: "link", url: u, heading: "t").valid?, u }
+      [ "javascript:alert(1)", "JAVASCRIPT:alert(1)", "ftp://x", "example.com", "https://", "https://x y" ].each do |u|
+        b = block(kind: "link", url: u, heading: "t")
+        refute b.valid?, u
+        assert_includes b.errors[:url], "must be an http or https URL", u
       end
+      long = block(kind: "link", url: "https://a.example/#{'x' * 2048}", heading: "t")
+      refute long.valid?
+      assert long.errors[:url].any?, "a URL over URL_MAX is refused on every kind"
+      refute block(kind: "text", body: "x", url: "https://a.example/#{'x' * 2048}").valid?
+    end
+
+    test "a malformed URL and a missing title are both reported" do
+      b = block(kind: "link", url: "https://[bad")
+      refute b.valid?
+      assert_includes b.errors[:url], "must be an http or https URL"
+      assert_includes b.errors[:heading], "is required for a link"
     end
 
     test "lengths are capped and whitespace is collapsed" do
