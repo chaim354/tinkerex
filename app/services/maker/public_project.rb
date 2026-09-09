@@ -56,22 +56,6 @@ module Maker
     # Empty for a public project, so the same call site works for both.
     def link_params = project.unlisted? ? { k: project.unlisted_token } : {}
 
-    # [[section_name, rows]] — the folder's own loose files first (under the project's name), then
-    # every subfolder in tree order by its path. Backups are left out: a public page is not a
-    # recovery tool, and a LightBurn rescue copy is noise to everyone but the maker.
-    # Rows are Maker::ProjectFolderListing::Row.
-    #
-    # NO TEMPLATE RENDERS THIS SINCE FOLDER PANELS (2026-09-08; spec §5): each depth-one subfolder
-    # is now its own panel (`#folder_sections`) and public/projects/_files renders `#loose_rows`
-    # alone. It is kept rather than deleted because it is still the honest answer to "what does this
-    # folder hold, section by section" for a caller that wants the WHOLE folder in one list, and
-    # test/services/maker/public_project_test.rb pins that order; the walk beneath it is shared with
-    # #folder_sections, so the two cannot drift about what a section is.
-    def sections
-      @sections ||= (listing.loose.any? ? [ [ project.name, listing.loose ] ] : []) +
-                    sections_under(listing.tree, prefix: "#{listing.path}/")
-    end
-
     # ONE FOLDER PANEL'S CONTENT (2026-09-08, folder panels; spec §5): the dir's OWN files under a
     # nil label — the panel head already names the folder — then every nested subfolder that holds
     # files, labelled RELATIVE TO THIS PANEL ("deep", never "models/deep" and never the library
@@ -130,9 +114,24 @@ module Maker
     # `Dir#subtree_file_ids` is recursive, so hiding a folder hides what nests inside it too, which
     # is the same subtree the panel would have rendered. Backups are not in it and need not be: the
     # bundle already drops every backup, wherever it sits.
+    # WHO FILTERS BY THIS SET, AND WHO DOES NOT — written down because the first two surfaces that
+    # forgot (the repo cards and the KiCad rows) were found by review, not by the rule. DERIVED
+    # readers filter: what a visitor gets because the app walked the folder — `bundle_files`,
+    # `bundle_path_for`, `photo_rows`, `repo_cards`, `kicad_rows`, `cover_node`. AUTHORED prose does
+    # not: a README's own links and images and a BOM line's file link are things the maker wrote
+    # naming a file, and `permits?` still answers for the file (decision 2: hidden is not
+    # unpermitted). A new reader of the listing on the visitor's page decides which side it is on
+    # and says so here.
     def hidden_file_ids
       @hidden_file_ids ||= listing.tree.select { |dir| hidden_folder_ids.include?(dir.node_id) }
                                   .flat_map(&:subtree_file_ids).to_set
+    end
+
+    # Every DIRECTORY under a hidden depth-one folder, the folder itself included — the set a repo
+    # card asks, since a repository can sit at depth one or anywhere beneath a hidden folder.
+    def hidden_dir_ids
+      @hidden_dir_ids ||= listing.tree.select { |dir| hidden_folder_ids.include?(dir.node_id) }
+                                 .flat_map { |dir| [ dir.node_id ] + flatten_dirs(dir.children).map(&:node_id) }.to_set
     end
 
     # The FOLDER's own README, rendered, or nil when it holds none. `defined?` rather than `||=`
@@ -299,8 +298,12 @@ module Maker
     # rule (projects/_schematics.html.erb), reading the SAME extension list so the two surfaces can
     # never name a different set of formats.
     def kicad_rows
+      # MINUS A HIDDEN FOLDER'S BOARDS (folder panels, decision 2; found in review): the first row
+      # is the file the page's KiCanvas embed loads, so a hidden folder's board was the picture on
+      # the page. Same rule as `photo_rows`.
       @kicad_rows ||= listing.all_rows
                              .select { |row| FilesController::KICANVAS_EXTS.include?(File.extname(row.node.name).delete(".").downcase) }
+                             .reject { |row| hidden_file_ids.include?(row.node_id) }
                              .sort_by { |row| row.node.name }
     end
 
@@ -310,7 +313,11 @@ module Maker
     # resolved through THIS page's file route, not `/files/:id`, which a visitor cannot open.
     def repo_cards
       @repo_cards ||= begin
-        dirs = flatten_dirs(listing.tree).select(&:repo?)
+        # NOT A HIDDEN FOLDER'S REPOSITORY (folder panels, decision 2; found in review): the maker's
+        # page renders the card INSIDE the folder panel, so hiding the folder hid the card there
+        # while this page went on rendering it after the panel loop — the owner's library path, the
+        # README and a public link into the folder they had hidden.
+        dirs = flatten_dirs(listing.tree).select(&:repo?).reject { |dir| hidden_dir_ids.include?(dir.node_id) }
         roots = owner.nodes.present.where(node_id: dirs.map(&:node_id), kind: "dir").index_by(&:node_id)
         dirs.index_by(&:node_id).transform_values do |dir|
           Maker::RepoCard.for(user: owner, dir:, root_node: roots[dir.node_id], listing:,
@@ -347,7 +354,9 @@ module Maker
 
       id = project.cover_node_id
       node = id && owner.nodes.present.find_by(node_id: id)
-      @cover_node = (node if node && permits?(node))
+      # AND NOT INSIDE A HIDDEN FOLDER (folder panels, decision 2): the hero is the page's largest
+      # picture, and a hidden folder's image as the hero is the Photos leak in its biggest frame.
+      @cover_node = (node if node && permits?(node) && !hidden_file_ids.include?(node.node_id))
     end
 
     # Live nodes for everything the page shows that is not in the listing: entry photos and BOM

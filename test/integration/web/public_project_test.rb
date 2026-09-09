@@ -312,6 +312,41 @@ module Web
       assert_select ".photos-panel a[href=?]", public_file_view_path("ada", @project.slug, @f[:entry_photo].node_id)
     end
 
+    # THE THREE DERIVED READERS REVIEW FOUND UNFILTERED (folder panels, decision 2). A hidden folder
+    # must not leak through a surface that is not its panel: its repository card (the owner's
+    # library path, the README and a public link into the folder), the Schematics panel (whose
+    # first row is the KiCanvas embed's file) and the hero (the page's largest picture).
+    test "a hidden repository folder shows no repo card to a visitor" do
+      @project.update!(panels: { "hidden" => [ Maker::ProjectKind.folder_key(@f[:firmware].node_id) ] })
+
+      get path
+
+      assert_select ".repo-card", { count: 0 }, "the hidden repository's card must leave the page with its panel"
+      assert_no_match(%r{Projects/#{@project.slug}/firmware}, response.body, "the owner's library path must not print")
+    end
+
+    test "a hidden folder's board leaves the visitor's Schematics panel and its embed" do
+      make_file!(@user, "board.kicad_sch", @f[:models], body: "(kicad_sch (version 1))")
+      Library::Scanner.call(@user, root: @root.to_s)
+      @project.update!(panels: { "hidden" => [ Maker::ProjectKind.folder_key(@f[:models].node_id) ] })
+
+      get path
+
+      assert_select ".schematics-panel", text: /driver\.kicad_sch/
+      assert_select ".schematics-panel", { text: /board\.kicad_sch/, count: 0 }
+      assert_no_match(/board\.kicad_sch/, response.body, "the hidden board must not be the embed's file either")
+    end
+
+    test "a hidden folder's image is not the visitor's hero" do
+      photos_dir = @user.nodes.present.find_by!(name: "photos", kind: "dir")
+      @project.update_column(:cover_node_id, @f[:pic].node_id)
+      @project.update!(panels: { "hidden" => [ Maker::ProjectKind.folder_key(photos_dir.node_id) ] })
+
+      get path
+
+      assert_select ".project-hero", { count: 0 }, "a hidden folder's image must not be the page's largest picture"
+    end
+
     # --- 7. the BOM: three columns, and what is absent ------------------------------
 
     test "the public BOM has exactly Ref, Part and Qty" do
