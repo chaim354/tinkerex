@@ -11,7 +11,12 @@
 <% label = @panel_labels.fetch(key) %>
 <% always = Maker::ProjectKind::ALWAYS.include?(key) %>
 <div class="panel-strip">
-  <span class="panel-strip-handle" title="Drag to move" aria-hidden="true">⋮⋮</span>
+  <%# PUBLISH HAS NO HANDLE: it is always last (spec decision 11), so there is nothing to grab. The
+      controller's Sortable `filter` on the pinned slot is the second lock (found in review: with a
+      handle rendered, the filter was the only thing keeping Publish in place, and nothing pinned it). %>
+  <% unless key == "publish" %>
+    <span class="panel-strip-handle" title="Drag to move" aria-hidden="true">⋮⋮</span>
+  <% end %>
   <span class="panel-strip-name">
     <b data-layout-editor-target="name"><%= @panel_layout.title_for(key, label) %></b>
     <% if @panel_layout.folder?(key) %><span class="mono muted"><%= label %>/</span><% end %>

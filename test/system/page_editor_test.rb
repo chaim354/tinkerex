@@ -35,6 +35,9 @@ class PageEditorTest < ApplicationSystemTestCase
   test "Down then Save persists the order, and the keyboard alone can do it" do
     open_editor
     within(slot("tasks")) { find("button[aria-label='Move Tasks down']").click }
+    # FOCUS SURVIVES THE MOVE: `before()`/`after()` re-inserts the slot, which blurs the button, and
+    # the controller refocuses it so a second press goes where the first did (found in review).
+    assert_equal "Move Tasks down", page.evaluate_script("document.activeElement.getAttribute('aria-label')")
     moved = order_on_page
     assert_equal moved.index("tasks"), moved.index("bom") + 1, "Tasks moved below BOM"
 
@@ -77,6 +80,9 @@ class PageEditorTest < ApplicationSystemTestCase
         .click_and_hold(handle.native)
         .move_by(0, 40)
         .move_to(target.native)
+        # TEN PIXELS PAST THE TARGET'S CENTRE, where `move_to` lands and Sortable's before/after
+        # decision is borderline; the nudge makes it "after" every time, and without it the
+        # Publish assertion below can go vacuous (found in review).
         .move_by(0, 10)
         .release
         .perform
@@ -162,6 +168,8 @@ class PageEditorTest < ApplicationSystemTestCase
         - panel: bom
           hidden: true
     YAML
+    # COPY FOLLOWS THE TYPED TEXT, not the server's last render (found in review).
+    assert_equal yaml.value, find("[data-layout-editor-target=copy]")["data-copy-text-value"]
     click_on "Apply"
     assert_selector ".layout-drawer-notes .layout-note", text: "no folder named “enclosure”"
     assert_no_selector ".layout-note--error"

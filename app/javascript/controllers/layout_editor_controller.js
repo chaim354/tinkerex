@@ -190,6 +190,13 @@ export default class extends Controller {
     event.currentTarget.setAttribute("aria-expanded", String(open))
     this.element.classList.toggle("layout-editor--drawer", open)
     if (open) this.refreshYaml(true)
+    else clearTimeout(this.yamlTimer)
+  }
+
+  // Copy follows what is ON SCREEN: hand-typed text updates the copy value too, so a paste with an
+  // error that Apply refused still copies as typed (found in review).
+  yamlTyped(event) {
+    this.copyTarget.dataset.copyTextValue = event.currentTarget.value
   }
 
   refreshYaml(now = false) {

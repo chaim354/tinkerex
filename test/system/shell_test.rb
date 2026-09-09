@@ -464,6 +464,10 @@ class ShellTest < ApplicationSystemTestCase
           assert_selector "div.panel-slot .panel-strip", count: Maker::Project::PANELS.size + folder_rows
           assert_selector ".layout-bar input[type=submit][value='Save']"
           opened_panels = true
+          # THE EDIT PAGE'S OWN OVERFLOW IS MEASURED HERE, on this page, before the sweep returns:
+          # the strips are the layout most likely to overflow at 375px, and a `visit path` first
+          # would measure the project page instead (found in review).
+          no_sideways_scroll.call(edit_layout_project_path(project))
           # BACK TO THE PAGE UNDER SWEEP: `no_sideways_scroll.call(path)` and the three shell
           # assertions below run on whatever page this branch leaves behind, and the edit page is
           # not the one this iteration is measuring.

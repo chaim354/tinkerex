@@ -77,6 +77,10 @@ module Web
         assert_select "details.panel-strip-edit input[maxlength=?]", Maker::ProjectKind::TITLE_MAX.to_s
       end
       assert_select "div.panel-slot[data-key=publish] .panel-strip button[data-action='layout-editor#up']", count: 0
+      # NO HANDLE ON PUBLISH (spec decision 11): nothing to grab, so the controller's filter is the
+      # second lock rather than the only one.
+      assert_select "div.panel-slot[data-key=publish] .panel-strip-handle", count: 0
+      assert_select "div.panel-slot[data-key=tasks] .panel-strip-handle", 1
     end
 
     test "a panel that renders nothing gets a placeholder in edit mode and no slot on the page" do

@@ -14,8 +14,10 @@
       <button type="button" class="btn small primary" data-action="layout-editor#apply">Apply</button>
     </span>
   </div>
+  <%# `input->yamlTyped` keeps Copy honest against hand-typed text: the copy value would otherwise be
+      the server's last render, not what is on screen (found in review). %>
   <textarea class="layout-yaml" rows="24" spellcheck="false" aria-label="Layout YAML"
-            data-layout-editor-target="yaml"></textarea>
+            data-layout-editor-target="yaml" data-action="input->layout-editor#yamlTyped"></textarea>
   <div class="layout-drawer-notes" data-layout-editor-target="notes" aria-live="polite"></div>
   <p class="muted">Apply updates the page behind this drawer; nothing is saved until Save. A layout naming a folder this project lacks is applied without that entry, and says so here.</p>
 </aside>
