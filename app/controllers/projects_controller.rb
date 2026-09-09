@@ -142,10 +142,14 @@ class ProjectsController < ApplicationController
     # that offers views and a view it offers; anything else is a 404, because the only client is
     # our own controller and a wrong pair from it is a bug to surface, not a page to render.
     if @editing && params[:panel].present?
-      @panel_key = params[:panel].to_s
+      # THE KEY THAT REACHES `render` IS THE LAYOUT'S OWN ELEMENT, NEVER THE PARAMETER'S STRING:
+      # `find` hands back the vocabulary's copy, so what _panel_body interpolates into a partial
+      # name came from the model. Brakeman's dynamic-render check reads it the same way, and it is
+      # the honest data flow rather than an ignore entry beside a check (found by `bin/ci scan`).
+      asked = params[:panel].to_s
+      @panel_key = @panel_layout.order.find { |k| k == asked }
       wanted = params[:view].to_s
-      offered = Maker::ProjectKind.offered_views(@panel_key)
-      raise ActiveRecord::RecordNotFound unless @panel_layout.order.include?(@panel_key) && offered.include?(wanted)
+      raise ActiveRecord::RecordNotFound unless @panel_key && Maker::ProjectKind.offered_views(@panel_key).include?(wanted)
 
       @panel_layout = @panel_layout.with(views: @panel_layout.views.merge(@panel_key => wanted))
     end

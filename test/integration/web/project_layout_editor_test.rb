@@ -195,6 +195,17 @@ module Web
       assert_match(/unknown panel/, response.parsed_body["errors"].first)
     end
 
+    test "parse merges into the draft the browser sends, so an unsaved change survives Apply" do
+      draft = { layout: 1, panels: [ { key: "tasks", hidden: true, width: "full" } ] }
+      post parse_project_layout_path(@project),
+           params: { yaml: "layout: 1\npanels:\n  - panel: bom\n    hidden: true\n", draft: draft.to_json }, as: :json
+
+      assert_response :success
+      panels = response.parsed_body["draft"]["panels"]
+      assert panels.find { |e| e["key"] == "tasks" }["hidden"], "the browser's unsaved hide survives"
+      assert panels.find { |e| e["key"] == "bom" }["hidden"]
+    end
+
     # --- Save --------------------------------------------------------------------------------------
 
     test "Save writes the whole document as six maps and lands on the page" do

@@ -66,7 +66,10 @@ module Maker
 
     # --- parse: YAML text in ---------------------------------------------------------------------
 
-    def parse(text)
+    # `base:` IS THE BROWSER'S DRAFT when Apply supplies one — already validated through #from_draft
+    # by the caller — so a hide made with the eye a moment ago survives an Apply whose text does not
+    # name that panel. nil means the saved layout (the browser suite found the difference).
+    def parse(text, base: nil)
       text = text.to_s
       return failure("The layout is over #{MAX_BYTES / 1024} KB.") if text.bytesize > MAX_BYTES
 
@@ -92,7 +95,7 @@ module Maker
       return failure("Unknown key “#{unknown.first}” at the top level.") if unknown.any?
       return failure("`panels` must be a list.") unless data["panels"].is_a?(Array)
 
-      merge(data["panels"], :yaml)
+      merge(data["panels"], :yaml, base)
     end
 
     # --- from_draft: the browser's JSON in ----------------------------------------------------------
@@ -135,9 +138,9 @@ module Maker
 
     # The merge, shared by both doors. `source` says how an entry names its panel: `:yaml` by
     # `panel:`/`folder:` (names), `:draft` by `key`. Everything after the key is one code path.
-    def merge(raw_entries, source)
+    def merge(raw_entries, source, base = nil)
       notes, errors = [], []
-      current = draft["panels"].to_h { |e| [ e["key"], e ] }
+      current = (base || draft)["panels"].to_h { |e| [ e["key"], e ] }
       listed = []
 
       raw_entries.each_with_index do |raw, i|

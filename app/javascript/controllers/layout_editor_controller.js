@@ -212,7 +212,8 @@ export default class extends Controller {
   async apply() {
     let data
     try {
-      const res = await this.post(this.parseUrlValue, { yaml: this.yamlTarget.value })
+      // The draft rides beside the text so the server merges into what is ON SCREEN, not the row.
+      const res = await this.post(this.parseUrlValue, { yaml: this.yamlTarget.value, draft: this.draft() })
       data = await res.json()
     } catch (_e) {
       this.note(["Apply failed: the server did not answer."], [])

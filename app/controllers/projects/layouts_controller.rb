@@ -18,8 +18,13 @@ module Projects
       render plain: text, content_type: "text/plain"
     end
 
+    # THE BASE IS THE BROWSER'S DRAFT, NOT THE SAVED ROW (found by the browser suite): a hide made
+    # with the eye a moment ago must survive an Apply whose text does not name that panel. The draft
+    # is validated through #from_draft first, so a hand-made or missing one falls back to the row.
     def parse
-      result = document.parse(params[:yaml].to_s)
+      doc = document
+      base = doc.from_draft(parsed_draft)
+      result = doc.parse(params[:yaml].to_s, base: base.ok? ? base.draft : nil)
       render json: { draft: result.draft, notes: result.notes, errors: result.errors }
     end
 

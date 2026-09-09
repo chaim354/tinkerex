@@ -87,6 +87,19 @@ module Maker
 
     # --- parse: the grammar -----------------------------------------------------------------------
 
+    test "parse merges into the base draft when one is given, so an unsaved change survives Apply" do
+      d = doc
+      base = d.from_draft("layout" => 1, "panels" => [ { "key" => "tasks", "hidden" => true, "width" => "full" } ]).draft
+
+      result = d.parse("layout: 1\npanels:\n  - panel: bom\n    hidden: true\n", base: base)
+
+      assert result.ok?, result.errors.inspect
+      assert entry(result, "tasks")["hidden"], "the base's unsaved hide survives"
+      assert_equal "full", entry(result, "tasks")["width"]
+      assert entry(result, "bom")["hidden"]
+      assert_equal "bom", result.draft["panels"].first["key"]
+    end
+
     test "parse: a folder is looked up by name and becomes its key" do
       result = doc.parse("layout: 1\npanels:\n  - folder: models\n    title: Prints\n")
 

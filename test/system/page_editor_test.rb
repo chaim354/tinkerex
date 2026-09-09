@@ -127,8 +127,8 @@ class PageEditorTest < ApplicationSystemTestCase
   test "the drawer shows the draft as YAML, follows a change, and Apply re-renders the page" do
     # SHEETS IS HIDDEN IN THE SAVED ROW, and the applied text below never names it — which is what
     # makes "a panel the text does not mention keeps its state" a claim about the MERGE rather than
-    # about a default. It has to be a SAVED hide rather than one made with the eye a moment earlier;
-    # see the note beside the assertion at the end of this test.
+    # about a default. Sheets is a SAVED hide and Tasks, below, an UNSAVED one, so both halves of the
+    # merge — the row's state and the browser's — are asserted at the end of this test.
     @project.update!(panels: { "hidden" => %w[sheets] })
     open_editor
     click_on "Edit as YAML"
@@ -172,15 +172,11 @@ class PageEditorTest < ApplicationSystemTestCase
     # on any of these — Capybara's `assert_selector` accepts none and raises `ArgumentError: Unused
     # parameters` rather than ignoring it.)
     assert_selector "#{slot('sheets')}.panel-slot--hidden"
-    # AND THE ASYMMETRY THIS PINS, RECORDED RATHER THAN ENDORSED (2026-09-09). `yaml` is handed the
-    # BROWSER's draft (LayoutsController#yaml -> #from_draft), which is why the poll above sees the
-    # eye's unsaved hide of Tasks in the text; `parse` is handed only the YAML and merges into the
-    # SAVED layout (LayoutScoped#document builds the document from `@project.panel_layout`), so
-    # Apply DISCARDS an unsaved change to a panel the text does not name. The plan's own draft of
-    # this test expected Tasks to survive here; it does not, and the fix — if it is one — is a
-    # `draft` parameter on `parse`, which is Projects::LayoutsController's to add, not this
-    # controller's to work around in the browser (spec decision 2: one grammar, server-side).
-    assert_no_selector "#{slot('tasks')}.panel-slot--hidden"
+    # AND THE EYE'S UNSAVED HIDE OF TASKS SURVIVES TOO: Apply merges into the BROWSER's draft, which
+    # rides beside the text (Projects::LayoutsController#parse), not into the saved row. The first
+    # version of this suite found the opposite — `parse` took only the YAML — and pinned it; this
+    # line is that finding, fixed (2026-09-09).
+    assert_selector "#{slot('tasks')}.panel-slot--hidden"
 
     yaml.set("layout: 1\npanels:\n  - panel: tsaks\n")
     click_on "Apply"
