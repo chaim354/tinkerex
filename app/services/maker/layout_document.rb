@@ -13,27 +13,59 @@ module Maker
   # ERRORS BLOCK, NOTES INFORM, AND A MISSPELLING IS AN ERROR (decision 5): the format is typed by
   # hand, and a silently ignored `hiden: true` is how a hand-typed line does nothing for a week.
   #
-  # PURE: takes a Layout and a { node_id => name } map, touches no row and no port, so every rule
-  # runs identically on the three backend legs. Psych's `safe_load` with no permitted classes and
-  # a 16 KB cap is the whole of the parsing surface.
+  # AN ENTRY IS A PANEL, A FOLDER OR A BLOCK (2026-09-09, content blocks; spec §5), and the third
+  # is the one that carries CONTENT rather than only an arrangement: a block entry holds the text,
+  # the link or the picture itself, so the draft and the YAML are the whole of what Save writes. In
+  # the YAML the discriminator is exactly one of `panel:`, `folder:` and `block:`; a saved block
+  # also carries `id:` (Maker::ProjectBlock#key, never a row id), which is what lets a pasted
+  # layout UPDATE the block it came from while an unknown id CREATES one — a layout pasted from
+  # another project brings its blocks with it rather than renaming this project's.
+  #
+  # A `page` MAPPING sits beside `panels`: the project's description and its cover. A cover and an
+  # image block name a node id in the draft and a PATH UNDER THE PROJECT FOLDER in the YAML, which
+  # is the same rule folders follow (`images:`, the map the caller supplies) — a node id is not
+  # shareable and means nothing in another project.
+  #
+  # THREE OUTPUTS FEED SAVE, one door each: #column (the six maps the layout reads back), #blocks_from
+  # (a row's worth of attributes per block) and #page_from (the description and the cover node id).
+  #
+  # PURE: takes a Layout, a { node_id => name } map, the block ROWS (read, never written) and a
+  # { node_id => path } map, touches no row and no port, so every rule runs identically on the
+  # three backend legs. Psych's `safe_load` with no permitted classes and a 16 KB cap is the whole
+  # of the parsing surface.
   class LayoutDocument
     VERSION = 1
     MAX_BYTES = 16 * 1024
     ATTRIBUTES = %w[title intro width view hidden].freeze
+    # A BLOCK TAKES THE ARRANGEMENT ATTRIBUTES AND ITS OWN KIND'S FIELDS, AND NOTHING ELSE: `title`
+    # on a link is the link's label, `view` on a block is an error, and the two sets are separate
+    # so a misspelling inside a block is still caught by name (spec decision 5).
+    BLOCK_COMMON = %w[width hidden].freeze
+    BLOCK_FIELDS = { "text" => %w[heading body], "link" => %w[url title line], "image" => %w[file caption] }.freeze
+    PAGE_KEYS = %w[description cover].freeze
+    COVER_OUTSIDE_NOTE = "# cover: set from a file outside the project folder; the picker cannot name it".freeze
 
     Result = Data.define(:draft, :notes, :errors) do
       def ok? = errors.empty?
     end
 
-    def initialize(layout, folder_names)
+    # blocks: the project's Maker::ProjectBlock rows (anything answering key/kind/heading/body/url/
+    # line/caption/node_id); images: { node_id => path relative to the project folder } for the
+    # folder's image files — what an image block or the cover may name; page: the description and
+    # the cover node id as the row holds them.
+    def initialize(layout, folder_names, blocks: [], images: {}, page: {})
       @layout = layout
       @names = folder_names.to_h { |id, name| [ id.to_s, name.to_s ] }
+      @blocks = blocks.to_h { |b| [ Maker::ProjectKind.block_key(b.key), b ] }
+      @images = images.to_h { |id, path| [ id.to_s, path.to_s ] }
+      @paths = @images.invert
+      @page = { "description" => page["description"].presence, "cover" => page["cover"].presence }
     end
 
     # --- the draft ---------------------------------------------------------------------------
 
     def draft
-      { "layout" => VERSION, "panels" => @layout.order.map { |key| entry(key) } }
+      { "layout" => VERSION, "page" => @page.dup, "panels" => @layout.order.map { |key| entry(key) } }
     end
 
     # --- export ------------------------------------------------------------------------------
@@ -41,7 +73,30 @@ module Maker
     def to_yaml(draft = self.draft, project_name:)
       panels = draft["panels"].filter_map do |e|
         out = {}
-        if @layout.folder?(e["key"])
+        if e["kind"]
+          out["block"] = e["kind"]
+          # A `new-` KEY CARRIES NO `id:`: it names nothing outside this browser session, and a
+          # pasted `id: new-1` would read as an unknown id and create a second block.
+          out["id"] = e["key"].delete_prefix(Maker::ProjectKind::BLOCK_PREFIX) unless new_key?(e["key"])
+          case e["kind"]
+          when "text"
+            out["heading"] = e["heading"] if e["heading"]
+            out["body"] = e["body"] if e["body"]
+          when "link"
+            out["url"] = e["url"]
+            out["title"] = e["title"]
+            out["line"] = e["line"] if e["line"]
+          when "image"
+            # TOTAL like the folder branch below: an image whose file has left the project folder
+            # has no shareable name, so it is left out of the text rather than exported as a node
+            # id another project could not resolve.
+            path = @images[e["file"].to_s]
+            next unless path
+
+            out["file"] = path
+            out["caption"] = e["caption"] if e["caption"]
+          end
+        elsif @layout.folder?(e["key"])
           # TOTAL, LIKE #label BELOW (found in review): a folder key with no name — the layout and
           # the names built from two different reads, a folder gone between them — is left out of
           # the text rather than a KeyError on every editor render. The layout's own totality
@@ -53,15 +108,30 @@ module Maker
         else
           out["panel"] = e["key"]
         end
-        out["title"] = e["title"] if e["title"]
-        out["intro"] = e["intro"] if e["intro"]
+        unless e["kind"]
+          out["title"] = e["title"] if e["title"]
+          out["intro"] = e["intro"] if e["intro"]
+        end
         out["width"] = e["width"]
         out["view"] = e["view"] if e["view"]
         out["hidden"] = true if e["hidden"]
         out
       end
-      body = Psych.dump({ "layout" => VERSION, "panels" => panels }, line_width: -1).delete_prefix("---\n")
-      "# #{project_name.to_s.gsub(/\s+/, ' ').strip}, page layout. Paste into another project's editor to reuse it.\n#{body}"
+      page = {}
+      page["description"] = draft.dig("page", "description") if draft.dig("page", "description").present?
+      cover = draft.dig("page", "cover")
+      cover_path = cover && @images[cover.to_s]
+      page["cover"] = cover_path if cover_path
+      doc = { "layout" => VERSION }
+      doc["page"] = page if page.any?
+      doc["panels"] = panels
+      body = Psych.dump(doc, line_width: -1).delete_prefix("---\n")
+      header = "# #{project_name.to_s.gsub(/\s+/, ' ').strip}, page layout. Paste into another project's editor to reuse it.\n"
+      # A COVER THE PICKER CANNOT NAME IS SAID OUT LOUD RATHER THAN DROPPED SILENTLY: the file is
+      # outside the project folder (a hero chosen before the folder moved), so there is no path to
+      # write, and a reader who pastes this text elsewhere should know why their cover did not come.
+      header += "#{COVER_OUTSIDE_NOTE}\n" if cover && !cover_path
+      header + body
     end
 
     # --- parse: YAML text in ---------------------------------------------------------------------
@@ -91,28 +161,37 @@ module Maker
       end
       return failure("`layout: #{VERSION}` is required at the top.") unless version == VERSION
 
-      unknown = data.keys.map(&:to_s) - %w[layout panels]
+      unknown = data.keys.map(&:to_s) - %w[layout page panels]
       return failure("Unknown key “#{unknown.first}” at the top level.") if unknown.any?
       return failure("`panels` must be a list.") unless data["panels"].is_a?(Array)
+      if data.key?("page") && !data["page"].is_a?(Hash)
+        return failure("`page` must be a mapping with `description` and `cover`.")
+      end
 
-      merge(data["panels"], :yaml, base)
+      merge(data["panels"], :yaml, base, page: data["page"])
     end
 
     # --- from_draft: the browser's JSON in ----------------------------------------------------------
 
     def from_draft(hash)
       return failure("Not a layout draft.") unless hash.is_a?(Hash) && hash["panels"].is_a?(Array)
+      return failure("Not a layout draft.") if hash.key?("page") && !hash["page"].is_a?(Hash)
 
-      merge(hash["panels"], :draft)
+      merge(hash["panels"], :draft, nil, page: hash["page"])
     end
 
     # --- the column -------------------------------------------------------------------------------
 
     def column(draft)
       panels = draft["panels"]
+      # A BLOCK'S OWN CONTENT IS NOT A PANEL OVERRIDE (2026-09-09, content blocks): a link entry
+      # carries `title`, which is the LINK'S LABEL and belongs in its row, so the three sparse text
+      # maps are built from the entries that are not blocks. `order`, `hidden` and `widths` DO carry
+      # block keys — those are the arrangement, which is exactly what this column holds.
+      arranged = panels.reject { |e| e["kind"] }
       { "order" => panels.map { |e| e["key"] },
         "hidden" => panels.select { |e| e["hidden"] }.map { |e| e["key"] },
-        "views" => panels.filter_map { |e| [ e["key"], e["view"] ] if e["view"] }.to_h,
+        "views" => arranged.filter_map { |e| [ e["key"], e["view"] ] if e["view"] }.to_h,
         # WIDTHS ARE WRITTEN FOR EVERY PANEL, DEFAULTS INCLUDED, BY DESIGN: a Save records the
         # arrangement the maker saw and approved, and the width is a control they operated. A folder
         # added later still falls through to default_width (Layout#width_for is `||`), so this is
@@ -120,14 +199,57 @@ module Maker
         # for the opposite reason: a maker never chose a default label, so a PANEL_LABELS change
         # must still reach a saved project. Do not "tidy" this into a filter on non-defaults.
         "widths" => panels.to_h { |e| [ e["key"], e["width"] ] },
-        "titles" => panels.filter_map { |e| [ e["key"], e["title"] ] if e["title"] }.to_h,
-        "intros" => panels.filter_map { |e| [ e["key"], e["intro"] ] if e["intro"] }.to_h }
+        "titles" => arranged.filter_map { |e| [ e["key"], e["title"] ] if e["title"] }.to_h,
+        "intros" => arranged.filter_map { |e| [ e["key"], e["intro"] ] if e["intro"] }.to_h }
+    end
+
+    # --- what Save writes beside the column -------------------------------------------------------
+
+    # One hash per block IN THE DRAFT'S ORDER, keyed as the draft keys it (`block:<key>` or
+    # `block:new-<n>`) — Save mints the real key for a `new-` one. EVERY FIELD IS PRESENT, nil
+    # included, so an attribute cleared in the editor is written as a clear rather than left behind.
+    def blocks_from(draft)
+      draft["panels"].select { |e| e["kind"] }.map do |e|
+        { "key" => e["key"], "kind" => e["kind"],
+          # A LINK'S `title` IS THE ROW'S `heading`: one column, so a kind change keeps its label.
+          "heading" => e["kind"] == "link" ? e["title"] : e["heading"],
+          "body" => e["body"], "url" => e["url"], "line" => e["line"], "caption" => e["caption"], "node_id" => e["file"] }
+      end
+    end
+
+    # nil MEANS "THIS DOCUMENT SAYS NOTHING ABOUT THE PAGE", which is not the same as a page with a
+    # blank description: a draft posted by an older browser has no `page`, and Save must leave the
+    # project's own description alone rather than clearing it.
+    def page_from(draft)
+      return nil unless draft["page"].is_a?(Hash)
+
+      { "description" => draft["page"]["description"].presence, "cover_node_id" => draft["page"]["cover"].presence }
     end
 
     private
 
     def entry(key)
       e = { "key" => key, "hidden" => @layout.hidden?(key), "width" => @layout.width_for(key) }
+      if @layout.block?(key)
+        # THE ROW IS THE CONTENT'S ONE SOURCE: the layout column holds a block's PLACE, never its
+        # text. `&.` throughout because the layout and the rows are two reads — a block deleted
+        # between them leaves a key with no row, which renders as an empty entry rather than a 500.
+        row = @blocks[key]
+        e["kind"] = @layout.block_kind(key)
+        case e["kind"]
+        when "text"
+          e["heading"] = row.heading if row&.heading.present?
+          e["body"] = row.body if row&.body.present?
+        when "link"
+          e["url"] = row&.url
+          e["title"] = row&.heading
+          e["line"] = row.line if row&.line.present?
+        when "image"
+          e["file"] = row&.node_id
+          e["caption"] = row.caption if row&.caption.present?
+        end
+        return e.compact
+      end
       e["view"] = @layout.view_for(key) if Maker::ProjectKind.offered_views(key).any?
       e["title"] = @layout.titles[key] if @layout.titles[key]
       e["intro"] = @layout.intros[key] if @layout.intros[key]
@@ -138,10 +260,15 @@ module Maker
 
     # The merge, shared by both doors. `source` says how an entry names its panel: `:yaml` by
     # `panel:`/`folder:` (names), `:draft` by `key`. Everything after the key is one code path.
-    def merge(raw_entries, source, base = nil)
+    def merge(raw_entries, source, base = nil, page: nil)
       notes, errors = [], []
-      current = (base || draft)["panels"].to_h { |e| [ e["key"], e ] }
+      base_draft = base || draft
+      current = base_draft["panels"].to_h { |e| [ e["key"], e ] }
       listed = []
+      # THE NEW-KEY COUNTER STARTS ABOVE THE BASE DRAFT'S OWN `new-` KEYS: a block added with the
+      # button a moment ago is `block:new-1` and is not in the text being applied, so allocating
+      # from 1 again would hand a pasted block the unsaved one's key and merge the two.
+      next_new = next_new_index(current.keys)
 
       raw_entries.each_with_index do |raw, i|
         n = i + 1
@@ -150,17 +277,26 @@ module Maker
           next
         end
         raw = raw.to_h { |k, v| [ k.to_s, v ] }
-        key = source == :yaml ? key_from_yaml(raw, n, notes, errors) : key_from_draft(raw, n, notes, errors)
+        key, kind = source == :yaml ? key_from_yaml(raw, n, notes, errors, current, -> { next_new += 1 }) : key_from_draft(raw, n, notes, errors)
         next unless key
 
-        unknown = raw.keys - (source == :yaml ? %w[panel folder] : %w[key]) - ATTRIBUTES
-        errors << "Entry #{n}: unknown attribute “#{unknown.first}”." if unknown.any?
         if listed.any? { |k, _| k == key }
           errors << "Entry #{n} names #{label(key)} a second time."
           next
         end
-        listed << [ key, apply(current.fetch(key), raw, key, n, notes, errors) ]
+        base_entry = current[key] || { "key" => key, "kind" => kind, "hidden" => false, "width" => Maker::ProjectKind.default_width(key, block_kind: kind) }
+        if kind
+          allowed = (source == :yaml ? %w[block id] : %w[key kind]) + BLOCK_COMMON + BLOCK_FIELDS.fetch(kind)
+          unknown = raw.keys - allowed
+          errors << "Entry #{n}: unknown attribute “#{unknown.first}”." if unknown.any?
+          listed << [ key, apply_block(base_entry, raw, kind, n, notes, errors, new_block: current[key].nil?) ]
+        else
+          unknown = raw.keys - (source == :yaml ? %w[panel folder] : %w[key]) - ATTRIBUTES
+          errors << "Entry #{n}: unknown attribute “#{unknown.first}”." if unknown.any?
+          listed << [ key, apply(base_entry, raw, key, n, notes, errors) ]
+        end
       end
+      page_out = merge_page(base_draft["page"], page, notes, errors)
       return Result.new(draft: draft, notes: notes, errors: errors) if errors.any?
 
       ordered = listed.map(&:last) + (current.keys - listed.map(&:first)).map { |k| current[k] }
@@ -169,17 +305,39 @@ module Maker
         ordered = (ordered - [ publish ]) + [ publish ]
         notes << "Publish is always last; it was moved to the end."
       end
-      Result.new(draft: { "layout" => VERSION, "panels" => ordered }, notes: notes, errors: errors)
+      # THE CAP IS COUNTED ON THE RESULT, NOT ON WHAT THE TEXT LISTS: the blocks the text does not
+      # mention keep their place, so a paste of forty into a project that already holds three is
+      # forty-three blocks. An error, never a truncation — which of them to drop is not ours to pick.
+      if ordered.count { |e| e["kind"] } > Maker::ProjectBlock::CAP
+        return Result.new(draft: draft, notes: notes, errors: [ "That would leave more than #{Maker::ProjectBlock::CAP} blocks on the page." ])
+      end
+      Result.new(draft: { "layout" => VERSION, "page" => page_out, "panels" => ordered }, notes: notes, errors: errors)
     end
 
-    def key_from_yaml(raw, n, notes, errors)
-      if raw.key?("panel") && raw.key?("folder")
-        errors << "Entry #{n} names both `panel` and `folder`; use one."
+    # `[key, kind]`, with `kind` nil for a panel or a folder — the one place a block entry is told
+    # apart from an arrangement entry, so everything after it is one code path.
+    def key_from_yaml(raw, n, notes, errors, current, allocate)
+      named = %w[panel folder block].select { |k| raw.key?(k) }
+      if named.size > 1
+        errors << "Entry #{n} names more than one of `panel`, `folder` and `block`; use one."
         return nil
+      end
+      if raw.key?("block")
+        kind = raw["block"].to_s
+        unless Maker::ProjectBlock::KINDS.include?(kind)
+          errors << "Entry #{n}: unknown block kind “#{kind}”."
+          return nil
+        end
+        # AN ID THIS PROJECT KNOWS UPDATES; ANYTHING ELSE CREATES (spec §5). The kind has to match
+        # too: `id: <a text block>` under `block: link` is a layout pasted from elsewhere whose id
+        # happens to collide, and updating across kinds would rewrite an unrelated block.
+        id = raw["id"].to_s
+        known = id.present? && current.key?(Maker::ProjectKind.block_key(id)) && current[Maker::ProjectKind.block_key(id)]["kind"] == kind
+        return [ known ? Maker::ProjectKind.block_key(id) : Maker::ProjectKind.block_key("new-#{allocate.call}"), kind ]
       end
       if raw.key?("panel")
         key = raw["panel"].to_s
-        return key if Maker::Project::PANELS.include?(key)
+        return [ key, nil ] if Maker::Project::PANELS.include?(key)
 
         errors << "Entry #{n}: unknown panel “#{key}”."
         return nil
@@ -187,18 +345,32 @@ module Maker
       if raw.key?("folder")
         name = raw["folder"].to_s
         id = @names.key(name)
-        return Maker::ProjectKind.folder_key(id) if id && @layout.order.include?(Maker::ProjectKind.folder_key(id))
+        return [ Maker::ProjectKind.folder_key(id), nil ] if id && @layout.order.include?(Maker::ProjectKind.folder_key(id))
 
         notes << "This project has no folder named “#{name}”; that entry was skipped."
         return nil
       end
-      errors << "Entry #{n} names neither `panel` nor `folder`."
+      errors << "Entry #{n} names none of `panel`, `folder` or `block`."
       nil
     end
 
     def key_from_draft(raw, n, notes, errors)
       key = raw["key"].to_s
-      return key if @layout.order.include?(key)
+      if @layout.block?(key)
+        kind = raw["kind"].to_s
+        unless Maker::ProjectBlock::KINDS.include?(kind)
+          errors << "Entry #{n}: unknown block kind “#{kind}”."
+          return nil
+        end
+        # A `new-` KEY IS THE BROWSER'S OWN AND HAS NO ROW YET; ANY OTHER BLOCK KEY MUST BE A BLOCK
+        # OF THIS PROJECT, of this kind — a posted `block:<someone else's key>` is refused rather
+        # than created, so the draft can never name a row the layout does not know.
+        return [ key, kind ] if new_key?(key) || @layout.block_kind(key) == kind
+
+        errors << "Entry #{n}: unknown panel “#{key}”."
+        return nil
+      end
+      return [ key, nil ] if @layout.order.include?(key)
 
       if @layout.folder?(key)
         # A FOLDER RENAMED ON DISK MID-EDIT (share/s3 mint a new dir id on rename — the layout's
@@ -208,6 +380,13 @@ module Maker
         errors << "Entry #{n}: unknown panel “#{key}”."
       end
       nil
+    end
+
+    # A key the BROWSER minted for a block that has no row yet. Save turns each into a real key.
+    def new_key?(key) = key.to_s.start_with?("#{Maker::ProjectKind::BLOCK_PREFIX}new-")
+
+    def next_new_index(keys)
+      keys.filter_map { |k| k[/\Ablock:new-(\d+)\z/, 1]&.to_i }.max || 0
     end
 
     # An attribute GIVEN replaces; one absent keeps `base`'s value. A given blank title or intro
@@ -273,9 +452,127 @@ module Maker
       e
     end
 
+    # A BLOCK'S ATTRIBUTES, THE SAME MERGE RULE AS #apply: given replaces, absent keeps, blank
+    # clears. `new_block:` is the one thing that reads differently — a file this folder does not
+    # hold is an ERROR for a block being created (it would have no picture at all) and a NOTE for
+    # one that already has one (it keeps it), which is spec §5's rule 3.
+    #
+    # THE FIELDS ARE CHECKED HERE AND AGAIN IN Maker::ProjectBlock: this is the door's answer, in
+    # the entry's own words ("Entry 3: a link needs a title"), and the model is the lock no door
+    # can bypass. Neither is redundant.
+    def apply_block(base, raw, kind, n, notes, errors, new_block:)
+      e = base.dup
+      e["kind"] = kind
+      if raw.key?("width")
+        width = raw["width"].to_s
+        if Maker::ProjectKind::WIDTHS.include?(width)
+          e["width"] = width
+        else
+          errors << "Entry #{n}: width must be full or half."
+        end
+      end
+      if raw.key?("hidden")
+        if [ true, false ].include?(raw["hidden"])
+          e["hidden"] = raw["hidden"]
+        else
+          errors << "Entry #{n}: hidden must be true or false."
+        end
+      end
+      case kind
+      when "text"
+        set_text(e, raw, "heading", Maker::ProjectBlock::HEADING_MAX, n, errors, "the heading")
+        if raw.key?("body")
+          # STRIPPED, NEVER COLLAPSED, unlike every other text here: the body is Markdown and its
+          # blank lines are what separate its paragraphs.
+          body = raw["body"].to_s.strip
+          errors << "Entry #{n}: the body is over #{Maker::ProjectBlock::BODY_MAX / 1024} KB." if body.bytesize > Maker::ProjectBlock::BODY_MAX
+          body.empty? ? e.delete("body") : e["body"] = body
+        end
+        errors << "Entry #{n}: a text block needs a heading or a body." if e["heading"].blank? && e["body"].blank?
+      when "link"
+        if raw.key?("url")
+          url = text(raw["url"])
+          # THE URL IS CAPPED HERE TOO, like every other field with a bound on the row: a draft
+          # posted straight at the door has no byte cap of its own (only pasted TEXT does), so
+          # without this the one field whose cap lives only in Maker::ProjectBlock would be
+          # answered by the model at Save instead of by the entry that named it.
+          errors << "Entry #{n}: the url is over #{Maker::ProjectBlock::URL_MAX} characters." if url.length > Maker::ProjectBlock::URL_MAX
+          if url.match?(Maker::ProjectBlock::URL_FORMAT)
+            e["url"] = url
+          else
+            errors << "Entry #{n}: url must be an http or https URL."
+          end
+        end
+        set_text(e, raw, "title", Maker::ProjectBlock::HEADING_MAX, n, errors, "the title")
+        set_text(e, raw, "line", Maker::ProjectBlock::LINE_MAX, n, errors, "the line")
+        # A NEW LINK WITH NO `url:` AT ALL — the branch above answers only a url that was given.
+        errors << "Entry #{n}: url must be an http or https URL." if e["url"].blank? && !raw.key?("url")
+        errors << "Entry #{n}: a link needs a title." if e["title"].blank?
+      when "image"
+        if raw.key?("file")
+          # A NODE ID FROM THE BROWSER, A PATH FROM THE YAML, and both are one lookup: the draft
+          # names what the picker clicked, the text names what a reader can see in the folder.
+          given = raw["file"].to_s
+          node_id = @images.key?(given) ? given : @paths[given]
+          if node_id
+            e["file"] = node_id
+          elsif new_block
+            errors << "Entry #{n}: no image at “#{given}” in the project folder."
+          else
+            notes << "No image at “#{given}” in the project folder; the block keeps its picture."
+          end
+        end
+        set_text(e, raw, "caption", Maker::ProjectBlock::LINE_MAX, n, errors, "the caption")
+        errors << "Entry #{n}: an image block needs a file." if e["file"].blank?
+      end
+      e
+    end
+
+    def set_text(e, raw, field, max, n, errors, name)
+      return unless raw.key?(field)
+
+      value = text(raw[field])
+      errors << "Entry #{n}: #{name} is over #{max} characters." if value.length > max
+      value.empty? ? e.delete(field) : e[field] = value
+    end
+
+    # THE PAGE MERGES LIKE AN ENTRY: what the document gives replaces, what it omits keeps. `raw`
+    # nil is a document with no `page` at all — an older browser's draft, or a layout text that
+    # says nothing about the intro — and must leave the project's own description alone.
+    def merge_page(base_page, raw, notes, errors)
+      out = (base_page || @page).dup
+      return out if raw.nil?
+
+      raw = raw.to_h { |k, v| [ k.to_s, v ] }
+      unknown = raw.keys - PAGE_KEYS
+      errors << "Unknown key “#{unknown.first}” under `page`." if unknown.any?
+      # STRIPPED, NOT COLLAPSED: the description keeps its line breaks (the page renders it pre-wrap).
+      out["description"] = raw["description"].to_s.strip.presence if raw.key?("description")
+      if raw.key?("cover")
+        given = raw["cover"]
+        # AN EXPLICIT NULL CLEARS THE COVER — the Remove button's answer, and the one case where a
+        # blank is a value rather than an omission.
+        if given.nil? || given.to_s.empty?
+          out["cover"] = nil
+        else
+          node_id = @images.key?(given.to_s) ? given.to_s : @paths[given.to_s]
+          if node_id
+            out["cover"] = node_id
+          else
+            notes << "No image at “#{given}” in the project folder; the cover was left as it is."
+          end
+        end
+      end
+      out
+    end
+
     def text(value) = value.to_s.gsub(/\s+/, " ").strip
 
     def label(key)
+      # A BLOCK HAS NO PANEL LABEL — it is named by what it is, which is all the duplicate-entry
+      # message needs ("Entry 4 names the link block a second time").
+      return "the #{@layout.block_kind(key) || 'new'} block" if @layout.block?(key)
+
       @layout.folder?(key) ? @names.fetch(@layout.folder_id(key), key) : Maker::Project::PANEL_LABELS.fetch(key, key)
     end
   end
