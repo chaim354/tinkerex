@@ -35,6 +35,9 @@ module Maker
   #     outside VIEWS is dropped rather than raised on, for the reason the rest of this read is
   #     total. #view_for falls back to .default_view: the browser for a working tree, tiles for
   #     every other folder and for every fixed key — which is today's page exactly (decision 6).
+  #   * `widths`, `titles` AND `intros` ARE PER PANEL TOO (2026-09-09, the page editor): a width in
+  #     WIDTHS, else the default that used to be a stylesheet rule (#default_width); plain one-line
+  #     text under TITLE_MAX / INTRO_MAX, else dropped. Same totality, same reason.
   #
   # `folders:` DEFAULTS TO `[]`, so a caller holding no listing — Home, the chooser before it
   # builds one, a test — gets the fixed-key layout it has always got, unchanged.
@@ -200,10 +203,12 @@ module Maker
 
     # One project page's panel list. `order` is a permutation of the vocabulary (Maker::Project::
     # PANELS plus the current folder keys); `hidden` is a subset of it with ALWAYS removed; `views`
-    # holds only vocabulary keys with values in Maker::Project::VIEWS; `repo_ids` are the node ids
-    # of the folders that are working trees, which is all #view_for needs to pick a default.
-    # `visible` is what the loop renders.
-    Layout = Data.define(:order, :hidden, :views, :repo_ids) do
+    # holds only vocabulary keys with values in Maker::Project::VIEWS; `widths` only vocabulary keys
+    # with values in WIDTHS; `titles` and `intros` only vocabulary keys with non-empty one-line text
+    # under their caps (2026-09-09, the page editor; spec §3); `repo_ids` are the node ids of the
+    # folders that are working trees, which is all #view_for needs to pick a default. `visible` is
+    # what the loop renders.
+    Layout = Data.define(:order, :hidden, :views, :widths, :titles, :intros, :repo_ids) do
       def visible = order - hidden
       # `to_s` like `folder?` and `view_for` below, so a Symbol asks the same question a String does.
       def visible?(key) = order.include?(key.to_s) && !hidden.include?(key.to_s)
@@ -217,6 +222,18 @@ module Maker
       def view_for(key)
         views[key.to_s] || ProjectKind.default_view(key.to_s, repo: folder?(key) && repo_ids.include?(folder_id(key)))
       end
+
+      # THE WIDTH IS DATA, NOT A STYLESHEET RULE (2026-09-09): pages/projects.css used to name
+      # `.attachments-panel, .photos-panel, .folder-panel` as the panels that span both columns.
+      # Both pages now render `panel--<width>` from this answer, so a layout can carry a width and
+      # be shared as YAML, and every existing project renders exactly as it did.
+      def width_for(key) = widths[key.to_s] || ProjectKind.default_width(key)
+
+      # THE CALLER SUPPLIES THE DEFAULT because only the caller knows it: PANEL_LABELS for a fixed
+      # key, the folder's own name for a folder key — this struct holds node ids, never names.
+      def title_for(key, default) = titles[key.to_s] || default
+
+      def intro_for(key) = intros[key.to_s]
     end
 
     def self.label(kind) = LABELS.fetch(kind.to_s, LABELS.fetch(DEFAULT))
@@ -245,6 +262,19 @@ module Maker
 
     def self.default_view(_key, repo:) = repo ? "browser" : "tiles"
 
+    WIDTHS = %w[full half].freeze
+    TITLE_MAX = 60
+    INTRO_MAX = 200
+    # Today's page, written down: Files and Photos spanned both columns by a stylesheet rule that
+    # also named `.folder-panel`; a folder panel holds a tile grid, nested sections or the browser,
+    # and half a column is where the browser stops being usable.
+    FULL_BY_DEFAULT = %w[attachments photos].freeze
+
+    def self.default_width(key)
+      k = key.to_s
+      k.start_with?(FOLDER_PREFIX) || FULL_BY_DEFAULT.include?(k) ? "full" : "half"
+    end
+
     # THE MAKER'S ANSWER WINS, INCLUDING "nothing hidden" — which is why the test below is `key?`
     # and not `.present?`. A maker who unhides every panel their kind's preset hid stores
     # `"hidden" => []`, and `.present?` would read that as "no override" and hand the preset
@@ -269,7 +299,11 @@ module Maker
 
       order = stored_order(known(over["order"], vocabulary), folder_keys) + preset_order(preset, folder_keys)
       hidden = (over.key?("hidden") ? known(over["hidden"], vocabulary) : preset[:hidden]) - ALWAYS
-      Layout.new(order: order & vocabulary, hidden:, views: stored_views(over["views"], vocabulary), repo_ids:)
+      Layout.new(order: order & vocabulary, hidden:, views: stored_views(over["views"], vocabulary),
+                 widths: stored_widths(over["widths"], vocabulary),
+                 titles: stored_text(over["titles"], vocabulary, TITLE_MAX),
+                 intros: stored_text(over["intros"], vocabulary, INTRO_MAX),
+                 repo_ids:)
     end
 
     # `Array#&` FILTERS, DEDUPS AND KEEPS THE RECEIVER'S ORDER in one operation, which is all three
@@ -304,6 +338,26 @@ module Maker
       raw.to_h { |key, view| [ key.to_s, view.to_s ] }
          .select { |key, view| vocabulary.include?(key) && Maker::Project::VIEWS.include?(view) }
     end
-    private_class_method :known, :stored_order, :preset_order, :stored_views
+    def self.stored_widths(raw, vocabulary)
+      return {} unless raw.is_a?(Hash)
+
+      raw.to_h { |key, width| [ key.to_s, width.to_s ] }
+         .select { |key, width| vocabulary.include?(key) && WIDTHS.include?(width) }
+    end
+
+    # PLAIN TEXT, ONE LINE, CAPPED — and total on the way out like every other map here: a console
+    # write of five thousand characters renders as the first sixty, never as an error on the page.
+    # Whitespace collapses so an intro pasted with a newline still reads as the one line it renders
+    # as, and a blank string is ABSENT rather than an empty heading.
+    def self.stored_text(raw, vocabulary, max)
+      return {} unless raw.is_a?(Hash)
+
+      raw.filter_map do |key, text|
+        k = key.to_s
+        t = text.to_s.gsub(/\s+/, " ").strip
+        [ k, t[0, max] ] if vocabulary.include?(k) && !t.empty?
+      end.to_h
+    end
+    private_class_method :known, :stored_order, :preset_order, :stored_views, :stored_widths, :stored_text
   end
 end
