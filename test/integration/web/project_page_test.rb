@@ -397,6 +397,37 @@ end
     # THE DEFAULT VIEW IS WHAT THE PANEL IS (Maker::ProjectKind.default_view): a working tree opens
     # in the Finder browser, everything else in tiles. Both halves in one test, because the pair is
     # what "defaults reproduce today's page" means.
+    # A REPOSITORY PANEL OFF THE BROWSER RENDERS TILES, SO ITS FILES MUST REACH THE THUMBNAIL MAP
+    # (found in review): the map's repo exclusion predates folder panels, and a tile it never
+    # backfilled spins for 41 polls and then reads "Preview not supported" over a file that renders
+    # fine. The default browser view keeps the exclusion — a repository's files must not cost a
+    # render job each from a page that shows none of them.
+    test "a repository panel switched to tiles gets its thumbnails backfilled; in the browser it does not" do
+      project = folder_panel_project!
+      # BOTH CONTENT COLUMNS, or the map has no token to key a row on and skips the node in every
+      # view — which would make both halves of this test pass for nothing (§14a: content_token is
+      # content_hash on share/s3 and current_version_id on chunk_remote).
+      @user.nodes.create!(node_id: "f-case", name: "case.stl", kind: "file", parent_node_id: "d-firmware",
+                          size: 10, mtime: 1_000_000_000, content_hash: "h-case", current_version_id: "v-case")
+
+      get project_path(project)
+      assert_not Maker::Preview.exists?(user: @user, node_id: "f-case"),
+                 "the browser view shows no tile for it, so nothing is enqueued"
+
+      project.update!(panels: { "views" => { "folder:d-firmware" => "tiles" } })
+      get project_path(project)
+      assert_select "section.folder-panel[id='folder:d-firmware'] .attachment-tile", { minimum: 1 }
+      assert Maker::Preview.exists?(user: @user, node_id: "f-case"),
+             "a tile on the page must have a row the poll can resolve"
+    end
+
+    test "the Files panel carries the anchor its own view toggle redirects to" do
+      project = folder_panel_project!
+      get project_path(project)
+      assert_select "section.attachments-panel#attachments", count: 1
+      assert_select "section.attachments-panel .view-toggle form[action=?]", project_panels_path(project)
+    end
+
     test "a repo folder opens in the browser and a plain one in tiles" do
       get project_path(folder_panel_project!)
 

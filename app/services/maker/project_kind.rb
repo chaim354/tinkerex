@@ -231,6 +231,18 @@ module Maker
     # working tree opens in the Finder browser (2026-09-07), everything else in tiles, the Files
     # panel included. `_key` is taken and ignored so a later per-key default (a Photos panel that
     # wants tiles whatever else changes) is a change to this method and to no caller.
+    # WHICH VIEWS A PANEL OFFERS — the toggles render this and the door validates against it, so
+    # the two cannot disagree (found in review: the door took any of VIEWS for any key, so a
+    # hand-made `view[attachments]=browser` stored a state no button could show, and the Files
+    # toggle rendered with nothing active). Files has no `Dir` of its own to hand the browser
+    # unless the folder is itself a working tree, so it offers tiles and list; a folder panel
+    # offers all three; a fixed panel with no view offers none and the door refuses the write.
+    def self.offered_views(key)
+      k = key.to_s
+      return Maker::Project::VIEWS if k.start_with?(FOLDER_PREFIX)
+      k == "attachments" ? %w[tiles list] : []
+    end
+
     def self.default_view(_key, repo:) = repo ? "browser" : "tiles"
 
     # THE MAKER'S ANSWER WINS, INCLUDING "nothing hidden" — which is why the test below is `key?`

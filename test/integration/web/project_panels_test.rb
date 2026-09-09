@@ -271,6 +271,27 @@ end
     # THE THREE OTHER DOORS MUST CARRY `views` FORWARD, or the first arrow click or Save would
     # silently reset every panel's view — the same "only the question that was asked" rule the
     # hidden set already follows.
+    # THE DOOR TAKES ONLY WHAT THE PANEL OFFERS, AND ONLY ONE PAIR (found in review): `browser` for
+    # Files stored a state no button could show, a fixed panel with no view took one anyway, and
+    # two pairs wrote the first. Each writes nothing now.
+    test "a view the panel does not offer, a panel with no view, and two pairs all write nothing" do
+      seed_folders!
+      # A STORED VIEW FIRST, so "writes nothing" is asserted against a real hash rather than nil —
+      # and so a door that merged a refused pair over an existing map would be seen doing it.
+      @project.update!(panels: { "views" => { "folder:d-firmware" => "tiles" } })
+      before = @project.reload.panels
+
+      patch project_panels_path(@project), params: { view: { "attachments" => "browser" } }
+      assert_equal before, @project.reload.panels, "Files offers no browser"
+
+      patch project_panels_path(@project), params: { view: { "tasks" => "list" } }
+      assert_equal before, @project.reload.panels, "Tasks has no view"
+
+      patch project_panels_path(@project), params: { view: { "folder:d-models" => "list", "attachments" => "list" } }
+      assert_equal before, @project.reload.panels, "two pairs are not one"
+      assert_response :redirect
+    end
+
     test "Save and a move keep the chosen views, and Reset clears them" do
       models, = seed_folders!
       @project.update!(panels: { "views" => { models => "list" } })

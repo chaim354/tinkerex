@@ -52,7 +52,9 @@
   renders as tiles, which is what every group already does with anything that is not "list".
 %>
 <% view = @panel_layout.view_for("attachments") %>
-<section class="panel attachments-panel">
+<%# `id="attachments"`: the view toggle below redirects to this panel's anchor, and a dead anchor
+    is worse than no panel (Maker::ProjectKind's own argument for ALWAYS; found in review). %>
+<section class="panel attachments-panel" id="attachments">
   <div class="panel-head">
     <h2>Files</h2>
     <%# The folder's own path, so the panel says WHERE it is showing, not just what. Nothing to
@@ -75,7 +77,7 @@
           same markup over all three of Maker::Project::VIEWS; see its header for why Files omits
           `browser`. %>
       <div class="view-toggle" role="group" aria-label="View">
-        <% %w[tiles list].each do |value| %>
+        <% Maker::ProjectKind.offered_views("attachments").each do |value| %>
           <%= button_to value.capitalize, project_panels_path(@project), method: :patch,
                         params: { view: { "attachments" => value } },
                         class: "toggle#{' active' if view == value}" %>

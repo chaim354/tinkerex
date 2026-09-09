@@ -349,6 +349,16 @@ module Maker
                    Maker::ProjectKind.layout_for(kind: "electronics", overrides: nil, folders: []).visible.first(5)
     end
 
+    # --- what a panel offers --------------------------------------------------------------------
+
+    test "offered_views: a folder offers all three, Files two, and a fixed panel with no view none" do
+      assert_equal %w[tiles list browser], Maker::ProjectKind.offered_views("folder:d-models")
+      assert_equal %w[tiles list], Maker::ProjectKind.offered_views("attachments")
+      assert_equal %w[tiles list], Maker::ProjectKind.offered_views(:attachments)
+      assert_empty Maker::ProjectKind.offered_views("tasks")
+      assert_empty Maker::ProjectKind.offered_views(nil)
+    end
+
     # --- the hero -----------------------------------------------------------------------------
 
     test "hero_roles is a preference list per kind, and other's is today's derivation" do

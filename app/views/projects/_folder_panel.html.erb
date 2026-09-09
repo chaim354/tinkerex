@@ -50,7 +50,7 @@
           three: Files has no browser to mount (there is no Dir for the folder's own root unless it
           is a working tree), and a control that does nothing is worse than one that is absent. %>
       <div class="view-toggle" role="group" aria-label="View">
-        <% Maker::Project::VIEWS.each do |value| %>
+        <% Maker::ProjectKind.offered_views(key).each do |value| %>
           <%= button_to value.capitalize, project_panels_path(@project), method: :patch,
                         params: { view: { key => value } },
                         class: "toggle#{' active' if view == value}" %>

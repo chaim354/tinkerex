@@ -324,7 +324,15 @@ class ProjectsController < ApplicationController
     # its thumbnail must stay in the map. The subtree walk is the listing's own
     # (Maker::ProjectFolderListing#repo_subtree_ids): in memory over the tree it already built, so
     # this costs no query and page_query_budget_test.rb stays flat.
-    hidden_in_repos = @listing.repo_subtree_ids - @generated_ids
+    # EXCEPT A DEPTH-ONE REPOSITORY WHOSE PANEL IS NOT IN THE BROWSER (folder panels; found in
+    # review): the exclusion was written when a repository could only ever render as the browser.
+    # A `tiles` or `list` view puts exactly those ids on the page as tiles, and a tile this map
+    # never backfilled spins for its 41 polls and then wears "Preview not supported" over a file
+    # that renders fine — worst on chunk_remote, where nothing but a backfill creates a row. A
+    # nested repository is still a closed browser section, so it stays out.
+    unrolled = @listing.tree.select { |d| d.repo? && @panel_layout.view_for(Maker::ProjectKind.folder_key(d.node_id)) != "browser" }
+                            .flat_map(&:subtree_file_ids)
+    hidden_in_repos = @listing.repo_subtree_ids - @generated_ids - unrolled
     tile_ids = @listing.node_ids.reject { |id| hidden_in_repos.include?(id) } +
                @linked_rows.map(&:node_id)
     @page_thumbs = Maker::Previews::ThumbnailMap.for(

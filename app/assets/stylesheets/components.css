@@ -86,7 +86,11 @@
   }
   .tag-chip:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
   .view-toggle { display: inline-flex; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); }
-  .view-toggle .toggle { padding: 4px 10px; font: 500 12px/1.4 var(--font-ui); color: var(--fg-muted); text-decoration: none; }
+  /* A `.toggle` is an <a> on the Files page and a button_to's <button> on the project page (folder
+     panels), so the UA's button border and background are reset HERE, in the component: a reset in
+     a `pages` sheet would beat `.toggle.active` and `.toggle:hover` below regardless of specificity,
+     because across cascade layers only the layer order counts (found in review). */
+  .view-toggle .toggle { padding: 4px 10px; font: 500 12px/1.4 var(--font-ui); color: var(--fg-muted); text-decoration: none; border: 0; background: none; cursor: pointer; }
   .view-toggle .toggle:hover { background: var(--raised); color: var(--fg); text-decoration: none; }
   .view-toggle .toggle.active { background: var(--raised); color: var(--accent); }
   .view-toggle .toggle + .toggle { border-left: 1px solid var(--line); }

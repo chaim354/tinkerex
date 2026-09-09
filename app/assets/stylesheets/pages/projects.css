@@ -62,11 +62,11 @@
      <form>, so the forms are `display: contents` to put the buttons back in `.view-toggle`'s flex
      row; and `.view-toggle .toggle + .toggle`'s divider can never match, because the buttons are
      not siblings in the DOM whatever their boxes do — the divider is redrawn on the FORM's
-     adjacency instead. The reset below deliberately stays at two classes plus an element, BELOW
-     `.view-toggle .toggle.active`'s three classes, so the component keeps the last word on the
-     active state; naming `button.toggle` here would win instead and silently flatten it. */
+     adjacency instead. The <button>'s own UA border and background are reset in components.css on
+     `.view-toggle .toggle` itself, NOT here: across cascade LAYERS specificity is never consulted
+     and `pages` is declared after `components`, so a reset in this sheet flattened the active and
+     hover fills whatever its selector (found in review). */
   .project-panels .view-toggle form.button_to { display: contents; }
-  .project-panels .view-toggle button { border: 0; background: none; cursor: pointer; }
   .project-panels .view-toggle form.button_to + form.button_to button { border-left: 1px solid var(--line); }
   .folder-panel .panel-path { font-size: 12px; margin-left: 8px; }
   /* Quiet (S4-1): the heading, the badge and one sentence on one line. `.panel--quiet` already

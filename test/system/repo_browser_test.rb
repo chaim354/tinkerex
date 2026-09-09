@@ -172,6 +172,14 @@ class RepoBrowserTest < ApplicationSystemTestCase
 
     within(panel_for(models)) do
       assert_selector ".filechooser--inline .filechooser-col", count: 1
+      # THE ACTIVE BUTTON KEEPS THE COMPONENT'S FILL (found in review): the buttons' UA reset lives
+      # in components.css on `.toggle` itself, because a reset in a `pages` sheet beats
+      # `.toggle.active`'s background whatever its specificity — across cascade layers only the
+      # layer order counts. Only a browser can see a computed style, so this is where it is pinned.
+      active_bg = page.evaluate_script("getComputedStyle(document.querySelector('.folder-panel .view-toggle .toggle.active')).backgroundColor")
+      idle_bg = page.evaluate_script("getComputedStyle(document.querySelector('.folder-panel .view-toggle .toggle:not(.active)')).backgroundColor")
+      assert_not_equal idle_bg, active_bg, "the active view button must be filled, not flattened (#{active_bg} vs #{idle_bg})"
+      assert_not_equal "rgba(0, 0, 0, 0)", active_bg, "the active view button must not be transparent"
       assert_selector ".filechooser-row", text: "base.stl"
       assert_selector ".filechooser-row", text: "lid.stl"
       assert_no_selector ".attachments-grid .attachment-tile"

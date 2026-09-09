@@ -101,8 +101,14 @@ module Projects
       raw = params[:view]
       return [ nil, nil ] unless raw.is_a?(ActionController::Parameters)
 
-      key, view = raw.to_unsafe_h.first
-      return [ nil, nil ] unless vocabulary.include?(key.to_s) && Maker::Project::VIEWS.include?(view.to_s)
+      pairs = raw.to_unsafe_h
+      # EXACTLY ONE PAIR (found in review: two pairs wrote the first and dropped the rest), and the
+      # value against what THIS panel offers rather than the global vocabulary — see
+      # Maker::ProjectKind.offered_views for why Files cannot store `browser`.
+      return [ nil, nil ] unless pairs.size == 1
+
+      key, view = pairs.first
+      return [ nil, nil ] unless vocabulary.include?(key.to_s) && Maker::ProjectKind.offered_views(key).include?(view.to_s)
 
       [ key.to_s, view.to_s ]
     end
