@@ -311,8 +311,9 @@ module Web
       # goes red naming projects/_bom, _wiring, _releases and _sheets — and public/projects/_bom
       # and _releases with them, because the visitor's page reads the SAME layout off the project
       # (Maker::PublicProject#visible_panels), which is the other half of this fixture's coverage.
-      # projects/_panel_chooser renders on a project detail page whatever the kind, so it is
-      # covered either way.
+      # projects/_panel_slot and _panel_strip render on a project detail page whatever the kind —
+      # the slot wraps every panel, and the strip is on every slot of the edit-mode entry below —
+      # so both are covered either way.
       #
       # STAGE 3, S3-4: PUBLISHED LAST, once every panel above has something to render — the public
       # page shows the SAME fixtures through ten new templates, so nothing here is seeded twice.
@@ -433,6 +434,12 @@ module Web
         # same page visited twice. `_file_rows` is swept by `d-models`' stored `list` view in setup
         # instead — which is a stronger claim, since it is the arm a real maker's page takes.
         "project detail" => project_path(@project),
+        # THE PAGE EDITOR'S OWN RENDER (2026-09-09): the same action with `editing` on, and the ONLY
+        # page that reaches projects/_panel_strip, _layout_bar and _layout_drawer. It earns its
+        # entry rather than merely filling the coverage assertion: the strip's comment quotes ERB,
+        # which is exactly the shape section 14d records, and the sweep caught one such leak in
+        # projects/_panel_slot while these three sat unswept.
+        "project detail (edit mode)" => edit_layout_project_path(@project),
         "project detail (no README)" => project_path(@unlisted),
         # Stage 4, S4-4: the owner's preview of their public page, the ONE page that reaches
         # projects/preview and projects/_preview_banner. @user has a handle (setup above), so this

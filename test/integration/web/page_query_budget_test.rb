@@ -345,6 +345,32 @@ module Web
       end
     end
 
+    # THE EDIT PAGE COSTS WHAT THE PAGE COSTS (2026-09-09, the page editor): the same action, one
+    # flag, and a strip that reads only what the page already loaded. Measured as a difference with
+    # the page rather than as a literal, so the three legs' differing baselines cannot pin one.
+    test "projects#show in edit mode costs no more queries than the page, and stays constant in folders" do
+      project = @user.maker_projects.create!(name: "Edit budget")
+      folder = project_folder_rows!(@user, project)
+      seed = lambda do |n|
+        n.times do |i|
+          dir = @user.nodes.create!(node_id: SecureRandom.uuid, name: "part-#{i}", kind: "dir", parent_node_id: folder.node_id, mtime: 1, size: 0)
+          @user.nodes.create!(node_id: SecureRandom.uuid, name: "f-#{i}.stl", kind: "file", parent_node_id: dir.node_id, mtime: 1, size: 3)
+        end
+      end
+
+      seed.call(1)
+      get edit_layout_project_path(project) # warm-up
+      get project_path(project)
+      page = count_queries { get project_path(project) }
+      small = count_queries { get edit_layout_project_path(project) }
+      seed.call(3)
+      get edit_layout_project_path(project)
+      large = count_queries { get edit_layout_project_path(project) }
+
+      assert_operator small, :<=, page + 1, "edit mode: #{small} vs page: #{page}"
+      assert_equal small, large, "the edit page must not grow with folders (#{small} → #{large})"
+    end
+
     # STAGE 3, S3-4: THE SAME PROJECT, READ BY A STRANGER. Not a duplicate of the budget above: the
     # public page is a DIFFERENT reader over the same rows (Maker::PublicProject, not
     # ProjectsController#show's ivars), and the two share no eager load — every panel it renders is

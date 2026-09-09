@@ -49,13 +49,15 @@
      grid item's own min-width moves it). Zeroing it hands the overflow to `.cm-scroller`, which has
      its own `overflow-x: auto` and is where a long line belongs. */
   .project-panels { display: grid; grid-template-columns: 1fr; gap: 16px; }
-  .project-panels > .panel { min-width: 0; }
-  @media (min-width: 900px) { .project-panels { grid-template-columns: 1fr 1fr; } .attachments-panel, .photos-panel, .folder-panel { grid-column: 1 / -1; } }
+  /* THE GRID ITEM IS THE SLOT (2026-09-09, the page editor): projects/_panel_slot wraps every panel
+     in `div.panel-slot.panel--<width>`, and the width is the LAYOUT's answer (Maker::ProjectKind
+     ::Layout#width_for) rather than this sheet naming three panel classes. `.panel` stays in the
+     rule for the public page's repo cards, which render outside a slot. */
+  .project-panels > .panel, .project-panels > .panel-slot { min-width: 0; }
+  @media (min-width: 900px) { .project-panels { grid-template-columns: 1fr 1fr; } .project-panels > .panel-slot.panel--full { grid-column: 1 / -1; } }
 
   /* --- Folder panels (2026-09-08): one per depth-one subfolder of the project's folder, each with
-     its own view. FULL WIDTH, with Files and Photos, because a folder panel holds the same content
-     a Files section held — a 96px tile grid, a nested section, or the Miller-columns browser — and
-     half a column is where the browser stops being usable.
+     its own view. Full width by default — Maker::ProjectKind.default_width, since the page editor.
 
      THE VIEW TOGGLE IS THREE `button_to` FORMS, NOT LINKS, because choosing a view is a WRITE now.
      Two consequences the component sheet cannot know about: each button arrives wrapped in its own
@@ -301,21 +303,4 @@
   .publish-url .mono, .publish-unlisted .mono { font-size: 12px; overflow-wrap: anywhere; }
   .publish-unlisted p { flex-basis: 100%; margin: 0; font-size: 12px; }
   .publish-unlisted form { margin: 0; }
-
-  /* --- The panel chooser (stage 4, S4-7): which panels this page shows, chosen on this page.
-     Closed by default and below the panels, so it never displaces the maker's own content. A
-     `summary.btn` and a `linkbtn` per move are COMPONENTS, styled in components.css and only
-     qualified here (design-system rule 3). The row wraps at 375px rather than scrolling: rule 11
-     is asserted by the phone sweep with this element OPEN. --- */
-  .panel-chooser { margin-top: 20px; }
-  .panel-chooser > summary { display: inline-block; cursor: pointer; }
-  .panel-chooser-note { margin: 10px 0 6px; }
-  .panel-choices { list-style: none; margin: 0; padding: 0; max-width: 420px; }
-  .panel-choice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-                  padding: 4px 0; border-bottom: 1px solid var(--line); }
-  .panel-choice:last-child { border-bottom: 0; }
-  .panel-choice-name { flex: 1 1 auto; display: flex; align-items: center; gap: 6px; overflow-wrap: anywhere; }
-  .panel-choice-always { font: 11px/1.4 var(--font-mono); }
-  .panel-choice-moves { display: flex; gap: 4px; }
-  .panel-chooser-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
 }

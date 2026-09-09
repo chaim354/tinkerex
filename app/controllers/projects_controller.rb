@@ -131,6 +131,23 @@ class ProjectsController < ApplicationController
       @listing.tree.to_h { |dir| [ Maker::ProjectKind.folder_key(dir.node_id), dir.name ] }
     )
 
+    # EDIT MODE (2026-09-09, the page editor; spec §5). `editing` arrives only as the DEFAULT of the
+    # two `layout` routes; it turns on the chrome and nothing else — every load below is the same,
+    # which is what lets page_query_budget_test.rb pin the edit page with the page's own budget.
+    @editing = params[:editing] == "1"
+    # ONE PANEL FOR A VIEW THE DRAFT CHOSE BUT HAS NOT SAVED (`layout/panel`). The layout is
+    # overridden IN MEMORY for this render alone — Data#with, never a write — and only for a panel
+    # that offers views and a view it offers; anything else is a 404, because the only client is
+    # our own controller and a wrong pair from it is a bug to surface, not a page to render.
+    if @editing && params[:panel].present?
+      @panel_key = params[:panel].to_s
+      wanted = params[:view].to_s
+      offered = Maker::ProjectKind.offered_views(@panel_key)
+      raise ActiveRecord::RecordNotFound unless @panel_layout.order.include?(@panel_key) && offered.include?(wanted)
+
+      @panel_layout = @panel_layout.with(views: @panel_layout.views.merge(@panel_key => wanted))
+    end
+
     # A FILE DELETED FROM THE LIBRARY LEAVES THE PROJECT, IMMEDIATELY. It used to sit here forever
     # as a "⚠️ (file unavailable)" tile with a per-file Remove button: `Library::Reconciler`
     # TOMBSTONES rather than destroys (deliberately — it is what makes a NAS reorganisation
@@ -366,11 +383,8 @@ class ProjectsController < ApplicationController
     # why it rides in the url rather than in the session: the reload navigates to the param-free
     # url and the hint is gone by construction.
     @scan_started = params[:scanning] == "1"
-    # THE CHOOSER'S RE-OPEN HINT (stage 4, S4-7). Every write to the panel layout redirects back
-    # here with `?panels=open`, so a maker clicking Up four times does not have to reopen the
-    # <details> between clicks. A one-shot RENDER HINT, not state — which is why it rides in the
-    # url exactly as @scan_started does, and is gone the moment they navigate away.
-    @panels_open = params[:panels] == "open"
+    # `layout/panel` renders the one body and stops; the whole page is the default render.
+    render partial: "projects/panel_body", locals: { key: @panel_key, extra: {} }, layout: false if @panel_key
   end
 
   # GET /projects/:id/preview — what a visitor sees, at any visibility, for the owner (story 5.1).

@@ -271,7 +271,7 @@ end
 
       assert_response :success
       expected = Maker::Project::PANELS.map { |k| "#{k.tr("_", "-")}-panel" }
-      rendered = css_select("div.project-panels > section.panel")
+      rendered = css_select("div.project-panels > div.panel-slot > section.panel")
                  .map { |s| s["class"].split.find { |c| c.end_with?("-panel") } }
 
       assert_equal rendered, expected & rendered,
@@ -312,7 +312,7 @@ end
       @project.update!(panels: { "order" => %w[tasks build_log] })
 
       get project_path(@project)
-      panels = css_select("div.project-panels > section.panel").map { |s| s["class"] }
+      panels = css_select("div.project-panels > div.panel-slot > section.panel").map { |s| s["class"] }
       assert_operator panels.index { |c| c.include?("tasks-panel") }, :<,
                       panels.index { |c| c.include?("build-log-panel") },
                       "the stored order must move Tasks above Build log"
@@ -320,7 +320,7 @@ end
       @project.update!(panels: nil, kind: "electronics")
       @project.connections.create!(user: @user, from_label: "A", to_label: "B")
       get project_path(@project)
-      panels = css_select("div.project-panels > section.panel").map { |s| s["class"] }
+      panels = css_select("div.project-panels > div.panel-slot > section.panel").map { |s| s["class"] }
       assert_operator panels.index { |c| c.include?("wiring-panel") }, :<,
                       panels.index { |c| c.include?("build-log-panel") },
                       "electronics lifts Wiring above the build log (story 6.2)"
@@ -369,9 +369,9 @@ end
 
     def folder_key(node_id) = Maker::ProjectKind.folder_key(node_id)
 
-    def panel_ids = css_select("div.project-panels > section.panel").map { |s| s["id"].to_s }
+    def panel_ids = css_select("div.project-panels > div.panel-slot > section.panel").map { |s| s["id"].to_s }
 
-    def panel_classes = css_select("div.project-panels > section.panel").map { |s| s["class"].to_s }
+    def panel_classes = css_select("div.project-panels > div.panel-slot > section.panel").map { |s| s["class"].to_s }
 
     # THE HEADLINE: a panel per DEPTH-ONE subfolder, immediately after Files, in disk order — the
     # placement Maker::ProjectKind's after-Files rule exists for, driven through a real request.
@@ -530,7 +530,7 @@ end
       # WHICH PANELS HOLD A TABLE, not how many tables there are: the nested old/ section inherits
       # this panel's view and draws a second one, so a count would pin the nesting rather than the
       # thing under test.
-      listed = css_select("div.project-panels > section.panel").select { |s| s.css("table.project-files").any? }
+      listed = css_select("div.project-panels > div.panel-slot > section.panel").select { |s| s.css("table.project-files").any? }
       assert_equal [ folder_key("d-models") ], listed.map { |s| s["id"] }, "only the models panel is a list"
       assert_select "section.folder-panel[id=?] .repo-browser", folder_key("d-firmware"), 1
     end
