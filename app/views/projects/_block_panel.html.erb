@@ -26,9 +26,7 @@
           root as the base: `[base](models/base.stl)` becomes the file's page, an unresolvable one
           plain text — never a dangling href (found in review: with no resolver every relative link
           silently became text, which was neither resolved nor "as written"). %>
-      <% base = Pathname.new(@listing.path.to_s) %>
-      <% index = @listing.path_index %>
-      <div class="markdown"><%= Maker::Markdown.render(block.body.to_s) { |href| (id = index[base.join(href).cleanpath.to_s]) && file_path(id) } %></div>
+      <div class="markdown"><%= Maker::Markdown.render(block.body.to_s, &Maker::Markdown.folder_resolver(@listing.path, @listing.path_index) { |id| file_path(id) }) %></div>
     <% when "link" %>
       <%# `target: "_blank"` WITH `rel: "noopener"`: a link block points off this site, and an
           off-site page opened without noopener can reach back through `window.opener`. The

@@ -27,9 +27,7 @@
       <%# RELATIVE LINKS RESOLVE AGAINST THE PROJECT FOLDER THROUGH THE PUBLIC SEAM — the README's own
           rule and its own lambda (`pub.file_url_for`), so a block links to a file exactly as the
           README does; an unresolvable path is plain text (found in review). %>
-      <% base = Pathname.new(pub.listing.path.to_s) %>
-      <% index = pub.listing.path_index %>
-      <div class="markdown"><%= Maker::Markdown.render(block.body.to_s) { |href| (id = index[base.join(href).cleanpath.to_s]) && pub.file_url_for(id) } %></div>
+      <div class="markdown"><%= Maker::Markdown.render(block.body.to_s, &Maker::Markdown.folder_resolver(pub.listing.path, pub.listing.path_index) { |id| pub.file_url_for(id) }) %></div>
     <% when "link" %>
       <%= link_to block.url, class: "block-link-card", rel: "noopener nofollow", target: "_blank" do %>
         <span class="block-link-title"><%= block.heading %></span>

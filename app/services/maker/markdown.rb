@@ -68,6 +68,19 @@ module Maker
     # there is no broken-image placeholder to fall back to, and a dangling `src` would just 404 in
     # the browser. No block at all (a caller with nothing to resolve against) behaves the same as a
     # block that always returns nil.
+    # A RESOLVER FOR RELATIVE LINKS UNDER ONE FOLDER (content blocks, 2026-09-09): the README's
+    # arithmetic, written once, so a text block resolves `[base](models/base.stl)` against the
+    # project folder exactly as a README resolves against its own directory. `index` is
+    # Maker::ProjectFolderListing#path_index (catalog paths → node ids); `link` turns a node id into
+    # a URL and belongs to the caller, because the maker's page and the visitor's answer differently.
+    # PURE PATH ARITHMETIC ON CATALOG STRINGS — Pathname is a string tool here and the disk is never
+    # touched, which is also why it lives in this service rather than in a view: Brakeman reads
+    # `Pathname.new(<model attribute>)` in a template as file access (found by `bin/ci scan`).
+    def self.folder_resolver(base_path, index, &link)
+      base = Pathname.new(base_path.to_s)
+      ->(href) { (id = index[base.join(href).cleanpath.to_s]) && link.call(id) }
+    end
+
     def self.render(text, &resolve)
       html = Kramdown::Document.new(text.to_s, input: "GFM", hard_wrap: false, syntax_highlighter: nil).to_html
       # ALWAYS rewritten, never skipped when `resolve` is nil — a relative href with nothing to

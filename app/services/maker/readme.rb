@@ -87,12 +87,9 @@ module Maker
       # filenames) — either way this must degrade to a replacement character, never raise
       # Encoding::InvalidByteSequenceError out of a card into a 500 for the whole page.
       text = (truncated ? bytes.byteslice(0, CAP) : bytes).dup.force_encoding(Encoding::UTF_8).scrub
-      base = Pathname.new(base_path.to_s)
-      index = listing.path_index
-      html = Maker::Markdown.render(text) do |href|
-        target_id = index[base.join(href).cleanpath.to_s]
-        target_id && link.call(target_id)
-      end
+      # THE ONE FOLDER RESOLVER (Maker::Markdown.folder_resolver): a content block resolves against
+      # the project folder with the same arithmetic, so the two cannot drift.
+      html = Maker::Markdown.render(text, &Maker::Markdown.folder_resolver(base_path, listing.path_index) { |id| link.call(id) })
       new(html:, note: (truncated ? "Showing the first #{CAP / 1024} KB of this README." : nil))
     rescue FileLayer::NotFound, FileLayer::FetchError
       new(html: nil, note: "README unavailable.")
