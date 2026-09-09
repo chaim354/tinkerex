@@ -38,6 +38,9 @@ module Maker
   #   * `widths`, `titles` AND `intros` ARE PER PANEL TOO (2026-09-09, the page editor): a width in
   #     WIDTHS, else the default that used to be a stylesheet rule (#default_width); plain one-line
   #     text under TITLE_MAX / INTRO_MAX, else dropped. Same totality, same reason.
+  #   * `publish` IS MOVED TO THE END of `order` whatever the stored column says (2026-09-09, spec
+  #     decision 11): the page head's `#publish` anchor targets it and the editor pins it there, so
+  #     an order the retired chooser saved with it half way up is normalised on the way out.
   #
   # `folders:` DEFAULTS TO `[]`, so a caller holding no listing — Home, the chooser before it
   # builds one, a test — gets the fixed-key layout it has always got, unchanged.
@@ -299,7 +302,11 @@ module Maker
 
       order = stored_order(known(over["order"], vocabulary), folder_keys) + preset_order(preset, folder_keys)
       hidden = (over.key?("hidden") ? known(over["hidden"], vocabulary) : preset[:hidden]) - ALWAYS
-      Layout.new(order: order & vocabulary, hidden:, views: stored_views(over["views"], vocabulary),
+      # PUBLISH IS ALWAYS LAST (2026-09-09, the page editor; spec decision 11): the head's anchor
+      # targets it and the editor pins it, so a stored order from the retired chooser that moved it
+      # up is normalised here on the way out — the same place every other stored oddity is.
+      ordered = ((order & vocabulary) - %w[publish]) + %w[publish]
+      Layout.new(order: ordered, hidden:, views: stored_views(over["views"], vocabulary),
                  widths: stored_widths(over["widths"], vocabulary),
                  titles: stored_text(over["titles"], vocabulary, TITLE_MAX),
                  intros: stored_text(over["intros"], vocabulary, INTRO_MAX),

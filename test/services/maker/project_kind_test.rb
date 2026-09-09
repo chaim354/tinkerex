@@ -426,6 +426,20 @@ module Maker
       assert_equal "full", layout.width_for(gone), "the stale key still answers a default, never raises"
     end
 
+    # PUBLISH IS ALWAYS LAST (2026-09-09, the page editor; spec decision 11). The page head's
+    # `#publish` anchor targets it and the editor pins it there, so an order stored by the retired
+    # chooser — which could move it anywhere — is normalised on the way OUT like every other stored
+    # oddity here, rather than left to render a pinned panel in the middle of the page.
+    test "publish is always last, whatever a stored order says" do
+      layout = Maker::ProjectKind.layout_for(kind: "other",
+                                             overrides: { "order" => %w[publish tasks attachments] },
+                                             folders: FOLDERS)
+
+      assert_equal "publish", layout.order.last
+      assert_equal 1, layout.order.count("publish"), "normalising must not duplicate it"
+      assert_equal (Maker::Project::PANELS + [ key(FIRMWARE), key(MODELS) ]).sort, layout.order.sort
+    end
+
     # --- the hero -----------------------------------------------------------------------------
 
     test "hero_roles is a preference list per kind, and other's is today's derivation" do
