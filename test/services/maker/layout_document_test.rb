@@ -49,11 +49,26 @@ module Maker
       assert text.start_with?("# Desk Lamp, page layout."), text.lines.first
       assert_includes text, "layout: 1\n"
       assert_includes text, "- panel: attachments\n  width: full\n  view: tiles\n"
-      assert_includes text, "- folder: models\n  title: Prints\n  intro: 'Everything you need to print: sliced.'\n  width: full\n  view: list\n"
+      # The QUOTE STYLE is Psych's to choose (single today; a version bump could pick double), so
+      # the structural pin is the entry shape and the durable guard is the round trip below.
+      assert_match(/- folder: models\n  title: Prints\n  intro: .Everything you need to print: sliced\..\n  width: full\n  view: list\n/, text)
       assert_includes text, "- panel: wiring\n  width: half\n  hidden: true\n"
       assert_includes text, "- panel: tasks\n  width: half\n"
       refute_includes text, "d-models", "a node id never appears in the shareable form"
       refute_includes text, "hidden: false"
+    end
+
+    # TOTAL LIKE THE LAYOUT (found in review): the names map and the layout are built from one
+    # listing in production, but the export must not be the one path that raises when they differ.
+    test "to_yaml leaves out a folder it has no name for rather than raising" do
+      d = Maker::LayoutDocument.new(layout, { FIRMWARE => "firmware" })
+
+      text = d.to_yaml(project_name: "Lamp")
+
+      assert_includes text, "- folder: firmware\n"
+      refute_includes text, "models"
+      refute_includes text, MODELS
+      assert d.parse(text).ok?, "what it exports it can read back"
     end
 
     test "export then parse is the identity on a layout with every attribute set" do
@@ -140,12 +155,16 @@ module Maker
         "layout: 1\npanels:\n  - width: full\n"                           => /Entry 1 names neither `panel` nor `folder`/,
         "layout: 1\npanels:\n  - panel: tasks\n  - panel: tasks\n"        => /Entry 2 names Tasks a second time/,
         "layout: 2\npanels: []\n"                                         => /newer than this server/,
+        "layout: 2.0\npanels: []\n"                                       => /newer than this server/,
         "panels: []\n"                                                    => /`layout: 1` is required/,
         "layout: 1\npanels: {}\n"                                         => /`panels` must be a list/,
         "layout: 1\npanels: []\nlook: dark\n"                             => /Unknown key “look” at the top level/,
         "- just\n- a list\n"                                              => /must be a mapping/,
         "layout: 1\npanels:\n  - panel: tasks\n   width: [\n"             => /Line \d+, column \d+/,
-        "x" * (16 * 1024 + 1)                                             => /over 16 KB/
+        "x" * (16 * 1024 + 1)                                             => /over 16 KB/,
+        # 8,193 CHARACTERS but 16,386 BYTES: the cap is bytes, and a `length` would let this through
+        # while the ASCII case above stayed green (found in review).
+        "é" * (8 * 1024 + 1)                                              => /over 16 KB/
       }
       cases.each do |text, message|
         result = doc.parse(text)

@@ -39,10 +39,17 @@ module Maker
     # --- export ------------------------------------------------------------------------------
 
     def to_yaml(draft = self.draft, project_name:)
-      panels = draft["panels"].map do |e|
+      panels = draft["panels"].filter_map do |e|
         out = {}
         if @layout.folder?(e["key"])
-          out["folder"] = @names.fetch(@layout.folder_id(e["key"]))
+          # TOTAL, LIKE #label BELOW (found in review): a folder key with no name — the layout and
+          # the names built from two different reads, a folder gone between them — is left out of
+          # the text rather than a KeyError on every editor render. The layout's own totality
+          # argument (its header), applied to the export.
+          name = @names[@layout.folder_id(e["key"])]
+          next unless name
+
+          out["folder"] = name
         else
           out["panel"] = e["key"]
         end
@@ -74,7 +81,9 @@ module Maker
       return failure("The layout must be a mapping with `layout` and `panels`.") unless data.is_a?(Hash)
 
       version = data["layout"]
-      if version.is_a?(Integer) && version > VERSION
+      # `Numeric`, not `Integer`: `layout: 2.0` is a newer document too, and the honest message is
+      # "newer than this server", not "`layout: 1` is required" (found in review).
+      if version.is_a?(Numeric) && version > VERSION
         return failure("`layout: #{version}` is newer than this server, which reads version #{VERSION}.")
       end
       return failure("`layout: #{VERSION}` is required at the top.") unless version == VERSION
@@ -101,6 +110,12 @@ module Maker
       { "order" => panels.map { |e| e["key"] },
         "hidden" => panels.select { |e| e["hidden"] }.map { |e| e["key"] },
         "views" => panels.filter_map { |e| [ e["key"], e["view"] ] if e["view"] }.to_h,
+        # WIDTHS ARE WRITTEN FOR EVERY PANEL, DEFAULTS INCLUDED, BY DESIGN: a Save records the
+        # arrangement the maker saw and approved, and the width is a control they operated. A folder
+        # added later still falls through to default_width (Layout#width_for is `||`), so this is
+        # additive, not the freezing bug the retired chooser's move branch had. Titles stay sparse
+        # for the opposite reason: a maker never chose a default label, so a PANEL_LABELS change
+        # must still reach a saved project. Do not "tidy" this into a filter on non-defaults.
         "widths" => panels.to_h { |e| [ e["key"], e["width"] ] },
         "titles" => panels.filter_map { |e| [ e["key"], e["title"] ] if e["title"] }.to_h,
         "intros" => panels.filter_map { |e| [ e["key"], e["intro"] ] if e["intro"] }.to_h }
@@ -223,6 +238,10 @@ module Maker
           errors << "Entry #{n}: width must be full or half."
         end
       end
+      # A nil `view` IS SKIPPED, NOT AN ERROR, because the browser's draft carries `"view": null`
+      # for a panel that offers none. The cost, accepted: a hand-typed bare `view:` with no value
+      # does nothing, silently — the one blank this grammar lets through, where every misspelling
+      # is an error.
       if raw.key?("view") && !raw["view"].nil?
         view = raw["view"].to_s
         offered = Maker::ProjectKind.offered_views(key)
