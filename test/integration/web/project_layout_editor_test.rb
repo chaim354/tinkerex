@@ -108,6 +108,13 @@ module Web
       assert_select "div.project-panels > div.panel-slot.panel--full > section.attachments-panel", 1
       assert_select "div.project-panels > div.panel-slot.panel--half > section.tasks-panel", 1
       assert_select "div.project-panels > div.panel-slot.panel--full > section.folder-panel", 1
+
+      # A STORED WIDTH, THE OPPOSITE OF EACH DEFAULT, so `default_width` alone cannot pass this
+      # (found in review: every width above is a default).
+      @project.update!(panels: { "widths" => { "tasks" => "full", "attachments" => "half" } })
+      get project_path(@project)
+      assert_select "div.project-panels > div.panel-slot.panel--full > section.tasks-panel", 1
+      assert_select "div.project-panels > div.panel-slot.panel--half > section.attachments-panel", 1
       assert_select ".panel-strip", count: 0
       assert_select ".layout-bar", count: 0
       assert_select "details.panel-chooser", count: 0

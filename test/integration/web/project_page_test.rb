@@ -595,8 +595,10 @@ end
       get project_path(project)
 
       assert_select "section.tasks-panel h2", text: "To do"
-      assert_select "section.folder-panel h2", text: "Prints"
-      assert_select "section.folder-panel p.panel-intro", text: "Sliced for 0.2 mm."
+      # KEYED BY THE PANEL'S OWN ID: the fixture holds three folder panels, and an un-keyed match
+      # would pass with the title on the wrong one (found in review).
+      assert_select "section.folder-panel[id=?] h2", models_key, text: "Prints"
+      assert_select "section.folder-panel[id=?] p.panel-intro", models_key, text: "Sliced for 0.2 mm."
       assert_select "section.tasks-panel p.panel-intro", count: 0
       # THE PATH LINE IS UNTOUCHED BY A RETITLE: a folder panel says WHERE it is as well as what it
       # is called, and a maker who renames the panel has not renamed the folder.

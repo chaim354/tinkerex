@@ -36,6 +36,9 @@
       <% if body.blank? %>
         <section class="panel panel--placeholder">
           <h2><%= @panel_layout.title_for(key, @panel_labels.fetch(key)) %></h2>
+          <%# The intro too, where the maker set one, so the placeholder reads like the panel it
+              stands in for and the live edit has a line to update rather than one to invent. %>
+          <% if (intro = @panel_layout.intro_for(key)) %><p class="panel-intro muted"><%= intro %></p><% end %>
           <p class="muted">Nothing here yet. This panel appears on the page once it has something to show.</p>
         </section>
       <% else %>
