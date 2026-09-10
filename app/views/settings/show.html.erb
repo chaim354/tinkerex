@@ -33,4 +33,29 @@
     <span class="settings-name">Theme</span>
     <%= render "theme" %>
   </li>
+  <%# THE ONE PREFERENCE THAT CHANGES WHERE FILES LAND (slice 0). Its own form and its own route,
+      beside Theme rather than on the Account page, because it is about how the app behaves and not
+      about the credential. `data: { turbo: false }` matches the current-project switcher's own
+      form, which this preference governs. %>
+  <li>
+    <span class="settings-name">Current project</span>
+    <%= form_with url: settings_preferences_path, method: :patch, data: { turbo: false },
+                  class: "preference-form" do %>
+      <%# `id: nil` IS LOAD-BEARING: `hidden_field_tag` and `check_box_tag` both derive
+          id="remember_current_project" from the name, so leaving it produces TWO elements with the
+          same DOM id — invalid, and the `<label>` below would resolve to whichever came first,
+          which is the hidden one. That is the same trap files/show.html.erb records for the
+          current-project select (§14d). The unchecked box sends nothing, so the hidden "0" is what
+          makes turning the preference OFF reach the controller at all. %>
+      <%= hidden_field_tag :remember_current_project, "0", id: nil %>
+      <label class="field-inline">
+        <%= check_box_tag :remember_current_project, "1", current_user.remember_current_project,
+                          onchange: "this.form.requestSubmit()" %>
+        <span>Remember it between sessions</span>
+      </label>
+    <% end %>
+    <span class="settings-fact">
+      <%= current_user.remember_current_project ? "Kept after sign-out" : "Resets on sign-out" %>
+    </span>
+  </li>
 </ul>

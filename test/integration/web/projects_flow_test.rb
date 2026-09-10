@@ -404,12 +404,12 @@ module Web
     end
 
     test "creating with make-current sets it, and the flash names the folder and the destination" do
-      sign_in
+      user = sign_in
       post projects_path, params: { project: { name: "Smart Lamp", status: "active",
                                                make_current: "1" } }
 
       project = Maker::Project.find_by!(slug: "smart-lamp")
-      assert_equal project.id, session[:current_project_id]
+      assert_equal project.id, current_project_id_for(user)
       assert_match(%r{Its folder is Projects/smart-lamp\.}, flash[:notice].to_s)
       assert_match(/Current project: Smart Lamp/, flash[:notice].to_s)
     end
@@ -417,9 +417,9 @@ module Web
     # `check_box_tag` emits NO hidden "0" companion, so an unchecked box sends nothing at all —
     # which is the right meaning here (absent = no) and is why this needs no hidden field.
     test "creating without make-current leaves the current project alone" do
-      sign_in
+      user = sign_in
       post projects_path, params: { project: { name: "Quiet Build", status: "planning" } }
-      assert_nil session[:current_project_id]
+      assert_nil current_project_id_for(user)
       refute_match(/Current project/, flash[:notice].to_s)
     end
 
@@ -433,7 +433,7 @@ module Web
     # read the failure sentence and then "uploads and tool output land there" — false in exactly the
     # case the first sentence describes, since uploads fall back to the library root.
     test "a current project whose folder could not be made does not promise uploads will land there" do
-      sign_in
+      user = sign_in
       broken = Object.new
       def broken.capabilities = Object.new.tap { |c| def c.port_writable? = true }
       def broken.mkdir(*) = raise(FileLayer::FetchError, "down")
@@ -442,7 +442,7 @@ module Web
       post projects_path, params: { project: { name: "No Folder Yet", make_current: "1" } }
 
       created = Maker::Project.find_by!(slug: "no-folder-yet")
-      assert_equal created.id, session[:current_project_id]
+      assert_equal created.id, current_project_id_for(user)
       assert_match(/could not be made/, flash[:notice].to_s)
       assert_match(/until its folder exists, uploads go to the library root/, flash[:notice].to_s)
       assert_no_match(/land there/, flash[:notice].to_s)

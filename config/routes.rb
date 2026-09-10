@@ -363,6 +363,7 @@ Rails.application.routes.draw do
     # its own form, because Devise's update demands the current password and a handle is not a
     # credential.
     resource :handle, only: :update
+    resource :preferences, only: :update
   end
 
   # --- Addons (Tools) — the /tools gallery + every addon's UI ---
