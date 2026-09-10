@@ -22,9 +22,10 @@ module FilesHelper
   # spells it out itself is a surface free to lose an entry silently. That already happened: the
   # menu worked on the Files list while the grid's cards carried no download-url, invisible to a
   # browser test that only ever visits one of them (file_menu_wiring_test.rb's own header records
-  # it). The keys are read POSITIONALLY, so representable-but-broken combinations exist —
-  # `#open` returns early on a missing `noteUrl`, which makes a Download entry with no menu to put
-  # it in.
+  # it). The keys are read POSITIONALLY, so representable-but-broken combinations exist. The gate
+  # used to be `if (!noteUrl) return`, which made a Download entry with no menu to put it in; since
+  # the folder menu landed it asks whether there is ANY entry at all, so the remaining trap runs
+  # the other way — an attribute nothing writes is an entry nothing renders, silently.
   #
   # `origin` IS AN ARGUMENT, NOT `@addon_origins`. The three Files-page cells and the project
   # attachment tiles read the same ivar today, but the models page and the project/model cards do
@@ -41,14 +42,28 @@ module FilesHelper
     { action: "contextmenu->filemenu#open",
       note_url: file_notes_path(node_id),
       download_url: blob_file_path(node_id, download: 1),
+      delete_url: file_path(node_id),
       addon_open_url: origin&.dig(:url),
       addon_open_label: origin&.dig(:label) }
   end
 
+  # A FOLDER'S MENU IS DELETE ALONE, and it is a SEPARATE BUILDER rather than a branch inside the
+  # one above because the two payloads share exactly one key. A folder has no note popover, no blob
+  # endpoint and no addon origin; handing it `file_menu_data` with four nils would put the decision
+  # about what a folder HAS into the CONTROLLER, which cannot see the node.
+  #
+  # NO `node_id` KEY, DELIBERATELY. `data-node-id` is the THUMB POLL's key (thumb_cell_data below,
+  # read by thumbs_controller.js) and a folder has nothing to poll for; writing one here would put
+  # folders into the poll's id list for the sake of a selector a test could get another way.
+  def folder_menu_data(node_id)
+    { action: "contextmenu->filemenu#open", delete_url: file_path(node_id) }
+  end
+
   # THE POLL CELL'S HALF — what `thumbs_controller.js` reads (`dataset.nodeId`; a cell without one
-  # sends `ids=undefined`). Separate from the menu because they are not co-extensive: a folder gets
-  # NEITHER, a non-renderable file gets the menu and no cell, and four surfaces outside this file's
-  # boundary get the cell and no menu.
+  # sends `ids=undefined`). Separate from the menu because they are not co-extensive, and MORE so
+  # since 2026-09-10: a folder now gets a menu (Delete) and still no cell, a non-renderable file
+  # gets the menu and no cell, and four surfaces outside this file's boundary get the cell and no
+  # menu.
   #
   # THOSE FOUR ARE THE ADOPTERS, NOT OVERSIGHTS — `projects/_log_entry.html.erb`,
   # `projects/_card.html.erb`, `models/_card.html.erb` and `models/_hero_poster.html.erb` write this
