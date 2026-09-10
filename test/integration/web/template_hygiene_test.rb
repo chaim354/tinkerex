@@ -535,6 +535,54 @@ module Web
       end
     end
 
+    # `.page-head` IS `display: flex; justify-content: space-between`, WHICH LAYS OUT EXACTLY TWO
+    # SLOTS. With two children that reads title-left / actions-right, which is what fourteen of the
+    # sixteen pages do. A THIRD child does not overflow or wrap — `space-between` puts it in the
+    # CENTRE of the page, which is a plausible-looking layout and therefore invisible in review:
+    # /models floated its primary action "Import model" mid-page with "Shelves" hard right, and the
+    # public project page centred its byline between the name and the download button. One
+    # mechanism, two pages, and an unwritten contract nothing enforced.
+    #
+    # THIS RIDES THE `pages` SWEEP RATHER THAN NAMING ROUTES, so a page added to that list is
+    # covered here with no edit — and the sweep already carries a coverage assertion tying it to the
+    # templates on disk. It asserts the RENDERED DOM: the two defects were structural in ERB whose
+    # `.page-head` class was correct on every one of them, so nothing short of the built tree could
+    # tell a compliant head from a broken one.
+    #
+    # MUTATION-CHECKED (§15), both directions:
+    #   - Unwrapping the two links in models/index.html.erb back to bare children:
+    #       models index: .page-head passes 3 slots, not 2 — [h1 "Models", a.btn.primary
+    #       "Import model", a.btn "Shelves"]. `.page-head` is space-between: the MIDDLE one lands
+    #       in the centre of the page.
+    #   - Setting the non-vacuity floor to `> 500` (a count no sweep reaches) reddens it at the
+    #       floor instead, confirming `seen` really is counting: "only 50 .page-head elements were
+    #       examined across 50 pages" — one head per page, which is itself worth knowing.
+    test "every .page-head passes exactly the two slots it lays out" do
+      seen = 0
+      offenders = []
+      pages.each do |name, path|
+        get path
+        assert_response :success, "#{name} (#{path}) did not render"
+        css_select(".page-head").each do |head|
+          seen += 1
+          kids = head.element_children
+          next if kids.size <= 2
+          shape = kids.map { |k| [ k.name, k["class"] ].compact.join(".") }
+          offenders << "#{name}: .page-head passes #{kids.size} slots, not 2 — #{shape.inspect}"
+        end
+      end
+
+      # NON-VACUITY FIRST (§14e). A sweep that rendered nothing, or a `.page-head` that lost its
+      # class everywhere, would produce zero elements to examine and satisfy `assert_empty` over
+      # nothing at all — the shape that let two architecture guards pass for weeks after the
+      # directory they scanned was moved. The floor is deliberately well below the real count
+      # rather than equal to it, so adding a page does not red this line.
+      assert_operator seen, :>, 30,
+                      "only #{seen} .page-head elements were examined across #{pages.size} pages — " \
+                      "the sweep is not reaching the heads it claims to check"
+      assert_empty offenders, offenders.join("\n")
+    end
+
     test "no page renders an ERB delimiter into its output" do
       # STATIC AND FIRST, because it needs no fixtures, covers every template on disk including the
       # ones no request renders, and is the only thing here that sees the two-snippet shape. It

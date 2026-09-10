@@ -20,11 +20,16 @@
   <span aria-current="page"><%= project.name %></span>
 </nav>
 
+<%# `.page-head` IS `justify-content: space-between` AND LAYS OUT EXACTLY TWO SLOTS. This head
+    passed THREE — title, byline, bundle — so the byline was laid out in the CENTRE of the page,
+    between the project's name on the left and the download button on the right. The byline is
+    title-side metadata, so it belongs in `.page-title` beside the name; the bundle is the head's
+    one action, so it takes the actions slot. Same mechanism as /models, fixed the same way.
+    Guard: template_hygiene_test.rb, "every .page-head passes exactly the two slots it lays out". %>
 <div class="page-head public-head">
   <div class="page-title">
     <h1><%= project.name %></h1>
-  </div>
-  <p class="public-byline">
+    <p class="public-byline">
     by <%= link_to "@#{pub.handle}", public_user_path(pub.handle) %>
     <%# THE SAME RULE AS THE MAKER'S OWN PAGE (stage 4, S4-6): `planning` is the column default and
         badging a default is noise; a status the maker SET is worth a badge. Found in review: the
@@ -48,7 +53,8 @@
     <% if pub.panel_visible?("build_log") || pub.panel_visible?("releases") %>
       <%= link_to "Feed", public_feed_path(pub.handle, project.slug, **pub.link_params), class: "feed-link" %>
     <% end %>
-  </p>
+    </p>
+  </div>
 
   <%# STAGE 3, S3-6: THE BUNDLE, BUILT IN THE VISITOR'S BROWSER. The button hands
       `bundle_controller.js` a manifest URL and nothing else; that controller fetches each file
@@ -68,7 +74,7 @@
       manifest's `bom_csv_url` is null when that panel is hidden and the script skips it. %>
   <% bundle = pub.bundle_files %>
   <% if bundle.any? %>
-    <div class="bundle" data-controller="bundle"
+    <div class="page-actions bundle" data-controller="bundle"
          data-bundle-manifest-value="<%= public_bundle_path(pub.handle, project.slug, **pub.link_params) %>"
          data-bundle-name-value="<%= project.slug %>">
       <button type="button" class="btn small" data-action="bundle#build">

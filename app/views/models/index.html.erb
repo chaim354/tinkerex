@@ -1,9 +1,16 @@
 <% content_for :title, "Models — Tinkerex" %>
 
+<%# `.page-head` IS `justify-content: space-between` AND LAYS OUT EXACTLY TWO SLOTS. These two
+    links sat as bare children of it, which made three, and `space-between` put the middle one —
+    the primary action "Import model" — in the CENTRE of the page while "Shelves" went hard right.
+    The other fourteen pages already wrap their actions; this one did not, and nothing said so.
+    Guard: template_hygiene_test.rb, "every .page-head passes exactly the two slots it lays out". %>
 <div class="page-head">
   <h1>Models</h1>
-  <%= link_to "Import model", new_model_path, class: "btn primary" %>
-  <%= link_to "Shelves", shelves_path, class: "btn" %>
+  <div class="page-actions">
+    <%= link_to "Import model", new_model_path, class: "btn primary" %>
+    <%= link_to "Shelves", shelves_path, class: "btn" %>
+  </div>
 </div>
 
 <form class="toolbar models-toolbar" method="get" action="<%= models_path %>">
