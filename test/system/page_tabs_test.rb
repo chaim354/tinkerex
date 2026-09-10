@@ -128,14 +128,33 @@ class PageTabsTest < ApplicationSystemTestCase
     assert_selector "h2.tab-heading", visible: :hidden, count: 2
     assert_selector "section#publish"
 
+    history_before = page.evaluate_script("history.length")
     click_on "Notes"
     assert_selector "section.tab-pane#tab-notes section.block--text", count: 3
     assert_no_selector "section.tab-pane#tab-build section.tasks-panel"
     assert_equal "#tab-notes", page.evaluate_script("window.location.hash")
+    # NO HISTORY ENTRY PER CLICK (spec §6): replaceState, not pushState — Back leaves the page rather
+    # than walking through every tab that was looked at (found in review: nothing asserted it).
+    assert_equal history_before, page.evaluate_script("history.length"), "a tab click must not push a history entry"
     assert_selector "section.tab-pane#tab-notes div.project-panels.masonry"
     spans = page.evaluate_script("Array.from(document.querySelectorAll('#tab-notes .panel-slot')).map((s) => s.style.gridRowEnd)")
     assert_equal 3, spans.size, "the pane's own slots: #{spans.inspect}"
-    assert spans.all? { |s| s.start_with?("span ") && s != "span 1" }, "the opened pane is packed: #{spans.inspect}"
+    # A HIDDEN PANE MEASURES ZERO AND STILL READS `span 16` (masonry's GAP floor), so "not span 1" is
+    # true before the click too (found in review). The tall block is what proves the re-pack.
+    assert_operator spans.map { |s| s[/\d+/].to_i }.max, :>, 200, "the opened pane is packed after the click: #{spans.inspect}"
+
+    # A HASH NAMING NOTHING HERE, ON AN OPEN PAGE, CHANGES NOTHING (spec §7): a stale slug or a link to
+    # a hidden panel must not yank the reader back to the first tab (found in review: every deep
+    # link in this suite was a full load, so the hashchange arm was never driven).
+    page.execute_script("window.location.hash = '#nowhere'")
+    assert_selector "section.tab-pane#tab-notes section.block--text", count: 3
+    assert_no_selector "section.tab-pane#tab-build section.tasks-panel"
+
+    # THE KEYBOARD, ONCE: Left from the second tab lands on the first, selected and shown.
+    find("a.tab-link[aria-selected='true']").send_keys(:arrow_left)
+    assert_selector "section.tab-pane#tab-build section.tasks-panel"
+    assert_selector "a.tab-link[href='#tab-build'][aria-selected='true']"
+    assert_equal "#tab-build", page.evaluate_script("window.location.hash")
 
     # A FULL LOAD EACH TIME, not a fragment change: `visit` to a URL differing only in its hash is a
     # same-document navigation, which exercises `hashchange` and never `connect`. The trip through
@@ -160,7 +179,11 @@ class PageTabsTest < ApplicationSystemTestCase
     open_editor
     # `build_log` rather than `photos`: photos is in Maker::ProjectKind::ALWAYS, so its strip offers
     # no Hide at all.
+    # HIDDEN PANELS STILL COUNT IN THE TAB'S HINT: build_log is in this tab (the layout appends the
+    # unnamed panels after Tasks), and hiding it must not change "n panels" (found in review).
+    count = within(slot(a)) { find(".tab-slot-count").text }
     within(slot("build_log")) { click_on "Hide" }
+    within(slot(a)) { assert_selector ".tab-slot-count", text: count }
     within(slot(a)) { fill_in "Name this tab", with: "" }
     click_on "Save"
     assert_selector ".flash-notice", text: "Not saved: a tab needs a name"
