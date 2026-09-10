@@ -279,3 +279,46 @@ tabs inside the page intro or around Publish; per-tab widths for the pane.
    byte-for-byte what it was; the tabs shape is entered only when a separator exists.
 10. **Reset removes tabs.** They live only in the override; blocks, the description and the cover
     are content and stay.
+
+### Settled in execution (2026-09-09)
+
+Decisions the four tasks made that this spec did not state, recorded here because each is one a
+future editor could undo without noticing it had been chosen.
+
+11. **The tab LINK's id is `tablink-<slug>`; the PANE's is `tab-<slug>`.** The obvious pairing —
+    `tab-<slug>-tab` for the link, which is what the plan carried — collides with the pane of a tab
+    someone names "… tab": `tab-build-tab` is then both a link and a pane, and `aria-labelledby`
+    points a pane at another pane. Two prefixes cannot collide whatever anyone types.
+12. **The trailing grid is omitted when it holds nothing.** Publish is normally in it, but the
+    visitor's page renders neither Publish nor a repository card for a project with no repos, and an
+    empty `.project-panels` still draws its margins. So the foot is captured first and the grid
+    rendered only if something survived — which is why `div.tabs + div.project-panels` is not
+    guaranteed on the visitor's page and a test must not assert it unconditionally.
+13. **A panel the stored order does not name joins the LAST tab.** `layout_for` appends preset
+    panels the override omits, and appending happens after the final separator. Nothing else is
+    defensible without a second store saying which group an unnamed panel belongs to — and it is why
+    a test that cares about a group's contents must write a full order.
+14. **Every tab whose slug collides falls back to its key, not merely the second one.** "Which one
+    keeps the pretty slug" is an order-dependent answer that a rename elsewhere on the page would
+    flip, silently changing a link someone had shared.
+15. **The tab-cap message counts the MERGED RESULT, not the text.** "This page can hold 8 tabs; this
+    would leave 9." — a paste naming seven tabs is refused because of the two it does not mention
+    but keeps, and a message counting the text would name a number the maker cannot see.
+16. **`Maker::Project#visible_panels` filters tab keys; `Maker::PublicProject#visible_panels` does
+    not.** The first is what a caller renders BY KEY, and a tab is not a panel; the second is the
+    list the visitor's page hands to `Layout#groups`, which is the reader that needs the separators.
+    Same name, two contracts, and collapsing either way breaks one page.
+17. **The block cap and `blocks_from` ask for a block kind BY NAME.** With a fourth entry kind in
+    the draft, `select { |e| e["kind"] }` counts tabs as blocks — against the cap, and into the rows
+    Save writes.
+18. **The new-key counter is shared between blocks and tabs.** One `next_new_index` over
+    `(?:block|tab):new-(\d+)`, in the document and in the browser alike; two counters would hand an
+    Add-tab a number an Apply had just given a block, and Save refuses a repeated key.
+19. **`.tab-pane[hidden] { display: none }` is not redundant.** An author `display` outranks the
+    user agent's `[hidden]` rule, so `.tab-pane { display: grid }` alone leaves every pane on screen
+    while the controller dutifully sets `hidden` on all but one — the feature absent, with the DOM
+    saying it works. Measured, not reasoned: three panes visible with `tabs-ready` on the element.
+20. **The browser suite's drag moves by a MEASURED PIXEL DELTA, never `move_to(element)`.**
+    chromedriver resolves an element origin by scrolling that element into view first, and the
+    scroll moves every other rect underneath the drag — `window.scrollY` 934 → 754 between two
+    performs, the pointer landing 183px above the separator, the drop silently doing nothing.

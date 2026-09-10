@@ -35,17 +35,27 @@ import Sortable from "sortablejs"
 // A NEW BLOCK'S MARKUP IS THE SERVER'S: "Add block" clones one of projects/_block_templates'
 // `<template>`s rather than building a slot with `createElement`, so there is no second copy of the
 // slot, the strip and the editor to drift from the ones a saved block renders.
+//
+// A TAB IS A SEPARATOR SLOT IN THE SAME LIST (2026-09-09, tabs; spec §6): `data-kind="tab"` and
+// `data-name` are its whole draft, it drags by the same handle, and the pinned-Publish rule keeps it
+// above Publish. "Add tab" clones projects/_block_templates' tab template and lands it just ABOVE
+// Publish — a new separator at the top would put every panel into one tab. Delete removes the
+// separator alone. The count hint under each tab is recomputed on every change.
 const YAML_DEBOUNCE_MS = 200
 const TOAST_MS = 6000
-const NEW_KEY = /^block:new-(\d+)$/
-const TEMPLATE_KEY = "block:new-__N__"
+// BOTH PREFIXES, ONE COUNTER. Maker::LayoutDocument mints `block:new-N` and `tab:new-N` from ONE
+// shared index (its own `next_new_index` reads both), so a browser regex that saw only blocks would
+// hand an Add-tab the number an Apply had just given a block — two slots with one key, which Save
+// refuses as a repeat.
+const NEW_KEY = /^(?:block|tab):new-(\d+)$/
+const templateKey = (kind) => `${kind === "tab" ? "tab" : "block"}:new-__N__`
 
 export default class extends Controller {
   static targets = ["grid", "slot", "form", "draft", "drawer", "yaml", "notes", "copy",
-                    "addMenu", "blockTemplate", "page", "coverName", "preview", "linkCard"]
+                    "addMenu", "blockTemplate", "page", "coverName", "preview", "linkCard", "tabCount"]
   static values = {
     yamlUrl: String, parseUrl: String, panelUrl: String, previewUrl: String,
-    blockCap: { type: Number, default: 40 }
+    blockCap: { type: Number, default: 40 }, tabCap: { type: Number, default: 8 }
   }
 
   connect() {
@@ -60,6 +70,7 @@ export default class extends Controller {
       onMove: (evt) => !evt.related.classList.contains("panel-slot--pinned"),
       onEnd: () => this.changed()
     })
+    this.countTabs()
   }
 
   disconnect() {
@@ -81,6 +92,11 @@ export default class extends Controller {
 
   entry(slot) {
     const d = slot.dataset
+    // A TAB'S ENTRY IS THREE FIELDS AND IS BUILT BEFORE `hidden`/`width` ARE EVEN NAMED (2026-09-09,
+    // tabs; spec decision 5). Not tidiness: Maker::LayoutDocument refuses a tab entry carrying any
+    // other attribute, so a draft that emitted `hidden: false` on a separator made Save answer "a
+    // tab takes only a name (“hidden” is not allowed)" for every tabbed project.
+    if (d.kind === "tab") return { key: d.key, kind: "tab", name: (d.name || "").trim() }
     const e = { key: d.key, hidden: d.hidden === "true", width: d.width }
     if (d.kind) {
       e.kind = d.kind
@@ -100,6 +116,7 @@ export default class extends Controller {
   }
 
   changed() {
+    this.countTabs()
     this.refreshYaml()
   }
 
@@ -252,13 +269,16 @@ export default class extends Controller {
   }
 
   // One empty slot for this kind, cloned from the server's own template with the placeholder key
-  // substituted. Returns null when no template is on the page (read mode has none).
+  // substituted. Returns null when no template is on the page (read mode has none). The placeholder
+  // is the KIND'S own (`tab:new-__N__` for a tab, `block:new-__N__` for the three block kinds), so a
+  // template whose key does not carry the substituted prefix is left with `__N__` in it — which
+  // Save refuses rather than mints.
   mintSlot(kind, key) {
     const tpl = this.blockTemplateTargets.find((t) => t.dataset.kind === kind)
     if (!tpl) return null
 
     const wrapper = document.createElement("div")
-    wrapper.innerHTML = tpl.innerHTML.trim().replaceAll(TEMPLATE_KEY, key)
+    wrapper.innerHTML = tpl.innerHTML.trim().replaceAll(templateKey(kind), key)
     return wrapper.firstElementChild
   }
 
@@ -324,6 +344,59 @@ export default class extends Controller {
         ? "The text is over the 20 KB limit; Save will refuse it too."
         : "The preview did not render; the text is kept and applies on Save.")
     }
+  }
+
+  // --- tabs ------------------------------------------------------------------------------------
+
+  // ADD LANDS THE TAB LAST, JUST ABOVE THE PINNED PUBLISH, which is the opposite of Add block and
+  // for the reason Add block's own rule gives: a separator takes everything BELOW it, so a new one
+  // at the top would swallow the whole page into one tab, and a maker who wanted that would still
+  // have to drag every panel back out. At the bottom it starts empty, which is what the hint says.
+  addTab() {
+    if (this.slotTargets.filter((s) => s.dataset.kind === "tab").length >= this.tabCapValue) {
+      // SAID, NOT SWALLOWED, the same rule Add block follows: the bar's `disabled` reflects the
+      // SAVED count, so a tab added within this session reaches this lock with the button still live.
+      this.toast(`This page has ${this.tabCapValue} tabs, the most it can hold.`)
+      return
+    }
+
+    this.newCounter = Math.max(this.newCounter || 0, this.highestNew()) + 1
+    const slot = this.mintSlot("tab", `tab:new-${this.newCounter}`)
+    if (!slot) return
+
+    const pinned = this.slotTargets.find((s) => s.classList.contains("panel-slot--pinned"))
+    if (pinned) pinned.before(slot)
+    else this.gridTarget.appendChild(slot)
+    slot.querySelector("input")?.focus()
+    this.changed()
+  }
+
+  tabName(event) {
+    this.slotOf(event).dataset.name = event.currentTarget.value.trim()
+    this.changed()
+  }
+
+  // A DRAFT EDIT, NOT A WRITE, exactly as deleteBlock is: the separator goes and its panels join the
+  // group above; Cancel (a reload) brings the tab back and only Save makes the removal final.
+  deleteTab(event) {
+    this.slotOf(event).remove()
+    this.changed()
+  }
+
+  // "3 panels" / "1 panel" / "empty": the slots between this separator and the next, or Publish,
+  // hidden ones included — a hidden panel is still in the tab.
+  countTabs() {
+    const slots = this.slotTargets
+    slots.forEach((slot, i) => {
+      if (slot.dataset.kind !== "tab") return
+      let n = 0
+      for (let j = i + 1; j < slots.length; j++) {
+        if (slots[j].dataset.kind === "tab" || slots[j].classList.contains("panel-slot--pinned")) break
+        n++
+      }
+      const hint = slot.querySelector("[data-layout-editor-target=tabCount]")
+      if (hint) hint.textContent = n ? `${n} panel${n === 1 ? "" : "s"}` : "empty: drag panels under it"
+    })
   }
 
   // --- the page intro ------------------------------------------------------------------------------
@@ -416,6 +489,17 @@ export default class extends Controller {
       }
       if (!slot) continue
 
+      // A TAB IS PLACED AND RENAMED AND NOTHING ELSE (2026-09-09, tabs): `setHidden`/`setWidth`
+      // below would write `data-hidden`/`data-width` onto a separator, which `entry()` no longer
+      // reads but the YAML drawer's next refresh would have to explain away.
+      if (e.kind === "tab") {
+        this.gridTarget.appendChild(slot)
+        slot.dataset.name = e.name || ""
+        const input = slot.querySelector("input.tab-name")
+        if (input) input.value = slot.dataset.name
+        continue
+      }
+
       this.gridTarget.appendChild(slot)
       this.setHidden(slot, Boolean(e.hidden))
       this.setWidth(slot, e.width)
@@ -430,6 +514,7 @@ export default class extends Controller {
       if (e.view) await this.setView(slot, e.view)
     }
     if (this.hasPageTarget && draft.page) this.adoptPage(draft.page)
+    this.countTabs()
     this.refreshYaml(true)
   }
 
@@ -483,9 +568,21 @@ export default class extends Controller {
   // session. The server's own rules, asked here first; the toast names the block, the slot is
   // scrolled into view, and nothing is lost. The body is byte-counted like the server, not in the
   // UTF-16 units `maxlength` counts.
-  blockProblem(slot) {
+  //
+  // A TAB IS THE FOURTH KIND THIS GATE ANSWERS FOR (2026-09-09, tabs; spec §7) — hence `slotProblem`
+  // rather than `blockProblem`: a blank or duplicate tab name is refused by Maker::LayoutDocument on
+  // exactly the same terms, so it costs the session exactly the same thing. The duplicate check is
+  // case-insensitive because the document's is, and the name is quoted AS TYPED, like the server's
+  // own message.
+  slotProblem(slot) {
     const d = slot.dataset
     switch (d.kind) {
+      case "tab": {
+        const name = (d.name || "").trim()
+        if (!name) return "a tab needs a name"
+        const twin = this.slotTargets.find((s) => s !== slot && s.dataset.kind === "tab" && (s.dataset.name || "").trim().toLowerCase() === name.toLowerCase())
+        return twin ? `two tabs are named “${name}”` : null
+      }
       case "text":
         if (!d.heading && !d.body) return "a text block needs a heading or a body"
         if (new TextEncoder().encode(d.body || "").length > 20 * 1024) return "a text block's body is over 20 KB"
@@ -502,13 +599,13 @@ export default class extends Controller {
   }
 
   save(event) {
-    const problems = this.slotTargets.filter((s) => s.dataset.kind).map((s) => [s, this.blockProblem(s)]).filter(([, p]) => p)
+    const problems = this.slotTargets.filter((s) => s.dataset.kind).map((s) => [s, this.slotProblem(s)]).filter(([, p]) => p)
     if (problems.length) {
       event.preventDefault()
       const [slot, problem] = problems[0]
       slot.scrollIntoView({ block: "center" })
       slot.querySelector("input, textarea")?.focus()
-      this.toast(`Not saved: ${problem}. Fill it in or delete the block; nothing else was lost.`)
+      this.toast(`Not saved: ${problem}. Fill it in or delete it; nothing else was lost.`)
       return
     }
     this.draftTarget.value = JSON.stringify(this.draft())
