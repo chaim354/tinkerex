@@ -2,7 +2,7 @@
 
 Date: 2026-09-10. Branches: `claude/ux-ui-cohesion-4oaw9c` (audit + slice 0),
 `claude/ui-ux-audit-plan-38ea13` (slice 1). Status: audit and first-run walkthrough complete;
-**slices 0–3 LANDED** (2026-09-10); slices 4–5 proposed, 5 blocked on §4.
+**slices 0–4 LANDED** (2026-09-10); slice 5 proposed and blocked on §4.
 
 The design system landed on 2026-09-07 (`95ae66b`, spec `2026-09-03-web-shell-and-design-system-design.md`)
 and **356 commits across 49 merged PRs have landed on top of it since** — stages 2, 3 and 4 (home,
@@ -19,15 +19,16 @@ vocabulary is rendered three ways, and the empty state has three implementations
 
 ## 0. Handoff — start here
 
-**Slices 0–3 have landed (§5). Slices 4 and 5 are unstarted and this document is their brief.**
+**Slices 0–4 have landed (§5). Slice 5 is unstarted and this document is its brief.**
 Read §2 for the findings, §5 for the slices, and this section for what earlier sessions learned the
 hard way about verifying work in this repo.
 
 ### What to pick up next
 
-Slice 4 (one list-page anatomy, Home rejoins the app, the type scale) is next. It inherits two
-items deliberately left by slice 3: the toolbar ORDER, and giving Projects the count and sort it
-lacks — slice 3 landed the `count_label` helper and the `.toolbar-count` component they need. Slices are ordered by what each costs the feeling of
+Slice 5 (the project page, and the IA answer) is the last, and it is **blocked**: §4 is a
+question for the user and 1A.5/1A.6 need a product decision about what a folder panel is for.
+Also outstanding, carried out of slice 4 on purpose: **the type-scale collapse** — see slice 4's
+record for the measurement and why it stopped where it did. Slices are ordered by what each costs the feeling of
 cohesion, and each is independently shippable.
 
 ### Two questions still open, both for the user — do not guess
@@ -667,7 +668,61 @@ guards in `cohesion_vocabulary_test.rb`, three mutation-checked.
 **Touches** `components.css`, `pages/{projects,models,settings}.css`, ~20 views, two helpers,
 `tools/home/index.html.erb`, and the two tests pinning the deleted classes.
 
-### Slice 4 — One list-page anatomy, and Home rejoins the app
+### Slice 4 — One list-page anatomy, and Home rejoins the app — **LANDED 2026-09-10**
+
+**Home rejoins the app.** The four `.home-section`s carry `panel` and their heads `panel-head`;
+`.home-section .section-head`, its `h2 { font-size: 15px }` and `.section-more` are deleted, leaving
+`.home-section { margin-bottom: 24px }` as the only rule in that block. `.section-more` styled
+nothing once its one declaration went, so it is dropped from the markup too. Page actions are
+`New project` alone — "Tools" and "Files" are rail links and the rail is on screen.
+
+**One list-page anatomy.** All four now carry a count and a sort in their toolbar. Projects had
+**neither**, and got `SORTS` on the controller (ModelsController's `SORTS.fetch` idiom, secondary
+key included) plus a `sort-form` in the toolbar. **Models had no count either** — the plan said
+"give Projects the count and sort it lacks" and named only half the gap; the guard found the other
+half. `.sort-form` moved from `pages/files.css` into `components.css`, since two pages use it now.
+
+**Mono off chrome (decision 4).** Group heads (`.attachment-group-head`, `.tasks-group h3`,
+`.group-head`), table column headers, `dl.meta dt`, Home's hero group heads and `/search`'s
+`.result-sub` all take `--font-ui`. `dl.meta dd`, `.num` and `.toolbar-count` keep mono — those are
+values, and decision 4 says mono means data. `.chip`'s mono went in slice 3, which also settled
+"Show dot-files", since it is a `.chip`.
+
+**THE TYPE-SCALE COLLAPSE WAS NOT DONE, AND THAT IS A DELIBERATE STOP.** Only the stray 11.5px is
+gone (`pages/tools.css`, `.box-topview-hint` → 12px), guarded against return. The proposed 12 → 6
+mapping is **not** attempted, because measuring the twelve steps showed several are not competing
+type steps at all:
+
+| step | what it actually is |
+|---|---|
+| 22px ×1 | `.addon-icon` — an **emoji glyph**, not text |
+| 10px ×5 | mono micro-labels (thumb icon, current-project, kbd hint) |
+| 18px ×2 | `.auth-card h2` and `.page-head h1` **at phone width** — a responsive override, not a peer of 20px |
+| 14px ×15 | `.panel h2`, `.prose`, `.entry-body`, `.addon-title` — a real body/small-heading step |
+| 16px ×6 | the global `h2` and three panel headings |
+
+Collapsing 14 → 13-or-15 and 16 → 15 changes every panel heading and all body prose. §7 already
+called this "the one change that can look worse before it looks better" and asked for it to be
+reviewed against captures at both widths, which is not something this session could do adequately
+for ~150 declarations. **What is left is a real item, not a quiet omission:** define the six
+`--text-*` tokens, adopt them where sizes already match exactly (a visual no-op), then remap 14/16
+under review. The guard against a fractional step is in place either way.
+
+**Two things only the screenshots showed**, both found after the gates were green. Putting `.panel`
+around Home's sections framed each existing `.empty` twice — a dashed box inside a bordered one —
+so `.panel .empty` drops the dash; the markup and `.empty` were both unchanged, and it was the
+NESTING that broke. And Files and Projects labelled their sort while Models and Inventory had only
+an `aria-label`, so the control looked different on half the pages while reading the same to a
+screen reader; all four carry a visible `Sort` now.
+
+**Verification.** Bare `bin/ci`, seven gates green, 4227 / 4227 / 4227 identical run counts. Four
+guards added, three mutation-checked — and one of those **could not fail on first writing**: the
+projects-sort fixture created "Zebra" then "Anvil", so `updated_at: :desc` and name order coincided
+and removing the sort from the controller entirely stayed green. Fixture reversed; the mutation now
+reports `["Zebra jig", "Anvil stand"]`.
+
+#### Original plan
+
 
 - Settle the toolbar order once — search, filters, spacer, count, sort, view toggle — and apply it
   to Files, Models, Projects and Inventory. Labels sentence case, or dropped where the control is

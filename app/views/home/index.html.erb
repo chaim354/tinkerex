@@ -3,21 +3,20 @@
 <div class="page-head">
   <h1>Home</h1>
   <div class="page-actions">
-    <%# THE ACCENT GOES ON THE ACTION, NOT ON A DESTINATION (decision 3). It sat on "Files" until
-        2026-09-10: a rail destination, rendered as the loudest control on the app's front door and
-        200px from the rail's own Files link, while the one thing a maker can DO from here was
-        quiet. Slice 4 of the cohesion spec reduces this row to "New project" alone; moving the
-        colour is the half that does not wait for it. %>
+    <%# ONE ACTION, AND IT IS THE ONE YOU CAN DO FROM HERE. This row was three links — "New
+        project", "Tools" and "Files" — with the ACCENT on "Files": a rail destination, rendered as
+        the loudest control on the app's front door, 200px from the rail's own Files link. Slice 1
+        of the UI-cohesion sweep moved the colour to the only real action; slice 4 dropped the two
+        destinations, because the rail is on screen eight pixels to the left and a page action is
+        something you DO on this page. %>
     <%= link_to "New project", new_project_path, class: "btn small primary" %>
-    <%= link_to "Tools", tools_path, class: "btn small" %>
-    <%= link_to "Files", files_path, class: "btn small" %>
   </div>
 </div>
 
 <%= render "project_hero" %>
 
-<section class="home-section home-projects">
-  <div class="section-head"><h2>Projects</h2><%= link_to "See all", projects_path, class: "muted section-more" %></div>
+<section class="panel home-section home-projects">
+  <div class="panel-head"><h2>Projects</h2><%= link_to "See all", projects_path, class: "muted" %></div>
   <% if @recent_projects.empty? %>
     <p class="empty">No projects yet. Create your first build.</p>
   <% else %>
@@ -29,8 +28,8 @@
   <% end %>
 </section>
 
-<section class="home-section home-files">
-  <div class="section-head"><h2>Files</h2><%= link_to "See all", files_path, class: "muted section-more" %></div>
+<section class="panel home-section home-files">
+  <div class="panel-head"><h2>Files</h2><%= link_to "See all", files_path, class: "muted" %></div>
   <% if @recent_files.empty? %>
     <p class="empty">No files yet. Upload one to get started.</p>
   <% else %>
@@ -55,8 +54,8 @@
   <% end %>
 </section>
 
-<section class="home-section home-prints">
-  <div class="section-head"><h2>Prints</h2><%= link_to "See all", models_path, class: "muted section-more" %></div>
+<section class="panel home-section home-prints">
+  <div class="panel-head"><h2>Prints</h2><%= link_to "See all", models_path, class: "muted" %></div>
   <% if @recent_prints.empty? %>
     <p class="empty">No prints logged yet.</p>
   <% else %>
@@ -72,8 +71,8 @@
   <% end %>
 </section>
 
-<section class="home-section home-attention">
-  <div class="section-head"><h2>Needs attention</h2></div>
+<section class="panel home-section home-attention">
+  <div class="panel-head"><h2>Needs attention</h2></div>
   <% if @failed_prints.empty? && @low_stock.empty? %>
     <p class="empty">Nothing needs attention.</p>
   <% else %>

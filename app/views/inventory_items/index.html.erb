@@ -40,7 +40,11 @@
       navigation link, not through this form — so it rides as a hidden field to survive a search
       or sort-key change. `sort`'s current value IS the select below; it needs no hidden twin. %>
   <input type="hidden" name="dir" value="<%= @dir %>">
-  <select name="sort" aria-label="Sort" onchange="this.form.requestSubmit()">
+  <%# A VISIBLE LABEL, so all four list pages label their sort the same way (UI-cohesion slice 4).
+      `aria-label` goes with it rather than staying alongside: a visible <label for> is the
+      accessible name, and keeping both leaves two sources for it. %>
+  <label class="muted" for="inventory-sort">Sort</label>
+  <select name="sort" id="inventory-sort" onchange="this.form.requestSubmit()">
     <% [ %w[name Name], [ "quantity", "On hand" ], %w[category Category], %w[updated Updated] ].each do |val, label| %>
       <option value="<%= val %>" <%= "selected" if @sort == val %>><%= label %></option>
     <% end %>

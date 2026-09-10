@@ -97,6 +97,64 @@ module Web
                    "#{offenders.inspect}"
     end
 
+    test "the four list pages share one toolbar anatomy" do
+      # §2.5 measured FOUR list pages with four anatomies: two filtered with a `<select>` and two
+      # with chips, the item count sat at OPPOSITE ENDS of the toolbar on Files and Inventory, and
+      # Projects had neither a count nor a sort. This pins the two parts every one of them now
+      # carries, on the RENDERED page — a class-list grep cannot tell a toolbar that renders from
+      # one behind a condition that is never true, which is exactly what Projects' was.
+      @user.maker_projects.create!(name: "Desk Lamp", status: "active")
+      @user.maker_models.create!(title: "Dragon", print_status: "printed")
+      @user.maker_inventory_items.create!(name: "M3 bolt", quantity_cached: 40)
+
+      { "projects" => projects_path, "models" => models_path,
+        "inventory" => inventory_items_path, "files" => files_path }.each do |name, path|
+        get path
+        assert_response :success, "#{name} did not render"
+        assert_select ".toolbar", 1, "#{name} has no toolbar"
+        assert_select ".toolbar .toolbar-count", 1, "#{name}'s toolbar has no count"
+        assert_select ".toolbar select[name=sort]", 1, "#{name}'s toolbar has no sort"
+        # LABELLED THE SAME WAY ON ALL FOUR. Files and Projects carried a visible "Sort"; Models
+        # and Inventory had only an `aria-label`, so the control looked different on half the
+        # pages while reading the same to a screen reader.
+        assert_select ".toolbar label", text: "Sort", count: 1
+        assert_select ".toolbar select[name=sort][id]", 1, "#{name}'s sort has no id for its label"
+      end
+    end
+
+    test "a projects sort actually reorders, and an unknown one falls back rather than erroring" do
+      # THE CONTROL EXISTING IS NOT THE CONTROL WORKING. A `<select name=sort>` that no controller
+      # reads renders identically and reorders nothing, which is the shape a markup-only assertion
+      # cannot see.
+      # THE CREATION ORDER IS LOAD-BEARING AND WAS WRONG FIRST TIME. The default sort is
+      # `updated_at: :desc`, so creating "Zebra" then "Anvil" makes the default order AND the
+      # name order both read [Anvil, Zebra] — and the mutation that removes the sort from the
+      # controller entirely stayed GREEN. Created oldest-alphabetically-first, the two orderings
+      # disagree, which is the only arrangement where this assertion can fail.
+      @user.maker_projects.create!(name: "Anvil stand", status: "active")
+      @user.maker_projects.create!(name: "Zebra jig", status: "active")
+
+      get projects_path(sort: "name")
+      assert_response :success
+      names = css_select(".project-tile .project-name").map { |e| e.text.strip }
+      refute_empty names, "no project tiles rendered — the fixture is not reaching the grid"
+      assert_equal [ "Anvil stand", "Zebra jig" ], names, "?sort=name did not order by name"
+
+      get projects_path(sort: "not-a-sort")
+      assert_response :success, "an unknown sort must fall back, not raise"
+    end
+
+    test "the type scale carries no half-pixel step" do
+      sheets = Dir[Rails.root.join("app/assets/stylesheets/**/*.css")]
+                 .reject { |f| f.include?("jsuites") || f.include?("vendor") }
+      refute_empty sheets, "no stylesheets were scanned"
+      offenders = sheets.select { |f| File.read(f).match?(/font(-size)?:[^;]*\d+\.\d+px/) }
+                        .map { |f| Pathname(f).relative_path_from(Rails.root).to_s }
+      assert_empty offenders,
+                   "a fractional font size reads as misalignment rather than hierarchy, and there " \
+                   "was exactly one in the app before slice 4: #{offenders.inspect}"
+    end
+
     test "the two per-page copies of .empty stay deleted" do
       sheets = Dir[Rails.root.join("app/assets/stylesheets/**/*.css")]
       refute_empty sheets, "no stylesheets were scanned"

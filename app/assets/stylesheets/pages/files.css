@@ -3,7 +3,6 @@
 @layer pages {
   .files-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px; }
   .files-grid .thumb { width: 100%; height: 140px; }
-  .sort-form { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
   .hidden-toggle { margin: 0 0 10px; font-size: 12px; }
 
   /* MIGRATED VERBATIM (old application.css 639-657): .ext-filter, .ext-picker, .ext-picker label,
@@ -81,7 +80,6 @@
   .files-toolbar { margin-bottom: 14px; }
   .files-toolbar .ext-filter { margin: 0; }
   .files-toolbar .hidden-toggle { margin: 0; }
-  .files-toolbar .sort-form { margin: 0; }
   .upload-caption { margin: -6px 0 12px; font-size: 12px; }
   .upload-caption strong { color: var(--fg); }
   /* The grid tile's second line: size and type, in mono, under the name. */

@@ -25,13 +25,15 @@
     <% end %>
   </span>
   <span class="toolbar-spacer"></span>
+  <span class="toolbar-count"><%= count_label(@models.size, "model") %></span>
   <% if @all_tags.any? %>
     <select name="tag" aria-label="Tag" onchange="this.form.requestSubmit()">
       <option value="">All tags</option>
       <% @all_tags.each do |t| %><option value="<%= t %>" <%= "selected" if params[:tag] == t %>><%= t %></option><% end %>
     </select>
   <% end %>
-  <select name="sort" aria-label="Sort" onchange="this.form.requestSubmit()">
+  <label class="muted" for="models-sort">Sort</label>
+  <select name="sort" id="models-sort" onchange="this.form.requestSubmit()">
     <% [%w[recent Recent], %w[title Title], %w[status Status]].each do |val, label| %>
       <option value="<%= val %>" <%= "selected" if params[:sort] == val %>><%= label %></option>
     <% end %>

@@ -112,6 +112,10 @@
      MONO IS CORRECT HERE and is not the chrome-mono decision 4 retires: a count is a QUANTITY,
      which is exactly what decision 4 says mono means. `tabular-nums` so a count changing under a
      filter does not shift the controls beside it. */
+  /* A toolbar part, not a Files-page one: `pages/files.css` defined it and then Projects needed
+     it too (slice 4). Both uses sit inside `.toolbar`, which owns the spacing, so the standalone
+     bottom margin that rule carried is gone with the move. */
+  .sort-form { display: flex; align-items: center; gap: 8px; margin: 0; }
   .toolbar-count { font: 12px/1.4 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--fg-muted); white-space: nowrap; }
   .breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; min-width: 0; }
   .breadcrumb .sep { color: var(--fg-muted); }
@@ -256,15 +260,19 @@
   .page-intro-description { margin-bottom: 0; }
   .page-intro-description textarea { max-width: none; }
   @media (min-width: 900px) { .page-intro { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+  /* MONO MEANS DATA (decision 4): paths, hashes, sizes, timestamps, quantities, IDs. A group head
+     is a LABEL, and mono was doing so much chrome work that it had stopped distinguishing anything
+     — 22 mono leaf elements on the project page, 20 on inventory. Uppercase and the letter-spacing
+     stay: they are what makes this read as a group head, and they do that in either face. */
   .attachment-group-head, .tasks-group h3, .group-head {
-    margin: 0 0 8px; font: 600 11px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted);
+    margin: 0 0 8px; font: 600 11px/1.4 var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted);
   }
   .attachment-group-head { cursor: pointer; }
   .attachment-group-head:hover { color: var(--fg); }
   table.files, .table { width: 100%; border-collapse: collapse; font-size: 13px; }
   table.files th, .table th {
     text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line-strong); white-space: nowrap;
-    font: 500 11px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted);
+    font: 500 11px/1.4 var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted);
   }
   table.files td, .table td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
   table.files tbody tr:hover, .table tbody tr:hover { background: var(--raised); }
@@ -306,7 +314,9 @@
     display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 0 0 16px;
     padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface);
   }
-  dl.meta dt { font: 500 11px/1.6 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted); }
+  /* `dt` is the label and `dd` is the value, which is decision 4's split inside one component:
+     the term goes to the UI face, the data keeps mono. */
+  dl.meta dt { font: 500 11px/1.6 var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted); }
   dl.meta dd { margin: 0; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
   @media (min-width: 900px) { dl.meta { grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr); } }
   /* ONE PILL VOCABULARY (decision 5). `.chip`, `.tag-chip` and `.badge` are three components
@@ -375,6 +385,11 @@
      here. All 18 are dropped; do not add a nineteenth. */
   .empty { padding: 40px 16px; text-align: center; color: var(--fg-muted); border: 1px dashed var(--line); border-radius: var(--radius-panel); }
   .empty.inline { padding: 4px 0; text-align: left; border: 0; font-size: 12px; }
+  /* INSIDE A PANEL THE DASH IS DOUBLE FRAMING. The dashed box exists to mark out a region that has
+     nothing in it on a bare page; a `.panel` already draws that region, so the two together read as
+     a box inside a box. Found by looking at Home after its four sections became panels (slice 4) —
+     the markup did not change, and neither did `.empty`, but putting one inside the other did. */
+  .panel .empty { border: 0; padding: 24px 16px; }
   /* An .empty that HOLDS elements rather than being one — /tools first-run state. `p` carries a
      bottom margin, which would otherwise sit inside the box's own padding and make it lopsided. */
   .empty > :last-child { margin-bottom: 0; }
