@@ -24,10 +24,10 @@ shippable alone, and this spec is the first:
 
 | slice | what | status |
 |---|---|---|
-| 1 | **the page editor** — reorder, hide, view, width, rename and intro per panel, in place, with a YAML view to copy and paste | this spec |
-| 2 | content blocks — text, link and image blocks between panels; hero and description edited from the same mode | later |
-| 3 | tabs — group panels into tabs or sections, modelled as separators in the same flat order | later |
-| 4 | a separate public layout, edited from the Preview page with the same editor | later |
+| 1 | **the page editor** — reorder, hide, view, width, rename and intro per panel, in place, with a YAML view to copy and paste | this spec; shipped 2026-09-09 (PR #349, arc tinkerex#301) |
+| 2 | content blocks — text, link and image blocks between panels; hero and description edited from the same mode | shipped 2026-09-09 (PR #350, arc tinkerex#303; `2026-09-09-content-blocks-design.md`) |
+| 3 | tabs — group panels into tabs below an always-visible top group, modelled as separators in the same flat order | shipped 2026-09-09 (PR #351, arc tinkerex#305; `2026-09-09-tabs-design.md`) |
+| 4 | a separate public layout, edited from the Preview page with the same editor | next: brainstorm begun 2026-09-09, no spec yet |
 | 5 | templates — save an arrangement by name, apply it to another project, make it a type's default | later |
 | 6 | per-project look — accent colour, banner, title style, within the design tokens | later |
 
