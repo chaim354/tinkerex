@@ -25,6 +25,7 @@
     <% end %>
   </span>
   <span class="toolbar-spacer"></span>
+  <span class="toolbar-count"><%= count_label(@models.size, "model") %></span>
   <% if @all_tags.any? %>
     <select name="tag" aria-label="Tag" onchange="this.form.requestSubmit()">
       <option value="">All tags</option>

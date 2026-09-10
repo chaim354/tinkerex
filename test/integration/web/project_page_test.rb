@@ -133,9 +133,14 @@ module Web
       assert_select "a.project-card[href=?]", project_path(untagged), false
     end
 
-    test "a user with no project tags sees no filter toolbar" do
+    test "a user with no project tags sees no filter chips" do
+      # THE SUBJECT IS THE FILTER ROW, NOT THE TOOLBAR — and the two stopped being the same thing
+      # in UI-cohesion slice 4. The toolbar now also carries the item count and the sort, which a
+      # project list has whether or not it has tags to filter by (Projects was the one list page
+      # with neither). What must still not render for a tagless user is a chip row offering to
+      # filter by nothing, so that is what this asserts.
       get projects_path
-      assert_select ".projects-toolbar", count: 0
+      assert_select ".projects-toolbar a.filter.chip", count: 0
     end
 
     # Ground rules for this task: ProjectsController#index also gained a `?q=` filter (one line,

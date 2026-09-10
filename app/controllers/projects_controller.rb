@@ -26,6 +26,9 @@ class ProjectsController < ApplicationController
   # tiles and the build-log photos — and both ask the same question of the same table.
   include PageNodes
 
+  SORTS = { "recent" => { updated_at: :desc }, "name" => { name: :asc },
+            "status" => { status: :asc, name: :asc } }.freeze
+
   QUERY_MAX = 80
 
   # One flat list of live projects, newest activity first. `?archived=1` swaps in the archived
@@ -55,7 +58,12 @@ class ProjectsController < ApplicationController
     if @q
       scope = scope.where("LOWER(name) LIKE ? ESCAPE '\\'", "%#{Maker::Project.sanitize_sql_like(@q.downcase)}%")
     end
-    all = scope.order(updated_at: :desc).to_a
+    # `?sort=` (UI-cohesion slice 4): this page was the one list page with NO sort at all, always
+    # ordered by `updated_at: :desc`. Same `SORTS.fetch` idiom as ModelsController, including the
+    # secondary key on `status` — an ordering with no tiebreak reorders equals differently per
+    # adapter, and this codebase runs on two.
+    @sort = params[:sort].presence_in(SORTS.keys) || "recent"
+    all = scope.order(SORTS.fetch(@sort)).to_a
     archived, live = all.partition { |p| p.status == "archived" }
     @projects = @archived_view ? archived : live
     @archived_count = archived.size

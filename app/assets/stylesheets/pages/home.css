@@ -5,15 +5,17 @@
   .home-hero .project-description { margin-bottom: 8px; }
   .home-hero .project-stats { margin-bottom: 12px; }
   .home-hero-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .home-hero-cols h3 { margin: 0 0 6px; font: 600 11px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted); }
+  .home-hero-cols h3 { margin: 0 0 6px; font: 600 11px/1.4 var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted); }
   .hero-entry .entry-time { display: block; font: 11px/1.6 var(--font-mono); }
   .hero-entry .entry-body { font-size: 14px; line-height: 1.55; max-width: 72ch; }
   @media (max-width: 719px) { .home-hero-cols { grid-template-columns: 1fr; } }
 
+  /* HOME IS BUILT FROM THE APP'S OWN COMPONENTS NOW (UI-cohesion spec §2.6). `.home-section` and
+     `.section-head` duplicated `.panel` and `.panel-head` at a different size (h2 15px against 14)
+     and with no surface or border, so the app's front door was the one page that did not look like
+     the app. The markup carries `panel` and `panel-head`; all that is left here is the gap between
+     sections, which `.panel` has no opinion about. */
   .home-section { margin-bottom: 24px; }
-  .home-section .section-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
-  .home-section .section-head h2 { font-size: 15px; }
-  .home-section .section-more { font-size: 12px; }
 
   .tile-row { display: flex; gap: 14px; overflow-x: auto; scroll-snap-type: x proximity; padding: 2px 2px 8px; }
   .tile-row > * { flex: 0 0 150px; scroll-snap-align: start; }

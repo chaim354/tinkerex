@@ -18,7 +18,12 @@
     change this stage keeps removing. `other` is absent from @project_kinds by construction
     (ProjectsController#index): it is the column default, and a chip for "everything nobody typed"
     filters nothing. %>
-<% if @project_tags.any? || @project_kinds.any? || @kind.present? %>
+<%# THE TOOLBAR RENDERS FOR THE COUNT AND THE SORT TOO, NOT ONLY FOR CHIPS (UI-cohesion slice 4).
+    Projects was the one list page with neither a count nor a sort — Files, Models and Inventory all
+    had both — so it rendered a bare grid with no way to say "by name". The condition keeps the one
+    case that should stay bare: no projects AND no filters, where a toolbar would offer to sort
+    nothing and count it. %>
+<% if @projects.any? || @project_tags.any? || @project_kinds.any? || @kind.present? %>
   <div class="toolbar projects-toolbar">
     <%# THE ROW RENDERS WHENEVER A KIND FILTER IS SET, EVEN WITH NO SURVIVORS (found in review):
         `/projects?kind=laser` for a maker whose last laser project was retyped showed the empty
@@ -43,6 +48,23 @@
                       class: "filter chip#{' active' if @tag == t}" %>
         <% end %>
       </span>
+    <% end %>
+    <span class="toolbar-spacer"></span>
+    <span class="toolbar-count"><%= count_label(@projects.size, "project") %></span>
+    <%# A FORM, BECAUSE THE FILTERS ABOVE ARE LINKS. Models keeps its chips inside one GET form and
+        lets the links ignore it; here the chips carry each other's state in their hrefs already, so
+        the sort travels with hidden fields instead of restructuring two working filter rows. %>
+    <%= form_with url: projects_path, method: :get, class: "sort-form", data: { turbo: false } do %>
+      <% { tag: @tag, kind: @kind, archived: (@archived_view ? 1 : nil) }.each do |k, v| %>
+        <% next if v.blank? %>
+        <%= hidden_field_tag k, v %>
+      <% end %>
+      <label class="muted" for="projects-sort">Sort</label>
+      <select name="sort" id="projects-sort" onchange="this.form.requestSubmit()">
+        <% { "recent" => "Recent", "name" => "Name", "status" => "Status" }.each do |value, label| %>
+          <option value="<%= value %>" <%= "selected" if @sort == value %>><%= label %></option>
+        <% end %>
+      </select>
     <% end %>
   </div>
 <% end %>
