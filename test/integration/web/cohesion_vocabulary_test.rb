@@ -80,6 +80,23 @@ module Web
                    "nothing. It was written 16 times before it was removed: #{offenders.inspect}"
     end
 
+    test "no view spells a print status for itself" do
+      # THE PER-PAGE GUARD COULD NOT SEE THIS, and that is the lesson. The chip/badge test above
+      # asserts agreement on /models; `shared/_result_group` renders the same badge on /search and
+      # /tags/:tag and kept its own `print_status.tr("_", " ")`. While `.badge` still carried
+      # `text-transform: capitalize` the two agreed by accident; removing the transform — the very
+      # change that made ONE label source necessary — turned it into "want to print". A rule about
+      # EVERY view needs a guard that reads every view.
+      views = Dir[Rails.root.join("app/views/**/*.erb")] + Dir[Rails.root.join("app/helpers/**/*.rb")]
+      refute_empty views, "no templates were scanned"
+      offenders = views.select { |f| File.read(f).match?(/print_status\.(tr|humanize|titleize|capitalize)/) }
+                       .map { |f| Pathname(f).relative_path_from(Rails.root).to_s }
+      assert_empty offenders,
+                   "a print status must render through `print_status_label`, never a transform of " \
+                   "the raw enum — `.badge` no longer capitalises, so these render lowercase: " \
+                   "#{offenders.inspect}"
+    end
+
     test "the two per-page copies of .empty stay deleted" do
       sheets = Dir[Rails.root.join("app/assets/stylesheets/**/*.css")]
       refute_empty sheets, "no stylesheets were scanned"
