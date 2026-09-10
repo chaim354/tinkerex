@@ -1,0 +1,26 @@
+<%# A NAME AND NOTHING ELSE. The file is created empty and the editor on its own page is where the
+    content is written — which is what keeps this door's refusals to the two name questions the
+    controller asks, and why there is no content field whose bytes a refusal would have to preserve. %>
+<% content_for :title, "New text file — Tinkerex" %>
+
+<div class="page-head">
+  <h1>New text file</h1>
+</div>
+
+<%= form_with url: files_text_files_path, method: :post do %>
+  <%# PLAIN TAG HELPERS, NOT `f.text_field`. `form_with url:` with no model has a blank
+      object_name, and `fields_for` on a blank one emits the literal bracket key Rack cannot parse
+      (§14d, shipped twice). Flat names, read as params[:name] / params[:parent_node_id]. %>
+  <%= hidden_field_tag :parent_node_id, @parent_node_id %>
+  <label class="field">
+    <span>Name</span>
+    <%= text_field_tag :name, params[:name], placeholder: "notes.txt", autofocus: true,
+                       required: true %>
+    <span class="field-hint muted">Include the extension — it is what decides how the file is
+      previewed and edited.</span>
+  </label>
+  <div class="form-actions">
+    <%= submit_tag "Create", class: "btn primary" %>
+    <%= link_to "Cancel", files_path({ folder: @parent_node_id }.compact), class: "linkbtn" %>
+  </div>
+<% end %>

@@ -95,6 +95,21 @@
         <span class="upload-status" data-uploader-target="status"></span>
       </section>
     <% end %>
+    <%#
+      NEW TEXT FILE (2026-09-10). QUIET, NOT ACCENT: this page already spends its accent on Upload,
+      and decision 3 of the UI-cohesion spec allows exactly one — test/system/accent_spend_test.rb
+      pins /files to ["Upload a file"] and reddens naming this route if `primary` appears here.
+
+      NOT GATED ON A CAPABILITY. The write goes through Maker::TextSave to
+      Maker::Addons::LibraryOutput.write_bytes!, which is the one place the `port_writable?` branch
+      is still written out (§14d), so this one link works on all three backends — unlike the upload
+      control above, whose whole branch exists because those two flows are genuinely different doors.
+
+      `@folder` IS THE FOLDER BEING VIEWED, so the file lands where the maker is standing. It is nil
+      at the library root and in flat/search mode, and `url_for` drops a nil param.
+    %>
+    <%= link_to "New text file", new_files_text_file_path(parent_node_id: @folder&.node_id),
+                class: "btn" %>
     <% if menu_items %>
       <details class="menu" data-controller="menu">
         <summary class="btn icon" aria-label="More actions" title="More actions">⋯</summary>
