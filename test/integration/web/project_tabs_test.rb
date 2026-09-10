@@ -34,7 +34,11 @@ module Web
       assert_select "div.tabs[data-controller=tabs]" do
         assert_select "nav.tab-bar[role=tablist] a.tab-link[role=tab]", 2
         assert_select "a.tab-link[href='#tab-build'][aria-controls='tab-build'][aria-selected=true]", text: "Build"
-        assert_select "a.tab-link[href='#tab-parts'][aria-selected=false]", text: "Parts"
+        assert_select "a.tab-link[href='#tab-parts'][aria-selected=false][tabindex='-1']", text: "Parts"
+        # THE CONTROLLER'S HOOKS ARE PART OF THE CONTRACT (§14d): a target or action that goes
+        # missing is a silent no-op, so both are pinned here as well as driven in the browser suite.
+        assert_select "a.tab-link[tabindex='0'][data-tabs-target=tab][data-action='click->tabs#select keydown->tabs#key']", 1
+        assert_select "section.tab-pane[data-tabs-target=pane]", 2
         assert_select "section.tab-pane#tab-build[role=tabpanel][aria-labelledby='tablink-build']" do
           assert_select "h2.tab-heading", text: "Build"
           assert_select "div.project-panels[data-controller=masonry] > div.panel-slot > section.build-log-panel", 1
@@ -47,6 +51,7 @@ module Web
       assert_operator body.index('id="publish"'), :>, body.index("tab-parts")
       assert_select "div.tabs + div.project-panels > div.panel-slot > section#publish", 1
       assert_select "div.tabs section.tab-pane section#publish", 0
+      assert_select "section#publish", 1, "Publish is rendered once, in the foot"
     end
 
     test "a project without tabs renders today's markup: one grid, every visible panel, Publish inside it" do
@@ -185,6 +190,31 @@ module Web
       assert_nil @project.reload.panels
       get project_path(@project)
       assert_select "div.tabs", 0
+    end
+
+    # FOUND IN REVIEW: the head was keyed on the top group's KEYS where the foot is keyed on what
+    # rendered, so a visitor whose top group held only Tasks got an empty band above the bar.
+    test "an empty top group renders no grid above the bar, on the maker's page and on a visitor's whose top has no public face" do
+      @project.update!(panels: { "order" => [ tk(TAB_A), "attachments", "publish" ], "titles" => { tk(TAB_A) => "Build" } })
+      get project_path(@project)
+      assert_select "div.tabs", 1
+      assert_select "div.project-panels + div.tabs", 0, "no grid, empty or not, above the bar"
+      assert_select "div.project-panels", 2, "the pane's grid and the foot's"
+
+      @project.update!(panels: { "order" => [ "tasks", tk(TAB_A), "build_log", "publish" ], "titles" => { tk(TAB_A) => "Build" } })
+      @project.build_log_entries.create!(user: @user, body: "Glued the base.", logged_at: Time.current)
+      delete destroy_user_session_path
+      get public_project_path(@user.handle, @project.slug)
+      assert_select "section.tab-pane#tab-build section.build-log-panel", 1
+      assert_select "div.project-panels + div.tabs", 0, "Tasks has no public face, so the top group renders no grid"
+    end
+
+    test "a tab's name is text on the page, never markup" do
+      @project.update!(panels: { "order" => [ "attachments", tk(TAB_A), "tasks", "publish" ], "titles" => { tk(TAB_A) => "<b>Build</b>" } })
+      get project_path(@project)
+      assert_select "a.tab-link", text: "<b>Build</b>"
+      assert_select "a.tab-link b", 0
+      assert_select "h2.tab-heading b", 0
     end
 
     test "a tab whose name yields no slug, or collides, is addressed by its key" do

@@ -35,10 +35,12 @@
        bodies = tab.keys.filter_map { |key| body = yield(key); body if body.present? }
        [ tab, bodies ] if bodies.any?
      end %>
-  <% if groups.top.any? %>
-    <div class="project-panels" data-controller="masonry">
-      <% groups.top.each do |key| %><%= yield key %><% end %>
-    </div>
+  <%# THE HEAD IS KEYED ON WHAT RENDERED, LIKE THE FOOT (found in review): a visitor's top group may
+      hold only keys with no public face (Tasks, Sheets), and a grid with nothing in it is a blank
+      band above the bar. %>
+  <% head = capture do %><% groups.top.each do |key| %><%= yield key %><% end %><% end %>
+  <% if head.present? %>
+    <div class="project-panels" data-controller="masonry"><%= head %></div>
   <% end %>
   <% if panes.any? %>
     <div class="tabs" data-controller="tabs">
