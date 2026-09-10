@@ -28,3 +28,6 @@
     </div>
   </div></template>
 <% end %>
+<%# THE TAB'S TEMPLATE, cloned by "Add tab" the way a block's is by "Add block" (2026-09-09, tabs).
+    `tab:new-__N__` is the same placeholder shape and names nothing until Save mints a key. %>
+<template data-layout-editor-target="blockTemplate" data-kind="tab"><%= render "projects/tab_slot", key: Maker::ProjectKind.tab_key("new-__N__"), name: "" %></template>

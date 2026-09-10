@@ -1,0 +1,64 @@
+<%#
+  THE GROUPED PAGE, ONE SHAPE FOR THE MAKER'S PAGE AND THE VISITOR'S (2026-09-09, tabs; spec §6).
+  A LAYOUT PARTIAL: the caller renders it with a block that takes a KEY and returns that key's
+  slot markup (or nothing), so each page keeps its own way of rendering a panel while the shape
+  around the panels is written once.
+
+  THE NO-TABS BRANCH IS TODAY'S MARKUP, UNCHANGED (decision 9): one `.project-panels` grid with
+  every key, Publish included, and the caller's tail (the public page's repository cards) inside
+  it. Every existing project takes this branch.
+
+  WITH TABS: the top group's grid (omitted when empty), then `div.tabs` with a bar and one pane per
+  tab, then Publish in its own grid -- with the tail before it -- so both are on view whichever tab
+  is open (decision 3). A PANE IS RENDERED ONLY IF SOMETHING IN IT RENDERS: the bodies are captured
+  first, exactly as the public page has always omitted an empty panel, and the bar lists only the
+  panes that survived. Each key is yielded ONCE.
+
+  THE LINK'S ID IS `tablink-<slug>` AND THE PANE'S IS `tab-<slug>`, WHICH IS NOT A COSMETIC CHOICE:
+  the pane of a tab NAMED "build tab" is `tab-build-tab`, so an `id` built as `tab-<slug>-tab` for
+  the link would collide with it and `aria-labelledby` would point at a pane instead of its own
+  label. Two prefixes cannot collide whatever anyone names a tab.
+
+  WITHOUT JAVASCRIPT nothing is hidden: the bar's links are anchors to the panes and every pane
+  shows its heading -- the page reads as sections. tabs_controller.js hides the rest (decision 8).
+
+  Locals: groups (Maker::ProjectKind::Groups); tail (HTML or nil).
+%>
+<% if groups.tabs.empty? %>
+  <div class="project-panels" data-controller="masonry">
+    <% groups.top.each do |key| %><%= yield key %><% end %>
+    <%= yield "publish" %>
+    <%= tail %>
+  </div>
+<% else %>
+  <% panes = groups.tabs.filter_map do |tab|
+       bodies = tab.keys.filter_map { |key| body = yield(key); body if body.present? }
+       [ tab, bodies ] if bodies.any?
+     end %>
+  <% if groups.top.any? %>
+    <div class="project-panels" data-controller="masonry">
+      <% groups.top.each do |key| %><%= yield key %><% end %>
+    </div>
+  <% end %>
+  <% if panes.any? %>
+    <div class="tabs" data-controller="tabs">
+      <nav class="tab-bar" role="tablist" aria-label="Page sections">
+        <% panes.each_with_index do |(tab, _bodies), i| %>
+          <a class="tab-link" role="tab" id="tablink-<%= tab.slug %>" href="#tab-<%= tab.slug %>"
+             aria-controls="tab-<%= tab.slug %>" aria-selected="<%= i.zero? %>" tabindex="<%= i.zero? ? 0 : -1 %>"
+             data-tabs-target="tab" data-action="click->tabs#select keydown->tabs#key"><%= tab.name %></a>
+        <% end %>
+      </nav>
+      <% panes.each do |tab, bodies| %>
+        <section class="tab-pane" id="tab-<%= tab.slug %>" role="tabpanel" aria-labelledby="tablink-<%= tab.slug %>" data-tabs-target="pane">
+          <h2 class="tab-heading"><%= tab.name %></h2>
+          <div class="project-panels" data-controller="masonry"><%= safe_join(bodies) %></div>
+        </section>
+      <% end %>
+    </div>
+  <% end %>
+  <% foot = capture do %><%= tail %><%= yield "publish" %><% end %>
+  <% if foot.present? %>
+    <div class="project-panels" data-controller="masonry"><%= foot %></div>
+  <% end %>
+<% end %>

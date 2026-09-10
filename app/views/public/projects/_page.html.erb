@@ -198,28 +198,32 @@
   ONE SLOT PER PANEL AND NONE AROUND A REPO CARD: a card is not a panel of the layout — it has no
   key, no width and no place in the order — so it stays a direct child of the grid, which
   pages/projects.css already sizes (`.project-panels > .panel, .project-panels > .panel-slot`).
+
+  THE GRID AROUND THESE SLOTS IS projects/_panel_groups (2026-09-09, tabs), the same shape the
+  maker's page renders: one grid when the layout has no tab, and the top group, the bar, the panes
+  and Publish's grid — with the repository cards before it — when it has.
 %>
-<div class="project-panels" data-controller="masonry">
-  <% pub.visible_panels.each do |key| %>
-    <% body = capture do %>
-      <% if key == "wiring" %>
-        <% if pub.connections.any? %>
-          <%= render "projects/wiring", project: project, connections: pub.connections, editable: false, layout: pub.layout %>
-        <% end %>
-      <% elsif pub.layout.block?(key) %>
-        <%= render "public/projects/block_panel", pub: pub, key: key, block: pub.blocks_by_key[key] %>
-      <% elsif pub.layout.folder?(key) %>
-        <%= render "public/projects/folder_panel", pub: pub, key: key, dir: pub.folder_dir(key),
-                   view: pub.layout.view_for(key) %>
-      <% elsif (partial = public_panels[key]) %>
-        <%= render partial, pub: pub %>
-      <% end %>
-    <% end %>
-    <% if body.present? %>
-      <div class="panel-slot panel--<%= pub.layout.width_for(key) %>"><%= body %></div>
-    <% end %>
-  <% end %>
+<% cards = capture do %>
   <% pub.repo_cards.each_value do |card| %>
     <%= render "public/projects/repo_card", card: card %>
   <% end %>
-</div>
+<% end %>
+<%= render layout: "projects/panel_groups", locals: { groups: pub.layout.groups(pub.visible_panels), tail: cards.presence } do |key| %>
+  <% body = capture do %>
+    <% if key == "wiring" %>
+      <% if pub.connections.any? %>
+        <%= render "projects/wiring", project: project, connections: pub.connections, editable: false, layout: pub.layout %>
+      <% end %>
+    <% elsif pub.layout.block?(key) %>
+      <%= render "public/projects/block_panel", pub: pub, key: key, block: pub.blocks_by_key[key] %>
+    <% elsif pub.layout.folder?(key) %>
+      <%= render "public/projects/folder_panel", pub: pub, key: key, dir: pub.folder_dir(key),
+                 view: pub.layout.view_for(key) %>
+    <% elsif (partial = public_panels[key]) %>
+      <%= render partial, pub: pub %>
+    <% end %>
+  <% end %>
+  <% if body.present? %>
+    <div class="panel-slot panel--<%= pub.layout.width_for(key) %>"><%= body %></div>
+  <% end %>
+<% end %>

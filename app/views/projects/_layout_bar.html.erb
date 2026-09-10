@@ -37,10 +37,16 @@
         <% end %>
       </div>
     </details>
+    <%# ADD TAB (2026-09-09, tabs; spec §2): a new, empty tab lands at the BOTTOM, just above the pinned
+        Publish — a new separator at the top would swallow every panel into one tab. Disabled at
+        Maker::ProjectKind::TAB_CAP with the door's own number, like Add block. %>
+    <% tabs_at_cap = @panel_layout.tabs.size >= Maker::ProjectKind::TAB_CAP %>
+    <button type="button" class="btn small" data-action="layout-editor#addTab" <%= "disabled" if tabs_at_cap %>
+            title="<%= tabs_at_cap ? "This page has #{Maker::ProjectKind::TAB_CAP} tabs, the most it can hold." : "A new tab at the bottom; drag panels under it, or drag it up." %>">Add tab</button>
     <button type="button" class="btn small" data-action="layout-editor#toggleDrawer" aria-expanded="false">Edit as YAML</button>
     <%= button_to "Reset to #{Maker::ProjectKind.label(@project.kind)} defaults", project_panels_path(@project),
                   method: :delete, class: "linkbtn small",
-                  form: { data: { turbo_confirm: "Reset the page to its type's defaults? Order, hidden panels, views, widths, titles and intros all go back." } } %>
+                  form: { data: { turbo_confirm: "Reset the page to its type's defaults? Order, hidden panels, views, widths, titles, intros and tabs all go back." } } %>
     <%= link_to "Cancel", project_path(@project), class: "btn small" %>
     <%= form_with url: project_panels_path(@project), method: :patch, class: "layout-save",
                   data: { layout_editor_target: "form", action: "submit->layout-editor#save" } do %>

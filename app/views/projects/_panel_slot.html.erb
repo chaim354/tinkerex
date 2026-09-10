@@ -20,7 +20,16 @@
   ending in a bare `extra:` swallowed the NEXT ERB line — the width assignment below — as that
   argument's value: measured here, the panel body was handed the string "full" as its locals map.
   It fails loudly in this shape and would pass silently in others.
+
+  A TAB KEY IS A SEPARATOR, NOT A PANEL (2026-09-09, tabs), AND ITS BRANCH IS FIRST FOR A REASON:
+  everything below asks a question a tab has no answer to — `projects/_panel_body` interpolates the
+  key into a partial name (`projects/tab:3f9a…`, missing), and the placeholder asks
+  `@panel_labels.fetch(key)`, which raises. It reaches this partial only from the edit-mode loop
+  over `order`; the read pages render projects/_panel_groups and never yield a tab key.
 %>
+<% if @panel_layout.tab?(key) %>
+  <%= render "projects/tab_slot", key: key, name: @panel_layout.tab_name_for(key) %>
+<% else %>
 <% body = render "projects/panel_body", key: key, extra: extra %>
 <% width = @panel_layout.width_for(key) %>
 <% if @editing %>
@@ -58,4 +67,5 @@
   </div>
 <% elsif body.present? %>
   <div class="panel-slot panel--<%= width %>"><%= body %></div>
+<% end %>
 <% end %>
