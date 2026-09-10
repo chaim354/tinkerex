@@ -12,7 +12,8 @@
   @media (max-width: 719px) { .inventory-table .col-supplier, .inventory-table .col-min { display: none; } }
   @media (max-width: 479px) { .inventory-table .col-category, .inventory-table .col-location { display: none; } }
 
-  .inventory-toolbar .toolbar-count { margin-left: auto; font: 12px/1.4 var(--font-mono); color: var(--fg-muted); }
+  /* Only the push-right is Inventory's own; the type comes from the component. */
+  .inventory-toolbar .toolbar-count { margin-left: auto; }
 
   /* The Adjust composer: one row of fields at desktop, a stack on the phone. */
   .adjust-fields { display: grid; grid-template-columns: 110px 150px minmax(120px, 1fr) minmax(160px, 2fr) auto; gap: 8px; align-items: end; }

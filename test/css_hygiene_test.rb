@@ -30,7 +30,7 @@ class CssHygieneTest < ActiveSupport::TestCase
   OVERRIDES = "vendor-overrides.css".freeze
   DELETED = %w[projects.css models.css notes.css].freeze
   COMPONENT_SELECTORS = %w[
-    .btn .linkbtn .chip .view-toggle .toolbar .breadcrumb .pager .page-head .panel .thumb
+    .btn .linkbtn .chip .view-toggle .toolbar .toolbar-count .breadcrumb .pager .page-head .panel .thumb
     .grid-card .badge dl.meta .empty .flash .file-menu .note-popover .filechooser
     table.files .folder-field-btn details.menu .tag-chips .tag-chip
     .panel-slot .panel-strip .layout-bar .layout-drawer

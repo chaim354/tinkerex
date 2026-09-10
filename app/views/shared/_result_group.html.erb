@@ -41,7 +41,7 @@
             <% end %>
           <% when :model %>
             <%= link_to record.title, model_path(record) %>
-            <span class="badge mstatus-<%= record.print_status %>"><%= record.print_status.tr("_", " ") %></span>
+            <span class="badge mstatus-<%= record.print_status %>"><%= record.print_status_label %></span>
           <% when :inventory_item %>
             <%= link_to record.name, inventory_item_path(record) %>
             <span class="result-sub"><%= [

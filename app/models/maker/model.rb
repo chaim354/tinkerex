@@ -13,6 +13,26 @@ module Maker
 
     PRINT_STATUSES = %w[want_to_print printed failed].freeze
 
+    # ONE LABEL PER STATUS, READ BY BOTH THE FILTER AND THE BADGE — and the pair is the whole point.
+    # Until 2026-09-10 the /models toolbar chip said "Wanted" while the badge on the card beside it
+    # said "Want To Print": the chip's label was a literal in the view, the badge rendered
+    # `print_status.tr("_", " ")`, and `.badge { text-transform: capitalize }` title-cased the
+    # result. Same state, two words, one screen. `capitalize` is gone from the badge (decision 5 of
+    # the UI-cohesion spec: a text-transform cannot know that `want_to_print` reads "Wanted"), so a
+    # label MUST come from here. Same shape as Maker::ProjectKind::LABELS, for the same reason.
+    PRINT_STATUS_LABELS = {
+      "want_to_print" => "Wanted", "printed" => "Printed", "failed" => "Failed"
+    }.freeze
+
+    # Falls back to the humanised status rather than raising: `print_status` is validated, so an
+    # unknown value means a migration added one and forgot this hash — a readable word beats a 500,
+    # and models_index_test.rb pins that every PRINT_STATUSES member has a label so the fallback is
+    # not load-bearing.
+    def self.print_status_label(status) =
+      PRINT_STATUS_LABELS.fetch(status.to_s) { status.to_s.tr("_", " ").upcase_first }
+
+    def print_status_label = self.class.print_status_label(print_status)
+
     # WHICH DOOR WROTE THE ROW. "import" is models#new; "auto" is Maker::ModelIntake's sweep over
     # the library. The two differ in exactly one user-visible way -- see ModelsController#destroy.
     # Named for that question, not for its `origin` column, because Maker::Item's origin answers a

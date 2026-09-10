@@ -45,11 +45,11 @@
       <option value="<%= val %>" <%= "selected" if @sort == val %>><%= label %></option>
     <% end %>
   </select>
-  <span class="toolbar-count"><%= pluralize(@items.size, "item") %></span>
+  <span class="toolbar-count"><%= count_label(@items.size, "item") %></span>
 </form>
 
 <% if @items.empty? %>
-  <p class="empty muted">No inventory yet. Add your first item.</p>
+  <p class="empty">No inventory yet. Add your first item.</p>
 <% else %>
   <table class="table inventory-table">
     <thead>

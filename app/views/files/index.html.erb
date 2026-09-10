@@ -204,9 +204,9 @@
   <span class="toolbar-spacer"></span>
   <span class="toolbar-count">
     <% if @flat %>
-      <%= pluralize(number_with_delimiter(@match_count), "match", "matches") %>
+      <%= count_label(@match_count, "match", "matches") %>
     <% else %>
-      <%= pluralize(number_with_delimiter(@paged ? @child_count : @nodes.size), "item") %>
+      <%= count_label(@paged ? @child_count : @nodes.size, "item") %>
     <% end %>
   </span>
   <%# List/grid toggle. files_query_base rides along so the choice keeps whatever the user is
@@ -284,13 +284,13 @@
   <%# Three emptinesses. "No files yet" is advice for a new library; said to someone who searched
       or filtered, it reads as "your library is empty" and is a lie. %>
   <% if @q && @exts.any? %>
-    <p class="empty muted">No files match “<%= @q %>” among <%= @exts.map { |e| ".#{e}" }.to_sentence %>.</p>
+    <p class="empty">No files match “<%= @q %>” among <%= @exts.map { |e| ".#{e}" }.to_sentence %>.</p>
   <% elsif @q %>
-    <p class="empty muted">No files match “<%= @q %>”.</p>
+    <p class="empty">No files match “<%= @q %>”.</p>
   <% elsif @flat %>
-    <p class="empty muted">No files match <%= @exts.map { |e| ".#{e}" }.to_sentence %>.</p>
+    <p class="empty">No files match <%= @exts.map { |e| ".#{e}" }.to_sentence %>.</p>
   <% else %>
-    <p class="empty muted">No files yet. Upload one to get started.</p>
+    <p class="empty">No files yet. Upload one to get started.</p>
   <% end %>
 <% elsif @view == "grid" %>
   <%= render "grid" %>

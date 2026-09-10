@@ -78,7 +78,7 @@
   .chip {
     display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px;
     border: 1px solid var(--line); background: var(--surface); color: var(--fg-muted);
-    font: 500 12px/1.4 var(--font-mono); text-decoration: none;
+    font: 500 12px/1.4 var(--font-ui); text-decoration: none;
   }
   .chip:hover { border-color: var(--line-strong); color: var(--fg); text-decoration: none; }
   .chip.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
@@ -91,7 +91,7 @@
   .tag-chip {
     display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px;
     border: 1px solid var(--line); background: var(--surface); color: var(--fg-muted);
-    font: 500 11px/1.4 var(--font-mono); text-transform: lowercase; text-decoration: none;
+    font: 500 11px/1.4 var(--font-ui); text-transform: lowercase; text-decoration: none;
   }
   .tag-chip:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
   .view-toggle { display: inline-flex; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); }
@@ -105,6 +105,14 @@
   .view-toggle .toggle + .toggle { border-left: 1px solid var(--line); }
   .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 12px; }
   .toolbar-spacer { flex: 1; }
+  /* ONE COUNT, ONE DEFINITION (UI-cohesion spec §2.7). This lived TWICE — `pages/files.css` had it
+     bare and `pages/inventory.css` had it qualified, with the same three declarations — which is
+     the `.projects-empty` shape again and equally invisible to css_hygiene_test.rb, since
+     `.toolbar-count` was not on its component list. It is now, and both copies are gone.
+     MONO IS CORRECT HERE and is not the chrome-mono decision 4 retires: a count is a QUANTITY,
+     which is exactly what decision 4 says mono means. `tabular-nums` so a count changing under a
+     filter does not shift the controls beside it. */
+  .toolbar-count { font: 12px/1.4 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--fg-muted); white-space: nowrap; }
   .breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; min-width: 0; }
   .breadcrumb .sep { color: var(--fg-muted); }
   .breadcrumb a { color: var(--fg-muted); }
@@ -301,9 +309,22 @@
   dl.meta dt { font: 500 11px/1.6 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted); }
   dl.meta dd { margin: 0; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
   @media (min-width: 900px) { dl.meta { grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr); } }
+  /* ONE PILL VOCABULARY (decision 5). `.chip`, `.tag-chip` and `.badge` are three components
+     saying the same kinds of thing, and until 2026-09-10 they said them in two typefaces and three
+     capitalisations: a 12px MONO chip, an 11px MONO lowercase tag, an 11px sans CAPITALIZED badge.
+     On /projects the same taxonomy rendered twice 200px apart — "Laser cutting" in mono, "Laser
+     Cutting" in sans. All three now share `--font-ui` (decision 4: mono means DATA — paths,
+     hashes, sizes, timestamps, IDs — not labels).
+
+     `text-transform: capitalize` IS GONE AND MUST NOT COME BACK. It cannot know that
+     `want_to_print` reads "Wanted", so it rendered "Want To Print" beside a filter chip saying
+     "Wanted" — one state, two words, one screen. Labels come from a hash keyed on the enum
+     (Maker::Model::PRINT_STATUS_LABELS, Maker::ProjectKind::LABELS) so both callers read one
+     source. `.tag-chip` KEEPS `lowercase`: a tag is user-entered and lowercasing it is a real
+     normalisation, not a display trick. */
   .badge {
     display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px;
-    font: 600 11px/1.6 var(--font-ui); background: var(--raised); color: var(--fg-muted); text-transform: capitalize;
+    font: 600 11px/1.6 var(--font-ui); background: var(--raised); color: var(--fg-muted);
   }
   .badge.status-archived { background: var(--raised); color: var(--fg-muted); }
   /* --- Project status and the new-project mark (stage 4, S4-6). Variants of `.badge`, so they
@@ -338,7 +359,25 @@
      `text-transform: none` for the same reason the bom-* modifiers carry it: these read as words,
      not as a label. */
   .badge.changed { background: var(--accent-soft); color: var(--accent); text-transform: none; }
+  /* ONE EMPTY STATE, TWO SIZES (decision, UI-cohesion spec §2.4). `.empty` had THREE
+     implementations before 2026-09-10: this one, plus `.projects-empty` and `.models-empty`, which
+     carried these four declarations VERBATIM under new names in two page sheets. That slipped past
+     css_hygiene_test.rb because the guard forbids REDECLARING a component selector, not copying
+     its declarations under a different name.
+
+     `.empty.inline` is the variant that was missing. The 40px dashed box is right for "this whole
+     page has nothing on it" and wrong for a one-line "nothing yet" inside a list or a card — so
+     those cases used to take the big box and then override it back down (pages/settings.css had
+     `.filing-card .empty { padding: 4px 0; text-align: left; border: 0 }` doing exactly that, and
+     it is deleted now). A `<li>` inside a list takes `.empty.inline`.
+
+     `.muted` ON AN `.empty` IS INERT AND WAS WRITTEN 18 TIMES — `color: var(--fg-muted)` is right
+     here. All 18 are dropped; do not add a nineteenth. */
   .empty { padding: 40px 16px; text-align: center; color: var(--fg-muted); border: 1px dashed var(--line); border-radius: var(--radius-panel); }
+  .empty.inline { padding: 4px 0; text-align: left; border: 0; font-size: 12px; }
+  /* An .empty that HOLDS elements rather than being one — /tools first-run state. `p` carries a
+     bottom margin, which would otherwise sit inside the box's own padding and make it lopsided. */
+  .empty > :last-child { margin-bottom: 0; }
   .truncated { margin: 0 0 12px; padding: 8px 12px; border-radius: var(--radius-control); background: var(--raised); color: var(--fg-muted); font-size: 12px; }
 
   /* --- Flash (inline colours here; the floating stack is shell.css's .flash-stack) --- */

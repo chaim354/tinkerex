@@ -72,4 +72,24 @@ module ApplicationHelper
   rescue URI::InvalidURIError
     nil
   end
+
+  # ONE SPELLING FOR "HOW MANY OF THESE ARE THERE" (UI-cohesion spec §2.7). The app wrote counts
+  # eight ways — `3 items`, `4 files`, `6 entries`, `Folders 1`, `0 shelves`, `LOOSE (4)` — in
+  # different words, placements and typefaces. This owns the two decisions every toolbar count
+  # shares and nothing else: the number is DELIMITED (Files did this, Inventory did not, so a
+  # library of 12000 files read "12000 items" on one page and "12,000 items" on another) and the
+  # noun is pluralised against the RAW count, never the delimited string — `pluralize` inspects its
+  # first argument, and handing it "1,000" would make it agree with a String.
+  #
+  # DELIBERATELY NOT A PLACEMENT OR A WRAPPER. It returns text; where the count sits and what
+  # element holds it is the toolbar's business (slice 4 settles the order). A helper that emitted
+  # the `<span class="toolbar-count">` too would have to know which page it was on, since Inventory
+  # pushes its count right and Files sits it against a spacer.
+  # Built directly rather than by post-processing `pluralize`'s output: delimiting the number by
+  # `.sub`bing the raw count out of "1000 items" corrupts any label whose own text contains those
+  # digits ("3 3d models"), and the failure is silent.
+  def count_label(count, singular, plural = nil)
+    word = count == 1 ? singular : (plural || singular.pluralize)
+    "#{number_with_delimiter(count)} #{word}"
+  end
 end

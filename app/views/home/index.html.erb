@@ -19,7 +19,7 @@
 <section class="home-section home-projects">
   <div class="section-head"><h2>Projects</h2><%= link_to "See all", projects_path, class: "muted section-more" %></div>
   <% if @recent_projects.empty? %>
-    <p class="empty muted">No projects yet. Create your first build.</p>
+    <p class="empty">No projects yet. Create your first build.</p>
   <% else %>
     <%= render "tile_row" do %>
       <% @recent_projects.each do |project| %>
@@ -32,7 +32,7 @@
 <section class="home-section home-files">
   <div class="section-head"><h2>Files</h2><%= link_to "See all", files_path, class: "muted section-more" %></div>
   <% if @recent_files.empty? %>
-    <p class="empty muted">No files yet. Upload one to get started.</p>
+    <p class="empty">No files yet. Upload one to get started.</p>
   <% else %>
     <%= render "tile_row" do %>
       <% @recent_files.each do |node| %>
@@ -58,7 +58,7 @@
 <section class="home-section home-prints">
   <div class="section-head"><h2>Prints</h2><%= link_to "See all", models_path, class: "muted section-more" %></div>
   <% if @recent_prints.empty? %>
-    <p class="empty muted">No prints logged yet.</p>
+    <p class="empty">No prints logged yet.</p>
   <% else %>
     <ul class="print-list">
       <% @recent_prints.each do |run| %>
@@ -75,7 +75,7 @@
 <section class="home-section home-attention">
   <div class="section-head"><h2>Needs attention</h2></div>
   <% if @failed_prints.empty? && @low_stock.empty? %>
-    <p class="empty muted">Nothing needs attention.</p>
+    <p class="empty">Nothing needs attention.</p>
   <% else %>
     <ul class="attention-list">
       <% @failed_prints.each do |run| %>

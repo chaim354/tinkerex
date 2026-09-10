@@ -8,5 +8,5 @@
     <span class="thumb project-thumb-empty" aria-hidden="true">🧊</span>
   <% end %>
   <span class="project-name model-name"><%= model.title %></span>
-  <span class="badge mstatus-<%= model.print_status %>"><%= model.print_status.tr("_", " ") %></span>
+  <span class="badge mstatus-<%= model.print_status %>"><%= model.print_status_label %></span>
 <% end %>
