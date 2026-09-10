@@ -465,23 +465,23 @@ area belongs there too, with a stub here.
   real door, because the maker layer branched around the port (§14d used to count five
   `port_writable?` copies for exactly this). It no longer can: in remote chunk mode there is no
   `Sync::*` in the process to branch into, so every one of them goes over the wire.
-  **`delete` on a directory must reach the server's CASCADING delete, never a per-node tombstone**
-  — a tombstone applied to the node alone **orphans every descendant**. That is why
-  `dir_deletable` is true here (next bullet) and it is the one trap this bullet has always existed
-  to protect. The cascade itself is the sync server's code and its rules live in that repo's
-  CLAUDE.md; what binds *here* is that this adapter must not invent a per-node substitute.
+  **`delete` on a directory must reach the server's CASCADING delete, never a per-node substitute**
+  (next bullet) — the cascade is the sync server's code and its rules live in that repo's CLAUDE.md.
   **`write` still refuses, and must**: it takes an IO, and a server-side byte write would push
   bytes through Rails (§15).
-- **`dir_deletable` (the 6th capability) is NOT `syncable`, though the two agree on all three
-  backends today.** It answers one question for one caller, `FilesController#destroy`: may this
-  backend's `delete` be handed a DIRECTORY? chunk_remote true (the sync server's delete cascades the whole
-  subtree); share false (children are stranded at paths that no longer exist while their bytes
-  sit in `.trash`, which the scan refuses to look at); s3 false (no directory and no rename — a
-  dir node's key does not exist). It exists because `#destroy` stopped branching on
-  `port_writable?` once the chunk family started answering `delete`, which made one call have
-  two answers —
-  the shape §14a forbids. Agreement across three backends is three samples, not an identity —
-  the same coincidence `scannable` was added to stop encoding twice (`is_a?(Share)`).
+- **A DIRECTORY DELETE CASCADES ON EVERY BACKEND (2026-09-10): the tombstone reaches the whole
+  subtree or it reaches nothing.** Three mechanisms — chunk_remote defers to the sync server's
+  SubtreeDelete; **share** renames into `.trash` in one atomic call; **s3** copies-then-deletes per
+  object, capped at `S3::DIR_DELETE_MAX_OBJECTS` and refusing above it, writing the catalog **only
+  once the bucket agrees** (a delete failing *after* a tombstone leaves an unclaimed key that mints
+  a new `node_id` and orphans every attachment, silently). Both writable adapters tombstone the one
+  walk, `FileLayer::Subtree`, **by the parent edge, never a `storage_path` prefix** (a moved child's
+  path is stale until a scan pairs it). **`undelete` refuses an orphan** rather than reparenting to
+  the root — a refusal is recoverable, a scatter is not — discriminating on the **tombstone kind**,
+  not on `deleted:`: a SCAN tombstone keeps its path and restoring into one is self-healing, so
+  `parent&.deleted?` breaks it (measured). **`dir_deletable` was the 6th capability and is
+  RETIRED** — it gated this while share and s3 refused, then varied on nothing, and a capability
+  earns its place by **varying**.
 - **`begin_upload`/`put_chunk`/`finalize_upload` are port verbs, and NONE of the three is the
   byte-taking `write` above.** The port never holds a byte: `begin_upload` returns presigned PUT
   URLs for whichever chunks the store is missing, and the caller PUTs straight to object storage —
@@ -511,9 +511,8 @@ area belongs there too, with a stub here.
   posts no `to_root` and takes the sync server's strict default, so the 409 reaches
   `Transport#interpret` as `UnsupportedOperation` with a message naming the ACTION ("restore the
   folder first"), not just the failure. Pinned by the shared mutation contract
-  (`adapter_mutation_contract.rb`) gated on `dir_deletable?`: share and s3 cannot reach this state
-  through the port at all, so there is no door producing a live child under a tombstoned parent for
-  them to disagree about. The device-facing half — why the sync server's trash controller keeps a
+  (`adapter_mutation_contract.rb`), UNCONDITIONAL since 2026-09-10 — it was gated on
+  `dir_deletable?` and skipped where neither backend could reach the state at all. The device-facing half — why the sync server's trash controller keeps a
   caller-supplied `to_root:` — is that repo's rule. **The web `TrashController` chooses the refusal
   on the user's behalf** because a browser Restore click has no prompt to offer.
 - **THE LOCAL MIRROR IS DELIBERATELY STALE BETWEEN PULLS, AND ONLY THE RECURRING JOB MAY CLOSE
@@ -844,7 +843,8 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   `require_capability!` gates and views that pick an upload FORM — those select a UI, which is
   `port_writable`'s stated job.) **THIS COUNT IS NOT §14c's chunk-internals-reference count** —
   both read "one" until Arc B by coincidence, not identity, the same warning this file gives about
-  `scannable`/`port_writable`/`dir_deletable` agreeing on three backends. This one is still ONE;
+  `scannable`/`port_writable` agreeing on three backends (`dir_deletable` was a third such
+  example until it was retired for agreeing everywhere). This one is still ONE;
   the OTHER went to zero when `put_chunk` became a port verb, without touching this branch at all.
 - **A verb more than one controller performs gets a named service** — `Maker::MoveNode`,
   `Maker::AttachToProject`, `Maker::LibraryFolder` — rather than being re-inlined per action.

@@ -28,8 +28,9 @@ module FileLayer
     # IDENTICAL TO CHUNK'S, AND THAT IS THE POINT: what changes in remote mode is WHERE the work
     # happens, not what the deployment can do. `port_writable` stays FALSE (§14a's most-misread
     # name: the UI drives the two-phase presigned flow, which is how a chunk_remote upload happens
-    # -- it is not "cannot accept uploads"), and `dir_deletable` stays TRUE because the server's
-    # SubtreeDelete cascades exactly as it does in-process.
+    # -- it is not "cannot accept uploads"). A directory delete cascades here because the server's
+    # SubtreeDelete does it behind the wire; that used to be declared as `dir_deletable: true` and
+    # is now simply what every backend does (§14a).
     # `presignable: FALSE`, WHICH IS THE ONE PLACE THIS DIVERGES FROM CHUNK, AND THE CONTRACT IS
     # WHAT FORCED THE QUESTION. It read `true` here until `FileLayerAdapterContract` was wired and
     # asserted the only thing the flag actually means: `presignable? == download returns a Redirect`,
@@ -53,7 +54,7 @@ module FileLayer
     # out with real git, so a server-side commit would move refs under a live working copy.
     CAPABILITIES = Capabilities.new(
       versioned: true, syncable: true, presignable: false,
-      scannable: false, port_writable: false, dir_deletable: true, local_worktree: false
+      scannable: false, port_writable: false, local_worktree: false
     ).freeze
 
     # `write` EXISTS IN ORDER TO REFUSE, and its absence was a real omission the contract caught.

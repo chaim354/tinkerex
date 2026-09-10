@@ -30,7 +30,7 @@ module FileLayer
       # and it is why committing is share-only (spec part 3c). It is a NETWORK filesystem though,
       # which is a live hazard rather than a footnote — spec part 8.
       Capabilities.new(versioned: false, syncable: false, presignable: false, scannable: true,
-                       port_writable: true, dir_deletable: true, local_worktree: true)
+                       port_writable: true, local_worktree: true)
     end
 
     # Nothing to presign, so nothing for the CSP's `connect-src` to name: every download here is a

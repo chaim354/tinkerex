@@ -163,7 +163,7 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
   # orphaning delete genuinely fails here, because `Node.present` filters on the row's own
   # `deleted` column, not on its ancestor chain, so an untombstoned child stays visible even with a
   # tombstoned parent -- this fixture cannot pass by accident.
-  test "a directory delete cascades, because dir_deletable is true on chunk_remote" do
+  test "a directory delete cascades to the whole subtree on the sync server" do
     skip_unless_remote_server
     user = sign_in
     folder = "#{journey_prefix}-cascade"
@@ -201,7 +201,8 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
 
     assert_not user.nodes.present.exists?(node_id: child),
                "SubtreeDelete must cascade to descendants -- an orphaned child is §14a's " \
-               "recorded trap, and dir_deletable is true precisely because the server cascades"
+               "recorded trap. All three backends cascade since 2026-09-10; this leg is the one " \
+               "where the cascade happens on the far side of the wire"
     assert_not user.nodes.present.exists?(node_id: subfolder_node.node_id),
                "SubtreeDelete must cascade to the nested folder itself, not just the file " \
                "directly inside the top folder"

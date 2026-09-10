@@ -1307,8 +1307,7 @@ module Tools
 
       def capabilities
         FileLayer::Capabilities.new(versioned: false, syncable: false, presignable: false,
-                                    scannable: true, port_writable: true, dir_deletable: false,
-                                    local_worktree: false)
+                                    scannable: true, port_writable: true, local_worktree: false)
       end
 
       # `replace:` AND `expect_token:` MIRROR THE REAL SIGNATURE and are deliberately ignored: this

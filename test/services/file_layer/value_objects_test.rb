@@ -29,7 +29,7 @@ module FileLayer
     test "Capabilities answers the first five questions" do
       caps = FileLayer::Capabilities.new(versioned: true, syncable: true, presignable: false,
                                          scannable: false, port_writable: true,
-                                         dir_deletable: true, local_worktree: false)
+                                         local_worktree: false)
       assert caps.versioned?
       assert caps.syncable?
       assert_not caps.presignable?
@@ -48,24 +48,17 @@ module FileLayer
       assert_match(/scannable/, err.message)
     end
 
-    # dir_deletable asks ONE question: can this backend's `delete` be handed a DIRECTORY?
+    # `dir_deletable` STOOD HERE AND IS RETIRED (2026-09-10). It asked one question for one caller
+    # — may this backend's `delete` be handed a DIRECTORY? — and it was a real distinction while
+    # chunk_remote cascaded and share and s3 refused. All three cascade now, so it varied on
+    # nothing, and §14a's own rule is that a capability earns its place by VARYING: one that agrees
+    # on every backend is a lie about the shape of the port, not a seam.
     #
-    # It exists because FilesController#destroy stopped branching on port_writable?. Chunk
-    # answers true (Sync::SubtreeDelete cascades the tombstone to the whole subtree); share
-    # answers false (children would be stranded at paths that no longer exist while their bytes
-    # sit in .trash, which the scan refuses to look at); S3 answers false (there is no directory
-    # and no rename -- a dir node's key does not exist).
-    #
-    # IT IS NOT `syncable`, and the fact that it currently equals it is a coincidence of having
-    # exactly three backends -- the same trap `scannable` was introduced to escape. A backend
-    # that owns its own tree without a changelog (a database-backed store, a versioned object
-    # store with real directories) answers dir_deletable true and syncable false.
-    test "dir_deletable is part of the capability set and reads as a predicate" do
-      caps = FileLayer::Capabilities.new(versioned: true, syncable: true, presignable: true,
-                                         scannable: false, port_writable: false,
-                                         dir_deletable: true, local_worktree: false)
-      assert_predicate caps, :dir_deletable?
-    end
+    # THE ARGUMENT FOR KEEPING IT WAS CONSIDERED AND REJECTED. It ran: leave the seam for a future
+    # backend that cannot cascade. But a member nothing reads is not a seam — it is a claim the
+    # tests stop checking, and reintroducing it later costs one line. §14a records what each
+    # backend does instead, which is the part a future adapter author actually needs.
+
 
     # Asserted as a RELATIONSHIP against the real adapters rather than three literals, so a
     # backend added later cannot quietly skip declaring it.
@@ -76,23 +69,6 @@ module FileLayer
     # keys. If a future adapter's capabilities ever depend on how it was constructed, this test
     # must move to real instances -- the answer would silently become whatever `allocate` left
     # behind, which for a Data-backed field is nil, and nil reads as false.
-    # SHARE JOINED CHUNK_REMOTE ON 2026-09-10; S3 IS THE LAST HOLDOUT. The reasons are no longer the
-    # same for the two that allow it, and that is worth stating: the sync server cascades the whole
-    # subtree behind the wire, while share renames the directory into `.trash` in one atomic call and
-    # tombstones the subtree itself (FileLayer::Subtree). S3 still refuses because a directory node's
-    # key does not exist at all — a folder there is a prefix, and moving one is a copy-and-delete per
-    # object rather than a rename.
-    #
-    # THIS TEST GOES WHEN THE CAPABILITY DOES. Once s3 cascades too, `dir_deletable` varies on
-    # nothing and is removed (§14a: a capability that agrees on every backend is a lie about the
-    # shape of the port) — and this table goes with it.
-    test "every adapter declares dir_deletable, and s3 is the one that still refuses" do
-      expected = { FileLayer::ChunkRemote => true, FileLayer::Share => true, FileLayer::S3 => false }
-      expected.each do |klass, want|
-        got = klass.allocate.capabilities.dir_deletable?
-        assert_equal want, got, "#{klass} must declare dir_deletable: #{want}"
-      end
-    end
 
     # Task 8's two return types. Both are plain immutable Data objects, same as FileInfo above --
     # the assertions here are deliberately as thin as FileInfo's own: what matters about a Data

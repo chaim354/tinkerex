@@ -196,19 +196,9 @@ class FilesHelperTest < ActiveSupport::TestCase
   # no directory has, a download url would put a dead entry on every folder, and a `node_id` would
   # enrol folders in the thumbnail poll. An exact comparison is the only shape that catches a key
   # someone adds by copying `file_menu_data`.
-  #
-  # AND IT IS EMPTY WHERE THE BACKEND REFUSES A DIRECTORY DELETE, so the assertion is keyed on the
-  # capability rather than on the ambient backend. Both arms are real: `dir_deletable?` is true on
-  # chunk_remote and false on share and s3, so this test takes a different branch on each of the
-  # three legs instead of pinning whichever one happens to be running.
   test "folder_menu_data is the action, the name and the delete url, and nothing else" do
-    if FileLayer.current.capabilities.dir_deletable?
-      assert_equal({ action: "contextmenu->filemenu#open", node_name: "cad", delete_url: file_path("dir-1") },
-                   folder_menu_data("dir-1", "cad"))
-    else
-      assert_empty folder_menu_data("dir-1", "cad"),
-                   "a backend that refuses a directory delete must offer a folder no menu at all"
-    end
+    assert_equal({ action: "contextmenu->filemenu#open", node_name: "cad", delete_url: file_path("dir-1") },
+                 folder_menu_data("dir-1", "cad"))
   end
 
   # `node_name` IS PASSED, NEVER DERIVED — the rule `ext_label` already follows below. The menu's
@@ -216,11 +206,7 @@ class FilesHelperTest < ActiveSupport::TestCase
   # hundreds; a caller that has the node already has the name.
   test "node_name passes through verbatim on both builders" do
     assert_equal "Bracket v2.stl", file_menu_data("n-1", "Bracket v2.stl", nil)[:node_name]
-    # The folder builder only HAS a payload where the backend can cascade a directory delete; where
-    # it cannot, "passes through verbatim" is not a claim about it.
-    if FileLayer.current.capabilities.dir_deletable?
-      assert_equal "Bracket v2.stl", folder_menu_data("n-1", "Bracket v2.stl")[:node_name]
-    end
+    assert_equal "Bracket v2.stl", folder_menu_data("n-1", "Bracket v2.stl")[:node_name]
   end
 
   # `ext_label` IS AN ARGUMENT, NEVER DERIVED FROM THE NAME. `models/_hero_poster` passes "" and

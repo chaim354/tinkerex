@@ -86,7 +86,7 @@ module FileLayer
       # would mean materialising the repository first; measured at 11,287 GETs on a cold container
       # for an unpacked repo (docs/roads-not-taken.md §9).
       Capabilities.new(versioned: false, syncable: false, presignable: true, scannable: true,
-                       port_writable: true, dir_deletable: false, local_worktree: false)
+                       port_writable: true, local_worktree: false)
     end
 
     # THE ORIGIN EVERY PRESIGNED URL FROM THIS ADAPTER CARRIES, for the CSP's `connect-src`. The
@@ -469,9 +469,18 @@ module FileLayer
     # `transaction do` around both would roll back the ROW while leaving the bytes in .trash —
     # manufacturing exactly the silent resurrection this ordering exists to avoid. `node.update!`
     # is a single statement and already atomic, which is the only atomicity this needs.
+    # A CAP ON A DIRECTORY DELETE, AND IT REFUSES RATHER THAN HALF-COMPLETING. Each object costs a
+    # COPY plus a DELETE — two billed requests — so a folder of 5,000 is 10,000 and will exhaust the
+    # request before it exhausts the folder. Refusing above the cap keeps the ordering guarantee in
+    # `delete_directory!` intact; a background job would have to decide what the catalog says while
+    # it runs, which is the landmine spread across time. Lifting this is named follow-on work, not
+    # something to do by raising the number.
+    DIR_DELETE_MAX_OBJECTS = 500
+
     def delete(user, node_id: nil)
       node = live_node!(user, node_id)
-      trashable_file!(node)
+      return delete_directory!(user, node) if node.dir?
+
       copyable_size!(node)
       src_key = key_for(node) # read BEFORE the update nulls storage_path
       dest_key = trash_key(node)
@@ -499,6 +508,65 @@ module FileLayer
       # unable to fire. It is also why `undelete` must exist as a fourth verb rather than being
       # "a move back": there is no storage_path left to move from.
       node.update!(deleted: true, storage_path: nil)
+      nil
+    end
+
+    # DELETE A DIRECTORY: COPY EVERY OBJECT, THEN DELETE EVERY SOURCE, THEN TOMBSTONE. That order is
+    # the whole design, and no two of the three may interleave.
+    #
+    # THE LANDMINE IS A DELETE FAILING *AFTER* A TOMBSTONE (§14a). The next scan then finds an
+    # unclaimed key with no tombstone to revive by path, mints a NEW node_id, and orphans every
+    # attachment, BOM link and tag on it — by a scan that did nothing wrong, with no error anywhere
+    # and nothing in a log. So the catalog is written LAST and only once the bucket agrees, and a
+    # failure at any stage leaves it untouched: some bytes may sit in `.trash` as unreferenced
+    # copies, which is wasted storage and nothing worse, and the next attempt overwrites them.
+    #
+    # THERE IS NO ATOMICITY TO BE HAD HERE and pretending otherwise is the trap. S3 has no rename
+    # and no multi-key transaction, which is exactly why share's single `File.rename` is not a model
+    # for this — that adapter's whole delete is one syscall. What is available is ORDERING, and
+    # ordering is what this buys.
+    def delete_directory!(user, node)
+      ids = FileLayer::Subtree.node_ids(user, node.node_id)
+      # Only rows with a path have an object behind them: directories are pure catalog here (there
+      # is no key for one), and a descendant already tombstoned by a scan has a NULL path.
+      files = user.nodes.where(node_id: ids).where.not(storage_path: nil).where(kind: "file").to_a
+
+      if files.size > DIR_DELETE_MAX_OBJECTS
+        raise UnsupportedOperation,
+              "#{node.node_id.inspect} holds #{files.size} files, over this deployment's " \
+              "#{DIR_DELETE_MAX_OBJECTS}-object limit for a folder delete — each one costs a copy " \
+              "and a delete here. Remove some of its contents first."
+      end
+      # The same 5GiB ceiling the single-file path enforces, asked of every member BEFORE anything
+      # moves: finding it on object 400 would be the half-completed state this method exists to
+      # avoid.
+      files.each { |f| copyable_size!(f) }
+
+      trash_root = "#{Library::Scanner::TRASH_PREFIX}/#{node.node_id}"
+      pairs = files.map { |f| [ key_for(f), key_for_rel("#{trash_root}/#{f.storage_path}") ] }
+
+      begin
+        # PHASE 1 — every copy, and nothing is destroyed yet. A failure here leaves the library
+        # exactly as it was plus some orphaned copies under `.trash`.
+        pairs.each { |src, dest| copy!(src, dest) }
+        # PHASE 2 — every source. A failure here leaves some objects deleted with their copies
+        # safely in `.trash` and the catalog still live: the next scan sees them vanished and
+        # tombstones them by the ordinary path, which is recoverable, and a retry of this delete
+        # completes it.
+        pairs.each { |src, _| @client.delete_object(bucket: @bucket, key: src) }
+      rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
+        # FetchError, and NOTHING IS TOMBSTONED — the same fail-safe direction the single-file path
+        # takes, and the same refusal to enumerate which errors are retryable: this backend points
+        # at any S3-compatible store, so the DEFAULT must be the recoverable answer.
+        raise FetchError, "#{node.node_id.inspect}: #{e.class} (#{e.message})"
+      end
+
+      # PHASE 3 — the catalog, once the bucket agrees. `update_all` so a subtree is never partly
+      # live, and `storage_path: nil` on all of them for the reason the file path already gives:
+      # a trash tombstone that kept its path would be revived by `create_or_revive!` and hand a new
+      # object that node's id. `undelete` rebuilds the paths from the restored parents instead.
+      user.nodes.where(node_id: ids).update_all(deleted: true, storage_path: nil,
+                                                updated_at: Time.current)
       nil
     end
 
@@ -638,6 +706,28 @@ module FileLayer
       # is what makes undeleting a live node a clean NotFound instead of a confusing copy.
       node = user.nodes.find_by(node_id:, deleted: true) ||
              raise(NotFound, "node #{node_id.inspect} is not in the trash")
+
+      # AN ORPHANED RESTORE IS REFUSED (§14a), REACHABLE HERE SINCE THE DIRECTORY CASCADE (2026-09-10).
+      # Before it, `delete` could not tombstone a parent out from under a live child on this backend
+      # and the shared contract SKIPPED this case; now restoring a CHILD first is the mainline.
+      # Refuse rather than reparent to the root: a refusal is recoverable — restore the folder, then
+      # the file — and a scatter is not. The message names the ACTION, because a browser Restore
+      # click has no prompt to offer.
+      #
+      # ON THE TOMBSTONE KIND, NOT ON `deleted:` — §14a's two-kinds rule, and share learned this the
+      # hard way. A SCAN tombstone KEEPS its storage_path and restoring into one is self-healing; a
+      # TRASH tombstone NULLs it, and that is what the cascade writes. The NULL is the discriminator.
+      #
+      # BEFORE THE BYTES CHECK BELOW, and that ordering is not cosmetic: a child tombstoned by the
+      # cascade has no object at `.trash/<its id>/<name>` — its bytes were copied to
+      # `.trash/<dir id>/<path under the dir>` — so the existence check would answer NotFound, "its
+      # trashed bytes are gone (purged?)", which is terminal and wrong.
+      parent = user.nodes.find_by(node_id: node.parent_node_id) if node.parent_node_id.present?
+      if parent&.deleted? && parent.storage_path.nil?
+        raise UnsupportedOperation,
+              "#{node_id.inspect}: its folder is in the trash too — restore the folder first"
+      end
+
       src_key = trash_key(node)
       # Reconstructed from parent + name, because delete released storage_path (Landmine 2).
       # live: false — see parent_dir_rel!.

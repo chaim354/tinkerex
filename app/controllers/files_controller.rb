@@ -977,11 +977,17 @@ class FilesController < ApplicationController
   # revive unable to fire. On chunk, Sync::SubtreeDelete IS the whole delete: the bytes belong to
   # the sync engine and the (cascaded) tombstone is the whole truth.
   #
-  # A DIRECTORY is refused on share/s3 and cascades on chunk. That is `dir_deletable`, and the
-  # refusal arrives as UnsupportedOperation, which this controller already maps to 422. The Delete
-  # button IS rendered for directories, so this is the ordinary path, not an edge -- on chunk it is
-  # Sync::SubtreeDelete cascading under one lock, never Sync::Mutation.apply(op: "delete"), which
-  # tombstones only the node it is handed and would orphan a directory's children.
+  # A DIRECTORY CASCADES ON EVERY BACKEND SINCE 2026-09-10, by three different mechanisms and one
+  # rule: the tombstone reaches the whole subtree or it reaches nothing. chunk_remote leaves it to
+  # the sync server's SubtreeDelete under one lock; share renames the directory into `.trash` in one
+  # atomic call and tombstones the subtree itself; s3 copies and deletes per object, capped, and
+  # writes the catalog only once the bucket agrees. `dir_deletable` gated this until all three could
+  # do it and was retired with the last refusal — a capability that varies on nothing is a lie about
+  # the shape of the port (§14a).
+  #
+  # WHAT MUST NEVER HAPPEN IS A PER-NODE TOMBSTONE STANDING IN FOR A CASCADE. It orphans every
+  # descendant: their bytes have moved somewhere the scan refuses to look, so nothing can pair them,
+  # and the mass-deletion guard then refuses that scan and every scan after it.
   def destroy
     node = current_user.nodes.find_by!(node_id: params[:id])
     FileLayer.current.delete(current_user, node_id: node.node_id)

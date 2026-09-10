@@ -1276,18 +1276,28 @@ module FileLayer
     # deletable_file! per-op rather than by kind. Share refuses because File.rename on a directory
     # SUCCEEDS and strands the children (its danger is that it works too well). This refuses
     # because there is nothing to copy at all.
-    test "deleting a DIRECTORY is refused as a client condition, not a retry-forever FetchError" do
+    # REWRITTEN 2026-09-10: THE REFUSAL BECAME A CAPPED CASCADE. The argument above is still exactly
+    # right about the MECHANISM — there is no directory object and no rename, so this is a copy and
+    # a delete per object with no atomicity across them — and what changed is the answer to it. A
+    # failure at object 400 of 1000 no longer leaves half the subtree in `.trash` and half live,
+    # because the CATALOG is written only after the bucket agrees, and the cap keeps the sequence
+    # short enough to finish inside a request. What this test still pins is that the refusal, when
+    # it comes, comes BEFORE anything leaves the process.
+    test "an over-cap directory delete is refused before any request leaves the process" do
       dir = @user.nodes.create!(node_id: SecureRandom.uuid, name: "cad", kind: "dir",
                                 deleted: false, storage_path: "cad", mtime: 1)
-      create_file!(name: "cad/gear.stl", bytes: "g")
+      (FileLayer::S3::DIR_DELETE_MAX_OBJECTS + 1).times do |i|
+        create_file!(name: "cad/g#{i}.stl", bytes: "g")
+      end
+      before = @fake.calls[:copy_object]
 
       err = assert_raises(FileLayer::UnsupportedOperation) do
         adapter.delete(@user, node_id: dir.node_id)
       end
-      assert_match(/files only/, err.message)
-      assert_equal 0, @fake.calls[:copy_object], "refused BEFORE any request left the process"
+      assert_match(/#{FileLayer::S3::DIR_DELETE_MAX_OBJECTS}-object limit/, err.message)
+      assert_equal before, @fake.calls[:copy_object], "refused BEFORE any request left the process"
       assert_not @user.nodes.find_by!(node_id: dir.node_id).deleted
-      assert_equal "g", @fake.objects["#{PREFIX}/cad/gear.stl"].body, "the children are untouched"
+      assert_equal "g", @fake.objects["#{PREFIX}/cad/g0.stl"].body, "the children are untouched"
     end
 
     # A DELIBERATE DIVERGENCE FROM SHARE, which ALLOWS a directory move. Share's permission rests
@@ -1320,18 +1330,27 @@ module FileLayer
     end
 
     # UnsupportedOperation is a StandardError, and that is load-bearing rather than taxonomy: a
-    # user clicked delete on a folder, so GeneratePreviewJob's `rescue StandardError` shape must
-    # catch it. NotImplementedError is a ScriptError and would propagate uncaught and page on-call.
-    test "a refused directory delete is a client condition, catchable by rescue StandardError" do
-      dir = @user.nodes.create!(node_id: SecureRandom.uuid, name: "cad", kind: "dir",
-                                deleted: false, storage_path: "cad", mtime: 1)
+    # user clicked a button, so GeneratePreviewJob's `rescue StandardError` shape must catch it.
+    # NotImplementedError is a ScriptError and would propagate uncaught and page on-call.
+    #
+    # RE-AIMED at the refusal that still exists. This asserted the taxonomy about the DIRECTORY
+    # refusal, which is gone; the orphaned RESTORE inherits the identical argument — a client
+    # condition, reached from a browser click, which must be catchable. The class of bug it guards
+    # has not changed at all, so it is kept rather than deleted.
+    test "a refused orphan restore is a client condition, catchable by rescue StandardError" do
+      dir_id = make_dir(name: "cad")
+      leaf_id = adapter.write(@user, parent_node_id: dir_id, name: "gear.stl",
+                              io: StringIO.new("g")).node_id
+      adapter.delete(@user, node_id: dir_id) # cascades: both tombstoned, both paths NULLed
+
       caught = begin
-        adapter.delete(@user, node_id: dir.node_id)
+        adapter.undelete(@user, node_id: leaf_id)
         nil
       rescue StandardError => e
         e
       end
       assert_instance_of FileLayer::UnsupportedOperation, caught
+      assert @user.nodes.find_by!(node_id: leaf_id).deleted?, "a refused restore must not half-apply"
     end
 
     # --- move (task 6) --------------------------------------------------------------------
@@ -1676,6 +1695,87 @@ module FileLayer
       scan!(max_delete_pct: 100)
       node = @user.nodes.find_by(node_id: info.node_id)
       assert node && !node.deleted, "the dir-marker keeps the empty folder alive"
+    end
+
+    # ---- Deleting a DIRECTORY (2026-09-10) ------------------------------------------------
+    #
+    # S3 HAS NO DIRECTORY AND NO RENAME, so a folder here is a key prefix and a folder delete is a
+    # copy-and-delete PER OBJECT. That makes it the dangerous twin of share's single atomic rename,
+    # and the ordering below is the whole design.
+
+    # `@fake.objects` IS THE STORE, keyed by the FULL key including PREFIX, so these assertions read
+    # the WIRE FORMAT. §14e's lesson is that a fake sharing the adapter's misunderstanding CONFIRMS
+    # it — FakeS3 once decoded copy_source with CGI.unescape against the adapter's CGI.escape, exact
+    # inverses, and 79 of 80 tests were green over silent permanent data loss on any name with a
+    # space.
+    def stored?(rel) = @fake.objects.key?("#{PREFIX}/#{rel}")
+
+    test "deleting a directory copies every object to .trash, deletes the sources, then tombstones" do
+      dir_id = make_dir(name: "parts")
+      sub_id = adapter.mkdir(@user, parent_node_id: dir_id, name: "stl").node_id
+      leaf_id = adapter.write(@user, parent_node_id: sub_id, name: "a.stl",
+                              io: StringIO.new("solid a\n")).node_id
+
+      adapter.delete(@user, node_id: dir_id)
+
+      [ dir_id, sub_id, leaf_id ].each do |id|
+        node = @user.nodes.find_by!(node_id: id)
+        assert node.deleted?, "#{id} survived as a live node under a deleted directory"
+        assert_nil node.storage_path, "#{id} kept its storage_path"
+      end
+      refute stored?("parts/stl/a.stl"), "the source object survived"
+      assert stored?(".trash/#{dir_id}/parts/stl/a.stl"), "no copy reached .trash"
+    end
+
+    test "a name with a space survives the round trip" do
+      # THE 79-OF-80 CASE, ASSERTED DIRECTLY. A folder delete is a copy per object, so it walks
+      # straight into the encoding bug that hid silent permanent data loss.
+      dir_id = make_dir(name: "parts")
+      adapter.write(@user, parent_node_id: dir_id, name: "Bracket v2.stl", io: StringIO.new("x"))
+
+      adapter.delete(@user, node_id: dir_id)
+
+      refute stored?("parts/Bracket v2.stl"), "the source object survived"
+      assert stored?(".trash/#{dir_id}/parts/Bracket v2.stl"),
+             "the copy did not land under its real name — check copy_source's encoding"
+    end
+
+    test "over the cap it refuses, and neither the catalog nor the bucket is touched" do
+      dir_id = make_dir(name: "parts")
+      (FileLayer::S3::DIR_DELETE_MAX_OBJECTS + 1).times do |i|
+        adapter.write(@user, parent_node_id: dir_id, name: "f#{i}.stl", io: StringIO.new("x"))
+      end
+
+      err = assert_raises(FileLayer::UnsupportedOperation) { adapter.delete(@user, node_id: dir_id) }
+      assert_match(/#{FileLayer::S3::DIR_DELETE_MAX_OBJECTS + 1}/, err.message,
+                   "the refusal must name the count, or the maker cannot tell how far over they are")
+      refute @user.nodes.find_by!(node_id: dir_id).deleted?, "a refused delete tombstoned anyway"
+      assert stored?("parts/f0.stl"), "a refused delete moved bytes"
+    end
+
+    test "a copy that fails partway leaves the catalog untouched" do
+      # THE LANDMINE, DRIVEN. If a tombstone were written before the objects were confirmed moved,
+      # a scan would find an unclaimed key with no tombstone to revive by path, mint a NEW node_id,
+      # and orphan every attachment — by a scan that did nothing wrong, with no error anywhere.
+      dir_id = make_dir(name: "parts")
+      adapter.write(@user, parent_node_id: dir_id, name: "a.stl", io: StringIO.new("a"))
+      leaf_id = adapter.write(@user, parent_node_id: dir_id, name: "b.stl", io: StringIO.new("b")).node_id
+
+      #  lets the first copy succeed and kills the second — MID-SEQUENCE, which is
+      # the only arrangement that can distinguish "nothing was attempted" from "it half-applied".
+      @fake.fault_after!(:copy_object, 1, "InternalError")
+      assert_raises(FileLayer::FetchError) { adapter.delete(@user, node_id: dir_id) }
+
+      refute @user.nodes.find_by!(node_id: dir_id).deleted?, "the directory was tombstoned anyway"
+      refute @user.nodes.find_by!(node_id: leaf_id).deleted?, "a child was tombstoned anyway"
+      assert stored?("parts/a.stl"), "a source was deleted despite the failure"
+      assert stored?("parts/b.stl"), "a source was deleted despite the failure"
+    end
+
+    test "an empty directory deletes" do
+      dir_id = make_dir(name: "empty")
+      adapter.delete(@user, node_id: dir_id)
+      assert @user.nodes.find_by!(node_id: dir_id).deleted?
     end
   end
 end
