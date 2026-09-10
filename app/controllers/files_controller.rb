@@ -512,7 +512,7 @@ class FilesController < ApplicationController
     # project README door already made (docs/invariants/git-editing.md, "The Markdown exception").
     # `@repo_root` still decides whether a save records a pending git edit, and still does so BY
     # BEING NIL inside Maker::TextSave, so nothing here branches.
-    @editable  = @kind == :text && editable?(@node)
+    @editable  = @kind == :text && editable?(@node) && editable_without_history?(@node, @repo_root)
     # THE WAY INTO THE COMMIT BOX. Without these two the box is reachable only by typing its URL --
     # which is exactly what shipped on 2026-08-28 and was found by a person using the app, not by
     # the suite: every test navigates straight to repo_commit_path, so nothing was ever asked
@@ -660,6 +660,14 @@ class FilesController < ApplicationController
     node = current_user.nodes.present.find_by!(node_id: params[:id])
     root = Library::WorkingTree.new(current_user).root_for(node)
     return render_save_error(:unprocessable_entity, "This file is too large to edit here.") unless editable?(node)
+    unless editable_without_history?(node, root)
+      # THE SERVER IS THE ENFORCER, not the hidden editor. A door that only withheld the control
+      # would still accept a hand-rolled PATCH — the same shape §14e records for the size cap, whose
+      # courteous half lives in the JS and whose real half lives on the line above.
+      return render_save_error(:unprocessable_entity,
+                               "This library keeps no history for this file, so it can only be " \
+                               "edited here as Markdown or plain text.")
+    end
 
     # THE SHARED SAVE (stage 4, S4-4). The stale check, the `replace: true` write that REUSES the
     # node, the pending git edit AND the preview re-enqueue (S4-3's rule: the picture of this file
@@ -1537,6 +1545,30 @@ class FilesController < ApplicationController
   # refuses to mount an editor over the cap, but a refusal that only lives in JavaScript is a
   # refusal an unmodified `curl` walks straight past.
   EDITABLE_MAX_BYTES = 200_000
+
+  # WHAT MAY BE EDITED WHERE THERE IS NO UNDO. Inside a working tree, anything text: git is the undo,
+  # which is the argument the editor was built on and this must not take away. OUTSIDE one, a save
+  # replaces the file with nothing to go back to, so the set narrows to the two extensions a maker
+  # writes PROSE in.
+  #
+  # THE NARROWING IS A DELIBERATE STEP BACK FROM "ANY TEXT FILE", taken 2026-09-10 after that
+  # shipped. Widening this far had a consequence worth naming: it left `codeview` — the read-only
+  # source view — reachable only by an over-cap file and a visitor's public page, so a maker
+  # browsing a `.rb` or a `.gcode` their slicer wrote was handed a writable editor over a file with
+  # no history. Reading it is the common case; a writable editor with no undo is a worse offer than
+  # showing it.
+  #
+  # `EXTENSIONS`, NOT A `text?` SUBSET, and the two questions are different: `Maker::FileAttachment
+  # .text?` asks "can this be displayed as text" and governs the VIEWER, which is unchanged. This
+  # asks "is losing the previous contents of this acceptable", which only the maker's own prose is.
+  # An extensionless text file is read-only outside a repo for the same reason.
+  EDITABLE_WITHOUT_HISTORY = %w[.md .txt].freeze
+
+  def editable_without_history?(node, repo_root)
+    return true if repo_root.present?
+
+    EDITABLE_WITHOUT_HISTORY.include?(File.extname(node.name.to_s).downcase)
+  end
 
   def editable?(node)
     return false unless Maker::FileAttachment.text?(node.name)

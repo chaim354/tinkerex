@@ -125,7 +125,7 @@ SCAD
     JS
   end
 
-  test "a source file opens in a mounted, highlighted, editable editor" do
+  test "a source file opens in a mounted, highlighted, READ-ONLY viewer" do
     open_file("firmware.cpp")
 
     assert_selector ".cm-lineNumbers .cm-gutterElement", minimum: 4
@@ -138,12 +138,18 @@ SCAD
     # what make either mean anything.
     assert_selector ".cm-line span", minimum: 1
 
-    # EDITABLE SINCE 2026-09-10 (see the file header): a source file under the cap mounts `editor`,
-    # which sets neither facet. Asserted rather than dropped, and both facets rather than one, so a
-    # regression that re-gated the editor on a working tree lands HERE — where the reason is
-    # written down — instead of only on repo_editor_test.rb's own cases.
-    assert_equal({ "readOnly" => false, "editable" => true }, editability_facts)
-    assert_selector ".cm-content[contenteditable=true]"
+    # READ-ONLY, AND THE ANSWER MOVED TWICE IN ONE DAY. A source file was read-only outside a
+    # working tree; then briefly editable anywhere, when the editor was widened to any text file;
+    # and read-only again once that was narrowed to `.md` and `.txt` outside a repository — a
+    # `.cpp` on a NAS has no undo behind it, and a writable editor over a file with no history is a
+    # worse offer than showing it. This file is not in a repository, so `codeview` is what it gets.
+    #
+    # BOTH FACETS, not one: `codeview` sets `EditorState.readOnly` AND `EditorView.editable`, and a
+    # regression that set only one would leave a caret blinking in a document that silently discards
+    # every keystroke. The editable arm is pinned on a `.md` in repo_editor_test.rb and on the
+    # created `.txt` in text_file_creation_test.rb.
+    assert_equal({ "readOnly" => true, "editable" => false }, editability_facts)
+    assert_no_selector ".cm-content[contenteditable=true]"
 
     assert_no_console_errors
   end

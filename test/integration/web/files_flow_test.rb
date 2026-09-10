@@ -492,28 +492,32 @@ module Web
     # thing worth asserting. THE FIXTURE'S NAME IS DELIBERATELY UPPER-CASE: the view's ext value
     # is `File.extname(name).downcase.delete(".")`, three steps, and a file already called
     # `x.cpp` would pass with two of them deleted.
-    # THE BRANCH THIS ASSERTS CHANGED ON 2026-09-10, AND THE PROPERTY DID NOT. It read `codeview`
-    # until then, because the writable `editor` mount was reachable only inside a working tree; a
-    # text file under the size cap now gets `editor` wherever it sits, and files/viewers/_code
-    # writes the two identifiers out LITERALLY in two duplicated divs (§14d), so the ext value has
-    # to be re-asserted on whichever branch a plain library file actually reaches. The `codeview`
-    # branch is still live for an over-cap file and for a visitor's page, and is pinned there —
-    # public_file_view_test.rb and test/system/code_viewer_test.rb.
-    test "a source file's page wires the editor with a normalised extension" do
+    # THE BRANCH THIS ASSERTS HAS MOVED TWICE IN ONE DAY AND THE PROPERTY HAS NOT MOVED AT ALL,
+    # which is the reason to write it this way. It read `codeview`, because the writable `editor`
+    # was reachable only inside a working tree; then `editor`, when any text file under the cap
+    # became editable anywhere; and now `codeview` again, because that was narrowed to `.md` and
+    # `.txt` outside a repository — a `.cpp` on a NAS has no undo behind it, and a writable editor
+    # over a file with no history is a worse offer than showing it.
+    #
+    # What is being pinned throughout is that the EXTENSION IS NORMALISED and reaches the viewer:
+    # `Firmware.CPP` must arrive as `cpp`. files/viewers/_code writes the two identifiers out
+    # LITERALLY in two duplicated divs (§14d), so the assertion has to name whichever branch a
+    # plain library file reaches — and the `editor` branch is pinned by a `.md`/`.txt` in
+    # text_file_creation_test.rb.
+    test "a source file's page wires the read-only viewer with a normalised extension" do
       sign_in
       node_id = upload("Firmware.CPP", "#include <Arduino.h>\n".b)
       get file_path(node_id)
 
       assert_response :success
-      assert_select "[data-controller=editor]", 1
-      assert_select "[data-editor-ext-value=cpp]", 1
-      assert_select "[data-editor-url-value=?]", blob_file_path(node_id), count: 1
-      assert_select "[data-editor-save-url-value=?]", file_path(node_id), count: 1
+      assert_select "[data-controller=codeview]", 1
+      assert_select "[data-codeview-ext-value=cpp]", 1
+      assert_select "[data-codeview-url-value=?]", blob_file_path(node_id), count: 1
       # INSIDE the controller's own element, not merely somewhere on the page. Stimulus resolves a
       # target only within the subtree of the controller that declares it, so a fallback that
       # drifted outside would be a target `this.fallbackTarget` can never find — and the graceful
       # degradation this whole branch is built around would raise instead.
-      assert_select "[data-controller=editor] pre.preview-text[data-editor-target=fallback]", 1
+      assert_select "[data-controller=codeview] pre.preview-text[data-codeview-target=fallback]", 1
     end
 
     # THE DEFAULT IS NO LANGUAGE, NOT A GUESS, and this is the half of that rule the server owns:
