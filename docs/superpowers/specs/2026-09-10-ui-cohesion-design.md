@@ -1,7 +1,7 @@
 # UI cohesion sweep — design
 
-Date: 2026-09-10. Branch: `claude/ux-ui-cohesion-4oaw9c`. Status: audit complete, plan proposed,
-awaiting approval before implementation.
+Date: 2026-09-10. Branch: `claude/ux-ui-cohesion-4oaw9c`. Status: audit complete, first-run walkthrough complete,
+plan proposed, awaiting approval before implementation.
 
 The design system landed on 2026-09-07 (`95ae66b`, spec `2026-09-03-web-shell-and-design-system-design.md`)
 and **356 commits across 49 merged PRs have landed on top of it since** — stages 2, 3 and 4 (home,
@@ -34,6 +34,153 @@ the same screenshots (§14e — checking beats reasoning):
 - **The phone tab bar is not rendered inline mid-page.** It is `position: fixed; bottom: 0; z-index: 30`,
   measured at `top: 792` in an 844px viewport. `fullPage: true` stitches fixed elements at their
   viewport offset; that is a capture artifact.
+
+## 1A. The first-run walkthrough (2026-09-10, added after the static audit)
+
+The audit above measured a *seeded* library. This section is a second pass that did what a maker
+does: signed up on a **completely empty install** (fresh database, empty share directory) as
+`jess@workshop.test`, created **Shop Stool** — a plywood stool with 3D-printed foot caps — uploaded
+a DXF, an STL, a README and a build photo, wrote a build-log entry, claimed a handle, published,
+and opened the result signed-out as a visitor would.
+
+Most of the flow works, and some of it is genuinely good (§1C). But the walkthrough found defects
+the static audit could not, because they only exist in motion — and one of them is a dead end on
+the very first screen.
+
+### 1A.1 A new maker is told to do the thing they just did — BLOCKER
+
+Signing up creates the account (`id=1, confirmed_at=nil, confirmation_token` present) and then
+redirects to `/users/sign_in` carrying:
+
+> **You need to sign in or sign up before continuing.**
+
+Devise's registration sets a "confirmation link sent" notice and redirects to root; root is gated,
+so `authenticate_user!` **replaces** that notice with its own. The user is never told an email was
+sent, never told to confirm, and is looking at a message describing the step they have just
+completed. They learn the truth only by failing a login, which finally says *"You have to confirm
+your email address before continuing."*
+
+On a self-hosted box with no SMTP configured — the product's primary deployment — the maker is
+simply stuck, with no explanation anywhere in the UI.
+
+### 1A.2 The auth card has never rendered at its designed width — HIGH
+
+`shell.css` defines `.auth-main { max-width: 440px; padding-top: 48px }`, and the layout applies it.
+It has never taken effect. Both rules sit in `@layer shell`, so specificity decides, and
+`main.container` (0,1,1) outranks `.auth-main` (0,1,0):
+
+| property | designed | actually computed |
+|---|---|---|
+| `max-width` | 440px | **1360px** |
+| `padding-top` | 48px | **20px** |
+
+Measured on `/users/sign_up` at 1440px. The sign-in and sign-up cards — the first screens of the
+product — stretch the full content width. The static audit missed this because it read the sheet
+and believed it; only the computed style shows it.
+
+### 1A.3 Files upload one at a time — HIGH
+
+A maker's project folder is a dozen files. The project's uploader and the library's uploader take
+**one**:
+
+| uploader | `multiple`? |
+|---|---|
+| `projects/_upload_control.html.erb:31` | no |
+| `files/index.html.erb:83` | no |
+| `models/new.html.erb:13` | **yes** |
+
+So the app already knows how to accept a batch — the model importer does it — and the two uploaders
+a maker actually lives in do not. Uploading four files meant opening the picker four times.
+
+### 1A.4 "Uploads land here" outlives its own storage — HIGH
+
+`session[:current_project_id]` (`concerns/current_project.rb:23`) is the whole persistence. The rail
+card says *"Uploads and tool output land here"* and the creation flash says *"Current project: Shop
+Stool — uploads and tool output land there."* Sign out and back in — done in this walkthrough — and
+the rail reads **None**. The promise is scoped to a browser session; uploads then land at the
+library root instead of the project folder, silently.
+
+### 1A.5 One photo, two panels — HIGH
+
+`stool-dryfit.jpg` (`node ef56ab3e…`) renders **twice** on both the private and the public page: in
+the `images` folder panel as *"JPG stool-dryfit.jpg"*, and again in the `Photos` panel as *"IMG"*
+with no filename. Same node id, two panels, two labels, two tile treatments. A maker cannot tell
+whether they uploaded it twice.
+
+### 1A.6 Five panels, four files, two thousand pixels — HIGH
+
+The published page renders `Files`, `design`, `images`, `models` and `Photos` as five full-width
+panels, each holding **one** tile in its top-left corner with ~1100px of empty space beside it.
+Measured height of the finished public page: **2059px desktop, 1988px phone** — roughly two and a
+half screens to show four files and one log entry. The folder-panel idea is right; one panel per
+folder regardless of how little it holds is not.
+
+### 1A.7 The hero photo is letterboxed in white — HIGH (desktop only)
+
+A 4:3 photo on the public page sits on `--thumb-stage: #ffffff` in a much wider stage, producing
+~345px of pure white either side on a dark page. §14m rule 5 makes that stage white deliberately,
+and it is right for the opaque rendered PNGs it was written for — but a user's *photo* is not one of
+those, and this is the largest element on the maker's shared page. At 390px the stage matches the
+image (366×275 in 366×298) and the problem does not occur.
+
+### 1A.8 Smaller things the walkthrough turned up
+
+- **`Add entry` labels two different controls in one panel** — the `<summary>` that opens the
+  build-log composer, and the submit that saves it, 150px apart.
+- **The handle field's `pattern` is invalid and does nothing.** `[a-z0-9][a-z0-9-]{0,30}[a-z0-9]`
+  throws in the browser: `pattern` compiles with the **`v`** flag, where a literal `-` in a class
+  must be escaped. Chrome logs *"Invalid character class"* and **skips validation entirely**. Two
+  views carry it — `projects/_publish.html.erb:44` and `users/registrations/edit.html.erb:50`.
+  `[a-z0-9\-]` compiles and matches. The server-side validation is unaffected, so this costs
+  inline feedback, not safety.
+- **Eight panels on a brand-new project** — Files, Build log, Tasks, Bill of materials, Wiring,
+  Releases, Sheets, Publish. The new-project form says Type *"presets which panels this project's
+  page shows"*, but `Mixed` shows all of them, so a plywood stool gets a **Wiring** panel.
+- **The project-created toast clips the page-head actions.** Measured: the two-line flash is 59px
+  tall (y 12–71) over an actions row at y 64–88 — a 7px visual overlap on the first view of every
+  new project. `elementFromPoint` confirms every button still receives its click, so this is
+  cosmetic, not blocking.
+- **First-run Home is four dashed boxes**, and its banner says *"Pick one from the rail"* when the
+  rail renders **no** project picker until a project exists (measured: `.current-project` count 0).
+- **An `unsupported` preview is indistinguishable from a pending one** — a white tile with an
+  extension label, permanently, with no explanation. This walkthrough ran on a box with none of the
+  thumbnailer binaries installed (`vipsthumbnail`, `resvg`, `pdftoppm`, `stl-thumbnailer` all
+  absent), so all four previews resolved `status=unsupported`. That is *this sandbox*, not a product
+  defect — but it is also an entirely plausible self-host state, and the app never says a word about
+  it. The blank tiles in the walkthrough screenshots are that, not a rendering bug.
+- **The build-log composer opens a 13-button rich-text toolbar** including *Insert a table*, with
+  row and column editing, for "what I did in the workshop today".
+- **The public page repeats itself** — breadcrumb, `h1` and README heading all say "Shop Stool" in
+  the first 250px, and the project description and the README's first line say the same sentence
+  twice in different words.
+- **The maker's internal status is public** — a visitor sees the `Active` badge.
+
+### 1B. Corrections to my own first reading
+
+Recorded because the screenshots are kept and the next reader will see the same things (§14e):
+
+- **Creating a project does not sign you out.** My harness clicked `input[type=submit]`, which
+  matched the rail's *Sign out* `button_to` first in DOM order.
+- **The build-log editor is not always open.** The 60-control toolbar dump came from querying
+  hidden DOM inside a closed `<details>`; measured, the panel is 42px tall with 2 visible controls.
+  Phase 1's fix is working.
+- **The blank tiles are a missing-binary sandbox, not a broken preview pipeline** (above).
+- **The rail and top bar appearing mid-page** in full-page phone captures is `fullPage` stitching
+  `position: fixed`/`sticky` elements at their scroll offset, as already recorded in §1.
+
+### 1C. What worked, and should not be disturbed
+
+- **Auto-filing is the best thing in the product.** Four uploaded files sorted themselves into
+  `design/`, `images/` and `models/` within seconds, the README stayed at the project root and
+  rendered inline as formatted Markdown. It needed no instruction and no configuration.
+- **The flashes are specific and honest** — *"Project created. Its folder is Projects/shop-stool"*,
+  and on publishing, *"Everything in the project's folder, and every file attached to it, is now
+  downloadable by anyone."* That last one tells the user exactly what they just agreed to.
+- **Publish explains itself**: the panel states that public projects live at `/u/<handle>/<slug>`
+  and offers the handle field inline, so claiming a handle is not a detour into Settings.
+- **Visibility defaults to private**, and the three options carry one-line explanations.
+- **Nothing scrolled sideways** at 390px at any point in the journey.
+- The finished public page has the right *bones*: README, files, build log, and a bundle download.
 
 ## 2. Findings
 
@@ -212,6 +359,23 @@ Everything in slices 1–4 is independent of this answer.
 
 Five slices, each independently shippable and independently revertible. Ordered so the loudest
 wins land first.
+
+### Slice 0 — The first five minutes
+
+*Everything in §1A that stops a maker before they reach the rest of the product. This now outranks
+slice 1: a centred button is a blemish; an account you cannot use is a lost user.*
+
+- Carry the registration's confirmation notice through the redirect, so a new maker is told an email
+  was sent and what to do next (§1A.1). Say something useful when no mailer is configured.
+- Fix `.auth-main` so the auth card renders at its designed 440px — the fix is specificity, not a
+  new rule: `main.container.auth-main`, or drop `.container` from that branch (§1A.2).
+- Add `multiple` to the project and library uploaders (§1A.3).
+- Escape the hyphen in both `pattern` attributes (§1A.8).
+- Decide whether the current project should outlive the session (§1A.4). If it should stay
+  session-scoped, the rail's copy has to stop promising otherwise.
+
+**Touches** `users/registrations_controller` · `shell.css` · `projects/_upload_control` ·
+`files/index` · `projects/_publish` · `users/registrations/edit` · `concerns/current_project`
 
 ### Slice 1 — Spend the accent once per page
 
