@@ -34,6 +34,49 @@ module Web
                      "the sweep filed it and the flash says where (stage 4, S4-2)"
       end
 
+      # --- A BATCH THROUGH THIS DOOR (slice 0, 2026-09-10) --------------------------------
+      #
+      # This is the door with the extra step: every file must be ATTACHED as well as written, and
+      # the attach has to keep its position relative to the write and the intake sweep (the
+      # ordering the controller's own comment is about). So the batch is pinned here, not only on
+      # the Files page.
+
+      test "a selection attaches every file, not just the first" do
+        project = @user.maker_projects.create!(name: "Stool")
+        files = [ [ "seat.dxf", "0\nSECTION" ], [ "cap.stl", "solid" ], [ "notes.md", "# hi" ] ].map do |name, body|
+          Rack::Test::UploadedFile.new(StringIO.new(body.b), "application/octet-stream",
+                                       original_filename: name)
+        end
+
+        assert_difference "project.file_attachments.count", 3 do
+          post project_uploads_path(project), params: { file: files }
+        end
+        assert_equal %w[cap.stl notes.md seat.dxf],
+                     project.file_attachments.map { |a| @user.nodes.find_by(node_id: a.node_id).name }.sort
+        assert_match(/Uploaded 3 files/, flash[:notice].to_s)
+      end
+
+      # THE COLLISION HAS TO HAPPEN INSIDE ONE BATCH. Uploading the name twice in two separate
+      # requests does NOT collide: the intake sweep files the first one into models/ between them,
+      # which frees the project root again — measured, the second upload succeeded and all three
+      # attached. Two files of the same name in ONE selection is the case that genuinely refuses,
+      # and it is also the one a maker hits (two folders on disk, both holding `part.stl`).
+      test "a name repeated inside one selection refuses the second and keeps the rest" do
+        project = @user.maker_projects.create!(name: "Stool")
+        batch = [ "before.stl", "dupe.stl", "dupe.stl", "after.stl" ].map do |name|
+          Rack::Test::UploadedFile.new(StringIO.new("x".b), "application/octet-stream",
+                                       original_filename: name)
+        end
+
+        assert_difference "project.file_attachments.count", 3 do
+          post project_uploads_path(project), params: { file: batch }
+        end
+        names = project.file_attachments.map { |a| @user.nodes.find_by(node_id: a.node_id).name }
+        assert_includes names, "after.stl", "a file AFTER the refusal must still attach"
+        assert_equal 1, names.count("dupe.stl"), "the repeated name must not attach twice"
+        assert_match(/not uploaded: dupe\.stl/, flash[:notice].to_s)
+      end
+
       test "multipart photo upload writes and attaches to the entry as image" do
         project = @user.maker_projects.create!(name: "Lamp")
         entry = project.build_log_entries.create!(user: @user, body: "x")

@@ -13,6 +13,7 @@ module Projects
     # FilesController, the other two upload doors; see the concern's header for why a shared module
     # rather than a second copy.
     include ProjectFolderIntake
+    include UploadBatch
 
     # The port's write can refuse (UnsupportedOperation — e.g. a name already at the library root,
     # a current-state-only clobber) or be temporarily unreachable (FetchError — unmounted NAS,
@@ -28,13 +29,23 @@ module Projects
     end
 
     def create
-      file = params.require(:file)
+      files = Array(params.require(:file))
       target = attach_target
-      info = FileLayer.current.write(current_user, parent_node_id: upload_parent(target),
-                                     name: file.original_filename, io: file)
-      enqueue_preview(node_id: info.node_id, name: file.original_filename)
-      target.file_attachments.create!(user: current_user, node_id: info.node_id,
-                                      role: role_for(file.original_filename, target))
+
+      # THE ATTACH RUNS INSIDE THE PER-FILE BLOCK, so it keeps its position relative to the write
+      # and to the intake sweep — the ordering the long comment below is about. What changed is
+      # only that the pair now happens N times instead of once, with each file's refusal isolated
+      # (UploadBatch) so one taken name cannot abandon the rest of the selection.
+      written, refused = write_batch(files, parent_node_id: upload_parent(target)) do |info|
+        target.file_attachments.create!(user: current_user, node_id: info.node_id,
+                                        role: role_for(info.name, target))
+      end
+
+      if written.empty?
+        return redirect_to(after_upload_url(target), alert: refused_sentence(refused))
+      end
+
+      info = written.last
       # AFTER the create! above, NOT BEFORE — the order is load-bearing, and backwards it 500s.
       # For a PROJECT target this file just landed at that SAME project's folder root, so
       # Maker::ProjectIntake.for_node resolves the SAME project and its own #attach step would try
@@ -51,8 +62,11 @@ module Projects
       # THE RETURN VALUE IS NOW READ, NOT DISCARDED (see ProjectFolderIntake's header) -- so a
       # same-named upload whose eager nudge lost a collision at its destination folder says so in
       # the flash below (#project_intake_notice), instead of a bare "Uploaded" that hid it.
+      # ONE SWEEP AFTER THE WHOLE BATCH: ProjectIntake.for_node sweeps the project ROOT, so a
+      # single call files everything that just landed (see the concern's #batch_upload_notice).
       intake_result = intake_project_folder(info.node_id)
-      redirect_to after_upload_url(target), notice: project_intake_notice(intake_result, file.original_filename)
+      redirect_to after_upload_url(target),
+                  notice: batch_upload_notice(written.map(&:name), intake_result, refused:)
     end
 
     private
