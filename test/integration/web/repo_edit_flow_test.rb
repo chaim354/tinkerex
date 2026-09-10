@@ -128,12 +128,20 @@ class RepoEditFlowTest < ActionDispatch::IntegrationTest
     assert_equal "ready", preview.reload.status
   end
 
-  test "a file outside a working tree is not saveable" do
+  # THIS CASE READ "a file outside a working tree is not saveable" UNTIL 2026-09-10, and asserted a
+  # 422. `FilesController#update` refused `root.nil?` then, because git was the only undo on a
+  # current-state backend; the trade is now named on the editor instead (`shared/_no_history_note`)
+  # and the save lands. What the case is FOR has not moved: `root` must still decide something, and
+  # the something is the pending git edit. Assert only the 200 and it would pass just as happily
+  # over a door that recorded a Maker::RepoEdit against a repository that does not exist.
+  test "a file outside a working tree saves, and records no pending edit" do
     node = seed_plain_file!("loose.md", "x\n")
 
     patch file_path(node.node_id), params: { content: "y\n", base_token: token_for(node) }
 
-    assert_response :unprocessable_entity
+    assert_response :success
+    assert_equal "y\n", read_back(node)
+    assert_empty Maker::RepoEdit.where(user: @user, node_id: node.node_id)
   end
 
   # THE SIZE CAP IS RE-CHECKED ON THE SERVER, and this case is the reason it is not merely a

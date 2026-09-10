@@ -205,6 +205,19 @@ export class FileChooser {
     }
     this.colsEl.scrollLeft = this.colsEl.scrollWidth
     this.crumbsEl.textContent = [ this.rootLabel, ...this.trail.map((f) => f.name) ].join("  ›  ")
+    // BACK IS OFFERED ONLY WHERE BACK CAN GO. `back()` returns early at `trail.length === 0`, so at
+    // the top level the control was rendered live, focusable and styled as available, and did
+    // nothing when clicked - the "looks available, is absent" shape §14d records for an
+    // unresolvable Stimulus identifier, with the added cost that here the maker can see it.
+    //
+    // HIDDEN HERE RATHER THAN IN THE TWO MARKUP TEMPLATES, because both faces - the modal and the
+    // inline browse mount - are drawn by this one method; a fix in a template is a fix for one
+    // caller, and the modal grew its copy of the bar independently of `mount()`'s.
+    //
+    // `el.hidden`, not `style.display`: the house idiom (readme_controller.js,
+    // layout_editor_controller.js), and the one the app's own reset already honours.
+    const backBtn = this.host.querySelector(".filechooser-back")
+    if (backBtn) backBtn.hidden = this.trail.length === 0
     // THE FOOTER IS OPTIONAL, because browse mode has none. Guarded on presence rather than on
     // `mode`, so the two facts stay one: whatever built the host decided which controls exist.
     if (!this.selEl || !this.chooseBtn) return

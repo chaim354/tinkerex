@@ -192,4 +192,34 @@ class RepoBrowserTest < ApplicationSystemTestCase
     assert_equal "browser", @project.reload.panels.dig("views", "folder:#{models.node_id}")
     assert_no_console_errors
   end
+
+  # THE CONTROL WAS RENDERED LIVE AND INERT AT THE ROOT. `back()` opens with
+  # `if (this.trail.length === 0) return`, so at the browser's top level the button was focusable,
+  # styled as available, and did nothing when clicked — §14d's "looks available, is absent" shape,
+  # with the added cost that here the maker can SEE the control that does nothing.
+  #
+  # A SYSTEM TEST BECAUSE ONLY A BROWSER KNOWS WHETHER A CONTROL IS VISIBLE. `assert_select` asks
+  # about elements in a document; this is about a rendered box, and the server writes ONE EMPTY DIV
+  # here — the bar, the button and the crumbs are all built by `mount()` after a fetch.
+  #
+  # BOTH DIRECTIONS, AND THE SECOND IS THE ONE THAT KEEPS THE FIX HONEST: hiding the control
+  # unconditionally would satisfy the root assertion and delete the feature, which is the same
+  # silent-no-op this test exists to close.
+  test "the browser offers no Back at its root, and does below it" do
+    open_firmware
+
+    within(panel_for(@firmware)) do
+      assert_selector ".filechooser-crumbs", text: @firmware.name
+      assert_no_selector ".filechooser-back"
+
+      find(".filechooser-col .filechooser-row", text: "src").click
+      assert_selector ".filechooser-crumbs", text: "src"
+      assert_selector ".filechooser-back"
+
+      find(".filechooser-back").click
+      assert_selector ".filechooser--inline .filechooser-col", count: 1
+      assert_no_selector ".filechooser-back"
+    end
+    assert_no_console_errors
+  end
 end

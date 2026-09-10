@@ -116,6 +116,21 @@ Rails.application.routes.draw do
     end
   end
 
+  # --- A text file made from nothing (2026-09-10) ---
+  #
+  # A DOOR OF ITS OWN, not a parameter on FilesController#create. That action’s job is bytes off a
+  # multipart form and it already carries a batch branch; a create-that-takes-no-bytes riding it
+  # would need a third arm with its own refusals. Namespaced under files/ so the two stay visibly
+  # related without sharing an action -- the shape Files::LinksController already has.
+  #
+  # THREE SEGMENTS, WHICH IS WHY THIS SITS AFTER `resources :files` AND STILL RESOLVES. The member
+  # routes above are all NAMED (`blob`, `geometry`, `history`, `restore/:oid`), so
+  # `/files/text_files/new` matches none of them, and the collection ones are two segments long. A
+  # member route spelled `:id/:action` would swallow this; there is not one, and adding one would.
+  namespace :files do
+    resources :text_files, only: %i[new create]
+  end
+
   # --- Review and commit, for a repository the maker brought (session-authed; never the v1 API,
   # which is device-token only — §14d). Keyed by the repository ROOT node id, because eligibility
   # is "inside a working tree" and has nothing to do with projects.

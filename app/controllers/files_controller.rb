@@ -501,10 +501,18 @@ class FilesController < ApplicationController
     @node = current_user.nodes.present.find_by!(node_id: params[:id])
     @info = FileLayer.current.stat(current_user, node_id: @node.node_id)
     @kind = preview_kind(@node.name)
-    # Editing appears exactly where committing could — one walk, one answer, nothing to keep in
-    # sync between the two surfaces.
+    # ONE WALK, READ BY THE SURFACES THAT STILL NEED IT. It USED to read "editing appears exactly
+    # where committing could"; since 2026-09-10 editing is WIDER than committing, so this answers
+    # the commit box and the pending count below, and Maker::TextSave decides the pending git edit
+    # from the same value. Still one walk — what changed is that `@editable` stopped reading it.
     @repo_root = Library::WorkingTree.new(current_user).root_for(@node)
-    @editable  = @kind == :text && @repo_root.present? && editable?(@node)
+    # `@repo_root.present?` WAS A TERM HERE AND IS GONE (2026-09-10). The editor refused anything
+    # outside a working tree because git was the undo; the trade is now NAMED on the editor instead
+    # — `shared/_no_history_note`, rendered by files/viewers/_code — which is the same choice the
+    # project README door already made (docs/invariants/git-editing.md, "The Markdown exception").
+    # `@repo_root` still decides whether a save records a pending git edit, and still does so BY
+    # BEING NIL inside Maker::TextSave, so nothing here branches.
+    @editable  = @kind == :text && editable?(@node)
     # THE WAY INTO THE COMMIT BOX. Without these two the box is reachable only by typing its URL --
     # which is exactly what shipped on 2026-08-28 and was found by a person using the app, not by
     # the suite: every test navigates straight to repo_commit_path, so nothing was ever asked
@@ -631,11 +639,19 @@ class FilesController < ApplicationController
 
   # PATCH /files/:id — the editor's Save.
   #
-  # WORKING TREE ONLY, ON EVERY BACKEND. Share and s3 are current-state only (§14a), so outside a
-  # repository a save destroys the previous bytes with nothing to recover from — while on
-  # chunk_remote it would be an ordinary new version. One condition with two answers across
-  # backends is the shape §14a forbids, so the answer is the same everywhere: git is the undo, and
-  # no repository means no editing. Spec part 2 records what reverses this.
+  # ANY TEXT FILE, IN A REPOSITORY OR NOT (2026-09-10). This refused `root.nil?` until then, because
+  # share and s3 are current-state only (§14a) and git was the only undo. The refusal was still one
+  # condition with ONE answer on every backend, which is what §14a asks — and it protected a file
+  # nobody could then write, the same argument the project README door already took
+  # (docs/invariants/git-editing.md, "The Markdown exception"): a rule that protects a file that
+  # cannot exist has protected nothing. So the trade is NAMED on the editor instead —
+  # `shared/_no_history_note`, keyed on `capabilities.versioned?` — and the maker chooses with the
+  # cost in front of them.
+  #
+  # `root` STAYS, AND STILL TRAVELS AS `repo_root_node_id:`. It is nil outside a repository and
+  # unchanged inside one, and Maker::TextSave records a pending Maker::RepoEdit only when it is
+  # present AND the backend holds the working tree — so a file inside a repository keeps every bit
+  # of its behaviour and one outside gets none of it, with no branch anywhere in this door.
   #
   # THE TOKEN CHECK IS NOT OPTIMISTIC POLITENESS. `base_token` is the content_token the editor
   # loaded with; if the file has moved on, the maker edited it in vim meanwhile and a
@@ -643,7 +659,6 @@ class FilesController < ApplicationController
   def update
     node = current_user.nodes.present.find_by!(node_id: params[:id])
     root = Library::WorkingTree.new(current_user).root_for(node)
-    return render_save_error(:unprocessable_entity, "Only files inside a git repository can be edited.") if root.nil?
     return render_save_error(:unprocessable_entity, "This file is too large to edit here.") unless editable?(node)
 
     # THE SHARED SAVE (stage 4, S4-4). The stale check, the `replace: true` write that REUSES the
@@ -654,7 +669,7 @@ class FilesController < ApplicationController
     # `#enqueue_preview` further down stays for the two UPLOAD doors, which share no save.
     result = Maker::TextSave.call(user: current_user, node:, parent_node_id: node.parent_node_id,
                                   name: node.name, body: params[:content], base_token: params[:base_token],
-                                  repo_root_node_id: root.node_id)
+                                  repo_root_node_id: root&.node_id)
     return render_save_error(result.status, result.error) unless result.ok
 
     render json: { ok: true, content_token: result.content_token }

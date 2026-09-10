@@ -1,7 +1,11 @@
 import { Controller } from "@hotwired/stimulus"
 
-// Editable source view. The read-only sibling is codeview_controller, which stays the default —
-// this one mounts only where FilesController#show says the file is inside a working tree.
+// Editable source view. The read-only sibling is codeview_controller.
+//
+// WHERE THIS ONE MOUNTS CHANGED ON 2026-09-10: it used to be "inside a working tree", where git was
+// the undo; FilesController#show now says `@kind == :text && editable?(@node)`, so any text file
+// under the server's cap gets it and the trade is named on the page instead
+// (shared/_no_history_note). codeview is what an OVER-CAP file and a visitor's public page get.
 //
 // THE FETCH RUNS FIRST AND THE BUNDLE LOADS SECOND, exactly as codeview does: the bytes are what
 // the user came for, and a failed bundle load leaves the <pre> holding the file's text.

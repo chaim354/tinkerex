@@ -160,7 +160,7 @@ class FilesHelperTest < ActiveSupport::TestCase
   # and filemenu_controller.js is truthiness-guarded, so it produces no entry either way. The test
   # net is the reason, not the menu.)
   test "file_menu_data omits the addon keys entirely when no addon made the file" do
-    data = file_menu_data("n-1", nil)
+    data = file_menu_data("n-1", "widget.stl", nil)
 
     assert_nil data[:addon_open_url],
                "a blank renders data-addon-open-url=\"\", which the presence selectors count as a link"
@@ -170,21 +170,57 @@ class FilesHelperTest < ActiveSupport::TestCase
   # THE PAIR TRAVELS TOGETHER, out of the one hash AddonOrigins builds — a cell carrying the url
   # with no label puts "undefined" in the menu.
   test "file_menu_data carries both addon keys when one is present" do
-    data = file_menu_data("n-1", { url: "/tools/boxes?state=7", label: "Edit in Box Generator" })
+    data = file_menu_data("n-1", "widget.stl", { url: "/tools/boxes?state=7", label: "Edit in Box Generator" })
 
     assert_equal "/tools/boxes?state=7", data[:addon_open_url]
     assert_equal "Edit in Box Generator", data[:addon_open_label]
   end
 
-  # THE MENU IS GATED ON note_url (`if (!noteUrl) return`), and download_url must force the
-  # attachment rather than trust the browser's `download` attribute — on chunk and s3 the endpoint
-  # 302s to a presigned CROSS-ORIGIN URL, where `download` is ignored.
-  test "file_menu_data always carries the note url and a forcing download url" do
-    data = file_menu_data("n-1", nil)
+  # THE MENU'S GATE IS NO LONGER note_url. It read `if (!noteUrl) return` until 2026-09-10 and now
+  # asks whether there is ANY entry (`!noteUrl && !deleteUrl`), because a folder carries the delete
+  # url alone. download_url must still force the attachment rather than trust the browser's
+  # `download` attribute — on chunk_remote and s3 the endpoint 302s to a presigned CROSS-ORIGIN URL,
+  # where `download` is ignored.
+  test "file_menu_data always carries the note url, a forcing download url and where to delete" do
+    data = file_menu_data("n-1", "widget.stl", nil)
 
     assert_equal file_notes_path("n-1"), data[:note_url]
     assert_includes data[:download_url], "download=1"
+    assert_equal file_path("n-1"), data[:delete_url]
+    assert_equal "widget.stl", data[:node_name]
     assert_equal "contextmenu->filemenu#open", data[:action]
+  end
+
+  # A FOLDER'S WHOLE MENU, ASSERTED AS AN EXACT HASH rather than key by key. The claim is not "it has
+  # a delete url" but "it has NOTHING ELSE": a note url would open a popover POSTing to an endpoint
+  # no directory has, a download url would put a dead entry on every folder, and a `node_id` would
+  # enrol folders in the thumbnail poll. An exact comparison is the only shape that catches a key
+  # someone adds by copying `file_menu_data`.
+  #
+  # AND IT IS EMPTY WHERE THE BACKEND REFUSES A DIRECTORY DELETE, so the assertion is keyed on the
+  # capability rather than on the ambient backend. Both arms are real: `dir_deletable?` is true on
+  # chunk_remote and false on share and s3, so this test takes a different branch on each of the
+  # three legs instead of pinning whichever one happens to be running.
+  test "folder_menu_data is the action, the name and the delete url, and nothing else" do
+    if FileLayer.current.capabilities.dir_deletable?
+      assert_equal({ action: "contextmenu->filemenu#open", node_name: "cad", delete_url: file_path("dir-1") },
+                   folder_menu_data("dir-1", "cad"))
+    else
+      assert_empty folder_menu_data("dir-1", "cad"),
+                   "a backend that refuses a directory delete must offer a folder no menu at all"
+    end
+  end
+
+  # `node_name` IS PASSED, NEVER DERIVED — the rule `ext_label` already follows below. The menu's
+  # `confirm` reads it, and deriving it here would mean a lookup per row on a page rendering
+  # hundreds; a caller that has the node already has the name.
+  test "node_name passes through verbatim on both builders" do
+    assert_equal "Bracket v2.stl", file_menu_data("n-1", "Bracket v2.stl", nil)[:node_name]
+    # The folder builder only HAS a payload where the backend can cascade a directory delete; where
+    # it cannot, "passes through verbatim" is not a claim about it.
+    if FileLayer.current.capabilities.dir_deletable?
+      assert_equal "Bracket v2.stl", folder_menu_data("n-1", "Bracket v2.stl")[:node_name]
+    end
   end
 
   # `ext_label` IS AN ARGUMENT, NEVER DERIVED FROM THE NAME. `models/_hero_poster` passes "" and

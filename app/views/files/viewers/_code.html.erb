@@ -7,13 +7,14 @@
     comments — an ERB comment ends at the first one and the rest of the prose prints into the
     page (§14d).
 
-    TWO CONTROLLERS, ONE PARTIAL, AND THE READ-ONLY ONE IS STILL THE DEFAULT. `editor` mounts
-    only where FilesController#show found the file inside a working tree and under the size
-    cap; every other text file keeps `codeview`, which sets BOTH EditorState.readOnly and
-    EditorView.editable. Swapping the CONTROLLER rather than passing `codeview` a flag is the
-    point: a page that is sometimes editable needs a different mount, not a mutated one. A
-    visitor's file page passes `editable: false` and gets `codeview` for the same reason it
-    carries no form — there is nothing it could save through (stage 4, S4-5).
+    TWO CONTROLLERS, ONE PARTIAL, AND WHICH ONE IS THE DEFAULT FLIPPED ON 2026-09-10. `editor`
+    used to mount only where FilesController#show found the file inside a working tree; it now
+    mounts for any text file under the size cap, so `codeview` — which sets BOTH
+    EditorState.readOnly and EditorView.editable — is what an OVER-CAP file gets, and what a
+    visitor's file page gets, which passes `editable: false` for the same reason it carries no
+    form: there is nothing it could save through (stage 4, S4-5). Swapping the CONTROLLER rather
+    than passing `codeview` a flag is still the point: a page that is sometimes editable needs a
+    different mount, not a mutated one.
 
     BOTH IDENTIFIERS ARE WRITTEN OUT LITERALLY, and the duplicated div is the price of that.
     The obvious spelling interpolates one attribute — data-controller with a ternary inside —
@@ -24,6 +25,17 @@
     controllers named after the pieces of the expression — the output tag, the ivar and the
     question mark. Do not collapse these two branches back into one. %>
 <% if editable %>
+  <%# THE TRADE, NAMED WHERE IT IS TAKEN (2026-09-10). Until then this editor mounted only inside a
+      working tree, where git was the undo; it now mounts on any text file, so on share and s3 a
+      Save replaces the previous bytes with nothing to recover from and the maker is told so before
+      they type. ONE PARTIAL, SHARED WITH THE PROJECT README EDITOR, so the sentence has a single
+      definition — and keyed on `capabilities.versioned?`, never on an adapter class, so
+      chunk_remote says nothing at all rather than a hedge. A note that renders everywhere is the
+      same defect as one that renders nowhere.
+
+      INSIDE THIS BRANCH ONLY. The `codeview` branch below is read-only and the public file page
+      passes `editable: false`, and there is nothing to warn about where there is nothing to save. %>
+  <%= render "shared/no_history_note" %>
   <div class="preview-code"
        data-controller="editor"
        data-editor-url-value="<%= blob_url %>"

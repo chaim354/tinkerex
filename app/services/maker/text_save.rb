@@ -1,9 +1,10 @@
 module Maker
-  # SAVING TEXT INTO A LIBRARY FILE, ONCE (stage 4, S4-4). Two doors perform this verb —
-  # FilesController#update (a file inside a working tree, §14d's git surface) and
-  # Projects::ReadmesController#update (the project's README, on any backend, D3's exception) — and
-  # a verb more than one controller performs gets a named service rather than being re-inlined
-  # (§14d). What must not drift between them is exactly what lives here:
+  # SAVING TEXT INTO A LIBRARY FILE, ONCE (stage 4, S4-4). THREE doors perform this verb —
+  # FilesController#update (any text file under the size cap since 2026-09-10; it was a file inside
+  # a working tree until then), Projects::ReadmesController#update (the project's README, D3's
+  # exception) and Files::TextFilesController#create (a new, empty one) — and a verb more than one
+  # controller performs gets a named service rather than being re-inlined (§14d). What must not
+  # drift between them is exactly what lives here:
   #
   #   * THE STALE CHECK. The caller edited SOME version; if the content token has moved since, the
   #     save would silently discard whatever moved it. 409, never a write. IT ASKS THE CATALOG
@@ -26,7 +27,11 @@ module Maker
   #     nothing logs, which is the whole signature (§14a, git-editing.md's opening rule).
   #   * THE PENDING GIT EDIT, recorded only when the caller NAMED a repo root AND the backend
   #     holds the working tree (`local_worktree?`). On one that does not, the bytes still land;
-  #     there is just no commit box on this box to review them in.
+  #     there is just no commit box on this box to review them in. THE `present?` TERM IS WHAT
+  #     LETS THE DOORS STAY BRANCHLESS since editing left the working tree: a file outside a
+  #     repository arrives with a nil root and gets no row, and one inside arrives with a real one
+  #     and keeps every bit of its behaviour, with no `if` in any of the three callers. Drop it and
+  #     the column's NOT NULL turns an ordinary save into a 500.
   #
   #   * THE PREVIEW RE-ENQUEUE. A save invalidates the picture of the file (stage 4, S4-3), and
   #     every text extension has a renderer (Registry derives TextThumb), so a saved file kept

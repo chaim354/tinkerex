@@ -13,7 +13,7 @@
 <div class="attachment-tile">
   <%= link_to file_path(row.node_id), class: "grid-card file-cell",
               data: thumb_cell_data(row.node_id, ext)
-                      .merge(file_menu_data(row.node_id, @addon_origins[row.node_id])) do %>
+                      .merge(file_menu_data(row.node_id, node.name, @addon_origins[row.node_id])) do %>
     <%= render "files/thumb", thumb: @page_thumbs.thumb(row.node_id), ext_label: ext,
                url: preview_src(@page_thumbs.thumb(row.node_id)) %>
     <span class="grid-name"><%= node.name %></span>

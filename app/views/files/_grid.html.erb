@@ -11,7 +11,10 @@
         tile's sub-line below uses the full extension, so "LBRN2" does not read as "LBRN". %>
     <% ext_label = File.extname(node.name).delete(".").upcase.first(4) %>
     <% if !node.file? %>
-      <%= link_to files_path(folder: node.node_id), class: "grid-card grid-folder" do %>
+      <%# #folder_menu_data, NOT #file_menu_data - Delete is a folder's whole menu, and it takes no
+          thumb cell. The fuller note is in _list.html.erb; the argument is in files_helper.rb. %>
+      <%= link_to files_path(folder: node.node_id), class: "grid-card grid-folder",
+                  data: folder_menu_data(node.node_id, node.name) do %>
         <span class="thumb folder-thumb" aria-hidden="true">📁</span>
         <span class="grid-name"><%= node.name %></span>
       <% end %>
@@ -19,11 +22,12 @@
       <% thumb = @thumb_by_node.thumb(node.node_id) %>
       <%# FilesHelper#file_menu_data carries data-download-url, which is the grid's ONLY route to
           the bytes without opening the file first — a card has no row-actions cell. The folder
-          branch above calls NEITHER builder, so none of this reaches a directory. See the fuller
-          note in _list.html.erb and the argument in files_helper.rb. %>
+          branch above calls #folder_menu_data instead, whose one url is the delete one, so none of
+          this reaches a directory. See the fuller note in _list.html.erb and the argument in
+          files_helper.rb. %>
       <%= link_to file_path(node.node_id), class: "grid-card file-cell",
                   data: thumb_cell_data(node.node_id, ext_label)
-                          .merge(file_menu_data(node.node_id, @addon_origins[node.node_id])) do %>
+                          .merge(file_menu_data(node.node_id, node.name, @addon_origins[node.node_id])) do %>
         <%= render "thumb", thumb:, ext_label:, url: preview_src(thumb) %>
         <span class="grid-name"><%= node.name %></span>
         <span class="grid-sub"><%= [ (info.content_token ? number_to_human_size(info.size) : nil), File.extname(node.name).delete(".").upcase.presence ].compact.join(" · ") %></span>
@@ -33,7 +37,7 @@
       <%# The non-renderable card: a menu, but no poll cell — nothing will ever render a thumbnail
           for it, so a cell here would be a spinner the poll cannot resolve. %>
       <%= link_to file_path(node.node_id), class: "grid-card",
-                  data: file_menu_data(node.node_id, @addon_origins[node.node_id]) do %>
+                  data: file_menu_data(node.node_id, node.name, @addon_origins[node.node_id]) do %>
         <span class="thumb generic-thumb" aria-hidden="true"><%= ext_label.presence || "FILE" %></span>
         <span class="grid-name"><%= node.name %></span>
         <span class="grid-sub"><%= [ (info.content_token ? number_to_human_size(info.size) : nil), File.extname(node.name).delete(".").upcase.presence ].compact.join(" · ") %></span>

@@ -413,6 +413,11 @@
     color: var(--fg); font: 13px/1.4 var(--font-ui); border-radius: var(--radius-control); cursor: pointer; text-decoration: none; box-sizing: border-box;
   }
   .file-menu button:hover, .file-menu a:hover { background: var(--raised); text-decoration: none; }
+  /* THE ONE DESTRUCTIVE ENTRY READS AS ONE. filemenu_controller.js sets `className = "danger"` on
+     Delete; with no rule for it that class styles NOTHING, and the item that removes a file would
+     look like one more navigation. `.btn.danger` cannot be reused - a menu entry is not a button
+     face - so this is the same token, not a second definition of it. */
+  .file-menu button.danger { color: var(--danger); }
   .note-popover {
     position: absolute; z-index: 1001; width: 320px; max-width: 90vw; padding: 10px;
     background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-float); box-shadow: var(--shadow-float);
@@ -481,6 +486,12 @@
      `.repo-browser` component would have been a second definition of all of them. */
   .filechooser--inline { position: static; width: 100%; max-height: none; height: 320px; border: 1px solid var(--line); border-radius: var(--radius-panel); }
   .filechooser-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  /* BACK IS HIDDEN AT THE ROOT BY `el.hidden` (file_chooser.js#render), and `.btn`'s author
+     `display: inline-flex` beats the user agent's `[hidden] { display: none }` — the trap
+     `.tab-pane[hidden]` above already records, met a second time. Without this line the control
+     goes on rendering, focusable and styled as available, while the DOM says it is hidden: the
+     mutation-check for the JS change reddens on exactly that. Pinned by repo_browser_test.rb. */
+  .filechooser-back[hidden] { display: none; }
   /* The crumbs keep their font and take the rest of the bar; the bar already draws the divider, so
      the crumbs' own bottom border would double it. */
   .filechooser-bar .filechooser-crumbs { flex: 1; min-width: 0; padding: 0; border-bottom: 0; }

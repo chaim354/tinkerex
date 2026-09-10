@@ -25,10 +25,12 @@ at all**. The last is a recorded IMPRECISION: the panel's `:ignored` label is sl
 git, inherited rather than introduced, and it is written down so the next reader recognises it
 instead of half-fixing it.
 
-One section below is not a rule but an EXCEPTION to the first one — stage 4's README door (S4-4,
-`docs/superpowers/specs/2026-09-07-stage-4-bench-maker-design.md` §2 D3). It sits SECOND, directly
-after the rule it excepts, so a reader meets the two in the same breath, and it is outside the
-three counts above.
+One section below is not a rule — it was stage 4's README EXCEPTION (S4-4,
+`docs/superpowers/specs/2026-09-07-stage-4-bench-maker-design.md` §2 D3), and on 2026-09-10 the rule
+it excepted was retired: editing no longer needs a repository at all. It sits SECOND, where the
+exception sat, because that is where a reader looking for "why can I edit this" will go, and it is
+outside the three counts above. **Read it before assuming any refusal in this file still gates
+`FilesController#update` — one of them does not.**
 
 ## Bytes the catalog tracks go through the port; bytes git owns never do
 
@@ -50,19 +52,32 @@ Both directions fail, and only one of them fails loudly:
 
 ## The Markdown exception: a project's README is editable without a repository
 
-**Stage 4, S4-4 (spec §2 D3).** `FilesController#update` refuses a file that is not inside a
-working tree, and every rule in this file is why. **One door is exempt**:
-`PATCH /projects/:id/readme` (`Projects::ReadmesController#update`) writes the project folder's own
-README on **any** backend, repository or not.
+**Stage 4, S4-4 (spec §2 D3) — AND THE RULE IT EXCEPTED IS GONE (2026-09-10).**
+`FilesController#update` refused a file that was not inside a working tree, and every rule in this
+file is why; the one door exempt was `PATCH /projects/:id/readme` (`Projects::ReadmesController#update`), writing the
+project folder's own README on **any** backend, repository or not. The Files-page affordances slice
+retired the refusal outright: **any text file under `FilesController::EDITABLE_MAX_BYTES` is
+editable on every backend**, and a third door, `POST /files/text_files`
+(`Files::TextFilesController#create`), makes an empty one where the maker is standing. This section
+is kept under its own name — three comments cite it — but it now records the ARGUMENT that widened
+the rule and the rules that survived, not a boundary that still exists.
 
-**Why this one and not the others.** The refusal exists because a save on share or s3 overwrites
-with no undo, and git is the undo. For documentation the alternative is not "edit it somewhere
-safer" — it is **no README at all**: on the measured share deployment, 0 of 9 real projects have
-one the page shows (spec §2 D3; §1 holds the count and, in its findings 1 and 4, why it is zero).
-A rule that protects a file nobody ever writes has protected nothing. So the trade is **named on
-the editor** — "This library keeps no history for this file; saving replaces it." on share and s3,
-nothing on chunk_remote, decided by `capabilities.versioned?` — and the maker chooses with the cost
-in front of them.
+**Why the refusal went, and it is the argument the exception was granted on.** The refusal existed
+because a save on share or s3 overwrites with no undo, and git is the undo. For documentation the
+alternative is not "edit it somewhere safer" — it is **no README at all**: on the measured share
+deployment, 0 of 9 real projects have one the page shows (spec §2 D3; §1 holds the count and, in its
+findings 1 and 4, why it is zero). A rule that protects a file nobody ever writes has protected
+nothing — and that is as true of a `.gcode` the maker keeps on a NAS as of a README. So the trade is
+**named on the editor** — "This library keeps no history for this file; saving replaces it." on
+share and s3, nothing on chunk_remote, decided by `capabilities.versioned?` — and the maker chooses
+with the cost in front of them.
+
+**ONE PARTIAL, `shared/_no_history_note`, AND IT IS NOW RENDERED TWICE:** the README editor
+(`projects/_readme_editor`) and the file page's editable source view
+(`files/viewers/_code`, inside its `editable` branch only — the read-only `codeview` branch and the
+visitor's page have nothing to warn about). Keyed on the CAPABILITY and never on an adapter class,
+so a note that renders everywhere — the same defect as one that renders nowhere — needs a second
+definition to happen, which is what one partial prevents.
 
 **What still holds, unchanged, and what breaks if you undo any of it.**
 
@@ -70,7 +85,7 @@ in front of them.
   → `FileLayer#write` / the two-phase upload. Never `File.write`, never a delete-then-create: both
   orphan every attachment, BOM line and tag on the node, silently (§14a).
 - **`replace: true`, so the node survives.** A README is attachable, taggable and BOM-linkable like
-  any other file.
+  any other file, and so is anything else the editor now reaches.
 - **The `base_token` stale check** — a 409 on the file page, an alert on the project page, one
   `Maker::TextSave` result underneath. The editor edited some version; if the port's content token moved
   under it, the save is refused rather than discarding whatever moved it. **As of the catalog's last
@@ -81,22 +96,36 @@ in front of them.
 - **A `.lock` is still refused and never deleted**, and a detached HEAD or a half-finished
   operation still refuses — this door does not touch `Maker::Git::LocalRepo` at all, so it inherits
   those refusals by not having a git path to skip.
-- **Restore is still git-only** and still writes a pending edit rather than committing. There is no
-  "undo" on this door, which is exactly what the note on the editor says.
-- **A pending `Maker::RepoEdit` is still recorded when the folder IS a working tree**, so a README
-  saved in a repository shows up in the commit box like any other edit.
+- **Restore is still git-only** and still writes a pending edit rather than committing.
+  `FilesController#restore` keeps its own `root.nil?` refusal, which `#update` no longer has, and
+  that asymmetry is deliberate: a restore is undone by committing or reverting it, so a restore
+  where there is no repository is a trap rather than a feature. There is no "undo" on the editor
+  door, which is exactly what the note on it says.
+- **A pending `Maker::RepoEdit` is still recorded when the folder IS a working tree**, so a file
+  saved in a repository shows up in the commit box like any other edit. **The three doors stay
+  branchless about this** because `Maker::TextSave` records one only when a repo root is `present?`
+  AND `local_worktree?` — a file outside a repository arrives with a nil root and gets no row.
+  Drop that `present?` term and `maker_repo_edits.repo_root_node_id`'s NOT NULL turns an ordinary
+  save into a 500 (mutation-checked, 2026-09-10).
 - **The 200,000-byte cap is still the SERVER's**, read from `FilesController::EDITABLE_MAX_BYTES`
-  rather than copied.
+  rather than copied — and it is now the ONLY term left in `@editable` besides "is this text", so it
+  is also the only thing keeping `codeview` reachable on a signed-in file page at all.
 
-**The exception is confined STRUCTURALLY, not by a name check.** The door takes **no node id from
-the client**: it resolves the file through `Maker::Readme.row_in(listing.loose)` — the same call
-both project-page cards render from — so the only file it can ever write is one of the six
-`Maker::Readme::NAMES` at the project folder's root. There is no parameter to point somewhere else
-and no predicate to loosen. D3's fuller wording ("Markdown is editable anywhere", story 2.13) is
-**not** implemented: widening `FilesController#update` to any `.md` outside a repository is a second
-door with its own surfaces — the file page's editor, its own no-history note, its stale thumbnail —
-and **needs its own spec and its own slice**. Do not widen this one to get there.
+**THE README DOOR IS STILL CONFINED STRUCTURALLY, NOT BY A NAME CHECK, AND THAT DID NOT LOOSEN.**
+It takes **no node id from the client**: it resolves the file through
+`Maker::Readme.row_in(listing.loose)` — the same call both project-page cards render from — so the
+only file it can ever write is one of the six `Maker::Readme::NAMES` at the project folder's root.
+There is no parameter to point somewhere else and no predicate to loosen. That confinement is now
+about keeping ONE door's blast radius small rather than about protecting files the other door
+cannot reach, and it is worth keeping for the first reason alone.
 
+D3's fuller wording ("Markdown is editable anywhere", story 2.13) shipped on 2026-09-10 and shipped
+**wider than it was written** — every text file, not only `.md` — with the surfaces this paragraph
+used to say it needed: the file page's editor (`files/viewers/_code`'s `editable` branch), its own
+no-history note (the shared partial above) and the thumbnail re-enqueue `Maker::TextSave` already
+carried. What that width costs is worth knowing before it is widened again: `codeview`, the
+read-only viewer, is now reachable only for an over-cap file and for a visitor's public page, so a
+change that raises `EDITABLE_MAX_BYTES` also retires the read-only mount from the signed-in app.
 ## Ask `local_worktree?`, never `is_a?(FileLayer::Share)`
 
 `local_worktree?` and `is_a?(FileLayer::Share)` give the SAME answer on all three backends today —

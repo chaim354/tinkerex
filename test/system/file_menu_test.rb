@@ -148,6 +148,76 @@ class FileMenuTest < ApplicationSystemTestCase
     ENV["ADDON_SOURCE_PATH"] = prior_source_path
   end
 
+  # DELETE FROM THE MENU, DRIVEN END TO END. The menu is built in JS, so there is no `button_to` to
+  # lean on — it assembles the DELETE itself, and a missing CSRF token, a wrong `_method` or a form
+  # never appended to the document all read the same way from outside: the row is still there.
+  #
+  # THE CONFIRM'S TEXT IS ASSERTED, not just accepted. It is built from `cell.dataset.nodeName`, and
+  # `nodeName` is a DOM property name — on a `DOMStringMap` it is an ordinary data key and resolves
+  # to `data-node-name`, but that is worth proving rather than reasoning about. It also pins the
+  # wording against the row's own `button_to` and the file page's button, so the three delete doors
+  # ask one question rather than three.
+  test "the right-click menu deletes a file" do
+    node = create_node!(@user, node_id: SecureRandom.uuid, name: "widget.stl", kind: "file")
+    visit files_path(view: "list")
+
+    find(".file-cell", text: "widget.stl").right_click
+    assert_selector ".file-menu button", text: "Delete"
+
+    # THE DESTRUCTIVE ITEM READS AS ONE, and only a browser can see that. `del.className = "danger"`
+    # styles nothing unless a rule exists for it — a class that does nothing is this layer's
+    # recurring silent no-op, and the item that deletes a file is the worst place for it.
+    danger = page.evaluate_script("getComputedStyle(document.querySelector('.file-menu button.danger')).color")
+    plain  = page.evaluate_script("getComputedStyle(document.querySelector('.file-menu button:not(.danger)')).color")
+    assert_not_equal plain, danger, "the Delete item is styled exactly like Add note (#{danger})"
+
+    message = accept_confirm { find(".file-menu button", text: "Delete").click }
+    assert_equal "Delete widget.stl?", message
+
+    assert_text "Deleted widget.stl."
+    assert_no_selector ".file-cell", text: "widget.stl"
+    refute @user.nodes.present.exists?(node_id: node.node_id), "the node was never tombstoned"
+
+    assert_no_console_errors
+  end
+
+  # THE GATE, WHICH IS THE HALF THE FEATURE WOULD HAVE DIED IN. `open()` read `if (!noteUrl) return`
+  # until 2026-09-10, gating the WHOLE menu on the note url — correct while every menu-bearing cell
+  # was a FILE and every file had notes. A folder carries a delete url and nothing else, so the old
+  # gate opened NOTHING for it, silently: a contextmenu handler that returns early is
+  # indistinguishable from one that never ran, which is why this is asserted in a browser.
+  #
+  # AND ON SHARE IT OFFERS A FOLDER NOTHING, WHICH IS THE POINT AT THIS DEPTH.
+  #
+  # THIS TEST ASSERTED THE OPPOSITE FIRST, and the correction is the finding. The menu was built
+  # before the port could cascade a directory delete, on the reasoning that the menu and the delete
+  # are different slices. They are — but a Delete that cannot delete is the exact defect this same
+  # slice removed from the chooser's Back control, and DRIVING IT showed what a maker would get:
+  # `302` back to /files flashing `"<uuid>" is a dir: share-mode delete is files only — deleting a
+  # directory would strand its children's nodes …`. An internal sentence with a raw node id in it.
+  #
+  # So `folder_menu_data` returns {} unless `dir_deletable?`. This file pins SHARE
+  # (`use_fresh_share_library!`), so the absent arm is what it can see; the present arm — and the
+  # payload's shape — is pinned per-backend in file_menu_wiring_test.rb, which runs on all three
+  # legs and takes a different branch on each.
+  test "a folder is offered no menu on a backend that refuses a directory delete" do
+    create_node!(@user, node_id: SecureRandom.uuid, name: "cad", kind: "dir")
+    create_node!(@user, node_id: SecureRandom.uuid, name: "widget.stl", kind: "file")
+    visit files_path(view: "list")
+
+    find("a.dir", text: "cad").right_click
+    assert_no_selector ".file-menu"
+
+    # NOT VACUOUS: a FILE on this same page still opens one, so the absence above is the folder's
+    # own and not a menu that stopped working everywhere. Without this arm the test passes just as
+    # happily if `filemenu` stops registering at all — §14e's "a guard that skips on the thing it
+    # asserts", with an absence in place of a skip.
+    find(".file-cell", text: "widget.stl").right_click
+    assert_selector ".file-menu button", text: "Delete"
+
+    assert_no_console_errors
+  end
+
   # project_with_folder gives a SOURCE folder ("parts") that is deliberately NOT the project's own
   # folder — this is a file sitting in the library, not yet part of any project, which is the
   # ordinary case the attach control exists for.

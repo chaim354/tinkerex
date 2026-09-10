@@ -60,19 +60,73 @@ module Web
              "a menu url without ?download=1 opens inline instead of downloading"
     end
 
-    # A DIRECTORY HAS NO BYTES. Folders take a different branch in both views and carry no
-    # contextmenu action at all, which is what keeps a "Download" off them — asserted rather than
-    # assumed, because the obvious way to add this feature is a blanket attribute on every cell.
-    test "folders are offered neither a menu nor a download" do
+    # DELETE IS THE MENU'S ONLY DESTRUCTIVE ENTRY AND IT MUST REACH EVERY MENU-BEARING ROW. The
+    # list has carried a `button_to "Delete"` in its row-actions cell since it shipped; the GRID has
+    # no row-actions cell at all, so before this a card's only route to deleting the file was to
+    # open it first. Swept across every row rather than asserted on one, for the reason this file
+    # exists: an entry that works on the list and is missing from the grid is invisible to a browser
+    # test that only ever visits one of them.
+    test "every menu-bearing row carries a delete url" do
+      get files_path
+      assert_response :success
+      rows = css_select("[data-action*='filemenu#open']")
+      refute_empty rows, "no menu-bearing rows rendered — the fixture is not reaching the list"
+      rows.each do |row|
+        assert row["data-delete-url"].present?,
+               "a menu-bearing row has no data-delete-url: #{row["data-node-id"] || row.to_s.first(80)}"
+      end
+    end
+
+    # A FOLDER GOT NEITHER MENU NOR THUMB CELL until 2026-09-10. It gains the MENU and still no
+    # cell, which makes files_helper's "not co-extensive" comment MORE true rather than less: a
+    # folder has no note popover, no blob to download and no addon origin, so Delete is its whole
+    # menu — which is why it is a separate builder and not `file_menu_data` with four nils.
+    #
+    # BOTH VIEWS, and by the folder branch's own selector rather than by a node id: `folder_menu_data`
+    # deliberately writes NO `data-node-id`, because that attribute is the THUMB POLL's key
+    # (thumbs_controller reads `dataset.nodeId`) and a folder has nothing to poll for.
+    test "a folder row carries a menu holding a delete url and nothing else" do
       @user.nodes.create!(node_id: "dir-cad", name: "cad", kind: "dir")
+
+      # SKIPPED WHERE THE BACKEND CANNOT CASCADE A DIRECTORY DELETE, because there the menu is
+      # deliberately absent — see "a folder is offered Delete only where the backend can cascade
+      # one" below, which is the test that pins THAT arm. This one is about the menu's SHAPE.
+      skip "this backend refuses a directory delete" unless FileLayer.current.capabilities.dir_deletable?
+
+      { "list" => "a.dir", "grid" => ".grid-folder" }.each do |view, selector|
+        get files_path(view:)
+        folder = css_select(selector).first
+        refute_nil folder, "the #{view} view rendered no folder row at all"
+        assert_includes folder["data-action"].to_s, "filemenu#open",
+                        "the #{view} view's folder row has no right-click menu"
+        assert_equal file_path("dir-cad"), folder["data-delete-url"],
+                     "the #{view} view's folder menu has no delete url"
+        assert_nil folder["data-note-url"], "a folder has no notes"
+        assert_nil folder["data-download-url"], "a folder has no blob"
+        assert_nil folder["data-thumbs-target"], "a folder has nothing to poll a thumbnail for"
+      end
+    end
+
+    # A DIRECTORY HAS NO BYTES, AND THAT HALF STILL HOLDS — what changed on 2026-09-10 is only the
+    # MENU. This test asserted `[data-action], count: 0` on both folder branches until then, which
+    # was the right assertion while a folder had nothing to put in a menu; it is REVERSED here
+    # deliberately rather than deleted, because the half worth keeping is the one that was always
+    # the point: no download url reaches a directory. The obvious way to give a folder a menu is a
+    # blanket `file_menu_data` on every cell, and that would hand every folder a dead Download.
+    test "a folder is offered a menu but never a download" do
+      @user.nodes.create!(node_id: "dir-cad", name: "cad", kind: "dir")
+
+      # THE DOWNLOAD HALF HOLDS EVERYWHERE — a directory has no bytes on any backend. Only the
+      # MENU count varies, so only it consults the capability.
+      menus = FileLayer.current.capabilities.dir_deletable? ? 1 : 0
 
       get files_path(view: "list")
       assert_select "a.dir[data-download-url]", count: 0
-      assert_select "a.dir[data-action]", count: 0
+      assert_select "a.dir[data-action]", count: menus
 
       get files_path(view: "grid")
       assert_select ".grid-folder[data-download-url]", count: 0
-      assert_select ".grid-folder[data-action]", count: 0
+      assert_select ".grid-folder[data-action]", count: menus
     end
 
     # The menu is gated on `data-note-url` (`if (!noteUrl) return`), so a cell with a download url
@@ -84,6 +138,31 @@ module Web
       assert_operator cells.size, :>=, 2
       assert cells.all? { |el| el["data-note-url"].present? },
              "a cell with a download url but no note url renders no menu, so the entry is unreachable"
+    end
+
+    # THE FOLDER MENU IS OFFERED ONLY WHERE THE DELETE BEHIND IT WORKS.
+    #
+    # BOTH ARMS, KEYED ON THE CAPABILITY — not one arm plus an assumption. On share and s3 a
+    # directory delete answers 302 with `"<uuid>" is a dir: share-mode delete is files only …`
+    # (driven, not reasoned), so an item there would be the "looks available, is inert" defect this
+    # slice removed from the chooser's Back control. chunk_remote cascades and gets it today.
+    #
+    # This test runs on all three legs and takes a different arm on each, which is what makes it a
+    # real guard rather than a restatement of whichever backend is ambient.
+    test "a folder is offered Delete only where the backend can cascade one" do
+      @user.nodes.create!(node_id: "dir-gate", name: "gate", kind: "dir")
+      get files_path(view: "list")
+      assert_response :success
+      rows = css_select("a.dir[data-action*='filemenu#open']")
+
+      if FileLayer.current.capabilities.dir_deletable?
+        refute_empty rows, "this backend cascades a directory delete but offers no folder menu"
+        assert rows.first["data-delete-url"].present?
+      else
+        assert_empty rows,
+                     "a folder menu is offered on a backend whose delete refuses directories — " \
+                     "clicking it flashes an internal message with a raw node id"
+      end
     end
   end
 end

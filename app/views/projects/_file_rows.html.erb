@@ -37,7 +37,7 @@
     <% rows.each do |row| %>
       <% node = row.node %>
       <% origin = @addon_origins[row.node_id] %>
-      <%= tag.tr(data: file_menu_data(row.node_id, origin)) do %>
+      <%= tag.tr(data: file_menu_data(row.node_id, node.name, origin)) do %>
         <td class="col-name"><%= link_to node.name, file_path(row.node_id) %></td>
         <td class="muted col-section"><%= row.section.presence || "Loose" %></td>
         <td class="num muted col-size"><%= node.size ? number_to_human_size(node.size) : "—" %></td>

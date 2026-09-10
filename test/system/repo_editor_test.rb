@@ -138,14 +138,26 @@ class RepoEditorTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  # THE NEGATIVE CASE, AND WITHOUT IT THE TEST ABOVE PROVES ONLY "CodeMirror MOUNTS". A file
-  # outside a working tree must keep the READ-ONLY controller — that is what makes "editing appears
-  # exactly where committing could" an observable property of the page rather than a claim in
-  # FilesController#show's comment. Mutating @editable to a bare `true` turns this red and leaves
-  # the case above green.
-  test "a file outside a repository still opens in the read-only viewer" do
-    loose = seed_plain_file!("loose.md", "nothing to see\n")
-    visit file_path(loose.node_id)
+  # THE NEGATIVE CASE, AND WITHOUT IT THE TEST ABOVE PROVES ONLY "CodeMirror MOUNTS". Its subject
+  # was "a file outside a working tree" until 2026-09-10; the editor stopped asking for a repository
+  # on that date (docs/invariants/git-editing.md's Markdown exception, widened to any text file), so
+  # that file is now editable and would prove the opposite of what this case is for.
+  #
+  # WHAT IS STILL READ-ONLY IS A FILE OVER THE SERVER'S CAP, `FilesController::EDITABLE_MAX_BYTES`
+  # — the one term left in `@editable` besides "is it text" — so it is the subject now and every
+  # assertion below is unchanged. MUTATION-CHECKED 2026-09-10 by dropping `editable?(@node)` from
+  # @editable: this case fails at its own `.cm-editor` wait — editor_controller returns early
+  # for an over-cap buffer and mounts nothing at all — and the case above stays green, which is
+  # the whole job.
+  #
+  # MANY LINES RATHER THAN ONE LONG ONE: a single 200,000-character line is a pathological
+  # CodeMirror document and would be measuring the renderer instead of the gate.
+  test "a file over the editable cap still opens in the read-only viewer" do
+    body = "filler line, long enough to be worth counting\n" * 5_000
+    assert_operator body.bytesize, :>, FilesController::EDITABLE_MAX_BYTES,
+                    "the fixture has to be over the cap or this case cannot fail"
+    big = seed_plain_file!("huge.md", body)
+    visit file_path(big.node_id)
     assert_selector ".cm-editor", wait: 10
 
     assert_equal({ "readOnly" => true, "editable" => false }, editability_facts)

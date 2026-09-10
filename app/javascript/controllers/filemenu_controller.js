@@ -1,14 +1,19 @@
 import { Controller } from "@hotwired/stimulus"
 
-// Right-click a file → a small menu (Add note / Open / Download / Edit in <Addon>). "Add note" opens a popover with a
-// textarea that POSTs to the file's notes endpoint (JSON), then reloads so the server-rendered badge
-// is correct. Progressive enhancement: with no JS, right-click is the browser's own menu and notes
-// stay fully usable from the file detail page.
+// Right-click a row → a small menu (Add note / Open / Download / Edit in <Addon> / Delete). "Add
+// note" opens a popover with a textarea that POSTs to the file's notes endpoint (JSON), then reloads
+// so the server-rendered badge is correct. Progressive enhancement: with no JS, right-click is the
+// browser's own menu, notes stay fully usable from the file detail page, and the list's own
+// row-actions cell still carries a Delete button.
 //
 // EVERY ENTRY IS BUILT FROM A `data-` ATTRIBUTE ON THE CELL, never from a URL assembled here. The
-// cell carries `data-note-url`, `data-download-url` and `data-addon-open-url`, all written by the
-// server's own route helpers — so this controller cannot get a path shape wrong, and a surface that
-// does not want an entry simply omits the attribute rather than needing a flag.
+// cell carries `data-note-url`, `data-download-url`, `data-delete-url` and `data-addon-open-url`,
+// all written by the server's own route helpers (files_helper.rb#file_menu_data and
+// #folder_menu_data) — so this controller cannot get a path shape wrong, and a surface that does not
+// want an entry simply omits the attribute rather than needing a flag.
+//
+// WHICH MEANS EVERY ENTRY IS INDEPENDENTLY OPTIONAL, and since 2026-09-10 that is load-bearing
+// rather than incidental: a FOLDER's cell carries the delete url alone.
 export default class extends Controller {
   connect() {
     this.onDocClick = () => this.close()
@@ -23,11 +28,18 @@ export default class extends Controller {
     this.close()
   }
 
-  // data-action="contextmenu->filemenu#open" on each file cell (which carries data-note-url).
+  // data-action="contextmenu->filemenu#open" on each menu-bearing cell.
   open(event) {
     const cell = event.currentTarget
     const noteUrl = cell.dataset.noteUrl
-    if (!noteUrl) return
+    const deleteUrl = cell.dataset.deleteUrl
+    // THE GATE ASKS WHETHER THERE IS A MENU TO SHOW, NOT WHETHER THERE ARE NOTES. It read
+    // `if (!noteUrl) return` until 2026-09-10, which was correct while every menu-bearing cell was a
+    // FILE and every file had notes. A folder has a delete url and nothing else, so the old gate
+    // would have opened no menu for it AT ALL — silently, because a contextmenu handler that returns
+    // early is indistinguishable from one that never ran, and the browser's own menu appears in its
+    // place. Any new entry must widen this too, or it ships behind a gate that hides it.
+    if (!noteUrl && !deleteUrl) return
     event.preventDefault()
     this.close()
 
@@ -37,11 +49,16 @@ export default class extends Controller {
     this.menu.style.left = `${event.pageX}px`
     this.menu.style.top = `${event.pageY}px`
 
-    const add = document.createElement("button")
-    add.type = "button"
-    add.textContent = "Add note"
-    add.addEventListener("click", (e) => { e.stopPropagation(); this.closeMenu(); this.openPopover(noteUrl, event.pageX, event.pageY) })
-    this.menu.appendChild(add)
+    // GUARDED NOW THAT THE GATE NO LONGER IMPLIES IT. Before, reaching this line proved `noteUrl`
+    // was present; a folder reaches it with none, and `openPopover(undefined)` would POST to
+    // "undefined" from a menu entry that looked perfectly ordinary.
+    if (noteUrl) {
+      const add = document.createElement("button")
+      add.type = "button"
+      add.textContent = "Add note"
+      add.addEventListener("click", (e) => { e.stopPropagation(); this.closeMenu(); this.openPopover(noteUrl, event.pageX, event.pageY) })
+      this.menu.appendChild(add)
+    }
 
     if (href) {
       const open = document.createElement("a")
@@ -78,6 +95,42 @@ export default class extends Controller {
       edit.href = addonUrl
       edit.textContent = cell.dataset.addonOpenLabel || "Edit in its generator"
       this.menu.appendChild(edit)
+    }
+
+    // DELETE IS LAST AND IS THE ONLY DESTRUCTIVE ITEM — last so a mis-aimed click lands on
+    // something recoverable, and `.danger` so it does not read as one more navigation (that class
+    // has its own rule in components.css; without one it would style nothing at all).
+    //
+    // A REAL DELETE WITH THE CSRF TOKEN, NOT A LINK. The menu is built in JS, so there is no
+    // `button_to` to lean on and it has to assemble the request itself: a hidden `_method` for
+    // Rack::MethodOverride and the token from the layout's own meta tag. `form.submit()` rather than
+    // `requestSubmit()` deliberately — submit() fires no `submit` event, so Turbo does not intercept
+    // it and this is a plain browser navigation ending at #destroy's redirect.
+    //
+    // `confirm` FIRST, with the wording the list row's `button_to` and the file page's button
+    // already use, so the three delete doors ask one question — a fourth phrasing for one action is
+    // exactly the divergence this menu exists to close. `dataset.nodeName` reads `data-node-name`;
+    // it is NOT the DOM's `nodeName`, because `dataset` is a DOMStringMap and has no such property.
+    if (deleteUrl) {
+      const name = cell.dataset.nodeName || "this item"
+      const del = document.createElement("button")
+      del.type = "button"
+      del.className = "danger"
+      del.textContent = "Delete"
+      del.addEventListener("click", (e) => {
+        e.stopPropagation()
+        this.closeMenu()
+        if (!window.confirm(`Delete ${name}?`)) return
+        const form = document.createElement("form")
+        form.method = "post"
+        form.action = deleteUrl
+        form.innerHTML =
+          `<input type="hidden" name="_method" value="delete">` +
+          `<input type="hidden" name="authenticity_token" value="${document.querySelector('meta[name="csrf-token"]')?.content || ""}">`
+        document.body.appendChild(form)
+        form.submit()
+      })
+      this.menu.appendChild(del)
     }
     document.body.appendChild(this.menu)
   }
