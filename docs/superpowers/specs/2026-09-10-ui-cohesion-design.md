@@ -1,7 +1,7 @@
 # UI cohesion sweep — design
 
-Date: 2026-09-10. Branch: `claude/ux-ui-cohesion-4oaw9c`. Status: audit complete, first-run walkthrough complete,
-plan proposed, awaiting approval before implementation.
+Date: 2026-09-10. Branch: `claude/ux-ui-cohesion-4oaw9c`. Status: audit and first-run walkthrough complete; **slice 0 LANDED**
+(2026-09-10); slices 1–5 proposed and awaiting approval.
 
 The design system landed on 2026-09-07 (`95ae66b`, spec `2026-09-03-web-shell-and-design-system-design.md`)
 and **356 commits across 49 merged PRs have landed on top of it since** — stages 2, 3 and 4 (home,
@@ -359,6 +359,44 @@ Everything in slices 1–4 is independent of this answer.
 
 Five slices, each independently shippable and independently revertible. Ordered so the loudest
 wins land first.
+
+### Slice 0 — The first five minutes — **LANDED 2026-09-10**
+
+Five commits, `7fe83be`…`d0f9ab8`. What shipped, and the two things the work itself turned up:
+
+- **The auth card** — `main.container.auth-main`, so the 440px column applies for the first time.
+  Verified computed: 1360px → 440px, padding-top 20px → 48px.
+- **The handle `pattern`** — `User::HANDLE_PATTERN` is now the one spelling and `HANDLE_RE` is
+  built from it. Verified in a browser: the field refuses a single character and a trailing hyphen
+  and accepts a hyphenated handle, with no console error.
+- **Sign-up** — lands on the sign-in page so the confirmation notice survives, and a mail server
+  that refuses the connection redirects with an honest message instead of a 500 over a committed
+  account. `APP_HOST` replaces the scaffold's `example.com` in the confirmation link.
+- **The current project** — a column on the user, with `remember_current_project` in Settings as
+  the opt-out. Switching the setting carries the selection across the stores in both directions.
+- **Both uploaders** — take a selection; one refusal no longer abandons the rest of the batch.
+  Verified through the real form: *"Uploaded 4 files. Filed 3 files into design/, images/, and
+  models/."*
+
+**Two defects the work found that the walkthrough had not.** A *green suite over a 500*: the
+rendered form's `multiple: true` adds a hidden empty-value companion, so the real `params[:file]`
+was `["", <file>, …]` and the server called `#original_filename` on a String — every test POSTed a
+Ruby array and could not see it (§14d, one attribute over). And the settings toggle shipped two
+elements sharing one DOM id, because `hidden_field_tag` and `check_box_tag` both derive it from the
+name; the label resolved to the hidden one. Both are fixed and pinned.
+
+**One thing worth knowing about the auto-filing**, found while testing: uploading the same name in
+two separate requests does **not** collide, because the intake sweep files the first into its
+category folder in between and frees the root. Only a name repeated inside ONE selection refuses.
+
+**Verification, honestly.** Every gate that can run in this sandbox is green and the full suite
+shows no regression against a captured baseline. Three legs cannot run here and were not run:
+`system` (chromedriver 147 against Chrome 153), `test-chunk-remote` (needs `../tinkerex-sync`), and
+34 suite failures that pre-date this work are environmental — the container runs as **root**, so
+`chmod 000` fixtures stay readable, and it has none of the thumbnailer binaries or addon bundles.
+`bin/ci test-s3`'s wrapper fails identically on a clean tree; the s3 suite itself runs clean.
+
+#### Original plan
 
 ### Slice 0 — The first five minutes
 
