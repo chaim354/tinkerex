@@ -72,21 +72,22 @@ module FileLayer
   # `nodes` table is a mirror and the bytes are remote).
   #
   # IT IS NOT `scannable`, WHICH IS TRUE FOR S3. It is not `port_writable` either, which is also
-  # true for s3. It agrees with NO existing capability, so unlike scannable/port_writable/
-  # dir_deletable there is not even a coincidence here to mistake for an identity.
+  # true for s3. It agrees with NO existing capability, so unlike scannable/port_writable there is
+  # not even a coincidence here to mistake for an identity. (`dir_deletable` was a third such
+  # cautionary example until 2026-09-10, when every backend learned to cascade a directory delete
+  # and it was retired for varying on nothing — which is the same rule read from the other side.)
   #
   # NEVER SPELL THIS `is_a?(FileLayer::Share)`. That class check is what §14b records as having
   # made Library::ScanJob answer false for S3 and silently never index the library. Widening
   # commits to another backend must be a new ANSWER here, never a rewrite of the callers.
   # Note the mutation this cannot catch, and what does catch it: spec part 12.
   Capabilities = Data.define(:versioned, :syncable, :presignable, :scannable, :port_writable,
-                             :dir_deletable, :local_worktree) do
+                             :local_worktree) do
     def versioned? = versioned
     def syncable? = syncable
     def presignable? = presignable
     def scannable? = scannable
     def port_writable? = port_writable
-    def dir_deletable? = dir_deletable
     def local_worktree? = local_worktree
   end
 end

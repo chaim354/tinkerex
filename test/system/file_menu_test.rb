@@ -187,34 +187,35 @@ class FileMenuTest < ApplicationSystemTestCase
   # gate opened NOTHING for it, silently: a contextmenu handler that returns early is
   # indistinguishable from one that never ran, which is why this is asserted in a browser.
   #
-  # AND ON SHARE IT OFFERS A FOLDER NOTHING, WHICH IS THE POINT AT THIS DEPTH.
+  # AND A FOLDER'S MENU IS DELETE, WHICH ON SHARE NOW ACTUALLY DELETES.
   #
-  # THIS TEST ASSERTED THE OPPOSITE FIRST, and the correction is the finding. The menu was built
-  # before the port could cascade a directory delete, on the reasoning that the menu and the delete
-  # are different slices. They are — but a Delete that cannot delete is the exact defect this same
-  # slice removed from the chooser's Back control, and DRIVING IT showed what a maker would get:
-  # `302` back to /files flashing `"<uuid>" is a dir: share-mode delete is files only — deleting a
-  # directory would strand its children's nodes …`. An internal sentence with a raw node id in it.
+  # THIS TEST HAS BEEN WRITTEN THREE WAYS AND THE SEQUENCE IS THE RECORD. First it asserted a folder
+  # menu exists, when the menu shipped ahead of the port. Then it asserted the OPPOSITE — no menu on
+  # share — because `folder_menu_data` was gated on `dir_deletable?` once driving it showed a maker
+  # got `302` back to /files flashing `"<uuid>" is a dir: share-mode delete is files only …`, an
+  # internal sentence with a raw node id. Now share cascades, the gate opens on its own, and the menu
+  # is back — this time with a working delete behind it.
   #
-  # So `folder_menu_data` returns {} unless `dir_deletable?`. This file pins SHARE
-  # (`use_fresh_share_library!`), so the absent arm is what it can see; the present arm — and the
-  # payload's shape — is pinned per-backend in file_menu_wiring_test.rb, which runs on all three
-  # legs and takes a different branch on each.
-  test "a folder is offered no menu on a backend that refuses a directory delete" do
-    create_node!(@user, node_id: SecureRandom.uuid, name: "cad", kind: "dir")
+  # SO IT CLICKS THROUGH rather than asserting the control exists. The whole reason the middle
+  # version had to be written is that a Delete which cannot delete looks identical to one that can
+  # until someone presses it. `s3` is the one backend still gated; that arm is pinned per-backend in
+  # file_menu_wiring_test.rb, which runs on all three legs.
+  test "a folder's menu is Delete, and it deletes the folder" do
+    dir = create_node!(@user, node_id: SecureRandom.uuid, name: "cad", kind: "dir")
     create_node!(@user, node_id: SecureRandom.uuid, name: "widget.stl", kind: "file")
     visit files_path(view: "list")
 
     find("a.dir", text: "cad").right_click
-    assert_no_selector ".file-menu"
-
-    # NOT VACUOUS: a FILE on this same page still opens one, so the absence above is the folder's
-    # own and not a menu that stopped working everywhere. Without this arm the test passes just as
-    # happily if `filemenu` stops registering at all — §14e's "a guard that skips on the thing it
-    # asserts", with an absence in place of a skip.
-    find(".file-cell", text: "widget.stl").right_click
     assert_selector ".file-menu button", text: "Delete"
+    # A FOLDER HAS NO NOTES AND NO BYTES, so those two entries must not appear — the obvious way to
+    # give a folder a menu is a blanket `file_menu_data`, which would hand it a dead Download.
+    assert_no_selector ".file-menu button", text: "Add note"
+    assert_no_selector ".file-menu a", text: "Download"
 
+    accept_confirm { find(".file-menu button", text: "Delete").click }
+
+    assert_no_selector "a.dir", text: "cad"
+    assert @user.nodes.find_by!(node_id: dir.node_id).deleted?, "the folder is still live"
     assert_no_console_errors
   end
 

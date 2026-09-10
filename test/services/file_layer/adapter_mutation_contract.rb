@@ -170,21 +170,17 @@ module FileLayerMutationContract
   # refusing even though refusing is less convenient than reparenting to the root -- a refusal is
   # recoverable (restore the folder, then the file); a scatter is not.
   #
-  # GATED ON `dir_deletable?`, matching the delete-refusal test below and for the identical
-  # reason: a cascading directory delete is the only PORT door that ever tombstones a parent out
-  # from under a still-referenced live child. On chunk and chunk_remote, dir_deletable? is true
-  # and `adapter.delete(dir)` cascades (Sync::SubtreeDelete, or the standalone server's own
-  # cascade behind the wire). On share and s3, dir_deletable? is false -- `adapter.delete` on a
-  # directory is refused outright, so there is no PORT-reachable door that ever produces this
-  # state, and the scenario is structurally UNREACHABLE there rather than merely untested. (Share's
-  # own `undelete` has a related but SEPARATE hazard when a directory disappears via a SCAN
-  # tombstone rather than a trash one -- a scan tombstone keeps `storage_path`, so `undelete` can
-  # silently reconstruct the folder on disk under a still-dead parent NODE. That is a different
-  # mechanism from the one closed here and is not pinned by this test.)
+  # UNCONDITIONAL SINCE 2026-09-10. This was gated on `dir_deletable?` and SKIPPED on share and s3,
+  # where a directory delete was refused outright and the state was structurally unreachable. All
+  # three cascade now, so all three can tombstone a parent out from under a live child, and all
+  # three must refuse the restore rather than reparent the orphan to the root — a refusal is
+  # recoverable, a scatter is not.
+  #
+  # THE ADAPTERS DISCRIMINATE ON THE TOMBSTONE KIND, NOT ON `deleted:`, and this test only reaches
+  # the trash kind. A SCAN tombstone keeps `storage_path` and restoring into one is self-healing
+  # (the folder is recreated, that is positive evidence, and the next scan revives the same dir
+  # node). Writing this refusal as `parent&.deleted?` breaks that, which share's own suite caught.
   def test_mutation_contract_undelete_refuses_an_orphan_whose_parent_is_still_tombstoned
-    skip "dir_deletable? is false -- no port door ever orphans a child on this backend" unless
-      adapter.capabilities.dir_deletable?
-
     dir_id = make_dir(name: "orphan-parent")
     child_id = make_file(name: "kid.stl", bytes: "b")
     adapter.move(@user, node_id: child_id, new_parent_node_id: dir_id, new_name: "kid.stl")
@@ -200,14 +196,24 @@ module FileLayerMutationContract
 
   # The capability from Task 1, asserted as a CONDITIONAL rather than a fixed expectation, because
   # both answers are correct and which one is right is a property of the backend.
-  def test_mutation_contract_delete_refuses_a_directory_unless_dir_deletable
+  # UNCONDITIONAL SINCE 2026-09-10, and that is the point rather than a simplification. This was a
+  # conditional keyed on `dir_deletable?` while share and s3 refused a directory delete; both cascade
+  # now, the capability is gone, and a directory delete is part of the contract EVERY backend
+  # answers. A shared assertion is the only thing that can catch the two adapters diverging here.
+  def test_mutation_contract_delete_cascades_a_directory
     dir_id = make_dir(name: "adir")
-    if adapter.capabilities.dir_deletable?
-      adapter.delete(@user, node_id: dir_id)
-      assert @user.nodes.find_by!(node_id: dir_id).deleted, "a dir_deletable backend tombstones it"
-    else
-      assert_raises(FileLayer::UnsupportedOperation) { adapter.delete(@user, node_id: dir_id) }
-      assert_not @user.nodes.find_by!(node_id: dir_id).deleted, "a refused delete must not half-apply"
-    end
+    child_id = make_file(name: "kid.stl", bytes: "b")
+    adapter.move(@user, node_id: child_id, new_parent_node_id: dir_id, new_name: "kid.stl")
+
+    adapter.delete(@user, node_id: dir_id)
+
+    assert @user.nodes.find_by!(node_id: dir_id).deleted, "the directory is not tombstoned"
+    # THE CHILD IS THE ASSERTION THAT MATTERS. A directory tombstoned alone leaves its children live
+    # at paths whose bytes have moved into `.trash`, where the scan refuses to look — nothing can
+    # pair them, and the mass-deletion guard then refuses that scan and every scan after it.
+    assert @user.nodes.find_by!(node_id: child_id).deleted,
+           "a child survived as a live node under a deleted directory"
+    assert_nil @user.nodes.find_by!(node_id: child_id).storage_path,
+               "a trash tombstone must release its path or create_or_revive! will revive it"
   end
 end

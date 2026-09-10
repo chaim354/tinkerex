@@ -86,17 +86,27 @@ module Web
     # longer exist while their bytes sat in .trash, where the scan refuses to look -- a permanent
     # wedge). Pinned HERE because the controller is what turns that refusal into an answer a user
     # can read: FileLayer::UnsupportedOperation is a StandardError, so rescue_from reaches it.
-    test "a share-mode delete of a directory is refused, not wedged" do
+    # REWRITTEN 2026-09-10: THE REFUSAL BECAME A CASCADE. This asserted that a directory delete was
+    # refused with "files only" in the flash. Share tombstones the subtree with the bytes now, so
+    # what the controller must turn into a readable answer is the SUCCESS — and the thing this test
+    # has always been about, that no child is left live at a path inside `.trash`, is asserted
+    # directly instead of being secured by refusing to try.
+    test "a share-mode delete of a directory cascades, and strands no child" do
       FileUtils.mkdir_p(@root.join("cad"))
       File.binwrite(@root.join("cad/part.stl"), "part")
       scan!
       dir_id = @user.nodes.find_by!(storage_path: "cad", kind: "dir").node_id
+      child_id = @user.nodes.find_by!(storage_path: "cad/part.stl").node_id
 
       delete file_path(dir_id)
       assert_redirected_to files_path
-      assert_match(/files only/, flash[:alert])
-      assert_not @user.nodes.find_by!(node_id: dir_id).deleted, "the directory must survive"
-      assert @root.join("cad/part.stl").exist?, "its children's bytes must not move"
+      assert_nil flash[:alert], "a cascade is not an error"
+
+      assert @user.nodes.find_by!(node_id: dir_id).deleted, "the directory is not tombstoned"
+      assert @user.nodes.find_by!(node_id: child_id).deleted,
+             "the child is live at a path inside .trash — the wedge this test exists for"
+      assert_not @root.join("cad/part.stl").exist?, "the bytes did not move"
+      assert_equal "part", File.binread(@root.join(".trash", dir_id, "cad", "part.stl"))
     end
   end
 end

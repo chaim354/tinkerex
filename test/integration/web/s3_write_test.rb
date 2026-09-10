@@ -163,22 +163,23 @@ module Web
       assert_nil node.storage_path
     end
 
-    # S3 refuses a directory delete, and diverges from Share by refusing a directory MOVE too --
-    # there is no directory and no rename here, so a dir node's key simply does not exist. Pinned
-    # at the controller because that is what turns the refusal into an answer a user can read:
-    # UnsupportedOperation is a StandardError, so rescue_from reaches it (NotImplementedError, a
-    # ScriptError, would not -- it would be the 500 spec §6 forbids).
-    test "an s3-mode delete of a directory is refused, not wedged" do
-      @fake.seed!("#{PREFIX}/cad/part.stl", "part", last_modified: Time.now)
-      scan!
-      dir_id = @user.nodes.find_by!(storage_path: "cad", kind: "dir").node_id
+    # REWRITTEN 2026-09-10: THE REFUSAL BECAME A CAPPED CASCADE. S3 still has no directory and no
+    # rename, so a folder delete here is a copy and a delete PER OBJECT — what changed is that the
+    # catalog is written only after the bucket agrees, so a failure partway leaves it untouched
+    # rather than half-applied, and a cap keeps the sequence short enough to finish in a request.
+    # What this pins at the controller level is that the cascade reaches the CHILDREN.
+    test "an s3-mode delete of a directory cascades, and strands no child" do
+      dir_id = FileLayer.current.mkdir(@user, parent_node_id: nil, name: "cad").node_id
+      child_id = FileLayer.current.write(@user, parent_node_id: dir_id, name: "part.stl",
+                                         io: StringIO.new("part")).node_id
 
       delete file_path(dir_id)
       assert_redirected_to files_path
-      assert_match(/files only/, flash[:alert])
-      assert_not @user.nodes.find_by!(node_id: dir_id).deleted, "the directory must survive"
-      assert_equal "part", @fake.objects["#{PREFIX}/cad/part.stl"].body,
-                   "its children's bytes must not move"
+      assert_nil flash[:alert], "a cascade is not an error"
+
+      assert @user.nodes.find_by!(node_id: dir_id).deleted, "the directory is not tombstoned"
+      assert @user.nodes.find_by!(node_id: child_id).deleted,
+             "the child is live at a key whose object has moved — the wedge this test exists for"
     end
 
     # --- TrashController -------------------------------------------------------

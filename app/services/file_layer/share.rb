@@ -30,7 +30,7 @@ module FileLayer
       # and it is why committing is share-only (spec part 3c). It is a NETWORK filesystem though,
       # which is a live hazard rather than a footnote — spec part 8.
       Capabilities.new(versioned: false, syncable: false, presignable: false, scannable: true,
-                       port_writable: true, dir_deletable: false, local_worktree: true)
+                       port_writable: true, local_worktree: true)
     end
 
     # Nothing to presign, so nothing for the CSP's `connect-src` to name: every download here is a
@@ -362,7 +362,6 @@ module FileLayer
     # statement and already atomic, which is the only atomicity this needs.
     def delete(user, node_id: nil)
       node = live_node!(user, node_id)
-      deletable_file!(node)
       src = absolute_path(node) # read BEFORE the update nulls storage_path
       dest_dir = trash_dir(node.node_id)
       begin
@@ -406,7 +405,23 @@ module FileLayer
       # NEW, unrelated file dropped there the trashed node's node_id — and with it every
       # attachment, BOM link and tag — while the old bytes sat in .trash waiting for an undelete
       # that would then collide. Nulling it is what makes that revive unable to fire.
-      node.update!(deleted: true, storage_path: nil)
+      # THE WHOLE SUBTREE, IN ONE STATEMENT. A directory rename took every descendant's bytes with
+      # it, so every descendant's ROW must follow — one left live is the wedge described above, and
+      # it is silent. `Subtree.node_ids` is the shared walk (s3 tombstones the identical set), by
+      # the parent edge rather than by a path prefix because a moved child's stored path is stale
+      # until a scan pairs it back.
+      #
+      # `storage_path: nil` ON ALL OF THEM, for the reason this method's file case already gives:
+      # `Reconciler#create_or_revive!` revives a tombstone BY storage_path, so one that kept its
+      # path would hand a NEW, unrelated file that node's id — and with it every attachment, BOM
+      # link and tag — while the old bytes sat in `.trash` awaiting an undelete that would then
+      # collide. `undelete` rebuilds the paths instead, from the restored parents.
+      #
+      # `update_all`, not a loop of `update!`: one statement for a folder of any size, and — the
+      # part that matters — it cannot half-apply, so a subtree is never partly live.
+      ids = FileLayer::Subtree.node_ids(user, node.node_id)
+      user.nodes.where(node_id: ids).update_all(deleted: true, storage_path: nil,
+                                                updated_at: Time.current)
       nil
     end
 
@@ -508,6 +523,40 @@ module FileLayer
       # is what makes undeleting a live node a clean NotFound instead of a confusing rename.
       node = user.nodes.find_by(node_id:, deleted: true) ||
              raise(NotFound, "node #{node_id.inspect} is not in the trash")
+      # AN ORPHANED RESTORE IS REFUSED (§14a), AND IT BECAME REACHABLE HERE ON 2026-09-10. Until the
+      # directory cascade above, `delete` could not tombstone a parent out from under a live child,
+      # so this state had no port-reachable door on share and the shared contract SKIPPED it. Now a
+      # folder delete tombstones the whole subtree, and restoring a CHILD first is the MAINLINE
+      # case, not an edge.
+      #
+      # REFUSE RATHER THAN REPARENT TO THE ROOT, which is the trade §14a already settled: a refusal
+      # is recoverable — restore the folder, then the file — and a scatter is not. The message names
+      # the ACTION, not just the failure, because a browser Restore click has no prompt to offer.
+      #
+      # AND IT DISCRIMINATES ON THE TOMBSTONE KIND, NOT ON `deleted:` — which is §14a's two-kinds
+      # rule doing real work rather than being restated. A SCAN tombstone KEEPS its storage_path
+      # (the user removed the emptied folder in Finder), and restoring into one is SELF-HEALING:
+      # mkdir_p recreates the folder, that is positive evidence, and the next scan revives the very
+      # same dir node by storage_path with its original id. A TRASH tombstone NULLs the path, and
+      # that is exactly what the cascade above writes — so the NULL is the discriminator, and it is
+      # the only one that separates "restore the folder first" from a dead end the user can neither
+      # see nor fix.
+      #
+      # Written as `deleted: true` first, which refused BOTH and broke the self-healing case: an
+      # existing test drove it and said so. Do not widen this back.
+      #
+      # AND IT RUNS BEFORE THE BYTES CHECK, which is not cosmetic ordering. A child tombstoned by
+      # the CASCADE has no entry of its own under `.trash/<its id>/` — its bytes travelled inside
+      # the directory, at `.trash/<dir id>/<dir>/…`. So the bytes check finds nothing and answers
+      # NotFound: "its trashed bytes are gone (purged?)" — terminal, wrong, and it tells the user
+      # their file is unrecoverable when restoring the folder beside it would bring it back. The
+      # shared mutation contract caught exactly this substitution.
+      parent = user.nodes.find_by(node_id: node.parent_node_id) if node.parent_node_id.present?
+      if parent&.deleted? && parent.storage_path.nil?
+        raise UnsupportedOperation,
+              "#{node_id.inspect}: its folder is in the trash too — restore the folder first"
+      end
+
       src = trash_dir(node.node_id).join(node.name)
       unless File.exist?(src)
         # An UNMOUNTED share makes the trashed bytes absent too — and this is the only place
@@ -527,6 +576,7 @@ module FileLayer
 
       # Reconstructed from parent + name, because delete released storage_path (Landmine 2).
       # live: false — see parent_dir_rel!.
+
       rel = join_rel(parent_dir_rel!(user, node.parent_node_id, live: false), node.name)
       # THE FOURTH INSTANCE OF THE SKIP-LIST BLIND SPOT, and it was reported as unreachable, which
       # was wrong. `rel` is reconstructed from the PARENT, so a parent whose storage_path is
@@ -555,6 +605,7 @@ module FileLayer
       # and a stale pair would make it re-hash the file for nothing.
       st = File.stat(dest)
       node.update!(deleted: false, storage_path: rel, size: st.size, mtime: nanos(st))
+      revive_subtree!(user, node)
       stat(user, node_id: node.node_id)
     end
 
@@ -597,48 +648,67 @@ module FileLayer
     # the identical argument, for the identical reason.)
     def trash_dir(node_id) = @root.join(Library::Scanner::TRASH_PREFIX, node_id)
 
-    # Deleting a DIRECTORY is refused rather than cascaded. File.rename on a directory succeeds,
-    # so without this check `delete` would move a whole subtree into .trash while leaving every
-    # child node live at a path that no longer exists — the next scan finds them all vanished,
-    # cannot pair them (their bytes are in .trash, which the scan skips), and refuses itself via
-    # the mass-deletion guard once that subtree is >20% of the library. Nothing then clears the
-    # ghosts, so the refusal is permanent: Task 2's temp-file wedge by another road.
+    # A DIRECTORY DELETE CASCADES HERE NOW (2026-09-10). `deletable_file!` stood in this place and
+    # refused one; its argument is kept because it is still true about what would happen WITHOUT the
+    # subtree tombstone below.
     #
-    # That is an instance of a STRUCTURAL property, not a coincidence: wherever this app moves
-    # bytes INTO a region the Scanner skips (.trash, .maker-tmp-) while leaving a live node
-    # pointing at the old path, it creates ghosts the Reconciler can never pair — pairing needs
-    # an OBSERVATION as the partner, and a skipped path produces none.
+    # THE RENAME WAS NEVER THE PROBLEM. `File.rename` on a directory is atomic and always was. What
+    # made a directory delete unsafe was the CATALOG: the whole subtree moved into `.trash` while
+    # every child node stayed LIVE at a path that no longer existed. The next scan finds them all
+    # vanished, cannot pair them (their bytes are in `.trash`, which the scan skips), and refuses
+    # itself via the mass-deletion guard once that subtree is >20% of the library. Nothing then
+    # clears the ghosts, so the refusal is PERMANENT.
     #
-    # An earlier draft of this paragraph concluded "delete is uniquely exposed, because a dir MOVE
-    # leaves the bytes observable at the new path while a dir DELETE puts them where the scan
-    # refuses to look." The principle was right and the conclusion was FALSE, which is worth
-    # leaving here as a warning: a move is only self-healing when its DESTINATION is observable,
-    # and `write`/`move` used to accept `.trash` and `.maker-tmp-x` as destinations — perfectly
-    # good leaf names — wedging the library the same way, and additionally breaking every delete
-    # in it by turning `.trash` into a file. See `observable!`, which is the guard that claim's
-    # confidence delayed. The property is structural; assume every path that writes is exposed
-    # until you have checked it, and do not trust a sentence like the one this replaced.
+    # That is an instance of a STRUCTURAL property, not a coincidence: wherever this app moves bytes
+    # INTO a region the Scanner skips while leaving a live node pointing at the old path, it creates
+    # ghosts the Reconciler can never pair — pairing needs an OBSERVATION as the partner, and a
+    # skipped path produces none. Assume every path that writes is exposed until you have checked it.
     #
-    # Chunk mode cascades instead (Sync::SubtreeDelete, whole subtree under one lock). Share mode
-    # deliberately does not: 2b is file-only, `undelete` restores ONE path under ONE parent and
-    # has no subtree story, and a cascade whose inverse does not exist is a delete the user cannot
-    # undo. (Worked both ways and both collapse: nulling the children's paths makes undelete mint
+    # THE OLD NOTE CONCLUDED THIS COULD NOT BE FIXED, AND IT WAS WRONG IN AN INSTRUCTIVE WAY. It
+    # read: "worked both ways and both collapse: nulling the children's paths makes undelete mint
     # new node_ids and lose every attachment; keeping them reintroduces the revive-by-path bug for
-    # each child.)
+    # each child." Both halves are right about their premise and the premise is incomplete — there
+    # is a third option it did not consider. Null the children's paths on DELETE (so no tombstone
+    # can be revived by path, which is the second failure) and on UNDELETE **revive the same rows**,
+    # rebuilding each path from its restored parent (so nothing is minted, which is the first).
+    # `undelete` below does exactly that. A conclusion of "impossible" is worth re-deriving.
+    # REVIVE EVERY DESCENDANT OF A RESTORED DIRECTORY, rebuilding each path from its parent.
     #
-    # Named for DELETE, not for `kind`, though it looks op-agnostic: Task 4's `move` may want a
-    # kind check too, and its answer is likely DIFFERENT (a moved dir's bytes stay observable, so
-    # the scan repairs the children on the next pass — a self-healing inconsistency, not a wedge).
-    # Sharing one guard would make this message lie there. Task 4 gets its own decision.
-    def deletable_file!(node)
-      return if node.file?
-      # UnsupportedOperation, not NotImplementedError: a user clicked delete on a folder, so this is a
-      # CLIENT condition (Phase 4 -> 409/422), and it must stay catchable by `rescue StandardError`.
-      # NotImplementedError is a ScriptError and means the DEPLOYMENT is mis-wired -> 501.
-      raise UnsupportedOperation,
-            "#{node.node_id.inspect} is a #{node.kind}: share-mode delete is files only — " \
-            "deleting a directory would strand its children's nodes at paths that no longer " \
-            "exist and wedge the next scan"
+    # THIS IS WHAT MAKES THE CASCADE UNDOABLE, and therefore what makes it safe to offer at all: a
+    # delete whose inverse does not exist is a delete the user cannot undo. `delete` nulled every
+    # descendant's storage_path (so no tombstone could be revived by path), and the rename back has
+    # already put the bytes where they belong — so all that is left is the catalog.
+    #
+    # THE SAME ROWS, NEVER NEW ONES. Every attachment, BOM line and tag is keyed on `node_id`, so a
+    # restore that minted ids would look perfect — the files are back, the bytes are right — while
+    # every project referencing them had quietly lost them. That is the failure the old refusal
+    # believed was unavoidable here.
+    #
+    # TOP-DOWN, AND THE ORDER IS LOAD-BEARING: a child's path is its parent's path plus its name,
+    # so the parent must be written first. `Subtree.node_ids` returns root-first in level order,
+    # which is exactly that guarantee — do not re-sort it.
+    #
+    # A file whose bytes did not come back is left TOMBSTONED rather than revived to a path with
+    # nothing behind it: a live node over absent bytes is the vanished-file shape the mass-deletion
+    # guard exists for, and it would be this method creating it.
+    def revive_subtree!(user, root)
+      ids = FileLayer::Subtree.node_ids(user, root.node_id)
+      return if ids.size <= 1
+
+      by_parent = user.nodes.where(node_id: ids - [ root.node_id ]).group_by(&:parent_node_id)
+      queue = [ root ]
+      until queue.empty?
+        parent = queue.shift
+        Array(by_parent[parent.node_id]).each do |child|
+          rel = join_rel(parent.storage_path, child.name)
+          path = resolve_inside!(rel)
+          next unless File.exist?(path)
+
+          st = File.stat(path)
+          child.update!(deleted: false, storage_path: rel, size: st.size, mtime: nanos(st))
+          queue << child
+        end
+      end
     end
 
     # Undo the entry dir when the move it was made for never landed, mirroring write's rm_f of
