@@ -701,20 +701,28 @@ module FileLayer
       assert_equal 0, @user.nodes.where("storage_path LIKE '.trash%'").count
     end
 
-    # NOT IN THE PLAN — the gap it left. Why a dir delete wedges the library permanently, and why
-    # a cascade is not the answer: see Share#deletable_file!. UnsupportedOperation (a client condition, a
-    # StandardError) rather than NotImplementedError (a mis-wired deployment, a ScriptError).
-    test "deleting a DIRECTORY is refused, not silently cascaded into a wedge" do
+    # THIS TEST ASSERTED THE REFUSAL UNTIL 2026-09-10, and it is rewritten rather than deleted
+    # because the thing it always cared about is the thing that still matters: a directory delete
+    # must not leave the subtree stranded. It used to secure that by refusing; it now secures it by
+    # cascading the tombstone with the bytes. The fixture is unchanged.
+    test "deleting a DIRECTORY cascades the tombstone with the bytes, so nothing is stranded" do
       FileUtils.mkdir_p(@root.join("cad"))
       File.binwrite(@root.join("cad/gear.stl"), "g")
       Library::Scanner.call(@user, root: @root.to_s)
       dir = @user.nodes.find_by!(storage_path: "cad", kind: "dir")
+      child = @user.nodes.find_by!(storage_path: "cad/gear.stl")
 
-      err = assert_raises(FileLayer::UnsupportedOperation) { adapter.delete(@user, node_id: dir.node_id) }
-      assert_match(/director/i, err.message)
-      assert_equal "g", File.binread(@root.join("cad/gear.stl")), "the subtree is untouched"
-      assert_not @user.nodes.find_by!(node_id: dir.node_id).deleted
-      assert_not File.exist?(@root.join(".trash")), "and nothing was moved"
+      adapter.delete(@user, node_id: dir.node_id)
+
+      assert @user.nodes.find_by!(node_id: child.node_id).deleted?,
+             "the child is live at a path inside .trash — the wedge this test has always been about"
+      assert_equal "g", File.binread(@root.join(".trash", dir.node_id, "cad", "gear.stl")),
+                   "the bytes did not travel with the directory"
+
+      # AND THE NEXT SCAN IS STILL HAPPY, which is the claim underneath all of it: a wedge shows up
+      # as a scan that refuses itself, so running one is the only way to say the wedge is absent.
+      Library::Scanner.call(@user, root: @root.to_s)
+      assert_equal 0, @user.nodes.present.where("storage_path LIKE 'cad%'").count
     end
 
     # mkdir_p is I/O against the same share as the rename and fails for the same transient
@@ -736,24 +744,31 @@ module FileLayer
       assert File.exist?(@root.join("x.stl")), "and must not lose the file"
     end
 
-    # The TAXONOMY, which is the whole point of the class and not its name: a caller's
+    # THE TAXONOMY, which is the whole point of the class and not its name: a caller's
     # `rescue StandardError` — GeneratePreviewJob's shape, cited throughout this adapter — must
-    # catch a folder-delete refusal. NotImplementedError is a ScriptError and would sail straight
-    # through it: uncaught out of a job, and once Phase 4 maps NotImplementedError to 501, a 5xx
-    # and an on-call page because a user clicked delete on a folder.
-    test "a refused directory delete is a client condition, catchable by rescue StandardError" do
-      FileUtils.mkdir_p(@root.join("cad"))
-      Library::Scanner.call(@user, root: @root.to_s)
-      dir = @user.nodes.find_by!(storage_path: "cad", kind: "dir")
+    # catch it. NotImplementedError is a ScriptError and would sail straight through: uncaught out
+    # of a job, and a 501 with an on-call page, because a user clicked a button.
+    #
+    # RE-AIMED ON 2026-09-10 AT THE REFUSAL THAT STILL EXISTS. This asserted the same taxonomy about
+    # the DIRECTORY-DELETE refusal, which is gone — a folder delete cascades now. The orphaned
+    # RESTORE inherits the identical argument: it is a client condition (the maker restored a child
+    # before its folder), it is reached from a browser click, and it must be catchable. Kept rather
+    # than deleted, because the class of bug it guards has not changed at all.
+    test "a refused orphan restore is a client condition, catchable by rescue StandardError" do
+      dir_id = make_dir(name: "cad")
+      leaf_id = adapter.write(@user, parent_node_id: dir_id, name: "gear.stl",
+                              io: StringIO.new("g")).node_id
+      adapter.delete(@user, node_id: dir_id) # cascades: both are tombstoned, both paths NULLed
 
       caught = begin
-        adapter.delete(@user, node_id: dir.node_id)
+        adapter.undelete(@user, node_id: leaf_id)
         :nothing_was_raised
       rescue StandardError => e
         e.class
       end
       assert_equal FileLayer::UnsupportedOperation, caught,
                    "a ScriptError here escapes every ordinary caller's rescue"
+      assert @user.nodes.find_by!(node_id: leaf_id).deleted?, "a refused restore must not half-apply"
     end
 
     # The second delete of a node is NOT idempotent-and-silent: live_node! refuses it. That is
@@ -834,13 +849,14 @@ module FileLayer
       assert_not File.exist?(@root.join("cad/gear.stl"))
     end
 
-    # NOT IN THE PLAN, and the asymmetry with delete is the point. Share#deletable_file! refuses a
-    # directory DELETE because it strands the children's nodes at paths the scan refuses to look
-    # behind (.trash) — a permanent wedge. It predicted move's answer would be different; it is,
-    # and this pins WHY: a moved directory leaves its children's bytes OBSERVABLE at the new path,
-    # so the Reconciler's move-pairing re-homes them on the next pass with their node_ids intact.
-    # Self-healing, not a wedge — so move allows what delete refuses. See #move's comment for the
-    # two residuals this accepts (both identical to the user renaming the folder in Finder).
+    # NOT IN THE PLAN, and the asymmetry it was written about is GONE as of 2026-09-10 — a
+    # directory delete cascades now, so move and delete both handle one. What this still pins is
+    # the MECHANISM, which is different in each and worth keeping distinct: a moved directory
+    # leaves its children's bytes OBSERVABLE at the new path, so the Reconciler's move-pairing
+    # re-homes them on the next pass with their node_ids intact — self-healing, and it needs no
+    # subtree write at all. A DELETE puts them where the scan refuses to look, so it must tombstone
+    # the subtree explicitly. Same outcome, opposite reason. See #move's comment for the two
+    # residuals this accepts (both identical to the user renaming the folder in Finder).
     test "moving a DIRECTORY is allowed: the next scan re-homes the children, node_ids intact" do
       FileUtils.mkdir_p(@root.join("cad"))
       Library::Scanner.call(@user, root: @root.to_s)
@@ -1131,6 +1147,81 @@ module FileLayer
       Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
       node = @user.nodes.find_by(node_id: info.node_id)
       assert node && !node.deleted, "the dir node must survive the scan (the real dir is on disk)"
+    end
+
+    # ---- Deleting a DIRECTORY (2026-09-10) ------------------------------------------------
+    #
+    # THE RENAME WAS NEVER THE PROBLEM. `File.rename` on a directory is atomic and always was; what
+    # made a directory delete unsafe was the CATALOG being left inconsistent — the children stayed
+    # live at paths that no longer existed. So the refusal is gone and the subtree tombstone is what
+    # replaced it.
+
+    test "deleting a directory moves it whole and tombstones every node under it" do
+      dir_id = make_dir(name: "parts")
+      sub_id = adapter.mkdir(@user, parent_node_id: dir_id, name: "stl").node_id
+      leaf_id = adapter.write(@user, parent_node_id: sub_id, name: "a.stl",
+                              io: StringIO.new("solid a\n")).node_id
+
+      adapter.delete(@user, node_id: dir_id)
+
+      # THE WEDGE ASSERTION, AND IT IS THE POINT OF THIS TEST. Asserting only that the directory is
+      # tombstoned would pass over exactly the defect the old refusal existed to prevent: a child
+      # left LIVE at a path now inside `.trash`, which the scan refuses to look at, so nothing can
+      # ever pair it — and the tombstone that follows refuses that scan and every scan after it.
+      [ dir_id, sub_id, leaf_id ].each do |id|
+        node = @user.nodes.find_by!(node_id: id)
+        assert node.deleted?, "#{id} survived as a live node under a deleted directory"
+        # storage_path RELEASED on all of them, for the reason the single-file delete already gives:
+        # Reconciler#create_or_revive! revives a tombstone BY storage_path, so one that kept its
+        # path would hand a new, unrelated file this node's id and every attachment on it.
+        assert_nil node.storage_path, "#{id} kept its storage_path"
+      end
+
+      refute Dir.exist?(@root.join("parts")), "the directory is still at its old path"
+      assert File.exist?(@root.join(".trash", dir_id, "parts", "stl", "a.stl")),
+             "the subtree's bytes are not in .trash"
+    end
+
+    test "restoring a directory returns the subtree with the same node ids and the same bytes" do
+      dir_id = make_dir(name: "parts")
+      sub_id = adapter.mkdir(@user, parent_node_id: dir_id, name: "stl").node_id
+      leaf_id = adapter.write(@user, parent_node_id: sub_id, name: "a.stl",
+                              io: StringIO.new("solid a\n")).node_id
+
+      adapter.delete(@user, node_id: dir_id)
+      adapter.undelete(@user, node_id: dir_id)
+
+      # THE NODE IDS ARE WHAT EVERY ATTACHMENT, BOM LINE AND TAG IS KEYED ON. A restore that minted
+      # new ones would look perfect — the files are back, the bytes are right — while every project
+      # that referenced them has quietly lost them.
+      [ dir_id, sub_id, leaf_id ].each do |id|
+        assert @user.nodes.present.exists?(node_id: id), "#{id} did not come back as itself"
+      end
+      assert_equal File.join("parts", "stl", "a.stl"),
+                   @user.nodes.find_by!(node_id: leaf_id).storage_path,
+                   "the child's storage_path was not rebuilt under the restored parent"
+      assert_equal "solid a\n", adapter.read(@user, node_id: leaf_id)
+    end
+
+    test "an empty directory deletes and restores too" do
+      # The degenerate case the subtree walk must not choke on: the set is the directory alone.
+      dir_id = make_dir(name: "empty")
+      adapter.delete(@user, node_id: dir_id)
+      assert @user.nodes.find_by!(node_id: dir_id).deleted?
+
+      adapter.undelete(@user, node_id: dir_id)
+      assert Dir.exist?(@root.join("empty"))
+    end
+
+    test "a directory delete does not disturb a sibling" do
+      dir_id = make_dir(name: "parts")
+      adapter.write(@user, parent_node_id: dir_id, name: "a.stl", io: StringIO.new("a"))
+      keep_id = make_file(name: "keep.stl", bytes: "keep")
+
+      adapter.delete(@user, node_id: dir_id)
+
+      refute @user.nodes.find_by!(node_id: keep_id).deleted?, "a sibling outside the tree was tombstoned"
+      assert File.exist?(@root.join("keep.stl"))
     end
   end
 end

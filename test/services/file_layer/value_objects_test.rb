@@ -76,13 +76,18 @@ module FileLayer
     # keys. If a future adapter's capabilities ever depend on how it was constructed, this test
     # must move to real instances -- the answer would silently become whatever `allocate` left
     # behind, which for a Data-backed field is nil, and nil reads as false.
-    # ONLY THE CHUNK-FAMILY BACKEND ALLOWS A DIRECTORY DELETE, and since Arc D Part 2 that is
-    # ChunkRemote rather than the retired embedded Chunk. The reason is unchanged (§14a): the sync
-    # server cascades the whole subtree, while on share the children would be stranded at paths
-    # that no longer exist with their bytes sitting in `.trash`, where the scan refuses to look,
-    # and on s3 a directory node's key does not exist at all.
-    test "every adapter declares dir_deletable, and only the chunk-family backend allows it" do
-      expected = { FileLayer::ChunkRemote => true, FileLayer::Share => false, FileLayer::S3 => false }
+    # SHARE JOINED CHUNK_REMOTE ON 2026-09-10; S3 IS THE LAST HOLDOUT. The reasons are no longer the
+    # same for the two that allow it, and that is worth stating: the sync server cascades the whole
+    # subtree behind the wire, while share renames the directory into `.trash` in one atomic call and
+    # tombstones the subtree itself (FileLayer::Subtree). S3 still refuses because a directory node's
+    # key does not exist at all — a folder there is a prefix, and moving one is a copy-and-delete per
+    # object rather than a rename.
+    #
+    # THIS TEST GOES WHEN THE CAPABILITY DOES. Once s3 cascades too, `dir_deletable` varies on
+    # nothing and is removed (§14a: a capability that agrees on every backend is a lie about the
+    # shape of the port) — and this table goes with it.
+    test "every adapter declares dir_deletable, and s3 is the one that still refuses" do
+      expected = { FileLayer::ChunkRemote => true, FileLayer::Share => true, FileLayer::S3 => false }
       expected.each do |klass, want|
         got = klass.allocate.capabilities.dir_deletable?
         assert_equal want, got, "#{klass} must declare dir_deletable: #{want}"
