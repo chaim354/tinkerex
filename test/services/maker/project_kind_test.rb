@@ -571,5 +571,31 @@ module Maker
       assert_equal %w[pcb image model], Maker::ProjectKind.hero_roles("electronics")
       assert_equal %w[image model], Maker::ProjectKind.hero_roles("wormhole")
     end
+# --- weight added after review (2026-09-09): the key's shape, the cap under a repeat, the middle tab
+
+test "a tab key is exactly tab: plus twelve lowercase hex characters; anything else is not vocabulary" do
+  good = tk("0123456789ab")
+  bad = [ "tab:0123456789AB", "tab:0123456789abc", "tab:0123456789a", " tab:0123456789ab", "tab:0123456789ab ", "tabs:0123456789ab" ]
+  l = Maker::ProjectKind.layout_for(kind: "other", folders: [], overrides: { "order" => [ "attachments", good, *bad, "publish" ] })
+  assert_equal [ good ], l.tabs
+  assert_empty l.order & bad
+end
+
+test "a tab key repeated in the stored order counts once against the cap" do
+  eight = (1..8).map { |i| tk(format("%012x", i)) }
+  l = Maker::ProjectKind.layout_for(kind: "other", folders: [],
+                                    overrides: { "order" => [ "attachments", eight[0], eight[0], *eight[1..], "photos", "publish" ] })
+  assert_equal eight, l.tabs, "the repeat must not eat the eighth distinct tab's slot"
+end
+
+test "groups keeps a non-empty top group beside the tabs, and an empty tab between two others stays empty" do
+  l = Maker::ProjectKind.layout_for(kind: "other", folders: [], overrides: {
+    "order" => [ "attachments", "photos", tk(TAB_A), tk(TAB_B), "tasks", "publish" ],
+    "titles" => { tk(TAB_A) => "Empty", tk(TAB_B) => "Build" } })
+  g = l.groups
+  assert_equal %w[attachments photos], g.top
+  tail = Maker::Project::PANELS - %w[attachments photos tasks publish]
+  assert_equal [ [ tk(TAB_A), [] ], [ tk(TAB_B), [ "tasks", *tail ] ] ], g.tabs.map { |t| [ t.key, t.keys ] }
+end
   end
 end
