@@ -21,6 +21,20 @@ module Web
 
     teardown { FileLayer.reset!; FileUtils.remove_entry(@root) if @root&.exist? }
 
+    # The house mutation/stub helper (readme_edit_test.rb, project_repo_card_test.rb and
+    # project_folder_listing_test.rb carry the same body; there is no shared copy in test_helper.rb,
+    # and this suite has no Object#stub — Minitest 6 dropped minitest/mock). Replaces a SINGLETON
+    # method for the block's duration, so an INHERITED one is removed again rather than left behind.
+    def replacing(owner, name, replacement)
+      mod = owner.singleton_class
+      own = mod.instance_methods(false).include?(name)
+      original = mod.instance_method(name)
+      mod.define_method(name, &replacement)
+      yield
+    ensure
+      own ? mod.define_method(name, original) : mod.remove_method(name)
+    end
+
     test "it creates an empty file and lands on its page" do
       post files_text_files_path, params: { name: "bench-notes.txt" }
       node = @user.nodes.present.find_by(name: "bench-notes.txt")
@@ -43,6 +57,83 @@ module Web
       post files_text_files_path, params: { name: "../escape.txt" }
       assert_response :unprocessable_entity
       assert_equal before, @user.nodes.count
+    end
+
+    # --- the editor, outside a repository (Task 5) ----------------------------------------------
+
+    test "the editor renders for a text file outside a repository" do
+      post files_text_files_path, params: { name: "notes.txt" }
+      node = @user.nodes.present.find_by!(name: "notes.txt")
+
+      get file_path(node.node_id)
+
+      assert_response :success
+      assert_select "[data-controller~=editor]", 1, "no editor rendered outside a repo"
+    end
+
+    test "a save round-trips and the node id survives it" do
+      # `replace: true` REUSES THE NODE. A save written as delete-then-create passes any
+      # bytes-oriented assertion while orphaning every attachment, BOM link and tag — §14a's
+      # landmine, which errors nowhere and logs nothing. The node id is what they are keyed on.
+      post files_text_files_path, params: { name: "notes.txt" }
+      node = @user.nodes.present.find_by!(name: "notes.txt")
+      token = FileLayer.current.stat(@user, node_id: node.node_id).content_token
+
+      patch file_path(node.node_id), params: { content: "bench notes\n", base_token: token }
+      assert_response :success
+
+      assert_equal 1, @user.nodes.present.where(name: "notes.txt").count,
+                   "a delete-then-create leaves the old row tombstoned and a new one beside it"
+      assert_equal node.node_id, @user.nodes.present.find_by!(name: "notes.txt").node_id
+      assert_equal "bench notes\n", FileLayer.current.read(@user, node_id: node.node_id)
+    end
+
+    test "no pending git edit is recorded outside a working tree" do
+      # THE HALF THAT NEEDED NO BRANCH. Maker::TextSave records a Maker::RepoEdit only when a repo
+      # root is NAMED and the backend holds the working tree, so this door passing nil is the whole
+      # difference between a file inside a repository and one outside it. Recording one here would
+      # put a row in the commit box for a repository that does not exist.
+      post files_text_files_path, params: { name: "notes.txt" }
+      node = @user.nodes.present.find_by!(name: "notes.txt")
+      token = FileLayer.current.stat(@user, node_id: node.node_id).content_token
+
+      patch file_path(node.node_id), params: { content: "bench notes\n", base_token: token }
+
+      assert_response :success
+      assert_empty Maker::RepoEdit.where(user: @user, node_id: node.node_id)
+    end
+
+    test "the no-history note names the trade on a library that keeps none" do
+      post files_text_files_path, params: { name: "notes.txt" }
+      node = @user.nodes.present.find_by!(name: "notes.txt")
+
+      get file_path(node.node_id)
+
+      if FileLayer.current.capabilities.versioned?
+        assert_select ".no-history-note", 0, "a versioned library must not claim it keeps no history"
+      else
+        assert_select ".no-history-note", text: /keeps no history for this file/
+      end
+    end
+
+    test "the note is keyed on versioned?, so a library that keeps history shows none" do
+      # THE OTHER ARM, AND IT IS UNREACHABLE WITHOUT THIS STUB. Every case in this class pins a
+      # share library (see the class comment), so on all three legs the branch above takes its
+      # `else` — the assertion that a versioned library says nothing would never once run, which is
+      # §14e's vacuous guard with a conditional in place of a skip. What is being asserted is a fact
+      # about the KEY rather than about a backend, so the key is what gets stubbed: chunk_remote's
+      # own answer is then this test's answer, on every leg, deterministically.
+      post files_text_files_path, params: { name: "notes.txt" }
+      node = @user.nodes.present.find_by!(name: "notes.txt")
+      versioned = FileLayer.current.capabilities.with(versioned: true)
+
+      replacing(FileLayer.current, :capabilities, -> { versioned }) do
+        get file_path(node.node_id)
+      end
+
+      assert_response :success
+      assert_select "[data-controller~=editor]", 1, "the editor must still be here to warn about"
+      assert_select ".no-history-note", 0, "a versioned library must not claim it keeps no history"
     end
   end
 end

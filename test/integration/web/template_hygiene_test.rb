@@ -437,6 +437,10 @@ module Web
         "file detail (pdf)" => file_path("n-pdf"),
         "file detail (gerber)" => file_path("n-pcb-0"),
         "file detail (other)" => file_path("n-other"),
+        # 2026-09-10: the "New text file" door's own form (Files::TextFilesController#new). Its
+        # comment quotes `f.text_field` and `fields_for`, which is the §14d shape this file exists
+        # for, and no other page renders it.
+        "text file new" => new_files_text_file_path,
         "projects index" => projects_path,
         # ONE ENTRY, NOT TWO. `project detail (list)` used to sit here as
         # `project_path(@project, view: "list")` and was the only page that swept

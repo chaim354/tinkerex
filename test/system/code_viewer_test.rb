@@ -1,6 +1,15 @@
 require "application_system_test_case"
 
-# The read-only CodeMirror 6 source viewer, in a real browser — the only tier that can see it.
+# The CodeMirror 6 source view, in a real browser — the only tier that can see it.
+#
+# IT WAS "THE READ-ONLY VIEWER" UNTIL 2026-09-10, and every fixture below was a codeview mount. The
+# editor stopped asking for a working tree on that date (docs/invariants/git-editing.md's Markdown
+# exception, widened to any text file), so a text file UNDER `FilesController::EDITABLE_MAX_BYTES`
+# now mounts `editor` and only an over-cap one still mounts `codeview`. NOTHING THESE CASES GUARD
+# MOVED WITH IT: the language modes, the theme and `basicSetup` are the same objects both
+# controllers build with, so the highlighting cases are pinning exactly what they always did —
+# which is why the fixtures are unchanged and only the editability assertions were re-aimed. The
+# codeview branch is still asserted here, on the multi-megabyte case at the foot of the file.
 #
 # WHY THIS FILE HAS TO EXIST. Everything the Ruby suite can assert about codeview is that the page
 # carries the right attributes; whether the 933 KB bundle actually loads, mounts, numbers the
@@ -82,7 +91,7 @@ SCAD
     assert_selector ".cm-editor", wait: 10 # the bundle loaded, parsed and mounted
   end
 
-  # READS THE TWO READ-ONLY FACTS OFF THE LIVE EditorState, not off the DOM, because the DOM can
+  # READS THE TWO EDITABILITY FACTS OFF THE LIVE EditorState, not off the DOM, because the DOM can
   # only show one of them. `EditorView.editable.of(false)` is what removes the contenteditable;
   # `EditorState.readOnly.of(true)` is what refuses a document change, and nothing a browser
   # renders distinguishes it from a view that merely has no keyboard focus. Both are facets, so
@@ -92,7 +101,7 @@ SCAD
   # The dynamic import resolves from the module cache the page already filled, so this is the SAME
   # module instance the controller used and the facet objects match by identity — which is the
   # very property config/importmap.rb's one-bundle rule exists to protect.
-  def read_only_facts
+  def editability_facts
     page.evaluate_async_script(<<~JS)
       const done = arguments[0]
       import("codemirror").then((cm) => {
@@ -116,7 +125,7 @@ SCAD
     JS
   end
 
-  test "a source file opens in a mounted, highlighted, read-only editor" do
+  test "a source file opens in a mounted, highlighted, editable editor" do
     open_file("firmware.cpp")
 
     assert_selector ".cm-lineNumbers .cm-gutterElement", minimum: 4
@@ -129,8 +138,12 @@ SCAD
     # what make either mean anything.
     assert_selector ".cm-line span", minimum: 1
 
-    assert_equal({ "readOnly" => true, "editable" => false }, read_only_facts)
-    assert_selector ".cm-content[contenteditable=false]"
+    # EDITABLE SINCE 2026-09-10 (see the file header): a source file under the cap mounts `editor`,
+    # which sets neither facet. Asserted rather than dropped, and both facets rather than one, so a
+    # regression that re-gated the editor on a working tree lands HERE — where the reason is
+    # written down — instead of only on repo_editor_test.rb's own cases.
+    assert_equal({ "readOnly" => false, "editable" => true }, editability_facts)
+    assert_selector ".cm-content[contenteditable=true]"
 
     assert_no_console_errors
   end
@@ -218,6 +231,12 @@ SCAD
     assert_equal 200_000 + "\n… (truncated)".length, facts["length"],
                  "the document is the cap plus the marker, not the whole file"
     assert_match(/… \(truncated\)\z/, facts["tail"])
+
+    # THE ONE CODEVIEW MOUNT LEFT IN THIS FILE, so this is where the read-only facts are asserted
+    # (the header says why). A truncated buffer must never be editable: saving one TRUNCATES THE
+    # FILE, which is the same rule FilesController::EDITABLE_MAX_BYTES enforces on the server.
+    assert_equal({ "readOnly" => true, "editable" => false }, editability_facts)
+    assert_selector ".cm-content[contenteditable=false]"
 
     transferred = page.evaluate_script(<<~JS)
       (performance.getEntriesByType("resource")
