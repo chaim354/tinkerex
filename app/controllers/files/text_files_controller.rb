@@ -39,6 +39,21 @@ module Files
       # §14a maps FetchError once, at the door: an unmounted share is retryable, not "your file is
       # gone". FilesController#update carries the identical arm.
       refuse(:service_unavailable, e.message)
+    rescue FileLayer::NotFound
+      # THE PARENT WENT AWAY BETWEEN OPENING THE FORM AND SUBMITTING IT, and this arm is NOT
+      # theoretical: `parent_node_id` rides as a hidden field, so another tab's Delete, a device
+      # push plus changelog pull, or an ordinary scan reconcile is enough. Driven, not reasoned —
+      # without this the exception escapes the request entirely (`FileLayer::NotFound: parent
+      # "<uuid>" is not a live directory`) and the maker gets a 500 with their typed name lost.
+      #
+      # IT NEEDS ITS OWN ARM BECAUSE `NotFound` IS A SIBLING, NOT A SUBCLASS, of the two above
+      # (`Class.new(StandardError)` each, file_layer.rb:10-17), and this controller does NOT inherit
+      # FilesController's `rescue_from` — ApplicationController has none at all. Every future door
+      # outside FilesController that touches the port has the same hole.
+      #
+      # The message is the DOOR's, not the port's: the port names a node id, which is not a sentence
+      # to show a maker (the same reason the folder menu is gated rather than left to flash one).
+      refuse(:not_found, "That folder is no longer here. It may have been moved or deleted.")
     end
 
     private

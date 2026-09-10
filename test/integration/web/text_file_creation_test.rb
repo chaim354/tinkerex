@@ -135,5 +135,29 @@ module Web
       assert_select "[data-controller~=editor]", 1, "the editor must still be here to warn about"
       assert_select ".no-history-note", 0, "a versioned library must not claim it keeps no history"
     end
+
+    # THE PARENT WENT AWAY BETWEEN OPENING THE FORM AND SUBMITTING IT. `parent_node_id` rides as a
+    # hidden field, so this needs no tampering: another tab's Delete, a device push plus changelog
+    # pull, or an ordinary scan reconcile will do it.
+    #
+    # `FileLayer::NotFound` IS A SIBLING OF THE TWO THIS DOOR ALREADY RESCUES, not a subclass, and
+    # this controller does not inherit FilesController's `rescue_from` — ApplicationController has
+    # none. Un-rescued, the exception escapes the request: a 500 with the typed name lost.
+    test "a parent that has gone is refused, not a 500" do
+      dir = FileLayer.current.mkdir(@user, parent_node_id: nil, name: "parts")
+      @user.nodes.find_by!(node_id: dir.node_id).update!(deleted: true, storage_path: nil)
+
+      post files_text_files_path, params: { name: "notes.txt", parent_node_id: dir.node_id }
+
+      assert_response :not_found
+      # THE MAKER'S SENTENCE, NOT THE PORT'S. The port's own message names a raw node id
+      # (`parent "<uuid>" is not a live directory`), which is not something to put in front of
+      # someone — so the assertion is on the FLASH, the text a maker actually reads. The id still
+      # appears in the re-rendered form's hidden field and the Cancel link, which is correct: the
+      # form comes back populated so the typed name is not lost.
+      flash_text = css_select(".flash-alert .flash-text").map(&:text).join(" ")
+      assert_match(/no longer here/i, flash_text)
+      refute_match(dir.node_id, flash_text, "a raw node id reached the maker's message")
+    end
   end
 end
