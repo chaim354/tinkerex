@@ -51,7 +51,7 @@
   <h1>Files</h1>
   <div class="page-actions">
     <% if project_upload %>
-      <%= render "projects/upload_control",
+      <%= render "projects/upload_control", primary: true,
                  upload_url: project_uploads_path(current_project),
                  attach_url: project_attachments_path(current_project),
                  redirect_url: files_path(folder: @current_project_folder_node_id),
@@ -68,7 +68,7 @@
       %>
       <%= form_with url: files_path, method: :post, class: "uploader",
                     data: { turbo: false }, html: { multipart: true } do |f| %>
-        <label class="upload-btn">
+        <label class="upload-btn primary">
           <%# `include_hidden: false` IS LOAD-BEARING. `f.file_field` with `multiple: true` renders a
               companion `<input name="file[]" type="hidden" value="">` so an empty selection still
               submits the key — which put a bare "" at the head of `params[:file]`, and the server
@@ -88,7 +88,7 @@
                data-controller="uploader"
                data-uploader-begin-url-value="<%= begin_upload_files_path %>"
                data-uploader-finalize-url-value="<%= finalize_upload_files_path %>">
-        <label class="upload-btn">
+        <label class="upload-btn primary">
           <input type="file" multiple data-uploader-target="input" data-action="uploader#upload" hidden>
           <span>Upload a file</span>
         </label>

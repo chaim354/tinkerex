@@ -2,7 +2,15 @@
   Inline "upload a new file and attach it" — two flows, one per deployment (spec §2), reusing the
   library upload machinery. Locals: upload_url (share/s3 multipart write-and-attach), attach_url
   (chunk final JSON attach step), redirect_url.
+
+  OPTIONAL LOCAL `primary:` — whether this uploader is THE action of the page it lands on
+  (decision 3 of the UI-cohesion spec). It DEFAULTS TO FALSE, which is the load-bearing half: this
+  partial has four call sites and three of them are row- or panel-level, so a caller that forgets
+  gets the quiet face rather than another accent button. The Files page and the project page's
+  Files panel pass true; a build-log entry and Home's hero do not — Home's one action is
+  "New project" and a log row's upload is not what either page exists for.
 %>
+<% upload_btn_class = local_assigns[:primary] ? "upload-btn primary" : "upload-btn" %>
 <% if capabilities.port_writable? %>
   <%= form_with url: upload_url, method: :post, class: "uploader",
                 data: { turbo: false }, html: { multipart: true } do |f| %>
@@ -15,7 +23,7 @@
     <% if local_assigns[:redirect_url].present? %>
       <%= hidden_field_tag :redirect_url, redirect_url %>
     <% end %>
-    <label class="upload-btn">
+    <label class="<%= upload_btn_class %>">
       <%# `include_hidden: false` IS LOAD-BEARING. `f.file_field` with `multiple: true` renders a
           companion `<input name="file[]" type="hidden" value="">` so an empty selection still
           submits the key — which put a bare "" at the head of `params[:file]`, and the server
@@ -36,7 +44,7 @@
         data-uploader-attach-url-value="<%= attach_url %>"
         data-uploader-redirect-url-value="<%= redirect_url %>"
         data-uploader-parent-node-id-value="<%= local_assigns[:parent_node_id] %>">
-    <label class="upload-btn">
+    <label class="<%= upload_btn_class %>">
       <input type="file" multiple data-uploader-target="input" data-action="uploader#upload" hidden>
       <span>Upload &amp; attach</span>
     </label>

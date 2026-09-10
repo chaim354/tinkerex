@@ -1,7 +1,8 @@
 # UI cohesion sweep — design
 
-Date: 2026-09-10. Branch: `claude/ux-ui-cohesion-4oaw9c`. Status: audit and first-run walkthrough complete; **slice 0 LANDED**
-(2026-09-10); slices 1–5 proposed and awaiting approval.
+Date: 2026-09-10. Branches: `claude/ux-ui-cohesion-4oaw9c` (audit + slice 0),
+`claude/ui-ux-audit-plan-38ea13` (slice 1). Status: audit and first-run walkthrough complete;
+**slices 0 and 1 LANDED** (2026-09-10); slices 2–5 proposed and awaiting approval.
 
 The design system landed on 2026-09-07 (`95ae66b`, spec `2026-09-03-web-shell-and-design-system-design.md`)
 and **356 commits across 49 merged PRs have landed on top of it since** — stages 2, 3 and 4 (home,
@@ -18,15 +19,16 @@ vocabulary is rendered three ways, and the empty state has three implementations
 
 ## 0. Handoff — start here
 
-**Slice 0 has landed (§5). Slices 1–5 are unstarted and this document is their brief.** Read §2
-for the findings, §5 for the slices, and this section for what the last session learned the hard
-way about verifying work in this repo.
+**Slices 0 and 1 have landed (§5). Slices 2–5 are unstarted and this document is their brief.**
+Read §2 for the findings, §5 for the slices, and this section for what earlier sessions learned the
+hard way about verifying work in this repo.
 
 ### What to pick up next
 
-Slice 1 (spend the accent once per page) is the next one and is the highest yield left: it corrects
-ten pages by editing two rules in `components.css`. Slices are ordered by what each costs the
-feeling of cohesion, and each is independently shippable.
+Slice 2 (`.page-head`'s two-slot contract) is next. It is small — wrap the loose children on
+`/models` and the public project page — and its guard is the one shape §14e warns about, so read
+that bullet in the slice before writing it. Slices are ordered by what each costs the feeling of
+cohesion, and each is independently shippable.
 
 ### Two questions still open, both for the user — do not guess
 
@@ -48,6 +50,15 @@ This matters more than it sounds: the last session's suite was green over a live
 | `test-chunk-remote` | **cannot run** | needs `../tinkerex-sync` checked out |
 | `system` | **cannot run** | chromedriver 147 vs Chrome 153; no matching pair available |
 | `setup` | not run | local-only gate |
+
+**ALL SIX OF THOSE RAN GREEN ON A REAL BOX ON 2026-09-10** (slice 1's session, an M-series Mac
+with Chrome 152 — Selenium Manager fetches its own chromedriver, so the version pair that blocked
+the container is not a property of this repo). Bare `bin/ci`: seven gates, **4217 / 4217 / 4217**
+identical run counts across share / s3 / chunk_remote, 32 / 33 / 8 skips, `system` 297 runs. The
+table above is a description of ONE sandbox, not of the suite — if you are on hardware, run the
+gates rather than inheriting the excuse. `test-chunk-remote` needs `TINKEREX_SYNC_DIR` when you are
+in a worktree, and failed ONCE inside a full `bin/ci` pass while passing standalone twice either
+side of it, which reads as boot contention rather than a defect.
 
 **34 suite failures pre-date this work and are the container, not the code.** It runs as **root**,
 so `chmod 000` fixtures stay readable and every scanner unreadable-directory test fails; it has none
@@ -491,7 +502,47 @@ slice 1: a centred button is a blemish; an account you cannot use is a lost user
 **Touches** `users/registrations_controller` · `shell.css` · `projects/_upload_control` ·
 `files/index` · `projects/_publish` · `users/registrations/edit` · `concerns/current_project`
 
-### Slice 1 — Spend the accent once per page
+### Slice 1 — Spend the accent once per page — **LANDED 2026-09-10**
+
+`components.css`'s accent group now reads `.upload-btn.primary span`, so an uploader is loud only
+when its page asks. Measured before and after, on a project with three build-log entries and a
+claimed handle:
+
+| route | before | after |
+|---|---|---|
+| `/` | `Files` | `New project` |
+| `/projects/desk-lamp` | **7** — 4 × `Upload & attach`, `Save README`, `Add`, `Create release` | **2** — `Upload & attach`, `Save publishing` |
+| `/files`, `/models`, `/projects`, `/inventory` | 1 each | unchanged |
+| `/settings/{suppliers,locations,shelves}` | 1 each | unchanged — the audit's answer was "already right" |
+
+**The audit's count of ten was exactly right and its itemisation was incomplete.** §2.1 said seven
+of the ten read "Upload & attach" and did not name the other three; they are `Save README`,
+`Add` (wiring) and `Create release`, each a `btn small primary` — **a panel's one action wearing the
+page's colour**, which is §2.1's mistake one level up and not something removing `.upload-btn span`
+would have touched. Slice 1 as written ("two rules in `components.css`") would have left the
+project page at four. The three lost their `primary`; `Save publishing` keeps it, because decision 3
+allows the project page two and those are the two it names.
+
+**Home's accent moved rather than being removed.** It was on `Files` — a rail destination rendered
+as the loudest control on the front door, 200px from the rail's own Files link — while `New project`,
+the only thing a maker can DO from that row, was quiet. Slice 4 still reduces the row to one link.
+
+**The guard is an exact table, not the ceiling the plan specified**, and the reason is worth
+carrying: a ceiling ("at most two") is satisfied perfectly by an app with **no** accent at all, so
+deleting `.btn.primary` outright would have left it green while the product lost its only strong
+signal. It also cannot see an uploader that silently *loses* its opt-in — a new failure mode this
+slice introduces, since `primary:` defaults to false and a call site can forget it. The table is
+floor, ceiling and the record of what decision 3 resolved to, in one assertion.
+`test/system/accent_spend_test.rb`, three mutations, each run and each restored — and one claim in
+its own header was **wrong on first writing** (that `/` and `/files` redden under mutation 1; only
+the project page does, because Home's hero renders no uploader without a current project). Corrected
+against the measured output rather than left as plausible prose.
+
+**Verification.** Bare `bin/ci`, seven gates, all green: 4217 / 4217 / 4217 identical run counts
+across the three backend legs, `system` 297 runs / 0 failures. Nothing about this slice is
+backend-dependent, and the counts confirm it.
+
+#### Original plan
 
 *The single highest-yield change: it corrects ten pages by editing two rules.*
 

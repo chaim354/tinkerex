@@ -13,10 +13,19 @@
     font: 500 13px/1 var(--font-ui); text-decoration: none; cursor: pointer; white-space: nowrap;
   }
   .btn:hover, input[type="submit"]:hover, details.composer > summary:hover { border-color: var(--line-strong); text-decoration: none; }
-  .btn.primary, .upload-btn span, input[type="submit"].primary {
+  /* THE ACCENT MEANS "THE ONE ACTION THIS PAGE EXISTS FOR", so an uploader is in this group only
+     when its page ASKS -- `.upload-btn.primary`, not `.upload-btn`. It was unconditional until
+     2026-09-10, which meant no page could ask for a neutral uploader and every upload control in
+     the app was the loudest thing on its page BY CONSTRUCTION. Measured on a project with three
+     build-log entries: seven accent controls, four of them the same "Upload & attach" repeated per
+     log row, so nothing on the page read as THE thing to do. The neutral `.btn` face still comes
+     from the base rule above, so an opted-out uploader is a button, not an unstyled label.
+     Guard: test/system/accent_spend_test.rb, which counts RESOLVED backgrounds -- a class-list
+     assertion counted zero on the page that had ten. */
+  .btn.primary, .upload-btn.primary span, input[type="submit"].primary {
     background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600;
   }
-  .btn.primary:hover, .upload-btn span:hover, input[type="submit"].primary:hover { filter: brightness(1.06); border-color: var(--accent); }
+  .btn.primary:hover, .upload-btn.primary span:hover, input[type="submit"].primary:hover { filter: brightness(1.06); border-color: var(--accent); }
   .btn.danger { background: transparent; border-color: var(--danger); color: var(--danger); }
   .btn.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
   .btn.ghost { background: transparent; border-color: transparent; }

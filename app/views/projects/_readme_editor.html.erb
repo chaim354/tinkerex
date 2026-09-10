@@ -46,7 +46,7 @@
                       rows: 16, disabled: row.present?, spellcheck: true,
                       class: "readme-source", data: { readme_target: "input" } %>
     <div class="readme-bar">
-      <%= submit_tag "Save README", class: "btn small primary", disabled: row.present?,
+      <%= submit_tag "Save README", class: "btn small", disabled: row.present?,
                      data: { readme_target: "submit" } %>
       <span class="muted readme-status" data-readme-target="status"></span>
     </div>
