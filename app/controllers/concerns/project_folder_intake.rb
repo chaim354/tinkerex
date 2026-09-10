@@ -128,6 +128,44 @@ module ProjectFolderIntake
     project_intake_sentence("Uploaded #{filename}", intake_result, filename)
   end
 
+  # THE SAME SENTENCE FOR A BATCH (slice 0, 2026-09-10), now that both upload doors accept more
+  # than one file. It builds on #project_intake_sentence rather than paraphrasing it, so the
+  # filed-into half and the conflict half stay in one place.
+  #
+  # ONE FILE AND NOTHING REFUSED SHORT-CIRCUITS TO #project_intake_notice, byte for byte. That is
+  # not a tidiness choice: #project_intake_sentence's third argument is BOTH the name to ask the
+  # conflict question about AND the name #filed_sentence uses to decide "is this the only file",
+  # so passing the batch's conflicting-name-or-nil into a single-file upload would turn today's
+  # "Filed part.stl into models/." into "Filed 1 file into models/." and change a message four
+  # suites assert in full.
+  #
+  # ONE SWEEP COVERS THE WHOLE BATCH, which is why there is a single `intake_result` here rather
+  # than one per file: Maker::ProjectIntake.for_node sweeps the project's OWN ROOT, not the node it
+  # is handed, so one call after the last write files everything that landed. #filed_sentence
+  # already summarises a set ("Filed 4 files into design/, images/."); it was written for addon
+  # saves, which have always written several files at once.
+  def batch_upload_notice(uploaded, intake_result, refused: {})
+    return project_intake_notice(intake_result, uploaded.first) if uploaded.size == 1 && refused.empty?
+
+    lead = "Uploaded #{uploaded.size} file#{"s" unless uploaded.size == 1}"
+    sentence = uploaded.any? ? project_intake_sentence(lead, intake_result, unfiled_by_conflict(intake_result, uploaded)) : nil
+    [ sentence, refused_sentence(refused) ].compact.join(" ")
+  end
+
+  # WHAT DID NOT LAND, NAMED. A batch must not lose a file silently: if three of four upload and
+  # the fourth hits a name that is already taken, saying only "Uploaded 3 files" leaves the maker
+  # to notice the gap themselves. Reports at most two by name and a count beyond that, because the
+  # flash is one sentence — the same reasoning #unfiled_by_conflict gives for naming only the first
+  # collision.
+  def refused_sentence(refused)
+    return nil if refused.blank?
+
+    named = refused.first(2).map { |name, reason| "#{name} (#{reason})" }
+    rest = refused.size - named.size
+    tail = rest.positive? ? "#{named.to_sentence} and #{rest} more" : named.to_sentence
+    "#{refused.size == 1 ? "This one was not uploaded" : "These were not uploaded"}: #{tail}."
+  end
+
   # THE SAME SENTENCE WITH THE LEAD-IN LEFT TO THE CALLER, because the doors genuinely differ on
   # that half and must not differ on this one. An upload door says "Uploaded grid.svg"; the addon
   # save doors say "Saved “3mm birch test”" — the state's name, not a filename, since one save can

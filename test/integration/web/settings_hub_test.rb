@@ -37,7 +37,7 @@ module Web
 
     # ============================================================ The hub
 
-    test "the hub lists seven rows with facts and links" do
+    test "the hub lists eight rows with facts and links" do
       @user.maker_shelves.create!(path: "Models")
       @user.maker_shelves.create!(path: "Enclosures")
       @user.maker_suppliers.create!(name: "Acme Bolts")
@@ -51,9 +51,10 @@ module Web
       get settings_path
 
       assert_response :success
-      assert_select "ul.settings-list.settings-hub li", count: 7
+      assert_select "ul.settings-list.settings-hub li", count: 8
       names = css_select("ul.settings-list.settings-hub li .settings-name").map { |el| el.text.strip }
-      assert_equal [ "Shelves", "Suppliers", "Locations", "Filing", "Tags", "Account", "Theme" ], names
+      assert_equal [ "Shelves", "Suppliers", "Locations", "Filing", "Tags", "Account", "Theme",
+                     "Current project" ], names
       assert_select "a.settings-name[href=?]", shelves_path
       assert_select "a.settings-name[href=?]", suppliers_path
       assert_select "a.settings-name[href=?]", locations_path
@@ -68,6 +69,11 @@ module Web
       assert_select ".settings-fact", text: @user.email
       # cookies[:theme] is unset -- ShellHelper#ui_theme's default, "dark".
       assert_select ".settings-fact", text: /dark/
+      # The current-project preference (slice 0). It is a FORM, not a link, so it has no
+      # `a.settings-name` — the row is named by a span and asserted through its control.
+      assert_select "form[action=?] input[type=checkbox][name=?]",
+                    settings_preferences_path, "remember_current_project"
+      assert_select ".settings-fact", text: /Kept after sign-out/
     end
 
     test "the theme row is a three-way choice" do

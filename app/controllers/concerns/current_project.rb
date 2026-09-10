@@ -20,12 +20,48 @@ module CurrentProject
   # consumer falls back to today's behavior. Memoized per request.
   def current_project
     return @current_project if defined?(@current_project)
-    id = session[:current_project_id]
+    id = current_project_id
     @current_project =
       if id && current_user
         current_user.maker_projects.where.not(status: "archived").find_by(id: id)
       end
   end
+
+  # --- WHERE THE POINTER LIVES, IN ONE PLACE (slice 0, 2026-09-10) -------------------------
+  #
+  # It used to live in the session and nowhere else, so the rail card's promise — "Uploads and tool
+  # output land here" — was scoped to one browser session: sign out, or open the app on the
+  # workshop tablet, and it silently read None while uploads went to the library root instead.
+  # It is now a column on the user, so it survives, and `users.remember_current_project` is the
+  # maker's own opt-out back to the old behaviour (Settings → "Remember current project").
+  #
+  # SIX CALL SITES READ AND WROTE `session[:current_project_id]` DIRECTLY — this concern, both
+  # CurrentProjectController actions, and two in ProjectsController. Routing them all through these
+  # three methods is what stops the two stores from disagreeing about which one is authoritative;
+  # a seventh site that reaches for the session again reintroduces exactly that split.
+  def current_project_id
+    return session[:current_project_id] unless remember_current_project?
+
+    current_user.current_project_id
+  end
+
+  # `update_column`, NOT `update`: this is a UI pointer, not content. It must not run validations
+  # (a user whose handle is mid-claim would otherwise be unable to switch projects), must not touch
+  # `updated_at` (switching projects is not editing the account), and must not fire callbacks.
+  def current_project_id=(id)
+    if remember_current_project?
+      current_user.update_column(:current_project_id, id)
+    elsif id.nil?
+      session.delete(:current_project_id)
+    else
+      session[:current_project_id] = id
+    end
+  end
+
+  # `current_user&.` because this concern is included in ApplicationController and a PUBLIC page
+  # (Public::BaseController) renders with no user at all; nil there means "read the session", which
+  # is empty, which is the same nil the old code produced.
+  def remember_current_project? = current_user&.remember_current_project?
 
   # The project's Projects/<slug> folder node_id, or nil. ensure_library_folder! is idempotent and
   # (re)creates the folder; a rescue → nil falls back to the library root rather than 500-ing a page.

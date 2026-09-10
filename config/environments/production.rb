@@ -105,7 +105,18 @@ Rails.application.configure do
   # config.action_mailer.raise_delivery_errors = false
 
   # Set host to be used by links generated in mailer templates.
-  config.action_mailer.default_url_options = { host: "example.com" }
+  #
+  # THE CONFIRMATION LINK IS THE ONLY WAY INTO A NEW ACCOUNT, SO THIS CANNOT STAY THE SCAFFOLD'S
+  # PLACEHOLDER. It shipped as a literal `example.com`, which every self-hosted deployment
+  # inherited — so the one link a new maker must click pointed at a domain nobody owns, and the
+  # account stayed unreachable no matter how well the mail server worked. `APP_HOST` is the
+  # deployment's own hostname (`kamal-proxy`'s), and the fallback is loud rather than plausible:
+  # a wrong-looking host in an email is a bug someone reports, where `example.com` reads like a
+  # redacted example and gets ignored.
+  config.action_mailer.default_url_options = {
+    host: ENV.fetch("APP_HOST", "APP_HOST-IS-NOT-SET.invalid"),
+    protocol: ENV["FORCE_SSL"].present? ? "https" : "http"
+  }
 
   # Specify outgoing SMTP server. Remember to add smtp/* credentials via bin/rails credentials:edit.
   # config.action_mailer.smtp_settings = {

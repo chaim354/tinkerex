@@ -1,0 +1,182 @@
+require "test_helper"
+
+module Web
+  # SEVERAL FILES IN ONE SELECTION (slice 0, 2026-09-10).
+  #
+  # Found by using the app: a maker's project folder is a dozen files, and both upload doors took
+  # one, so uploading four meant opening the picker four times. The model importer next door has
+  # always accepted a batch — the app knew how; the two doors a maker lives in did not.
+  #
+  # THE SHARE LEG DRIVES REAL BYTES through the real port, because the interesting behaviour is
+  # what happens when ONE file in the middle of a batch is refused: the batch must keep going and
+  # SAY what did not land. A test that only counted nodes would pass over a silently dropped file.
+  class UploadBatchTest < ActionDispatch::IntegrationTest
+    PASSWORD = "correct horse battery staple".freeze
+
+    setup do
+      @root = use_fresh_share_library!
+      @user = User.create!(email: "ub-#{SecureRandom.hex(4)}@example.com",
+                           password: PASSWORD, confirmed_at: Time.current)
+      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+    end
+
+    def uploaded(name, body: nil)
+      Rack::Test::UploadedFile.new(StringIO.new(body || "body-#{name}"),
+                                   "application/octet-stream", original_filename: name)
+    end
+
+    def upload(*names, bodies: nil)
+      files = names.each_with_index.map do |name, i|
+        Rack::Test::UploadedFile.new(StringIO.new(bodies&.[](i) || "body-#{name}"),
+                                     "application/octet-stream", original_filename: name)
+      end
+      post files_path, params: { file: files.size == 1 ? files.first : files }
+    end
+
+    # --- the batch lands -------------------------------------------------------------------
+
+    test "three files in one selection all land, and the flash counts them" do
+      upload("seat.dxf", "cap.stl", "notes.md")
+
+      assert_response :redirect
+      %w[seat.dxf cap.stl notes.md].each do |name|
+        assert @user.nodes.present.exists?(name:), "#{name} should have landed"
+        assert_path_exists @root.join(name)
+      end
+      assert_match(/Uploaded 3 files/, flash[:notice].to_s)
+    end
+
+    test "the file field offers multiple, on the page a maker actually uses" do
+      get files_path
+      assert_response :success
+      assert_select "form.uploader input[type=file][multiple]", 1,
+                    "the Files page uploader must accept a selection, not one file"
+    end
+
+    # --- WHAT THE RENDERED FORM ACTUALLY SENDS ----------------------------------------------
+    #
+    # These two exist because the suite above passed while the real page 500'd. `f.file_field` with
+    # `multiple: true` renders a companion `<input name="file[]" type="hidden" value="">`
+    # (`include_hidden`), so the real `params[:file]` arrived as `["", <file>, …]` and the server
+    # called #original_filename on a String. A Rack::Test POST of a Ruby array never sends that
+    # marker, so no test here could see it — §14d's "assert the rendered field name", one attribute
+    # over. The first pins the markup; the second pins the server against the shape regardless.
+
+    test "neither uploader renders the hidden empty-value companion" do
+      get files_path
+      assert_select "form.uploader input[type=hidden][name='file[]']", 0,
+                    "the empty marker puts a bare String at the head of params[:file]"
+    end
+
+    test "a blank entry beside real files is ignored rather than raising" do
+      post files_path, params: { file: [ "", uploaded("real.stl") ] }
+      assert_response :redirect
+      assert @user.nodes.present.exists?(name: "real.stl")
+      assert_equal "Uploaded real.stl.", flash[:notice],
+                   "one real file beside the marker is still a single-file upload"
+    end
+
+    # --- ONE REFUSAL MUST NOT LOSE THE REST ------------------------------------------------
+    #
+    # The old code let FileLayer::UnsupportedOperation reach a controller-wide `rescue_from` that
+    # redirected — right for one file, and for a batch it would abandon everything after the
+    # refusal. This is the behaviour the whole shared loop exists for.
+
+    test "a name that is already taken refuses only that file, and the others still land" do
+      upload("dupe.stl")
+      assert @user.nodes.present.exists?(name: "dupe.stl")
+
+      upload("first.stl", "dupe.stl", "last.stl")
+
+      assert @user.nodes.present.exists?(name: "first.stl"), "a file BEFORE the refusal must land"
+      assert @user.nodes.present.exists?(name: "last.stl"),
+             "a file AFTER the refusal must land — this is the whole point"
+      assert_equal 1, @user.nodes.present.where(name: "dupe.stl").count,
+                   "the clobber must not have created a second node"
+      assert_equal "body-dupe.stl", @root.join("dupe.stl").binread,
+                   "the original bytes survive the refusal"
+    end
+
+    test "the flash names what did not land rather than reporting a clean batch" do
+      upload("dupe.stl")
+      upload("ok.stl", "dupe.stl")
+
+      assert_match(/Uploaded 1 file\b/, flash[:notice].to_s)
+      assert_match(/not uploaded: dupe\.stl/, flash[:notice].to_s)
+      assert_match(/already exists/, flash[:notice].to_s)
+    end
+
+    test "a batch in which nothing lands is an alert, not a notice claiming success" do
+      upload("a.stl", "b.stl")
+      # FOLLOW THE FIRST REDIRECT so its notice is actually consumed. Without this the flash from
+      # the successful upload is still pending when the second request runs, and `flash[:notice]`
+      # below reads THAT — the assertion would fail against a message the second upload never set.
+      follow_redirect!
+
+      upload("a.stl", "b.stl")
+
+      assert_nil flash[:notice]
+      assert_match(/not uploaded/, flash[:alert].to_s)
+      assert_match(/a\.stl/, flash[:alert].to_s)
+      assert_match(/b\.stl/, flash[:alert].to_s)
+    end
+
+    # --- the single-file message is unchanged ----------------------------------------------
+    #
+    # Four suites assert the one-file sentence in full. Widening the door must not reword it.
+
+    test "one file still redirects to its own page with exactly the old sentence" do
+      upload("solo.stl")
+      node = @user.nodes.present.find_by!(name: "solo.stl")
+      assert_redirected_to file_path(node.node_id)
+      assert_equal "Uploaded solo.stl.", flash[:notice]
+    end
+
+    # --- the JSON door stays single-file ----------------------------------------------------
+    #
+    # importer_controller and measure_controller each POST one file and read back the one node_id
+    # they must attach; there is no sensible JSON shape for a batch, so it is refused rather than
+    # answered with something invented.
+
+    test "a multi-file POST asking for JSON is refused rather than given an invented shape" do
+      files = %w[x.stl y.stl].map do |n|
+        Rack::Test::UploadedFile.new(StringIO.new("b"), "application/octet-stream", original_filename: n)
+      end
+      post files_path, params: { file: files }, as: :json
+      assert_response :unprocessable_entity
+    end
+
+    # THE DOOR THE BATCH BROKE, AND THE ONLY LEG THAT CAUGHT IT WAS THE BROWSER.
+    #
+    # `measure_controller.js` saves through `uploadPortFile`, which reads `data.error` off a 422 to
+    # show the refusal IN WORDS. The first cut of the batch absorbed UnsupportedOperation inside
+    # the loop, so `rescue_from` never rendered that JSON, the empty batch redirected instead,
+    # fetch followed the redirect to an HTML page, and the user saw "upload failed (406)".
+    # measure_export_test.rb caught it; nothing here could, because no test drove this door with a
+    # name that was already taken. Now one does.
+
+    test "a JSON upload of a taken name answers 422 with the message, not a redirect" do
+      upload("taken.stl")
+      follow_redirect!
+
+      post files_path,
+           params: { file: uploaded("taken.stl") },
+           headers: { "Accept" => "application/json" }
+
+      assert_response :unprocessable_entity,
+                      "a redirect here is followed to HTML and reported as 'upload failed (406)'"
+      assert_match(/already exists/i, JSON.parse(response.body)["error"].to_s,
+                   "uploadPortFile shows data.error verbatim — it has to say what happened")
+    end
+
+    test "a single-file JSON upload still answers the node_id its callers need" do
+      post files_path,
+           params: { file: Rack::Test::UploadedFile.new(StringIO.new("b"), "application/octet-stream",
+                                                        original_filename: "one.stl") },
+           headers: { "Accept" => "application/json" }
+      assert_response :created
+      assert_equal @user.nodes.present.find_by!(name: "one.stl").node_id,
+                   JSON.parse(response.body)["node_id"]
+    end
+  end
+end

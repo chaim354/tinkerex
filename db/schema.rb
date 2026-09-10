@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_09_200000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_10_120000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -526,6 +526,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_09_200000) do
     t.string "confirmation_token"
     t.datetime "confirmed_at"
     t.datetime "created_at", null: false
+    t.bigint "current_project_id"
     t.datetime "current_sign_in_at"
     t.string "current_sign_in_ip"
     t.string "email", null: false
@@ -538,6 +539,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_09_200000) do
     t.datetime "library_scanned_at"
     t.datetime "locked_at"
     t.datetime "remember_created_at"
+    t.boolean "remember_current_project", default: true, null: false
     t.bigint "remote_sync_cursor", default: 0, null: false
     t.datetime "reset_password_sent_at"
     t.string "reset_password_token"

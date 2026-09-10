@@ -19,7 +19,7 @@ module Web
 
     test "setting it from the project page makes it the session current project" do
       patch current_project_path, params: { project_id: @project.id }
-      assert_equal @project.id, session[:current_project_id]
+      assert_equal @project.id, current_project_id_for(@user)
     end
 
     test "the project page shows a current badge + Clear once it is current" do

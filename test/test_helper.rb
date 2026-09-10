@@ -337,5 +337,16 @@ module ActionDispatch
     def bootstrap_token(email:, device_name: "device")
       bootstrap_account(email:, device_name:)["device_token"]
     end
+
+    # THE CURRENT PROJECT, READ FROM WHICHEVER STORE IS AUTHORITATIVE (slice 0, 2026-09-10).
+    #
+    # Ten assertions across three suites read `session[:current_project_id]` directly. That was the
+    # storage, not the behaviour, and when the pointer moved onto the user row every one of them
+    # went red while the feature worked perfectly — a test pinned to an implementation detail.
+    # `users.remember_current_project` now decides which store answers, so asking through this
+    # helper keeps a test true under BOTH settings and says what it means.
+    def current_project_id_for(user)
+      user.reload.remember_current_project ? user.current_project_id : session[:current_project_id]
+    end
   end
 end

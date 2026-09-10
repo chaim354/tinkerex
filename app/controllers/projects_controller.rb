@@ -587,7 +587,7 @@ class ProjectsController < ApplicationController
     else
       "Project created. Its folder is #{Maker::ProjectFolders::ROOT}/#{project.slug}."
     end
-    return lead unless session[:current_project_id] == project.id
+    return lead unless current_project_id == project.id
     # A CURRENT PROJECT WITH NO FOLDER CANNOT PROMISE "uploads land there" — they fall back to the
     # library root until the folder exists (Projects::UploadsController#upload_parent). Found in
     # review: ticking "make current" on a create whose mkdir failed read the failure sentence and
@@ -598,7 +598,7 @@ class ProjectsController < ApplicationController
   end
 
   def make_current(project)
-    session[:current_project_id] = project.id
+    self.current_project_id = project.id
   end
 
   # `cover_clear` is the form's way back to the automatic pick — see `_form.html.erb`. It is NOT a

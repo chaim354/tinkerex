@@ -54,6 +54,7 @@ class FilesController < ApplicationController
   # below. Shared with Projects::UploadsController, the project page's own inline uploader, which
   # needed the identical call once it stopped being the only other upload door; see the concern's
   # header for why that made it a concern rather than a second copy.
+  include UploadBatch
   include ProjectFolderIntake
 
   # "Edit in <Addon>" for a file an addon produced — #addon_origins_for, called from #index and
@@ -774,11 +775,41 @@ class FilesController < ApplicationController
   # chunk store would duplicate Sync::Commit, move bytes through Rails, and reach into the sync
   # engine (spec §10).
   def create
-    upload = params.require(:file)
-    info = FileLayer.current.write(current_user, parent_node_id: params[:parent_node_id],
-                                   name: upload.original_filename, io: upload)
-    enqueue_preview(node_id: info.node_id, name: upload.original_filename)
+    uploads = Array(params.require(:file))
+    # `multiple` MEANS `params[:file]` CAN BE AN ARRAY, and the JSON branch below cannot be: its
+    # callers (importer_controller and measure_controller, through lib/chunk_upload's
+    # uploadPortFile) each POST exactly one file and read back the one node_id they need to attach.
+    # So the batch is an HTML-only widening; a multi-file POST asking for JSON is a caller error,
+    # not a shape to invent a response for.
+    if uploads.size > 1 && !request.format.html?
+      return render(json: { error: "one file per JSON upload" }, status: :unprocessable_entity)
+    end
+
+    written, refused, errors = write_batch(uploads, parent_node_id: params[:parent_node_id])
+
+    if written.empty?
+      # ONE FILE REFUSED IS EXACTLY THE PRE-BATCH CONDITION, so it is answered by exactly the
+      # pre-batch code: re-raise and let the class-level `rescue_from` render it — HTML redirect
+      # with the message, JSON `{ error: … }` at 422. Absorbing it here instead sent the JSON door
+      # a redirect, which `uploadPortFile` followed to an HTML page and reported as
+      # "upload failed (406)" rather than "… already exists" (caught by the system leg).
+      raise errors.first if uploads.size == 1 && errors.any?
+
+      return redirect_back_or_to(files_path, alert: refused_sentence(refused))
+    end
+
+    info = written.last
+    # ONE SWEEP FOR THE WHOLE BATCH, after every write: ProjectIntake.for_node sweeps the project
+    # ROOT, so a single call files everything that just landed. Running it per file would sweep the
+    # same folder N times and report only the last file's view of it.
     intake_result = intake_project_folder(info.node_id)
+
+    if uploads.size > 1 || refused.any?
+      return redirect_back_or_to(files_path,
+                                 notice: batch_upload_notice(written.map(&:name), intake_result, refused:))
+    end
+
+    upload = uploads.first
     # format.json for the importer (app/javascript/controllers/importer_controller.js via
     # lib/chunk_upload's uploadPortFile): it needs the new node_id to attach in the SAME request
     # that uploaded it. A followed redirect can't carry that back -- fetch() resolves to the

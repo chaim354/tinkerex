@@ -69,7 +69,16 @@
       <%= form_with url: files_path, method: :post, class: "uploader",
                     data: { turbo: false }, html: { multipart: true } do |f| %>
         <label class="upload-btn">
-          <%= f.file_field :file, onchange: "this.form.requestSubmit()", hidden: true %>
+          <%# `include_hidden: false` IS LOAD-BEARING. `f.file_field` with `multiple: true` renders a
+              companion `<input name="file[]" type="hidden" value="">` so an empty selection still
+              submits the key — which put a bare "" at the head of `params[:file]`, and the server
+              called `original_filename` on a String and 500'd. Nothing needs that marker here: the
+              field's own `onchange` is the only thing that submits this form, so it never fires with
+              an empty selection. Found by uploading four real files through the real form; the
+              Rack::Test suites POSTed a Ruby array and never sent the marker at all, which is §14d's
+              "assert the rendered field name" with a different attribute. %>
+          <%= f.file_field :file, multiple: true, include_hidden: false,
+                           onchange: "this.form.requestSubmit()", hidden: true %>
           <span>Upload a file</span>
         </label>
       <% end %>
@@ -80,7 +89,7 @@
                data-uploader-begin-url-value="<%= begin_upload_files_path %>"
                data-uploader-finalize-url-value="<%= finalize_upload_files_path %>">
         <label class="upload-btn">
-          <input type="file" data-uploader-target="input" data-action="uploader#upload" hidden>
+          <input type="file" multiple data-uploader-target="input" data-action="uploader#upload" hidden>
           <span>Upload a file</span>
         </label>
         <span class="upload-status" data-uploader-target="status"></span>
