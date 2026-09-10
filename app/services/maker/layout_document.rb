@@ -239,7 +239,7 @@ module Maker
     # `block:new-<n>`) — Save mints the real key for a `new-` one. EVERY FIELD IS PRESENT, nil
     # included, so an attribute cleared in the editor is written as a clear rather than left behind.
     def blocks_from(draft)
-      draft["panels"].select { |e| e["kind"] && e["kind"] != "tab" }.map do |e|
+      draft["panels"].select { |e| Maker::ProjectBlock::KINDS.include?(e["kind"]) }.map do |e|
         { "key" => e["key"], "kind" => e["kind"],
           # A LINK'S `title` IS THE ROW'S `heading`: one column, so a kind change keeps its label.
           "heading" => e["kind"] == "link" ? e["title"] : e["heading"],
@@ -358,9 +358,10 @@ module Maker
       # THE CAP IS COUNTED ON THE RESULT, NOT ON WHAT THE TEXT LISTS: the blocks the text does not
       # mention keep their place, so a paste of forty into a project that already holds three is
       # forty-three blocks. An error, never a truncation — which of them to drop is not ours to pick.
-      # `e["kind"] != "tab"` IS NOT DECORATION (2026-09-09, tabs): a separator carries a `kind` too,
-      # so counting every kind would spend eight of the forty block slots on tabs.
-      if ordered.count { |e| e["kind"] && e["kind"] != "tab" } > Maker::ProjectBlock::CAP
+      # A BLOCK IS ASKED FOR BY KIND (2026-09-09, tabs; sharpened in review): a separator carries a
+      # `kind` too, so counting every kinded entry would let eight tabs eat eight of the forty block
+      # slots — and an exclusion (`!= "tab"`) would leak the NEXT entry kind the same way.
+      if ordered.count { |e| Maker::ProjectBlock::KINDS.include?(e["kind"]) } > Maker::ProjectBlock::CAP
         return Result.new(draft: draft, notes: notes, errors: [ "That would leave more than #{Maker::ProjectBlock::CAP} blocks on the page." ])
       end
       # TWO CHECKS ON THE RESULT, NOT THE TEXT, for the block cap's reason: the tabs the text does not
@@ -368,7 +369,9 @@ module Maker
       # by name both do (spec §3, §4).
       tabs = ordered.select { |e| e["kind"] == "tab" }
       if (dup = tabs.map { |e| e["name"].to_s.downcase }.tally.find { |_, c| c > 1 })
-        return Result.new(draft: draft, notes: notes, errors: [ "Two tabs are named “#{dup.first}”; tab names must differ." ])
+        # THE NAME AS THE MAKER WROTE IT, not the downcased key the tally grouped on (found in review).
+        as_written = tabs.find { |e| e["name"].to_s.downcase == dup.first }["name"]
+        return Result.new(draft: draft, notes: notes, errors: [ "Two tabs are named “#{as_written}”; tab names must differ." ])
       end
       if tabs.size > Maker::ProjectKind::TAB_CAP
         return Result.new(draft: draft, notes: notes, errors: [ "This page can hold #{Maker::ProjectKind::TAB_CAP} tabs; this would leave #{tabs.size}." ])

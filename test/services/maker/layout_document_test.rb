@@ -559,7 +559,7 @@ module Maker
       assert r.ok?, "matching by name is not a duplicate: #{r.errors.inspect}"
 
       r = tabbed.parse("layout: 1\npanels:\n  - tab: Extra\n  - tab: extra\n")
-      assert_equal [ "Two tabs are named “extra”; tab names must differ." ], r.errors
+      assert_equal [ "Two tabs are named “Extra”; tab names must differ." ], r.errors, "the name as written, not the downcased key"
 
       seven = (1..7).map { |i| "  - tab: T#{i}\n" }.join
       r = tabbed.parse("layout: 1\npanels:\n#{seven}")
@@ -610,5 +610,30 @@ module Maker
       assert r.ok?, "39 blocks beside 2 tabs is 39 blocks: #{r.errors.inspect}"
       assert_equal 39, tabbed.blocks_from(r.draft).size
     end
+# --- weight added after review (2026-09-09): an unknown id, an id of another kind, whitespace, the label
+
+test "a tab whose id names nothing here is created, and an id naming a panel or a block never converts it" do
+  r = tabbed.parse("layout: 1\npanels:\n  - tab: Ghost\n    id: ffffffffffff\n  - tab: Files\n    id: attachments\n  - panel: attachments\n")
+  assert r.ok?, r.errors.inspect
+  created = r.draft["panels"].select { |e| e["kind"] == "tab" && e["key"].start_with?("tab:new-") }
+  assert_equal %w[Ghost Files], created.map { |e| e["name"] }, "both ids are foreign to this page, so both create"
+  refute_includes r.draft["panels"].map { |e| e["key"] }, "tab:ffffffffffff", "a foreign key is never stored"
+  files = entry(r, "attachments")
+  refute files.key?("kind"), "Files is still a panel"
+end
+
+test "a tab name collapses whitespace before the length check, and a repeated tab is named as a tab" do
+  r = tabbed.parse("layout: 1\npanels:\n  - tab: \"  Build   Log \"\n    id: #{TAB_A}\n")
+  assert r.ok?, r.errors.inspect
+  assert_equal "Build Log", entry(r, tk(TAB_A))["name"]
+
+  raw31 = "x" * 15 + "  " + "y" * 14
+  assert_equal 31, raw31.length
+  r = tabbed.parse("layout: 1\npanels:\n  - tab: \"#{raw31}\"\n")
+  assert r.ok?, "31 raw characters that collapse to 30 are within the cap: #{r.errors.inspect}"
+
+  r = tabbed.parse("layout: 1\npanels:\n  - tab: Build\n    id: #{TAB_A}\n  - tab: build\n")
+  assert_equal [ "Entry 2 names the tab a second time." ], r.errors
+end
   end
 end
