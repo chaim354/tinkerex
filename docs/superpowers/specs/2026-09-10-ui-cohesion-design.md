@@ -2,7 +2,7 @@
 
 Date: 2026-09-10. Branches: `claude/ux-ui-cohesion-4oaw9c` (audit + slice 0),
 `claude/ui-ux-audit-plan-38ea13` (slice 1). Status: audit and first-run walkthrough complete;
-**slices 0 and 1 LANDED** (2026-09-10); slices 2–5 proposed and awaiting approval.
+**slices 0, 1 and 2 LANDED** (2026-09-10); slices 3–5 proposed, 5 blocked on §4.
 
 The design system landed on 2026-09-07 (`95ae66b`, spec `2026-09-03-web-shell-and-design-system-design.md`)
 and **356 commits across 49 merged PRs have landed on top of it since** — stages 2, 3 and 4 (home,
@@ -19,15 +19,15 @@ vocabulary is rendered three ways, and the empty state has three implementations
 
 ## 0. Handoff — start here
 
-**Slices 0 and 1 have landed (§5). Slices 2–5 are unstarted and this document is their brief.**
+**Slices 0, 1 and 2 have landed (§5). Slices 3–5 are unstarted and this document is their brief.**
 Read §2 for the findings, §5 for the slices, and this section for what earlier sessions learned the
 hard way about verifying work in this repo.
 
 ### What to pick up next
 
-Slice 2 (`.page-head`'s two-slot contract) is next. It is small — wrap the loose children on
-`/models` and the public project page — and its guard is the one shape §14e warns about, so read
-that bullet in the slice before writing it. Slices are ordered by what each costs the feeling of
+Slice 3 (one empty state, one count, one pill vocabulary) is next, and it is the biggest of the
+five: ~20 views, two helpers, and the `/tools` first-run state the spec calls the single largest
+intuitiveness win in the sweep. Slices are ordered by what each costs the feeling of
 cohesion, and each is independently shippable.
 
 ### Two questions still open, both for the user — do not guess
@@ -558,7 +558,41 @@ backend-dependent, and the counts confirm it.
 `app/views/projects/_attachments.html.erb`, `app/views/projects/_log_entry.html.erb`,
 `app/views/home/index.html.erb`, plus the new guard.
 
-### Slice 2 — Make `.page-head`'s two-slot contract real
+### Slice 2 — Make `.page-head`'s two-slot contract real — **LANDED 2026-09-10**
+
+`/models` wraps its two links in `.page-actions`; the public project page's byline moves inside
+`.page-title` and the bundle becomes the actions slot. Measured in a browser at 1400px, both heads
+now lay out as two slots:
+
+| page | slot 1 | slot 2 |
+|---|---|---|
+| `/models` | `h1` L212–277 | `.page-actions` L1187–1376 |
+| `/u/:handle/:slug` | `.page-title` L44–344 (h1 + byline on one line) | `.page-actions bundle` L1149–1356 |
+
+**§2.2's "the sort select wraps to a second row" did not reproduce and nothing was done about it.**
+The select is already inside `form.toolbar`, and measured there its four children sit at T110 /
+T114 / T125 — one row, no wrap, at the width the audit used. The most likely reading of the original
+observation is that a three-child head spread by `space-between` made the toolbar beneath it *look*
+like a wrapped second row of the head; with the head corrected the effect is gone. Recorded rather
+than quietly dropped, because the plan's own bullet asked for a move that turned out to be
+unnecessary — and a future reader comparing plan to diff would otherwise find a gap.
+
+**One page sheet got smaller, per decision 6.** `.bundle` had declared `display: flex; flex-wrap:
+wrap; align-items: center; gap: 8px` — a verbatim copy of `.page-actions`. Now that the div carries
+both classes, only `margin-top` is its own.
+
+**The guard rides the existing 45-page sweep** in `template_hygiene_test.rb` rather than naming
+routes, so a page added to that list is covered with no edit. It asserts the **rendered DOM**: both
+defects were structural in ERB whose `.page-head` class was correct on every one of them, so nothing
+short of the built tree could tell a compliant head from a broken one. Mutation-checked both ways —
+unwrapping the Models links reddens it (`3 slots, not 2 — ["h1", "a.btn primary", "a.btn"]`), and
+raising the non-vacuity floor to 500 reddens it at the floor instead, confirming `seen` really
+counts (**50 heads across 50 pages** — one per page, itself worth knowing).
+
+**Verification.** Bare `bin/ci`, seven gates green, 4218 / 4218 / 4218 identical run counts.
+
+#### Original plan
+
 
 - Wrap the loose children on `/models` and the public project page in the `.page-actions` /
   `.page-title` blocks every other page already uses.

@@ -23,7 +23,9 @@
      a file — and at 375px it has to go under the button rather than push the page sideways
      (§14m rule 11; test/system/shell_test.rb's sweep is what would say otherwise).
      `overflow-wrap: anywhere` for the same reason a long file NAME needs it in the tables. */
-  .bundle { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+  /* The div carries `page-actions` too, which is where the flex/wrap/align/gap come from — this
+     rule held a verbatim copy of all four until 2026-09-10. Only the margin is the bundle's own. */
+  .bundle { margin-top: 8px; }
   .bundle .muted { font-size: 12px; overflow-wrap: anywhere; }
 
   /* 40px, matching `table.files .thumb` — the same row height the owner's file list has. */
