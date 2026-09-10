@@ -148,6 +148,61 @@ class FileMenuTest < ApplicationSystemTestCase
     ENV["ADDON_SOURCE_PATH"] = prior_source_path
   end
 
+  # DELETE FROM THE MENU, DRIVEN END TO END. The menu is built in JS, so there is no `button_to` to
+  # lean on — it assembles the DELETE itself, and a missing CSRF token, a wrong `_method` or a form
+  # never appended to the document all read the same way from outside: the row is still there.
+  #
+  # THE CONFIRM'S TEXT IS ASSERTED, not just accepted. It is built from `cell.dataset.nodeName`, and
+  # `nodeName` is a DOM property name — on a `DOMStringMap` it is an ordinary data key and resolves
+  # to `data-node-name`, but that is worth proving rather than reasoning about. It also pins the
+  # wording against the row's own `button_to` and the file page's button, so the three delete doors
+  # ask one question rather than three.
+  test "the right-click menu deletes a file" do
+    node = create_node!(@user, node_id: SecureRandom.uuid, name: "widget.stl", kind: "file")
+    visit files_path(view: "list")
+
+    find(".file-cell", text: "widget.stl").right_click
+    assert_selector ".file-menu button", text: "Delete"
+
+    # THE DESTRUCTIVE ITEM READS AS ONE, and only a browser can see that. `del.className = "danger"`
+    # styles nothing unless a rule exists for it — a class that does nothing is this layer's
+    # recurring silent no-op, and the item that deletes a file is the worst place for it.
+    danger = page.evaluate_script("getComputedStyle(document.querySelector('.file-menu button.danger')).color")
+    plain  = page.evaluate_script("getComputedStyle(document.querySelector('.file-menu button:not(.danger)')).color")
+    assert_not_equal plain, danger, "the Delete item is styled exactly like Add note (#{danger})"
+
+    message = accept_confirm { find(".file-menu button", text: "Delete").click }
+    assert_equal "Delete widget.stl?", message
+
+    assert_text "Deleted widget.stl."
+    assert_no_selector ".file-cell", text: "widget.stl"
+    refute @user.nodes.present.exists?(node_id: node.node_id), "the node was never tombstoned"
+
+    assert_no_console_errors
+  end
+
+  # THE GATE, WHICH IS THE HALF THE FEATURE WOULD HAVE DIED IN. `open()` read `if (!noteUrl) return`
+  # until 2026-09-10, gating the WHOLE menu on the note url — correct while every menu-bearing cell
+  # was a FILE and every file had notes. A folder carries a delete url and nothing else, so the old
+  # gate opened NOTHING for it, silently: a contextmenu handler that returns early is
+  # indistinguishable from one that never ran, which is why this is asserted in a browser.
+  #
+  # WHETHER THE PORT ACCEPTS A DIRECTORY DELETE IS A DIFFERENT QUESTION AND A DIFFERENT SLICE —
+  # share and s3 refuse one today (§14a, `dir_deletable`). What this slice ships is the menu, so
+  # that is what this asserts; clicking through would pin a refusal the port half then removes.
+  test "the right-click menu opens for a folder, whose whole menu is Delete" do
+    create_node!(@user, node_id: SecureRandom.uuid, name: "cad", kind: "dir")
+    visit files_path(view: "list")
+
+    find("a.dir", text: "cad").right_click
+
+    assert_selector ".file-menu button", text: "Delete"
+    assert_no_selector ".file-menu button", text: "Add note"
+    assert_no_selector ".file-menu a", text: "Download"
+
+    assert_no_console_errors
+  end
+
   # project_with_folder gives a SOURCE folder ("parts") that is deliberately NOT the project's own
   # folder — this is a file sitting in the library, not yet part of any project, which is the
   # ordinary case the attach control exists for.

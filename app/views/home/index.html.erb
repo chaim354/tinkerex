@@ -38,13 +38,13 @@
         <% ext_label = File.extname(node.name).delete(".").upcase.first(4) %>
         <% if Maker::Previews::Registry.for_filename(node.name).present? %>
           <%= link_to file_path(node.node_id), class: "grid-card file-cell",
-                      data: thumb_cell_data(node.node_id, ext_label).merge(file_menu_data(node.node_id, @addon_origins[node.node_id])) do %>
+                      data: thumb_cell_data(node.node_id, ext_label).merge(file_menu_data(node.node_id, node.name, @addon_origins[node.node_id])) do %>
             <%= render "files/thumb", thumb: @covers.thumb(node.node_id), ext_label:,
                        url: preview_src(@covers.thumb(node.node_id)) %>
             <span class="grid-name"><%= node.name %></span>
           <% end %>
         <% else %>
-          <%= link_to file_path(node.node_id), class: "grid-card", data: file_menu_data(node.node_id, @addon_origins[node.node_id]) do %>
+          <%= link_to file_path(node.node_id), class: "grid-card", data: file_menu_data(node.node_id, node.name, @addon_origins[node.node_id]) do %>
             <span class="thumb generic-thumb" aria-hidden="true"><%= ext_label.presence || "FILE" %></span>
             <span class="grid-name"><%= node.name %></span>
           <% end %>

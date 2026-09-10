@@ -42,7 +42,7 @@
                   gets none. See files_helper.rb for why they are separate builders. %>
               <%= link_to file_path(node.node_id), class: "file-cell",
                           data: thumb_cell_data(node.node_id, ext_label)
-                                  .merge(file_menu_data(node.node_id, @addon_origins[node.node_id])) do %>
+                                  .merge(file_menu_data(node.node_id, node.name, @addon_origins[node.node_id])) do %>
                 <%= render "thumb", thumb:, ext_label:, url: preview_src(thumb) %>
                 <span class="file-name"><%= node.name %></span>
               <% end %>
@@ -50,7 +50,7 @@
               <%# The plain-link branch: a menu, but no poll cell — there is no thumbnail to wait
                   for. The branch that is easy to forget, and was forgotten first time round. %>
               <%= link_to node.name, file_path(node.node_id),
-                          data: file_menu_data(node.node_id, @addon_origins[node.node_id]) %>
+                          data: file_menu_data(node.node_id, node.name, @addon_origins[node.node_id]) %>
             <% end %>
             <%= render "note_badge", count: @note_counts[node.node_id] %>
           <% else %>
@@ -62,7 +62,7 @@
                 #thumb_cell_data either: there is nothing to poll a thumbnail for. See
                 files_helper.rb for why the two builders are two. %>
             <%= link_to "📁 #{node.name}", files_path(folder: node.node_id), class: "dir",
-                        data: folder_menu_data(node.node_id) %>
+                        data: folder_menu_data(node.node_id, node.name) %>
           <% end %>
         </td>
         <%# The EXTENSION, not node.kind — see FilesHelper#file_type_label for why the cell under

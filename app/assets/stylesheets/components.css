@@ -413,6 +413,11 @@
     color: var(--fg); font: 13px/1.4 var(--font-ui); border-radius: var(--radius-control); cursor: pointer; text-decoration: none; box-sizing: border-box;
   }
   .file-menu button:hover, .file-menu a:hover { background: var(--raised); text-decoration: none; }
+  /* THE ONE DESTRUCTIVE ENTRY READS AS ONE. filemenu_controller.js sets `className = "danger"` on
+     Delete; with no rule for it that class styles NOTHING, and the item that removes a file would
+     look like one more navigation. `.btn.danger` cannot be reused - a menu entry is not a button
+     face - so this is the same token, not a second definition of it. */
+  .file-menu button.danger { color: var(--danger); }
   .note-popover {
     position: absolute; z-index: 1001; width: 320px; max-width: 90vw; padding: 10px;
     background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-float); box-shadow: var(--shadow-float);

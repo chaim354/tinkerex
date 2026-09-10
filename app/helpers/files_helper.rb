@@ -38,8 +38,13 @@ module FilesHelper
   #
   # NOT A SHARED `_file_cell` PARTIAL: the four `link_to` block bodies genuinely differ, and only
   # the data hash is the identical part.
-  def file_menu_data(node_id, origin)
+  # `node_name` IS AN ARGUMENT, NOT DERIVED, for the reason `ext_label` already is below: the caller
+  # holds the node and this helper holds only its id, and a lookup here would be a second query per
+  # row on a page that renders hundreds. The menu's `confirm` reads it — a missing one degrades to
+  # "Delete this item?" rather than to a broken menu.
+  def file_menu_data(node_id, node_name, origin)
     { action: "contextmenu->filemenu#open",
+      node_name:,
       note_url: file_notes_path(node_id),
       download_url: blob_file_path(node_id, download: 1),
       delete_url: file_path(node_id),
@@ -55,8 +60,8 @@ module FilesHelper
   # NO `node_id` KEY, DELIBERATELY. `data-node-id` is the THUMB POLL's key (thumb_cell_data below,
   # read by thumbs_controller.js) and a folder has nothing to poll for; writing one here would put
   # folders into the poll's id list for the sake of a selector a test could get another way.
-  def folder_menu_data(node_id)
-    { action: "contextmenu->filemenu#open", delete_url: file_path(node_id) }
+  def folder_menu_data(node_id, node_name)
+    { action: "contextmenu->filemenu#open", node_name:, delete_url: file_path(node_id) }
   end
 
   # THE POLL CELL'S HALF — what `thumbs_controller.js` reads (`dataset.nodeId`; a cell without one
