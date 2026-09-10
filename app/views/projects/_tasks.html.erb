@@ -22,15 +22,21 @@
 %>
 <% layout = @panel_layout || @project.panel_layout %>
 <section class="panel tasks-panel<%= " panel--quiet" if @tasks.empty? %>" id="project-tasks">
-  <h2><%= panel_title(layout, "tasks") %></h2>
+  <div class="panel-head"><h2><%= panel_title(layout, "tasks") %></h2></div>
   <%= panel_intro(layout, "tasks") %>
 
   <%# QUIET AT ZERO (stage 4, S4-1): three headed groups reading "(0)" is not information. The
       turbo-stream target, the error line and the add form below are unchanged, so an Add that
       creates the first task replaces this element with the three groups as before. %>
   <% if @tasks.any? %>
+    <%# AND AN EMPTY GROUP IS SUPPRESSED TOO, WHICH THE PANEL-LEVEL GUARD ABOVE DOES NOT COVER. That
+        one hides the groups only when EVERY status is empty; a project with two todos still rendered
+        `DOING (0)` and `DONE (0)` under it, which is the same "(0) is not information" argument one
+        level down. `next if group.empty?` rather than a filtered STATUSES list, so the ORDER stays
+        the enum's — a group that fills later appears in its own place, not at the end. %>
     <% Maker::Task::STATUSES.each do |status| %>
       <% group = @tasks.select { |t| t.status == status } %>
+      <% next if group.empty? %>
       <div class="tasks-group status-<%= status %>">
         <h3><%= status.capitalize %> <span class="muted">(<%= group.size %>)</span></h3>
         <%# "projects/task", FULLY QUALIFIED, not "task". A bare name resolves against the RENDERING

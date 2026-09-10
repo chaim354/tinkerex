@@ -81,14 +81,24 @@ module Web
       assert_select ".build-log-panel details.composer:not([open]) > summary", text: "Add entry"
       assert_select ".build-log-panel details.composer form[action=?] lexxy-editor[attachments='false']",
                     project_build_log_entries_path(@project)
-      assert_select ".build-log-panel details.composer form input[type='submit'][value='Add entry']"
+      # "Save entry" ON THE SUBMIT, "Add entry" ON THE SUMMARY — they both read "Add entry" until
+      # 2026-09-10, two controls 150px apart in one panel naming different actions (§1A.8). Asserted
+      # as a PAIR here, because the defect was only visible as one.
+      assert_select ".build-log-panel details.composer form input[type='submit'][value='Save entry']"
     end
 
     test "a log entry puts its date in the first column and its body in the second" do
       get project_path(@project)
       assert_select ".log-timeline .log-entry > time.entry-time", count: 1
       assert_select ".log-timeline .log-entry > .entry-main .entry-body", text: /First print came out clean/
-      assert_select ".log-timeline .log-entry > .entry-main .entry-head form button", text: "Delete"
+      # THE ENTRY'S ACTIONS ARE BEHIND A MENU SINCE 2026-09-10 (UI-cohesion slice 5): three controls
+      # per entry meant eighteen in a six-entry panel. The head still holds them, one level in.
+      assert_select ".log-timeline .log-entry > .entry-main .entry-head details.menu > summary", count: 1
+      assert_select ".log-timeline .log-entry .entry-head .menu-list form button", text: "Delete entry"
+      # ALL THREE ARE IN IT, not just the one that used to be up here — a menu that swallowed an
+      # action would be the "control that quietly stopped existing" this sweep keeps finding.
+      assert_select ".log-timeline .log-entry .entry-head .menu-list a", text: "Add existing photo"
+      assert_select ".log-timeline .log-entry .entry-head .menu-list .upload-btn", count: 1
     end
 
     # --- tags (stage 2, S2-5) ----------------------------------------------------------------
@@ -194,7 +204,12 @@ end
 
       assert_select "section.tasks-panel.panel--quiet", count: 0
       assert_select "section.build-log-panel.panel--quiet", count: 0
-      assert_select "#project-tasks .tasks-group", count: 3
+      # ONE GROUP, NOT THREE, SINCE 2026-09-10. The fixture creates a single todo, and an empty
+      # group is suppressed now — `DOING (0)` and `DONE (0)` beneath one real task is the same
+      # "(0) is not information" argument the panel-level quiet rule already makes, one level down.
+      # What this test is about is that a POPULATED panel is not quiet, and that still holds.
+      assert_select "#project-tasks .tasks-group", count: 1
+      assert_select "#project-tasks .tasks-group.status-todo", count: 1
     end
 
     # THE HERO (stage 4, S4-1): the cover on the project's OWN page. `cover_node_id` is a raw
@@ -631,6 +646,32 @@ end
 
       assert_response :success
       assert_match(/<h2>To do<\/h2>/, response.body)
+    end
+
+    # ONE PANEL-HEAD SHAPE ACROSS THE PROJECT PAGE (UI-cohesion slice 5). §2.10 measured FOUR:
+    # Files (title + path + toggle + three links + a button), Tasks (title alone), Publish (title +
+    # a right-aligned link) and Build log (title, then its button on the NEXT LINE). Two of them
+    # carried a bare `<h2>` with no `.panel-head` at all, so the component's alignment and gap
+    # applied to half the page.
+    #
+    # ASSERTED ON THE RENDERED PAGE, and on the RELATIONSHIP rather than a count: what makes a head
+    # a head is that the title lives inside one. A grep for `.panel-head` in the templates would
+    # pass on a panel that renders none, which is exactly what two of these did.
+    test "every panel on the project page wraps its title in a panel head" do
+      @project.build_log_entries.create!(user: @user, body: "glued", logged_at: Time.current)
+      @project.tasks.create!(user: @user, title: "cut")
+      get project_path(@project)
+      assert_response :success
+
+      panels = css_select("main section.panel")
+      refute_empty panels, "no panels rendered — the sweep is not reaching the page"
+      bare = panels.filter_map do |panel|
+        h2 = panel.at_css("h2")
+        next if h2.nil?
+        next if h2.ancestors.any? { |a| a["class"].to_s.split.include?("panel-head") }
+        panel["class"]
+      end
+      assert_empty bare, "these panels put their title outside a .panel-head: #{bare.inspect}"
     end
   end
 end

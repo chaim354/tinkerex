@@ -17,7 +17,14 @@ module ShellHelper
     "tools" => %w[tools],
     "trash" => %w[trash],
     # The hub and its own children (settings/tags) light the rail FOOT's Settings link, not a rail
-    # item; Shelves, Suppliers and Locations keep lighting the section they serve (models, inventory).
+    # item.
+    #
+    # SHELVES, SUPPLIERS AND LOCATIONS STILL LIGHT THE SECTION THEY SERVE — and since 2026-09-10 the
+    # URL agrees, which is the whole point of the move. They lived at `/settings/*` while this map
+    # lit Models and Inventory, so clicking Settings landed a maker on a page where Settings went
+    # dark and something else was highlighted. The disorientation was real and this map was not the
+    # thing that was wrong: `/models/shelves`, `/inventory/suppliers` and `/inventory/locations` now
+    # read like what they are. The old paths 301 (config/routes.rb) and must keep doing so.
     "settings" => %w[settings]
   }.freeze
 

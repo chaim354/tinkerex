@@ -455,6 +455,11 @@
     text-decoration: none; white-space: nowrap;
   }
   .menu-item:hover { background: var(--raised); text-decoration: none; }
+  .menu-item.danger { color: var(--danger); }
+  /* A menu row that HOSTS a control rather than being one — the build-log uploader is a label
+     wrapping a hidden file input, so it cannot be a .menu-item anchor without losing the input. */
+  .menu-item--host { padding: 4px 6px; }
+  .menu-item--host .upload-btn span { width: 100%; justify-content: flex-start; border: 0; background: none; }
 
   /* --- The folder/file chooser (filechooser_controller.js; shared with the addon bundles, which
      build this markup themselves — every class here is part of the §14c contract) --- */
