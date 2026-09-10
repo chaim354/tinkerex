@@ -3,9 +3,14 @@
 <div class="page-head">
   <h1>Home</h1>
   <div class="page-actions">
-    <%= link_to "New project", new_project_path, class: "btn small" %>
+    <%# THE ACCENT GOES ON THE ACTION, NOT ON A DESTINATION (decision 3). It sat on "Files" until
+        2026-09-10: a rail destination, rendered as the loudest control on the app's front door and
+        200px from the rail's own Files link, while the one thing a maker can DO from here was
+        quiet. Slice 4 of the cohesion spec reduces this row to "New project" alone; moving the
+        colour is the half that does not wait for it. %>
+    <%= link_to "New project", new_project_path, class: "btn small primary" %>
     <%= link_to "Tools", tools_path, class: "btn small" %>
-    <%= link_to "Files", files_path, class: "btn small primary" %>
+    <%= link_to "Files", files_path, class: "btn small" %>
   </div>
 </div>
 
