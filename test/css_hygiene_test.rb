@@ -119,4 +119,69 @@ class CssHygieneTest < ActiveSupport::TestCase
     positions.each { |name, pos| assert pos, "the layout does not link #{name}" }
     assert_equal positions.map(&:last), positions.map(&:last).sort, "link order is #{positions.map(&:first).inspect}; it must be #{order.inspect}"
   end
+
+  # --- A MAIN-CONTAINER VARIANT MUST ACTUALLY WIN (slice 0, 2026-09-10) --------------------
+  #
+  # `.auth-main` shipped as a BARE class in shell.css beside `main.container`, in the SAME layer.
+  # Layer order cannot separate them, so specificity decides, and `main.container` (0,1,1) outranks
+  # `.auth-main` (0,1,0): the auth card computed max-width 1360px where 440px was written, and
+  # padding-top 20px where 48px was written — every sign-in and sign-up page rendered full width
+  # from the day it shipped. `container-wide`, three lines away, is the same idea written correctly
+  # (`main.container.container-wide`) and has always worked.
+  #
+  # TWO WAYS TO WIN, AND BOTH ARE LEGITIMATE — which is why this is not simply "qualify everything":
+  # `.public-main` is a bare class too, but it lives in pages/public.css and `pages` comes AFTER
+  # `shell` in the layer order, so it beats `main.container` on layer regardless of specificity.
+  # Refusing that would be a false positive on correct CSS.
+  #
+  # THE VARIANT LIST IS DERIVED, NOT WRITTEN DOWN (the rule stimulus_hygiene_test follows): a new
+  # `content_for :container_class, "x"` is covered with no edit here.
+  CONTAINER_LAYER = "shell".freeze
+
+  def container_variants
+    from_views = Dir[Rails.root.join("app/views/**/*.erb")].flat_map do |f|
+      File.read(f).scan(/content_for\s+:container_class,\s*"([\w-]+)"/).flatten
+    end
+    # The layout's own literal default for the signed-out branch.
+    from_layout = File.read(LAYOUT).scan(/content_for\(:container_class\)[^"]*"([\w-]+)"/).flatten
+    (from_views + from_layout).uniq
+  end
+
+  def layer_of(enclosing)
+    head = enclosing.find { |h| h.start_with?("@layer ") && !h.include?(",") }
+    head&.sub("@layer ", "")&.strip
+  end
+
+  test "every class the layout can put on main.container is written so it actually wins" do
+    variants = container_variants
+    assert_operator variants.size, :>=, 3,
+                    "derived only #{variants.inspect} — the scan is vacuous"
+
+    order = LAYER_ORDER.delete_prefix("@layer ").delete_suffix(";").split(",").map(&:strip)
+    container_rank = order.index(CONTAINER_LAYER)
+    offenders = []
+
+    (OURS + [ OVERRIDES ]).each do |sheet|
+      rules(read(sheet)).each do |head, enclosing|
+        selectors_of(head).each do |sel|
+          variants.each do |variant|
+            # Only a selector whose SUBJECT is the variant competes with `main.container`;
+            # `.public-main .pager` styles a descendant and is a different selector entirely.
+            next unless sel == ".#{variant}" || sel == "main.container.#{variant}" ||
+                        sel.match?(/\A(main)?(\.container)?\.#{Regexp.escape(variant)}\z/)
+            next if sel.start_with?("main.container.")   # wins on specificity
+
+            rank = order.index(layer_of(enclosing).to_s)
+            next if rank && container_rank && rank > container_rank  # wins on layer order
+
+            offenders << "#{sheet}: `#{sel}` is a bare class in layer " \
+                         "#{layer_of(enclosing).inspect}, so `main.container` outranks it"
+          end
+        end
+      end
+    end
+
+    assert_empty offenders,
+                 "these container variants never apply:\n  #{offenders.join("\n  ")}"
+  end
 end

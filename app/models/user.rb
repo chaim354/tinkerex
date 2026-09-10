@@ -158,7 +158,17 @@ class User < ApplicationRecord
   # would match `[a-z0-9]` alone, which contradicts both the message below and the `pattern`
   # attribute the Account form renders. The three must agree or the browser accepts what the
   # server refuses.
-  HANDLE_RE = /\A[a-z0-9][a-z0-9-]{0,30}[a-z0-9]\z/
+  #
+  # ONE SPELLING, AND IT IS THE HTML ONE, BECAUSE ONLY THAT SPELLING HAS A CONSTRAINT RUBY LACKS.
+  # An HTML `pattern` is compiled with the **`v`** flag, where a literal `-` inside a character
+  # class must be escaped; `[a-z0-9-]` therefore THROWS in the browser ("Invalid character class"),
+  # and a `pattern` that fails to compile is not a loose validation — the browser discards it and
+  # validates nothing at all. Both forms rendered that for as long as they have existed, so the
+  # comment above ("The three must agree") was true of the message and the regex and quietly false
+  # of the attribute. `\-` is a plain escaped hyphen to Ruby too, so the one string below serves
+  # both, and neither can drift from the other again. Guard: user_handle_test.rb.
+  HANDLE_PATTERN = "[a-z0-9][a-z0-9\\-]{0,30}[a-z0-9]".freeze
+  HANDLE_RE = /\A#{HANDLE_PATTERN}\z/
   # Segments that exist at the site root or are obvious impersonation targets. `u` itself is here
   # so /u/u/... cannot be minted; the rest are the app's own top-level paths (config/routes.rb) —
   # every first segment HANDLE_RE could mint (the underscored ones, `bom_lines`, `current_project`,

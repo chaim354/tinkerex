@@ -112,4 +112,46 @@ class UserHandleTest < ActiveSupport::TestCase
 
     assert user.update(handle: "chaim"), user.errors.full_messages.to_sentence
   end
+
+  # --- the HTML `pattern` attribute (slice 0, 2026-09-10) ----------------------------------
+  #
+  # `User::HANDLE_PATTERN` is the ONE spelling, and `HANDLE_RE` is built from it. These pin the
+  # property that made a second spelling necessary in the first place: an HTML `pattern` compiles
+  # with the `v` flag, where a literal `-` inside a character class is a SyntaxError. A `pattern`
+  # that fails to compile is not merely permissive -- the browser discards it and validates
+  # nothing, silently, which is what both handle forms shipped.
+
+  test "the handle pattern escapes every literal hyphen inside a character class" do
+    # The v-flag rule, checked directly rather than by eye: walk each [...] class and refuse a `-`
+    # that is neither escaped nor part of a range (a-z, 0-9).
+    classes = User::HANDLE_PATTERN.scan(/\[(.*?)(?<!\\)\]/m).flatten
+    assert_not_empty classes, "HANDLE_PATTERN has no character class -- this guard would be vacuous"
+    classes.each do |body|
+      # drop ranges and escaped hyphens, then nothing containing a bare `-` may remain
+      remaining = body.gsub(/\w-\w/, "").gsub(/\\-/, "")
+      assert_not_includes remaining, "-",
+                          "character class [#{body}] carries an unescaped hyphen; " \
+                          "the browser compiles `pattern` with the v flag and will reject it"
+    end
+  end
+
+  test "the pattern and the model regex accept and refuse the same handles" do
+    anchored = /\A#{User::HANDLE_PATTERN}\z/
+    ([ "ab", "a1", "desk-lamp-2", ("a" * 32) ]).each do |good|
+      assert_match anchored, good
+      assert_match User::HANDLE_RE, good
+    end
+    ([ "a", "-jess", "jess-", "JESS", "je_ss", ("a" * 33) ]).each do |bad|
+      assert_no_match anchored, bad
+      assert_no_match User::HANDLE_RE, bad
+    end
+  end
+
+  test "both handle forms render the shared pattern rather than a literal of their own" do
+    literals = Dir[Rails.root.join("app/views/**/*.erb")].select do |f|
+      File.read(f).match?(/pattern:\s*"/)
+    end
+    assert_empty literals,
+                 "these views inline a `pattern:` literal instead of naming a constant: #{literals.inspect}"
+  end
 end
