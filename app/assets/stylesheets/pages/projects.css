@@ -1,6 +1,11 @@
 /* The Projects hub: index tiles, the project page's panels, tasks, the build-log timeline,
    sheets. Panels, buttons, badges and fields are components. */
 @layer pages {
+  /* THE BUILD-LOG COMPOSER SITS IN THE PANEL HEAD, and open it takes the whole row. Without this it
+     is a flex item beside the title and the editor renders about 70px wide — measured, in a
+     screenshot, after the reasoning that predicted a graceful wrap turned out to be wrong.
+     Qualified inside  because only this head holds a disclosure. */
+  .build-log-panel .panel-head > details.composer[open] { flex-basis: 100%; }
   /* --- Index --- */
   .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 16px; }
   /* Deliberately NOT `align-items: center` here: `.project-card` is a flex item of `.project-tile`

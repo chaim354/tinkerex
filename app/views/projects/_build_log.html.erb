@@ -1,18 +1,34 @@
 <section class="panel build-log-panel<%= " panel--quiet" if @entries.empty? %>">
-  <h2><%= panel_title(@panel_layout, "build_log") %></h2>
+  <%# ONE PANEL-HEAD SHAPE ACROSS ALL FOUR PANELS (UI-cohesion slice 5): title, optional muted
+      meta, actions right. This and Tasks carried a BARE <h2> while Files and Publish wrapped
+      theirs, so `.panel-head`'s alignment and gap applied to half the page — and this panel
+      additionally put its one action on the LINE BELOW the title (§2.10), a third arrangement again.
+      THE WHOLE `<details>` GOES IN THE HEAD, not merely its summary: the two are one element. It is
+      a DIRECT CHILD of `.panel-head` and not wrapped in `.panel-actions`, and that is not tidiness
+      — a first draft put it inside one and the OPEN composer became a ~70px column squeezed beside
+      the title, because `.panel-actions` is a flex item that shrinks and the form inherits whatever
+      width is left. A screenshot said so; the reasoning that predicted otherwise was wrong. As a
+      direct child, `pages/projects.css` can give the open state `flex-basis: 100%` and it takes the
+      row beneath the title. Closed — its resting state — it is a button on the right like every
+      other panel's action. %>
+  <div class="panel-head">
+    <h2><%= panel_title(@panel_layout, "build_log") %></h2>
+    <details class="composer">
+      <summary class="btn small">Add entry</summary>
+      <%# scope: :build_log_entry — form_with on a NAMESPACED model (Maker::BuildLogEntry) derives
+          `maker_build_log_entry[...]`, which the controller's params.require(:build_log_entry)
+          rejects. Same trap as projects/_form.html.erb. %>
+      <%= form_with model: @new_entry, scope: :build_log_entry,
+                    url: project_build_log_entries_path(@project), class: "log-form" do |f| %>
+        <%= f.rich_text_area :body, placeholder: "What did you do?", attachments: "false" %>
+        <%# "Save entry", NOT "Add entry" — the <summary> above already says Add entry, and the two sat
+            150px apart in one panel naming different actions (§1A.8). The opener offers the composer;
+            this commits what is in it. %>
+        <%= f.submit "Save entry", class: "btn small" %>
+      <% end %>
+    </details>
+  </div>
   <%= panel_intro(@panel_layout, "build_log") %>
-
-  <details class="composer">
-    <summary class="btn small">Add entry</summary>
-    <%# scope: :build_log_entry — form_with on a NAMESPACED model (Maker::BuildLogEntry) derives
-        `maker_build_log_entry[...]`, which the controller's params.require(:build_log_entry)
-        rejects. Same trap as projects/_form.html.erb. %>
-    <%= form_with model: @new_entry, scope: :build_log_entry,
-                  url: project_build_log_entries_path(@project), class: "log-form" do |f| %>
-      <%= f.rich_text_area :body, placeholder: "What did you do?", attachments: "false" %>
-      <%= f.submit "Add entry", class: "btn small" %>
-    <% end %>
-  </details>
 
   <%# QUIET AT ZERO (stage 4, S4-1): a build log with nothing in it is the composer alone. The
       sentence it replaces said only what the empty panel already showed, above an Add entry

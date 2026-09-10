@@ -87,17 +87,17 @@ class AccentSpendTest < ApplicationSystemTestCase
       # (slice 1, "Add supplier / Add location") AND THE AUDIT'S ANSWER WAS "already right".
       # Recording an answer of "no change" as a pinned expectation is the cheap half: without it
       # the next reader has to re-derive that these were looked at.
-      "/settings/suppliers" => [ "Add supplier" ],
-      "/settings/locations" => [ "Add location" ],
-      "/settings/shelves" => [ "Add shelf" ]
+      "/inventory/suppliers" => [ "Add supplier" ],
+      "/inventory/locations" => [ "Add location" ],
+      "/models/shelves" => [ "Add shelf" ]
     }
     paths = {
       "/" => root_path, "/files" => files_path, "/models" => models_path,
       "/projects" => projects_path, "/inventory" => inventory_items_path,
       "/projects/desk-lamp" => project_path(@project), "/settings" => settings_path,
       "/tools" => tools_path, "/search" => search_path,
-      "/settings/suppliers" => suppliers_path, "/settings/locations" => locations_path,
-      "/settings/shelves" => shelves_path
+      "/inventory/suppliers" => suppliers_path, "/inventory/locations" => locations_path,
+      "/models/shelves" => shelves_path
     }
 
     actual = paths.transform_values do |path|

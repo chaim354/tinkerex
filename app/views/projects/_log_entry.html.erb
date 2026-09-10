@@ -1,9 +1,30 @@
 <li class="log-entry">
   <time class="entry-time muted"><%= entry.logged_at.strftime("%Y-%m-%d %H:%M") %></time>
   <div class="entry-main">
+    <%# THREE CONTROLS PER ENTRY BECAME ONE MENU (UI-cohesion slice 5). Each entry carried a red
+        Delete up here and an "Add existing photo" link plus an upload button below — three action
+        treatments per row, and on a project with six entries EIGHTEEN controls in one panel. The
+        build log is a place to READ what you did; the things you do to an entry are occasional.
+        `details.menu` is the pattern the Files page already uses for exactly this problem, and it
+        is on the addon class contract, so it is the component rather than a fourth treatment.
+        Discoverability is the trade and it is the one the Files page already made. %>
     <div class="entry-head">
-      <%= button_to "Delete", build_log_entry_path(entry), method: :delete, class: "linkbtn danger small entry-delete",
-                    form: { data: { turbo_confirm: "Delete this entry?" } } %>
+      <details class="menu" data-controller="menu">
+        <summary class="btn icon small" aria-label="Entry actions" title="Entry actions">⋯</summary>
+        <div class="menu-list">
+          <%= link_to "Add existing photo", new_project_attachment_path(@project, entry_id: entry.id),
+                      class: "menu-item" %>
+          <%# The uploader keeps its own markup: it is a label wrapping a hidden file input, so it
+              cannot become a `.menu-item` anchor without losing the input it exists to carry. %>
+          <div class="menu-item menu-item--host">
+            <%= render "upload_control", upload_url: build_log_entry_uploads_path(entry),
+                       attach_url: entry_photos_path(entry), redirect_url: project_path(@project) %>
+          </div>
+          <%= button_to "Delete entry", build_log_entry_path(entry), method: :delete,
+                        class: "menu-item danger",
+                        form: { data: { turbo_confirm: "Delete this entry?" } } %>
+        </div>
+      </details>
     </div>
     <%# A div, not a p: Action Text emits block-level markup and a <p> cannot legally contain it. %>
     <div class="entry-body"><%= entry.body %></div>
@@ -21,10 +42,5 @@
       </div>
     <% end %>
 
-    <div class="photo-attach">
-      <%= link_to "Add existing photo", new_project_attachment_path(@project, entry_id: entry.id), class: "linkbtn muted" %>
-      <%= render "upload_control", upload_url: build_log_entry_uploads_path(entry),
-                 attach_url: entry_photos_path(entry), redirect_url: project_path(@project) %>
-    </div>
   </div>
 </li>

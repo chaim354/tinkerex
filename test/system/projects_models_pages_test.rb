@@ -51,7 +51,11 @@ class ProjectsModelsPagesTest < ApplicationSystemTestCase
     assert_selector ".build-log-panel details.composer[open] lexxy-editor", visible: true
     find(".build-log-panel lexxy-editor [contenteditable='true']").click
     find(".build-log-panel lexxy-editor [contenteditable='true']").send_keys("Shade printed in PETG.")
-    click_on "Add entry"
+    # "Save entry" — AND THIS LINE IS THE EVIDENCE FOR THE RENAME. It read `click_on "Add entry"`
+    # until 2026-09-10, at which point BOTH the disclosure that opens the composer and the submit
+    # that saves it carried that label, 150px apart in one panel (§1A.8). Capybara resolved the
+    # ambiguity silently; a maker reading the panel could not.
+    click_on "Save entry"
     assert_selector ".log-timeline .log-entry .entry-body", text: "Shade printed in PETG."
     assert_no_console_errors
   end

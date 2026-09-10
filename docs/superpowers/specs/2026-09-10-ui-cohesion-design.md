@@ -2,7 +2,7 @@
 
 Date: 2026-09-10. Branches: `claude/ux-ui-cohesion-4oaw9c` (audit + slice 0),
 `claude/ui-ux-audit-plan-38ea13` (slice 1). Status: audit and first-run walkthrough complete;
-**slices 0–4 LANDED** (2026-09-10); slice 5 proposed and blocked on §4.
+**slices 0–5 LANDED** (2026-09-10). The sweep is complete; §4 was answered (c) — move them.
 
 The design system landed on 2026-09-07 (`95ae66b`, spec `2026-09-03-web-shell-and-design-system-design.md`)
 and **356 commits across 49 merged PRs have landed on top of it since** — stages 2, 3 and 4 (home,
@@ -19,7 +19,8 @@ vocabulary is rendered three ways, and the empty state has three implementations
 
 ## 0. Handoff — start here
 
-**Slices 0–4 have landed (§5). Slice 5 is unstarted and this document is its brief.**
+**All six slices have landed (§5).** What is left is named in slice 4's record (the type-scale
+collapse) and in §1A.5/1A.6 (what a folder panel is for, answered 2026-09-10: curated panels win).
 Read §2 for the findings, §5 for the slices, and this section for what earlier sessions learned the
 hard way about verifying work in this repo.
 
@@ -738,7 +739,43 @@ reports `["Zebra jig", "Anvil stand"]`.
 **Touches** four index views, `pages/home.css`, `pages/files.css`, `components.css`,
 `application.css`, `search/index.html.erb`.
 
-### Slice 5 — The project page, and the IA answer
+### Slice 5 — The project page, and the IA answer — **LANDED 2026-09-10**
+
+**The IA answer was (c): move them.** `/models/shelves`, `/inventory/suppliers`,
+`/inventory/locations`, with 301s from the old `/settings/*` paths. `ShellHelper::SECTIONS` is
+**unchanged** — the map was never the thing that was wrong, the URLs were, and now they agree.
+
+**Route ORDER is load-bearing and the suite found it.** A static segment under a resourceful path is
+shadowed by the parent's `:id` route, so `/models/shelves` matched `models#show id=shelves` — a 404
+on a page that exists, with nothing about the route file looking wrong. The three declarations sit
+above their parents, and `moved_reference_pages_test.rb` pins both the shadowing and the redirects,
+neither of which fails loudly.
+
+**One panel-head shape.** Tasks and Build log carried a bare `<h2>` with no `.panel-head` at all, so
+the component's alignment and gap applied to half the page; Build log additionally put its one
+action on the line *below* the title. Guarded on the **relationship** (is the title inside a head?)
+rather than a count — a template grep passes on a panel that renders none, which is what two did.
+
+**Eighteen controls became three menus.** Each log entry carried a red Delete, an "Add existing
+photo" link and an accent upload button — three treatments per row. They are one `⋯` menu now
+(`details.menu`, the component the Files page already uses for this and on the addon contract).
+
+**Empty task GROUPS are suppressed, which the panel-level rule did not cover.** It hid the groups
+only when every status was empty; a project with two todos still rendered `DOING (0)` and `DONE (0)`.
+
+**§1A.8's "Add entry labels two different controls":** the submit is `Save entry`. A system test was
+literally resolving `click_on "Add entry"` against both — the ambiguity, in the suite, silently.
+
+**A reasoning error the screenshots caught.** Moving the composer into the head, the first version
+wrapped it in `.panel-actions` with a comment claiming `.panel-head` would wrap it to a full row
+when open. It does not — `.panel-actions` is a flex item that shrinks, and the editor rendered about
+**70px wide**. It is a direct child of `.panel-head` now with a `flex-basis: 100%` open state, and
+the comment records the wrong prediction rather than the corrected conclusion alone.
+
+**Verification.** Bare `bin/ci`, seven gates, 4261 / 4261 / 4261.
+
+#### Original plan
+
 
 - One panel-header shape: title, optional muted meta, actions right. Applied to all four panels.
 - Build-log entries collapse to one row plus a `⋯` menu holding Delete / Add existing photo /

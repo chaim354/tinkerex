@@ -329,6 +329,28 @@ Rails.application.routes.draw do
   # --- Maker: Models (3D-print model library; server-rendered web UI, session auth) ---
   # A curated view over library files at Models/<slug>/. `create` is the JSON import endpoint the
   # importer Stimulus controller calls; there is no plain-HTML create (import IS the new flow).
+  # THESE THREE ARE DECLARED BEFORE THEIR PARENT `resources`, AND THE ORDER IS LOAD-BEARING.
+  # `/models/shelves` and `/inventory/suppliers` are static segments under a resourceful path, so a
+  # parent declared first matches them as `models#show id=shelves` and `inventory_items#show
+  # id=suppliers` — a 404 on a page that exists, which is exactly how the suite reported it when
+  # they were moved here on 2026-09-10 and left below.
+  # WHICH FOLDERS ARE SHELVES, UNDER /models BECAUSE THAT IS WHAT IT SERVES (moved 2026-09-10).
+  # It was `settings/shelves`, and the URL and the navigation disagreed: ShellHelper::SECTIONS lit
+  # MODELS for it, so a maker clicking Settings landed on a page where Settings went dark. Two ways
+  # to end that and this is the one that makes them agree rather than picking a side —
+  # `/models/shelves` lights Models and reads like Models.
+  #
+  # THE OLD PATH REDIRECTS AND MUST KEEP DOING SO. It is eight months of a maker's bookmarks and
+  # anything the settings hub linked; a 404 is the cost of a tidy-up nobody asked for.
+  resources :shelves, only: %i[index create destroy], path: "models/shelves"
+  get "settings/shelves", to: redirect("/models/shelves")
+  # UNDER /inventory FOR THE REASON SHELVES IS UNDER /models (2026-09-10): SECTIONS lit Inventory
+  # while the URL said settings. The redirect keeps the old path alive.
+  resources :suppliers, only: %i[index create destroy], path: "inventory/suppliers"
+  get "settings/suppliers", to: redirect("/inventory/suppliers")
+  resources :locations, only: %i[index create destroy], path: "inventory/locations"
+  get "settings/locations", to: redirect("/inventory/locations")
+
   resources :models do
     # NOT shallow: a shallow member route here would collapse to DELETE /attachments/:id and
     # collide with the pre-existing shallow `resources :attachments` under :projects (first
@@ -340,10 +362,7 @@ Rails.application.routes.draw do
     resources :print_runs, only: %i[create destroy], module: :models, shallow: true
   end
 
-  # The model catalog's one setting: which folders are shelves. Path-scoped under /settings so the
-  # URL reads like what it is; the controller is top-level because there is no other settings page
-  # to namespace it with yet.
-  resources :shelves, only: %i[index create destroy], path: "settings/shelves"
+
 
   # --- Inventory (stage 2, S2-3): the web half of the maker inventory the v1 API already serves.
   # `path: "inventory"` keeps the URL singular while the helpers stay inventory_item(s)_path; the
@@ -352,14 +371,14 @@ Rails.application.routes.draw do
   resources :inventory_items, path: "inventory" do
     post :adjust, on: :member
   end
-  resources :suppliers, only: %i[index create destroy], path: "settings/suppliers"
+
 
   # --- Tags and search (stage 2, S2-5). One results page for everything, driven from the top bar;
   # a page per tag. A tag name is whatever Maker::Tag normalized (stripped, downcased) and may hold
   # a dot, so the segment constraint is "anything but a slash". ---
   get "search", to: "search#index", as: :search
   get "tags/:name", to: "tags#show", as: :tag, constraints: { name: %r{[^/]+} }
-  resources :locations, only: %i[index create destroy], path: "settings/locations"
+
 
   # --- The settings hub (stage 2, S2-6): one door onto the reference pages above, the account page
   # and the theme. `resource` (singular) so the URL is /settings with no id; the controller name is
