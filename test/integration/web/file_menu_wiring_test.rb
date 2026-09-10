@@ -88,6 +88,11 @@ module Web
     test "a folder row carries a menu holding a delete url and nothing else" do
       @user.nodes.create!(node_id: "dir-cad", name: "cad", kind: "dir")
 
+      # SKIPPED WHERE THE BACKEND CANNOT CASCADE A DIRECTORY DELETE, because there the menu is
+      # deliberately absent — see "a folder is offered Delete only where the backend can cascade
+      # one" below, which is the test that pins THAT arm. This one is about the menu's SHAPE.
+      skip "this backend refuses a directory delete" unless FileLayer.current.capabilities.dir_deletable?
+
       { "list" => "a.dir", "grid" => ".grid-folder" }.each do |view, selector|
         get files_path(view:)
         folder = css_select(selector).first
@@ -111,13 +116,17 @@ module Web
     test "a folder is offered a menu but never a download" do
       @user.nodes.create!(node_id: "dir-cad", name: "cad", kind: "dir")
 
+      # THE DOWNLOAD HALF HOLDS EVERYWHERE — a directory has no bytes on any backend. Only the
+      # MENU count varies, so only it consults the capability.
+      menus = FileLayer.current.capabilities.dir_deletable? ? 1 : 0
+
       get files_path(view: "list")
       assert_select "a.dir[data-download-url]", count: 0
-      assert_select "a.dir[data-action]", count: 1
+      assert_select "a.dir[data-action]", count: menus
 
       get files_path(view: "grid")
       assert_select ".grid-folder[data-download-url]", count: 0
-      assert_select ".grid-folder[data-action]", count: 1
+      assert_select ".grid-folder[data-action]", count: menus
     end
 
     # The menu is gated on `data-note-url` (`if (!noteUrl) return`), so a cell with a download url
@@ -129,6 +138,31 @@ module Web
       assert_operator cells.size, :>=, 2
       assert cells.all? { |el| el["data-note-url"].present? },
              "a cell with a download url but no note url renders no menu, so the entry is unreachable"
+    end
+
+    # THE FOLDER MENU IS OFFERED ONLY WHERE THE DELETE BEHIND IT WORKS.
+    #
+    # BOTH ARMS, KEYED ON THE CAPABILITY — not one arm plus an assumption. On share and s3 a
+    # directory delete answers 302 with `"<uuid>" is a dir: share-mode delete is files only …`
+    # (driven, not reasoned), so an item there would be the "looks available, is inert" defect this
+    # slice removed from the chooser's Back control. chunk_remote cascades and gets it today.
+    #
+    # This test runs on all three legs and takes a different arm on each, which is what makes it a
+    # real guard rather than a restatement of whichever backend is ambient.
+    test "a folder is offered Delete only where the backend can cascade one" do
+      @user.nodes.create!(node_id: "dir-gate", name: "gate", kind: "dir")
+      get files_path(view: "list")
+      assert_response :success
+      rows = css_select("a.dir[data-action*='filemenu#open']")
+
+      if FileLayer.current.capabilities.dir_deletable?
+        refute_empty rows, "this backend cascades a directory delete but offers no folder menu"
+        assert rows.first["data-delete-url"].present?
+      else
+        assert_empty rows,
+                     "a folder menu is offered on a backend whose delete refuses directories — " \
+                     "clicking it flashes an internal message with a raw node id"
+      end
     end
   end
 end

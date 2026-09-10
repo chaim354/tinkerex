@@ -110,6 +110,17 @@ nothing to right-click. A folder's menu holds Delete alone: it has no note popov
 download, and no addon origin. That makes the helper's "not co-extensive" comment more true rather
 than less — a folder gets the menu and no thumb cell.
 
+**AND IT IS GATED ON `dir_deletable?` UNTIL PART D LANDS (added 2026-09-10 during implementation).**
+This spec originally shipped the folder menu in slice 1 and the working delete in slices 3–4, on the
+reasoning that the menu and the port are different concerns. They are — but a Delete that cannot
+delete is the same defect part A removes from the Back control, and driving it settled the question:
+a folder DELETE on share answers 302 with the flash `"<uuid>" is a dir: share-mode delete is files
+only — deleting a directory would strand its children's nodes …`. An internal sentence with a raw
+node id, in front of a maker. `folder_menu_data` therefore returns `{}` unless the backend can
+cascade, which is the one question `dir_deletable` exists to answer — so **chunk_remote, the primary
+deployment, gets folder delete in slice 1** and the other two get it with part D, at which point the
+capability and this branch are removed together.
+
 **Guard.** Request-level for the payload (`delete_url` present on a file row and on a folder row);
 system-level for the menu actually deleting, since the JS-built form is the half no request test can
 see. **Mutation:** drop `delete_url` from the helper and confirm both reddens.
