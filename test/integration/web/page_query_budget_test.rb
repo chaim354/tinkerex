@@ -431,6 +431,43 @@ module Web
       assert_equal pub_small, pub_large, "the visitor's page grew with blocks (#{pub_small} → #{pub_large})"
     end
 
+    # TABS ARE A SHAPE, NOT DATA (2026-09-09; spec §6), AND THIS IS WHAT SAYS SO. Both pages render
+    # from `layout.groups`, which yields each key exactly once whichever group it lands in — so a
+    # page cut into six tabs must cost what the same panels cost in one grid. What would break it:
+    # a per-pane read (asking the layout, the listing or the blocks again inside each pane), or a
+    # pane that re-renders a panel it already captured. Every panel is in the order either way —
+    # `layout_for` is total — so the two sizes render the SAME panels, and only the separators differ.
+    test "tabs do not grow the project page or the visitor's page" do
+      @user.update!(handle: "tabbudget")
+      project = @user.maker_projects.create!(name: "Tabbed", visibility: "public")
+      project_folder_rows!(@user, project)
+      public_path = public_project_path("tabbudget", project.slug)
+      sign_out = -> { delete destroy_user_session_path }
+      sign_in = -> { post user_session_path, params: { user: { email: @user.email, password: PASSWORD } } }
+
+      measure = lambda do |n|
+        keys = (1..n).map { |i| Maker::ProjectKind.tab_key(format("%012x", i)) }
+        order = [ "attachments", "photos" ] +
+                keys.flat_map.with_index { |k, i| [ k, Maker::Project::PANELS[2 + i] ].compact } + %w[publish]
+        project.update!(panels: { "order" => order.uniq, "titles" => keys.to_h { |k| [ k, "T#{k.last(2)}" ] } })
+
+        sign_out.call
+        get public_path
+        assert_response :success, "the visitor's page must render before it can be budgeted"
+        pub = count_queries { get public_path }
+        sign_in.call
+        get project_path(project)
+        assert_response :success, "the project page must render before it can be budgeted"
+        [ pub, count_queries { get project_path(project) } ]
+      end
+
+      pub_small, page_small = measure.call(1)
+      pub_large, page_large = measure.call(6)
+
+      assert_equal page_small, page_large, "projects#show grew with tabs (#{page_small} → #{page_large})"
+      assert_equal pub_small, pub_large, "the visitor's page grew with tabs (#{pub_small} → #{pub_large})"
+    end
+
     # STAGE 3, S3-4: THE SAME PROJECT, READ BY A STRANGER. Not a duplicate of the budget above: the
     # public page is a DIFFERENT reader over the same rows (Maker::PublicProject, not
     # ProjectsController#show's ivars), and the two share no eager load — every panel it renders is

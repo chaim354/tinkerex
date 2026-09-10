@@ -174,7 +174,8 @@
        data-layout-editor-parse-url-value="<%= parse_project_layout_path(@project) %>"
        data-layout-editor-panel-url-value="<%= layout_panel_project_path(@project) %>"
        data-layout-editor-preview-url-value="<%= preview_project_layout_path(@project) %>"
-       data-layout-editor-block-cap-value="<%= Maker::ProjectBlock::CAP %>">
+       data-layout-editor-block-cap-value="<%= Maker::ProjectBlock::CAP %>"
+       data-layout-editor-tab-cap-value="<%= Maker::ProjectKind::TAB_CAP %>">
     <%= render "projects/layout_bar" %>
     <%= render "projects/page_intro" %>
     <div class="project-panels layout-editing" data-controller="masonry" data-layout-editor-target="grid">
@@ -186,9 +187,9 @@
     <%= render "projects/block_templates" %>
   </div>
 <% else %>
-  <div class="project-panels" data-controller="masonry">
-    <% @panel_layout.visible.each do |key| %>
-      <%= render "projects/panel_slot", key:, extra: panel_locals.fetch(key, {}) %>
-    <% end %>
-  </div>
+  <%# THE GROUPED SHAPE (2026-09-09, tabs; spec §6): projects/_panel_groups renders today's one grid
+      when the layout has no tab, and the top group, the bar, the panes and Publish when it has. %>
+  <%= render layout: "projects/panel_groups", locals: { groups: @panel_layout.groups, tail: nil } do |key| %>
+    <%= render "projects/panel_slot", key: key, extra: panel_locals.fetch(key, {}) %>
+  <% end %>
 <% end %>

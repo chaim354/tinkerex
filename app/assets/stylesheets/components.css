@@ -160,6 +160,39 @@
   .layout-note--ok { color: var(--ok); }
   @media (max-width: 899px) { .layout-editor--drawer { grid-template-columns: 1fr; } .layout-drawer { position: static; } }
 
+  /* --- Tabs (2026-09-09; spec 2026-09-09-tabs-design §6). The separator slot in edit mode, and the
+     bar + panes on the read pages. Components, not page rules, because the visitor's page renders
+     the same bar and panes from projects/_panel_groups — the identical argument the content-block
+     rules below carry.
+
+     `.tab-heading` SHOWS ONLY WITHOUT JAVASCRIPT: tabs_controller adds `tabs-ready` on connect, and
+     that class is what hides the headings, so a page whose script never ran reads as headed
+     sections with nothing concealed (decision 8). Hiding the heading in the base rule and revealing
+     it some other way would invert that: the no-JavaScript page would lose its own structure.
+
+     THE BAR SCROLLS SIDEWAYS RATHER THAN WRAPPING, on every width (decision 7): one row of tabs is
+     one mechanism and one set of deep links, and a wrapped bar changes height as tabs are renamed. */
+  .panel-slot--tab { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 8px 12px;
+                     border: 1px solid var(--accent); border-radius: var(--radius-panel); background: var(--accent-soft); }
+  .panel-slot--tab .tab-slot-label { font-weight: 600; }
+  .panel-slot--tab .tab-name { width: min(240px, 60vw); }
+  .panel-slot--tab .tab-slot-count { flex: 1 1 auto; font-size: 12px; }
+  .tabs { display: grid; gap: 16px; margin: 16px 0; }
+  .tab-bar { display: flex; gap: 4px; overflow-x: auto; white-space: nowrap; border-bottom: 1px solid var(--line-strong); scrollbar-width: thin; }
+  .tab-link { padding: 8px 14px; border: 1px solid transparent; border-bottom: none;
+              border-radius: var(--radius-panel) var(--radius-panel) 0 0; color: var(--fg-muted); text-decoration: none; }
+  .tab-link:hover { color: var(--fg); text-decoration: none; }
+  .tab-link.is-active, .tab-link[aria-selected="true"] { color: var(--fg); border-color: var(--line-strong); margin-bottom: -1px; background: var(--surface); }
+  .tab-pane { display: grid; gap: 12px; }
+  /* AN AUTHOR `display` BEATS THE USER AGENT'S `[hidden] { display: none }`, so the rule above would
+     otherwise leave every pane on screen while tabs_controller dutifully set `hidden` on all but
+     one — the tabs feature silently absent, with the DOM saying it was working. Measured here: all
+     three panes visible with `tabs-ready` on the element. Any component given a `display` must
+     restate this if anything ever hides it with the attribute. */
+  .tab-pane[hidden] { display: none; }
+  .tab-heading { margin: 0; }
+  .tabs.tabs-ready .tab-heading { display: none; }
+
   /* --- Content blocks (2026-09-09, spec 2026-09-09-content-blocks §2, §3): the three kinds as both
      pages draw them, the editors edit mode puts in their place, and the page-intro card above the
      grid. Components, not page rules, because the visitor's page renders the same block markup from

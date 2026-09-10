@@ -231,7 +231,10 @@ module Maker
     def panel_layout(folders: [], blocks: []) =
       Maker::ProjectKind.layout_for(kind:, overrides: self[:panels], folders:, blocks:)
 
-    def visible_panels(folders: [], blocks: []) = panel_layout(folders:, blocks:).visible
+    # THE PANELS A CALLER MAY RENDER BY KEY, so a tab separator is filtered out (2026-09-09, tabs):
+    # the two pages read Layout#groups instead, and every other caller of this method looks a panel
+    # up by name. `grep -rn "visible_panels(" app/ lib/` before changing this.
+    def visible_panels(folders: [], blocks: []) = panel_layout(folders:, blocks:).visible.reject { |k| k.start_with?(Maker::ProjectKind::TAB_PREFIX) }
 
     def archive!
       update!(status: "archived", archived_at: Time.current)

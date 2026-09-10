@@ -55,7 +55,7 @@ module Projects
       held = held_by_browser(result.draft, posted)
       begin
         @project.transaction do
-          keys = write_blocks(doc.blocks_from(held))
+          keys = write_blocks(doc.blocks_from(held)).merge(mint_tab_keys(held))
           attrs = { panels: doc.column(held).transform_values { |value| rekey(value, keys) } }
           if (page = doc.page_from(held))
             attrs[:description] = page["description"]
@@ -119,9 +119,20 @@ module Projects
       keys
     end
 
-    # A `new-` KEY IN THE COLUMN BECOMES THE ROW'S OWN. Arrays are `order` and `hidden`, hashes are
-    # `widths` (blocks carry one) and the three sparse text maps (they never do — a block's title is
-    # its own content, Maker::LayoutDocument#column says so).
+    # A NEW TAB HAS NO ROW TO MINT A KEY FOR, so the door mints it here (2026-09-09, tabs; spec §5):
+    # `tab:new-N` becomes `tab:<12 hex>` in `order` and `titles` through the same rekey a block's
+    # placeholder goes through. Nothing else to write — the key's presence in the order is the tab.
+    def mint_tab_keys(draft)
+      draft["panels"].filter_map do |e|
+        [ e["key"], Maker::ProjectKind.tab_key(Maker::ProjectKind.new_tab_key) ] if e["kind"] == "tab" && e["key"].to_s.match?(Maker::ProjectKind::NEW_TAB_KEY)
+      end.to_h
+    end
+
+    # A `new-` KEY IN THE COLUMN BECOMES THE ROW'S OWN — or, for a tab, the key this door just
+    # minted. Arrays are `order` and `hidden`, hashes are `widths` (blocks carry one, a tab never
+    # does) and the three sparse text maps — of which `titles` DOES carry a `new-` key now: a tab's
+    # NAME is a title, so a rekey that skipped the hashes would strand a new tab's name under a key
+    # nothing else names (Maker::LayoutDocument#column says which map holds what).
     def rekey(value, keys)
       case value
       when Array then value.map { |k| keys.fetch(k, k) }

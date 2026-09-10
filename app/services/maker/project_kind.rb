@@ -212,8 +212,28 @@ module Maker
     BLOCK_PREFIX = "block:".freeze
     BLOCK_DEFAULT_WIDTHS = { "text" => "full", "link" => "half", "image" => "full" }.freeze
 
+    # `tab:<key>` — a SEPARATOR in the flat order (2026-09-09, tabs; spec §3 and decision 2). Twelve
+    # hex characters minted on Save, like a block's, but there is NO ROW: the key's presence in the
+    # stored order IS the tab, and its name is the `titles` entry under it. A tab has no width, no
+    # view, no intro and cannot be hidden — hide its panels, and a tab with nothing to show is not
+    # rendered. TAB_KEY is what #tab_keys_in reads off a stored order; a browser placeholder
+    # (`tab:new-1`) or a truncated key is never vocabulary.
+    TAB_PREFIX = "tab:".freeze
+    TAB_KEY = /\Atab:[0-9a-f]{12}\z/
+    TAB_CAP = 8
+    TAB_NAME_MAX = 30
+    TAB_FALLBACK_NAME = "Tab".freeze
+    NEW_TAB_KEY = /\Atab:new-\d+\z/
+
+    # What the pages render from (spec §3): the keys before the first tab, then one Tab per
+    # separator with the keys up to the next one. `publish` is in neither — it is pinned below the
+    # tabs (decision 3) and the pages render it themselves.
+    Tab = Data.define(:key, :name, :slug, :keys)
+    Groups = Data.define(:top, :tabs)
+
     # One project page's panel list. `order` is a permutation of the vocabulary (Maker::Project::
-    # PANELS plus the current folder keys plus the project's block keys); `hidden` is a subset of it
+    # PANELS plus the current folder keys plus the project's block keys) plus the TAB KEYS THE
+    # STORED ORDER CARRIES; `hidden` is a subset of it
     # with ALWAYS removed; `views`
     # holds only vocabulary keys with values in Maker::Project::VIEWS; `widths` only vocabulary keys
     # with values in WIDTHS; `titles` and `intros` only vocabulary keys with non-empty one-line text
@@ -221,6 +241,12 @@ module Maker
     # folders that are working trees, which is all #view_for needs to pick a default;
     # `block_kinds` maps each block key to its kind, which is all #width_for and the editor's strip
     # need (2026-09-09, content blocks). `visible` is what the loop renders.
+    #
+    # A TAB KEY IS IN `order` AND IN `titles` AND IN NO OTHER MAP (2026-09-09, tabs; spec §3):
+    # `hidden`, `views`, `widths` and `intros` are filtered to the vocabulary WITHOUT the tab keys,
+    # so a stray entry under one in a hand-written column is dropped rather than honoured — a
+    # hidden or half-width tab is not a page anything could render. `titles` holds a tab's NAME,
+    # which is what #tab_name_for reads.
     Layout = Data.define(:order, :hidden, :views, :widths, :titles, :intros, :repo_ids, :block_kinds) do
       def visible = order - hidden
       # `to_s` like `folder?` and `view_for` below, so a Symbol asks the same question a String does.
@@ -231,6 +257,30 @@ module Maker
       def block?(key) = key.to_s.start_with?(BLOCK_PREFIX)
       # The kind of a block key, nil for anything else — what `width_for` and the strip ask.
       def block_kind(key) = block_kinds[key.to_s]
+
+      def tab?(key) = key.to_s.start_with?(TAB_PREFIX)
+      def tabs = order.select { |k| tab?(k) }
+      # TOTAL: a tab key with no title (a column written by hand) reads as "Tab", never as nil in a
+      # heading — the writers (Maker::LayoutDocument) never store a blank one.
+      def tab_name_for(key) = titles[key.to_s] || TAB_FALLBACK_NAME
+
+      # THE ONE GROUPING READER for the maker's page and the visitor's (spec §3, §6). `keys` is
+      # `visible` for a page and `order` for every group hidden panels included; whichever it is,
+      # `publish` is dropped here because the pages pin it below the tabs, and hidden TAB keys do
+      # not exist (layout_for drops them from `hidden`). Slugs come from the names; see .tab_slugs.
+      def groups(keys = visible)
+        top, found = [], []
+        keys.each do |k|
+          next if k == "publish"
+          if tab?(k) then found << [ k, [] ]
+          elsif found.empty? then top << k
+          else found.last.last << k
+          end
+        end
+        names = found.map { |k, _| tab_name_for(k) }
+        slugs = ProjectKind.tab_slugs(found.map(&:first), names)
+        Groups.new(top:, tabs: found.each_with_index.map { |(k, ks), i| Tab.new(key: k, name: names[i], slug: slugs[i], keys: ks) })
+      end
 
       # The maker's choice, else the default for what this panel IS. The `folder?` guard is not
       # decoration: without it a fixed key is asked whether `repo_ids` holds the string
@@ -264,6 +314,26 @@ module Maker
     # states above, for the second prefix.
     def self.block_key(key) = "#{BLOCK_PREFIX}#{key}"
 
+    def self.tab_key(key) = "#{TAB_PREFIX}#{key}"
+    def self.new_tab_key = SecureRandom.hex(6)
+
+    # THE TAB KEYS A STORED ORDER CARRIES, in order, deduplicated, and CAPPED HERE so the read is
+    # total: a ninth tab key is not vocabulary, so `known` drops it and its panels join the group
+    # before it (spec §3). A browser's `tab:new-N` placeholder never matches TAB_KEY.
+    def self.tab_keys_in(list) = Array(list).map(&:to_s).select { |k| k.match?(TAB_KEY) }.uniq.first(TAB_CAP)
+
+    # A TAB'S PLACE IN A URL: `#tab-<slug>`, the parameterized name (spec §3). A name that
+    # parameterizes to nothing, or two names that collide ("Build!" and "build?"), fall back to the
+    # key — EVERY colliding tab, not the second one alone, because "which one keeps the pretty slug"
+    # is an order-dependent answer that a rename elsewhere on the page would flip.
+    def self.tab_slugs(keys, names)
+      base = names.map { |n| n.to_s.parameterize }
+      keys.each_with_index.map do |key, i|
+        s = base[i]
+        s.empty? || base.count(s) > 1 ? key.to_s.delete_prefix(TAB_PREFIX) : s
+      end
+    end
+
     # The view a panel opens in when the maker has not chosen one — today's page, written down: a
     # working tree opens in the Finder browser (2026-09-07), everything else in tiles, the Files
     # panel included. `_key` is taken and ignored so a later per-key default (a Photos panel that
@@ -292,6 +362,9 @@ module Maker
 
     def self.default_width(key, block_kind: nil)
       k = key.to_s
+      # A TAB HAS NO WIDTH AT ALL, and nil is the honest answer rather than "full": the separator is
+      # not a grid cell, so a caller that renders `panel--#{width_for(key)}` must not get a class.
+      return nil if k.start_with?(TAB_PREFIX)
       return BLOCK_DEFAULT_WIDTHS.fetch(block_kind.to_s, "full") if k.start_with?(BLOCK_PREFIX)
 
       k.start_with?(FOLDER_PREFIX) || FULL_BY_DEFAULT.include?(k) ? "full" : "half"
@@ -319,21 +392,27 @@ module Maker
       repo_ids = Array(folders).filter_map { |id, repo| id.to_s if repo }
       block_keys = Array(blocks).map { |k, _kind| block_key(k) }
       block_kinds = Array(blocks).to_h { |k, kind| [ block_key(k), kind.to_s ] }
-      vocabulary = Maker::Project::PANELS + folder_keys + block_keys
+      # A TAB IS VOCABULARY BECAUSE THE ORDER SAYS SO (2026-09-09, tabs; spec §3): there is no row to
+      # consult, the key's presence is the tab. `panel_vocabulary` is what the four maps that do not
+      # apply to a tab may name — a stray `hidden` on a tab key in a hand-written column is dropped
+      # here rather than honoured, since a hidden tab has no meaning the pages could render.
+      tab_keys = tab_keys_in(over["order"])
+      vocabulary = Maker::Project::PANELS + folder_keys + block_keys + tab_keys
+      panel_vocabulary = vocabulary - tab_keys
 
       order = stored_order(known(over["order"], vocabulary), folder_keys) + preset_order(preset, folder_keys)
       # A BLOCK THE STORED ORDER DOES NOT NAME LANDS FIRST (content blocks, spec §4): it is what
       # "Add block" did a moment ago, and first is where the editor puts a new one.
       order = (block_keys - order) + order
-      hidden = (over.key?("hidden") ? known(over["hidden"], vocabulary) : preset[:hidden]) - ALWAYS
+      hidden = (over.key?("hidden") ? known(over["hidden"], panel_vocabulary) : preset[:hidden]) - ALWAYS
       # PUBLISH IS ALWAYS LAST (2026-09-09, the page editor; spec decision 11): the head's anchor
       # targets it and the editor pins it, so a stored order from the retired chooser that moved it
       # up is normalised here on the way out — the same place every other stored oddity is.
       ordered = ((order & vocabulary) - %w[publish]) + %w[publish]
-      Layout.new(order: ordered, hidden:, views: stored_views(over["views"], vocabulary),
-                 widths: stored_widths(over["widths"], vocabulary),
+      Layout.new(order: ordered, hidden:, views: stored_views(over["views"], panel_vocabulary),
+                 widths: stored_widths(over["widths"], panel_vocabulary),
                  titles: stored_text(over["titles"], vocabulary, TITLE_MAX),
-                 intros: stored_text(over["intros"], vocabulary, INTRO_MAX),
+                 intros: stored_text(over["intros"], panel_vocabulary, INTRO_MAX),
                  repo_ids:, block_kinds:)
     end
 

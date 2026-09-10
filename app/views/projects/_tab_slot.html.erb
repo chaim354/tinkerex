@@ -1,0 +1,18 @@
+<%#
+  A TAB'S SLOT IN EDIT MODE (2026-09-09, tabs; spec §6). A separator in the flat list: it is a
+  `.panel-slot`, so Sortable drags it by the same handle and the pinned-Publish rule keeps it above
+  Publish; it carries `data-kind="tab"` and `data-name`, which is all of its draft. No strip, no
+  width, no eye, no pencil -- a tab has none of those (decision 5). Delete removes the separator
+  only; its panels join the group above. The count hint is the controller's (countTabs).
+
+  Locals: key, name.
+%>
+<div class="panel-slot panel-slot--tab panel--full" data-layout-editor-target="slot"
+     data-key="<%= key %>" data-kind="tab" data-name="<%= name %>">
+  <span class="panel-strip-handle" title="Drag to move" aria-hidden="true">⋮⋮</span>
+  <span class="tab-slot-label">Tab</span>
+  <input type="text" class="tab-name" maxlength="<%= Maker::ProjectKind::TAB_NAME_MAX %>" value="<%= name %>"
+         placeholder="Name this tab" aria-label="Tab name" data-action="input->layout-editor#tabName">
+  <span class="muted tab-slot-count" data-layout-editor-target="tabCount"></span>
+  <button type="button" class="linkbtn small danger" data-action="layout-editor#deleteTab" aria-label="Delete this tab">Delete</button>
+</div>

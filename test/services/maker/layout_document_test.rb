@@ -160,7 +160,7 @@ module Maker
         # BOTH DISCRIMINATOR MESSAGES NAME ALL THREE SINCE `block:` JOINED THEM (2026-09-09,
         # content blocks): one condition, one answer — a message per pair would be the shape §14a
         # forbids, and "neither `panel` nor `folder`" would send a reader looking for the third.
-        "layout: 1\npanels:\n  - panel: tasks\n    folder: models\n"      => /Entry 1 names more than one of `panel`, `folder` and `block`/,
+        "layout: 1\npanels:\n  - panel: tasks\n    folder: models\n"      => /Entry 1 names more than one of `panel`, `folder`, `block` and `tab`/,
         "layout: 1\npanels:\n  - panel: photos\n    view: list\n"         => /Entry 1: Photos has no view/,
         "layout: 1\npanels:\n  - panel: attachments\n    view: browser\n" => /Entry 1: Files does not offer the browser view/,
         "layout: 1\npanels:\n  - panel: tasks\n    width: wide\n"         => /Entry 1: width must be full or half/,
@@ -168,7 +168,7 @@ module Maker
         "layout: 1\npanels:\n  - panel: tasks\n    intro: #{'x' * 201}\n" => /Entry 1: the intro is over 200 characters/,
         "layout: 1\npanels:\n  - panel: tasks\n    hidden: yes please\n"  => /Entry 1: hidden must be true or false/,
         "layout: 1\npanels:\n  - tasks\n"                                 => /Entry 1 is not a mapping/,
-        "layout: 1\npanels:\n  - width: full\n"                           => /Entry 1 names none of `panel`, `folder` or `block`/,
+        "layout: 1\npanels:\n  - width: full\n"                           => /Entry 1 names none of `panel`, `folder`, `block` or `tab`/,
         "layout: 1\npanels:\n  - panel: tasks\n  - panel: tasks\n"        => /Entry 2 names Tasks a second time/,
         "layout: 2\npanels: []\n"                                         => /newer than this server/,
         "layout: 2.0\npanels: []\n"                                       => /newer than this server/,
@@ -372,7 +372,7 @@ module Maker
         "layout: 1\npanels:\n  - block: image\n    file: photos/nope.jpg\n"                => /Entry 1: no image at “photos\/nope.jpg”/,
         "layout: 1\npanels:\n  - block: text\n    heading: #{'x' * 81}\n"                  => /Entry 1: the heading is over 80 characters/,
         "layout: 1\npanels:\n  - block: text\n    view: list\n"                            => /Entry 1: unknown attribute “view”/,
-        "layout: 1\npanels:\n  - block: text\n    body: x\n    panel: tasks\n"             => /Entry 1 names more than one of `panel`, `folder` and `block`/,
+        "layout: 1\npanels:\n  - block: text\n    body: x\n    panel: tasks\n"             => /Entry 1 names more than one of `panel`, `folder`, `block` and `tab`/,
         "layout: 1\npanels:\n  - block: text\n"                                             => /Entry 1: a text block needs a heading or a body/,
         "layout: 1\npage: nope\npanels: []\n"                                              => /`page` must be a mapping/,
         "layout: 1\npage:\n  look: dark\npanels: []\n"                                     => /Unknown key “look” under `page`/
@@ -503,5 +503,137 @@ module Maker
       refute column["titles"].key?(bkey("bbbbbbbbbbbb"))
       assert_equal({}, column["titles"])
     end
+
+    # --- tabs (2026-09-09; spec §4) --------------------------------------------------------------
+
+    TAB_A = "3f9a1b2c4d5e".freeze
+    TAB_B = "a0c4d8e2f611".freeze
+    def tk(hex) = Maker::ProjectKind.tab_key(hex)
+
+    def tabbed
+      doc({ "order" => [ "attachments", "photos", tk(TAB_A), "build_log", "tasks", tk(TAB_B), key(MODELS), "publish" ],
+            "titles" => { tk(TAB_A) => "Build", tk(TAB_B) => "Downloads" } })
+    end
+
+    test "the draft carries a tab as key, kind and name and nothing else, and the export writes tab and id in place" do
+      d = tabbed.draft
+      # The bare draft, not a Result: #entry reads `result.draft`, and finding the entry here reads
+      # plainer than wrapping the hash in a one-field Struct to reuse that helper.
+      assert_equal({ "key" => tk(TAB_A), "kind" => "tab", "name" => "Build" },
+                   d["panels"].find { |e| e["key"] == tk(TAB_A) })
+
+      text = tabbed.to_yaml(project_name: "Lamp")
+      assert_includes text, "- panel: photos\n  width: full\n- tab: Build\n  id: #{TAB_A}\n- panel: build_log\n"
+      assert_includes text, "- tab: Downloads\n  id: #{TAB_B}\n- folder: models\n"
+      # A TAB ENTRY IS `tab` AND `id` AND NOTHING ELSE, `id:` skipped so the check reaches the line
+      # after it — the plan's `- tab: .*\n  (width|hidden):` could only ever see an attribute
+      # written BEFORE the id, which is not where one would appear.
+      refute_match(/- tab: [^\n]*\n(?:  id: [^\n]*\n)?  (?:width|hidden|view|title|intro):/, text)
+    end
+
+    test "Apply renames by id, matches by name ignoring case, and creates otherwise" do
+      r = tabbed.parse("layout: 1\npanels:\n  - tab: Building\n    id: #{TAB_A}\n  - panel: build_log\n  - tab: DOWNLOADS\n  - tab: Photos\n  - panel: photos\n")
+      assert r.ok?, r.errors.inspect
+      keys = r.draft["panels"].map { |e| e["key"] }
+      assert_equal "Building", entry(r, tk(TAB_A))["name"], "a known id renames"
+      assert_equal "DOWNLOADS", entry(r, tk(TAB_B))["name"], "the same name in another case is the same tab, renamed as written"
+      created = r.draft["panels"].find { |e| e["kind"] == "tab" && e["key"].start_with?("tab:new-") }
+      assert_equal "Photos", created["name"]
+      assert_equal [ tk(TAB_A), "build_log", tk(TAB_B), created["key"], "photos" ], keys.first(5)
+      assert_equal "publish", keys.last
+    end
+
+    test "a tab entry takes tab and id and nothing else, needs a name, and is capped at 30 characters" do
+      r = tabbed.parse("layout: 1\npanels:\n  - tab: Build\n    id: #{TAB_A}\n    hidden: true\n")
+      assert_equal [ "Entry 1: a tab takes only a name (“hidden” is not allowed)." ], r.errors
+
+      r = tabbed.parse("layout: 1\npanels:\n  - tab: '   '\n")
+      assert_equal [ "Entry 1: a tab needs a name." ], r.errors
+
+      r = tabbed.parse("layout: 1\npanels:\n  - tab: #{'x' * 31}\n")
+      assert_equal [ "Entry 1: the tab name is over 30 characters." ], r.errors
+    end
+
+    test "two tabs with one name, or more than eight, are errors on the merged result" do
+      r = tabbed.parse("layout: 1\npanels:\n  - tab: build\n")
+      assert r.ok?, "matching by name is not a duplicate: #{r.errors.inspect}"
+
+      r = tabbed.parse("layout: 1\npanels:\n  - tab: Extra\n  - tab: extra\n")
+      assert_equal [ "Two tabs are named “Extra”; tab names must differ." ], r.errors, "the name as written, not the downcased key"
+
+      seven = (1..7).map { |i| "  - tab: T#{i}\n" }.join
+      r = tabbed.parse("layout: 1\npanels:\n#{seven}")
+      assert_equal [ "This page can hold 8 tabs; this would leave 9." ], r.errors
+    end
+
+    test "from_draft accepts a new-keyed tab, refuses a width or hidden on it, and refuses a tab key the layout does not know" do
+      r = tabbed.from_draft({ "layout" => 1, "panels" => [
+        { "key" => "attachments", "hidden" => false, "width" => "full" },
+        { "key" => "tab:new-1", "kind" => "tab", "name" => "Notes" },
+        { "key" => "tasks", "hidden" => false, "width" => "half" } ] })
+      assert r.ok?, r.errors.inspect
+      assert_equal "Notes", entry(r, "tab:new-1")["name"]
+
+      r = tabbed.from_draft({ "layout" => 1, "panels" => [ { "key" => tk(TAB_A), "kind" => "tab", "name" => "Build", "width" => "half" } ] })
+      assert_equal [ "Entry 1: a tab takes only a name (“width” is not allowed)." ], r.errors
+
+      r = tabbed.from_draft({ "layout" => 1, "panels" => [ { "key" => tk("ffffffffffff"), "kind" => "tab", "name" => "Ghost" } ] })
+      assert_equal [ "Entry 1: unknown tab “tab:ffffffffffff”." ], r.errors
+    end
+
+    test "the column puts a tab in order and titles and nowhere else, and an unmentioned tab keeps its place" do
+      r = tabbed.parse("layout: 1\npanels:\n  - panel: tasks\n")
+      col = tabbed.column(r.draft)
+      # NARROWED FROM THE PLAN, which spelled the whole order out as eight keys: this layout also
+      # carries the firmware folder and every other fixed panel, so the true claim is that the one
+      # listed entry leads and everything else — the separators included — keeps its place.
+      assert_equal "tasks", col["order"].first
+      assert_equal "publish", col["order"].last
+      assert_equal [ "photos", tk(TAB_A), "build_log", tk(TAB_B), key(MODELS) ],
+                   col["order"][col["order"].index("photos"), 5],
+                   "only Tasks moved; it left from between build_log and the second tab"
+      assert_equal [ "tasks", *(tabbed.draft["panels"].map { |e| e["key"] } - %w[tasks]) ], col["order"]
+
+      assert_equal({ tk(TAB_A) => "Build", tk(TAB_B) => "Downloads" }, col["titles"].slice(tk(TAB_A), tk(TAB_B)))
+      refute col["widths"].key?(tk(TAB_A)), "a tab has no width; `widths` must be built from the entries that do"
+      refute_includes col["hidden"], tk(TAB_A), "a tab cannot be hidden"
+      refute col["views"].key?(tk(TAB_A)), "a tab has no view"
+      refute col["intros"].key?(tk(TAB_A)), "a tab has no intro"
+    end
+
+    # NOT IN THE PLAN, and the reason it is here: `e["kind"]` used to mean "this entry is a block",
+    # and a tab entry carries one too. Both readers of that test had to learn the difference or the
+    # block cap would count separators and Save would try to write a row for one.
+    test "a tab is not a block: it counts against neither the block cap nor what Save writes" do
+      many = (1..39).map { |i| "  - block: text\n    body: b#{i}\n" }.join
+      r = tabbed.parse("layout: 1\npanels:\n#{many}")
+      assert r.ok?, "39 blocks beside 2 tabs is 39 blocks: #{r.errors.inspect}"
+      assert_equal 39, tabbed.blocks_from(r.draft).size
+    end
+# --- weight added after review (2026-09-09): an unknown id, an id of another kind, whitespace, the label
+
+test "a tab whose id names nothing here is created, and an id naming a panel or a block never converts it" do
+  r = tabbed.parse("layout: 1\npanels:\n  - tab: Ghost\n    id: ffffffffffff\n  - tab: Files\n    id: attachments\n  - panel: attachments\n")
+  assert r.ok?, r.errors.inspect
+  created = r.draft["panels"].select { |e| e["kind"] == "tab" && e["key"].start_with?("tab:new-") }
+  assert_equal %w[Ghost Files], created.map { |e| e["name"] }, "both ids are foreign to this page, so both create"
+  refute_includes r.draft["panels"].map { |e| e["key"] }, "tab:ffffffffffff", "a foreign key is never stored"
+  files = entry(r, "attachments")
+  refute files.key?("kind"), "Files is still a panel"
+end
+
+test "a tab name collapses whitespace before the length check, and a repeated tab is named as a tab" do
+  r = tabbed.parse("layout: 1\npanels:\n  - tab: \"  Build   Log \"\n    id: #{TAB_A}\n")
+  assert r.ok?, r.errors.inspect
+  assert_equal "Build Log", entry(r, tk(TAB_A))["name"]
+
+  raw31 = "x" * 15 + "  " + "y" * 14
+  assert_equal 31, raw31.length
+  r = tabbed.parse("layout: 1\npanels:\n  - tab: \"#{raw31}\"\n")
+  assert r.ok?, "31 raw characters that collapse to 30 are within the cap: #{r.errors.inspect}"
+
+  r = tabbed.parse("layout: 1\npanels:\n  - tab: Build\n    id: #{TAB_A}\n  - tab: build\n")
+  assert_equal [ "Entry 2 names the tab a second time." ], r.errors
+end
   end
 end

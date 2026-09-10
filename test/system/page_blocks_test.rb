@@ -145,6 +145,10 @@ class PageBlocksTest < ApplicationSystemTestCase
   # is the re-pack, not the drag. A `move_to` resolves its element's in-view centre when its own
   # tick runs, so the second one reads the settled layout and the nudge is honest again (3/3 runs).
   # A human never meets this: they watch the ghost move and release when it looks right.
+  # THIS PAGE FITS WITHOUT SCROLLING; test/system/page_tabs_test.rb records the other half: chromedriver
+  # resolves an element origin by scrolling that element into view first, so on a longer page the
+  # second `move_to` moves every other rect underneath the drag, and only a measured pixel delta is
+  # honest there.
   def drag(handle, target)
     page.driver.browser.action
         .click_and_hold(handle.native)
