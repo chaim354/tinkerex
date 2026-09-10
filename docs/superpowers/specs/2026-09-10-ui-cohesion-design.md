@@ -16,6 +16,82 @@ and there is exactly one inline `style=` in the entire view tree. What drifted i
 spend that system: the accent is overspent, one layout contract is violated by two pages, one
 vocabulary is rendered three ways, and the empty state has three implementations and one hole.
 
+## 0. Handoff — start here
+
+**Slice 0 has landed (§5). Slices 1–5 are unstarted and this document is their brief.** Read §2
+for the findings, §5 for the slices, and this section for what the last session learned the hard
+way about verifying work in this repo.
+
+### What to pick up next
+
+Slice 1 (spend the accent once per page) is the next one and is the highest yield left: it corrects
+ten pages by editing two rules in `components.css`. Slices are ordered by what each costs the
+feeling of cohesion, and each is independently shippable.
+
+### Two questions still open, both for the user — do not guess
+
+1. **§4 / finding 2.12** — should `/settings/suppliers`, `/settings/locations` and
+   `/settings/shelves` keep lighting the section they *serve* (Inventory, Models) rather than
+   Settings? Three options are laid out in §4. Slices 1–4 do not depend on the answer; slice 5 does.
+2. **Finding 1A.5 (one photo, two panels)** and **1A.6 (five panels, four files)** need a product
+   decision about what a folder panel is *for* before they can be fixed well. They are listed under
+   slice 5 but the shape of the fix is not settled.
+
+### What CANNOT be verified in a cloud container, and must be run on a real runner
+
+This matters more than it sounds: the last session's suite was green over a live 500 twice.
+
+| leg | status here | why |
+|---|---|---|
+| `test` (share) | runs | — |
+| `test-s3` | suite runs; the `bin/ci` wrapper fails | wrapper fails identically on a clean tree |
+| `test-chunk-remote` | **cannot run** | needs `../tinkerex-sync` checked out |
+| `system` | **cannot run** | chromedriver 147 vs Chrome 153; no matching pair available |
+| `setup` | not run | local-only gate |
+
+**34 suite failures pre-date this work and are the container, not the code.** It runs as **root**,
+so `chmod 000` fixtures stay readable and every scanner unreadable-directory test fails; it has none
+of the thumbnailer binaries (`vipsthumbnail`, `resvg`, `pdftoppm`, `stl-thumbnailer`), so every
+preview test fails; and `public/addons` is absent, so the addon suites fail. **Capture that baseline
+before you start** and diff against it rather than reading a raw failure count:
+
+```sh
+bin/rails test 2>&1 | grep -oE '^[A-Za-z0-9_:]+#test_[^ []*' | sort -u > /tmp/baseline.txt
+# ... do the work ...
+bin/rails test 2>&1 | grep -oE '^[A-Za-z0-9_:]+#test_[^ []*' | sort -u > /tmp/now.txt
+comm -23 /tmp/now.txt /tmp/baseline.txt      # empty means you broke nothing
+```
+
+The failure COUNT varies run to run (the addon suites are order-dependent under the sandbox);
+the failing NAMES do not. Diff names, never counts.
+
+### How to run the app here
+
+The share backend, a fresh library and a seeded user, then drive it with Playwright against
+`/opt/pw-browsers/chromium` — Selenium cannot be used (see the table above), but Playwright can:
+
+```sh
+export LIBRARY_BACKEND=share LIBRARY_PATH=$(mktemp -d) RAILS_MAX_THREADS=16
+bin/rails db:prepare && bin/rails server -p 3000 -b 127.0.0.1
+```
+
+**Park the pointer before every screenshot** (`page.mouse.move(w-4, h-4)`) or the rail link under
+it renders lit and reads as a stuck active state — that cost a false finding. And do not read
+`fullPage` captures for the position of anything `fixed` or `sticky`: they are stitched at scroll
+offset, which put the phone tab bar in the middle of the page and cost another.
+
+### The two failure shapes this repo keeps producing, both hit again in slice 0
+
+1. **A green suite over something that never worked.** `.auth-main` had never applied; the handle
+   `pattern` had never validated; the multi-file form 500'd while ten tests passed. In each case the
+   test asked the code, not the browser. **Drive the real request, and read the computed value.**
+2. **A test pinned to storage rather than behaviour.** Ten assertions read
+   `session[:current_project_id]` and went red when the pointer moved to a column, while the feature
+   worked perfectly. Assert what the user gets.
+
+Every guard added in slice 0 was mutation-checked (13 mutations). Keep doing that — §15 requires it,
+and it caught a rescue that was too wide within a minute of being written.
+
 ## 1. How this was measured
 
 A dev server on the `share` backend with a seeded library (5 projects, 33 nodes, 3 models, 3
