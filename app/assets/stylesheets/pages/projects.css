@@ -20,7 +20,6 @@
   .project-thumb-empty { font-size: 36px; }
   .project-name { font-size: 13px; font-weight: 600; text-align: center; overflow-wrap: anywhere; }
   .archived-note { margin: 24px 0 0; padding-top: 12px; border-top: 1px solid var(--line); font-size: 12px; }
-  .projects-empty { padding: 40px 16px; text-align: center; border: 1px dashed var(--line); border-radius: var(--radius-panel); }
 
   /* --- Show: head, stats, panels --- */
   .project-head { align-items: flex-start; }

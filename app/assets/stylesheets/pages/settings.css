@@ -34,6 +34,5 @@
   .filing-exts { list-style: none; padding: 0; margin: 0 0 10px; display: flex; flex-wrap: wrap; gap: 6px; }
   .filing-card .chip { display: inline-flex; align-items: center; gap: 4px; }
   .filing-card .chip form { display: inline; margin: 0; }
-  .filing-card .empty { padding: 4px 0; text-align: left; border: 0; font-size: 12px; }
   .filing-card .settings-add { max-width: none; }
 }

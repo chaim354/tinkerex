@@ -42,7 +42,7 @@ module Web
       get models_path
       assert_response :success
       assert_select "h1", "Models"
-      assert_select ".models-empty"
+      assert_select ".empty"
 
       user.maker_models.create!(title: "Dragon", print_status: "printed")
       get models_path

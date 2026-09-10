@@ -37,7 +37,7 @@ module Web
       get projects_path
       assert_response :success
       assert_select "h1", "Projects"
-      assert_select ".projects-empty"
+      assert_select ".empty"
 
       user.maker_projects.create!(name: "Desk Lamp", status: "active")
       user.maker_projects.create!(name: "Bench Jig", status: "paused")

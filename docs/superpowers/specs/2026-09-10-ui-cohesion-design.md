@@ -2,7 +2,7 @@
 
 Date: 2026-09-10. Branches: `claude/ux-ui-cohesion-4oaw9c` (audit + slice 0),
 `claude/ui-ux-audit-plan-38ea13` (slice 1). Status: audit and first-run walkthrough complete;
-**slices 0, 1 and 2 LANDED** (2026-09-10); slices 3–5 proposed, 5 blocked on §4.
+**slices 0–3 LANDED** (2026-09-10); slices 4–5 proposed, 5 blocked on §4.
 
 The design system landed on 2026-09-07 (`95ae66b`, spec `2026-09-03-web-shell-and-design-system-design.md`)
 and **356 commits across 49 merged PRs have landed on top of it since** — stages 2, 3 and 4 (home,
@@ -19,15 +19,15 @@ vocabulary is rendered three ways, and the empty state has three implementations
 
 ## 0. Handoff — start here
 
-**Slices 0, 1 and 2 have landed (§5). Slices 3–5 are unstarted and this document is their brief.**
+**Slices 0–3 have landed (§5). Slices 4 and 5 are unstarted and this document is their brief.**
 Read §2 for the findings, §5 for the slices, and this section for what earlier sessions learned the
 hard way about verifying work in this repo.
 
 ### What to pick up next
 
-Slice 3 (one empty state, one count, one pill vocabulary) is next, and it is the biggest of the
-five: ~20 views, two helpers, and the `/tools` first-run state the spec calls the single largest
-intuitiveness win in the sweep. Slices are ordered by what each costs the feeling of
+Slice 4 (one list-page anatomy, Home rejoins the app, the type scale) is next. It inherits two
+items deliberately left by slice 3: the toolbar ORDER, and giving Projects the count and sort it
+lacks — slice 3 landed the `count_label` helper and the `.toolbar-count` component they need. Slices are ordered by what each costs the feeling of
 cohesion, and each is independently shippable.
 
 ### Two questions still open, both for the user — do not guess
@@ -605,7 +605,51 @@ counts (**50 heads across 50 pages** — one per page, itself worth knowing).
 **Touches** `app/views/models/index.html.erb`, `app/views/public/projects/_page.html.erb`,
 `test/integration/web/template_hygiene_test.rb`.
 
-### Slice 3 — One empty state, one count, one pill vocabulary
+### Slice 3 — One empty state, one count, one pill vocabulary — **LANDED 2026-09-10**
+
+**Pills.** `.chip`, `.tag-chip` and `.badge` all take `--font-ui`; `.badge` loses
+`text-transform: capitalize`. Labels now come from `Maker::Model::PRINT_STATUS_LABELS`, read by both
+the /models filter chip and the card badge, so the two cannot say different words for one state.
+`.tag-chip` keeps `lowercase` — a tag is user-entered and lowercasing it is a real normalisation.
+
+*Correction to §2.3:* it attributed the badge's text to `want_to_print.titleize`. The view actually
+rendered `print_status.tr("_", " ")` and `capitalize` did the title-casing. Same outcome, different
+mechanism, and the fix is the same — but the spec named a method the code does not call.
+
+**Empty.** `.empty.inline` added (4px, left, no border, 12px). `.projects-empty` and `.models-empty`
+deleted with their views repointed at `.empty`. All **16** inert `class="empty muted"` sites dropped.
+The four `<li>` cases (Suppliers, Locations, Tags, filing rules) take `.empty.inline`, which let
+`pages/settings.css`'s `.filing-card .empty` override — the rule that existed to undo the 40px box —
+be deleted.
+
+**A third test pinned the inert modifier and the spec did not know.** §2.4 said `.projects-empty` and
+`.models-empty` were "each pinned by exactly one test"; a third, `repo_trash_pages_test.rb`, asserted
+`p.empty.muted` and went red on all three legs. Found by running the gates, not by grepping — the
+grep that would have found it (`empty muted` in `test/`) does not match `p.empty.muted`.
+
+**Counts.** `.toolbar-count` was defined **twice** — bare in `pages/files.css`, qualified in
+`pages/inventory.css`, same three declarations. That is the `.projects-empty` shape again and equally
+invisible to `css_hygiene_test.rb`, because `.toolbar-count` was not on its component list. It is a
+component now, on the list, and both copies are gone (Inventory keeps only its `margin-left: auto`).
+A `count_label` helper owns the two decisions every toolbar count shares: the number is delimited
+(Files did this, Inventory did not — a 12000-file library read "12000 items" on one page and "12,000
+items" on another) and the noun agrees with the raw count. **Mono stays on a count**: decision 4 says
+mono means quantities, and a count is one.
+
+*Split from slice 4 deliberately:* the helper and the component are here; **toolbar ORDER and giving
+Projects the count it lacks stay in slice 4**, which is where the plan settles the order for all four
+list pages at once.
+
+**/tools.** The first-run state exists, and it distinguishes the two ways to have no tools —
+`Registry.all` returns `[]` both for "no source configured" and "configured but returned nothing",
+and `docs/invariants/addons.md` names both as live (OVH blanks `ADDON_SOURCE_URL` today). The only
+previous signal was a `Rails.logger.warn`.
+
+**Verification.** Bare `bin/ci`, seven gates green, 4223 / 4223 / 4223 identical run counts. Five new
+guards in `cohesion_vocabulary_test.rb`, three mutation-checked.
+
+#### Original plan
+
 
 - **Empty:** add `.empty.inline` (no border, left-aligned, 12px) to `components.css`. Delete
   `.projects-empty` and `.models-empty` from the page sheets and point both views at `.empty`

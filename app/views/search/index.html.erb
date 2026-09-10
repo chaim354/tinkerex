@@ -19,7 +19,7 @@
 <% if @q.blank? %>
   <p class="search-prompt muted">Search files, folders, notes, projects, models, inventory and tags.</p>
 <% elsif @groups.empty? %>
-  <p class="empty muted">Nothing matches “<%= @q %>”.</p>
+  <p class="empty">Nothing matches “<%= @q %>”.</p>
 <% else %>
   <% @groups.each do |group| %>
     <%= render "shared/result_group", **group %>

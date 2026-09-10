@@ -69,7 +69,6 @@
      badge after the name), so the placement is this rule and nothing else. */
   .model-card { position: relative; }
   .model-card .badge { position: absolute; top: 6px; left: 6px; }
-  .models-empty { padding: 40px 16px; text-align: center; border: 1px dashed var(--line); border-radius: var(--radius-panel); }
 
   .print-log details.composer { margin: 0 0 10px; }
   .print-form { display: grid; gap: 8px; max-width: 480px; }

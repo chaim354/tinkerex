@@ -33,7 +33,10 @@ module Web
 
     test "an empty trash keeps its sentence in the empty component" do
       get trash_index_path
-      assert_select "p.empty.muted", text: "Trash is empty."
+      # `.muted` DROPPED (UI-cohesion spec §2.4): `.empty` already sets `color: var(--fg-muted)`,
+      # so the modifier was inert on all 16 sites that carried it. The sentence and the component
+      # are what this test is about, and both survive.
+      assert_select "p.empty", text: "Trash is empty."
     end
 
     include GitRepoFixture

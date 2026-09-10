@@ -11,7 +11,7 @@
 <div class="page-head">
   <div>
     <h1><%= @model.title %></h1>
-    <span class="badge mstatus-<%= @model.print_status %>"><%= @model.print_status.tr("_", " ") %></span>
+    <span class="badge mstatus-<%= @model.print_status %>"><%= @model.print_status_label %></span>
   </div>
   <div class="head-actions">
     <%= link_to "Edit", edit_model_path(@model), class: "btn small" %>

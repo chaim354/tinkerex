@@ -14,7 +14,7 @@
 </div>
 
 <% if @groups.all? { |g| g[:records].empty? } %>
-  <p class="empty muted">Nothing wears this tag yet.</p>
+  <p class="empty">Nothing wears this tag yet.</p>
 <% else %>
   <% @groups.each do |group| %>
     <%= render "shared/result_group", **group %>

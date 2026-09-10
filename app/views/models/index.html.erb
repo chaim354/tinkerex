@@ -16,7 +16,10 @@
 <form class="toolbar models-toolbar" method="get" action="<%= models_path %>">
   <input type="search" name="q" value="<%= params[:q] %>" placeholder="Search models…" aria-label="Search models">
   <span class="chips">
-    <% [["", "All"], %w[want_to_print Wanted], %w[printed Printed], %w[failed Failed]].each do |val, label| %>
+    <%# THE LABELS COME FROM Maker::Model::PRINT_STATUS_LABELS, NOT FROM LITERALS HERE. They were
+        literals until 2026-09-10, and the badge on the card below rendered its own spelling of the
+        same state — "Wanted" in this row against "Want To Print" 200px away. %>
+    <% [["", "All"], *Maker::Model::PRINT_STATUS_LABELS.to_a].each do |val, label| %>
       <%= link_to label, models_path(status: val.presence, q: params[:q], tag: params[:tag], sort: params[:sort]),
                   class: "filter chip#{' active' if @status.to_s == val}" %>
     <% end %>
@@ -36,7 +39,7 @@
 </form>
 
 <% if @models.empty? %>
-  <p class="models-empty muted">No models yet. Import your first one.</p>
+  <p class="empty">No models yet. Import your first one.</p>
 <% else %>
   <div class="projects-grid" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
     <% @models.each do |model| %>
