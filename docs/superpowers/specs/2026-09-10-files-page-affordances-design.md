@@ -64,6 +64,15 @@ mounts `lib/file_chooser.js` in browse mode. `files/show.html.erb` is out of sco
    Any file the app already classifies as text becomes editable, and share/s3 carry the no-history
    note. This is the trade the README door already made and *names on the editor*; a second rule
    here would be a second vocabulary to keep in step (§14d's standing complaint).
+
+   **REVERSED THE SAME DAY, AND THE REVERSAL IS THE RECORD.** Shipped as written, then narrowed to
+   `.md` and `.txt` outside a working tree (`FilesController::EDITABLE_WITHOUT_HISTORY`). The
+   consequence this decision did not weigh: it left `codeview` reachable only by an over-cap file
+   and a visitor's page, so a maker browsing a `.rb` or a `.gcode` a slicer wrote got a **writable
+   editor over a file with no history**. The "second vocabulary" objection was right about the cost
+   and wrong about the alternative — the cost of one extension list is smaller than the cost of
+   offering an undo-less editor for every machine-written file in a library. Inside a repository
+   nothing changed: git is the undo, and any text file is still editable there.
 3. **A name-minting door asks BOTH questions.** `Maker::MoveNode.valid_leaf_name?` for syntax and
    `Library::ReservedNames.reserved?` for the library's own namespace. §14b records the upload door
    shipping with **neither** and being the weakest door in the app; the new-file door is a fourth

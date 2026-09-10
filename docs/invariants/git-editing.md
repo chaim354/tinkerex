@@ -56,11 +56,25 @@ Both directions fail, and only one of them fails loudly:
 `FilesController#update` refused a file that was not inside a working tree, and every rule in this
 file is why; the one door exempt was `PATCH /projects/:id/readme` (`Projects::ReadmesController#update`), writing the
 project folder's own README on **any** backend, repository or not. The Files-page affordances slice
-retired the refusal outright: **any text file under `FilesController::EDITABLE_MAX_BYTES` is
-editable on every backend**, and a third door, `POST /files/text_files`
-(`Files::TextFilesController#create`), makes an empty one where the maker is standing. This section
-is kept under its own name — three comments cite it — but it now records the ARGUMENT that widened
-the rule and the rules that survived, not a boundary that still exists.
+retired the refusal: outside a working tree, **a `.md` or a `.txt` under
+`FilesController::EDITABLE_MAX_BYTES` is editable on every backend**, and a third door,
+`POST /files/text_files` (`Files::TextFilesController#create`), makes an empty one where the maker
+is standing. **Inside** a working tree any text file is still editable, unchanged — git is the undo.
+
+**THE EXTENSION LIST IS A CORRECTION, AND THE SEQUENCE IS WORTH KEEPING.** It shipped as *any* text
+file outside a repository, which had a consequence nobody weighed at the time: it left `codeview` —
+the read-only source view — reachable only by an over-cap file and a visitor's public page, so a
+maker browsing a `.rb` or a `.gcode` their slicer wrote was handed a **writable editor over a file
+with no history**. Reading such a file is the common case, and a writable editor with no undo is a
+worse offer than showing it. Narrowed the same day to `FilesController::EDITABLE_WITHOUT_HISTORY`.
+
+**`EDITABLE_WITHOUT_HISTORY` IS NOT A SUBSET OF `Maker::FileAttachment.text?`, AND THE TWO QUESTIONS
+DIFFER.** `text?` asks *"can this be displayed as text"* and governs the VIEWER, which is unchanged
+and deliberately wide. The list asks *"is losing the previous contents of this acceptable"*, which
+only the maker's own prose is. An extensionless text file is read-only outside a repository for the
+same reason. **The SERVER enforces it** (`#update`, not only `@editable`): hiding the control is the
+courteous half, and a door that only hid it would still take a hand-rolled PATCH — §14e's shape for
+the size cap, whose real half is also on the server.
 
 **Why the refusal went, and it is the argument the exception was granted on.** The refusal existed
 because a save on share or s3 overwrites with no undo, and git is the undo. For documentation the

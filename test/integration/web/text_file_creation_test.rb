@@ -159,5 +159,51 @@ module Web
       assert_match(/no longer here/i, flash_text)
       refute_match(dir.node_id, flash_text, "a raw node id reached the maker's message")
     end
+
+    # ---- WHAT IS EDITABLE OUTSIDE A REPOSITORY (narrowed 2026-09-10) -----------------------------
+    #
+    # THE REFUSAL EXISTS BECAUSE THERE IS NO UNDO. Inside a working tree git is the undo, so any text
+    # file stays editable there — that is the behaviour this door inherited and must not remove.
+    # OUTSIDE one a save replaces the file with nothing to go back to, so the set is narrowed to the
+    # two extensions a maker writes PROSE in. A `.rb`, a `.json` or a `.gcode` on a NAS is something
+    # a tool wrote; opening it in a writable editor with no history is a worse offer than showing it.
+
+    test "a .txt outside a repository is editable" do
+      post files_text_files_path, params: { name: "notes.txt" }
+      node = @user.nodes.present.find_by!(name: "notes.txt")
+      get file_path(node.node_id)
+      assert_select "[data-controller~=editor]", 1, "a .txt is what this door exists to make"
+    end
+
+    test "a .md outside a repository is editable" do
+      post files_text_files_path, params: { name: "notes.md" }
+      node = @user.nodes.present.find_by!(name: "notes.md")
+      get file_path(node.node_id)
+      assert_select "[data-controller~=editor]", 1
+    end
+
+    test "another text file outside a repository is read-only, not editable" do
+      post files_text_files_path, params: { name: "sketch.scad" }
+      node = @user.nodes.present.find_by!(name: "sketch.scad")
+
+      get file_path(node.node_id)
+      assert_response :success
+      assert_select "[data-controller~=editor]", 0, "a .scad outside a repo has no undo behind it"
+      # AND IT IS STILL SHOWN. Narrowing what is WRITABLE must not narrow what is READABLE — the
+      # read-only viewer is the whole point of the distinction.
+      assert_select "[data-controller~=codeview]", 1, "the read-only viewer must still render it"
+    end
+
+    test "the server refuses the save too, not just the editor" do
+      # THE SERVER IS THE ENFORCER. Hiding the editor is the courteous half; a door that only hid it
+      # would still accept a hand-rolled PATCH, which is the shape §14e records for the size cap.
+      post files_text_files_path, params: { name: "sketch.scad" }
+      node = @user.nodes.present.find_by!(name: "sketch.scad")
+      token = FileLayer.current.stat(@user, node_id: node.node_id).content_token
+
+      patch file_path(node.node_id), params: { content: "cube(1);", base_token: token }
+      assert_response :unprocessable_entity
+      assert_equal "", FileLayer.current.read(@user, node_id: node.node_id), "the file was written anyway"
+    end
   end
 end
