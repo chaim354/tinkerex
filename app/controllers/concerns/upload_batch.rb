@@ -20,15 +20,24 @@
 module UploadBatch
   extend ActiveSupport::Concern
 
-  # Returns [written, refused]:
+  # Returns [written, refused, errors]:
   #   written — the FileLayer::FileInfo of every file that landed, in selection order
   #   refused — { filename => reason }, in selection order, for anything the port turned away
+  #   errors  — the exceptions themselves, so a SINGLE-file caller can re-raise and let the
+  #             controller's existing `rescue_from` answer exactly as it did before this concern
+  #             existed. That is not tidiness: swallowing the exception here broke the JSON door.
+  #             `measure_controller.js` saves through `uploadPortFile`, which reads `data.error`
+  #             off a 422 to show "… already exists" IN WORDS; with the raise absorbed, the empty
+  #             batch redirected instead, fetch followed it to an HTML page, and the user saw
+  #             "upload failed (406)". Caught by the system leg, which is the only one that drives
+  #             that door.
   #
   # Yields each FileInfo (with its upload) so a caller that must do more per file — attaching to a
   # project, say — can, without this concern learning what an attachment is.
   def write_batch(uploads, parent_node_id:)
     written = []
     refused = {}
+    errors  = []
 
     # ANYTHING THAT IS NOT AN UPLOADED FILE IS DROPPED, not trusted to answer #original_filename.
     # `include_hidden: false` on both forms stops the empty marker at source, but this param is
@@ -41,17 +50,19 @@ module UploadBatch
         enqueue_preview(node_id: info.node_id, name:)
         yield(info, upload) if block_given?
         written << info
-      rescue FileLayer::UnsupportedOperation
+      rescue FileLayer::UnsupportedOperation => e
         # "already exists" IS THE ESTABLISHED WORDING AND IS PINNED, on both writable backends
         # (share_delivery_test, s3_write_test). §14a records why: a clobber used to raise NotFound,
         # so the app told a maker the file was "not found" while they could see it in the list
         # behind the alert. Any rewording here has to keep saying the name is taken.
         refused[name] = "a file of that name already exists"
-      rescue FileLayer::FetchError
+        errors << e
+      rescue FileLayer::FetchError => e
         refused[name] = "the library could not be reached"
+        errors << e
       end
     end
 
-    [ written, refused ]
+    [ written, refused, errors ]
   end
 end

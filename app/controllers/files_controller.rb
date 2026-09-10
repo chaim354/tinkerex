@@ -785,9 +785,16 @@ class FilesController < ApplicationController
       return render(json: { error: "one file per JSON upload" }, status: :unprocessable_entity)
     end
 
-    written, refused = write_batch(uploads, parent_node_id: params[:parent_node_id])
+    written, refused, errors = write_batch(uploads, parent_node_id: params[:parent_node_id])
 
     if written.empty?
+      # ONE FILE REFUSED IS EXACTLY THE PRE-BATCH CONDITION, so it is answered by exactly the
+      # pre-batch code: re-raise and let the class-level `rescue_from` render it — HTML redirect
+      # with the message, JSON `{ error: … }` at 422. Absorbing it here instead sent the JSON door
+      # a redirect, which `uploadPortFile` followed to an HTML page and reported as
+      # "upload failed (406)" rather than "… already exists" (caught by the system leg).
+      raise errors.first if uploads.size == 1 && errors.any?
+
       return redirect_back_or_to(files_path, alert: refused_sentence(refused))
     end
 

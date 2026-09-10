@@ -146,6 +146,29 @@ module Web
       assert_response :unprocessable_entity
     end
 
+    # THE DOOR THE BATCH BROKE, AND THE ONLY LEG THAT CAUGHT IT WAS THE BROWSER.
+    #
+    # `measure_controller.js` saves through `uploadPortFile`, which reads `data.error` off a 422 to
+    # show the refusal IN WORDS. The first cut of the batch absorbed UnsupportedOperation inside
+    # the loop, so `rescue_from` never rendered that JSON, the empty batch redirected instead,
+    # fetch followed the redirect to an HTML page, and the user saw "upload failed (406)".
+    # measure_export_test.rb caught it; nothing here could, because no test drove this door with a
+    # name that was already taken. Now one does.
+
+    test "a JSON upload of a taken name answers 422 with the message, not a redirect" do
+      upload("taken.stl")
+      follow_redirect!
+
+      post files_path,
+           params: { file: uploaded("taken.stl") },
+           headers: { "Accept" => "application/json" }
+
+      assert_response :unprocessable_entity,
+                      "a redirect here is followed to HTML and reported as 'upload failed (406)'"
+      assert_match(/already exists/i, JSON.parse(response.body)["error"].to_s,
+                   "uploadPortFile shows data.error verbatim — it has to say what happened")
+    end
+
     test "a single-file JSON upload still answers the node_id its callers need" do
       post files_path,
            params: { file: Rack::Test::UploadedFile.new(StringIO.new("b"), "application/octet-stream",

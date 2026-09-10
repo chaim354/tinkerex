@@ -36,12 +36,16 @@ module Projects
       # and to the intake sweep — the ordering the long comment below is about. What changed is
       # only that the pair now happens N times instead of once, with each file's refusal isolated
       # (UploadBatch) so one taken name cannot abandon the rest of the selection.
-      written, refused = write_batch(files, parent_node_id: upload_parent(target)) do |info|
+      written, refused, errors = write_batch(files, parent_node_id: upload_parent(target)) do |info|
         target.file_attachments.create!(user: current_user, node_id: info.node_id,
                                         role: role_for(info.name, target))
       end
 
       if written.empty?
+        # One file refused is the pre-batch condition; re-raise so this controller's own
+        # `rescue_from` answers it with the wording it has always used.
+        raise errors.first if files.size == 1 && errors.any?
+
         return redirect_to(after_upload_url(target), alert: refused_sentence(refused))
       end
 
