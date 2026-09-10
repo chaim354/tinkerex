@@ -21,6 +21,14 @@ module Maker
   # layout UPDATE the block it came from while an unknown id CREATES one — a layout pasted from
   # another project brings its blocks with it rather than renaming this project's.
   #
+  # A TAB IS THE FOURTH KIND OF ENTRY (2026-09-09, tabs; spec §4), and the lightest: `- tab: Build`
+  # with an `id:` in the YAML, `{ key, kind: "tab", name }` in the draft, nothing else on either.
+  # Apply resolves a tab by id, then by NAME ignoring case, then creates one — a tab's name is its
+  # identity to a person, so a layout pasted from another project maps Build onto Build rather than
+  # making a second one (decision 4). A tab has no width, hidden, view or intro; a tab entry naming
+  # one is an error, not a note. `kind` NO LONGER MEANS "a block": every reader of it here asks for
+  # a block kind by name (#blocks_from, the block cap) so a separator is never written as a row.
+  #
   # A `page` MAPPING sits beside `panels`: the project's description and its cover. A cover and an
   # image block name a node id in the draft and a PATH UNDER THE PROJECT FOLDER in the YAML, which
   # is the same rule folders follow (`images:`, the map the caller supplies) — a node id is not
@@ -75,6 +83,13 @@ module Maker
       dropped = []
       panels = draft["panels"].filter_map do |e|
         out = {}
+        # A SEPARATOR IN PLACE, TWO LINES AND NO MORE (2026-09-09, tabs; spec §4): `next out` leaves
+        # before the width/view/hidden tail below, which a tab has none of.
+        if e["kind"] == "tab"
+          out["tab"] = e["name"]
+          out["id"] = e["key"].delete_prefix(Maker::ProjectKind::TAB_PREFIX) unless new_key?(e["key"])
+          next out
+        end
         if e["kind"]
           out["block"] = e["kind"]
           # A `new-` KEY CARRIES NO `id:`: it names nothing outside this browser session, and a
@@ -200,8 +215,12 @@ module Maker
       # maps are built from the entries that are not blocks. `order`, `hidden` and `widths` DO carry
       # block keys — those are the arrangement, which is exactly what this column holds.
       arranged = panels.reject { |e| e["kind"] }
+      # A TAB IS IN `order` AND `titles` AND NOWHERE ELSE (2026-09-09, tabs; spec §3): its name is a
+      # title, its key has no width, no view, no intro and no hidden flag.
+      tabs = panels.select { |e| e["kind"] == "tab" }
+      sized = panels.reject { |e| e["kind"] == "tab" }
       { "order" => panels.map { |e| e["key"] },
-        "hidden" => panels.select { |e| e["hidden"] }.map { |e| e["key"] },
+        "hidden" => sized.select { |e| e["hidden"] }.map { |e| e["key"] },
         "views" => arranged.filter_map { |e| [ e["key"], e["view"] ] if e["view"] }.to_h,
         # WIDTHS ARE WRITTEN FOR EVERY PANEL, DEFAULTS INCLUDED, BY DESIGN: a Save records the
         # arrangement the maker saw and approved, and the width is a control they operated. A folder
@@ -209,8 +228,8 @@ module Maker
         # additive, not the freezing bug the retired chooser's move branch had. Titles stay sparse
         # for the opposite reason: a maker never chose a default label, so a PANEL_LABELS change
         # must still reach a saved project. Do not "tidy" this into a filter on non-defaults.
-        "widths" => panels.to_h { |e| [ e["key"], e["width"] ] },
-        "titles" => arranged.filter_map { |e| [ e["key"], e["title"] ] if e["title"] }.to_h,
+        "widths" => sized.to_h { |e| [ e["key"], e["width"] ] },
+        "titles" => arranged.filter_map { |e| [ e["key"], e["title"] ] if e["title"] }.to_h.merge(tabs.to_h { |e| [ e["key"], e["name"] ] }),
         "intros" => arranged.filter_map { |e| [ e["key"], e["intro"] ] if e["intro"] }.to_h }
     end
 
@@ -220,7 +239,7 @@ module Maker
     # `block:new-<n>`) — Save mints the real key for a `new-` one. EVERY FIELD IS PRESENT, nil
     # included, so an attribute cleared in the editor is written as a clear rather than left behind.
     def blocks_from(draft)
-      draft["panels"].select { |e| e["kind"] }.map do |e|
+      draft["panels"].select { |e| e["kind"] && e["kind"] != "tab" }.map do |e|
         { "key" => e["key"], "kind" => e["kind"],
           # A LINK'S `title` IS THE ROW'S `heading`: one column, so a kind change keeps its label.
           "heading" => e["kind"] == "link" ? e["title"] : e["heading"],
@@ -240,6 +259,8 @@ module Maker
     private
 
     def entry(key)
+      return { "key" => key, "kind" => "tab", "name" => @layout.tab_name_for(key) } if @layout.tab?(key)
+
       e = { "key" => key, "hidden" => @layout.hidden?(key), "width" => @layout.width_for(key) }
       if @layout.block?(key)
         # THE ROW IS THE CONTENT'S ONE SOURCE: the layout column holds a block's PLACE, never its
@@ -294,22 +315,35 @@ module Maker
         # THE ATTRIBUTE CHECK COMES BEFORE THE DUPLICATE GUARD, as it did in slice 1: an entry that
         # is both a repeat and misspelled reports both, not one reason per round trip (found in
         # review — the block branch had put it after the `next`).
-        allowed = if kind
-          (source == :yaml ? %w[block id] : %w[key kind]) + BLOCK_COMMON + BLOCK_FIELDS.fetch(kind)
+        # A TAB'S CHECK IS ITS OWN because its answer is: `BLOCK_FIELDS.fetch("tab")` would raise,
+        # and "unknown attribute “hidden”" is the wrong sentence for an attribute that exists
+        # everywhere else and is refused only here (2026-09-09, tabs; spec §7).
+        if kind == "tab"
+          unknown = raw.keys - (source == :yaml ? %w[tab id] : %w[key kind name])
+          errors << "Entry #{n}: a tab takes only a name (“#{unknown.first}” is not allowed)." if unknown.any?
         else
-          (source == :yaml ? %w[panel folder] : %w[key]) + ATTRIBUTES
+          allowed = if kind
+            (source == :yaml ? %w[block id] : %w[key kind]) + BLOCK_COMMON + BLOCK_FIELDS.fetch(kind)
+          else
+            (source == :yaml ? %w[panel folder] : %w[key]) + ATTRIBUTES
+          end
+          unknown = raw.keys - allowed
+          errors << "Entry #{n}: unknown attribute “#{unknown.first}”." if unknown.any?
         end
-        unknown = raw.keys - allowed
-        errors << "Entry #{n}: unknown attribute “#{unknown.first}”." if unknown.any?
         if listed.any? { |k, _| k == key }
           errors << "Entry #{n} names #{label(key)} a second time."
           next
         end
-        base_entry = current[key] || { "key" => key, "kind" => kind, "hidden" => false, "width" => Maker::ProjectKind.default_width(key, block_kind: kind) }
-        if kind
-          listed << [ key, apply_block(base_entry, raw, kind, n, notes, errors, new_block: current[key].nil?) ]
+        if kind == "tab"
+          base_entry = current[key] || { "key" => key, "kind" => "tab", "name" => nil }
+          listed << [ key, apply_tab(base_entry, raw, source, n, errors) ]
         else
-          listed << [ key, apply(base_entry, raw, key, n, notes, errors) ]
+          base_entry = current[key] || { "key" => key, "kind" => kind, "hidden" => false, "width" => Maker::ProjectKind.default_width(key, block_kind: kind) }
+          if kind
+            listed << [ key, apply_block(base_entry, raw, kind, n, notes, errors, new_block: current[key].nil?) ]
+          else
+            listed << [ key, apply(base_entry, raw, key, n, notes, errors) ]
+          end
         end
       end
       page_out = merge_page(base_draft["page"], page, notes, errors)
@@ -324,8 +358,20 @@ module Maker
       # THE CAP IS COUNTED ON THE RESULT, NOT ON WHAT THE TEXT LISTS: the blocks the text does not
       # mention keep their place, so a paste of forty into a project that already holds three is
       # forty-three blocks. An error, never a truncation — which of them to drop is not ours to pick.
-      if ordered.count { |e| e["kind"] } > Maker::ProjectBlock::CAP
+      # `e["kind"] != "tab"` IS NOT DECORATION (2026-09-09, tabs): a separator carries a `kind` too,
+      # so counting every kind would spend eight of the forty block slots on tabs.
+      if ordered.count { |e| e["kind"] && e["kind"] != "tab" } > Maker::ProjectBlock::CAP
         return Result.new(draft: draft, notes: notes, errors: [ "That would leave more than #{Maker::ProjectBlock::CAP} blocks on the page." ])
+      end
+      # TWO CHECKS ON THE RESULT, NOT THE TEXT, for the block cap's reason: the tabs the text does not
+      # mention keep their place. Names are compared ignoring case because the slug and the match
+      # by name both do (spec §3, §4).
+      tabs = ordered.select { |e| e["kind"] == "tab" }
+      if (dup = tabs.map { |e| e["name"].to_s.downcase }.tally.find { |_, c| c > 1 })
+        return Result.new(draft: draft, notes: notes, errors: [ "Two tabs are named “#{dup.first}”; tab names must differ." ])
+      end
+      if tabs.size > Maker::ProjectKind::TAB_CAP
+        return Result.new(draft: draft, notes: notes, errors: [ "This page can hold #{Maker::ProjectKind::TAB_CAP} tabs; this would leave #{tabs.size}." ])
       end
       Result.new(draft: { "layout" => VERSION, "page" => page_out, "panels" => ordered }, notes: notes, errors: errors)
     end
@@ -333,10 +379,22 @@ module Maker
     # `[key, kind]`, with `kind` nil for a panel or a folder — the one place a block entry is told
     # apart from an arrangement entry, so everything after it is one code path.
     def key_from_yaml(raw, n, notes, errors, current, allocate)
-      named = %w[panel folder block].select { |k| raw.key?(k) }
+      named = %w[panel folder block tab].select { |k| raw.key?(k) }
       if named.size > 1
-        errors << "Entry #{n} names more than one of `panel`, `folder` and `block`; use one."
+        errors << "Entry #{n} names more than one of `panel`, `folder`, `block` and `tab`; use one."
         return nil
+      end
+      if raw.key?("tab")
+        # BY ID, THEN BY NAME, THEN NEW (spec §4, decision 4). `current` is the base draft, so a tab
+        # added with the button a moment ago is matchable by name too.
+        id = raw["id"].to_s
+        return [ Maker::ProjectKind.tab_key(id), "tab" ] if id.present? && current[Maker::ProjectKind.tab_key(id)]&.dig("kind") == "tab"
+
+        name = text(raw["tab"])
+        twin = name.empty? ? nil : current.values.find { |e| e["kind"] == "tab" && e["name"].to_s.casecmp?(name) }
+        return [ twin["key"], "tab" ] if twin
+
+        return [ Maker::ProjectKind.tab_key("new-#{allocate.call}"), "tab" ]
       end
       if raw.key?("block")
         kind = raw["block"].to_s
@@ -366,12 +424,20 @@ module Maker
         notes << "This project has no folder named “#{name}”; that entry was skipped."
         return nil
       end
-      errors << "Entry #{n} names none of `panel`, `folder` or `block`."
+      errors << "Entry #{n} names none of `panel`, `folder`, `block` or `tab`."
       nil
     end
 
     def key_from_draft(raw, n, notes, errors)
       key = raw["key"].to_s
+      if @layout.tab?(key)
+        # A `new-` KEY IS THE BROWSER'S OWN; ANY OTHER TAB KEY MUST BE ONE OF THIS LAYOUT'S — the
+        # same rule a block key follows, so a posted `tab:<invented>` is refused, not created.
+        return [ key, "tab" ] if raw["kind"].to_s == "tab" && (new_key?(key) || @layout.order.include?(key))
+
+        errors << "Entry #{n}: unknown tab “#{key}”."
+        return nil
+      end
       if @layout.block?(key)
         kind = raw["kind"].to_s
         unless Maker::ProjectBlock::KINDS.include?(kind)
@@ -398,12 +464,13 @@ module Maker
       nil
     end
 
-    # A key the BROWSER minted for a block that has no row yet. Save turns each into a real key.
-    def new_key?(key) = key.to_s.start_with?("#{Maker::ProjectKind::BLOCK_PREFIX}new-")
-
-    def next_new_index(keys)
-      keys.filter_map { |k| k[/\Ablock:new-(\d+)\z/, 1]&.to_i }.max || 0
-    end
+    # A key the BROWSER minted for a block or a tab that Save has not keyed yet — ONE COUNTER OVER
+    # BOTH PREFIXES (2026-09-09, tabs), so a session that adds a block and then a tab gets
+    # `block:new-1` and `tab:new-2` rather than two entries both allocating 1 and a paste merging
+    # them. Save turns each into a real key.
+    NEW_KEY = /\A(?:block|tab):new-(\d+)\z/
+    def new_key?(key) = key.to_s.match?(/\A(?:block|tab):new-/)
+    def next_new_index(keys) = keys.filter_map { |k| k[NEW_KEY, 1]&.to_i }.max || 0
 
     # An attribute GIVEN replaces; one absent keeps `base`'s value. A given blank title or intro
     # clears it. `hidden: true` on an always-shown panel is a note, never an error, because a
@@ -544,6 +611,16 @@ module Maker
       e
     end
 
+    # A TAB'S ONE ATTRIBUTE. The name is always GIVEN (it is the `tab:` value itself in the YAML and
+    # the `name` field in the draft), so there is no absent-keeps arm: blank is an error, never a
+    # default (spec decision 6).
+    def apply_tab(base, raw, source, n, errors)
+      name = text(source == :yaml ? raw["tab"] : raw["name"])
+      errors << "Entry #{n}: a tab needs a name." if name.empty?
+      errors << "Entry #{n}: the tab name is over #{Maker::ProjectKind::TAB_NAME_MAX} characters." if name.length > Maker::ProjectKind::TAB_NAME_MAX
+      { "key" => base["key"], "kind" => "tab", "name" => name.presence }
+    end
+
     def set_text(e, raw, field, max, n, errors, name)
       return unless raw.key?(field)
 
@@ -585,6 +662,9 @@ module Maker
     def text(value) = value.to_s.gsub(/\s+/, " ").strip
 
     def label(key)
+      # A TAB IS NAMED BY WHAT IT IS, like a block: the duplicate-entry message reads "Entry 4 names
+      # the tab a second time", and a tab's own NAME has its own message (two tabs, one name).
+      return "the tab" if @layout.tab?(key)
       # A BLOCK HAS NO PANEL LABEL — it is named by what it is, which is all the duplicate-entry
       # message needs ("Entry 4 names the link block a second time").
       return "the #{@layout.block_kind(key) || 'new'} block" if @layout.block?(key)
