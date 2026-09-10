@@ -32,7 +32,8 @@
       <% @all_tags.each do |t| %><option value="<%= t %>" <%= "selected" if params[:tag] == t %>><%= t %></option><% end %>
     </select>
   <% end %>
-  <select name="sort" aria-label="Sort" onchange="this.form.requestSubmit()">
+  <label class="muted" for="models-sort">Sort</label>
+  <select name="sort" id="models-sort" onchange="this.form.requestSubmit()">
     <% [%w[recent Recent], %w[title Title], %w[status Status]].each do |val, label| %>
       <option value="<%= val %>" <%= "selected" if params[:sort] == val %>><%= label %></option>
     <% end %>

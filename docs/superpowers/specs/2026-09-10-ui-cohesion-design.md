@@ -708,6 +708,13 @@ for ~150 declarations. **What is left is a real item, not a quiet omission:** de
 `--text-*` tokens, adopt them where sizes already match exactly (a visual no-op), then remap 14/16
 under review. The guard against a fractional step is in place either way.
 
+**Two things only the screenshots showed**, both found after the gates were green. Putting `.panel`
+around Home's sections framed each existing `.empty` twice — a dashed box inside a bordered one —
+so `.panel .empty` drops the dash; the markup and `.empty` were both unchanged, and it was the
+NESTING that broke. And Files and Projects labelled their sort while Models and Inventory had only
+an `aria-label`, so the control looked different on half the pages while reading the same to a
+screen reader; all four carry a visible `Sort` now.
+
 **Verification.** Bare `bin/ci`, seven gates green, 4227 / 4227 / 4227 identical run counts. Four
 guards added, three mutation-checked — and one of those **could not fail on first writing**: the
 projects-sort fixture created "Zebra" then "Anvil", so `updated_at: :desc` and name order coincided

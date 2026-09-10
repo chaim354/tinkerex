@@ -385,6 +385,11 @@
      here. All 18 are dropped; do not add a nineteenth. */
   .empty { padding: 40px 16px; text-align: center; color: var(--fg-muted); border: 1px dashed var(--line); border-radius: var(--radius-panel); }
   .empty.inline { padding: 4px 0; text-align: left; border: 0; font-size: 12px; }
+  /* INSIDE A PANEL THE DASH IS DOUBLE FRAMING. The dashed box exists to mark out a region that has
+     nothing in it on a bare page; a `.panel` already draws that region, so the two together read as
+     a box inside a box. Found by looking at Home after its four sections became panels (slice 4) —
+     the markup did not change, and neither did `.empty`, but putting one inside the other did. */
+  .panel .empty { border: 0; padding: 24px 16px; }
   /* An .empty that HOLDS elements rather than being one — /tools first-run state. `p` carries a
      bottom margin, which would otherwise sit inside the box's own padding and make it lopsided. */
   .empty > :last-child { margin-bottom: 0; }

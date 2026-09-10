@@ -114,6 +114,11 @@ module Web
         assert_select ".toolbar", 1, "#{name} has no toolbar"
         assert_select ".toolbar .toolbar-count", 1, "#{name}'s toolbar has no count"
         assert_select ".toolbar select[name=sort]", 1, "#{name}'s toolbar has no sort"
+        # LABELLED THE SAME WAY ON ALL FOUR. Files and Projects carried a visible "Sort"; Models
+        # and Inventory had only an `aria-label`, so the control looked different on half the
+        # pages while reading the same to a screen reader.
+        assert_select ".toolbar label", text: "Sort", count: 1
+        assert_select ".toolbar select[name=sort][id]", 1, "#{name}'s sort has no id for its label"
       end
     end
 
