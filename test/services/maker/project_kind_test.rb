@@ -491,6 +491,78 @@ module Maker
       assert_equal({}, Maker::ProjectKind.layout_for(kind: "other", overrides: nil).block_kinds)
     end
 
+    # --- tabs (2026-09-09; spec §3) --------------------------------------------------------------
+
+    def tk(hex) = Maker::ProjectKind.tab_key(hex)
+
+    TAB_A = "3f9a1b2c4d5e".freeze
+    TAB_B = "a0c4d8e2f611".freeze
+
+    test "tab keys read off the stored order join the vocabulary, keep their names, and nothing else applies to them" do
+      l = Maker::ProjectKind.layout_for(kind: "other", folders: [], overrides: {
+        "order" => [ "attachments", "photos", tk(TAB_A), "build_log", "tasks", tk(TAB_B), "releases", "publish" ],
+        "titles" => { tk(TAB_A) => "Build", tk(TAB_B) => "Downloads" },
+        "hidden" => [ tk(TAB_A), "tasks" ], "widths" => { tk(TAB_A) => "half" },
+        "views" => { tk(TAB_A) => "list" }, "intros" => { tk(TAB_A) => "no" } })
+
+      assert_equal [ tk(TAB_A), tk(TAB_B) ], l.tabs
+      assert l.tab?(tk(TAB_A))
+      refute l.tab?("attachments")
+      assert_equal "Build", l.tab_name_for(tk(TAB_A))
+      assert_equal %w[tasks], l.hidden, "a tab cannot be hidden; the stray entry is dropped"
+      assert_empty l.widths.keys & l.tabs
+      assert_empty l.views.keys & l.tabs
+      assert_empty l.intros.keys & l.tabs
+      assert_nil l.width_for(tk(TAB_A))
+      assert_empty Maker::ProjectKind.offered_views(tk(TAB_A))
+    end
+
+    test "a tab key with no name reads as Tab, and a malformed or ninth tab key is dropped from the order" do
+      nine = (1..9).map { |i| tk(format("%012x", i)) }
+      l = Maker::ProjectKind.layout_for(kind: "other", folders: [], overrides: {
+        "order" => [ "attachments", *nine, "tab:short", "tab:new-1", "photos", "publish" ] })
+
+      assert_equal "Tab", l.tab_name_for(nine.first)
+      assert_equal nine.first(8), l.tabs, "the cap holds on read too"
+      refute_includes l.order, "tab:short"
+      refute_includes l.order, "tab:new-1", "a browser placeholder is never vocabulary"
+    end
+
+    test "groups splits at the tabs, drops Publish, keeps an empty top group, and slugs the names" do
+      l = Maker::ProjectKind.layout_for(kind: "other", folders: [], overrides: {
+        "order" => [ tk(TAB_A), "attachments", "photos", tk(TAB_B), "tasks", "publish" ],
+        "titles" => { tk(TAB_A) => "Build log & notes", tk(TAB_B) => "Downloads" }, "hidden" => %w[tasks] })
+
+      # THE PANELS THE STORED ORDER DOES NOT NAME KEEP THEIR PRESET PLACE, which is after `tasks`,
+      # so they land in the LAST tab's group rather than in none — the same rule the overrides
+      # section above pins, read through `groups`. Publish is in no group whatever the order says.
+      tail = Maker::Project::PANELS - %w[attachments photos tasks publish]
+      g = l.groups
+      assert_equal [], g.top
+      assert_equal [ [ tk(TAB_A), "Build log & notes", "build-log-notes", %w[attachments photos] ],
+                     [ tk(TAB_B), "Downloads", "downloads", tail ] ],
+                   g.tabs.map { |t| [ t.key, t.name, t.slug, t.keys ] }
+      refute_includes g.tabs.last.keys, "publish", "Publish is pinned below the tabs, never inside one"
+      every = l.groups(l.order)
+      assert_equal [ "tasks", *tail ], every.tabs.last.keys, "groups(order) includes hidden panels"
+
+      plain = Maker::ProjectKind.layout_for(kind: "other", folders: [], overrides: nil)
+      assert_equal plain.visible - %w[publish], plain.groups.top
+      assert_empty plain.groups.tabs
+    end
+
+    test "a slug that is empty or shared falls back to the key" do
+      keys = [ tk(TAB_A), tk(TAB_B), tk("0123456789ab") ]
+      assert_equal [ TAB_A, TAB_B, "0123456789ab" ], Maker::ProjectKind.tab_slugs(keys, [ "日本語", "Build!", "build?" ])
+      assert_equal %w[build downloads a], Maker::ProjectKind.tab_slugs(keys, %w[Build Downloads a])
+    end
+
+    test "Maker::Project#visible_panels never hands a caller a tab key" do
+      project = @user.maker_projects.create!(name: "Tabbed", panels: { "order" => [ "attachments", tk(TAB_A), "photos", "publish" ], "titles" => { tk(TAB_A) => "Build" } })
+      refute_includes project.visible_panels, tk(TAB_A)
+      assert_includes project.panel_layout.visible, tk(TAB_A), "the layout itself keeps it: it is the pages' reader"
+    end
+
     # --- the hero -----------------------------------------------------------------------------
 
     test "hero_roles is a preference list per kind, and other's is today's derivation" do
