@@ -132,4 +132,4 @@ gem "kramdown-parser-gfm", "~> 1.1"
 # the 24 days before this install — patch-level looseness is not safe to assume on a pre-1.0 line
 # this fast-moving. Bump it deliberately: edit this line, run the suite, and re-do the manual
 # editor check (Task 7), rather than letting a version ride in on someone's `bundle update`.
-gem "lexxy", "0.9.31"
+gem "lexxy", "0.9.32"
