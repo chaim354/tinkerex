@@ -12,7 +12,7 @@ source "https://rubygems.org"
 # read-only deploy key and its https->SSH rewrite (§14j), the engine_schema generator and its
 # byte-identical cross-repo guard, and every /v1 sync endpoint this app used to serve. A desktop
 # client syncs against the sync server now, never against the maker app.
-gem "rails", "~> 8.1.1"
+gem "rails", "~> 8.1.4"
 # The modern asset pipeline for Rails [https://github.com/rails/propshaft]
 gem "propshaft"
 # Use sqlite3 as the database for Active Record (self-host default)
