@@ -29,6 +29,20 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
 SYNC_DIR="${TINKEREX_SYNC_DIR:-$REPO_ROOT/../tinkerex-sync}"
 HOST_DIR="$SYNC_DIR/host"
+# WHICH IMPLEMENTATION OF THE SYNC SERVER (tinkerex-sync's own plan,
+# docs/superpowers/plans/2026-09-30-rust-rewrite.md §8.1): `ruby` boots host/ under bin/rails as
+# this script always has; `rust` builds and boots the crates/tinkerex-sync binary from the same
+# checkout. Default `ruby` until the cutover flips it; the switch goes away with the Ruby host.
+# The Rust arm keeps its OWN database and chunk directory under tmp/ rather than the host's
+# development.sqlite3, so switching implementations never hands one a file the other wrote.
+IMPL="${SYNC_IMPL:-ruby}"
+RUST_BIN="${TINKEREX_SYNC_BIN:-$SYNC_DIR/target/release/tinkerex-sync}"
+RUST_DB="$REPO_ROOT/tmp/sync-server-rust.sqlite3"
+RUST_CHUNKS="$REPO_ROOT/tmp/sync-server-rust-chunks"
+# A FIXED DEV SECRET, deliberately: SECRET_KEY_BASE only signs this ephemeral server's own local
+# blob URLs (an HMAC the client never needs to know), exactly as the Ruby arm's Rails development
+# secret is fixed per checkout. It guards nothing a real deployment guards.
+RUST_SECRET_KEY_BASE="sync-server-local-development-secret"
 # Overridable so the hermetic happy-path test in test/bin_sync_server_test.rb can point this at
 # an isolated tmpdir path instead of the real repo file. A save-and-restore of the real file was
 # tried first and rejected: Ruby's `ensure` runs on a normal return or on SIGINT, but NOT on
@@ -38,12 +52,20 @@ HOST_DIR="$SYNC_DIR/host"
 ENV_FILE="${SYNC_SERVER_ENV_FILE:-$REPO_ROOT/tmp/sync-server.env}"
 
 usage() {
-  echo "usage: bin/sync-server {prepare|start}" >&2
+  echo "usage: [SYNC_IMPL=ruby|rust] bin/sync-server {prepare|start}" >&2
   echo "  prepare  migrate the sync host DB, mint a device token, write tmp/sync-server.env" >&2
   echo "  start    boot the sync host in the foreground on \$SYNC_PORT (default $PORT)" >&2
+  echo "  SYNC_IMPL=rust builds and boots tinkerex-sync's Rust binary instead of host/ (default ruby)" >&2
 }
 
 require_checkout() {
+  case "$IMPL" in
+    ruby|rust) ;;
+    *)
+      echo "SYNC_IMPL must be ruby or rust, not '$IMPL'" >&2
+      exit 64
+      ;;
+  esac
   if [ ! -d "$HOST_DIR" ]; then
     echo "tinkerex-sync host app not found at $HOST_DIR" >&2
     echo "" >&2
@@ -83,10 +105,42 @@ unset_inherited_bundler_env() {
   unset BUNDLE_GEMFILE BUNDLE_BIN_PATH BUNDLE_LOCKFILE BUNDLER_VERSION BUNDLER_SETUP RUBYOPT RUBYLIB
 }
 
+# THE RUST ARM'S BUILD: `cargo build --release` in the sibling checkout, unless TINKEREX_SYNC_BIN
+# names a binary already built (CI's cache, or a downloaded release). A missing cargo fails
+# loudly and names the fix, the same shape require_checkout uses for a missing clone.
+build_rust_binary() {
+  if [ -n "${TINKEREX_SYNC_BIN:-}" ]; then
+    [ -x "$RUST_BIN" ] || { echo "TINKEREX_SYNC_BIN=$RUST_BIN is not an executable" >&2; exit 1; }
+    return
+  fi
+  command -v cargo >/dev/null 2>&1 || {
+    echo "SYNC_IMPL=rust needs cargo on PATH to build tinkerex-sync (rustup.rs), or" >&2
+    echo "TINKEREX_SYNC_BIN=/path/to/tinkerex-sync pointing at a built binary" >&2
+    exit 1
+  }
+  ( cd "$SYNC_DIR" && cargo build --release --quiet -p tinkerex-sync )
+}
+
+# The env every Rust-arm invocation shares: prepare's migrate + device issue, and start's serve.
+rust_env() {
+  env STORAGE_BACKEND=local \
+      SQLITE_DATABASE="$RUST_DB" \
+      CHUNK_LOCAL_DIR="$RUST_CHUNKS" \
+      SECRET_KEY_BASE="$RUST_SECRET_KEY_BASE" \
+      "$RUST_BIN" "$@"
+}
+
 case "${1:-}" in
   prepare)
     require_checkout prepare
     mkdir -p "$REPO_ROOT/tmp"
+    if [ "$IMPL" = rust ]; then
+      build_rust_binary
+      rust_env migrate >/dev/null
+      # The SAME lines the rake task prints (user_id:/device_id:/device_token:), so the awk
+      # below is shared -- the binary's `device issue` was written to be parsed by this script.
+      token="$(rust_env device issue --email "$EMAIL" | awk '/^device_token:/ { print $2 }')"
+    else
     ( cd "$HOST_DIR" && unset_inherited_bundler_env && bundle install --quiet && bin/rails db:prepare )
     # The token is printed ONCE by the task (only a SHA256 digest is stored), so capture it here.
     #
@@ -101,6 +155,7 @@ case "${1:-}" in
     # proves this specific `sync:device:issue` invocation works end to end.
     token="$(cd "$HOST_DIR" && unset_inherited_bundler_env && EMAIL="$EMAIL" bin/rails sync:device:issue \
              | awk '/^device_token:/ { print $2 }')"
+    fi
     if [ -z "$token" ]; then
       echo "sync:device:issue printed no device_token -- refusing to write a blank credential" >&2
       exit 1
@@ -131,6 +186,16 @@ case "${1:-}" in
     ;;
   start)
     require_checkout start
+    if [ "$IMPL" = rust ]; then
+      # SYNC_ADMIN_TOKEN reaches the binary by the same env inheritance the Ruby arm relies on
+      # (see below); the binary reads a blank one as "admin door answers 503", never a refusal.
+      build_rust_binary
+      exec env STORAGE_BACKEND=local \
+               SQLITE_DATABASE="$RUST_DB" \
+               CHUNK_LOCAL_DIR="$RUST_CHUNKS" \
+               SECRET_KEY_BASE="$RUST_SECRET_KEY_BASE" \
+               "$RUST_BIN" serve --bind 127.0.0.1 --port "$PORT"
+    fi
     cd "$HOST_DIR"
     # SYNC_ADMIN_TOKEN REACHES THIS SERVER PROCESS BY ORDINARY ENV INHERITANCE, NOT A LINE HERE --
     # worth stating because every OTHER var this script writes is read by the CLIENT, and this one

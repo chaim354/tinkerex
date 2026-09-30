@@ -31,6 +31,77 @@ class BinSyncServerTest < ActiveSupport::TestCase
                      "the failure must name the command that fixes it"
   end
 
+  test "an unknown SYNC_IMPL is refused and names the two it knows" do
+    out, status = Dir.mktmpdir("impl") do |dir|
+      Open3.capture2e({ "TINKEREX_SYNC_DIR" => dir, "SYNC_IMPL" => "python" }, SCRIPT.to_s, "prepare")
+    end
+
+    assert_not status.success?
+    assert_includes out, "SYNC_IMPL must be ruby or rust"
+  end
+
+  # THE RUST ARM (tinkerex-sync's crates/tinkerex-sync), through the same seam as the Ruby arm's
+  # happy path below: the binary is stubbed by TINKEREX_SYNC_BIN so no cargo, no build and no
+  # database are involved, and the stub answers exactly the two subcommands `prepare` runs
+  # (`migrate`, then `device issue`, whose output lines are the rake task's own so the awk is
+  # shared). What this pins: the arm reaches the binary with STORAGE_BACKEND=local and its own
+  # SQLITE_DATABASE under tmp/ (never host/storage/development.sqlite3), parses the token, and
+  # writes the same three keys the Ruby arm writes -- the client (config/ci.rb) cannot tell them
+  # apart, which is the point.
+  test "prepare's Rust arm migrates, issues a device through the stubbed binary and writes the same env file" do
+    Dir.mktmpdir("sync-rust-stub") do |sync_dir|
+      bin_stub = File.join(sync_dir, "tinkerex-sync")
+      File.write(bin_stub, <<~STUB)
+        #!/usr/bin/env bash
+        # Shaped after the real binary's `migrate` and `device issue` output (tinkerex-sync
+        # crates/tinkerex-sync/src/main.rs). Records the env it was reached with, for assertions.
+        set -euo pipefail
+        printf '%s\n' "STORAGE_BACKEND=${STORAGE_BACKEND:-unset}" "SQLITE_DATABASE=${SQLITE_DATABASE:-unset}" \
+          "SECRET_KEY_BASE=${SECRET_KEY_BASE:-unset}" >> "#{sync_dir}/seen-env"
+        case "${1:-} ${2:-}" in
+          "migrate ")
+            echo "Created"
+            ;;
+          "device issue")
+            echo "user_id:      1"
+            echo "device_id:    1"
+            echo "device_token: stub-rust-devtoken-1a2b3c4d5e6f"
+            echo
+            echo "Store it now -- only its digest is kept, so this cannot be shown again."
+            ;;
+          *)
+            echo "stub tinkerex-sync: unhandled '$*'" >&2
+            exit 1
+            ;;
+        esac
+      STUB
+      File.chmod(0o755, bin_stub)
+      # require_checkout still wants host/ to exist -- the checkout is one repo holding both.
+      FileUtils.mkdir_p(File.join(sync_dir, "host"))
+      env_file = Pathname.new(File.join(sync_dir, "sync-server.env"))
+
+      run_env = {
+        "TINKEREX_SYNC_DIR" => sync_dir,
+        "TINKEREX_SYNC_BIN" => bin_stub,
+        "SYNC_IMPL" => "rust",
+        "SYNC_SERVER_ENV_FILE" => env_file.to_s
+      }
+      out, status = Open3.capture2e(run_env, SCRIPT.to_s, "prepare")
+
+      assert status.success?, "the Rust arm's prepare should succeed against a stubbed binary:\n#{out}"
+      written = env_file.read
+      assert_includes written, "CHUNK_REMOTE_URL="
+      assert_includes written, "CHUNK_REMOTE_TOKEN=stub-rust-devtoken-1a2b3c4d5e6f"
+      assert_match(/^SYNC_ADMIN_TOKEN=[0-9a-f]{64}$/, written)
+
+      seen = File.read(File.join(sync_dir, "seen-env"))
+      assert_includes seen, "STORAGE_BACKEND=local"
+      assert_match(%r{SQLITE_DATABASE=.*/tmp/sync-server-rust\.sqlite3}, seen,
+                   "the Rust arm must use its own database under tmp/, never the host's")
+      assert_not_includes seen, "SECRET_KEY_BASE=unset", "the binary refuses to boot without one"
+    end
+  end
+
   test "an unknown subcommand is refused rather than silently doing nothing" do
     out, status = Open3.capture2e(SCRIPT.to_s, "frobnicate")
 
