@@ -1,15 +1,17 @@
 # Sync Protocol — the v1 HTTP API
 
-**Status:** normative reference · **Last updated:** 2026-08-24
+**Status:** normative reference · **Last updated:** 2026-09-30
 
 This document specifies the wire protocol between a sync client (a device) and a sync
 server, well enough that an implementer who has never seen the Ruby source could build
-a compatible server from it alone. It is written for the person who will eventually
-**rewrite the sync server in Rust** — today it is `chaim354/tinkerex-sync`, a mountable
-Rails engine, either embedded in this app (`LIBRARY_BACKEND=chunk`) or run as the
-standalone `host/` Rails app that `LIBRARY_BACKEND=chunk_remote` clients talk to
-(`chaim354/tinkerex-sync`'s own README, "`host/` — a standalone sync server"). Whichever
-process answers `/v1/*`, the wire is what this document describes.
+a compatible server from it alone. It was written for the person who would
+**rewrite the sync server in Rust**, and that rewrite now exists: `chaim354/tinkerex-sync`
+holds both the Ruby implementation (a mountable Rails engine plus the standalone `host/`
+Rails app that `LIBRARY_BACKEND=chunk_remote` clients talk to) and, since 2026-09-30, the
+Rust binary under `crates/tinkerex-sync`, which serves the same wire from the same paths
+and env. The embedded form (`LIBRARY_BACKEND=chunk`) was retired on 2026-08-25. Whichever
+process answers `/v1/*`, the wire is what this document describes — and what that repo's
+recorded conformance corpus pins, exchange by exchange.
 
 **How to use this document alongside the conformance corpus.** `chaim354/tinkerex-sync`
 is growing a recorded conformance corpus at `conformance/` — `runner.rb` (the matcher:
@@ -133,7 +135,7 @@ Three real processes answer this wire today:
 |---|---|---|
 | Embedded engine | `chaim354/tinkerex` (this repo), `LIBRARY_BACKEND=chunk` | The engine mounted in-process via `Sync.draw_v1_routes`; `FileLayer::Chunk` is the in-process adapter. |
 | Standalone host | `chaim354/tinkerex-sync`'s own `host/` | A small dedicated Rails app: the engine, the three host models, device enrollment, nothing else. What `LIBRARY_BACKEND=chunk_remote` clients (`FileLayer::ChunkRemote`, this repo) talk to over plain HTTP. Verified end-to-end 2026-08-22: upload, finalize, changelog pull, local `stat`, byte read, `mkdir`, `move` (with `node_id` preserved), two separate processes, `Sync` undefined in the maker app's process throughout. |
-| *(target)* Rust rewrite | not yet built | What this document is written for. Same wire, same host obligations, free choice of internals. |
+| Rust rewrite | `chaim354/tinkerex-sync`, `crates/tinkerex-sync` (branch `claude/rust-rewrite` as of 2026-09-30; not yet deployed) | What this document was written for. Same wire, same paths and env as the Ruby host, free choice of internals. Graded not by this document alone but by that repo's recorded corpus — sixteen scenario files, `18 runs, 284 assertions, 0 failures, 0 skips` against both the Ruby host and the binary — and by this repo's `SYNC_IMPL=rust bin/sync-server`, which boots it for `bin/ci test-chunk-remote`. |
 
 A **device** holds a local SQLite mirror of the tree and a local chunk cache; metadata
 reads never touch the network. Bytes move **client ⇄ object storage directly** —

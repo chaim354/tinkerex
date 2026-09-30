@@ -102,7 +102,7 @@ The sync engine's own design — chunking, versions, the changelog, conflict rec
 
 | repo | role | how it reaches us |
 |---|---|---|
-| `chaim354/tinkerex-sync` | The chunk/version/changelog engine + its own host app. **Not a dependency of this repo** — no gem, `Sync::` is undefined in this process. | Runs as the **`sync` Kamal accessory**; this app talks to it over HTTP as a client (§6). Devices sync against it directly, never against this app. |
+| `chaim354/tinkerex-sync` | The chunk/version/changelog engine + its own host app, being replaced by a Rust binary (`crates/tinkerex-sync` there) that serves the same wire from the same image paths and env. **Not a dependency of this repo** — no gem, `Sync::` is undefined in this process. | Runs as the **`sync` Kamal accessory**; this app talks to it over HTTP as a client (§6). Devices sync against it directly, never against this app. `SYNC_IMPL=rust bin/sync-server` boots the Rust binary for `bin/ci test-chunk-remote`; the default arm stays Ruby until the cutover. |
 | `chaim354/tinkerex-client` | Rust crates (`fs-provider`, the per-OS mounts, `sync-client`, `sync-engine`) + the Tauri desktop app. Extracted 2026-08-20. | Syncs against the sync server. Clone as a sibling (`../tinkerex-client`) for the CI legs in §13 that need it. |
 
 ---
@@ -1179,7 +1179,10 @@ Four rules survive on **this** side of the boundary:
   require the other in the case that matters. There was a parity test comparing the two method
   bodies while they shared a process; it went with the extraction, and **nothing checks that
   agreement now.** If you change device-token verification here, change it there in the same
-  breath — that obligation has no guard behind it.
+  breath — that obligation has no guard behind it. Since 2026-09-30 "there" is two places, and
+  they are in different languages: `Sync::V1::Authentication` in the Ruby host and
+  `crates/tinkerex-sync/src/auth.rs` (`authenticate`: strip an optional `Bearer `, SHA-256 hex,
+  look up `devices.token_digest`, stamp `last_seen_at`) in the Rust binary that replaces it.
 
 ### 14k. The model catalog and shelves → **`docs/invariants/model-intake.md`**
 
