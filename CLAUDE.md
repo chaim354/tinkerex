@@ -1179,10 +1179,7 @@ Four rules survive on **this** side of the boundary:
   require the other in the case that matters. There was a parity test comparing the two method
   bodies while they shared a process; it went with the extraction, and **nothing checks that
   agreement now.** If you change device-token verification here, change it there in the same
-  breath — that obligation has no guard behind it. Since 2026-09-30 "there" is two places, and
-  they are in different languages: `Sync::V1::Authentication` in the Ruby host and
-  `crates/tinkerex-sync/src/auth.rs` (`authenticate`: strip an optional `Bearer `, SHA-256 hex,
-  look up `devices.token_digest`, stamp `last_seen_at`) in the Rust binary that replaces it.
+  breath — that obligation has no guard behind it. Since 2026-09-30 "there" is two places in two languages: `Sync::V1::Authentication` (Ruby host) and `crates/tinkerex-sync/src/auth.rs`'s `authenticate` (the Rust binary replacing it).
 
 ### 14k. The model catalog and shelves → **`docs/invariants/model-intake.md`**
 
