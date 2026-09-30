@@ -178,10 +178,14 @@ class BinSyncServerTest < ActiveSupport::TestCase
       # bin/sync-server for why a save-and-restore of the real file isn't safe here.
       env_file = Pathname.new(File.join(sync_dir, "sync-server.env"))
 
+      # SYNC_IMPL PINNED, not inherited: this is the RUBY arm's happy path, and a caller running the
+      # suite under `SYNC_IMPL=rust bin/ci ...` would otherwise hand the script the Rust arm, which
+      # looks for a Cargo.toml this stub checkout does not have. Measured, not supposed.
       run_env = {
         "TINKEREX_SYNC_DIR" => sync_dir,
         "PATH" => "#{stub_path_dir}:#{ENV.fetch("PATH")}",
-        "SYNC_SERVER_ENV_FILE" => env_file.to_s
+        "SYNC_SERVER_ENV_FILE" => env_file.to_s,
+        "SYNC_IMPL" => "ruby"
       }
 
       out, status = Open3.capture2e(run_env, SCRIPT.to_s, "prepare")
