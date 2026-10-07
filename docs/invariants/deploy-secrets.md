@@ -58,9 +58,12 @@
   key must stay DEFINED in that destination's `.kamal/secrets.<dest>`, because the accessory still
   requires it. Removing it from the secrets file is what goes red.
 - **AN ACCESSORY HAS NO PROXY REGISTRATION UNLESS YOU GIVE IT ONE, AND THAT BREAKS ANY TOOL THAT
-  PROBES HEALTH BY HOST HEADER.** `sync` declares no `port:` and no `proxy:` — correct, since only
-  another container on the kamal network talks to it — but `bin/restore-db` verified a restore with
-  `curl -H "Host: <dest>.tinkerex.local" http://localhost/up`, which for this destination 404s
-  thirty times, sleeps 60 s and reports "no answer" **for a perfectly healthy server**. Probe an
-  accessory from INSIDE it (`docker exec tinkerex-sync curl localhost:3000/up`). The general shape:
+  PROBES HEALTH BY HOST HEADER.** `sync` declared no `port:` and no `proxy:` until 2026-10-07 —
+  correct while only another container on the kamal network talked to it — but `bin/restore-db`
+  verified a restore with `curl -H "Host: <dest>.tinkerex.local" http://localhost/up`, which for
+  this destination 404ed thirty times, slept 60 s and reported "no answer" **for a perfectly healthy
+  server**. Probe an accessory from INSIDE it (`docker exec tinkerex-sync curl localhost:3000/up`).
+  `sync` now carries a `proxy:` block (the device door, `sync.tinkerex.{local,home}`); the rule
+  stands for every accessory without one, and the in-container probe stays right for `sync` too — a
+  restore must not report failure because kamal-proxy or a registration is down. The general shape:
   a health check written for the app tier silently means something else at the accessory tier.

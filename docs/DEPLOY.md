@@ -306,8 +306,9 @@ goes wrong next.
 ## 4. Point clients at it
 
 **Desktop clients sync against the sync server, never against the maker app** (CLAUDE.md §2, §6;
-`http://192.168.1.95` is the maker app behind kamal-proxy and has not served `/v1/*` since
-2026-08-25). Since 2026-10-07 the `sync` accessory has a door for them: kamal-proxy routes
+`http://192.168.1.95` is the maker app behind kamal-proxy, and it has not served the sync endpoints
+— `/v1/changes`, `/v1/commit`, `/v1/chunks/*`, … — since 2026-08-25; its remaining `/v1/*` is device
+login and the maker API). Since 2026-10-07 the `sync` accessory has a door for them: kamal-proxy routes
 `http://sync.tinkerex.local` (LAN, via `/etc/hosts`) and `http://sync.tinkerex.home` (Tailscale) to
 the container — the `proxy:` block on the accessory in `config/deploy.yml`, same two-names rule as
 the app's own hostnames. The maker app itself keeps using `http://tinkerex-sync:3000` over the
@@ -323,8 +324,10 @@ kamal network; the door is for devices.
   port 80, the same shape as `chunk.tinkerex.home`'s entry, passing the Host header through. Until
   then NPM answers its own 404 page for the name.
 
-Verify, then issue a device token (the command depends on which image the accessory runs —
-"Which build is a sidecar accessory running?" below):
+Verify, then issue a device token. The command depends on which image the accessory runs, and the
+revision label cannot tell them apart (a Ruby and a Rust build of one commit share it): probe for the
+binary instead, as `bin/restore-db` does — `ssh kamal1@192.168.1.95 "docker exec tinkerex-sync sh -c
+'command -v tinkerex-sync'"` prints a path on the Rust image and nothing on the Ruby one.
 
 ```sh
 curl -s http://sync.tinkerex.local/up; echo                                                  # ok

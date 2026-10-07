@@ -304,9 +304,12 @@ accessories:
     # sync server was internal-only: reachable from the maker app's container as
     # http://tinkerex-sync:3000 and from NOTHING else. No desktop client could sync against
     # production at all, and the client repo's scripts still pointed devices at http://192.168.1.95,
-    # which has not served /v1/* since 2026-08-25 (CLAUDE.md §6). kamal 2.12 accepts `proxy:` on an
-    # accessory (lib/kamal/configuration/accessory.rb `running_proxy?`): boot and start register the
-    # container with kamal-proxy, stop deregisters it, and the keys are the app's own.
+    # which has not served the sync endpoints (/v1/changes, /v1/commit, /v1/chunks/*, …) since
+    # 2026-08-25 (CLAUDE.md §6; its remaining /v1/* is device login and the maker API). kamal 2.12
+    # accepts `proxy:` on an accessory (lib/kamal/configuration/accessory.rb `running_proxy?`): boot
+    # and start register the container with kamal-proxy, stop deregisters it, and the keys are the
+    # app's own. DEPLOY IT WITH `reboot` (or `start`, for a container already running): `boot` skips
+    # any host whose container already exists, and the proxy registration is skipped with it.
     #
     # TWO NAMES, for the reasons the header comment gives the app roles — `.local` is what every
     # /etc/hosts client reaches, `.home` is what a phone over Tailscale reaches — and the same
