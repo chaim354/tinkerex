@@ -239,12 +239,14 @@ else
   #
   # THE HEALTH PROBE: the three maker deployments answer through kamal-proxy on a `<dest>.tinkerex
   # .local` host header, which is what makes a Host-header curl the right instrument for them. The
-  # `sync` accessory has NO PROXY REGISTRATION AT ALL — it declares no `port:` and no `proxy:`
-  # (config/deploy.yml's `sync:` block), because the only thing that talks to it is another
-  # container on the kamal network reaching the alias `tinkerex-sync` directly. Left as a Host
-  # curl this loop would 404 thirty times, sleep a full 60 seconds and print "no answer" for a
-  # server that is perfectly healthy — a restore reporting failure over a working database, which
-  # is the worst direction for a script someone runs mid-incident.
+  # `sync` accessory had NO PROXY REGISTRATION AT ALL until 2026-10-07 — no `port:`, no `proxy:` —
+  # because the only thing that talked to it was another container on the kamal network reaching
+  # the alias `tinkerex-sync` directly. Left as a Host curl this loop would 404 thirty times, sleep
+  # a full 60 seconds and print "no answer" for a server that is perfectly healthy — a restore
+  # reporting failure over a working database, which is the worst direction for a script someone
+  # runs mid-incident. It now carries a `proxy:` block (the device door, config/deploy.yml), and the
+  # in-container probe below is STILL the right instrument: a restore must not depend on kamal-proxy
+  # or on a registration being up to report that the database it just restored answers.
   #
   # THE ROW COUNT: `Maker::Project` DOES NOT EXIST on the sync server. It is a different Rails app
   # (chaim354/tinkerex-sync) with no maker layer in it whatsoever — the whole point of Arc D — so

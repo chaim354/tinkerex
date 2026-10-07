@@ -71,6 +71,34 @@ class DeployHygieneTest < ActiveSupport::TestCase
                  "one box, one kamal-proxy, so the last deploy silently wins the name"
   end
 
+  test "the sync accessory's device door registers BOTH names, publishes no port, and collides with no destination" do
+    # Until 2026-10-07 the sync accessory declared no `port:` and no `proxy:` -- internal-only, so no
+    # desktop client could reach production at all (chaim354/tinkerex-sync
+    # docs/superpowers/plans/2026-10-07-rust-cutover.md §0.3.2). The door is kamal-proxy, which routes
+    # on the Host header, so it inherits the destinations' two-names rule above for the same two
+    # reasons -- `.local` is what /etc/hosts clients reach, `.home` is what a phone over Tailscale
+    # reaches, and dropping either strands that population. A `port:` would publish 3000 on the box
+    # and bypass the proxy's Host routing: the proxy is the one door. Read off the MERGED config like
+    # proxy_hosts, so what kamal will register is what is asserted.
+    require "kamal"
+    sync = Kamal::Configuration.create_from(
+      config_file: ROOT.join("config/deploy.yml"), destination: nil
+    ).accessory("sync")
+
+    assert sync.running_proxy?, "the sync accessory must carry a proxy: block -- its device door"
+    assert_equal %w[sync.tinkerex.local sync.tinkerex.home].sort, sync.proxy.hosts.sort,
+                 "the door must register exactly sync.tinkerex.local AND sync.tinkerex.home"
+    refute sync.proxy.ssl?, "plain HTTP on the LAN, like every Unraid destination"
+    assert_nil sync.port, "no port: -- kamal-proxy is the only door, and it routes on Host"
+
+    # One box, one kamal-proxy: a name registered by two services is silently won by the last deploy.
+    UNRAID_DESTINATIONS.each_key do |destination|
+      shared = proxy_hosts(destination) & sync.proxy.hosts
+      assert_empty shared,
+                   "#{destination || 'base'} and the sync accessory both register #{shared.inspect}"
+    end
+  end
+
   test "the OVH overlay clears every Unraid-host-only service URL it cannot reach" do
     # Kamal DEEP-MERGES env.clear (a hash), so the overlay inherits deploy.yml's accessory hostnames.
     # Those resolve only on the Unraid host, where the accessories actually run. Inheriting one makes

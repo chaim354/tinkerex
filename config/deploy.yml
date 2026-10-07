@@ -27,8 +27,9 @@ ssh:
 # Host-routed: three LIBRARY_BACKEND deployments (chunk here, plus `-d s3` and `-d share`) share
 # this one box and one kamal-proxy. Each destination registers DISTINCT hostnames; without a
 # host, three catch-alls would collide and the last deploy would silently win. Add to /etc/hosts
-# on any client that will reach them:
-#   192.168.1.95  chunk.tinkerex.local s3.tinkerex.local share.tinkerex.local
+# on any client that will reach them (sync.tinkerex.local is the sync accessory's device door --
+# `accessories: sync: proxy:` below -- and follows every rule in this comment):
+#   192.168.1.95  chunk.tinkerex.local s3.tinkerex.local share.tinkerex.local sync.tinkerex.local
 # NOTE: once this host is set, the bare IP (http://192.168.1.95) no longer routes to chunk —
 # use http://chunk.tinkerex.local.
 #
@@ -258,11 +259,13 @@ accessories:
     host: 192.168.1.95
 
   # The standalone sync server (repo: chaim354/tinkerex-sync) — Arc D Task 2
-  # (docs/superpowers/plans/2026-08-25-arc-d-part-1-a-real-remote-deployment.md). NO `port:` ->
-  # internal-only, reachable on the Kamal network as `tinkerex-sync`, exactly like the three
-  # accessories above — but unlike them, only ONE app deployment talks to it: the BASE destination,
-  # which carries LIBRARY_BACKEND=chunk_remote since Arc D Part 2 folded the old `remote` overlay
-  # into it. share/s3 never open this door; ovh declares no backend at all (see deploy.ovh.yml).
+  # (docs/superpowers/plans/2026-08-25-arc-d-part-1-a-real-remote-deployment.md). Reachable on the
+  # Kamal network as `tinkerex-sync` — the MAKER APP's door (CHUNK_REMOTE_URL above) — and, since
+  # 2026-10-07, through kamal-proxy as sync.tinkerex.{local,home} — the DEVICES' door (the `proxy:`
+  # block below). Still NO `port:`, like the three accessories above. Unlike them, only ONE app
+  # deployment talks to it: the BASE destination, which carries LIBRARY_BACKEND=chunk_remote since
+  # Arc D Part 2 folded the old `remote` overlay into it. share/s3 never open this door; ovh
+  # declares no backend at all (see deploy.ovh.yml).
   #
   # STORAGE_BACKEND=local: chunk bytes AND this host's own SQLite catalog both live on the volume
   # below, so it needs no SeaweedFS/S3 credential of its own (unlike the maker app's `s3`
@@ -296,6 +299,37 @@ accessories:
   sync:
     image: ghcr.io/chaim354/tinkerex-sync:latest
     host: 192.168.1.95
+    # A DOOR FOR DEVICES (chaim354/tinkerex-sync docs/superpowers/plans/2026-10-07-rust-cutover.md
+    # §2.2, decision D1). Until this block the accessory declared no `port:` and no `proxy:`, so the
+    # sync server was internal-only: reachable from the maker app's container as
+    # http://tinkerex-sync:3000 and from NOTHING else. No desktop client could sync against
+    # production at all, and the client repo's scripts still pointed devices at http://192.168.1.95,
+    # which has not served the sync endpoints (/v1/changes, /v1/commit, /v1/chunks/*, …) since
+    # 2026-08-25 (CLAUDE.md §6; its remaining /v1/* is device login and the maker API). kamal 2.12
+    # accepts `proxy:` on an accessory (lib/kamal/configuration/accessory.rb `running_proxy?`): boot
+    # and start register the container with kamal-proxy, stop deregisters it, and the keys are the
+    # app's own. DEPLOY IT WITH `reboot` (or `start`, for a container already running): `boot` skips
+    # any host whose container already exists, and the proxy registration is skipped with it.
+    #
+    # TWO NAMES, for the reasons the header comment gives the app roles — `.local` is what every
+    # /etc/hosts client reaches, `.home` is what a phone over Tailscale reaches — and the same
+    # one-box-one-proxy rule: a name registered by two services is silently won by the last deploy
+    # (test/deploy_hygiene_test.rb asserts the accessory's names collide with no destination's).
+    # Publishing the names is outside this repo: docs/DEPLOY.md §4.
+    #
+    # STILL NO `port:`. Publishing 3000 on the host would bypass the proxy and its Host routing; the
+    # proxy is the one door. What stands behind it is gated by design: the v1 API by device token,
+    # the admin door by SYNC_ADMIN_TOKEN; the anonymous share-link redeem becomes reachable, which is
+    # its purpose. The maker app keeps using http://tinkerex-sync:3000 — this door is for devices.
+    proxy:
+      ssl: false
+      hosts:
+        - sync.tinkerex.local
+        - sync.tinkerex.home
+      app_port: 3000
+      healthcheck:
+        path: /up
+        interval: 5
     env:
       clear:
         STORAGE_BACKEND: local
