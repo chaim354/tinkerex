@@ -19,7 +19,7 @@ gem "propshaft"
 gem "sqlite3", ">= 2.1"
 # PostgreSQL adapter for the managed/SaaS deployment. Both adapters ship; the active
 # one is selected by config/database.yml / DATABASE_URL (see docs/SYNC_SERVER.md).
-gem "pg", "~> 1.5"
+gem "pg", "~> 1.7"
 # Use the Puma web server [https://github.com/puma/puma]
 gem "puma", ">= 5.0"
 # Use JavaScript with ESM import maps [https://github.com/rails/importmap-rails]
