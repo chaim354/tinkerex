@@ -308,8 +308,15 @@ accessories:
     # 2026-08-25 (CLAUDE.md §6; its remaining /v1/* is device login and the maker API). kamal 2.12
     # accepts `proxy:` on an accessory (lib/kamal/configuration/accessory.rb `running_proxy?`): boot
     # and start register the container with kamal-proxy, stop deregisters it, and the keys are the
-    # app's own. DEPLOY IT WITH `reboot` (or `start`, for a container already running): `boot` skips
-    # any host whose container already exists, and the proxy registration is skipped with it.
+    # app's own. A `proxy:` BLOCK ADDED TO AN ACCESSORY THAT IS ALREADY RUNNING IS DEPLOYED WITH
+    # `start`, NEVER `reboot` -- measured 2026-10-07, the day this block landed: `reboot` runs `stop`
+    # first, `stop` now deregisters a proxied accessory with `kamal-proxy remove tinkerex-sync`, and
+    # for a service that has never been registered that answers "service not found", so SSHKit
+    # aborted AFTER `docker container stop` and BEFORE remove_container/boot. The sync server sat
+    # stopped for about a minute until `bin/kamal accessory start sync` started the same container
+    # and ran `kamal-proxy deploy` for it. Once the service exists, `reboot` works (its remove
+    # succeeds), and that is the ordinary roll command again. `boot` is no help for either case: it
+    # skips any host whose container already exists, and the proxy registration is skipped with it.
     #
     # TWO NAMES, for the reasons the header comment gives the app roles — `.local` is what every
     # /etc/hosts client reaches, `.home` is what a phone over Tailscale reaches — and the same
