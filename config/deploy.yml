@@ -273,6 +273,15 @@ accessories:
   # comment. CABLE_ADAPTER=async because this is ONE container; a second would need Redis, or devices
   # attached to one would never hear the other's broadcasts (host/config/cable.yml over there).
   #
+  # SINCE THE CUTOVER OF 2026-10-07 THE IMAGE IS THE RUST BINARY (`crates/tinkerex-sync` in that
+  # repo; `:latest` is `:<sha>-rust`, the rollback target is `:ruby-4148fcd6…`, the plan is
+  # docs/superpowers/plans/2026-10-07-rust-cutover.md there). It reads STORAGE_BACKEND,
+  # CHUNK_LOCAL_DIR, SECRET_KEY_BASE and SYNC_ADMIN_TOKEN under the same names and IGNORES
+  # CABLE_ADAPTER and RAILS_LOG_TO_STDOUT — the two sentences above describe the previous image.
+  # Both lines stay until that plan's §9 retires the Ruby image: the rollback target still reads
+  # them. Its own Dockerfile already defaults CHUNK_LOCAL_DIR to the volume path, so the line below
+  # is belt-and-braces on Rust and load-bearing for the rollback.
+  #
   # SECRET_KEY_BASE and SYNC_ADMIN_TOKEN are THIS ACCESSORY's own env, resolved through Kamal like any
   # other secret — but they end up referenced from DIFFERENT files, and that split is deliberate, not
   # an inconsistency. `accessories:` here is never overridden by ANY destination overlay, so BOTH keys
@@ -345,6 +354,7 @@ accessories:
         # WITHOUT THIS LINE EVERY CHUNK BYTE IN THE LIBRARY IS DESTROYED BY ANY CONTAINER
         # REPLACEMENT, AND THE CATALOG SURVIVES TO GO ON CLAIMING THE FILES EXIST.
         #
+        # In the Ruby image — what ran until 2026-10-07, and the rollback target —
         # Sync::Storage::LocalChunkStore defaults to `Rails.root.join("tmp", "chunk-store")` —
         # `/rails/host/tmp/chunk-store`, which is the container's EPHEMERAL layer, not the volume
         # mounted below. So a `kamal accessory reboot sync`, an image bump, or any redeploy took

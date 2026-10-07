@@ -102,7 +102,7 @@ The sync engine's own design — chunking, versions, the changelog, conflict rec
 
 | repo | role | how it reaches us |
 |---|---|---|
-| `chaim354/tinkerex-sync` | The chunk/version/changelog engine + its own host app, being replaced by a Rust binary (`crates/tinkerex-sync` there) that serves the same wire from the same image paths and env. **Not a dependency of this repo** — no gem, `Sync::` is undefined in this process. | Runs as the **`sync` Kamal accessory**; this app talks to it over HTTP as a client (§6). Devices sync against it directly, never against this app. `SYNC_IMPL=rust bin/sync-server` boots the Rust binary for `bin/ci test-chunk-remote`; the default arm stays Ruby until the cutover. |
+| `chaim354/tinkerex-sync` | The chunk/version/changelog engine + its own host app, being replaced by a Rust binary (`crates/tinkerex-sync` there) that serves the same wire from the same image paths and env. **Not a dependency of this repo** — no gem, `Sync::` is undefined in this process. | Runs as the **`sync` Kamal accessory**; this app talks to it over HTTP as a client (§6). Devices sync against it directly, never against this app. **Cut over 2026-10-07**: the accessory runs the Rust image (`:38931307…-rust`; rollback `:ruby-4148fcd6…`; plan `docs/superpowers/plans/2026-10-07-rust-cutover.md` there). `SYNC_IMPL=rust bin/sync-server` boots the binary for `bin/ci test-chunk-remote`; the default arm stays Ruby until that plan's §9 (D4). |
 | `chaim354/tinkerex-client` | Rust crates (`fs-provider`, the per-OS mounts, `sync-client`, `sync-engine`) + the Tauri desktop app. Extracted 2026-08-20. | Syncs against the sync server. Clone as a sibling (`../tinkerex-client`) for the CI legs in §13 that need it. |
 
 ---
