@@ -819,3 +819,20 @@ the tag unique, which would imply a dirty build is reproducible.
 "rebuild this sidecar", not "the build is unknown". `docker ps` and
 `kamal accessory details` cannot answer this — they print the run reference, `:latest`, and the
 registry has no digest→tag reverse lookup, so the tags say only which builds exist.
+
+**The `sync` accessory has two implementations, and the revision label cannot tell them apart** — a
+Ruby and a Rust build of one commit share it. Read the description label (`tinkerex-sync (rust)` or
+`tinkerex-sync (ruby)`), or probe for the binary as `bin/restore-db` does:
+
+```sh
+ssh kamal1@192.168.1.95 'docker inspect tinkerex-sync --format \
+  "{{index .Config.Labels \"org.opencontainers.image.description\"}} {{index .Config.Labels \"org.opencontainers.image.revision\"}}"'
+ssh kamal1@192.168.1.95 "docker exec tinkerex-sync sh -c 'command -v tinkerex-sync'"   # a path on Rust, nothing on Ruby
+```
+
+A blank description beside a revision is the pre-label Ruby image. Since the cutover of 2026-10-07
+the answer is `tinkerex-sync (rust) 38931307…`; the rollback target is
+`ghcr.io/chaim354/tinkerex-sync:ruby-4148fcd68ef16bb29f536ced13cd56c0a5237975`, and the rollback is
+the reverse retag of `:latest` plus `bin/kamal accessory reboot sync` — **verified with `docker pull`
+on the box before the reboot**, because on 2026-10-07 a retag read back from the Mac for a minute and
+then reverted at the registry, and the reboot inside that window silently redeployed the old image.
