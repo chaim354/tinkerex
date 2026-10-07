@@ -324,6 +324,12 @@ kamal network; the door is for devices.
   port 80, the same shape as `chunk.tinkerex.home`'s entry, passing the Host header through. Until
   then NPM answers its own 404 page for the name.
 
+**Deploying the door the first time is `bin/kamal accessory start sync`, not `reboot`.** kamal's
+`stop` stops the container and then runs `kamal-proxy remove <service>`; for a service that has never
+been registered that fails with "service not found" and aborts the command, leaving the container
+stopped — measured 2026-10-07, about a minute of sync-server downtime. `start` starts the existing
+container and registers it. Once the service exists, `reboot` is the ordinary roll command again.
+
 Verify, then issue a device token. The command depends on which image the accessory runs, and the
 revision label cannot tell them apart (a Ruby and a Rust build of one commit share it): probe for the
 binary instead, as `bin/restore-db` does — `ssh kamal1@192.168.1.95 "docker exec tinkerex-sync sh -c

@@ -67,3 +67,12 @@
   stands for every accessory without one, and the in-container probe stays right for `sync` too — a
   restore must not report failure because kamal-proxy or a registration is down. The general shape:
   a health check written for the app tier silently means something else at the accessory tier.
+- **A `proxy:` BLOCK ADDED TO A RUNNING ACCESSORY IS DEPLOYED WITH `kamal accessory start`, NEVER
+  `reboot`.** `reboot` is prepare → pull → `stop` → remove_container → boot, and kamal 2.12's `stop`
+  deregisters a proxied accessory with `kamal-proxy remove <service>` AFTER `docker container stop`.
+  For a service that has never been registered the remove answers "service not found", SSHKit
+  aborts, and the container is left STOPPED with nothing rebooting it — measured 2026-10-07 on the
+  `sync` accessory's first proxied deploy, about a minute of sync-server downtime, recovered with
+  `bin/kamal accessory start sync` (it starts the same container and runs `kamal-proxy deploy`).
+  Once the service exists `reboot` works. A reviewer had already noted that `boot` skips a host whose
+  container exists; the trap was in the OTHER command.
