@@ -1204,7 +1204,7 @@ walk is ALWAYS capped and `stopped` reaches the view; restore writes a pending e
 
 **Read that file before touching** `app/assets/stylesheets/`, `app/views/layouts/`,
 `app/helpers/shell_helper.rb`, the `theme`/`rail`/`toast` Stimulus controllers, or any template's
-class names. Twelve rules there; the ones most often undone: the `@layer` order opens
+class names. Thirteen rules there; the ones most often undone: the `@layer` order opens
 `application.css` and every rule of ours is layered, `vendor-overrides.css` alone is not; a
 component selector is defined in `components.css` and nowhere else; theme and rail state are
 cookies the layout renders, never an inline script; the classes the tests pin and the 52 the addon

@@ -27,22 +27,27 @@ landed it (§11).
 
 ## Tokens and themes
 
-4. **Every colour is a token on `:root`, declared there first**; `[data-theme="light"]` and
-   `@media (prefers-color-scheme: light) { [data-theme="system"] }` redefine the same set. Dark is
-   the default and what an absent or junk cookie means. A colour whose only definition sits inside
-   a theme block never applies in the other state.
+4. **Every colour is a token on `:root`, declared there first**; `[data-theme="dark"]` and
+   `@media (prefers-color-scheme: dark) { [data-theme="system"] }` redefine the same set. **Light
+   ("Paper") is the default and what an absent or junk cookie means** (since the 2026-10-08
+   redesign; it was dark before). The default lives in four places that must agree:
+   `ShellHelper#ui_theme`, `theme_controller.js#current`, `lib/codemirror_theme.js#darkThemeActive`
+   and the PWA manifest. A colour whose only definition sits inside a theme block never applies in
+   the other state.
 5. **Drawing colours stay literal**: Measure's layer strokes and the hover/selected pair (pinned by
    computed style in the Measure system tests), the tray top-view fills, LightBurn swatches, and the
    thumbnail stage. `--thumb-stage` is white in BOTH themes because rendered previews are opaque
-   white PNGs — anything that paints text onto that stage needs its own explicit colour (the model
-   file tree shipped light-on-white once for lack of one).
+   white PNGs — anything that paints onto that stage uses `--thumb-ink`, which does not flip
+   either (the model file tree shipped light-on-white once for lack of one). A user's PHOTO is not
+   a render and sits on `--photo-stage` (`.thumb.photo`), never letterboxed in white.
 6. **A token flip is a review question.** Migrating a light-only rule verbatim can break it: `color:
    #fff` over `var(--fg)` was readable when `--fg` was near-black. Pair literals with the ink token
-   (`--accent-ink`) or drop the copy in favour of the component.
+   (`--accent-ink`, which is near-black in the dark theme) or drop the copy in favour of the
+   component.
 
 ## The shell
 
-7. **Theme and rail state are cookies (`theme` ∈ dark|light|system, `rail` ∈ expanded|collapsed),
+7. **Theme and rail state are cookies (`theme` ∈ light|dark|system, `rail` ∈ expanded|collapsed),
    rendered by `ShellHelper` into the first byte of HTML — never an inline script.** The CSP nonces
    `script-src`, and a pre-paint script is the thing not to add. The JS writes them with `path=/`,
    a one-year `max-age` and `samesite=lax`; the server trusts nothing beyond the enum.
@@ -69,6 +74,15 @@ landed it (§11).
     list is in spec §10). Fonts are self-hosted under `app/assets/fonts` with the OFL text beside
     them because `font_src` is `:self`; `@font-face` `url()`s are relative to `application.css`'s
     logical path and Propshaft fingerprints them (`shell_layout_test.rb` fetches each).
+
+13. **The accent is spent once per screen; selection is ink.** `--accent` fills the one primary
+    action and marks the current project (where that action lands). Links, selected chips,
+    toggles, tabs, the file-chooser selection and the active rail item use `--fg`. Status carries
+    its word, never colour alone (`.flash::before`, badge labels). Text on an accent fill is
+    `--accent-ink` (near-black in the dark theme), never a literal white. `components.css` and
+    `shell.css` name tokens, never colour literals (`css_hygiene_test.rb`); drawing colours stay
+    literal in `pages/` (rule 5). Labels stay Plex Sans and mono stays for data (the 2026-09-10
+    cohesion decisions 4 and 5). The values are the Tinkerex Design System artifact.
 
 The library search that the top bar drives (`FilesController#index`, `?q=`) is flat, whole-library
 and case-insensitive; its `LIKE` carries `ESCAPE '\'` because SQLite has no default escape
