@@ -28,7 +28,7 @@ class ShellTest < ApplicationSystemTestCase
     find("aside.rail [data-action='rail#toggle']").click
     assert_selector "body.rail--collapsed"
 
-    find("aside.rail a.rail-link[title='Projects']").click
+    find("aside.rail a.rail-link[title='All projects']").click
     assert_current_path projects_path
     assert_selector "body.rail--collapsed"
 
@@ -37,6 +37,40 @@ class ShellTest < ApplicationSystemTestCase
 
     find("aside.rail [data-action='rail#toggle']").click
     assert_no_selector "body.rail--collapsed"
+    assert_no_console_errors
+  end
+
+  # COLLAPSED, A LIT PIN OR PROJECT HIDES WITH ITS GROUP, so its family link must wear the lit mark
+  # or the rail shows nothing lit at all — which the first cut of the places sidebar did, seen in a
+  # screenshot and by no test. Measured as "which VISIBLE links draw the edge marker", the
+  # `::before` every lit rail link carries, because only a browser resolves the cascade.
+  test "the collapsed rail still marks where you are inside a pinned folder or a project" do
+    @root.join("laser").mkpath
+    Library::ScanJob.perform_now(user_id: @user.id)
+    laser = @user.nodes.present.find_by!(name: "laser", kind: "dir")
+    @user.maker_pins.create!(node_id: laser.node_id)
+    project = @user.maker_projects.create!(name: "Desk Lamp")
+    marked = lambda do
+      page.evaluate_script(<<~JS)
+        Array.from(document.querySelectorAll("aside.rail a.rail-link"))
+          .filter((a) => a.offsetParent !== null && getComputedStyle(a, "::before").content !== "none")
+          .map((a) => a.title)
+      JS
+    end
+
+    visit files_path(folder: laser.node_id)
+    assert_equal [ "laser" ], marked.call
+    find("aside.rail [data-action='rail#toggle']").click
+    assert_selector "body.rail--collapsed"
+    assert_equal [ "Library" ], marked.call
+
+    visit project_path(project)
+    assert_selector "body.rail--collapsed"
+    assert_equal [ "All projects" ], marked.call
+
+    find("aside.rail [data-action='rail#toggle']").click
+    assert_no_selector "body.rail--collapsed"
+    assert_equal [ "Desk Lamp" ], marked.call
     assert_no_console_errors
   end
 

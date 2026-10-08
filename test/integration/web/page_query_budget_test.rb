@@ -1201,6 +1201,24 @@ module Web
                               "settings#show")
     end
 
+    # THE SIDEBAR IS ON EVERY PAGE, so a per-project or per-pin query here would grow every page in
+    # the app. Settings is the probe because nothing else on it grows with projects or pins.
+    test "the sidebar does not grow with projects or pins" do
+      grow = lambda do |upto|
+        (@user.maker_projects.count...upto).each { |i| @user.maker_projects.create!(name: "P#{i}") }
+        (@user.maker_pins.count...[ upto, Maker::Pin::CAP ].min).each do |i|
+          dir = @user.nodes.create!(node_id: "pin-#{i}", name: "place-#{i}", kind: "dir")
+          @user.maker_pins.create!(node_id: dir.node_id)
+        end
+      end
+      grow.call(SMALL)
+      get settings_path
+      small = count_queries { get settings_path }
+      grow.call(LARGE)
+      large = count_queries { get settings_path }
+      assert_equal small, large, "the sidebar's queries grew with projects or pins"
+    end
+
     # THE TAGS LIST (S2-6). Each iteration grows a tag AND tags a project with it, so the one
     # grouped count (Settings::TagsController#index's @counts) is under measurement -- a per-row
     # `tag.taggings.count` in the view would show as growth here, the same argument

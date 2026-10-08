@@ -1,8 +1,8 @@
-<%# The phone navigation (spec §5.4): the same six links as the rail, shown below 720px by
-    shell.css and hidden above it. %>
+<%# The phone navigation (structural redesign spec §4.3): four destinations, shown below 720px by
+    shell.css. Lit by ShellHelper#sidebar_current, the same answer as the sidebar. %>
 <nav class="tabbar" aria-label="Main">
-  <% rail_links.each do |key, label, path, icon| %>
-    <%= link_to path, class: "tabbar-link", "aria-current": (rail_section == key ? "page" : nil) do %>
+  <% tabbar_links.each do |label, path, icon, lit| %>
+    <%= link_to path, class: "tabbar-link", "aria-current": (lit ? "page" : nil) do %>
       <%= rail_icon(icon) %><span><%= label %></span>
     <% end %>
   <% end %>

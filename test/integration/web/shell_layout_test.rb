@@ -18,11 +18,11 @@ module Web
       get files_path
       assert_response :success
       assert_select "body.app-shell aside.rail"
-      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Files"
+      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Library"
     end
 
     test "each top-level section lights its own link" do
-      { root_path => "Home", projects_path => "Projects", models_path => "Models",
+      { root_path => "Home", projects_path => "All projects", models_path => "3D models",
         inventory_items_path => "Inventory", tools_path => "Tools",
         trash_index_path => "Trash" }.each do |path, label|
         get path
@@ -33,8 +33,8 @@ module Web
 
     # Stage 2, S2-6: the settings hub's door in the rail foot, not the main nav -- it lights on
     # its own hub AND on its child (settings/tags), the same way "a nested controller lights its
-    # family" pins Projects/Models below, but scoped to .rail-foot since Settings is not one of
-    # rail_links's seven sections (the phone tab bar mirror stays at 7 -- see that test below).
+    # family" pins Projects/Models below, but scoped to .rail-foot since Settings is a foot control,
+    # not a `.rail-link` -- ShellHelper#sidebar_current's [:settings] lights this link alone.
     test "the rail foot links to Settings and lights it on the hub and its children" do
       get projects_path
       assert_select "aside.rail .rail-foot a.rail-btn.rail-settings[href=?]", settings_path
@@ -46,7 +46,7 @@ module Web
       assert_select "aside.rail .rail-foot a.rail-btn.rail-settings[aria-current='page']"
 
       # NOT lit on a page the settings hub merely links TO -- Suppliers keeps lighting Inventory,
-      # its own rail_links section, not Settings.
+      # its own sidebar entry, not Settings.
       get suppliers_path
       assert_select "aside.rail .rail-foot a.rail-btn.rail-settings[aria-current='page']", count: 0
       assert_select "aside.rail a.rail-link[aria-current='page']", text: "Inventory"
@@ -55,7 +55,7 @@ module Web
     test "the rail's first link is Home, at the root path" do
       get files_path
       assert_select "nav.rail-nav li:first-child a.rail-link[href='/']", text: "Home"
-      # Files -- not Home -- is what GET /files lights; Home carries no aria-current here.
+      # Library -- not Home -- is what GET /files lights; Home carries no aria-current here.
       assert_select "nav.rail-nav li:first-child a.rail-link[aria-current]", count: 0
 
       get root_path
@@ -66,9 +66,11 @@ module Web
     test "a nested controller lights its family" do
       project = @user.maker_projects.create!(name: "Desk Lamp")
       get new_project_attachment_path(project)
-      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Projects"
+      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Desk Lamp"
+      get project_path(project)
+      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Desk Lamp"
       get shelves_path
-      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Models"
+      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "3D models"
     end
 
     test "the sign-in page has no rail and no shell class, whatever the rail cookie says" do
@@ -154,10 +156,105 @@ module Web
       assert_select "aside.rail .current-project-hint", text: /land here/
     end
 
-    test "the phone tab bar mirrors the rail" do
+    # Four tabs, not every sidebar entry: Trash is reached from the sidebar alone, so its page lights
+    # no tab rather than a wrong one.
+    test "the phone tab bar carries four tabs and lights none on a page it does not carry" do
       get trash_index_path
-      assert_select "nav.tabbar a.tabbar-link", count: 7
-      assert_select "nav.tabbar a.tabbar-link[aria-current='page']", count: 1, text: "Trash"
+      assert_select "nav.tabbar a.tabbar-link", count: 4
+      assert_select "nav.tabbar a.tabbar-link[aria-current='page']", count: 0
+    end
+
+    test "the sidebar lists the eight most recently updated active projects, then All projects" do
+      projects = 10.times.map { |i| @user.maker_projects.create!(name: "P#{i}") }
+      projects.each_with_index { |p, i| p.update_column(:updated_at, i.days.ago) }
+      @user.maker_projects.create!(name: "Shelved", status: "archived")
+      get files_path
+      names = css_select("aside.rail a.rail-project .rail-label").map { |e| e.text.strip }
+      assert_equal %w[P0 P1 P2 P3 P4 P5 P6 P7], names
+      assert_select "aside.rail a.rail-link[href=?]", projects_path, text: "All projects"
+    end
+
+    test "an older project's page lights All projects, so one link is always lit" do
+      projects = 9.times.map { |i| @user.maker_projects.create!(name: "P#{i}") }
+      projects.each_with_index { |p, i| p.update_column(:updated_at, i.days.ago) }
+      oldest = projects.last
+      get project_path(oldest)
+      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "All projects"
+    end
+
+    test "a pinned folder sits under Places and lights when you are in it or beneath it" do
+      laser = @user.nodes.create!(node_id: "dir-laser", name: "laser", kind: "dir")
+      jigs = @user.nodes.create!(node_id: "dir-jigs", name: "jigs", kind: "dir", parent_node_id: laser.node_id)
+      @user.maker_pins.create!(node_id: laser.node_id)
+
+      get files_path(folder: jigs.node_id)
+      assert_select "aside.rail a.rail-pin[href=?] svg.folder-glyph", files_path(folder: laser.node_id)
+      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "laser"
+
+      get files_path
+      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Library"
+    end
+
+    # A pin and a pin inside it: the DEEPER one lights (design-system.md rule 8). The test above pins
+    # one folder, so "the first pinned crumb" and "the deepest" agree there and cannot be told apart.
+    test "with a pinned folder inside a pinned folder, the deeper one lights" do
+      laser = @user.nodes.create!(node_id: "dir-laser", name: "laser", kind: "dir")
+      jigs = @user.nodes.create!(node_id: "dir-jigs", name: "jigs", kind: "dir", parent_node_id: laser.node_id)
+      @user.maker_pins.create!(node_id: laser.node_id)
+      @user.maker_pins.create!(node_id: jigs.node_id)
+
+      get files_path(folder: jigs.node_id)
+      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "jigs"
+      get files_path(folder: laser.node_id)
+      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "laser"
+    end
+
+    # Collapsed (and below 1100px) project and pin links hide with their labels, so the lit one's
+    # FAMILY link carries the visible mark there. A class, never aria-current: the markup still lights
+    # exactly one link. shell_test.rb checks that the collapsed rail actually draws it.
+    test "a lit pin or project marks its family link for the collapsed rail" do
+      laser = @user.nodes.create!(node_id: "dir-laser", name: "laser", kind: "dir")
+      @user.maker_pins.create!(node_id: laser.node_id)
+      project = @user.maker_projects.create!(name: "Desk Lamp")
+
+      get files_path(folder: laser.node_id)
+      assert_select "aside.rail a.rail-family-lit", count: 1, text: "Library"
+      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "laser"
+      get project_path(project)
+      assert_select "aside.rail a.rail-family-lit", count: 1, text: "All projects"
+      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Desk Lamp"
+
+      # The family link lit in its own right is not ALSO marked, and nothing else is.
+      get files_path
+      assert_select "aside.rail a.rail-family-lit", count: 0
+      get projects_path
+      assert_select "aside.rail a.rail-family-lit", count: 0
+    end
+
+    test "a pin to a tombstoned folder is hidden and kept" do
+      laser = @user.nodes.create!(node_id: "dir-laser", name: "laser", kind: "dir")
+      @user.maker_pins.create!(node_id: laser.node_id)
+      laser.update!(deleted: true)
+      get files_path
+      assert_select "aside.rail a.rail-pin", count: 0
+      assert_equal 1, @user.maker_pins.count
+    end
+
+    test "Inventory joins the sidebar once there are items, or while you are in it" do
+      get files_path
+      assert_select "aside.rail a.rail-link[href=?]", inventory_items_path, count: 0
+      get inventory_items_path
+      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Inventory"
+      @user.maker_inventory_items.create!(name: "M3 bolt")
+      get files_path
+      assert_select "aside.rail a.rail-link[href=?]", inventory_items_path, count: 1
+    end
+
+    test "the phone tab bar is Home, Library, Projects and Tools" do
+      get files_path
+      labels = css_select("nav.tabbar a.tabbar-link span").map { |e| e.text.strip }
+      assert_equal %w[Home Library Projects Tools], labels
+      assert_select "nav.tabbar a.tabbar-link[aria-current='page']", count: 1, text: "Library"
     end
 
     test "the stylesheet references fingerprinted, servable Plex fonts" do

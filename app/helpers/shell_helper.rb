@@ -99,15 +99,74 @@ module ShellHelper
     SECTIONS.find { |_key, heads| heads.include?(head) }&.first
   end
 
-  def rail_links
+  # --- The places sidebar (structural redesign spec §4.1, slice 2). Each list is ONE query
+  # whatever it holds, so no page's query count grows with projects or pins
+  # (page_query_budget_test.rb). Memoised per request: the sidebar and the tab bar both read them.
+  SIDEBAR_PROJECTS = 8
+
+  def sidebar_projects
+    @sidebar_projects ||= current_user.maker_projects.where.not(status: "archived")
+                                      .order(updated_at: :desc).limit(SIDEBAR_PROJECTS).to_a
+  end
+
+  # [pin, folder name] for each pin whose folder is LIVE, in pinned order. A tombstoned folder's pin
+  # is skipped here and kept in the table, so restoring the folder restores the pin (Maker::Pin).
+  def sidebar_pins
+    @sidebar_pins ||= begin
+      pins = current_user.maker_pins.ordered.to_a
+      names = current_user.nodes.present.where(node_id: pins.map(&:node_id), kind: "dir")
+                          .pluck(:node_id, :name).to_h
+      pins.filter_map { |pin| [ pin, names[pin.node_id] ] if names.key?(pin.node_id) }
+    end
+  end
+
+  # Inventory earns its sidebar entry once it is used — or while the maker is standing in it, so the
+  # page they are on is never one with no lit link.
+  def sidebar_inventory?
+    rail_section == "inventory" || current_user.maker_inventory_items.exists?
+  end
+
+  # THE ONE ANSWER TO "WHICH LINK IS LIT", so exactly one is. A key, compared by sidebar_aria:
+  #   [:home] [:library] [:pin, node_id] [:project, id] [:all_projects] [:models] [:inventory]
+  #   [:tools] [:trash] [:settings]
+  # On the Files page the DEEPEST pinned folder on the breadcrumb wins over Library (`@crumbs` is
+  # FilesController#index's ancestor chain; absent elsewhere). On a project page the project's own
+  # link wins, unless it is older than the eight listed — then All projects, never nothing.
+  def sidebar_current
+    @sidebar_current ||=
+      case rail_section
+      when "home" then [ :home ]
+      when "files"
+        pinned = sidebar_pins.map { |pin, _| pin.node_id }
+        deepest = Array(@crumbs).map(&:node_id).reverse.find { |id| pinned.include?(id) }
+        deepest ? [ :pin, deepest ] : [ :library ]
+      when "projects"
+        id = @project&.id
+        id && sidebar_projects.any? { |p| p.id == id } ? [ :project, id ] : [ :all_projects ]
+      when "models" then [ :models ]
+      when "inventory" then [ :inventory ]
+      when "tools" then [ :tools ]
+      when "trash" then [ :trash ]
+      when "settings" then [ :settings ]
+      end
+  end
+
+  def sidebar_aria(key) = sidebar_current == key ? "page" : nil
+
+  # COLLAPSED — and below 1100px whatever the cookie says — project and pin links hide with their
+  # labels (shell.css), so a lit one would leave the rail with nothing lit to see. Its family link
+  # carries the mark there instead: Library for a pin, All projects for a project. A CLASS, never
+  # aria-current, so the markup still lights exactly one link; shell.css draws it only when narrow.
+  def sidebar_family_lit?(family) = { pin: :library, project: :all_projects }[sidebar_current&.first] == family
+
+  # The phone tab bar: four destinations, each lit by the same answer the sidebar uses.
+  def tabbar_links
+    current = sidebar_current&.first
     [
-      [ "home", "Home", root_path, :home ],
-      [ "files", "Files", files_path, :files ],
-      [ "models", "Models", models_path, :models ],
-      [ "projects", "Projects", projects_path, :projects ],
-      [ "inventory", "Inventory", inventory_items_path, :inventory ],
-      [ "tools", "Tools", tools_path, :tools ],
-      [ "trash", "Trash", trash_index_path, :trash ]
+      [ "Home", root_path, :home, current == :home ],
+      [ "Library", files_path, :files, %i[library pin].include?(current) ],
+      [ "Projects", projects_path, :projects, %i[project all_projects].include?(current) ],
+      [ "Tools", tools_path, :tools, current == :tools ]
     ]
   end
 
