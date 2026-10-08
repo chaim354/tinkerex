@@ -26,17 +26,17 @@ lexxy-toolbar { border-bottom: 1px solid var(--line); background: var(--surface)
 
    THE PAINTING RULES ARE LIGHT-ONLY, and that is the whole arrangement: under the dark theme, or
    `system` resolving dark, app/javascript/lib/codemirror_theme.js adds oneDark and nothing here
-   opposes it. Scoping them to
-   the light theme is not decoration — an unscoped `.cm-editor { background: var(--surface) }` in
+   opposes it. Scoping them to the light theme is not decoration — an unscoped `.cm-editor { background: var(--surface) }` in
    THIS sheet beats oneDark outright (the sheet is unlayered AND linked after the style module CM
    mounts into the head, and `:root[data-theme] .cm-editor` out-specifies oneDark's own
    generated-class selector), so the theme would load and paint nothing.
 
-   `system` IS MATCHED THROUGH THE SAME MEDIA QUERY application.css USES FOR ITS LIGHT TOKENS, not
-   as a bare `:root[data-theme="system"]`. The JS resolves `system` with the identical
-   prefers-color-scheme test, so a bare selector would paint this app's surface over oneDark for
-   exactly the users whose OS is dark and whose theme is "system" — the two halves must agree, and
-   the way to make them agree is to ask the same question.
+   `system` IS MATCHED THROUGH A MEDIA QUERY, not as a bare `:root[data-theme="system"]`.
+   application.css puts Graphite on `system` under `(prefers-color-scheme: dark)`, and the JS
+   resolves `system` with that same dark test; the light painting below asks the COMPLEMENT,
+   `(prefers-color-scheme: light)` (the only other value a browser reports). A bare selector would
+   paint this app's surface over oneDark for exactly the users whose OS is dark and whose theme is
+   "system" — the halves must agree, and the way to make them agree is to ask one question.
 
    The border, the radius and the selection colour are ours in BOTH themes: the first two are the
    panel shape every surface in the app shares, and the third is the accent the rest of the page

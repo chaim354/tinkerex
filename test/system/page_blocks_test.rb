@@ -140,7 +140,10 @@ class PageBlocksTest < ApplicationSystemTestCase
   # on a half pixel (Photos: 786.5 at 13px type, 800.5 after the 2026-10-08 redesign), so the
   # Y-only nudge left the outcome to rounding and to what the drag's animation had under the
   # pointer; the redesign's geometry tipped it and the slot stayed first, 4 runs of 4. The X nudge
-  # makes "after" unambiguous: 5 of 5.
+  # takes the pointer off that exact centre, where Sortable makes no move at all; it does not pick
+  # "after" over "before" (a -10px nudge also lands the block past Photos). What the test checks is
+  # the outcome — the block ends up after Files in the DOM and in the saved order — so the nudge
+  # changes where the pointer is released, never what is asserted. 8 of 8 runs.
   #
   # THE SECOND `move_to` IS THIS SUITE'S OWN ADDITION, AND MASONRY IS WHY. Dragging the FIRST slot —
   # which is where "Add block" puts a new one, so it is this feature's mainline gesture — lifts it
