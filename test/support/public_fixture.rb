@@ -51,13 +51,24 @@ module PublicFixture
   # keeps answering to anyone who saved the URL. A derived asset reaches a visitor through
   # `public_file_preview` or not at all. It lives HERE, in the fixture every public suite includes,
   # so the sweep is one definition rather than one per suite.
-  def assert_no_private_urls
-    assert_select "[href^='/files/']", count: 0
-    assert_select "[src^='/files/']", count: 0
-    assert_no_match(%r{["']/files/}, response.body,
+  #
+  # `within:` IS FOR THE ONE CALLER WHOSE DOCUMENT IS NOT ALL PUBLIC. The owner's preview
+  # (projects/preview) renders the visitor's page inside the APP SHELL, and that chrome is the
+  # owner's: the top bar's New ▸ Text file links into /files/ by design. There the fence is the
+  # visitor's page, `main`, and the scope must match something, or the sweep passes over nothing.
+  def assert_no_private_urls(within: nil)
+    html = response.body
+    if within
+      scope = css_select(within)
+      assert scope.any?, "no #{within} on the page to sweep for private URLs"
+      html = scope.to_s
+    end
+    assert_select "#{within} [href^='/files/']".strip, count: 0
+    assert_select "#{within} [src^='/files/']".strip, count: 0
+    assert_no_match(%r{["']/files/}, html,
                     "a public page built a private /files/ URL — the seam a public template " \
                     "must never cross (CLAUDE.md §14d)")
-    assert_no_match(%r{/rails/active_storage/}, response.body,
+    assert_no_match(%r{/rails/active_storage/}, html,
                     "a public page emitted an Active Storage blob URL — unauthenticated and " \
                     "with no expiry, so the picture outlives the publication. A derived asset " \
                     "goes through public_file_preview (tinkerex#278)")

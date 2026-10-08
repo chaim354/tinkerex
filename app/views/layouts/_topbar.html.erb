@@ -40,4 +40,31 @@
            autocomplete="off">
     <kbd class="topbar-kbd" aria-hidden="true">⌘K</kbd>
   <% end %>
+  <%# NEW ▾ (structural redesign spec §4.2): everything here creates where the maker is standing —
+      NewMenuHelper#new_menu_folder_node_id. Upload joins it in slice 4 with folder destinations. %>
+  <details class="menu topbar-new" data-controller="menu">
+    <summary class="btn">New <span aria-hidden="true">▾</span></summary>
+    <div class="menu-list">
+      <%= form_with url: library_folders_path, method: :post, class: "menu-form", data: { turbo: false } do %>
+        <%= hidden_field_tag :parent_node_id, new_menu_folder_node_id, id: nil %>
+        <label class="menu-form-label" for="new_folder_name">New folder</label>
+        <span class="menu-form-row">
+          <%= text_field_tag :name, nil, id: "new_folder_name", placeholder: "Folder name",
+                             required: true, autocomplete: "off" %>
+          <%= submit_tag "Create", class: "small", name: nil %>
+        </span>
+      <% end %>
+      <div class="menu-sep" role="separator"></div>
+      <%= link_to "Text file", new_files_text_file_path(parent_node_id: new_menu_folder_node_id), class: "menu-item" %>
+      <%= link_to "Project", new_project_path, class: "menu-item" %>
+      <% if new_menu_tools.any? %>
+        <div class="menu-sep" role="separator"></div>
+        <% new_menu_tools.each do |addon| %>
+          <%= link_to "#{addon.title}…", tools_addon_path(addon.key), class: "menu-item" %>
+        <% end %>
+      <% end %>
+      <div class="menu-sep" role="separator"></div>
+      <%= link_to "Inventory item", new_inventory_item_path, class: "menu-item" %>
+    </div>
+  </details>
 </header>

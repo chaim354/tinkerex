@@ -66,7 +66,13 @@ class LibraryBrowseController < ApplicationController
     # TrashController carries this same class in its rescue_from for the same reason, and its
     # comment says so; this door never got the equivalent update.
     node = Maker::LibraryFolder.create_child!(current_user, parent_node_id: parent&.node_id, name:)
-    render json: { node_id: node.node_id, name: node.name, kind: node.kind }, status: :created
+    # TWO DOORS, ONE ACTION. The file chooser posts JSON (Accept: application/json) and gets the row
+    # back; the top bar's New ▸ Folder posts a browser form and lands IN the new folder. JSON is
+    # listed FIRST so an ambiguous Accept (*/*) keeps getting the JSON it always got.
+    respond_to do |format|
+      format.json { render json: { node_id: node.node_id, name: node.name, kind: node.kind }, status: :created }
+      format.html { redirect_to files_path(folder: node.node_id), notice: "Folder “#{node.name}” created." }
+    end
   rescue FileLayer::NotFound
     # KEPT, BUT NO LONGER FOR THE REASON IT WAS WRITTEN. This used to be the reserved-name answer on
     # share/s3 — and it was the ONLY one, which is what let chunk have no answer at all. The door
@@ -107,6 +113,9 @@ class LibraryBrowseController < ApplicationController
   end
 
   def folder_error(message)
-    render json: { error: message }, status: :unprocessable_entity
+    respond_to do |format|
+      format.json { render json: { error: message }, status: :unprocessable_entity }
+      format.html { redirect_back fallback_location: files_path, alert: message }
+    end
   end
 end
