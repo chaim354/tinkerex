@@ -5,7 +5,7 @@ import { postJSON, uploadChunkFile, uploadPortFile } from "lib/chunk_upload"
 import { SVG_NS, shapeElement, unionBox } from "lib/shape_svg"
 import { installPanZoom } from "lib/svg_pan_zoom"
 
-// Measure view: click a contour, read its size in mm.
+// Measure view: click a contour, read its size in mm or inches.
 //
 // Serves .lbrn/.lbrn2, .mage, .dxf and .svg — every format Maker::Previews::Geometry can build a
 // payload for. The page shows a picture at rest (the app's own embedded render for LightBurn and
@@ -53,6 +53,26 @@ const PAPER_KEY = "measure.paper"
 // A guess about the operator rather than a measurement — one constant to change.
 const DEFAULT_PAPER = "Letter"
 
+// THE UNIT A LENGTH IS WRITTEN IN, and ONLY written in. The payload is millimetres and stays
+// millimetres: every number is converted at the last step, in `length()`, so nothing upstream of
+// a label — the bbox, the ⌀, the union, the page geometry — ever holds an inch. Remembered across
+// visits for the paper's reason: a maker who works in inches does so on every file.
+//
+// `places` IS THE DISPLAY PRECISION, AND THE INCH FIGURE IS NOT FINER THAN THE DATA. The payload
+// rounds at 0.01 mm (Geometry::PRECISION); 0.001 in is 0.0254 mm, so three places in inches still
+// says less than the server measured, as 0.1 mm does.
+//
+// THE SVG EXPORT AND THE PRINT SHEET'S SCALE ARE NOT UNITS OF DISPLAY and do not read this:
+// `width="{w}mm"` over a viewBox is the whole scale mechanism of both (§14h), so an inch toggle
+// reaching them would change the size of a file somebody cuts. The sheet's size LABELS do follow
+// it, through the injected `sizeLabel` — the paper and the readout must not disagree (§14h).
+const UNITS = {
+  mm: { label: "mm", perMm: 1, places: 1 },
+  in: { label: "in", perMm: 1 / 25.4, places: 3 },
+}
+const UNIT_KEY = "measure.unit"
+const DEFAULT_UNIT = "mm"
+
 export default class extends Controller {
   // `name` IS REQUIRED, NOT COSMETIC. Stimulus silently ignores a data-*-value attribute the
   // controller does not declare, so `this.nameValue` is `undefined` until it appears here — no
@@ -70,11 +90,20 @@ export default class extends Controller {
   // declare — the trap `name` records above — and the converse costs nothing but is still a lie
   // about what this surface needs, so a value that no method reads does not get declared.
   static targets = ["stage", "dims", "fallback", "paper", "printButton", "svgButton",
-                    "savePrintButton", "saveSvgButton"]
+                    "savePrintButton", "saveSvgButton", "unitButton"]
 
   connect() {
     this.aborted = false
     this.hovered = null
+    // READ HERE, NOT IN draw(), because sizeLabel() has callers that never go through draw():
+    // measure_print_test.rb drives print() on a hand-built `allShapes`, and an undefined unit there
+    // is a TypeError out of the print. `storedUnit` cannot throw, so this is safe where
+    // populatePaper's read had to be moved below bindInteractions.
+    this.unit = this.storedUnit()
+    this.refreshUnitToggle()
+    // THE READOUT ON SCREEN, AS THE FUNCTION THAT WROTE IT — or null for a line with no length in
+    // it. Flipping the unit re-runs it, so "60 × 40 mm" cannot sit beside a toggle reading "in".
+    this.readout = null
     // THE SELECTION, AND SINCE 2026-09-03 THE ONLY SELECTION STATE THERE IS. Membership is by
     // IDENTITY on the payload's own shape objects, reached through node.__shape — so nothing about
     // the wire format has to change to give a contour an id.
@@ -266,6 +295,44 @@ export default class extends Controller {
 
   paperChanged() {
     localStorage.setItem(PAPER_KEY, this.paperTarget.value)
+  }
+
+  // `Object.hasOwn`, NOT `UNITS[saved] ?` the way populatePaper asks PAPERS: a stored
+  // "constructor" or "toString" answers truthy off Object.prototype, and the unit would become a
+  // function with no `perMm`, printing NaN in every label. The try is for a blocked or partitioned
+  // storage context, which throws on READ — a remembered preference must not cost measuring.
+  storedUnit() {
+    try {
+      const saved = localStorage.getItem(UNIT_KEY)
+      return Object.hasOwn(UNITS, saved) ? saved : DEFAULT_UNIT
+    } catch (e) {
+      return DEFAULT_UNIT
+    }
+  }
+
+  setUnit({ params: { unit } }) {
+    if (!Object.hasOwn(UNITS, unit) || unit === this.unit) return
+    this.unit = unit
+    try {
+      localStorage.setItem(UNIT_KEY, unit)
+    } catch (e) {
+      // The choice still holds for this page; it just will not be remembered.
+      console.warn("[measure] could not remember the unit:", e)
+    }
+    this.refreshUnitToggle()
+    if (this.readout) this.setReadout(this.readout)
+  }
+
+  // THE ERB RENDERS `mm` PRESSED AT REST and this rewrites it from the stored choice before the bar
+  // is ever shown (`.measure-actions` is display:none until --ready). NO `hasUnitButtonTarget`
+  // GUARD, for refreshPrintBar's reason: both buttons live in the always-rendered actions span, on
+  // the owner's page and a visitor's alike.
+  refreshUnitToggle() {
+    for (const button of this.unitButtonTargets) {
+      const on = button.dataset.measureUnitParam === this.unit
+      button.classList.toggle("active", on)
+      button.setAttribute("aria-pressed", String(on))
+    }
   }
 
   print() {
@@ -610,8 +677,14 @@ export default class extends Controller {
     // AND `contourLabel` RATHER THAN THE BARE `sizeLabel` THE SELECTING ARM USED TO PASS, so the
     // "⌥ for the whole object" hint survives the merge. It is the ONLY place the app says that
     // gesture exists, and it used to appear only OUTSIDE select mode — which is now nowhere.
-    const size = useObject ? this.dims(unionBox(siblings)) : this.contourLabel(shape, siblings)
-    this.setStatus(`${size} · ${this.selectionStatus()}`)
+    //
+    // A READOUT, NOT A STATUS: the line is kept as the function that composes it, so the unit
+    // toggle can rewrite it in place. Both halves carry lengths, and both are re-read at that
+    // moment — the selection summary is the set as it stands, which is what it said when written.
+    this.setReadout(() => {
+      const size = useObject ? this.dims(unionBox(siblings)) : this.contourLabel(shape, siblings)
+      return `${size} · ${this.selectionStatus()}`
+    })
   }
 
   // The message the view rests at, and the one definition of it: `draw` opens with it and
@@ -738,8 +811,8 @@ export default class extends Controller {
     }
   }
 
-  // NO `hasPrintButtonTarget` GUARD, DELIBERATELY, and the plan's draft had one. FIVE of the seven
-  // controls — the paper select, Print, Download SVG, Reset and ✕ Image — live in ONE
+  // NO `hasPrintButtonTarget` GUARD, DELIBERATELY, and the plan's draft had one. SIX of the eight
+  // controls — the mm/in toggle, the paper select, Print, Download SVG, Reset and ✕ Image — live in ONE
   // always-rendered <span class="measure-actions">, so those targets exist whenever this controller
   // is connected. A guard that cannot fail asserts a condition that does not exist.
   //
@@ -817,18 +890,24 @@ export default class extends Controller {
   // ⌀ only when the server said so. Circularity is decided server-side, from full-resolution
   // points, so the client never re-derives a measurement from the thinned drawing points.
   sizeLabel(shape) {
-    return shape.d != null ? `⌀${this.mm(shape.d)} mm` : this.dims(shape.b)
+    return shape.d != null ? `⌀${this.length(shape.d)} ${UNITS[this.unit].label}` : this.dims(shape.b)
   }
 
   dims(box) {
-    return `${this.mm(box[2] - box[0])} × ${this.mm(box[3] - box[1])} mm`
+    return `${this.length(box[2] - box[0])} × ${this.length(box[3] - box[1])} ${UNITS[this.unit].label}`
   }
 
   // `unionOf` LIVED HERE AND WAS BYTE-IDENTICAL TO print_sheet's `unionBox`. The exporter would
   // have been a third copy, so the one definition moved to lib/shape_svg and both import it.
 
-  mm(n) {
-    return (Math.round(n * 10) / 10).toLocaleString()
+  // MILLIMETRES IN, THE CHOSEN UNIT OUT — the one place a payload number becomes text. It was
+  // `mm(n)`, rounding to 0.1 and leaning on toLocaleString's DEFAULT of three fraction digits;
+  // `maximumFractionDigits` is explicit now because inches use all three, and a fourth place
+  // added to UNITS would otherwise be rounded away here without a word.
+  length(mm) {
+    const { perMm, places } = UNITS[this.unit]
+    const scale = 10 ** places
+    return (Math.round(mm * perMm * scale) / scale).toLocaleString(undefined, { maximumFractionDigits: places })
   }
 
   // RESET IS BOTH HALVES OF "START AGAIN": the view goes home AND the selection empties. There is
@@ -858,7 +937,16 @@ export default class extends Controller {
   // `this.panZoom` — `reset`, `didPan`, `panning`, and `set`/`view` for a caller that ever needs
   // the numbers.
 
+  // EVERY plain status drops the kept readout, so the unit toggle can only ever rewrite the line
+  // that is actually on screen — never resurrect a measurement over "Saved sample-parts.svg." or
+  // a refusal that replaced it.
   setStatus(text) {
+    this.readout = null
     if (this.hasDimsTarget) this.dimsTarget.textContent = text
+  }
+
+  setReadout(compose) {
+    this.setStatus(compose())
+    this.readout = compose
   }
 }

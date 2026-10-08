@@ -2476,17 +2476,17 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # absent AND a click selects anyway, since either half alone is satisfied by a broken view.
   #
   # THE BUTTON COUNT IS PART OF THE CLAIM. `assert_no_button` passes just as happily over a bar
-  # that lost every control, which is exactly the way a template edit fails; SIX is Print, Save
-  # sheet, Download SVG, Save SVG, Reset and ✕ Image, with the paper <select> not a button and the
-  # launch button in a different span. It was FOUR until stage 4, S4-3 added the two Save twins
-  # beside their download counterparts — the count moved because the bar really did, which is the
-  # only reason it may ever move.
+  # that lost every control, which is exactly the way a template edit fails; EIGHT is the mm/in
+  # pair, Print, Save sheet, Download SVG, Save SVG, Reset and ✕ Image, with the paper <select> not a
+  # button and the launch button in a different span. It was FOUR until stage 4, S4-3 added the two
+  # Save twins beside their download counterparts, and SIX until the unit toggle (2026-10-08) — the
+  # count moved because the bar really did, which is the only reason it may ever move.
   test "the actions bar carries no select toggle, and a click selects without one" do
     open_measure_view(@nested_id)
 
     assert_no_button "Select parts", visible: :all
     assert_no_selector "[data-measure-target='selectToggle']", visible: :all
-    assert_selector ".measure-actions button", count: 6
+    assert_selector ".measure-actions button", count: 8
 
     click_plate
 

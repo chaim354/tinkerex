@@ -219,7 +219,7 @@ class MeasureExportTest < ApplicationSystemTestCase
   end
 
   # THE BUTTON MUST NOT LIE ABOUT WHAT IT DOES. Its visible text is constant because the bar
-  # already carries six other controls (four until S4-3's Save twins), so the accessible name is
+  # already carries seven other controls (four until S4-3's Save twins and the mm/in toggle), so the accessible name is
   # what tracks the target — written
   # by the same refreshPrintBar() that writes the Print label, from the same targetNoun(). The
   # at-rest literal is also in the ERB, so this catches the two drifting apart.
