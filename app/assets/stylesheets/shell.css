@@ -5,12 +5,14 @@
   body.app-shell.rail--collapsed { grid-template-columns: var(--rail-collapsed-width) minmax(0, 1fr); }
 
   .rail {
-    position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 14px;
-    padding: 12px 8px; background: var(--surface); border-right: 1px solid var(--line); overflow: hidden auto;
+    position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: var(--space-4);
+    padding: 14px 8px; background: var(--bg); border-right: 1px solid var(--line); overflow: hidden auto;
   }
-  .brand { display: flex; align-items: center; gap: 8px; padding: 2px 8px; color: var(--fg); font-weight: 600; white-space: nowrap; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px; color: var(--fg); font-size: 15px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; }
   .brand:hover { text-decoration: none; }
-  .brand-mark { width: 18px; height: 18px; flex: 0 0 auto; border-radius: 4px; background: var(--accent); }
+  /* The mark: an orange square with a paper square cut from its centre. */
+  .brand-mark { position: relative; width: 18px; height: 18px; flex: 0 0 auto; border-radius: var(--radius-control); background: var(--accent); }
+  .brand-mark::after { content: ""; position: absolute; left: 5px; top: 5px; width: 8px; height: 8px; border-radius: 1px; background: var(--bg); }
 
   /* --- The visitor's header (stage 4, S4-5). The anonymous branch's only chrome: the wordmark and,
      on a maker's page, the maker. Not the rail — a visitor has no library to navigate. It reuses
@@ -30,30 +32,33 @@
 
   .current-project-form { margin: 0; }
   .current-project {
-    display: flex; flex-direction: column; gap: 2px; padding: 10px 10px 8px;
-    border-radius: var(--radius-panel); background: var(--accent-soft);
-    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+    display: flex; flex-direction: column; gap: 2px; padding: 10px;
+    border-radius: var(--radius-panel); background: var(--accent-soft); border: 1px solid var(--accent);
   }
-  .current-project-label { font: 600 10px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .1em; color: var(--accent); }
-  .current-project-name { font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .current-project-hint { font-size: 11px; color: var(--fg-muted); }
-  .current-project select { margin-top: 6px; width: 100%; min-height: 26px; padding: 3px 24px 3px 8px; font-size: 12px; }
+  /* A label, so Plex Sans: mono means data (UI-cohesion decision 4). */
+  .current-project-label { font: 600 11px/16px var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--accent-text); }
+  .current-project-name { font-size: 14px; font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .current-project-hint { font-size: 12px; line-height: 17px; color: var(--fg-muted); }
+  .current-project select { margin-top: var(--space-2); width: 100%; min-height: var(--control-height-small); padding: 2px 26px 2px 8px; font-size: 13px; }
 
-  .rail-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .rail-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
   .rail-link {
-    display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: var(--radius-control);
-    border-left: 2px solid transparent; color: var(--fg-muted); font-weight: 500; white-space: nowrap;
+    position: relative; display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 0 10px;
+    border-radius: var(--radius-control); color: var(--fg-muted); font-weight: 500; white-space: nowrap;
   }
   .rail-link:hover { color: var(--fg); background: var(--raised); text-decoration: none; }
-  .rail-link[aria-current="page"] { color: var(--accent); border-left-color: var(--accent); background: var(--accent-soft); }
+  /* The lit link is INK, never accent: the accent is the one action. The marker sits on the rail's
+     edge, -8px being the rail's own padding-inline (8px in every state, collapsed included). */
+  .rail-link[aria-current="page"] { color: var(--fg); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+  .rail-link[aria-current="page"]::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 2px 2px 0; background: var(--fg); }
   .rail-icon { width: 16px; height: 16px; flex: 0 0 auto; }
 
-  .rail-foot { margin-top: auto; display: flex; flex-direction: column; gap: 4px; padding: 8px 2px 0; border-top: 1px solid var(--line); }
+  .rail-foot { margin-top: auto; display: flex; flex-direction: column; gap: 2px; padding: var(--space-2) 0 0; border-top: 1px solid var(--line); }
   .rail-foot form { margin: 0; }
   .rail-btn {
-    display: inline-flex; align-items: center; gap: 8px; width: 100%; padding: 5px 6px;
+    display: inline-flex; align-items: center; gap: 10px; width: 100%; min-height: 30px; padding: 0 10px;
     background: none; border: 0; border-radius: var(--radius-control); color: var(--fg-muted);
-    font: 500 12px/1.4 var(--font-ui); text-align: left; cursor: pointer;
+    font: 500 13px/1 var(--font-ui); text-align: left; cursor: pointer;
   }
   /* text-decoration: none because the Settings link (an <a>) also carries .rail-btn -- the other
      three rail-foot controls are <button>s, which never picked up base.css's `a:hover` underline. */
@@ -61,12 +66,12 @@
   /* The Settings link's lit state, on the hub and its own children (settings/tags) -- mirrors
      .rail-link[aria-current="page"]'s colour; .rail-btn reserves no border-left gutter, so this
      does not add one. */
-  .rail-foot .rail-btn[aria-current="page"] { color: var(--accent); background: var(--accent-soft); }
-  .rail-user { padding: 2px 6px; font: 11px/1.4 var(--font-mono); color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rail-foot .rail-btn[aria-current="page"] { color: var(--fg); background: var(--surface); }
+  .rail-user { padding: 4px 10px; font: 400 12px/16px var(--font-mono); color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* Collapsed: icons only. The same rules apply below 1100px whatever the cookie says. */
-  .rail--collapsed .rail { padding-inline: 6px; }
-  .rail--collapsed .brand { justify-content: center; padding: 2px 0; }
+  .rail--collapsed .rail { padding-inline: 8px; }
+  .rail--collapsed .brand { justify-content: center; padding: 4px 0; }
   .rail--collapsed .brand-name, .rail--collapsed .rail-label, .rail--collapsed .current-project,
   .rail--collapsed .rail-user, .rail--collapsed .rail-btn span { display: none; }
   .rail--collapsed .rail-link, .rail--collapsed .rail-btn { justify-content: center; padding-inline: 0; }
@@ -74,29 +79,32 @@
 
   .shell-main { min-width: 0; display: flex; flex-direction: column; }
   .topbar {
-    position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 16px;
-    min-height: var(--topbar-height); padding: 0 24px; background: var(--surface); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: var(--space-4);
+    min-height: var(--topbar-height); padding: 0 var(--space-5); background: var(--bg); border-bottom: 1px solid var(--line);
   }
   .topbar-crumbs { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; }
   .topbar-title { font-weight: 600; }
   .topbar-search {
-    display: flex; align-items: center; gap: 8px; flex: 0 1 320px; min-width: 160px; height: 30px; padding: 0 8px;
-    border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--bg); color: var(--fg-muted);
+    display: flex; align-items: center; gap: var(--space-2); flex: 0 1 340px; min-width: 160px; height: var(--control-height); padding: 0 10px;
+    border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface); color: var(--fg-muted);
   }
-  .topbar-search:focus-within { border-color: var(--accent); }
-  .topbar-search input { flex: 1; min-width: 0; min-height: 0; padding: 0; border: 0; background: transparent; color: var(--fg); font: 13px/1.4 var(--font-ui); }
+  .topbar-search:focus-within { border-color: var(--fg); outline: 2px solid var(--focus); outline-offset: 1px; }
+  .topbar-search input { flex: 1; min-width: 0; min-height: 0; padding: 0; border: 0; background: transparent; color: var(--fg); font: 400 14px/20px var(--font-ui); }
   .topbar-search input:focus-visible { outline: none; }
   .topbar-search input::-webkit-search-cancel-button { filter: grayscale(1); }
-  .topbar-kbd { padding: 3px 5px; border: 1px solid var(--line); border-radius: 3px; font: 500 10px/1 var(--font-mono); color: var(--fg-muted); }
+  .topbar-kbd { padding: 2px 5px; border: 1px solid var(--line); border-radius: 2px; font: 500 11px/1 var(--font-mono); color: var(--fg-muted); }
 
-  main.container { width: 100%; max-width: 1360px; margin: 0 auto; padding: 20px 24px 64px; }
+  main.container { width: 100%; max-width: var(--container-max); margin: 0 auto; padding: var(--space-5) var(--space-5) var(--space-8); }
   main.container.container-wide { max-width: none; }
 
   .flash-stack {
     position: fixed; top: 12px; right: 12px; z-index: 900; display: flex; flex-direction: column; gap: 8px;
     width: min(420px, calc(100vw - 24px)); pointer-events: none;
   }
-  .flash-stack > .flash { box-shadow: var(--shadow-float); pointer-events: auto; }
+  /* A floating toast is OPAQUE: the -soft tint is translucent, so it layers over --surface rather
+     than letting the page show through. */
+  .flash-stack > .flash { box-shadow: var(--shadow-float); pointer-events: auto; background-color: var(--surface); background-image: linear-gradient(var(--ok-soft), var(--ok-soft)); }
+  .flash-stack > .flash-alert { background-image: linear-gradient(var(--danger-soft), var(--danger-soft)); }
   .flash-stack:empty { display: none; }
 
   .tabbar { display: none; }
@@ -111,8 +119,8 @@
      correctly and is why that one has always worked. Measured on /users/sign_up at 1440px; guarded
      by test/system/shell_test.rb, which reads the COMPUTED value — a static check on this file
      cannot see a specificity loss. */
-  main.container.auth-main { max-width: 440px; padding-top: 48px; }
-  .auth-card { padding: 24px; border: 1px solid var(--line); border-radius: var(--radius-float); background: var(--surface); }
+  main.container.auth-main { max-width: 440px; padding-top: var(--space-7); }
+  .auth-card { padding: var(--space-5); border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
   .auth-card .brand { padding: 0; margin-bottom: 18px; }
   .auth-card h2 { font-size: 18px; margin: 0 0 16px; }
   .auth-card .field input { max-width: none; }
@@ -121,7 +129,7 @@
   .auth-links { list-style: none; margin: 16px 0 0; padding: 12px 0 0; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
   #error_explanation {
     margin: 0 0 14px; padding: 10px 12px; border-radius: var(--radius-control);
-    background: color-mix(in srgb, var(--danger) 14%, var(--surface)); color: var(--danger); font-size: 13px;
+    border: 1px solid var(--danger); background: var(--danger-soft); color: var(--fg); font-size: 13px;
   }
   #error_explanation h2 { font-size: 13px; margin: 0 0 4px; }
   #error_explanation ul { margin: 0; padding-left: 18px; }
@@ -129,8 +137,8 @@
 
   @media (max-width: 1099px) {
     body.app-shell { grid-template-columns: var(--rail-collapsed-width) minmax(0, 1fr); }
-    .rail { padding-inline: 6px; }
-    .brand { justify-content: center; padding: 2px 0; }
+    .rail { padding-inline: 8px; }
+    .brand { justify-content: center; padding: 4px 0; }
     .brand-name, .rail-label, .current-project, .rail-user, .rail-btn span { display: none; }
     .rail-link, .rail-btn { justify-content: center; padding-inline: 0; }
     .topbar { padding: 0 16px; }
@@ -144,12 +152,12 @@
       position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex;
       height: var(--tabbar-height); background: var(--surface); border-top: 1px solid var(--line);
     }
-    .tabbar-link { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--fg-muted); font-size: 10px; }
+    .tabbar-link { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--fg-muted); font-size: 11px; }
     .tabbar-link:hover { text-decoration: none; }
-    .tabbar-link[aria-current="page"] { color: var(--accent); }
+    .tabbar-link[aria-current="page"] { color: var(--fg); font-weight: 600; }
     .topbar { flex-wrap: wrap; gap: 6px 8px; padding: 6px 12px; }
     .topbar-project { display: flex; align-items: center; gap: 6px; margin: 0; }
-    .topbar-project-label { font: 600 10px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .1em; color: var(--accent); }
+    .topbar-project-label { font: 600 11px/16px var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--accent-text); }
     .topbar-project select { min-height: 26px; padding: 3px 24px 3px 8px; font-size: 12px; max-width: 46vw; }
     .topbar-search { flex: 1 1 100%; min-width: 0; }
     .topbar-kbd { display: none; }
