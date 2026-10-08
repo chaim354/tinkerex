@@ -134,6 +134,14 @@ class PageBlocksTest < ApplicationSystemTestCase
   # `move_by` is load-bearing (a single jump arrives before the drag has begun), and the ten pixels
   # past the target's centre are what make Sortable's before/after decision "after" every time.
   #
+  # TEN PIXELS ON BOTH AXES, BECAUSE SORTABLE READS THIS GRID AS HORIZONTAL. Its `_detectDirection`
+  # answers "horizontal" for any grid with more than one column, so the before/after decision is
+  # made on X, where `move_to` leaves the pointer exactly on the target's centre. That centre sits
+  # on a half pixel (Photos: 786.5 at 13px type, 800.5 after the 2026-10-08 redesign), so the
+  # Y-only nudge left the outcome to rounding and to what the drag's animation had under the
+  # pointer; the redesign's geometry tipped it and the slot stayed first, 4 runs of 4. The X nudge
+  # makes "after" unambiguous: 5 of 5.
+  #
   # THE SECOND `move_to` IS THIS SUITE'S OWN ADDITION, AND MASONRY IS WHY. Dragging the FIRST slot —
   # which is where "Add block" puts a new one, so it is this feature's mainline gesture — lifts it
   # out of the packed grid, and masonry_controller re-spans everything the same instant: every slot
@@ -155,7 +163,7 @@ class PageBlocksTest < ApplicationSystemTestCase
         .move_by(0, 40)
         .move_to(target.native)
         .move_to(target.native)
-        .move_by(0, 10)
+        .move_by(10, 10)
         .release
         .perform
   end
