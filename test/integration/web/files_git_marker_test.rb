@@ -51,10 +51,11 @@ module Web
 
     # Same reader as files_sort_test.rb and files_type_filter_test.rb — a thumbnailable file's
     # link contains the thumbnail cell as well as the name, so read the .file-name span when there
-    # is one, and strip the folder glyph a directory row carries.
+    # is one. A directory row's folder glyph is an SVG with no text, so `strip` drops the space
+    # after it.
     def listed_names
       css_select("table.files tbody tr td:first-child").map do |cell|
-        (cell.at_css(".file-name") || cell.at_css("a")).text.strip.delete_prefix("📁 ")
+        (cell.at_css(".file-name") || cell.at_css("a")).text.strip
       end
     end
 

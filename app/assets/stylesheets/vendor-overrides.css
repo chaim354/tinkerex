@@ -9,7 +9,7 @@ lexxy-editor, lexxy-editor.lexxy-content {
   background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: var(--radius-panel);
   font-family: var(--font-ui);
 }
-lexxy-editor:focus-within { border-color: var(--accent); }
+lexxy-editor:focus-within { border-color: var(--fg); }
 lexxy-editor button, lexxy-toolbar button { color: var(--fg-muted); }
 lexxy-editor button:hover, lexxy-toolbar button:hover { color: var(--fg); background: var(--raised); }
 lexxy-toolbar { border-bottom: 1px solid var(--line); background: var(--surface); }
@@ -19,22 +19,24 @@ lexxy-toolbar { border-bottom: 1px solid var(--line); background: var(--surface)
    above covers only `lexxy-editor`; this covers the read-only rendering. Inherit, so it follows
    whatever the surrounding page colour is in either theme. */
 .lexxy-content { color: inherit; }
-.lexxy-content a { color: var(--accent); }
+/* Links are ink (design-system.md rule 13): the accent is spent on the one action. */
+.lexxy-content a { color: var(--fg); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
 
 /* CodeMirror 6 (the source viewer, the editor, diffs, history blobs).
 
-   THE PAINTING RULES ARE LIGHT-ONLY, and that is the whole arrangement: under the DARK theme
-   app/javascript/lib/codemirror_theme.js adds oneDark and nothing here opposes it. Scoping them to
-   the light theme is not decoration — an unscoped `.cm-editor { background: var(--surface) }` in
+   THE PAINTING RULES ARE LIGHT-ONLY, and that is the whole arrangement: under the dark theme, or
+   `system` resolving dark, app/javascript/lib/codemirror_theme.js adds oneDark and nothing here
+   opposes it. Scoping them to the light theme is not decoration — an unscoped `.cm-editor { background: var(--surface) }` in
    THIS sheet beats oneDark outright (the sheet is unlayered AND linked after the style module CM
    mounts into the head, and `:root[data-theme] .cm-editor` out-specifies oneDark's own
    generated-class selector), so the theme would load and paint nothing.
 
-   `system` IS MATCHED THROUGH THE SAME MEDIA QUERY application.css USES FOR ITS LIGHT TOKENS, not
-   as a bare `:root[data-theme="system"]`. The JS resolves `system` with the identical
-   prefers-color-scheme test, so a bare selector would paint this app's surface over oneDark for
-   exactly the users whose OS is dark and whose theme is "system" — the two halves must agree, and
-   the way to make them agree is to ask the same question.
+   `system` IS MATCHED THROUGH A MEDIA QUERY, not as a bare `:root[data-theme="system"]`.
+   application.css puts Graphite on `system` under `(prefers-color-scheme: dark)`, and the JS
+   resolves `system` with that same dark test; the light painting below asks the COMPLEMENT,
+   `(prefers-color-scheme: light)` (the only other value a browser reports). A bare selector would
+   paint this app's surface over oneDark for exactly the users whose OS is dark and whose theme is
+   "system" — the halves must agree, and the way to make them agree is to ask one question.
 
    The border, the radius and the selection colour are ours in BOTH themes: the first two are the
    panel shape every surface in the app shares, and the third is the accent the rest of the page
@@ -58,5 +60,5 @@ lexxy-toolbar { border-bottom: 1px solid var(--line); background: var(--surface)
 
 /* The spreadsheet grid (jspreadsheet CE + jsuites) stays a LIGHT ISLAND in PR 1 — spec §13 names
    it as the one third-party surface that may keep its own scheme. color-scheme: light keeps its
-   native form controls readable inside the dark shell. */
+   native form controls readable when the shell is dark. */
 .sheet-grid { color-scheme: light; background: #ffffff; color: #1a1e26; border-radius: var(--radius-panel); padding: 4px; }

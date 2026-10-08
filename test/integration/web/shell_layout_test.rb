@@ -91,26 +91,27 @@ module Web
       assert_select "select#topbar_project_id", count: 1
     end
 
-    test "the theme comes from the cookie and defaults to dark" do
-      get files_path
-      assert_select "html[data-theme='dark']"
-      assert_select "meta[name='theme-color'][content='#15181d']"
-      assert_select "meta[name='color-scheme'][content='dark']"
-
-      cookies[:theme] = "light"
+    test "the theme comes from the cookie and defaults to light" do
       get files_path
       assert_select "html[data-theme='light']"
-      assert_select "meta[name='theme-color'][content='#f4f5f7']"
+      assert_select "meta[name='theme-color'][content='#f4f2ed']"
       assert_select "meta[name='color-scheme'][content='light']"
+
+      cookies[:theme] = "dark"
+      get files_path
+      assert_select "html[data-theme='dark']"
+      assert_select "meta[name='theme-color'][content='#141512']"
+      assert_select "meta[name='color-scheme'][content='dark']"
 
       cookies[:theme] = "system"
       get files_path
       assert_select "html[data-theme='system']"
+      assert_select "meta[name='theme-color'][content='#f4f2ed']"
       assert_select "meta[name='color-scheme'][content='light dark']"
 
       cookies[:theme] = "purple"
       get files_path
-      assert_select "html[data-theme='dark']"
+      assert_select "html[data-theme='light']"
     end
 
     test "the rail collapse state comes from the cookie" do

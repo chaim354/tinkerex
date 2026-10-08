@@ -48,7 +48,7 @@ module Web
     # and every ordering assertion below would be comparing against markup instead of names.
     def listed_names
       css_select("table.files tbody tr td:first-child").map do |cell|
-        (cell.at_css(".file-name") || cell.at_css("a")).text.strip.delete_prefix("📁 ")
+        (cell.at_css(".file-name") || cell.at_css("a")).text.strip
       end
     end
 

@@ -7,12 +7,14 @@
 @layer components {
   /* --- Buttons --- */
   .btn, input[type="submit"], .upload-btn span, details.composer > summary {
-    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-    min-height: 30px; padding: 0 12px; border-radius: var(--radius-control);
-    border: 1px solid var(--line); background: var(--raised); color: var(--fg);
-    font: 500 13px/1 var(--font-ui); text-decoration: none; cursor: pointer; white-space: nowrap;
+    display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+    min-height: var(--control-height); padding: 0 14px; border-radius: var(--radius-control);
+    border: 1px solid var(--line-strong); background: var(--surface); color: var(--fg);
+    font: 500 14px/1 var(--font-ui); text-decoration: none; cursor: pointer; white-space: nowrap;
+    transition: background-color .12s, border-color .12s;
   }
-  .btn:hover, input[type="submit"]:hover, details.composer > summary:hover { border-color: var(--line-strong); text-decoration: none; }
+  .btn:hover, input[type="submit"]:hover, .upload-btn span:hover, details.composer > summary:hover { background: var(--raised); text-decoration: none; }
+  .btn svg { width: 16px; height: 16px; flex: 0 0 auto; }
   /* THE ACCENT MEANS "THE ONE ACTION THIS PAGE EXISTS FOR", so an uploader is in this group only
      when its page ASKS -- `.upload-btn.primary`, not `.upload-btn`. It was unconditional until
      2026-09-10, which meant no page could ask for a neutral uploader and every upload control in
@@ -27,83 +29,92 @@
   }
   .btn.primary:hover, .upload-btn.primary span:hover, input[type="submit"].primary:hover { filter: brightness(1.06); border-color: var(--accent); }
   .btn.danger { background: transparent; border-color: var(--danger); color: var(--danger); }
-  .btn.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+  .btn.danger:hover { background: var(--danger-soft); }
   .btn.ghost { background: transparent; border-color: transparent; }
   .btn.ghost:hover { background: var(--raised); }
   /* Outlined in the accent: the one secondary action on a page that deserves the colour without
      the fill (Set as current on a project). */
-  .btn.outline { background: transparent; border-color: var(--accent); color: var(--accent); }
+  .btn.outline { background: transparent; border-color: var(--accent); color: var(--accent-text); }
   .btn.outline:hover { background: var(--accent-soft); border-color: var(--accent); }
-  .btn.small, input[type="submit"].small { min-height: 24px; padding: 0 8px; font-size: 12px; }
-  .btn.icon { width: 30px; padding: 0; }
-  .btn:disabled, input[type="submit"]:disabled { opacity: .55; cursor: default; }
-  .linkbtn { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; cursor: pointer; }
-  .linkbtn:hover { text-decoration: underline; }
-  .linkbtn.danger { color: var(--danger); }
+  .btn.small, input[type="submit"].small { min-height: var(--control-height-small); padding: 0 10px; font-size: 13px; }
+  .btn.icon { width: var(--control-height); padding: 0; }
+  .btn.small.icon { width: var(--control-height-small); }
+  .btn:disabled, input[type="submit"]:disabled { opacity: .5; cursor: default; filter: none; }
+  .linkbtn {
+    background: none; border: 0; padding: 0; color: var(--fg); font: inherit; cursor: pointer;
+    text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px;
+  }
+  .linkbtn:hover { text-decoration-color: var(--fg); }
+  .linkbtn.danger { color: var(--danger); text-decoration-color: currentColor; }
   .linkbtn.small { font-size: 12px; }
   .upload-btn { display: inline-flex; cursor: pointer; }
   .upload-status { font-size: 12px; color: var(--fg-muted); }
-  .uploader { display: inline-flex; align-items: center; gap: 10px; }
+  .uploader { display: inline-flex; align-items: center; gap: var(--space-3); }
 
   /* --- Inputs --- */
   .app-shell input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="submit"]):not([type="hidden"]),
   .app-shell select, .app-shell textarea,
   .auth-card input:not([type="checkbox"]):not([type="submit"]) {
-    font: 13px/1.4 var(--font-ui); color: var(--fg); background: var(--surface);
-    border: 1px solid var(--line); border-radius: var(--radius-control); padding: 5px 9px; min-height: 30px;
+    font: 400 14px/20px var(--font-ui); color: var(--fg); background: var(--surface);
+    border: 1px solid var(--line-strong); border-radius: var(--radius-control);
+    padding: 5px 10px; min-height: var(--control-height);
   }
   .app-shell input:hover, .app-shell select:hover, .app-shell textarea:hover,
-  .auth-card input:hover { border-color: var(--line-strong); }
+  .auth-card input:hover { border-color: var(--fg-muted); }
   .app-shell input:focus-visible, .app-shell select:focus-visible, .app-shell textarea:focus-visible,
-  .auth-card input:focus-visible { border-color: var(--accent); outline: 2px solid var(--focus); outline-offset: 0; }
-  .app-shell textarea { min-height: 80px; line-height: 1.5; }
+  .auth-card input:focus-visible { border-color: var(--fg); outline: 2px solid var(--focus); outline-offset: 1px; }
+  .app-shell input::placeholder, .app-shell textarea::placeholder { color: var(--fg-muted); }
+  .app-shell textarea { min-height: 88px; line-height: 22px; }
   .app-shell select {
-    padding-right: 26px; appearance: none;
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%238a93a2' stroke-width='1.5'/></svg>");
-    background-repeat: no-repeat; background-position: right 9px center;
+    padding-right: 28px; appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23878276' stroke-width='1.5'/></svg>");
+    background-repeat: no-repeat; background-position: right 10px center;
   }
-  .field { display: block; margin-bottom: 14px; }
-  .field > span, .field > label { display: block; font-size: 12px; color: var(--fg-muted); margin-bottom: 4px; }
+  .field { display: block; margin-bottom: var(--space-4); }
+  .field > span, .field > label { display: block; margin-bottom: var(--space-1); font-size: 13px; font-weight: 500; color: var(--fg); }
   .field input, .field textarea, .field select { width: 100%; max-width: 480px; }
   .field > .folder-field { display: inline-flex; }
-  .field-inline { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; }
+  .field-inline { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); font-size: 13px; }
   .field-inline input { width: auto; }
   .form-actions { display: flex; gap: 12px; align-items: center; }
   .form-errors {
-    margin-bottom: 14px; padding: 8px 12px; border-radius: var(--radius-control);
-    background: color-mix(in srgb, var(--danger) 14%, var(--surface)); color: var(--danger); font-size: 13px;
+    margin-bottom: var(--space-4); padding: 10px 12px; border-radius: var(--radius-control);
+    border: 1px solid var(--danger); background: var(--danger-soft); color: var(--fg); font-size: 13px;
   }
 
   /* --- Chips, segmented control, toolbar, breadcrumb, pager, page head --- */
   .chip {
-    display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px;
-    border: 1px solid var(--line); background: var(--surface); color: var(--fg-muted);
-    font: 500 12px/1.4 var(--font-ui); text-decoration: none;
+    display: inline-flex; align-items: center; gap: var(--space-1); min-height: var(--control-height-small);
+    padding: 0 10px; border-radius: var(--radius-pill); border: 1px solid var(--line);
+    background: var(--surface); color: var(--fg-muted); font: 500 13px/1 var(--font-ui); text-decoration: none;
   }
   .chip:hover { border-color: var(--line-strong); color: var(--fg); text-decoration: none; }
-  .chip.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
-  .chip .chip-x { opacity: .7; font-weight: 700; }
-  .chip.active:hover { border-color: var(--danger); color: var(--danger); background: transparent; }
+  .chip.active { border-color: var(--fg); background: var(--fg); color: var(--surface); }
+  .chip .chip-x { opacity: .75; font-weight: 600; }
+  .chip.active:hover { border-color: var(--danger); background: var(--danger-soft); color: var(--danger); }
   /* Tags (stage 2, S2-5): the chip row a tagged record's page renders (TagsHelper#tag_chips) and
-     the tag page's own h1. Smaller and lowercase so a run of them reads as metadata beside a
-     title, not as a second row of the same buttons `.chip` renders for a toolbar filter. */
+     the tag page's own h1. Smaller, lowercase and outlined so a run of them reads as metadata
+     beside a title, not as a second row of the same buttons `.chip` renders for a toolbar filter. */
   .tag-chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .tag-chip {
-    display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px;
+    display: inline-flex; align-items: center; padding: 2px 8px; border-radius: var(--radius-pill);
     border: 1px solid var(--line); background: var(--surface); color: var(--fg-muted);
-    font: 500 11px/1.4 var(--font-ui); text-transform: lowercase; text-decoration: none;
+    font: 500 12px/16px var(--font-ui); text-transform: lowercase; text-decoration: none;
   }
-  .tag-chip:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
-  .view-toggle { display: inline-flex; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); }
+  .tag-chip:hover { border-color: var(--line-strong); color: var(--fg); text-decoration: none; }
+  .view-toggle { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--radius-control); background: var(--raised); }
   /* A `.toggle` is an <a> on the Files page and a button_to's <button> on the project page (folder
      panels), so the UA's button border and background are reset HERE, in the component: a reset in
      a `pages` sheet would beat `.toggle.active` and `.toggle:hover` below regardless of specificity,
      because across cascade layers only the layer order counts (found in review). */
-  .view-toggle .toggle { padding: 4px 10px; font: 500 12px/1.4 var(--font-ui); color: var(--fg-muted); text-decoration: none; border: 0; background: none; cursor: pointer; }
-  .view-toggle .toggle:hover { background: var(--raised); color: var(--fg); text-decoration: none; }
-  .view-toggle .toggle.active { background: var(--raised); color: var(--accent); }
-  .view-toggle .toggle + .toggle { border-left: 1px solid var(--line); }
-  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 12px; }
+  .view-toggle .toggle {
+    display: inline-flex; align-items: center; gap: 6px; min-height: calc(var(--control-height-small) - 2px); padding: 0 10px;
+    border: 0; border-radius: 2px; background: none; color: var(--fg-muted);
+    font: 500 13px/1 var(--font-ui); text-decoration: none; cursor: pointer;
+  }
+  .view-toggle .toggle:hover { color: var(--fg); text-decoration: none; }
+  .view-toggle .toggle.active { background: var(--surface); color: var(--fg); box-shadow: var(--shadow-toggle); }
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); margin: 0 0 var(--space-4); }
   .toolbar-spacer { flex: 1; }
   /* ONE COUNT, ONE DEFINITION (UI-cohesion spec §2.7). This lived TWICE — `pages/files.css` had it
      bare and `pages/inventory.css` had it qualified, with the same three declarations — which is
@@ -116,25 +127,25 @@
      it too (slice 4). Both uses sit inside `.toolbar`, which owns the spacing, so the standalone
      bottom margin that rule carried is gone with the move. */
   .sort-form { display: flex; align-items: center; gap: 8px; margin: 0; }
-  .toolbar-count { font: 12px/1.4 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--fg-muted); white-space: nowrap; }
-  .breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; min-width: 0; }
-  .breadcrumb .sep { color: var(--fg-muted); }
+  .toolbar-count { font: 400 12px/16px var(--font-mono); font-variant-numeric: tabular-nums; color: var(--fg-muted); white-space: nowrap; }
+  .breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; min-width: 0; }
+  .breadcrumb .sep { color: var(--line-strong); }
   .breadcrumb a { color: var(--fg-muted); }
-  .breadcrumb a:hover { color: var(--fg); }
+  .breadcrumb a:hover { color: var(--fg); text-decoration: none; }
   .breadcrumb [aria-current="page"] { color: var(--fg); font-weight: 600; }
-  .pager { display: flex; align-items: center; gap: 14px; margin: 0 0 12px; font-size: 12px; }
+  .pager { display: flex; align-items: center; gap: var(--space-4); margin: 0 0 var(--space-3); font-size: 13px; }
   .pager-status { color: var(--fg-muted); font-family: var(--font-mono); }
-  .page-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin: 0 0 16px; }
-  .page-head h1 { font-size: 20px; }
-  .page-subtitle { margin: 2px 0 0; font-size: 13px; flex-basis: 100%; }
+  .page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-2) var(--space-4); margin: 0 0 var(--space-5); }
+  .page-head h1 { font-size: 20px; line-height: 26px; }
+  .page-subtitle { margin: 2px 0 0; font-size: 14px; color: var(--fg-muted); flex-basis: 100%; }
   .page-actions, .row-actions, .head-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
   /* --- Panels, group headers, tables --- */
-  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px 14px; }
-  .panel h2 { margin: 0 0 10px; font-size: 14px; }
-  .panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin-bottom: 8px; }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel); padding: var(--space-4); }
+  .panel h2 { margin: 0 0 var(--space-3); font-size: 16px; }
+  .panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-3); margin-bottom: var(--space-3); }
   .panel-head h2 { margin: 0; }
-  .panel-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .panel-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 
   /* --- The page editor (2026-09-09, spec 2026-09-09-page-editor §5): the slot, the strip along
      a panel's top edge, the ghost state, the top bar and the YAML drawer. Components, so they hold
@@ -142,7 +153,7 @@
      `panel--full` / `panel--half` stay in pages/projects.css: they are the GRID's business (a
      column span inside `.project-panels`' own media query), not a component's. --- */
   .panel-slot { min-width: 0; }
-  .panel-intro { margin: -4px 0 10px; font-size: 13px; }
+  .panel-intro { margin: -6px 0 var(--space-3); font-size: 13px; color: var(--fg-muted); }
   .panel-slot-body > .panel { border-top-left-radius: 0; border-top-right-radius: 0; }
   .panel--placeholder p { margin: 0; }
   .panel-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 4px 8px;
@@ -164,7 +175,7 @@
   .panel-slot--hidden .panel-strip { border-style: dotted; }
   .panel-slot--ghost { opacity: .35; }
   .layout-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px;
-                padding: 10px 12px; margin: 0 0 12px; border: 1px solid var(--accent); border-radius: var(--radius-panel); background: var(--accent-soft); }
+                padding: 10px 12px; margin: 0 0 12px; border: 1px solid var(--info); border-radius: var(--radius-panel); background: var(--info-soft); }
   .layout-bar-text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13px; }
   .layout-bar-noscript { color: var(--danger); }
   .layout-bar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -194,16 +205,16 @@
      THE BAR SCROLLS SIDEWAYS RATHER THAN WRAPPING, on every width (decision 7): one row of tabs is
      one mechanism and one set of deep links, and a wrapped bar changes height as tabs are renamed. */
   .panel-slot--tab { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 8px 12px;
-                     border: 1px solid var(--accent); border-radius: var(--radius-panel); background: var(--accent-soft); }
+                     border: 1px solid var(--info); border-radius: var(--radius-panel); background: var(--info-soft); }
   .panel-slot--tab .tab-slot-label { font-weight: 600; }
   .panel-slot--tab .tab-name { width: min(240px, 60vw); }
   .panel-slot--tab .tab-slot-count { flex: 1 1 auto; font-size: 12px; }
   .tabs { display: grid; gap: 16px; margin: 16px 0; }
-  .tab-bar { display: flex; gap: 4px; overflow-x: auto; white-space: nowrap; border-bottom: 1px solid var(--line-strong); scrollbar-width: thin; }
-  .tab-link { padding: 8px 14px; border: 1px solid transparent; border-bottom: none;
-              border-radius: var(--radius-panel) var(--radius-panel) 0 0; color: var(--fg-muted); text-decoration: none; }
+  .tab-bar { display: flex; gap: var(--space-5); overflow-x: auto; white-space: nowrap; border-bottom: 1px solid var(--line); scrollbar-width: thin; }
+  .tab-link { padding: 10px 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
+              color: var(--fg-muted); font-weight: 500; text-decoration: none; }
   .tab-link:hover { color: var(--fg); text-decoration: none; }
-  .tab-link.is-active, .tab-link[aria-selected="true"] { color: var(--fg); border-color: var(--line-strong); margin-bottom: -1px; background: var(--surface); }
+  .tab-link.is-active, .tab-link[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--fg); }
   .tab-pane { display: grid; gap: 12px; }
   /* AN AUTHOR `display` BEATS THE USER AGENT'S `[hidden] { display: none }`, so the rule above would
      otherwise leave every pane on screen while tabs_controller dutifully set `hidden` on all but
@@ -221,7 +232,8 @@
 
      `.image-pick` IS ONE CONTROL WITH TWO CALLERS: an image block's picker and the cover's picker
      (which adds `.cover-pick` to carry a different action, not a different look). Its `.active` is
-     the accent outline, so "which picture is this block's" is answerable at a glance. --- */
+     the ink outline (selection is ink, design-system.md rule 13), so "which picture is this
+     block's" is answerable at a glance. --- */
   .layout-add .menu-list { min-width: 160px; }
   .layout-add-cap { max-width: 200px; margin: 4px 6px 2px; font-size: 11px; white-space: normal; }
   .block-panel { display: flex; flex-direction: column; gap: 8px; }
@@ -229,7 +241,7 @@
   .block-link-card { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; color: var(--fg);
                      background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel);
                      text-decoration: none; }
-  .block-link-card:hover { border-color: var(--accent); text-decoration: none; }
+  .block-link-card:hover { border-color: var(--fg); text-decoration: none; }
   .block-link-title { font-weight: 600; }
   .block-link-line { font-size: 12px; }
   .block-link-host { font-size: 11px; font-family: var(--font-mono); overflow-wrap: anywhere; }
@@ -251,7 +263,7 @@
                 font: 12px/1.4 var(--font-ui); background: none; border: 1px solid transparent;
                 border-radius: var(--radius-panel); cursor: pointer; }
   .image-pick:hover { border-color: var(--line-strong); }
-  .image-pick.active { border-color: var(--accent); background: var(--accent-soft); }
+  .image-pick.active { border-color: var(--fg); background: var(--raised); }
   .image-pick .thumb { width: 100%; height: 72px; }
   .image-pick-name { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
   .page-intro { display: grid; gap: 12px; margin: 0 0 12px; }
@@ -265,59 +277,66 @@
      — 22 mono leaf elements on the project page, 20 on inventory. Uppercase and the letter-spacing
      stay: they are what makes this read as a group head, and they do that in either face. */
   .attachment-group-head, .tasks-group h3, .group-head {
-    margin: 0 0 8px; font: 600 11px/1.4 var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted);
+    margin: 0 0 var(--space-2); font: 600 11px/16px var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted);
   }
   .attachment-group-head { cursor: pointer; }
   .attachment-group-head:hover { color: var(--fg); }
-  table.files, .table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.files, .table { width: 100%; border-collapse: collapse; font-size: 14px; }
   table.files th, .table th {
-    text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line-strong); white-space: nowrap;
-    font: 500 11px/1.4 var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted);
+    text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line-strong); white-space: nowrap;
+    font: 600 11px/16px var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted);
   }
-  table.files td, .table td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  table.files td, .table td { height: var(--row-height); padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
   table.files tbody tr:hover, .table tbody tr:hover { background: var(--raised); }
   table.files th a { color: inherit; }
   table.files th a:hover { text-decoration: underline; }
   table.files th.sorted a { color: var(--fg); }
-  table.files .num, .table .num { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  table.files .row-actions { justify-content: flex-end; font-size: 12px; opacity: 0; transition: opacity .12s; }
+  table.files .num, .table .num { text-align: right; font: 400 12px/16px var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--fg-muted); }
+  table.files .row-actions { justify-content: flex-end; opacity: 0; transition: opacity .12s; }
   table.files tr:hover .row-actions, table.files tr:focus-within .row-actions { opacity: 1; }
   @media (hover: none) { table.files .row-actions { opacity: 1; } }
   .dir { font-weight: 600; }
-  .file-cell { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .file-cell { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
   .file-name { overflow-wrap: anywhere; }
 
   /* --- Tiles and thumbnails (the markup is files/_thumb.html.erb; thumbs_controller swaps its
      children, so every state below keeps its class) --- */
   .thumb {
-    display: flex; align-items: center; justify-content: center; overflow: hidden;
-    border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--thumb-stage); color: #5f6873;
+    position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden;
+    border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--thumb-stage); color: var(--thumb-ink);
   }
   .thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
-  .thumb-icon { font: 600 10px/1 var(--font-mono); letter-spacing: .04em; color: #5f6873; }
+  .thumb-icon { font: 500 11px/1 var(--font-mono); letter-spacing: .06em; color: var(--thumb-ink); }
   .thumb-spinner {
-    width: 14px; height: 14px; border: 2px solid #d9dde3; border-top-color: #7a8390; border-radius: 50%;
-    animation: thumb-spin .8s linear infinite;
+    width: 14px; height: 14px; border: 2px solid transparent; border-top-color: var(--thumb-ink); border-right-color: var(--thumb-ink);
+    border-radius: 50%; animation: thumb-spin .8s linear infinite;
   }
   @keyframes thumb-spin { to { transform: rotate(360deg); } }
-  table.files .thumb { width: 40px; height: 40px; flex: 0 0 40px; }
+  table.files .thumb { width: 32px; height: 32px; flex: 0 0 32px; }
   .folder-thumb, .generic-thumb { background: var(--raised); color: var(--fg-muted); }
-  .folder-thumb { font-size: 40px; }
-  .generic-thumb { font: 700 13px/1 var(--font-mono); letter-spacing: .06em; }
-  .grid-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; color: var(--fg); text-decoration: none; }
+  .folder-thumb .folder-glyph { width: 40%; height: 40%; }
+  .generic-thumb { font: 500 12px/1 var(--font-mono); letter-spacing: .08em; }
+  /* A user's PHOTO on a tile: the neutral matte and a crop, never letterboxed in white. */
+  .thumb.photo { background: var(--photo-stage); }
+  .thumb.photo img { object-fit: cover; }
+  /* The folder glyph (ShellHelper#folder_glyph): the rail's `files` icon, inline beside a name. */
+  .folder-glyph, .file-glyph { width: 16px; height: 16px; flex: 0 0 auto; vertical-align: -3px; }
+  .filechooser-row .folder-glyph, .filechooser-row .file-glyph { margin-right: 6px; }
+  .grid-card { display: flex; flex-direction: column; gap: 2px; min-width: 0; color: var(--fg); text-decoration: none; }
+  .grid-card .thumb { margin-bottom: var(--space-2); transition: border-color .12s; }
   .grid-card:hover { text-decoration: none; }
-  .grid-card:hover .thumb { border-color: var(--accent); }
-  .grid-card .grid-name { font-size: 12px; line-height: 1.35; text-align: center; overflow-wrap: anywhere; }
+  .grid-card:hover .thumb { border-color: var(--fg); }
+  .grid-card .grid-name { font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
 
   /* --- Metadata strip, badges, empty state --- */
   dl.meta {
-    display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 0 0 16px;
-    padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface);
+    display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px var(--space-4); margin: 0 0 var(--space-4);
+    padding: 12px var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface);
   }
   /* `dt` is the label and `dd` is the value, which is decision 4's split inside one component:
      the term goes to the UI face, the data keeps mono. */
-  dl.meta dt { font: 500 11px/1.6 var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted); }
-  dl.meta dd { margin: 0; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+  dl.meta dt { font: 600 11px/20px var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted); }
+  dl.meta dd { margin: 0; font: 400 13px/20px var(--font-mono); overflow-wrap: anywhere; }
   @media (min-width: 900px) { dl.meta { grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr); } }
   /* ONE PILL VOCABULARY (decision 5). `.chip`, `.tag-chip` and `.badge` are three components
      saying the same kinds of thing, and until 2026-09-10 they said them in two typefaces and three
@@ -331,32 +350,35 @@
      "Wanted" — one state, two words, one screen. Labels come from a hash keyed on the enum
      (Maker::Model::PRINT_STATUS_LABELS, Maker::ProjectKind::LABELS) so both callers read one
      source. `.tag-chip` KEEPS `lowercase`: a tag is user-entered and lowercasing it is a real
-     normalisation, not a display trick. */
+     normalisation, not a display trick. Since the 2026-10-08 redesign a `.badge` is
+     square-shouldered (`--radius-control`) where a `.chip` stays round: shape says
+     fixed-versus-removable, face and case stay shared. */
   .badge {
-    display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px;
-    font: 600 11px/1.6 var(--font-ui); background: var(--raised); color: var(--fg-muted);
+    display: inline-flex; align-items: center; padding: 1px 7px; border-radius: var(--radius-control);
+    font: 600 12px/18px var(--font-ui); background: var(--raised); color: var(--fg-muted); white-space: nowrap;
   }
   .badge.status-archived { background: var(--raised); color: var(--fg-muted); }
   /* --- Project status and the new-project mark (stage 4, S4-6). Variants of `.badge`, so they
      live HERE and nowhere else: a component selector is defined in components.css alone
      (design-system rule 3), and `pages/projects.css` may qualify one inside a container but never
      redeclare it. `planning` has no rule because it is the default and is never badged. --- */
-  .badge.status-active { background: var(--accent-soft); color: var(--accent); }
+  .badge.status-active { background: var(--info-soft); color: var(--info); }
   .badge.status-paused { background: var(--raised); color: var(--fg-muted); }
-  .badge.status-done { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
-  .badge.project-new { background: var(--accent-soft); color: var(--accent); text-transform: none; }
-  .badge.mstatus-want_to_print { background: var(--accent-soft); color: var(--accent); }
-  .badge.mstatus-printed { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
-  .badge.mstatus-failed { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
-  .badge.current-project-badge { background: var(--accent-soft); color: var(--accent); text-transform: none; }
-  .badge.low-stock { background: var(--accent-soft); color: var(--accent); text-transform: none; }
-  .badge.bom-stock { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); text-transform: none; }
-  .badge.bom-file { background: var(--accent-soft); color: var(--accent); text-transform: none; }
+  .badge.status-done { background: var(--ok-soft); color: var(--ok); }
+  .badge.project-new { background: var(--info-soft); color: var(--info); text-transform: none; }
+  .badge.mstatus-want_to_print { background: var(--info-soft); color: var(--info); }
+  .badge.mstatus-printed { background: var(--ok-soft); color: var(--ok); }
+  .badge.mstatus-failed { background: var(--danger-soft); color: var(--danger); }
+  .badge.current-project-badge { background: var(--accent-soft); color: var(--accent-text); text-transform: none; }
+  .badge.low-stock { background: var(--warn-soft); color: var(--warn); text-transform: none; }
+  .badge.bom-stock { background: var(--ok-soft); color: var(--ok); text-transform: none; }
+  .badge.bom-file { background: var(--info-soft); color: var(--info); text-transform: none; }
   .badge.bom-text { background: var(--raised); color: var(--fg-muted); text-transform: none; }
   /* Publishing (stage 3, S3-4): the project head's visibility badge. Public reads as "on", unlisted
-     as the quieter accent -- a link, not a listing. Private renders no badge at all. */
-  .badge.visibility-public { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
-  .badge.visibility-unlisted { background: var(--accent-soft); color: var(--accent); }
+     as a warning tone, since the accent is reserved for the one action -- a link, not a listing.
+     Private renders no badge at all. */
+  .badge.visibility-public { background: var(--ok-soft); color: var(--ok); }
+  .badge.visibility-unlisted { background: var(--warn-soft); color: var(--warn); }
   /* Releases (stage 3, S3-5): a release recorded from a folder larger than the snapshot's cap says
      so on its row -- the quiet neutral, since it is a fact about the record, not a fault. NOT
      `.badge.truncated`: the bare `.truncated` BANNER rule below shares that class and, later in the
@@ -368,7 +390,7 @@
      one render it -- a copy in each page sheet is the shape rule 3 (design-system.md) forbids.
      `text-transform: none` for the same reason the bom-* modifiers carry it: these read as words,
      not as a label. */
-  .badge.changed { background: var(--accent-soft); color: var(--accent); text-transform: none; }
+  .badge.changed { background: var(--info-soft); color: var(--info); text-transform: none; }
   /* ONE EMPTY STATE, TWO SIZES (decision, UI-cohesion spec §2.4). `.empty` had THREE
      implementations before 2026-09-10: this one, plus `.projects-empty` and `.models-empty`, which
      carried these four declarations VERBATIM under new names in two page sheets. That slipped past
@@ -383,34 +405,48 @@
 
      `.muted` ON AN `.empty` IS INERT AND WAS WRITTEN 18 TIMES — `color: var(--fg-muted)` is right
      here. All 18 are dropped; do not add a nineteenth. */
-  .empty { padding: 40px 16px; text-align: center; color: var(--fg-muted); border: 1px dashed var(--line); border-radius: var(--radius-panel); }
-  .empty.inline { padding: 4px 0; text-align: left; border: 0; font-size: 12px; }
+  .empty {
+    padding: var(--space-7) var(--space-4); text-align: center; color: var(--fg-muted);
+    border: 1px dashed var(--line-strong); border-radius: var(--radius-panel); background-color: var(--bg);
+    background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 12px 12px; background-position: -1px -1px;
+  }
+  .empty.inline { padding: 4px 0; text-align: left; border: 0; background: none; font-size: 13px; }
   /* INSIDE A PANEL THE DASH IS DOUBLE FRAMING. The dashed box exists to mark out a region that has
      nothing in it on a bare page; a `.panel` already draws that region, so the two together read as
      a box inside a box. Found by looking at Home after its four sections became panels (slice 4) —
      the markup did not change, and neither did `.empty`, but putting one inside the other did. */
-  .panel .empty { border: 0; padding: 24px 16px; }
+  .panel .empty { border: 0; padding: 24px 16px; background: none; }
   /* An .empty that HOLDS elements rather than being one — /tools first-run state. `p` carries a
      bottom margin, which would otherwise sit inside the box's own padding and make it lopsided. */
   .empty > :last-child { margin-bottom: 0; }
-  .truncated { margin: 0 0 12px; padding: 8px 12px; border-radius: var(--radius-control); background: var(--raised); color: var(--fg-muted); font-size: 12px; }
+  .truncated { margin: 0 0 var(--space-3); padding: 8px 12px; border-radius: var(--radius-control); background: var(--warn-soft); color: var(--fg); font-size: 13px; }
 
   /* --- Flash (inline colours here; the floating stack is shell.css's .flash-stack) --- */
-  .flash { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: var(--radius-panel); border: 1px solid transparent; font-size: 13px; color: var(--fg); }
-  .flash-notice { background: color-mix(in srgb, var(--ok) 14%, var(--surface)); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
-  .flash-alert { background: color-mix(in srgb, var(--danger) 14%, var(--surface)); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+  .flash { display: flex; align-items: flex-start; gap: var(--space-3); padding: 10px 12px; border-radius: var(--radius-float); border: 1px solid; font-size: 14px; color: var(--fg); background: var(--surface); }
+  /* Each toast LEADS WITH ITS WORD: a status is never colour alone (design-system.md rule 13). */
+  .flash::before { flex: 0 0 auto; font: 600 11px/21px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; }
+  .flash-notice { border-color: var(--ok); background: var(--ok-soft); }
+  .flash.flash-notice::before { content: "Done"; color: var(--ok); }
+  .flash-alert { border-color: var(--danger); background: var(--danger-soft); }
+  .flash.flash-alert::before { content: "Problem"; color: var(--danger); }
+  /* `.flash { display: flex }` outranks the UA's `[hidden] { display: none }`, so a flash rendered
+     hidden (the openscad addon bundle ships `p.flash.flash-alert[hidden]` as a notice slot) showed
+     as an empty PROBLEM box on every load. Same shape as `.tab-pane[hidden]`. */
+  .flash[hidden] { display: none; }
   .flash-text { flex: 1; }
   .flash-close { background: none; border: 0; padding: 0 2px; color: inherit; font-size: 16px; line-height: 1; cursor: pointer; opacity: .7; }
   .flash-close:hover { opacity: 1; }
 
   /* --- Floating things: menu, popover, dialog, composer --- */
   .file-menu {
-    position: absolute; z-index: 1000; min-width: 160px; padding: 4px;
-    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel); box-shadow: var(--shadow-float);
+    position: absolute; z-index: 1000; min-width: 200px; padding: 4px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-float); box-shadow: var(--shadow-float);
   }
   .file-menu button, .file-menu a {
-    display: block; width: 100%; text-align: left; padding: 7px 10px; background: none; border: 0;
-    color: var(--fg); font: 13px/1.4 var(--font-ui); border-radius: var(--radius-control); cursor: pointer; text-decoration: none; box-sizing: border-box;
+    display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: var(--control-height); padding: 0 10px;
+    text-align: left; background: none; border: 0; color: var(--fg); font: 400 14px/1 var(--font-ui);
+    border-radius: var(--radius-control); cursor: pointer; text-decoration: none; box-sizing: border-box;
   }
   .file-menu button:hover, .file-menu a:hover { background: var(--raised); text-decoration: none; }
   /* THE ONE DESTRUCTIVE ENTRY READS AS ONE. filemenu_controller.js sets `className = "danger"` on
@@ -428,7 +464,7 @@
   .note-badge { display: inline-block; margin-left: 6px; font: 500 11px/1 var(--font-mono); color: var(--fg-muted); vertical-align: middle; white-space: nowrap; }
   dialog.move-conflict {
     display: block; position: static; width: 100%; max-width: none; margin: 0 0 16px; padding: 12px 14px;
-    border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius-panel);
+    border: 1px solid var(--line-strong); border-radius: var(--radius-panel);
     background: var(--surface); color: var(--fg);
   }
   dialog.move-conflict p { margin: 0 0 10px; }
@@ -446,14 +482,15 @@
   details.menu[open] > summary { border-color: var(--line-strong); }
   .menu-list {
     position: absolute; right: 0; top: calc(100% + 4px); z-index: 50; min-width: 220px; padding: 4px;
-    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel); box-shadow: var(--shadow-float);
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-float); box-shadow: var(--shadow-float);
   }
   .menu-list form { margin: 0; }
   .menu-item {
-    display: block; width: 100%; text-align: left; padding: 7px 10px; background: none; border: 0;
-    color: var(--fg); font: 13px/1.4 var(--font-ui); border-radius: var(--radius-control); cursor: pointer;
-    text-decoration: none; white-space: nowrap;
+    display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: var(--control-height); padding: 0 10px;
+    text-align: left; background: none; border: 0; color: var(--fg); font: 400 14px/1 var(--font-ui);
+    border-radius: var(--radius-control); cursor: pointer; text-decoration: none; white-space: nowrap;
   }
+  .menu-sep { height: 1px; margin: 4px 6px; background: var(--line); }
   .menu-item:hover { background: var(--raised); text-decoration: none; }
   .menu-item.danger { color: var(--danger); }
   /* A menu row that HOSTS a control rather than being one — the build-log uploader is a label
@@ -465,14 +502,14 @@
      build this markup themselves — every class here is part of the §14c contract) --- */
   .folder-field { display: inline-flex; }
   .folder-field-btn {
-    display: inline-flex; align-items: center; gap: 6px; max-width: 260px; min-height: 30px;
-    padding: 0 12px; border: 1px solid var(--line); border-radius: var(--radius-control);
-    background: var(--surface); color: var(--fg); font: 13px/1.4 var(--font-ui); cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px; max-width: 260px; min-height: var(--control-height);
+    padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-control);
+    background: var(--surface); color: var(--fg); font: 400 14px/20px var(--font-ui); cursor: pointer;
   }
-  .folder-field-btn:hover { border-color: var(--accent); }
+  .folder-field-btn:hover { border-color: var(--fg-muted); }
   .folder-field-btn .ff-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .filechooser-overlay {
-    position: fixed; inset: 0; z-index: 1000; padding: 16px; background: rgba(0, 0, 0, .55);
+    position: fixed; inset: 0; z-index: 1000; padding: 16px; background: var(--scrim);
     display: flex; align-items: center; justify-content: center;
   }
   .filechooser {
@@ -505,9 +542,9 @@
      UA-styled button and an anchor back to what the `div` row always looked like. */
   .filechooser-row { display: block; padding: 7px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; appearance: none; border: 0; background: none; width: 100%; text-align: left; font-family: inherit; color: inherit; text-decoration: none; }
   .filechooser-row:hover { background: var(--raised); }
-  .filechooser-row.sel { background: var(--accent); color: var(--accent-ink); }
+  .filechooser-row.sel { background: var(--fg); color: var(--surface); }
   .filechooser-row.is-file { color: var(--fg-muted); }
-  .filechooser-row.sel.is-file { color: var(--accent-ink); }
+  .filechooser-row.sel.is-file { color: var(--surface); }
   .filechooser-empty { padding: 10px 12px; color: var(--fg-muted); font-size: 12px; }
   .filechooser-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--line); }
   .filechooser-actions { display: flex; align-items: center; gap: 8px; }

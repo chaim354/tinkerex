@@ -7,70 +7,126 @@
 @layer tokens, base, components, shell, pages;
 
 @layer tokens {
+  /* PAPER IS THE DEFAULT (2026-10-08 redesign): an absent or junk theme cookie renders
+     data-theme="light", and :root carries the complete Paper set. Graphite redefines the SAME names
+     below; a colour declared only inside a theme block never applies in the other state
+     (design-system.md rule 4). Token names are the pre-redesign names on purpose, so every page
+     sheet keeps working. Values: the Tinkerex Design System artifact. */
   :root {
-    color-scheme: dark;
-    --bg: #15181d;
-    --surface: #1b1f25;
-    --raised: #232830;
-    --line: #2b313a;
-    --line-strong: #3a424d;
-    --fg: #e4e7ec;
-    --fg-muted: #8a93a2;
-    --accent: #f0a53a;
-    --accent-ink: #1a1408;
-    --accent-soft: rgba(240, 165, 58, .10);
-    --ok: #5cc186;
-    --danger: #ef6b5c;
+    color-scheme: light;
+    --bg: #f4f2ed;
+    --surface: #fcfbf8;
+    --raised: #ebe8e1;
+    --line: #dcd8cf;
+    --line-strong: #878276;
+    --fg: #1b1c19;
+    --fg-muted: #5b5c55;
+    /* Text tokens (fg-muted, accent-text, ok, warn, danger, info) clear 4.5:1 on BOTH --bg and
+       --surface: the rail and page heads sit on --bg, panels on --surface. */
+    /* THE ACCENT IS SPENT ONCE PER SCREEN: the one primary action, and the destination it lands
+       in. Selection, tabs, links and the active nav item are INK (--fg), never accent. */
+    --accent: #c2410c;
+    --accent-ink: #ffffff;
+    --accent-text: #ad3a0b;
+    --accent-soft: rgba(194, 65, 12, .12);
+    --ok: #206b3a;
+    --ok-soft: rgba(36, 115, 63, .14);
+    --warn: #835500;
+    --warn-soft: rgba(138, 90, 0, .14);
+    --danger: #b42318;
+    --danger-soft: rgba(180, 35, 24, .14);
+    --info: #1c5d99;
+    --info-soft: rgba(28, 93, 153, .14);
     --focus: var(--accent);
-    --shadow-float: 0 10px 30px rgba(0, 0, 0, .45);
+    --shadow-float: 0 8px 24px rgba(27, 28, 25, .14), 0 1px 2px rgba(27, 28, 25, .10);
+    --shadow-toggle: 0 1px 2px rgba(27, 28, 25, .12);
+    --scrim: rgba(27, 28, 25, .45);
+    /* A user's PHOTO is not a render: it sits on a neutral matte, never on the white stage. */
+    --photo-stage: #ebe8e1;
     /* Rendered drawings (thumbnails, generator previews, cut sheets) are opaque white PNGs, so
-       their stage stays paper-white in both themes; a dark stage would frame a white square. */
+       their stage stays paper-white in both themes; a dark stage would frame a white square.
+       Anything painted ON the stage uses --thumb-ink, which does not flip either. */
     --thumb-stage: #ffffff;
+    --thumb-ink: #5b5c55;
     /* Aliases for rules migrated from the pre-2026-09 sheets. New rules use the names above. */
     --muted: var(--fg-muted);
     --soft: var(--raised);
     --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
     --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
-    --radius-control: 4px;
-    --radius-panel: 6px;
-    --radius-float: 10px;
-    --rail-width: 188px;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+    --space-7: 48px;
+    --space-8: 64px;
+    --radius-control: 3px;
+    --radius-panel: 5px;
+    --radius-float: 8px;
+    --radius-pill: 999px;
+    --control-height: 32px;
+    --control-height-small: 26px;
+    --row-height: 44px;
+    --container-max: 1360px;
+    --prose-measure: 72ch;
+    --rail-width: 216px;
     --rail-collapsed-width: 56px;
-    --topbar-height: 44px;
-    --tabbar-height: 52px;
+    --topbar-height: 48px;
+    --tabbar-height: 56px;
   }
-  :root[data-theme="light"] {
-    color-scheme: light;
-    --bg: #f4f5f7;
-    --surface: #ffffff;
-    --raised: #eceef2;
-    --line: #dfe2e7;
-    --line-strong: #c9ced6;
-    --fg: #1a1e26;
-    --fg-muted: #626b78;
-    --accent: #b8700a;
-    --accent-ink: #ffffff;
-    --accent-soft: rgba(184, 112, 10, .10);
-    --ok: #2f8f5b;
-    --danger: #c8413a;
-    --shadow-float: 0 10px 30px rgba(20, 24, 32, .18);
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #141512;
+    --surface: #1b1c19;
+    --raised: #252622;
+    --line: #32332d;
+    --line-strong: #74756c;
+    --fg: #ecebe5;
+    --fg-muted: #a3a299;
+    --accent: #ff7a33;
+    --accent-ink: #1d0c02;
+    --accent-text: #ff8f52;
+    --accent-soft: rgba(255, 122, 51, .14);
+    --ok: #56c27f;
+    --ok-soft: rgba(86, 194, 127, .14);
+    --warn: #e3a73d;
+    --warn-soft: rgba(227, 167, 61, .14);
+    --danger: #f36c5c;
+    --danger-soft: rgba(243, 108, 92, .14);
+    --info: #6fb2f0;
+    --info-soft: rgba(111, 178, 240, .14);
+    --shadow-float: 0 10px 30px rgba(0, 0, 0, .55), 0 1px 2px rgba(0, 0, 0, .4);
+    --shadow-toggle: 0 1px 2px rgba(0, 0, 0, .5);
+    --scrim: rgba(0, 0, 0, .6);
+    --photo-stage: #0e0f0c;
   }
-  @media (prefers-color-scheme: light) {
+  @media (prefers-color-scheme: dark) {
     :root[data-theme="system"] {
-      color-scheme: light;
-      --bg: #f4f5f7;
-      --surface: #ffffff;
-      --raised: #eceef2;
-      --line: #dfe2e7;
-      --line-strong: #c9ced6;
-      --fg: #1a1e26;
-      --fg-muted: #626b78;
-      --accent: #b8700a;
-      --accent-ink: #ffffff;
-      --accent-soft: rgba(184, 112, 10, .10);
-      --ok: #2f8f5b;
-      --danger: #c8413a;
-      --shadow-float: 0 10px 30px rgba(20, 24, 32, .18);
+      color-scheme: dark;
+      --bg: #141512;
+      --surface: #1b1c19;
+      --raised: #252622;
+      --line: #32332d;
+      --line-strong: #74756c;
+      --fg: #ecebe5;
+      --fg-muted: #a3a299;
+      --accent: #ff7a33;
+      --accent-ink: #1d0c02;
+      --accent-text: #ff8f52;
+      --accent-soft: rgba(255, 122, 51, .14);
+      --ok: #56c27f;
+      --ok-soft: rgba(86, 194, 127, .14);
+      --warn: #e3a73d;
+      --warn-soft: rgba(227, 167, 61, .14);
+      --danger: #f36c5c;
+      --danger-soft: rgba(243, 108, 92, .14);
+      --info: #6fb2f0;
+      --info-soft: rgba(111, 178, 240, .14);
+      --shadow-float: 0 10px 30px rgba(0, 0, 0, .55), 0 1px 2px rgba(0, 0, 0, .4);
+      --shadow-toggle: 0 1px 2px rgba(0, 0, 0, .5);
+      --scrim: rgba(0, 0, 0, .6);
+      --photo-stage: #0e0f0c;
     }
   }
 }
@@ -99,19 +155,23 @@
   html { -webkit-text-size-adjust: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--fg);
-    font: 13px/1.45 var(--font-ui);
+    font: 400 14px/21px var(--font-ui);
   }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  h1, h2, h3 { margin: 0; line-height: 1.2; letter-spacing: -0.01em; text-wrap: balance; }
-  h1 { font-size: 20px; font-weight: 600; }
-  h2 { font-size: 16px; font-weight: 600; }
-  h3 { font-size: 13px; font-weight: 600; }
+  /* Links are INK, not accent (the accent is spent on the one action). Navigation links (file
+     names, crumbs) underline on hover; links inside prose are always underlined (.prose a). */
+  a { color: var(--fg); text-decoration: none; }
+  a:hover { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+  h1, h2, h3 { margin: 0; text-wrap: balance; }
+  h1 { font-size: 20px; line-height: 26px; font-weight: 600; letter-spacing: -0.01em; }
+  h2 { font-size: 16px; line-height: 22px; font-weight: 600; }
+  h3 { font-size: 14px; line-height: 20px; font-weight: 600; }
   p { margin: 0 0 8px; }
-  code, kbd, pre, .mono { font-family: var(--font-mono); font-size: 12px; }
+  code, kbd, pre, .mono { font-family: var(--font-mono); font-size: 13px; line-height: 20px; }
   .muted { color: var(--fg-muted); }
-  .num { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-  .prose { max-width: 72ch; font-size: 14px; line-height: 1.55; }
+  .num { text-align: right; font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .prose { max-width: var(--prose-measure); font-size: 15px; line-height: 24px; }
+  .prose a { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+  .prose a:hover { text-decoration-color: var(--fg); }
   :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   ::selection { background: var(--accent-soft); }
   @media (prefers-reduced-motion: reduce) {

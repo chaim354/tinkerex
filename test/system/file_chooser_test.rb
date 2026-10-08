@@ -76,6 +76,10 @@ class FileChooserTest < ApplicationSystemTestCase
     assert_selector ".filechooser-overlay"
     # Root column, the seeded tree's top level.
     within(".filechooser-cols") { assert_text "Projects" }
+    # THE ROWS DRAW THE RAIL'S LINE ICONS, NOT EMOJI (2026-10-08 redesign): a folder row carries
+    # svg.folder-glyph and the column text has no 📁/📄 left in it.
+    assert_selector ".filechooser-row svg.folder-glyph"
+    within(".filechooser-cols") { assert_no_text "📁"; assert_no_text "📄" }
 
     # IN FILE MODE, DESCENDING SELECTS NOTHING — folders navigate and only a file click commits.
     # Asserting the placeholder is what makes that an assertion rather than an assumption: were

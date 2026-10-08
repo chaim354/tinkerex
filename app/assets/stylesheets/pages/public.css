@@ -73,7 +73,7 @@
   .project-card-grid .card-cover { display: block; width: 100%; }
 
   .explore-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
-  .explore-chips .tag-chip.active { border-color: var(--accent); color: var(--accent); }
+  .explore-chips .tag-chip.active { border-color: var(--fg); background: var(--fg); color: var(--surface); }
 
   /* COLUMN DROPS: Size is the least useful cell to a visitor on a phone, the thumbnail the next
      least; Name and Download survive at every width. READABILITY, NOT OVERFLOW SAFETY, and the

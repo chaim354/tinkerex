@@ -1,8 +1,11 @@
 /* The Files pages: the list and grid, the type filter, sorting, notes. Components (table.files,
    .thumb, .chip, .view-toggle) come from components.css; these are the page's own classes. */
 @layer pages {
-  .files-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px; }
-  .files-grid .thumb { width: 100%; height: 140px; }
+  /* SQUARE STAGES, AT LEAST 160PX (2026-10-08): about four per row where 140px fitted five — the
+     redesign trades density for preview, since previews are what the library is used for. */
+  .files-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: var(--space-5) var(--space-4); }
+  .files-grid .grid-card { align-items: stretch; }
+  .files-grid .thumb { width: 100%; height: auto; aspect-ratio: 1 / 1; }
   .hidden-toggle { margin: 0 0 10px; font-size: 12px; }
 
   /* MIGRATED VERBATIM (old application.css 639-657): .ext-filter, .ext-picker, .ext-picker label,
@@ -13,7 +16,7 @@
   .ext-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 14px; }
   .ext-picker { display: inline-flex; gap: 6px; align-items: center; }
   .ext-picker label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
-  .ext-picker select { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px;
+  .ext-picker select {
     font: inherit; font-size: 13px; max-width: 260px; }
   /* The full-set state (MAX_EXTS reached) — the control goes inert rather than accepting a value
      resolve_exts would then drop. */
@@ -44,7 +47,7 @@
      .project-chip, .project-chip form, .chip-x, .chip-x:hover — these live on files/show. */
   .attach-to-project { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 16px; }
   .attach-form { display: inline-flex; align-items: center; gap: 8px; }
-  .attach-form select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; }
+  .attach-form select { max-width: 260px; }
   .project-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px;
     border: 1px solid var(--line); border-radius: 999px; font-size: 13px; }
   .project-chip form { display: inline; }
@@ -83,7 +86,7 @@
   .upload-caption { margin: -6px 0 12px; font-size: 12px; }
   .upload-caption strong { color: var(--fg); }
   /* The grid tile's second line: size and type, in mono, under the name. */
-  .grid-sub { display: block; font: 11px/1.4 var(--font-mono); color: var(--fg-muted); text-align: center; }
+  .grid-sub { display: block; font: 400 12px/16px var(--font-mono); font-variant-numeric: tabular-nums; color: var(--fg-muted); }
   /* The file page's title row and format badge (Task 2's markup). */
   .page-head .page-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .page-head .file-badge { font-family: var(--font-mono); text-transform: none; letter-spacing: .04em; }

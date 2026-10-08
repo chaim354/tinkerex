@@ -35,7 +35,7 @@
         <tr>
           <td class="col-name">
             <% if entry.kind == "dir" %>
-              <span class="dir">📁 <%= entry.name %></span>
+              <span class="dir"><%= folder_glyph %> <%= entry.name %></span>
             <% else %>
               <%= entry.name %>
             <% end %>

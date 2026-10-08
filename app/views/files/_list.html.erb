@@ -61,8 +61,8 @@
                 no addon origin, so Delete is its whole right-click menu. It gets no
                 #thumb_cell_data either: there is nothing to poll a thumbnail for. See
                 files_helper.rb for why the two builders are two. %>
-            <%= link_to "📁 #{node.name}", files_path(folder: node.node_id), class: "dir",
-                        data: folder_menu_data(node.node_id, node.name) %>
+            <%= link_to files_path(folder: node.node_id), class: "dir",
+                        data: folder_menu_data(node.node_id, node.name) do %><%= folder_glyph %> <%= node.name %><% end %>
           <% end %>
         </td>
         <%# The EXTENSION, not node.kind — see FilesHelper#file_type_label for why the cell under

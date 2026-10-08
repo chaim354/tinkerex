@@ -18,9 +18,10 @@
      inline-block `<button>` without touching `.project-card`'s box model at all. */
   .project-tile { display: flex; flex-direction: column; gap: 6px; }
   .project-tile form { text-align: center; }
+  .project-tile > .badge { align-self: center; }
   .project-card { display: flex; flex-direction: column; gap: 8px; align-items: center; color: var(--fg); }
   .project-card:hover { text-decoration: none; }
-  .project-card:hover .thumb { border-color: var(--accent); }
+  .project-card:hover .thumb { border-color: var(--fg); }
   .project-card .thumb { width: 100%; height: 120px; }
   .project-thumb-empty { font-size: 36px; }
   .project-name { font-size: 13px; font-weight: 600; text-align: center; overflow-wrap: anywhere; }
@@ -181,7 +182,7 @@
   .task-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   .status-done .task-title { text-decoration: line-through; color: var(--fg-muted); }
   .task-state { width: 14px; height: 14px; flex: 0 0 auto; border-radius: 50%; border: 1.5px solid var(--fg-muted); position: relative; }
-  .task-state--doing { background: linear-gradient(90deg, var(--accent) 50%, transparent 50%); border-color: var(--accent); }
+  .task-state--doing { background: linear-gradient(90deg, var(--info) 50%, transparent 50%); border-color: var(--info); }
   .task-state--done { background: var(--ok); border-color: var(--ok); }
   .task-state--done::after { content: ""; position: absolute; left: 4px; top: 1px; width: 3px; height: 7px; border: solid var(--bg); border-width: 0 2px 2px 0; transform: rotate(45deg); }
   .task-actions { display: flex; gap: 4px; align-items: center; }
@@ -212,16 +213,21 @@
   .bom-rev { font-size: 12px; }
   .bom-lines .col-ref { font-family: var(--font-mono); font-size: 12px; }
   .bom-lines .col-supplier, .bom-lines .col-stock { color: var(--fg-muted); }
-  .bom-lines tr.short .col-stock { color: var(--accent); }
+  .bom-lines tr.short .col-stock { color: var(--warn); }
   .bom-more { font-size: 12px; margin: 6px 0 0; }
   .bom-rollup { font: 12px/1.5 var(--font-mono); color: var(--fg-muted); margin: 8px 0; }
   .composer-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; align-items: end; margin-bottom: 8px; }
   .composer-fields label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--fg-muted); }
+  /* Fields fill their cell and a phone column may shrink below its content (`minmax(0, 1fr)`): the
+     BOM composer's item <select> carries part names as long as a sentence, and its min-content
+     differs between macOS and the Linux runners — the shape that pushed /inventory/:id sideways
+     at 375px (pages/inventory.css's `.adjust-fields` records it). */
+  .composer-fields input, .composer-fields select { width: 100%; min-width: 0; }
   .bom-target { display: flex; flex-direction: column; gap: 8px; border: 0; padding: 0; margin: 0 0 8px; }
   .bom-target legend { font-size: 11px; color: var(--fg-muted); padding: 0; }
   .bom-target label { display: flex; gap: 8px; align-items: center; }
   @media (max-width: 719px) {
-    .composer-fields { grid-template-columns: 1fr 1fr; }
+    .composer-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
     .bom-lines .col-supplier, .bom-lines .col-ref { display: none; }
   }
 
@@ -307,8 +313,8 @@
 
   /* --- The preview banner (stage 4, S4-4): the one thing on the preview that a visitor never
      sees, so it must not look like part of the page it sits above. --- */
-  .preview-banner { border: 1px solid var(--accent); border-radius: var(--radius-panel);
-                    background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  .preview-banner { border: 1px solid var(--info); border-radius: var(--radius-panel);
+                    background: var(--info-soft);
                     padding: 10px 14px; margin: 0 0 16px;
                     display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
   .preview-banner p { margin: 0; flex: 1 1 320px; font-size: 13px; }

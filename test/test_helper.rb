@@ -2,6 +2,16 @@ ENV["RAILS_ENV"] ||= "test"
 require_relative "../config/environment"
 require "rails/test_help"
 
+# THE SUITE IS HERMETIC BY FIXTURE (§14c), AND bin/ci's share and s3 legs run
+# `bin/rails db:test:prepare test` IN ONE PROCESS, which boots development first. development.rb
+# defaults ADDON_SOURCE_PATH to a sibling `tinkerex-addons` checkout, and ENV outlives the boot —
+# so on any machine with that sibling cloned, /tools listed the REAL addons and
+# cohesion_vocabulary_test's empty-state assertion failed (main included, reproduced 2026-10-08).
+# The runners have no sibling, which is why CI never saw it. Only that exact default is dropped: a
+# value a test or a developer set on purpose is left alone.
+dev_addon_default = File.expand_path("../../tinkerex-addons/addons", __dir__)
+ENV.delete("ADDON_SOURCE_PATH") if ENV["ADDON_SOURCE_PATH"] == dev_addon_default
+
 # Devise registers its `mappings` (used by Devise::Mailer to resolve a record's scope) while
 # DRAWING the routes (`devise_for :users`). Routes load lazily, so in a parallel test worker a
 # Devise mailer can fire (e.g. a confirmation email when a confirmable account is created)

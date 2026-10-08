@@ -40,24 +40,39 @@ class ShellTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  test "the theme button cycles dark, light, system and persists" do
+  test "the theme button cycles light, dark, system and persists" do
     visit files_path
     theme = -> { page.evaluate_script("document.documentElement.dataset.theme") }
-    assert_equal "dark", theme.call
+    assert_equal "light", theme.call
 
     find("aside.rail [data-action='theme#cycle']").click
-    assert_equal "light", theme.call
+    assert_equal "dark", theme.call
     visit files_path
-    assert_equal "light", theme.call
-    assert_selector "aside.rail [data-action='theme#cycle']", text: "Theme: light"
+    assert_equal "dark", theme.call
+    assert_selector "aside.rail [data-action='theme#cycle']", text: "Theme: dark"
 
     find("aside.rail [data-action='theme#cycle']").click
     assert_equal "system", theme.call
     find("aside.rail [data-action='theme#cycle']").click
-    assert_equal "dark", theme.call
+    assert_equal "light", theme.call
     visit files_path
-    assert_equal "dark", theme.call
+    assert_equal "light", theme.call
     assert_no_console_errors
+  end
+
+  # `.flash { display: flex }` outranks the UA's `[hidden] { display: none }`, and the openscad
+  # addon bundle ships `p.flash.flash-alert[hidden]` as a notice slot — so until components.css
+  # restored `[hidden]` it rendered as an empty PROBLEM box on every openscad load. Injected rather
+  # than rendered by a fixture because the markup is the ADDON's, not a template of ours; the CSS
+  # is what is under test. Mutation-checked: deleting `.flash[hidden]` turns this red.
+  test "a flash rendered hidden stays hidden" do
+    visit files_path
+    page.execute_script(<<~JS)
+      document.querySelector("main").insertAdjacentHTML("beforeend",
+        '<p class="flash flash-alert" data-role="notice" id="hidden-flash-probe" hidden></p>')
+    JS
+    assert_selector "#hidden-flash-probe", visible: :hidden
+    assert_no_selector "#hidden-flash-probe", visible: true
   end
 
   test "a notice toast leaves on its own and an alert waits to be dismissed" do

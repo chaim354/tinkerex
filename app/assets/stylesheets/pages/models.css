@@ -79,6 +79,6 @@
 
   /* The import form's file input, as a target you can drop onto as well as click. */
   .dropzone { display: block; padding: 18px; border: 1px dashed var(--line-strong); border-radius: var(--radius-panel); background: var(--surface); text-align: center; cursor: pointer; }
-  .dropzone:hover { border-color: var(--accent); }
+  .dropzone:hover { border-color: var(--fg); }
   .dropzone input[type="file"] { display: block; margin: 10px auto 0; }
 }

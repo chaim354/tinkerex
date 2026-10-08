@@ -184,4 +184,20 @@ class CssHygieneTest < ActiveSupport::TestCase
     assert_empty offenders,
                  "these container variants never apply:\n  #{offenders.join("\n  ")}"
   end
+
+  # --- A COMPONENT OR SHELL RULE NAMES A TOKEN, NEVER A COLOUR (2026-10-08 redesign) -----------
+  #
+  # The thumbnail ink (#5f6873), the spinner (#d9dde3 / #7a8390) and the file-chooser scrim
+  # (rgba(0, 0, 0, .55)) were literals in components.css. Each was right in exactly one theme and
+  # a token flip could not reach it. Drawing colours (Measure, LightBurn, the tray top view) are
+  # deliberately literal, and they live in pages/, which this guard does not scan. The one allowed
+  # literal is inside a data: URI (the select chevron), which cannot read a custom property.
+  test "components.css and shell.css name tokens, not colours" do
+    %w[components.css shell.css].each do |sheet|
+      css = strip_comments(read(sheet)).gsub(/url\("data:[^"]*"\)/, "")
+      assert_operator css.length, :>, 1000, "#{sheet} is suspiciously short — the scan is vacuous"
+      literals = css.scan(/#\h{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)/)
+      assert_empty literals, "#{sheet} carries colour literals #{literals.uniq.inspect}; add a token"
+    end
+  end
 end

@@ -23,9 +23,9 @@ require "application_system_test_case"
 #
 # WHAT IS COUNTED: elements inside `main` whose computed background-color equals the resolved
 # `--accent`, restricted to controls. The restriction is deliberate, not tidiness — `.brand-mark`
-# (the rail's 18px logo) and `.attention-row--warn .attention-mark` (a dot on Home) are both
-# accent-filled and neither is a control, so counting every element would fail this for two things
-# decision 3 does not govern. The accent is compared against a PROBE rather than a literal
+# (the rail's 18px logo) is accent-filled and is not a control (Home's low-stock dot was the
+# second such element until the 2026-10-08 redesign moved it to `--warn`), so counting every
+# element would fail this for things decision 3 does not govern. The accent is compared against a PROBE rather than a literal
 # `rgb(240, 165, 58)`: the token has a different value in the light theme, and a literal would pin
 # this guard to one of the three theme states.
 #

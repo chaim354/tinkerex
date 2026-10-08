@@ -30,6 +30,26 @@
 // reached through `this.overlay`, so an inline host can supply one without an overlay existing.
 export const ROOT_LABEL = "/ (library root)"
 
+// THE ROW GLYPHS ARE THE RAIL'S LINE ICONS, not emoji (design-system.md: no emoji in the
+// interface). The folder path is ShellHelper::ICON_PATHS[:files] — keep the two in step — and the
+// file path is drawn on the same 16px grid, 1.5px stroke, round joins.
+const GLYPH_PATHS = { folder: "M2 4h5l2 2h5v7H2z", file: "M4 2h5l3 3v9H4z M9 2v3h3" }
+
+function lineGlyph(isFile) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
+  svg.setAttribute("viewBox", "0 0 16 16")
+  svg.setAttribute("class", isFile ? "file-glyph" : "folder-glyph")
+  svg.setAttribute("aria-hidden", "true")
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path")
+  path.setAttribute("d", isFile ? GLYPH_PATHS.file : GLYPH_PATHS.folder)
+  for (const [k, v] of Object.entries({ fill: "none", stroke: "currentColor", "stroke-width": "1.5",
+                                          "stroke-linejoin": "round", "stroke-linecap": "round" })) {
+    path.setAttribute(k, v)
+  }
+  svg.appendChild(path)
+  return svg
+}
+
 export class FileChooser {
   // `label` is the CURRENT selection's path, not decoration — see the note in #open.
   constructor({ mode = "folder", childrenUrl, createUrl, rootLabel = ROOT_LABEL, value = "", label = null,
@@ -254,9 +274,10 @@ export class FileChooser {
       const selected = (!isFile && entry.node_id === descendedId) ||
         (isFile && this.selection && this.selection.kind === "file" && this.selection.nodeId === entry.node_id)
       if (selected) row.classList.add("sel")
-      // textContent, never innerHTML: `name` is a user's own filename and this is the one place a
-      // library file's bytes-adjacent metadata is drawn into the page.
-      row.textContent = (isFile ? "📄 " : "📁 ") + entry.name
+      // A text node, never innerHTML: `name` is a user's own filename and this is the one place a
+      // library file's bytes-adjacent metadata is drawn into the page. The glyph is built with
+      // createElementNS for the same reason (design system: no emoji in the interface).
+      row.replaceChildren(lineGlyph(isFile), document.createTextNode(entry.name))
       if (this.mode === "browse") {
         // A FILE ROW IN BROWSE MODE CARRIES NO CLICK HANDLER AT ALL — it is an `<a href>`, so
         // middle-click, ⌘-click, "Open in new tab" and keyboard focus all work the way a maker
