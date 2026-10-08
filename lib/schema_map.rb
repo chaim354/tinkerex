@@ -77,7 +77,7 @@ module SchemaMap
                      maker_file_links] },
     { "label" => "Library", "group" => "maker",
       "tables" => %w[maker_items maker_collection_items maker_collections maker_taggings
-                     maker_tags maker_tasks] },
+                     maker_tags maker_tasks maker_pins] },
     { "label" => "Models & projects", "group" => "maker",
       "tables" => %w[maker_models maker_print_runs maker_projects maker_build_log_entries
                      maker_sheets maker_shelves maker_filing_rules maker_connections
@@ -176,6 +176,7 @@ module SchemaMap
     # and the block KEEPS ITS ROW and renders nothing (spec §8) rather than being swept — the same
     # softness `maker_file_links` and `maker_notes` rely on.
     [ "maker_project_blocks.node_id",       "nodes.node_id",      "app", "pictures" ],
+    [ "maker_pins.node_id",                 "nodes.node_id",      "app", "pins" ],
     # --- maker layer internals ----------------------------------------------------
     [ "maker_boms.project_id",                        "maker_projects.id",        "app", "BOM for" ],
     [ "maker_bom_lines.bom_id",                       "maker_boms.id",            "app", "line of" ],

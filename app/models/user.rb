@@ -98,6 +98,7 @@ class User < ApplicationRecord
   # with the project too (Maker::Project#blocks); this is the tenant sweep's own door, the one
   # test/models/tenant_cleanup_test.rb asks for.
   has_many :maker_project_blocks, class_name: "Maker::ProjectBlock", dependent: :destroy
+  has_many :maker_pins, class_name: "Maker::Pin", dependent: :destroy
   has_many :maker_releases, class_name: "Maker::Release", dependent: :destroy
   has_many :maker_release_files, class_name: "Maker::ReleaseFile", dependent: :destroy
   has_many :maker_addon_states, class_name: "Maker::AddonState", dependent: :destroy

@@ -31,6 +31,10 @@ module Maker
   # forever, which is the same "⚠️ (file unavailable)" tile this sweep was written to end. The
   # grace window is Maker::DeadNodes' and is therefore identical for all three subjects: a
   # tombstone is one undo away from returning with the same node_id, and the link is keyed on it.
+  #
+  # SINCE THE 2026-10-08 REDESIGN IT SWEEPS `maker_pins` TOO, beside attachments, covers and links:
+  # a sidebar pin names a folder by node_id, so it is hidden while the folder is a tombstone and
+  # destroyed here, on the same grace, once the folder is gone for good (Maker::Pin).
   module AttachmentReaper
     module_function
 
@@ -47,10 +51,12 @@ module Maker
       end
     end
 
-    # -> the number of rows changed (attachments destroyed + covers cleared + links destroyed).
+    # -> the number of rows changed (attachments destroyed + covers cleared + links destroyed +
+    # pins destroyed).
     def reap!(user, grace: GRACE, dry_run: false)
       attachments = user.maker_file_attachments.to_a
       links       = user.maker_file_links.to_a
+      pins        = user.maker_pins.to_a
       # A project or MODEL whose cover was CHOSEN. A derived cover needs nothing here — it is
       # computed from the attachments, so reaping those moves it on its own.
       #
@@ -66,11 +72,12 @@ module Maker
       # the class, or reaching for something only `Project` has, breaks the model half SILENTLY.
       covered = user.maker_projects.where.not(cover_node_id: [ nil, "" ]).to_a +
                 user.maker_models.where.not(cover_node_id: [ nil, "" ]).to_a
-      return 0 if attachments.empty? && covered.empty? && links.empty?
+      return 0 if attachments.empty? && covered.empty? && links.empty? && pins.empty?
 
       nodes  = Maker::DeadNodes.index(user, attachments.map(&:node_id) +
                                             covered.map { |p| p[:cover_node_id] } +
-                                            links.flat_map { |l| [ l.from_node_id, l.to_node_id ] })
+                                            links.flat_map { |l| [ l.from_node_id, l.to_node_id ] } +
+                                            pins.map(&:node_id))
       cutoff = grace.ago
 
       doomed = attachments.select { |a| Maker::DeadNodes.reapable?(nodes[a.node_id], cutoff) }
@@ -92,7 +99,11 @@ module Maker
         Maker::DeadNodes.reapable?(nodes[l.from_node_id], cutoff) ||
           Maker::DeadNodes.reapable?(nodes[l.to_node_id], cutoff)
       }
-      return doomed.size + stale_covers.size + dead_links.size if dry_run
+      # A PIN GOES WITH ITS FOLDER, on the same grace (Maker::Pin's header): hidden by the sidebar
+      # while the folder is a fresh tombstone, removed here once the folder is gone for good.
+      dead_pins = pins.select { |p| Maker::DeadNodes.reapable?(nodes[p.node_id], cutoff) }
+      total = doomed.size + stale_covers.size + dead_links.size + dead_pins.size
+      return total if dry_run
 
       doomed.each(&:destroy!)
       # update_column, not update!: this is a sweep touching rows nobody asked to modify, and
@@ -101,7 +112,8 @@ module Maker
       # deleted weeks ago being cleaned up.
       stale_covers.each { |p| p.update_column(:cover_node_id, nil) }
       dead_links.each(&:destroy!)
-      doomed.size + stale_covers.size + dead_links.size
+      dead_pins.each(&:destroy!)
+      total
     end
   end
 end

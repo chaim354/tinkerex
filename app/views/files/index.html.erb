@@ -39,14 +39,14 @@
                       Maker::ProjectDiscovery.adoptable_name?(@folder.name) &&
                       !(@folder.parent_node_id.nil? && @folder.name == Maker::ProjectFolders::ROOT) %>
 <%# THE MENU RENDERS ONLY WHEN IT WILL HOLD AN ITEM, and the folder arm therefore asks what the
-    folder arm actually offers, never merely "is there a folder". `@folder.present?` over-shot on a
-    non-scannable backend with no current project: a dot-folder or the `Projects` root has neither
-    an "Open project" nor an adopt button to show, so the menu rendered EMPTY -- the exact state
-    files_toolbar_test.rb's "no menu renders when it would be empty" pins, escaping through the
-    folder view. `adoptable_folder` already carries the two cheap refusals, so this reuses it
-    rather than asking them a second time. %>
+    folder arm actually offers. Until slice 2 of the 2026-10-08 redesign "is there a folder" was
+    NOT that question: on a non-scannable backend with no current project, a dot-folder or the
+    `Projects` root had neither an "Open project" nor an adopt button, so the menu rendered EMPTY --
+    the state files_toolbar_test.rb's "no menu renders when it would be empty" pins. Every folder
+    view now offers Pin (or Unpin) to the sidebar, so `@folder.present?` is the honest answer and
+    the root (no `@folder`) still renders no menu unless another arm has an item. %>
 <% menu_items = capabilities.scannable? || current_project.present? ||
-                @folder_project.present? || adoptable_folder %>
+                @folder_project.present? || adoptable_folder || @folder.present? %>
 <div class="page-head">
   <h1>Files</h1>
   <div class="page-actions">
@@ -114,6 +114,17 @@
       <details class="menu" data-controller="menu">
         <summary class="btn icon" aria-label="More actions" title="More actions">⋯</summary>
         <div class="menu-list">
+          <%# PIN TO THE SIDEBAR (structural redesign, slice 2): the folder being viewed, never the
+              library root (no @folder there), and never in flat/search mode (also no @folder). %>
+          <% if @folder %>
+            <% if current_user.maker_pins.exists?(node_id: @folder.node_id) %>
+              <%= button_to "Unpin from sidebar", pin_path(@folder.node_id), method: :delete,
+                            class: "menu-item", data: { turbo: false } %>
+            <% else %>
+              <%= button_to "Pin to sidebar", pins_path, params: { node_id: @folder.node_id },
+                            class: "menu-item", data: { turbo: false } %>
+            <% end %>
+          <% end %>
           <% if capabilities.scannable? %>
             <%#
               RESCAN, offered ONLY on a scannable (share/s3) library: the catalog there is
