@@ -105,6 +105,10 @@ class PageBlocksTest < ApplicationSystemTestCase
   test "Delete removes a block and Save persists the removal; a dragged block lands below Files" do
     gone = @project.blocks.create!(user: @user, kind: "text", body: "gone")
     kept = @project.blocks.create!(user: @user, kind: "text", body: "kept")
+    # THE WHOLE PAGE IN VIEW, so the stepped drag below never has to leave the viewport (a pointer
+    # move outside it is refused) and nothing scrolls mid-gesture. The 2026-10-08 redesign's 14px
+    # type put Photos' top at y≈1290 in the suite's 1257px viewport. Restored in `ensure`.
+    page.current_window.resize_to(1400, 2200)
     open_editor
     within(slot(gone.layout_key)) { click_on "Delete" }
     assert_no_selector slot(gone.layout_key)
@@ -125,51 +129,51 @@ class PageBlocksTest < ApplicationSystemTestCase
     assert_nil Maker::ProjectBlock.find_by(id: gone.id)
     saved = @project.reload.panels["order"]
     assert_operator saved.index(kept.layout_key), :>, saved.index("attachments")
+  ensure
+    page.current_window.resize_to(1400, 1400)
   end
 
   # SORTABLE RUNS `forceFallback: true` (layout_editor_controller.js says why), so it listens for
   # REAL mouse events rather than the HTML5 drag events `drag_to` synthesises — a `drag_to` here
-  # moves nothing at all, silently. This is slice 1's pointer sequence: press on the handle, move
-  # far enough to pass `fallbackTolerance`, then onto the target and release. The intermediate
-  # `move_by` is load-bearing (a single jump arrives before the drag has begun), and the ten pixels
-  # past the target's centre are what make Sortable's before/after decision "after" every time.
+  # moves nothing at all, silently. The gesture: press on the handle, move 40px to pass
+  # `fallbackTolerance`, then WALK to a point just past the target's centre and release.
   #
-  # TEN PIXELS ON BOTH AXES, BECAUSE SORTABLE READS THIS GRID AS HORIZONTAL. Its `_detectDirection`
-  # answers "horizontal" for any grid with more than one column, so the before/after decision is
-  # made on X, where `move_to` leaves the pointer exactly on the target's centre. That centre sits
-  # on a half pixel (Photos: 786.5 at 13px type, 800.5 after the 2026-10-08 redesign), so the
-  # Y-only nudge left the outcome to rounding and to what the drag's animation had under the
-  # pointer; the redesign's geometry tipped it and the slot stayed first, 4 runs of 4. The X nudge
-  # takes the pointer off that exact centre, where Sortable makes no move at all; it does not pick
-  # "after" over "before" (a -10px nudge also lands the block past Photos). What the test checks is
-  # the outcome — the block ends up after Files in the DOM and in the saved order — so the nudge
-  # changes where the pointer is released, never what is asserted. 8 of 8 runs.
+  # WHY A WALK AND NOT A JUMP (2026-10-08). The earlier sequence jumped onto the target with two
+  # `move_to`s and a 10px nudge, and it was knife-edge on geometry: masonry re-packs the grid the
+  # instant the first slot lifts, and Sortable decides on the rects it sees at that moment. The
+  # redesign's 14px type tipped it (bisected to a combination of component hunks, none wrong
+  # alone): the pointer sat on Photos' centre with Photos correctly under it, and Sortable made no
+  # move. Each step here re-reads the target's rect and covers half the remaining distance, which
+  # is the run of `mousemove`s a person's drag produces — and a person never meets the knife-edge,
+  # because they watch the ghost and release when it looks right. Mutation-checked: Sortable
+  # created with `disabled: true` turns the order assertion red.
   #
-  # THE SECOND `move_to` IS THIS SUITE'S OWN ADDITION, AND MASONRY IS WHY. Dragging the FIRST slot —
-  # which is where "Add block" puts a new one, so it is this feature's mainline gesture — lifts it
-  # out of the packed grid, and masonry_controller re-spans everything the same instant: every slot
-  # below rises by the dragged one's height. The coordinates the first `move_to` resolved are stale
-  # by then, and ten pixels past a centre that has since moved up lands ABOVE the new one, so
-  # Sortable decides "before" and the slot does not move. Measured on this page: with masonry the
-  # single-`move_to` drag left the slot at index 0 three times over, a 40px nudge reached index 4,
-  # and with `data-controller` removed from the grid the ORIGINAL sequence reached index 4 — so it
-  # is the re-pack, not the drag. A `move_to` resolves its element's in-view centre when its own
-  # tick runs, so the second one reads the settled layout and the nudge is honest again (3/3 runs).
-  # A human never meets this: they watch the ghost move and release when it looks right.
-  # THIS PAGE FITS WITHOUT SCROLLING; test/system/page_tabs_test.rb records the other half: chromedriver
-  # resolves an element origin by scrolling that element into view first, so on a longer page the
-  # second `move_to` moves every other rect underneath the drag, and only a measured pixel delta is
-  # honest there.
+  # THE WHOLE PAGE MUST BE IN VIEW (the test resizes the window to 1400×2200): Selenium refuses a
+  # pointer move outside the viewport, and a page that scrolls mid-gesture moves every rect Sortable
+  # is comparing against. test/system/page_tabs_test.rb records the same constraint for its page.
   def drag(handle, target)
-    page.driver.browser.action
-        .click_and_hold(handle.native)
-        .move_by(0, 40)
-        .move_to(target.native)
-        .move_to(target.native)
-        .move_by(10, 10)
-        .release
-        .perform
+    target_key = target["data-key"]
+    b = page.driver.browser
+    b.action.click_and_hold(handle.native).move_by(0, 40).perform
+    pointer = center_of(handle).then { |x, y| [ x, y + 40 ] }
+    # STEPPED, LIKE A HAND. Each step re-reads the target's rect (masonry re-packs and the page may
+    # scroll under the drag) and covers half the remaining distance to a point just past its centre,
+    # so Sortable sees the run of `mousemove`s a person's drag produces rather than one jump.
+    12.times do
+      tx, ty = center_of_slot(target_key)
+      dx = ((tx + 10 - pointer[0]) / 2.0).round
+      dy = ((ty + 10 - pointer[1]) / 2.0).round
+      break if dx.abs < 2 && dy.abs < 2
+      b.action.move_by(dx, dy).perform
+      pointer = [ pointer[0] + dx, pointer[1] + dy ]
+    end
+    b.action.move_by(2, 2).release.perform
   end
+
+  # Viewport-relative centres, read in the browser so they reflect the layout at this instant.
+  def center_of(el) = page.evaluate_script("(() => { const r = arguments[0].getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()".sub("arguments[0]", "document.querySelector(#{css_path_for(el).to_json})"))
+  def center_of_slot(key) = page.evaluate_script("(() => { const r = document.querySelector(#{slot(key).to_json}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()")
+  def css_path_for(handle) = "#{slot(handle.find(:xpath, "ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' panel-slot ')][1]")['data-key'])} .panel-strip-handle"
 
   # THE GATE ON SAVE (found in review): without it an empty block made the server refuse the whole
   # draft and reload the editor from the row — every other unsaved change in the session gone.
