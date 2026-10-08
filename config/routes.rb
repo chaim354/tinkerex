@@ -409,6 +409,9 @@ Rails.application.routes.draw do
   # `tools/:key` below). `generators`, `boxes` and — last — `openscad` have all migrated, so no
   # addon has a controller or routes of its own any more, and adding one needs no edit to this file.
   get "tools", to: "tools/home#index", as: :tools
+  # The New ▾ menu's tool entries, for its lazy frame. ABOVE `tools/:key`, or "new_menu" would be
+  # read as an addon key.
+  get "tools/new_menu", to: "tools/home#new_menu", as: :tools_new_menu
 
   # The params behind ANY addon state, as a download. ONE route for every addon: `Maker::AddonState`
   # is addon-agnostic (`data` IS each addon's own shape), so there is nothing per-addon to branch on.

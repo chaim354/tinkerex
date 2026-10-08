@@ -4,6 +4,18 @@ module Web
   class NewMenuTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
+    # The house stub helper (text_file_creation_test.rb carries the same body; Minitest 6 has no
+    # Object#stub). Replaces a SINGLETON method for the block, removing an inherited one after.
+    def replacing(owner, name, replacement)
+      mod = owner.singleton_class
+      own = mod.instance_methods(false).include?(name)
+      original = mod.instance_method(name)
+      mod.define_method(name, &replacement)
+      yield
+    ensure
+      own ? mod.define_method(name, original) : mod.remove_method(name)
+    end
+
     setup do
       # A REAL SHARE LIBRARY AND A FOLDER THAT EXISTS ON DISK. Four tests below reach the port's
       # mkdir, and a bare `nodes.create!` leaves a NULL storage_path, which cannot exist on share or
@@ -45,14 +57,40 @@ module Web
       ENV.delete("FIXTURE_SVC_SIDECAR_URL")
 
       get projects_path
-      assert_select "header.topbar .topbar-new a.menu-item[href=?]", tools_addon_path("boxes"),
+      assert_select "header.topbar .topbar-new turbo-frame#new-menu-tools[src=?][loading='lazy'][target='_top']",
+                    tools_new_menu_path
+
+      get tools_new_menu_path
+      assert_response :success
+      assert_select "turbo-frame#new-menu-tools a.menu-item[href=?]", tools_addon_path("boxes"),
                     text: "Box Generator…"
-      assert_select "header.topbar .topbar-new a.menu-item[href=?]", tools_addon_path("fixture"),
+      assert_select "turbo-frame#new-menu-tools a.menu-item[href=?]", tools_addon_path("fixture"),
                     count: 0
     ensure
       %w[ADDON_SOURCE_PATH BOXES_SIDECAR_URL FIXTURE_SVC_SIDECAR_URL].each do |key|
         prior&.key?(key) ? ENV[key] = prior[key] : ENV.delete(key)
       end
+    end
+
+    # THE LAYOUT NEVER READS THE ADDON REGISTRY (docs/invariants/addons.md; found in review). With a
+    # source CONFIGURED — production's shape, and the case a stubbed source with no ADDON_SOURCE_*
+    # set cannot reach — a page render fetches no manifests; only the menu's frame does, when someone
+    # opens New. Asserted both ways, so the zero means "not called" rather than "not counting".
+    test "no page render reads the addon registry; only the menu's frame does" do
+      prior = ENV["ADDON_SOURCE_PATH"]
+      ENV["ADDON_SOURCE_PATH"] = Rails.root.join("test/fixtures/addons").to_s
+      calls = 0
+      real = Maker::Addons::Registry.method(:manifests)
+      replacing(Maker::Addons::Registry, :manifests, -> { calls += 1; real.call }) do
+        get files_path
+        get projects_path
+        assert_equal 0, calls, "a page render read the addon registry #{calls} time(s)"
+
+        get tools_new_menu_path
+        assert_operator calls, :>=, 1, "the menu's frame did not read the registry at all"
+      end
+    ensure
+      prior ? ENV["ADDON_SOURCE_PATH"] = prior : ENV.delete("ADDON_SOURCE_PATH")
     end
 
     test "New ▸ Folder from the browser lands in the new folder" do

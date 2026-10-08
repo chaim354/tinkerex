@@ -485,6 +485,9 @@ module Web
         "suppliers" => suppliers_path,
         "locations" => locations_path,
         "tools gallery" => tools_path,
+        # The New ▾ menu's lazy tool list (slice 2): a fragment, swept like a page so a comment
+        # leak in it would show. The sweep's ADDON_SOURCE_PATH points at the fixtures, so it lists.
+        "new menu tools" => tools_new_menu_path,
         "tools addon" => tools_addon_path("fixture"),
         "trash" => trash_index_path,
         "search" => search_path(q: "lamp"),

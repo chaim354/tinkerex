@@ -7,11 +7,6 @@ module NewMenuHelper
     params[:folder].presence if controller_path == "files" && action_name == "index"
   end
 
-  # Available tools only; an unavailable one would be a menu entry that opens an apology. NOT ASKED
-  # WITHOUT A SOURCE: an unconfigured Source.current raises KeyError, which Registry rescues to []
-  # with a warning — on every page, since this is the layout.
-  def new_menu_tools
-    @new_menu_tools ||=
-      Maker::Addons::Source.configured? ? Maker::Addons::Registry.all.select(&:available?) : []
-  end
+  # The tool entries are NOT here: Tools::HomeController#new_menu serves them to a lazy frame when the
+  # menu opens, so no page render reads the addon registry (docs/invariants/addons.md).
 end

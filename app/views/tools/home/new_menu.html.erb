@@ -1,0 +1,10 @@
+<%# The New ▾ menu's tool entries (layouts/_topbar.html.erb's lazy frame). The registry is read HERE,
+    on demand, never by the layout. %>
+<turbo-frame id="new-menu-tools">
+  <% if @addons.any? %>
+    <div class="menu-sep" role="separator"></div>
+    <% @addons.each do |addon| %>
+      <%= link_to "#{addon.title}…", tools_addon_path(addon.key), class: "menu-item" %>
+    <% end %>
+  <% end %>
+</turbo-frame>
