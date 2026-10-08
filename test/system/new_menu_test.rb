@@ -32,6 +32,18 @@ class NewMenuSystemTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # Escape from inside the menu closes it AND hands focus back to its summary; without that, closing
+  # the <details> hid the focused field and focus fell to <body> (menu_controller.js).
+  test "Escape from the folder field closes New and returns focus to it" do
+    visit projects_path
+    find("header.topbar .topbar-new > summary").click
+    find("#new_folder_name").send_keys("jigs", :escape)
+    assert_no_selector "header.topbar .topbar-new[open]"
+    assert page.evaluate_script(<<~JS), "focus did not return to the New summary"
+      document.activeElement === document.querySelector("header.topbar .topbar-new > summary")
+    JS
+  end
+
   # AT PHONE WIDTH THE TOP BAR WRAPS and New takes a row of its own. It used to wrap to the LEFT,
   # and the right-anchored menu then opened at x≈-185 — off-screen, with no sideways scroll to
   # betray it, so the 375px sweep in shell_test.rb stayed green. This measures the open menu.

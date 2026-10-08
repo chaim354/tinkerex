@@ -74,6 +74,28 @@ class ShellTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # BELOW 1100px THE RAIL IS ICONS WHATEVER THE COOKIE SAYS, and shell.css carries a SECOND copy of
+  # the family-lit rules inside that media query — which the collapsed-cookie test above cannot
+  # reach. Expanded cookie, 900px viewport (CDP, for the reason the 375px sweep below records).
+  test "below 1100px the icon rail marks a lit pin's family link without the collapse cookie" do
+    @root.join("laser").mkpath
+    Library::ScanJob.perform_now(user_id: @user.id)
+    laser = @user.nodes.present.find_by!(name: "laser", kind: "dir")
+    @user.maker_pins.create!(node_id: laser.node_id)
+    page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
+                                    width: 900, height: 900, deviceScaleFactor: 1, mobile: false)
+    visit files_path(folder: laser.node_id)
+    assert_no_selector "body.rail--collapsed"
+    marked = page.evaluate_script(<<~JS)
+      Array.from(document.querySelectorAll("aside.rail a.rail-link"))
+        .filter((a) => a.offsetParent !== null && getComputedStyle(a, "::before").content !== "none")
+        .map((a) => a.title)
+    JS
+    assert_equal [ "Library" ], marked
+  ensure
+    page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
+  end
+
   test "the theme button cycles light, dark, system and persists" do
     visit files_path
     theme = -> { page.evaluate_script("document.documentElement.dataset.theme") }
