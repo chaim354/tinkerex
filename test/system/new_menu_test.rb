@@ -31,4 +31,25 @@ class NewMenuSystemTest < ApplicationSystemTestCase
     assert_current_path tools_addon_path("boxes")
     assert_no_console_errors
   end
+
+  # AT PHONE WIDTH THE TOP BAR WRAPS and New takes a row of its own. It used to wrap to the LEFT,
+  # and the right-anchored menu then opened at x≈-185 — off-screen, with no sideways scroll to
+  # betray it, so the 375px sweep in shell_test.rb stayed green. This measures the open menu.
+  # The viewport is set through CDP for the reason shell_test.rb records (headless Chrome will not
+  # make a WebDriver window narrower than 500px).
+  test "at phone width the open New menu stays on screen" do
+    page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
+                                    width: 375, height: 812, deviceScaleFactor: 1, mobile: false)
+    visit projects_path
+    find("header.topbar .topbar-new > summary").click
+    assert_selector "header.topbar .topbar-new .menu-list"
+    left, right, width = page.evaluate_script(<<~JS)
+      (() => { const r = document.querySelector("header.topbar .topbar-new .menu-list").getBoundingClientRect();
+               return [r.left, r.right, window.innerWidth]; })()
+    JS
+    assert_operator left, :>=, 0, "the New menu opens off the left edge (left #{left})"
+    assert_operator right, :<=, width, "the New menu opens off the right edge (right #{right} of #{width})"
+  ensure
+    page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
+  end
 end

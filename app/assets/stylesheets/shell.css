@@ -107,6 +107,10 @@
   .topbar-search input { flex: 1; min-width: 0; min-height: 0; padding: 0; border: 0; background: transparent; color: var(--fg); font: 400 14px/20px var(--font-ui); }
   .topbar-search input:focus-visible { outline: none; }
   .topbar-search input::-webkit-search-cancel-button { filter: grayscale(1); }
+  /* New ▾ sits at the bar's right edge at every width. On a phone the bar wraps and New takes a row
+     of its own; without this it wrapped to the LEFT and its right-anchored menu opened at x≈-185,
+     off-screen (found in slice 2's Task 3; test/system/new_menu_test.rb measures it at 375px). */
+  .topbar-new { margin-left: auto; }
   .topbar-kbd { padding: 2px 5px; border: 1px solid var(--line); border-radius: 2px; font: 500 11px/1 var(--font-mono); color: var(--fg-muted); }
 
   main.container { width: 100%; max-width: var(--container-max); margin: 0 auto; padding: var(--space-5) var(--space-5) var(--space-8); }

@@ -56,7 +56,10 @@ landed it (§11).
    `SECTIONS` entry or its pages light nothing), and `sidebar_current` refines it: the deepest
    pinned folder on the Files breadcrumb beats Library, a listed project's own link beats All
    projects, and an unlisted one lights All projects. The sidebar and the phone tab bar both read
-   it; `shell_layout_test.rb` pins one lit link per page.
+   it; `shell_layout_test.rb` pins one lit link per page. **Collapsed (or below 1100px) the project
+   and pin links are hidden**, so `sidebar_family_lit?` marks their visible parent — Library for a
+   pin, All projects for a project — with `.rail-family-lit`, a CLASS and not a second
+   aria-current, which shell.css draws only in the icon rail.
 9. **Breadcrumbs render in the top bar through `content_for :crumbs`**, with the page title as the
    fallback; page-level actions stay in the page's `.page-head`, so the top bar carries no
    per-page control.
