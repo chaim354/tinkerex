@@ -872,7 +872,7 @@
   rather than "you selected nothing", and the caller has a readout to put the message in.
 - **THE SVG BUTTON'S VISIBLE TEXT IS CONSTANT AND ITS ACCESSIBLE NAME IS NOT.** The actions bar
   carries seven controls since S4-3 (paper, Print, Save sheet, Download SVG, Save SVG, Reset,
-  ✕ Image), so a second count-bearing label beside "Print 3 parts" is noise — but a
+  ✕ Image), eight with the mm/in toggle, so a second count-bearing label beside "Print 3 parts" is noise — but a
   button must not lie about what it does, so its `aria-label` AND its `title` are written from the
   same `targetNoun()` the Print label uses, by the same refresh — four buttons since S4-3, the
   Download/Save SVG twins and the Print/Save sheet pair — and the ERB's at-rest literals are that
@@ -889,3 +889,17 @@
   and the button reads "Print 1 part". It was written out TWICE, in `print()` and in
   `refreshPrintBar()`, under a comment saying the two "must not drift", which is prose where a
   mechanism belongs; the exporter would have been a third copy.
+- **THE mm/in TOGGLE CHANGES WORDS, NEVER GEOMETRY.** The payload is millimetres and stays so;
+  `measure_controller.js#length` is the ONE place a payload number becomes text, and it converts
+  there and nowhere earlier. The **SVG export and the print sheet's scale do not read the unit** —
+  `width="{w}mm"` over a viewBox is the whole scale mechanism of both, so routing the toggle into
+  either changes the physical size of a file somebody cuts. The sheet's size LABELS do follow it,
+  through the injected `sizeLabel` (the paper and the readout must not disagree — the PRINTED SIZE LABEL bullet above);
+  the calibration ruler's "100 mm" does not, because it certifies the scale rather than reporting
+  a part. A measurement line is kept as the CLOSURE that wrote it (`setReadout`), so a flip rewrites
+  the line on screen; every plain `setStatus` drops it, so a flip can never resurrect a measurement
+  over a save notice or a refusal. The remembered choice is checked with `Object.hasOwn`, not
+  `UNITS[saved]`: a stored `constructor` answers truthy off the prototype and prints `NaN`. Guard:
+  `test/system/measure_units_test.rb`, every test of which first asserts `mm` is pressed. A leaked
+  `in` would turn other files' `mm` assertions red, and what prevents it is Capybara's own reset,
+  which clears localStorage between tests (measured 2026-10-08, capybara 3.40).

@@ -87,6 +87,21 @@
         than hidden. See measure_controller.js's `pick` and §14h.
       %>
       <%#
+        THE UNIT OF THE READOUT, mm or in. Display only: the payload, the SVG export and the print
+        sheet's scale stay millimetres, and only the words change (UNITS in measure_controller.js).
+        Rendered on BOTH pages, outside the `save` branch, because a visitor reads sizes too. `mm`
+        pressed is the at-rest literal; refreshUnitToggle() rewrites it from the remembered choice
+        on connect, before this span is ever shown.
+      %>
+      <span class="view-toggle" role="group" aria-label="Units">
+        <% %w[mm in].each do |unit| %>
+          <button type="button" class="toggle<%= " active" if unit == "mm" %>"
+                  data-action="measure#setUnit" data-measure-unit-param="<%= unit %>"
+                  data-measure-target="unitButton"
+                  aria-pressed="<%= unit == "mm" %>"><%= unit %></button>
+        <% end %>
+      </span>
+      <%#
         THE PAPER OPTIONS ARE POPULATED BY THE CONTROLLER FROM print_sheet.js's PAPERS table, not
         listed here. A second copy of the paper list in ERB is a second definition that drifts, and
         this select only ever appears once the controller has run anyway.
@@ -97,7 +112,7 @@
               data-measure-target="printButton">Print all</button>
       <%#
         SAVE, BESIDE PRINT. Constant text, for the reason the SVG button's is constant: the bar
-        carries seven controls now and a second count-bearing label beside "Print 3 parts" is
+        carries eight controls now and a second count-bearing label beside "Print 3 parts" is
         noise. The accessible name tracks the target, written by the same refreshPrintBar() from
         the same targetNoun(), so the four labels can only drift together.
       %>
@@ -108,8 +123,8 @@
                 title="Save all as a print sheet in the library">Save sheet</button>
       <% end %>
       <%#
-        VISIBLE TEXT IS CONSTANT, THE ACCESSIBLE NAME IS NOT. The bar already carries SIX other
-        controls since stage 4, S4-3 added the two Save twins (it was four), so a second
+        VISIBLE TEXT IS CONSTANT, THE ACCESSIBLE NAME IS NOT. The bar already carries SEVEN other
+        controls since the mm/in toggle joined stage 4, S4-3's two Save twins (it was four), so a second
         count-bearing label beside "Print 3 parts" is noise — but the button
         must still say what it will do, so refreshPrintBar() writes aria-label/title from the same
         targetNoun() the Print label uses. The literals here are the at-rest state the controller
