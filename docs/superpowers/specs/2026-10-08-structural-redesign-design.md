@@ -320,12 +320,17 @@ One PR per slice, each useful on its own, in this order:
 | slice | delivers | depends on |
 |---|---|---|
 | 1. Visual system | the design system's tokens and components applied to today's structure | the §2 open questions |
-| 2. Shell | places sidebar, top bar New and Upload, pins (`maker_pins`) | 1 |
+| 2. Shell | places sidebar, pins (`maker_pins`), the top bar's New ▾ menu, Inventory on demand in the sidebar | 1 |
 | 3. Inspector and workspace | selection, the inspector frame, the workspace header | 2 |
-| 4. Folder destinations | retire the current project, the tool destination bar, intake-only attach | 3, the cross-repo check |
+| 4. Folder destinations | retire the current project, Upload into the top bar, the tool destination bar, intake-only attach | 3, the cross-repo check |
 | 5. Models fold-in | the model strip, the 3D models place, the redirects, shelves to Settings | 3 |
 | 6. Project hub and Recent | the default layout, "+ Add panel", tile links to selection, Recent | 2 |
-| 7. Inventory on demand and cleanup | the conditional sidebar entry, dropping the retired columns | 4 |
+| 7. Cleanup | dropping the retired current-project columns (Inventory on demand landed in slice 2) | 4 |
+
+**Amended 2026-10-08 (slice 2's plan):** the top bar's Upload moved from slice 2 to slice 4, because
+its destination IS slice 4's change; moving the button first would write its destination logic
+twice. The current-project card stays in the sidebar until slice 4 for the same reason. The
+conditional Inventory entry moved forward into slice 2, where the sidebar is built.
 
 **The main risk is slice 4.** It changes uploads, tools and an addon host contract together, which
 is why it waits until the inspector exists (so "where did my file go" has an answer on screen) and
