@@ -238,14 +238,13 @@ module Maker
       old   = @user.nodes.create!(node_id: "pin-old", name: "old", kind: "dir")
       fresh = @user.nodes.create!(node_id: "pin-fresh", name: "fresh", kind: "dir")
       live  = @user.nodes.create!(node_id: "pin-live", name: "live", kind: "dir")
-      pins = [ gone, old, fresh, live ].map { |n| @user.maker_pins.create!(node_id: n.node_id) }
+      [ gone, old, fresh, live ].each { |n| @user.maker_pins.create!(node_id: n.node_id) }
       gone.destroy!
       old.update_columns(deleted: true, updated_at: 31.days.ago)
       fresh.update_columns(deleted: true)
 
       assert_equal 2, Maker::AttachmentReaper.reap_all!(grace: 30.days)
       assert_equal %w[pin-fresh pin-live], @user.maker_pins.order(:node_id).pluck(:node_id)
-      assert_equal 4, pins.size
     end
   end
 end

@@ -32,6 +32,11 @@ module Maker
       second = @user.maker_pins.create!(node_id: b.node_id)
       assert_operator second.position, :>, first.position
       assert_equal [ first, second ], @user.maker_pins.ordered.to_a
+
+      # `ordered` SORTS BY POSITION, NOT BY CREATION. Above, creation order and position agree, so
+      # an `order(:id)` would pass too; give the later pin the LOWER position and it must lead.
+      second.update_column(:position, first.position - 1)
+      assert_equal [ second, first ], @user.maker_pins.ordered.to_a
     end
 
     test "the sidebar holds at most CAP pins" do

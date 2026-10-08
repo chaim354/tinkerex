@@ -46,6 +46,23 @@ module Web
       assert_empty @user.maker_pins
     end
 
+    # THE RACE, FORCED: a double-clicked Pin sends two requests that both pass the uniqueness check;
+    # the second insert hits the unique index. `save` raising RecordNotUnique is that second insert.
+    test "a double-clicked Pin lands like a single one instead of failing" do
+      Maker::Pin.class_eval do
+        alias_method :__real_save, :save
+        define_method(:save) { |*| raise ActiveRecord::RecordNotUnique, "duplicate pin" }
+      end
+      post pins_path, params: { node_id: @dir.node_id }
+      assert_redirected_to files_path(folder: @dir.node_id)
+      assert_equal "Pinned to the sidebar.", flash[:notice]
+    ensure
+      Maker::Pin.class_eval do
+        alias_method :save, :__real_save
+        remove_method :__real_save
+      end
+    end
+
     test "another user's pin cannot be removed" do
       other = User.create!(email: "o-#{SecureRandom.hex(4)}@example.com")
       theirs = other.nodes.create!(node_id: "dir-theirs", name: "theirs", kind: "dir")

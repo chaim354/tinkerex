@@ -207,6 +207,12 @@ module Web
                     text: "Pin to sidebar"
       assert_select ".page-actions details.menu form[action=?] button.menu-item",
                     adopt_projects_path, text: /make this folder a project/i
+
+      # AND THE ROOT, ON THIS SAME ADAPTER, STILL RENDERS NO MENU: no folder means no pin, and
+      # nothing else here has an item. The folder views above can no longer be empty, so this is
+      # the one place left where this file pins "never an empty ⋯" on every backend leg.
+      get files_path
+      assert_select ".page-actions details.menu", { count: 0 }, "at the root"
     end
 
     # THE OTHER HALF OF THE SAME GATE, and Task E's phone sweep depends on it: a folder a project

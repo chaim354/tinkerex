@@ -10,6 +10,11 @@ class PinsController < ApplicationController
     else
       redirect_back fallback_location: files_path, alert: pin.errors.full_messages.to_sentence
     end
+  rescue ActiveRecord::RecordNotUnique
+    # A DOUBLE-CLICK RACES THE UNIQUENESS CHECK: both requests pass validation and the second insert
+    # hits the (user_id, node_id) index. The folder IS pinned, so answer as if this request did it
+    # rather than with a 500 (found in review).
+    redirect_to files_path(folder: params[:node_id].to_s), notice: "Pinned to the sidebar."
   end
 
   def destroy
