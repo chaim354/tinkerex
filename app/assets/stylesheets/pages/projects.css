@@ -218,11 +218,16 @@
   .bom-rollup { font: 12px/1.5 var(--font-mono); color: var(--fg-muted); margin: 8px 0; }
   .composer-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; align-items: end; margin-bottom: 8px; }
   .composer-fields label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--fg-muted); }
+  /* Fields fill their cell and a phone column may shrink below its content (`minmax(0, 1fr)`): the
+     BOM composer's item <select> carries part names as long as a sentence, and its min-content
+     differs between macOS and the Linux runners — the shape that pushed /inventory/:id sideways
+     at 375px (pages/inventory.css's `.adjust-fields` records it). */
+  .composer-fields input, .composer-fields select { width: 100%; min-width: 0; }
   .bom-target { display: flex; flex-direction: column; gap: 8px; border: 0; padding: 0; margin: 0 0 8px; }
   .bom-target legend { font-size: 11px; color: var(--fg-muted); padding: 0; }
   .bom-target label { display: flex; gap: 8px; align-items: center; }
   @media (max-width: 719px) {
-    .composer-fields { grid-template-columns: 1fr 1fr; }
+    .composer-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
     .bom-lines .col-supplier, .bom-lines .col-ref { display: none; }
   }
 

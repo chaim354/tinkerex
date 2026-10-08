@@ -18,7 +18,13 @@
   /* The Adjust composer: one row of fields at desktop, a stack on the phone. */
   .adjust-fields { display: grid; grid-template-columns: 110px 150px minmax(120px, 1fr) minmax(160px, 2fr) auto; gap: 8px; align-items: end; }
   .adjust-fields label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--fg-muted); }
-  @media (max-width: 719px) { .adjust-fields { grid-template-columns: 1fr 1fr; } .adjust-fields .adjust-submit { grid-column: 1 / -1; } }
+  /* `minmax(0, 1fr)`, NOT `1fr`, AND FIELDS THAT FILL THEIR CELL: a bare `1fr` column cannot shrink
+     below its content's min-content, and a <select>'s min-content is its longest option at the
+     font's own metrics — which differ between macOS and the Linux CI runners. At the redesign's
+     14px the reason select pushed /inventory/:id to scrollWidth 382 at 375px on Linux while
+     measuring 362 on a Mac (2026-10-08). Column width now comes from the grid, never from text. */
+  .adjust-fields input, .adjust-fields select { width: 100%; min-width: 0; }
+  @media (max-width: 719px) { .adjust-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .adjust-fields .adjust-submit { grid-column: 1 / -1; } }
 
   .ledger .delta-in { color: var(--ok); }
   .ledger .delta-out { color: var(--danger); }
