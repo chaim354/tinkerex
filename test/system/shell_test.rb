@@ -60,6 +60,21 @@ class ShellTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # `.flash { display: flex }` outranks the UA's `[hidden] { display: none }`, and the openscad
+  # addon bundle ships `p.flash.flash-alert[hidden]` as a notice slot — so until components.css
+  # restored `[hidden]` it rendered as an empty PROBLEM box on every openscad load. Injected rather
+  # than rendered by a fixture because the markup is the ADDON's, not a template of ours; the CSS
+  # is what is under test. Mutation-checked: deleting `.flash[hidden]` turns this red.
+  test "a flash rendered hidden stays hidden" do
+    visit files_path
+    page.execute_script(<<~JS)
+      document.querySelector("main").insertAdjacentHTML("beforeend",
+        '<p class="flash flash-alert" data-role="notice" id="hidden-flash-probe" hidden></p>')
+    JS
+    assert_selector "#hidden-flash-probe", visible: :hidden
+    assert_no_selector "#hidden-flash-probe", visible: true
+  end
+
   test "a notice toast leaves on its own and an alert waits to be dismissed" do
     # sign_in_as landed on /files carrying Devise's "Signed in successfully." notice.
     assert_selector ".flash-stack .flash-notice", text: "Signed in successfully."

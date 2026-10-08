@@ -1,5 +1,6 @@
-/* The Home page (stage 2, S2-1): the hero reuses the rail card's accent border so the two read as
-   the same object; the tile rows scroll sideways INSIDE their own box so the page never does. */
+/* The Home page (stage 2, S2-1): the hero carries an accent tint because it IS the current project,
+   the one destination the accent marks besides the primary action (design-system.md rule 13); the
+   tile rows scroll sideways INSIDE their own box so the page never does. */
 @layer pages {
   .home-hero { border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 5%, var(--surface)); margin-bottom: 20px; }
   .home-hero .project-description { margin-bottom: 8px; }
@@ -29,7 +30,7 @@
   .attention-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
   .attention-mark { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
   .attention-row--danger .attention-mark { background: var(--danger); }
-  /* Low stock (stage 2, S2-3): a milder signal than a failed print — accent, not danger. */
+  /* Low stock (stage 2, S2-3): a milder signal than a failed print — warn, not danger. */
   .attention-row--warn .attention-mark { background: var(--warn); }
   .attention-text { flex: 1; min-width: 0; }
 }

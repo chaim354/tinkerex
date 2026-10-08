@@ -21,15 +21,17 @@
     --line-strong: #878276;
     --fg: #1b1c19;
     --fg-muted: #5b5c55;
+    /* Text tokens (fg-muted, accent-text, ok, warn, danger, info) clear 4.5:1 on BOTH --bg and
+       --surface: the rail and page heads sit on --bg, panels on --surface. */
     /* THE ACCENT IS SPENT ONCE PER SCREEN: the one primary action, and the destination it lands
        in. Selection, tabs, links and the active nav item are INK (--fg), never accent. */
     --accent: #c2410c;
     --accent-ink: #ffffff;
-    --accent-text: #b23c0b;
+    --accent-text: #ad3a0b;
     --accent-soft: rgba(194, 65, 12, .12);
-    --ok: #24733f;
+    --ok: #206b3a;
     --ok-soft: rgba(36, 115, 63, .14);
-    --warn: #8a5a00;
+    --warn: #835500;
     --warn-soft: rgba(138, 90, 0, .14);
     --danger: #b42318;
     --danger-soft: rgba(180, 35, 24, .14);

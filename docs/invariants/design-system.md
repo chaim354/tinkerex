@@ -76,13 +76,17 @@ landed it (§11).
     logical path and Propshaft fingerprints them (`shell_layout_test.rb` fetches each).
 
 13. **The accent is spent once per screen; selection is ink.** `--accent` fills the one primary
-    action and marks the current project (where that action lands). Links, selected chips,
+    action and marks the current project (where that action lands); `.btn.outline` ("Set as
+    current") is the one secondary control allowed it, because it acts on that destination. Links,
+    selected chips,
     toggles, tabs, the file-chooser selection and the active rail item use `--fg`. Status carries
     its word, never colour alone (`.flash::before`, badge labels). Text on an accent fill is
     `--accent-ink` (near-black in the dark theme), never a literal white. `components.css` and
     `shell.css` name tokens, never colour literals (`css_hygiene_test.rb`); drawing colours stay
     literal in `pages/` (rule 5). Labels stay Plex Sans and mono stays for data (the 2026-09-10
-    cohesion decisions 4 and 5). The values are the Tinkerex Design System artifact.
+    cohesion decisions 4 and 5). Text selection (`::selection`) and the code editor's selection and
+    active-line tints are browser text affordances, not UI selection state, and keep accent tints.
+    The values are the Tinkerex Design System artifact.
 
 The library search that the top bar drives (`FilesController#index`, `?q=`) is flat, whole-library
 and case-insensitive; its `LIKE` carries `ESCAPE '\'` because SQLite has no default escape
