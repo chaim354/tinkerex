@@ -16,7 +16,8 @@
   /* The hub has no Remove button to anchor to the right, so its own fact takes that job. */
   .settings-hub .settings-fact { margin-left: auto; }
   .theme-choice { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-  .theme-choice .theme-option[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  /* A pressed theme is SELECTED, so it is ink like a selected chip (design-system.md rule 13). */
+  .theme-choice .theme-option[aria-pressed="true"] { border-color: var(--fg); background: var(--fg); color: var(--surface); }
 
   /* --- Filing (stage 4, S4-2): one card per FOLDER, replacing the 124-row reference list.
      `.chip` and `.empty` are COMPONENTS and are only QUALIFIED here, never redeclared

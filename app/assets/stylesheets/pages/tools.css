@@ -15,7 +15,7 @@
   /* --- Tools (addons) gallery --- */
   .tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
   .addon-card { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); color: var(--fg); }
-  .addon-card:hover { text-decoration: none; border-color: var(--accent); }
+  .addon-card:hover { text-decoration: none; border-color: var(--fg); }
   .addon-card.disabled { opacity: .6; }
   .addon-card-head { display: flex; align-items: center; gap: 10px; }
   .addon-icon { font-size: 22px; line-height: 1; }
@@ -66,7 +66,7 @@
     border: none; background: none; padding: 0; cursor: pointer;
     font-size: 12px; color: var(--fg-muted); text-decoration: underline;
   }
-  .box-toc-all:hover { color: var(--accent); }
+  .box-toc-all:hover { color: var(--fg); }
   .box-toc-list { list-style: none; padding: 0; margin: 0; }
   .box-toc-list li[hidden] { display: none; }
   .box-toc-list a {
@@ -74,7 +74,7 @@
     padding: 5px 8px; border-radius: 7px; font-size: 14px; color: var(--fg);
   }
   .box-toc-list a:hover { background: var(--raised); text-decoration: none; }
-  .box-toc-list li.is-active a { background: var(--raised); color: var(--accent); font-weight: 600; }
+  .box-toc-list li.is-active a { background: var(--raised); color: var(--fg); font-weight: 600; }
   .box-toc-count, .box-group-count {
     font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums;
   }
@@ -92,7 +92,7 @@
     transform: rotate(-45deg); transition: transform 120ms ease;
   }
   details[open] > .box-group-summary::before, details[open] > .box-saved-summary::before { transform: rotate(45deg); }
-  .box-group-summary:hover .box-group-title, .box-saved-summary:hover .box-saved-name { color: var(--accent); }
+  .box-group-summary:hover .box-group-title, .box-saved-summary:hover .box-saved-name { color: var(--fg); }
   .box-group > .tools-grid { margin-top: 10px; }
   .addon-card[hidden], .box-group[hidden] { display: none; }
 
@@ -244,7 +244,7 @@
     border: 1px solid var(--line); border-radius: 50%;
     font-size: 10px; line-height: 1; color: var(--fg-muted);
   }
-  .box-help:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+  .box-help:hover { border-color: var(--fg); color: var(--fg); text-decoration: none; }
 
   /* EVERY param group folds, not just the advanced ones — same <details>/<summary> pattern as the
      index's sections, so both pages fold the same way. The fields inside are unchanged. */
@@ -266,7 +266,7 @@
     transform: rotate(-45deg); transition: transform 120ms ease;
   }
   .param-group[open] > .param-group-summary::before { transform: rotate(45deg); }
-  .param-group-summary:hover .param-group-title { color: var(--accent); }
+  .param-group-summary:hover .param-group-title { color: var(--fg); }
   /* The advanced groups keep their boxed-off look, so "these are the fiddly ones" survives the change. */
   .param-group-adv { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 2px 12px 4px; margin: 0 0 10px; }
   .param-group > .box-params { margin-top: 6px; }

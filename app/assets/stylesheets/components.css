@@ -232,7 +232,8 @@
 
      `.image-pick` IS ONE CONTROL WITH TWO CALLERS: an image block's picker and the cover's picker
      (which adds `.cover-pick` to carry a different action, not a different look). Its `.active` is
-     the accent outline, so "which picture is this block's" is answerable at a glance. --- */
+     the ink outline (selection is ink, design-system.md rule 13), so "which picture is this
+     block's" is answerable at a glance. --- */
   .layout-add .menu-list { min-width: 160px; }
   .layout-add-cap { max-width: 200px; margin: 4px 6px 2px; font-size: 11px; white-space: normal; }
   .block-panel { display: flex; flex-direction: column; gap: 8px; }
@@ -319,7 +320,8 @@
   .thumb.photo { background: var(--photo-stage); }
   .thumb.photo img { object-fit: cover; }
   /* The folder glyph (ShellHelper#folder_glyph): the rail's `files` icon, inline beside a name. */
-  .folder-glyph { width: 16px; height: 16px; flex: 0 0 auto; vertical-align: -3px; }
+  .folder-glyph, .file-glyph { width: 16px; height: 16px; flex: 0 0 auto; vertical-align: -3px; }
+  .filechooser-row .folder-glyph, .filechooser-row .file-glyph { margin-right: 6px; }
   .grid-card { display: flex; flex-direction: column; gap: 2px; min-width: 0; color: var(--fg); text-decoration: none; }
   .grid-card .thumb { margin-bottom: var(--space-2); transition: border-color .12s; }
   .grid-card:hover { text-decoration: none; }

@@ -8,7 +8,7 @@
   .inventory-table .col-part { font-family: var(--font-mono); font-size: 12px; color: var(--fg-muted); }
   .inventory-table .col-category, .inventory-table .col-location, .inventory-table .col-supplier { color: var(--fg-muted); }
   .inventory-table .badge.low-stock { margin-left: 6px; }
-  .inventory-table tr.low-stock .col-onhand { color: var(--accent); }
+  .inventory-table tr.low-stock .col-onhand { color: var(--warn); }
   @media (max-width: 719px) { .inventory-table .col-supplier, .inventory-table .col-min { display: none; } }
   @media (max-width: 479px) { .inventory-table .col-category, .inventory-table .col-location { display: none; } }
 

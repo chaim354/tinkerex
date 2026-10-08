@@ -16,7 +16,7 @@
   .ext-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 14px; }
   .ext-picker { display: inline-flex; gap: 6px; align-items: center; }
   .ext-picker label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
-  .ext-picker select { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px;
+  .ext-picker select {
     font: inherit; font-size: 13px; max-width: 260px; }
   /* The full-set state (MAX_EXTS reached) — the control goes inert rather than accepting a value
      resolve_exts would then drop. */
@@ -47,7 +47,7 @@
      .project-chip, .project-chip form, .chip-x, .chip-x:hover — these live on files/show. */
   .attach-to-project { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 16px; }
   .attach-form { display: inline-flex; align-items: center; gap: 8px; }
-  .attach-form select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; }
+  .attach-form select { max-width: 260px; }
   .project-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px;
     border: 1px solid var(--line); border-radius: 999px; font-size: 13px; }
   .project-chip form { display: inline; }
