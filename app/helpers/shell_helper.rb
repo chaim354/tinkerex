@@ -118,6 +118,16 @@ module ShellHelper
     end
   end
 
+  # The folder glyph on tiles, list rows, the trash and the folder field: the rail's own `files`
+  # path, so a folder looks the same in the nav and in the grid (design system: no emoji in the
+  # interface; the 📁 it replaces rendered differently on every OS).
+  def folder_glyph
+    tag.svg(viewBox: "0 0 16 16", class: "folder-glyph", "aria-hidden": "true") do
+      tag.path(d: ICON_PATHS.fetch(:files), fill: "none", stroke: "currentColor",
+               "stroke-width": "1.5", "stroke-linejoin": "round", "stroke-linecap": "round")
+    end
+  end
+
   # The page's own name for the top bar when it supplies no breadcrumb: the title minus the
   # " — Tinkerex" suffix every page appends.
   def page_title_text

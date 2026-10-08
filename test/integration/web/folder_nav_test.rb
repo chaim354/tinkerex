@@ -49,7 +49,11 @@ module Web
 
       # Root children are present…
       assert_select "a", text: "root-file.txt"
-      assert_select "a", text: "📁 cad"
+      assert_select "a.dir", text: "cad"
+      # The folder glyph is the rail's line icon, never an emoji (design system: no emoji in the
+      # interface).
+      assert_select "a.dir svg.folder-glyph"
+      assert_no_match "📁", response.body
       # …and the nested files are NOT — the flat-dump bug. THIS is the mutation-sensitive
       # assertion: revert #index to `current_user.nodes.present` (all nodes) and this goes red,
       # because nested.stl and deep.stl would be dumped here too.
@@ -71,7 +75,7 @@ module Web
       assert_response :success
 
       assert_select "a", text: "nested.stl"
-      assert_select "a", text: "📁 sub"
+      assert_select "a.dir", text: "sub"
       assert_select "a", text: "shared.stl", count: 1     # cad/shared.stl, not root's
       # The parent's siblings and the grandchild are both off this page.
       assert_select "a", text: "root-file.txt", count: 0

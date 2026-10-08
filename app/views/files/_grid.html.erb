@@ -15,7 +15,7 @@
           thumb cell. The fuller note is in _list.html.erb; the argument is in files_helper.rb. %>
       <%= link_to files_path(folder: node.node_id), class: "grid-card grid-folder",
                   data: folder_menu_data(node.node_id, node.name) do %>
-        <span class="thumb folder-thumb" aria-hidden="true">📁</span>
+        <span class="thumb folder-thumb" aria-hidden="true"><%= folder_glyph %></span>
         <span class="grid-name"><%= node.name %></span>
       <% end %>
     <% elsif Maker::Previews::Registry.for_filename(node.name).present? %>

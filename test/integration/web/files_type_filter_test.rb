@@ -46,7 +46,7 @@ module Web
     def folder_labels
       css_select("table.files tbody tr").to_h do |row|
         cells = row.css("td")
-        name = (cells[0].at_css(".file-name") || cells[0].at_css("a")).text.strip.delete_prefix("📁 ")
+        name = (cells[0].at_css(".file-name") || cells[0].at_css("a")).text.strip
         [ name, cells[2].text.strip ]
       end
     end
@@ -55,7 +55,7 @@ module Web
     # as well as the name, so read the .file-name span when there is one.
     def listed_names
       css_select("table.files tbody tr td:first-child").map do |cell|
-        (cell.at_css(".file-name") || cell.at_css("a")).text.strip.delete_prefix("📁 ")
+        (cell.at_css(".file-name") || cell.at_css("a")).text.strip
       end
     end
 
