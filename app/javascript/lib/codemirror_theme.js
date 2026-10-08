@@ -8,13 +8,14 @@
 // controller; the trade is deliberate and the fix, if it is ever wanted, is that — not a
 // reconfigure bolted onto one of the three.
 //
-// THE DEFAULT IS DARK, matching ui_theme's own rule: an absent or junk cookie means dark, and a
-// junk value never reaches this attribute anyway (the server only ever writes the enum).
+// THE DEFAULT IS LIGHT (2026-10-08), matching ui_theme's own rule: an absent or junk cookie means
+// light, and a junk value never reaches this attribute anyway (the server only ever writes the
+// enum).
 export function darkThemeActive() {
   const theme = document.documentElement.dataset.theme
-  if (theme === "light") return false
+  if (theme === "dark") return true
   if (theme === "system") return window.matchMedia("(prefers-color-scheme: dark)").matches
-  return true
+  return false
 }
 
 // TAKES THE CODEMIRROR NAMESPACE AS AN ARGUMENT, like lib/codemirror_languages beside it and for

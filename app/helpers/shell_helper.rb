@@ -3,7 +3,7 @@
 # the wrong theme and no inline script — the CSP nonces script-src (§14e), and a script that
 # runs before paint is exactly the kind of thing not to add.
 module ShellHelper
-  THEMES = %w[dark light system].freeze
+  THEMES = %w[light dark system].freeze
 
   # controller_path's FIRST segment, so projects/tasks, models/print_runs and tools/addons all
   # resolve to their family. A controller not listed here lights nothing, which is correct for
@@ -42,11 +42,13 @@ module ShellHelper
     settings: "M8 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6z M8 1.5v2 M8 12.5v2 M1.5 8h2 M12.5 8h2 M3.4 3.4l1.4 1.4 M11.2 11.2l1.4 1.4 M3.4 12.6l1.4-1.4 M11.2 4.8l1.4-1.4"
   }.freeze
 
-  # An unknown or absent cookie is the default. The cookie is client-written (theme_controller.js)
-  # and is never trusted for anything but this enum.
+  # An unknown or absent cookie is the default, LIGHT ("Paper") since the 2026-10-08 redesign: the
+  # library is mostly opaque white renders, and a paper page frames them where a dark one framed
+  # white squares. The cookie is client-written (theme_controller.js) and is never trusted for
+  # anything but this enum.
   def ui_theme
     value = cookies[:theme].to_s
-    THEMES.include?(value) ? value : "dark"
+    THEMES.include?(value) ? value : "light"
   end
 
   def rail_collapsed? = cookies[:rail] == "collapsed"
@@ -122,13 +124,15 @@ module ShellHelper
     content_for(:title).to_s.sub(/\s+[—-]\s+Tinkerex\z/, "").presence || "Tinkerex"
   end
 
-  def theme_color_hex = ui_theme == "light" ? "#f4f5f7" : "#15181d"
+  # The browser chrome's colour: Graphite's ground for dark, Paper's for light AND for system,
+  # because the server cannot see the OS setting and light is the default.
+  def theme_color_hex = ui_theme == "dark" ? "#141512" : "#f4f2ed"
 
   def color_scheme_meta
     case ui_theme
-    when "light" then "light"
+    when "dark" then "dark"
     when "system" then "light dark"
-    else "dark"
+    else "light"
     end
   end
 end

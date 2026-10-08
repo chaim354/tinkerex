@@ -18,13 +18,13 @@ class SettingsThemeTest < ApplicationSystemTestCase
   test "choosing a theme writes html[data-theme] and the cookie immediately, and the rail agrees after a reload" do
     visit settings_path
     theme = -> { page.evaluate_script("document.documentElement.dataset.theme") }
-    assert_equal "dark", theme.call
-    assert_selector ".theme-choice button[data-theme-theme-param='dark'][aria-pressed='true']"
-
-    find(".theme-choice button[data-theme-theme-param='light']").click
     assert_equal "light", theme.call
-    assert_equal "light", page.driver.browser.manage.cookie_named("theme")[:value]
     assert_selector ".theme-choice button[data-theme-theme-param='light'][aria-pressed='true']"
+
+    find(".theme-choice button[data-theme-theme-param='dark']").click
+    assert_equal "dark", theme.call
+    assert_equal "dark", page.driver.browser.manage.cookie_named("theme")[:value]
+    assert_selector ".theme-choice button[data-theme-theme-param='dark'][aria-pressed='true']"
 
     # RELOAD, NOT JUST THE IMMEDIATE DOM CHANGE. The rail's theme button is a SEPARATE Stimulus
     # `theme` controller instance from the settings row's (theme_controller.js's own comment: two
@@ -33,15 +33,15 @@ class SettingsThemeTest < ApplicationSystemTestCase
     # in-page DOM tweak. That is the property actually worth pinning here: not "the button looks
     # pressed", but "a page rendered afterwards agrees".
     visit settings_path
-    assert_selector "aside.rail [data-action='theme#cycle']", text: "Theme: light"
-    assert_selector ".theme-choice button[data-theme-theme-param='light'][aria-pressed='true']"
+    assert_selector "aside.rail [data-action='theme#cycle']", text: "Theme: dark"
+    assert_selector ".theme-choice button[data-theme-theme-param='dark'][aria-pressed='true']"
 
     # MUTATION-CHECKED (test/system/README.md): inside theme_controller.js#choose, replacing
     # `this.apply(next)` with the write path minus its `document.cookie = ...` line (i.e. set
     # `document.documentElement.dataset.theme`, the two metas and call `this.render(next)`
-    # directly, skipping the cookie) leaves line 25's own DOM assertion green -- the in-page
-    # DOM still flips to "light" -- but turns line 26's cookie read red, before this test ever
-    # reaches the reload:
+    # directly, skipping the cookie) leaves the first DOM assertion after the click green -- the
+    # in-page DOM still flips to "dark" -- but turns the cookie read below it red, before this test
+    # ever reaches the reload:
     #   Selenium::WebDriver::Error::NoSuchCookieError: no such cookie
     #     test/system/settings_theme_test.rb:26:in 'block in <class:SettingsThemeTest>'
     # (chromedriver raises rather than answering nil for a cookie that was never set -- this is

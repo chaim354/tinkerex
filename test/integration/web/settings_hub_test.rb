@@ -67,8 +67,8 @@ module Web
       assert_select ".settings-fact", text: "1 rule"
       assert_select ".settings-fact", text: "4 tags"
       assert_select ".settings-fact", text: @user.email
-      # cookies[:theme] is unset -- ShellHelper#ui_theme's default, "dark".
-      assert_select ".settings-fact", text: /dark/
+      # cookies[:theme] is unset -- ShellHelper#ui_theme's default, "light".
+      assert_select ".settings-fact", text: /light/
       # The current-project preference (slice 0). It is a FORM, not a link, so it has no
       # `a.settings-name` — the row is named by a span and asserted through its control.
       assert_select "form[action=?] input[type=checkbox][name=?]",
@@ -85,15 +85,15 @@ module Web
         assert_select "button[data-action='theme#choose'][data-theme-theme-param='light']"
         assert_select "button[data-action='theme#choose'][data-theme-theme-param='system']"
       end
-      assert_select ".theme-choice button[data-theme-theme-param='dark'][aria-pressed='true']"
-      assert_select ".theme-choice button[data-theme-theme-param='light'][aria-pressed='false']"
-      assert_select ".theme-choice button[data-theme-theme-param='system'][aria-pressed='false']"
-
-      cookies[:theme] = "light"
-      get settings_path
-
       assert_select ".theme-choice button[data-theme-theme-param='light'][aria-pressed='true']"
       assert_select ".theme-choice button[data-theme-theme-param='dark'][aria-pressed='false']"
+      assert_select ".theme-choice button[data-theme-theme-param='system'][aria-pressed='false']"
+
+      cookies[:theme] = "dark"
+      get settings_path
+
+      assert_select ".theme-choice button[data-theme-theme-param='dark'][aria-pressed='true']"
+      assert_select ".theme-choice button[data-theme-theme-param='light'][aria-pressed='false']"
     end
 
     test "requires a session" do

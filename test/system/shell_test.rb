@@ -40,23 +40,23 @@ class ShellTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  test "the theme button cycles dark, light, system and persists" do
+  test "the theme button cycles light, dark, system and persists" do
     visit files_path
     theme = -> { page.evaluate_script("document.documentElement.dataset.theme") }
-    assert_equal "dark", theme.call
+    assert_equal "light", theme.call
 
     find("aside.rail [data-action='theme#cycle']").click
-    assert_equal "light", theme.call
+    assert_equal "dark", theme.call
     visit files_path
-    assert_equal "light", theme.call
-    assert_selector "aside.rail [data-action='theme#cycle']", text: "Theme: light"
+    assert_equal "dark", theme.call
+    assert_selector "aside.rail [data-action='theme#cycle']", text: "Theme: dark"
 
     find("aside.rail [data-action='theme#cycle']").click
     assert_equal "system", theme.call
     find("aside.rail [data-action='theme#cycle']").click
-    assert_equal "dark", theme.call
+    assert_equal "light", theme.call
     visit files_path
-    assert_equal "dark", theme.call
+    assert_equal "light", theme.call
     assert_no_console_errors
   end
 

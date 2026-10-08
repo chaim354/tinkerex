@@ -1,16 +1,18 @@
 import { Controller } from "@hotwired/stimulus"
 
 // The theme button in the rail (spec §5.7), and — stage 2, S2-6 — the three-way choice on the
-// settings page. Both write the same three states: dark -> light -> system in the rail (cycle),
+// settings page. Both write the same three states: light -> dark -> system in the rail (cycle),
 // or pick one directly on the settings row (choose). Either way this stamps the choice on
 // <html data-theme> for this page and writes the `theme` cookie so the layout renders the next
 // page with it already applied (no flash, no inline script). ShellHelper#ui_theme treats any
-// other cookie value as dark. The rail's button and the settings row are TWO SEPARATE controller
-// instances (each is its own data-controller="theme"), so each renders only its own label/option
-// targets -- the rail's label updates on the rail's own next render, not from a click on the
-// settings row.
-const ORDER = ["dark", "light", "system"]
-const META = { dark: ["dark", "#15181d"], light: ["light", "#f4f5f7"], system: ["light dark", "#15181d"] }
+// other cookie value as LIGHT, the default since the 2026-10-08 redesign. The rail's button and
+// the settings row are TWO SEPARATE controller instances (each is its own data-controller="theme"),
+// so each renders only its own label/option targets -- the rail's label updates on the rail's own
+// next render, not from a click on the settings row.
+const ORDER = ["light", "dark", "system"]
+// theme-color mirrors ShellHelper#theme_color_hex: Paper's ground for light and system, Graphite's
+// for dark.
+const META = { light: ["light", "#f4f2ed"], dark: ["dark", "#141512"], system: ["light dark", "#f4f2ed"] }
 
 export default class extends Controller {
   static targets = ["label", "option"]
@@ -25,7 +27,7 @@ export default class extends Controller {
 
   // The settings row's three buttons (data-theme-theme-param="dark|light|system"). Guarded
   // against a value outside ORDER rather than trusting the DOM -- cheap, and it keeps this from
-  // ever writing a cookie value ShellHelper#ui_theme would then have to treat as dark anyway.
+  // ever writing a cookie value ShellHelper#ui_theme would then have to treat as light anyway.
   choose(event) {
     const next = event.params.theme
     if (!ORDER.includes(next)) return
@@ -45,7 +47,7 @@ export default class extends Controller {
 
   current() {
     const value = document.documentElement.dataset.theme
-    return ORDER.includes(value) ? value : "dark"
+    return ORDER.includes(value) ? value : "light"
   }
 
   render(theme) {
