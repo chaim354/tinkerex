@@ -67,7 +67,7 @@ independent of the structure and can flip without changing anything below.
 | Home (current-project card, continue, attention) | **Recent**, the landing page: recently changed files, active projects, an attention row when non-empty | `/` |
 | Files | **Library**: folder grid or list, with the inspector | `/files?folder=…&selected=…` |
 | File page | **Workspace**: the full-width deep-work page | `/files/:id` (unchanged) |
-| Models index, model pages, shelves | **Folded into the Library**: the model strip, the "3D models" place, shelves as a Settings rule | `/models*` → 301 to Library views; `/models/shelves` → `/settings/shelves` |
+| Models index, model pages, shelves | **Folded into the Library**: the model strip, the "3D models" place, shelves as a Settings rule | `/models` → 301 to `/files/models`; `/models/:id` → 302 to its folder when that folder shows its strip; `/models/shelves` → 301 to `/settings/shelves` |
 | Projects index | The sidebar's Projects list, plus an index page with archived projects | `/projects` (unchanged) |
 | Project page | **Project hub** (§6) | `/projects/:id` (unchanged) |
 | Inventory section | **Hidden until used** (§7) | `/inventory*` (unchanged) |
@@ -172,15 +172,22 @@ the viewers, the preview stack or Measure changes (`docs/invariants/measure-view
 
 ### 5.4 Models as a lens
 
-- **The model strip**: when the current folder is a catalogued model (`maker_models.auto_node_id`),
-  a compact strip sits above the grid with the cover, the status badge, the print settings summary
-  and "Log a print". It replaces the model page.
-- **The "3D models" place**: `/files?view=models`, every model folder as a cover tile, which is the
-  old Models index as a Library view.
-- **Redirects**: `/models` → `/files?view=models`; `/models/:id` → the model's folder. A manual
-  model with no folder keeps a restyled `/models/:id` page; that is the one exception, not a second
-  catalog.
-- **Shelves** move to Settings as the rule for what counts as a model; they stop being navigation.
+- **The model strip** (`files/_model_strip`): when the current folder is a catalogued model's
+  folder (`maker_models.folder_node_id`, answered by `Maker::ModelFolder.model_in`) and no project
+  claims it, a compact strip sits above the grid with the cover, the title, the status badge,
+  designer · license · source, the print settings summary, notes, Edit and Remove from catalog /
+  Delete, and the print log with "Log a print". It replaces the model page for every model that has
+  a folder to land on.
+- **The "3D models" place**: `/files/models` (`Files::ModelsController`, `files_models_path`), every
+  catalogued model as a cover tile with its own status, tag, title and sort filters, which is the
+  old Models index as a Library view. Its primary action is Import model, still at `/models/new`.
+- **Redirects**: `/models` → 301 to `/files/models`, keeping `q`, `status`, `tag` and `sort`.
+  `/models/:id` → 302 to the model's folder when `Maker::ModelFolder.landing_folder_id` names one:
+  live, claimed by no project, and showing this model's strip. Every other model keeps its
+  `/models/:id` page: a one-file model, an import whose `Models/<slug>` was never made or is in the
+  trash, and a model whose folder a project claims. Those are the exceptions, not a second catalog.
+- **Shelves** move to Settings (`Settings::ShelvesController`, `/settings/shelves`) as the rule for
+  what counts as a model; they stop being navigation, and `/models/shelves` 301s there.
   `docs/invariants/model-intake.md`'s rules (nearest shelf, path vs node id, dismiss is not
   delete) are unchanged.
 
@@ -274,12 +281,13 @@ accept. Nothing chooses a destination from session or user state.
   `defaultFolderLabel` (three copies of `folder_field.js`). So the host kept those keys and changed
   only what fills them, and no new host contract was needed. The addons repo took a README
   correction (`chaim354/tinkerex-addons#16`) and no code.
-- **Routes**: `/` renders Recent (it already does through `HomeController`); `/models*` redirects
-  (§5.4); `/models/shelves` moves to `/settings/shelves` with a redirect. **This reverses a
-  2026-09-10 move and the old redirect must go in the same change**: today `/settings/shelves`
-  301s to `/models/shelves`, because the cohesion sweep put shelves under the section they serve.
-  With Models gone, the section they serve is Settings. Adding the new redirect without deleting the
-  old one is a redirect loop.
+- **Routes**: `/` renders Recent (it already does through `HomeController`); `/models` 301s to
+  `/files/models`, and `/models/:id` 302s to the model's folder when that folder shows its strip
+  (§5.4); `/models/shelves` moves to `/settings/shelves` with a 301. **This reverses a
+  2026-09-10 move and the old redirect must go in the same change**: until slice 5
+  `/settings/shelves` 301'd to `/models/shelves`, because the cohesion sweep put shelves under the
+  section they serve. With Models gone, the section they serve is Settings. Adding the new redirect
+  without deleting the old one is a redirect loop.
 - **Navigation highlighting**: `ShellHelper::SECTIONS` grows into the sidebar's highlight map
   (§4.1); `shell_layout_test` is updated.
 - **Pins need storage**: a `maker_pins` table (`user_id`, `node_id`, `position`). It is a new
@@ -370,6 +378,39 @@ in the same validated folder as Upload on every page that shows one; it used to 
 `params[:folder]`, and only on the Files index. Its tool entries carry `in=` that folder. Finally,
 `users.current_project_id` and `users.remember_current_project` become `ignored_columns` rather than
 merely unused (§9.1), so no code can read either by accident before slice 7 drops them.
+
+**Amended 2026-10-09 (slice 5's plan):** the 3D models view lives at `/files/models`, not
+`/files?view=models`. `?view=` is already the Library's list/grid toggle and is saved in the
+`files_view` cookie, so a `models` value would be saved as the Library's view and the next plain
+folder link would render the models view. Every control built from `files_query_base` (sort,
+dot-files, search, Rescan) would also drop it, and the view's own filters (status, tag, title search,
+its own sort values) collide with the Library's `q` and `sort`. A path of its own avoids all three,
+and as a `Files::` controller it reads as a Library page: the sidebar's 3D models place lights for it,
+and the phone tab bar lights Library. The strip keys on `folder_node_id`, not the `auto_node_id` §5.4
+first named. An imported model's `Models/<slug>` sets only `folder_node_id`, an auto folder model sets
+both to the folder, and a one-file auto model has no folder at all (its `auto_node_id` is a file on a
+shelf), so it gets no strip. There is no "manual" origin, so the model page is not one exception: it
+survives for every model with no strip to land on. That is one-file models (about half of what the
+sweep creates), imports whose `Models/<slug>` was never made or is in the trash, and a model whose
+folder a project now claims, because a project's claim wins. `Maker::ModelFolder` is the one answer to
+"which model does this folder show?" and "where does `/models/:id` go?", so the strip and the redirect
+cannot disagree. `/models/:id` redirects only when `landing_folder_id` names a folder, and it is a 302,
+not a 301, because the answer changes when a folder is trashed or restored. `/models` itself is a
+permanent 301 to `/files/models` that keeps `q`, `status`, `tag` and `sort`. The strip carries the
+cover, title, status badge, designer · license · source, the print-settings summary, notes in a
+`<details>`, Edit, Remove from catalog / Delete with the model page's exact wording and branches, and
+the print log with "Log a print". It does not repeat the page's 3D viewer, image gallery, instructions
+PDFs or file tree, because the folder's own listing, the inspector and the workspace already show
+those files. Logging or deleting a print redirects back, so from the strip the maker stays in the
+folder; deleting a model still lands on 3D models. Import stays at `/models/new`, linked as the 3D
+models view's primary action, and still lands on `model_url`, which now redirects to the new
+`Models/<slug>` folder and its strip. Shelves move to `Settings::ShelvesController` at
+`/settings/shelves`. The 2026-09-10 redirect from `/settings/shelves` to `/models/shelves` is deleted
+in the same change, as §9.1 requires, so `/models/shelves` can 301 the other way without a loop.
+Shelves light Settings and stop being navigation; the 3D models view keeps one muted sentence pointing
+at them. Finally, the emoji placeholders slice 1 deferred become the 3D models icon
+(`rail_icon(:models)`), and the `_print_log` partial takes strict locals so the strip and the page
+share one copy.
 
 **The main risk is slice 4.** It changes uploads, tools and an addon host contract together, which
 is why it waits until the inspector exists (so "where did my file go" has an answer on screen) and
