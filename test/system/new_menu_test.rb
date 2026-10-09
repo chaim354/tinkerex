@@ -47,20 +47,28 @@ class NewMenuSystemTest < ApplicationSystemTestCase
   # AT PHONE WIDTH THE TOP BAR WRAPS and New takes a row of its own. It used to wrap to the LEFT,
   # and the right-anchored menu then opened at x≈-185 — off-screen, with no sideways scroll to
   # betray it, so the 375px sweep in shell_test.rb stayed green. This measures the open menu.
+  #
+  # 360px TOO, AND AGAINST THE CLIENT WIDTH. Slice 4 put Upload to New's right, and a menu hung off
+  # New's right edge then opened at left -1.1 on CI — whose Linux Chrome draws a 15px scrollbar, so
+  # 375 there is 360 here — and ~14px off-screen on an ordinary 360px Android phone, while this Mac
+  # (no scrollbar) still measured it inside at 375. Asking at 360 makes the local run see what CI and
+  # a small phone see; `clientWidth` is the viewport minus any scrollbar, which `innerWidth` is not.
   # The viewport is set through CDP for the reason shell_test.rb records (headless Chrome will not
   # make a WebDriver window narrower than 500px).
   test "at phone width the open New menu stays on screen" do
-    page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
-                                    width: 375, height: 812, deviceScaleFactor: 1, mobile: false)
-    visit projects_path
-    find("header.topbar .topbar-new > summary").click
-    assert_selector "header.topbar .topbar-new .menu-list"
-    left, right, width = page.evaluate_script(<<~JS)
-      (() => { const r = document.querySelector("header.topbar .topbar-new .menu-list").getBoundingClientRect();
-               return [r.left, r.right, window.innerWidth]; })()
-    JS
-    assert_operator left, :>=, 0, "the New menu opens off the left edge (left #{left})"
-    assert_operator right, :<=, width, "the New menu opens off the right edge (right #{right} of #{width})"
+    [ 375, 360 ].each do |phone|
+      page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
+                                      width: phone, height: 812, deviceScaleFactor: 1, mobile: false)
+      visit projects_path
+      find("header.topbar .topbar-new > summary").click
+      assert_selector "header.topbar .topbar-new .menu-list"
+      left, right, width = page.evaluate_script(<<~JS)
+        (() => { const r = document.querySelector("header.topbar .topbar-new .menu-list").getBoundingClientRect();
+                 return [r.left, r.right, document.documentElement.clientWidth]; })()
+      JS
+      assert_operator left, :>=, 0, "at #{phone}px the New menu opens off the left edge (left #{left})"
+      assert_operator right, :<=, width, "at #{phone}px the New menu opens off the right edge (right #{right} of #{width})"
+    end
   ensure
     page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
   end

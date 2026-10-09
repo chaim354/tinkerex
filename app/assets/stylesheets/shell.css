@@ -178,6 +178,14 @@
     .tabbar-link[aria-current="page"] { color: var(--fg); font-weight: 600; }
     .topbar { flex-wrap: wrap; gap: 6px 8px; padding: 6px 12px; }
     .topbar-search { flex: 1 1 100%; min-width: 0; }
+    /* ON A PHONE THE NEW MENU SPANS THE BAR rather than hanging off New's right edge. Since slice 4
+       put Upload to New's right, a menu anchored to New opened ~14px off the left edge of a 360px
+       phone (and 1px off CI's 375px, whose Linux Chrome spends 15 of them on a scrollbar). A static
+       `.topbar-new` hands the absolutely positioned list to `.topbar`, which is sticky and therefore
+       its containing block, so the list sits under the bar between the gutters wherever New lands.
+       test/system/new_menu_test.rb measures it at 375 and 360. */
+    .topbar-new { position: static; }
+    .topbar-new .menu-list { left: 12px; right: 12px; min-width: 0; }
     .topbar-kbd { display: none; }
     main.container { padding: 12px 12px 72px; }
     .page-head h1 { font-size: 18px; }
