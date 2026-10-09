@@ -17,7 +17,8 @@ class ModelsController < ApplicationController
   # action's body moved to verbatim with SORTS. Permanent, keeping the filters a bookmark or a "See
   # all" link carries; anything else in the query is dropped.
   def index
-    redirect_to files_models_path(request.query_parameters.slice("q", "status", "tag", "sort")),
+    filters = request.query_parameters.slice(*Files::ModelsController::FILTERS).select { |_, value| value.is_a?(String) }
+    redirect_to files_models_path(filters),
                 status: :moved_permanently
   end
 

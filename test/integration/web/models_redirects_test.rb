@@ -107,6 +107,18 @@ module Web
                     text: "Printed"
     end
 
+    # A CRAFTED FILTER IS ABSENT, NEVER A 500. `?q[a]=b` arrives as a hash; handed to the status chips'
+    # files_models_path it raised "unable to convert unpermitted parameters to hash" (found in slice 5's
+    # review, older than it). The /models redirect drops it too.
+    test "a filter that is not a string is ignored, on the view and through the redirect" do
+      @user.maker_models.create!(title: "Wall Bracket")
+      get "#{files_models_path}?q[a]=b&status[]=printed&tag[x]=y&sort[]=title"
+      assert_response :success
+      assert_select ".model-card", count: 1
+      get "/models?q[a]=b&status=printed"
+      assert_redirected_to files_models_path(status: "printed")
+    end
+
     test "the sidebar lights 3D models on the view, and the phone tab bar lights Library" do
       get files_models_path
       assert_select "aside.rail [aria-current='page']", count: 1, text: /3D models/

@@ -13,23 +13,30 @@ module Files
     SORTS = { "recent" => { updated_at: :desc }, "title" => { title: :asc },
               "status" => { print_status: :asc, title: :asc } }.freeze
 
+    # THE FOUR FILTERS, AS STRINGS OR NOT AT ALL. A crafted `?q[a]=b` arrives as a hash, and handed to
+    # the status chips' files_models_path it raised "unable to convert unpermitted parameters to hash" —
+    # a 500, found in slice 5's review and older than it (carried over from /models). Anything that is
+    # not a String is simply absent, here and in ModelsController#index's redirect.
+    FILTERS = %w[q status tag sort].freeze
+
     def index
+      @filters = FILTERS.to_h { |key| [ key.to_sym, (params[key] if params[key].is_a?(String)) ] }.compact
       models = current_user.maker_models.catalogued.includes(:file_attachments)
-      models = models.by_status(params[:status])
+      models = models.by_status(@filters[:status])
       # THE FILES IDIOM: LOWER on both sides, ESCAPE so sanitize_sql_like means something on SQLite,
       # capped like every other search box. This clause predates the idiom; /search previews a query
       # escaped and its "See all" landed here unescaped, so `100%` matched on one page and not the
       # other (found in review, S2-5).
-      q = params[:q].to_s.strip.first(80)
+      q = @filters[:q].to_s.strip.first(80)
       if q.present?
         models = models.where("LOWER(title) LIKE ? ESCAPE '\\'", "%#{ActiveRecord::Base.sanitize_sql_like(q.downcase)}%")
       end
-      if params[:tag].present?
+      if @filters[:tag].present?
         # Maker::Taggable#tagged_with (stage 2, S2-5) -- same SQL this join always ran, now shared
         # with Project and InventoryItem rather than reimplemented per controller.
-        models = models.tagged_with(params[:tag])
+        models = models.tagged_with(@filters[:tag])
       end
-      @models = models.order(SORTS.fetch(params[:sort], SORTS["recent"])).to_a
+      @models = models.order(SORTS.fetch(@filters[:sort], SORTS["recent"])).to_a
       # AN AUTO MODEL WITH NO ATTACHMENTS IS AN EMPTIED FOLDER, and it is hidden rather than dismissed
       # or destroyed: the row keeps the user's title and tags and returns the moment a file does. The
       # rows themselves are cleared on the ordinary schedule by Maker::AttachmentReaper once the
@@ -39,7 +46,7 @@ module Files
       @models.reject! { |m| m.auto? && m.file_attachments.empty? }
       @covers = Maker::Previews::ThumbnailMap.for(current_user, @models.map(&:cover_node_id))
       @all_tags = current_user.maker_tags.order(:name).pluck(:name)
-      @status = params[:status]
+      @status = @filters[:status]
     end
   end
 end

@@ -24,13 +24,13 @@
 </div>
 
 <form class="toolbar models-toolbar" method="get" action="<%= files_models_path %>">
-  <input type="search" name="q" value="<%= params[:q] %>" placeholder="Search models…" aria-label="Search models">
+  <input type="search" name="q" value="<%= @filters[:q] %>" placeholder="Search models…" aria-label="Search models">
   <span class="chips">
     <%# THE LABELS COME FROM Maker::Model::PRINT_STATUS_LABELS, NOT FROM LITERALS HERE. They were
         literals until 2026-09-10, and the badge on the card below rendered its own spelling of the
         same state — "Wanted" in this row against "Want To Print" 200px away. %>
     <% [["", "All"], *Maker::Model::PRINT_STATUS_LABELS.to_a].each do |val, label| %>
-      <%= link_to label, files_models_path(status: val.presence, q: params[:q], tag: params[:tag], sort: params[:sort]),
+      <%= link_to label, files_models_path(status: val.presence, q: @filters[:q], tag: @filters[:tag], sort: @filters[:sort]),
                   class: "filter chip#{' active' if @status.to_s == val}" %>
     <% end %>
   </span>
@@ -39,13 +39,13 @@
   <% if @all_tags.any? %>
     <select name="tag" aria-label="Tag" onchange="this.form.requestSubmit()">
       <option value="">All tags</option>
-      <% @all_tags.each do |t| %><option value="<%= t %>" <%= "selected" if params[:tag] == t %>><%= t %></option><% end %>
+      <% @all_tags.each do |t| %><option value="<%= t %>" <%= "selected" if @filters[:tag] == t %>><%= t %></option><% end %>
     </select>
   <% end %>
   <label class="muted" for="models-sort">Sort</label>
   <select name="sort" id="models-sort" onchange="this.form.requestSubmit()">
     <% [%w[recent Recent], %w[title Title], %w[status Status]].each do |val, label| %>
-      <option value="<%= val %>" <%= "selected" if params[:sort] == val %>><%= label %></option>
+      <option value="<%= val %>" <%= "selected" if @filters[:sort] == val %>><%= label %></option>
     <% end %>
   </select>
 </form>
