@@ -115,6 +115,15 @@ module Tools
       saved("n-trashed", at: 1.minute.ago)
       file("n-orphan", "orphan.svg", "d-dead")
       saved("n-orphan", at: 2.minutes.ago)
+      # ANOTHER USER OWNS LIVE ROWS UNDER THE SAME TWO IDS, because `node_id` is unique only per user
+      # (index_nodes_on_user_id_and_node_id). Both node joins in #latest_output_folder are scoped by
+      # user; drop either scope and this user's trashed output resolves through THEIR live file (the
+      # page names their folder), or this user's dead folder through THEIR live dir.
+      other = User.create!(email: "o-#{SecureRandom.hex(4)}@example.com", password: PASSWORD, confirmed_at: Time.current)
+      other.nodes.create!(node_id: "d-theirs", name: "theirs", kind: "dir", mtime: 1, size: 0)
+      other.nodes.create!(node_id: "n-trashed", name: "trashed.svg", kind: "file", parent_node_id: "d-theirs",
+                          mtime: 1, size: 1, content_hash: "h-theirs", current_version_id: "v-theirs")
+      other.nodes.create!(node_id: "d-dead", name: "dead", kind: "dir", mtime: 1, size: 0)
       get tools_addon_path("destkit")
       assert_default "d-live", "/live"
     end
