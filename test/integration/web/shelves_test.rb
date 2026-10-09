@@ -6,10 +6,10 @@ module Web
   # pattern currently names anything, which is what makes path-keying honest.
   #
   # NO BACKEND IS PINNED HERE, deliberately, unlike models_flow_test.rb and models_catalog_test.rb.
-  # ShelvesController reads `nodes` and `maker_shelves` and calls the port not at all, and neither
-  # does the layout it renders -- so there is nothing for FileLayer.current to answer and nothing
-  # for the ambient LIBRARY_BACKEND to change. Adding use_fresh_share_library! here would pin a
-  # backend this page never asks about.
+  # Settings::ShelvesController reads `nodes` and `maker_shelves` and calls the port not at all, and
+  # neither does the layout it renders -- so there is nothing for FileLayer.current to answer and
+  # nothing for the ambient LIBRARY_BACKEND to change. Adding use_fresh_share_library! here would pin
+  # a backend this page never asks about.
   class ShelvesTest < ActionDispatch::IntegrationTest
     PASSWORD = "password123".freeze
 
@@ -29,7 +29,7 @@ module Web
     end
 
     test "the page seeds the default shelves on first visit" do
-      get shelves_path
+      get settings_shelves_path
 
       assert_response :success
       assert_equal [ "", "*", "Models", "Projects/*/models" ], @user.maker_shelves.order(:path).pluck(:path)
@@ -40,7 +40,7 @@ module Web
     # emitted param names the controller's `require` rejected, both invisible to tests that POSTed
     # a Ruby hash -- which is exactly what every POST below does.
     test "the add form posts the flat node_id the controller reads" do
-      get shelves_path
+      get settings_shelves_path
 
       assert_select "form.shelf-add input[type=hidden][name=?]", "node_id"
     end
@@ -60,7 +60,7 @@ module Web
       @user.nodes.create!(node_id: "d-s", name: "spare", kind: "dir", parent_node_id: "d-d", mtime: 1, size: 0)
       @user.nodes.create!(node_id: "d-x", name: "models", kind: "dir", parent_node_id: "d-s", mtime: 1, size: 0)
 
-      get shelves_path
+      get settings_shelves_path
 
       assert_response :success
       assert_select "li", text: /Projects\/\*\/models/
@@ -73,7 +73,7 @@ module Web
       @user.maker_shelves.create!(path: "Nowhere")
       @user.update_column(:shelves_seeded_at, Time.current)
 
-      get shelves_path
+      get settings_shelves_path
 
       assert_select ".shelf-status", text: /no folder at this path/i
     end
@@ -84,15 +84,15 @@ module Web
       @user.nodes.create!(node_id: "d-a", name: "3D Models", kind: "dir", mtime: 1, size: 0)
       @user.nodes.create!(node_id: "d-b", name: "Prints", kind: "dir", parent_node_id: "d-a", mtime: 1, size: 0)
 
-      post shelves_path, params: { node_id: "d-b" }
+      post settings_shelves_path, params: { node_id: "d-b" }
 
-      assert_redirected_to shelves_path
+      assert_redirected_to settings_shelves_path
       assert_includes @user.maker_shelves.pluck(:path), "3D Models/Prints"
     end
 
     test "adding the library root stores the empty path" do
       @user.update_column(:shelves_seeded_at, Time.current)
-      post shelves_path, params: { node_id: "" }
+      post settings_shelves_path, params: { node_id: "" }
 
       assert_includes @user.maker_shelves.pluck(:path), ""
     end
@@ -102,9 +102,9 @@ module Web
       @user.update_column(:shelves_seeded_at, Time.current)
       @user.nodes.create!(node_id: "d-m", name: "Models", kind: "dir", mtime: 1, size: 0)
 
-      post shelves_path, params: { node_id: "d-m" }
+      post settings_shelves_path, params: { node_id: "d-m" }
 
-      assert_redirected_to shelves_path
+      assert_redirected_to settings_shelves_path
       assert_match(/already/i, flash[:alert])
       assert_equal 1, @user.maker_shelves.count
     end
@@ -116,7 +116,7 @@ module Web
       @user.update_column(:shelves_seeded_at, Time.current)
       @user.nodes.create!(node_id: "d-trash", name: ".trash", kind: "dir", mtime: 1, size: 0)
 
-      post shelves_path, params: { node_id: "d-trash" }
+      post settings_shelves_path, params: { node_id: "d-trash" }
 
       assert_empty @user.maker_shelves
       assert_match(/can't be a folder name/i, flash[:alert])
@@ -136,19 +136,19 @@ module Web
       other.nodes.create!(node_id: "d-theirs", name: "Theirs", kind: "dir", mtime: 1, size: 0)
       @user.update_column(:shelves_seeded_at, Time.current)
 
-      post shelves_path, params: { node_id: "d-theirs" }
+      post settings_shelves_path, params: { node_id: "d-theirs" }
 
       assert_empty @user.maker_shelves
       assert_match(/isn't in your library/i, flash[:alert])
     end
 
     test "removing a shelf removes it" do
-      get shelves_path
+      get settings_shelves_path
       shelf = @user.maker_shelves.find_by!(path: "Models")
 
-      delete shelf_path(shelf)
+      delete settings_shelf_path(shelf)
 
-      assert_redirected_to shelves_path
+      assert_redirected_to settings_shelves_path
       assert_nil Maker::Shelf.find_by(id: shelf.id)
     end
 
@@ -157,10 +157,19 @@ module Web
                            confirmed_at: Time.current, omniauth_signup: true)
       theirs = other.maker_shelves.create!(path: "Models")
 
-      delete shelf_path(theirs)
+      delete settings_shelf_path(theirs)
 
       assert_response :not_found
       assert_predicate Maker::Shelf.find_by(id: theirs.id), :present?
+    end
+
+    # MOVED HERE FROM models_pages_test.rb IN SLICE 5, when the page left /models: its way back is
+    # the Settings hub now, not the model catalog, and a test of this page's buttons no longer
+    # belongs to a file about the Models pages.
+    test "the shelves page uses buttons for its actions, and leads back to Settings" do
+      get settings_shelves_path
+      assert_select ".page-head a.btn.ghost[href=?]", settings_path, text: "Settings"
+      assert_select "form.shelf-add button.btn.primary", text: "Add shelf"
     end
   end
 end

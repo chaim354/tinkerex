@@ -2,9 +2,11 @@
 
 > CLAUDE.md §14k's area file. Read before touching `app/services/maker/model_intake.rb`,
 > `app/services/maker/library_tree.rb`, `app/models/maker/shelf.rb`,
-> `app/controllers/shelves_controller.rb`, `app/jobs/maker/model_intake_job.rb`,
-> `app/services/maker/model_intake/prune.rb`, `ModelsController`'s file-tree helpers, or the
-> `origin` / `auto_node_id` / `dismissed_at` columns on `maker_models`. The arc that produced it —
+> `app/controllers/settings/shelves_controller.rb`, `app/jobs/maker/model_intake_job.rb`,
+> `app/services/maker/model_intake/prune.rb`, `app/services/maker/model_folder.rb`,
+> `app/views/files/_model_strip.html.erb`, `Files::ModelsController` (the 3D models view),
+> `ModelsController`'s file-tree helpers and redirects, or the `origin` / `auto_node_id` /
+> `folder_node_id` / `dismissed_at` columns on `maker_models`. The arc that produced it —
 > measurements, what each guard caught, what was deliberately left out — is in `docs/STATUS.md`.
 
 - **A FOLDER IS EITHER A SHELF OR A MODEL, AND THE NEAREST SHELF ANCESTOR DECIDES.** A model-role
@@ -18,7 +20,8 @@
   Reconciler` pairs by `(content_hash, size)` and keeps a renamed node's `node_id` (§14b), so a
   path key would abandon a renamed folder's row and mint a second, leaving two models for one
   folder. The cost of path-keyed shelves — a renamed folder silently stops matching — is paid by
-  the settings page's live/missing indicator, which is therefore not decoration.
+  the settings page's live/missing indicator (`/settings/shelves`), which is therefore not
+  decoration.
 - **THE WILDCARD CLAUSE IN `Shelf`'S PATH VALIDATION CANNOT BE DELEGATED, and composing the two
   library-name checks is not enough.** `*` is an ordinary legal filename byte, so
   `valid_leaf_name?("*x")` is TRUE and `reserved?("*x")` is FALSE — neither composed check knows
@@ -40,12 +43,18 @@
   the memory. `Maker::ModelIntake` must look up existing rows **without** the `catalogued` scope —
   filtering dismissed rows out of its own lookup is exactly how they come back, and the partial
   unique index on `(user_id, auto_node_id)` turns that into a `RecordNotUnique` rather than a
-  duplicate. An IMPORT-origin model still destroys: nothing recreates it. **The button on
-  `models/show` branches too** — one "Delete … (files are kept)" confirm describes only the second
-  branch, and told a user their model was being deleted at the moment the row was about to survive.
+  duplicate. An IMPORT-origin model still destroys: nothing recreates it. **The button branches
+  too, on `models/show` AND on the Library's model strip (`files/_model_strip`), with the same two
+  branches and the same wording on both** — "Remove from catalog" (the files stay and the next
+  scan will not re-add it) for an auto model, "Delete" with "(files are kept)" for an import. One
+  "Delete … (files are kept)" confirm describes only the second branch, and told a user their model
+  was being deleted at the moment the row was about to survive. The strip carries what the page
+  did, so the button exists twice; a change to either copy is a change to both
+  (`model_strip_test.rb` pins the strip's auto branch).
 - **AN EMPTIED AUTO MODEL IS HIDDEN, NOT DISMISSED.** Hiding is reversible and dismissal is not, so
   reusing dismissal for "its files went away" means a folder that refills stays gone forever. The
-  index drops auto models with no attachments off the **already-loaded** association; the rows age
+  3D models view (`Files::ModelsController#index`, the old index) and `Maker::ModelFolder.model_in`
+  both drop auto models with no attachments off the **already-loaded** association; the rows age
   out through `Maker::AttachmentReaper` on the ordinary grace window. Do not add a second reaper,
   and do not reach for `where.missing` — it is a second query that can disagree with what the cards
   render.
@@ -122,7 +131,49 @@
   reads `@attachments`, ALREADY partitioned against the live-node index, so it adds no query (the
   page budget is asserted constant in N) and inherits `PageNodes`' tombstone rule instead of
   re-deriving it. **The count in the heading is derived from the same tree** — a panel that
-  filtered while `@file_count` did not is the same contradiction one line higher up.
+  filtered while `@file_count` did not is the same contradiction one line higher up. **It binds
+  only on the page that survives slice 5**: a model whose folder shows its strip never renders
+  `models/show` (the next rule), and the strip does not repeat this panel, because the folder's own
+  listing is the folder browser there. The panel renders for the models that keep the page.
+- **THE MODEL STRIP AND THE REDIRECTS REPLACE THE MODEL PAGE FOR A MODEL WITH A FOLDER TO LAND ON,
+  AND FOR NO OTHER (structural redesign slice 5).** `files/_model_strip` sits above that folder's
+  files carrying what `models/show` did — cover, status, details, print settings, notes, Edit, the
+  destroy button above and the print log — and `/models/:id` 302s there. There is no "manual"
+  origin to carve one exception out by, so **the page survives for every model with no strip to
+  land on**: a one-file model (about half of what the sweep creates), an import whose
+  `Models/<slug>` was never made or is in the trash, and a model whose folder a project claims.
+  Redirecting those would land the maker on a folder that shows nothing of what they clicked. The
+  strip does NOT repeat the page's 3D viewer, gallery, instructions PDFs or file tree (the listing,
+  the inspector and the workspace show those files), and it is not a selection item
+  (`files-preview.md`, "The inspector"). `/models` 301s to the Library's 3D models view,
+  `/files/models`, keeping `q`/`status`/`tag`/`sort`; import stays at `/models/new`, and its
+  `model_url` lands on the new folder through the same redirect.
+- **`Maker::ModelFolder` IS THE ONE ANSWER TO "WHICH MODEL DOES THIS FOLDER SHOW?" AND "WHERE DOES
+  `/models/:id` GO?", AND IT KEYS ON `folder_node_id`, NEVER `auto_node_id`.** `model_in` feeds
+  `FilesController#index`'s strip and `landing_folder_id` feeds `ModelsController#show`'s redirect,
+  and the second is DEFINED through the first (`model_in(user, id)&.id == model.id`), so the two
+  cannot disagree about whether a model has a strip to land on. `folder_node_id` is the column every
+  folder model sets: an IMPORT's `Models/<slug>` sets only it, an auto FOLDER model sets both to the
+  folder, and a one-file auto model's `auto_node_id` is a FILE on a shelf. Keyed on `auto_node_id`,
+  every import loses its strip (a mutation `model_folder_test.rb` catches). `model_in` reads
+  `catalogued`, hides an emptied auto model off the eager-loaded association (the rule above that
+  hides rather than dismisses it), and lets the OLDEST VISIBLE row win — several rows can name one
+  folder until `rake models:prune` runs, and a stale emptied auto row must not hide a live import
+  beside it. It does not check a project's claim, because `FilesController` asks only when
+  `@folder_project` is nil; `landing_folder_id` checks the claim itself, along with a live dir node.
+  **`/models/:id` is a 302, never a 301**: the answer changes when the folder is trashed, restored
+  or claimed, and a browser caches a 301 indefinitely. **Neither function calls the port or
+  `ensure_library_folder!`** — rendering a folder or following a link must not mint one, the
+  sweep's own rule below. Pinned by `test/services/maker/model_folder_test.rb` and
+  `test/integration/web/models_redirects_test.rb`.
+- **SHELVES ARE A SETTINGS RULE AT `Settings::ShelvesController` / `/settings/shelves` (slice 5),
+  AND ONLY ONE REDIRECT MAY EXIST BETWEEN THE TWO PATHS.** It reverses the 2026-09-10 move to
+  `/models/shelves`: with Models a Library view, Settings is the only section shelves serve.
+  `/models/shelves` 301s to `/settings/shelves`, declared above `resources :models` or it matches
+  `models#show id=shelves`; the old `settings/shelves → /models/shelves` line went in the same
+  change, because keeping both is a redirect loop (`moved_reference_pages_test.rb` asserts both
+  directions). Shelves light Settings and stop being navigation; the 3D models view keeps one muted
+  pointer to them.
 - **`Maker::ModelIntake::Prune` IS THE REPAIR HALF, AND IT IS NOT IN THE SWEEP ON PURPOSE.**
   `attach_all` is one `insert_all … unique_by`, so tightening the rule fixes what is written NEXT
   and leaves every row the loose rule wrote in place — a rule change here is not self-applying.
@@ -174,15 +225,15 @@
   every id the walk touched is cached `nil`, which is sound because they all share the broken
   suffix. Mutation-checked by two tests that go red on a per-hop write.
 - **`path_for` IS THE ONE ANCESTRY DEFINITION AND HAS THREE CALLERS OUTSIDE THIS SWEEP** —
-  `ShelvesController`, `FilesController#folder_paths_for` (the flat view's Folder column) and
-  `Tools::LibraryFolders` (the addon save-folder picker). The last two each carried a byte-identical
-  whole-dir pluck with its own in-memory walk, and the three disagreed on a parent cycle: `nil` here,
-  a literal `"…"` spliced into the rendered path there, and unbounded recursion in the third —
-  `SystemStackError`, a 500 on every `/tools/:addon` page for that user. **Do not re-inline a fourth
-  walk.** A caller that cannot skip an unresolvable node degrades `nil` ITSELF, in one named place
-  (`Tools::LibraryFolders#folder_label`); the primitive stays strict, because a lenient mode on it
-  invites each caller to pick a fallback without arguing for it — which is how the three answers
-  happened.
+  `Settings::ShelvesController`, `FilesController#folder_paths_for` (the flat view's Folder column)
+  and `Tools::LibraryFolders` (the addon save-folder picker). The last two each carried a
+  byte-identical whole-dir pluck with its own in-memory walk, and the three disagreed on a parent
+  cycle: `nil` here, a literal `"…"` spliced into the rendered path there, and unbounded recursion
+  in the third — `SystemStackError`, a 500 on every `/tools/:addon` page for that user. **Do not
+  re-inline a fourth walk.** A caller that cannot skip an unresolvable node degrades `nil` ITSELF,
+  in one named place (`Tools::LibraryFolders#folder_label`); the primitive stays strict, because a
+  lenient mode on it invites each caller to pick a fallback without arguing for it — which is how
+  the three answers happened.
 - **THE TRIGGER SET IS `Maker::FileAttachment.role_for(name) == "model"`, never a fresh extension
   list** (§14d, one file-type vocabulary). Consequence, stated rather than discovered: `.obj`,
   `.step` and `.stp` are catalogued alongside `.stl` and `.3mf`.

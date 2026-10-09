@@ -3,7 +3,12 @@ require "test_helper"
 module Web
   # The model catalog after PR 3 (spec §8): a Files-style toolbar on the index with the status
   # filters as chips, the status badge over the cover, button actions on the model page, a print
-  # composer that opens on demand, a drop-zone import field, and the shelves page's buttons.
+  # composer that opens on demand, and a drop-zone import field. (The shelves page's buttons moved
+  # to shelves_test.rb in slice 5, with the page, to Settings.)
+  #
+  # The index is the Library's 3D models view at /files/models since slice 5; the model page is
+  # asserted over a FOLDERLESS model, the kind that keeps it (a folder model redirects to its strip —
+  # models_redirects_test.rb).
   class ModelsPagesTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
@@ -17,31 +22,41 @@ module Web
     end
 
     test "the index carries a toolbar with the search, the status chips, the tag and sort selects" do
-      get models_path
+      get files_models_path
       assert_response :success
       assert_select "form.toolbar.models-toolbar input[type='search'][name='q']"
       assert_select "form.toolbar.models-toolbar a.filter.chip.active", text: "All"
       assert_select "form.toolbar.models-toolbar a.filter.chip", text: "Printed"
       assert_select "form.toolbar.models-toolbar select[name='sort']"
       assert_select ".page-head a.btn.primary[href=?]", new_model_path, text: "Import model"
-      assert_select ".page-head a.btn[href=?]", shelves_path, text: "Shelves"
     end
 
-    # THE INDEX'S OWN SEARCH USES THE FILES IDIOM (LOWER, ESCAPE), because /search's "See all" lands
+    # THE VIEW'S OWN SEARCH USES THE FILES IDIOM (LOWER, ESCAPE), because /search's "See all" lands
     # here with the same query: a `%` that previewed one model there must find the same one here.
     test "?q= is case-insensitive and treats % and _ as literals" do
       literal = @user.maker_models.create!(title: "100% infill test")
-      get models_path(q: "100%")
+      get files_models_path(q: "100%")
       assert_select "a[href=?]", model_path(literal)
       assert_select "a[href=?]", model_path(@model), false
-      get models_path(q: "BENCHY")
+      get files_models_path(q: "BENCHY")
       assert_select "a[href=?]", model_path(@model)
     end
 
     test "a model card keeps its badge, which the stylesheet places over the cover" do
-      get models_path
+      get files_models_path
       assert_select ".model-card .badge.mstatus-printed", text: /printed/i
       assert_select ".model-card .model-name", text: "Benchy"
+    end
+
+    # NO EMOJI IN THE INTERFACE (slice 5 retired the cube placeholders): an empty cover is the 3D models
+    # icon, on the view's card and on the page's hero alike.
+    test "an empty cover is the 3D models icon on the card and on the model page" do
+      bare = @user.maker_models.create!(title: "Bare")
+      get files_models_path
+      assert_select ".model-card[href=?] .project-thumb-empty[aria-hidden='true'] svg.rail-icon", model_path(bare)
+      get model_path(bare)
+      assert_select ".model-hero-empty[aria-hidden='true'] svg.rail-icon"
+      assert_no_match "\u{1F9CA}", response.body
     end
 
     test "the model page's actions are buttons and its print log is a closed composer" do
@@ -57,12 +72,6 @@ module Web
       get new_model_path
       assert_select "[data-controller='importer'] label.dropzone input[type='file'][multiple][data-importer-target='input'][data-action='importer#choose']"
       assert_select "[data-controller='importer'] [data-importer-target='summary']", text: "No files selected."
-    end
-
-    test "the shelves page uses buttons for its actions" do
-      get shelves_path
-      assert_select ".page-head a.btn.ghost[href=?]", models_path, text: "Back to models"
-      assert_select "form.shelf-add button.btn.primary", text: "Add shelf"
     end
   end
 end

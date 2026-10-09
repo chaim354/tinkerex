@@ -1183,12 +1183,12 @@ Four rules survive on **this** side of the boundary:
 
 ### 14k. The model catalog and shelves → **`docs/invariants/model-intake.md`**
 
-**Read that file before touching** `app/services/maker/model_intake*`, `app/models/maker/model.rb`,
-`app/models/maker/item.rb`, `app/models/maker/shelf.rb`, `app/services/maker/library_tree.rb`,
-`app/controllers/shelves_controller.rb`, `app/jobs/maker/model_intake_job.rb`, or `maker_models`'
-`origin`/`auto_node_id`/`dismissed_at`. Nearest-shelf; a shelf is a PATH and a model a NODE ID; dismissing
-is not deleting; ScanJob ordering; `LibraryTree#path_for` cycle-guard/memo rules; why Model and Item are
-TWO catalogs; which of a folder's files a model claims; and `rake models:prune`, the sweep's own repair.
+**Read that file before touching** `app/services/maker/{model_intake*,library_tree.rb,model_folder.rb}`,
+`app/models/maker/{model,item,shelf}.rb`, `app/controllers/settings/shelves_controller.rb`,
+`app/views/files/_model_strip.html.erb`, `app/jobs/maker/model_intake_job.rb`, or `maker_models`'
+`origin`, `auto_node_id`, `folder_node_id`, `dismissed_at`. Nearest-shelf; a shelf is a PATH and a model
+a NODE ID; dismissing is not deleting; ScanJob ordering; `path_for`'s cycle guard and memo; Model and
+Item are TWO catalogs; which files a model claims and which model a folder shows; `rake models:prune`.
 
 ### 14l. Editing, committing and history in a repository → **`docs/invariants/git-editing.md`**
 

@@ -815,7 +815,7 @@ module Web
 
     # Same reasoning as projects#index above: a model with no attachment has no derived cover, so
     # the grid's `@covers` map was being budgeted while resolving nothing.
-    test "models#index does not grow with the number of models" do
+    test "files/models#index does not grow with the number of models" do
       add = lambda do |prefix, count|
         count.times do |i|
           model = @user.maker_models.create!(title: "#{prefix}#{i}", slug: "#{prefix}#{i}")
@@ -823,15 +823,15 @@ module Web
           model.file_attachments.create!(user: @user, node_id: "mc-#{prefix}#{i}", role: "image")
         end
       end
-      assert_constant_queries(models_path,
+      assert_constant_queries(files_models_path,
                               -> { add.call("s", SMALL) },
                               -> { add.call("l", LARGE - SMALL) },
-                              "models#index")
+                              "files/models#index")
     end
 
     # THIS PAGE GROWS ON TWO AXES AT ONCE -- one row per shelf, and each row's live/missing
     # indicator scanned against every DIRECTORY in the library -- so it is seeded on both. The scan
-    # is Ruby over ONE pluck that ShelvesController#decorate memoizes across the whole map; drop
+    # is Ruby over ONE pluck that Settings::ShelvesController#decorate memoizes across the whole map; drop
     # that memo and the page costs a pluck per shelf, which is precisely the linear-in-rows shape
     # this file exists for and which no assertion about the rendered markup can see.
     test "shelves#index does not grow with shelves or directories" do
@@ -845,7 +845,7 @@ module Web
                               size: 0, mtime: 1_700_000_000_000_000_000)
         end
       end
-      assert_constant_queries(shelves_path,
+      assert_constant_queries(settings_shelves_path,
                               -> { add.call("s", SMALL) },
                               -> { add.call("l", LARGE - SMALL) },
                               "shelves#index")
@@ -885,6 +885,30 @@ module Web
                               -> { add.call("fs", SMALL) },
                               -> { add.call("fl", LARGE - SMALL) },
                               "files#index (folder)")
+    end
+
+    # THE MODEL STRIP (slice 5) MUST NOT GROW WITH THE MODEL: its cover is derived from ONE load of its
+    # attachments and its print log is one query, so a model folder with 15 files and 15 prints costs
+    # what one with 3 does. Whether Maker::ModelFolder.model_in's eager load holds as hidden rows pile
+    # up in one folder is model_folder_test.rb's to say — one model's attachments load once either way.
+    test "files#index on a model folder does not grow with attachments or print runs" do
+      folder = @user.nodes.create!(node_id: "budget-model-dir", name: "bracket", kind: "dir", mtime: 1, size: 0)
+      model = @user.maker_models.create!(title: "Budget Bracket", folder_node_id: folder.node_id)
+      add = lambda do |prefix, count|
+        count.times do |i|
+          node!("#{prefix}#{i}", "#{prefix}#{i}.stl")
+          @user.nodes.find_by!(node_id: "#{prefix}#{i}").update!(parent_node_id: folder.node_id)
+          model.file_attachments.create!(user: @user, node_id: "#{prefix}#{i}", role: "model")
+          model.print_runs.create!(user: @user, printed_on: Date.current, outcome: "success", printer: "P#{i}")
+        end
+      end
+      assert_constant_queries(files_path(folder: folder.node_id), -> { add.call("ms", SMALL) },
+                              -> { add.call("ml", LARGE - SMALL) }, "files#index (model folder)")
+      # The strip was ON the page measured, cover and print log included — a budget over a page that
+      # quietly stopped rendering it would hold for the wrong reason.
+      assert_select ".model-strip h2", text: "Budget Bracket"
+      assert_select ".model-strip .model-strip-cover[data-controller='thumbs']"
+      assert_select ".model-strip .print-run", count: LARGE
     end
 
     # EVERY BOUNDED LIST HOME READS GROWS PER STEP — recent projects (each with an attachment, which

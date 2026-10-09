@@ -2,7 +2,7 @@
 
 <div class="page-head">
   <h1>Shelves</h1>
-  <%= link_to "Back to models", models_path, class: "btn ghost small" %>
+  <%= link_to "Settings", settings_path, class: "btn ghost small" %>
 </div>
 
 <p class="muted">
@@ -23,12 +23,12 @@
           in your library
         <% end %>
       </span>
-      <%= button_to "Remove", shelf_path(shelf[:record]), method: :delete, class: "linkbtn danger small" %>
+      <%= button_to "Remove", settings_shelf_path(shelf[:record]), method: :delete, class: "linkbtn danger small" %>
     </li>
   <% end %>
 </ul>
 
-<%= form_with url: shelves_path, method: :post, class: "shelf-add" do %>
+<%= form_with url: settings_shelves_path, method: :post, class: "shelf-add" do %>
   <%= render "shared/folder_field",
              name: "node_id",
              children_url: library_children_path,

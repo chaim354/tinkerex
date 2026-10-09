@@ -53,7 +53,7 @@
 </section>
 
 <section class="panel home-section home-prints">
-  <div class="panel-head"><h2>Prints</h2><%= link_to "See all", models_path, class: "muted" %></div>
+  <div class="panel-head"><h2>Prints</h2><%= link_to "See all", files_models_path, class: "muted" %></div>
   <% if @recent_prints.empty? %>
     <p class="empty">No prints logged yet.</p>
   <% else %>

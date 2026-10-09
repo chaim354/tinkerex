@@ -33,7 +33,7 @@ module Web
 
     test "the chip and the badge must say the same word for one state" do
       @user.maker_models.create!(title: "Dragon", print_status: "want_to_print")
-      get models_path
+      get files_models_path
       assert_response :success
 
       # THE FILTER CHIP AND THE CARD BADGE, ON ONE PAGE, READ OUT OF THE RENDERED HTML rather than
@@ -82,7 +82,7 @@ module Web
 
     test "no view spells a print status for itself" do
       # THE PER-PAGE GUARD COULD NOT SEE THIS, and that is the lesson. The chip/badge test above
-      # asserts agreement on /models; `shared/_result_group` renders the same badge on /search and
+      # asserts agreement on /files/models; `shared/_result_group` renders the same badge on /search and
       # /tags/:tag and kept its own `print_status.tr("_", " ")`. While `.badge` still carried
       # `text-transform: capitalize` the two agreed by accident; removing the transform — the very
       # change that made ONE label source necessary — turned it into "want to print". A rule about
@@ -107,7 +107,7 @@ module Web
       @user.maker_models.create!(title: "Dragon", print_status: "printed")
       @user.maker_inventory_items.create!(name: "M3 bolt", quantity_cached: 40)
 
-      { "projects" => projects_path, "models" => models_path,
+      { "projects" => projects_path, "models" => files_models_path,
         "inventory" => inventory_items_path, "files" => files_path }.each do |name, path|
         get path
         assert_response :success, "#{name} did not render"

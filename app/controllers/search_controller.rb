@@ -64,9 +64,9 @@ class SearchController < ApplicationController
     add_group("Projects", :project, projects.order(:name), projects_path(q: @q))
 
     # Models: title only. `catalogued` excludes a dismissed auto model, the same filter the
-    # Models index itself applies.
+    # 3D models view (Files::ModelsController) itself applies.
     models = current_user.maker_models.catalogued.where("LOWER(title) LIKE ? ESCAPE '\\'", like)
-    add_group("Models", :model, models.order(:title), models_path(q: @q))
+    add_group("Models", :model, models.order(:title), files_models_path(q: @q))
 
     # Notes: the note BODY, which is the one thing a maker writes that this app keeps and could not
     # find (story 3.5). It lives in `action_text_rich_texts`, reached through the `rich_text_body`

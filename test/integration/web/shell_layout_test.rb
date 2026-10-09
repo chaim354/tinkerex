@@ -21,7 +21,7 @@ module Web
     end
 
     test "each top-level section lights its own link" do
-      { root_path => "Home", projects_path => "All projects", models_path => "3D models",
+      { root_path => "Home", projects_path => "All projects", files_models_path => "3D models",
         inventory_items_path => "Inventory", tools_path => "Tools",
         trash_index_path => "Trash" }.each do |path, label|
         get path
@@ -68,8 +68,14 @@ module Web
       assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Desk Lamp"
       get project_path(project)
       assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Desk Lamp"
-      get shelves_path
-      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "3D models"
+      # settings/shelves (slice 5) and settings/tags are nested controllers whose family is the
+      # rail FOOT's Settings, not a place: Settings lights and no `.rail-link` does. Shelves lit
+      # 3D models from 2026-09-10 until it moved back under Settings.
+      [ settings_shelves_path, settings_tags_path ].each do |path|
+        get path
+        assert_select "aside.rail .rail-foot a.rail-btn.rail-settings[aria-current='page']", count: 1
+        assert_select "aside.rail a.rail-link[aria-current='page']", count: 0
+      end
     end
 
     test "the sign-in page has no rail and no shell class, whatever the rail cookie says" do
@@ -133,8 +139,11 @@ module Web
       get project_path(project)
       assert_select "header.topbar nav.breadcrumb a", text: "Projects"
       assert_select "main nav.breadcrumb", count: 0
-      get models_path
-      assert_select "header.topbar .topbar-title", text: "Models"
+      # The 3D models view (slice 5) is a Library page: its top bar carries a breadcrumb, not a title.
+      get files_models_path
+      assert_select "header.topbar nav.breadcrumb a[href=?]", files_path, text: "Files"
+      assert_select "header.topbar nav.breadcrumb [aria-current='page']", text: "3D models"
+      assert_select "main nav.breadcrumb", count: 0
     end
 
     # Four tabs, not every sidebar entry: Trash is reached from the sidebar alone, so its page lights

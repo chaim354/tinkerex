@@ -63,6 +63,11 @@ class AccentSpendTest < ApplicationSystemTestCase
     # only reproduces on a project that has entries. One entry would prove the rule; three prove it
     # does not scale with the log.
     3.times { |i| @project.build_log_entries.create!(user: @user, body: "Bench note #{i}.") }
+    # A 3D MODEL'S FOLDER (structural redesign §5.4, slice 5), so the Library's model strip is on a
+    # page this guard measures. The strip carries Edit, Delete and "Log a print" and spends none of
+    # them: the folder's one action is still the top bar's Upload.
+    @model_folder = FileLayer.current.mkdir(@user, parent_node_id: nil, name: "bracket")
+    @user.maker_models.create!(title: "Wall Bracket", folder_node_id: @model_folder.node_id)
   end
 
   teardown do
@@ -78,7 +83,11 @@ class AccentSpendTest < ApplicationSystemTestCase
       "/" => [ "New project" ],
       # The top bar's, now the Library's one action (redesign slice 4).
       "/files" => [ "Upload" ],
-      "/models" => [ "Import model" ],
+      # The model strip above the files adds nothing (slice 5).
+      "/files (a model folder)" => [ "Upload" ],
+      # The Library's 3D models view (slice 5): its one action is Import model. No folder is on screen,
+      # so the top bar's Upload stays quiet (FolderDestination is never set here).
+      "/files/models" => [ "Import model" ],
       "/projects" => [ "New project" ],
       "/inventory" => [ "New item" ],
       # THE ONE PAGE DECISION 3 ALLOWS TWO, and these are the two it names: the folder this project
@@ -96,15 +105,16 @@ class AccentSpendTest < ApplicationSystemTestCase
       # the next reader has to re-derive that these were looked at.
       "/inventory/suppliers" => [ "Add supplier" ],
       "/inventory/locations" => [ "Add location" ],
-      "/models/shelves" => [ "Add shelf" ]
+      "/settings/shelves" => [ "Add shelf" ]
     }
     paths = {
-      "/" => root_path, "/files" => files_path, "/models" => models_path,
+      "/" => root_path, "/files" => files_path, "/files/models" => files_models_path,
+      "/files (a model folder)" => files_path(folder: @model_folder.node_id),
       "/projects" => projects_path, "/inventory" => inventory_items_path,
       "/projects/desk-lamp" => project_path(@project), "/settings" => settings_path,
       "/tools" => tools_path, "/search" => search_path,
       "/inventory/suppliers" => suppliers_path, "/inventory/locations" => locations_path,
-      "/models/shelves" => shelves_path
+      "/settings/shelves" => settings_shelves_path
     }
 
     actual = paths.transform_values do |path|
@@ -113,6 +123,9 @@ class AccentSpendTest < ApplicationSystemTestCase
       # report NO accent controls and satisfy every `[]` expectation — §14e's "a guard that scans a
       # directory dies silently when the directory leaves", with a route in place of a glob.
       assert_selector "main", visible: :all
+      # The model folder's row pins the strip spending nothing only while the strip is ON the page —
+      # without it, a folder that stopped showing its model would report ["Upload"] just the same.
+      assert_selector ".model-strip h2", text: "Wall Bracket" if path == paths["/files (a model folder)"]
       accent_controls
     end
     assert_equal expected, actual

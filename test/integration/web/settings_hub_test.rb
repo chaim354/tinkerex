@@ -54,7 +54,7 @@ module Web
       assert_select "ul.settings-list.settings-hub li", count: 7
       names = css_select("ul.settings-list.settings-hub li .settings-name").map { |el| el.text.strip }
       assert_equal [ "Shelves", "Suppliers", "Locations", "Filing", "Tags", "Account", "Theme" ], names
-      assert_select "a.settings-name[href=?]", shelves_path
+      assert_select "a.settings-name[href=?]", settings_shelves_path
       assert_select "a.settings-name[href=?]", suppliers_path
       assert_select "a.settings-name[href=?]", locations_path
       assert_select "a.settings-name[href=?]", settings_filing_rules_path

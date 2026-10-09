@@ -26,7 +26,7 @@ module Maker
 
     # Falls back to the humanised status rather than raising: `print_status` is validated, so an
     # unknown value means a migration added one and forgot this hash — a readable word beats a 500,
-    # and models_index_test.rb pins that every PRINT_STATUSES member has a label so the fallback is
+    # and cohesion_vocabulary_test.rb pins that every PRINT_STATUSES member has a label so the fallback is
     # not load-bearing.
     def self.print_status_label(status) =
       PRINT_STATUS_LABELS.fetch(status.to_s) { status.to_s.tr("_", " ").upcase_first }
@@ -59,7 +59,8 @@ module Maker
 
     scope :by_status, ->(s) { where(print_status: s) if s.present? }
 
-    # WHAT /models SHOWS. A dismissed auto model is the user's "I do not want this" and is
+    # WHAT THE 3D MODELS VIEW (/files/models) AND A FOLDER'S MODEL STRIP SHOW (Maker::ModelFolder).
+    # A dismissed auto model is the user's "I do not want this" and is
     # permanent; the row survives only so the next sweep does not recreate it.
     scope :catalogued, -> { where(dismissed_at: nil) }
 

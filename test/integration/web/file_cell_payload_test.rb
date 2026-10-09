@@ -64,7 +64,7 @@ module Web
         "projects#show" => project_path(project),
         "projects#index" => projects_path,
         "models#show" => model_path(model),
-        "models#index" => models_path }
+        "files/models#index" => files_models_path }
     end
 
     # THE MENU HALF. `[data-download-url]` is the presence test the existing per-surface files use;

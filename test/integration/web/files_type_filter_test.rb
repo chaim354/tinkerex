@@ -669,7 +669,7 @@ module Web
 
     def with_flat_limit(limit, &) = with_const(FilesController, :FLAT_LIMIT, limit, &)
 
-    # The cap lives on `Maker::Previews::ThumbnailMap`, not this controller — the Models and
+    # The cap lives on `Maker::Previews::ThumbnailMap`, not this controller — the 3D models and
     # Projects pages back onto the same class and get the same budget. Both tests below still
     # drive a real `GET /files`, which is the point: they measure the PAGE, not the method.
     def with_backfill_limit(limit, &)

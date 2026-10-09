@@ -7,8 +7,8 @@
 
 <form class="toolbar inventory-toolbar" method="get" action="<%= inventory_items_path %>">
   <input type="search" name="q" value="<%= @q %>" placeholder="Name or part number" aria-label="Search inventory">
-  <%# CARRY THE RAW params, NOT THE NORMALIZED @sort/@dir — the same shape models/index.html.erb's
-      status chips use (`models_path(status:, q: params[:q], tag: params[:tag], sort: params[:sort])`).
+  <%# CARRY THE RAW params, NOT THE NORMALIZED @sort/@dir — the same shape files/models/index.html.erb's
+      status chips use (`files_models_path(status:, q: params[:q], tag: params[:tag], sort: params[:sort])`).
       @sort/@dir are always concrete ("name"/"asc" even with nothing in the URL), so building these
       links from them would stamp `&sort=name&dir=asc` onto every chip even on a plain first visit —
       noisy, and it is not what a bookmarked/shared chip URL should freeze in. %>

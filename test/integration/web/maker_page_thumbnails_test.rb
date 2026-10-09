@@ -52,12 +52,12 @@ module Web
     # gave up. The spinner then sat there for good.
     # ----------------------------------------------------------------------------------
 
-    test "models#index enqueues a missing cover thumbnail" do
+    test "the 3D models view enqueues a missing cover thumbnail" do
       node = file!("m-cover", "case.stl")
       model = @user.maker_models.create!(title: "Case", slug: "case", cover_node_id: node)
       assert_nil @user.maker_previews.find_by(node_id: node), "fixture: no row yet"
 
-      assert_enqueued_with(job: Maker::GeneratePreviewJob) { get models_path }
+      assert_enqueued_with(job: Maker::GeneratePreviewJob) { get files_models_path }
       assert_response :success
       assert @user.maker_previews.exists?(node_id: node, kind: "thumbnail")
       assert model.reload

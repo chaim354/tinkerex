@@ -55,9 +55,15 @@ landed it (§11).
    `rail_section` still maps `controller_path`'s FIRST segment (a new web controller needs a
    `SECTIONS` entry or its pages light nothing), and `sidebar_current` refines it: the deepest
    pinned folder on the breadcrumb (the Files page's or a file page's — both set `@crumbs`) beats
-   Library, a listed project's own link beats All
-   projects, and an unlisted one lights All projects. The sidebar and the phone tab bar both read
-   it; `shell_layout_test.rb` pins one lit link per page. **Collapsed (or below 1100px) the project
+   Library, a listed project's own link beats All projects, and an unlisted one lights All
+   projects. **The Library's 3D models view (`files/models`, slice 5) lights the 3D models place,
+   not Library**, although its first segment is `files`: `sidebar_current`'s files arm checks
+   `controller_path == "files/models"` before the pin walk. The phone tab bar has no place of its
+   own for it, so it lights Library for `[:models]`, on the view and on the model pages that survive
+   (`models/*`, which `SECTIONS` still maps to 3D models); `models_redirects_test.rb` pins both
+   lights on the view. `SECTIONS`' `models` entry no longer names `shelves`, so `settings/shelves`
+   lights Settings. The sidebar and the phone tab bar both read `sidebar_current`;
+   `shell_layout_test.rb` pins one lit link per page. **Collapsed (or below 1100px) the project
    and pin links are hidden**, so `sidebar_family_lit?` marks their visible parent — Library for a
    pin, All projects for a project — with `.rail-family-lit`, a CLASS and not a second
    aria-current, which shell.css draws only in the icon rail. **The top bar's Upload and New ▾

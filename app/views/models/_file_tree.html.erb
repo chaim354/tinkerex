@@ -8,7 +8,7 @@
     <% if item[:dir] %>
       <li class="tree-dir">
         <details open>
-          <summary><span class="tree-folder"><%= item[:dir].name %></span></summary>
+          <summary><span class="tree-folder"><%= folder_glyph %><%= item[:dir].name %></span></summary>
           <%= render "file_tree", nodes: item[:children] %>
         </details>
       </li>

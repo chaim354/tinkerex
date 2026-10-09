@@ -200,4 +200,18 @@ class CssHygieneTest < ActiveSupport::TestCase
       assert_empty literals, "#{sheet} carries colour literals #{literals.uniq.inspect}; add a token"
     end
   end
+
+  # NO EMOJI IN THE INTERFACE, AND A STYLESHEET IS WHERE ONE HIDES (structural redesign, slice 5). The
+  # model page's file tree drew 📁 and 🧊 through `::before { content: … }` for two slices after the
+  # markup's emoji were swept, because no template grep can see a glyph that lives in CSS. Pictographs
+  # only (U+1F300–U+1FAFF): the typographic marks status still uses (✓, ✕) are words, not emoji.
+  test "no stylesheet draws an emoji through content" do
+    sheets = Dir[SHEETS_DIR.join("**/*.css")]
+    assert_operator sheets.size, :>, 5, "the sheet scan found almost nothing — it would pass over nothing"
+    hits = sheets.flat_map do |path|
+      strip_comments(File.read(path)).scan(/content:\s*"[^"]*"/).grep(/[\u{1F300}-\u{1FAFF}]/)
+                                     .map { |decl| "#{Pathname.new(path).basename}: #{decl}" }
+    end
+    assert_empty hits, "a stylesheet draws an emoji; use a glyph helper (folder_glyph, rail_icon) in the markup"
+  end
 end

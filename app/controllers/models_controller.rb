@@ -2,6 +2,10 @@
 # API). Reads file metadata + capabilities through FileLayer.current; `create` writes FOLDERS only
 # (via LibraryFolder), never bytes — the importer uploads files through the existing /files
 # endpoints, so §15/§10 are untouched here.
+#
+# SINCE SLICE 5 THE LIST IS A LIBRARY VIEW (Files::ModelsController, /files/models) and `#index` only
+# 301s there; `#show` sends a model whose folder shows its strip to that folder. What stays here is
+# the page every other model keeps, the import, edit and destroy.
 class ModelsController < ApplicationController
   before_action :set_model, only: %i[show edit update destroy]
 
@@ -9,39 +13,26 @@ class ModelsController < ApplicationController
   # switcher off the same rows, and every one of them must skip a tombstone.
   include PageNodes
 
-  SORTS = { "recent" => { updated_at: :desc }, "title" => { title: :asc },
-            "status" => { print_status: :asc, title: :asc } }.freeze
-
+  # /models IS THE LIBRARY'S 3D MODELS VIEW NOW (slice 5): Files::ModelsController#index, which this
+  # action's body moved to verbatim with SORTS. Permanent, keeping the filters a bookmark or a "See
+  # all" link carries; anything else in the query is dropped.
   def index
-    models = current_user.maker_models.catalogued.includes(:file_attachments)
-    models = models.by_status(params[:status])
-    # THE FILES IDIOM: LOWER on both sides, ESCAPE so sanitize_sql_like means something on SQLite,
-    # capped like every other search box. This clause predates the idiom; /search previews a query
-    # escaped and its "See all" landed here unescaped, so `100%` matched on one page and not the
-    # other (found in review, S2-5).
-    q = params[:q].to_s.strip.first(80)
-    if q.present?
-      models = models.where("LOWER(title) LIKE ? ESCAPE '\\'", "%#{ActiveRecord::Base.sanitize_sql_like(q.downcase)}%")
-    end
-    if params[:tag].present?
-      # Maker::Taggable#tagged_with (stage 2, S2-5) -- same SQL this join always ran, now shared
-      # with Project and InventoryItem rather than reimplemented per controller.
-      models = models.tagged_with(params[:tag])
-    end
-    @models = models.order(SORTS.fetch(params[:sort], SORTS["recent"])).to_a
-    # AN AUTO MODEL WITH NO ATTACHMENTS IS AN EMPTIED FOLDER, and it is hidden rather than dismissed
-    # or destroyed: the row keeps the user's title and tags and returns the moment a file does. The
-    # rows themselves are cleared on the ordinary schedule by Maker::AttachmentReaper once the
-    # tombstones age out, so this is a display rule and not a second reaper. Filtering in Ruby off
-    # the ALREADY-LOADED :file_attachments include -- a `where.missing` would be a second query and
-    # would disagree with what the cards render.
-    @models.reject! { |m| m.auto? && m.file_attachments.empty? }
-    @covers = Maker::Previews::ThumbnailMap.for(current_user, @models.map(&:cover_node_id))
-    @all_tags = current_user.maker_tags.order(:name).pluck(:name)
-    @status = params[:status]
+    filters = request.query_parameters.slice(*Files::ModelsController::FILTERS).select { |_, value| value.is_a?(String) }
+    redirect_to files_models_path(filters),
+                status: :moved_permanently
   end
 
   def show
+    # A MODEL WITH A STRIP TO LAND ON GOES THERE (slice 5): its folder, where the Library's model strip
+    # carries what this page did. Everything else stays — a one-file model, an import whose folder was
+    # never made or is in the trash, a folder a project now claims. 302, never 301: the answer changes
+    # when the folder is trashed or restored. Maker::ModelFolder is the one definition. AFTER
+    # `set_model`, which resolves through current_user, so another user's model is a 404 before this
+    # line can name their folder in a Location header (models_redirects_test.rb).
+    if (folder_id = Maker::ModelFolder.landing_folder_id(current_user, @model))
+      return redirect_to(files_path(folder: folder_id))
+    end
+
     # A FILE DELETED FROM THE LIBRARY LEAVES THIS MODEL TOO, on exactly the terms ProjectsController
     # #show has always used — `Library::Reconciler` tombstones rather than destroys, so the
     # attachment row outlives the file and every surface below has to skip it. It did not: this
@@ -111,8 +102,7 @@ class ModelsController < ApplicationController
     @file_tree  = file_tree_for_model
     @file_count = count_files(@file_tree)
     @print_runs = @model.print_runs.reorder(printed_on: :desc, id: :desc).to_a
-    @printers = current_user.maker_print_runs.where.not(printer: [ nil, "" ]).distinct.pluck(:printer)
-    @materials = current_user.maker_print_runs.where.not(material: [ nil, "" ]).distinct.pluck(:material)
+    @printers, @materials = Maker::PrintRun.composer_choices(current_user)
   end
 
   # GET /models/new — the import form (the importer Stimulus controller drives it).
@@ -167,18 +157,18 @@ class ModelsController < ApplicationController
   def destroy
     if @model.auto?
       @model.update!(dismissed_at: Time.current)
-      redirect_to models_path,
+      redirect_to files_models_path,
                   notice: "Removed #{@model.title} from the catalog. It won't be re-added by the next scan."
     else
       @model.destroy!
-      redirect_to models_path, notice: "Deleted #{@model.title}."
+      redirect_to files_models_path, notice: "Deleted #{@model.title}."
     end
   end
 
   # An unmounted NAS / bucket blip while ensuring folders: 503, not a 500 or a fake "gone".
   rescue_from FileLayer::FetchError do
     respond_to do |format|
-      format.html { redirect_to models_path, alert: "Couldn't reach your library. Try again." }
+      format.html { redirect_to files_models_path, alert: "Couldn't reach your library. Try again." }
       format.any  { render json: { error: "fetch_error" }, status: :service_unavailable }
     end
   end
@@ -187,7 +177,7 @@ class ModelsController < ApplicationController
   # port, but other port ops can raise NotFound too — never let it reach the default 500.
   rescue_from FileLayer::NotFound do
     respond_to do |format|
-      format.html { redirect_to models_path, alert: "That location isn't valid." }
+      format.html { redirect_to files_models_path, alert: "That location isn't valid." }
       format.any  { render json: { error: "invalid_path" }, status: :unprocessable_entity }
     end
   end

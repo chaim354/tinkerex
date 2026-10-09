@@ -1,4 +1,15 @@
-<% content_for :title, "Models — Tinkerex" %>
+<% content_for :title, "3D models — Tinkerex" %>
+
+<%# THE LIBRARY'S 3D MODELS VIEW (structural redesign §5.4, slice 5): the old Models index, moved
+    here from models/index with its toolbar and grid unchanged. A Library page, so its breadcrumb
+    starts at Files; the sidebar lights its own 3D models place (ShellHelper#sidebar_current). %>
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Library path">
+    <%= link_to "Files", files_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page">3D models</span>
+  </nav>
+<% end %>
 
 <%# `.page-head` IS `justify-content: space-between` AND LAYS OUT EXACTLY TWO SLOTS. These two
     links sat as bare children of it, which made three, and `space-between` put the middle one —
@@ -6,21 +17,20 @@
     The other fourteen pages already wrap their actions; this one did not, and nothing said so.
     Guard: template_hygiene_test.rb, "every .page-head passes exactly the two slots it lays out". %>
 <div class="page-head">
-  <h1>Models</h1>
+  <h1>3D models</h1>
   <div class="page-actions">
     <%= link_to "Import model", new_model_path, class: "btn primary" %>
-    <%= link_to "Shelves", shelves_path, class: "btn" %>
   </div>
 </div>
 
-<form class="toolbar models-toolbar" method="get" action="<%= models_path %>">
-  <input type="search" name="q" value="<%= params[:q] %>" placeholder="Search models…" aria-label="Search models">
+<form class="toolbar models-toolbar" method="get" action="<%= files_models_path %>">
+  <input type="search" name="q" value="<%= @filters[:q] %>" placeholder="Search models…" aria-label="Search models">
   <span class="chips">
     <%# THE LABELS COME FROM Maker::Model::PRINT_STATUS_LABELS, NOT FROM LITERALS HERE. They were
         literals until 2026-09-10, and the badge on the card below rendered its own spelling of the
         same state — "Wanted" in this row against "Want To Print" 200px away. %>
     <% [["", "All"], *Maker::Model::PRINT_STATUS_LABELS.to_a].each do |val, label| %>
-      <%= link_to label, models_path(status: val.presence, q: params[:q], tag: params[:tag], sort: params[:sort]),
+      <%= link_to label, files_models_path(status: val.presence, q: @filters[:q], tag: @filters[:tag], sort: @filters[:sort]),
                   class: "filter chip#{' active' if @status.to_s == val}" %>
     <% end %>
   </span>
@@ -29,23 +39,26 @@
   <% if @all_tags.any? %>
     <select name="tag" aria-label="Tag" onchange="this.form.requestSubmit()">
       <option value="">All tags</option>
-      <% @all_tags.each do |t| %><option value="<%= t %>" <%= "selected" if params[:tag] == t %>><%= t %></option><% end %>
+      <% @all_tags.each do |t| %><option value="<%= t %>" <%= "selected" if @filters[:tag] == t %>><%= t %></option><% end %>
     </select>
   <% end %>
   <label class="muted" for="models-sort">Sort</label>
   <select name="sort" id="models-sort" onchange="this.form.requestSubmit()">
     <% [%w[recent Recent], %w[title Title], %w[status Status]].each do |val, label| %>
-      <option value="<%= val %>" <%= "selected" if params[:sort] == val %>><%= label %></option>
+      <option value="<%= val %>" <%= "selected" if @filters[:sort] == val %>><%= label %></option>
     <% end %>
   </select>
 </form>
+
+<%# Shelves are a Settings rule since slice 5, not navigation; this is the one pointer left to them. %>
+<p class="muted models-shelves-hint">Which folders count as models: <%= link_to "Settings → Shelves", settings_shelves_path %>.</p>
 
 <% if @models.empty? %>
   <p class="empty">No models yet. Import your first one.</p>
 <% else %>
   <div class="projects-grid" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
     <% @models.each do |model| %>
-      <%= render "card", model:, thumb: @covers.thumb(model.cover_node_id) %>
+      <%= render "models/card", model:, thumb: @covers.thumb(model.cover_node_id) %>
     <% end %>
   </div>
 <% end %>

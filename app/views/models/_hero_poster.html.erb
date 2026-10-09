@@ -22,5 +22,5 @@
                url: preview_src(@covers.thumb(@model.cover_node_id)) %>
   </span>
 <% else %>
-  <span class="model-hero-empty" aria-hidden="true">🧊</span>
+  <span class="model-hero-empty" aria-hidden="true"><%= rail_icon(:models) %></span>
 <% end %>
