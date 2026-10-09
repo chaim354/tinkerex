@@ -1129,6 +1129,39 @@ module Web
                               "files#index (addon origins)")
     end
 
+    # STEP 3 OF Tools::AddonsController#tool_destination_node_id IS ONE STATEMENT, and the project
+    # mapping walks the request's own LibraryTree — so the page's cost must not grow with how many
+    # boxes this user has saved, nor with how deep their folders sit.
+    test "tools#show's default folder does not grow with saved states" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(
+        manifests: [ { "key" => "fixture", "title" => "Fixture", "icon" => "🧪",
+                       "description" => "A fixture addon", "api_version" => "1", "entry" => "f.js" } ],
+        assets: { "fixture/f.js" => "export default { mount() {} }" }
+      )
+      project = @user.maker_projects.create!(name: "Budget Lamp")
+      folder = project_folder_rows!(@user, project)
+      # EACH DIR NESTS UNDER THE LAST, so the seed grows on BOTH axes the comment names: more saved
+      # states, and a newest output sitting deeper under the project folder (2 levels small, 8
+      # large). Siblings alone leave the walk one level long at both sizes, so a per-level query in
+      # #owning_project_folder read constant over a fixture that never deepened (measured: green on
+      # siblings, 13 -> 25 queries nested).
+      add = lambda do |prefix, count|
+        parent = folder.node_id
+        count.times do |i|
+          id = "#{prefix}#{i}"
+          dir = @user.nodes.create!(node_id: "#{id}-dir", name: "d-#{id}", kind: "dir",
+                                    parent_node_id: parent, mtime: 1, size: 0)
+          @user.nodes.create!(node_id: id, name: "#{id}.svg", kind: "file", parent_node_id: dir.node_id,
+                              mtime: 1, size: 1, content_hash: "h-#{id}", current_version_id: "v-#{id}")
+          state = @user.maker_addon_states.create!(addon_key: "fixture", name: "box #{id}", data: {})
+          state.files.create!(node_id: id, role: "output")
+          parent = dir.node_id
+        end
+      end
+      assert_constant_queries(tools_addon_path("fixture"), -> { add.call("s", 2) }, -> { add.call("l", 8) },
+                              "tools#show")
+    end
+
     test "trash#index does not grow with the number of tombstones" do
       add = lambda do |prefix, count|
         count.times do |i|

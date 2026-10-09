@@ -155,17 +155,17 @@ class BoxRevisionsTest < ApplicationSystemTestCase
   # it answers 422 "…already exists in that folder. Rename the save or pick another folder."
   # A 409 arises only through #resolve_placements, i.e. when the picked folder is a PROJECT FOLDER's
   # own root and the CATEGORY folder the sweep will file into already holds that name (CLAUDE.md
-  # §14f's recorded gap, and §12 item 11 in the wild). That is the mainline for anyone with a
-  # current project set, because the save dialog defaults to exactly that folder.
+  # §14f's recorded gap, and §12 item 11 in the wild). That is the mainline for anyone saving into a
+  # project folder, which a tool starts in when its last output was filed there.
   #
   # ANSWERING YES SENDS A SECOND SAVE CARRYING `state_id`, NOT AN OVERWRITE RETRY. The SDK resolves
   # `stateId` once, before its first request, so onReplace returning true would replace the file and
   # STILL mint a second box. This is the assertion that proves the second call happened: one row,
   # revision 2.
   test "a same-name save into a project folder offers to join that box's lineage" do
-    use_current_project
+    lamp = project_folder
 
-    create_box("Shelf box", x: "111")
+    create_box("Shelf box", x: "111", folder: lamp)
     original = Maker::AddonState.sole
     # The eager intake nudge has filed it under the category folder, which is what leaves the
     # project root vacant for the next save and opens the gap.
@@ -173,6 +173,9 @@ class BoxRevisionsTest < ApplicationSystemTestCase
       .then { |n| @user.nodes.present.find_by!(node_id: n.parent_node_id).name }
 
     # A BLANK GENERATOR, not the saved box — this is the accidental re-save, not an edit.
+    #
+    # NO `in=`: the blank generator starts where this tool last saved, mapped up to the project
+    # folder (step 3), and that is the only reason this save reaches the 409.
     visit tools_addon_path("boxes")
     open_addon_card("ABox")
     find('[data-param="x"]').set("222")
@@ -194,9 +197,9 @@ class BoxRevisionsTest < ApplicationSystemTestCase
   # two boxes both called "Shelf box". Every other test in this file navigates first, which is
   # exactly why none of them could see it.
   test "save, tweak, save again in one mount joins the box it just created" do
-    use_current_project
+    lamp = project_folder
 
-    visit tools_addon_path("boxes")
+    visit tools_addon_path("boxes", in: lamp)
     open_addon_card("ABox")
     find('[data-param="x"]').set("111")
     find('[data-role="name"]').set("Shelf box")
@@ -246,8 +249,8 @@ class BoxRevisionsTest < ApplicationSystemTestCase
   # Saves one box from a fresh generator and returns its row. The ordinary CREATE path, used as the
   # fixture every test here starts from — so nothing hand-builds an AddonState whose files point at
   # node ids no port ever wrote, which is the shape that would let a bytes-level regression through.
-  def create_box(name, x: nil)
-    visit tools_addon_path("boxes")
+  def create_box(name, x: nil, folder: nil)
+    visit tools_addon_path("boxes", in: folder)
     open_addon_card("ABox")
     find('[data-param="x"]').set(x) if x
     find('[data-role="name"]').set(name)
@@ -256,15 +259,11 @@ class BoxRevisionsTest < ApplicationSystemTestCase
     Maker::AddonState.order(:id).last
   end
 
-  # A project whose library folder the save dialog will default to — which is what puts a save on the
-  # one path that reaches a 409 rather than the terminal 422 (see the join test). Set through the
-  # top-bar select the way a user does, since the current project is session-scoped and has no other
-  # browser door.
-  def use_current_project(name = "Lamp")
-    @user.maker_projects.create!(name:).ensure_library_folder!(@user)
-    visit tools_path
-    select name, from: "project_id"
-    assert_selector ".current-project select"
+  # A project whose library folder a save starts in — which is what puts the save on the one path
+  # that reaches a 409 rather than the terminal 422 (see the join test). Returns the folder's
+  # node_id for `?in=`.
+  def project_folder(name = "Lamp")
+    @user.maker_projects.create!(name:).ensure_library_folder!(@user).node_id
   end
 
   # POLLS THE ROW, NOT THE STATUS LINE, and that is not fussiness: "Saved." is already on screen from
