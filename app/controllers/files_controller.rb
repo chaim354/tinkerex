@@ -328,7 +328,7 @@ class FilesController < ApplicationController
     # Both list and grid read it, so it is set here rather than in either branch above.
     @addon_origins = addon_origins_for(@nodes.map(&:node_id))
     # Current-version, current-build thumbnails, plus a bounded backfill of the ones that have no
-    # row yet. ONE call, and it is the same class the Models and Projects pages go through: this
+    # row yet. ONE call, and it is the same class the 3D models and Projects pages go through: this
     # controller held the only copy of both rules (the renderer-revision filter and the backfill),
     # which is exactly how those pages came to have neither. `@info_by_node` is passed in rather
     # than re-stat'd — on share a second stat_all is a filesystem stat per node, doubled.

@@ -77,7 +77,7 @@ module Web
       assert_select ".result-group--file .result-more a[href=?]", files_path(q: "widget"), text: /See all 7/
 
       assert_select ".result-group--model .result-row", count: 5
-      assert_select ".result-group--model .result-more a[href=?]", models_path(q: "widget"), text: /See all 7/
+      assert_select ".result-group--model .result-more a[href=?]", files_models_path(q: "widget"), text: /See all 7/
 
       assert_select ".result-group--inventory_item .result-row", count: 5
       assert_select ".result-group--inventory_item .result-more a[href=?]", inventory_items_path(q: "widget"), text: /See all 7/

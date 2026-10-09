@@ -60,6 +60,9 @@ module Web
       get root_path
       assert_select ".home-prints .print-row", count: 2
       assert_select ".home-prints .print-row a[href=?]", model_path(model), text: "Benchy"
+      # "See all" is the Library's 3D models view (slice 5); a row's own link stays model_path, which
+      # lands on the model's folder when it has a strip to show.
+      assert_select ".home-prints .panel-head a[href=?]", files_models_path, text: "See all"
       assert_select ".home-attention .attention-list .attention-row", count: 1
       assert_select ".home-attention .attention-row", text: /Benchy/
       assert_select ".home-attention .attention-row", text: /failed/i

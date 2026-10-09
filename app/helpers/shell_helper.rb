@@ -133,6 +133,8 @@ module ShellHelper
   # THE ONE ANSWER TO "WHICH LINK IS LIT", so exactly one is. A key, compared by sidebar_aria:
   #   [:home] [:library] [:pin, node_id] [:project, id] [:all_projects] [:models] [:inventory]
   #   [:tools] [:trash] [:settings]
+  # The Library's 3D models view (`files/models`) lights [:models], not Library, though its section
+  # is files (slice 5).
   # On the Files page AND a file's own page the DEEPEST pinned folder on the breadcrumb wins over
   # Library (`@crumbs` is the folder chain FilesController#index and #show both build; absent
   # elsewhere, where Library lights). On a project page the project's own
@@ -142,9 +144,14 @@ module ShellHelper
       case rail_section
       when "home" then [ :home ]
       when "files"
-        pinned = sidebar_pins.map { |pin, _| pin.node_id }
-        deepest = Array(@crumbs).map(&:node_id).reverse.find { |id| pinned.include?(id) }
-        deepest ? [ :pin, deepest ] : [ :library ]
+        # The Library's 3D models VIEW lights its own place, not Library (slice 5). Only one link is lit.
+        if controller_path == "files/models"
+          [ :models ]
+        else
+          pinned = sidebar_pins.map { |pin, _| pin.node_id }
+          deepest = Array(@crumbs).map(&:node_id).reverse.find { |id| pinned.include?(id) }
+          deepest ? [ :pin, deepest ] : [ :library ]
+        end
       when "projects"
         id = @project&.id
         id && sidebar_projects.any? { |p| p.id == id } ? [ :project, id ] : [ :all_projects ]
@@ -169,7 +176,9 @@ module ShellHelper
     current = sidebar_current&.first
     [
       [ "Home", root_path, :home, current == :home ],
-      [ "Library", files_path, :files, %i[library pin].include?(current) ],
+      # The 3D models view is a Library view; the bar has no place of its own for it. The same key
+      # lights the model pages ModelsController still serves.
+      [ "Library", files_path, :files, %i[library pin models].include?(current) ],
       [ "Projects", projects_path, :projects, %i[project all_projects].include?(current) ],
       [ "Tools", tools_path, :tools, current == :tools ]
     ]

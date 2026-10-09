@@ -74,6 +74,17 @@ module Web
                     text: "See all #{TagsController::GROUP_CAP + 1}"
     end
 
+    # The models group's "See all" lands on the Library's 3D models view (slice 5), filtered by the tag;
+    # /models itself only 301s there now, which would cost the click a redirect.
+    test "the models group's See all lands on the 3D models view, filtered by the tag" do
+      (TagsController::GROUP_CAP + 1).times { |i| @user.maker_models.create!(title: "M#{i}", tag_list: "laser") }
+
+      get tag_path("laser")
+      assert_response :success
+      assert_select ".result-group--model .result-more a[href=?]", files_models_path(tag: "laser"),
+                    text: "See all #{TagsController::GROUP_CAP + 1}"
+    end
+
     test "a tag nobody wears any more (all taggings removed) shows the empty state, not a 404" do
       project = @user.maker_projects.create!(name: "Desk Lamp", tag_list: "laser")
       project.update!(tag_list: "")

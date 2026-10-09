@@ -67,6 +67,12 @@ Rails.application.routes.draw do
   # `update` is the editor's Save. PATCH rather than POST because it replaces the content of a
   # file that already exists — and `replace: true` REUSES the node, which is what keeps every
   # attachment, BOM link and tag pointing at it (§14a).
+  #
+  # THE 3D MODELS VIEW (structural redesign §5.4, slice 5): the old /models index as a Library view.
+  # Its own path, NOT ?view=models: `view` is the list/grid toggle and lives in a cookie, so a
+  # "models" value would be saved and every plain folder link would render this view. DECLARED BEFORE
+  # `resources :files`, or /files/models matches files#show id=models.
+  get "files/models", to: "files/models#index", as: :files_models
   resources :files, only: %i[index create show update destroy] do
     collection do
       post "begin_upload"
@@ -331,6 +337,8 @@ Rails.application.routes.draw do
   # --- Maker: Models (3D-print model library; server-rendered web UI, session auth) ---
   # A curated view over library files at Models/<slug>/. `create` is the JSON import endpoint the
   # importer Stimulus controller calls; there is no plain-HTML create (import IS the new flow).
+  # Since slice 5 `index` 301s to the Library's 3D models view (`files/models`, above `resources
+  # :files`) and `show` 302s to a model's folder when it shows the model strip (Maker::ModelFolder).
   # THESE THREE ARE DECLARED BEFORE THEIR PARENT `resources`, AND THE ORDER IS LOAD-BEARING.
   # `/models/shelves` and `/inventory/suppliers` are static segments under a resourceful path, so a
   # parent declared first matches them as `models#show id=shelves` and `inventory_items#show

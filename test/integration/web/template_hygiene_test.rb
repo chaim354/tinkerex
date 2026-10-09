@@ -501,7 +501,8 @@ module Web
         # Stage 2, S2-5. @project wears "laser" (setup above), so this renders shared/_result_group
         # (Task A's own partial, also rendered by Task B's search page) at least once.
         "tags/show" => tag_path("laser"),
-        "models index" => models_path,
+        # Slice 5: the old Models index as the Library's 3D models view, files/models/index.
+        "3D models" => files_models_path,
         "model detail" => model_path(@model),
         "model new" => new_model_path,
         "model edit" => edit_model_path(@model),
@@ -579,9 +580,9 @@ module Web
     # SLOTS. With two children that reads title-left / actions-right, which is what fourteen of the
     # sixteen pages do. A THIRD child does not overflow or wrap — `space-between` puts it in the
     # CENTRE of the page, which is a plausible-looking layout and therefore invisible in review:
-    # /models floated its primary action "Import model" mid-page with "Shelves" hard right, and the
-    # public project page centred its byline between the name and the download button. One
-    # mechanism, two pages, and an unwritten contract nothing enforced.
+    # /models (now /files/models) floated its primary action "Import model" mid-page with "Shelves"
+    # hard right, and the public project page centred its byline between the name and the download
+    # button. One mechanism, two pages, and an unwritten contract nothing enforced.
     #
     # THIS RIDES THE `pages` SWEEP RATHER THAN NAMING ROUTES, so a page added to that list is
     # covered here with no edit — and the sweep already carries a coverage assertion tying it to the
@@ -590,7 +591,8 @@ module Web
     # tell a compliant head from a broken one.
     #
     # MUTATION-CHECKED (§15), both directions:
-    #   - Unwrapping the two links in models/index.html.erb back to bare children:
+    #   - Unwrapping the two links in models/index.html.erb (files/models/index since slice 5) back
+    #       to bare children:
     #       models index: .page-head passes 3 slots, not 2 — [h1 "Models", a.btn.primary
     #       "Import model", a.btn "Shelves"]. `.page-head` is space-between: the MIDDLE one lands
     #       in the centre of the page.

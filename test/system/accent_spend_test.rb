@@ -85,7 +85,9 @@ class AccentSpendTest < ApplicationSystemTestCase
       "/files" => [ "Upload" ],
       # The model strip above the files adds nothing (slice 5).
       "/files (a model folder)" => [ "Upload" ],
-      "/models" => [ "Import model" ],
+      # The Library's 3D models view (slice 5): its one action is Import model. No folder is on screen,
+      # so the top bar's Upload stays quiet (FolderDestination is never set here).
+      "/files/models" => [ "Import model" ],
       "/projects" => [ "New project" ],
       "/inventory" => [ "New item" ],
       # THE ONE PAGE DECISION 3 ALLOWS TWO, and these are the two it names: the folder this project
@@ -106,7 +108,7 @@ class AccentSpendTest < ApplicationSystemTestCase
       "/settings/shelves" => [ "Add shelf" ]
     }
     paths = {
-      "/" => root_path, "/files" => files_path, "/models" => models_path,
+      "/" => root_path, "/files" => files_path, "/files/models" => files_models_path,
       "/files (a model folder)" => files_path(folder: @model_folder.node_id),
       "/projects" => projects_path, "/inventory" => inventory_items_path,
       "/projects/desk-lamp" => project_path(@project), "/settings" => settings_path,

@@ -815,7 +815,7 @@ module Web
 
     # Same reasoning as projects#index above: a model with no attachment has no derived cover, so
     # the grid's `@covers` map was being budgeted while resolving nothing.
-    test "models#index does not grow with the number of models" do
+    test "files/models#index does not grow with the number of models" do
       add = lambda do |prefix, count|
         count.times do |i|
           model = @user.maker_models.create!(title: "#{prefix}#{i}", slug: "#{prefix}#{i}")
@@ -823,10 +823,10 @@ module Web
           model.file_attachments.create!(user: @user, node_id: "mc-#{prefix}#{i}", role: "image")
         end
       end
-      assert_constant_queries(models_path,
+      assert_constant_queries(files_models_path,
                               -> { add.call("s", SMALL) },
                               -> { add.call("l", LARGE - SMALL) },
-                              "models#index")
+                              "files/models#index")
     end
 
     # THIS PAGE GROWS ON TWO AXES AT ONCE -- one row per shelf, and each row's live/missing

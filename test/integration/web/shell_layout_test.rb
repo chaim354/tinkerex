@@ -21,7 +21,7 @@ module Web
     end
 
     test "each top-level section lights its own link" do
-      { root_path => "Home", projects_path => "All projects", models_path => "3D models",
+      { root_path => "Home", projects_path => "All projects", files_models_path => "3D models",
         inventory_items_path => "Inventory", tools_path => "Tools",
         trash_index_path => "Trash" }.each do |path, label|
         get path
@@ -139,8 +139,11 @@ module Web
       get project_path(project)
       assert_select "header.topbar nav.breadcrumb a", text: "Projects"
       assert_select "main nav.breadcrumb", count: 0
-      get models_path
-      assert_select "header.topbar .topbar-title", text: "Models"
+      # The 3D models view (slice 5) is a Library page: its top bar carries a breadcrumb, not a title.
+      get files_models_path
+      assert_select "header.topbar nav.breadcrumb a[href=?]", files_path, text: "Files"
+      assert_select "header.topbar nav.breadcrumb [aria-current='page']", text: "3D models"
+      assert_select "main nav.breadcrumb", count: 0
     end
 
     # Four tabs, not every sidebar entry: Trash is reached from the sidebar alone, so its page lights

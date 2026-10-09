@@ -231,7 +231,7 @@ module Projects
     #
     # Returns whether a LISTED model went away, which is what the flash may speak about; an
     # already-dismissed row is destroyed just the same (Prune does not consult dismissed_at either)
-    # but was never on /models to be delisted from.
+    # but was never in the 3D models view to be delisted from.
     def destroy_auto_model(node)
       model = current_user.maker_models.find_by(origin: "auto", auto_node_id: node.node_id)
       return false unless model

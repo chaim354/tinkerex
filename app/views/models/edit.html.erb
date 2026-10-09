@@ -1,4 +1,17 @@
 <% content_for :title, "Edit #{@model.title} — Tinkerex" %>
+
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Model path">
+    <%= link_to "Files", files_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <%= link_to "3D models", files_models_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <%= link_to @model.title, model_path(@model) %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page">Edit</span>
+  </nav>
+<% end %>
+
 <div class="page-head"><h1>Edit <%= @model.title %></h1></div>
 
 <%= form_with model: @model, scope: :model, url: model_path(@model), method: :patch, class: "project-form" do |f| %>

@@ -25,6 +25,16 @@ module Web
       FileUtils.remove_entry(@root) if @root&.exist?
     end
 
+    # A MODEL WITH A LIVE, UNCLAIMED FOLDER NO LONGER RENDERS THIS PAGE (slice 5): /models/:id 302s to
+    # the folder, whose strip carries what the page did (models_redirects_test.rb). The page survives
+    # for every model with no strip to land on, and the ONE of those that still has a live folder —
+    # the only kind whose Files panel draws the folder's SHAPE — is a model whose folder a project
+    # claims. So the file-tree tests claim it; the hero, switcher and gallery tests use a folderless
+    # model, the ordinary page (a one-file model, an import whose folder was never made).
+    def claim_for_a_project!(user, folder)
+      user.maker_projects.create!(name: "Claims #{folder.name}").update_column(:folder_node_id, folder.node_id)
+    end
+
     def sign_in(email = "maker@example.com")
       user = User.find_by(email:) ||
              User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
@@ -33,19 +43,19 @@ module Web
     end
 
     test "requires login" do
-      get models_path
+      get files_models_path
       assert_redirected_to new_user_session_path
     end
 
     test "index lists the user's models with an empty state otherwise" do
       user = sign_in
-      get models_path
+      get files_models_path
       assert_response :success
-      assert_select "h1", "Models"
+      assert_select "h1", "3D models"
       assert_select ".empty"
 
       user.maker_models.create!(title: "Dragon", print_status: "printed")
-      get models_path
+      get files_models_path
       assert_select ".model-card .model-name", text: "Dragon"
       assert_select ".model-card .badge.mstatus-printed"
     end
@@ -54,7 +64,7 @@ module Web
       sign_in("a@example.com").maker_models.create!(title: "Mine")
       User.create!(email: "b@example.com", password: PASSWORD, confirmed_at: Time.current)
           .maker_models.create!(title: "Theirs")
-      get models_path
+      get files_models_path
       assert_select ".model-name", text: "Mine"
       assert_select ".model-name", text: "Theirs", count: 0
     end
@@ -63,10 +73,10 @@ module Web
       user = sign_in
       user.maker_models.create!(title: "Printed Dragon", print_status: "printed")
       user.maker_models.create!(title: "Wanted Gear", print_status: "want_to_print")
-      get models_path(status: "printed")
+      get files_models_path(status: "printed")
       assert_select ".model-name", text: "Printed Dragon"
       assert_select ".model-name", text: "Wanted Gear", count: 0
-      get models_path(q: "gear")
+      get files_models_path(q: "gear")
       assert_select ".model-name", text: "Wanted Gear"
       assert_select ".model-name", text: "Printed Dragon", count: 0
     end
@@ -77,6 +87,7 @@ module Web
                                     source_url: "https://printables.com/model/1", print_status: "printed")
       # A realistic imported structure: Models/dragon/parts/body.stl.
       folder = m.ensure_library_folder!(user)
+      claim_for_a_project!(user, folder)
       sub = user.nodes.create!(node_id: "sub1", name: "parts", kind: "dir", parent_node_id: folder.node_id)
       user.nodes.create!(node_id: "mdl1", name: "body.stl", kind: "file", parent_node_id: sub.node_id)
       m.file_attachments.create!(user:, node_id: "mdl1", role: "model")
@@ -98,6 +109,7 @@ module Web
       user = sign_in
       m = user.maker_models.create!(title: "Dragon")
       folder = m.ensure_library_folder!(user)
+      claim_for_a_project!(user, folder)
       user.nodes.create!(node_id: "mdl1", name: "body.stl", kind: "file", parent_node_id: folder.node_id)
       user.nodes.create!(node_id: "dxf1", name: "drawing.dxf", kind: "file", parent_node_id: folder.node_id)
       docs = user.nodes.create!(node_id: "docs1", name: "docs", kind: "dir", parent_node_id: folder.node_id)
@@ -106,6 +118,7 @@ module Web
 
       get model_path(m)
 
+      assert_response :success
       assert_select ".file-tree-box .tree-fname", text: "body.stl"
       assert_select ".file-tree-box .tree-fname", text: "drawing.dxf", count: 0
       assert_select ".file-tree-box .tree-folder", text: "docs", count: 0
@@ -122,10 +135,9 @@ module Web
     test "show renders a 3D switcher over every viewable file, excluding the ones nothing can read" do
       user = sign_in
       m = user.maker_models.create!(title: "Multi")
-      folder = m.ensure_library_folder!(user)
       { "body.stl" => "b1", "lid.3mf" => "l1", "clip.obj" => "c1", "cad.step" => "s1",
         "scene.glb" => "g1", "part.f3d" => "f1" }.each_with_index do |(name, nid), i|
-        user.nodes.create!(node_id: nid, name:, kind: "file", parent_node_id: folder.node_id)
+        user.nodes.create!(node_id: nid, name:, kind: "file")
         m.file_attachments.create!(user:, node_id: nid, role: Maker::FileAttachment.role_for(name), position: i)
       end
 
@@ -191,9 +203,8 @@ module Web
     test "show marks the cover file as the default selected option in the switcher" do
       user = sign_in
       m = user.maker_models.create!(title: "Cover")
-      folder = m.ensure_library_folder!(user)
       { "body.stl" => "cv1", "lid.3mf" => "cv2", "clip.obj" => "cv3" }.each_with_index do |(name, nid), i|
-        user.nodes.create!(node_id: nid, name:, kind: "file", parent_node_id: folder.node_id)
+        user.nodes.create!(node_id: nid, name:, kind: "file")
         m.file_attachments.create!(user:, node_id: nid, role: "model", position: i)
       end
       m.update!(cover_node_id: "cv2") # not the first by position
@@ -208,8 +219,7 @@ module Web
     test "show renders the 3D button without a switcher for a single 3D file" do
       user = sign_in
       m = user.maker_models.create!(title: "Solo")
-      folder = m.ensure_library_folder!(user)
-      user.nodes.create!(node_id: "solo1", name: "body.stl", kind: "file", parent_node_id: folder.node_id)
+      user.nodes.create!(node_id: "solo1", name: "body.stl", kind: "file")
       m.file_attachments.create!(user:, node_id: "solo1", role: "model")
 
       get model_path(m)
@@ -224,8 +234,7 @@ module Web
     test "show renders the plain hero with no 3D controls when no viewable 3D files" do
       user = sign_in
       m = user.maker_models.create!(title: "Flat")
-      folder = m.ensure_library_folder!(user)
-      user.nodes.create!(node_id: "img1", name: "cover.png", kind: "file", parent_node_id: folder.node_id)
+      user.nodes.create!(node_id: "img1", name: "cover.png", kind: "file")
       m.file_attachments.create!(user:, node_id: "img1", role: "image")
 
       get model_path(m)
@@ -242,9 +251,8 @@ module Web
     test "a HEIC cover and a HEIC gallery photo are thumbnails, never inline bytes" do
       user = sign_in
       m = user.maker_models.create!(title: "Phone shots")
-      folder = m.ensure_library_folder!(user)
-      user.nodes.create!(node_id: "img-png", name: "cover.png", kind: "file", parent_node_id: folder.node_id)
-      user.nodes.create!(node_id: "img-heic", name: "IMG_0001.heic", kind: "file", parent_node_id: folder.node_id)
+      user.nodes.create!(node_id: "img-png", name: "cover.png", kind: "file")
+      user.nodes.create!(node_id: "img-heic", name: "IMG_0001.heic", kind: "file")
       m.file_attachments.create!(user:, node_id: "img-png", role: "image")
       m.file_attachments.create!(user:, node_id: "img-heic", role: "image")
       m.update!(cover_node_id: "img-heic")
@@ -301,7 +309,7 @@ module Web
       assert_difference "Maker::Model.count", -1 do
         delete model_path(m)
       end
-      assert_redirected_to models_path
+      assert_redirected_to files_models_path
       assert user.nodes.exists?(node_id: "keep1"), "the library file must survive deleting the model"
     end
 

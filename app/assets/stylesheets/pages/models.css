@@ -70,6 +70,14 @@
   .model-card { position: relative; }
   .model-card .badge { position: absolute; top: 6px; left: 6px; }
 
+  /* An empty cover is the 3D models icon (slice 5; no emoji in the interface), at the size the
+     glyph it replaced was set. */
+  .model-card .project-thumb-empty .rail-icon { width: 36px; height: 36px; color: var(--fg-muted); }
+  .model-hero-empty .rail-icon { width: 48px; height: 48px; color: var(--fg-muted); }
+
+  /* The 3D models view's one pointer at the Settings rule that decides what counts as a model. */
+  .models-shelves-hint { margin: 0 0 14px; font-size: 13px; }
+
   .print-log details.composer { margin: 0 0 10px; }
   .print-form { display: grid; gap: 8px; max-width: 480px; }
   .print-form .row { display: flex; gap: 10px; }

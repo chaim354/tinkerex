@@ -465,7 +465,7 @@ class ShellTest < ApplicationSystemTestCase
         # separately — the public page in the second loop below, the app shell everywhere in this
         # one — and neither says what happens when they are laid out on top of each other at 375px.
         preview_project_path(project),
-        file_path(long.node_id), file_path(kicad.node_id), file_path(gerbers[:gtl].node_id), tools_path, models_path, trash_index_path,
+        file_path(long.node_id), file_path(kicad.node_id), file_path(gerbers[:gtl].node_id), tools_path, files_models_path, trash_index_path,
         inventory_items_path, inventory_item_path(item), suppliers_path, locations_path,
         project_bom_path(project),
         # STAGE 2, S2-5: the search results page (several groups populated -- see the tag_list:

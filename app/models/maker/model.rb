@@ -59,7 +59,8 @@ module Maker
 
     scope :by_status, ->(s) { where(print_status: s) if s.present? }
 
-    # WHAT /models SHOWS. A dismissed auto model is the user's "I do not want this" and is
+    # WHAT THE 3D MODELS VIEW (/files/models) AND A FOLDER'S MODEL STRIP SHOW (Maker::ModelFolder).
+    # A dismissed auto model is the user's "I do not want this" and is
     # permanent; the row survives only so the next sweep does not recreate it.
     scope :catalogued, -> { where(dismissed_at: nil) }
 
