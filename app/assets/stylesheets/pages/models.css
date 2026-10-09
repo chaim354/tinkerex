@@ -1,5 +1,5 @@
 /* The model catalog: index toolbar, the detail page's two columns, the file tree, print log,
-   and the shelves settings page. */
+   and the shelf rows Settings::ShelvesController renders (they stayed in this sheet). */
 @layer pages {
   /* The detail page's rules below (hero, gallery, file tree, print settings) were migrated from the
      old models.css with the token substitution applied; the toolbar, the card badge, the print log,
@@ -42,11 +42,12 @@
   .tree-dir > details > summary { cursor: pointer; list-style: none; padding: 2px 4px; border-radius: 4px; }
   .tree-dir > details > summary::-webkit-details-marker { display: none; }
   .tree-dir > details > summary:hover { background: var(--raised); }
-  .tree-folder::before { content: "📁"; margin-right: 6px; }
+  /* The tree draws the Library's folder glyph, not an emoji (design system: no emoji in the interface);
+     a file entry keeps its 22px indent so its name lines up with a folder name beside its glyph. */
+  .tree-folder .folder-glyph { margin-right: 6px; }
   .tree-folder { font-weight: 600; color: var(--fg); }
   .tree-file .tree-fname { display: block; padding: 2px 4px 2px 22px; border-radius: 4px;
                            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .tree-file .tree-fname::before { content: "🧊"; margin-left: -18px; margin-right: 4px; }
   .tree-file .tree-fname:hover { background: var(--raised); }
 
   .model-print-settings { margin-bottom: 22px; }

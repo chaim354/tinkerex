@@ -96,6 +96,7 @@ module Web
       assert_select "h1", text: /Dragon/
       assert_select ".badge.mstatus-printed"
       assert_select ".file-tree-box .tree-folder", text: "parts"          # folder structure shown
+      assert_select ".file-tree-box .tree-folder svg.folder-glyph", minimum: 1  # the Library glyph, not an emoji
       assert_select ".file-tree-box .tree-fname", text: "body.stl"        # file under it
       assert_select "a[href=?]", "https://printables.com/model/1"
     end

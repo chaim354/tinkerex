@@ -26,7 +26,7 @@ module Maker
 
     # Falls back to the humanised status rather than raising: `print_status` is validated, so an
     # unknown value means a migration added one and forgot this hash — a readable word beats a 500,
-    # and models_index_test.rb pins that every PRINT_STATUSES member has a label so the fallback is
+    # and cohesion_vocabulary_test.rb pins that every PRINT_STATUSES member has a label so the fallback is
     # not load-bearing.
     def self.print_status_label(status) =
       PRINT_STATUS_LABELS.fetch(status.to_s) { status.to_s.tr("_", " ").upcase_first }
