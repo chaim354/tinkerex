@@ -8,34 +8,49 @@
   </nav>
 <% end %>
 
+<%#
+  THE HUB'S HEAD (structural redesign §6, slice 6): the cover, a PROJECT eyebrow, the name, then the
+  badges and links that were always here. STILL TWO SLOTS — `.page-title` and `.head-actions` — which
+  is what `.page-head` lays out (template_hygiene_test.rb); the cover and the text column are both
+  inside `.page-title`. The eyebrow sits OUTSIDE the h1, whose exact text a test pins.
+
+  The hero partial is unchanged and still decides whether there is a cover at all (no cover renders
+  nothing, so the head is the text column alone); pages/projects.css places it on the photo stage
+  and sizes it for the head. The text column is its own div because a cover beside a wrapping row
+  of name, badges and links is two boxes, not one flex row.
+%>
 <div class="page-head project-head">
   <div class="page-title">
-    <h1><%= @project.name %></h1>
-    <% if @project.status == "archived" %>
-      <span class="badge status-archived">Archived</span>
-    <% end %>
-    <%#
-      THE STATUS, WHERE IT CAN BE SEEN (stage 4, S4-6; story 1.6). The form can set it again, and a
-      value nobody can see is a field nobody will use. `planning` is the column default and badging a
-      default is noise — the same argument S4-1's quiet panels make about a zero. `archived` keeps its
-      own badge above; this covers active, paused and done.
-    %>
-    <% if @project.status.in?(%w[active paused done]) %>
-      <span class="badge status-<%= @project.status %>"><%= @project.status.humanize %></span>
-    <% end %>
-    <% if @project.published? %>
-      <span class="badge visibility-<%= @project.visibility %>"><%= @project.visibility.humanize %></span>
-      <%# An unlisted project's link carries ?k=<token>, which IS the credential for that page --
-          a public one needs none. %>
-      <%= link_to "Public page",
-                  public_project_path(@project.user.handle, @project.slug,
-                                      **(@project.unlisted? ? { k: @project.unlisted_token } : {})),
-                  class: "linkbtn small public-link" %>
-    <% end %>
-    <%# THE DOOR TO THE PANEL (stage 4, S4-4). A plain in-page anchor: the panel is the LAST panel
-        so it does not displace the maker's own content, and the head is where a maker already
-        looks for publishing state. %>
-    <%= link_to (@project.published? ? "Publishing" : "Publish"), "#publish", class: "linkbtn small publish-link" %>
+    <%= render "hero" %>
+    <div class="project-head-text">
+      <span class="eyebrow">Project</span>
+      <h1><%= @project.name %></h1>
+      <% if @project.status == "archived" %>
+        <span class="badge status-archived">Archived</span>
+      <% end %>
+      <%#
+        THE STATUS, WHERE IT CAN BE SEEN (stage 4, S4-6; story 1.6). The form can set it again, and a
+        value nobody can see is a field nobody will use. `planning` is the column default and badging a
+        default is noise — the same argument S4-1's quiet panels make about a zero. `archived` keeps its
+        own badge above; this covers active, paused and done.
+      %>
+      <% if @project.status.in?(%w[active paused done]) %>
+        <span class="badge status-<%= @project.status %>"><%= @project.status.humanize %></span>
+      <% end %>
+      <% if @project.published? %>
+        <span class="badge visibility-<%= @project.visibility %>"><%= @project.visibility.humanize %></span>
+        <%# An unlisted project's link carries ?k=<token>, which IS the credential for that page --
+            a public one needs none. %>
+        <%= link_to "Public page",
+                    public_project_path(@project.user.handle, @project.slug,
+                                        **(@project.unlisted? ? { k: @project.unlisted_token } : {})),
+                    class: "linkbtn small public-link" %>
+      <% end %>
+      <%# THE DOOR TO THE PANEL (stage 4, S4-4). A plain in-page anchor: the panel is the LAST panel
+          so it does not displace the maker's own content, and the head is where a maker already
+          looks for publishing state. %>
+      <%= link_to (@project.published? ? "Publishing" : "Publish"), "#publish", class: "linkbtn small publish-link" %>
+    </div>
   </div>
   <%# ARCHIVE'S OWN CONFIRM SAYS THE UNDOCUMENTED HALF (stage 4, S4-6; story 1.6): for a project
       the app adopted, archiving is also what stops it being adopted again. A local rather than a
@@ -50,28 +65,41 @@
     <%# THE PAGE EDITOR (2026-09-09): the same page with the chrome on. A link, because entering
         edit mode changes nothing until Save. %>
     <%= link_to "Customise page", edit_layout_project_path(@project), class: "btn small customise-link" %>
-    <% if @project.status == "archived" %>
-      <%= button_to "Unarchive", unarchive_project_path(@project), method: :patch, class: "btn small" %>
-    <% else %>
-      <% if @project.discovered_at.present? %>
-        <%#
-          NOT A PROJECT (stage 4, S4-6; story 1.6). The app made this row from a folder, so the
-          maker needs a way to say it was wrong — and archiving already IS that mechanism, silently:
-          the claim lookup is unscoped, so an archived project keeps its folder_node_id and the
-          sweep passes over that folder forever. This names the act instead of leaving it to be
-          discovered. ONE WRITE, TWO SENTENCES — see ProjectsController#destroy; a second route
-          would be two ways to do one thing.
+    <%#
+      THE ⋯ MENU (structural redesign §6, slice 6): the occasional acts, out of the head's one row.
+      Publish settings is the same in-page anchor the head's Publish link is; Archive, Unarchive and
+      Not a project moved here VERBATIM — the same button_to, routes and confirms, with menu-item for
+      the button class (Archive keeps `danger`). Nothing in here is an accent: the hub's two are the
+      top bar's Upload and the Publish panel's Save publishing (design-system.md rule 13).
+    %>
+    <details class="menu project-menu" data-controller="menu">
+      <summary class="btn small icon" aria-label="More actions" title="More actions">⋯</summary>
+      <div class="menu-list">
+        <%= link_to "Publish settings", "#publish", class: "menu-item" %>
+        <% if @project.status == "archived" %>
+          <%= button_to "Unarchive", unarchive_project_path(@project), method: :patch, class: "menu-item" %>
+        <% else %>
+          <% if @project.discovered_at.present? %>
+            <%#
+              NOT A PROJECT (stage 4, S4-6; story 1.6). The app made this row from a folder, so the
+              maker needs a way to say it was wrong — and archiving already IS that mechanism, silently:
+              the claim lookup is unscoped, so an archived project keeps its folder_node_id and the
+              sweep passes over that folder forever. This names the act instead of leaving it to be
+              discovered. ONE WRITE, TWO SENTENCES — see ProjectsController#destroy; a second route
+              would be two ways to do one thing.
 
-          Only for a discovered project: a project you made by hand was never adopted, so there is
-          nothing for "not a project" to mean.
-        %>
-        <%= button_to "Not a project", project_path(@project, dismiss: 1), method: :delete,
-                      class: "btn small ghost",
-                      form: { data: { turbo_confirm: "“#{@project.name}” is not a project? Its folder stays in your library, and the app won't adopt it again." } } %>
-      <% end %>
-      <%= button_to "Archive", project_path(@project), method: :delete, class: "btn small danger",
-                    form: { data: { turbo_confirm: archive_confirm } } %>
-    <% end %>
+              Only for a discovered project: a project you made by hand was never adopted, so there is
+              nothing for "not a project" to mean.
+            %>
+            <%= button_to "Not a project", project_path(@project, dismiss: 1), method: :delete,
+                          class: "menu-item",
+                          form: { data: { turbo_confirm: "“#{@project.name}” is not a project? Its folder stays in your library, and the app won't adopt it again." } } %>
+          <% end %>
+          <%= button_to "Archive", project_path(@project), method: :delete, class: "menu-item danger",
+                        form: { data: { turbo_confirm: archive_confirm } } %>
+        <% end %>
+      </div>
+    </details>
   </div>
 </div>
 
@@ -98,10 +126,6 @@
   <span><b><%= @entries.size %></b> log <%= "entry".pluralize(@entries.size) %></span>
   <span><b><%= @sheets.size %></b> <%= "sheet".pluralize(@sheets.size) %></span>
 </p>
-
-<%# Stage 4, S4-1: the cover, on the project's own page at last. The partial itself decides whether
-    there is one to show — an unset or tombstoned cover renders nothing at all. %>
-<%= render "hero" %>
 
 <%#
   THE PANELS, AS DATA (stage 4, S4-7; story 6.5). Ten hard-coded renders became one loop over

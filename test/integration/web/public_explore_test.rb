@@ -140,6 +140,9 @@ module Web
       assert_response :success
       assert_select ".project-card .card-cover", minimum: 1
       assert_select ".project-card .project-thumb-empty", minimum: 1
+      # NO EMOJI IN THE INTERFACE (slice 6): the placeholder is the rail's projects icon.
+      assert_select ".project-card .project-thumb-empty[aria-hidden='true'] svg.rail-icon", minimum: 1
+      assert_no_match "\u{1F4E6}", css_select(".project-card-grid").to_s
       # /files/thumbnails is session-authed, so a visitor's spinner has nothing that could ever
       # resolve it. The controller must not be on this page at all.
       assert_select "[data-controller=?]", "thumbs", 0

@@ -75,7 +75,13 @@ class PageEditorTest < ApplicationSystemTestCase
   # onto the target and release. The intermediate `move_by` is load-bearing — Sortable starts a
   # fallback drag on the first move past the tolerance, and a single jump to the target arrives
   # before the drag has begun.
+  #
+  # THE HANDLE IS SCROLLED TO JUST BELOW THE TOP BAR FIRST. A W3C pointer move does not scroll, so a
+  # target past the bottom of the 1400px window is MoveTargetOutOfBounds, and how far down a slot
+  # sits is the page's business, not this test's — slice 6's "Recently changed" row in Files was
+  # enough to push Tasks out of it. With the handle near the top, the whole window below is room.
   def drag(handle, target)
+    page.execute_script("window.scrollBy(0, arguments[0].getBoundingClientRect().top - 120)", handle.native)
     page.driver.browser.action
         .click_and_hold(handle.native)
         .move_by(0, 40)

@@ -432,5 +432,56 @@ module Maker
       project = @user.maker_projects.create!(name: "Folderless")
       refute Maker::ProjectFolderListing.new(@user, project).root_repo?
     end
+
+    # --- #recent_files (structural redesign §6, slice 6: the Files panel's "Recently changed") ---
+
+    # NEWEST FIRST, ANYWHERE UNDER THE FOLDER, ONE QUERY. Creation order, name order and recency all
+    # disagree here, so an ORDER BY name, by id or oldest-first reads a different sequence; the
+    # library-root file is the newest node of all and must not appear, and neither may a dot-file.
+    test "recent_files is the newest visible files anywhere under the folder, newest first, in one query" do
+      _projects, desk_lamp = desk_lamp_folder
+      deep = dir("dir-deep", "deep", dir("dir-models", "models", desk_lamp.node_id).node_id)
+      { "f-a" => [ "a.stl", desk_lamp, 4 ], "f-b" => [ "b.stl", deep, 1 ], "f-c" => [ "c.stl", desk_lamp, 3 ],
+        "f-d" => [ "d.stl", deep, 2 ] }.each do |id, (name, parent, hours)|
+        file(id, name, parent.node_id).update_columns(updated_at: hours.hours.ago)
+      end
+      file("f-dot", ".DS_Store", desk_lamp.node_id)
+      file("f-outside", "z.stl", nil)
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
+
+      recent = nil
+      assert_equal 1, count_queries { recent = listing.recent_files }
+      assert_equal %w[b.stl d.stl c.stl a.stl], recent.map(&:name)
+      assert_equal %w[b.stl d.stl], listing.recent_files(2).map(&:name), "the limit keeps the newest"
+    end
+
+    # THE ROW SHOWS WHAT THE PAGE SHOWS OPENLY: a skipped dir's WHOLE subtree is left out, and so is
+    # a LightBurn rescue copy at any depth — while `battery_backup.stl`, which is no such thing,
+    # stays (Maker::FileAttachment.backup?'s narrowness, in SQL). Both IN the query, so the limit
+    # still counts files the row can show.
+    test "recent_files leaves out a skipped dir's subtree and LightBurn backups, and only those" do
+      _projects, desk_lamp = desk_lamp_folder
+      models = dir("dir-models", "models", desk_lamp.node_id)
+      old = dir("dir-old", "old", models.node_id)
+      file("f-keep", "keep.stl", desk_lamp.node_id).update_columns(updated_at: 2.hours.ago)
+      file("f-bat", "battery_backup.stl", desk_lamp.node_id).update_columns(updated_at: 3.hours.ago)
+      file("f-bak", "sign_backup.LBRN2", desk_lamp.node_id)
+      file("f-mage", "cut_backup.mage", models.node_id)
+      file("f-old", "mk1.stl", old.node_id)
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
+
+      assert_equal %w[mk1.stl keep.stl battery_backup.stl], listing.recent_files.map(&:name)
+      assert_equal %w[keep.stl battery_backup.stl], listing.recent_files(skip: [ listing.tree.sole ]).map(&:name),
+                   "skipping models/ skips models/old/ with it"
+      assert_equal %w[keep.stl], listing.recent_files(1, skip: listing.tree).map(&:name),
+                   "a backup does not spend a slot of the limit"
+    end
+
+    test "recent_files is empty, with no query, when the folder is unavailable" do
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(nil, name: "Bare"))
+      recent = :unset
+      assert_equal 0, count_queries { recent = listing.recent_files }
+      assert_equal [], recent
+    end
   end
 end

@@ -7,11 +7,19 @@
   Local: row (Maker::ProjectFolderListing::Row). Reads @project, @addon_origins and @page_thumbs
   off the enclosing template — exactly as the block this was extracted from always did — because
   every caller on this page already builds those three the same way, over the same tile_ids union.
+
+  THE TILE OPENS THE LIBRARY, NOT THE FILE PAGE (structural redesign §6 and §7, slice 6):
+  library_file_path is the file's folder with the file selected, where the inspector answers "what
+  is this" and its Open reaches the file page. The hub has no inspector of its own, and this tile is
+  NOT a selection item — nothing here goes through with_selection, because this page has no
+  selection controller. The file menu's Open follows this href, so it lands in the Library too.
+  Photos, Schematics and the hero keep file_path: a picture or a schematic is looked at, not
+  located.
 %>
 <% node = row.node %>
 <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
 <div class="attachment-tile">
-  <%= link_to file_path(row.node_id), class: "grid-card file-cell",
+  <%= link_to library_file_path(node), class: "grid-card file-cell",
               data: thumb_cell_data(row.node_id, ext)
                       .merge(file_menu_data(row.node_id, node.name, @addon_origins[row.node_id])) do %>
     <%= render "files/thumb", thumb: @page_thumbs.thumb(row.node_id), ext_label: ext,

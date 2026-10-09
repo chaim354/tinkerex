@@ -49,10 +49,95 @@ module Web
       assert_select ".project-stats", text: /1 sheet\b/
     end
 
-    test "the head's actions are buttons, with Archive quiet" do
+    test "the head's actions are buttons, with Archive in the ⋯ menu" do
       get project_path(@project)
       assert_select ".head-actions a.btn[href=?]", edit_project_path(@project), text: "Edit"
-      assert_select ".head-actions form[action=?] button.btn.danger", project_path(@project), text: "Archive"
+      assert_select ".head-actions details.project-menu form[action=?] button.menu-item.danger",
+                    project_path(@project), text: "Archive"
+      assert_select ".head-actions > form", 0, "no act is a head button any more: they live in the menu"
+    end
+
+    # THE HUB'S HEAD (structural redesign §6, slice 6): the cover and the name in one head, a PROJECT
+    # eyebrow ABOVE the h1 and never inside it (projects_flow_test.rb pins the h1's exact text), and a
+    # ⋯ menu opening on Publish settings. `.page-head` keeps its two slots; template_hygiene_test.rb
+    # is the guard for that, this is the guard for what the first slot holds.
+    test "the head carries the cover, the PROJECT eyebrow outside the h1, and a ⋯ menu" do
+      folder = Maker::ProjectFolderListing.new(@user, @project).folder_id
+      @user.nodes.create!(node_id: "n-cover", name: "lamp.png", kind: "file", parent_node_id: folder,
+                          size: 1, mtime: 1_000_000_000)
+      @project.update!(cover_node_id: "n-cover")
+
+      get project_path(@project)
+
+      assert_select ".page-head.project-head > *", 2
+      assert_select ".project-head .page-title" do
+        assert_select "> .project-hero img.project-hero-img[src=?]", blob_file_path("n-cover")
+        assert_select ".eyebrow", text: "Project"
+        assert_select "h1", text: "Desk Lamp"
+        assert_select "h1 .eyebrow", 0
+      end
+      eyebrow, h1 = css_select(".project-head .eyebrow, .project-head h1")
+      assert_equal %w[span h1], [ eyebrow&.name, h1&.name ], "the eyebrow comes before the name"
+      assert_select ".project-hero", 1, "the cover moved into the head; it is not drawn twice"
+      assert_select ".head-actions details.project-menu[data-controller=?]", "menu" do
+        assert_select "summary.btn.icon[aria-label=?]", "More actions"
+        assert_select ".menu-list > .menu-item:first-child[href=?]", "#publish", text: "Publish settings"
+      end
+    end
+
+    # THE FILES PANEL'S "RECENTLY CHANGED" ROW (structural redesign §6, slice 6). NINE files in nested
+    # folders, so the cap (8) is straddled and the row reaches past the folder's root. THREE ORDERS
+    # DISAGREE ON PURPOSE — creation (r1…r9), name (also r1…r9) and recency — so a row ordered by
+    # name, by id or oldest-first cannot read the same sequence. A file outside the folder is the
+    # newest of all and must not appear: "under the project folder" is the scope.
+    test "the Files panel shows the 8 newest files under the folder, newest first, each opening the Library" do
+      project = @user.maker_projects.create!(name: "Recent Rig")
+      folder = project_folder_rows!(@user, project)
+      models = @user.nodes.create!(node_id: "d-r-models", name: "models", kind: "dir", parent_node_id: folder.node_id)
+      old = @user.nodes.create!(node_id: "d-r-old", name: "old", kind: "dir", parent_node_id: models.node_id)
+      laser = @user.nodes.create!(node_id: "d-r-laser", name: "laser", kind: "dir", parent_node_id: folder.node_id)
+      parents = { 1 => folder, 2 => models, 3 => old, 4 => laser, 5 => old, 6 => models, 7 => folder, 8 => laser, 9 => old }
+      hours_ago = { 5 => 1, 9 => 2, 1 => 3, 7 => 4, 3 => 5, 8 => 6, 2 => 7, 6 => 8, 4 => 9 }
+      (1..9).each do |i|
+        node = @user.nodes.create!(node_id: "r#{i}", name: "r#{i}.stl", kind: "file", parent_node_id: parents[i].node_id,
+                                   size: 1, mtime: 1_000_000_000)
+        node.update_columns(updated_at: hours_ago[i].hours.ago)
+      end
+      @user.nodes.create!(node_id: "r-outside", name: "r0.stl", kind: "file", size: 1, mtime: 1_000_000_000)
+
+      get project_path(project)
+
+      tiles = css_select("section.attachments-panel .recent-files .attachment-tile")
+      assert_equal %w[r5 r9 r1 r7 r3 r8 r2 r6], tiles.map { |t| t.at_css(".grid-name").text.delete_suffix(".stl") }
+      assert_select "section.attachments-panel .recent-files .recent-files-head", text: "Recently changed"
+      assert_select "section.attachments-panel .recent-files .attachment-tile a[href=?]",
+                    files_path(folder: "d-r-old", selected: "r5")
+      assert_select "section.attachments-panel .recent-files .attachment-tile a[href=?]",
+                    files_path(folder: folder.node_id, selected: "r1")
+      assert_select ".recent-files .grid-name", { text: "r0.stl", count: 0 }, "a file outside the folder is not recent here"
+      assert_select "section.attachments-panel .panel-head a.panel-path[href=?][title=?]",
+                    files_path(folder: folder.node_id), "#{Maker::ProjectFolders::ROOT}/#{project.slug}", text: "Open folder →"
+    end
+
+    # WHAT THE PAGE KEEPS CLOSED, THE ROW DOES NOT OPEN. A LightBurn rescue copy is folded into the
+    # closed Backups group, and LightBurn rewrites it on every save — the newest file in a laser
+    # project, every time. A panel the maker hid takes its files off the page; a repository the page
+    # browses draws no tiles. All three are newer here than the one file that should show.
+    test "the recent row leaves out backups, a hidden panel's files and a browsed repository's" do
+      project = folder_panel_project!
+      @user.nodes.find_by!(node_id: "f-loose").update_columns(updated_at: 1.day.ago)
+      folder = Maker::ProjectFolderListing.new(@user, project).folder_id
+      @user.nodes.create!(node_id: "f-bak", name: "sign_backup.lbrn2", kind: "file", parent_node_id: folder,
+                          size: 1, mtime: 1_000_000_000)
+      project.update!(panels: { "hidden" => [ folder_key("d-models") ] })
+      (Maker::ProjectFolderListing.new(@user, project).node_ids - %w[f-loose]).each do |id|
+        @user.nodes.find_by!(node_id: id).update_columns(updated_at: 1.minute.ago)
+      end
+      @user.nodes.find_by!(node_id: "f-main").update_columns(updated_at: 1.minute.ago)
+
+      get project_path(project)
+
+      assert_equal %w[sketch.txt], css_select(".recent-files .grid-name").map(&:text)
     end
 
     # DETACH IS THE LINKED ROW'S CONTROL, ONLY. base.stl/shade.3mf are plain folder files now (no
@@ -433,9 +518,14 @@ end
       assert_not Maker::Preview.exists?(user: @user, node_id: "f-case"),
                  "the browser view shows no tile for it, so nothing is enqueued"
 
+      # THE RECENT ROW ASKS THE SAME QUESTION (slice 6): case.stl is the newest file in the folder,
+      # and it is in the row exactly when the repository draws tiles.
+      assert_select ".recent-files .grid-name", { text: "case.stl", count: 0 }, "a browsed repository draws no recent tile"
+
       project.update!(panels: { "views" => { "folder:d-firmware" => "tiles" } })
       get project_path(project)
       assert_select "section.folder-panel[id='folder:d-firmware'] .attachment-tile", { minimum: 1 }
+      assert_select ".recent-files .grid-name", { text: "case.stl", count: 1 }, "a repository in tiles is a folder like any other"
       assert Maker::Preview.exists?(user: @user, node_id: "f-case"),
              "a tile on the page must have a row the poll can resolve"
     end
@@ -500,7 +590,9 @@ end
       assert_select "section.attachments-panel .attachment-group-head", text: /Loose \(1\)/
       assert_select "section.attachments-panel .attachment-tile .grid-name", text: "sketch.txt"
       assert_select "section.attachments-panel .file-tree-section", count: 0
-      assert_select "section.attachments-panel .attachment-tile", { count: 1 },
+      # THE GROUPS' TILES, NOT THE RECENT ROW'S: Recently changed reaches into every subfolder by
+      # design (slice 6), so what this pins is that no GROUP below it draws a subfolder.
+      assert_select "section.attachments-panel .attachment-group .attachment-tile", { count: 1 },
                     "only the loose file — a subfolder's files belong to its own panel"
       assert_select ".file-tree-section", 1, "only the nested old/ section is left, inside models"
     end

@@ -288,6 +288,10 @@ module Web
                               -> { add.call("s", SMALL) },
                               -> { add.call("l", LARGE - SMALL) },
                               "projects#show")
+      # THE RECENT ROW (slice 6) WAS UNDER MEASUREMENT: one query whatever N is, and its tiles are
+      # projects/_file_tile, whose per-tile cost the groups above already grow. It is full (8) at
+      # BOTH sizes, so this proves the row rendered, not that a per-tile read inside it would show.
+      assert_select ".attachments-panel .recent-files .attachment-tile", 8
     ensure
       Maker::Addons::Source.reset!
     end

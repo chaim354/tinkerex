@@ -399,7 +399,9 @@ module Web
       assert_response :success
       assert_equal tray.node_id, project.reload.folder_node_id
       assert_nil @user.nodes.find_by(name: Maker::ProjectFolders::ROOT, parent_node_id: nil)
-      assert_select ".attachments-panel .panel-path", text: "designs/tray"
+      # "Open folder →" since slice 6; the path is still on the link, as its title.
+      assert_select ".attachments-panel a.panel-path[href=?][title=?]", files_path(folder: tray.node_id),
+                    "designs/tray", text: "Open folder →"
     end
 
     test "requires sign-in" do
