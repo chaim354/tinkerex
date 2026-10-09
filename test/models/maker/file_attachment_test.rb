@@ -255,5 +255,17 @@ module Maker
       assert_not_includes Maker::FileAttachment::TEXT_ROLES, "cnc_design"
       refute Maker::FileAttachment.text?("catan.mage")
     end
+
+    # A PHOTO TILE CROPS TO FILL ITS STAGE (structural redesign slice 3) — and which tiles are photos
+    # is decided by extension, as a DISPLAY subset of the image role, never a second vocabulary.
+    test "a photo is a camera format, and every photo extension is an image" do
+      assert Maker::FileAttachment.photo?("stool.JPG")
+      assert Maker::FileAttachment.photo?("IMG_0042.heic")
+      refute Maker::FileAttachment.photo?("screenshot.png"), "a PNG keeps contain: it is often a screenshot"
+      refute Maker::FileAttachment.photo?("bracket.stl")
+      refute Maker::FileAttachment.photo?(nil)
+      assert_empty Maker::FileAttachment::PHOTO_EXTS - Maker::FileAttachment::IMAGE_EXTS,
+                   "PHOTO_EXTS is a display subset of the image role, never a second vocabulary"
+    end
   end
 end

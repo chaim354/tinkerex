@@ -89,6 +89,16 @@ module FilesHelper
     { thumbs_target: "cell", node_id:, ext: ext_label }
   end
 
+  # A FILE TILE IS A SELECTABLE ITEM (structural redesign §5.1): click selects, double-click opens,
+  # and the link's own behaviour stays for everything else (selection_controller.js). Merged into
+  # whatever data the tile already carries — its `action` is APPENDED to, never replaced, because
+  # the file menu's `contextmenu->filemenu#open` lives in the same attribute. A FOLDER IS NEVER
+  # PASSED THROUGH THIS: a folder click navigates into it.
+  def with_selection(data, node_id)
+    data.merge(selection_target: "item", selection_id: node_id,
+               action: [ data[:action], "click->selection#click", "dblclick->selection#open" ].compact.join(" "))
+  end
+
   # WHAT THE "Type" COLUMN SHOWS, AND IT MUST AGREE WITH WHAT THE "Type" HEADER SORTS BY
   # (FilesController#sort_key's "type" branch): the file's extension, or "Symlink" for a symlink.
   # This column used to be headed "Kind" and render `node.kind`, which is the word "file" on every

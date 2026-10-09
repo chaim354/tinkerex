@@ -307,6 +307,12 @@ class FilesController < ApplicationController
     # page boundaries, and files_pagination_test.rb goes red when you do), so the invariant worth
     # keeping is "one order, expressed once", not "this line is load-bearing today".
     @nodes = sort_nodes(@nodes, @info_by_node, @sort, @dir) unless @flat || @paged
+    # THE SELECTION (structural redesign §5.1): a FILE in THIS listing, or nothing. A stale, foreign,
+    # folder or off-page id is ignored rather than an error — a shared link outlives its file. Asked
+    # of the rows already in hand, AFTER select!, so it costs no query and can never name a node the
+    # page does not render (files_selection_test.rb).
+    requested = params[:selected].presence
+    @selected = requested if requested && @nodes.any? { |n| n.node_id == requested && n.file? }
     # Only the flat view needs it — a folder view already tells you where you are, and this is a
     # query the folder view would pay for and never read.
     @folder_paths = @flat ? folder_paths_for(@nodes) : {}
@@ -1368,9 +1374,13 @@ class FilesController < ApplicationController
   #
   # `folder` and `ext` are never both present: flat mode NILs @folder (see #index), so this is one
   # key or the other, never an intersection the rest of the page would have to make sense of.
+  #
+  # `selected` RIDES ALONG (structural redesign §5.1), so re-sorting or switching view keeps the
+  # inspector open on the same file. It is the VALIDATED @selected, never params[:selected] — an id
+  # #index ignored must not be echoed into every link on the page.
   helper_method :files_query_base
   def files_query_base
-    { folder: @folder&.node_id, ext: @exts.presence&.join(","), q: @q }.compact
+    { folder: @folder&.node_id, ext: @exts.presence&.join(","), q: @q, selected: @selected }.compact
   end
 
   # A file extension is 1-8 lowercase alphanumerics. ANYTHING ELSE IS DROPPED, not escaped and not

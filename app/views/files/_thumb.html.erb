@@ -1,11 +1,17 @@
-<%# locals: (thumb:, ext_label:, url:) %>
+<%# locals: (thumb:, ext_label:, url:, photo: false) %>
 <%#
   Shared thumbnail box for a renderable file, used by both the list and grid views. The poll
   controller (thumbs_controller.js) finds `.thumb` inside a `.file-cell` and swaps the spinner for
   the <img> once ready, or a static badge on unsupported/failed. Sizing comes from the ancestor
   container (table.files .thumb vs .files-grid .thumb), so this markup is size-agnostic.
 
-  Locals: `thumb` (a Maker::Preview or nil), `ext_label` (String), `url` (String or nil).
+  Locals: `thumb` (a Maker::Preview or nil), `ext_label` (String), `url` (String or nil), `photo`
+  (Boolean, default false).
+
+  `photo` CROPS A CAMERA FORMAT TO FILL ITS STAGE (`.thumb.photo`, Maker::FileAttachment.photo?;
+  structural redesign slice 3). It defaults to FALSE so every caller that does not ask — the public
+  surfaces among them — renders exactly as before. The class sits on the span, which the poll
+  never replaces (thumbs_controller swaps its children only), so it survives the render landing.
 
   `url` IS A STRICT LOCAL BECAUSE THIS PARTIAL IS SHARED BY A SESSION-AUTHED PAGE AND A SESSIONLESS
   ONE (hardening, 2026-09-08; tinkerex#278) — the same design the eight viewer partials already use
@@ -15,7 +21,7 @@
   after its project went private, so `url_for` is refused in this file by the Public seam guard's
   third arm (test/architecture_invariants_test.rb) — pass it in, never derive it.
 %>
-<span class="thumb" data-thumbs-target="thumb">
+<span class="thumb<%= " photo" if photo %>" data-thumbs-target="thumb">
   <% if thumb&.status == "ready" && thumb.asset.attached? %>
     <img src="<%= url %>" alt="" loading="lazy">
   <% elsif thumb.nil? || %w[pending processing].include?(thumb&.status) %>
