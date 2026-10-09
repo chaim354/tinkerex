@@ -6,7 +6,15 @@ import { Controller } from "@hotwired/stimulus"
 export default class extends Controller {
   connect() {
     this.onClick = (event) => { if (!this.element.contains(event.target)) this.element.removeAttribute("open") }
-    this.onKeydown = (event) => { if (event.key === "Escape") this.element.removeAttribute("open") }
+    // ESCAPE RETURNS FOCUS TO THE SUMMARY when it was inside the menu: closing a <details> hides
+    // the focused field, and focus would otherwise fall to <body>, leaving a keyboard user nowhere
+    // (found in slice 2's review, from the New menu's inline folder field).
+    this.onKeydown = (event) => {
+      if (event.key !== "Escape" || !this.element.open) return
+      const hadFocus = this.element.contains(document.activeElement)
+      this.element.removeAttribute("open")
+      if (hadFocus) this.element.querySelector("summary")?.focus()
+    }
     document.addEventListener("click", this.onClick)
     document.addEventListener("keydown", this.onKeydown)
   }

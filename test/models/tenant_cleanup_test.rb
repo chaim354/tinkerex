@@ -137,6 +137,11 @@ class TenantCleanupTest < ActiveSupport::TestCase
 
     "maker_release_files" => ->(u) {
       u.maker_releases.first.files.create!(user: u, node_id: SecureRandom.uuid, name: "base.stl")
+    },
+
+    "maker_pins" => ->(u) {
+      dir = u.nodes.create!(node_id: SecureRandom.uuid, name: "pinned", kind: "dir")
+      u.maker_pins.create!(node_id: dir.node_id)
     }
   }.freeze
 
@@ -151,7 +156,7 @@ class TenantCleanupTest < ActiveSupport::TestCase
     maker_print_runs maker_taggings maker_file_attachments maker_collection_items maker_repo_edits
     maker_build_log_entries maker_sheets maker_boms maker_inventory_items
     maker_inventory_transactions maker_bom_lines maker_connections maker_project_blocks
-    maker_releases maker_release_files
+    maker_releases maker_release_files maker_pins
   ].freeze
 
   def rows_for(user, table)

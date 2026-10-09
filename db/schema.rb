@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_10_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_08_120000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -291,6 +291,16 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_10_120000) do
     t.index ["user_id", "node_id"], name: "index_maker_notes_on_user_id_and_node_id"
   end
 
+  create_table "maker_pins", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "node_id", null: false
+    t.integer "position", default: 0, null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "node_id"], name: "index_maker_pins_on_user_id_and_node_id", unique: true
+    t.index ["user_id", "position"], name: "index_maker_pins_on_user_id_and_position"
+  end
+
   create_table "maker_previews", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.text "error"
@@ -564,6 +574,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_10_120000) do
   add_foreign_key "maker_addon_states", "users"
   add_foreign_key "maker_connections", "users"
   add_foreign_key "maker_filing_rules", "users"
+  add_foreign_key "maker_pins", "users"
   add_foreign_key "maker_project_blocks", "users"
   add_foreign_key "maker_release_files", "users"
   add_foreign_key "maker_releases", "users"

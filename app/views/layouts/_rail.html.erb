@@ -1,6 +1,9 @@
-<%# The rail (spec §5.1-5.2). The current-project card KEEPS the form and the select that
-    current_project_topbar_test, box_revisions_test and addon_bundle_test pin
-    (form[action=current_project_path] select[name=project_id], .current-project select). %>
+<%# The places sidebar (structural redesign spec §4.1, slice 2). Still `aside.rail` with `.rail-link`s
+    — restyle and restructure, never rename (design-system.md rule 12) — and still carrying the
+    current-project card, whose form and select current_project_topbar_test, box_revisions_test and
+    addon_bundle_test pin until slice 4 retires the concept. EXACTLY ONE `.rail-link` carries
+    aria-current: ShellHelper#sidebar_current decides which. When that link is a project or a pin,
+    which the collapsed rail hides, its family link wears `rail-family-lit` (sidebar_family_lit?). %>
 <aside class="rail" id="rail" data-controller="rail">
   <%= link_to root_path, class: "brand", "aria-label": "Tinkerex home" do %>
     <span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span>
@@ -23,14 +26,76 @@
 
   <nav class="rail-nav" aria-label="Main">
     <ul>
-      <% rail_links.each do |key, label, path, icon| %>
+      <li>
+        <%= link_to root_path, class: "rail-link", title: "Home", "aria-current": sidebar_aria([ :home ]) do %>
+          <%= rail_icon(:home) %><span class="rail-label">Home</span>
+        <% end %>
+      </li>
+      <li>
+        <%= link_to files_path, class: class_names("rail-link", "rail-family-lit": sidebar_family_lit?(:library)),
+                    title: "Library", "aria-current": sidebar_aria([ :library ]) do %>
+          <%= rail_icon(:files) %><span class="rail-label">Library</span>
+        <% end %>
+      </li>
+    </ul>
+
+    <h2 class="rail-group-head">Projects</h2>
+    <ul>
+      <% sidebar_projects.each do |project| %>
         <li>
-          <%= link_to path, class: "rail-link", title: label,
-                      "aria-current": (rail_section == key ? "page" : nil) do %>
-            <%= rail_icon(icon) %><span class="rail-label"><%= label %></span>
+          <%= link_to project_path(project), class: "rail-link rail-project", title: project.name,
+                      "aria-current": sidebar_aria([ :project, project.id ]) do %>
+            <span class="rail-label"><%= project.name %></span>
           <% end %>
         </li>
       <% end %>
+      <li>
+        <%= link_to projects_path, class: class_names("rail-link", "rail-family-lit": sidebar_family_lit?(:all_projects)),
+                    title: "All projects",
+                    "aria-current": sidebar_aria([ :all_projects ]) do %>
+          <%= rail_icon(:projects) %><span class="rail-label">All projects</span>
+        <% end %>
+      </li>
+    </ul>
+
+    <h2 class="rail-group-head">Places</h2>
+    <ul>
+      <li>
+        <%= link_to models_path, class: "rail-link", title: "3D models", "aria-current": sidebar_aria([ :models ]) do %>
+          <%= rail_icon(:models) %><span class="rail-label">3D models</span>
+        <% end %>
+      </li>
+      <% sidebar_pins.each do |pin, name| %>
+        <li>
+          <%= link_to files_path(folder: pin.node_id), class: "rail-link rail-pin", title: name,
+                      "aria-current": sidebar_aria([ :pin, pin.node_id ]) do %>
+            <%= folder_glyph %><span class="rail-label"><%= name %></span>
+          <% end %>
+        </li>
+      <% end %>
+    </ul>
+  </nav>
+
+  <nav class="rail-nav rail-nav--foot" aria-label="Tools and trash">
+    <ul>
+      <li>
+        <%= link_to tools_path, class: "rail-link", title: "Tools", "aria-current": sidebar_aria([ :tools ]) do %>
+          <%= rail_icon(:tools) %><span class="rail-label">Tools</span>
+        <% end %>
+      </li>
+      <% if sidebar_inventory? %>
+        <li>
+          <%= link_to inventory_items_path, class: "rail-link", title: "Inventory",
+                      "aria-current": sidebar_aria([ :inventory ]) do %>
+            <%= rail_icon(:inventory) %><span class="rail-label">Inventory</span>
+          <% end %>
+        </li>
+      <% end %>
+      <li>
+        <%= link_to trash_index_path, class: "rail-link", title: "Trash", "aria-current": sidebar_aria([ :trash ]) do %>
+          <%= rail_icon(:trash) %><span class="rail-label">Trash</span>
+        <% end %>
+      </li>
     </ul>
   </nav>
 
@@ -45,7 +110,7 @@
     </button>
     <span class="rail-user" title="<%= current_user.email %>"><%= current_user.email %></span>
     <%= link_to settings_path, class: "rail-btn rail-settings",
-                "aria-current": (rail_section == "settings" ? "page" : nil) do %>
+                "aria-current": (sidebar_current == [ :settings ] ? "page" : nil) do %>
       <%= rail_icon(:settings) %><span>Settings</span>
     <% end %>
     <%= button_to "Sign out", destroy_user_session_path, method: :delete, class: "rail-btn" %>

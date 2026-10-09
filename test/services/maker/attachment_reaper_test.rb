@@ -232,5 +232,19 @@ module Maker
       assert_equal Maker::DeadNodes::GRACE, Maker::AttachmentReaper::GRACE
       assert_equal Maker::DeadNodes::GRACE, Maker::Previews::DeadNodeReaper::GRACE
     end
+
+    test "a pin is reaped with its folder: gone for good at once, a tombstone only past the window" do
+      gone  = @user.nodes.create!(node_id: "pin-gone", name: "gone", kind: "dir")
+      old   = @user.nodes.create!(node_id: "pin-old", name: "old", kind: "dir")
+      fresh = @user.nodes.create!(node_id: "pin-fresh", name: "fresh", kind: "dir")
+      live  = @user.nodes.create!(node_id: "pin-live", name: "live", kind: "dir")
+      [ gone, old, fresh, live ].each { |n| @user.maker_pins.create!(node_id: n.node_id) }
+      gone.destroy!
+      old.update_columns(deleted: true, updated_at: 31.days.ago)
+      fresh.update_columns(deleted: true)
+
+      assert_equal 2, Maker::AttachmentReaper.reap_all!(grace: 30.days)
+      assert_equal %w[pin-fresh pin-live], @user.maker_pins.order(:node_id).pluck(:node_id)
+    end
   end
 end

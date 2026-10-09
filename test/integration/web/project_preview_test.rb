@@ -66,7 +66,8 @@ module Web
       assert_equal %w[firmware models photos], css_select("section.folder-panel h2").map(&:text)
       assert_select "section.folder-panel .public-tiles a[href=?]",
                     public_file_view_path("ada", @project.slug, @f[:base].node_id)
-      assert_no_private_urls
+      # `main` IS THE VISITOR'S PAGE; the shell around it is the owner's and links into /files/.
+      assert_no_private_urls(within: "main")
     end
 
     test "a published project's banner says so and names the URL" do

@@ -51,8 +51,15 @@ landed it (§11).
    rendered by `ShellHelper` into the first byte of HTML — never an inline script.** The CSP nonces
    `script-src`, and a pre-paint script is the thing not to add. The JS writes them with `path=/`,
    a one-year `max-age` and `samesite=lax`; the server trusts nothing beyond the enum.
-8. **`rail_section` maps `controller_path`'s FIRST segment.** A new web controller needs a
-   `SECTIONS` entry or its pages light no rail link; `shell_layout_test.rb` pins the existing map.
+8. **The sidebar lights exactly one link, and `ShellHelper#sidebar_current` alone decides which.**
+   `rail_section` still maps `controller_path`'s FIRST segment (a new web controller needs a
+   `SECTIONS` entry or its pages light nothing), and `sidebar_current` refines it: the deepest
+   pinned folder on the Files breadcrumb beats Library, a listed project's own link beats All
+   projects, and an unlisted one lights All projects. The sidebar and the phone tab bar both read
+   it; `shell_layout_test.rb` pins one lit link per page. **Collapsed (or below 1100px) the project
+   and pin links are hidden**, so `sidebar_family_lit?` marks their visible parent — Library for a
+   pin, All projects for a project — with `.rail-family-lit`, a CLASS and not a second
+   aria-current, which shell.css draws only in the icon rail.
 9. **Breadcrumbs render in the top bar through `content_for :crumbs`**, with the page title as the
    fallback; page-level actions stay in the page's `.page-head`, so the top bar carries no
    per-page control.
@@ -68,6 +75,7 @@ landed it (§11).
 
 12. **Class names are a contract: restyle, never rename.** The selectors the tests pin (spec §10),
     `main.container` / `.container-wide` (the addon host page opts in), `.current-project select`
+    (until slice 4 of the 2026-10-08 redesign retires the current project)
     and `form[action=current_project_path] select[name=project_id]` (the current-project card keeps
     the old switcher's form), `.flash-notice` / `.flash-alert`, and the 52 classes the addon bundles
     in `chaim354/tinkerex-addons` build their own markup with (`addons.md`'s host contract; the

@@ -491,6 +491,11 @@
     border-radius: var(--radius-control); cursor: pointer; text-decoration: none; white-space: nowrap;
   }
   .menu-sep { height: 1px; margin: 4px 6px; background: var(--line); }
+  /* An inline form inside a menu (New ▸ Folder): a label, then a field and its button on one row. */
+  .menu-form { display: grid; gap: var(--space-1); padding: 6px 10px 8px; margin: 0; }
+  .menu-form-label { font-size: 13px; font-weight: 500; color: var(--fg); }
+  .menu-form-row { display: flex; gap: var(--space-2); }
+  .menu-form-row input[type="text"] { flex: 1; min-width: 0; }
   .menu-item:hover { background: var(--raised); text-decoration: none; }
   .menu-item.danger { color: var(--danger); }
   /* A menu row that HOSTS a control rather than being one — the build-log uploader is a label

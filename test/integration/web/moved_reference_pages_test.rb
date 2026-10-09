@@ -47,7 +47,7 @@ module Web
     test "the rail lights the section each page serves, and the URL now agrees with it" do
       # THE POINT OF THE MOVE, asserted on the rendered rail rather than on SECTIONS — the map being
       # right was never in question; what was wrong was a URL that disagreed with it.
-      { shelves_path => "Models", suppliers_path => "Inventory", locations_path => "Inventory" }
+      { shelves_path => "3D models", suppliers_path => "Inventory", locations_path => "Inventory" }
         .each do |path, section|
           get path
           assert_select "aside.rail a.rail-link[aria-current=page]", 1 do |links|

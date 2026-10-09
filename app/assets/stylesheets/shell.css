@@ -53,7 +53,17 @@
   .rail-link[aria-current="page"]::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 2px 2px 0; background: var(--fg); }
   .rail-icon { width: 16px; height: 16px; flex: 0 0 auto; }
 
-  .rail-foot { margin-top: auto; display: flex; flex-direction: column; gap: 2px; padding: var(--space-2) 0 0; border-top: 1px solid var(--line); }
+  /* The places sidebar's groups (structural redesign, slice 2). A group head is a LABEL: Plex Sans,
+     uppercase (cohesion decision 4). Project links carry no icon and sit indented under their head;
+     a pin carries the folder glyph. The foot nav takes the auto margin that pushes it and the
+     account foot to the bottom. */
+  .rail-group-head { margin: var(--space-3) 10px 2px; font: 600 11px/16px var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted); }
+  .rail-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .rail-project { min-height: 30px; padding-left: 36px; font-weight: 400; }
+  .rail-pin { font-weight: 400; }
+  .rail-nav--foot { margin-top: auto; }
+
+  .rail-foot { margin-top: 0; display: flex; flex-direction: column; gap: 2px; padding: var(--space-2) 0 0; border-top: 1px solid var(--line); }
   .rail-foot form { margin: 0; }
   .rail-btn {
     display: inline-flex; align-items: center; gap: 10px; width: 100%; min-height: 30px; padding: 0 10px;
@@ -76,6 +86,11 @@
   .rail--collapsed .rail-user, .rail--collapsed .rail-btn span { display: none; }
   .rail--collapsed .rail-link, .rail--collapsed .rail-btn { justify-content: center; padding-inline: 0; }
   .rail--collapsed .rail-foot form button { justify-content: center; }
+  .rail--collapsed .rail-group-head, .rail--collapsed .rail-project, .rail--collapsed .rail-pin { display: none; }
+  /* The lit project or pin just hid, so its family link (ShellHelper#sidebar_family_lit?) wears the
+     lit look instead — otherwise a collapsed rail shows nothing lit. The same pair below 1100px. */
+  .rail--collapsed .rail-family-lit { color: var(--fg); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+  .rail--collapsed .rail-family-lit::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 2px 2px 0; background: var(--fg); }
 
   .shell-main { min-width: 0; display: flex; flex-direction: column; }
   .topbar {
@@ -92,6 +107,10 @@
   .topbar-search input { flex: 1; min-width: 0; min-height: 0; padding: 0; border: 0; background: transparent; color: var(--fg); font: 400 14px/20px var(--font-ui); }
   .topbar-search input:focus-visible { outline: none; }
   .topbar-search input::-webkit-search-cancel-button { filter: grayscale(1); }
+  /* New ▾ sits at the bar's right edge at every width. On a phone the bar wraps and New takes a row
+     of its own; without this it wrapped to the LEFT and its right-anchored menu opened at x≈-185,
+     off-screen (found in slice 2's Task 3; test/system/new_menu_test.rb measures it at 375px). */
+  .topbar-new { margin-left: auto; }
   .topbar-kbd { padding: 2px 5px; border: 1px solid var(--line); border-radius: 2px; font: 500 11px/1 var(--font-mono); color: var(--fg-muted); }
 
   main.container { width: 100%; max-width: var(--container-max); margin: 0 auto; padding: var(--space-5) var(--space-5) var(--space-8); }
@@ -141,6 +160,9 @@
     .brand { justify-content: center; padding: 4px 0; }
     .brand-name, .rail-label, .current-project, .rail-user, .rail-btn span { display: none; }
     .rail-link, .rail-btn { justify-content: center; padding-inline: 0; }
+    .rail-group-head, .rail-project, .rail-pin { display: none; }
+    .rail-family-lit { color: var(--fg); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+    .rail-family-lit::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 2px 2px 0; background: var(--fg); }
     .topbar { padding: 0 16px; }
     main.container { padding: 16px 16px 64px; }
   }

@@ -39,6 +39,12 @@ module Web
 
     def json = JSON.parse(response.body)
 
+    # WHAT THE FILE CHOOSER SENDS (lib/file_chooser.js): a form body with `Accept: application/json`.
+    # Since the top bar's New ▸ Folder made #create_folder answer HTML too, a post that names no
+    # Accept gets the integration session's browser-like default, which Rails reads as HTML — so
+    # these JSON assertions have to say what the real caller says.
+    CHOOSER = { "Accept" => "application/json" }.freeze
+
     test "children of the root lists root dirs only by default (no files)" do
       get library_children_path
       assert_response :success
@@ -132,7 +138,7 @@ module Web
     # Maker::LibraryFolderTest, so these pin chunk — the repo's idiom for a port-touching test.
     test "create_folder makes a dir under a parent and returns its node" do
       assert_difference -> { @user.nodes.present.where(kind: "dir").count }, 1 do
-        post library_folders_path, params: { parent_node_id: @projects, name: "exports" }
+        post library_folders_path, params: { parent_node_id: @projects, name: "exports" }, headers: CHOOSER
       end
       assert_response :created
       created = @user.nodes.present.find_by(name: "exports", parent_node_id: @projects, kind: "dir")
@@ -142,14 +148,14 @@ module Web
     end
 
     test "create_folder at the root uses a nil parent" do
-      post library_folders_path, params: { name: "Top" }
+      post library_folders_path, params: { name: "Top" }, headers: CHOOSER
       assert_response :created
       assert @user.nodes.present.exists?(name: "Top", parent_node_id: nil, kind: "dir")
     end
 
     test "create_folder rejects a duplicate name in the same folder" do
       assert_no_difference -> { @user.nodes.present.where(kind: "dir").count } do
-        post library_folders_path, params: { parent_node_id: @projects, name: "v2" } # already exists
+        post library_folders_path, params: { parent_node_id: @projects, name: "v2" }, headers: CHOOSER # already exists
       end
       assert_response :unprocessable_entity
       assert_match(/already exists/i, json["error"])
@@ -173,14 +179,14 @@ module Web
     # which is what the three-leg CI exists to supply.
     test "create_folder answers 422, not 500, when a FILE already holds the name" do
       assert_no_difference -> { @user.nodes.present.where(kind: "dir").count } do
-        post library_folders_path, params: { parent_node_id: @projects, name: "readme.txt" }
+        post library_folders_path, params: { parent_node_id: @projects, name: "readme.txt" }, headers: CHOOSER
       end
       assert_response :unprocessable_entity
       assert_match(/already named/i, json["error"])
     end
 
     test "create_folder rejects a blank name" do
-      post library_folders_path, params: { parent_node_id: @projects, name: "  " }
+      post library_folders_path, params: { parent_node_id: @projects, name: "  " }, headers: CHOOSER
       assert_response :unprocessable_entity
       assert_match(/blank/i, json["error"])
     end
@@ -199,7 +205,7 @@ module Web
     test "create_folder rejects a name that is not a single storable path segment" do
       [ "a/b", "a\\b", "..", ".", "nul\0byte", "x" * 300 ].each do |bad|
         assert_no_difference -> { @user.nodes.present.where(kind: "dir").count }, "created #{bad.inspect}" do
-          post library_folders_path, params: { name: bad }
+          post library_folders_path, params: { name: bad }, headers: CHOOSER
         end
         assert_response :unprocessable_entity, "#{bad.inspect} was not refused"
       end
@@ -223,7 +229,7 @@ module Web
     test "create_folder rejects a name the library scan will never index" do
       %w[.DS_Store ._resource __MACOSX .Trashes .Spotlight-V100 .trash .maker-tmp-x].each do |bad|
         assert_no_difference -> { @user.nodes.present.where(kind: "dir").count }, "created #{bad.inspect}" do
-          post library_folders_path, params: { name: bad }
+          post library_folders_path, params: { name: bad }, headers: CHOOSER
         end
         assert_response :unprocessable_entity, "#{bad.inspect} was not refused"
       end
@@ -232,7 +238,7 @@ module Web
     # The near miss, so the guard is pinned as EXACT-match on `.trash` rather than a prefix — a
     # folder called `.trashcan` is an ordinary folder the Scanner indexes.
     test "create_folder accepts a name that merely starts with a reserved prefix" do
-      post library_folders_path, params: { name: ".trashcan" }
+      post library_folders_path, params: { name: ".trashcan" }, headers: CHOOSER
       assert_response :created
       assert @user.nodes.present.exists?(name: ".trashcan", kind: "dir")
     end

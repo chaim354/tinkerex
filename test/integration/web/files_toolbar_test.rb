@@ -180,11 +180,14 @@ module Web
     end
 
     # AND IT STILL MUST NOT RENDER EMPTY — the rule two tests up, asked on the folder view, where a
-    # gate reading "is there a folder at all" escaped it. chunk_remote EXPLICITLY (the idiom
-    # rescan_test.rb records: constructing the adapter needs no sync server, and its reads answer
-    # from the local mirror), with no current project, so the folder arm is the only possible item:
-    # a dot-folder and the Projects root have none to offer, an ordinary folder has exactly one.
-    test "on a non-scannable backend the folder menu renders only when it has an item" do
+    # gate reading "is there a folder at all" once escaped it. Since slice 2 of the 2026-10-08
+    # redesign every folder view holds "Pin to sidebar", so a folder view always has a menu, and
+    # what this pins is that the folder arm adds exactly what it offers beside the pin. chunk_remote
+    # EXPLICITLY (the idiom rescan_test.rb records: constructing the adapter needs no sync server,
+    # and its reads answer from the local mirror), with no current project, so the folder arms are
+    # the only possible items: a dot-folder and the Projects root offer the pin alone, an ordinary
+    # folder the pin and the adopt button.
+    test "on a non-scannable backend the folder menu holds the pin and only what the folder offers" do
       FileLayer.current = FileLayer::ChunkRemote.new
       @user.nodes.create!(node_id: "dir-dot2", name: ".config", kind: "dir")
       @user.nodes.create!(node_id: "dir-projects2", name: Maker::ProjectFolders::ROOT, kind: "dir")
@@ -192,14 +195,24 @@ module Web
       %w[dir-dot2 dir-projects2].each do |folder|
         get files_path(folder:)
         assert_response :success
-        assert_select ".page-actions details.menu", { count: 0 }, "for #{folder}"
+        assert_select ".page-actions details.menu .menu-item", { count: 1 }, "for #{folder}"
+        assert_select ".page-actions details.menu form[action=?] button.menu-item", pins_path,
+                      { text: "Pin to sidebar" }, "for #{folder}"
       end
 
       get files_path(folder: "dir-cad")
       assert_select ".page-actions details.menu", count: 1
-      assert_select ".page-actions details.menu .menu-item", count: 1
+      assert_select ".page-actions details.menu .menu-item", count: 2
+      assert_select ".page-actions details.menu form[action=?] button.menu-item", pins_path,
+                    text: "Pin to sidebar"
       assert_select ".page-actions details.menu form[action=?] button.menu-item",
                     adopt_projects_path, text: /make this folder a project/i
+
+      # AND THE ROOT, ON THIS SAME ADAPTER, STILL RENDERS NO MENU: no folder means no pin, and
+      # nothing else here has an item. The folder views above can no longer be empty, so this is
+      # the one place left where this file pins "never an empty ⋯" on every backend leg.
+      get files_path
+      assert_select ".page-actions details.menu", { count: 0 }, "at the root"
     end
 
     # THE OTHER HALF OF THE SAME GATE, and Task E's phone sweep depends on it: a folder a project

@@ -12,5 +12,13 @@ module Tools
       # apart.
       @addon_source_configured = Maker::Addons::Source.configured?
     end
+
+    # The top bar's New ▾ menu loads this into a lazy frame when it opens (layouts/_topbar.html.erb).
+    # Available tools only — an unavailable one would be an entry that opens an apology — and none
+    # at all without a configured source, where Source.current would raise and Registry log it.
+    def new_menu
+      @addons = Maker::Addons::Source.configured? ? Maker::Addons::Registry.all.select(&:available?) : []
+      render layout: false
+    end
   end
 end
