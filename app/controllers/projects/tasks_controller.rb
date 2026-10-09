@@ -15,6 +15,8 @@ module Projects
   # per-status counts and the button set stay in one place — the partial — instead of being
   # duplicated in a Stimulus controller that would then have to agree with it forever.
   class TasksController < ApplicationController
+    include Projects::PanelReturn
+
     def create
       project = current_user.maker_projects.find_by!(slug: params[:project_id])
       next_pos = (project.tasks.maximum(:position) || -1) + 1
@@ -86,7 +88,8 @@ module Projects
           @task_error = alert
           render turbo_stream: turbo_stream.replace("project-tasks", partial: "projects/tasks")
         end
-        format.html { redirect_to project_path(project), notice:, alert: }
+        # Without JavaScript a refused task returns with its panel opened (Projects::PanelReturn).
+        format.html { redirect_to (alert ? project_panel_path(project, "tasks") : project_path(project)), notice:, alert: }
       end
     end
 

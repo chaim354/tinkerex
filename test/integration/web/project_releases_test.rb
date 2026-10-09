@@ -215,7 +215,7 @@ module Web
       assert_no_difference "Maker::Release.count" do
         create_release!(git_tag: "#{firmware.node_id}:v9.9.9")
       end
-      assert_redirected_to project_path(@project)
+      assert_redirected_to project_path(@project, add: "releases", anchor: "project-releases")
       assert_match(/Release not created/, flash[:alert])
       assert_match(/v9\.9\.9/, flash[:alert])
     end
@@ -247,7 +247,7 @@ module Web
       assert_no_difference "Maker::Release.count" do
         create_release!
       end
-      assert_redirected_to project_path(@project)
+      assert_redirected_to project_path(@project, add: "releases", anchor: "project-releases")
       assert_match(/Release not created/, flash[:alert])
       assert_match(/already a release of this project/, flash[:alert])
     end

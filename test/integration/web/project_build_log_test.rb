@@ -33,7 +33,11 @@ module Web
       assert_no_difference "Maker::BuildLogEntry.count" do
         post project_build_log_entries_path(project), params: { build_log_entry: { body: "" } }
       end
-      assert_redirected_to project_path(project)
+      # A FAILED FIRST ENTRY KEEPS ITS PANEL OPEN (Projects::PanelReturn): the project is otherwise empty,
+      # so the plain page would no longer carry the Build log the maker was writing in.
+      assert_redirected_to project_path(project, add: "build_log", anchor: "project-build-log")
+      follow_redirect!
+      assert_select "section.build-log-panel details.composer form"
     end
 
     test "delete a build-log entry" do
