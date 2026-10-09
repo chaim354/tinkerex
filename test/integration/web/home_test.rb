@@ -110,6 +110,15 @@ module Web
       assert_select ".home-projects .project-name", text: "Old Rig", count: 0
     end
 
+    # "Active projects" leaves a finished one out, as it does an archived one (slice 6 review).
+    test "a done project is not an active project" do
+      @user.maker_projects.create!(name: "Live Rig")
+      @user.maker_projects.create!(name: "Built Rig", status: "done")
+      get root_path
+      assert_select ".home-projects .project-name", text: "Live Rig"
+      assert_select ".home-projects .project-name", text: "Built Rig", count: 0
+    end
+
     # Stage 2, S2-3: a second attention source alongside failed prints.
     test "low-stock items land in attention, and a well-stocked item does not" do
       low = @user.maker_inventory_items.create!(name: "M3×8 screw", unit: "each", min_quantity: 50)

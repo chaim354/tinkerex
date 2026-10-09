@@ -24,7 +24,9 @@ class HomeController < ApplicationController
     # either way but stops being the SAME constant once the seeded project count crosses the limit
     # (page_query_budget_test.rb's small seed sits under it, the large one over it). Mirrors
     # ProjectsController#index, which eager-loads the same association for the same reason.
-    @recent_projects = current_user.maker_projects.where.not(status: "archived")
+    # ACTIVE MEANS NOT FINISHED (slice 6 review): the section is "Active projects", so a done project is
+    # left out as an archived one is — it showed under that heading with a "Done" badge.
+    @recent_projects = current_user.maker_projects.where.not(status: %w[archived done])
                                    .includes(:file_attachments)
                                    .order(updated_at: :desc).limit(RECENT_PROJECTS).to_a
     @recent_files = current_user.nodes.present.where(kind: "file").visible_entries(false)
