@@ -278,7 +278,7 @@ class FilesController < ApplicationController
     # ?folder= renders the root's listing and must upload to the root it shows. Flat mode has no
     # folder, so it is the root too.
     use_folder_destination(@folder&.node_id, path: Array(@crumbs).map(&:name).join("/"), primary: true)
-    @info_by_node =FileLayer.current.stat_all(current_user, node_ids: @nodes.map(&:node_id))
+    @info_by_node = FileLayer.current.stat_all(current_user, node_ids: @nodes.map(&:node_id))
     @nodes.select! { |node| @info_by_node.key?(node.node_id) }
     # AFTER select!, so a node that vanished between the two queries is gone before it can be
     # given a sort position (and before sort_key asks @info_by_node for an mtime it does not

@@ -45,7 +45,7 @@ class TopbarUploadSystemTest < ApplicationSystemTestCase
     assert_equal 0, page.evaluate_script("window.__picks"), "the file picker opened before a folder was chosen"
     find(".filechooser-row", text: "cad").click
     click_on "Choose"
-    assert_selector "header.topbar .topbar-upload-caption", text: "Saves to /cad"
+    assert_selector "header.topbar .topbar-upload-caption", text: "Saves to cad"
     # After the caption, which the same callback writes just before it clicks — so no race.
     assert_equal 1, page.evaluate_script("window.__picks"), "choosing a folder did not open the file picker"
     assert_equal @cad.node_id, find("header.topbar .topbar-upload input[name='parent_node_id']", visible: :all).value

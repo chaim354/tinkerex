@@ -33,7 +33,10 @@ export default class extends Controller {
     if (this.hasUploaderTarget) this.uploaderTarget.setAttribute("data-uploader-parent-node-id-value", nodeId)
     if (this.hasCaptionTarget) {
       const strong = document.createElement("strong")
-      strong.textContent = selection.path
+      // The SERVER'S spelling (FolderDestination::Destination#caption): root-relative with no leading
+      // slash, and "the library root" for the root — not the chooser's own "/cad" and "/ (library root)",
+      // so the caption reads the same whichever way the folder was chosen.
+      strong.textContent = nodeId ? selection.path.replace(/^\//, "") : "the library root"
       this.captionTarget.replaceChildren("Saves to ", strong)
       this.captionTarget.hidden = false
     }
