@@ -168,7 +168,7 @@ module Web
     # belongs to a file about the Models pages.
     test "the shelves page uses buttons for its actions, and leads back to Settings" do
       get settings_shelves_path
-      assert_select ".page-head a.btn.ghost[href=?]", settings_path, text: "Back to settings"
+      assert_select ".page-head a.btn.ghost[href=?]", settings_path, text: "Settings"
       assert_select "form.shelf-add button.btn.primary", text: "Add shelf"
     end
   end
