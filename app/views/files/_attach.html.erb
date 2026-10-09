@@ -26,14 +26,13 @@
         become an open redirect: `return_to` is "file" on the file page and "library" in the
         inspector; AttachmentsController#attach_redirect_path allowlists both.
 
-        The explicit id is load-bearing, and the param name is why: the layout's top-bar
-        current-project switcher is ALSO named project_id, so `select_tag :project_id` there and a
-        default-id `f.select :project_id` here put TWO id="project_id" elements on this page —
-        every page where the user has a project, i.e. exactly when this control renders. The
-        label then resolves to the FIRST one in document order, the top bar's, whose onchange
-        fires requestSubmit() — so clicking these words focused the switcher and one arrow key
-        silently changed the whole app's default save destination. The name stays project_id (the
-        controller reads it); only the DOM id is disambiguated.
+        The explicit id stays. It was load-bearing while the layout carried a current-project
+        switcher (retired in slice 4 of the 2026-10-08 redesign) ALSO named project_id: a
+        default-id `f.select :project_id` here put TWO id="project_id" elements on the page, the
+        label resolved to the switcher's, and one arrow key silently changed the whole app's
+        default save destination. Nothing else on the page claims that id today, but a distinct id
+        costs nothing and keeps a future `project_id` field from reopening the clash. The name
+        stays project_id (the controller reads it); only the DOM id is disambiguated.
       %>
       <%= form_with url: attachments_path, method: :post, class: "attach-form",
                     data: { turbo: false } do |f| %>

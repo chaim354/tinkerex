@@ -75,11 +75,10 @@ module Projects
 
     private
 
-    # WHERE THE BROWSER LANDS AFTER THE UPLOAD. The default is the project page, so every caller
-    # that omits `redirect_url` — the project page's own uploader, a build-log entry — is unchanged.
-    # The Files-page current-project uploader passes `redirect_url: files_path(...)` so the user
-    # stays in Files instead of being bounced to the project (parity with the chunk branch, which
-    # already honors it via uploader_controller.js).
+    # WHERE THE BROWSER LANDS AFTER THE UPLOAD. The default is the project page; a caller may pass
+    # `redirect_url` to land somewhere else (parity with the chunk branch, which honors it via
+    # uploader_controller.js). Its callers are the project page's Files panel and a build-log
+    # entry's inline upload, and both name the project page.
     #
     # `url_from` is Rails' own open-redirect guard (its docs show exactly `url_from(params[...])`):
     # it returns the location ONLY for a same-host or leading-single-slash RELATIVE path, and nil

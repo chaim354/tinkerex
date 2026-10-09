@@ -10,7 +10,7 @@
 # DELIBERATELY NOT ApplicationController. Violations fire on pages an anonymous visitor reaches —
 # sign-in, sign-up, password reset are exactly where the `'nonce-'` bug was found — so this must
 # work with no session and no user. Inheriting ActionController::Base directly also keeps it clear
-# of `allow_browser`, CurrentProject and the rest: a report is machine-to-machine, and the fewer
+# of `allow_browser` and the rest: a report is machine-to-machine, and the fewer
 # app concerns it touches the fewer ways it can fail while reporting that something failed.
 class CspReportsController < ActionController::Base
   # The browser POSTs this itself, with no CSRF token and no session — a token check would reject

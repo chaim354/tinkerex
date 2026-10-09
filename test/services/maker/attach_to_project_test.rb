@@ -340,9 +340,9 @@ module Maker
     # to go and check, the same way this test just had to).
     #
     # with_concurrent_file_attachment (test_helper.rb) is the shared simulation for this and its
-    # three siblings (Models::AttachmentsController#create, Projects::EntryPhotosController#create,
-    # CurrentProject#attach_addon_files_to_current_project) — see its own comment for why the
-    # obvious #save!-hook approach is wrong here specifically.
+    # two siblings (Models::AttachmentsController#create, Projects::EntryPhotosController#create;
+    # the current project's addon attach was a third until slice 4 of the 2026-10-08 redesign) —
+    # see its own comment for why the obvious #save!-hook approach is wrong here specifically.
     test "#call is safe under a concurrent attach of the same file" do
       result = nil
       assert_nothing_raised do

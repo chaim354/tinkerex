@@ -4,20 +4,20 @@
   (chunk final JSON attach step), redirect_url.
 
   OPTIONAL LOCAL `primary:` — whether this uploader is THE action of the page it lands on
-  (decision 3 of the UI-cohesion spec). It DEFAULTS TO FALSE, which is the load-bearing half: this
-  partial has four call sites and three of them are row- or panel-level, so a caller that forgets
-  gets the quiet face rather than another accent button. The Files page and the project page's
-  Files panel pass true; a build-log entry and Home's hero do not — Home's one action is
-  "New project" and a log row's upload is not what either page exists for.
+  (decision 3 of the UI-cohesion spec). It DEFAULTS TO FALSE, which is the load-bearing half: a
+  caller that forgets gets the quiet face rather than another accent button. Two call sites are
+  left since the Files page's current-project uploader and Home's hero were retired (redesign
+  slice 4): the project page's Files panel passes true; a build-log entry does not — a log row's
+  upload is not what the page exists for.
 %>
 <% upload_btn_class = local_assigns[:primary] ? "upload-btn primary" : "upload-btn" %>
 <% if capabilities.port_writable? %>
   <%= form_with url: upload_url, method: :post, class: "uploader",
                 data: { turbo: false }, html: { multipart: true } do |f| %>
-    <%# Where to send the browser after the upload+attach. OPTIONAL: the project page and a
-        build-log entry omit it and the controller defaults to the project page; the Files-page
-        (current-project) uploader passes files_path so the user stays in Files. This mirrors the
-        chunk branch's data-uploader-redirect-url-value below — the two flows now land in the same
+    <%# Where to send the browser after the upload+attach. OPTIONAL: omitted, the controller
+        defaults to the project page, which is also what both callers — the project page's Files
+        panel and a build-log entry — pass. This mirrors the chunk branch's
+        data-uploader-redirect-url-value below — the two flows now land in the same
         place. Projects::UploadsController re-validates it with url_from (a relative path only), so
         this field can never become an open redirect. %>
     <% if local_assigns[:redirect_url].present? %>

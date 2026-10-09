@@ -1,5 +1,5 @@
-/* The application shell (spec §5): the rail and its current-project card, the top bar, the phone
-   tab bar, the content container, the toast stack, the auth card, and the three widths. */
+/* The application shell (spec §5): the rail, the top bar, the phone tab bar, the content
+   container, the toast stack, the auth card, and the three widths. */
 @layer shell {
   body.app-shell { display: grid; grid-template-columns: var(--rail-width) minmax(0, 1fr); min-height: 100vh; }
   body.app-shell.rail--collapsed { grid-template-columns: var(--rail-collapsed-width) minmax(0, 1fr); }
@@ -29,17 +29,6 @@
   .public-header .brand-name { display: inline; }
   .public-header .public-author { color: var(--fg-muted); font-size: 12px; }
   .public-header .public-intro { margin: 0; font-size: 12px; }
-
-  .current-project-form { margin: 0; }
-  .current-project {
-    display: flex; flex-direction: column; gap: 2px; padding: 10px;
-    border-radius: var(--radius-panel); background: var(--accent-soft); border: 1px solid var(--accent);
-  }
-  /* A label, so Plex Sans: mono means data (UI-cohesion decision 4). */
-  .current-project-label { font: 600 11px/16px var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--accent-text); }
-  .current-project-name { font-size: 14px; font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .current-project-hint { font-size: 12px; line-height: 17px; color: var(--fg-muted); }
-  .current-project select { margin-top: var(--space-2); width: 100%; min-height: var(--control-height-small); padding: 2px 26px 2px 8px; font-size: 13px; }
 
   .rail-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
   .rail-link {
@@ -82,8 +71,8 @@
   /* Collapsed: icons only. The same rules apply below 1100px whatever the cookie says. */
   .rail--collapsed .rail { padding-inline: 8px; }
   .rail--collapsed .brand { justify-content: center; padding: 4px 0; }
-  .rail--collapsed .brand-name, .rail--collapsed .rail-label, .rail--collapsed .current-project,
-  .rail--collapsed .rail-user, .rail--collapsed .rail-btn span { display: none; }
+  .rail--collapsed .brand-name, .rail--collapsed .rail-label, .rail--collapsed .rail-user,
+  .rail--collapsed .rail-btn span { display: none; }
   .rail--collapsed .rail-link, .rail--collapsed .rail-btn { justify-content: center; padding-inline: 0; }
   .rail--collapsed .rail-foot form button { justify-content: center; }
   .rail--collapsed .rail-group-head, .rail--collapsed .rail-project, .rail--collapsed .rail-pin { display: none; }
@@ -127,7 +116,6 @@
   .flash-stack:empty { display: none; }
 
   .tabbar { display: none; }
-  .topbar-project { display: none; }
 
   /* Signed-out pages: the auth card (Task 5 writes the markup). */
   /* QUALIFIED `main.container.auth-main`, NOT a bare `.auth-main`, and the qualifier is the whole
@@ -158,7 +146,7 @@
     body.app-shell { grid-template-columns: var(--rail-collapsed-width) minmax(0, 1fr); }
     .rail { padding-inline: 8px; }
     .brand { justify-content: center; padding: 4px 0; }
-    .brand-name, .rail-label, .current-project, .rail-user, .rail-btn span { display: none; }
+    .brand-name, .rail-label, .rail-user, .rail-btn span { display: none; }
     .rail-link, .rail-btn { justify-content: center; padding-inline: 0; }
     .rail-group-head, .rail-project, .rail-pin { display: none; }
     .rail-family-lit { color: var(--fg); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
@@ -178,9 +166,6 @@
     .tabbar-link:hover { text-decoration: none; }
     .tabbar-link[aria-current="page"] { color: var(--fg); font-weight: 600; }
     .topbar { flex-wrap: wrap; gap: 6px 8px; padding: 6px 12px; }
-    .topbar-project { display: flex; align-items: center; gap: 6px; margin: 0; }
-    .topbar-project-label { font: 600 11px/16px var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--accent-text); }
-    .topbar-project select { min-height: 26px; padding: 3px 24px 3px 8px; font-size: 12px; max-width: 46vw; }
     .topbar-search { flex: 1 1 100%; min-width: 0; }
     .topbar-kbd { display: none; }
     main.container { padding: 12px 12px 72px; }

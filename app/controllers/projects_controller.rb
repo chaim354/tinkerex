@@ -465,7 +465,6 @@ class ProjectsController < ApplicationController
     @project = current_user.maker_projects.new(project_params)
     if @project.save
       failure = ensure_project_folder(@project)
-      make_current(@project) if params[:project][:make_current] == "1"
       redirect_to project_path(@project), notice: created_notice(@project, failure)
     else
       render :new, status: :unprocessable_entity
@@ -589,24 +588,12 @@ class ProjectsController < ApplicationController
   # project has no folder_node_id), and that branch builds [ROOT, slug] literally. A project ADOPTED
   # in place never comes through this action, so no sentence built here can name the wrong path.
   def created_notice(project, failure)
-    lead = if failure
+    if failure
       "Project created, but its folder could not be made (#{failure}). It will be retried the " \
-      "next time you upload."
+        "next time you upload."
     else
       "Project created. Its folder is #{Maker::ProjectFolders::ROOT}/#{project.slug}."
     end
-    return lead unless current_project_id == project.id
-    # A CURRENT PROJECT WITH NO FOLDER CANNOT PROMISE "uploads land there" — they fall back to the
-    # library root until the folder exists (Projects::UploadsController#upload_parent). Found in
-    # review: ticking "make current" on a create whose mkdir failed read the failure sentence and
-    # then the promise, in one flash.
-    return "#{lead} It is your current project; until its folder exists, uploads go to the library root." if failure
-
-    "#{lead} #{current_project_notice(project)}"
-  end
-
-  def make_current(project)
-    self.current_project_id = project.id
   end
 
   # `cover_clear` is the form's way back to the automatic pick — see `_form.html.erb`. It is NOT a

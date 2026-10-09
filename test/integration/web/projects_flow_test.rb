@@ -390,37 +390,11 @@ module Web
       assert_equal "active", project.reload.status
     end
 
-    # STORY 1.2: "Does not set current." The box is on `new` only — the edit page already has a
-    # "Set as current" button, and an edit submit that silently switched the current project would
-    # be a side effect nobody asked for.
-    test "the new form offers make-current, checked, and the edit form does not" do
-      user = sign_in
-      get new_project_path
-      assert_select "form.project-form input[type=checkbox][name=?][checked=?]",
-                    "project[make_current]", "checked"
+    test "creating a project names its folder" do
+      sign_in
+      post projects_path, params: { project: { name: "Smart Lamp", status: "active" } }
 
-      get edit_project_path(user.maker_projects.create!(name: "Desk Lamp"))
-      assert_select "input[name=?]", "project[make_current]", count: 0
-    end
-
-    test "creating with make-current sets it, and the flash names the folder and the destination" do
-      user = sign_in
-      post projects_path, params: { project: { name: "Smart Lamp", status: "active",
-                                               make_current: "1" } }
-
-      project = Maker::Project.find_by!(slug: "smart-lamp")
-      assert_equal project.id, current_project_id_for(user)
       assert_match(%r{Its folder is Projects/smart-lamp\.}, flash[:notice].to_s)
-      assert_match(/Current project: Smart Lamp/, flash[:notice].to_s)
-    end
-
-    # `check_box_tag` emits NO hidden "0" companion, so an unchecked box sends nothing at all —
-    # which is the right meaning here (absent = no) and is why this needs no hidden field.
-    test "creating without make-current leaves the current project alone" do
-      user = sign_in
-      post projects_path, params: { project: { name: "Quiet Build", status: "planning" } }
-      assert_nil current_project_id_for(user)
-      refute_match(/Current project/, flash[:notice].to_s)
     end
 
     # STORY 1.2: "A failed mkdir still says 'Project created.'" — the one flash a maker cannot act
@@ -429,27 +403,6 @@ module Web
     # are different problems with different answers. The broken-port fixture is the one "project
     # create still succeeds if the library backend can't make the folder" already uses, above —
     # a second mechanism (define_method on the model) would prove the same thing twice.
-    # THE CROSSING (found in review): "make current" ticked AND the mkdir failed. The flash used to
-    # read the failure sentence and then "uploads and tool output land there" — false in exactly the
-    # case the first sentence describes, since uploads fall back to the library root.
-    test "a current project whose folder could not be made does not promise uploads will land there" do
-      user = sign_in
-      broken = Object.new
-      def broken.capabilities = Object.new.tap { |c| def c.port_writable? = true }
-      def broken.mkdir(*) = raise(FileLayer::FetchError, "down")
-      FileLayer.current = broken
-
-      post projects_path, params: { project: { name: "No Folder Yet", make_current: "1" } }
-
-      created = Maker::Project.find_by!(slug: "no-folder-yet")
-      assert_equal created.id, current_project_id_for(user)
-      assert_match(/could not be made/, flash[:notice].to_s)
-      assert_match(/until its folder exists, uploads go to the library root/, flash[:notice].to_s)
-      assert_no_match(/land there/, flash[:notice].to_s)
-    ensure
-      FileLayer.reset!
-    end
-
     test "a project whose folder could not be made says so, and names the error class" do
       sign_in
       broken = Object.new
@@ -485,25 +438,6 @@ module Web
       get project_path(project)
       assert_select "form[action=?]", project_path(project)
       assert_select "form[action=?]", unarchive_project_path(project), count: 0
-    end
-
-    test "an archived project cannot be set as the current project from its detail page" do
-      user = sign_in
-      archived = user.maker_projects.create!(name: "Old Rig", status: "archived")
-      live = user.maker_projects.create!(name: "Desk Lamp", status: "active")
-
-      # Scoped to `.head-actions` (the detail page's own action bar): the top bar in
-      # app/views/layouts/application.html.erb also renders a `form_with url: current_project_path`
-      # whenever the user has ANY live project (`current_project_choices.any?`) — which `live` makes
-      # true here regardless of which project's page we're on. An unscoped selector would find that
-      # unrelated form and fail for the wrong reason.
-      get project_path(archived)
-      assert_select ".head-actions form[action=?]", current_project_path, count: 0
-
-      # The control is offered for a live project — proving the assertion above discriminates on
-      # status rather than passing because the selector never matches anything.
-      get project_path(live)
-      assert_select ".head-actions form[action=?]", current_project_path
     end
 
     # --- the New badge, first open, and "Not a project" (stage 4, S4-6) ----------

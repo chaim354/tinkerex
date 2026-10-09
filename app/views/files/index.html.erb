@@ -25,38 +25,24 @@
 <% end %>
 
 <%# THE PAGE HEAD HOLDS THE ONE PRIMARY ACTION (spec §8): Upload, in whichever of its two flows
-    this deployment has, or the current project's upload-and-attach control. The rest of what used
-    to stack above the list — rescan, the destination switch — is an overflow menu, rendered only
-    when it would have an item.
-
-    UPLOAD — when a project is CURRENT, the single upload button defaults into it (its
-    Projects/<slug> folder + attach), reusing the EXISTING project upload/attach control (spec
-    2026-07-23) — no new controller, no new JS. A menu item overrides to a plain library-root
-    upload (?upload=library) without clearing the current project. When no project is current, or
-    the override is active, the plain two-flow upload renders exactly as before. %>
-<% project_upload = current_project && params[:upload] != "library" %>
+    this deployment has. The rest of what used to stack above the list — rescan, the folder's own
+    actions — is an overflow menu, rendered only when it would have an item. %>
 <% adoptable_folder = @folder && @folder_project.nil? &&
                       Maker::ProjectDiscovery.adoptable_name?(@folder.name) &&
                       !(@folder.parent_node_id.nil? && @folder.name == Maker::ProjectFolders::ROOT) %>
 <%# THE MENU RENDERS ONLY WHEN IT WILL HOLD AN ITEM, and the folder arm therefore asks what the
     folder arm actually offers. Until slice 2 of the 2026-10-08 redesign "is there a folder" was
-    NOT that question: on a non-scannable backend with no current project, a dot-folder or the
+    NOT that question: on a non-scannable backend, a dot-folder or the
     `Projects` root had neither an "Open project" nor an adopt button, so the menu rendered EMPTY --
     the state files_toolbar_test.rb's "no menu renders when it would be empty" pins. Every folder
     view now offers Pin (or Unpin) to the sidebar, so `@folder.present?` is the honest answer and
     the root (no `@folder`) still renders no menu unless another arm has an item. %>
-<% menu_items = capabilities.scannable? || current_project.present? ||
-                @folder_project.present? || adoptable_folder || @folder.present? %>
+<% menu_items = capabilities.scannable? || @folder_project.present? || adoptable_folder ||
+                @folder.present? %>
 <div class="page-head">
   <h1>Files</h1>
   <div class="page-actions">
-    <% if project_upload %>
-      <%= render "projects/upload_control", primary: true,
-                 upload_url: project_uploads_path(current_project),
-                 attach_url: project_attachments_path(current_project),
-                 redirect_url: files_path(folder: @current_project_folder_node_id),
-                 parent_node_id: @current_project_folder_node_id %>
-    <% elsif capabilities.port_writable? %>
+    <% if capabilities.port_writable? %>
       <%#
         ONE BUTTON, TWO FLOWS -- and this branch is why `port_writable` exists. It does NOT ask
         "can this deployment accept uploads": both of these upload. It asks WHICH DOOR the bytes
@@ -157,15 +143,6 @@
             <%= button_to "Make this folder a project", adopt_projects_path,
                           params: { node_id: @folder.node_id }, class: "menu-item" %>
           <% end %>
-          <% if current_project %>
-            <% if project_upload %>
-              <%= link_to "Upload to library root instead",
-                          files_path(files_query_base.merge(upload: "library")), class: "menu-item upload-alt" %>
-            <% else %>
-              <%= link_to "Upload to project “#{current_project.name}” instead",
-                          files_path(files_query_base), class: "menu-item upload-alt" %>
-            <% end %>
-          <% end %>
         </div>
       </details>
     <% end %>
@@ -185,10 +162,6 @@
         data-scanreload-url-value="<%= files_path(files_query_base) %>"
         data-scanreload-status-url-value="<%= scan_status_files_path %>"
         data-scanreload-since-value="<%= current_user.library_scanned_stamp %>"></span>
-<% end %>
-
-<% if project_upload %>
-  <p class="upload-to-project upload-caption muted">Uploads go to <strong><%= current_project.name %></strong> and are attached to it.</p>
 <% end %>
 
 <%# ONE TOOLBAR ROW: the search box, the type filter and its chips, the dot-file switch, the

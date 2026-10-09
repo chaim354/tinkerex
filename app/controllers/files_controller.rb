@@ -330,13 +330,6 @@ class FilesController < ApplicationController
     # than re-stat'd — on share a second stat_all is a filesystem stat per node, doubled.
     @thumb_by_node = Maker::Previews::ThumbnailMap.from_info(current_user, @nodes.map(&:node_id),
                                                             @info_by_node, backfill: true)
-    # The current project's folder, for the upload button's default-into-project wiring (spec
-    # 2026-07-23). `current_project_folder_node_id` (CurrentProject concern) is deliberately NOT a
-    # helper_method — like ProjectsController#show's @upload_parent_node_id, a view must not create
-    # a project folder as a side effect of merely being rendered; the owning action opts in
-    # explicitly and hands the view an ivar. nil when no project is current (its own rescue already
-    # covers an ensure failure, same as ProjectsController#show's).
-    @current_project_folder_node_id = current_project_folder_node_id
     # The type filter's options — see #ext_facets. Library-wide in BOTH modes, deliberately: it is
     # the control for choosing a whole-library type view, so scoping it to the folder you happen to
     # be standing in would hide the types the filter exists to reach.

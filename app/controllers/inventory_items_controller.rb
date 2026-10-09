@@ -54,7 +54,7 @@ class InventoryItemsController < ApplicationController
     # per-row query — @ledger is already loaded above.
     running = @item.quantity_cached
     @balances = @ledger.each_with_object({}) { |t, h| h[t.id] = running; running -= t.delta }
-    @projects = current_project_choices
+    @projects = current_user.maker_projects.where.not(status: "archived").order(:name).pluck(:name, :id)
   end
 
   def new

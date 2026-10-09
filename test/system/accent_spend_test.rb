@@ -34,9 +34,9 @@ require "application_system_test_case"
 #      /projects/desk-lamp renders ["Upload & attach", "Upload & attach", "Upload & attach",
 #      "Upload & attach", "Save publishing"] against the two expected. ONLY that route reddens, and
 #      the reason is worth knowing rather than guessing at: /files draws an uploader that opts IN
-#      either way, and Home's hero renders only when a current project is set, which this fixture
-#      does not do until its last three lines. The runaway is per-BUILD-LOG-ENTRY, so the project
-#      page is the only page that can show it.
+#      either way, and Home has no uploader of its own (its current-project hero went in slice 4
+#      of the 2026-10-08 redesign). The runaway is per-BUILD-LOG-ENTRY, so the project page is the
+#      only page that can show it.
 #   2. Deleting the `.btn.primary` background/border/color declarations: every route reports []
 #      against its expectation, so the FLOOR half is not decoration.
 #   3. Dropping `primary: true` from the `projects/upload_control` render in
@@ -109,17 +109,6 @@ class AccentSpendTest < ApplicationSystemTestCase
       accent_controls
     end
     assert_equal expected, actual
-
-    # THE FILES PAGE HAS TWO UPLOADERS AND ONLY ONE RENDERS AT A TIME. With no current project it
-    # draws its own inline form; with one it renders `projects/upload_control` instead — a separate
-    # call site with its own `primary:` to forget, so it needs its own visit. `current_project_id`
-    # is the column slice 0 introduced, which `CurrentProject` reads whenever
-    # `remember_current_project?` — this user's default.
-    @user.update!(current_project_id: @project.id)
-    visit files_path
-    assert_selector "main", visible: :all
-    assert_equal [ "Upload & attach" ], accent_controls,
-                 "the Files page's current-project uploader"
   end
 
   private

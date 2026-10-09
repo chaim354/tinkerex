@@ -368,15 +368,12 @@ class ShellTest < ApplicationSystemTestCase
     # home_test.rb's margin.
     8.times { |i| create_node!(@user, node_id: SecureRandom.uuid, kind: "file", name: "shell-sweep-#{i}.stl") }
 
-    # ROOT_PATH RENDERS THE HOME HERO IN ITS FULL SHAPE ONLY WITH A CURRENT PROJECT SET, so pick
-    # one through the rail's own <select> BEFORE narrowing the viewport below — at 375px the rail
-    # itself is `display: none` (`assert_no_selector "aside.rail .current-project select"` in the
-    # loop below), and the topbar's own project select is a separate, narrower affordance this test
-    # has no need to drive. `visit root_path` first because sign_in_as's post-login DOM predates
-    # this project — the rail's <select> was rendered before `project` existed.
+    # `visit root_path` once at desktop width before narrowing, so the sweep starts from a page
+    # rendered after every fixture above existed. (This used to pick a current project through the
+    # rail's <select> so Home rendered its hero in full; both went in slice 4 of the 2026-10-08
+    # redesign.)
     visit root_path
-    select project.name, from: "project_id"
-    assert_selector ".home-hero h2", text: project.name
+    assert_selector "main h1", text: "Home"
 
     # THE VIEWPORT IS SET THROUGH CDP, NOT `manage.window.resize_to`, AND THE DIFFERENCE IS THE
     # WHOLE GUARD. Headless Chrome refuses to make a window narrower than 500px: asking for
@@ -568,8 +565,6 @@ class ShellTest < ApplicationSystemTestCase
         # phone rules are running at all — without it a viewport that never narrowed would satisfy
         # the overflow assertion for entirely the wrong reason. It is what caught the 500px floor.
         assert_selector "nav.tabbar", visible: true
-        assert_selector "form.topbar-project select", visible: true
-        assert_no_selector "aside.rail .current-project select"
         no_sideways_scroll.call(path)
       end
       assert launched_gerber, "the sweep never launched the Gerber viewer, so its overflow check measured a poster"

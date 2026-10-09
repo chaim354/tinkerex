@@ -80,32 +80,6 @@ module Web
       assert_select ".files-toolbar .toolbar-count", text: "3 matches"
     end
 
-    test "a current project turns the head's upload into the project's, with a caption and a menu switch" do
-      project = @user.maker_projects.create!(name: "Desk Lamp")
-      patch current_project_path, params: { project_id: project.id }
-      get files_path
-      assert_select ".page-actions label.upload-btn span", text: /Upload/
-      if FileLayer.current.capabilities.port_writable?
-        assert_select ".page-actions form.uploader[action=?]", project_uploads_path(project)
-      else
-        assert_select ".page-actions .uploader[data-controller='uploader'][data-uploader-attach-url-value=?]",
-                      project_attachments_path(project)
-      end
-      assert_select ".upload-to-project.upload-caption", text: /Uploads go to Desk Lamp/
-      assert_select ".page-actions details.menu a.menu-item.upload-alt[href=?]",
-                    files_path(upload: "library"), text: "Upload to library root instead"
-
-      get files_path(upload: "library")
-      if FileLayer.current.capabilities.port_writable?
-        assert_select ".page-actions form.uploader[action=?]", files_path
-      else
-        assert_select ".page-actions section.uploader[data-controller='uploader']:not([data-uploader-attach-url-value])"
-      end
-      assert_select ".upload-caption", count: 0
-      assert_select ".page-actions details.menu a.menu-item.upload-alt[href=?]", files_path,
-                    text: "Upload to project “Desk Lamp” instead"
-    end
-
     # The scannable arm is asserted too, so this run is not a test that reports success having
     # asserted nothing on the backend it happens to be running against (§15).
     test "no menu renders when it would be empty" do
@@ -172,8 +146,8 @@ module Web
     end
 
     # The menu itself must appear on a folder view even where it would otherwise be empty —
-    # chunk_remote is not scannable and has no current project here, so before this slice the
-    # `details.menu` did not render at all and the item would have had nowhere to go.
+    # chunk_remote is not scannable, so before this slice the `details.menu` did not render at all
+    # and the item would have had nowhere to go.
     test "the overflow menu renders on a folder view on every backend" do
       get files_path(folder: "dir-cad")
       assert_select ".page-actions details.menu[data-controller='menu'] summary.btn", count: 1
@@ -184,9 +158,9 @@ module Web
     # redesign every folder view holds "Pin to sidebar", so a folder view always has a menu, and
     # what this pins is that the folder arm adds exactly what it offers beside the pin. chunk_remote
     # EXPLICITLY (the idiom rescan_test.rb records: constructing the adapter needs no sync server,
-    # and its reads answer from the local mirror), with no current project, so the folder arms are
-    # the only possible items: a dot-folder and the Projects root offer the pin alone, an ordinary
-    # folder the pin and the adopt button.
+    # and its reads answer from the local mirror), so the folder arms are the only possible items:
+    # a dot-folder and the Projects root offer the pin alone, an ordinary folder the pin and the
+    # adopt button.
     test "on a non-scannable backend the folder menu holds the pin and only what the folder offers" do
       FileLayer.current = FileLayer::ChunkRemote.new
       @user.nodes.create!(node_id: "dir-dot2", name: ".config", kind: "dir")

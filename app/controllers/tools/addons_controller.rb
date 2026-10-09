@@ -546,8 +546,8 @@ module Tools
       # `project_folder_intake` schedule at all (ProjectIntakeJob.sweep_all! declines on a
       # scannable backend), so the wait is on Library::ScanJob's own poll.
       #
-      # THE SWEEP IS ALSO HOW A SAVE REACHES A PROJECT (structural redesign spec §7): it attaches what
-      # it finds at a project folder's root, and this door attaches nothing itself. The retired
+      # THE SWEEP IS ALSO HOW A SAVE REACHES A PROJECT (structural redesign spec §7): it attaches every
+      # file under the owning project's folder, and this door attaches nothing itself. The retired
       # current project used to attach every output to whichever project was current, whatever
       # folder the save had landed in.
       #

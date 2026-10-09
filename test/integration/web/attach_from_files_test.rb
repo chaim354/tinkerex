@@ -57,12 +57,13 @@ module Web
       assert_select ".attach-to-project select option[value=desk-lamp]"
     end
 
-    # THE LABEL MUST POINT AT OUR OWN SELECT. The layout's top-bar current-project switcher is
-    # also named project_id, so a default-id f.select puts a SECOND id="project_id" on the page
-    # and `for` resolves to the top bar's — whose onchange requestSubmit()s, silently changing the
-    # app's default save destination when the user clicks these words. Pinned as "the for matches
-    # the id of the select INSIDE .attach-to-project", so a future duplicate cannot slip back in.
-    test "the attach label points at the attach select, not the top bar's project_id" do
+    # THE LABEL MUST POINT AT OUR OWN SELECT. While the layout carried a current-project switcher
+    # (retired in slice 4 of the 2026-10-08 redesign) also named project_id, a default-id f.select
+    # put a SECOND id="project_id" on the page and `for` resolved to the switcher's — silently
+    # changing the app's default save destination when the user clicked these words. Pinned as
+    # "the for matches the id of the select INSIDE .attach-to-project, and that id is unique", so
+    # any future field named project_id cannot reopen the clash.
+    test "the attach label points at the attach select" do
       user = sign_in
       user.nodes.create!(node_id: "f-1", name: "bracket.stl", kind: "file")
       user.maker_projects.create!(name: "Lamp")

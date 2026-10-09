@@ -27,8 +27,7 @@
 
   <body class="<%= body_classes %>">
     <%# `shell_signed_in?`, not `user_signed_in?` — a PUBLIC page (Public::BaseController, stage 3,
-        S3-4) renders the visitor's shell even for its signed-in owner: the rail's current-project
-        switcher needs CurrentProject, which that base deliberately lacks, and what a maker wants
+        S3-4) renders the visitor's shell even for its signed-in owner, because what a maker wants
         from their own public URL is an honest preview of what a visitor sees. %>
     <% if shell_signed_in? %>
       <%= render "layouts/rail" %>

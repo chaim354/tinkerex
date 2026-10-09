@@ -118,10 +118,10 @@ module Maker
       # does" failure this codebase leaves loud (LibraryCapabilities' argument for un-rescued
       # NotImplementedError makes the same call). Deliberately not silently swallowed.
       #
-      # THIS SERVICE IS NOT THE ONLY WRITER, EITHER — CLAUDE.md counts six others
+      # THIS SERVICE IS NOT THE ONLY WRITER, EITHER — CLAUDE.md counts five others
       # (Projects::UploadsController, Models::AttachmentsController,
-      # CurrentProject#attach_addon_files_to_current_project, Projects::EntryPhotosController,
-      # V1::Maker::FileAttachmentsController, and #attach_bundle below), which is why a
+      # Projects::EntryPhotosController, V1::Maker::FileAttachmentsController, and #attach_bundle
+      # below), which is why a
       # database-level constraint, not merely this method's own care, is what makes "no duplicate
       # row" actually true.
       att = @project.file_attachments.create_or_find_by!(user: @user, node_id: node.node_id) do |a|
@@ -170,11 +170,11 @@ module Maker
     #
     # IT WAS A REAL, SILENT, PERMANENT BUG, not a theoretical asymmetry. A file at a project root
     # that any OTHER project also claimed was skipped by every 15-minute sweep forever, recorded only
-    # as a `skips` entry that nothing but `rake projects:organize` prints — and it is reachable
-    # without doing anything unusual, because CurrentProject#attach_addon_files_to_current_project
-    # attaches an addon's output to whatever project is CURRENT regardless of which folder the save
-    # dialog wrote it into. One addon save into a second project's folder made that file
-    # permanently unsortable.
+    # as a `skips` entry that nothing but `rake projects:organize` prints — and it was reachable
+    # without doing anything unusual while a current project attached tool output regardless of
+    # folder (retired in slice 4 of the 2026-10-08 redesign): one addon save into a second
+    # project's folder made that file permanently unsortable. The scoping stays, because any
+    # second claim on a file at a project root still reaches the same state.
     #
     # A KWARG HERE RATHER THAN #place IGNORING THE SYMBOL IT WAS HANDED. The three rules have one
     # home on purpose (this class's header records #relocate being written below all of them), and a

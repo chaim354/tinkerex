@@ -1,4 +1,10 @@
 class User < ApplicationRecord
+  # RETIRED WITH THE CURRENT PROJECT (structural redesign spec §9.1, slice 4) and dropped by slice 7's
+  # migration. Ignored rather than dropped now so a deploy's old and new code never disagree about a
+  # column mid-rollout; ignored rather than left readable so no code reaches for either by accident
+  # (test/architecture_invariants_test.rb forbids the names as well).
+  self.ignored_columns += %w[current_project_id remember_current_project]
+
   has_many :devices, dependent: :destroy
   has_many :nodes, dependent: :destroy
   # Stage 3b Phase A Task 3: the seven engine models these associations reach are now
@@ -172,8 +178,8 @@ class User < ApplicationRecord
   HANDLE_RE = /\A#{HANDLE_PATTERN}\z/
   # Segments that exist at the site root or are obvious impersonation targets. `u` itself is here
   # so /u/u/... cannot be minted; the rest are the app's own top-level paths (config/routes.rb) —
-  # every first segment HANDLE_RE could mint (the underscored ones, `bom_lines`, `current_project`,
-  # `print_runs`…, are unmintable already). A handle only ever appears under /u/, so today this is
+  # every first segment HANDLE_RE could mint (the underscored ones, `bom_lines`, `print_runs`…, are
+  # unmintable already). A handle only ever appears under /u/, so today this is
   # defence in depth for a future bare /<handle> route, not a live gap; S3-4's review enumerated
   # the routes file and found four missing, added below (`csp-violation-report` is hyphenated and
   # therefore mintable).

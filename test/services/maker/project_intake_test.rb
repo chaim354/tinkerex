@@ -250,10 +250,10 @@ module Maker
         unless raced
           raced = true
           # THE CONCURRENT WRITER — the identical tuple #attach is about to insert, landed by a
-          # SEPARATE statement first. Stands in for any of the six other writers CLAUDE.md counts
+          # SEPARATE statement first. Stands in for any of the five other writers CLAUDE.md counts
           # (AttachToProject#call, AttachToProject#attach_bundle, Projects::UploadsController,
-          # Models::AttachmentsController, CurrentProject#attach_addon_files_to_current_project,
-          # Projects::EntryPhotosController) or a second ProjectIntake sweep running concurrently.
+          # Models::AttachmentsController, Projects::EntryPhotosController) or a second
+          # ProjectIntake sweep running concurrently.
           row = rows.first
           Maker::FileAttachment.create!(user_id: row[:user_id], attachable_type: row[:attachable_type],
                                         attachable_id: row[:attachable_id], node_id: row[:node_id],
@@ -694,10 +694,11 @@ module Maker
     #
     # IT WAS SILENT AND PERMANENT, which is why it is worth a test rather than a comment: the file
     # sat at the root through every 15-minute sweep forever, with a `skips` entry only
-    # `rake projects:organize` prints. Reachable without doing anything unusual —
-    # CurrentProject#attach_addon_files_to_current_project attaches an addon's output to whatever
-    # project is CURRENT, regardless of which folder the save dialog wrote it into, so one addon save
-    # into another project's folder made that file permanently unsortable.
+    # `rake projects:organize` prints. It was reachable without doing anything unusual while a
+    # current project attached an addon's output to whatever project was CURRENT, regardless of
+    # which folder the save dialog wrote it into (retired in slice 4 of the 2026-10-08 redesign) —
+    # one addon save into another project's folder made that file permanently unsortable. Any
+    # second claim on a file at a project root still reaches the same state.
     #
     # THE OTHER TWO RULES ARE UNCHANGED, deliberately: :not_a_file and :model_bundle still refuse
     # here (see the test above, which still passes). Only the arm whose stated reason is about the

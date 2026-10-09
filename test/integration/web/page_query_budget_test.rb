@@ -524,8 +524,8 @@ module Web
     end
 
     # STAGE 4, S4-4: THE OWNER'S PREVIEW, SIGNED IN — which is the difference worth measuring. It
-    # renders the same partials over the same object, plus the app shell (the rail, the
-    # current-project switcher, the flash) that a visitor never pays for. That shell cost is a
+    # renders the same partials over the same object, plus the app shell (the rail, the top bar,
+    # the flash) that a visitor never pays for. That shell cost is a
     # CONSTANT and must stay one: a preview that grew with the project would grow with it on a page
     # the maker opens to check their work, not on a page a stranger opens once.
     #
@@ -887,37 +887,20 @@ module Web
                               "files#index (folder)")
     end
 
-    # THE HERO IS SEEDED TOO, NOT JUST THE RECENT LISTS — a current project is what makes
-    # HomeController#index actually enter the hero's branch (tasks, stats, the latest entry, the
-    # folder-ensure), so a page seeded with no current project would budget only the anonymous
-    # empty-hero path and miss an N+1 in the branch every signed-in visit with a project actually
-    # takes. The hero project itself gains one task, one attachment and one log entry per seed step for the same reason: its task
-    # list is loaded with `.to_a` (one query regardless of row count), so growing EVERY collection the hero
-    # reads is what would catch a per-row query if one crept in — with only the tasks growing, a
-    # per-attachment probe in the stats line stayed green (found in review, 2026-09-04).
-    test "home#index does not grow with projects, files, runs or tasks" do
-      hero = @user.maker_projects.create!(name: "Hero", status: "active")
-      patch current_project_path, params: { project_id: hero.id }
-      # THE HERO'S FOLDER GROWS TOO — a subfolder with a file per step — because the hero now counts
-      # the folder through Maker::ProjectFolderListing, and a listing budgeted over an EMPTY folder
-      # cannot see a per-dir query: the review's per-dir mutation reddened projects#show and left this
-      # test green until the folder was seeded (2026-09-04).
-      hero_folder = project_folder_rows!(@user, hero)
+    # EVERY BOUNDED LIST HOME READS GROWS PER STEP — recent projects (each with an attachment, which
+    # `cover_node_id` reads), recent files, failed prints and low stock — and SMALL/LARGE straddle
+    # each list's LIMIT, so a per-row query the LIMIT alone would hide still shows. (The
+    # current-project hero, and the seeding it needed, went with the current project in slice 4 of
+    # the 2026-10-08 redesign.)
+    test "home#index does not grow with projects, files, prints or low stock" do
       add = lambda do |prefix, count|
         count.times do |i|
           id = "#{prefix}#{i}"
           node!(id, "#{id}.stl")
-          sub = @user.nodes.create!(node_id: "#{id}-dir", name: "sub-#{id}", kind: "dir",
-                                    parent_node_id: hero_folder.node_id, mtime: 1, size: 0)
-          @user.nodes.create!(node_id: "#{id}-in", name: "#{id}.pdf", kind: "file",
-                              parent_node_id: sub.node_id, mtime: 1, size: 1)
           project = @user.maker_projects.create!(name: "P #{id}", status: "active")
           project.file_attachments.create!(user: @user, node_id: id, role: "model")
           model = @user.maker_models.create!(title: "M #{id}", slug: "m-#{id}")
           model.print_runs.create!(user: @user, printed_on: Date.current, outcome: "failed")
-          hero.tasks.create!(user: @user, title: "task #{id}")
-          hero.file_attachments.create!(user: @user, node_id: id, role: "model")
-          hero.build_log_entries.create!(user: @user, body: "entry #{id}", logged_at: Time.current)
           # STAGE 2, S2-3: the attention list's second source. Each item is seeded already below
           # its own minimum, so the `low_stock` scope's row count grows past ATTENTION_STOCK (5)
           # between SMALL (3) and LARGE (15) — the same over-the-cap crossing RECENT_PROJECTS etc.

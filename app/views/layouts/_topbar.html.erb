@@ -11,21 +11,6 @@
       <span class="topbar-title"><%= page_title_text %></span>
     <% end %>
   </div>
-  <%# THE PHONE CHIP (spec §5.4). Below 720px shell.css hides the rail, and with it the
-      current-project card — so the same form and select render here too, shown only at that
-      width. A second id, because the rail's select already owns `project_id` on the same page
-      (a label resolving to the wrong one is the bug files/show.html.erb records); the NAME stays
-      `project_id` because CurrentProjectController reads it. Capybara sees only the visible one. %>
-  <% chip_choices = current_project_choices %>
-  <% if chip_choices.any? %>
-    <%= form_with url: current_project_path, method: :patch, data: { turbo: false },
-                  class: "topbar-project" do %>
-      <label class="topbar-project-label" for="topbar_project_id">Project</label>
-      <%= select_tag :project_id,
-            options_for_select([ [ "— none —", "" ] ] + chip_choices, current_project&.id),
-            id: "topbar_project_id", onchange: "this.form.requestSubmit()" %>
-    <% end %>
-  <% end %>
   <%= form_with url: search_path, method: :get, class: "topbar-search", role: "search",
                 data: { turbo: false } do %>
     <%= rail_icon(:search) %>

@@ -1,16 +1,7 @@
-/* The Home page (stage 2, S2-1): the hero carries an accent tint because it IS the current project,
-   the one destination the accent marks besides the primary action (design-system.md rule 13); the
-   tile rows scroll sideways INSIDE their own box so the page never does. */
+/* The Home page (stage 2, S2-1): the tile rows scroll sideways INSIDE their own box so the page
+   never does. (Its current-project hero went with the current project in the 2026-10-08 redesign
+   slice 4.) */
 @layer pages {
-  .home-hero { border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 5%, var(--surface)); margin-bottom: 20px; }
-  .home-hero .project-description { margin-bottom: 8px; }
-  .home-hero .project-stats { margin-bottom: 12px; }
-  .home-hero-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .home-hero-cols h3 { margin: 0 0 6px; font: 600 11px/1.4 var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted); }
-  .hero-entry .entry-time { display: block; font: 11px/1.6 var(--font-mono); }
-  .hero-entry .entry-body { font-size: 14px; line-height: 1.55; max-width: 72ch; }
-  @media (max-width: 719px) { .home-hero-cols { grid-template-columns: 1fr; } }
-
   /* HOME IS BUILT FROM THE APP'S OWN COMPONENTS NOW (UI-cohesion spec §2.6). `.home-section` and
      `.section-head` duplicated `.panel` and `.panel-head` at a different size (h2 15px against 14)
      and with no surface or border, so the app's front door was the one page that did not look like

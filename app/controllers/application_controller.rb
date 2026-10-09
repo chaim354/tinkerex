@@ -37,8 +37,6 @@ class ApplicationController < ActionController::Base
   # direct_uploads hole in §15 is closed by the route shadow, not by this.
   before_action :authenticate_user!, unless: :devise_controller?
 
-  include CurrentProject
-
   # Changes to the importmap will invalidate the etag for HTML responses
   stale_when_importmap_changes
 
