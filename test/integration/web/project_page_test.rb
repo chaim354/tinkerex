@@ -140,6 +140,29 @@ module Web
       assert_equal %w[sketch.txt], css_select(".recent-files .grid-name").map(&:text)
     end
 
+    # THE ROW SKIPS WHAT THE PAGE DRAWS NO TILE FOR, AND IT ASKS EACH PANEL'S VIEW, NOT "IS IT A REPOSITORY"
+    # (slice 6 review): a plain folder switched to browser view draws no tiles, and a repository nested
+    # inside a tiles-view repository panel is a closed browser section. Both leaked into the row while the
+    # rule keyed on `repo?`.
+    test "the recent row follows each panel's view: a browsed plain folder and a nested repository stay out" do
+      project = folder_panel_project!
+      nested = @user.nodes.create!(node_id: "d-lib", name: "lib", kind: "dir", parent_node_id: "d-firmware")
+      @user.nodes.create!(node_id: "d-lib-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
+                          parent_node_id: nested.node_id)
+      @user.nodes.create!(node_id: "f-lib", name: "lib.c", kind: "file", parent_node_id: nested.node_id,
+                          size: 10, mtime: 1_000_000_000)
+      project.update!(panels: { "views" => { folder_key("d-firmware") => "tiles", folder_key("d-models") => "browser" } })
+      @user.nodes.where(kind: "file").update_all(updated_at: 1.minute.ago)
+
+      get project_path(project)
+
+      names = css_select(".recent-files .grid-name").map(&:text)
+      assert_includes names, "main.c", "a tiles-view repository's own files are tiles, so they are recent"
+      assert_includes names, "sketch.txt"
+      refute_includes names, "lib.c", "a repository nested in a tiles-view panel is a closed browser section"
+      refute_includes names, "base.stl", "a plain folder in browser view draws no tiles"
+    end
+
     # DETACH IS THE LINKED ROW'S CONTROL, ONLY. base.stl/shade.3mf are plain folder files now (no
     # tile-meta corner at all — folder_files_do_not_get_detach in project_attachments_test.rb pins
     # that directly); @linked_attachment is the one tile this page renders with a Detach button.

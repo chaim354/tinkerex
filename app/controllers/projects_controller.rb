@@ -609,8 +609,10 @@ class ProjectsController < ApplicationController
   def dirs_without_tiles
     @listing.tree.flat_map do |dir|
       key = Maker::ProjectKind.folder_key(dir.node_id)
-      if !@panel_layout.visible?(key) then [ dir ]
-      elsif dir.repo? then @panel_layout.view_for(key) == "browser" ? [ dir ] : []
+      # THE PANEL'S VIEW DECIDES, NOT WHETHER IT IS A REPOSITORY (slice 6 review): a hidden panel and a
+      # browser-view panel — repository or plain folder — draw no tiles; any other panel draws its own
+      # files, and every repository nested inside it is a closed browser section.
+      if !@panel_layout.visible?(key) || @panel_layout.view_for(key) == "browser" then [ dir ]
       else collect_repo_dirs(dir.children)
       end
     end
