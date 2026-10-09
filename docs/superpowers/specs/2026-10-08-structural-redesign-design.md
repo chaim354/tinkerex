@@ -207,14 +207,17 @@ the viewers, the preview stack or Measure changes (`docs/invariants/measure-view
 
 ## 7. Tools, inventory, Recent
 
-**Tools.** `/tools` stays a gallery. Every tool page gains a **destination bar**: "Saves to
-Projects/shop-stool · Change", where Change opens the file chooser. The destination resolves in
-this order:
+**Tools.** `/tools` stays a gallery. A tool page starts its save in a **default folder**, and the
+bundle's own "Save into" field shows it and changes it. There is no host destination bar: slice 4's
+plan dropped it, and the amendment in §11 says why. The default resolves in this order, as that
+amendment settled it:
 
-1. `?in=<node_id>` when it names a live folder (New ▸ from a folder sets it; Reopen from a file sets
-   the file's folder);
-2. otherwise the folder of the tool's most recent output for this user;
-3. otherwise the library root.
+1. `?in=<node_id>` when it names a live folder of the user's (New ▸ from a folder sets it);
+2. otherwise, when `?state=` names one of this tool's saved states, the folder that state's output
+   lives in now (every Reopen link already carries it, so Reopen from a file sets the file's folder);
+3. otherwise the folder of the tool's most recent live output for this user, mapped up to its
+   project's folder when it sits inside one;
+4. otherwise the library root.
 
 This replaces the current-project default in `Tools::AddonsController` (`@default_parent_node_id`).
 Output saved inside a project folder is filed and attached by the existing project intake sweep
@@ -245,7 +248,7 @@ The **current folder** is the destination everywhere:
 | Library | the folder being viewed (the library root at `/files`) |
 | Project hub | the project's folder |
 | Workspace | the file's folder |
-| Tool page | the destination bar's folder (§7) |
+| Tool page | the folder its save starts in (§7), shown by the bundle's own "Save into" field, not a host bar (slice 4's amendment, §11) |
 | Recent, Tools gallery, Settings, Search | none: Upload asks with the file chooser |
 
 The upload forms carry the destination as the parent folder parameter the upload doors already
@@ -263,11 +266,14 @@ accept. Nothing chooses a destination from session or user state.
 - **The columns stay for one release**: `users.current_project_id` and
   `users.remember_current_project` are left unused, then dropped by a later migration. Adding a
   drop runs forward everywhere; nothing in `db/migrate/` is rewritten (§10).
-- **Cross-repo check before slice 4 merges**: `addon_bundle_test` pins `.current-project select` on
-  the addon host page. Check whether `chaim354/tinkerex-addons` reads it. If it does, the
-  destination bar exposes the destination under a new, documented host contract
-  (`docs/invariants/addons.md`), and the addons repo moves to it before this repo removes the old
-  one.
+- **Cross-repo check before slice 4 merges: done while planning slice 4 (2026-10-09), and it
+  passed.** `addon_bundle_test` pinned `.current-project select` on the addon host page, so the
+  question was whether `chaim354/tinkerex-addons` reads it. It does not. Nothing in that repo
+  (`main` @ `b0e6c0f`) reads `.current-project select`, `current_project`, `project_id` or any host
+  DOM. The only host values its bundles read are the raw ctx keys `defaultFolder` and
+  `defaultFolderLabel` (three copies of `folder_field.js`). So the host kept those keys and changed
+  only what fills them, and no new host contract was needed. The addons repo took a README
+  correction (`chaim354/tinkerex-addons#16`) and no code.
 - **Routes**: `/` renders Recent (it already does through `HomeController`); `/models*` redirects
   (§5.4); `/models/shelves` moves to `/settings/shelves` with a redirect. **This reverses a
   2026-09-10 move and the old redirect must go in the same change**: today `/settings/shelves`
@@ -322,7 +328,7 @@ One PR per slice, each useful on its own, in this order:
 | 1. Visual system | the design system's tokens and components applied to today's structure | the §2 open questions |
 | 2. Shell | places sidebar, pins (`maker_pins`), the top bar's New ▾ menu, Inventory on demand in the sidebar | 1 |
 | 3. Inspector and workspace | selection, the inspector frame, the workspace header | 2 |
-| 4. Folder destinations | retire the current project, Upload into the top bar, the tool destination bar, intake-only attach | 3, the cross-repo check |
+| 4. Folder destinations | retire the current project, Upload into the top bar, the tool's default save folder, intake-only attach | 3, the cross-repo check |
 | 5. Models fold-in | the model strip, the 3D models place, the redirects, shelves to Settings | 3 |
 | 6. Project hub and Recent | the default layout, "+ Add panel", tile links to selection, Recent | 2 |
 | 7. Cleanup | dropping the retired current-project columns (Inventory on demand landed in slice 2) | 4 |
@@ -339,6 +345,31 @@ the file page's breadcrumb, whose folder link reselects the file; the existing B
 referer contract (and the referer already carries `?selected=`). The workspace's side column is not
 collapsible: the 3D, Gerber and Measure viewers size themselves to their container when built, so a
 column that changes width after load needs a resize contract with each of them first.
+
+**Amended 2026-10-09 (slice 4's plan):** tool pages get no host destination bar. All three shipped
+bundles already render their own "Save into" field, seeded from the host's `defaultFolder` and sent
+back as `folderNodeId`. A host bar would be a second chooser that could disagree with the bundle's,
+and its Change could only take effect by reloading with `?in=`, which throws away the tool's unsaved
+settings. So the host decides only the default, and §7's order grew from three steps to four:
+`?in=`; then `?state=`'s own output folder; then the tool's most recent live output, mapped up to its
+project's folder; then the root. The `?state=` step meets "Reopen from a file sets the file's folder"
+without changing a link, because every reopen link already carries `state=`. The mapping exists
+because intake files `Projects/<slug>/x.svg` into `design/`. A same-name save into `design/` is a
+terminal 422, while a save into the project root reaches the 409 "save as revision 2" offer. Home's
+current-project hero goes in this slice with the concept it showed. Recent stays in slice 6. Until
+then Home keeps its other sections, keeps "New project" as its primary, and uploads through the top
+bar's Upload, which asks for a folder there. So §4.2's Upload is `.btn.primary` on the Library and
+the project hub only. It is quiet everywhere else, including a tool page, whose primary is its own
+Save. The hub's Files-panel upload moves to the top bar, which leaves
+one door per destination and the two accent controls the cohesion spec's decision 3 allows a hub.
+An upload into the project folder attaches through intake, and `Projects::UploadsController` stays
+for build-log entries. The top-bar Upload keeps both Files flows' outcomes exactly, redirects
+included. At phone width Upload sits beside New, so §4.3's single "+" waits for slice 7's cleanup,
+and below 1100px the caption hides and the button's `title` carries it. The New ▾ menu now creates
+in the same validated folder as Upload on every page that shows one; it used to read the raw
+`params[:folder]`, and only on the Files index. Its tool entries carry `in=` that folder. Finally,
+`users.current_project_id` and `users.remember_current_project` become `ignored_columns` rather than
+merely unused (§9.1), so no code can read either by accident before slice 7 drops them.
 
 **The main risk is slice 4.** It changes uploads, tools and an addon host contract together, which
 is why it waits until the inspector exists (so "where did my file go" has an answer on screen) and

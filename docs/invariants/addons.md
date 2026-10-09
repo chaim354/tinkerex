@@ -332,6 +332,39 @@
   bundle on a LEVEL-2 host (which sends no `launch` key at all) still reads an object rather than
   `undefined` — which means dropping `stateId` from inside the server's hash would NOT surface as a
   missing value. **Keep the key in `addon_ctx`.**
+- **WHERE A SAVE STARTS IS `Tools::AddonsController#tool_destination_node_id`: FOUR STEPS, FIRST
+  ANSWER WINS, AND NEVER SESSION OR USER STATE.** (1) `?in=` naming a live folder of the user's —
+  New ▸ <tool> sets it to the folder the menu was opened from; (2) `?state=` naming one of this
+  tool's saved states — the folder THAT state's output lives in now, so a reopen link (they all
+  carry `state=` already) starts a revision where its file is, and `#resolve_placements`' owned arm
+  replaces it in place there; (3) the folder of the tool's most recent LIVE output, **mapped up to
+  its owning project's folder** when it sits inside one; (4) nil, the library root. The bundle's own
+  "Save into" field shows this and changes it; the host decides only where that field begins, and
+  there is no host destination bar (structural redesign spec §7, as slice 4 amended it). It replaced
+  the global current project, whose names `test/architecture_invariants_test.rb` now forbids.
+  **Step 3's mapping is not cosmetic: it decides which refusal a same-name save meets.** The eager
+  intake nudge files `Projects/<slug>/x.svg` into `design/` (§14f), so the raw last-output folder
+  is the CATEGORY folder, and a same-name save there is `#refuse_taken_names!`'s terminal 422
+  `name_taken`. Mapped up to the project root, the same save reaches `#resolve_placements`' 409
+  `would_replace` — the "save as revision 2" offer, a question rather than a dead end (the 409/422
+  rule above). `test/system/box_revisions_test.rb`'s join test reaches that offer only through step
+  3, which makes it the mapping's mutation check. Two spellings not to tidy: the "no output" test is
+  `rows.empty?`, **never `any?`**, because `[nil]` is the answer "the newest output sits at the
+  library root" and `[nil].any?` is false, which silently turns the root into a fall-through to an
+  older output's folder; and the folder is a **LEFT** join, so an output at the root is still a row
+  while a trashed folder disqualifies its output rather than answering a tombstone's id. Step 3 is
+  one statement and the mapping walks the request's own `Maker::LibraryTree`, so
+  `page_query_budget_test.rb` pins the page's query count constant in the number of saved states.
+- **`?in=` IS A HINT EXACTLY AS `?state=` IS: A STRING ONLY, VALIDATED AS A LIVE FOLDER OF THIS
+  USER'S, AND ANY MISS FALLS THROUGH TO THE NEXT STEP — NEVER AN ERROR.** A stale bookmark, a
+  trashed folder, a file's id and another user's folder all fall through to step 2, because a link
+  that outlived its folder must not take the tool down. The `is_a?(String)` check is load-bearing for
+  `#find_addon_state`'s reason: `?in[]=a&in[]=b` arrives as an Array, and `find_by(node_id: [...])`
+  is an IN lookup answering whichever row the planner meets first. `Tools::HomeController#new_menu`
+  echoes its own `in=` into each tool link WITHOUT validating it, because the tool page does, so a
+  bad value costs only a link to the tool's own default. There is no stricter door to harmonise it
+  with: the save never reads `?in=`, since the bundle's field sends its choice as `folderNodeId`, and
+  `Tools::LibraryFolders#chosen_parent_node_id` resolves that on its own.
 - **THE FILE→STATE REVERSE LOOKUP CONSULTS THE REGISTRY ONLY WHEN THE NODE QUERY FOUND A HIT.**
   `Maker::AddonOrigin.for` makes no `Registry` call at all and `AddonOrigins#addon_origins_for` returns
   early when it is empty, so a library with no addon output never touches the addon source — a
@@ -357,6 +390,16 @@
   label}`. Harmless only because the SDK never exposes its copy — so **never add a
   `host.defaultFolder` accessor**, which would silently hand an object to every bundle that expects
   a string.
+- **`defaultFolder`'S VALUE CHANGED IN SLICE 4 AND ITS TWO SHAPES DID NOT, WHICH IS WHY NO BUNDLE
+  HAD TO MOVE.** It used to carry the current project's folder. It now carries
+  `#tool_destination_node_id`'s answer. The raw string, the blob's `{nodeId, label}` and
+  `defaultFolderLabel` are filled exactly as before. The cross-repo check (structural redesign spec
+  §9.1, against `chaim354/tinkerex-addons` @ `b0e6c0f`) found that the bundles read nothing else of
+  the host's: no `.current-project select`, no `current_project`, no `project_id`, no host DOM. That
+  is the whole reason a change to where every save starts shipped with a README correction in that
+  repo and no bundle release. **Keep that discipline for any later change to the default**: change
+  what fills the keys, never their names or shapes, for the life of `api_version: "1"`. Otherwise it
+  becomes the coordinated two-repo move the check existed to rule out.
 - **AN EDGE PARAM'S OPTION READS `"{letter} — {description}"` AND CARRIES THE BARE LETTER AS ITS
   VALUE.** boxes.py's edge choices are single letters — `top_edge` offers sixteen — and a letter on
   its own is not a choice anyone can make; upstream's own web UI never showed them bare

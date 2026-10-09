@@ -635,9 +635,9 @@ implicit.
 - each name a valid single filename: non-empty, at most 255 bytes, no `/`, `\` or NUL, and not
   `.` or `..`.
 
-**Where the file actually lands.** If the destination is a project's folder, the host may file the
-output into a category subfolder, and if the user has a current project set, the outputs are
-attached to it. Your addon does not need to do either.
+**Where the file actually lands.** If the destination is a project's folder, the host files the
+output into a category subfolder and attaches it to that project. Your addon does not need to do
+either.
 
 ### `host.files.pickFolder(options?)` — capability `pick:folder`
 
@@ -653,8 +653,9 @@ const folder = await host.files.pickFolder()
 
 `options` is forwarded to the chooser, which the host owns. Two keys are useful and stable: `value`
 (the node id to seed the selection with) and `label` (the path text to show for it). The host
-already seeds both from the user's current project folder, so calling `pickFolder()` with no
-arguments is the normal case. Unrecognised options are ignored.
+seeds both from where this tool's save starts: the folder it was opened from, the reopened file's
+folder, or where it last saved. So calling `pickFolder()` with no arguments is the normal case.
+Unrecognised options are ignored.
 
 If the capability map says `pick:folder` is available but the host wired up no chooser, you get an
 `AddonError` with code `host_misconfigured` — never a `null`, because that would be

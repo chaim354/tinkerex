@@ -307,7 +307,7 @@ migrated in full — 110 arcs, `tinkerex#6`–`#115` — then deleted. Its text 
 
 Where things stand: the full stack runs **on real hardware**. Rails is deployed via Kamal on an
 Unraid VM, and all **three `LIBRARY_BACKEND` values are deployed live**. The maker web layer
-(projects, model library, previews, `/tools` addons, current-project, 3D viewer, file
+(projects, model library, previews, `/tools` addons, 3D viewer, file
 organization) is server-rendered Hotwire on `Maker::*` models. The desktop client mounts and syncs
 on all three OSes against the sync server — that half's status lives in `tinkerex-client`.
 
