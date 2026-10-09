@@ -129,8 +129,9 @@ module ShellHelper
   # THE ONE ANSWER TO "WHICH LINK IS LIT", so exactly one is. A key, compared by sidebar_aria:
   #   [:home] [:library] [:pin, node_id] [:project, id] [:all_projects] [:models] [:inventory]
   #   [:tools] [:trash] [:settings]
-  # On the Files page the DEEPEST pinned folder on the breadcrumb wins over Library (`@crumbs` is
-  # FilesController#index's ancestor chain; absent elsewhere). On a project page the project's own
+  # On the Files page AND a file's own page the DEEPEST pinned folder on the breadcrumb wins over
+  # Library (`@crumbs` is the folder chain FilesController#index and #show both build; absent
+  # elsewhere, where Library lights). On a project page the project's own
   # link wins, unless it is older than the eight listed — then All projects, never nothing.
   def sidebar_current
     @sidebar_current ||=

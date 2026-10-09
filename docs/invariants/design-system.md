@@ -54,7 +54,8 @@ landed it (§11).
 8. **The sidebar lights exactly one link, and `ShellHelper#sidebar_current` alone decides which.**
    `rail_section` still maps `controller_path`'s FIRST segment (a new web controller needs a
    `SECTIONS` entry or its pages light nothing), and `sidebar_current` refines it: the deepest
-   pinned folder on the Files breadcrumb beats Library, a listed project's own link beats All
+   pinned folder on the breadcrumb (the Files page's or a file page's — both set `@crumbs`) beats
+   Library, a listed project's own link beats All
    projects, and an unlisted one lights All projects. The sidebar and the phone tab bar both read
    it; `shell_layout_test.rb` pins one lit link per page. **Collapsed (or below 1100px) the project
    and pin links are hidden**, so `sidebar_family_lit?` marks their visible parent — Library for a
