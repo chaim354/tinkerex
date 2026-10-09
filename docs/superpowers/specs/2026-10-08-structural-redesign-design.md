@@ -332,6 +332,14 @@ its destination IS slice 4's change; moving the button first would write its des
 twice. The current-project card stays in the sidebar until slice 4 for the same reason. The
 conditional Inventory entry moved forward into slice 2, where the sidebar is built.
 
+**Amended 2026-10-09 (slice 3's plan):** the inspector's actions are Open, Download and Delete —
+Rename and Move need web doors that do not exist yet, and Pin belongs to the folder's own menu. It
+shows the note count with a link to the page's notes rather than the composer. "Back to folder" is
+the file page's breadcrumb, whose folder link reselects the file; the existing Back keeps its
+referer contract (and the referer already carries `?selected=`). The workspace's side column is not
+collapsible: the 3D, Gerber and Measure viewers size themselves to their container when built, so a
+column that changes width after load needs a resize contract with each of them first.
+
 **The main risk is slice 4.** It changes uploads, tools and an addon host contract together, which
 is why it waits until the inspector exists (so "where did my file go" has an answer on screen) and
 why it has its own cross-repo check.
