@@ -18,6 +18,11 @@ module Tools
     # at all without a configured source, where Source.current would raise and Registry log it.
     def new_menu
       @addons = Maker::Addons::Source.configured? ? Maker::Addons::Registry.all.select(&:available?) : []
+      # The folder the menu was opened from (layouts/_topbar.html.erb's frame src), echoed into each
+      # tool link as `?in=`. A String only; the tool page validates it
+      # (Tools::AddonsController#destination_from_param), so a bad value costs a link to the tool's
+      # own default.
+      @in = params[:in].presence if params[:in].is_a?(String)
       render layout: false
     end
   end

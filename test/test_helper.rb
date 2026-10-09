@@ -172,8 +172,9 @@ module ActiveSupport
 
     # A PROJECT FOLDER WITHOUT THE PORT. Writes the two dir ROWS (`Projects/`, `Projects/<slug>`)
     # and points folder_node_id at the second, so Maker::Project#ensure_library_folder! -- which the
-    # project page and Home call best-effort for their upload controls -- finds a live dir and
-    # returns WITHOUT a mkdir. That is what lets a test about what a page READS from a folder run
+    # project page calls best-effort before it lists the folder its top-bar Upload saves into --
+    # finds a live dir and returns WITHOUT a mkdir. That is what lets a test about what a page READS
+    # from a folder run
     # on whichever backend the leg supplies: through the port, the same fixture is a real mkdir,
     # which on the s3 leg is a Forbidden against the stub bucket and on chunk_remote provisions a
     # sync-server library per email (eleven and two errors respectively, 2026-09-04). A test that
@@ -250,9 +251,9 @@ module ActiveSupport
     # Simulates a genuinely CONCURRENT writer landing the identical (user, attachable_type,
     # attachable_id, node_id) row an instant before this block's own create_or_find_by! attempts
     # to insert it — the race Task 9a's follow-up (RecordNotUnique -> "treat it as already
-    # attached") closes on AttachToProject#call, Models::AttachmentsController#create,
-    # Projects::EntryPhotosController#create and
-    # CurrentProject#attach_addon_files_to_current_project. Shared here rather than duplicated
+    # attached") closes on AttachToProject#call, Models::AttachmentsController#create and
+    # Projects::EntryPhotosController#create (and closed on the current project's addon attach
+    # until slice 4 of the 2026-10-08 redesign retired it). Shared here rather than duplicated
     # per file (unlike e.g. project_intake_test.rb's with_broken_move) because it is genuinely easy
     # to get subtly wrong, and it very nearly was — see below.
     #
@@ -261,11 +262,11 @@ module ActiveSupport
     # association-scoped relation create_or_find_by! was itself called on, e.g.
     # @project.file_attachments), inherits that association's attachable_type/attachable_id scope
     # exactly the way an ordinary create! on it would — and `attributes` already carries `user:`
-    # and `node_id:`, since those are literally what the real call passed. This is WHY it can also
-    # cover CurrentProject#attach_addon_files_to_current_project's multi-file loop with no changes:
-    # that method calls create_or_find_by! once per output file with a node_id chosen at RUNTIME
-    # (the addon's generated files), which a hook parameterized with one fixed node_id up front
-    # could not have raced against without first knowing which id to name.
+    # and `node_id:`, since those are literally what the real call passed. This is WHY it could
+    # also cover a multi-file loop with no changes (the retired current project's addon attach was
+    # one): a loop calling create_or_find_by! once per file with a node_id chosen at RUNTIME is
+    # something a hook parameterized with one fixed node_id up front could not have raced against
+    # without first knowing which id to name.
     #
     # HOOKS ActiveRecord::Relation#create_or_find_by! ITSELF, ONE CALL FRAME OUTSIDE it — NOT
     # Maker::FileAttachment#save!, which was tried first and is WRONG for this specific method, in
@@ -346,17 +347,6 @@ module ActionDispatch
     # Token-only convenience for the many helpers that returned just the device token.
     def bootstrap_token(email:, device_name: "device")
       bootstrap_account(email:, device_name:)["device_token"]
-    end
-
-    # THE CURRENT PROJECT, READ FROM WHICHEVER STORE IS AUTHORITATIVE (slice 0, 2026-09-10).
-    #
-    # Ten assertions across three suites read `session[:current_project_id]` directly. That was the
-    # storage, not the behaviour, and when the pointer moved onto the user row every one of them
-    # went red while the feature worked perfectly — a test pinned to an implementation detail.
-    # `users.remember_current_project` now decides which store answers, so asking through this
-    # helper keeps a test true under BOTH settings and says what it means.
-    def current_project_id_for(user)
-      user.reload.remember_current_project ? user.current_project_id : session[:current_project_id]
     end
   end
 end

@@ -37,23 +37,16 @@ class FilesController < ApplicationController
   # below are re-exposed, not redefined.
   include FilePreview
 
-  # ONE named mechanism for what this deployment can do, reachable from the views AND from the v1
-  # API. Not two: a view reaching for FileLayer.current.capabilities inline while a controller
-  # also sets @caps is how the two answers drift apart, which is §9a-3's complaint and Landmine
-  # 1's whole shape. The `capabilities` helper this controller used to define privately now lives
-  # in the concern -- the same argument that forbids two answers in a view forbids two ways to
-  # reach them.
-  include LibraryCapabilities
-
   # ?move_conflict=<id> — the prompt an attach leaves behind when the auto-move into the project
   # folder hit a name collision. Rendered here and on the project page; an attach can come from
   # either, so the resolution lives in one concern rather than in two actions.
   include MoveConflicts
 
   # The eager nudge (Task 11) — #intake_project_folder, called from #create and #finalize_upload
-  # below. Shared with Projects::UploadsController, the project page's own inline uploader, which
-  # needed the identical call once it stopped being the only other upload door; see the concern's
-  # header for why that made it a concern rather than a second copy.
+  # below. Shared with Projects::UploadsController (the build-log entries' inline uploader; the
+  # project page's own Upload has been the top bar's, into this controller, since redesign slice 4),
+  # which needed the identical call once it stopped being the only other upload door; see the
+  # concern's header for why that made it a concern rather than a second copy.
   include UploadBatch
   include ProjectFolderIntake
 
@@ -281,6 +274,10 @@ class FilesController < ApplicationController
       end
       @truncated = false
     end
+    # The top bar's Upload and New create here (FolderDestination). The VALIDATED folder: a stale
+    # ?folder= renders the root's listing and must upload to the root it shows. Flat mode has no
+    # folder, so it is the root too.
+    use_folder_destination(@folder&.node_id, path: Array(@crumbs).map(&:name).join("/"), primary: true)
     @info_by_node = FileLayer.current.stat_all(current_user, node_ids: @nodes.map(&:node_id))
     @nodes.select! { |node| @info_by_node.key?(node.node_id) }
     # AFTER select!, so a node that vanished between the two queries is gone before it can be
@@ -330,13 +327,6 @@ class FilesController < ApplicationController
     # than re-stat'd — on share a second stat_all is a filesystem stat per node, doubled.
     @thumb_by_node = Maker::Previews::ThumbnailMap.from_info(current_user, @nodes.map(&:node_id),
                                                             @info_by_node, backfill: true)
-    # The current project's folder, for the upload button's default-into-project wiring (spec
-    # 2026-07-23). `current_project_folder_node_id` (CurrentProject concern) is deliberately NOT a
-    # helper_method — like ProjectsController#show's @upload_parent_node_id, a view must not create
-    # a project folder as a side effect of merely being rendered; the owning action opts in
-    # explicitly and hands the view an ivar. nil when no project is current (its own rescue already
-    # covers an ensure failure, same as ProjectsController#show's).
-    @current_project_folder_node_id = current_project_folder_node_id
     # The type filter's options — see #ext_facets. Library-wide in BOTH modes, deliberately: it is
     # the control for choosing a whole-library type view, so scoping it to the folder you happen to
     # be standing in would hide the types the filter exists to reach.
@@ -610,6 +600,9 @@ class FilesController < ApplicationController
     parent = @node.parent_node_id &&
              current_user.nodes.present.find_by(node_id: @node.parent_node_id, kind: "dir")
     @crumbs = folder_crumbs(parent)
+    # The top bar's Upload and New create beside this file (FolderDestination) — quietly: the
+    # workspace's one action is the file, not an upload.
+    use_folder_destination(parent&.node_id, path: @crumbs.map(&:name).join("/"))
   end
 
   # GET /files/:id/inspector — the Library's right-hand panel for ONE selected file (structural

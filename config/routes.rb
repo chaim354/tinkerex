@@ -271,12 +271,6 @@ Rails.application.routes.draw do
   # attachment_path.)
   post "attachments", to: "projects/attachments#create", as: :attachments
 
-  # Session-scoped "current project" (the top-bar default destination). Singular resource: no id in
-  # the URL — the id rides in params[:project_id] so a blank one can clear it. `controller:` is
-  # required here: Rails' singular `resource` DSL still infers a PLURALIZED controller name by
-  # default (-> CurrentProjectsController), which would not match CurrentProjectController below.
-  resource :current_project, only: %i[update destroy], controller: "current_project"
-
   # Inline photo upload on a build-log entry (share/s3 multipart), same Projects::UploadsController.
   resources :build_log_entries, only: [], module: :projects do
     resources :uploads, only: :create
@@ -405,7 +399,6 @@ Rails.application.routes.draw do
     # its own form, because Devise's update demands the current password and a handle is not a
     # credential.
     resource :handle, only: :update
-    resource :preferences, only: :update
   end
 
   # --- Addons (Tools) — the /tools gallery + every addon's UI ---

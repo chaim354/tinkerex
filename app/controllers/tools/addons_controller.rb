@@ -168,8 +168,8 @@ module Tools
     # that id against the user's own live dirs — which leaves it reachable only as a TOCTOU, a folder
     # tombstoned between those two lookups (a real window on share/s3, where Library::ScanJob
     # tombstones a folder removed on the NAS). Nothing AFTER the write can reach here either:
-    # #attach_addon_files_to_current_project and #intake_project_folder both rescue StandardError,
-    # and Maker::ProjectIntake#place already rescues FileLayer::NotFound into a :not_found skip.
+    # #record_source_links touches no port, #intake_project_folder rescues StandardError, and
+    # Maker::ProjectIntake#place already rescues FileLayer::NotFound into a :not_found skip.
     #
     # THE MESSAGE STILL NAMES THE RESERVED-NAME CAUSE, DELIBERATELY LEFT WIDER THAN THE ARM. Its
     # "rename the output" clause is now belt-and-braces for this door — #parse_files gets there
@@ -191,7 +191,7 @@ module Tools
 
     def show
       @importmap = merged_importmap
-      @default_parent_node_id = current_project_folder_node_id
+      @default_parent_node_id = tool_destination_node_id
       # BOTH shapes of "where does this save go?", because a bundle may be built against either.
       # `folders` is the flat [label, node_id] list the shipped bundles build a <select> from;
       # `default_folder_label` is the one path a chooser trigger shows. This repo cannot know which
@@ -199,6 +199,10 @@ module Tools
       # rebuilt (§14c) — so it answers both until the addons repo says otherwise.
       @folders = folder_options
       @default_folder_label = folder_path_label(@default_parent_node_id)
+      # The top bar's Upload starts where this tool's save starts, so the two agree on the page.
+      # `path_for` answers "" for the root and nil for a broken chain; `.to_s` (inside
+      # use_folder_destination) folds the second into the root caption.
+      use_folder_destination(@default_parent_node_id, path: library_tree.path_for(@default_parent_node_id))
       @service_url = service_base_url
       @ctx = addon_ctx
     end
@@ -535,23 +539,33 @@ module Tools
           end
         )
       end
-      attach_addon_files_to_current_project(addon_files)
       record_source_links(state, addon_files)
 
       # THE EAGER NUDGE, and this door was the last browser-facing one without it. §14f names seven
       # ways a file reaches `Projects/<slug>/`; the three web upload doors call this inline and a
-      # device push got one in 2b9ca85, but an addon save — where the save dialog DEFAULTS to the
-      # current project's folder and the user is watching the redirect land — left its output at the
-      # project root until the next sweep. That is up to 15 minutes on chunk, and on share/s3 there
-      # is no `project_folder_intake` schedule at all (ProjectIntakeJob.sweep_all! declines on a
+      # device push got one in 2b9ca85, but an addon save — where the user is watching the redirect
+      # land, often in a project folder (#tool_destination_node_id starts a tool whose last output
+      # was filed inside a project at that project's folder) — left its output at the project root
+      # until the next sweep. That is up to 15 minutes on chunk, and on share/s3 there is no
+      # `project_folder_intake` schedule at all (ProjectIntakeJob.sweep_all! declines on a
       # scannable backend), so the wait is on Library::ScanJob's own poll.
+      #
+      # THE SWEEP IS ALSO HOW A SAVE REACHES A PROJECT (structural redesign spec §7): it attaches every
+      # file under the owning project's folder, and this door attaches nothing itself. The retired
+      # current project used to attach every output to whichever project was current, whatever
+      # folder the save had landed in.
       #
       # ONE SWEEP FOR THE WHOLE SAVE. Every file in a save shares `parent_node_id`, and .for_node
       # sweeps the OWNING PROJECT rather than the one node, so the first written file covers all of
       # them — calling it per file would re-sweep the same project N times for one request.
       #
-      # AFTER attach_addon_files_to_current_project, per ProjectFolderIntake's own call-site ordering
-      # rule: a door that makes its own file_attachments create! for these files must do it first.
+      # AFTER record_source_links, AND NO LONGER BECAUSE A RULE SAYS SO. ProjectFolderIntake's
+      # call-site rule binds a door that makes its OWN `file_attachments.create!` for these files —
+      # that create! must come first, or it lands second on the sweep's identical row and raises
+      # RecordNotUnique. This door made one until the current project's attach was retired, and makes
+      # none now. record_source_links writes `maker_file_links`, which the sweep never touches and
+      # which are keyed on node_id, which a filing move keeps — so either order is correct, and this
+      # one means a link write that raises does so before the sweep has moved anything.
       intake_result = intake_project_folder(addon_files.first&.node_id)
 
       # @addon.key here, NOT states_key — this builds a ROUTE (back to this addon's own page), not a
@@ -570,10 +584,12 @@ module Tools
     end
 
     # THE DATA SCOPE EVERY STATE READ AND WRITE IN THIS CONTROLLER RESOLVES THROUGH — and the claim
-    # is exhaustive rather than a summary: `grep maker_addon_states` finds this line and nothing but
-    # comments. Four sites today — #states lists, #revisions and #launch_state_id look one up (both
-    # via #find_addon_state), and #create both looks one up and CREATES one — with the next
-    # state-reading action making five.
+    # is exhaustive rather than a summary: `grep maker_addon_states` finds this line, comments, and
+    # the join and order clauses of #latest_output_folder — which names the TABLE to join against a
+    # relation it is handed, and is only ever handed one built from this method. Five sites today —
+    # #states lists, #revisions and #launch_state_id look one up (both via #find_addon_state),
+    # #destination_from_outputs reads outputs through it for where a save starts, and #create both
+    # looks one up and CREATES one — with the next state-reading action making six.
     #
     # #create's create! IS THE SITE THAT MATTERS MOST, and it was the last to be converted: every
     # other caller merely fails to FIND a row if the scope drifts, while that one FILES rows under
@@ -597,13 +613,96 @@ module Tools
     # user's rows from a stranger's.
     def addon_states = current_user.maker_addon_states.for_addon(@addon.states_key)
 
+    # WHERE A SAVE STARTS (structural redesign spec §7, as slice 4's plan amended it). The bundle shows
+    # this folder in its OWN "Save into" field and the user changes it there; this decides only where
+    # that field begins. Four steps, first answer wins:
+    #
+    #   1. `?in=` naming a live folder of this user's (New ▸ <tool> from a folder sets it).
+    #   2. `?state=` naming one of this tool's saved states: the folder ITS output lives in now. Every
+    #      reopen link ("Edit in Boxes") already carries `state=`, so a revision starts where its file
+    #      is and #resolve_placements' owned arm replaces it in place there.
+    #   3. The folder of this tool's most recent live output, MAPPED UP to its owning project's folder
+    #      when it sits inside one. The eager intake nudge files `Projects/<slug>/x.svg` into
+    #      `design/`; a same-name save into `design/` is #refuse_taken_names!'s terminal 422, where the
+    #      project root reaches #resolve_placements' 409 "save as revision 2" offer —
+    #      test/system/box_revisions_test.rb's join test reaches that offer through this step.
+    #   4. nil, the library root.
+    #
+    # NEVER SESSION OR USER STATE: this replaced the global current project, whose names
+    # test/architecture_invariants_test.rb now forbids.
+    def tool_destination_node_id
+      return @tool_destination_node_id if defined?(@tool_destination_node_id)
+
+      @tool_destination_node_id = destination_from_param || destination_from_outputs
+    end
+
+    # Step 1. A String only, for #find_addon_state's reason: `?in[]=a&in[]=b` arrives as an Array, and
+    # `find_by(node_id: [...])` is an IN lookup answering whichever row the planner meets first.
+    def destination_from_param
+      id = params[:in]
+      return nil unless id.is_a?(String) && id.present?
+
+      current_user.nodes.present.find_by(node_id: id, kind: "dir")&.node_id
+    end
+
+    # Steps 2–4. `empty?`, NEVER `any?`: `[nil]` is the answer "its output is at the library root",
+    # and `[nil].any?` is false — the spelling that turns a reopened box saved at the root into a
+    # fall-through to step 3, which starts it in whatever folder a newer box went to.
+    def destination_from_outputs
+      if (state = find_addon_state(params[:state]))
+        rows = latest_output_folder(addon_states.where(id: state.id))
+        return rows.first unless rows.empty?
+      end
+
+      rows = latest_output_folder(addon_states)
+      return nil if rows.empty? || rows.first.nil?
+
+      owning_project_folder(rows.first) || rows.first
+    end
+
+    # `[]` when no live output exists, `[nil]` when the newest one sits at the library root, `[id]`
+    # otherwise. `pluck` + `limit(1)` rather than `pick`, because `pick` answers nil for BOTH "no row"
+    # and "a row whose folder is the root", and the caller must tell them apart.
+    #
+    # ONE STATEMENT. `[user_id, addon_key]` drives the states, `[addon_state_id, node_id]` the files,
+    # `[user_id, node_id]` both node lookups. The folder is a LEFT join so an output at the root is
+    # still a row, and a dead folder disqualifies its output rather than answering a tombstone's id.
+    # `maker_addon_states.updated_at` orders it because every save touches the state (create, or
+    # `revision + 1`), where `maker_addon_files.updated_at` survives an unchanged upsert.
+    def latest_output_folder(states)
+      states
+        .joins("INNER JOIN maker_addon_files ON maker_addon_files.addon_state_id = maker_addon_states.id")
+        .joins("INNER JOIN nodes outputs ON outputs.user_id = maker_addon_states.user_id " \
+               "AND outputs.node_id = maker_addon_files.node_id")
+        .joins("LEFT JOIN nodes folders ON folders.user_id = outputs.user_id " \
+               "AND folders.node_id = outputs.parent_node_id")
+        .where("outputs.deleted = ? AND outputs.kind = ?", false, "file")
+        .where("outputs.parent_node_id IS NULL OR (folders.deleted = ? AND folders.kind = ?)", false, "dir")
+        .order(Arel.sql("maker_addon_states.updated_at DESC, maker_addon_states.id DESC, " \
+                        "maker_addon_files.position ASC, maker_addon_files.id ASC"))
+        .limit(1)
+        .pluck(Arel.sql("outputs.parent_node_id"))
+    end
+
+    # The nearest folder at-or-above `folder_id` that a project claims, or nil. The walk is the
+    # request's own Maker::LibraryTree (#show already builds it for the picker), so it costs one
+    # pluck of the claimed folder ids and no query per level.
+    def owning_project_folder(folder_id)
+      chain = library_tree.ancestors_of(folder_id)
+      return nil if chain.nil?
+
+      claimed = current_user.maker_projects.where.not(folder_node_id: nil).pluck(:folder_node_id).to_set
+      chain.compact.find { |id| claimed.include?(id) }
+    end
+
     # ONE saved state by a client-supplied id, or nil.
     #
     # IT RENDERS NOTHING AND RAISES NOTHING, AND THAT IS THE WHOLE REASON IT CAN BE SHARED. THE
-    # CALLER DECIDES WHAT A MISS MEANS, and the three callers do not agree: #create and #revisions
+    # CALLER DECIDES WHAT A MISS MEANS, and the four callers do not agree: #create and #revisions
     # answer 404 (there the id is an INSTRUCTION — where to write, whose history to serve — and
     # guessing wrong acts on the wrong row), while #addon_ctx serves a null `stateId` and renders
-    # the page (there it is a HINT about what to open, and a stale bookmark must not take the tool
+    # the page, and #destination_from_outputs falls through to the next step of where a save starts
+    # (in both the id is a HINT about what to open, and a stale bookmark must not take the tool
     # down). This is the one place that opposition is written out; the callers point here.
     #
     # ** DO NOT MOVE A RENDER IN HERE. ** Folding #render_no_such_state into this method is the

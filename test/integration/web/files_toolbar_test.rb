@@ -1,8 +1,9 @@
 require "test_helper"
 
 module Web
-  # The Files page's controls (spec §8, PR 2): Upload is the primary action in the page head,
-  # rescan and the upload-destination switch live in an overflow menu, and everything else —
+  # The Files page's controls (spec §8, PR 2): Upload is the page's primary action and has lived in
+  # the top bar since redesign slice 4 (topbar_upload_test.rb owns it), rescan and the folder's own
+  # actions live in an overflow menu, and everything else —
   # the type filter, the dot-file switch, the count, the view toggle and the sort — sits on ONE
   # toolbar row in both views. Nodes are created directly, as files_type_filter_test.rb does.
   class FilesToolbarTest < ActionDispatch::IntegrationTest
@@ -33,20 +34,16 @@ module Web
                           content_hash: "h-#{name}", current_version_id: "v-#{name}")
     end
 
-    test "upload is the primary action in the page head and the dashed panel is gone" do
+    # THE PAGE HEAD NO LONGER HOLDS AN UPLOADER. It moved to the top bar (redesign slice 4), which
+    # uploads into the folder this page shows; topbar_upload_test.rb owns its markup, flows and
+    # destination. `.uploader` is the class BOTH flows carry (the multipart form and the chunk
+    # section), so these counts hold on every backend leg without a `port_writable?` branch.
+    test "the Files page head no longer holds an uploader; Upload is the top bar's" do
       get files_path
       assert_response :success
-      assert_select ".page-head .page-actions label.upload-btn span", text: "Upload a file"
-      # Two flows, one per deployment (files/index.html.erb's own comment): a multipart form on a
-      # port-writable backend, the two-phase `uploader` controller on chunk_remote. Asserting the
-      # form alone was red on the chunk_remote leg and green on the other two.
-      if FileLayer.current.capabilities.port_writable?
-        assert_select ".page-head .page-actions form.uploader[action=?]", files_path
-      else
-        assert_select ".page-head .page-actions section.uploader[data-controller='uploader'][data-uploader-begin-url-value=?]",
-                      begin_upload_files_path
-      end
-      assert_select "main .uploader", count: 1
+      assert_select "main .uploader", count: 0
+      assert_select "header.topbar .topbar-upload .uploader", count: 1
+      assert_select ".page-head .page-actions a.btn[href=?]", new_files_text_file_path, text: "New text file"
     end
 
     test "rescan lives in the overflow menu on a scannable backend" do
@@ -78,32 +75,6 @@ module Web
       assert_select ".files-toolbar .toolbar-count", text: "1 match"
       get files_path(q: "e")
       assert_select ".files-toolbar .toolbar-count", text: "3 matches"
-    end
-
-    test "a current project turns the head's upload into the project's, with a caption and a menu switch" do
-      project = @user.maker_projects.create!(name: "Desk Lamp")
-      patch current_project_path, params: { project_id: project.id }
-      get files_path
-      assert_select ".page-actions label.upload-btn span", text: /Upload/
-      if FileLayer.current.capabilities.port_writable?
-        assert_select ".page-actions form.uploader[action=?]", project_uploads_path(project)
-      else
-        assert_select ".page-actions .uploader[data-controller='uploader'][data-uploader-attach-url-value=?]",
-                      project_attachments_path(project)
-      end
-      assert_select ".upload-to-project.upload-caption", text: /Uploads go to Desk Lamp/
-      assert_select ".page-actions details.menu a.menu-item.upload-alt[href=?]",
-                    files_path(upload: "library"), text: "Upload to library root instead"
-
-      get files_path(upload: "library")
-      if FileLayer.current.capabilities.port_writable?
-        assert_select ".page-actions form.uploader[action=?]", files_path
-      else
-        assert_select ".page-actions section.uploader[data-controller='uploader']:not([data-uploader-attach-url-value])"
-      end
-      assert_select ".upload-caption", count: 0
-      assert_select ".page-actions details.menu a.menu-item.upload-alt[href=?]", files_path,
-                    text: "Upload to project “Desk Lamp” instead"
     end
 
     # The scannable arm is asserted too, so this run is not a test that reports success having
@@ -172,8 +143,8 @@ module Web
     end
 
     # The menu itself must appear on a folder view even where it would otherwise be empty —
-    # chunk_remote is not scannable and has no current project here, so before this slice the
-    # `details.menu` did not render at all and the item would have had nowhere to go.
+    # chunk_remote is not scannable, so before this slice the `details.menu` did not render at all
+    # and the item would have had nowhere to go.
     test "the overflow menu renders on a folder view on every backend" do
       get files_path(folder: "dir-cad")
       assert_select ".page-actions details.menu[data-controller='menu'] summary.btn", count: 1
@@ -184,9 +155,9 @@ module Web
     # redesign every folder view holds "Pin to sidebar", so a folder view always has a menu, and
     # what this pins is that the folder arm adds exactly what it offers beside the pin. chunk_remote
     # EXPLICITLY (the idiom rescan_test.rb records: constructing the adapter needs no sync server,
-    # and its reads answer from the local mirror), with no current project, so the folder arms are
-    # the only possible items: a dot-folder and the Projects root offer the pin alone, an ordinary
-    # folder the pin and the adopt button.
+    # and its reads answer from the local mirror), so the folder arms are the only possible items:
+    # a dot-folder and the Projects root offer the pin alone, an ordinary folder the pin and the
+    # adopt button.
     test "on a non-scannable backend the folder menu holds the pin and only what the folder offers" do
       FileLayer.current = FileLayer::ChunkRemote.new
       @user.nodes.create!(node_id: "dir-dot2", name: ".config", kind: "dir")

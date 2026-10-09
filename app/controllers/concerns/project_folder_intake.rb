@@ -8,7 +8,8 @@
 # copy] needs an argument for being inline rather than a service, and a verb that more than one
 # caller performs does not have one." Two upload doors already needed this exact rescue-and-call
 # (FilesController#create/#finalize_upload); wiring in a THIRD (Projects::UploadsController#create,
-# the project page's own inline share/s3 uploader) is the second caller crossing into "more than
+# then the project page's own inline share/s3 uploader and, since redesign slice 4 moved the hub's
+# Upload into the top bar, the build-log entries') is the second caller crossing into "more than
 # one" territory a second time, and copy-pasting the block below into a second controller — all of
 # it, including the reasoning for why StandardError is right here and wrong in the service — is
 # exactly the kind of drift this codebase keeps paying for and keeps writing down when it finds it

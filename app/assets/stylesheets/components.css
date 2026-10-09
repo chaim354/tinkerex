@@ -32,10 +32,6 @@
   .btn.danger:hover { background: var(--danger-soft); }
   .btn.ghost { background: transparent; border-color: transparent; }
   .btn.ghost:hover { background: var(--raised); }
-  /* Outlined in the accent: the one secondary action on a page that deserves the colour without
-     the fill (Set as current on a project). */
-  .btn.outline { background: transparent; border-color: var(--accent); color: var(--accent-text); }
-  .btn.outline:hover { background: var(--accent-soft); border-color: var(--accent); }
   .btn.small, input[type="submit"].small { min-height: var(--control-height-small); padding: 0 10px; font-size: 13px; }
   .btn.icon { width: var(--control-height); padding: 0; }
   .btn.small.icon { width: var(--control-height-small); }
@@ -369,7 +365,6 @@
   .badge.mstatus-want_to_print { background: var(--info-soft); color: var(--info); }
   .badge.mstatus-printed { background: var(--ok-soft); color: var(--ok); }
   .badge.mstatus-failed { background: var(--danger-soft); color: var(--danger); }
-  .badge.current-project-badge { background: var(--accent-soft); color: var(--accent-text); text-transform: none; }
   .badge.low-stock { background: var(--warn-soft); color: var(--warn); text-transform: none; }
   .badge.bom-stock { background: var(--ok-soft); color: var(--ok); text-transform: none; }
   .badge.bom-file { background: var(--info-soft); color: var(--info); text-transform: none; }

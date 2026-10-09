@@ -161,6 +161,36 @@ module Web
         node = @user.nodes.find_by!(node_id: project.file_attachments.last.node_id)
         assert_equal "Projects/lamp/models/cube.stl", node.storage_path
       end
+
+      # --- WHERE THE BROWSER LANDS (Projects::UploadsController#after_upload_url) --------------
+      #
+      # The chunk branch honors data-uploader-redirect-url-value in uploader_controller.js; the
+      # multipart branch must reach the same place, so a hidden redirect_url is followed instead of
+      # the project page. (Moved here from the retired current-project Files uploader's test, whose
+      # only caller of a non-project redirect_url went with it in slice 4.)
+      test "an upload carrying a redirect_url lands there, not on the project page" do
+        project = @user.maker_projects.create!(name: "Desk Lamp")
+        folder = project.ensure_library_folder!(@user)
+        file = Rack::Test::UploadedFile.new(StringIO.new("solid cube".b),
+                                            "application/octet-stream", original_filename: "cube.stl")
+        assert_difference "project.file_attachments.count", 1 do
+          post project_uploads_path(project),
+               params: { file:, redirect_url: files_path(folder: folder.node_id) }
+        end
+        assert_redirected_to files_path(folder: folder.node_id)
+      end
+
+      # An open-redirect guard: a tampered redirect_url pointing off-site must never send the user
+      # away from this app. url_from returns nil for anything non-relative, so the controller falls
+      # back to the project page. (The upload itself still succeeds.)
+      test "an off-site redirect_url is refused — the upload falls back to the project page" do
+        project = @user.maker_projects.create!(name: "Desk Lamp")
+        file = Rack::Test::UploadedFile.new(StringIO.new("cube".b),
+                                            "application/octet-stream", original_filename: "cube.stl")
+        post project_uploads_path(project),
+             params: { file:, redirect_url: "https://evil.example.com/phish" }
+        assert_redirected_to project_path(project)
+      end
     end
   end
 end

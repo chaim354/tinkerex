@@ -5,9 +5,9 @@
 # whichever page the attach came FROM — the file page or the project page — which is why this is a
 # concern and not two copies.
 #
-# A CONTROLLER CONCERN, NOT VIEW LOGIC, for the reason FilesController#index already gives about
-# @current_project_folder_node_id: a view must not run queries — or worse, create a project folder
-# — as a side effect of being rendered. The owning action opts in and hands the view one ivar.
+# A CONTROLLER CONCERN, NOT VIEW LOGIC, for the reason ProjectsController#show's folder ensure
+# gives: a view must not run queries — or worse, create a project folder — as a side effect of being
+# rendered. The owning action opts in and hands the view one ivar.
 # (`project.folder_node_id` is READ here rather than `ensure_library_folder!` CALLED, for the same
 # reason: a GET of a bookmarked URL must not resurrect a folder the user just deleted.)
 #
@@ -54,8 +54,6 @@ module MoveConflicts
     #                                           .maker_build_log_entries).
     #   Models::AttachmentsController         — #set_model (current_user.maker_models).
     #   Projects::EntryPhotosController       — current_user.maker_build_log_entries.find.
-    #   CurrentProject                        — #attach_addon_files_to_current_project, whose
-    #                                           #current_project is current_user-scoped.
     #   V1::Maker::FileAttachmentsController  — #resolve_parent (current_user.public_send(...)).
     #
     # Projects::AttachmentsController only READS the table now (#destroy finds by id through

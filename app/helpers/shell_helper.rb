@@ -12,7 +12,7 @@ module ShellHelper
     "home" => %w[home],
     "files" => %w[files library_browse notes repo_commits repo_histories],
     "models" => %w[models shelves],
-    "projects" => %w[projects current_project],
+    "projects" => %w[projects],
     "inventory" => %w[inventory_items suppliers locations],
     "tools" => %w[tools],
     "trash" => %w[trash],
@@ -61,7 +61,7 @@ module ShellHelper
   # about which surface this is.
   def public_shell? = respond_to?(:public_surface?) && public_surface?
 
-  # The signed-in shell (rail, tab bar, current-project switcher) renders for a signed-in user on
+  # The signed-in shell (rail, tab bar) renders for a signed-in user on
   # every page EXCEPT a public one, which renders what a visitor sees (Public::BaseController, stage
   # 3, S3-4). `respond_to?` on both halves because a public controller stands on
   # ActionController::Base and has neither helper — and Devise's own pages have no

@@ -1,10 +1,9 @@
 require "test_helper"
 
 module Web
-  # The application shell (spec §5): the rail with one active section, the current-project card
-  # that keeps the switcher the topbar tests pin, the top bar's breadcrumb slot and search field,
-  # the theme and rail-collapse cookies rendered server-side (no inline script under the CSP),
-  # and the self-hosted fonts actually resolving.
+  # The application shell (spec §5): the rail with one active section, the top bar's breadcrumb
+  # slot and search field, the theme and rail-collapse cookies rendered server-side (no inline
+  # script under the CSP), and the self-hosted fonts actually resolving.
   class ShellLayoutTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
@@ -84,15 +83,6 @@ module Web
       assert_select "body.rail--collapsed", count: 0
     end
 
-    test "the top bar carries a second, phone-only project switcher with its own id" do
-      @user.maker_projects.create!(name: "Desk Lamp")
-      get files_path
-      assert_select "header.topbar form.topbar-project[action=?] select[name='project_id']#topbar_project_id", current_project_path
-      assert_select "select#topbar_project_id option[value='']", text: /none/i
-      assert_select "select#project_id", count: 1
-      assert_select "select#topbar_project_id", count: 1
-    end
-
     test "the theme comes from the cookie and defaults to light" do
       get files_path
       assert_select "html[data-theme='light']"
@@ -145,15 +135,6 @@ module Web
       assert_select "main nav.breadcrumb", count: 0
       get models_path
       assert_select "header.topbar .topbar-title", text: "Models"
-    end
-
-    test "the current-project card keeps the switcher the topbar tests pin" do
-      @user.maker_projects.create!(name: "Desk Lamp")
-      get files_path
-      assert_select "aside.rail .current-project select[name='project_id']"
-      assert_select "aside.rail form[action=?] select[name='project_id'] option[value='']", current_project_path,
-                    text: /none/i
-      assert_select "aside.rail .current-project-hint", text: /land here/
     end
 
     # Four tabs, not every sidebar entry: Trash is reached from the sidebar alone, so its page lights

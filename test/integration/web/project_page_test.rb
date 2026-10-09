@@ -49,9 +49,8 @@ module Web
       assert_select ".project-stats", text: /1 sheet\b/
     end
 
-    test "the head's actions are buttons, with Archive quiet and Set as current outlined" do
+    test "the head's actions are buttons, with Archive quiet" do
       get project_path(@project)
-      assert_select ".head-actions form[action=?] button.btn.outline", current_project_path, text: /set as current/i
       assert_select ".head-actions a.btn[href=?]", edit_project_path(@project), text: "Edit"
       assert_select ".head-actions form[action=?] button.btn.danger", project_path(@project), text: "Archive"
     end

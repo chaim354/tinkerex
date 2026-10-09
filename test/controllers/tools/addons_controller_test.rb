@@ -633,10 +633,11 @@ module Tools
     # blindly there is a bare ActiveRecord::RecordNotUnique 500, not a refusal anybody designed.
     #
     # REACHABLE THROUGH THE ORDINARY DOOR, which is why this is the shape the test takes rather
-    # than something narrower: the save dialog defaults to the current project's folder, the eager
-    # nudge files the first copy into `design/`, and the re-save then resolves to `replace: true`
-    # against that same node (see "confirming the overwrite replaces the filed file in place").
-    # This is exactly that save, now carrying a `state_id`.
+    # than something narrower: the save dialog defaults by Tools::AddonsController
+    # #tool_destination_node_id — which starts a tool whose last output was filed inside a project at
+    # that project's folder — the eager nudge files the first copy into `design/`, and the re-save
+    # then resolves to `replace: true` against that same node (see "confirming the overwrite
+    # replaces the filed file in place"). This is exactly that save, now carrying a `state_id`.
     #
     # AND IT SENDS NO `overwrite`, WHICH IS THIS TEST'S SECOND JOB. It needed one when it was
     # written — the 409 fired on the box's OWN filed output, because nothing yet knew whose file
@@ -1050,15 +1051,16 @@ module Tools
     # reaches `Projects/<slug>/`; the three web upload doors call
     # ProjectFolderIntake#intake_project_folder inline (FilesController#create, #finalize_upload,
     # Projects::UploadsController#create) and a device push got one in 2b9ca85 — but this door, where
-    # the user is WATCHING the save complete and the save dialog DEFAULTS to the current project's
-    # folder, silently left the file at the project root for up to 15 minutes. On a share/s3
-    # deployment there is no `project_folder_intake` schedule at all (ProjectIntakeJob.sweep_all!
-    # declines on a scannable backend), so the wait is on Library::ScanJob's own poll.
+    # the user is WATCHING the save complete and the save dialog defaults by Tools::AddonsController
+    # #tool_destination_node_id (a tool whose last output was filed inside a project starts at that
+    # project's folder), silently left the file at the project root for up to 15 minutes. On a
+    # share/s3 deployment there is no `project_folder_intake` schedule at all
+    # (ProjectIntakeJob.sweep_all! declines on a scannable backend), so the wait is on
+    # Library::ScanJob's own poll.
     #
     # ONE SWEEP FOR THE WHOLE SAVE, not one per file: every file in a save shares `parent_node_id`,
     # and .for_node sweeps the OWNING PROJECT rather than the single node, so the first written file
-    # covers all of them. AFTER attach_addon_files_to_current_project, per ProjectFolderIntake's own
-    # call-site ordering rule ("that create! MUST run before this call").
+    # covers all of them.
     test "save files the output into its category folder without waiting for the sweep" do
       project = @user.maker_projects.create!(name: "Harbor Signs")
       folder = project.ensure_library_folder!(@user)
@@ -1074,6 +1076,35 @@ module Tools
       assert node, "the save should have written the file"
       assert_equal "design", @user.nodes.find_by(node_id: node.parent_node_id)&.name,
                    "an .svg saved into a project folder should be filed into design/ by the nudge"
+    end
+
+    # INTAKE IS THE ONLY WAY A TOOL'S OUTPUT REACHES A PROJECT (structural redesign slice 4;
+    # docs/invariants/project-intake.md). Until slice 4 this door attached every output to the CURRENT
+    # project, wherever the save went. Now a save beneath a project folder is attached by the eager
+    # intake nudge, and a save anywhere else is attached to nothing — not to some project by default.
+    test "a save beneath a project folder attaches to that project, and a save elsewhere to none" do
+      project = @user.maker_projects.create!(name: "Harbor Lamps")
+      folder = project.ensure_library_folder!(@user)
+      inside = "lamp-#{SecureRandom.hex(4)}.svg"
+      post tools_addon_path("widgetkit"), params: {
+        name: "lamp", data: "{}", parent_node_id: folder.node_id,
+        files: [ { name: inside, content_type: "image/svg+xml", body: "<svg/>" } ].to_json
+      }
+      assert_redirected_to tools_addon_path("widgetkit")
+      node = @user.nodes.present.find_by!(name: inside)
+      assert project.file_attachments.exists?(node_id: node.node_id),
+             "a save beneath the project folder should be attached to that project by intake"
+      assert_equal 1, Maker::FileAttachment.where(node_id: node.node_id).count
+
+      outside = "loose-#{SecureRandom.hex(4)}.svg"
+      post tools_addon_path("widgetkit"), params: {
+        name: "loose", data: "{}",
+        files: [ { name: outside, content_type: "image/svg+xml", body: "<svg/>" } ].to_json
+      }
+      assert_redirected_to tools_addon_path("widgetkit")
+      loose = @user.nodes.present.find_by!(name: outside)
+      refute Maker::FileAttachment.exists?(node_id: loose.node_id),
+             "a save outside every project folder attaches to no project"
     end
 
     # A SAVE WRITES A SET, AND THE 409 MUST NAME EVERY COLLIDING OUTPUT — a body reporting only a

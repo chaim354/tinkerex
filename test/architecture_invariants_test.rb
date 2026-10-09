@@ -215,6 +215,48 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
                  "that."
   end
 
+  # THE CURRENT PROJECT IS RETIRED (structural redesign spec §9.1, slice 4) AND NOTHING MAY READ A
+  # DESTINATION FROM SESSION OR USER STATE AGAIN (spec §10). New files land in the folder the maker
+  # is looking at — FolderDestination, set by the action that renders that folder — and a destination
+  # read from a session key or a user column is the design this replaced: it needed three rounds of
+  # fixes because the place a file landed was not the place the maker was looking.
+  #
+  # Ripper over app/ + lib/ + config/routes.rb, and over every ERB template COMPILED to Ruby first
+  # (Erubi drops `<%# %>` comments, so prose about the old design never trips it). Tokens, not text:
+  # `:on_ident` catches a method, a local and a `session[:current_project_id]` key; `:on_const` the
+  # concern and controller; `:on_tstring_content` a string that IS one of the names, which is how
+  # `session["current_project_id"]` spells the key (review of slice 4). Only a WHOLE string token
+  # matches, so prose that merely mentions a name inside a longer string never does. The columns themselves are also `ignored_columns` on User, so a read
+  # raises; this catches the NAMES, which is what a revival starts with.
+  RETIRED_DESTINATION_NAMES = %w[
+    current_project current_project_id current_project_folder_node_id current_project_choices
+    current_project_notice remember_current_project remember_current_project? make_current
+    attach_addon_files_to_current_project CurrentProject CurrentProjectController
+  ].freeze
+
+  test "nothing reads a destination from session or user state: the current project's names are gone" do
+    rb = Dir[ROOT.join("app/**/*.rb"), ROOT.join("lib/**/*.rb"), ROOT.join("config/routes.rb")]
+    erb = Dir[ROOT.join("app/views/**/*.erb")]
+    refute_empty rb, "the Ruby scan found no files — the guard would pass over nothing"
+    refute_empty erb, "the template scan found no files — the guard would pass over nothing"
+
+    hits = (rb.map { |f| [ f, File.read(f) ] } +
+            erb.map { |f| [ f, ActionView::Template::Handlers::ERB::Erubi.new(File.read(f)).src ] })
+      .flat_map do |file, source|
+        rel = Pathname.new(file).relative_path_from(ROOT)
+        lines = source.lines
+        Ripper.lex(source).filter_map do |(pos, type, str, _)|
+          next unless %i[on_ident on_const on_tstring_content].include?(type) && RETIRED_DESTINATION_NAMES.include?(str)
+          # THE ONE SANCTIONED SPELLING: User's `ignored_columns` names the two columns as strings, and
+          # that line is what makes a read RAISE. Slice 7's drop migration removes it.
+          next if type == :on_tstring_content && lines[pos.first - 1].to_s.include?("ignored_columns")
+
+          "#{rel}:#{pos.first} #{str}"
+        end
+      end
+    assert_empty hits, "the retired current project is referenced again"
+  end
+
   # NO ADAPTER CLASS-CHECKS IN THE GIT SURFACE. `is_a?(FileLayer::Share)` and `local_worktree?`
   # give the SAME answer on all three backends today — share true, s3 and chunk_remote false — so
   # swapping one for the other changes no behaviour anywhere and NO behavioural test can go red for
@@ -1153,7 +1195,7 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
                  "project's publication:\n  #{url_for_offenders.join("\n  ")}"
   end
 
-  SESSION_ACCESSOR = /\b(current_user|current_project|user_signed_in\?|web_device)\b|\bsession\s*[\[.]|\bcookies\s*[\[.]/
+  SESSION_ACCESSOR = /\b(current_user|user_signed_in\?|web_device)\b|\bsession\s*[\[.]|\bcookies\s*[\[.]/
 
   # `line` with every `<%# … %>` region removed, plus whether a comment is still open at its end.
   # Returns [code, still_open]. A `.rb` file contains no `<%#` at all, so this is a no-op there and

@@ -152,9 +152,12 @@ module Web
     test "a backend blip still degrades to a spinner instead of taking the page down" do
       node = file!("blip-cover", "case.stl")
       model = @user.maker_models.create!(title: "Blip", slug: "blip", cover_node_id: node)
-      FileLayer.current = Class.new do
+      # DELEGATES EVERYTHING ELSE, as page_nodes_test.rb's double does: the top bar's Upload asks
+      # the port for its capabilities on every signed-in page (redesign slice 4), and a bare double
+      # answers NoMethodError there — red for a reason that has nothing to do with the blip.
+      FileLayer.current = Class.new(SimpleDelegator) do
         def stat_all(*, **) = raise(FileLayer::FetchError, "nas down")
-      end.new
+      end.new(FileLayer.current)
 
       assert_no_enqueued_jobs(only: Maker::GeneratePreviewJob) { get model_path(model) }
       assert_response :success

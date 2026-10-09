@@ -220,15 +220,9 @@ class AddonBundleTest < ApplicationSystemTestCase
     project = user.maker_projects.create!(name: "Lamp")
     folder = project.ensure_library_folder!(user)
 
-    # THE CURRENT PROJECT IS WHAT MAKES THE DEFAULT FOLDER NON-ROOT — `AddonsController#show` reads
-    # `current_project_folder_node_id`. Set through the top-bar select the way a user does (it is
-    # session-scoped, so there is no other door from a browser), and that form is `turbo: false`,
-    # so this is a full page load rather than a soft navigation.
-    visit tools_path
-    select "Lamp", from: "project_id"
-    assert_selector ".current-project select"
-
-    visit "/tools/fixture?fname=seeded.svg" # NO `parent=` — see the header
+    # `?in=` IS WHAT MAKES THE DEFAULT FOLDER NON-ROOT
+    # (Tools::AddonsController#tool_destination_node_id, step 1).
+    visit "/tools/fixture?in=#{folder.node_id}&fname=seeded.svg" # NO `parent=` — see the header
     assert_selector "[data-role=fixture-output]", text: "pinned-ok"
 
     # The label the server resolved, before the modal is involved at all.

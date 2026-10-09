@@ -267,10 +267,12 @@
 
 - **THE PAGE LISTS THE FOLDER AND NEVER FILES OR MINTS IT.** `Maker::ProjectFolderListing` reads
   `folder_node_id`, answers liveness through the LibraryTree, and creates nothing; the one writer of the FOLDER
-  on `projects#show` is the pre-existing best-effort `ensure_library_folder!` for the upload
-  control, which runs before the listing. A file inside the folder with no attachment row is still
-  listed — the folder is the relation the panel shows; `maker_file_attachments` stays the relation
-  detach, cover and addon origin read.
+  on `projects#show` is the pre-existing best-effort `ensure_library_folder!`, which runs before the
+  listing. The top bar's Upload saves into the LISTING's folder (`FolderDestination`, set only when
+  `available?`), never into what the ensure returned, so the page shows and uploads into one
+  folder. A file inside the folder with no attachment row is still listed — the folder is the
+  relation the panel shows; `maker_file_attachments` stays the relation detach, cover and addon
+  origin read.
 
 - **`:in_working_tree` IS UNSCOPED, UNLIKE `:attached_elsewhere` — DO NOT ADD A KWARG TO IT.** A
   refusal from `#refusal_for` does not mean "refuse the attachment": `#call` returns
@@ -339,10 +341,11 @@
   project's folder to yank it out of; `node_id` never changes, so the other project's
   attachment survives. Unscoped it was **silent and permanent**: a file any second project
   also claimed sat at the root through every 15-minute sweep forever, recorded only in a
-  `skips` entry nothing but `rake projects:organize` prints. Reachable without doing
-  anything unusual — `CurrentProject#attach_addon_files_to_current_project` attaches an
-  addon's output to whatever project is **current**, regardless of which folder the save
-  dialog wrote it into. `:not_a_file` and `:model_bundle` stay unconditional: the bundle
+  `skips` entry nothing but `rake projects:organize` prints. It was reachable without doing
+  anything unusual while a current project attached an addon's output to whatever project
+  was **current**, regardless of which folder the save dialog wrote it into (retired in
+  slice 4 of the 2026-10-08 redesign); any second claim on a file at a project root still
+  reaches it. `:not_a_file` and `:model_bundle` stay unconditional: the bundle
   rule is deliberately about the ATTACHMENT rather than the folder, so it makes no claim
   about where the file currently sits and has no equivalent argument for relaxing.
 - **TWO COLLISION CHECKS, AGAINST TWO DIFFERENT FOLDERS, AND THE GAP BETWEEN THEM WAS A REAL BUG.**
@@ -413,8 +416,9 @@
 - **EVERY ADDON SAVE DOOR FIRES THE EAGER NUDGE — there is now exactly ONE**
   (`Tools::AddonsController#create`), and the concern is included on `Tools::BaseController` so a
   second inherits it. It was TWO until openscad's own door was retired. This was the last
-  browser-facing door without one: the save dialog DEFAULTS to the current project's folder,
-  so the user watched the redirect land on a file that visibly did not sort — 15 minutes on
+  browser-facing door without one: the save dialog starts where the tool last saved, mapped
+  up to its project folder, so the user watched the redirect land on a file that visibly did
+  not sort — 15 minutes on
   chunk, and on share/s3 there is no `project_folder_intake` schedule at all
   (`ProjectIntakeJob.sweep_all!` declines on a scannable backend), so it waits on
   `Library::ScanJob`'s poll. **ONE sweep per save, not one per file** (every file in a save
@@ -423,6 +427,18 @@
   `#project_intake_sentence` — the doors differ on the LEAD-IN ("Uploaded grid.svg" vs
   "Saved “X”") and must not differ on what follows — and `#unfiled_by_conflict` is its plural
   form, because a save writes a SET and the colliding output need not be the first.
+- **INTAKE IS NOW THE ONLY WAY TOOL OUTPUT REACHES A PROJECT (redesign slice 4, spec §9.3), AND
+  OUTPUT SAVED OUTSIDE EVERY PROJECT FOLDER ATTACHES TO NONE — ON PURPOSE.**
+  `attach_addon_files_to_current_project` went with the current project and nothing replaced it:
+  `Tools::AddonsController#create` attaches nothing itself. Output saved anywhere inside a project
+  folder is filed and attached by `Maker::ProjectIntake.for_node`, reached through the save door's
+  eager nudge above (`.owning_project` walks up from the output's parent, so a subfolder counts;
+  `#call` attaches the whole subtree and files only the root). Output saved outside every project
+  folder belongs to no project, and that is the answer, not a gap — where the file landed is the
+  relation, the same position-is-the-marker rule ROOT = INBOX states for filing. **Do not add an
+  attach back to the save door keyed on anything but the folder**: one keyed on session or user
+  state is the design `test/architecture_invariants_test.rb` now forbids by name, and attaching
+  regardless of folder is what made `:attached_elsewhere`'s unscoped arm reachable (above).
 - **THE SCANJOB ORDERING — INTAKE STRICTLY AFTER THE RECONCILE, SAME JOB — IS A
   CORRECTNESS CONSTRAINT, NOT A CONVENIENCE.** A move made after the Scanner has captured
   its observations gets paired back by `(content_hash, size)` — `best_pairing` working

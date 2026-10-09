@@ -1,7 +1,7 @@
 module Public
   # THE SESSIONLESS BASE. ActionController::Base, not ApplicationController: a public page never
-  # reads the session (spec §6), so it must not inherit `authenticate_user!`, `CurrentProject` or
-  # anything that would let a template branch on who is looking. The architecture guard asserts
+  # reads the session (spec §6), so it must not inherit `authenticate_user!` or anything that
+  # would let a template branch on who is looking. The architecture guard asserts
   # this superclass and greps app/controllers/public and app/views/public for session words.
   class BaseController < ActionController::Base
     layout "application"
@@ -14,9 +14,8 @@ module Public
       head :service_unavailable
     end
 
-    # The layout renders the anonymous shell for a public page EVEN FOR A SIGNED-IN OWNER: the
-    # rail's current-project switcher needs CurrentProject, which this base deliberately lacks,
-    # and "what a visitor sees" is the honest preview of a public page.
+    # The layout renders the anonymous shell for a public page EVEN FOR A SIGNED-IN OWNER, because
+    # "what a visitor sees" is the honest preview of a public page.
     def public_surface? = true
 
     private

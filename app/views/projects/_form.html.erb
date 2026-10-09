@@ -138,30 +138,6 @@
       just leaves them where you put them.</span>
   </label>
 
-  <% unless project.persisted? %>
-    <%#
-      MAKE IT CURRENT (stage 4, S4-6; story 1.2). "New project" minted the folder and then left the
-      maker's next LightBurn save going somewhere else. Default ON, because a project you just
-      created is the one you are about to work in.
-
-      `check_box_tag`, NOT `f.check_box`, and NEVER PERMITTED — #create reads it straight off
-      `params[:project]`, so project_params neither permits nor has to strip it (the cover_clear box
-      above is the same shape). There is no `make_current` attribute on
-      Maker::Project and inventing one for a form is a model change nothing else would read. It
-      emits no hidden "0" companion, which is correct here: absent means no, the box exists only on
-      `new`, and there is no stored value an unchecked box has to clear.
-
-      ON `new` ONLY. The edit page's header already carries a "Set as current" button, and an edit
-      submit that switched the current project as a side effect would be exactly the silent change
-      story 1.5 is about.
-    %>
-    <label class="field-inline">
-      <%= check_box_tag "project[make_current]", "1", true %>
-      Make this the current project
-      <span class="field-hint muted">Uploads and tool output will land here.</span>
-    </label>
-  <% end %>
-
   <div class="form-actions">
     <%= f.submit(project.persisted? ? "Save changes" : "Create project", class: "btn primary") %>
     <%= link_to "Cancel", (project.persisted? ? project_path(project) : projects_path), class: "linkbtn" %>

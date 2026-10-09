@@ -41,11 +41,9 @@ module Projects
     # verb means the same thing in each. That upload posts a `parent_node_id` of the project
     # folder, so it arrives in place and the relocate short-circuits on :already_there.
     #
-    # "ATTACHED ⇒ IN THE FOLDER" IS NOT AN INVARIANT, and must not be read as one. Two attach paths
-    # never reach this action at all: CurrentProject#attach_addon_files_to_current_project creates
-    # the row directly (a tool save DEFAULTS to the project folder, but @default_parent_node_id is
-    # a default the user can override in the file chooser), and the model importer posts to
-    # Models::AttachmentsController, which attaches to a Maker::Model and does not move. So this
+    # "ATTACHED ⇒ IN THE FOLDER" IS NOT AN INVARIANT, and must not be read as one. One attach path
+    # never reaches this action at all: the model importer, which posts to
+    # Models::AttachmentsController, attaches to a Maker::Model and does not move. So this
     # action enforces the rule for the files that pass through it; nothing enforces it
     # library-wide. Maker::AttachToProject#refusal_for holds the exceptions INSIDE it.
     def create

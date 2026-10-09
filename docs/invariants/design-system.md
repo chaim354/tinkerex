@@ -60,10 +60,15 @@ landed it (§11).
    it; `shell_layout_test.rb` pins one lit link per page. **Collapsed (or below 1100px) the project
    and pin links are hidden**, so `sidebar_family_lit?` marks their visible parent — Library for a
    pin, All projects for a project — with `.rail-family-lit`, a CLASS and not a second
-   aria-current, which shell.css draws only in the icon rail.
+   aria-current, which shell.css draws only in the icon rail. **The top bar's Upload and New ▾
+   create in `FolderDestination`'s folder, set by the action that renders a folder** and by nothing
+   else, never from session or user state (the current project it replaced is guarded out by
+   `architecture_invariants_test.rb`). A page with none asks with the folder chooser
+   (`upload_pick_controller.js`) rather than guess one.
 9. **Breadcrumbs render in the top bar through `content_for :crumbs`**, with the page title as the
    fallback; page-level actions stay in the page's `.page-head`, so the top bar carries no
-   per-page control.
+   per-page control. Its New ▾ and Upload are on every signed-in page; only their destination
+   (rule 8) and Upload's weight (rule 13) vary.
 10. **Only `.flash-stack > .flash` floats.** `projects/_tasks` renders an inline
     `p.flash-alert.task-error` and two forms render `div.form-errors.flash-alert`; they must stay
     inline, so the fixed positioning lives on the stack container, not on the class.
@@ -75,21 +80,20 @@ landed it (§11).
 ## Contracts a restyle may not break
 
 12. **Class names are a contract: restyle, never rename.** The selectors the tests pin (spec §10),
-    `main.container` / `.container-wide` (the addon host page opts in), `.current-project select`
-    (until slice 4 of the 2026-10-08 redesign retires the current project)
-    and `form[action=current_project_path] select[name=project_id]` (the current-project card keeps
-    the old switcher's form), `.flash-notice` / `.flash-alert`, and the 52 classes the addon bundles
-    in `chaim354/tinkerex-addons` build their own markup with (`addons.md`'s host contract; the
-    list is in spec §10). Fonts are self-hosted under `app/assets/fonts` with the OFL text beside
+    `main.container` / `.container-wide` (the addon host page opts in), `.flash-notice` /
+    `.flash-alert`, and the 52 classes the addon bundles in `chaim354/tinkerex-addons` build their
+    own markup with (`addons.md`'s host contract; the list is in spec §10). Fonts are self-hosted under `app/assets/fonts` with the OFL text beside
     them because `font_src` is `:self`; `@font-face` `url()`s are relative to `application.css`'s
     logical path and Propshaft fingerprints them (`shell_layout_test.rb` fetches each).
 
 13. **The accent is spent once per screen; selection is ink.** `--accent` fills the one primary
-    action and marks the current project (where that action lands); `.btn.outline` ("Set as
-    current") is the one secondary control allowed it, because it acts on that destination. Links,
-    selected chips,
-    toggles, tabs, the file-chooser selection and the active rail item use `--fg`. Status carries
-    its word, never colour alone (`.flash::before`, badge labels). Text on an accent fill is
+    action. On the Library and a project hub that is the top bar's Upload, which says where it saves;
+    everywhere else Upload is a quiet `.btn` (`FolderDestination`'s `primary`). No secondary control
+    is allowed the accent now. A project hub's second accent is its Save publishing, because the hub
+    is the one page the 2026-09-10 cohesion spec's decision 3 allows two; `accent_spend_test.rb`
+    pins every page. Links, selected chips, toggles, tabs, the file-chooser selection and the active
+    rail item use `--fg`. Status carries its word, never colour alone (`.flash::before`, badge
+    labels). Text on an accent fill is
     `--accent-ink` (near-black in the dark theme), never a literal white. `components.css` and
     `shell.css` name tokens, never colour literals (`css_hygiene_test.rb`); drawing colours stay
     literal in `pages/` (rule 5). Labels stay Plex Sans and mono stays for data (the 2026-09-10

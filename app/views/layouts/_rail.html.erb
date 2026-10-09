@@ -1,27 +1,11 @@
 <%# The places sidebar (structural redesign spec §4.1, slice 2). Still `aside.rail` with `.rail-link`s
-    — restyle and restructure, never rename (design-system.md rule 12) — and still carrying the
-    current-project card, whose form and select current_project_topbar_test, box_revisions_test and
-    addon_bundle_test pin until slice 4 retires the concept. EXACTLY ONE `.rail-link` carries
-    aria-current: ShellHelper#sidebar_current decides which. When that link is a project or a pin,
-    which the collapsed rail hides, its family link wears `rail-family-lit` (sidebar_family_lit?). %>
+    — restyle and restructure, never rename (design-system.md rule 12). EXACTLY ONE `.rail-link`
+    carries aria-current: ShellHelper#sidebar_current decides which. When that link is a project or
+    a pin, which the collapsed rail hides, its family link wears `rail-family-lit`
+    (sidebar_family_lit?). %>
 <aside class="rail" id="rail" data-controller="rail">
   <%= link_to root_path, class: "brand", "aria-label": "Tinkerex home" do %>
     <span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span>
-  <% end %>
-
-  <% choices = current_project_choices %>
-  <% if choices.any? %>
-    <%= form_with url: current_project_path, method: :patch, data: { turbo: false },
-                  class: "current-project-form" do %>
-      <label class="current-project">
-        <span class="current-project-label">Current project</span>
-        <span class="current-project-name"><%= current_project&.name || "None" %></span>
-        <span class="current-project-hint">Uploads and tool output land here</span>
-        <%= select_tag :project_id,
-              options_for_select([ [ "— none —", "" ] ] + choices, current_project&.id),
-              onchange: "this.form.requestSubmit()", "aria-label": "Switch current project" %>
-      </label>
-    <% end %>
   <% end %>
 
   <nav class="rail-nav" aria-label="Main">

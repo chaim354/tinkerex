@@ -1,8 +1,9 @@
 require "test_helper"
 
 module Web
-  # The Home page (stage 2, S2-1): the current project first, then what changed recently, then what
-  # needs attention — every section from columns that already exist, every list bounded.
+  # The Home page (stage 2, S2-1): what changed recently, then what needs attention — every section
+  # from columns that already exist, every list bounded. (Its current-project hero went with the
+  # current project in slice 4 of the 2026-10-08 redesign.)
   class HomeTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
@@ -16,59 +17,14 @@ module Web
       @user.nodes.create!(node_id: "n-#{name}", name:, kind: "file", mtime: 1_000_000_000, size: 5, updated_at: at)
     end
 
-    test "an empty account sees every section's empty sentence and a prompt to pick a project" do
+    test "an empty account sees every section's empty sentence" do
       get root_path
       assert_response :success
       assert_select ".page-head h1", text: "Home"
-      assert_select ".home-hero", text: /No current project/
       assert_select ".home-section.home-projects .empty", text: /No projects yet/
       assert_select ".home-section.home-files .empty", text: /No files yet/
       assert_select ".home-section.home-prints .empty", text: /No prints logged yet/
       assert_select ".home-section.home-attention .empty", text: /Nothing needs attention/
-    end
-
-    test "the hero shows the current project's open tasks and latest entry, and its upload control" do
-      project = @user.maker_projects.create!(name: "Desk Lamp", description: "A lamp.")
-      project.tasks.create!(user: @user, title: "Wire the LED", status: "todo", position: 0)
-      project.tasks.create!(user: @user, title: "Print the base", status: "done", position: 1)
-      project.build_log_entries.create!(user: @user, entry_type: "note", logged_at: 1.day.ago, body: "<div>Shade printed.</div>")
-      # THE HERO'S FILE COUNT IS THE FOLDER'S (Maker::ProjectFolderListing#total, the same thing
-      # projects#show's own stats line reads) — one file placed straight in the project's folder.
-      folder = project_folder_rows!(@user, project)
-      @user.nodes.create!(node_id: "n-hero-file", name: "bracket.stl", kind: "file",
-                          parent_node_id: folder.node_id, mtime: 1_000_000_000, size: 5)
-      patch current_project_path, params: { project_id: project.id }
-      get root_path
-      assert_select ".home-hero h2 a[href=?]", project_path(project), text: "Desk Lamp"
-      assert_select ".home-hero .project-stats", text: /1 file\b/
-      assert_select ".home-hero .project-stats", text: /1 of 2 tasks done/
-      assert_select ".home-hero .hero-tasks .task-row .task-state--todo", count: 1
-      assert_select ".home-hero .hero-tasks", text: /Wire the LED/
-      assert_select ".home-hero .hero-tasks", text: /Print the base/, count: 0
-      assert_select ".home-hero .hero-entry", text: /Shade printed/
-      assert_select ".home-hero .upload-btn"
-      # One redirect, two wire shapes (projects/_upload_control): the share/s3 multipart form carries
-      # it as a hidden field, the chunk_remote presigned flow as the uploader controller's value —
-      # so this assertion branches on the backend the leg runs under, as files_toolbar_test does.
-      if FileLayer.current.capabilities.port_writable?
-        assert_select ".home-hero input[type='hidden'][name='redirect_url'][value=?]", root_path
-      else
-        assert_select ".home-hero [data-uploader-redirect-url-value=?]", root_path
-      end
-    end
-
-    # THE COUNT IS THE FOLDER'S, NOT maker_file_attachments'. An attachment to a node OUTSIDE the
-    # project's folder (the Linked case) must not inflate the hero the way it no longer inflates
-    # the project page's own stats line — HomeController#index and ProjectsController#show read
-    # the identical Maker::ProjectFolderListing#total.
-    test "an attachment to a node outside the folder does not count toward the hero's files" do
-      project = @user.maker_projects.create!(name: "Desk Lamp")
-      @user.nodes.create!(node_id: "n-root", name: "loose.stl", kind: "file",
-                          mtime: 1_000_000_000, size: 5)
-      project.file_attachments.create!(user: @user, node_id: "n-root", role: "model")
-      patch current_project_path, params: { project_id: project.id }
-      get root_path
-      assert_select ".home-hero .project-stats", text: /0 files/
     end
 
     test "the recent rows are bounded and newest first" do
@@ -109,12 +65,10 @@ module Web
       assert_select ".home-attention .attention-row", text: /failed/i
     end
 
-    test "an archived project is neither the hero nor recent" do
+    test "an archived project is not recent" do
       project = @user.maker_projects.create!(name: "Old Rig")
-      patch current_project_path, params: { project_id: project.id }
       project.archive!
       get root_path
-      assert_select ".home-hero", text: /No current project/
       assert_select ".home-projects .project-name", text: "Old Rig", count: 0
     end
 
@@ -148,20 +102,6 @@ module Web
       end
       get root_path
       assert_select ".home-attention .attention-row.attention-row--warn", count: HomeController::ATTENTION_STOCK
-    end
-
-    # STAGE 4, S4-7: Home's hero says what kind of project it is holding, on the same rule the
-    # cards follow — a non-default kind only.
-    test "the current-project hero badges a typed project and says nothing for an untyped one" do
-      project = @user.maker_projects.create!(name: "Desk Lamp", kind: "electronics")
-      patch current_project_path, params: { project_id: project.id }
-
-      get root_path
-      assert_select ".home-hero .panel-head .badge.project-kind", text: "Electronics & firmware"
-
-      project.update!(kind: "other")
-      get root_path
-      assert_select ".home-hero .badge.project-kind", count: 0
     end
   end
 end

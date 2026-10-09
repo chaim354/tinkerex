@@ -1,8 +1,8 @@
 // Save an addon's output, asking first when the host says the write would REPLACE something.
 //
-// WHY THIS EXISTS. An addon save writes into a folder that defaults to the current project's, and
-// the host then files each output into a category subfolder (`design/`, `models/`, …). Re-saving
-// under the same name used to slip between two collision checks that look at different folders: the
+// WHY THIS EXISTS. An addon save often writes into a project's folder (a tool starts where it last
+// saved, mapped up to that project's folder), and the host then files each output into a category
+// subfolder (`design/`, `models/`, …). Re-saving under the same name used to slip between two collision checks that look at different folders: the
 // host's door checked the folder you picked, which is vacant because the first copy has already
 // been filed, so the save was accepted — and the sweep then could not place it, leaving a SECOND
 // copy stranded at the project root forever, silently. See tinkerex CLAUDE.md §12 item 11.

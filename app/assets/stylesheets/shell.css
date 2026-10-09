@@ -1,5 +1,5 @@
-/* The application shell (spec §5): the rail and its current-project card, the top bar, the phone
-   tab bar, the content container, the toast stack, the auth card, and the three widths. */
+/* The application shell (spec §5): the rail, the top bar, the phone tab bar, the content
+   container, the toast stack, the auth card, and the three widths. */
 @layer shell {
   body.app-shell { display: grid; grid-template-columns: var(--rail-width) minmax(0, 1fr); min-height: 100vh; }
   body.app-shell.rail--collapsed { grid-template-columns: var(--rail-collapsed-width) minmax(0, 1fr); }
@@ -29,17 +29,6 @@
   .public-header .brand-name { display: inline; }
   .public-header .public-author { color: var(--fg-muted); font-size: 12px; }
   .public-header .public-intro { margin: 0; font-size: 12px; }
-
-  .current-project-form { margin: 0; }
-  .current-project {
-    display: flex; flex-direction: column; gap: 2px; padding: 10px;
-    border-radius: var(--radius-panel); background: var(--accent-soft); border: 1px solid var(--accent);
-  }
-  /* A label, so Plex Sans: mono means data (UI-cohesion decision 4). */
-  .current-project-label { font: 600 11px/16px var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--accent-text); }
-  .current-project-name { font-size: 14px; font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .current-project-hint { font-size: 12px; line-height: 17px; color: var(--fg-muted); }
-  .current-project select { margin-top: var(--space-2); width: 100%; min-height: var(--control-height-small); padding: 2px 26px 2px 8px; font-size: 13px; }
 
   .rail-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
   .rail-link {
@@ -82,8 +71,8 @@
   /* Collapsed: icons only. The same rules apply below 1100px whatever the cookie says. */
   .rail--collapsed .rail { padding-inline: 8px; }
   .rail--collapsed .brand { justify-content: center; padding: 4px 0; }
-  .rail--collapsed .brand-name, .rail--collapsed .rail-label, .rail--collapsed .current-project,
-  .rail--collapsed .rail-user, .rail--collapsed .rail-btn span { display: none; }
+  .rail--collapsed .brand-name, .rail--collapsed .rail-label, .rail--collapsed .rail-user,
+  .rail--collapsed .rail-btn span { display: none; }
   .rail--collapsed .rail-link, .rail--collapsed .rail-btn { justify-content: center; padding-inline: 0; }
   .rail--collapsed .rail-foot form button { justify-content: center; }
   .rail--collapsed .rail-group-head, .rail--collapsed .rail-project, .rail--collapsed .rail-pin { display: none; }
@@ -111,6 +100,16 @@
      of its own; without this it wrapped to the LEFT and its right-anchored menu opened at x≈-185,
      off-screen (found in slice 2's Task 3; test/system/new_menu_test.rb measures it at 375px). */
   .topbar-new { margin-left: auto; }
+  /* THE TOP BAR'S UPLOAD (layouts/_topbar_upload.html.erb): the button, then where it saves. The
+     caption is the answer to "where will this go", so its folder is ink, not muted; below 1100px it
+     hides and the button's title carries it. */
+  .topbar-upload { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+  .topbar-upload .uploader { gap: var(--space-2); }
+  .topbar-upload-caption { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--fg-muted); }
+  .topbar-upload-caption strong { color: var(--fg); font-weight: 600; }
+  /* An author `display` beats the UA's `[hidden]`; the no-folder caption is rendered hidden until the
+     chooser fills it (upload_pick_controller.js). Same shape as components.css's `.tab-pane[hidden]`. */
+  .topbar-upload-caption[hidden] { display: none; }
   .topbar-kbd { padding: 2px 5px; border: 1px solid var(--line); border-radius: 2px; font: 500 11px/1 var(--font-mono); color: var(--fg-muted); }
 
   main.container { width: 100%; max-width: var(--container-max); margin: 0 auto; padding: var(--space-5) var(--space-5) var(--space-8); }
@@ -127,7 +126,6 @@
   .flash-stack:empty { display: none; }
 
   .tabbar { display: none; }
-  .topbar-project { display: none; }
 
   /* Signed-out pages: the auth card (Task 5 writes the markup). */
   /* QUALIFIED `main.container.auth-main`, NOT a bare `.auth-main`, and the qualifier is the whole
@@ -158,12 +156,13 @@
     body.app-shell { grid-template-columns: var(--rail-collapsed-width) minmax(0, 1fr); }
     .rail { padding-inline: 8px; }
     .brand { justify-content: center; padding: 4px 0; }
-    .brand-name, .rail-label, .current-project, .rail-user, .rail-btn span { display: none; }
+    .brand-name, .rail-label, .rail-user, .rail-btn span { display: none; }
     .rail-link, .rail-btn { justify-content: center; padding-inline: 0; }
     .rail-group-head, .rail-project, .rail-pin { display: none; }
     .rail-family-lit { color: var(--fg); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
     .rail-family-lit::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 2px 2px 0; background: var(--fg); }
     .topbar { padding: 0 16px; }
+    .topbar-upload-caption { display: none; }
     main.container { padding: 16px 16px 64px; }
   }
 
@@ -178,10 +177,15 @@
     .tabbar-link:hover { text-decoration: none; }
     .tabbar-link[aria-current="page"] { color: var(--fg); font-weight: 600; }
     .topbar { flex-wrap: wrap; gap: 6px 8px; padding: 6px 12px; }
-    .topbar-project { display: flex; align-items: center; gap: 6px; margin: 0; }
-    .topbar-project-label { font: 600 11px/16px var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--accent-text); }
-    .topbar-project select { min-height: 26px; padding: 3px 24px 3px 8px; font-size: 12px; max-width: 46vw; }
     .topbar-search { flex: 1 1 100%; min-width: 0; }
+    /* ON A PHONE THE NEW MENU SPANS THE BAR rather than hanging off New's right edge. Since slice 4
+       put Upload to New's right, a menu anchored to New opened ~14px off the left edge of a 360px
+       phone (and 1px off CI's 375px, whose Linux Chrome spends 15 of them on a scrollbar). A static
+       `.topbar-new` hands the absolutely positioned list to `.topbar`, which is sticky and therefore
+       its containing block, so the list sits under the bar between the gutters wherever New lands.
+       test/system/new_menu_test.rb measures it at 375 and 360. */
+    .topbar-new { position: static; }
+    .topbar-new .menu-list { left: 12px; right: 12px; min-width: 0; }
     .topbar-kbd { display: none; }
     main.container { padding: 12px 12px 72px; }
     .page-head h1 { font-size: 18px; }

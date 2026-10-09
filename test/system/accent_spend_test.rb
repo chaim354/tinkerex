@@ -21,27 +21,32 @@ require "application_system_test_case"
 # resolved to, in one assertion. Updating it is meant to cost a deliberate edit: accent spend
 # drifting silently across 49 PRs is why this file exists.
 #
-# WHAT IS COUNTED: elements inside `main` whose computed background-color equals the resolved
-# `--accent`, restricted to controls. The restriction is deliberate, not tidiness — `.brand-mark`
+# WHAT IS COUNTED: elements inside the top bar or `main` whose computed background-color equals the
+# resolved `--accent`, restricted to controls. The top bar joined in redesign slice 4, when Upload
+# moved there and became the Library's and the project hub's one action — a guard still reading
+# `main` alone would have seen those two pages lose their primary and reported it as `[]`. The
+# restriction is deliberate, not tidiness — `.brand-mark`
 # (the rail's 18px logo) is accent-filled and is not a control (Home's low-stock dot was the
 # second such element until the 2026-10-08 redesign moved it to `--warn`), so counting every
 # element would fail this for things decision 3 does not govern. The accent is compared against a PROBE rather than a literal
 # `rgb(240, 165, 58)`: the token has a different value in the light theme, and a literal would pin
 # this guard to one of the three theme states.
 #
-# MUTATION-CHECKED (§15) — three, each run and each restored:
-#   1. Putting `.upload-btn span` back into the `.btn.primary` group in components.css —
-#      /projects/desk-lamp renders ["Upload & attach", "Upload & attach", "Upload & attach",
-#      "Upload & attach", "Save publishing"] against the two expected. ONLY that route reddens, and
-#      the reason is worth knowing rather than guessing at: /files draws an uploader that opts IN
-#      either way, and Home's hero renders only when a current project is set, which this fixture
-#      does not do until its last three lines. The runaway is per-BUILD-LOG-ENTRY, so the project
-#      page is the only page that can show it.
+# MUTATION-CHECKED (§15) — three, each run and each restored (re-measured in redesign slice 4, when
+# Upload moved into the top bar):
+#   1. Putting `.upload-btn span` back into the `.btn.primary` group in components.css — every
+#      route except /files and /projects/desk-lamp gains an "Upload" at the head of its list (Home
+#      reports ["Upload", "New project"], /settings ["Upload"]): the top bar's QUIET Upload, on
+#      every signed-in page, turns accent. The two routes that stay green are the two where Upload
+#      opts IN either way. The build-log entries' "Upload & attach" no longer shows here even under
+#      this mutation: they sit in each entry's action menu, where `.menu-item--host .upload-btn
+#      span` resets the background — so the per-entry runaway the spec measured (seven on one page)
+#      is now held by that rule, and the fixture's entries are what would show it coming back.
 #   2. Deleting the `.btn.primary` background/border/color declarations: every route reports []
 #      against its expectation, so the FLOOR half is not decoration.
-#   3. Dropping `primary: true` from the `projects/upload_control` render in
-#      projects/_attachments.html.erb: /projects/desk-lamp reports ["Save publishing"] alone — the
-#      opt-in-forgotten case, which a ceiling could never have caught.
+#   3. Dropping `primary: true` from ProjectsController#show's `use_folder_destination`:
+#      /projects/desk-lamp reports ["Save publishing"] alone — the opt-in-forgotten case, which a
+#      ceiling could never have caught.
 class AccentSpendTest < ApplicationSystemTestCase
   setup do
     @root = use_fresh_share_library!
@@ -69,15 +74,17 @@ class AccentSpendTest < ApplicationSystemTestCase
     expected = {
       # Home's was "Files" until 2026-09-10 — a rail destination rendered as the loudest control on
       # the front door, 200px from the rail's own Files link (§2.6).
+      # Home's Upload (the top bar's) is quiet until slice 6 makes the page Recent.
       "/" => [ "New project" ],
-      "/files" => [ "Upload a file" ],
+      # The top bar's, now the Library's one action (redesign slice 4).
+      "/files" => [ "Upload" ],
       "/models" => [ "Import model" ],
       "/projects" => [ "New project" ],
       "/inventory" => [ "New item" ],
       # THE ONE PAGE DECISION 3 ALLOWS TWO, and these are the two it names: the folder this project
-      # keeps its files in, and the switch that makes the whole thing public. It rendered SEVEN with
-      # this fixture and ten with six log entries.
-      "/projects/desk-lamp" => [ "Upload & attach", "Save publishing" ],
+      # keeps its files in (now the top bar's Upload, into that folder) and the switch that makes the
+      # whole thing public. It rendered SEVEN with this fixture and ten with six log entries.
+      "/projects/desk-lamp" => [ "Upload", "Save publishing" ],
       # Pages with no action of their own spend none, and pinning [] is what keeps it that way —
       # /tools in particular is about to grow a first-run state (slice 3).
       "/settings" => [],
@@ -109,24 +116,13 @@ class AccentSpendTest < ApplicationSystemTestCase
       accent_controls
     end
     assert_equal expected, actual
-
-    # THE FILES PAGE HAS TWO UPLOADERS AND ONLY ONE RENDERS AT A TIME. With no current project it
-    # draws its own inline form; with one it renders `projects/upload_control` instead — a separate
-    # call site with its own `primary:` to forget, so it needs its own visit. `current_project_id`
-    # is the column slice 0 introduced, which `CurrentProject` reads whenever
-    # `remember_current_project?` — this user's default.
-    @user.update!(current_project_id: @project.id)
-    visit files_path
-    assert_selector "main", visible: :all
-    assert_equal [ "Upload & attach" ], accent_controls,
-                 "the Files page's current-project uploader"
   end
 
   private
 
-    # The labels of every accent-filled control inside `main`, in document order. Labels rather than
-    # a bare count so a failure says WHICH controls — a count alone sends the next reader back to
-    # the browser to find out what it was talking about.
+    # The labels of every accent-filled control inside the top bar or `main`, in document order (the
+    # bar comes first). Labels rather than a bare count so a failure says WHICH controls — a count
+    # alone sends the next reader back to the browser to find out what it was talking about.
     def accent_controls
       page.evaluate_script(<<~JS)
         (function () {
@@ -138,7 +134,8 @@ class AccentSpendTest < ApplicationSystemTestCase
 
           var sel = ['a', 'button', 'input[type=submit]', 'input[type=button]', 'summary',
                      'label.upload-btn > span']
-                      .map(function (s) { return 'main ' + s }).join(', ')
+                      .reduce(function (all, s) { return all.concat(['header.topbar ' + s, 'main ' + s]) }, [])
+                      .join(', ')
 
           return Array.prototype.slice.call(document.querySelectorAll(sel))
             .filter(function (el) { return getComputedStyle(el).backgroundColor === accent })

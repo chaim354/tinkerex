@@ -118,8 +118,6 @@
   .files-toolbar { margin-bottom: 14px; }
   .files-toolbar .ext-filter { margin: 0; }
   .files-toolbar .hidden-toggle { margin: 0; }
-  .upload-caption { margin: -6px 0 12px; font-size: 12px; }
-  .upload-caption strong { color: var(--fg); }
   /* The grid tile's second line: size and type, in mono, under the name. */
   .grid-sub { display: block; font: 400 12px/16px var(--font-mono); font-variant-numeric: tabular-nums; color: var(--fg-muted); }
   /* The file page's title row and format badge (Task 2's markup). */

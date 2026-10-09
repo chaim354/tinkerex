@@ -568,23 +568,6 @@ module Web
       end
     end
 
-    # files_query_base's doc calls itself "query params every in-page link must carry", and three
-    # links were hand-building `files_path(folder: …)` instead — so "Upload to library root
-    # instead", "Upload to project X instead" and the Rescan redirect each dumped a filtered view
-    # back at the unfiltered root. The two upload links need a current project to render at all,
-    # which is why one is set up here. (The Rescan button only exists on a scannable backend, so
-    # its half of this lives in rescan_test.rb, where the backend is pinned.)
-    test "the upload-alternative links keep the filter instead of dumping you at the root" do
-      project = @user.maker_projects.create!(name: "Desk Lamp")
-      patch current_project_path, params: { project_id: project.id }
-
-      get files_path(ext: "stl")
-      assert_select "a.upload-alt[href=?]", files_path(ext: "stl", upload: "library")
-
-      get files_path(ext: "stl", upload: "library")
-      assert_select "a.upload-alt[href=?]", files_path(ext: "stl")
-    end
-
     test "the view toggle keeps the filter" do
       get files_path(ext: "stl")
       assert_select ".view-toggle a[href=?]", files_path(ext: "stl", view: "grid")

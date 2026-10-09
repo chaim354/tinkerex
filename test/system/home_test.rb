@@ -1,15 +1,12 @@
 require "application_system_test_case"
 
-# The Home page (stage 2, S2-1), the things only a browser can see: the rail's current-project
-# <select> auto-submits through a bare `onchange="this.form.requestSubmit()"` rather than a submit
-# button (test/system/README.md's "Form-control semantics" and "Rendered-HTML -> JS contracts"
-# bullets -- an integration test can PATCH current_project directly and never prove the markup's
-# onchange attribute is what a real click-and-choose does), the hero's own upload control drives
-# the identical real multipart round trip a file-input change event triggers, and the Files row's
-# CSS containment (`overflow-x: auto`) is a rendered-layout question no request test can ask at
-# all. Content and bounded-list correctness (empty states, stats, archived-project handling) are
-# already covered at the request level in test/integration/web/home_test.rb and are deliberately
-# NOT repeated here (README: "Does not qualify -- keep these at the request level").
+# The Home page (stage 2, S2-1), the things only a browser can see: the Files row's CSS
+# containment (`overflow-x: auto`) is a rendered-layout question no request test can ask at all.
+# (The current-project hero's two browser tests — its rail select and its upload round trip — went
+# with the current project in slice 4 of the 2026-10-08 redesign.) Content and bounded-list
+# correctness (empty states, archived-project handling) are already covered at the request level in
+# test/integration/web/home_test.rb and are deliberately NOT repeated here (README: "Does not
+# qualify -- keep these at the request level").
 class HomeTest < ApplicationSystemTestCase
   setup do
     @root = use_fresh_share_library!
@@ -19,66 +16,6 @@ class HomeTest < ApplicationSystemTestCase
   teardown do
     FileLayer.reset!
     FileUtils.remove_entry(@root) if @root&.exist?
-    FileUtils.remove_entry(@attach_dir) if @attach_dir
-  end
-
-  test "sign-in lands on Home and the hero follows the current project" do
-    # sign_in_as already asserted the post-login path is "/" (root_path). No project exists yet.
-    assert_selector ".home-hero", text: /No current project/
-
-    project = @user.maker_projects.create!(name: "Desk Lamp")
-    # Created through ActiveRecord, not the browser -- the already-rendered rail's <select> has no
-    # way to learn about it without a reload.
-    visit root_path
-    select project.name, from: "project_id"
-
-    # THE SELECT HAS NO SUBMIT BUTTON -- app/views/layouts/_rail.html.erb's `onchange:
-    # "this.form.requestSubmit()"` is what turns a Capybara `select` into a real `PATCH
-    # current_project`, and `data: { turbo: false }` is what makes that a full page reload rather
-    # than a Turbo visit. Capybara's `select` dispatches a real change event (already relied on by
-    # box_revisions_test.rb's and addon_bundle_test.rb's own use of this exact rail form), so what
-    # this proves is the JS contract, not the server-side PATCH -- an integration test can drive
-    # the PATCH directly without ever touching the onchange attribute at all.
-    assert_selector ".home-hero h2", text: project.name
-    assert_no_console_errors
-  end
-
-  # MUTATION-CHECKED (see test/system/README.md): changing `redirect_url: root_path` to
-  # `redirect_url: project_path(@project)` in app/views/home/_project_hero.html.erb turns
-  # `assert_current_path root_path` red:
-  #   expected "/projects/desk-lamp" to equal "/"
-  # Reverted immediately after.
-  test "an upload from the hero returns to Home with the file in the row and the count in the stats" do
-    project = @user.maker_projects.create!(name: "Desk Lamp")
-    visit root_path
-    select project.name, from: "project_id"
-    assert_selector ".home-hero h2", text: project.name
-
-    file = Rails.root.join("test/fixtures/files/sample.txt")
-    # Copied to a Dir.mktmpdir, not attached from its own path under ~/Desktop -- macOS TCC gates
-    # that behind per-app consent a synthetic Selenium attach never satisfies (test/system/README.md;
-    # uploader_test.rb hits the identical trap on this same checkout and explains it at length).
-    @attach_dir = Dir.mktmpdir("home_test")
-    attach_path = File.join(@attach_dir, file.basename.to_s)
-    FileUtils.cp(file, attach_path)
-
-    # No locator needed: the share backend (set in setup) makes capabilities.port_writable? true,
-    # so the hero renders projects/_upload_control.html.erb's plain-multipart-form branch -- ONE
-    # `input[type=file]`, and it is the only file input anywhere on Home. make_visible: true, not a
-    # CSS-selector String (the latter silently sets nothing -- test/system/README.md).
-    attach_file(attach_path, make_visible: true)
-
-    # The form has no submit button either -- `f.file_field :file, onchange:
-    # "this.form.requestSubmit()", hidden: true` is what a real file choice submits, and
-    # `data: { turbo: false }` makes this a full page load rather than a Turbo visit.
-    #
-    # Back on "/": the hero passes `redirect_url: root_path`, so an upload from Home returns to the
-    # same URL the rail links. Home has ONE route on purpose -- a `/home` alias existed for a few
-    # commits while the page and its landing were built side by side, and left with them.
-    assert_current_path root_path
-    assert_selector ".home-hero .project-stats", text: /1 file/
-    assert_selector ".home-files .grid-card .grid-name", text: "sample.txt"
-    assert_no_console_errors
   end
 
   # MUTATION-CHECKED (see test/system/README.md): removing `overflow-x: auto` from `.tile-row` in

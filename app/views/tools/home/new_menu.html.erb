@@ -4,7 +4,7 @@
   <% if @addons.any? %>
     <div class="menu-sep" role="separator"></div>
     <% @addons.each do |addon| %>
-      <%= link_to "#{addon.title}…", tools_addon_path(addon.key), class: "menu-item" %>
+      <%= link_to "#{addon.title}…", tools_addon_path(addon.key, in: @in), class: "menu-item" %>
     <% end %>
   <% end %>
 </turbo-frame>
