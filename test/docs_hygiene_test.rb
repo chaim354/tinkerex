@@ -61,7 +61,11 @@ class DocsHygieneTest < ActiveSupport::TestCase
   # makes them findable by the mechanism every other area file uses. The file sat at EXACTLY the
   # ceiling when the arc began, so the raise is the stub's whole cost and not a line more — the
   # preamble's "Seven subsections" became "Eight" on its own line without wrapping.
-  MAX_LINES = 1_364
+  #
+  # LOWERED 1,364 -> 1,363 ON 2026-10-09 (redesign slice 7): dropping the retired current-project
+  # columns removed §14e's parenthetical about user.rb's stale comment, one line, and a ratchet banks
+  # nothing.
+  MAX_LINES = 1_363
 
   test "CLAUDE.md stays under its line ceiling" do
     lines = CLAUDE_MD.readlines.size
