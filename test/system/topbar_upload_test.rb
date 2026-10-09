@@ -35,11 +35,19 @@ class TopbarUploadSystemTest < ApplicationSystemTestCase
 
   test "on Home, Upload asks for a folder first and then saves there" do
     visit root_path
+    # THE FILE PICKER MUST OPEN FROM THE CHOOSER STEP. Headless Chrome shows no picker, so this counts
+    # the click upload_pick_controller.js dispatches on the input: none while the chooser is open (the
+    # label click is intercepted), exactly one after Choose. It proves the call, not that a real
+    # browser opens its dialog — that last link is the PR checklist manual check.
+    page.execute_script("window.__picks = 0; document.getElementById('topbar_upload_file').addEventListener('click', () => window.__picks++)")
     find("header.topbar .topbar-upload label.upload-btn").click
     assert_selector ".filechooser-overlay"
+    assert_equal 0, page.evaluate_script("window.__picks"), "the file picker opened before a folder was chosen"
     find(".filechooser-row", text: "cad").click
     click_on "Choose"
     assert_selector "header.topbar .topbar-upload-caption", text: "Saves to /cad"
+    # After the caption, which the same callback writes just before it clicks — so no race.
+    assert_equal 1, page.evaluate_script("window.__picks"), "choosing a folder did not open the file picker"
     assert_equal @cad.node_id, find("header.topbar .topbar-upload input[name='parent_node_id']", visible: :all).value
 
     attach_file("topbar_upload_file", @sample.to_s, make_visible: true)
