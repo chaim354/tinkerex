@@ -1,0 +1,40 @@
+<%# locals: (info:, addon_origin:, library_path:) %>
+<%# A FILE'S FACTS, SHARED BY THE FILE PAGE AND THE LIBRARY'S INSPECTOR (structural redesign
+    slice 3) — extracted from files/show.html.erb so the two cannot drift. Not one of the eight
+    viewer partials: both callers are session-authed, so `capabilities` below is the controller's
+    helper_method as it always was. %>
+<dl class="meta">
+  <dt>Name</dt><dd><%= info.name %></dd>
+  <dt>Size</dt><dd><%= info.content_token ? number_to_human_size(info.size) : "—" %></dd>
+  <dt>Type</dt><dd class="mono"><%= Marcel::MimeType.for(name: info.name) %></dd>
+  <%# WHICH saved item, and WHICH revision of it — the button above says only "Edit in X". The
+      revision number is the state's own counter (Maker::AddonState#revision, 1 for a state that has
+      never been revised), NOT a library version: on share and s3 there are no Version rows at all,
+      so this row is the one piece of history those deployments can show. %>
+  <% if addon_origin %>
+    <dt>Saved item</dt>
+    <dd><%= link_to addon_origin[:state].name, addon_origin[:url] %>
+        <span class="muted">· v<%= addon_origin[:state].revision %></span></dd>
+  <% end %>
+  <% if capabilities.versioned? %>
+    <dt>Current version</dt><dd class="mono"><%= info.content_token || "—" %></dd>
+  <% end %>
+  <%# FileInfo#mtime is unix NANOSECONDS, the same convention as the nodes column this replaced.
+      Reading it as seconds is the nanos-overflow bug this codebase has shipped twice. %>
+  <dt>Modified</dt><dd><%= info.mtime ? Time.at(info.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M:%S") : "—" %></dd>
+  <%# WHERE IT IS, AND A BUTTON THAT PUTS IT ON THE CLIPBOARD (stage 4, S4-3; story 2.10). The
+      path is root-relative on purpose — see FilesController#library_path_for. `dl.meta dd` is
+      already mono (components.css), so the value needs no class of its own for its font;
+      `.file-path-value` is what the copy fallback selects when the clipboard API is unavailable,
+      which is the ordinary case on a self-hosted plain-http box.
+
+      LAST IN THE LIST, because it is the longest value here and the four-column layout above 900px
+      pairs rows: a wrapping path at the end of the grid disturbs nothing above it. %>
+  <% if library_path %>
+    <dt>Path</dt>
+    <dd class="file-path" data-controller="copy" data-copy-text-value="<%= library_path %>">
+      <span class="file-path-value" data-copy-target="source"><%= library_path %></span>
+      <button type="button" class="linkbtn" data-action="copy#copy">Copy</button>
+    </dd>
+  <% end %>
+</dl>

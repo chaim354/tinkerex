@@ -670,3 +670,38 @@ never a write guard — and it hides the **entry**, not its descendants, the sam
 Both scopes go on `FilesController#index`'s `scope =` assignment, **not** the `.order` chain —
 `@match_count`/`@child_count` read the same object, so one line lower the truncation banner and the
 pager count rows the page never renders.
+
+## The inspector is ONE node's frame, and it must stay that
+
+`FilesController#inspector` (structural redesign, slice 3) is the Library's right-hand panel for one
+selected file: a Turbo Frame body rendered **without the layout**, built from `files/_meta` and
+`files/_attach` — the SAME partials the file page renders, so the two cannot drift. Six rules:
+
+- **Constant in N.** It reads one node, its stat, its current thumbnail, its attach choices, a note
+  COUNT, its addon origin and its library path. `page_query_budget_test.rb` asserts it does not grow
+  with the file's notes or projects. A per-row query here is paid on every selection.
+- **`current_thumbnail`, never `Enqueue.call`.** The panel is opened again and again; `call` resets a
+  `failed` render (the S4-5 asymmetry above), so a direct call would re-queue a broken render on
+  every click. `inspector_test.rb` seeds a `failed` row and asserts nothing is queued.
+- **Swap mode, never reload mode.** Its `thumbs` controller carries no `reload` value. A reload-mode
+  controller here would reload the WHOLE Files page when the render lands; the file page's preview
+  row is the one surface that owns reload mode.
+- **`target="_top"`.** Open, a project link and every form's redirect replace the Library, never just
+  the panel. The Files page's own `turbo_frame_tag` carries it (Turbo does not copy the response
+  frame's target onto the page's frame).
+- **A missing node answers a frame, never the controller's redirect.** `rescue_from` sends HTML to
+  `files_path`, which inside a frame loads the whole Library into the panel. A folder, a tombstone,
+  another user's node, a bogus id and a node that vanishes between lookup and `stat` all answer
+  `files/inspector_gone` with 404. **Never fold `FetchError` into that rescue**: an unmounted share is
+  "couldn't reach", not "gone" (§14a), so if an adapter's `stat` ever starts raising it, it gets its
+  own frame with a 503. No adapter's `stat` raises it today (it is a database read of the node).
+- **The tiles stay links.** Selection (`selection_controller.js`) intercepts only a plain click; every
+  tile keeps `href=file_path`, which the file menu's Open, a modifier click, Enter and no-JavaScript
+  all rely on.
+
+**`PHOTO_EXTS` is a DISPLAY subset of the image role, not a second vocabulary.** `jpg jpeg heic heif`
+— what a camera writes — get `.thumb.photo` (cropped to fill, on `--photo-stage`); PNG, GIF, WebP,
+BMP and TIFF keep `contain`, being more often screenshots, renders and scans. The ROLE stays `image`
+for all ten (`ROLE_BY_EXT`), and `file_attachment_test.rb` asserts `PHOTO_EXTS` is a subset of
+`IMAGE_EXTS`, so adding an extension still happens in `ROLE_BY_EXT` alone.
+

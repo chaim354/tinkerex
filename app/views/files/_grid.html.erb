@@ -24,11 +24,14 @@
           the bytes without opening the file first — a card has no row-actions cell. The folder
           branch above calls #folder_menu_data instead, whose one url is the delete one, so none of
           this reaches a directory. See the fuller note in _list.html.erb and the argument in
-          files_helper.rb. %>
-      <%= link_to file_path(node.node_id), class: "grid-card file-cell",
-                  data: thumb_cell_data(node.node_id, ext_label)
-                          .merge(file_menu_data(node.node_id, node.name, @addon_origins[node.node_id])) do %>
-        <%= render "thumb", thumb:, ext_label:, url: preview_src(thumb) %>
+          files_helper.rb.
+
+          A FILE CARD IS A SELECTION ITEM (FilesHelper#with_selection) and stays a link to its page;
+          `photo:` crops a camera format to fill the stage (Maker::FileAttachment.photo?). %>
+      <%= link_to file_path(node.node_id), class: [ "grid-card file-cell", ("is-selected" if node.node_id == @selected) ],
+                  data: with_selection(thumb_cell_data(node.node_id, ext_label)
+                          .merge(file_menu_data(node.node_id, node.name, @addon_origins[node.node_id])), node.node_id) do %>
+        <%= render "thumb", thumb:, ext_label:, url: preview_src(thumb), photo: Maker::FileAttachment.photo?(node.name) %>
         <span class="grid-name"><%= node.name %></span>
         <span class="grid-sub"><%= [ (info.content_token ? number_to_human_size(info.size) : nil), File.extname(node.name).delete(".").upcase.presence ].compact.join(" · ") %></span>
         <%= render "note_badge", count: @note_counts[node.node_id] %>
@@ -36,8 +39,8 @@
     <% else %>
       <%# The non-renderable card: a menu, but no poll cell — nothing will ever render a thumbnail
           for it, so a cell here would be a spinner the poll cannot resolve. %>
-      <%= link_to file_path(node.node_id), class: "grid-card",
-                  data: file_menu_data(node.node_id, node.name, @addon_origins[node.node_id]) do %>
+      <%= link_to file_path(node.node_id), class: [ "grid-card", ("is-selected" if node.node_id == @selected) ],
+                  data: with_selection(file_menu_data(node.node_id, node.name, @addon_origins[node.node_id]), node.node_id) do %>
         <span class="thumb generic-thumb" aria-hidden="true"><%= ext_label.presence || "FILE" %></span>
         <span class="grid-name"><%= node.name %></span>
         <span class="grid-sub"><%= [ (info.content_token ? number_to_human_size(info.size) : nil), File.extname(node.name).delete(".").upcase.presence ].compact.join(" · ") %></span>

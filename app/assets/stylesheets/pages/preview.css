@@ -372,4 +372,32 @@
   .meta .file-path-value { min-width: 0; overflow-wrap: anywhere; }
   .meta .file-path .linkbtn { flex: 0 0 auto; }
   /* ---- END OF S4-3 TASK C's ADDITIONS. Task D (Save to library) appends below. ---- */
+
+  /* THE WORKSPACE (structural redesign §5.3, slice 3): the viewer takes the main column and the
+     file's facts sit beside it from 1280px; below that they stack under the viewer. NOT
+     COLLAPSIBLE: the 3D, Gerber and Measure viewers measure their container when they are built
+     (files-preview.md, "`--ready` means the viewer is open"), so a column that changes width after
+     load would need a resize contract with each of them.
+
+     The side column's own grid gap spaces its blocks, so the margins they carry on their own
+     (dl.meta's bottom, .attach-to-project's, .notes-panel's and .connections-panel's tops) are
+     zeroed here rather than added to it. */
+  .workspace { display: grid; gap: var(--space-5); grid-template-columns: minmax(0, 1fr); }
+  .workspace-side { display: grid; gap: var(--space-4); align-content: start; min-width: 0; }
+  .workspace-side dl.meta { margin: 0; }
+  .workspace-side .attach-to-project,
+  .workspace-side .notes-panel,
+  .workspace-side .connections-panel { margin-top: 0; }
+  @media (min-width: 1280px) {
+    .workspace { grid-template-columns: minmax(0, 1fr) 340px; }
+    /* `align-self: start` IS WHAT LETS STICKY WORK AT ALL: a grid item stretches to its row by
+       default, and an element as tall as its containing block has nowhere to stick. A side column
+       taller than the window and shorter than the viewer scrolls its foot into view as the main
+       column ends, the ordinary sticky-sidebar trade. */
+    .workspace-side { position: sticky; top: calc(var(--topbar-height) + var(--space-4)); align-self: start; }
+    /* dl.meta's four-column layout (components.css) keys on a 900px VIEWPORT, which a 340px column
+       is not; two columns here. Stacked below 1280px the side column is the full width again and
+       the component's own rule is right, so this override lives only at this width. */
+    .workspace-side dl.meta { grid-template-columns: max-content minmax(0, 1fr); }
+  }
 }

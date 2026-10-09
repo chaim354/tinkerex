@@ -270,6 +270,21 @@
   </form>
 </div>
 
+<%# THE LIBRARY AND ITS INSPECTOR (structural redesign spec §5.1–5.2, slice 3). A plain click on a
+    file tile SELECTS it (selection_controller.js): `.is-selected` on the tile, `?selected=` in the
+    URL, and the inspector frame below loads that one file's panel (FilesController#inspector).
+    Every tile stays a link to its page, so a double-click, Enter, a modifier click, the file menu's
+    Open and no-JavaScript all still open the page. The server reads `?selected=` too (@selected,
+    a file in THIS listing or nil), so a reload, Back or a shared link restores the panel.
+
+    THE ASIDE ALWAYS RENDERS, empty and hidden until something is selected, so the controller always
+    has a frame to point at. `src` is absent, not blank, when nothing is selected: turbo_frame_tag
+    compacts a nil src away, and a frame with no src fetches nothing. The `__ID__` placeholder is
+    the controller's to fill, so the one inspector URL is built here by the route helper and never
+    spelled out in JavaScript. %>
+<div class="library<%= " has-inspector" if @selected %>" data-controller="selection"
+     data-selection-inspector-url-value="<%= inspector_file_path("__ID__") %>">
+  <div class="library-main">
 <% if @truncated %>
   <p class="truncated">
     Showing the first <%= number_with_delimiter(@nodes.size) %> of
@@ -323,3 +338,15 @@
 <% else %>
   <%= render "list" %>
 <% end %>
+  </div>
+  <aside class="inspector" aria-label="Selected file">
+    <%# A LINK, NOT A BUTTON: with JavaScript off the frame never loads, and a ?selected= page (the
+        file page's folder crumb carries one) would otherwise show an empty panel whose only control
+        does nothing — on a phone a sheet over the listing. With the controller, close prevents it. %>
+    <%= link_to "×", files_path(request.query_parameters.except("selected")),
+                class: "btn small icon inspector-close", data: { action: "selection#close" },
+                aria: { label: "Close the inspector" } %>
+    <%= turbo_frame_tag "inspector", src: (@selected && inspector_file_path(@selected)),
+                        target: "_top", data: { selection_target: "frame" } %>
+  </aside>
+</div>

@@ -8,6 +8,41 @@
   .files-grid .thumb { width: 100%; height: auto; aspect-ratio: 1 / 1; }
   .hidden-toggle { margin: 0 0 10px; font-size: 12px; }
 
+  /* THE LIBRARY AND ITS INSPECTOR (structural redesign §5.1–5.2, slice 3). Hidden until a file is
+     selected (`.has-inspector`, written by the server for `?selected=` and by selection_controller).
+     Docked beside the listing at 1100px and up; sliding over it from 720px; a full-screen sheet on a
+     phone. The two narrow forms are `position: fixed` and pinned by `left`/`right`, never sized in
+     `vw` — a 100vw box is wider than the page whenever a scrollbar takes room, which is a sideways
+     scroll at 375px (design-system.md rule 11). Selection is INK, never the accent (rule 13). */
+  .library { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
+  .inspector { display: none; padding: var(--space-4); background: var(--surface);
+               border: 1px solid var(--line); border-radius: var(--radius-panel); min-width: 0; }
+  .library.has-inspector .inspector { display: block; }
+  .inspector-close { float: right; margin: 0 0 var(--space-2) var(--space-2); }
+  .inspector-head { margin-bottom: var(--space-3); }
+  .inspector-head .eyebrow { display: block; font: 600 11px/16px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-muted); }
+  .inspector-name { margin: 0; font-size: 16px; line-height: 22px; overflow-wrap: anywhere; }
+  .inspector-stage .thumb { width: 100%; height: auto; aspect-ratio: 1 / 1; }
+  .inspector-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-3) 0; }
+  .inspector dl.meta { grid-template-columns: max-content minmax(0, 1fr); overflow-wrap: anywhere; }
+  .inspector .attach-form { flex-wrap: wrap; }
+  .inspector .attach-form select { max-width: 100%; min-width: 0; }
+  .inspector-origin, .inspector-notes { margin: var(--space-3) 0 0; font-size: 13px; }
+  .grid-card.is-selected .thumb { border-color: var(--fg); box-shadow: 0 0 0 1px var(--fg); }
+  table.files tr:has(.is-selected) { background: var(--raised); }
+  @media (min-width: 1100px) {
+    .library.has-inspector { grid-template-columns: minmax(0, 1fr) 300px; }
+    .inspector { position: sticky; top: calc(var(--topbar-height) + var(--space-4)); align-self: start;
+                 max-height: calc(100vh - var(--topbar-height) - var(--space-6)); overflow-y: auto; }
+  }
+  @media (max-width: 1099px) {
+    .inspector { position: fixed; z-index: 40; top: var(--topbar-height); right: 0; bottom: 0;
+                 width: 340px; max-width: 100%; overflow-y: auto; border-radius: 0; box-shadow: var(--shadow-float); }
+  }
+  @media (max-width: 719px) {
+    .inspector { top: 0; left: 0; width: auto; max-width: none; bottom: var(--tabbar-height); z-index: 50; }
+  }
+
   /* MIGRATED VERBATIM (old application.css 639-657): .ext-filter, .ext-picker, .ext-picker label,
      .ext-picker select, .ext-picker select:disabled, .ext-active, .ext-filter .chip,
      .ext-filter .chip:hover, .ext-filter .chip.active, .ext-filter .chip .chip-x,

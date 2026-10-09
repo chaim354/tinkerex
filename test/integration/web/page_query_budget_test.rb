@@ -1071,6 +1071,28 @@ module Web
                               "files#show (connections)")
     end
 
+    # THE INSPECTOR IS ONE NODE'S PANEL, so it must not grow with the file's notes or its projects —
+    # it is fetched on every selection (structural redesign slice 3). Notes are COUNTED, never
+    # loaded; the attach chips come off one eager-loaded query (FilesController#attach_choices_for).
+    #
+    # `node!`, not `nodes.create!`, for this class's usual reason: without a content token the
+    # panel's thumbnail lookup never runs, and an N+1 in it would be invisible. Constancy, never a
+    # literal (this class's header).
+    test "the inspector does not grow with notes or attached projects" do
+      file = node!("panel", "panel.stl")
+      add = lambda do |prefix, count|
+        count.times do |i|
+          @user.maker_notes.create!(node_id: file.node_id, body: "note #{prefix}#{i}")
+          project = @user.maker_projects.create!(name: "P#{prefix}#{i}")
+          project.file_attachments.create!(user: @user, node_id: file.node_id, role: "model")
+        end
+      end
+      assert_constant_queries(inspector_file_path(file.node_id),
+                              -> { add.call("is", SMALL) },
+                              -> { add.call("il", LARGE - SMALL) },
+                              "files#inspector")
+    end
+
     # THE REVERSE LOOKUP MUST NOT BE PER ROW. `Maker::AddonOrigin.for` resolves a whole page at a
     # fixed cost; written as a per-node (or per-state) lookup it is invisible on a three-file fixture
     # and fatal on a real library, which has never had pagination in flat mode and was measured at

@@ -199,6 +199,17 @@ module Maker
       INLINE_IMAGE_EXTS.include?(File.extname(name.to_s).downcase.delete("."))
     end
 
+    # PHOTO_EXTS — the image formats a CAMERA writes. A tile of one is cropped to fill its stage
+    # (`.thumb.photo`); PNG, GIF, WebP, BMP and TIFF keep `contain`, being more often screenshots,
+    # renders or scans, where a crop cuts off the point. A DISPLAY choice only: the role stays
+    # "image" for all ten (ROLE_BY_EXT), and this list must stay a subset of IMAGE_EXTS
+    # (file_attachment_test.rb). Structural redesign slice 3; slice 1 styled `.thumb.photo`.
+    # A LITERAL, NOT AN INTERSECTION: `IMAGE_EXTS & %w[...]` is a subset by construction, so the
+    # subset test could never fail and a typo would vanish silently (found in review).
+    PHOTO_EXTS = %w[jpg jpeg heic heif].freeze
+
+    def self.photo?(name) = PHOTO_EXTS.include?(File.extname(name.to_s).delete(".").downcase)
+
     # EVERY EXTENSION THE 3D VIEWER CAN OPEN — the ONE list, read by BOTH doors that offer it
     # (`FilesController#preview_kind`'s `:model3d` branch and `ModelsController#show`'s hero
     # switcher). Each controller carried its own copy of `%w[stl 3mf obj]` until 2026-09-06, which

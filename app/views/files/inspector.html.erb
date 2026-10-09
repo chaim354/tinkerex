@@ -1,0 +1,52 @@
+<%# THE INSPECTOR (structural redesign spec §5.2, slice 3): the Library's right-hand panel for one
+    selected file, loaded into the `inspector` frame on files/index.html.erb. `target="_top"` so
+    Open, a project link and every form's redirect replace the Library, never just this panel.
+
+    THE PREVIEW POLLS IN SWAP MODE (no reload value): a reload-mode thumbs controller here would
+    reload the whole Files page when the render lands. files/show.html.erb's preview row owns
+    reload mode. %>
+<% addon_origin = @addon_origins[@node.node_id] %>
+<% ext = File.extname(@node.name).delete(".").upcase %>
+<turbo-frame id="inspector" target="_top">
+  <div class="inspector-head">
+    <span class="eyebrow"><%= ext.present? ? "#{ext} file" : "File" %></span>
+    <h2 class="inspector-name"><%= @node.name %></h2>
+  </div>
+
+  <div class="inspector-stage" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+    <% if Maker::FileAttachment.inline_image?(@node.name) %>
+      <span class="thumb<%= " photo" if Maker::FileAttachment.photo?(@node.name) %>"><img src="<%= blob_file_path(@node.node_id) %>" alt=""></span>
+    <% elsif Maker::Previews::Registry.for_filename(@node.name).present? %>
+      <%= tag.span class: "file-cell", data: thumb_cell_data(@node.node_id, ext.first(4)) do %>
+        <%= render "files/thumb", thumb: @thumbnail, ext_label: ext.first(4), url: preview_src(@thumbnail),
+                                  photo: Maker::FileAttachment.photo?(@node.name) %>
+      <% end %>
+    <% else %>
+      <span class="thumb generic-thumb" aria-hidden="true"><%= ext.first(4).presence || "FILE" %></span>
+    <% end %>
+  </div>
+
+  <div class="inspector-actions">
+    <%= link_to "Open", file_path(@node.node_id), class: "btn small" %>
+    <%= link_to "Download", blob_file_path(@node.node_id, download: 1), class: "btn small", data: { turbo: false } %>
+    <%= button_to "Delete", file_path(@node.node_id), method: :delete, class: "btn small danger",
+          form: { data: { turbo_confirm: "Delete #{@node.name}?" } } %>
+  </div>
+
+  <%= render "files/meta", info: @info, addon_origin: addon_origin, library_path: @library_path %>
+
+  <% if addon_origin %>
+    <p class="inspector-origin">
+      <span class="group-head">Made with</span>
+      <%= link_to addon_origin[:label], addon_origin[:url] %>
+    </p>
+  <% end %>
+
+  <%= render "files/attach", node: @node, attached_projects: @attached_projects, projects: @projects,
+                             return_to: "library" %>
+
+  <p class="inspector-notes">
+    <%= link_to pluralize(@note_count, "note"), file_path(@node.node_id, anchor: "notes") %>
+    · <%= link_to "Add a note", file_path(@node.node_id, anchor: "notes") %>
+  </p>
+</turbo-frame>

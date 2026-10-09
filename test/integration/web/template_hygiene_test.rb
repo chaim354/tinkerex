@@ -83,10 +83,18 @@ module Web
     # share one. What is different is that its rendered output IS swept, by a test that already has
     # that fixture: RepoHistoryFlowTest#"the repository page lists commits and is reachable from the
     # file page" drives the real page and asserts its body carries neither ERB delimiter. That is
-    # the standing check the paragraph above calls for and repo_commits still owes — TWO ENTRIES,
-    # NOT A `repo_` PREFIX or a directory: an escape hatch wide enough to cover a template nobody
-    # checked is the vacuous shape this file exists to refuse.
-    UNSWEPT_TEMPLATES = %w[repo_commits/show.html.erb repo_histories/show.html.erb].freeze
+    # the standing check the paragraph above calls for and repo_commits still owes — ENTRIES, NOT A
+    # `repo_` PREFIX or a directory: an escape hatch wide enough to cover a template nobody checked
+    # is the vacuous shape this file exists to refuse.
+    #
+    # `files/inspector_gone.html.erb` IS THE THIRD, FOR A DIFFERENT REASON AND WITH ITS DEBT PAID
+    # THE SAME WAY. It is reachable on every leg, but only as a 404 (FilesController#inspector's
+    # answer for a node that is not a live file), and every sweep below asserts :success. Its
+    # rendered output is checked by InspectorTest#"a folder, a tombstone or another user's file
+    # answers a gone frame, not a page", which asserts its body carries neither ERB delimiter.
+    UNSWEPT_TEMPLATES = %w[
+      repo_commits/show.html.erb repo_histories/show.html.erb files/inspector_gone.html.erb
+    ].freeze
 
     setup do
       # HERMETIC BY FIXTURE (§14c): the addon pages below read `test/fixtures/addons`, never the
@@ -437,6 +445,11 @@ module Web
         "file detail (pdf)" => file_path("n-pdf"),
         "file detail (gerber)" => file_path("n-pcb-0"),
         "file detail (other)" => file_path("n-other"),
+        # Structural redesign slice 3: the Library's inspector frame, a fragment swept like a page
+        # so a comment leak in it would show. `n-stl` is attached to @project and renderable, so
+        # the frame reaches the attach chips and the thumbnail cell. Its 404 sibling,
+        # files/inspector_gone, is in UNSWEPT_TEMPLATES — this sweep asserts :success.
+        "file inspector" => inspector_file_path("n-stl"),
         # 2026-09-10: the "New text file" door's own form (Files::TextFilesController#new). Its
         # comment quotes `f.text_field` and `fields_for`, which is the §14d shape this file exists
         # for, and no other page renders it.
