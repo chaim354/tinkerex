@@ -199,6 +199,10 @@ module Tools
       # rebuilt (§14c) — so it answers both until the addons repo says otherwise.
       @folders = folder_options
       @default_folder_label = folder_path_label(@default_parent_node_id)
+      # The top bar's Upload starts where this tool's save starts, so the two agree on the page.
+      # `path_for` answers "" for the root and nil for a broken chain; `.to_s` (inside
+      # use_folder_destination) folds the second into the root caption.
+      use_folder_destination(@default_parent_node_id, path: library_tree.path_for(@default_parent_node_id))
       @service_url = service_base_url
       @ctx = addon_ctx
     end

@@ -1,0 +1,72 @@
+<%# THE TOP BAR'S UPLOAD (structural redesign spec §4.2 and §8, slice 4). It uploads into the folder
+    the page shows (FolderDestination, set by that page's action) and says which.
+
+    ONE BUTTON, TWO FLOWS — the Files page's own, moved here unchanged. `port_writable?` picks WHICH
+    DOOR the bytes go in (CLAUDE.md §14a — it is not "can this deployment upload"; rendering the
+    wrong one ships a button whose door answers 501), and both carry the destination as the
+    `parent_node_id` the doors already accept.
+
+    A PAGE WITH NO FOLDER (Home, Tools, Settings, Search) asks with the library's folder chooser
+    before the file picker opens (upload_pick_controller.js), and never guesses one. Its targets are
+    the two places the two flows read their destination from: the form's hidden field, or the chunk
+    uploader's own parent value.
+
+    `primary` only where Upload IS the screen's one action (design-system.md rule 13): the Library and
+    the project hub. The caption hides below 1100px, so the button's title carries it there. %>
+<% dest = folder_destination %>
+<% parent_value = dest ? dest.node_id.to_s : "" %>
+<% btn_class = dest&.primary ? "upload-btn primary" : "upload-btn" %>
+<% btn_title = dest ? "Saves to #{dest.caption}" : "Choose a folder, then files" %>
+<% pick = dest.nil? %>
+<%= tag.div class: "topbar-upload",
+            data: (pick ? { controller: "upload-pick",
+                            upload_pick_children_url_value: library_children_path,
+                            upload_pick_create_url_value: library_folders_path } : {}) do %>
+  <% if capabilities.port_writable? %>
+    <%# Share/S3: no chunk store to presign into, so the bytes come up in one multipart POST. %>
+    <%= form_with url: files_path, method: :post, class: "uploader",
+                  data: { turbo: false }, html: { multipart: true } do |f| %>
+      <%= hidden_field_tag :parent_node_id, parent_value, id: nil,
+                           data: (pick ? { upload_pick_target: "parent" } : {}) %>
+      <%= tag.label class: btn_class, title: btn_title,
+                    data: (pick ? { action: "click->upload-pick#pick" } : {}) do %>
+        <%# `include_hidden: false` IS LOAD-BEARING. `f.file_field` with `multiple: true` renders a
+            companion `<input name="file[]" type="hidden" value="">` so an empty selection still
+            submits the key, which put a bare "" at the head of `params[:file]`, and the server
+            called `original_filename` on a String and 500'd. Nothing needs that marker here: the
+            field's own `onchange` is the only thing that submits this form, so it never fires with
+            an empty selection. Found by uploading four real files through the real form; the
+            Rack::Test suites POSTed a Ruby array and never sent the marker at all, which is §14d's
+            "assert the rendered field name" with a different attribute (upload_batch_test.rb). %>
+        <%= f.file_field :file, multiple: true, include_hidden: false, id: "topbar_upload_file",
+                         onchange: "this.form.requestSubmit()", hidden: true,
+                         data: (pick ? { upload_pick_target: "input" } : {}) %>
+        <span>Upload</span>
+      <% end %>
+    <% end %>
+  <% else %>
+    <%# Chunk: the browser hashes, we presign the missing chunks, the browser PUTs them (§15). The
+        section is built with `tag.section` so its optional `uploader` target is an attribute the
+        builder writes, never a string spliced into an open tag. %>
+    <%= tag.section class: "uploader",
+                    data: { controller: "uploader",
+                            uploader_begin_url_value: begin_upload_files_path,
+                            uploader_finalize_url_value: finalize_upload_files_path,
+                            uploader_parent_node_id_value: parent_value,
+                            upload_pick_target: ("uploader" if pick) } do %>
+      <%= tag.label class: btn_class, title: btn_title,
+                    data: (pick ? { action: "click->upload-pick#pick" } : {}) do %>
+        <%= tag.input type: "file", multiple: true, id: "topbar_upload_file", hidden: true,
+                      data: { uploader_target: "input", action: "uploader#upload",
+                              upload_pick_target: ("input" if pick) } %>
+        <span>Upload</span>
+      <% end %>
+      <span class="upload-status" data-uploader-target="status"></span>
+    <% end %>
+  <% end %>
+  <% if dest %>
+    <span class="topbar-upload-caption">Saves to <strong><%= dest.caption %></strong></span>
+  <% else %>
+    <span class="topbar-upload-caption" data-upload-pick-target="caption" hidden></span>
+  <% end %>
+<% end %>

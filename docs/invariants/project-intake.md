@@ -267,10 +267,12 @@
 
 - **THE PAGE LISTS THE FOLDER AND NEVER FILES OR MINTS IT.** `Maker::ProjectFolderListing` reads
   `folder_node_id`, answers liveness through the LibraryTree, and creates nothing; the one writer of the FOLDER
-  on `projects#show` is the pre-existing best-effort `ensure_library_folder!` for the upload
-  control, which runs before the listing. A file inside the folder with no attachment row is still
-  listed — the folder is the relation the panel shows; `maker_file_attachments` stays the relation
-  detach, cover and addon origin read.
+  on `projects#show` is the pre-existing best-effort `ensure_library_folder!`, which runs before the
+  listing. The top bar's Upload saves into the LISTING's folder (`FolderDestination`, set only when
+  `available?`), never into what the ensure returned, so the page shows and uploads into one
+  folder. A file inside the folder with no attachment row is still listed — the folder is the
+  relation the panel shows; `maker_file_attachments` stays the relation detach, cover and addon
+  origin read.
 
 - **`:in_working_tree` IS UNSCOPED, UNLIKE `:attached_elsewhere` — DO NOT ADD A KWARG TO IT.** A
   refusal from `#refusal_for` does not mean "refuse the attachment": `#call` returns

@@ -24,9 +24,11 @@
   </nav>
 <% end %>
 
-<%# THE PAGE HEAD HOLDS THE ONE PRIMARY ACTION (spec §8): Upload, in whichever of its two flows
-    this deployment has. The rest of what used to stack above the list — rescan, the folder's own
-    actions — is an overflow menu, rendered only when it would have an item. %>
+<%# THE PAGE'S ONE PRIMARY ACTION IS UPLOAD, AND IT LIVES IN THE TOP BAR (structural redesign
+    slice 4; layouts/_topbar_upload.html.erb), which uploads into this folder — FilesController#index
+    hands it the validated @folder through FolderDestination, as `primary`. The page head keeps the
+    quiet New text file and an overflow menu for the rest of what used to stack above the list —
+    rescan, the folder's own actions — rendered only when it would have an item. %>
 <% adoptable_folder = @folder && @folder_project.nil? &&
                       Maker::ProjectDiscovery.adoptable_name?(@folder.name) &&
                       !(@folder.parent_node_id.nil? && @folder.name == Maker::ProjectFolders::ROOT) %>
@@ -42,54 +44,16 @@
 <div class="page-head">
   <h1>Files</h1>
   <div class="page-actions">
-    <% if capabilities.port_writable? %>
-      <%#
-        ONE BUTTON, TWO FLOWS -- and this branch is why `port_writable` exists. It does NOT ask
-        "can this deployment accept uploads": both of these upload. It asks WHICH DOOR the bytes
-        go in, and the answer is the deployment's, not the user's. Rendering the wrong form is not
-        a cosmetic bug: the JS uploader would drive begin_upload, which FilesController answers 501
-        on a share/s3 library, so the button would simply fail.
-
-        Share/S3: no chunk store to presign into, so the bytes come up in one multipart POST.
-      %>
-      <%= form_with url: files_path, method: :post, class: "uploader",
-                    data: { turbo: false }, html: { multipart: true } do |f| %>
-        <label class="upload-btn primary">
-          <%# `include_hidden: false` IS LOAD-BEARING. `f.file_field` with `multiple: true` renders a
-              companion `<input name="file[]" type="hidden" value="">` so an empty selection still
-              submits the key — which put a bare "" at the head of `params[:file]`, and the server
-              called `original_filename` on a String and 500'd. Nothing needs that marker here: the
-              field's own `onchange` is the only thing that submits this form, so it never fires with
-              an empty selection. Found by uploading four real files through the real form; the
-              Rack::Test suites POSTed a Ruby array and never sent the marker at all, which is §14d's
-              "assert the rendered field name" with a different attribute. %>
-          <%= f.file_field :file, multiple: true, include_hidden: false,
-                           onchange: "this.form.requestSubmit()", hidden: true %>
-          <span>Upload a file</span>
-        </label>
-      <% end %>
-    <% else %>
-      <%# Chunk: the browser hashes, we presign the missing chunks, the browser PUTs them (§15). %>
-      <section class="uploader"
-               data-controller="uploader"
-               data-uploader-begin-url-value="<%= begin_upload_files_path %>"
-               data-uploader-finalize-url-value="<%= finalize_upload_files_path %>">
-        <label class="upload-btn primary">
-          <input type="file" multiple data-uploader-target="input" data-action="uploader#upload" hidden>
-          <span>Upload a file</span>
-        </label>
-        <span class="upload-status" data-uploader-target="status"></span>
-      </section>
-    <% end %>
     <%#
-      NEW TEXT FILE (2026-09-10). QUIET, NOT ACCENT: this page already spends its accent on Upload,
-      and decision 3 of the UI-cohesion spec allows exactly one — test/system/accent_spend_test.rb
-      pins /files to ["Upload a file"] and reddens naming this route if `primary` appears here.
+      NEW TEXT FILE (2026-09-10). QUIET, NOT ACCENT: this page already spends its accent on the top
+      bar's Upload, and decision 3 of the UI-cohesion spec allows exactly one —
+      test/system/accent_spend_test.rb pins /files to ["Upload"] and reddens naming this route if
+      `primary` appears here.
 
       NOT GATED ON A CAPABILITY. The write goes through Maker::TextSave to
       Maker::Addons::LibraryOutput.write_bytes!, which is the one place the `port_writable?` branch
-      is still written out (§14d), so this one link works on all three backends — unlike the upload
-      control above, whose whole branch exists because those two flows are genuinely different doors.
+      is still written out (§14d), so this one link works on all three backends — unlike the top
+      bar's Upload, whose whole branch exists because those two flows are genuinely different doors.
 
       `@folder` IS THE FOLDER BEING VIEWED, so the file lands where the maker is standing. It is nil
       at the library root and in flat/search mode, and `url_for` drops a nil param.

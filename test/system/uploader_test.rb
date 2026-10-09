@@ -56,11 +56,12 @@ class UploaderTest < ApplicationSystemTestCase
   test "a file chosen in the browser lands in the library through the presigned two-phase flow" do
     visit files_path
 
-    # /files renders the plain library uploader here (app/views/files/index.html.erb's
-    # presigned-flow branch) — a <section data-controller="uploader"> carrying ONLY begin-url and
-    # finalize-url (no attach-url, no redirect-url, no parent-node-id), so the file lands at the
-    # library root and the controller finishes with window.location.reload() rather than a
-    # redirect. Nothing below depends on that ending; the assertions poll the database.
+    # /files renders the plain library uploader here — the top bar's Upload since redesign slice 4
+    # (app/views/layouts/_topbar_upload.html.erb's presigned-flow branch): a
+    # <section data-controller="uploader"> carrying begin-url, finalize-url and the page's folder as
+    # parent-node-id, which at the library root is "" (no attach-url, no redirect-url), so the file
+    # lands at the library root and the controller finishes with window.location.reload() rather
+    # than a redirect. Nothing below depends on that ending; the assertions poll the database.
     #
     # If this selector is missing, capabilities.port_writable? came back true and the backend pin
     # above did not take — under share/s3 this branch renders a multipart form with no Stimulus
@@ -98,9 +99,10 @@ class UploaderTest < ApplicationSystemTestCase
     # STRING's character indices instead of a style map, silently sets nothing, and raises
     # "The style changes in :make_visible did not make the file input visible" (reproduced). No
     # locator is passed either: this branch renders exactly one `input[type=file]` on the page
-    # (verified against app/views/files/index.html.erb and the layout — the other upload branch
-    # is `port_writable?`-gated off, and no other view fragment renders here), so Capybara's
-    # locator-less fallback (descendant-or-self input[type=file]) finds it unambiguously.
+    # (verified against app/views/files/index.html.erb, which has had no uploader of its own since
+    # redesign slice 4, and the layout's top bar — the other upload branch is `port_writable?`-gated
+    # off, and no other view fragment renders here), so Capybara's locator-less fallback
+    # (descendant-or-self input[type=file]) finds it unambiguously.
     attach_file(attach_path, make_visible: true)
 
     # The controller writes "Done." into its status target as the last thing it does before

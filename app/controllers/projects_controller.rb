@@ -8,10 +8,6 @@
 class ProjectsController < ApplicationController
   before_action :set_project, only: %i[show edit update destroy unarchive preview]
 
-  # Exposes the `capabilities` helper the attachments panel's upload control branches on
-  # (chunk two-phase vs. share/s3 multipart). Read-only here — no action is capability-gated.
-  include LibraryCapabilities
-
   # ?move_conflict=<id> — the prompt an attach leaves behind when the auto-move into this
   # project's folder hit a name collision. The same prompt renders on the file page; an attach can
   # come from either.
@@ -97,16 +93,19 @@ class ProjectsController < ApplicationController
     # project ever, and page_query_budget_test.rb's warm-up render absorbs it.
     @project.update_column(:opened_at, Time.current) if @project.opened_at.nil?
 
-    # The folder project-view uploads go into. Best-effort (re-ensured here so a folder the user
-    # deleted is recreated); nil → uploads fall back to the library root rather than 500 the page.
-    # AND IT RUNS BEFORE THE LISTING BELOW, which reads the folder_node_id this (re)writes —
-    # looking at a folder must never be what mints it (docs/invariants/project-intake.md).
-    # `&.` BECAUSE nil IS AN ANSWER NOW (decision 2, stage 4, S4-6): a project whose folder is in
-    # the trash gets nil here, on purpose, and the rescue below is for PORT failures — found in
-    # review: without the safe navigation the routine case rode through that rescue, which would
-    # have gone on swallowing any real NoMethodError in this block.
-    @upload_parent_node_id = begin
-      @project.ensure_library_folder!(current_user)&.node_id
+    # The project's folder, ensured best-effort: a project whose folder was never minted (the form
+    # path, an ensure that failed at create time) gets one here; a port failure leaves the page
+    # rendering with no folder rather than a 500. AND IT RUNS BEFORE THE LISTING BELOW, which reads
+    # the folder_node_id this (re)writes — looking at a folder must never be what mints it
+    # (docs/invariants/project-intake.md). Its answer is no longer kept: the top bar's Upload reads
+    # the LISTING's folder (use_folder_destination below), so the page shows and uploads into one
+    # folder by construction.
+    # nil IS AN ANSWER (decision 2, stage 4, S4-6): a project whose folder is in the trash gets nil
+    # here, on purpose, and the rescue below is for PORT failures only. Nothing is called on the
+    # result any more, so the routine nil case cannot ride through that rescue as a NoMethodError —
+    # the reason this line used to carry `&.node_id` rather than `.node_id`.
+    begin
+      @project.ensure_library_folder!(current_user)
     rescue StandardError
       nil
     end
@@ -124,6 +123,9 @@ class ProjectsController < ApplicationController
     # every load that a hidden panel skips (@bom/@releases/@connections below), which is the
     # property that mattered about being early — being FIRST was never the point.
     @listing = Maker::ProjectFolderListing.new(current_user, @project)
+    # Upload targets the project's folder (spec §6). A folder in the trash or unreachable this render
+    # gives no destination, and the top bar asks with the chooser rather than guess the root.
+    use_folder_destination(@listing.folder_id, path: @listing.path, primary: true) if @listing.available?
 
     # THE PAGE'S PANEL LIST (stage 4, S4-7; story 6.5): this project's kind's preset with its own
     # overrides on top, over a vocabulary that now includes this folder's own depth-one subfolders

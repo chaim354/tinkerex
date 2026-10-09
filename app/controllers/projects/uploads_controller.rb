@@ -19,7 +19,8 @@ module Projects
     # a current-state-only clobber) or be temporarily unreachable (FetchError — unmounted NAS,
     # bucket blip). FilesController maps these on its write path; this parallel path must too, or an
     # ordinary duplicate-name upload 500s instead of showing a flash. Browser action -> redirect
-    # back to where the upload button was (the project page), with an alert.
+    # back to where the upload button was (the project page, whose build-log entries carry it), with
+    # an alert.
     rescue_from FileLayer::UnsupportedOperation do
       redirect_back_or_to projects_path,
                           alert: "Couldn't upload that file — a file with the same name may already exist."
@@ -77,8 +78,10 @@ module Projects
 
     # WHERE THE BROWSER LANDS AFTER THE UPLOAD. The default is the project page; a caller may pass
     # `redirect_url` to land somewhere else (parity with the chunk branch, which honors it via
-    # uploader_controller.js). Its callers are the project page's Files panel and a build-log
-    # entry's inline upload, and both name the project page.
+    # uploader_controller.js). Its one caller in the app is a build-log entry's inline upload
+    # (projects/_log_entry.html.erb), which names the project page. The project page's Files panel
+    # was the other until redesign slice 4 moved the hub's Upload into the top bar, which posts to
+    # FilesController instead; the project-target route stays, answering exactly as before.
     #
     # `url_from` is Rails' own open-redirect guard (its docs show exactly `url_from(params[...])`):
     # it returns the location ONLY for a same-host or leading-single-slash RELATIVE path, and nil
@@ -106,8 +109,8 @@ module Projects
     # `&.`, BECAUSE ensure_library_folder! ANSWERS NIL FOR A FOLDER IN THE TRASH (stage 4, S4-6;
     # decision 2) rather than silently minting a fresh one. nil already means the library root on
     # the line above, so the upload lands there and the attach below still runs — the file is in
-    # the library and linked to the project, which is the same fallback the project page's own
-    # upload control already degrades to when the ensure fails. Without the `&.` this is a
+    # the library and linked to the project, at the root, which is the fallback this door has
+    # always had when no folder can be resolved. Without the `&.` this is a
     # NoMethodError and a 500 on every upload to a project whose folder the maker deleted in
     # Finder; the project page says the folder is in the trash and points at Trash.
     def upload_parent(target)

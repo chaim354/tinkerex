@@ -183,9 +183,9 @@ module Web
       entry = project.build_log_entries.create!(user: @user, body: "day one", logged_at: Time.current)
       entry.file_attachments.create!(user: @user, node_id: file!("nas-2", "shot.png"), role: "image")
 
-      # DELEGATES EVERYTHING ELSE. The panel renders `_upload_control`, which asks the port for its
-      # capabilities — a bare double answers NoMethodError there and the test would go red for a
-      # reason that has nothing to do with liveness.
+      # DELEGATES EVERYTHING ELSE. The top bar's Upload and the build-log entry's `_upload_control`
+      # both ask the port for its capabilities — a bare double answers NoMethodError there and the
+      # test would go red for a reason that has nothing to do with liveness.
       FileLayer.current = Class.new(SimpleDelegator) do
         def stat_all(*, **) = raise(FileLayer::FetchError, "nas down")
       end.new(FileLayer.current)

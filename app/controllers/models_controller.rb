@@ -5,8 +5,6 @@
 class ModelsController < ApplicationController
   before_action :set_model, only: %i[show edit update destroy]
 
-  include LibraryCapabilities
-
   # The page's ONE live-node index — `#show` renders attachments by role, a cover hero and a 3D
   # switcher off the same rows, and every one of them must skip a tombstone.
   include PageNodes

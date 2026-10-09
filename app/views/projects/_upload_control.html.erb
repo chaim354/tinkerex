@@ -5,18 +5,19 @@
 
   OPTIONAL LOCAL `primary:` — whether this uploader is THE action of the page it lands on
   (decision 3 of the UI-cohesion spec). It DEFAULTS TO FALSE, which is the load-bearing half: a
-  caller that forgets gets the quiet face rather than another accent button. Two call sites are
-  left since the Files page's current-project uploader and Home's hero were retired (redesign
-  slice 4): the project page's Files panel passes true; a build-log entry does not — a log row's
-  upload is not what the page exists for.
+  caller that forgets gets the quiet face rather than another accent button. ONE call site is left,
+  projects/_log_entry.html.erb, and it does not pass it — a log row's upload is not what the page
+  exists for. The Files page's current-project uploader and Home's hero went first, and the project
+  page's Files panel — the one caller that passed true — went when Upload moved into the top bar
+  (redesign slice 4; layouts/_topbar_upload.html.erb), which is now the hub's primary.
 %>
 <% upload_btn_class = local_assigns[:primary] ? "upload-btn primary" : "upload-btn" %>
 <% if capabilities.port_writable? %>
   <%= form_with url: upload_url, method: :post, class: "uploader",
                 data: { turbo: false }, html: { multipart: true } do |f| %>
     <%# Where to send the browser after the upload+attach. OPTIONAL: omitted, the controller
-        defaults to the project page, which is also what both callers — the project page's Files
-        panel and a build-log entry — pass. This mirrors the chunk branch's
+        defaults to the project page, which is also what the one caller — a build-log entry —
+        passes. This mirrors the chunk branch's
         data-uploader-redirect-url-value below — the two flows now land in the same
         place. Projects::UploadsController re-validates it with url_from (a relative path only), so
         this field can never become an open redirect. %>

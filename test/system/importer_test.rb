@@ -25,7 +25,9 @@ require "zip"
 #     anywhere in the DOM. The bundle below unzips to 2 model files + 1 PDF (the dotfile is
 #     dropped), which renders as "2 model files · 0 images · 1 PDF".
 #   - The file input on this page is a plain, unhidden `<input type="file" multiple>` (unlike
-#     files/index.html.erb's uploader input, which carries `hidden`) -- so `attach_file` needs no
+#     the top bar's uploader input, layouts/_topbar_upload.html.erb, which carries `hidden` -- and
+#     being hidden is also why the locator-less attach below does not find it beside this one;
+#     verified green with both on the page) -- so `attach_file` needs no
 #     `make_visible:` at all, and per the README's environment-traps section, if it did, the
 #     value would have to be `true`, never a CSS-selector string.
 #   - Maker::FileAttachment has NO `node` association (only a bare `node_id` string column, no

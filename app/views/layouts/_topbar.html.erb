@@ -26,12 +26,14 @@
     <kbd class="topbar-kbd" aria-hidden="true">⌘K</kbd>
   <% end %>
   <%# NEW ▾ (structural redesign spec §4.2): everything here creates where the maker is standing —
-      NewMenuHelper#new_menu_folder_node_id. Upload joins it in slice 4 with folder destinations. %>
+      NewMenuHelper#new_menu_folder_node_id. Upload sits beside it (layouts/_topbar_upload.html.erb),
+      and both create in FolderDestination's folder. %>
   <details class="menu topbar-new" data-controller="menu">
     <summary class="btn">New <span aria-hidden="true">▾</span></summary>
     <div class="menu-list">
       <%= form_with url: library_folders_path, method: :post, class: "menu-form", data: { turbo: false } do %>
-        <%= hidden_field_tag :parent_node_id, new_menu_folder_node_id, id: nil %>
+        <%# `.to_s`: no folder is the library root, sent as "" exactly as Upload sends it. %>
+        <%= hidden_field_tag :parent_node_id, new_menu_folder_node_id.to_s, id: nil %>
         <label class="menu-form-label" for="new_folder_name">New folder</label>
         <span class="menu-form-row">
           <%= text_field_tag :name, nil, id: "new_folder_name", placeholder: "Folder name",
@@ -47,9 +49,10 @@
           reads the addon registry (docs/invariants/addons.md), and an addon-source outage costs this
           menu its tool list instead of costing every page its render. `target="_top"` so a tool link
           navigates the page, not the frame. %>
-      <turbo-frame id="new-menu-tools" src="<%= tools_new_menu_path %>" loading="lazy" target="_top"></turbo-frame>
+      <turbo-frame id="new-menu-tools" src="<%= tools_new_menu_path(in: new_menu_folder_node_id) %>" loading="lazy" target="_top"></turbo-frame>
       <div class="menu-sep" role="separator"></div>
       <%= link_to "Inventory item", new_inventory_item_path, class: "menu-item" %>
     </div>
   </details>
+  <%= render "layouts/topbar_upload" %>
 </header>

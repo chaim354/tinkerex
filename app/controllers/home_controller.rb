@@ -2,11 +2,6 @@
 # IS BOUNDED AND ORDERED BY A COLUMN THAT ALREADY EXISTS — there is no activity table and no
 # counter, and page_query_budget_test.rb asserts the count is constant in N.
 class HomeController < ApplicationController
-  # No Home template reads `capabilities` since the current-project hero went (redesign slice 4).
-  # The include stays until the same slice moves it up to ApplicationController, where the top
-  # bar's Upload needs `capabilities.port_writable?` on every page.
-  include LibraryCapabilities
-
   # "Edit in <Addon>" for the recent-files row, the same right-click menu entry FilesController and
   # ProjectsController give their own file tiles.
   include AddonOrigins

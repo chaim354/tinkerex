@@ -100,6 +100,16 @@
      of its own; without this it wrapped to the LEFT and its right-anchored menu opened at x≈-185,
      off-screen (found in slice 2's Task 3; test/system/new_menu_test.rb measures it at 375px). */
   .topbar-new { margin-left: auto; }
+  /* THE TOP BAR'S UPLOAD (layouts/_topbar_upload.html.erb): the button, then where it saves. The
+     caption is the answer to "where will this go", so its folder is ink, not muted; below 1100px it
+     hides and the button's title carries it. */
+  .topbar-upload { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+  .topbar-upload .uploader { gap: var(--space-2); }
+  .topbar-upload-caption { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--fg-muted); }
+  .topbar-upload-caption strong { color: var(--fg); font-weight: 600; }
+  /* An author `display` beats the UA's `[hidden]`; the no-folder caption is rendered hidden until the
+     chooser fills it (upload_pick_controller.js). Same shape as components.css's `.tab-pane[hidden]`. */
+  .topbar-upload-caption[hidden] { display: none; }
   .topbar-kbd { padding: 2px 5px; border: 1px solid var(--line); border-radius: 2px; font: 500 11px/1 var(--font-mono); color: var(--fg-muted); }
 
   main.container { width: 100%; max-width: var(--container-max); margin: 0 auto; padding: var(--space-5) var(--space-5) var(--space-8); }
@@ -152,6 +162,7 @@
     .rail-family-lit { color: var(--fg); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
     .rail-family-lit::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 2px 2px 0; background: var(--fg); }
     .topbar { padding: 0 16px; }
+    .topbar-upload-caption { display: none; }
     main.container { padding: 16px 16px 64px; }
   }
 

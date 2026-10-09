@@ -1,8 +1,9 @@
 require "test_helper"
 
 module Web
-  # The Files page's controls (spec §8, PR 2): Upload is the primary action in the page head,
-  # rescan and the upload-destination switch live in an overflow menu, and everything else —
+  # The Files page's controls (spec §8, PR 2): Upload is the page's primary action and has lived in
+  # the top bar since redesign slice 4 (topbar_upload_test.rb owns it), rescan and the folder's own
+  # actions live in an overflow menu, and everything else —
   # the type filter, the dot-file switch, the count, the view toggle and the sort — sits on ONE
   # toolbar row in both views. Nodes are created directly, as files_type_filter_test.rb does.
   class FilesToolbarTest < ActionDispatch::IntegrationTest
@@ -33,20 +34,16 @@ module Web
                           content_hash: "h-#{name}", current_version_id: "v-#{name}")
     end
 
-    test "upload is the primary action in the page head and the dashed panel is gone" do
+    # THE PAGE HEAD NO LONGER HOLDS AN UPLOADER. It moved to the top bar (redesign slice 4), which
+    # uploads into the folder this page shows; topbar_upload_test.rb owns its markup, flows and
+    # destination. `.uploader` is the class BOTH flows carry (the multipart form and the chunk
+    # section), so these counts hold on every backend leg without a `port_writable?` branch.
+    test "the Files page head no longer holds an uploader; Upload is the top bar's" do
       get files_path
       assert_response :success
-      assert_select ".page-head .page-actions label.upload-btn span", text: "Upload a file"
-      # Two flows, one per deployment (files/index.html.erb's own comment): a multipart form on a
-      # port-writable backend, the two-phase `uploader` controller on chunk_remote. Asserting the
-      # form alone was red on the chunk_remote leg and green on the other two.
-      if FileLayer.current.capabilities.port_writable?
-        assert_select ".page-head .page-actions form.uploader[action=?]", files_path
-      else
-        assert_select ".page-head .page-actions section.uploader[data-controller='uploader'][data-uploader-begin-url-value=?]",
-                      begin_upload_files_path
-      end
-      assert_select "main .uploader", count: 1
+      assert_select "main .uploader", count: 0
+      assert_select "header.topbar .topbar-upload .uploader", count: 1
+      assert_select ".page-head .page-actions a.btn[href=?]", new_files_text_file_path, text: "New text file"
     end
 
     test "rescan lives in the overflow menu on a scannable backend" do

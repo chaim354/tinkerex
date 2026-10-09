@@ -37,6 +37,11 @@ class ApplicationController < ActionController::Base
   # direct_uploads hole in §15 is closed by the route shadow, not by this.
   before_action :authenticate_user!, unless: :devise_controller?
 
+  # The top bar renders on every signed-in page and needs both: which upload flow this deployment
+  # drives (`capabilities.port_writable?`) and which folder it uploads into.
+  include LibraryCapabilities
+  include FolderDestination
+
   # Changes to the importmap will invalidate the etag for HTML responses
   stale_when_importmap_changes
 

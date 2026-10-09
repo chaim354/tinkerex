@@ -2,7 +2,8 @@
 #
 # Both upload doors took exactly one file — `projects/_upload_control` and `files/index` rendered a
 # file field with no `multiple`, so a maker with a dozen project files opened the picker a dozen
-# times. The model importer next door has always accepted a batch, so the app already knew how; the
+# times. (The Files page's field has been the top bar's since redesign slice 4,
+# layouts/_topbar_upload.html.erb; it posts to the same door.) The model importer next door has always accepted a batch, so the app already knew how; the
 # two doors a maker actually lives in did not.
 #
 # ONE FILE'S FAILURE MUST NOT LOSE THE OTHERS, which is the whole reason this is a shared loop

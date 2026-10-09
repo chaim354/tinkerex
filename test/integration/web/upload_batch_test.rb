@@ -46,11 +46,13 @@ module Web
       assert_match(/Uploaded 3 files/, flash[:notice].to_s)
     end
 
+    # The top bar's, since redesign slice 4 moved the Files page's uploader there. This file runs on
+    # a fresh SHARE library (setup), so the multipart form is the flow every leg renders here.
     test "the file field offers multiple, on the page a maker actually uses" do
       get files_path
       assert_response :success
-      assert_select "form.uploader input[type=file][multiple]", 1,
-                    "the Files page uploader must accept a selection, not one file"
+      assert_select "header.topbar form.uploader input[type=file][multiple]", 1,
+                    "the top bar's uploader must accept a selection, not one file"
     end
 
     # --- WHAT THE RENDERED FORM ACTUALLY SENDS ----------------------------------------------
@@ -62,9 +64,12 @@ module Web
     # marker, so no test here could see it — §14d's "assert the rendered field name", one attribute
     # over. The first pins the markup; the second pins the server against the shape regardless.
 
+    # A COUNT OF ZERO IS ONLY EVIDENCE IF THE FORM IS THERE, so its presence is asserted first: with
+    # the uploader gone from the page altogether, the `0` would pass over nothing.
     test "neither uploader renders the hidden empty-value companion" do
       get files_path
-      assert_select "form.uploader input[type=hidden][name='file[]']", 0,
+      assert_select "header.topbar form.uploader input[type=file][name='file[]']", 1
+      assert_select "header.topbar form.uploader input[type=hidden][name='file[]']", 0,
                     "the empty marker puts a bare String at the head of params[:file]"
     end
 

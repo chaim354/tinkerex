@@ -172,8 +172,9 @@ module ActiveSupport
 
     # A PROJECT FOLDER WITHOUT THE PORT. Writes the two dir ROWS (`Projects/`, `Projects/<slug>`)
     # and points folder_node_id at the second, so Maker::Project#ensure_library_folder! -- which the
-    # project page and Home call best-effort for their upload controls -- finds a live dir and
-    # returns WITHOUT a mkdir. That is what lets a test about what a page READS from a folder run
+    # project page calls best-effort before it lists the folder its top-bar Upload saves into --
+    # finds a live dir and returns WITHOUT a mkdir. That is what lets a test about what a page READS
+    # from a folder run
     # on whichever backend the leg supplies: through the port, the same fixture is a real mkdir,
     # which on the s3 leg is a Forbidden against the stub bucket and on chunk_remote provisions a
     # sync-server library per email (eleven and two errors respectively, 2026-09-04). A test that

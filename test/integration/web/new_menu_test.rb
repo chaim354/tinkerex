@@ -46,6 +46,19 @@ module Web
                     new_files_text_file_path(parent_node_id: @dir.node_id)
     end
 
+    # NOT ONLY THE FILES INDEX (redesign slice 4): New reads FolderDestination, so every page that
+    # renders a folder — here a file's workspace — creates beside what it shows. Until slice 4 the
+    # menu read `params[:folder]` on files#index alone and created at the root everywhere else.
+    test "on a file's page, New creates in the file's folder" do
+      file = create_node!(@user, node_id: "n-sheet", name: "sheet.svg", kind: "file", parent_node_id: @dir.node_id)
+      get file_path(file.node_id)
+      assert_response :success
+      assert_select "header.topbar form[action=?] input[name='parent_node_id'][value=?]",
+                    library_folders_path, @dir.node_id
+      assert_select "header.topbar a.menu-item[href=?]",
+                    new_files_text_file_path(parent_node_id: @dir.node_id)
+    end
+
     # ONE ENTRY PER AVAILABLE TOOL, AND AN UNAVAILABLE ONE IS LEFT OUT rather than listed as a link
     # that opens an apology. The fixture source declares `boxes` (service `boxes`) and `fixture`
     # (service `fixture-svc`); only the first has a sidecar URL here, so it is the positive and the
@@ -56,9 +69,16 @@ module Web
       ENV["BOXES_SIDECAR_URL"] = "http://boxes.invalid"
       ENV.delete("FIXTURE_SVC_SIDECAR_URL")
 
+      # A page with no folder: `in: nil` is dropped by url_for, so this is the plain path.
       get projects_path
       assert_select "header.topbar .topbar-new turbo-frame#new-menu-tools[src=?][loading='lazy'][target='_top']",
-                    tools_new_menu_path
+                    tools_new_menu_path(in: nil)
+
+      # A folder's page: the frame carries the folder, and each tool link it serves echoes it as
+      # `in=`, so New ▸ <tool> starts its save where the maker is standing (Tools::HomeController).
+      get files_path(folder: @dir.node_id)
+      assert_select "header.topbar .topbar-new turbo-frame#new-menu-tools[src=?]",
+                    tools_new_menu_path(in: @dir.node_id)
 
       get tools_new_menu_path
       assert_response :success

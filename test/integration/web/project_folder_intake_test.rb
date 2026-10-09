@@ -156,9 +156,11 @@ module Web
       end
     end
 
-    # THE THIRD DOOR: Projects::UploadsController#create, the project page's OWN inline uploader
-    # (share/s3 only — before_action :require_port_writable! keeps chunk mode off this action
-    # entirely). Wired via the SAME ProjectFolderIntake concern FilesController uses, not a second
+    # THE THIRD DOOR: Projects::UploadsController#create, the project-target upload route — the
+    # project page's OWN inline uploader until redesign slice 4 moved the hub's Upload into the top
+    # bar (which posts to FilesController, the first door); the route still answers, and build-log
+    # entries still post to its sibling (share/s3 only — before_action :require_port_writable!
+    # keeps chunk mode off this action entirely). Wired via the SAME ProjectFolderIntake concern FilesController uses, not a second
     # copy — see the concern's header for why.
     #
     # THIS CONTROLLER ALREADY DOES ITS OWN EXPLICIT ATTACH (`target.file_attachments.create!`)

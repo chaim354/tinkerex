@@ -222,5 +222,26 @@ module Tools
     ensure
       prior ? ENV["ADDON_SOURCE_PATH"] = prior : ENV.delete("ADDON_SOURCE_PATH")
     end
+
+    # THE TOP BAR'S UPLOAD STARTS WHERE THE SAVE STARTS (redesign slice 4, FolderDestination), so the
+    # page never names two folders. QUIET: a tool page's primary is its own Save. A tool page always
+    # HAS a destination — with nothing saved it is the root, named — so it never asks with the
+    # chooser. Branches on the flow this leg renders, or the form arm is red on chunk_remote.
+    test "the top bar's Upload saves where the tool's save starts, quietly" do
+      dir("d-jigs", "jigs")
+      { tools_addon_path("destkit", in: "d-jigs") => [ "d-jigs", "jigs" ],
+        tools_addon_path("destkit") => [ "", "the library root" ] }.each do |path, (node_id, caption)|
+        get path
+        assert_response :success
+        if FileLayer.current.capabilities.port_writable?
+          assert_select "header.topbar .topbar-upload form.uploader input[name='parent_node_id'][value=?]", node_id
+        else
+          assert_select "header.topbar .topbar-upload section.uploader[data-uploader-parent-node-id-value=?]", node_id
+        end
+        assert_select "header.topbar .topbar-upload label.upload-btn:not(.primary)"
+        assert_select "header.topbar .topbar-upload-caption", text: "Saves to #{caption}"
+        assert_select "header.topbar .topbar-upload[data-controller]", 0
+      end
+    end
   end
 end
