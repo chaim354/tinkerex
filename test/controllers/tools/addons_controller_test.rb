@@ -1078,6 +1078,35 @@ module Tools
                    "an .svg saved into a project folder should be filed into design/ by the nudge"
     end
 
+    # INTAKE IS THE ONLY WAY A TOOL'S OUTPUT REACHES A PROJECT (structural redesign slice 4;
+    # docs/invariants/project-intake.md). Until slice 4 this door attached every output to the CURRENT
+    # project, wherever the save went. Now a save beneath a project folder is attached by the eager
+    # intake nudge, and a save anywhere else is attached to nothing — not to some project by default.
+    test "a save beneath a project folder attaches to that project, and a save elsewhere to none" do
+      project = @user.maker_projects.create!(name: "Harbor Lamps")
+      folder = project.ensure_library_folder!(@user)
+      inside = "lamp-#{SecureRandom.hex(4)}.svg"
+      post tools_addon_path("widgetkit"), params: {
+        name: "lamp", data: "{}", parent_node_id: folder.node_id,
+        files: [ { name: inside, content_type: "image/svg+xml", body: "<svg/>" } ].to_json
+      }
+      assert_redirected_to tools_addon_path("widgetkit")
+      node = @user.nodes.present.find_by!(name: inside)
+      assert project.file_attachments.exists?(node_id: node.node_id),
+             "a save beneath the project folder should be attached to that project by intake"
+      assert_equal 1, Maker::FileAttachment.where(node_id: node.node_id).count
+
+      outside = "loose-#{SecureRandom.hex(4)}.svg"
+      post tools_addon_path("widgetkit"), params: {
+        name: "loose", data: "{}",
+        files: [ { name: outside, content_type: "image/svg+xml", body: "<svg/>" } ].to_json
+      }
+      assert_redirected_to tools_addon_path("widgetkit")
+      loose = @user.nodes.present.find_by!(name: outside)
+      refute Maker::FileAttachment.exists?(node_id: loose.node_id),
+             "a save outside every project folder attaches to no project"
+    end
+
     # A SAVE WRITES A SET, AND THE 409 MUST NAME EVERY COLLIDING OUTPUT — a body reporting only a
     # count, or only the first, makes the user guess which drawing the dialog is about. The boxes
     # addon emits `<base>.svg` AND `<base>-plan.svg` in one save, so a plain re-save collides on
