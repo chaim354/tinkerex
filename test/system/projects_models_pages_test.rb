@@ -44,8 +44,15 @@ class ProjectsModelsPagesTest < ApplicationSystemTestCase
     FileUtils.remove_entry(@root) if @root&.exist?
   end
 
+  # THROUGH "+ ADD PANEL" (slice 6): an empty build log is not on the page until the head's menu opens
+  # it for this visit (?add=build_log), and once the entry is saved the redirect's plain page keeps
+  # it because it now holds a row.
   test "a build-log entry goes through the closed composer" do
     visit project_path(@project)
+    assert_no_selector ".build-log-panel"
+    find("details.add-panel > summary", text: "+ Add panel").click
+    click_link "Build log"
+    assert_current_path project_path(@project, add: "build_log")
     assert_no_selector ".build-log-panel details.composer[open]"
     find(".build-log-panel details.composer > summary", text: "Add entry").click
     assert_selector ".build-log-panel details.composer[open] lexxy-editor", visible: true

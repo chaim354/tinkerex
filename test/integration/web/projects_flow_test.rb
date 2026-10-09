@@ -654,6 +654,11 @@ module Web
     test "saving the type changes the page's panels" do
       user = sign_in
       project = user.maker_projects.create!(name: "Desk Lamp")
+      # A BOM LINE, so the panel would render if the type left it visible: an empty BOM is absent on
+      # its own since slice 6, and the count of 0 below would pass over nothing.
+      project.boms.create!(user:).lines.create!(user:, part_name: "M3 screw", quantity: 4, unit: "each")
+      get project_path(project)
+      assert_select "section.bom-panel", 1, "the visible arm, so the assertion below is a CHANGE"
 
       patch project_path(project), params: { project: { name: "Desk Lamp", kind: "laser" } }
 

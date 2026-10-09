@@ -531,6 +531,17 @@ class ShellTest < ApplicationSystemTestCase
             ".map(function (el) { return el.getBoundingClientRect().right }))")
           client = page.evaluate_script("document.documentElement.clientWidth")
           assert_operator right, :<=, client, "the hub's head or recent row runs past the page at 375px (right edge #{right}, client width #{client})"
+          # SLICE 6: "+ ADD PANEL", OPEN. This project holds no task, log entry or sheet, so the head
+          # carries the menu, and its list is the one thing here a scroll check cannot see: it hangs
+          # from the summary's right edge, so a summary that wraps to the head's left would push it
+          # off the LEFT of the page, which scrolls nothing. Measured open, both edges.
+          find(".project-head details.add-panel > summary", text: "+ Add panel").click
+          left, list_right = page.evaluate_script(
+            "(function () { var r = document.querySelector('.project-head details.add-panel .menu-list').getBoundingClientRect(); return [r.left, r.right] })()")
+          assert_operator left, :>=, 0, "the + Add panel list starts off the page at 375px (left edge #{left})"
+          assert_operator list_right, :<=, client, "the + Add panel list runs past the page at 375px (right edge #{list_right})"
+          find(".project-head details.add-panel > summary").click
+          assert_no_selector ".project-head details.add-panel[open]"
           # STAGE 4, S4-4: THE PUBLISH PANEL AND THE README EDITOR, both new to this page and both
           # invisible to the overflow check until they are actually here and actually open. The
           # editor mounts CodeMirror on toggle, so a closed <details> measures a summary button and

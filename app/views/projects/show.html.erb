@@ -65,6 +65,25 @@
     <%# THE PAGE EDITOR (2026-09-09): the same page with the chrome on. A link, because entering
         edit mode changes nothing until Save. %>
     <%= link_to "Customise page", edit_layout_project_path(@project), class: "btn small customise-link" %>
+    <% if Array(@absent_panels).any? %>
+      <%#
+        "+ ADD PANEL" (structural redesign §6, slice 6): the on-demand panels absent because they are
+        empty (ProjectsController#show's @absent_panels, never set in the editor). Each link opens its
+        panel for this visit (?add=), empty and with its composer, and lands on the panel's own anchor
+        (ProjectsHelper::PANEL_ANCHORS); it stays on its own once it holds a row. Nothing is saved.
+        Labelled as the panel is headed, so a maker's own title reads the same in both places.
+      %>
+      <details class="menu add-panel" data-controller="menu">
+        <summary class="btn small">+ Add panel</summary>
+        <div class="menu-list">
+          <% @absent_panels.each do |key| %>
+            <%= link_to panel_title(@panel_layout, key),
+                        project_path(@project, add: key, anchor: ProjectsHelper::PANEL_ANCHORS.fetch(key)),
+                        class: "menu-item" %>
+          <% end %>
+        </div>
+      </details>
+    <% end %>
     <%#
       THE ⋯ MENU (structural redesign §6, slice 6): the occasional acts, out of the head's one row.
       Publish settings is the same in-page anchor the head's Publish link is; Archive, Unarchive and
@@ -147,9 +166,11 @@
   no request can reach, and it would hide the real bug (a layout built from a different listing)
   behind a silently missing panel.
 
-  HIDDEN IS NOT QUIET. A panel this loop skips is absent from the page; an empty panel it DOES
-  render is quiet (S4-1's panel--quiet) — its heading and one add control. Two questions, and the
-  overview's quiet-panel contract is what keeps them two.
+  HIDDEN IS NOT EMPTY. A panel the maker hid is absent and stays absent. An EMPTY on-demand panel
+  (ProjectsController::ON_DEMAND) is absent from this page too since slice 6, but the head's
+  "+ Add panel" offers it, and one opened with ?add= renders quiet (S4-1's panel--quiet) — its
+  heading and one add control — as an empty folder panel still does. Two questions, and the
+  overview's quiet-panel contract is what keeps them two. The editor shows every panel.
 
   THE LOCALS MAP EXISTS BECAUSE THREE PARTIALS TAKE LOCALS AND SEVEN READ IVARS, and neither group
   may be converted: projects/_wiring, projects/_releases and projects/_publish take locals so the
@@ -202,8 +223,13 @@
   </div>
 <% else %>
   <%# THE GROUPED SHAPE (2026-09-09, tabs; spec §6): projects/_panel_groups renders today's one grid
-      when the layout has no tab, and the top group, the bar, the panes and Publish when it has. %>
-  <%= render layout: "projects/panel_groups", locals: { groups: @panel_layout.groups, tail: nil } do |key| %>
+      when the layout has no tab, and the top group, the bar, the panes and Publish when it has.
+      MINUS THE ABSENT ON-DEMAND PANELS (slice 6): the keys are narrowed HERE, not in the layout the
+      public page shares, so an empty Build log, Tasks, BOM, Wiring, Releases or Sheets is never
+      yielded at all. A tab left holding none of its keys drops out with its bar link, because
+      _panel_groups renders only the panes something rendered into. %>
+  <%= render layout: "projects/panel_groups",
+             locals: { groups: @panel_layout.groups(@panel_layout.visible - Array(@absent_panels)), tail: nil } do |key| %>
     <%= render "projects/panel_slot", key: key, extra: panel_locals.fetch(key, {}) %>
   <% end %>
 <% end %>

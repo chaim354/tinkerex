@@ -34,14 +34,15 @@ module Web
     test "the add-task field is named for the key the controller requires" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      get project_path(project)
+      # ?add=tasks: an empty Tasks panel is absent until "+ Add panel" opens it (slice 6).
+      get project_path(project, add: "tasks")
       assert_select "form.task-form input[type=text][name=?]", "task[title]"
     end
 
     test "submitting the add-task form as a browser does creates the task" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      get project_path(project)
+      get project_path(project, add: "tasks")
 
       # Scrape the form's OWN field name and submit that, urlencoded, so this test follows the
       # view rather than restating it — a name that stops matching the controller fails here.

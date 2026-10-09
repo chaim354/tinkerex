@@ -202,6 +202,28 @@ class PageTabsTest < ApplicationSystemTestCase
     assert_includes panels["hidden"], "build_log"
   end
 
+  # "+ ADD PANEL" INTO A TAB (slice 6): an empty BOM alone in the second tab leaves no pane and no bar
+  # link for it, and the menu's link lands on `#project-bom` — a panel's own anchor, which
+  # tabs_controller.js resolves to the pane it sits in. Without that, the link would open the first
+  # tab and the panel the maker just asked for would be on the page but out of sight.
+  test "+ Add panel opens an empty panel in its tab, and the tab is shown" do
+    a, b = tk("3f9a1b2c4d5e"), tk("a0c4d8e2f611")
+    top = Maker::Project::PANELS - %w[tasks bom publish]
+    @project.update!(panels: { "order" => top + [ a, "tasks", b, "bom", "publish" ],
+                               "titles" => { a => "Build", b => "Parts" } })
+
+    visit project_path(@project)
+    assert_selector "a.tab-link", count: 1
+    assert_no_selector "a.tab-link", text: "Parts"
+    find("details.add-panel > summary", text: "+ Add panel").click
+    click_link "Bill of materials"
+
+    assert_selector "a.tab-link[href='#tab-parts'][aria-selected='true']", text: "Parts"
+    assert_selector "section.tab-pane#tab-parts section.bom-panel.panel--quiet#project-bom", visible: true
+    assert_no_selector "section.tab-pane#tab-build section.tasks-panel"
+    assert_no_console_errors
+  end
+
   test "Apply mints a separator slot for a tab the pasted text creates" do
     open_editor
     click_on "Edit as YAML"

@@ -25,8 +25,17 @@ module Web
                                  "titles" => { tk(TAB_A) => "Build", tk(TAB_B) => "Parts" } })
     end
 
+    # A ROW IN EACH TAB'S PANELS (slice 6): an empty Build log or BOM is absent from the maker's page
+    # now, and a tab holding nothing that renders drops out (the next test). Seeded so both tabs are
+    # on the page to be asserted.
+    def rows_in_both_tabs!
+      @project.build_log_entries.create!(user: @user, body: "Glued the base.", logged_at: Time.current)
+      @project.boms.create!(user: @user).lines.create!(user: @user, part_name: "M3 screw", quantity: 4, unit: "each")
+    end
+
     test "the maker's page renders the top group, a tab bar, one pane per tab and Publish below" do
       tabbed!
+      rows_in_both_tabs!
       get project_path(@project)
       assert_response :success
 
@@ -52,6 +61,27 @@ module Web
       assert_select "div.tabs + div.project-panels > div.panel-slot > section#publish", 1
       assert_select "div.tabs section.tab-pane section#publish", 0
       assert_select "section#publish", 1, "Publish is rendered once, in the foot"
+    end
+
+    # A TAB WHOSE PANELS ARE ALL EMPTY ON-DEMAND PANELS DROPS OUT CLEANLY (slice 6): its keys are
+    # never yielded, so _panel_groups renders no pane for it and no link in the bar — the same rule
+    # that already keeps a visitor's empty tab out. "+ Add panel" still offers the panel, and
+    # ?add= brings the tab back with it for that visit.
+    test "a tab holding only empty on-demand panels has no pane and no bar link until ?add= opens one" do
+      tabbed!
+      @project.build_log_entries.create!(user: @user, body: "Glued the base.", logged_at: Time.current)
+
+      get project_path(@project)
+      assert_select "nav.tab-bar a.tab-link", 1
+      assert_select "a.tab-link[href='#tab-parts']", 0
+      assert_select "section.tab-pane#tab-parts", 0
+      assert_select "section.tab-pane", 1
+      assert_select ".add-panel a.menu-item[href=?]", project_path(@project, add: "bom", anchor: "project-bom"),
+                    text: "Bill of materials"
+
+      get project_path(@project, add: "bom")
+      assert_select "nav.tab-bar a.tab-link", 2
+      assert_select "section.tab-pane#tab-parts section.bom-panel.panel--quiet#project-bom", 1
     end
 
     test "a project without tabs renders today's markup: one grid, every visible panel, Publish inside it" do
@@ -220,6 +250,8 @@ module Web
     test "a tab whose name yields no slug, or collides, is addressed by its key" do
       @project.update!(panels: { "order" => [ "attachments", tk(TAB_A), "build_log", tk(TAB_B), "tasks", "publish" ],
                                  "titles" => { tk(TAB_A) => "Build!", tk(TAB_B) => "build?" } })
+      # A row, so tab A's Build log renders and its pane is on the page (slice 6).
+      @project.build_log_entries.create!(user: @user, body: "Glued the base.", logged_at: Time.current)
       get project_path(@project)
       assert_select "section.tab-pane#tab-#{TAB_A}", 1
       assert_select "section.tab-pane#tab-#{TAB_B}", 1

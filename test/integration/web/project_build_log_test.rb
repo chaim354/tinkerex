@@ -107,7 +107,8 @@ module Web
     test "the entry form renders a Lexxy editor with attachments disabled" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      get project_path(project)
+      # ?add=build_log: an empty Build log is absent until "+ Add panel" opens it (slice 6).
+      get project_path(project, add: "build_log")
       assert_response :success
       assert_select "lexxy-editor[attachments=?]", "false"
       assert_select "textarea[name=?]", "build_log_entry[body]", count: 0

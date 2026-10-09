@@ -28,7 +28,7 @@
     span goes with the table it counts -- "0 connections" beside a heading is not information --
     and the sentence that stood where the table does said no more than the empty panel already did.
     The composer below is untouched: it is the one control an empty panel exists to offer. %>
-<section class="panel wiring-panel<%= " panel--quiet" if connections.empty? %>">
+<section class="panel wiring-panel<%= " panel--quiet" if connections.empty? %>" id="project-wiring">
   <div class="panel-head">
     <h2><%= panel_title(layout, "wiring") %></h2>
     <% if connections.any? %>
