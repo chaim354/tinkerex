@@ -14,7 +14,7 @@
      `minmax(160px, 1fr)` gave a 375px phone ONE column (measured: a 302px grid, where two 160px tracks
      and the gap need 332), so sixteen 302px squares stacked 5,400px deep. The `min()` lets a track
      shrink to half the row when 160px will not fit twice; at desktop width half the row is far over
-     160px, so the rule is the plain one there (measured: six 174px tracks in a 1102px grid). */
+     160px, so the rule is the plain one there (how many tracks depends on the window: five of 184px at 1280px, measured). */
   .recent-grid {
     display: grid; gap: var(--space-3);
     grid-template-columns: repeat(auto-fill, minmax(min(160px, calc((100% - var(--space-3)) / 2)), 1fr));
