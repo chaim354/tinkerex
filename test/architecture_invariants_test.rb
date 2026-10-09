@@ -226,8 +226,9 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # `:on_ident` catches a method, a local and a `session[:current_project_id]` key; `:on_const` the
   # concern and controller; `:on_tstring_content` a string that IS one of the names, which is how
   # `session["current_project_id"]` spells the key (review of slice 4). Only a WHOLE string token
-  # matches, so prose that merely mentions a name inside a longer string never does. The columns themselves are also `ignored_columns` on User, so a read
-  # raises; this catches the NAMES, which is what a revival starts with.
+  # matches, so prose that merely mentions a name inside a longer string never does. The columns
+  # themselves are DROPPED (slice 7's migration), so a read fails at the database; this catches the
+  # NAMES, which is where a revival starts.
   RETIRED_DESTINATION_NAMES = %w[
     current_project current_project_id current_project_folder_node_id current_project_choices
     current_project_notice remember_current_project remember_current_project? make_current
@@ -244,12 +245,8 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
             erb.map { |f| [ f, ActionView::Template::Handlers::ERB::Erubi.new(File.read(f)).src ] })
       .flat_map do |file, source|
         rel = Pathname.new(file).relative_path_from(ROOT)
-        lines = source.lines
         Ripper.lex(source).filter_map do |(pos, type, str, _)|
           next unless %i[on_ident on_const on_tstring_content].include?(type) && RETIRED_DESTINATION_NAMES.include?(str)
-          # THE ONE SANCTIONED SPELLING: User's `ignored_columns` names the two columns as strings, and
-          # that line is what makes a read RAISE. Slice 7's drop migration removes it.
-          next if type == :on_tstring_content && lines[pos.first - 1].to_s.include?("ignored_columns")
 
           "#{rel}:#{pos.first} #{str}"
         end

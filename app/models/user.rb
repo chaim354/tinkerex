@@ -1,20 +1,8 @@
 class User < ApplicationRecord
-  # RETIRED WITH THE CURRENT PROJECT (structural redesign spec §9.1, slice 4) and dropped by slice 7's
-  # migration. Ignored rather than dropped now so a deploy's old and new code never disagree about a
-  # column mid-rollout; ignored rather than left readable so no code reaches for either by accident
-  # (test/architecture_invariants_test.rb forbids the names as well).
-  self.ignored_columns += %w[current_project_id remember_current_project]
-
   has_many :devices, dependent: :destroy
   has_many :nodes, dependent: :destroy
-  # Stage 3b Phase A Task 3: the seven engine models these associations reach are now
-  # `Sync::*`, so each needs an explicit class_name: — Rails derives one from the association
-  # NAME (`versions` -> "Version") and that guess no longer resolves to anything. `manifest_chunks`
-  # has no has_many here at all (reached by the string manifest_id everywhere), which is why
-  # this list is seven, not eight.
-  # UNCONDITIONAL, UNLIKE THE Sync:: ASSOCIATIONS BELOW, and the difference is which side owns the
-  # class. Those name engine models that do not exist on share/s3; RemoteManifestChunk is a HOST
-  # model whose table every deployment has, so there is nothing to guard.
+  # The manifests FileLayer::ChunkRemote reads, mirrored from the sync server by its ChangelogSync
+  # (CLAUDE.md §5). Every deployment has the table; only chunk_remote ever writes a row to it.
   #
   # `dependent:` IS REQUIRED HERE, NOT DECORATION: the table carries a real foreign key to `users`,
   # so without it `user.destroy` raises ActiveRecord::InvalidForeignKey the moment a chunk_remote
@@ -50,16 +38,6 @@ class User < ApplicationRecord
   # `support_unencrypted_data` (config/initializers/active_record_encryption.rb): a default that
   # happens to already be right is exactly what a future Rails upgrade silently flips.
   encrypts :sync_device_token, deterministic: false
-
-  # DECLARED ONLY WHEN THE ENGINE IS LOADED, and `class_name:` being a STRING is not enough to
-  # make that unnecessary -- which was probed, not reasoned. A string class_name is lazy, so
-  # merely loading User is fine either way; but `dependent: :destroy` constantizes on destroy, and
-  # on a share/s3 box with no engine that raises `NameError: Missing model class Sync::Version`
-  # from an ordinary `user.destroy`. Nothing at boot would have shown it.
-  #
-  # The rows these point at cannot exist on share/s3 anyway: only Sync::Commit/Restore/Conflicts
-  # ever create a version, and none of them runs there. So this drops associations to tables that
-  # are empty by construction, not a feature.
 
   # ADDING A USER-SCOPED TABLE? IT NEEDS A LINE HERE (or a parent that already has one).
   # Tenant cleanup is these hand-written `dependent:`s and nothing else — no database foreign key
@@ -222,9 +200,9 @@ class User < ApplicationRecord
 
     errors.add(:handle, "can't change while a project is unlisted or public")
   end
-  # `private :<name>`, MATCHING LINE 138 ABOVE AND NOT A BARE `private` KEYWORD: this class has no
-  # private section, so opening one here would take `password_set?` and `next_seq!` (both called
-  # from outside) private with it.
+  # `private :<name>`, AS FOR `skip_passwordless_confirmation_notification` ABOVE, AND NOT A BARE
+  # `private` KEYWORD: this class has no private section, so opening one here would take
+  # `password_set?` and `next_seq!` (both called from outside) private with it.
   private :handle_is_locked_while_published
 
   # --- OmniAuth seam (docs/parity-roadmap.md §A) ------------------------------------
@@ -308,33 +286,16 @@ class User < ApplicationRecord
     claim == true || claim.to_s == "true"
   end
 
-  # ENGINE STATE ON THE HOST'S OWN ROW. head_seq and next_seq! belong to the sync engine — they
-  # serialize changelog sequence assignment and mean nothing on share/s3. They stay here through
-  # Stage 3a and move with the engine's migration in 3b; relocating the column now would be a
-  # migration this repo would immediately have to undo. (The boot guard that protects this lock,
-  # lib/postgres_pooler_check.rb, is already engine-conditional as of 3a — see Sync.engine_present?.)
+  # head_seq IS THE SYNC SERVER'S CHANGELOG SEQUENCE, KEPT ON THIS APP'S ROW: V1::DevicesController,
+  # its one reader in app/, hands it to a joining device as its starting cursor (CLAUDE.md §5, §14e).
   #
-  # Assign the next per-user changelog sequence. MUST be called inside a transaction, and
-  # MUST be the FIRST write in it (before any node/version/changelog insert): locks the user
-  # row so concurrent commits from multiple devices get distinct, ordered seqs. Portable —
-  # `SELECT … FOR UPDATE` on Postgres; a harmless reload on SQLite (which serializes writes
-  # globally anyway). Correct and fast on both.
-  #
-  # LOCK ORDERING (Postgres): the node/version/changelog/chunk rows written later in a commit
-  # all FK-reference `users`, and a Postgres FK insert takes a `FOR KEY SHARE` lock on the
-  # parent users row. If a commit inserted those FIRST and called next_seq! second, two
-  # concurrent commits for the same user would each hold KEY SHARE and both want FOR UPDATE →
-  # a lock-upgrade DEADLOCK (observed live under a concurrent-commit load test). Taking the
-  # strong FOR UPDATE here, up front, makes a user's commits serialize cleanly with no
-  # deadlock. All callers (Sync::Commit, Mutation, Restore, Conflicts) lock first.
-  #
-  # Pooler note: because the FOR UPDATE lock must span the read+write of head_seq, the
-  # transaction's statements must run on ONE backend connection — i.e. a connection pooler in
-  # front of Postgres MUST be in SESSION or TRANSACTION mode, never STATEMENT mode. See
-  # The pooler constraint this describes is the SYNC SERVER's now, and so is its
-  # documentation: chaim354/tinkerex-sync, docs/SYNC_SERVER.md "Connection pooler".
-  # NOTHING IN THIS PROCESS TAKES THE LOCK -- next_seq! has no caller here (CLAUDE.md
-  # §14e); head_seq survives because V1::DevicesController hands it to a joining device.
+  # next_seq! HAS NO CALLER IN THIS APP, AND CLAUDE.md §14e KEEPS IT ANYWAY -- not dead code to sweep.
+  # It locks the user row (`SELECT … FOR UPDATE` on Postgres; a reload on SQLite, which serializes
+  # writes globally anyway) and assigns the next per-user sequence. The lock-ordering rule that
+  # governs it, and the commit paths that call it, live in the sync server's repository,
+  # chaim354/tinkerex-sync (its CLAUDE.md), as does the pooler constraint that rule implies
+  # (docs/SYNC_SERVER.md, "Connection pooler"). Nothing in this process takes the lock, so neither
+  # the rule nor a pooler boot guard for it belongs here.
   def next_seq!
     lock!
     new_seq = head_seq + 1

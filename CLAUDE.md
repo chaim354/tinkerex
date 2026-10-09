@@ -963,8 +963,7 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   row FIRST, before any FK insert takes `FOR KEY SHARE`, or two concurrent commits deadlock on
   the upgrade — governs the sync server's commit path and lives in **that repo's** CLAUDE.md now.
   Its five callers are all there. Do not reintroduce that rule, or a pooler boot guard for it,
-  here: nothing in this process takes the lock. (`lib/postgres_pooler_check.rb` is gone; a
-  comment in `app/models/user.rb` still points at it and at `Sync.engine_present?`, and is stale.)
+  here: nothing in this process takes the lock.
   **A statement-mode pooler still breaks the sync server** — that constraint did not disappear,
   it relocated.
 
