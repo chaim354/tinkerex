@@ -27,10 +27,16 @@
   <% end %>
   <%# NEW ▾ (structural redesign spec §4.2): everything here creates where the maker is standing —
       NewMenuHelper#new_menu_folder_node_id. Upload sits beside it (layouts/_topbar_upload.html.erb),
-      and both create in FolderDestination's folder. %>
+      and both create in FolderDestination's folder. ON A PHONE (spec §4.3, slice 7) the summary reads
+      "+" and Upload moves inside it: shell.css hides the top bar's upload LABEL at 719px and below and
+      shows the Upload item here, which forwards a click to that label (upload_forward_controller.js). %>
   <details class="menu topbar-new" data-controller="menu">
-    <summary class="btn">New <span aria-hidden="true">▾</span></summary>
+    <summary class="btn" aria-label="New and upload"><span class="topbar-new-label">New <span aria-hidden="true">▾</span></span><span class="topbar-new-plus" aria-hidden="true">+</span></summary>
     <div class="menu-list">
+      <%# PHONE ONLY (shell.css hides it above 719px): the top bar's Upload, from inside the one "+". %>
+      <button type="button" class="menu-item topbar-new-upload" data-controller="upload-forward"
+              data-action="upload-forward#open">Upload…</button>
+      <div class="menu-sep topbar-new-upload" role="separator"></div>
       <%= form_with url: library_folders_path, method: :post, class: "menu-form", data: { turbo: false } do %>
         <%# `.to_s`: no folder is the library root, sent as "" exactly as Upload sends it. %>
         <%= hidden_field_tag :parent_node_id, new_menu_folder_node_id.to_s, id: nil %>

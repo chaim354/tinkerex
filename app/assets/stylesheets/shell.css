@@ -100,6 +100,11 @@
      of its own; without this it wrapped to the LEFT and its right-anchored menu opened at x≈-185,
      off-screen (found in slice 2's Task 3; test/system/new_menu_test.rb measures it at 375px). */
   .topbar-new { margin-left: auto; }
+  /* THE PHONE'S "+" AND ITS UPLOAD ITEM (layouts/_topbar.html.erb) are hidden here and shown in the
+     ≤719px block. THE LAYER ORDER, NOT SPECIFICITY, is what lets this beat `.menu-item`'s own `display:
+     flex`: `shell` comes after `components`, so a single class here wins over any selector there.
+     test/system/phone_topbar_test.rb asserts it by visibility at desktop width. */
+  .topbar-new-plus, .topbar-new-upload { display: none; }
   /* THE TOP BAR'S UPLOAD (layouts/_topbar_upload.html.erb): the button, then where it saves. The
      caption is the answer to "where will this go", so its folder is ink, not muted; below 1100px it
      hides and the button's title carries it. */
@@ -186,6 +191,17 @@
        test/system/new_menu_test.rb measures it at 375 and 360. */
     .topbar-new { position: static; }
     .topbar-new .menu-list { left: 12px; right: 12px; min-width: 0; }
+    /* ONE "+" FOR NEW AND UPLOAD (structural redesign spec §4.3, slice 7). The summary reads "+", and
+       the top bar's Upload moves inside it as the menu's first item, which clicks the hidden LABEL
+       (upload_forward_controller.js) so a page with no folder still asks with the chooser. Only the
+       LABEL hides, never `.topbar-upload`: the chunk flow's `.upload-status` beside it is where an
+       upload started from the menu reports its progress. `revert-layer` hands the item back the
+       display its own component gives it (`.menu-item`'s flex, the separator's block) rather than
+       restating either here. */
+    .topbar-new-label { display: none; }
+    .topbar-new-plus { display: inline; }
+    .topbar-new-upload { display: revert-layer; }
+    .topbar-upload label.upload-btn { display: none; }
     .topbar-kbd { display: none; }
     main.container { padding: 12px 12px 72px; }
     .page-head h1 { font-size: 18px; }

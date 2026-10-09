@@ -38,6 +38,20 @@ module Web
       end
     end
 
+    # THE PHONE'S "+" (spec §4.3, slice 7): the menu's first item is Upload, wired to the controller that
+    # forwards its click to the top bar's upload LABEL. shell.css shows it at 719px and below only —
+    # which a browser sees (test/system/phone_topbar_test.rb); this pins the markup and the wiring, and
+    # that it is a button, so a tap never navigates. The summary's name says the "+" carries both.
+    test "the New menu carries the phone's Upload item, wired to forward to the top bar's label" do
+      get root_path
+      assert_select "header.topbar details.menu.topbar-new" do
+        assert_select "summary[aria-label='New and upload'] .topbar-new-plus", text: "+"
+        assert_select ".menu-list > button.menu-item.topbar-new-upload[type=button][data-controller='upload-forward'][data-action='upload-forward#open']:first-child",
+                      text: "Upload…"
+      end
+      assert_select "header.topbar .topbar-upload label.upload-btn", 1
+    end
+
     test "on a folder's page, New creates in that folder" do
       get files_path(folder: @dir.node_id)
       assert_select "header.topbar form[action=?] input[name='parent_node_id'][value=?]",
