@@ -255,8 +255,12 @@ module Web
       @project.blocks.create!(user: @user, kind: "image", node_id: photo, caption: "Side on.")
       @sheet = @project.sheets.create!(user: @user, name: "Cut list", position: 0,
                                        data: Maker::Sheet.blank_data)
-      @model = @user.maker_models.create!(title: "Bracket", slug: "bracket",
-                                          cover_node_id: "n-stl", folder_node_id: "d-laser")
+      # FOLDERLESS ON PURPOSE (structural redesign slice 5). A model whose folder is live shows the
+      # Library's model strip there instead of needing this page, and `/models/:id` is to send it
+      # to that folder (Maker::ModelFolder.landing_folder_id), so "model detail" below sweeps the
+      # page every model WITHOUT a folder keeps: a one-file model, an import whose folder was never
+      # made. The strip itself is swept by "model folder", over its own fixture further down.
+      @model = @user.maker_models.create!(title: "Bracket", slug: "bracket", cover_node_id: "n-stl")
       # THE MODEL ARM AND THE FILE ARM OF THE SEARCH PAGE (tinkerex#286): a model and a file whose
       # names carry the sweep's query, or shared/_result_group's :model and :file branches are
       # rendered by no page in `pages` — measured by S4-8's Task E, which found only :project,
@@ -264,12 +268,25 @@ module Web
       @user.maker_models.create!(title: "Lamp shade", slug: "lamp-shade")
       file!("n-lamp", "lamp-base.stl")
       @model.file_attachments.create!(user: @user, node_id: "n-stl", role: "model", position: 0)
-      # ONE ATTACHMENT INSIDE `d-laser`, OR `models/_file_tree` IS NEVER RENDERED. Since 2026-09-02
-      # the Files panel intersects the folder walk with the model's attachments (§14k), and `n-stl`
-      # sits at the library root, not in the model's folder -- so with only that row the tree is
-      # empty, the partial never renders, and the coverage assertion below reports it. That is the
-      # guard working: it went red on exactly the commit that changed the panel.
+      # `models/_file_tree` RENDERS FROM THESE ATTACHMENTS: a folderless model's Files panel lists
+      # its own LIVE attachments (ModelsController#file_tree_for_model's fallback, §14k). With none
+      # live the panel says "No files yet", the partial is never rendered, and the coverage assertion
+      # below reports it -- the guard that went red when the panel first changed (2026-09-02).
       @model.file_attachments.create!(user: @user, node_id: "n-bak", role: "laser", position: 1)
+      # THE MODEL STRIP (structural redesign §5.4, slice 5), or `files/_model_strip` is rendered by
+      # no page here. ITS OWN FOLDER AND MODEL, so @model above stays folderless. Every arm the strip
+      # has that the coverage assertion cannot tell apart is populated: a live cover (the derived one,
+      # its mesh), designer, licence and an http source, print settings, notes, and one logged print
+      # so the shared print log renders a row inside it.
+      @user.nodes.create!(node_id: "d-wall-bracket", name: "wall-bracket", kind: "dir")
+      file!("n-wall-bracket", "wall-bracket.stl", parent_node_id: "d-wall-bracket")
+      strip_model = @user.maker_models.create!(title: "Wall Bracket", folder_node_id: "d-wall-bracket",
+                                               designer: "Ada", license: "CC-BY",
+                                               source_url: "https://example.com/wall-bracket",
+                                               print_settings: { "layer_height" => "0.2mm" },
+                                               notes: "Print it on its back.")
+      strip_model.file_attachments.create!(user: @user, node_id: "n-wall-bracket", role: "model", position: 0)
+      strip_model.print_runs.create!(user: @user, printed_on: Date.current, outcome: "success", printer: "MK4")
       # THE RECIPE PANELS ARE ONLY REACHABLE THROUGH A THUMBNAIL ROW CARRYING METADATA, and they
       # branch on the KEY, not the extension (`operations` → MillMage, else LightBurn). Without
       # both rows, `files/_lbrn_settings` and `files/_mage_settings` are unreachable from any
@@ -434,6 +451,8 @@ module Web
         "files (grid)" => files_path(view: "grid"),
         "files (filtered)" => files_path(ext: "stl"),
         "files (in a folder)" => files_path(folder: "d-laser"),
+        # Slice 5: a catalogued model's folder, the one page that renders files/_model_strip.
+        "model folder" => files_path(folder: "d-wall-bracket"),
         "file detail (3d)" => file_path("n-stl"),
         "file detail (measure, lbrn)" => file_path("n-bak"),
         "file detail (measure, mage)" => file_path("n-mill"),

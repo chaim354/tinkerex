@@ -111,8 +111,7 @@ class ModelsController < ApplicationController
     @file_tree  = file_tree_for_model
     @file_count = count_files(@file_tree)
     @print_runs = @model.print_runs.reorder(printed_on: :desc, id: :desc).to_a
-    @printers = current_user.maker_print_runs.where.not(printer: [ nil, "" ]).distinct.pluck(:printer)
-    @materials = current_user.maker_print_runs.where.not(material: [ nil, "" ]).distinct.pluck(:material)
+    @printers, @materials = Maker::PrintRun.composer_choices(current_user)
   end
 
   # GET /models/new — the import form (the importer Stimulus controller drives it).

@@ -887,6 +887,30 @@ module Web
                               "files#index (folder)")
     end
 
+    # THE MODEL STRIP (slice 5) MUST NOT GROW WITH THE MODEL: its cover is derived from ONE load of its
+    # attachments and its print log is one query, so a model folder with 15 files and 15 prints costs
+    # what one with 3 does. Whether Maker::ModelFolder.model_in's eager load holds as hidden rows pile
+    # up in one folder is model_folder_test.rb's to say — one model's attachments load once either way.
+    test "files#index on a model folder does not grow with attachments or print runs" do
+      folder = @user.nodes.create!(node_id: "budget-model-dir", name: "bracket", kind: "dir", mtime: 1, size: 0)
+      model = @user.maker_models.create!(title: "Budget Bracket", folder_node_id: folder.node_id)
+      add = lambda do |prefix, count|
+        count.times do |i|
+          node!("#{prefix}#{i}", "#{prefix}#{i}.stl")
+          @user.nodes.find_by!(node_id: "#{prefix}#{i}").update!(parent_node_id: folder.node_id)
+          model.file_attachments.create!(user: @user, node_id: "#{prefix}#{i}", role: "model")
+          model.print_runs.create!(user: @user, printed_on: Date.current, outcome: "success", printer: "P#{i}")
+        end
+      end
+      assert_constant_queries(files_path(folder: folder.node_id), -> { add.call("ms", SMALL) },
+                              -> { add.call("ml", LARGE - SMALL) }, "files#index (model folder)")
+      # The strip was ON the page measured, cover and print log included — a budget over a page that
+      # quietly stopped rendering it would hold for the wrong reason.
+      assert_select ".model-strip h2", text: "Budget Bracket"
+      assert_select ".model-strip .model-strip-cover[data-controller='thumbs']"
+      assert_select ".model-strip .print-run", count: LARGE
+    end
+
     # EVERY BOUNDED LIST HOME READS GROWS PER STEP — recent projects (each with an attachment, which
     # `cover_node_id` reads), recent files, failed prints and low stock — and SMALL/LARGE straddle
     # each list's LIMIT, so a per-row query the LIMIT alone would hide still shows. (The

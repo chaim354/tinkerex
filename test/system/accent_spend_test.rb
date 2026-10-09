@@ -63,6 +63,11 @@ class AccentSpendTest < ApplicationSystemTestCase
     # only reproduces on a project that has entries. One entry would prove the rule; three prove it
     # does not scale with the log.
     3.times { |i| @project.build_log_entries.create!(user: @user, body: "Bench note #{i}.") }
+    # A 3D MODEL'S FOLDER (structural redesign §5.4, slice 5), so the Library's model strip is on a
+    # page this guard measures. The strip carries Edit, Delete and "Log a print" and spends none of
+    # them: the folder's one action is still the top bar's Upload.
+    @model_folder = FileLayer.current.mkdir(@user, parent_node_id: nil, name: "bracket")
+    @user.maker_models.create!(title: "Wall Bracket", folder_node_id: @model_folder.node_id)
   end
 
   teardown do
@@ -78,6 +83,8 @@ class AccentSpendTest < ApplicationSystemTestCase
       "/" => [ "New project" ],
       # The top bar's, now the Library's one action (redesign slice 4).
       "/files" => [ "Upload" ],
+      # The model strip above the files adds nothing (slice 5).
+      "/files (a model folder)" => [ "Upload" ],
       "/models" => [ "Import model" ],
       "/projects" => [ "New project" ],
       "/inventory" => [ "New item" ],
@@ -100,6 +107,7 @@ class AccentSpendTest < ApplicationSystemTestCase
     }
     paths = {
       "/" => root_path, "/files" => files_path, "/models" => models_path,
+      "/files (a model folder)" => files_path(folder: @model_folder.node_id),
       "/projects" => projects_path, "/inventory" => inventory_items_path,
       "/projects/desk-lamp" => project_path(@project), "/settings" => settings_path,
       "/tools" => tools_path, "/search" => search_path,
@@ -113,6 +121,9 @@ class AccentSpendTest < ApplicationSystemTestCase
       # report NO accent controls and satisfy every `[]` expectation — §14e's "a guard that scans a
       # directory dies silently when the directory leaves", with a route in place of a glob.
       assert_selector "main", visible: :all
+      # The model folder's row pins the strip spending nothing only while the strip is ON the page —
+      # without it, a folder that stopped showing its model would report ["Upload"] just the same.
+      assert_selector ".model-strip h2", text: "Wall Bracket" if path == paths["/files (a model folder)"]
       accent_controls
     end
     assert_equal expected, actual

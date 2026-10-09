@@ -367,6 +367,20 @@ class ShellTest < ApplicationSystemTestCase
     # immediately after. RECENT_FILES caps display at 8; 8 more (9 total with `long`) mirrors
     # home_test.rb's margin.
     8.times { |i| create_node!(@user, node_id: SecureRandom.uuid, kind: "file", name: "shell-sweep-#{i}.stl") }
+    # A 3D MODEL'S FOLDER (structural redesign §5.4, slice 5), so the Library's model strip is laid
+    # out at 375px: a long title and long details to wrap, print settings, a live cover, and a logged
+    # print — the composer is opened below, because its form is the widest thing the strip holds.
+    model_dir = FileLayer.current.mkdir(@user, parent_node_id: nil, name: "spool-holder")
+    model_mesh = create_node!(@user, node_id: SecureRandom.uuid, kind: "file", name: "spool-holder-arm.stl",
+                              parent_node_id: model_dir.node_id)
+    strip_model = @user.maker_models.create!(
+      title: "Articulated wall-mounted spool holder bracket, remix v3 (short arm)", folder_node_id: model_dir.node_id,
+      designer: "A designer with a rather long handle", license: "CC-BY-NC-SA-4.0",
+      source_url: "https://www.printables.com/model/123456-articulated-wall-mounted-spool-holder",
+      print_settings: { "layer_height" => "0.2mm", "supports" => "tree, touching build plate only" })
+    strip_model.file_attachments.create!(user: @user, node_id: model_mesh.node_id, role: "model")
+    strip_model.print_runs.create!(user: @user, printed_on: Date.current, outcome: "success",
+                                   printer: "Prusa MK4 with the input shaper", material: "PETG")
 
     # `visit root_path` once at desktop width before narrowing, so the sweep starts from a page
     # rendered after every fixture above existed. (This used to pick a current project through the
@@ -438,6 +452,9 @@ class ShellTest < ApplicationSystemTestCase
       # new layouts were laid out at 375px rather than measured empty.
       saw_connections = false
       saw_search_groups = false
+      # SLICE 5: THE MODEL STRIP, THE SAME GATE-ON-A-PATH ARGUMENT. A folder that stopped showing its
+      # model would leave this sweep measuring a plain folder a second time and saying nothing.
+      saw_model_strip = false
       [ root_path, files_path(view: "list"), files_path(view: "grid"),
         # STAGE 4, S4-6: THE FOLDER VIEW, which the two `view:` entries above are not — they are the
         # flat library, where `@folder` is nil and the overflow menu's project items never render.
@@ -456,7 +473,9 @@ class ShellTest < ApplicationSystemTestCase
         search_path(q: "lamp"), tag_path("lamp"),
         # STAGE 2, S2-6: the settings hub and its tags list -- the same tag_list: above gives the
         # list a real row to render instead of the empty state.
-        settings_path, settings_tags_path ].each do |path|
+        settings_path, settings_tags_path,
+        # SLICE 5: a 3D model's folder, with the model strip above its files.
+        files_path(folder: model_dir.node_id) ].each do |path|
         visit path
         if path == file_path(gerbers[:gtl].node_id)
           click_button "View layer"
@@ -552,6 +571,20 @@ class ShellTest < ApplicationSystemTestCase
           assert_selector ".connections-photos .photo-cell"
           saw_connections = true
         end
+        if path == files_path(folder: model_dir.node_id)
+          # THE STRIP AND ITS OPEN COMPOSER, measured against the page's CLIENT width rather than the
+          # window's, because CI's Linux Chrome draws a 15px scrollbar the Mac's does not: a box
+          # that fits innerWidth there can still run under the scrollbar.
+          assert_selector ".library-main > .model-strip h2", text: strip_model.title
+          find(".model-strip details.composer > summary").click
+          assert_selector ".model-strip form.print-form", visible: true
+          right = page.evaluate_script(
+            "Math.max.apply(null, Array.from(document.querySelectorAll('.model-strip, .model-strip *'))" \
+            ".map(function (el) { return el.getBoundingClientRect().right }))")
+          client = page.evaluate_script("document.documentElement.clientWidth")
+          assert_operator right, :<=, client, "the model strip runs past the page at 375px (right edge #{right}, client width #{client})"
+          saw_model_strip = true
+        end
         if path == search_path(q: "lamp")
           # STAGE 4, S4-8: the two groups that slice added, rendered rather than absent. Both are
           # `shared/_result_group` arms with markup no other group has — the note's excerpt line
@@ -576,6 +609,7 @@ class ShellTest < ApplicationSystemTestCase
       assert visited_folder_view, "the sweep never reached the Files folder view, so its overflow menu was never measured"
       assert saw_connections, "the sweep never reached the connected file page, so the Connected panel's two layouts were never measured"
       assert saw_search_groups, "the sweep never reached the search page, so the Notes and Folders groups were never measured"
+      assert saw_model_strip, "the sweep never reached a model's folder, so the model strip was never laid out at 375px"
 
       # STAGE 3, S3-4: THE PUBLIC PAGES, IN THEIR OWN LOOP BECAUSE THEIR SHELL IS THE OTHER ONE.
       # The three assertions above are the SIGNED-IN shell's, and this session IS signed in — so

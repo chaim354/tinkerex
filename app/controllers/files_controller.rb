@@ -209,8 +209,9 @@ class FilesController < ApplicationController
       @folder = nil
       @crumbs = []
       # NO FOLDER, SO NOTHING TO ADOPT AND NOBODY TO NAME — set beside @folder/@crumbs so the view
-      # never reads an undefined ivar in this branch (stage 4, S4-6).
+      # never reads an undefined ivar in this branch (stage 4, S4-6). No folder, so no model strip.
       @folder_project = nil
+      @folder_model = nil
       # `.outside_repo_metadata` ON THE SCOPE, NOT ON THE `.order` BELOW, so @match_count is taken
       # from the same query as the rows and the banner cannot claim a file the page never shows.
       # A `.git` row reaches THIS scope only as a file — a `gitdir:` pointer, since flat mode
@@ -255,6 +256,12 @@ class FilesController < ApplicationController
       # view asserts constancy in N and now actually visits a folder, so a per-row version of this
       # could not hide.
       @folder_project = @folder && current_user.maker_projects.find_by(folder_node_id: @folder.node_id)
+      # THE FOLDER'S 3D MODEL, IF IT IS ONE (structural redesign §5.4, slice 5): the model strip above
+      # the files. Maker::ModelFolder is the one definition (the redirect from /models/:id reads it
+      # too). A project's claim wins, so a claimed folder never asks. Constant in N, beside
+      # @folder_project's lookup and for the same reason.
+      @folder_model = (@folder && @folder_project.nil?) ? Maker::ModelFolder.model_in(current_user, @folder.node_id) : nil
+      load_model_strip(@folder_model) if @folder_model
       # `.outside_repo_metadata` here for the same reason it is on the flat scope above, and on
       # the scope rather than the orders below so @child_count paginates what is actually shown.
       scope = current_user.nodes.present.where(parent_node_id: @folder&.node_id)
@@ -1559,6 +1566,18 @@ class FilesController < ApplicationController
   def folder_paths_for(nodes)
     tree = Maker::LibraryTree.new(current_user)
     nodes.to_h { |n| [ n.node_id, tree.path_for(n.parent_node_id) ] }
+  end
+
+  # What the strip shows beyond the row itself: the cover (only when its node is live — the cover is a
+  # raw column nothing validates, and a dead one would spin forever, the case models/_hero_poster
+  # guards), the print log, and the composer's choices. None grows with the folder or the model: one
+  # liveness check, one node's thumbnail, the print log in one query, and the composer's two plucks.
+  def load_model_strip(model)
+    cover = model.cover_node_id
+    @strip_cover_live = cover.present? && current_user.nodes.present.exists?(node_id: cover, kind: "file")
+    @strip_covers = Maker::Previews::ThumbnailMap.for(current_user, @strip_cover_live ? [ cover ] : [])
+    @strip_print_runs = model.print_runs.reorder(printed_on: :desc, id: :desc).to_a
+    @strip_printers, @strip_materials = Maker::PrintRun.composer_choices(current_user)
   end
 
   # `params[:folder]` is USER INPUT in a URL. Accept it ONLY when it names a `dir` the

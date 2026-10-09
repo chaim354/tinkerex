@@ -126,4 +126,22 @@
   /* The notes composer (Task 2): the summary reads as a small button under the heading. */
   .notes-panel details.composer { margin: 0 0 12px; }
   .notes-panel details.composer > summary { min-height: 24px; padding: 0 8px; font-size: 12px; }
+
+  /* THE MODEL STRIP (files/_model_strip.html.erb): a model folder's header above its files. A panel,
+     qualified rather than redeclared (design-system.md rule 3). The cover is a fixed small square so
+     the strip stays a strip; it wraps at phone width rather than scrolling sideways. The title's 180px
+     basis is what keeps the cover beside it inside a 375px phone's panel; the actions wrap below. */
+  .model-strip { margin-bottom: var(--space-4); }
+  .model-strip-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-3); }
+  .model-strip-cover { flex: 0 0 72px; width: 72px; height: 72px; }
+  .model-strip-cover--empty { display: grid; place-items: center; color: var(--fg-muted); }
+  .model-strip-cover--empty .rail-icon { width: 24px; height: 24px; }
+  .model-strip-title { flex: 1 1 180px; min-width: 0; }
+  .model-strip-title .eyebrow { display: block; font: 600 11px/16px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-muted); }
+  .model-strip-title h2 { margin: 0 0 var(--space-1); font-size: 16px; line-height: 22px; overflow-wrap: anywhere; }
+  .model-strip-meta { margin: var(--space-1) 0 0; font-size: 13px; overflow-wrap: anywhere; }
+  .model-strip-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .model-strip-settings { margin-top: var(--space-3); grid-template-columns: max-content minmax(0, 1fr); }
+  .model-strip-notes { margin-top: var(--space-3); }
+  .model-strip .print-log { margin-top: var(--space-3); }
 }

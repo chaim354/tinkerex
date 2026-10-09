@@ -19,6 +19,14 @@ module Maker
     after_save    :sync_model_status
     after_destroy :sync_model_status
 
+    # The composer's datalists: every printer and material this user has logged, for "Log a print" on
+    # the model page and the Library's model strip alike. Two distinct plucks, constant in N.
+    def self.composer_choices(user)
+      runs = user.maker_print_runs
+      [ runs.where.not(printer: [ nil, "" ]).distinct.pluck(:printer),
+        runs.where.not(material: [ nil, "" ]).distinct.pluck(:material) ]
+    end
+
     private
 
     def sync_model_status

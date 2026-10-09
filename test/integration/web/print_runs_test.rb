@@ -58,6 +58,23 @@ module Web
       assert_select ".flash-alert"
     end
 
+    # EVERY ANSWER GOES BACK WHERE IT CAME FROM (structural redesign §5.4, slice 5): the Library's
+    # model strip logs and deletes prints from the model's folder, and must land there again. The
+    # tests above send no referer, which is why they still land on the model page. The strip's own
+    # create-with-referer case is in model_strip_test.rb; these are the other two answers.
+    test "deleting a run, or a refused log, returns to the page that asked" do
+      user = sign_in
+      m = user.maker_models.create!(title: "Dragon")
+      back = files_url(folder: "d-dragon")
+      run = m.print_runs.create!(printed_on: Date.today, outcome: "failed")
+      delete print_run_path(run), headers: { "HTTP_REFERER" => back }
+      assert_redirected_to back
+
+      post model_print_runs_path(m), params: { print_run: { printed_on: "", outcome: "success" } },
+                                     headers: { "HTTP_REFERER" => back }
+      assert_redirected_to back
+    end
+
     test "cannot log a print on another user's model" do
       sign_in("a@example.com")
       other = User.create!(email: "b@example.com", password: PASSWORD, confirmed_at: Time.current)

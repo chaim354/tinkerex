@@ -1,15 +1,19 @@
 module Models
   # Log a print against a model / delete a logged print. The Maker::PrintRun after_save/destroy
   # callback keeps the model's print_status in sync (latest run wins).
+  #
+  # EVERY ANSWER REDIRECTS BACK (structural redesign §5.4, slice 5), so a print logged from the
+  # Library's model strip stays in that folder; with no usable referer it lands on the model page,
+  # exactly as it always did.
   class PrintRunsController < ApplicationController
     # POST /models/:model_id/print_runs
     def create
       model = current_user.maker_models.find_by!(slug: params[:model_id])
       run = model.print_runs.build(run_params.merge(user: current_user))
       if run.save
-        redirect_to model_path(model), notice: "Logged a print."
+        redirect_back_or_to model_path(model), notice: "Logged a print."
       else
-        redirect_to model_path(model), alert: run.errors.full_messages.to_sentence
+        redirect_back_or_to model_path(model), alert: run.errors.full_messages.to_sentence
       end
     end
 
@@ -18,7 +22,7 @@ module Models
       run = current_user.maker_print_runs.find(params[:id])
       model = run.model
       run.destroy!
-      redirect_to model_path(model), notice: "Removed the print."
+      redirect_back_or_to model_path(model), notice: "Removed the print."
     end
 
     private

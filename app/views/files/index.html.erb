@@ -222,6 +222,12 @@
 <div class="library<%= " has-inspector" if @selected %>" data-controller="selection"
      data-selection-inspector-url-value="<%= inspector_file_path("__ID__") %>">
   <div class="library-main">
+    <%# THE MODEL STRIP (structural redesign §5.4, slice 5): set by FilesController#index only on a
+        folder view whose folder a catalogued model names and no project claims. %>
+    <% if @folder_model %>
+      <%= render "files/model_strip", model: @folder_model, cover_live: @strip_cover_live, covers: @strip_covers,
+                 print_runs: @strip_print_runs, printers: @strip_printers, materials: @strip_materials %>
+    <% end %>
 <% if @truncated %>
   <p class="truncated">
     Showing the first <%= number_with_delimiter(@nodes.size) %> of
