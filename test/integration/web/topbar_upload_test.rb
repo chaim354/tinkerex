@@ -91,6 +91,18 @@ module Web
       assert_select "header.topbar .topbar-upload-caption[hidden][data-upload-pick-target='caption']"
     end
 
+    # RECENT IS THE ONE PAGE WITH NO FOLDER WHOSE UPLOAD IS ITS ACCENT (slice 6; FolderDestination's
+    # upload_primary!). Both halves in one selector: the weight changed (`primary`) and the destination
+    # did not — it still asks with the chooser, because Recent has no folder to name. The settings test
+    # above is the other half: the flag must not leak to every page without a folder.
+    test "Recent's Upload is its primary, and still asks with the chooser" do
+      get root_path
+      assert_select "header.topbar .topbar-upload[data-controller='upload-pick'] label.upload-btn.primary[data-action=?]",
+                    "click->upload-pick#pick"
+      assert_destination ""
+      assert_select "header.topbar .topbar-upload-caption[hidden][data-upload-pick-target='caption']"
+    end
+
     # A page WITH a folder wires none of the chooser: no controller, no targets, no action. Asked so
     # a refactor that always rendered the chooser step would have to say so here.
     test "a page with a folder renders no chooser step" do

@@ -33,7 +33,9 @@ module ShellHelper
   }.freeze
 
   ICON_PATHS = {
-    home: "M2 8l6-5 6 5v6H9v-4H7v4H2z",
+    # A clock for Recent (slice 6), the root page's link in the sidebar and the tab bar. The page's
+    # sidebar KEY is still [:home] (sidebar_current) — only the label and the drawing changed.
+    recent: "M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zM8 5v3l2 1.5",
     files: "M2 4h5l2 2h5v7H2z",
     models: "M8 2l6 3v6l-6 3-6-3V5z M2 5l6 3 6-3 M8 8v6",
     projects: "M2 3h12v10H2z M6 3v10 M10 3v10",
@@ -175,7 +177,8 @@ module ShellHelper
   def tabbar_links
     current = sidebar_current&.first
     [
-      [ "Home", root_path, :home, current == :home ],
+      # Recent, the root page (slice 6): labelled and drawn as Recent, lit by the [:home] key.
+      [ "Recent", root_path, :recent, current == :home ],
       # The 3D models view is a Library view; the bar has no place of its own for it. The same key
       # lights the model pages ModelsController still serves.
       [ "Library", files_path, :files, %i[library pin models].include?(current) ],

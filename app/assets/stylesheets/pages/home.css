@@ -1,23 +1,30 @@
-/* The Home page (stage 2, S2-1): the tile rows scroll sideways INSIDE their own box so the page
-   never does. (Its current-project hero went with the current project in the 2026-10-08 redesign
-   slice 4.) */
+/* Recent, the app's front door (structural redesign §7, slice 6): the files you changed as a grid that
+   WRAPS, so the page never scrolls sideways and needs no inner scroller either. (It was the Home page
+   until slice 6, whose tile rows scrolled sideways inside their own box; its current-project hero went
+   with the current project in slice 4.) */
 @layer pages {
-  /* HOME IS BUILT FROM THE APP'S OWN COMPONENTS NOW (UI-cohesion spec §2.6). `.home-section` and
-     `.section-head` duplicated `.panel` and `.panel-head` at a different size (h2 15px against 14)
-     and with no surface or border, so the app's front door was the one page that did not look like
-     the app. The markup carries `panel` and `panel-head`; all that is left here is the gap between
-     sections, which `.panel` has no opinion about. */
+  /* BUILT FROM THE APP'S OWN COMPONENTS (UI-cohesion spec §2.6). `.home-section` and `.section-head`
+     duplicated `.panel` and `.panel-head` at a different size (h2 15px against 14) and with no surface
+     or border, so the app's front door was the one page that did not look like the app. The markup
+     carries `panel` and `panel-head`; all that is left here is the gap between sections, which
+     `.panel` has no opinion about. */
   .home-section { margin-bottom: 24px; }
 
-  .tile-row { display: flex; gap: 14px; overflow-x: auto; scroll-snap-type: x proximity; padding: 2px 2px 8px; }
-  .tile-row > * { flex: 0 0 150px; scroll-snap-align: start; }
-  .tile-row .thumb { width: 100%; height: 110px; }
+  /* 160px tiles, as many per row as fit, stretched to fill the row — and NEVER FEWER THAN TWO. A bare
+     `minmax(160px, 1fr)` gave a 375px phone ONE column (measured: a 302px grid, where two 160px tracks
+     and the gap need 332), so sixteen 302px squares stacked 5,400px deep. The `min()` lets a track
+     shrink to half the row when 160px will not fit twice; at desktop width half the row is far over
+     160px, so the rule is the plain one there (measured: six 174px tracks in a 1102px grid). */
+  .recent-grid {
+    display: grid; gap: var(--space-3);
+    grid-template-columns: repeat(auto-fill, minmax(min(160px, calc((100% - var(--space-3)) / 2)), 1fr));
+  }
+  /* `.thumb` has no intrinsic size (components.css); each container sizes it. A file tile is square,
+     as in the Library's grid. Scoped to `.grid-card` so a project card in Active projects keeps the
+     height `.project-card .thumb` gives it. */
+  .recent-grid .grid-card .thumb { width: 100%; height: auto; aspect-ratio: 1 / 1; }
 
-  .print-list, .attention-list { list-style: none; margin: 0; padding: 0; }
-  .print-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
-  .print-outcome { font-family: var(--font-mono); }
-  .print-outcome--success { color: var(--ok); }
-  .print-outcome--failed { color: var(--danger); }
+  .attention-list { list-style: none; margin: 0; padding: 0; }
   .attention-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
   .attention-mark { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
   .attention-row--danger .attention-mark { background: var(--danger); }

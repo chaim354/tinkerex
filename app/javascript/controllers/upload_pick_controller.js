@@ -2,7 +2,7 @@ import { Controller } from "@hotwired/stimulus"
 import { chooseFolder } from "lib/file_chooser"
 
 // THE TOP BAR'S UPLOAD ON A PAGE THAT SHOWS NO FOLDER (structural redesign spec §4.2 and §8, slice 4).
-// Home, Tools, Settings and Search have no "folder you're in", so the first click asks for one with the
+// Recent, Tools, Settings and Search have no "folder you're in", so the first click asks for one with the
 // library's own chooser, writes it where the upload flow reads its destination, and only then opens
 // the file picker. It never guesses: a cancelled chooser uploads nothing.
 //
@@ -13,7 +13,7 @@ import { chooseFolder } from "lib/file_chooser"
 // THE FILE PICKER OPENS FROM THE CHOOSER'S OWN CLICK. `input.click()` needs a user activation, and the
 // chooser resolves inside its Choose button's click handler, so the activation is still live here.
 // NO AUTOMATED TEST SEES THAT HAPPEN: Capybara's `attach_file` sets the input's files directly, so
-// deleting the `click()` below leaves every test green. A human clicking Upload on Home, then Choose,
+// deleting the `click()` below leaves every test green. A human clicking Upload on Recent, then Choose,
 // is the only check that the picker opens.
 export default class extends Controller {
   static targets = [ "input", "parent", "uploader", "caption" ]

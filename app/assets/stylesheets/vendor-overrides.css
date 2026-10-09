@@ -15,7 +15,7 @@ lexxy-editor button:hover, lexxy-toolbar button:hover { color: var(--fg); backgr
 lexxy-toolbar { border-bottom: 1px solid var(--line); background: var(--surface); }
 /* The RENDERED rich text (`div.lexxy-content`, from action_text's content layout) is painted by
    lexxy-content.css in its own near-black (`oklch(0.2 0 0)`), which on the dark theme is black on
-   black — a build-log entry or the Home hero's latest entry read as almost empty. The editor rule
+   black — a build-log entry read as almost empty. The editor rule
    above covers only `lexxy-editor`; this covers the read-only rendering. Inherit, so it follows
    whatever the surrounding page colour is in either theme. */
 .lexxy-content { color: inherit; }

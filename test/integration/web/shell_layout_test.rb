@@ -21,7 +21,7 @@ module Web
     end
 
     test "each top-level section lights its own link" do
-      { root_path => "Home", projects_path => "All projects", files_models_path => "3D models",
+      { root_path => "Recent", projects_path => "All projects", files_models_path => "3D models",
         inventory_items_path => "Inventory", tools_path => "Tools",
         trash_index_path => "Trash" }.each do |path, label|
         get path
@@ -51,15 +51,15 @@ module Web
       assert_select "aside.rail a.rail-link[aria-current='page']", text: "Inventory"
     end
 
-    test "the rail's first link is Home, at the root path" do
+    test "the rail's first link is Recent, at the root path" do
       get files_path
-      assert_select "nav.rail-nav li:first-child a.rail-link[href='/']", text: "Home"
-      # Library -- not Home -- is what GET /files lights; Home carries no aria-current here.
+      assert_select "nav.rail-nav li:first-child a.rail-link[href='/']", text: "Recent"
+      # Library -- not Recent -- is what GET /files lights; Recent carries no aria-current here.
       assert_select "nav.rail-nav li:first-child a.rail-link[aria-current]", count: 0
 
       get root_path
       assert_response :success
-      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Home"
+      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Recent"
     end
 
     test "a nested controller lights its family" do
@@ -240,11 +240,14 @@ module Web
       assert_select "aside.rail a.rail-link[href=?]", inventory_items_path, count: 1
     end
 
-    test "the phone tab bar is Home, Library, Projects and Tools" do
+    test "the phone tab bar is Recent, Library, Projects and Tools" do
       get files_path
       labels = css_select("nav.tabbar a.tabbar-link span").map { |e| e.text.strip }
-      assert_equal %w[Home Library Projects Tools], labels
+      assert_equal %w[Recent Library Projects Tools], labels
       assert_select "nav.tabbar a.tabbar-link[aria-current='page']", count: 1, text: "Library"
+      # Recent is drawn and labelled as Recent but still lit by the root page's [:home] key (slice 6).
+      get root_path
+      assert_select "nav.tabbar a.tabbar-link[aria-current='page']", count: 1, text: "Recent"
     end
 
     test "the stylesheet references fingerprinted, servable Plex fonts" do

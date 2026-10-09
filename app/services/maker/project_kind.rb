@@ -45,8 +45,8 @@ module Maker
   #     supplies `blocks:` as [key, kind] pairs the way it supplies `folders:`; an unnamed block
   #     lands first; a key whose row is gone drops out.
   #
-  # `folders:` DEFAULTS TO `[]`, so a caller holding no listing — Home, the chooser before it
-  # builds one, a test — gets the fixed-key layout it has always got, unchanged.
+  # `folders:` DEFAULTS TO `[]`, so a caller holding no listing — the chooser before it builds one,
+  # a test — gets the fixed-key layout it has always got, unchanged.
   #
   # NOTHING HERE TOUCHES THE PORT. #suggest reads roles off filenames (ProjectFolderListing::Row
   # #role -> Maker::FileAttachment.role_for) and one boolean (#root_repo?), both in memory over a

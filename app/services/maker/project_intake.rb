@@ -883,7 +883,7 @@ module Maker
     # a hook on each of seven doors.
     #
     # `update_columns`: no validation, no callback, no `updated_at` bump. This runs every 15
-    # minutes forever, and touching `updated_at` would make every project look edited on Home,
+    # minutes forever, and touching `updated_at` would make every project look edited on Recent,
     # which orders by it.
     #
     # NEVER ON A DRY RUN, AND NEVER ON AN ATTACH-ONLY PASS — #call's two callers are the only ones,

@@ -6,16 +6,17 @@
     wrong one ships a button whose door answers 501), and both carry the destination as the
     `parent_node_id` the doors already accept.
 
-    A PAGE WITH NO FOLDER (Home, Tools, Settings, Search) asks with the library's folder chooser
+    A PAGE WITH NO FOLDER (Recent, Tools, Settings, Search) asks with the library's folder chooser
     before the file picker opens (upload_pick_controller.js), and never guesses one. Its targets are
     the two places the two flows read their destination from: the form's hidden field, or the chunk
     uploader's own parent value.
 
-    `primary` only where Upload IS the screen's one action (design-system.md rule 13): the Library and
-    the project hub. The caption hides below 1100px, so the button's title carries it there. %>
+    `primary` only where Upload IS the screen's one action (design-system.md rule 13): the Library,
+    the project hub and Recent — the last with no folder, so it still asks (FolderDestination's
+    upload_primary?). The caption hides below 1100px, so the button's title carries it there. %>
 <% dest = folder_destination %>
 <% parent_value = dest ? dest.node_id.to_s : "" %>
-<% btn_class = dest&.primary ? "upload-btn primary" : "upload-btn" %>
+<% btn_class = upload_primary? ? "upload-btn primary" : "upload-btn" %>
 <% btn_title = dest ? "Saves to #{dest.caption}" : "Choose a folder, then files" %>
 <% pick = dest.nil? %>
 <%= tag.div class: "topbar-upload",
