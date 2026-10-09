@@ -182,7 +182,9 @@
     .tabbar-link:hover { text-decoration: none; }
     .tabbar-link[aria-current="page"] { color: var(--fg); font-weight: 600; }
     .topbar { flex-wrap: wrap; gap: 6px 8px; padding: 6px 12px; }
-    .topbar-search { flex: 1 1 100%; min-width: 0; }
+    /* THE PHONE ROW IS THE BREADCRUMB AND THE "+" (spec §4.3), with search on a full-width row below
+       (slice 7). `order` moves only the search box; the crumbs, New and Upload keep their DOM order. */
+    .topbar-search { flex: 1 1 100%; min-width: 0; order: 1; }
     /* ON A PHONE THE NEW MENU SPANS THE BAR rather than hanging off New's right edge. Since slice 4
        put Upload to New's right, a menu anchored to New opened ~14px off the left edge of a 360px
        phone (and 1px off CI's 375px, whose Linux Chrome spends 15 of them on a scrollbar). A static

@@ -38,6 +38,16 @@ class PhoneTopbarSystemTest < ApplicationSystemTestCase
     summary = find("header.topbar .topbar-new > summary")
     assert_equal "+", summary.text
     assert_equal "New and upload", summary["aria-label"]
+    # ONE ROW FOR THE BREADCRUMB AND THE "+", AND SEARCH BELOW BOTH (spec §4.3): the "+"'s middle sits
+    # inside the crumbs' line, and the search box starts below the lower of the two.
+    crumbs, plus, search = page.evaluate_script(<<~JS)
+      [ ".topbar-crumbs", ".topbar-new > summary", ".topbar-search" ].map((s) => {
+        const r = document.querySelector("header.topbar " + s).getBoundingClientRect(); return [ r.top, r.bottom ]; })
+    JS
+    plus_middle = (plus[0] + plus[1]) / 2
+    assert plus_middle.between?(crumbs[0], crumbs[1]) || (crumbs[0] + crumbs[1]) / 2 <= plus[1] && (crumbs[0] + crumbs[1]) / 2 >= plus[0],
+           "the + is not on the breadcrumb's row (crumbs #{crumbs.inspect}, + #{plus.inspect})"
+    assert_operator search[0], :>=, [ crumbs[1], plus[1] ].max - 1, "the search box is not on its own row below them"
     # PRESENT AND HIDDEN, not merely absent: absence would mean the partial stopped rendering the label
     # the "+" forwards to, which is a broken Upload rather than a phone layout.
     assert_selector "header.topbar .topbar-upload label.upload-btn", visible: :hidden
@@ -63,12 +73,16 @@ class PhoneTopbarSystemTest < ApplicationSystemTestCase
     assert_selector ".filechooser-overlay"
     assert_equal 0, picks, "the file picker opened before a folder was chosen"
     find(".filechooser-row", text: "cad").click
-    # THE SHARED CHOOSER CLIPS ITS OWN CANCEL AND CHOOSE AT 375px: `.filechooser-foot` is one row
-    # inside an `overflow: hidden` panel (components.css), so on a phone both buttons sit past the
-    # panel's right edge — a defect of the chooser that predates the "+" (the visible label reached the
-    # same dialog), reported with slice 7. Choosing at desktop width keeps this test about the "+":
-    # the chooser it opened is the one whose answer reaches the upload.
-    page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
+    # CHOOSE IS ON SCREEN AT 375px. The chooser's foot was one row inside an `overflow: hidden` panel and
+    # put Cancel and Choose past its right edge, so a phone could not finish this upload; it wraps now
+    # (components.css). Measured against the client width: CI's Linux Chrome draws a scrollbar.
+    choose_right, cancel_right, edge = page.evaluate_script(<<~JS)
+      (() => { const b = [...document.querySelectorAll('.filechooser-foot button')];
+               const r = (t) => b.find((e) => e.textContent.trim() === t).getBoundingClientRect().right;
+               return [r('Choose'), r('Cancel'), document.documentElement.clientWidth]; })()
+    JS
+    assert_operator choose_right, :<=, edge, "the chooser's Choose button sits off-screen (right #{choose_right} of #{edge})"
+    assert_operator cancel_right, :<=, edge, "the chooser's Cancel button sits off-screen (right #{cancel_right} of #{edge})"
     click_on "Choose"
     # THE CAPTION IS READ AS TEXT (`visible: :all`): it hides below 1100px, so a phone never shows it,
     # but the chooser's callback still writes it, just before it clicks the input — so no race.

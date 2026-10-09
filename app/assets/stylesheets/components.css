@@ -557,6 +557,13 @@
   .filechooser-empty { padding: 10px 12px; color: var(--fg-muted); font-size: 12px; }
   .filechooser-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--line); }
   .filechooser-actions { display: flex; align-items: center; gap: 8px; }
+  /* ON A PHONE THE FOOT WRAPS (redesign slice 7). One row inside the panel's `overflow: hidden` put
+     Cancel and Choose past its right edge at 375px, so an upload started from a page with no folder
+     could not be finished there. test/system/phone_topbar_test.rb clicks Choose at 375px. */
+  @media (max-width: 640px) {
+    .filechooser-foot { flex-wrap: wrap; }
+    .filechooser-actions { flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
+  }
   .filechooser-sel { max-width: 240px; font-size: 12px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* BACK IS VISIBLE AT EVERY WIDTH, ON PURPOSE. The pre-2026-09 sheets hid it here and showed it
      below 640px — but the button also carries `.btn`, and projects.css's later `.btn` definition
