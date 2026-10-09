@@ -42,6 +42,12 @@ module Web
         assert_select "form.attach-form input[name='return_to'][value='library']"
         assert_select "form.attach-form select option", text: project.name
         assert_select "a[href=?]", file_path(@file.node_id, anchor: "notes"), text: "1 note"
+        # SWAP MODE, NEVER RELOAD (files-preview.md): a reload-mode thumbs controller in this frame
+        # reloads the whole Files page when the render lands. The first assertion keeps the second
+        # from passing over a panel that has no thumbs controller at all.
+        assert_select "[data-controller~='thumbs']", 1
+        assert_select "[data-thumbs-reload-value]", { count: 0 },
+                      "the inspector's preview must poll in swap mode"
       end
       assert_select "aside.rail", { count: 0 }, "a frame body renders without the layout"
     end

@@ -692,7 +692,9 @@ selected file: a Turbo Frame body rendered **without the layout**, built from `f
 - **A missing node answers a frame, never the controller's redirect.** `rescue_from` sends HTML to
   `files_path`, which inside a frame loads the whole Library into the panel. A folder, a tombstone,
   another user's node, a bogus id and a node that vanishes between lookup and `stat` all answer
-  `files/inspector_gone` with 404.
+  `files/inspector_gone` with 404. **Never fold `FetchError` into that rescue**: an unmounted share is
+  "couldn't reach", not "gone" (§14a), so if an adapter's `stat` ever starts raising it, it gets its
+  own frame with a 503. No adapter's `stat` raises it today (it is a database read of the node).
 - **The tiles stay links.** Selection (`selection_controller.js`) intercepts only a plain click; every
   tile keeps `href=file_path`, which the file menu's Open, a modifier click, Enter and no-JavaScript
   all rely on.
