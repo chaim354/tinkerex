@@ -68,8 +68,14 @@ module Web
       assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Desk Lamp"
       get project_path(project)
       assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Desk Lamp"
-      get shelves_path
-      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "3D models"
+      # settings/shelves (slice 5) and settings/tags are nested controllers whose family is the
+      # rail FOOT's Settings, not a place: Settings lights and no `.rail-link` does. Shelves lit
+      # 3D models from 2026-09-10 until it moved back under Settings.
+      [ settings_shelves_path, settings_tags_path ].each do |path|
+        get path
+        assert_select "aside.rail .rail-foot a.rail-btn.rail-settings[aria-current='page']", count: 1
+        assert_select "aside.rail a.rail-link[aria-current='page']", count: 0
+      end
     end
 
     test "the sign-in page has no rail and no shell class, whatever the rail cookie says" do

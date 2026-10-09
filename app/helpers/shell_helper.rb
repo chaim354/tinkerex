@@ -11,20 +11,24 @@ module ShellHelper
   SECTIONS = {
     "home" => %w[home],
     "files" => %w[files library_browse notes repo_commits repo_histories],
-    "models" => %w[models shelves],
+    "models" => %w[models],
     "projects" => %w[projects],
     "inventory" => %w[inventory_items suppliers locations],
     "tools" => %w[tools],
     "trash" => %w[trash],
-    # The hub and its own children (settings/tags) light the rail FOOT's Settings link, not a rail
-    # item.
+    # The hub and its own children (settings/tags, settings/filing_rules, settings/shelves) light the
+    # rail FOOT's Settings link, not a rail item — through this one entry, because the key is the
+    # controller path's first segment and every one of them is `settings/…`.
     #
-    # SHELVES, SUPPLIERS AND LOCATIONS STILL LIGHT THE SECTION THEY SERVE — and since 2026-09-10 the
-    # URL agrees, which is the whole point of the move. They lived at `/settings/*` while this map
-    # lit Models and Inventory, so clicking Settings landed a maker on a page where Settings went
-    # dark and something else was highlighted. The disorientation was real and this map was not the
-    # thing that was wrong: `/models/shelves`, `/inventory/suppliers` and `/inventory/locations` now
-    # read like what they are. The old paths 301 (config/routes.rb) and must keep doing so.
+    # SUPPLIERS AND LOCATIONS STILL LIGHT THE SECTION THEY SERVE — and since 2026-09-10 the URL
+    # agrees, which is the whole point of that move. They lived at `/settings/*` while this map lit
+    # Inventory, so clicking Settings landed a maker on a page where Settings went dark and something
+    # else was highlighted: `/inventory/suppliers` and `/inventory/locations` now read like what they
+    # are, and the old paths 301 (config/routes.rb) and must keep doing so.
+    # SHELVES MADE THE SAME MOVE TO /models/shelves AND MADE IT BACK in slice 5, the other way to
+    # make URL and light agree: Models stopped being a section, so the rule for what counts as a
+    # model has no section to serve but Settings. That is why `shelves` left the "models" entry —
+    # a top-level `shelves` controller no longer exists for it to name.
     "settings" => %w[settings]
   }.freeze
 

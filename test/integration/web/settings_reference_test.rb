@@ -157,7 +157,7 @@ module Web
     end
 
     # A FOREIGN parent_id FAILS Maker::Location#parent_belongs_to_user, AND THE MODEL'S OWN MESSAGE
-    # IS WHAT REACHES THE USER -- not a guessed one (the same argument ShelvesController#create's
+    # IS WHAT REACHES THE USER -- not a guessed one (the same argument Settings::ShelvesController#create's
     # comment makes for its own two-validation refusal).
     test "a foreign parent_id is refused with the model's error, not a 500" do
       theirs = other_user!.maker_locations.create!(name: "Not yours")

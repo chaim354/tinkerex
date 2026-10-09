@@ -83,7 +83,7 @@ module Maker
       # NIL IS NOT THE ROOT, AND THE DIFFERENCE MATTERS AT A DOOR. `""` is the library root and is
       # valid; a MISSING path is a caller that forgot one. Without this the record validates and
       # then dies on the database's NOT NULL, turning a routine form error into a 500 in
-      # ShelvesController.
+      # Settings::ShelvesController.
       return errors.add(:path, "isn't allowed - a shelf needs a path (\"\" is the library root)") if path.nil?
 
       raw = path

@@ -336,18 +336,18 @@ Rails.application.routes.draw do
   # parent declared first matches them as `models#show id=shelves` and `inventory_items#show
   # id=suppliers` — a 404 on a page that exists, which is exactly how the suite reported it when
   # they were moved here on 2026-09-10 and left below.
-  # WHICH FOLDERS ARE SHELVES, UNDER /models BECAUSE THAT IS WHAT IT SERVES (moved 2026-09-10).
-  # It was `settings/shelves`, and the URL and the navigation disagreed: ShellHelper::SECTIONS lit
-  # MODELS for it, so a maker clicking Settings landed on a page where Settings went dark. Two ways
-  # to end that and this is the one that makes them agree rather than picking a side —
-  # `/models/shelves` lights Models and reads like Models.
   #
-  # THE OLD PATH REDIRECTS AND MUST KEEP DOING SO. It is eight months of a maker's bookmarks and
-  # anything the settings hub linked; a 404 is the cost of a tidy-up nobody asked for.
-  resources :shelves, only: %i[index create destroy], path: "models/shelves"
-  get "settings/shelves", to: redirect("/models/shelves")
-  # UNDER /inventory FOR THE REASON SHELVES IS UNDER /models (2026-09-10): SECTIONS lit Inventory
-  # while the URL said settings. The redirect keeps the old path alive.
+  # /models/shelves WAS THE PAGE FROM 2026-09-10 TO SLICE 5 — a maker's bookmarks and anything that
+  # linked it keep working. Declared before `resources :models`, or it matches models#show id=shelves.
+  # The page itself went back to `settings/shelves` (the `settings` namespace below says why).
+  # THE REVERSE REDIRECT IS GONE AND MUST STAY GONE: the 2026-09-10 move left
+  # `settings/shelves → /models/shelves` here, and anywhere above the namespace it matches before
+  # the page does — /settings/shelves 301s to /models/shelves, which 301s back, forever.
+  # moved_reference_pages_test.rb asserts both directions.
+  get "models/shelves", to: redirect("/settings/shelves")
+  # UNDER /inventory BECAUSE THAT IS WHAT THEY SERVE (2026-09-10): SECTIONS lit Inventory while the
+  # URL said settings. The redirect keeps the old path alive. Unlike shelves, these stay: Inventory
+  # is still a section with its own sidebar place, so the URL and the lit item still agree there.
   resources :suppliers, only: %i[index create destroy], path: "inventory/suppliers"
   get "settings/suppliers", to: redirect("/inventory/suppliers")
   resources :locations, only: %i[index create destroy], path: "inventory/locations"
@@ -389,6 +389,11 @@ Rails.application.routes.draw do
   resource :settings, only: :show, controller: "settings"
   namespace :settings do
     resources :tags, only: %i[index destroy]
+    # WHICH FOLDERS COUNT AS MODELS (structural redesign slice 5). Back under Settings, reversing the
+    # 2026-09-10 move to /models/shelves: Models is now a Library view (/files/models), not a section,
+    # so the section shelves serve is Settings — a rule, not navigation. The old path redirects
+    # (declared above `resources :models`, where its static segment must precede the parent).
+    resources :shelves, only: %i[index create destroy]
     # Stage 3, S3-1: the per-user extension map the intake sweep files by (Maker::FilingRules).
     # `path: "filing"` keeps the URL as /settings/filing while the helpers stay
     # settings_filing_rule(s)_path; `create` is the per-folder add form, `destroy` the chip's Remove

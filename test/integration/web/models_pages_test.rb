@@ -3,7 +3,8 @@ require "test_helper"
 module Web
   # The model catalog after PR 3 (spec §8): a Files-style toolbar on the index with the status
   # filters as chips, the status badge over the cover, button actions on the model page, a print
-  # composer that opens on demand, a drop-zone import field, and the shelves page's buttons.
+  # composer that opens on demand, and a drop-zone import field. (The shelves page's buttons moved
+  # to shelves_test.rb in slice 5, with the page, to Settings.)
   class ModelsPagesTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
@@ -24,7 +25,6 @@ module Web
       assert_select "form.toolbar.models-toolbar a.filter.chip", text: "Printed"
       assert_select "form.toolbar.models-toolbar select[name='sort']"
       assert_select ".page-head a.btn.primary[href=?]", new_model_path, text: "Import model"
-      assert_select ".page-head a.btn[href=?]", shelves_path, text: "Shelves"
     end
 
     # THE INDEX'S OWN SEARCH USES THE FILES IDIOM (LOWER, ESCAPE), because /search's "See all" lands
@@ -57,12 +57,6 @@ module Web
       get new_model_path
       assert_select "[data-controller='importer'] label.dropzone input[type='file'][multiple][data-importer-target='input'][data-action='importer#choose']"
       assert_select "[data-controller='importer'] [data-importer-target='summary']", text: "No files selected."
-    end
-
-    test "the shelves page uses buttons for its actions" do
-      get shelves_path
-      assert_select ".page-head a.btn.ghost[href=?]", models_path, text: "Back to models"
-      assert_select "form.shelf-add button.btn.primary", text: "Add shelf"
     end
   end
 end

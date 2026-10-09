@@ -96,7 +96,7 @@ class AccentSpendTest < ApplicationSystemTestCase
       # the next reader has to re-derive that these were looked at.
       "/inventory/suppliers" => [ "Add supplier" ],
       "/inventory/locations" => [ "Add location" ],
-      "/models/shelves" => [ "Add shelf" ]
+      "/settings/shelves" => [ "Add shelf" ]
     }
     paths = {
       "/" => root_path, "/files" => files_path, "/models" => models_path,
@@ -104,7 +104,7 @@ class AccentSpendTest < ApplicationSystemTestCase
       "/projects/desk-lamp" => project_path(@project), "/settings" => settings_path,
       "/tools" => tools_path, "/search" => search_path,
       "/inventory/suppliers" => suppliers_path, "/inventory/locations" => locations_path,
-      "/models/shelves" => shelves_path
+      "/settings/shelves" => settings_shelves_path
     }
 
     actual = paths.transform_values do |path|

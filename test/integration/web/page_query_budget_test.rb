@@ -831,7 +831,7 @@ module Web
 
     # THIS PAGE GROWS ON TWO AXES AT ONCE -- one row per shelf, and each row's live/missing
     # indicator scanned against every DIRECTORY in the library -- so it is seeded on both. The scan
-    # is Ruby over ONE pluck that ShelvesController#decorate memoizes across the whole map; drop
+    # is Ruby over ONE pluck that Settings::ShelvesController#decorate memoizes across the whole map; drop
     # that memo and the page costs a pluck per shelf, which is precisely the linear-in-rows shape
     # this file exists for and which no assertion about the rendered markup can see.
     test "shelves#index does not grow with shelves or directories" do
@@ -845,7 +845,7 @@ module Web
                               size: 0, mtime: 1_700_000_000_000_000_000)
         end
       end
-      assert_constant_queries(shelves_path,
+      assert_constant_queries(settings_shelves_path,
                               -> { add.call("s", SMALL) },
                               -> { add.call("l", LARGE - SMALL) },
                               "shelves#index")

@@ -6,7 +6,7 @@
 
 <ul class="settings-list settings-hub">
   <li>
-    <%= link_to "Shelves", shelves_path, class: "settings-name" %>
+    <%= link_to "Shelves", settings_shelves_path, class: "settings-name" %>
     <span class="settings-fact"><%= pluralize(@shelf_count, "shelf") %></span>
   </li>
   <li>

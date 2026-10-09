@@ -486,9 +486,10 @@ module Web
         "model detail" => model_path(@model),
         "model new" => new_model_path,
         "model edit" => edit_model_path(@model),
-        # The model catalog's one setting page. Needs no fixture of its own: it seeds its
-        # three shelves on first visit, and renders the shared folder chooser either way.
-        "shelves" => shelves_path,
+        # Which folders count as models -- a Settings page again since slice 5. Needs no fixture of
+        # its own: it seeds its three shelves on first visit, and renders the shared folder chooser
+        # either way.
+        "shelves" => settings_shelves_path,
         # Stage 2, S2-3.
         "inventory index" => inventory_items_path,
         "inventory item" => inventory_item_path(@inventory_item),
