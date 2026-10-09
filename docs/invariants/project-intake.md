@@ -272,7 +272,12 @@
   `available?`), never into what the ensure returned, so the page shows and uploads into one
   folder. A file inside the folder with no attachment row is still listed — the folder is the
   relation the panel shows; `maker_file_attachments` stays the relation detach, cover and addon
-  origin read.
+  origin read. **The Files panel's "Recently changed" row (slice 6) reads
+  `ProjectFolderListing#recent_files`**: ONE query over the subtree `files_in` already scopes,
+  newest `updated_at` first, `[]` when the folder is unavailable, and like the rest of the listing
+  it never mints and never files. It is deliberately **not** part of the capped, name-ordered
+  listing: a folder past `FILE_CAP` has its newest files somewhere beyond the cap, so a row taken
+  from the listing would show the newest of the first 300 names.
 
 - **`:in_working_tree` IS UNSCOPED, UNLIKE `:attached_elsewhere` — DO NOT ADD A KWARG TO IT.** A
   refusal from `#refusal_for` does not mean "refuse the attachment": `#call` returns
@@ -395,7 +400,7 @@
   existed.
 - **THE SWEEP RECORD HAS ONE WRITER, AND AN ATTACH-ONLY PASS IS NOT A SWEEP.** `#record_sweep!`
   stamps `last_swept_at`/`last_sweep_moves` with `update_columns` (no validation, no callback, no
-  `updated_at` bump — this runs every 15 minutes forever and Home orders by `updated_at`). It sits
+  `updated_at` bump — this runs every 15 minutes forever and Recent orders by `updated_at`). It sits
   **below** `#call`'s `unless @move` return: `move: false` is `.for_node`'s over-the-eager-cap path,
   which declines to file, so stamping a 0 there would overwrite a real "filed 3 files" on every
   upload into a busy project. It **does** stamp when `autofile` is off — that pass was allowed to
