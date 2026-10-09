@@ -77,6 +77,11 @@
   .note-body :first-child { margin-top: 0; }
   .note-body :last-child { margin-bottom: 0; }
   .note-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; font-size: 12px; }
+  /* THE NOTE BADGE'S ICON (ShellHelper::ICON_PATHS[:note], slice 7) at the size of its 11px count.
+     HERE AND NOT BESIDE `.note-badge` IN components.css, because a layer outranks specificity:
+     shell.css's bare `.rail-icon { width: 16px }` sits in a LATER layer than components, so this
+     rule written there lost and the icon drew at 16px (measured; files_layout_test.rb pins 12px). */
+  .note-badge .rail-icon { width: 12px; height: 12px; vertical-align: -2px; }
 
   /* MIGRATED VERBATIM (old projects.css): .attach-to-project, .attach-form, .attach-form select,
      .project-chip, .project-chip form, .chip-x, .chip-x:hover — these live on files/show. */

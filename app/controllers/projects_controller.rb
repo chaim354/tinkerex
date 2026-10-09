@@ -93,7 +93,7 @@ class ProjectsController < ApplicationController
     # badge: the app made this and I have not looked at it yet.
     #
     # `update_column`: no validation, no callback, and NO `updated_at` BUMP — deliberately. Both
-    # projects#index and Home order by `updated_at`, so bumping it would make merely OPENING a
+    # projects#index and Recent order by `updated_at`, so bumping it would make merely OPENING a
     # project reorder every list, which is a change nobody asked for wearing a feature.
     #
     # A WRITE ON A GET, and an established one here: ensure_library_folder! below already writes

@@ -283,6 +283,15 @@
     font: 600 11px/16px var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted);
   }
   table.files td, .table td { height: var(--row-height); padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  /* THE LIST'S ROW DIVIDER IS THE ROW'S, NOT ITS CELLS' (slice 7). `td.row-actions` is
+     `display: flex` (the .row-actions component), which makes it a flex box inside an anonymous
+     table cell rather than a cell: its border left the collapsed row line, sat at the bottom of
+     a 44px box in a taller row, and faded with the actions' opacity below, so the divider broke
+     under the actions column on the Library and the Trash. A row's border in a
+     `border-collapse: collapse` table runs under every cell, anonymous ones included.
+     test/system/files_layout_test.rb samples the painted pixels. */
+  table.files tbody tr { border-bottom: 1px solid var(--line); }
+  table.files tbody td { border-bottom: 0; }
   table.files tbody tr:hover, .table tbody tr:hover { background: var(--raised); }
   table.files th a { color: inherit; }
   table.files th a:hover { text-decoration: underline; }

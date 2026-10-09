@@ -1,5 +1,7 @@
 <%# A small indicator that a file has notes. NOT a link — the enclosing card/row already links to
-    the file detail page, whose Notes section is where the notes live. Local: `count` (Integer). %>
+    the file detail page, whose Notes section is where the notes live. Local: `count` (Integer).
+    The rail's note icon and the number; the TITLE carries the words ("2 notes"), which is where a
+    status says what it means (design-system.md rule 13). It drew an emoji until slice 7. %>
 <% if count.to_i.positive? %>
-  <span class="note-badge" title="<%= count %> note<%= "s" unless count == 1 %>">📝 <%= count %></span>
+  <span class="note-badge" title="<%= count %> note<%= "s" unless count == 1 %>"><%= rail_icon(:note) %> <%= count %></span>
 <% end %>

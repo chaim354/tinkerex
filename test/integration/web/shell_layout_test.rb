@@ -51,6 +51,18 @@ module Web
       assert_select "aside.rail a.rail-link[aria-current='page']", text: "Inventory"
     end
 
+    # THE COLLAPSED RAIL HIDES EVERY `.rail-btn span`, so Settings and Sign out name themselves
+    # on the element (slice 7): Sign out was a bare-text button that wrapped in the icon column.
+    # Its one-line height is a browser fact, measured in test/system/shell_test.rb.
+    test "the rail foot's Settings and Sign out carry an icon, a hideable label and their own name" do
+      get files_path
+      assert_select "aside.rail .rail-foot a.rail-settings[title='Settings'][aria-label='Settings'] svg.rail-icon"
+      assert_select "aside.rail .rail-foot form button.rail-btn[title='Sign out'][aria-label='Sign out']" do
+        assert_select "svg.rail-icon", 1
+        assert_select "span", text: "Sign out"
+      end
+    end
+
     test "the rail's first link is Recent, at the root path" do
       get files_path
       assert_select "nav.rail-nav li:first-child a.rail-link[href='/']", text: "Recent"

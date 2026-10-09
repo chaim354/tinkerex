@@ -45,7 +45,13 @@ module ShellHelper
     search: "M7 2.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z M10.5 10.5L14 14",
     theme: "M8 2a6 6 0 0 0 0 12V2z M8 2a6 6 0 1 1 0 12",
     collapse: "M3 8h10 M7 4L3 8l4 4",
-    settings: "M8 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6z M8 1.5v2 M8 12.5v2 M1.5 8h2 M12.5 8h2 M3.4 3.4l1.4 1.4 M11.2 11.2l1.4 1.4 M3.4 12.6l1.4-1.4 M11.2 4.8l1.4-1.4"
+    settings: "M8 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6z M8 1.5v2 M8 12.5v2 M1.5 8h2 M12.5 8h2 M3.4 3.4l1.4 1.4 M11.2 11.2l1.4 1.4 M3.4 12.6l1.4-1.4 M11.2 4.8l1.4-1.4",
+    # A door and an arrow leaving it, for the rail foot's Sign out (slice 7): collapsed, the foot
+    # draws icons only, and a bare-text button wrapped "Sign out" onto two lines in a 40px column.
+    sign_out: "M6 3H3v10h3 M10 5l3 3-3 3 M13 8H7",
+    # A page with a folded corner and two lines: a file's note-count badge (slice 7), which drew
+    # the last emoji in the interface (test/no_emoji_test.rb). The count and its title stay.
+    note: "M3 2h7l3 3v9H3z M5 7h6 M5 10h6"
   }.freeze
 
   # An unknown or absent cookie is the default, LIGHT ("Paper") since the 2026-10-08 redesign: the

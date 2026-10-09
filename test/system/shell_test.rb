@@ -96,6 +96,43 @@ class ShellTest < ApplicationSystemTestCase
     page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
   end
 
+  # SIGN OUT IS ONE ICON IN THE ICON RAIL (slice 7). It was a bare-text `button_to` with no span
+  # for shell.css's `.rail-btn span { display: none }` to hide, so in the 40px button "Sign out"
+  # wrapped onto two lines. HEIGHT ALONE COULD NOT SEE THAT: the foot's `font: 13px/1` makes two
+  # lines 26px, inside the button's 30px min-height, so the wrapped button measured exactly as
+  # tall as Theme. Hence three assertions — the visible text occupies at most one line box, the
+  # button is no taller than a sibling `.rail-btn`, and its icon draws — each mutation-checked:
+  # deleting the `<span>` (bare text beside the icon) reddens the first, deleting the icon
+  # reddens the third, and restoring the original bare-text `button_to` reddens the first.
+  test "below 1100px Sign out is a single-line icon like its rail-foot siblings" do
+    page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
+                                    width: 900, height: 900, deviceScaleFactor: 1, mobile: false)
+    visit files_path
+    assert_no_selector "body.rail--collapsed"
+    sign_out = find("aside.rail .rail-foot form button")
+    foot = page.evaluate_script(<<~JS, sign_out)
+      (() => {
+        const b = arguments[0], theme = document.querySelector("aside.rail .rail-foot [data-action='theme#cycle']");
+        const walk = document.createTreeWalker(b, NodeFilter.SHOW_TEXT);
+        const tops = new Set();
+        for (let t = walk.nextNode(); t; t = walk.nextNode()) {
+          const range = document.createRange();
+          range.selectNodeContents(t);
+          for (const r of range.getClientRects()) if (r.width > 0 && r.height > 0) tops.add(Math.round(r.top));
+        }
+        const icon = b.querySelector("svg.rail-icon"), ir = icon && icon.getBoundingClientRect();
+        return { lines: tops.size, height: b.getBoundingClientRect().height,
+                 sibling: theme.getBoundingClientRect().height, icon: ir ? [ir.width, ir.height] : null };
+      })()
+    JS
+    assert_operator foot["lines"], :<=, 1, "Sign out's visible text wraps in the icon rail (#{foot.inspect})"
+    assert_operator foot["height"], :<=, foot["sibling"], "Sign out is taller than Theme in the icon rail (#{foot.inspect})"
+    assert_equal [ 16, 16 ], foot["icon"], "Sign out draws no icon in the icon rail (#{foot.inspect})"
+    assert_equal "Sign out", sign_out["aria-label"]
+  ensure
+    page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
+  end
+
   test "the theme button cycles light, dark, system and persists" do
     visit files_path
     theme = -> { page.evaluate_script("document.documentElement.dataset.theme") }
