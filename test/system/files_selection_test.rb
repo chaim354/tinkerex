@@ -116,9 +116,14 @@ class FilesSelectionTest < ApplicationSystemTestCase
     assert_selector ".inspector .inspector-name", text: "bracket.stl"
     assert page.evaluate_script("document.documentElement.scrollWidth <= window.innerWidth"),
            "the sheet scrolls the page sideways"
-    # A SHEET: it covers the listing edge to edge.
-    rect = page.evaluate_script("(() => { const r = document.querySelector('.inspector').getBoundingClientRect(); return [r.left, r.right] })()")
-    assert_equal [ 0, 375 ], rect.map(&:round)
+    # A SHEET: it covers the listing edge to edge. Measured against the viewport's CLIENT width, never
+    # a literal 375: a fixed box with left/right 0 ends where the scrollbar begins, and the Linux CI
+    # runners draw a classic 15px scrollbar (360) where macOS overlays one (375).
+    left, right, edge = page.evaluate_script(<<~JS)
+      (() => { const r = document.querySelector('.inspector').getBoundingClientRect();
+               return [r.left, r.right, document.documentElement.clientWidth]; })()
+    JS
+    assert_equal [ 0, edge ], [ left.round, right.round ]
     # The close is a LINK (the no-JavaScript door), so with the controller it must not also follow
     # it. turbo:before-visit fires inside the click's own dispatch, so the count is settled here.
     page.execute_script("window.__visits = 0; addEventListener('turbo:before-visit', () => window.__visits++)")
