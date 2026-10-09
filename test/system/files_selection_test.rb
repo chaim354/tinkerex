@@ -119,8 +119,12 @@ class FilesSelectionTest < ApplicationSystemTestCase
     # A SHEET: it covers the listing edge to edge.
     rect = page.evaluate_script("(() => { const r = document.querySelector('.inspector').getBoundingClientRect(); return [r.left, r.right] })()")
     assert_equal [ 0, 375 ], rect.map(&:round)
+    # The close is a LINK (the no-JavaScript door), so with the controller it must not also follow
+    # it. turbo:before-visit fires inside the click's own dispatch, so the count is settled here.
+    page.execute_script("window.__visits = 0; addEventListener('turbo:before-visit', () => window.__visits++)")
     find(".inspector-close").click
     assert_no_selector ".library.has-inspector"
+    assert_equal 0, page.evaluate_script("window.__visits"), "closing the panel followed the link"
     # The close button hides with the panel, so focus is handed back to the tile the panel
     # described rather than dropped to <body>. Asked of the active element ITSELF: a querySelector
     # from it would answer for <body> too, since the first tile in the document is this one.

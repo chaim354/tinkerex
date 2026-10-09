@@ -18,7 +18,8 @@
       <span class="thumb<%= " photo" if Maker::FileAttachment.photo?(@node.name) %>"><img src="<%= blob_file_path(@node.node_id) %>" alt=""></span>
     <% elsif Maker::Previews::Registry.for_filename(@node.name).present? %>
       <%= tag.span class: "file-cell", data: thumb_cell_data(@node.node_id, ext.first(4)) do %>
-        <%= render "files/thumb", thumb: @thumbnail, ext_label: ext.first(4), url: preview_src(@thumbnail) %>
+        <%= render "files/thumb", thumb: @thumbnail, ext_label: ext.first(4), url: preview_src(@thumbnail),
+                                  photo: Maker::FileAttachment.photo?(@node.name) %>
       <% end %>
     <% else %>
       <span class="thumb generic-thumb" aria-hidden="true"><%= ext.first(4).presence || "FILE" %></span>

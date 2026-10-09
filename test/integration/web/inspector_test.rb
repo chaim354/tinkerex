@@ -52,20 +52,25 @@ module Web
       assert_select "aside.rail", { count: 0 }, "a frame body renders without the layout"
     end
 
-    # THE GONE FRAME IS NOT IN template_hygiene_test.rb's `pages` SWEEP, because it answers 404 and
-    # that sweep asserts :success on every page. Its rendered output is checked HERE instead, the
-    # standing check that file's UNSWEPT_TEMPLATES entry names.
     # A PHOTO IN THE PANEL CROPS LIKE ITS TILE (PHOTO_EXTS), and a screenshot keeps the whole picture.
+    # BOTH STAGE BRANCHES: a .jpg is inline bytes, a .heic is no inline image and goes through the
+    # rendered thumbnail (the `files/thumb` branch), where the grid and list already pass `photo:`.
     test "the panel's preview crops a photo and keeps a screenshot whole" do
       jpg = @user.nodes.create!(node_id: "n-jpg", name: "side.jpg", kind: "file", mtime: 1, size: 5)
       png = @user.nodes.create!(node_id: "n-png", name: "shot.png", kind: "file", mtime: 1, size: 5)
+      heic = @user.nodes.create!(node_id: "n-heic", name: "IMG_0042.heic", kind: "file", mtime: 1, size: 5)
       get inspector_file_path(jpg.node_id)
       assert_select ".inspector-stage .thumb.photo img"
       get inspector_file_path(png.node_id)
       assert_select ".inspector-stage .thumb img"
       assert_select ".inspector-stage .thumb.photo", count: 0
+      get inspector_file_path(heic.node_id)
+      assert_select ".inspector-stage .file-cell .thumb.photo"
     end
 
+    # THE GONE FRAME IS NOT IN template_hygiene_test.rb's `pages` SWEEP, because it answers 404 and
+    # that sweep asserts :success on every page. Its rendered output is checked HERE instead, the
+    # standing check that file's UNSWEPT_TEMPLATES entry names.
     test "a folder, a tombstone or another user's file answers a gone frame, not a page" do
       other = User.create!(email: "o-#{SecureRandom.hex(4)}@example.com")
       theirs = other.nodes.create!(node_id: "n-theirs", name: "x.stl", kind: "file", mtime: 1, size: 1)

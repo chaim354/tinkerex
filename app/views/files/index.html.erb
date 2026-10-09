@@ -340,8 +340,12 @@
 <% end %>
   </div>
   <aside class="inspector" aria-label="Selected file">
-    <button type="button" class="btn small icon inspector-close" data-action="selection#close"
-            aria-label="Close the inspector">×</button>
+    <%# A LINK, NOT A BUTTON: with JavaScript off the frame never loads, and a ?selected= page (the
+        file page's folder crumb carries one) would otherwise show an empty panel whose only control
+        does nothing — on a phone a sheet over the listing. With the controller, close prevents it. %>
+    <%= link_to "×", files_path(request.query_parameters.except("selected")),
+                class: "btn small icon inspector-close", data: { action: "selection#close" },
+                aria: { label: "Close the inspector" } %>
     <%= turbo_frame_tag "inspector", src: (@selected && inspector_file_path(@selected)),
                         target: "_top", data: { selection_target: "frame" } %>
   </aside>

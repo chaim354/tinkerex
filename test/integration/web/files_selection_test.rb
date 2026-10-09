@@ -95,6 +95,36 @@ module Web
       end
     end
 
+    # WITH JAVASCRIPT OFF the frame never loads, so a ?selected= page (the file page's folder crumb
+    # always carries one) shows an empty panel — on a phone a full-screen sheet over the listing and
+    # the top bar. Its close must work without the controller: a link to the listing minus the param.
+    test "the inspector's close is a link back to the listing without the selection" do
+      get files_path(folder: @dir.node_id, selected: @stl.node_id, view: "grid")
+      close = css_select("aside.inspector .inspector-close").first
+      assert_equal "a", close.name, "a <button type=button> does nothing without JavaScript"
+      assert_includes close["href"], "folder=#{@dir.node_id}"
+      refute_includes close["href"], "selected="
+      assert_includes close["data-action"], "selection#close"
+    end
+
+    # OFF-PAGE, its own case: a file in the SAME folder on another page. The off-listing case above
+    # cannot see it — a check against the whole folder (`scope`) instead of the rendered rows keeps
+    # every assertion there green.
+    test "a file on another page of a paged folder is ignored there and selected on its own page" do
+      shelf = @user.nodes.create!(node_id: "dir-shelf", name: "shelf", kind: "dir", mtime: 1, size: 0)
+      (FilesController::FOLDER_PAGE + 1).times do |i|
+        @user.nodes.create!(node_id: format("n-p%04d", i), name: format("p%04d.stl", i), kind: "file",
+                            mtime: 1, size: 1, parent_node_id: shelf.node_id)
+      end
+      last = format("n-p%04d", FilesController::FOLDER_PAGE)
+
+      get files_path(folder: shelf.node_id, selected: last)
+      assert_select "nav.pager"
+      assert_select ".library.has-inspector", count: 0
+      get files_path(folder: shelf.node_id, selected: last, page: 2)
+      assert_select ".library.has-inspector"
+    end
+
     test "the selection rides along on the listing's own links" do
       get files_path(folder: @dir.node_id, selected: @stl.node_id, view: "list")
       assert_select "th a[href*='selected=#{@stl.node_id}']", minimum: 1

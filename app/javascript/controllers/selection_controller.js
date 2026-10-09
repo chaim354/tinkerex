@@ -47,7 +47,9 @@ export default class extends Controller {
     item.focus({ preventScroll: true })
   }
 
-  close() {
+  close(event) {
+    // The close control is a link to the listing without ?selected= (the no-JavaScript door).
+    event?.preventDefault()
     const selected = this.itemTargets.find((el) => el.classList.contains("is-selected"))
     this.itemTargets.forEach((el) => el.classList.remove("is-selected"))
     this.replaceUrl((url) => url.searchParams.delete("selected"))

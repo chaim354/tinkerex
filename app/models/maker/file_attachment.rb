@@ -204,7 +204,9 @@ module Maker
     # renders or scans, where a crop cuts off the point. A DISPLAY choice only: the role stays
     # "image" for all ten (ROLE_BY_EXT), and this list must stay a subset of IMAGE_EXTS
     # (file_attachment_test.rb). Structural redesign slice 3; slice 1 styled `.thumb.photo`.
-    PHOTO_EXTS = (IMAGE_EXTS & %w[jpg jpeg heic heif]).freeze
+    # A LITERAL, NOT AN INTERSECTION: `IMAGE_EXTS & %w[...]` is a subset by construction, so the
+    # subset test could never fail and a typo would vanish silently (found in review).
+    PHOTO_EXTS = %w[jpg jpeg heic heif].freeze
 
     def self.photo?(name) = PHOTO_EXTS.include?(File.extname(name.to_s).delete(".").downcase)
 
