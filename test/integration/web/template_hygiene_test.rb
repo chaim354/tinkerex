@@ -359,7 +359,9 @@ module Web
       # THE UNLISTED SIBLING RENDERS ONE BRANCH NO PUBLIC PROJECT CAN: the `noindex` meta and the
       # "Unlisted link" badge, reached only with `k` (the token IS the credential). It needs no
       # fixtures of its own — its panels are all empty, which is the OTHER half of a partial that
-      # renders nothing when its collection is empty.
+      # renders nothing when its collection is empty. SINCE SLICE 6 its page leaves the six empty
+      # on-demand panels out and carries "+ Add panel" instead (the one page here that sweeps that
+      # menu), so their quiet arm is swept by its edit-mode entry in `pages`, where every panel shows.
       @unlisted = @user.maker_projects.create!(name: "Hidden Rig", visibility: "unlisted")
       # STAGE 4, S4-4: A FOLDER WITH NO README, or projects/_readme_editor's "Write a README" branch
       # (the template in the textarea, the enabled controls) is rendered by no page here — @project's
@@ -489,6 +491,7 @@ module Web
         # projects/_panel_slot while these three sat unswept.
         "project detail (edit mode)" => edit_layout_project_path(@project),
         "project detail (no README)" => project_path(@unlisted),
+        "project detail (edit mode, empty panels)" => edit_layout_project_path(@unlisted),
         # Stage 4, S4-4: the owner's preview of their public page, the ONE page that reaches
         # projects/preview and projects/_preview_banner. @user has a handle (setup above), so this
         # renders the page rather than the no-handle redirect.

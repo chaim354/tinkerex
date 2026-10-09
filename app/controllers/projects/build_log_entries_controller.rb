@@ -1,13 +1,15 @@
 module Projects
   # Build-log entries for a project. Create is nested under a project; destroy is shallow.
   class BuildLogEntriesController < ApplicationController
+    include Projects::PanelReturn
+
     def create
       project = current_user.maker_projects.find_by!(slug: params[:project_id])
       entry = project.build_log_entries.new(entry_params.merge(user: current_user))
       if entry.save
         redirect_to project_path(project), notice: "Log entry added."
       else
-        redirect_to project_path(project), alert: entry.errors.full_messages.to_sentence
+        redirect_to project_panel_path(project, "build_log"), alert: entry.errors.full_messages.to_sentence
       end
     end
 

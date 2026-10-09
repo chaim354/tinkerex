@@ -65,10 +65,10 @@
   /* THE COVER SLOT (stage 4, S4-5). `width: 100%` IS THE WHOLE RULE, AND IT IS NOT DECORATION:
      `.project-card` is `align-items: center` (pages/projects.css), which sizes a block child to
      shrink-to-fit in the cross axis — so `.project-card .thumb`'s own `width: 100%` would resolve
-     against the anchor's content width and starve the cover down to the emoji, exactly the trap
+     against the anchor's content width and starve the cover down to the icon, exactly the trap
      that sheet's `.project-tile` comment already records for the private card. Nothing else is
-     needed: the cell's size comes from `.project-card .thumb` and the placeholder's glyph from
-     `.project-thumb-empty`, both already defined in pages/projects.css and both correct here —
+     needed: the cell's size comes from `.project-card .thumb` and the placeholder icon's from
+     `.project-card .project-thumb-empty .rail-icon`, both in pages/projects.css and both correct here —
      a second copy is what §14m rule 3 exists to stop. */
   .project-card-grid .card-cover { display: block; width: 100%; }
 

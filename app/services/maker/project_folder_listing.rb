@@ -75,6 +75,8 @@ module Maker
       # `#backups` list, which the panel DOES render as tiles wherever the file physically sits, so
       # a rescue copy inside a repository must keep its thumbnail.
       def subtree_file_ids = files.map(&:node_id) + children.flat_map(&:subtree_file_ids)
+      # This dir and every dir beneath it — what #recent_files leaves out for a dir it is told to skip.
+      def subtree_dir_ids = [ node_id ] + children.flat_map(&:subtree_dir_ids)
       def subtree_file_count = files.size + children.sum(&:subtree_file_count)
     end
 
@@ -103,6 +105,8 @@ module Maker
       @backups = []
       @dir_cap_hit = false
       dir_ids = @folder_id ? collect_dirs(@folder_id) : []
+      # Kept for #recent_files, which asks the same subtree a second, differently ordered question.
+      @dir_ids = dir_ids
       # THE ROOT ITSELF (stage 4, S4-1). collect_dirs ENTERS the folder but flags only its
       # children, so a project whose folder IS the working tree — every real repository on the
       # share deployment, measured 2026-09-07 — answered repo? nowhere on its page: no card, no
@@ -127,6 +131,30 @@ module Maker
     end
 
     def available? = !@folder_id.nil?
+
+    # THE NEWEST FILES ANYWHERE UNDER THE FOLDER (structural redesign §6, slice 6: the Files panel's
+    # "Recently changed" row). ONE query over the same subtree `files_in` already scopes — the same
+    # visible-entries rule, the same dirs the walk entered (DIR_CAP) — ordered by `updated_at`, with
+    # `node_id` as the tiebreak an ordering needs on two adapters. [] when the folder is unavailable,
+    # without a query. DELIBERATELY NOT PART OF THE NAME-ORDERED, CAPPED LISTING: a folder with 301
+    # files keeps its newest ones wherever the name order puts them, which may be past FILE_CAP, so
+    # this cannot be answered by sorting `all_rows`. Reads; never mints (project-intake.md).
+    #
+    # The row shows only what the page would otherwise show OPENLY, so two kinds of file stay out,
+    # both IN the query so the limit still counts files the row can show:
+    #   * `skip:` takes Dirs from `#tree` whose WHOLE subtree is left out — the page's answer to
+    #     "which folders draw no tile" (a hidden panel, a browsed repository; ProjectsController#show
+    #     decides).
+    #   * BACKUPS. LightBurn rewrites `<stem>_backup.lbrn2` on every save, so a laser project's
+    #     newest files are half rescue copies — exactly what `#backups` folds into one closed
+    #     section to keep off the panel's eye level (S2-2). #backup_names_sql is that rule in SQL.
+    def recent_files(limit = 8, skip: [])
+      dirs = @dir_ids - skip.flat_map(&:subtree_dir_ids)
+      return [] if dirs.empty?
+
+      files_in(dirs).where.not(*backup_names_sql)
+                    .order(updated_at: :desc, node_id: :asc).limit(limit).to_a
+    end
 
     # Is the project's folder ITSELF a working tree (a `.git` marker child of folder_node_id)?
     # False when the folder is not available. S4-4's README editor and S4-6's adoption read this.
@@ -222,6 +250,18 @@ module Maker
 
     def files_in(dir_ids)
       @user.nodes.present.where(kind: "file", parent_node_id: dir_ids).visible_entries(false)
+    end
+
+    # Maker::FileAttachment.backup? as a WHERE fragment: the name ends in BACKUP_SUFFIX then one of
+    # BACKUP_EXTS, case-insensitively — composed from those two constants, never a copy of the
+    # strings. `_` is a LIKE wildcard, so the pattern is sanitized, and the ESCAPE clause is what
+    # makes that sanitizing do anything on SQLite, which has no default escape character (the same
+    # rule SearchController records).
+    def backup_names_sql
+      patterns = Maker::FileAttachment::BACKUP_EXTS.map do |ext|
+        "%#{Node.sanitize_sql_like("#{Maker::FileAttachment::BACKUP_SUFFIX}.#{ext}")}"
+      end
+      [ patterns.map { "LOWER(name) LIKE ? ESCAPE '\\'" }.join(" OR "), *patterns ]
     end
 
     # Splits one dir's (or the root's) already-fetched file nodes into ordinary Rows and backups,

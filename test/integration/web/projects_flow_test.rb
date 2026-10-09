@@ -46,12 +46,45 @@ module Web
 
       # One grid, no per-status sections.
       assert_select ".projects-grid", count: 1
-      # A non-archived status is no longer a heading and no longer a badge.
+      # A non-archived status is no longer a heading, and its badge (slice 6) sits beside the card's
+      # link, never inside it — the card itself carries no badge.
       assert_select ".project-card .badge", count: 0
       assert_select ".project-card .project-name", text: "Desk Lamp"
       assert_select ".project-card .project-name", text: "Bench Jig"
       # Archived projects stay out of the default listing.
       assert_select ".project-card .project-name", text: "Old Rig", count: 0
+    end
+
+    # THE STATUS ON THE CARD (structural redesign §6, slice 6): active, paused and done are badged,
+    # in the words the project page's head uses, beside the other badges and OUTSIDE the link;
+    # `planning` — the column default — never is.
+    test "an index card badges active, paused and done beside its link, and never planning" do
+      user = sign_in
+      { "Desk Lamp" => "active", "Bench Jig" => "paused", "Old Clock" => "done", "Someday" => "planning" }
+        .each { |name, status| user.maker_projects.create!(name:, status:) }
+
+      get projects_path
+
+      assert_select ".project-tile > .badge.status-active", text: "Active"
+      assert_select ".project-tile > .badge.status-paused", text: "Paused"
+      assert_select ".project-tile > .badge.status-done", text: "Done"
+      assert_select ".project-tile .badge.status-planning", 0
+      tile = css_select(".project-tile").find { |t| t.at_css(".project-name")&.text == "Someday" }
+      assert tile, "expected a tile for the planning project"
+      assert_empty tile.css(".badge"), "a planning project wears no badge at all"
+      assert_select ".project-card .badge", 0
+    end
+
+    # NO EMOJI IN THE INTERFACE: a project with no cover shows the rail's projects icon, which is the
+    # glyph the 📦 it replaced stood for. Scoped to the grid — the shell is not this test's business.
+    test "a project with no cover shows the projects icon, never an emoji" do
+      user = sign_in
+      user.maker_projects.create!(name: "Bare")
+
+      get projects_path
+
+      assert_select ".projects-grid .project-card .project-thumb-empty[aria-hidden='true'] svg.rail-icon", 1
+      assert_no_match "\u{1F4E6}", css_select(".projects-grid").to_s
     end
 
     test "index shows only the current user's projects" do
@@ -426,7 +459,9 @@ module Web
 
       get project_path(project)
       assert_response :success
-      assert_select "form[action=?]", unarchive_project_path(project)
+      # IN THE ⋯ MENU since slice 6, the same button_to it always was.
+      assert_select ".head-actions details.project-menu form[action=?] button.menu-item",
+                    unarchive_project_path(project), text: "Unarchive"
       # The Archive button posts DELETE to the project itself; it must not render here.
       assert_select "form[action=?][method=?]", project_path(project), "post", count: 0
     end
@@ -436,7 +471,8 @@ module Web
       project = user.maker_projects.create!(name: "Desk Lamp", status: "active")
 
       get project_path(project)
-      assert_select "form[action=?]", project_path(project)
+      assert_select ".head-actions details.project-menu form[action=?] button.menu-item.danger",
+                    project_path(project), text: "Archive"
       assert_select "form[action=?]", unarchive_project_path(project), count: 0
     end
 
@@ -491,9 +527,9 @@ module Web
       auto.update_columns(discovered_at: 1.hour.ago)
 
       get project_path(auto)
-      assert_select ".head-actions form[action=?] button", project_path(auto, dismiss: 1),
+      assert_select ".head-actions details.project-menu form[action=?] button.menu-item", project_path(auto, dismiss: 1),
                     text: "Not a project"
-      assert_select ".head-actions form[data-turbo-confirm*=?]", "won't adopt it as a project again"
+      assert_select ".head-actions details.project-menu form[data-turbo-confirm*=?]", "won't adopt it as a project again"
 
       delete project_path(auto, dismiss: 1)
       assert_equal "archived", auto.reload.status
@@ -507,7 +543,7 @@ module Web
 
       get project_path(project)
       assert_select "form[action=?]", project_path(project, dismiss: 1), count: 0
-      assert_select ".head-actions form[data-turbo-confirm=?]", "Archive By Hand?"
+      assert_select ".head-actions details.project-menu form[data-turbo-confirm=?]", "Archive By Hand?"
 
       delete project_path(project)
       assert_match(/\AArchived By Hand\./, flash[:notice].to_s)
@@ -618,6 +654,11 @@ module Web
     test "saving the type changes the page's panels" do
       user = sign_in
       project = user.maker_projects.create!(name: "Desk Lamp")
+      # A BOM LINE, so the panel would render if the type left it visible: an empty BOM is absent on
+      # its own since slice 6, and the count of 0 below would pass over nothing.
+      project.boms.create!(user:).lines.create!(user:, part_name: "M3 screw", quantity: 4, unit: "each")
+      get project_path(project)
+      assert_select "section.bom-panel", 1, "the visible arm, so the assertion below is a CHANGE"
 
       patch project_path(project), params: { project: { name: "Desk Lamp", kind: "laser" } }
 

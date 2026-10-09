@@ -702,7 +702,14 @@ selected file: a Turbo Frame body rendered **without the layout**, built from `f
   all rely on. **The model strip above a model folder's files (`files/_model_strip`, slice 5) is not
   a selection item**: nothing in it goes through `with_selection`, because a model is not a file in
   the listing, so it never opens this frame (`model_strip_test.rb` asserts no `data-selection-target`
-  inside it).
+  inside it). **Recent and the project hub have no inspector (slice 6), so their file tiles are
+  never selection items either**: neither page mounts a `selection` controller, so nothing there goes
+  through `with_selection`. Each tile links `FilesHelper#library_file_path`, the file's folder in the
+  Library with `?selected=` naming it (a root file's link is `/files?selected=…`, since Rails drops
+  the nil `folder`), and this frame then answers "what is this" and its Open reaches the file page.
+  **The Library's own tiles keep `file_path`**, which selection intercepts: `library_file_path` there
+  would send the file menu's Open, a modifier click and Enter back to the Library instead of the
+  file. On the hub, Photos, Schematics and the hero keep `file_path` too.
 
 **`PHOTO_EXTS` is a DISPLAY subset of the image role, not a second vocabulary.** `jpg jpeg heic heif`
 — what a camera writes — get `.thumb.photo` (cropped to fill, on `--photo-stage`); PNG, GIF, WebP,

@@ -28,7 +28,7 @@
 <%# QUIET AT ZERO (stage 4, S4-1): no releases is the heading and Create release. The count span
     goes with the list it counts and the empty sentence with it, for the same reason
     projects/_wiring drops both -- the composer below, which is what an empty panel is for, stays. %>
-<section class="panel releases-panel<%= " panel--quiet" if releases.empty? %>">
+<section class="panel releases-panel<%= " panel--quiet" if releases.empty? %>" id="project-releases">
   <div class="panel-head">
     <h2><%= panel_title(@panel_layout, "releases") %></h2>
     <% if releases.any? %>

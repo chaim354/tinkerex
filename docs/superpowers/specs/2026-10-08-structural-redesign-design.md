@@ -195,22 +195,34 @@ the viewers, the preview stack or Measure changes (`docs/invariants/measure-view
 
 `ProjectsController#show`, option B:
 
-- **Header**: the cover on `photo-stage`, a PROJECT label, the name in `display`, visibility and
-  archived badges, the description. Actions: Edit, Customise layout (the existing layout editor),
-  and ⋯ (Publish settings, Archive). The top bar's Upload targets the project's folder.
-- **Files panel, always**: the project folder's contents (folder-as-truth, stage 2's decision),
-  the 8 most recently changed files, then a "Linked" group for files elsewhere. "Open folder →" goes
-  to the Library view. A tile links to `/files?folder=…&selected=…`; the hub has no inspector of
-  its own.
-- **README panel, always**: the folder's README, editable as today.
-- **On-demand panels**: Build log, Tasks, BOM, Sheets, Releases, Print log. A panel renders only
-  when it has rows or the user added it from **"+ Add panel"**. This is the existing `panels`
-  layout machinery with a new default layout (Files, README, then panels that have data), not a
-  second system.
-- **Layout**: two columns at 1100px and up (Files wide; log and tasks beside it; README below), one
-  column on a phone.
-- **Projects index** (`/projects`): cover tiles with name and status; archived projects behind a
-  quiet link. New ▸ Project creates the project and its folder under `Projects/`.
+- **Header**: the cover (`projects/_hero`, unchanged markup) on `--photo-stage`, a PROJECT eyebrow
+  above the name and outside the `h1`, the badges, the description and tags. Actions: Edit,
+  Customise page (the existing layout editor, under the label tests pin), "+ Add panel" when an
+  on-demand panel is absent, and ⋯ (Publish settings, which jumps to `#publish`, then Archive,
+  Unarchive or Not a project, moved in with their confirms unchanged). The `publish` panel stays at
+  the foot, and its Save publishing stays the hub's second accent. The top bar's Upload targets the
+  project's folder.
+- **Files panel, always**: the project folder's contents (folder-as-truth, stage 2's decision). A
+  "Recently changed" row of the 8 newest files anywhere under the folder sits above the existing
+  groups (`Maker::ProjectFolderListing#recent_files`: one query, not part of the capped,
+  name-ordered listing). The README card, the loose, generated and backups groups and "Linked" stay
+  below it. "Open folder →" replaces the head's folder path and goes to the Library view. A file
+  tile or list row links to `/files?folder=…&selected=…` (`FilesHelper#library_file_path`), in
+  the Files panel, the folder panels and the generated group alike; the hub has no inspector of
+  its own. Photos, Schematics and the hero keep their file-page links.
+- **README, always, inside the Files panel**: the folder's README card, editable as today. There is
+  no separate README panel key (slice 6's amendment, §11).
+- **On-demand panels**: Build log, Tasks, BOM, Wiring, Releases, Sheets. There is no project Print
+  log: prints belong to 3D models, and the model strip carries them (§5.4). On the normal page an
+  on-demand panel renders only when it has a row, or when this visit opened it from **"+ Add
+  panel"** (`?add=<key>`, which persists nothing). `ProjectsController#show` decides this, not the
+  layout: the stored `panels`, `Maker::ProjectKind.layout_for` and the public page are unchanged, a
+  panel the maker hid stays hidden, and the layout editor still shows every panel.
+- **Layout**: two columns at 900px and up (Files wide; log and tasks beside it), one column on a
+  phone.
+- **Projects index** (`/projects`): cover tiles with name and a status badge (active, paused and
+  done; planning is never badged); archived projects behind a quiet link. A project with no cover
+  shows the Projects icon. New ▸ Project creates the project and its folder under `Projects/`.
 
 ## 7. Tools, inventory, Recent
 
@@ -237,12 +249,17 @@ pages are restyled, not restructured.
 
 **Recent** (`/`, `HomeController#index`):
 
-- **Recently changed**: 16 live file nodes by `updated_at`, as tiles; a tile opens its folder with
-  the file selected.
-- **Active projects**: 6 cover tiles.
+- **Recently changed**: 16 live file nodes by `updated_at`, as a wrapping grid of 160px tiles. A
+  tile opens its folder in the Library with the file selected (`FilesHelper#library_file_path`);
+  it is a link, never a selection item.
+- **Active projects**: 6 cover tiles, rendered only when there is one.
 - **Attention**: failed prints in the last 30 days and low-stock items, rendered only when
-  non-empty.
-- An empty library shows one empty state, "No files yet", with Upload.
+  non-empty. There is no Prints section; a failed print is the only print Recent shows.
+- An empty library shows one empty state, "No files yet", whose sentence points at the top bar's
+  Upload. The page adds no second upload control. Upload is Recent's one accent
+  (`FolderDestination#upload_primary!`) and still asks for a folder with the chooser (§8).
+- The page head is the heading alone, because New ▾ already holds Project. The sidebar and the
+  phone tab bar call the page "Recent", with a clock icon.
 
 It reads columns that exist; no counters, no activity table.
 
@@ -411,6 +428,56 @@ Shelves light Settings and stop being navigation; the 3D models view keeps one m
 at them. Finally, the emoji placeholders slice 1 deferred become the 3D models icon
 (`rail_icon(:models)`), and the `_print_log` partial takes strict locals so the strip and the page
 share one copy.
+
+**Amended 2026-10-09 (slice 6's plan):** there is no project Print log panel to put on demand.
+Prints belong to 3D models (`Maker::PrintRun belongs_to :model`), and slice 5's model strip carries
+them. The README stays the card inside the Files panel, where it already renders on every project.
+A separate `readme` key would widen a vocabulary the public page, the layout editor's YAML and their
+tests share, for no visible gain. "Shown only once used" is decided in `ProjectsController#show`,
+not in the layout. The new default layout §6 first described would have put "empty means absent"
+into `Maker::ProjectKind.layout_for`, and that layout is shared with the public page, its feed, its
+bundle and its BOM CSV through `Maker::PublicProject#layout`. The public page already omits an
+empty panel in each of its own partials. So the controller keeps the on-demand keys (Build log,
+Tasks, BOM, Wiring, Releases, Sheets) and leaves out each one that has no row, on the normal page
+only. A panel the maker hid stays hidden, the layout editor still shows every panel, and Customise
+page's Hide and Show are unchanged. "+ Add panel" opens a panel for one visit. It is a menu in the
+hub's head listing the panels absent because they are empty, and each entry links to the project
+with `?add=<key>` and that panel's anchor. The panel renders empty with its composer and stays for
+good once it holds a row; if nothing is added, it is gone on the next visit. Nothing is persisted,
+so there is no new key in the `panels` JSON for `Maker::LayoutDocument`'s Save to carry or lose.
+The two-column grid stays at 900px, not the 1100px §6 first named. Between 900 and 1099px the
+sidebar is the 56px icon rail, so the main column is about as wide there as it is at 1100px beside
+the full sidebar, and the breakpoint is hard-coded in `masonry_controller.js` and shared with the
+public page. The Files panel gains a "Recently changed" row of the 8 newest files anywhere under the
+project folder. Intake files most things into subfolders, each its own panel, so the folder's root
+is often near-empty and the panel used to show little. The row is one query
+(`Maker::ProjectFolderListing#recent_files`) outside the capped, name-ordered listing, because a
+folder past the cap has its newest files somewhere beyond it. The head's folder path becomes "Open
+folder →". Hub file tiles and list rows open the Library with the file selected through one helper,
+`FilesHelper#library_file_path`, which the Files panel, the folder panels and the generated group
+share. Photos, Schematics and the hero keep their file-page links. The file menu's Open follows the
+tile's link, so it lands in the Library too, where the inspector's Open reaches the file page. The
+head carries the cover on `--photo-stage` and a PROJECT eyebrow outside the `h1`, whose exact text
+a test pins. Its actions are Edit, Customise page (the label tests pin, where §6 first said
+"Customise layout"), "+ Add panel" when a panel is absent, and a ⋯ menu holding Publish settings
+(`#publish`) and then Archive, Unarchive or Not a project, moved in with their confirms unchanged.
+The `publish` panel stays at the foot, and its Save publishing stays the hub's second accent.
+Recent's files are a wrapping grid of 160px tiles, not a 16-tile horizontal strip. Active projects
+and Attention each render only when non-empty, and the Prints section goes; a failed print still
+reaches Attention.
+The page head is the heading alone, because New ▾ in the top bar already holds Project. With no
+files, the Files section is the one empty state, "No files yet", and its sentence points at the top
+bar's Upload. A second upload control would duplicate `id="topbar_upload_file"` and the accent.
+Upload becomes Recent's accent through `FolderDestination#upload_primary!`, which changes Upload's
+weight and never its destination. Recent shows no folder, so Upload still asks with the chooser, and
+the flag is its own because a Destination with a nil `node_id` would mean the library root rather
+than "ask". That restores §4.2's Upload on Recent, which slice 4's amendment held back until this
+slice. The sidebar and the phone tab bar say "Recent" with a clock icon, under the same `[:home]`
+key and route. Finally, the emoji project placeholder becomes the Projects icon
+(`rail_icon(:projects)`) on `projects/_card` (the projects index and Recent) and on
+`public/_project_card`, and a projects index card
+gains a status badge for active, paused and done (planning is never badged), beside the other
+badges and outside the link.
 
 **The main risk is slice 4.** It changes uploads, tools and an addon host contract together, which
 is why it waits until the inspector exists (so "where did my file go" has an answer on screen) and

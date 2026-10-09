@@ -1,8 +1,10 @@
 <%#
   The project folder's ROOT, shown as the Files panel (stage 3, S3-1; folder panels 2026-09-08):
-  loose root files first (the sweep's inbox), then Generated (tool output, once, never repeated in
-  the folder it sits in), Backups, and every attachment that points OUTSIDE the folder ("Linked
-  from elsewhere"). Each real SUBFOLDER is its own panel now — see the note below.
+  the Recently changed row first (slice 6 — the newest files ANYWHERE under the folder, the one
+  part of this panel that reaches into subfolders), then loose root files (the sweep's inbox), then
+  Generated (tool output, once, never repeated in the folder it sits in), Backups, and every
+  attachment that points OUTSIDE the folder ("Linked from elsewhere"). Each real SUBFOLDER is its
+  own panel now — see the note below.
   Maker::ProjectFolderListing (@listing) computes the tree, the loose files and the cross-cutting
   Backups list; ProjectsController#show computes Generated (Maker::AddonOrigin.for) and Linked
   (diffing @attachments against @listing's own tree).
@@ -57,11 +59,13 @@
 <section class="panel attachments-panel" id="attachments">
   <div class="panel-head">
     <h2><%= panel_title(@panel_layout, "attachments") %></h2>
-    <%# The folder's own path, so the panel says WHERE it is showing, not just what. Nothing to
-        link to when the folder ensure failed this render (an unmounted NAS, a bucket blip) — the
-        top bar's Upload degrades the same way for the same reason: with no available folder,
-        ProjectsController#show sets no destination and it asks with the folder chooser. %>
-    <%= link_to @listing.path, files_path(folder: @listing.folder_id), class: "panel-path mono muted" if @listing.available? %>
+    <%# "OPEN FOLDER →" (structural redesign §6, slice 6): the door to this folder in the Library,
+        where the inspector answers for each file. The path rides in the link's `title`, so the
+        panel still says WHERE it is showing on hover. Nothing to link to when the folder ensure
+        failed this render (an unmounted NAS, a bucket blip) — the top bar's Upload degrades the
+        same way for the same reason: with no available folder, ProjectsController#show sets no
+        destination and it asks with the folder chooser. %>
+    <%= link_to "Open folder →", files_path(folder: @listing.folder_id), class: "panel-path muted", title: @listing.path if @listing.available? %>
     <% if @listing.root_repo? %><span class="badge">repo</span><% end %>
     <div class="panel-actions">
       <%# THE ROOT'S OWN Commits/History (stage 4, S4-1). A nested repository carries these on its
@@ -179,11 +183,40 @@
         panels would be the flat lie the folder-missing note above exists to avoid. %>
     <p class="muted">No files in this project yet.<% if @listing.available? %> Upload one, or drop files into <span class="mono"><%= @listing.path %></span>.<% end %></p>
   <% else %>
-    <%# THE WRAPPER IS CONDITIONAL because this panel's groups are, all four of them: with the
-        subfolder sections gone, a folder holding only subfolders leaves nothing here to poll or
-        right-click, and an empty `thumbs` div would be a controller instance over no cells. %>
-    <% if loose.any? || @generated.any? || backups.any? || @linked_rows.any? %>
+    <%# THE WRAPPER IS CONDITIONAL because this panel's groups are, all five of them: with the
+        subfolder sections gone, a folder holding only subfolders and no recent file leaves nothing
+        here to poll or right-click, and an empty `thumbs` div would be a controller instance over
+        no cells. %>
+    <% if @recent_files.any? || loose.any? || @generated.any? || backups.any? || @linked_rows.any? %>
       <div data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
+        <%#
+          RECENTLY CHANGED (structural redesign §6, slice 6): the newest files ANYWHERE under the
+          folder (ProjectFolderListing#recent_files, one query) — intake files most things into
+          subfolders, so the folder's root (Loose, below) is often near-empty and the work in
+          progress sits in the folder panels further down. A file can show here AND in its own
+          group; this row is about when, the groups about where. WHAT THE PAGE KEEPS CLOSED STAYS
+          CLOSED: no file from a panel the maker hid, from a repository the page browses, or a
+          LightBurn backup (ProjectsController#dirs_without_tiles and the listing's backup rule).
+
+          THE SAME TILE, NEVER A SECOND PARTIAL: the listing's own Row where it holds the node, else
+          the minimal folder Row the listing itself builds — a recent file past FILE_CAP is still a
+          folder file, never Linked. Always tiles, whatever this panel's view, because a row of
+          tiles is what the row is. Each opens the Library with the file selected
+          (library_file_path, inside projects/_file_tile).
+        %>
+        <% if @recent_files.any? %>
+          <div class="recent-files">
+            <h3 class="recent-files-head">Recently changed</h3>
+            <div class="attachments-grid">
+              <% @recent_files.each do |node| %>
+                <% row = @listing.row_for(node.node_id) ||
+                         Maker::ProjectFolderListing::Row.new(node: node, attachment: nil, linked: false, section: "") %>
+                <%= render "file_tile", row: row %>
+              <% end %>
+            </div>
+          </div>
+        <% end %>
+
         <%# LOOSE FIRST — the sweep's inbox. Shown only when there is something in it; the note says
             why these files sit apart from every real section instead of reading as forgotten. %>
         <% if loose.any? %>

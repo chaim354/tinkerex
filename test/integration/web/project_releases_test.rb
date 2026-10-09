@@ -79,7 +79,8 @@ module Web
     test "the empty state, and the composer's rendered field names" do
       seed!({ "README.md" => "# Desk Lamp\n" })
 
-      get project_path(@project)
+      # ?add=releases: with no release the panel is absent until "+ Add panel" opens it (slice 6).
+      get project_path(@project, add: "releases")
       assert_response :success
       assert_select "section.panel.releases-panel h2", text: "Releases"
       # QUIET AT ZERO (stage 4, S4-1): no releases is the heading and Create release, so the
@@ -110,7 +111,7 @@ module Web
       seed!({ "README.md" => "# Desk Lamp\n" }, repo: "firmware", tags: %w[v0.1.0 v0.2.0])
       firmware = repo_node!("firmware")
 
-      get project_path(@project)
+      get project_path(@project, add: "releases")
       assert_response :success
       assert_select "select[name=?]", "release[git_tag]" do
         assert_select "option[value=?]", "", text: "No tag"
@@ -214,7 +215,7 @@ module Web
       assert_no_difference "Maker::Release.count" do
         create_release!(git_tag: "#{firmware.node_id}:v9.9.9")
       end
-      assert_redirected_to project_path(@project)
+      assert_redirected_to project_path(@project, add: "releases", anchor: "project-releases")
       assert_match(/Release not created/, flash[:alert])
       assert_match(/v9\.9\.9/, flash[:alert])
     end
@@ -246,7 +247,7 @@ module Web
       assert_no_difference "Maker::Release.count" do
         create_release!
       end
-      assert_redirected_to project_path(@project)
+      assert_redirected_to project_path(@project, add: "releases", anchor: "project-releases")
       assert_match(/Release not created/, flash[:alert])
       assert_match(/already a release of this project/, flash[:alert])
     end

@@ -1,9 +1,9 @@
 require "test_helper"
 
 module Web
-  # The Home page (stage 2, S2-1): what changed recently, then what needs attention — every section
-  # from columns that already exist, every list bounded. (Its current-project hero went with the
-  # current project in slice 4 of the 2026-10-08 redesign.)
+  # Recent, the app's front door at `/` (structural redesign §7, slice 6; the Home page until then):
+  # the files you changed lately, your active projects, and what needs attention — the last two only
+  # when they hold anything. Every section from columns that already exist, every list bounded.
   class HomeTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
@@ -13,36 +13,67 @@ module Web
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
     end
 
-    def file(name, at:)
-      @user.nodes.create!(node_id: "n-#{name}", name:, kind: "file", mtime: 1_000_000_000, size: 5, updated_at: at)
+    def file(name, at:, parent: nil)
+      @user.nodes.create!(node_id: "n-#{name}", name:, kind: "file", mtime: 1_000_000_000, size: 5,
+                          updated_at: at, parent_node_id: parent)
     end
 
-    test "an empty account sees every section's empty sentence" do
+    # ONE EMPTY STATE, AND IT POINTS AT THE TOP BAR. Active projects and Needs attention are absent
+    # rather than empty, and the files section does not grow an upload control of its own — a second
+    # one would duplicate the top bar's input id and spend the accent twice.
+    test "an empty account sees one empty state, pointing at the top bar's Upload" do
       get root_path
       assert_response :success
-      assert_select ".page-head h1", text: "Home"
-      assert_select ".home-section.home-projects .empty", text: /No projects yet/
-      assert_select ".home-section.home-files .empty", text: /No files yet/
-      assert_select ".home-section.home-prints .empty", text: /No prints logged yet/
-      assert_select ".home-section.home-attention .empty", text: /Nothing needs attention/
+      assert_select ".page-head h1", text: "Recent"
+      # The head is the heading alone: New ▾ in the top bar already has Project.
+      assert_select ".page-head > *", count: 1
+      assert_select "main a[href=?]", new_project_path, count: 0
+      assert_select ".home-section.home-files .home-empty", text: /No files yet\..*Upload, in the top bar/
+      assert_select ".home-section .empty", count: 1
+      assert_select ".home-projects", count: 0
+      assert_select ".home-attention", count: 0
+      assert_select ".home-prints", count: 0
+      assert_select "main .uploader", count: 0
+      assert_select "#topbar_upload_file", count: 1
     end
 
-    test "the recent rows are bounded and newest first" do
+    # THE LITERAL 16 IS THE SPEC'S NUMBER (§7), asserted as a literal on purpose: `count:
+    # HomeController::RECENT_FILES` would follow the constant wherever it went and could never fail.
+    # Seventeen files so the cap is reached with one to spare, and the spare is the OLDEST, so a
+    # wrong order would show as well as a wrong limit.
+    test "the recent lists are bounded and newest first" do
       7.times { |i| @user.maker_projects.create!(name: "Project #{i}", updated_at: i.hours.ago) }
-      9.times { |i| file("part-#{i}.stl", at: i.hours.ago) }
+      17.times { |i| file("part-#{i}.stl", at: i.hours.ago) }
       get root_path
-      assert_select ".home-projects .tile-row .project-tile", count: HomeController::RECENT_PROJECTS
-      names = css_select(".home-projects .tile-row .project-name").map(&:text)
+      assert_select ".home-projects .recent-grid .project-tile", count: HomeController::RECENT_PROJECTS
+      names = css_select(".home-projects .recent-grid .project-name").map(&:text)
       assert_equal "Project 0", names.first
-      assert_select ".home-files .tile-row .grid-card", count: HomeController::RECENT_FILES
-      assert_select ".home-files .tile-row .grid-card .grid-name", text: "part-0.stl"
-      assert_select ".home-projects a[href=?]", projects_path, text: "See all"
-      assert_select ".home-files a[href=?]", files_path, text: "See all"
+      assert_select ".home-files .recent-grid .grid-card", count: 16
+      assert_equal "part-0.stl", css_select(".home-files .recent-grid .grid-card .grid-name").first.text
+      assert_select ".home-files .grid-name", text: "part-16.stl", count: 0
+      assert_select ".home-projects .panel-head a[href=?]", projects_path, text: "All projects"
+      assert_select ".home-files .panel-head a[href=?]", files_path, text: "Library"
     end
 
-    # The same partial, so Home gets discovery's feedback for free — and this is what Home gets
-    # from S4-6 instead of an adopt door (there is no folder on this page to adopt).
-    test "Home badges an auto-created project the owner has not opened" do
+    # A TILE OPENS ITS FOLDER IN THE LIBRARY WITH THE FILE SELECTED (§7), where the inspector says
+    # what it is and its Open reaches the file page — never the file page directly. A root file has
+    # no folder, and the link says so by carrying `selected` alone. A link, never a selection item:
+    # this page has no selection controller to answer one.
+    test "a tile opens its folder in the Library with the file selected" do
+      @user.nodes.create!(node_id: "d-jigs", name: "jigs", kind: "dir", mtime: 1, size: 0)
+      nested = file("plate.dxf", at: 1.hour.ago, parent: "d-jigs")
+      root = file("notes.txt", at: 2.hours.ago)
+      get root_path
+      assert_select ".home-files .recent-grid a.grid-card[href=?]",
+                    files_path(folder: "d-jigs", selected: nested.node_id), text: /plate\.dxf/
+      assert_select ".home-files .recent-grid a.grid-card[href=?]", files_path(selected: root.node_id), text: /notes\.txt/
+      assert_select ".home-files a[href=?]", file_path(nested.node_id), count: 0
+      assert_select ".home-files [data-selection-target]", count: 0
+    end
+
+    # The same partial, so Recent gets discovery's feedback for free — and this is what it gets from
+    # S4-6 instead of an adopt door (there is no folder on this page to adopt).
+    test "Recent badges an auto-created project the owner has not opened" do
       project = @user.maker_projects.create!(name: "Tray")
       project.update_columns(discovered_at: 1.hour.ago)
 
@@ -51,28 +82,41 @@ module Web
       assert_select ".home-projects .project-tile .badge.project-new", text: "New"
     end
 
-    test "recent and failed prints show with their model, and a failed one lands in attention" do
+    # Recent has no prints section (slice 6); a failed print is the one kind that still reaches it,
+    # through Needs attention. The successful run beside it is what proves the section is gone rather
+    # than merely filtered: it would have been a row there.
+    test "a failed print lands in attention with its model, and no prints section renders" do
       node = file("benchy.stl", at: 1.day.ago)
       model = @user.maker_models.create!(title: "Benchy", print_status: "failed")
       model.file_attachments.create!(user: @user, node_id: node.node_id, role: "model")
       model.print_runs.create!(user: @user, printed_on: 2.days.ago.to_date, outcome: "failed", printer: "MK4")
       model.print_runs.create!(user: @user, printed_on: 3.days.ago.to_date, outcome: "success")
       get root_path
-      assert_select ".home-prints .print-row", count: 2
-      assert_select ".home-prints .print-row a[href=?]", model_path(model), text: "Benchy"
-      # "See all" is the Library's 3D models view (slice 5); a row's own link stays model_path, which
-      # lands on the model's folder when it has a strip to show.
-      assert_select ".home-prints .panel-head a[href=?]", files_models_path, text: "See all"
+      assert_select ".home-prints", count: 0
       assert_select ".home-attention .attention-list .attention-row", count: 1
       assert_select ".home-attention .attention-row", text: /Benchy/
       assert_select ".home-attention .attention-row", text: /failed/i
+      assert_select ".home-attention .attention-row a.btn[href=?]", model_path(model), text: "Log a print"
     end
 
+    # The live project is what makes this assertion able to fail: with the archived one alone, the
+    # section is absent and "Old Rig is not in it" would hold over nothing.
     test "an archived project is not recent" do
+      @user.maker_projects.create!(name: "Live Rig")
       project = @user.maker_projects.create!(name: "Old Rig")
       project.archive!
       get root_path
+      assert_select ".home-projects .project-name", text: "Live Rig"
       assert_select ".home-projects .project-name", text: "Old Rig", count: 0
+    end
+
+    # "Active projects" leaves a finished one out, as it does an archived one (slice 6 review).
+    test "a done project is not an active project" do
+      @user.maker_projects.create!(name: "Live Rig")
+      @user.maker_projects.create!(name: "Built Rig", status: "done")
+      get root_path
+      assert_select ".home-projects .project-name", text: "Live Rig"
+      assert_select ".home-projects .project-name", text: "Built Rig", count: 0
     end
 
     # Stage 2, S2-3: a second attention source alongside failed prints.

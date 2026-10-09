@@ -356,17 +356,15 @@ class ShellTest < ApplicationSystemTestCase
                           name: "a-very-long-file-name-that-would-push-the-table-out-of-the-viewport-v3-final.stl",
                           path: "models/a-very-long-file-name-that-would-push-the-table-out-of-the-viewport-v3-final.stl",
                           content_token: "t-gone")
-    # ENOUGH FILES FOR THE HOME ROW TO OVERFLOW TOO, mutation-checked same as home_test.rb's own
-    # dedicated scroll-containment test (see test/system/README.md) — without these, root_path's
-    # single `long` tile never fills `.home-files .tile-row` wide enough to overflow its own box,
-    # so dropping `.tile-row`'s `overflow-x: auto` in app/assets/stylesheets/pages/home.css read
-    # GREEN here on the first attempt, for having nothing to contain rather than containing it
-    # correctly — measured, not assumed: adding these 8 nodes is what turned that false green into
-    #   / scrolls sideways at 375px (scrollWidth 1312)
-    # which is the failure this loop's own final assertion below is written to catch. Reverted
-    # immediately after. RECENT_FILES caps display at 8; 8 more (9 total with `long`) mirrors
-    # home_test.rb's margin.
-    8.times { |i| create_node!(@user, node_id: SecureRandom.uuid, kind: "file", name: "shell-sweep-#{i}.stl") }
+    # ENOUGH FILES TO FILL RECENT'S GRID (slice 6), so root_path is laid out at 375px with every tile
+    # it can hold rather than the handful the fixtures above happen to leave in the recently-changed
+    # list. RECENT_FILES caps the grid at 16; with the fixture's other files this reaches the cap with
+    # spares, the margin home_test.rb's own wrap test keeps. (Until slice 6 these were eight files to
+    # make the Home tile ROW overflow its own scroller; the grid wraps instead, so there is nothing to
+    # contain — what is left to measure is that every tile still fits.)
+    HomeController::RECENT_FILES.times do |i|
+      create_node!(@user, node_id: SecureRandom.uuid, kind: "file", name: "shell-sweep-#{i}.stl")
+    end
     # A 3D MODEL'S FOLDER (structural redesign §5.4, slice 5), so the Library's model strip is laid
     # out at 375px: a long title and long details to wrap, print settings, a live cover, and a logged
     # print — the composer is opened below, because its form is the widest thing the strip holds.
@@ -385,9 +383,10 @@ class ShellTest < ApplicationSystemTestCase
     # `visit root_path` once at desktop width before narrowing, so the sweep starts from a page
     # rendered after every fixture above existed. (This used to pick a current project through the
     # rail's <select> so Home rendered its hero in full; both went in slice 4 of the 2026-10-08
-    # redesign.)
+    # redesign. Home became Recent in slice 6.)
     visit root_path
-    assert_selector "main h1", text: "Home"
+    assert_selector "main h1", text: "Recent"
+    assert_selector ".home-files .recent-grid .grid-card", count: HomeController::RECENT_FILES
 
     # THE VIEWPORT IS SET THROUGH CDP, NOT `manage.window.resize_to`, AND THE DIFFERENCE IS THE
     # WHOLE GUARD. Headless Chrome refuses to make a window narrower than 500px: asking for
@@ -520,6 +519,29 @@ class ShellTest < ApplicationSystemTestCase
           # measured the no-cover and no-photos branches and said nothing about the two new layouts.
           assert_selector ".project-hero img.project-hero-img"
           assert_selector "section.photos-panel .photo-cell", minimum: 1
+          # SLICE 6: THE HUB'S HEAD AND ITS RECENT ROW, both new markup. The cover now sits BESIDE the
+          # name with the ⋯ menu after the actions, and the Files panel opens on a row of the folder's
+          # newest files — each laid out at 375px, and measured against the page's CLIENT width (the
+          # model strip's rule below: CI's Linux Chrome draws a scrollbar the Mac's does not).
+          assert_selector ".project-head .page-title > .project-hero img.project-hero-img"
+          assert_selector ".project-head details.project-menu > summary", visible: true
+          assert_selector ".attachments-panel .recent-files .attachment-tile", minimum: 1
+          right = page.evaluate_script(
+            "Math.max.apply(null, Array.from(document.querySelectorAll('.project-head, .project-head *, .recent-files, .recent-files *'))" \
+            ".map(function (el) { return el.getBoundingClientRect().right }))")
+          client = page.evaluate_script("document.documentElement.clientWidth")
+          assert_operator right, :<=, client, "the hub's head or recent row runs past the page at 375px (right edge #{right}, client width #{client})"
+          # SLICE 6: "+ ADD PANEL", OPEN. This project holds no task, log entry or sheet, so the head
+          # carries the menu, and its list is the one thing here a scroll check cannot see: it hangs
+          # from the summary's right edge, so a summary that wraps to the head's left would push it
+          # off the LEFT of the page, which scrolls nothing. Measured open, both edges.
+          find(".project-head details.add-panel > summary", text: "+ Add panel").click
+          left, list_right = page.evaluate_script(
+            "(function () { var r = document.querySelector('.project-head details.add-panel .menu-list').getBoundingClientRect(); return [r.left, r.right] })()")
+          assert_operator left, :>=, 0, "the + Add panel list starts off the page at 375px (left edge #{left})"
+          assert_operator list_right, :<=, client, "the + Add panel list runs past the page at 375px (right edge #{list_right})"
+          find(".project-head details.add-panel > summary").click
+          assert_no_selector ".project-head details.add-panel[open]"
           # STAGE 4, S4-4: THE PUBLISH PANEL AND THE README EDITOR, both new to this page and both
           # invisible to the overflow check until they are actually here and actually open. The
           # editor mounts CodeMirror on toggle, so a closed <details> measures a summary button and

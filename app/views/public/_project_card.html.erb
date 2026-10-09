@@ -10,7 +10,8 @@
     THE COVER (stage 4, S4-5; story 5.7). `thumb` is a Maker::Preview or nil — the private
     projects/_card's shape, minus the poll: /files/thumbnails is session-authed, so a visitor's
     spinner has nothing that could ever resolve it. A card with no cover node gets the same neutral
-    placeholder the private card uses, never a forever-spinner.
+    placeholder the private card uses (the rail's projects icon — no emoji in the interface), never
+    a forever-spinner.
 
     `thumb` IS ALLOWED TO BE nil AND /explore ALWAYS PASSES nil (this slice's Amendment 9).
     Maker::Previews::ThumbnailMap is PER-USER, so a cross-user list would cost three statements per
@@ -32,7 +33,7 @@
                                                                  thumb.node_id, "thumbnail") %>"
                                alt="" loading="lazy"></span>
     <% else %>
-      <span class="thumb project-thumb-empty" aria-hidden="true">📦</span>
+      <span class="thumb project-thumb-empty" aria-hidden="true"><%= rail_icon(:projects) %></span>
     <% end %>
   <% end %>
   <h3 class="card-title">

@@ -1,4 +1,4 @@
-<section class="panel build-log-panel<%= " panel--quiet" if @entries.empty? %>">
+<section class="panel build-log-panel<%= " panel--quiet" if @entries.empty? %>" id="project-build-log">
   <%# ONE PANEL-HEAD SHAPE ACROSS ALL FOUR PANELS (UI-cohesion slice 5): title, optional muted
       meta, actions right. This and Tasks carried a BARE <h2> while Files and Publish wrapped
       theirs, so `.panel-head`'s alignment and gap applied to half the page — and this panel

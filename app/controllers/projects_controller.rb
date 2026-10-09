@@ -27,9 +27,17 @@ class ProjectsController < ApplicationController
 
   QUERY_MAX = 80
 
+  # ON-DEMAND PANELS (structural redesign §6, slice 6): absent from the maker's normal page while
+  # empty, unless this request opens one with ?add=<key> ("+ Add panel"). Nothing else is on demand:
+  # Files and Publish always show, Photos and Schematics already render nothing when empty, and an
+  # empty folder panel stays quiet (docs/invariants/design-system.md rule 14).
+  ON_DEMAND = %w[build_log tasks bom wiring releases sheets].freeze
+
   # One flat list of live projects, newest activity first. `?archived=1` swaps in the archived
-  # ones. The web reads `status` as archived-or-not and never shows or sets the other four values
-  # (spec decision #1) — the column, its validation and the v1 API are deliberately untouched.
+  # ones. ARCHIVED IS THE ONE STATUS THAT DECIDES WHICH LIST A PROJECT IS IN; the other four are
+  # shown and set rather than filtered on — the form offers active, paused and done (stage 4,
+  # S4-6), the project page badges them, and each card here badges them beside the link (slice 6).
+  # `planning` is the column default and is never badged.
   def index
     # `== "1"`, not `.present?`: a checkbox submits "0" for off, and `.present?` would read that as
     # "show me the archive" — the opposite page.
@@ -174,6 +182,14 @@ class ProjectsController < ApplicationController
 
       @panel_layout = @panel_layout.with(views: @panel_layout.views.merge(@panel_key => wanted))
     end
+
+    # THE FILES PANEL'S "RECENTLY CHANGED" ROW (structural redesign §6, slice 6): the 8 newest files
+    # under the folder, ONE query, and [] with no query when the folder is unavailable. AFTER THE
+    # LAYOUT, because it leaves out the folders the page draws no tile for (#dirs_without_tiles): a
+    # panel the maker hid must take its files off the page with it, and a browsed repository's files
+    # must not come back as tiles here. Their ids join the page's one ThumbnailMap and its one
+    # addon-origin lookup below, so each stays one call.
+    @recent_files = @listing.recent_files(skip: dirs_without_tiles)
 
     # A FILE DELETED FROM THE LIBRARY LEAVES THE PROJECT, IMMEDIATELY. It used to sit here forever
     # as a "⚠️ (file unavailable)" tile with a per-file Remove button: `Library::Reconciler`
@@ -394,8 +410,15 @@ class ProjectsController < ApplicationController
     # AN IMAGE BLOCK'S PICTURE, ONLY WHERE IT IS LIVE: `@page_nodes` has already answered that, and
     # a dead id here would spend a slot in the backfill budget for a block that renders nothing.
     block_thumb_ids = @blocks.filter_map(&:node_id).select { |id| @page_nodes.key?(id) }
+    # THE RECENT ROW'S TILES ARE TILES TOO, and they are not all in `tile_ids`: a recent file can sit
+    # past FILE_CAP, and a tile this map never backfilled spins for its 41 polls. Usually they ARE
+    # already there — ThumbnailMap and AddonOrigin both take a union, so a duplicate costs nothing.
+    # FIRST IN THE UNION, because BACKFILL_LIMIT is spent in the order given and this row is the top
+    # of the Files panel: behind 300 listed tiles, a recent file past the cap would wait renders for
+    # a slot (project_attachments_test.rb).
+    recent_ids = @recent_files.map(&:node_id)
     @page_thumbs = Maker::Previews::ThumbnailMap.for(
-      current_user, tile_ids + entry_photo_ids.select { |id| @page_nodes.key?(id) } +
+      current_user, recent_ids + tile_ids + entry_photo_ids.select { |id| @page_nodes.key?(id) } +
                     block_thumb_ids + @folder_images.map(&:node_id) + (@cover_node ? [ cover_id ] : [])
     )
     # PHOTOS (stage 4, S4-1): the public page's own definition, on the maker's page too. In memory
@@ -408,7 +431,7 @@ class ProjectsController < ApplicationController
     # `_log_entry`'s photos are spans driven by the `thumbs` controller alone, with no menu to add
     # an entry to — so an origin resolved for one would be work nothing reads. That is why entry
     # photos are not merged into this union either.
-    @addon_origins = addon_origins_for(tile_ids)
+    @addon_origins = addon_origins_for((recent_ids + tile_ids).uniq)
     @tasks = @project.tasks.order(:position, :created_at).to_a
     @sheets = @project.sheets.to_a
     # THE WIRING TABLE (stage 3, S3-3). ONE query -- Maker::Project#connections already orders by
@@ -426,6 +449,25 @@ class ProjectsController < ApplicationController
     # why it rides in the url rather than in the session: the reload navigates to the param-free
     # url and the hint is gone by construction.
     @scan_started = params[:scanning] == "1"
+    # WHICH ON-DEMAND PANELS LEAVE THE PAGE (structural redesign §6, slice 6), decided HERE and never
+    # in Maker::ProjectKind.layout_for: the layout is shared with the public page, its feed, its
+    # bundle and its BOM CSV (Maker::PublicProject#layout), which already omit an empty panel in
+    # their own partials — and an empty BOM's header-only CSV is a different answer from a hidden
+    # one's 404. Last, because every panel's data is loaded by now.
+    #   A panel the maker HID stays hidden: the menu asks `visible?` first and the page loop draws
+    #   from `visible`, so neither ?add= nor the menu can bring one back. (The `visible?` on
+    #   @add_panel is belt and braces: mutation-checked, dropping it changes nothing on the page,
+    #   because the loop never yields a hidden key whatever @add_panel holds.) The editor
+    #   (@editing) shows every panel, so none of this runs there.
+    #   ?add= opens one panel for THIS request and writes nothing; a non-String (`add[]=`) or a key
+    #   that is not a visible on-demand panel is ignored.
+    unless @editing
+      requested = params[:add] if params[:add].is_a?(String)
+      @add_panel = requested if ON_DEMAND.include?(requested) && @panel_layout.visible?(requested)
+      @absent_panels = ON_DEMAND.select do |key|
+        @panel_layout.visible?(key) && key != @add_panel && !panel_has_rows?(key)
+      end
+    end
     # `layout/panel` renders the one body and stops; the whole page is the default render.
     render partial: "projects/panel_body", locals: { key: @panel_key, extra: {} }, layout: false if @panel_key
   end
@@ -527,6 +569,21 @@ class ProjectsController < ApplicationController
     @project = current_user.maker_projects.find_by!(slug: params[:id])
   end
 
+  # DOES THIS ON-DEMAND PANEL HOLD A ROW? Read off what #show already loaded, so it costs no query.
+  # BOM, Wiring and Releases are loaded only when visible, and #show asks only about a visible key
+  # (`visible?` short-circuits first); hidden or empty, each ivar is [] and never nil, so the one
+  # `any?` reads all six. An empty BOM REVISION is no row: its lines are the rows.
+  def panel_has_rows?(key)
+    case key
+    when "build_log" then @entries.any?
+    when "tasks" then @tasks.any?
+    when "bom" then @bom_lines.any?
+    when "wiring" then @connections.any?
+    when "releases" then @releases.any?
+    when "sheets" then @sheets.any?
+    end
+  end
+
   # THE PAGE-WIDE VIEW COOKIE IS GONE (2026-09-08, folder panels; spec decision 6). `project_view`
   # answered for every section at once, so a maker could not have their models as tiles and their
   # firmware checkout as the Finder browser; the view is now per PANEL and persisted in
@@ -541,6 +598,24 @@ class ProjectsController < ApplicationController
   # the full Dir to find a README among a repo's own root files.
   def collect_repo_dirs(dirs)
     dirs.flat_map { |d| (d.repo? ? [ d ] : []) + collect_repo_dirs(d.children) }
+  end
+
+  # THE SUBFOLDERS WHOSE FILES THE PAGE DRAWS NO TILE FOR (slice 6), so the recent row does not draw
+  # one either: a folder panel the maker HID (hidden is absent, files and all — project_page_test.rb),
+  # a depth-one repository in the browser view, and every repository nested deeper, which is always
+  # a closed browser section. The last two are the exclusion #show's thumbnail union already makes
+  # (`hidden_in_repos`), asked of dirs rather than file ids so the recent query can subtract
+  # them before its LIMIT. In memory over the listing's tree; no query.
+  def dirs_without_tiles
+    @listing.tree.flat_map do |dir|
+      key = Maker::ProjectKind.folder_key(dir.node_id)
+      # THE PANEL'S VIEW DECIDES, NOT WHETHER IT IS A REPOSITORY (slice 6 review): a hidden panel and a
+      # browser-view panel — repository or plain folder — draw no tiles; any other panel draws its own
+      # files, and every repository nested inside it is a closed browser section.
+      if !@panel_layout.visible?(key) || @panel_layout.view_for(key) == "browser" then [ dir ]
+      else collect_repo_dirs(dir.children)
+      end
+    end
   end
 
   # [[dir name, dir node_id, [tag names]]] for the release composer's picker (stage 3, S3-5), over

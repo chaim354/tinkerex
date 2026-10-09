@@ -5,7 +5,9 @@
   this element on every add/status-change/delete, so the rest of the page (the build log, the Files
   panel with its thumbnail polling, the sheets) is never re-rendered and never re-fetched. Rename it
   and the controller's `turbo_stream.replace` silently matches nothing: the request succeeds, the
-  response is discarded, and the list simply stops updating.
+  response is discarded, and the list simply stops updating. SINCE SLICE 6 AN EMPTY TASKS PANEL IS
+  ON THE MAKER'S PAGE ONLY THROUGH ?add=tasks ("+ Add panel"), which renders this whole section with
+  its form, so the first add always has this element to land on.
 
   THE HTML REDIRECT IS STILL THERE, in the controller, as the no-JS path. Everything below is plain
   form markup — nothing here depends on Turbo being loaded.

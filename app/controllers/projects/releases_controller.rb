@@ -8,6 +8,8 @@ module Projects
   # rather than edited -- an editable version or changelog would describe a snapshot that was never
   # taken. `Maker::ReleaseSnapshot` is the ONE door that writes one, here and everywhere.
   class ReleasesController < ApplicationController
+    include Projects::PanelReturn
+
     # THE PICKER SENDS ONE FIELD FOR TWO FACTS, AND THIS IS WHERE THEY COME APART. A project folder
     # may hold several repositories, so a tag is meaningless without the one it came from -- but a
     # <select> cannot set a second field without JS, so its option values are `"<repo node_id>:<tag>"`
@@ -29,11 +31,11 @@ module Projects
     rescue ActiveRecord::RecordInvalid => e
       # The version's uniqueness and format live on Maker::Release, so this is where the maker is
       # told "v1.0.0 is already a release of this project" rather than at a 500.
-      redirect_to project_path(project), alert: "Release not created: #{e.record.errors.full_messages.to_sentence}."
+      redirect_to project_panel_path(project, "releases"), alert: "Release not created: #{e.record.errors.full_messages.to_sentence}."
     rescue Maker::ReleaseSnapshot::TagNotFound => e
       # A REFUSED TAG LEAVES NOTHING BEHIND: the snapshot resolves the tag before it opens its
       # transaction, so there is no half-written release to clean up here.
-      redirect_to project_path(project), alert: "Release not created: #{e.message}."
+      redirect_to project_panel_path(project, "releases"), alert: "Release not created: #{e.message}."
     end
 
     # SCOPED TO THIS USER'S OWN RELEASES, not a bare Maker::Release.find -- a foreign id 404s rather

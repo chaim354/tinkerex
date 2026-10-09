@@ -49,10 +49,118 @@ module Web
       assert_select ".project-stats", text: /1 sheet\b/
     end
 
-    test "the head's actions are buttons, with Archive quiet" do
+    test "the head's actions are buttons, with Archive in the ⋯ menu" do
       get project_path(@project)
       assert_select ".head-actions a.btn[href=?]", edit_project_path(@project), text: "Edit"
-      assert_select ".head-actions form[action=?] button.btn.danger", project_path(@project), text: "Archive"
+      assert_select ".head-actions details.project-menu form[action=?] button.menu-item.danger",
+                    project_path(@project), text: "Archive"
+      assert_select ".head-actions > form", 0, "no act is a head button any more: they live in the menu"
+    end
+
+    # THE HUB'S HEAD (structural redesign §6, slice 6): the cover and the name in one head, a PROJECT
+    # eyebrow ABOVE the h1 and never inside it (projects_flow_test.rb pins the h1's exact text), and a
+    # ⋯ menu opening on Publish settings. `.page-head` keeps its two slots; template_hygiene_test.rb
+    # is the guard for that, this is the guard for what the first slot holds.
+    test "the head carries the cover, the PROJECT eyebrow outside the h1, and a ⋯ menu" do
+      folder = Maker::ProjectFolderListing.new(@user, @project).folder_id
+      @user.nodes.create!(node_id: "n-cover", name: "lamp.png", kind: "file", parent_node_id: folder,
+                          size: 1, mtime: 1_000_000_000)
+      @project.update!(cover_node_id: "n-cover")
+
+      get project_path(@project)
+
+      assert_select ".page-head.project-head > *", 2
+      assert_select ".project-head .page-title" do
+        assert_select "> .project-hero img.project-hero-img[src=?]", blob_file_path("n-cover")
+        assert_select ".eyebrow", text: "Project"
+        assert_select "h1", text: "Desk Lamp"
+        assert_select "h1 .eyebrow", 0
+      end
+      eyebrow, h1 = css_select(".project-head .eyebrow, .project-head h1")
+      assert_equal %w[span h1], [ eyebrow&.name, h1&.name ], "the eyebrow comes before the name"
+      assert_select ".project-hero", 1, "the cover moved into the head; it is not drawn twice"
+      assert_select ".head-actions details.project-menu[data-controller=?]", "menu" do
+        assert_select "summary.btn.icon[aria-label=?]", "More actions"
+        assert_select ".menu-list > .menu-item:first-child[href=?]", "#publish", text: "Publish settings"
+      end
+    end
+
+    # THE FILES PANEL'S "RECENTLY CHANGED" ROW (structural redesign §6, slice 6). NINE files in nested
+    # folders, so the cap (8) is straddled and the row reaches past the folder's root. THREE ORDERS
+    # DISAGREE ON PURPOSE — creation (r1…r9), name (also r1…r9) and recency — so a row ordered by
+    # name, by id or oldest-first cannot read the same sequence. A file outside the folder is the
+    # newest of all and must not appear: "under the project folder" is the scope.
+    test "the Files panel shows the 8 newest files under the folder, newest first, each opening the Library" do
+      project = @user.maker_projects.create!(name: "Recent Rig")
+      folder = project_folder_rows!(@user, project)
+      models = @user.nodes.create!(node_id: "d-r-models", name: "models", kind: "dir", parent_node_id: folder.node_id)
+      old = @user.nodes.create!(node_id: "d-r-old", name: "old", kind: "dir", parent_node_id: models.node_id)
+      laser = @user.nodes.create!(node_id: "d-r-laser", name: "laser", kind: "dir", parent_node_id: folder.node_id)
+      parents = { 1 => folder, 2 => models, 3 => old, 4 => laser, 5 => old, 6 => models, 7 => folder, 8 => laser, 9 => old }
+      hours_ago = { 5 => 1, 9 => 2, 1 => 3, 7 => 4, 3 => 5, 8 => 6, 2 => 7, 6 => 8, 4 => 9 }
+      (1..9).each do |i|
+        node = @user.nodes.create!(node_id: "r#{i}", name: "r#{i}.stl", kind: "file", parent_node_id: parents[i].node_id,
+                                   size: 1, mtime: 1_000_000_000)
+        node.update_columns(updated_at: hours_ago[i].hours.ago)
+      end
+      @user.nodes.create!(node_id: "r-outside", name: "r0.stl", kind: "file", size: 1, mtime: 1_000_000_000)
+
+      get project_path(project)
+
+      tiles = css_select("section.attachments-panel .recent-files .attachment-tile")
+      assert_equal %w[r5 r9 r1 r7 r3 r8 r2 r6], tiles.map { |t| t.at_css(".grid-name").text.delete_suffix(".stl") }
+      assert_select "section.attachments-panel .recent-files .recent-files-head", text: "Recently changed"
+      assert_select "section.attachments-panel .recent-files .attachment-tile a[href=?]",
+                    files_path(folder: "d-r-old", selected: "r5")
+      assert_select "section.attachments-panel .recent-files .attachment-tile a[href=?]",
+                    files_path(folder: folder.node_id, selected: "r1")
+      assert_select ".recent-files .grid-name", { text: "r0.stl", count: 0 }, "a file outside the folder is not recent here"
+      assert_select "section.attachments-panel .panel-head a.panel-path[href=?][title=?]",
+                    files_path(folder: folder.node_id), "#{Maker::ProjectFolders::ROOT}/#{project.slug}", text: "Open folder →"
+    end
+
+    # WHAT THE PAGE KEEPS CLOSED, THE ROW DOES NOT OPEN. A LightBurn rescue copy is folded into the
+    # closed Backups group, and LightBurn rewrites it on every save — the newest file in a laser
+    # project, every time. A panel the maker hid takes its files off the page; a repository the page
+    # browses draws no tiles. All three are newer here than the one file that should show.
+    test "the recent row leaves out backups, a hidden panel's files and a browsed repository's" do
+      project = folder_panel_project!
+      @user.nodes.find_by!(node_id: "f-loose").update_columns(updated_at: 1.day.ago)
+      folder = Maker::ProjectFolderListing.new(@user, project).folder_id
+      @user.nodes.create!(node_id: "f-bak", name: "sign_backup.lbrn2", kind: "file", parent_node_id: folder,
+                          size: 1, mtime: 1_000_000_000)
+      project.update!(panels: { "hidden" => [ folder_key("d-models") ] })
+      (Maker::ProjectFolderListing.new(@user, project).node_ids - %w[f-loose]).each do |id|
+        @user.nodes.find_by!(node_id: id).update_columns(updated_at: 1.minute.ago)
+      end
+      @user.nodes.find_by!(node_id: "f-main").update_columns(updated_at: 1.minute.ago)
+
+      get project_path(project)
+
+      assert_equal %w[sketch.txt], css_select(".recent-files .grid-name").map(&:text)
+    end
+
+    # THE ROW SKIPS WHAT THE PAGE DRAWS NO TILE FOR, AND IT ASKS EACH PANEL'S VIEW, NOT "IS IT A REPOSITORY"
+    # (slice 6 review): a plain folder switched to browser view draws no tiles, and a repository nested
+    # inside a tiles-view repository panel is a closed browser section. Both leaked into the row while the
+    # rule keyed on `repo?`.
+    test "the recent row follows each panel's view: a browsed plain folder and a nested repository stay out" do
+      project = folder_panel_project!
+      nested = @user.nodes.create!(node_id: "d-lib", name: "lib", kind: "dir", parent_node_id: "d-firmware")
+      @user.nodes.create!(node_id: "d-lib-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
+                          parent_node_id: nested.node_id)
+      @user.nodes.create!(node_id: "f-lib", name: "lib.c", kind: "file", parent_node_id: nested.node_id,
+                          size: 10, mtime: 1_000_000_000)
+      project.update!(panels: { "views" => { folder_key("d-firmware") => "tiles", folder_key("d-models") => "browser" } })
+      @user.nodes.where(kind: "file").update_all(updated_at: 1.minute.ago)
+
+      get project_path(project)
+
+      names = css_select(".recent-files .grid-name").map(&:text)
+      assert_includes names, "main.c", "a tiles-view repository's own files are tiles, so they are recent"
+      assert_includes names, "sketch.txt"
+      refute_includes names, "lib.c", "a repository nested in a tiles-view panel is a closed browser section"
+      refute_includes names, "base.stl", "a plain folder in browser view draws no tiles"
     end
 
     # DETACH IS THE LINKED ROW'S CONTROL, ONLY. base.stl/shade.3mf are plain folder files now (no
@@ -165,34 +273,143 @@ module Web
       assert_select "a.project-card[href=?]", project_path(other), false
     end
 
-    # --- Quiet empty panels (stage 4, S4-1) -----------------------------------------------------
+    # --- On-demand panels (structural redesign §6, slice 6) ---------------------------------------
     #
-    # A secondary panel with nothing in it is its heading and one add control, not a box saying
-    # "No entries yet." over an open composer. `@project` in `setup` is populated, so these two
-    # tests each build their own project rather than reading it.
-    test "an empty secondary panel is quiet: its heading and one add control, no zero-count groups, no empty sentences" do
-      project = @user.maker_projects.create!(name: "Blank")
+    # AN EMPTY Build log, Tasks, BOM, Wiring, Releases or Sheets IS ABSENT FROM THE NORMAL PAGE — not
+    # quiet — and "+ Add panel" opens one for this visit with ?add=<key>, where it renders quiet (S4-1's
+    # heading and one add control) with its composer. Decided in ProjectsController#show alone
+    # (design-system.md rule 14). `@project` in `setup` is populated, so these build their own.
+    ADD_MENU = { "build_log" => [ "Build log", "project-build-log" ], "tasks" => [ "Tasks", "project-tasks" ],
+                 "bom" => [ "Bill of materials", "project-bom" ], "wiring" => [ "Wiring", "project-wiring" ],
+                 "releases" => [ "Releases", "project-releases" ], "sheets" => [ "Sheets", "project-sheets" ] }.freeze
 
-      get project_path(project)
+    def add_menu_links
+      css_select(".head-actions details.add-panel .menu-list a.menu-item").map { |a| [ a.text.strip, a["href"] ] }
+    end
+
+    test "a fresh project shows Files and Publish, and offers the empty panels to add" do
+      fresh = @user.maker_projects.create!(name: "Blank")
+
+      get project_path(fresh)
 
       assert_response :success
       %w[build-log tasks bom wiring releases sheets].each do |name|
-        assert_select "section.panel.#{name}-panel.panel--quiet", 1, "#{name} should be quiet"
+        assert_select "section.#{name}-panel", count: 0
       end
-      assert_select "#project-tasks .tasks-group", count: 0
-      assert_select ".build-log-panel details.composer > summary", text: "Add entry"
-      assert_select "#project-tasks form.task-form input[name='task[title]']"
-      assert_select "p.muted", text: /No (entries|connections|releases|sheets) yet/, count: 0
+      assert_select "section.attachments-panel"
+      assert_select "section.publish-panel#publish"
+      assert_select ".head-actions details.add-panel .menu-list a.menu-item[href=?]",
+                    project_path(fresh, add: "tasks", anchor: "project-tasks"), text: "Tasks"
+      # EVERY ABSENT PANEL, IN ON_DEMAND ORDER, EACH TO ITS OWN ?add= AND ITS OWN ANCHOR — the whole
+      # list rather than one link, so a key the menu drops or an anchor it misspells is a failure here.
+      assert_equal(ADD_MENU.map { |key, (label, anchor)| [ label, project_path(fresh, add: key, anchor:) ] },
+                   add_menu_links)
+      # Between Customise page and the ⋯ menu, inside .head-actions: the head stays two slots.
+      actions = css_select(".page-head > .head-actions > *").map { |el| el["class"].to_s }
+      assert_operator actions.index { |c| c.include?("customise-link") }, :<, actions.index { |c| c.include?("add-panel") }
+      assert_operator actions.index { |c| c.include?("add-panel") }, :<, actions.index { |c| c.include?("project-menu") }
     end
 
-test "a quiet BOM panel keeps its revision badge: the hidden span is a count, and rev is not one" do
-  project = @user.maker_projects.create!(name: "Rev")
-  project.boms.create!(user: @user)
+    test "?add= opens one empty panel, quiet, with its composer, and nothing else" do
+      fresh = @user.maker_projects.create!(name: "Blank")
 
-  get project_path(project)
+      get project_path(fresh, add: "tasks")
 
-  assert_select "section.bom-panel.panel--quiet .panel-head .bom-rev", text: /rev \d+/
-end
+      assert_select "section.tasks-panel.panel--quiet form.task-form"
+      # THE TURBO TARGET IS ON THE PAGE, so the first add's stream replace has something to land on.
+      assert_select "#project-tasks", count: 1
+      assert_select "#project-tasks .tasks-group", count: 0
+      assert_select "section.build-log-panel", count: 0
+      # The open panel leaves the menu; the other five stay in it.
+      assert_select ".add-panel a.menu-item", text: "Tasks", count: 0
+      assert_equal 5, add_menu_links.size
+    end
+
+    # EACH LINK'S ANCHOR IS THE ID OF THE PANEL IT OPENS (ProjectsHelper::PANEL_ANCHORS), and each
+    # opened panel is S4-1's quiet panel: its heading and one add control, no zero-count group, no
+    # empty sentence. One request per key, because ?add= opens exactly one.
+    test "every add link lands on the quiet panel it opens" do
+      fresh = @user.maker_projects.create!(name: "Blank")
+
+      ADD_MENU.each do |key, (_label, anchor)|
+        get project_path(fresh, add: key)
+        assert_select "section.panel.panel--quiet[id=?]", anchor, 1, "?add=#{key} must render ##{anchor}, quiet"
+        assert_select "p.muted", text: /No (entries|connections|releases|sheets) yet/, count: 0
+      end
+      get project_path(fresh, add: "build_log")
+      assert_select ".build-log-panel details.composer > summary", text: "Add entry"
+    end
+
+    test "a panel with a row stays without ?add=, and drops out of the add menu" do
+      fresh = @user.maker_projects.create!(name: "Blank")
+      fresh.tasks.create!(user: @user, title: "Cut the base")
+
+      get project_path(fresh)
+
+      assert_select "section.tasks-panel"
+      assert_select ".add-panel a.menu-item", text: "Tasks", count: 0
+      assert_select ".add-panel a.menu-item", text: "Build log", count: 1
+    end
+
+    test "a panel the maker hid stays hidden even with ?add=, and is not offered" do
+      fresh = @user.maker_projects.create!(name: "Blank")
+      fresh.update!(panels: { "hidden" => %w[tasks] })
+
+      get project_path(fresh, add: "tasks")
+
+      assert_select "section.tasks-panel", count: 0
+      assert_select ".add-panel a.menu-item", text: "Tasks", count: 0
+      assert_select ".add-panel a.menu-item", text: "Build log", count: 1
+    end
+
+    test "?add= with an unknown key is ignored" do
+      fresh = @user.maker_projects.create!(name: "Blank")
+
+      get project_path(fresh, add: "publish")
+      assert_response :success
+      assert_equal 6, add_menu_links.size, "a key that is not on demand opens nothing and closes nothing"
+      get "#{project_path(fresh)}?add[]=tasks"
+      assert_response :success
+      assert_select "section.tasks-panel", count: 0
+      get "#{project_path(fresh)}?add[tasks]=1"
+      assert_response :success
+      assert_select "section.tasks-panel", count: 0
+    end
+
+    # NOTHING PERSISTS: the column ?add= might have written is the one Maker::LayoutDocument's Save
+    # owns, and a panel opened and left empty is gone on the next visit.
+    test "?add= writes nothing, and the panel is gone again on the next visit" do
+      fresh = @user.maker_projects.create!(name: "Blank")
+
+      get project_path(fresh, add: "wiring")
+      assert_select "section.wiring-panel", 1
+      assert_nil fresh.reload[:panels]
+
+      get project_path(fresh)
+      assert_select "section.wiring-panel", count: 0
+    end
+
+    # THE EDITOR SHOWS EVERY PANEL (@editing skips all of this), so an empty panel can still be
+    # arranged, and the editor offers no "+ Add panel": there is nothing absent to add there.
+    test "the editor still shows every empty panel and offers no add menu" do
+      fresh = @user.maker_projects.create!(name: "Blank")
+
+      get edit_layout_project_path(fresh)
+
+      %w[build-log tasks bom wiring releases sheets].each do |name|
+        assert_select "div.panel-slot[data-hidden=false] section.#{name}-panel.panel--quiet", 1, "#{name} in the editor"
+      end
+      assert_select "details.add-panel", count: 0
+    end
+
+    test "a quiet BOM panel keeps its revision badge: the hidden span is a count, and rev is not one" do
+      project = @user.maker_projects.create!(name: "Rev")
+      project.boms.create!(user: @user)
+
+      get project_path(project, add: "bom")
+
+      assert_select "section.bom-panel.panel--quiet .panel-head .bom-rev", text: /rev \d+/
+    end
 
     test "a populated panel is not quiet" do
       project = @user.maker_projects.create!(name: "Busy")
@@ -301,7 +518,14 @@ end
       assert_includes rendered, "sheets-panel"
     end
 
+    # ALL THREE HIDDEN PANELS HOLD A ROW, so each would render if the layout let it (slice 6): an
+    # empty BOM or Wiring is absent on its own now, and a count of 0 would pass over nothing.
     test "a hidden panel is not rendered at all — not quiet, absent" do
+      @project.boms.create!(user: @user).lines.create!(user: @user, part_name: "M3 screw", quantity: 4, unit: "each")
+      @project.connections.create!(user: @user, from_label: "Driver", to_label: "Motor")
+      get project_path(@project)
+      assert_select "section.bom-panel", 1, "the populated arm, so the assertions below are a CHANGE"
+      assert_select "section.wiring-panel", 1
       @project.update!(panels: { "hidden" => %w[tasks bom wiring] })
 
       get project_path(@project)
@@ -313,18 +537,22 @@ end
       assert_select "section.attachments-panel", 1
     end
 
-    # HIDDEN AND EMPTY ARE TWO QUESTIONS (the overview's quiet-panel contract). An empty panel that
-    # is NOT hidden still renders, quiet — S4-1's state — and a hidden one is gone whether it is
-    # empty or full. Both halves in one test, because it is the pair that must not collapse.
-    test "hidden and quiet are different states" do
+    # HIDDEN AND EMPTY ARE TWO QUESTIONS (the overview's quiet-panel contract; slice 6). An empty
+    # panel that is NOT hidden is absent from the normal page but OFFERED by "+ Add panel", and
+    # ?add= opens it quiet — S4-1's state. A hidden one is neither offered nor opened, empty or
+    # full. Both halves in one test, because it is the pair that must not collapse.
+    test "hidden and empty are different states" do
       empty = @user.maker_projects.create!(name: "Blank")
 
       get project_path(empty)
+      assert_select ".add-panel a.menu-item", text: "Wiring", count: 1
+      get project_path(empty, add: "wiring")
       assert_select "section.wiring-panel.panel--quiet", 1
 
       empty.update!(panels: { "hidden" => %w[wiring] })
-      get project_path(empty)
+      get project_path(empty, add: "wiring")
       assert_select "section.wiring-panel", count: 0
+      assert_select ".add-panel a.menu-item", text: "Wiring", count: 0
     end
 
     test "a stored order reorders the DOM, and a preset does too" do
@@ -433,9 +661,14 @@ end
       assert_not Maker::Preview.exists?(user: @user, node_id: "f-case"),
                  "the browser view shows no tile for it, so nothing is enqueued"
 
+      # THE RECENT ROW ASKS THE SAME QUESTION (slice 6): case.stl is the newest file in the folder,
+      # and it is in the row exactly when the repository draws tiles.
+      assert_select ".recent-files .grid-name", { text: "case.stl", count: 0 }, "a browsed repository draws no recent tile"
+
       project.update!(panels: { "views" => { "folder:d-firmware" => "tiles" } })
       get project_path(project)
       assert_select "section.folder-panel[id='folder:d-firmware'] .attachment-tile", { minimum: 1 }
+      assert_select ".recent-files .grid-name", { text: "case.stl", count: 1 }, "a repository in tiles is a folder like any other"
       assert Maker::Preview.exists?(user: @user, node_id: "f-case"),
              "a tile on the page must have a row the poll can resolve"
     end
@@ -500,7 +733,9 @@ end
       assert_select "section.attachments-panel .attachment-group-head", text: /Loose \(1\)/
       assert_select "section.attachments-panel .attachment-tile .grid-name", text: "sketch.txt"
       assert_select "section.attachments-panel .file-tree-section", count: 0
-      assert_select "section.attachments-panel .attachment-tile", { count: 1 },
+      # THE GROUPS' TILES, NOT THE RECENT ROW'S: Recently changed reaches into every subfolder by
+      # design (slice 6), so what this pins is that no GROUP below it draws a subfolder.
+      assert_select "section.attachments-panel .attachment-group .attachment-tile", { count: 1 },
                     "only the loose file — a subfolder's files belong to its own panel"
       assert_select ".file-tree-section", 1, "only the nested old/ section is left, inside models"
     end
@@ -509,6 +744,8 @@ end
     # first half of "a first-class member of the chooser" (spec decision 1).
     test "a stored order lifts a folder panel above the build log" do
       project = folder_panel_project!
+      # A ROW, so the build log is on the page to be ordered against (slice 6: empty, it is absent).
+      project.build_log_entries.create!(user: @user, body: "glued", logged_at: Time.current)
       project.update!(panels: { "order" => [ "attachments", folder_key("d-firmware"), "build_log" ] })
 
       get project_path(project)
@@ -607,6 +844,8 @@ end
 
     test "a custom title replaces the heading and an intro renders under it, on fixed and folder panels" do
       project = folder_panel_project!
+      # A ROW, so the Tasks panel is on the page to carry its title (slice 6: empty, it is absent).
+      project.tasks.create!(user: @user, title: "Cut the base")
       models_key = folder_key("d-models")
       project.update!(panels: { "titles" => { "tasks" => "To do", models_key => "Prints" },
                                 "intros" => { models_key => "Sliced for 0.2 mm." } })
@@ -656,14 +895,20 @@ end
     # ASSERTED ON THE RENDERED PAGE, and on the RELATIONSHIP rather than a count: what makes a head
     # a head is that the title lives inside one. A grep for `.panel-head` in the templates would
     # pass on a panel that renders none, which is exactly what two of these did.
+    # BOM, Wiring and Releases are empty on `@project`, so each is opened with ?add= (slice 6) — one
+    # request apiece, the panels of all four pages swept together.
     test "every panel on the project page wraps its title in a panel head" do
       @project.build_log_entries.create!(user: @user, body: "glued", logged_at: Time.current)
       @project.tasks.create!(user: @user, title: "cut")
-      get project_path(@project)
-      assert_response :success
-
-      panels = css_select("main section.panel")
+      panels = [ nil, "bom", "wiring", "releases" ].flat_map do |add|
+        get project_path(@project, add:)
+        assert_response :success
+        css_select("main section.panel")
+      end
       refute_empty panels, "no panels rendered — the sweep is not reaching the page"
+      %w[build-log tasks bom wiring releases sheets].each do |name|
+        assert panels.any? { |p| p["class"].to_s.split.include?("#{name}-panel") }, "the sweep never reached #{name}"
+      end
       bare = panels.filter_map do |panel|
         h2 = panel.at_css("h2")
         next if h2.nil?

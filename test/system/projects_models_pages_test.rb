@@ -44,8 +44,15 @@ class ProjectsModelsPagesTest < ApplicationSystemTestCase
     FileUtils.remove_entry(@root) if @root&.exist?
   end
 
+  # THROUGH "+ ADD PANEL" (slice 6): an empty build log is not on the page until the head's menu opens
+  # it for this visit (?add=build_log), and once the entry is saved the redirect's plain page keeps
+  # it because it now holds a row.
   test "a build-log entry goes through the closed composer" do
     visit project_path(@project)
+    assert_no_selector ".build-log-panel"
+    find("details.add-panel > summary", text: "+ Add panel").click
+    click_link "Build log"
+    assert_current_path project_path(@project, add: "build_log")
     assert_no_selector ".build-log-panel details.composer[open]"
     find(".build-log-panel details.composer > summary", text: "Add entry").click
     assert_selector ".build-log-panel details.composer[open] lexxy-editor", visible: true
@@ -142,12 +149,14 @@ class ProjectsModelsPagesTest < ApplicationSystemTestCase
     create_node!(@user, node_id: SecureRandom.uuid, name: "bracket.stl", kind: "file",
                 parent_node_id: folder.node_id)
     visit project_path(@project)
-    assert_selector ".attachments-panel .attachments-grid .attachment-tile .grid-name", text: "bracket.stl"
+    # THE LOOSE GROUP'S TILES. The Recently changed row above it (slice 6) is tiles in either view —
+    # a row of the newest files, not the panel's listing — so it is not what the toggle switches.
+    assert_selector ".attachments-panel .attachment-group .attachments-grid .attachment-tile .grid-name", text: "bracket.stl"
     assert_no_selector "table.project-files"
 
     within(".attachments-panel .view-toggle") { click_on "List" }
     assert_selector "table.project-files td.col-name", text: "bracket.stl"
-    assert_no_selector ".attachments-panel .attachments-grid .attachment-tile"
+    assert_no_selector ".attachments-panel .attachment-group .attachments-grid .attachment-tile"
     assert_equal "list", @project.reload.panels.dig("views", "attachments")
 
     # A FRESH VISIT WITH NO PARAMS AT ALL. The row is the only thing left that could carry the

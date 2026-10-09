@@ -118,18 +118,26 @@ module Web
       assert_select "p.sweep-note a[href=?]", edit_project_path(project)
     end
 
-    test "attached files render as tiles linking to the file view" do
+    # A HUB TILE OPENS THE LIBRARY WITH THE FILE SELECTED (structural redesign §6 and §7, slice 6),
+    # never the file page: library_file_path. Both shapes of the link are here — a file at the
+    # library ROOT has no parent, so Rails drops the nil `folder` and the link is /files?selected=…;
+    # a folder file names its folder.
+    test "attached files render as tiles opening the Library with the file selected" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
       # attach_node's node sits at the library ROOT, outside the project's folder — the LINKED
-      # CASE now (Row#linked? true) — and a Linked row still renders as an ordinary
-      # .attachment-tile linking to the file view, which is all this test is pinning.
+      # CASE now (Row#linked? true) — and a Linked row still renders as an ordinary .attachment-tile.
       attach_node(user, project, name: "base.stl", node_id: "n-1", role: "model")
+      folder = project_folder_rows!(user, project).node_id
+      user.nodes.create!(node_id: "n-lid", name: "lid.stl", kind: "file", parent_node_id: folder)
 
       get project_path(project)
       assert_response :success
-      assert_select ".attachments-panel .attachment-tile", 1
-      assert_select ".attachment-tile a[href=?]", file_path("n-1")
+      assert_select ".attachments-panel .attachment-group .attachment-tile", 2
+      assert_select ".attachment-group .attachment-tile a[href=?]", files_path(selected: "n-1")
+      assert_select ".attachment-group .attachment-tile a[href=?]", files_path(folder:, selected: "n-lid")
+      assert_select ".attachment-tile a[href=?]", file_path("n-1"), 0
+      assert_select ".attachment-tile a[href=?]", file_path("n-lid"), 0
     end
 
     # WAS: "degrades to an unavailable placeholder". That placeholder was the bug — a file deleted
@@ -325,7 +333,9 @@ module Web
 
       get project_path(project)
       assert_response :success
-      assert_select ".attachment-tile", 1
+      # The Loose group's tile; the same file is also the recent row's only tile (slice 6), and
+      # neither carries the corner.
+      assert_select ".attachment-group .attachment-tile", 1
       assert_select ".attachment-tile .tile-detach", count: 0
       assert_select ".attachment-tile .tile-meta", count: 0
     end
@@ -342,12 +352,50 @@ module Web
 
       get project_path(project)
       assert_response :success
-      assert_select ".attachment-tile", Maker::ProjectFolderListing::FILE_CAP
+      # THE GROUPS' TILES: the recent row above them draws its own 8 by design (slice 6), and is
+      # not part of the cap this pins.
+      assert_select ".attachment-group .attachment-tile", Maker::ProjectFolderListing::FILE_CAP
       # `text:` on the LINK selector below checks the link's own text ("Open the folder"), not the
       # paragraph's — the count sentence is asserted on the paragraph itself.
       assert_select ".attachments-truncated", text: /Showing 300 of 301/
       assert_select ".attachments-truncated a[href=?]", files_path(folder: folder.node_id),
                     text: "Open the folder"
+    end
+
+    # THE RECENT ROW IS NOT THE CAPPED LISTING (slice 6). Its newest file here is the LAST by name,
+    # so past FILE_CAP: absent from every group, present in the row — and its thumbnail must
+    # backfill on this render, which needs its id in the page's one ThumbnailMap union AHEAD of the
+    # 300 listed tiles (BACKFILL_LIMIT is spent in order, and is 100). Content tokens on every row,
+    # or the map short-circuits before the backfill this asserts ever runs. It is also an addon's
+    # output, so its right-click menu's "Edit in" needs its id in the ONE addon-origin lookup too.
+    test "a recent file past FILE_CAP shows in the recent row, and its thumbnail backfills on the first render" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      folder = project_folder_rows!(user, project)
+      day_ago = 1.day.ago
+      Node.insert_all((Maker::ProjectFolderListing::FILE_CAP + 1).times.map do |i|
+        { node_id: "cap-#{i}", name: format("f%03d.stl", i), kind: "file", user_id: user.id,
+          parent_node_id: folder.node_id, deleted: false, size: 5, mtime: 1_000_000_000,
+          content_hash: "h-cap-#{i}", current_version_id: "v-cap-#{i}", created_at: day_ago, updated_at: day_ago }
+      end)
+      last = "cap-#{Maker::ProjectFolderListing::FILE_CAP}"
+      user.nodes.find_by!(node_id: last).update_columns(updated_at: Time.current)
+      state = user.maker_addon_states.create!(addon_key: "boxes", name: "shelf box", data: {}, revision: 1)
+      state.files.create!(node_id: last, role: "output", position: 0)
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [
+        { "key" => "boxes", "title" => "Box Generator", "icon" => "📦", "description" => "Parametric boxes",
+          "api_version" => "1", "entry" => "boxes.js" }
+      ])
+
+      get project_path(project)
+      assert_response :success
+      assert_equal "f300.stl", css_select(".recent-files .attachment-tile .grid-name").first&.text
+      assert_select ".attachment-group .grid-name", { text: "f300.stl", count: 0 }, "past the cap, so in no group"
+      assert user.maker_previews.exists?(node_id: last),
+             "a recent tile past the cap must get its preview row on the render that draws it"
+      assert_select ".recent-files .attachment-tile a[data-node-id=?][data-addon-open-url]", last
+    ensure
+      Maker::Addons::Source.reset!
     end
 
     # THE OTHER CAP. A walk that stops at DIR_CAP subfolders before it has seen a single file must
@@ -565,8 +613,10 @@ module Web
       assert_select ".attachment-tile .grid-name", text: "bracket.stl"
       assert_no_match(/bracket\.stl\.ptr/, response.body)
       assert_select ".loose-note", text: /Loose files are filed on the next sweep/
-      # ONE tile, ONE file counted -- the pointer is not a second, merely-hidden row.
-      assert_select ".attachment-tile", 1
+      # ONE tile, ONE file counted -- the pointer is not a second, merely-hidden row. In the recent
+      # row too (slice 6): the pointer is no more a recent file than a listed one.
+      assert_select ".attachment-group .attachment-tile", 1
+      assert_select ".recent-files .attachment-tile", 1
       assert_select ".attachment-group-head", text: /Loose \(1\)/
     end
 
@@ -589,6 +639,9 @@ module Web
         assert_select "table.project-files td.col-section", text: "models"
         assert_select "table.project-files td.col-origin", text: "—"
         assert_select ".view-toggle button.toggle.active", text: "List"
+        # THE NAME OPENS THE LIBRARY WITH THE FILE SELECTED (slice 6), the tile's own target.
+        assert_select "table.project-files td.col-name a[href=?]", files_path(folder: "d-models", selected: "n-bracket"),
+                      text: "bracket.stl"
       end
 
       # A BARE `?view=list` IS INERT NOW. The old url survived in bookmarks and would otherwise

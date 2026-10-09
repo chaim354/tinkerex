@@ -55,7 +55,11 @@ module Web
     end
 
     test "the empty state" do
+      # ABSENT, THEN OPENED (slice 6): no connection means no panel, and "+ Add panel" offers it.
       get project_path(@project)
+      assert_select "section.wiring-panel", count: 0
+      assert_select ".add-panel a.menu-item", text: "Wiring"
+      get project_path(@project, add: "wiring")
       assert_response :success
       # QUIET AT ZERO (stage 4, S4-1): the panel says it is empty by being empty. The sentence and
       # the "0 connections" count span are both gone -- a zero beside a heading is not information
@@ -68,7 +72,7 @@ module Web
     end
 
     test "the composer's field names" do
-      get project_path(@project)
+      get project_path(@project, add: "wiring")
       assert_select "details.composer.wiring-add summary", text: "Add connection"
       assert_select "form[action=?]", project_connections_path(@project)
       assert_select "input[name=?]", "connection[from_label]"

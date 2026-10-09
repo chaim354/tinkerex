@@ -33,7 +33,11 @@ module Web
       assert_no_difference "Maker::BuildLogEntry.count" do
         post project_build_log_entries_path(project), params: { build_log_entry: { body: "" } }
       end
-      assert_redirected_to project_path(project)
+      # A FAILED FIRST ENTRY KEEPS ITS PANEL OPEN (Projects::PanelReturn): the project is otherwise empty,
+      # so the plain page would no longer carry the Build log the maker was writing in.
+      assert_redirected_to project_path(project, add: "build_log", anchor: "project-build-log")
+      follow_redirect!
+      assert_select "section.build-log-panel details.composer form"
     end
 
     test "delete a build-log entry" do
@@ -107,7 +111,8 @@ module Web
     test "the entry form renders a Lexxy editor with attachments disabled" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      get project_path(project)
+      # ?add=build_log: an empty Build log is absent until "+ Add panel" opens it (slice 6).
+      get project_path(project, add: "build_log")
       assert_response :success
       assert_select "lexxy-editor[attachments=?]", "false"
       assert_select "textarea[name=?]", "build_log_entry[body]", count: 0

@@ -47,8 +47,8 @@ class ApplicationController < ActionController::Base
 
   helper_method :web_device
 
-  # After a Devise sign-in (or sign-up confirmation), land on the Home page — the app's front
-  # door (config/routes.rb's `root to: "home#index"`). This IS Devise's own default
+  # After a Devise sign-in (or sign-up confirmation), land on Recent — the app's front door
+  # (config/routes.rb's `root to: "home#index"`). This IS Devise's own default
   # (root_path); it is stated explicitly rather than left to fall through, so a reader does not
   # have to know Devise's default to know where sign-in lands.
   def after_sign_in_path_for(_resource)

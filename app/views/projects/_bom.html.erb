@@ -5,7 +5,7 @@
   @bom_rollup / @items / @suppliers and folds the bom's file-line node ids into the page's ONE
   PageNodes union (@page_nodes) — this partial issues no query of its own.
 %>
-<section class="panel bom-panel<%= " panel--quiet" if @bom_lines.empty? %>">
+<section class="panel bom-panel<%= " panel--quiet" if @bom_lines.empty? %>" id="project-bom">
   <div class="panel-head">
     <h2><%= panel_title(@panel_layout, "bom") %></h2>
     <% if @bom %>

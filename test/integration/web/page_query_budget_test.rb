@@ -288,6 +288,10 @@ module Web
                               -> { add.call("s", SMALL) },
                               -> { add.call("l", LARGE - SMALL) },
                               "projects#show")
+      # THE RECENT ROW (slice 6) WAS UNDER MEASUREMENT: one query whatever N is, and its tiles are
+      # projects/_file_tile, whose per-tile cost the groups above already grow. It is full (8) at
+      # BOTH sizes, so this proves the row rendered, not that a per-tile read inside it would show.
+      assert_select ".attachments-panel .recent-files .attachment-tile", 8
     ensure
       Maker::Addons::Source.reset!
     end
@@ -911,12 +915,19 @@ module Web
       assert_select ".model-strip .print-run", count: LARGE
     end
 
-    # EVERY BOUNDED LIST HOME READS GROWS PER STEP — recent projects (each with an attachment, which
-    # `cover_node_id` reads), recent files, failed prints and low stock — and SMALL/LARGE straddle
+    # EVERY BOUNDED LIST RECENT READS GROWS PER STEP — recent projects (each with an attachment, which
+    # `cover_node_id` reads), recent files, failed prints and low stock — and the two sizes straddle
     # each list's LIMIT, so a per-row query the LIMIT alone would hide still shows. (The
     # current-project hero, and the seeding it needed, went with the current project in slice 4 of
-    # the 2026-10-08 redesign.)
-    test "home#index does not grow with projects, files, prints or low stock" do
+    # the 2026-10-08 redesign; the prints section went in slice 6, when Home became Recent.)
+    #
+    # LOCAL SIZES, NOT SMALL/LARGE: RECENT_FILES is 16 since slice 6, and the file's LARGE (15) sits
+    # UNDER it, so with the shared constants both sizes would render every file and the straddle this
+    # test exists for would be gone for its biggest list. `small` is under every limit here (6, 16, 5,
+    # 5) and `large` over all of them.
+    test "home#index does not grow with projects, files, failed prints or low stock" do
+      small = 3
+      large = 20
       add = lambda do |prefix, count|
         count.times do |i|
           id = "#{prefix}#{i}"
@@ -927,16 +938,21 @@ module Web
           model.print_runs.create!(user: @user, printed_on: Date.current, outcome: "failed")
           # STAGE 2, S2-3: the attention list's second source. Each item is seeded already below
           # its own minimum, so the `low_stock` scope's row count grows past ATTENTION_STOCK (5)
-          # between SMALL (3) and LARGE (15) — the same over-the-cap crossing RECENT_PROJECTS etc.
+          # between `small` and `large` — the same over-the-cap crossing RECENT_PROJECTS etc.
           # already rely on to catch a per-row query the LIMIT alone would hide.
           inv = @user.maker_inventory_items.create!(name: "Inv #{id}", unit: "each", min_quantity: 10)
           Maker::InventoryTransaction.apply!(item: inv, user: @user, delta: 1, reason: "initial")
         end
       end
       assert_constant_queries(root_path,
-                              -> { add.call("hs", SMALL) },
-                              -> { add.call("hl", LARGE - SMALL) },
+                              -> { add.call("hs", small) },
+                              -> { add.call("hl", large - small) },
                               "home#index")
+      # THE STRADDLE, MEASURED RATHER THAN ASSUMED: the large size renders the capped count, so the
+      # files query really was cut by its LIMIT while the per-row work stayed flat.
+      assert_select ".home-files .grid-card", count: HomeController::RECENT_FILES
+      assert_operator large, :>, HomeController::RECENT_FILES
+      assert_operator small, :<, HomeController::RECENT_FILES
     end
 
     # Stage 2, S2-3. Each item gets its OWN location and supplier so `.includes(:location,

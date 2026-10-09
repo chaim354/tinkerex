@@ -1,17 +1,20 @@
-# The Home page (stage 2, S2-1): what changed recently, then what needs attention. EVERY LIST HERE
-# IS BOUNDED AND ORDERED BY A COLUMN THAT ALREADY EXISTS — there is no activity table and no
-# counter, and page_query_budget_test.rb asserts the count is constant in N.
+# RECENT (structural redesign spec §7, slice 6; the app's front door at `/`): the files you changed
+# lately, your active projects, and what needs attention — the last two only when they hold anything.
+# EVERY LIST HERE IS BOUNDED AND ORDERED BY A COLUMN THAT ALREADY EXISTS — there is no activity table
+# and no counter, and page_query_budget_test.rb asserts the count is constant in N.
 class HomeController < ApplicationController
-  # "Edit in <Addon>" for the recent-files row, the same right-click menu entry FilesController and
+  # "Edit in <Addon>" for the recent-files tiles, the same right-click menu entry FilesController and
   # ProjectsController give their own file tiles.
   include AddonOrigins
 
   RECENT_PROJECTS = 6
-  RECENT_FILES = 8
-  RECENT_PRINTS = 5
+  RECENT_FILES = 16
+  # Only the failed-prints limit now: Recent has no prints section of its own (slice 6) — a failed
+  # print is the one kind that still reaches this page, through "Needs attention".
+  ATTENTION_PRINTS = 5
   ATTENTION_WINDOW = 30.days
   # Stage 2, S2-3: how many low-stock inventory items land in "Needs attention" — the same
-  # bounded-list shape as RECENT_PROJECTS/RECENT_FILES/RECENT_PRINTS above, not a second pattern.
+  # bounded-list shape as RECENT_PROJECTS/RECENT_FILES/ATTENTION_PRINTS above, not a second pattern.
   ATTENTION_STOCK = 5
 
   def index
@@ -21,17 +24,17 @@ class HomeController < ApplicationController
     # either way but stops being the SAME constant once the seeded project count crosses the limit
     # (page_query_budget_test.rb's small seed sits under it, the large one over it). Mirrors
     # ProjectsController#index, which eager-loads the same association for the same reason.
-    @recent_projects = current_user.maker_projects.where.not(status: "archived")
+    # ACTIVE MEANS NOT FINISHED (slice 6 review): the section is "Active projects", so a done project is
+    # left out as an archived one is — it showed under that heading with a "Done" badge.
+    @recent_projects = current_user.maker_projects.where.not(status: %w[archived done])
                                    .includes(:file_attachments)
                                    .order(updated_at: :desc).limit(RECENT_PROJECTS).to_a
     @recent_files = current_user.nodes.present.where(kind: "file").visible_entries(false)
                                 .order(updated_at: :desc).limit(RECENT_FILES).to_a
-    @recent_prints = current_user.maker_print_runs.includes(:model)
-                                 .order(printed_on: :desc, id: :desc).limit(RECENT_PRINTS).to_a
     @failed_prints = current_user.maker_print_runs.includes(:model)
                                  .where(outcome: "failed")
                                  .where("printed_on >= ?", ATTENTION_WINDOW.ago.to_date)
-                                 .order(printed_on: :desc, id: :desc).limit(RECENT_PRINTS).to_a
+                                 .order(printed_on: :desc, id: :desc).limit(ATTENTION_PRINTS).to_a
     # A SECOND attention source, alongside failed prints — low stock is the `<=` scope from
     # Maker::InventoryItem (min_quantity itself counts as low), bounded and ordered by name the
     # same way every other list on this page is bounded (this class's own header).
@@ -40,5 +43,8 @@ class HomeController < ApplicationController
       current_user, @recent_projects.filter_map(&:cover_node_id) + @recent_files.map(&:node_id)
     )
     @addon_origins = addon_origins_for(@recent_files.map(&:node_id))
+    # Recent shows no folder, so Upload asks with the chooser — but it is this page's one action
+    # (spec §4.2).
+    upload_primary!
   end
 end

@@ -1,12 +1,10 @@
 require "application_system_test_case"
 
-# The Home page (stage 2, S2-1), the things only a browser can see: the Files row's CSS
-# containment (`overflow-x: auto`) is a rendered-layout question no request test can ask at all.
-# (The current-project hero's two browser tests — its rail select and its upload round trip — went
-# with the current project in slice 4 of the 2026-10-08 redesign.) Content and bounded-list
-# correctness (empty states, archived-project handling) are already covered at the request level in
-# test/integration/web/home_test.rb and are deliberately NOT repeated here (README: "Does not
-# qualify -- keep these at the request level").
+# Recent, the app's front door (structural redesign §7, slice 6; the Home page until then), the things
+# only a browser can see: that the recently-changed grid WRAPS — a rendered-layout question no request
+# test can ask at all. Content and bounded-list correctness (the one empty state, archived-project
+# handling, the tiles' links) are covered at the request level in test/integration/web/home_test.rb and
+# are deliberately NOT repeated here (README: "Does not qualify -- keep these at the request level").
 class HomeTest < ApplicationSystemTestCase
   setup do
     @root = use_fresh_share_library!
@@ -18,54 +16,70 @@ class HomeTest < ApplicationSystemTestCase
     FileUtils.remove_entry(@root) if @root&.exist?
   end
 
-  # MUTATION-CHECKED (see test/system/README.md): removing `overflow-x: auto` from `.tile-row` in
-  # app/assets/stylesheets/pages/home.css. The DESKTOP-width assertion below stays green under this
-  # mutation, correctly -- it measures the row's raw content width, which `overflow-x` never
-  # changes -- and it is the 375px assertion that turns red:
-  #   home scrolls sideways at 375px (scrollWidth 1312)
-  # Reverted immediately after; also caught by shell_test.rb's phone sweep (see its own comment).
-  test "the Files row scrolls inside itself, not the page" do
-    9.times do |i|
-      create_node!(@user, node_id: SecureRandom.uuid, kind: "file", name: "scroll-file-#{i}.stl")
+  # THE GRID WRAPS, AND THE PAGE NEVER SCROLLS SIDEWAYS. Until slice 6 this page was a row of tiles
+  # that scrolled inside its own box; sixteen tiles are a page of their own, so they wrap instead.
+  #
+  # Seventeen files so the RECENT_FILES cap (16) is reached with one to spare. The wrap is measured
+  # as GEOMETRY — a tile whose top sits below the first tile's — because a grid that stopped wrapping
+  # (`display: flex` with no wrap, or `grid-auto-flow: column`) puts every tile on one line, wider
+  # than the panel, which is the old row without its scroller.
+  #
+  # THE 375px HALF MEASURES AGAINST `document.documentElement.clientWidth`, NOT `innerWidth`: CI's
+  # Linux Chrome draws a 15px classic scrollbar, so `innerWidth` (375) counts a strip the page cannot
+  # lay content in, and a page 10px too wide would still read as fitting.
+  #
+  # MUTATION-CHECKED (see test/system/README.md), three in app/assets/stylesheets/pages/home.css, each
+  # run and restored:
+  #   1. `.recent-grid` as `display: flex` (one line, no wrap): the tiles shrink rather than overflow,
+  #      so only the geometry catches it —
+  #        the recently changed tiles sit on one line (first top 173, last top 173) — the grid does not wrap
+  #   2. `minmax(340px, 1fr)` tracks, wider than a phone's panel:
+  #        Recent scrolls sideways at 375px (scrollWidth 369, clientWidth 360)
+  #      — 369 is UNDER `innerWidth` (375), so the old `<= innerWidth` comparison passed it.
+  #   3. A bare `minmax(160px, 1fr)` (the `min()` dropped):
+  #        Recent's grid is one column at 375px (first tile top 223, second 565)
+  test "the recently changed grid wraps, and the page never scrolls sideways" do
+    17.times do |i|
+      create_node!(@user, node_id: SecureRandom.uuid, kind: "file", name: "grid-file-#{i}.stl")
     end
 
     visit root_path
-    assert_selector ".home-files .grid-card", count: HomeController::RECENT_FILES
+    assert_selector ".home-files .recent-grid .grid-card", count: HomeController::RECENT_FILES
 
-    # AT THE DEFAULT (DESKTOP) WINDOW: prove the row's OWN content is wider than its OWN box first
-    # -- otherwise the 375px assertion below could pass for the wrong reason, since a row that
-    # never overflows is contained either way. Nine nodes exist so the RECENT_FILES cap (8) is
-    # reached with a spare rather than by an exact count that a future off-by-one in the query
-    # would silently undercut; only 8 tiles ever render either way. MEASURED on this box
-    # (screen_size [1400, 1400], window.innerWidth 1400): 8 tiles at 150px with a 14px gap is
-    # 1298px of content against a `.home-files .tile-row` clientWidth of 1164px (the 1212px column
-    # `main.container` leaves after the 188px rail, minus its own 24px+24px padding), and the
-    # observed scrollWidth was 1302 (the row's own 2px+2px padding accounts for the last 4px).
-    # 1302 > 1164 confirms the overflow is real, not assumed.
-    client_width, scroll_width = page.evaluate_script(<<~JS)
+    first_top, last_top, grid_width, grid_scroll = page.evaluate_script(<<~JS)
       (function () {
-        var row = document.querySelector('.home-files .tile-row')
-        return [row.clientWidth, row.scrollWidth]
+        var grid = document.querySelector('.home-files .recent-grid')
+        var tiles = grid.querySelectorAll('.grid-card')
+        return [tiles[0].getBoundingClientRect().top, tiles[tiles.length - 1].getBoundingClientRect().top,
+                grid.clientWidth, grid.scrollWidth]
       })()
     JS
-    assert scroll_width > client_width,
-           "the tile row does not overflow its own box at the default window width " \
-           "(clientWidth #{client_width}, scrollWidth #{scroll_width}) -- the scroll-containment " \
-           "assertion below would pass without measuring anything"
+    assert_operator last_top, :>, first_top,
+                    "the recently changed tiles sit on one line (first top #{first_top}, last top #{last_top}) — the grid does not wrap"
+    assert_operator grid_scroll, :<=, grid_width,
+                    "the recently changed grid is wider than its own box (clientWidth #{grid_width}, scrollWidth #{grid_scroll})"
 
-    # AT PHONE WIDTH: the PAGE must not scroll sideways even though the ROW's content does not fit
-    # -- containment, not absence of overflow. Same CDP mechanism as shell_test.rb's phone sweep,
-    # for the same reason: WebDriver's window-resize API refuses to go below 500px (measured
-    # there), and Emulation.setDeviceMetricsOverride honours 375. Cleared in the ensure because
-    # Selenium reuses one Chrome for the whole file. MEASURED: window.innerWidth 375,
-    # documentElement.scrollWidth 360 -- the row's own overflow above never reaches the page.
+    # AT PHONE WIDTH, through CDP for the reason shell_test.rb's phone sweep gives: WebDriver's
+    # window-resize API refuses to go below 500px, and Emulation.setDeviceMetricsOverride honours 375.
+    # Cleared in the ensure because Selenium reuses one Chrome for the whole file.
     page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
                                     width: 375, height: 812, deviceScaleFactor: 1, mobile: false)
     begin
       visit root_path
-      assert page.evaluate_script("document.documentElement.scrollWidth <= window.innerWidth"),
-             "home scrolls sideways at 375px (scrollWidth " \
-             "#{page.evaluate_script('document.documentElement.scrollWidth')})"
+      assert_selector ".home-files .recent-grid .grid-card", count: HomeController::RECENT_FILES
+      scroll_width, client_width, first_top, second_top = page.evaluate_script(<<~JS)
+        (function () {
+          var tiles = document.querySelectorAll('.home-files .recent-grid .grid-card')
+          return [document.documentElement.scrollWidth, document.documentElement.clientWidth,
+                  tiles[0].getBoundingClientRect().top, tiles[1].getBoundingClientRect().top]
+        })()
+      JS
+      assert_operator scroll_width, :<=, client_width,
+                      "Recent scrolls sideways at 375px (scrollWidth #{scroll_width}, clientWidth #{client_width})"
+      # NEVER FEWER THAN TWO A ROW (pages/home.css): a bare `minmax(160px, 1fr)` fits one 302px column
+      # here, and sixteen of those stack 5,400px deep.
+      assert_equal first_top, second_top,
+                   "Recent's grid is one column at 375px (first tile top #{first_top}, second #{second_top})"
     ensure
       page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
     end

@@ -23,13 +23,23 @@
   .project-card:hover { text-decoration: none; }
   .project-card:hover .thumb { border-color: var(--fg); }
   .project-card .thumb { width: 100%; height: 120px; }
-  .project-thumb-empty { font-size: 36px; }
+  /* An empty cover is the rail's projects icon (slice 6; no emoji in the interface), at the size the
+     glyph it replaced was set. `.project-card` qualifies it, so the public explore card (which is a
+     `.project-card` too) and the model card (`.project-card.model-card`) draw it the same size. */
+  .project-card .project-thumb-empty .rail-icon { width: 36px; height: 36px; color: var(--fg-muted); }
   .project-name { font-size: 13px; font-weight: 600; text-align: center; overflow-wrap: anywhere; }
   .archived-note { margin: 24px 0 0; padding-top: 12px; border-top: 1px solid var(--line); font-size: 12px; }
 
   /* --- Show: head, stats, panels --- */
   .project-head { align-items: flex-start; }
-  .project-head .page-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+  /* THE HUB'S HEAD (structural redesign §6, slice 6): the cover, then a text column holding the
+     PROJECT eyebrow on its own line and the name, badges and links wrapping after it. Two boxes side
+     by side — never wrapping, so the cover stays beside the name at 375px — and `min-width: 0` on
+     both, so a long name wraps inside the column instead of widening the page. */
+  .project-head .page-title { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+  .project-head-text { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+  .project-head-text .eyebrow { flex-basis: 100%; font: 600 11px/16px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-muted); }
+  .project-head-text h1 { min-width: 0; overflow-wrap: anywhere; }
   .project-description { white-space: pre-wrap; margin: 0 0 12px; max-width: 72ch; font-size: 14px; line-height: 1.55; }
   .project-stats { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 20px; font: 12px/1.5 var(--font-mono); color: var(--fg-muted); }
   .project-stats b { color: var(--fg); font-weight: 500; }
@@ -41,6 +51,19 @@
   .project-hero-thumb { display: block; width: min(100%, 480px); }
   .project-hero-thumb .thumb { width: 100%; height: 240px; }
   .project-hero-name { font-size: 12px; }
+  /* THE COVER IN THE HEAD (slice 6). The hero partial is unchanged; it is placed and sized here. A
+     photo sits on `--photo-stage`, cropped to fill (design-system.md rule 5: a user's photo is not a
+     render); a poll cell keeps its `.thumb`'s own white stage, because a render is an opaque white
+     PNG, and is stretched to the same square. The name below the picture is the old full-width
+     hero's caption, and the head already says what the picture is of. */
+  .project-head .project-hero { flex: none; width: 96px; height: 96px; margin: 0; gap: 0; overflow: hidden;
+                                background: var(--photo-stage); border-radius: var(--radius-control); }
+  .project-head .project-hero > a { display: block; width: 100%; height: 100%; }
+  .project-head .project-hero-img { width: 100%; height: 100%; max-height: none; object-fit: cover;
+                                    border: 0; border-radius: 0; background: var(--photo-stage); }
+  .project-head .project-hero-thumb .thumb { width: 100%; height: 100%; }
+  .project-head .project-hero-name { display: none; }
+  @media (max-width: 719px) { .project-head .project-hero { width: 64px; height: 64px; } }
   /* --- Photos (stage 4, S4-1): the public gallery's grid, on the private page, full width. --- */
   .project-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
   .project-photos .thumb { width: 100%; height: 110px; }
@@ -95,6 +118,10 @@
 
   /* --- Files panel: 96px tiles, Detach in the corner on hover --- */
   .attachments-panel .panel-path { font-size: 12px; margin-left: 8px; }
+  /* "Recently changed" (slice 6): the newest files anywhere under the folder, above the root's own
+     groups, in the same tile grid. The heading is a caption, smaller than a group's summary. */
+  .recent-files { margin: 0 0 16px; }
+  .recent-files-head { margin: 0 0 8px; font: 600 11px/16px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-muted); }
   .attachments-grid, .entry-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 12px; }
   .attachment-tile { position: relative; display: flex; flex-direction: column; gap: 4px; }
   .attachment-tile .thumb { width: 100%; height: 96px; }

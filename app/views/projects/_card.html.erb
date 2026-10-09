@@ -1,7 +1,8 @@
 <%#
   One project on the list. `thumb` is a Maker::Preview or nil (cover). The `.file-cell` +
   data-node-id wiring lets the shared `thumbs` controller poll a pending cover to ready — but only
-  when a cover node exists. No cover -> a neutral placeholder, never a forever-spinner.
+  when a cover node exists. No cover -> a neutral placeholder, never a forever-spinner: the rail's
+  projects icon (structural redesign slice 6; no emoji in the interface).
 %>
 <div class="project-tile">
   <%= link_to project_path(project), class: "project-card" do %>
@@ -11,7 +12,7 @@
         <%= render "files/thumb", thumb:, ext_label: "", url: preview_src(thumb) %>
       </span>
     <% else %>
-      <span class="thumb project-thumb-empty" aria-hidden="true">📦</span>
+      <span class="thumb project-thumb-empty" aria-hidden="true"><%= rail_icon(:projects) %></span>
     <% end %>
     <span class="project-name"><%= project.name %></span>
   <% end %>
@@ -38,6 +39,13 @@
       -- "Cnc" is not a word. %>
   <% unless project.kind == Maker::ProjectKind::DEFAULT %>
     <span class="badge project-kind"><%= Maker::ProjectKind.label(project.kind) %></span>
+  <% end %>
+  <%# THE STATUS, WHERE THE PROJECT IS LISTED (structural redesign §6, slice 6): active, paused and
+      done, in the words and component classes the project page's own head uses. `planning` is the
+      column default and is never badged, and `archived` is a different list, not a badge. With the
+      other badges, OUTSIDE the link — `.project-card .badge` stays empty (projects_flow_test.rb). %>
+  <% if project.status.in?(%w[active paused done]) %>
+    <span class="badge status-<%= project.status %>"><%= project.status.humanize %></span>
   <% end %>
   <% if project.status == "archived" %>
     <%= button_to "Unarchive", unarchive_project_path(project), method: :patch, class: "linkbtn" %>

@@ -2,7 +2,7 @@
   Named spreadsheets on this project. The grid itself lives on its own full-width page — a real
   grid inside a panel this size is unusable — so this panel is a list plus a create form.
 %>
-<section class="panel sheets-panel<%= " panel--quiet" if @sheets.empty? %>">
+<section class="panel sheets-panel<%= " panel--quiet" if @sheets.empty? %>" id="project-sheets">
   <div class="panel-head">
     <h2><%= panel_title(@panel_layout, "sheets") %></h2>
     <%# text_field_tag, not f.text_field: this form has no model object, and the controller reads

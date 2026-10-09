@@ -7,7 +7,7 @@ require "application_system_test_case"
 #
 # WHAT NO TEST HERE CAN SEE: that the file picker OPENS after Choose. upload_pick_controller.js calls
 # `inputTarget.click()` for that, and Capybara's `attach_file` sets the input's files directly, so
-# deleting the call leaves this file green (mutation-checked). A human clicking Upload on Home, then
+# deleting the call leaves this file green (mutation-checked). A human clicking Upload on Recent, then
 # Choose, is the only check.
 class TopbarUploadSystemTest < ApplicationSystemTestCase
   setup do
@@ -33,7 +33,7 @@ class TopbarUploadSystemTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  test "on Home, Upload asks for a folder first and then saves there" do
+  test "on Recent, Upload asks for a folder first and then saves there" do
     visit root_path
     # THE FILE PICKER MUST OPEN FROM THE CHOOSER STEP. Headless Chrome shows no picker, so this counts
     # the click upload_pick_controller.js dispatches on the input: none while the chooser is open (the

@@ -27,6 +27,19 @@ module Web
       assert_redirected_to project_path(project)
     end
 
+    # WITHOUT JAVASCRIPT A REFUSED FIRST TASK RETURNS WITH ITS PANEL OPEN (Projects::PanelReturn): the
+    # project has no tasks, so the plain page would carry no Tasks panel to show the refusal beside.
+    test "a refused task without JavaScript returns to the opened Tasks panel" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      assert_no_difference "project.tasks.count" do
+        post project_tasks_path(project), params: { task: { title: "" } }
+      end
+      assert_redirected_to project_path(project, add: "tasks", anchor: "project-tasks")
+      follow_redirect!
+      assert_select "#project-tasks form.task-form"
+    end
+
     # The two tests above/below POST `task: {...}` as a nested hash, which bypasses the form
     # entirely — it cannot see a malformed `name` attribute, so it stays green while the panel's
     # Add button is a hard 400. These two pin the WIRE FORMAT instead. Same shape as the PR #69
@@ -34,14 +47,15 @@ module Web
     test "the add-task field is named for the key the controller requires" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      get project_path(project)
+      # ?add=tasks: an empty Tasks panel is absent until "+ Add panel" opens it (slice 6).
+      get project_path(project, add: "tasks")
       assert_select "form.task-form input[type=text][name=?]", "task[title]"
     end
 
     test "submitting the add-task form as a browser does creates the task" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      get project_path(project)
+      get project_path(project, add: "tasks")
 
       # Scrape the form's OWN field name and submit that, urlencoded, so this test follows the
       # view rather than restating it — a name that stops matching the controller fails here.

@@ -141,7 +141,7 @@ module Maker
     # FOLDER PANELS (2026-09-08; spec decision 3). The model's whole job is to THREAD `folders:`
     # through to Maker::ProjectKind.layout_for — the layout RULES are pinned in
     # project_kind_test.rb — and the `[]` default is what keeps every caller that holds no listing
-    # (Home, the chooser before it builds one) on the page it already had.
+    # (the chooser before it builds one) on the page it already had.
     test "panel_layout threads the folders it is given, and with none reads the fixed keys alone" do
       project = @user.maker_projects.create!(name: "Threaded",
                                              panels: { "views" => { "folder:d-fw" => "list" } })

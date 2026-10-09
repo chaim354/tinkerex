@@ -26,20 +26,20 @@ require "application_system_test_case"
 # moved there and became the Library's and the project hub's one action — a guard still reading
 # `main` alone would have seen those two pages lose their primary and reported it as `[]`. The
 # restriction is deliberate, not tidiness — `.brand-mark`
-# (the rail's 18px logo) is accent-filled and is not a control (Home's low-stock dot was the
+# (the rail's 18px logo) is accent-filled and is not a control (the front door's low-stock dot was the
 # second such element until the 2026-10-08 redesign moved it to `--warn`), so counting every
 # element would fail this for things decision 3 does not govern. The accent is compared against a PROBE rather than a literal
 # `rgb(240, 165, 58)`: the token has a different value in the light theme, and a literal would pin
 # this guard to one of the three theme states.
 #
-# MUTATION-CHECKED (§15) — three, each run and each restored (re-measured in redesign slice 4, when
-# Upload moved into the top bar):
+# MUTATION-CHECKED (§15) — four, each run and each restored (re-measured in redesign slice 6, when
+# Recent made the top bar's Upload its one action):
 #   1. Putting `.upload-btn span` back into the `.btn.primary` group in components.css — every
-#      route except /files and /projects/desk-lamp gains an "Upload" at the head of its list (Home
-#      reports ["Upload", "New project"], /settings ["Upload"]): the top bar's QUIET Upload, on
-#      every signed-in page, turns accent. The two routes that stay green are the two where Upload
-#      opts IN either way. The build-log entries' "Upload & attach" no longer shows here even under
-#      this mutation: they sit in each entry's action menu, where `.menu-item--host .upload-btn
+#      route except /, /files (both rows) and /projects/desk-lamp gains an "Upload" at the head of
+#      its list (/projects reports ["Upload", "New project"], /settings ["Upload"]): the top bar's
+#      QUIET Upload, on every signed-in page, turns accent. The routes that stay green are the ones
+#      where Upload opts IN either way. The build-log entries' "Upload & attach" no longer shows
+#      here even under this mutation: they sit in each entry's action menu, where `.menu-item--host .upload-btn
 #      span` resets the background — so the per-entry runaway the spec measured (seven on one page)
 #      is now held by that rule, and the fixture's entries are what would show it coming back.
 #   2. Deleting the `.btn.primary` background/border/color declarations: every route reports []
@@ -47,6 +47,8 @@ require "application_system_test_case"
 #   3. Dropping `primary: true` from ProjectsController#show's `use_folder_destination`:
 #      /projects/desk-lamp reports ["Save publishing"] alone — the opt-in-forgotten case, which a
 #      ceiling could never have caught.
+#   4. Deleting `upload_primary!` from HomeController#index: "/" reports [] — the same
+#      opt-in-forgotten case on the one page whose Upload is its accent without a folder.
 class AccentSpendTest < ApplicationSystemTestCase
   setup do
     @root = use_fresh_share_library!
@@ -77,10 +79,12 @@ class AccentSpendTest < ApplicationSystemTestCase
 
   test "every page spends the accent on exactly the action it exists for" do
     expected = {
-      # Home's was "Files" until 2026-09-10 — a rail destination rendered as the loudest control on
-      # the front door, 200px from the rail's own Files link (§2.6).
-      # Home's Upload (the top bar's) is quiet until slice 6 makes the page Recent.
-      "/" => [ "New project" ],
+      # RECENT'S ONE ACTION IS THE TOP BAR'S UPLOAD (slice 6, spec §4.2), although the page shows no
+      # folder: FolderDestination's upload_primary! changes Upload's weight and leaves it asking with
+      # the chooser. The head's "New project" went — New ▾ in the top bar already has Project. (The
+      # front door's accent was "Files" until 2026-09-10, a rail destination rendered as the loudest
+      # control on the page, §2.6; then "New project" until slice 6.)
+      "/" => [ "Upload" ],
       # The top bar's, now the Library's one action (redesign slice 4).
       "/files" => [ "Upload" ],
       # The model strip above the files adds nothing (slice 5).

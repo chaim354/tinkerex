@@ -188,6 +188,10 @@ module Web
 
       assert_equal [ %w[reference part quantity unit file] ], rows,
                    "a spreadsheet that opens on named columns says \"no parts\"; zero bytes says \"broken\""
+      # EMPTY IS NOT HIDDEN (slice 6). The maker's own page leaves an empty BOM panel out, but that is
+      # ProjectsController#show's decision and never the shared layout's: a layout that hid empty
+      # panels would turn this CSV into a 404 and take it out of the manifest (mutation-checked).
+      assert_equal public_bom_path("ada", @project.slug), manifest["bom_csv_url"]
     end
 
     # A LINE POINTING OUTSIDE THE PROJECT NAMES ITS OWN TEXT OR NOTHING — NEVER THE FILE. This is

@@ -49,9 +49,12 @@ module Web
       assert_select "section.publish-panel input[name=?]", "user[handle]", 0
     end
 
+    # TWO DOORS SINCE SLICE 6, AND BOTH ARE ANCHORS: the head's Publish link and the ⋯ menu's
+    # Publish settings.
     test "the page head links to the panel" do
       get project_path(@project)
-      assert_select ".page-head a[href='#publish']"
+      assert_select ".page-head a.publish-link[href='#publish']", 1
+      assert_select ".page-head details.project-menu a.menu-item[href='#publish']", { count: 1, text: "Publish settings" }
     end
 
     test "with no handle the panel claims one inline and offers no visibility rows" do

@@ -38,7 +38,9 @@
         in, and the maker's own title wins over it when there is one. %>
     <h2><%= panel_title(@panel_layout, key, dir.name) %></h2>
     <span class="mono muted"><%= pluralize(count, "file") %></span>
-    <%# WHERE IT IS, not just what — the Files panel head's own `panel-path` link, per folder. %>
+    <%# WHERE IT IS, not just what: the subfolder's path, linked to it in the Library. The Files
+        panel's own `panel-path` reads "Open folder →" since slice 6, with the path as its title —
+        that folder is the page's own subject, where a subfolder's path is the news. %>
     <%= link_to dir.path, files_path(folder: dir.node_id), class: "panel-path mono muted" %>
     <% if dir.repo? %><span class="badge">repo</span><% end %>
     <div class="panel-actions">

@@ -1,79 +1,64 @@
-<% content_for :title, "Home — Tinkerex" %>
+<% content_for :title, "Recent — Tinkerex" %>
 
+<%# THE HEADING ALONE (structural redesign §7, slice 6). This head carried "New project" as the page's
+    one action; the top bar's New menu already has Project, and Recent's one action is the top bar's
+    Upload (HomeController#index calls upload_primary!), so a second accent here would spend it twice. %>
 <div class="page-head">
-  <h1>Home</h1>
-  <div class="page-actions">
-    <%# ONE ACTION, AND IT IS THE ONE YOU CAN DO FROM HERE. This row was three links — "New
-        project", "Tools" and "Files" — with the ACCENT on "Files": a rail destination, rendered as
-        the loudest control on the app's front door, 200px from the rail's own Files link. Slice 1
-        of the UI-cohesion sweep moved the colour to the only real action; slice 4 dropped the two
-        destinations, because the rail is on screen eight pixels to the left and a page action is
-        something you DO on this page. %>
-    <%= link_to "New project", new_project_path, class: "btn small primary" %>
-  </div>
+  <h1>Recent</h1>
 </div>
 
-<section class="panel home-section home-projects">
-  <div class="panel-head"><h2>Projects</h2><%= link_to "See all", projects_path, class: "muted" %></div>
-  <% if @recent_projects.empty? %>
-    <p class="empty">No projects yet. Create your first build.</p>
-  <% else %>
-    <%= render "tile_row" do %>
-      <% @recent_projects.each do |project| %>
-        <%= render "projects/card", project:, thumb: @covers.thumb(project.cover_node_id) %>
-      <% end %>
-    <% end %>
-  <% end %>
-</section>
+<%# RECENTLY CHANGED (structural redesign §7): the newest live files, as tiles that open their folder in
+    the Library with the file selected — a link, never a selection item (this page has no selection
+    controller). A file at the library root has no parent, and Rails drops the nil `folder`, so its link
+    is /files?selected=… (files/show.html.erb relies on the same). A wrapping grid, not a row that
+    scrolls sideways: sixteen tiles are a page of their own, and pages/home.css wraps them.
 
+    THE ONE EMPTY STATE ON THIS PAGE. With no files it points at the top bar's Upload rather than
+    rendering a second upload control, which would duplicate the input's id and the accent. %>
 <section class="panel home-section home-files">
-  <div class="panel-head"><h2>Files</h2><%= link_to "See all", files_path, class: "muted" %></div>
+  <div class="panel-head"><h2>Recently changed</h2><%= link_to "Library", files_path, class: "muted" %></div>
   <% if @recent_files.empty? %>
-    <p class="empty">No files yet. Upload one to get started.</p>
+    <p class="empty home-empty">No files yet. Upload, in the top bar, puts your first one in the folder you choose.</p>
   <% else %>
-    <%= render "tile_row" do %>
+    <div class="recent-grid" data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
       <% @recent_files.each do |node| %>
         <% ext_label = File.extname(node.name).delete(".").upcase.first(4) %>
+        <% href = library_file_path(node) %>
         <% if Maker::Previews::Registry.for_filename(node.name).present? %>
-          <%= link_to file_path(node.node_id), class: "grid-card file-cell",
+          <%= link_to href, class: "grid-card file-cell",
                       data: thumb_cell_data(node.node_id, ext_label).merge(file_menu_data(node.node_id, node.name, @addon_origins[node.node_id])) do %>
-            <%= render "files/thumb", thumb: @covers.thumb(node.node_id), ext_label:,
-                       url: preview_src(@covers.thumb(node.node_id)) %>
+            <%= render "files/thumb", thumb: @covers.thumb(node.node_id), ext_label: ext_label,
+                       url: preview_src(@covers.thumb(node.node_id)), photo: Maker::FileAttachment.photo?(node.name) %>
             <span class="grid-name"><%= node.name %></span>
           <% end %>
         <% else %>
-          <%= link_to file_path(node.node_id), class: "grid-card", data: file_menu_data(node.node_id, node.name, @addon_origins[node.node_id]) do %>
+          <%= link_to href, class: "grid-card", data: file_menu_data(node.node_id, node.name, @addon_origins[node.node_id]) do %>
             <span class="thumb generic-thumb" aria-hidden="true"><%= ext_label.presence || "FILE" %></span>
             <span class="grid-name"><%= node.name %></span>
           <% end %>
         <% end %>
       <% end %>
-    <% end %>
+    </div>
   <% end %>
 </section>
 
-<section class="panel home-section home-prints">
-  <div class="panel-head"><h2>Prints</h2><%= link_to "See all", files_models_path, class: "muted" %></div>
-  <% if @recent_prints.empty? %>
-    <p class="empty">No prints logged yet.</p>
-  <% else %>
-    <ul class="print-list">
-      <% @recent_prints.each do |run| %>
-        <li class="print-row">
-          <span class="print-outcome print-outcome--<%= run.outcome %>" aria-hidden="true"><%= run.outcome == "success" ? "✓" : "✕" %></span>
-          <%= link_to run.model.title, model_path(run.model) %>
-          <span class="muted mono"><%= run.printed_on.strftime("%Y-%m-%d") %><%= " · #{run.printer}" if run.printer.present? %></span>
-        </li>
+<%# ACTIVE PROJECTS, ONLY WHEN THERE ARE ANY: an empty account has one empty state, the files one above. %>
+<% if @recent_projects.any? %>
+  <section class="panel home-section home-projects">
+    <div class="panel-head"><h2>Active projects</h2><%= link_to "All projects", projects_path, class: "muted" %></div>
+    <div class="recent-grid" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+      <% @recent_projects.each do |project| %>
+        <%= render "projects/card", project: project, thumb: @covers.thumb(project.cover_node_id) %>
       <% end %>
-    </ul>
-  <% end %>
-</section>
+    </div>
+  </section>
+<% end %>
 
-<section class="panel home-section home-attention">
-  <div class="panel-head"><h2>Needs attention</h2></div>
-  <% if @failed_prints.empty? && @low_stock.empty? %>
-    <p class="empty">Nothing needs attention.</p>
-  <% else %>
+<%# NEEDS ATTENTION, ONLY WHEN SOMETHING DOES. A section reading "Nothing needs attention" is a row of
+    reassurance on every visit; absent, the page is shorter by exactly what was not news. %>
+<% if @failed_prints.any? || @low_stock.any? %>
+  <section class="panel home-section home-attention">
+    <div class="panel-head"><h2>Needs attention</h2></div>
     <ul class="attention-list">
       <% @failed_prints.each do |run| %>
         <li class="attention-row attention-row--danger">
@@ -93,5 +78,5 @@
         </li>
       <% end %>
     </ul>
-  <% end %>
-</section>
+  </section>
+<% end %>

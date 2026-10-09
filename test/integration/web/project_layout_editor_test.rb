@@ -115,6 +115,8 @@ module Web
     end
 
     test "the normal page wraps every visible panel in a slot with its width, and carries no chrome" do
+      # A ROW, so Tasks is on the normal page to carry a width (slice 6: empty, it is absent).
+      @project.tasks.create!(user: @user, title: "Cut the base")
       get project_path(@project)
 
       assert_select "div.project-panels > div.panel-slot.panel--full > section.attachments-panel", 1

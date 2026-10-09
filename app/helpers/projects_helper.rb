@@ -16,6 +16,15 @@ module ProjectsHelper
     block.heading.present? ? "#{name}: #{block.heading}" : name
   end
 
+  # WHERE "+ ADD PANEL" LANDS (structural redesign §6, slice 6): each on-demand panel's own element
+  # id, so the link opens the panel and scrolls to it — and tabs_controller.js shows the pane a
+  # panel's own anchor sits in. `project-tasks` is also Projects::TasksController's turbo-stream
+  # target and must not be renamed; the other five ids exist for this map. Keyed exactly as
+  # ProjectsController::ON_DEMAND, which `fetch` holds it to.
+  PANEL_ANCHORS = { "build_log" => "project-build-log", "tasks" => "project-tasks", "bom" => "project-bom",
+                    "wiring" => "project-wiring", "releases" => "project-releases",
+                    "sheets" => "project-sheets" }.freeze
+
   # The maker's title, else the default label — Maker::Project::PANEL_LABELS for a fixed key, the
   # folder's own name for a folder key, which only the caller knows.
   def panel_title(layout, key, default = nil)

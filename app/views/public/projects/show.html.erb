@@ -9,7 +9,10 @@
   AN EMPTY PANEL IS OMITTED HERE, NOT RENDERED AT ALL. An empty state invites someone to add the
   first one, which is exactly what a visitor cannot do. Since stage 4, S4-1 the private page carries
   no such sentence either — an empty panel there goes QUIET (its heading and one add control) rather
-  than vanishing, because the maker IS the person who would fill it.
+  than vanishing, because the maker IS the person who would fill it. Since slice 6 an empty Build
+  log, Tasks, BOM, Wiring, Releases or Sheets leaves the maker's page as well until it holds a row,
+  and "+ Add panel" opens one quiet for a visit. That is decided in ProjectsController#show, so
+  nothing on this page changed.
 %>
 <% content_for :title, "#{@project.name} — @#{@pub.handle}" %>
 <% content_for :container_class, "public-main" %>

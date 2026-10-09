@@ -240,7 +240,12 @@ module Web
     test "the project page shows an empty state with no sheets" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
+      # ABSENT, THEN OPENED (slice 6): with no sheet the panel is not on the page, and "+ Add panel"
+      # offers it; ?add=sheets opens it quiet.
       get project_path(project)
+      assert_select "section.sheets-panel", count: 0
+      assert_select ".add-panel a.menu-item", text: "Sheets"
+      get project_path(project, add: "sheets")
       # QUIET AT ZERO (stage 4, S4-1): the empty panel is its heading and the New sheet field, so
       # there is no "No sheets yet." sentence left to assert -- the class is what says it.
       assert_select ".sheets-panel .sheet-row", count: 0
@@ -253,7 +258,10 @@ module Web
       other = User.create!(email: "b@example.com", password: PASSWORD, confirmed_at: Time.current)
       other.maker_projects.create!(name: "Theirs").sheets.create!(user: other, name: "Secret")
 
-      get project_path(project)
+      # ?add=sheets, so the panel is on the page and the count of 0 is about ITS links (slice 6: an
+      # empty panel is absent, and a count over an absent panel would pass over nothing).
+      get project_path(project, add: "sheets")
+      assert_select ".sheets-panel", 1
       assert_select ".sheets-panel a", text: "Secret", count: 0
     end
 

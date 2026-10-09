@@ -2,7 +2,8 @@
 
 §14d material for the web layer's styling and chrome. Read this before touching
 `app/assets/stylesheets/`, `app/views/layouts/`, `app/helpers/shell_helper.rb`, the `theme` / `rail` /
-`toast` Stimulus controllers, or any template's class names. Spec:
+`toast` Stimulus controllers, any template's class names, or which panels `ProjectsController#show`
+renders (rule 14). Spec:
 `docs/superpowers/specs/2026-09-03-web-shell-and-design-system-design.md`; the story is the arc that
 landed it (§11).
 
@@ -52,6 +53,9 @@ landed it (§11).
    `script-src`, and a pre-paint script is the thing not to add. The JS writes them with `path=/`,
    a one-year `max-age` and `samesite=lax`; the server trusts nothing beyond the enum.
 8. **The sidebar lights exactly one link, and `ShellHelper#sidebar_current` alone decides which.**
+   The first place is **Recent** (`/`, a clock icon), and it keeps the `[:home]` key, the `home`
+   `SECTIONS` entry and the route: slice 6 changed its label and icon in the sidebar and the phone
+   tab bar, never the key the lit test reads.
    `rail_section` still maps `controller_path`'s FIRST segment (a new web controller needs a
    `SECTIONS` entry or its pages light nothing), and `sidebar_current` refines it: the deepest
    pinned folder on the breadcrumb (the Files page's or a file page's — both set `@crumbs`) beats
@@ -93,8 +97,12 @@ landed it (§11).
     logical path and Propshaft fingerprints them (`shell_layout_test.rb` fetches each).
 
 13. **The accent is spent once per screen; selection is ink.** `--accent` fills the one primary
-    action. On the Library and a project hub that is the top bar's Upload, which says where it saves;
-    everywhere else Upload is a quiet `.btn` (`FolderDestination`'s `primary`). No secondary control
+    action. On the Library, Recent and a project hub that is the top bar's Upload. The Library and
+    the hub show a folder and say so through `FolderDestination`'s `primary`, and Upload names where
+    it saves. Recent shows none, so it calls `upload_primary!`, **which changes Upload's weight and
+    never its destination**: Upload there still asks with the chooser. It is a flag of its own
+    because a `Destination` with a nil `node_id` would mean the library ROOT, not "ask". Everywhere
+    else Upload is a quiet `.btn`. No secondary control
     is allowed the accent now. A project hub's second accent is its Save publishing, because the hub
     is the one page the 2026-09-10 cohesion spec's decision 3 allows two; `accent_spend_test.rb`
     pins every page. Links, selected chips, toggles, tabs, the file-chooser selection and the active
@@ -111,3 +119,22 @@ The library search that the top bar drives (`FilesController#index`, `?q=`) is f
 and case-insensitive; its `LIKE` carries `ESCAPE '\'` because SQLite has no default escape
 character and `sanitize_sql_like` alone is inert there — measured, and the same rule `LIKE_EXT`
 already records. Guards: `files_search_test.rb`, `page_query_budget_test.rb`.
+
+## The project hub
+
+14. **On-demand panels are decided in `ProjectsController#show`, never in
+    `Maker::ProjectKind.layout_for` or its `Layout`.** The layout is shared with the public page, its
+    feed, its bundle and its BOM CSV through `Maker::PublicProject#layout`, so "empty means absent"
+    put there would change what a visitor sees and what the downloads carry; the public page already
+    omits an empty panel in each of its own partials. `ProjectsController::ON_DEMAND` names the
+    panels that leave the maker's normal page while they hold no row (Build log, Tasks, BOM, Wiring,
+    Releases, Sheets), and `panel_has_rows?` answers from data `#show` already loaded, so the
+    decision costs no query. Three things not to undo. **A panel the maker hid stays hidden**: the
+    layout's `visible?` is asked first, so neither `?add=` nor the add menu can bring it back. **The
+    editor shows every panel**: `@editing` skips all of this, so an empty panel can still be
+    arranged. **"+ Add panel" is per-visit and persists nothing**: `?add=<key>` opens that one
+    panel, empty and with its composer, for this request only (a key that is not a String naming a
+    visible on-demand panel is ignored, never a 500). Once it holds a row it stays on its own. There
+    is no new key in the stored `panels` JSON, so `Maker::LayoutDocument`'s Save has nothing to carry
+    or lose, and a maker who opens a panel and adds nothing finds it gone on the next visit, which is
+    what "on demand" means.
