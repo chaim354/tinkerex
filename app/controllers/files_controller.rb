@@ -597,6 +597,13 @@ class FilesController < ApplicationController
     @addon_origins = addon_origins_for([ @node.node_id ])
     @move_conflict = move_conflict_prompt
     @library_path = library_path_for(@node)
+    # THE BREADCRUMB'S FOLDER CHAIN (structural redesign §5.3): the same `folder_crumbs` walk #index
+    # makes — one find_by per ancestor, so it grows with DEPTH, never with the folder's size. Also
+    # what lets ShellHelper#sidebar_current light a pinned ancestor on a file page. A file at the
+    # library root has no parent, and `folder_crumbs(nil)` is [].
+    parent = @node.parent_node_id &&
+             current_user.nodes.present.find_by(node_id: @node.parent_node_id, kind: "dir")
+    @crumbs = folder_crumbs(parent)
   end
 
   # GET /files/:id/inspector — the Library's right-hand panel for ONE selected file (structural
