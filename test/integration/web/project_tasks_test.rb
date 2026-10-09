@@ -27,10 +27,6 @@ module Web
       assert_redirected_to project_path(project)
     end
 
-    # The two tests above/below POST `task: {...}` as a nested hash, which bypasses the form
-    # entirely — it cannot see a malformed `name` attribute, so it stays green while the panel's
-    # Add button is a hard 400. These two pin the WIRE FORMAT instead. Same shape as the PR #69
-    # `scope:` gotcha, one view over.
     # WITHOUT JAVASCRIPT A REFUSED FIRST TASK RETURNS WITH ITS PANEL OPEN (Projects::PanelReturn): the
     # project has no tasks, so the plain page would carry no Tasks panel to show the refusal beside.
     test "a refused task without JavaScript returns to the opened Tasks panel" do
@@ -44,6 +40,10 @@ module Web
       assert_select "#project-tasks form.task-form"
     end
 
+    # The two tests above/below POST `task: {...}` as a nested hash, which bypasses the form
+    # entirely — it cannot see a malformed `name` attribute, so it stays green while the panel's
+    # Add button is a hard 400. These two pin the WIRE FORMAT instead. Same shape as the PR #69
+    # `scope:` gotcha, one view over.
     test "the add-task field is named for the key the controller requires" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
