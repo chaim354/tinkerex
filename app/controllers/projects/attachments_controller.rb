@@ -35,9 +35,10 @@ module Projects
     # POST /projects/:project_id/attachments  { node_id }
     # POST /attachments                       { project_id, node_id, return_to? }
     #
-    # Three of its own attach paths reach this action — the file page's dropdown and the project
-    # page's picker (HTML), and the project page's inline upload (JSON, uploader_controller.js) —
-    # so the verb means the same thing in each. That upload posts a `parent_node_id` of the project
+    # Four of its own attach paths reach this action — the file page's dropdown, the Library
+    # inspector's (the same files/_attach partial, `return_to: "library"`) and the project page's
+    # picker (HTML), and the project page's inline upload (JSON, uploader_controller.js) — so the
+    # verb means the same thing in each. That upload posts a `parent_node_id` of the project
     # folder, so it arrives in place and the relocate short-circuits on :already_there.
     #
     # "ATTACHED ⇒ IN THE FOLDER" IS NOT AN INVARIANT, and must not be read as one. Two attach paths
@@ -219,18 +220,30 @@ module Projects
     # FilesController#show (find_by! on nodes.present) would 404 on exactly the condition that got
     # us here, and take the alert down with it. The library browser is the nearest page that
     # renders — and it is a great deal closer to where the user was than another project's picker.
+    # The inspector ("library") is ON the library browser, so it lands there for the same reason.
     def not_found_return_path
-      params[:return_to] == "file" ? files_path : new_project_attachment_path(@project)
+      %w[file library].include?(params[:return_to]) ? files_path : new_project_attachment_path(@project)
     end
 
-    # Where to land after an attach. `return_to` is an ALLOWLISTED FLAG, not a URL — a
-    # caller-supplied redirect target is an open redirect, and there are exactly two places this
-    # action is reached from. (#relocate needs none of this: it is only ever reached from a form on
-    # a page we rendered, so its Referer is enough.) A collision rides back as
-    # ?move_conflict=<attachment id>, which the MoveConflicts concern renders the rename prompt
-    # from — on either page, which is why the param travels rather than the prompt living on one.
+    # Where to land after an attach. `return_to` IS AN ALLOWLISTED FLAG, NOT A URL, so it cannot
+    # become an open redirect — a caller-supplied redirect target is one. "file" is the file page;
+    # "library" is the inspector, which returns to the file's folder with the file still selected —
+    # UNLESS the attach raised a move conflict, whose prompt (projects/_move_conflict) the Library
+    # does not render, so a conflict falls back to the file page. Anything else is the project
+    # page. (#relocate needs none of this: it is only ever reached from a form on a page we
+    # rendered, so its Referer is enough.) A collision rides back as ?move_conflict=<attachment
+    # id>, which the MoveConflicts concern renders the rename prompt from — on the file page and
+    # the project page, which is why the param travels rather than the prompt living on one.
+    #
+    # "THE FILE'S FOLDER" IS THE ONE IT IS IN NOW. A first attach moves the file into the project's
+    # folder, and Maker::MoveNode reloads the node it was handed, so `node.parent_node_id` here is
+    # the post-move parent — the listing that actually holds the file being selected.
     def attach_redirect_path(node, conflict_id)
-      if params[:return_to] == "file"
+      case params[:return_to]
+      when "library"
+        return file_path(node.node_id, move_conflict: conflict_id) if conflict_id
+        files_path(folder: node.parent_node_id, selected: node.node_id)
+      when "file"
         file_path(node.node_id, move_conflict: conflict_id)
       else
         project_path(@project, move_conflict: conflict_id)

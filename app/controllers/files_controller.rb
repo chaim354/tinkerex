@@ -566,28 +566,7 @@ class FilesController < ApplicationController
     # AN ARCHIVE IS NEVER SINGLE, for the `.gbrjob` reason: a zip is a whole export, so the honest
     # render is the BOARD, with Top and Bottom.
     @gerber_single = @kind == :gerber && !gerber_job?(@node.name) && !@gerber_archive
-    # THE ATTACH CONTROL'S TWO HALVES. `@attached_projects` is what the file is already in — a
-    # file can be in several projects, and until now the page gave no sign it was in any. The
-    # dropdown then offers the REST: re-attaching to a project it is already in is a no-op, so
-    # listing it would be an option that does nothing.
-    attachments = current_user.maker_file_attachments
-                              .where(node_id: @node.node_id, attachable_type: "Maker::Project")
-                              .includes(:attachable).to_a
-    @attached_projects = attachments.filter_map { |a|
-      [ a.attachable, a ] if a.attachable && a.attachable.status != "archived"
-    }.sort_by { |project, _| name_key(project) }
-    scope = current_user.maker_projects.where.not(status: "archived")
-    # Guarded: `where.not(id: [])` is a no-op clause in Rails, but writing it unconditionally
-    # invites the reader to assume it filters. Say what happens.
-    attached_ids = attachments.map(&:attachable_id)
-    scope = scope.where.not(id: attached_ids) if attached_ids.any?
-    # BOTH LISTS SORT IN RUBY, and NO TEST LEG CAN CATCH A REGRESSION HERE. The chips must sort
-    # in Ruby (they come from attachments, not a query), so an SQL `order(:name)` on the dropdown
-    # beside them would mean two collations on one line: SQLite is binary and agrees, but
-    # production is managed Postgres, where ORDER BY under a non-C locale is effectively
-    # case-insensitive — chips reading "Alpha, Bravo, beta" next to a dropdown reading "Alpha,
-    # beta, Bravo". One comparator, applied to both.
-    @projects = scope.to_a.sort_by { |p| name_key(p) }
+    @attached_projects, @projects = attach_choices_for(@node)
     @notes = current_user.maker_notes.where(node_id: @node.node_id).order(created_at: :desc).to_a
     @new_note = current_user.maker_notes.new(node_id: @node.node_id)
     # THE CONNECTED PANEL, BOTH DIRECTIONS IN ONE QUERY (stage 4, S4-8). `touching` is
@@ -617,24 +596,34 @@ class FilesController < ApplicationController
     # way so the view reads it identically; a file no addon produced is simply an absent key.
     @addon_origins = addon_origins_for([ @node.node_id ])
     @move_conflict = move_conflict_prompt
-    # WHERE THIS FILE IS, IN THE LIBRARY'S OWN TERMS (stage 4, S4-3; story 2.10). The SAME reader
-    # #index uses for its folder column (#folder_paths_for) — Maker::LibraryTree is ONE pluck of
-    # this user's dir rows and an in-memory walk: constant in QUERY COUNT and in the number of
-    # FILES, linear in the number of DIRECTORIES (a 10k-folder library materialises 10k tuples per
-    # file page, the same price #index already pays), and no port read at all. Asking
-    # `folder_crumbs`-style, one find_by per level, would be a query per ancestor for the same answer.
-    #
-    # NIL WHEN THE CHAIN IS BROKEN, AND THE VIEW RENDERS NOTHING THEN. `path_for` answers nil for a
-    # tombstoned or missing ancestor (its own contract: "nil IS AN ANSWER, NOT AN ERROR"), and
-    # falling back to the bare name would say the file sits at the library root — a confident wrong
-    # answer to the one question this row exists to answer.
-    #
-    # ROOT-RELATIVE, WITH NO SCHEME. `path_for(nil)` is "" for a file at the root, so the join
-    # drops it. This app cannot know what the share is mounted as on the maker's machine, so an
-    # smb:// or file:// here would be a guess printed as a fact; the maker pastes this into
-    # whatever their own Finder/Explorer path is.
-    folder_path = Maker::LibraryTree.new(current_user).path_for(@node.parent_node_id)
-    @library_path = folder_path && [ folder_path.presence, @node.name ].compact.join("/")
+    @library_path = library_path_for(@node)
+  end
+
+  # GET /files/:id/inspector — the Library's right-hand panel for ONE selected file (structural
+  # redesign spec §5.2, slice 3), a Turbo Frame body rendered without the layout. Everything here is
+  # about one node, so its cost is constant in the size of the folder (page_query_budget_test.rb).
+  #
+  # `current_thumbnail` ASKS FOR THE EXISTING ROW FIRST, so a panel opened again and again never
+  # re-enqueues — files-preview.md's Enqueue asymmetry (`call` resets `failed`).
+  #
+  # A MISSING NODE ANSWERS A FRAME, NOT THE CONTROLLER'S REDIRECT: rescue_from sends HTML to
+  # files_path, which inside a frame would put the whole Library into the panel. That holds for the
+  # port's NotFound too — a node tombstoned between the lookup and the `stat` — hence the rescue
+  # below, which the class-level rescue_from would otherwise turn into that redirect.
+  def inspector
+    @node = current_user.nodes.present.find_by(node_id: params[:id], kind: "file")
+    return render("inspector_gone", layout: false, status: :not_found) unless @node
+
+    @info = FileLayer.current.stat(current_user, node_id: @node.node_id)
+    token = @info&.content_token
+    @thumbnail = token && current_thumbnail(@node, token)
+    @attached_projects, @projects = attach_choices_for(@node)
+    @note_count = current_user.maker_notes.where(node_id: @node.node_id).count
+    @addon_origins = addon_origins_for([ @node.node_id ])
+    @library_path = library_path_for(@node)
+    render layout: false
+  rescue FileLayer::NotFound
+    render "inspector_gone", layout: false, status: :not_found
   end
 
   # PATCH /files/:id — the editor's Save.
@@ -1043,10 +1032,63 @@ class FilesController < ApplicationController
 
   private
 
-  # The ONE comparator behind both halves of the attach control (see #show). Case-insensitive so
-  # the Ruby sort matches what a reader expects from Postgres' default collation, with the raw
-  # name as the tie-break so "beta"/"Beta" still order deterministically.
+  # The ONE comparator behind both halves of the attach control (see #attach_choices_for).
+  # Case-insensitive so the Ruby sort matches what a reader expects from Postgres' default
+  # collation, with the raw name as the tie-break so "beta"/"Beta" still order deterministically.
   def name_key(project) = [ project.name.downcase, project.name ]
+
+  # THE ATTACH CONTROL'S TWO HALVES — what the file is already in, and the rest — shared by #show
+  # and #inspector, which render them through the one partial (files/_attach). Answers
+  # `[attached, projects]`: `attached` is what the file is already in — a file can be in several
+  # projects, and until now the page gave no sign it was in any. The dropdown then offers the REST:
+  # re-attaching to a project it is already in is a no-op, so listing it would be an option that
+  # does nothing.
+  #
+  # Two queries however many projects or attachments there are (the attachments with their
+  # projects eager-loaded, then the remaining projects) — page_query_budget_test.rb pins that for
+  # both callers.
+  def attach_choices_for(node)
+    attachments = current_user.maker_file_attachments
+                              .where(node_id: node.node_id, attachable_type: "Maker::Project")
+                              .includes(:attachable).to_a
+    attached = attachments.filter_map { |a|
+      [ a.attachable, a ] if a.attachable && a.attachable.status != "archived"
+    }.sort_by { |project, _| name_key(project) }
+    scope = current_user.maker_projects.where.not(status: "archived")
+    # Guarded: `where.not(id: [])` is a no-op clause in Rails, but writing it unconditionally
+    # invites the reader to assume it filters. Say what happens.
+    attached_ids = attachments.map(&:attachable_id)
+    scope = scope.where.not(id: attached_ids) if attached_ids.any?
+    # BOTH LISTS SORT IN RUBY, and NO TEST LEG CAN CATCH A REGRESSION HERE. The chips must sort
+    # in Ruby (they come from attachments, not a query), so an SQL `order(:name)` on the dropdown
+    # beside them would mean two collations on one line: SQLite is binary and agrees, but
+    # production is managed Postgres, where ORDER BY under a non-C locale is effectively
+    # case-insensitive — chips reading "Alpha, Bravo, beta" next to a dropdown reading "Alpha,
+    # beta, Bravo". One comparator, applied to both.
+    [ attached, scope.to_a.sort_by { |p| name_key(p) } ]
+  end
+
+  # WHERE THIS FILE IS, IN THE LIBRARY'S OWN TERMS (stage 4, S4-3; story 2.10), for #show and
+  # #inspector. The SAME reader #index uses for its folder column (#folder_paths_for) —
+  # Maker::LibraryTree is ONE pluck of this user's dir rows and an in-memory walk: constant in QUERY
+  # COUNT and in the number of FILES, linear in the number of DIRECTORIES (a 10k-folder library
+  # materialises 10k tuples per file page, the same price #index already pays), and no port read at
+  # all. Asking `folder_crumbs`-style, one find_by per level, would be a query per ancestor for the
+  # same answer.
+  #
+  # NIL WHEN THE CHAIN IS BROKEN, AND THE VIEW RENDERS NOTHING THEN. `path_for` answers nil for a
+  # tombstoned or missing ancestor (its own contract: "nil IS AN ANSWER, NOT AN ERROR"), and
+  # falling back to the bare name would say the file sits at the library root — a confident wrong
+  # answer to the one question this row exists to answer.
+  #
+  # ROOT-RELATIVE, WITH NO SCHEME. `path_for(nil)` is "" for a file at the root, so the join
+  # drops it. This app cannot know what the share is mounted as on the maker's machine, so an
+  # smb:// or file:// here would be a guess printed as a fact; the maker pastes this into
+  # whatever their own Finder/Explorer path is.
+  def library_path_for(node)
+    folder_path = Maker::LibraryTree.new(current_user).path_for(node.parent_node_id)
+    folder_path && [ folder_path.presence, node.name ].compact.join("/")
+  end
 
   # The live partner nodes of `links` for one kind, where `@node` is the named END of the pair.
   # `end_` is :from when @node is the link's from_node_id (so the partner is its `to`), and :to

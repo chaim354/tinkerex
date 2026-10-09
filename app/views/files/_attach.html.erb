@@ -1,0 +1,49 @@
+<%# locals: (node:, attached_projects:, projects:, return_to:) %>
+<%# THE ATTACH CONTROL, SHARED BY THE FILE PAGE AND THE LIBRARY'S INSPECTOR (structural redesign
+    slice 3). Its two halves come from FilesController#attach_choices_for, so both callers offer the
+    same chips and the same dropdown. %>
+<% if projects.present? || attached_projects.present? %>
+  <div class="attach-to-project">
+    <% if attached_projects.present? %>
+      <span class="muted">In projects:</span>
+      <% attached_projects.each do |project, attachment| %>
+        <span class="project-chip">
+          <%= link_to project.name, project_path(project) %>
+          <%= button_to "×", attachment_path(attachment), method: :delete,
+                form: { data: { turbo_confirm: "Detach #{node.name} from #{project.name}?" } },
+                class: "chip-x", "aria-label": "Detach from #{project.name}" %>
+        </span>
+      <% end %>
+    <% end %>
+
+    <% if projects.present? %>
+      <%#
+        Posts to the NON-NESTED attachments_path so the project can travel as a body param — see
+        the route comment. The option value is the SLUG, because set_project resolves
+        find_by!(slug: params[:project_id]); an integer id here 404s. `return_to` is now LIVE —
+        AttachmentsController#attach_redirect_path reads it and sends the user back to the page the
+        control was on instead of to the project. It is an allowlisted FLAG, not a URL, so it cannot
+        become an open redirect: `return_to` is "file" on the file page and "library" in the
+        inspector; AttachmentsController#attach_redirect_path allowlists both.
+
+        The explicit id is load-bearing, and the param name is why: the layout's top-bar
+        current-project switcher is ALSO named project_id, so `select_tag :project_id` there and a
+        default-id `f.select :project_id` here put TWO id="project_id" elements on this page —
+        every page where the user has a project, i.e. exactly when this control renders. The
+        label then resolves to the FIRST one in document order, the top bar's, whose onchange
+        fires requestSubmit() — so clicking these words focused the switcher and one arrow key
+        silently changed the whole app's default save destination. The name stays project_id (the
+        controller reads it); only the DOM id is disambiguated.
+      %>
+      <%= form_with url: attachments_path, method: :post, class: "attach-form",
+                    data: { turbo: false } do |f| %>
+        <%= f.hidden_field :node_id, value: node.node_id %>
+        <%= f.hidden_field :return_to, value: return_to %>
+        <%= f.label :project_id, "Attach to project:", class: "muted", for: "attach_project_id" %>
+        <%= f.select :project_id, projects.map { |p| [ p.name, p.slug ] }, {},
+                     id: "attach_project_id" %>
+        <%= f.submit "Attach", class: "btn small" %>
+      <% end %>
+    <% end %>
+  </div>
+<% end %>

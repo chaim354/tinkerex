@@ -49,86 +49,9 @@
 
 <%= render "projects/move_conflict" %>
 
-<dl class="meta">
-  <dt>Name</dt><dd><%= @info.name %></dd>
-  <dt>Size</dt><dd><%= @info.content_token ? number_to_human_size(@info.size) : "—" %></dd>
-  <dt>Type</dt><dd class="mono"><%= Marcel::MimeType.for(name: @info.name) %></dd>
-  <%# WHICH saved item, and WHICH revision of it — the button above says only "Edit in X". The
-      revision number is the state's own counter (Maker::AddonState#revision, 1 for a state that has
-      never been revised), NOT a library version: on share and s3 there are no Version rows at all,
-      so this row is the one piece of history those deployments can show. %>
-  <% if addon_origin %>
-    <dt>Saved item</dt>
-    <dd><%= link_to addon_origin[:state].name, addon_origin[:url] %>
-        <span class="muted">· v<%= addon_origin[:state].revision %></span></dd>
-  <% end %>
-  <% if capabilities.versioned? %>
-    <dt>Current version</dt><dd class="mono"><%= @info.content_token || "—" %></dd>
-  <% end %>
-  <%# FileInfo#mtime is unix NANOSECONDS, the same convention as the nodes column this replaced.
-      Reading it as seconds is the nanos-overflow bug this codebase has shipped twice. %>
-  <dt>Modified</dt><dd><%= @info.mtime ? Time.at(@info.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M:%S") : "—" %></dd>
-  <%# WHERE IT IS, AND A BUTTON THAT PUTS IT ON THE CLIPBOARD (stage 4, S4-3; story 2.10). The
-      path is root-relative on purpose — see FilesController#show. `dl.meta dd` is already mono
-      (components.css), so the value needs no class of its own for its font; `.file-path-value` is
-      what the copy fallback selects when the clipboard API is unavailable, which is the ordinary
-      case on a self-hosted plain-http box.
-
-      LAST IN THE LIST, because it is the longest value here and the four-column layout above 900px
-      pairs rows: a wrapping path at the end of the grid disturbs nothing above it. %>
-  <% if @library_path %>
-    <dt>Path</dt>
-    <dd class="file-path" data-controller="copy" data-copy-text-value="<%= @library_path %>">
-      <span class="file-path-value" data-copy-target="source"><%= @library_path %></span>
-      <button type="button" class="linkbtn" data-action="copy#copy">Copy</button>
-    </dd>
-  <% end %>
-</dl>
-
-<% if @projects.present? || @attached_projects.present? %>
-  <div class="attach-to-project">
-    <% if @attached_projects.present? %>
-      <span class="muted">In projects:</span>
-      <% @attached_projects.each do |project, attachment| %>
-        <span class="project-chip">
-          <%= link_to project.name, project_path(project) %>
-          <%= button_to "×", attachment_path(attachment), method: :delete,
-                form: { data: { turbo_confirm: "Detach #{@node.name} from #{project.name}?" } },
-                class: "chip-x", "aria-label": "Detach from #{project.name}" %>
-        </span>
-      <% end %>
-    <% end %>
-
-    <% if @projects.present? %>
-      <%#
-        Posts to the NON-NESTED attachments_path so the project can travel as a body param — see
-        the route comment. The option value is the SLUG, because set_project resolves
-        find_by!(slug: params[:project_id]); an integer id here 404s. `return_to` is now LIVE —
-        AttachmentsController#attach_redirect_path reads it and sends the user back to this file
-        page instead of to the project. It is an allowlisted FLAG, not a URL: "file" is the only
-        value that means anything, so it cannot become an open redirect.
-
-        The explicit id is load-bearing, and the param name is why: the layout's top-bar
-        current-project switcher is ALSO named project_id, so `select_tag :project_id` there and a
-        default-id `f.select :project_id` here put TWO id="project_id" elements on this page —
-        every page where the user has a project, i.e. exactly when this control renders. The
-        label then resolves to the FIRST one in document order, the top bar's, whose onchange
-        fires requestSubmit() — so clicking these words focused the switcher and one arrow key
-        silently changed the whole app's default save destination. The name stays project_id (the
-        controller reads it); only the DOM id is disambiguated.
-      %>
-      <%= form_with url: attachments_path, method: :post, class: "attach-form",
-                    data: { turbo: false } do |f| %>
-        <%= f.hidden_field :node_id, value: @node.node_id %>
-        <%= f.hidden_field :return_to, value: "file" %>
-        <%= f.label :project_id, "Attach to project:", class: "muted", for: "attach_project_id" %>
-        <%= f.select :project_id, @projects.map { |p| [ p.name, p.slug ] }, {},
-                     id: "attach_project_id" %>
-        <%= f.submit "Attach", class: "btn small" %>
-      <% end %>
-    <% end %>
-  </div>
-<% end %>
+<%= render "files/meta", info: @info, addon_origin: addon_origin, library_path: @library_path %>
+<%= render "files/attach", node: @node, attached_projects: @attached_projects, projects: @projects,
+                           return_to: "file" %>
 
 <%# THE PAGE FINISHES ITS OWN PREVIEW (stage 4, S4-3). One `thumbs` controller on the row covers
     every branch below — the Measure poster, the 3D poster, the Gerber poster and the plain
@@ -292,7 +215,9 @@
     outward-in — what it is tied to, then what you wrote about it. %>
 <%= render "files/connections" %>
 
-<section class="notes-panel">
+<%# id="notes" is the inspector's door in: its note count and "Add a note" link here as #notes
+    (files/inspector.html.erb), because the composer is a Lexxy editor and belongs on this page. %>
+<section class="notes-panel" id="notes">
   <h2>Notes <span class="muted">(<%= @notes.size %>)</span></h2>
 
   <%# CLOSED UNTIL ASKED FOR (spec §8): the editor's whole toolbar used to sit open on every file

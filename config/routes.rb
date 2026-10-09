@@ -100,6 +100,10 @@ Rails.application.routes.draw do
       # (kind: "geometry"), so this neither replaces nor disturbs the thumbnail. The payload
       # itself leaves via the blob URL, off Rails — this action only reports where it is.
       get "geometry"
+      # The Library's right-hand panel for one selected file (structural redesign slice 3): a
+      # Turbo Frame body rendered without the layout, loaded into the `inspector` frame on the
+      # Files page. Session-authed like every route here, never the v1 API.
+      get "inspector"
       # History is FETCHED, not rendered inline: a cold capped walk is ~100ms and a deep one is
       # seconds, and the file page must not wait on either (tinkerex#178, spec part 3 rule 2).
       # JSON, for history_controller.js.
@@ -124,7 +128,7 @@ Rails.application.routes.draw do
   # related without sharing an action -- the shape Files::LinksController already has.
   #
   # THREE SEGMENTS, WHICH IS WHY THIS SITS AFTER `resources :files` AND STILL RESOLVES. The member
-  # routes above are all NAMED (`blob`, `geometry`, `history`, `restore/:oid`), so
+  # routes above are all NAMED (`blob`, `geometry`, `inspector`, `history`, `restore/:oid`), so
   # `/files/text_files/new` matches none of them, and the collection ones are two segments long. A
   # member route spelled `:id/:action` would swallow this; there is not one, and adding one would.
   namespace :files do
