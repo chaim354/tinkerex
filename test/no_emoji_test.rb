@@ -11,8 +11,11 @@ class NoEmojiTest < ActiveSupport::TestCase
 
   test "no template, helper, controller or script draws an emoji" do
     erb = Dir[Rails.root.join("app/views/**/*.erb")]
-    rb = Dir[Rails.root.join("app/helpers/**/*.rb"), Rails.root.join("app/controllers/**/*.rb")]
-    js = Dir[Rails.root.join("app/javascript/**/*.js")]
+    # Non-ERB views count too: a `.builder` template is Ruby, and the PWA service worker is a script
+    # rendered from app/views (slice 7 review).
+    rb = Dir[Rails.root.join("app/helpers/**/*.rb"), Rails.root.join("app/controllers/**/*.rb"),
+             Rails.root.join("app/views/**/*.builder")]
+    js = Dir[Rails.root.join("app/javascript/**/*.js"), Rails.root.join("app/views/**/*.js")]
     [ erb, rb, js ].each { |set| refute_empty set, "a scan found no files — it would pass over nothing" }
 
     hits = erb.filter_map { |f| f if ActionView::Template::Handlers::ERB::Erubi.new(File.read(f)).src.match?(PICTOGRAPH) }

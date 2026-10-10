@@ -31,7 +31,7 @@
       "+" and Upload moves inside it: shell.css hides the top bar's upload LABEL at 719px and below and
       shows the Upload item here, which forwards a click to that label (upload_forward_controller.js). %>
   <details class="menu topbar-new" data-controller="menu">
-    <summary class="btn" aria-label="New and upload"><span class="topbar-new-label">New <span aria-hidden="true">▾</span></span><span class="topbar-new-plus" aria-hidden="true">+</span></summary>
+    <summary class="btn" aria-label="New"><span class="topbar-new-label">New <span aria-hidden="true">▾</span></span><span class="topbar-new-plus" aria-hidden="true">+</span></summary>
     <div class="menu-list">
       <%# PHONE ONLY (shell.css hides it above 719px): the top bar's Upload, from inside the one "+". %>
       <button type="button" class="menu-item topbar-new-upload" data-controller="upload-forward"

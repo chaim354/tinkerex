@@ -37,7 +37,8 @@ class PhoneTopbarSystemTest < ApplicationSystemTestCase
     visit root_path
     summary = find("header.topbar .topbar-new > summary")
     assert_equal "+", summary.text
-    assert_equal "New and upload", summary["aria-label"]
+    # "New" at every width: the menu's own first item, "Upload…", names the upload on a phone.
+    assert_equal "New", summary["aria-label"]
     # ONE ROW FOR THE BREADCRUMB AND THE "+", AND SEARCH BELOW BOTH (spec §4.3): the "+"'s middle sits
     # inside the crumbs' line, and the search box starts below the lower of the two.
     crumbs, plus, search = page.evaluate_script(<<~JS)

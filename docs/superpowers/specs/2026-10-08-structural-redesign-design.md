@@ -494,7 +494,7 @@ stays, because `design-system.md` rule 8, the addon controller and `addons.md` a
 `ignored_columns` exemption goes. A read of either column now fails at the database, and the guard
 still catches the names, which is where a revival would start.
 Phones get §4.3's single "+", which slice 4's amendment held back. Below 720px the New summary
-reads "+" with the accessible name "New and upload", the top bar's upload label hides, and the New
+reads "+" with the accessible name "New" (its first item, "Upload…", names the upload), the top bar's upload label hides, and the New
 menu opens with a phone-only "Upload…" item. That item forwards a click to the top bar's upload
 LABEL (`upload_forward_controller.js`). It never clicks the file input, and it is never a
 `<label for>`, whose click would land on the input as well. On a page with no folder, the label's

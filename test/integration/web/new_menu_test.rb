@@ -45,7 +45,7 @@ module Web
     test "the New menu carries the phone's Upload item, wired to forward to the top bar's label" do
       get root_path
       assert_select "header.topbar details.menu.topbar-new" do
-        assert_select "summary[aria-label='New and upload'] .topbar-new-plus", text: "+"
+        assert_select "summary[aria-label='New'] .topbar-new-plus", text: "+"
         assert_select ".menu-list > button.menu-item.topbar-new-upload[type=button][data-controller='upload-forward'][data-action='upload-forward#open']:first-child",
                       text: "Upload…"
       end
