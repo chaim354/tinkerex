@@ -1,5 +1,5 @@
 /* The settings pages (stage 2, S2-3 onward): reference lists with an inline add form -- Suppliers,
-   Locations; Shelves keeps its own rules in pages/models.css until S2-6 folds them together.
+   Locations; the Shelves page keeps its own row rules (.shelf-list) in pages/models.css.
    Same shape as .shelf-list: one row per record, its facts on the line, Remove at the end.
    Stage 2, S2-6: the hub (.settings-hub, one link + one fact per row) and the theme choice.
    Stage 4, S4-2: /settings/filing left that shape -- it is a grid of folder cards

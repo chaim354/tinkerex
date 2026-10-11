@@ -71,9 +71,9 @@
   .model-card { position: relative; }
   .model-card .badge { position: absolute; top: 6px; left: 6px; }
 
-  /* An empty cover is the 3D models icon (slice 5; no emoji in the interface), at the size the
-     glyph it replaced was set. */
-  .model-card .project-thumb-empty .rail-icon { width: 36px; height: 36px; color: var(--fg-muted); }
+  /* An empty hero is the 3D models icon (slice 5; no emoji in the interface), at the size the
+     glyph it replaced was set. The model CARD's empty cover is sized by pages/projects.css's
+     `.project-card .project-thumb-empty .rail-icon`: the card carries `.project-card` too. */
   .model-hero-empty .rail-icon { width: 48px; height: 48px; color: var(--fg-muted); }
 
   /* The 3D models view's one pointer at the Settings rule that decides what counts as a model. */

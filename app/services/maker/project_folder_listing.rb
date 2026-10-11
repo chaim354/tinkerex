@@ -90,11 +90,10 @@ module Maker
 
     attr_reader :folder_id, :path, :total
 
-    # `load_files: false` answers `total` (and `repos`) without the files query — Home's hero.
     # `file_cap:` is the PAGE's render budget by default (FILE_CAP); a caller that must see the
     # whole folder — Maker::ReleaseSnapshot, whose record is permanent — passes its own, and
     # `truncated?` answers against whichever cap was given (stage 3, S3-5's review).
-    def initialize(user, project, tree: nil, load_files: true, file_cap: FILE_CAP)
+    def initialize(user, project, tree: nil, file_cap: FILE_CAP)
       @file_cap = file_cap
       @user = user
       @tree = tree || Maker::LibraryTree.new(user)
@@ -115,7 +114,7 @@ module Maker
       @dir_ids_set = dir_ids.to_set
       scope = dir_ids.empty? ? user.nodes.none : files_in(dir_ids)
       @total = dir_ids.empty? ? 0 : scope.count
-      rows = load_files && !dir_ids.empty? ? scope.order(:name, :node_id).limit(@file_cap + 1).to_a : []
+      rows = dir_ids.empty? ? [] : scope.order(:name, :node_id).limit(@file_cap + 1).to_a
       # TRUNCATED READS TRUE ON EITHER CAP, not the file one alone: a folder can blow past DIR_CAP
       # with only a handful of files in each of its many subfolders and never come near FILE_CAP,
       # and that walk is exactly as incomplete as an over-long file list is. @dir_cap_hit is set by

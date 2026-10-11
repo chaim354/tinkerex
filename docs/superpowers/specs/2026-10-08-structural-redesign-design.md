@@ -346,17 +346,18 @@ accept. Nothing chooses a destination from session or user state.
 
 ## 11. Delivery
 
-One PR per slice, each useful on its own, in this order:
+One PR per slice, each useful on its own, in this order. All seven shipped, and the last column
+names each one's PR:
 
-| slice | delivers | depends on |
-|---|---|---|
-| 1. Visual system | the design system's tokens and components applied to today's structure | the §2 open questions |
-| 2. Shell | places sidebar, pins (`maker_pins`), the top bar's New ▾ menu, Inventory on demand in the sidebar | 1 |
-| 3. Inspector and workspace | selection, the inspector frame, the workspace header | 2 |
-| 4. Folder destinations | retire the current project, Upload into the top bar, the tool's default save folder, intake-only attach | 3, the cross-repo check |
-| 5. Models fold-in | the model strip, the 3D models place, the redirects, shelves to Settings | 3 |
-| 6. Project hub and Recent | the default layout, "+ Add panel", tile links to selection, Recent | 2 |
-| 7. Cleanup | dropping the retired current-project columns (Inventory on demand landed in slice 2) | 4 |
+| slice | delivers | depends on | shipped |
+|---|---|---|---|
+| 1. Visual system | the design system's tokens and components applied to today's structure | the §2 open questions | #381 |
+| 2. Shell | places sidebar, pins (`maker_pins`), the top bar's New ▾ menu, Inventory on demand in the sidebar | 1 | #382 |
+| 3. Inspector and workspace | selection, the inspector frame, the workspace header | 2 | #383 |
+| 4. Folder destinations | retire the current project, Upload into the top bar, the tool's default save folder, intake-only attach | 3, the cross-repo check | #384 |
+| 5. Models fold-in | the model strip, the 3D models place, the redirects, shelves to Settings | 3 | #385 |
+| 6. Project hub and Recent | the default layout, "+ Add panel", tile links to selection, Recent | 2 | #386 |
+| 7. Cleanup | dropping the retired current-project columns, the phone's one "+", the last emoji and its guard (Inventory on demand landed in slice 2) | 4 | this slice's PR |
 
 **Amended 2026-10-08 (slice 2's plan):** the top bar's Upload moved from slice 2 to slice 4, because
 its destination IS slice 4's change; moving the button first would write its destination logic
@@ -478,6 +479,50 @@ key and route. Finally, the emoji project placeholder becomes the Projects icon
 `public/_project_card`, and a projects index card
 gains a status badge for active, paused and done (planning is never badged), beside the other
 badges and outside the link.
+
+**Amended 2026-10-09 (slice 7's plan):** the redesign is complete with this slice, which finishes
+what the earlier six deferred. The two current-project columns are dropped by a migration of their
+own, `DropRetiredCurrentProjectColumns`, added after the one that created them and never written
+into it (§9.1, CLAUDE.md §10). It is reversible, unlike the two table drops before it, whose DDL
+lived in another repository: each column is one typed `remove_column`, and neither value has been
+read since slice 4. It carries no `if_exists:`, because every database that reaches it ran the add,
+and a silent skip would hide one that did not. Its deploy precondition is that the code already
+running on all three backends is slice 4's or later, which ignores both columns, so a rollout's old
+and new code never disagree about a column mid-deploy; #384 merged on 2026-10-09. `User` loses its
+`ignored_columns`. The guard that no code path reads a destination from session or user state
+stays, because `design-system.md` rule 8, the addon controller and `addons.md` all cite it. Only its
+`ignored_columns` exemption goes. A read of either column now fails at the database, and the guard
+still catches the names, which is where a revival would start.
+Phones get §4.3's single "+", which slice 4's amendment held back. Below 720px the New summary
+reads "+" with the accessible name "New" (its first item, "Upload…", names the upload), the top bar's upload label hides, and the New
+menu opens with a phone-only "Upload…" item. That item forwards a click to the top bar's upload
+LABEL (`upload_forward_controller.js`). It never clicks the file input, and it is never a
+`<label for>`, whose click would land on the input as well. On a page with no folder, the label's
+click is what `upload_pick_controller.js` intercepts to ask for a folder first, and an
+input-targeted click is the one it deliberately lets through, so either shortcut would upload to the
+library root unasked. The forward runs inside the tap's own click, so the user activation the file
+picker needs is still live. Only the label hides, never the whole `.topbar-upload`, so the chunk
+flow's `.upload-status` progress text still shows on a phone. No upload logic moves: both flows
+keep their markup (§9.2), and the "+" reaches the same door the desktop button does.
+The last emoji leaves the interface. The note badge's emoji becomes the note icon
+(`rail_icon(:note)`) beside the count, and its `title` keeps the words ("2 notes"), which is where
+status carries its word. `test/no_emoji_test.rb` keeps emoji out of templates, helpers,
+controllers and scripts, beside `css_hygiene_test.rb`'s rule for stylesheets. It refuses
+pictographs (U+1F300–U+1FAFF), reads templates compiled so an ERB comment is not read, and skips
+Ruby and JavaScript comments. The typographic marks status uses (✓, ✕, ✎) fall outside that range,
+and an addon manifest's `icon` is data the bundle supplies rather than this repo's source, so both
+stay allowed. Three visual nits noted along the way are fixed. Sign out had no icon, so in the
+collapsed rail its words wrapped in the 56px column. It now draws an icon with its label hidden,
+like its neighbours, and it and Settings carry an accessible name for the icon-only form. The 3D
+and Gerber fallback poster is centred with `margin-inline: auto`, scoped to the fallback containers
+and never set on the bare `.preview-image`, which the addon bundles share. The Library's list-view
+row divider stopped short of the actions column, because `td.row-actions` is a flex box held at
+opacity 0 until hover, so its own bottom border faded with the actions. The divider now runs under
+that column too, and Trash, which shares the table, gets the same fix. Finally, the comments the
+earlier slices left stale are rewritten: `projects_controller.rb`, `projects/_card` and
+`Maker::ProjectFolderListing` still named Home and its hero rather than Recent, `User`'s comments
+still described `Sync::` associations and a pooler check that left with the engine, and two page
+stylesheets carried a duplicate rule and a wrong pointer.
 
 **The main risk is slice 4.** It changes uploads, tools and an addon host contract together, which
 is why it waits until the inspector exists (so "where did my file go" has an answer on screen) and

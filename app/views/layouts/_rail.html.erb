@@ -93,10 +93,18 @@
       <%= rail_icon(:collapse) %><span>Collapse</span>
     </button>
     <span class="rail-user" title="<%= current_user.email %>"><%= current_user.email %></span>
-    <%= link_to settings_path, class: "rail-btn rail-settings",
+    <%# ICONS ONLY IN THE COLLAPSED RAIL (and below 1100px), where shell.css hides each
+        `.rail-btn span` — so a foot control's NAME cannot live in its span alone: Settings and
+        Sign out carry `aria-label` for a screen reader, as Theme and Collapse already did, and
+        `title` for a pointer. Sign out was a bare-text `button_to` with no span to hide, and in
+        the 40px button it wrapped onto two lines (slice 7; shell_test.rb measures it). %>
+    <%= link_to settings_path, class: "rail-btn rail-settings", title: "Settings", "aria-label": "Settings",
                 "aria-current": (sidebar_current == [ :settings ] ? "page" : nil) do %>
       <%= rail_icon(:settings) %><span>Settings</span>
     <% end %>
-    <%= button_to "Sign out", destroy_user_session_path, method: :delete, class: "rail-btn" %>
+    <%= button_to destroy_user_session_path, method: :delete, class: "rail-btn",
+                  title: "Sign out", "aria-label": "Sign out" do %>
+      <%= rail_icon(:sign_out) %><span>Sign out</span>
+    <% end %>
   </div>
 </aside>

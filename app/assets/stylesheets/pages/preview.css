@@ -235,6 +235,12 @@
   .measure-actions { display: none; gap: 4px; flex-wrap: wrap; }
   .measure-dims { flex: 1; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
   .measure-fallback { text-align: center; padding: 24px; }
+  /* THE POSTER, CENTRED (slice 7). `.preview-image` is `display: block`, which the fallbacks'
+     `text-align: center` does not move, so a thumbnail narrower than the column sat against its
+     left padding. Scoped to the two fallback containers (the Gerber viewer's is
+     `.model-viewer-fallback` too): the bare `.preview-image` is shared with the addon bundles
+     and is never restyled (design-system.md rule 12). files_layout_test.rb measures it. */
+  .model-viewer-fallback .preview-image, .measure-fallback .preview-image { margin-inline: auto; }
   /* The controller adds --ready on a successful render: reveal the outline stage, hide the poster. */
   .measure-view--ready .measure-stage { display: block; }
   .measure-view--ready .measure-fallback { display: none; }

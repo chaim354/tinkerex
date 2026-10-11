@@ -557,8 +557,14 @@ module Web
 
       get files_path(view: "grid")
       assert_select ".note-badge", text: /2/
+      # AN ICON, NOT AN EMOJI (slice 7): the badge drew U+1F4DD until the interface dropped emoji.
+      assert_select ".note-badge svg.rail-icon"
+      assert_select ".note-badge[title=?]", "2 notes"
+      assert_not response.body.include?("\u{1F4DD}"), "the note badge draws an emoji"
       get files_path(view: "list")
       assert_select ".note-badge", text: /2/
+      assert_select ".note-badge svg.rail-icon"
+      assert_not response.body.include?("\u{1F4DD}"), "the note badge draws an emoji"
     end
 
     test "a file with no notes shows no badge" do

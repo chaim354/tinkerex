@@ -22,9 +22,9 @@ module Projects
     def set_project
       @project = current_user.maker_projects.find_by!(slug: params[:project_id])
       # WITH FILES SINCE CONTENT BLOCKS (2026-09-09): the document names an image by its PATH under
-      # the project folder, so the file rows are what `folder_images` needs — `load_files: false`
-      # answers `total` and the dirs alone, and an image block would then have no name to export
-      # and no picture to resolve. One capped files query; the page itself pays it on every render.
+      # the project folder, so the file rows are what `folder_images` needs: without them an image
+      # block would have no name to export and no picture to resolve. One capped files query; the
+      # page itself pays it on every render.
       @listing = Maker::ProjectFolderListing.new(current_user, @project)
     end
 

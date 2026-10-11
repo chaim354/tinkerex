@@ -78,7 +78,13 @@ landed it (§11).
 9. **Breadcrumbs render in the top bar through `content_for :crumbs`**, with the page title as the
    fallback; page-level actions stay in the page's `.page-head`, so the top bar carries no
    per-page control. Its New ▾ and Upload are on every signed-in page; only their destination
-   (rule 8) and Upload's weight (rule 13) vary.
+   (rule 8) and Upload's weight (rule 13) vary. **On a phone (below 720px) they are one "+"**: the
+   upload label hides and the New menu's phone-only "Upload…" item (`upload_forward_controller.js`)
+   clicks that LABEL, never the file input and never through a `<label for>`. On a page with no
+   folder the label's click is what `upload_pick_controller.js` intercepts to ask for a folder, and
+   an input-targeted click is the one it lets through, so either shortcut uploads to the library
+   root unasked. Hide only the label, never `.topbar-upload`, which also holds the chunk flow's
+   `.upload-status` progress text.
 10. **Only `.flash-stack > .flash` floats.** `projects/_tasks` renders an inline
     `p.flash-alert.task-error` and two forms render `div.form-errors.flash-alert`; they must stay
     inline, so the fixed positioning lives on the stack container, not on the class.
@@ -110,7 +116,10 @@ landed it (§11).
     labels). Text on an accent fill is
     `--accent-ink` (near-black in the dark theme), never a literal white. `components.css` and
     `shell.css` name tokens, never colour literals (`css_hygiene_test.rb`); drawing colours stay
-    literal in `pages/` (rule 5). Labels stay Plex Sans and mono stays for data (the 2026-09-10
+    literal in `pages/` (rule 5). No emoji draws anything: `css_hygiene_test.rb` refuses a
+    pictograph (U+1F300–U+1FAFF) in a stylesheet's `content`, and `test/no_emoji_test.rb` refuses
+    one in templates, helpers, controllers and scripts; a glyph helper (`rail_icon`,
+    `folder_glyph`) or a word stands in. Labels stay Plex Sans and mono stays for data (the 2026-09-10
     cohesion decisions 4 and 5). Text selection (`::selection`) and the code editor's selection and
     active-line tints are browser text affordances, not UI selection state, and keep accent tints.
     The values are the Tinkerex Design System artifact.

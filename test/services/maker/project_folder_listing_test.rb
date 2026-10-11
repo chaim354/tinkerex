@@ -281,23 +281,6 @@ module Maker
       assert_equal before, @user.nodes.count
     end
 
-    test "load_files: false skips the files query; total and repos are still right, in exactly two queries" do
-      _projects, desk_lamp = desk_lamp_folder
-      firmware = dir("dir-firmware", "firmware", desk_lamp.node_id)
-      dir("dir-firmware-git", ".git", firmware.node_id)
-      file("f-root", "bracket.stl", desk_lamp.node_id)
-
-      project = project_with_folder(desk_lamp.node_id)
-      listing = nil
-      n = count_queries { listing = Maker::ProjectFolderListing.new(@user, project, load_files: false) }
-
-      assert_equal [], listing.loose
-      assert_equal 1, listing.total
-      assert_equal 1, listing.repos.size
-      assert_equal "firmware", listing.repos.first.name
-      assert_equal 2, n, "expected exactly the dirs pluck and the count -- got #{n}"
-    end
-
     test "Row#role reads the filename and Row#backup? recognizes a LightBurn rescue copy" do
       node = @user.nodes.create!(node_id: "f-role", name: "plate.dxf", kind: "file",
                                  parent_node_id: nil, mtime: 1, size: 1)
