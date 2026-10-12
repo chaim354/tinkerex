@@ -78,6 +78,24 @@ class CspReportTest < ActionDispatch::IntegrationTest
     assert_not_includes line, "a" * 400, "a long value must be truncated, not logged whole"
   end
 
+  test "a URL field's query string is not logged — it can carry the unlisted-project token" do
+    # A same-origin document-uri is the page's own URL, and for an unlisted project that URL
+    # carries the credential (`?k=<token>`, Public::BaseController). A blocked-uri can carry a
+    # signed URL. The path is what a violation needs; the query must never reach the log.
+    logged = capture_csp_logs do
+      post REPORT_PATH,
+           params: { "csp-report" => { "violated-directive" => "img-src",
+                                       "document-uri" => "https://x.test/u/ada/rig?k=SECRETTOKEN",
+                                       "blocked-uri"  => "https://y.test/img.png?sig=SECRETSIG" } }.to_json,
+           headers: { "CONTENT_TYPE" => "application/csp-report" }
+    end
+
+    line = logged.sole
+    assert_includes line, "/u/ada/rig", "the path is still logged"
+    assert_not_includes line, "SECRETTOKEN"
+    assert_not_includes line, "SECRETSIG"
+  end
+
   # Every malformed shape answers 204 and logs nothing. 204 rather than 4xx because the browser
   # discards the response anyway, and an error status only tells a prober that bad input is
   # interesting. What must NOT happen is a 500 — an unauthenticated endpoint that can be crashed
