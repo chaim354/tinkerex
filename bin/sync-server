@@ -182,7 +182,15 @@ case "${1:-}" in
     # Tokens live only on the box, chmod 600, never in git -- same rule, same words, as
     # ping.env in bin/backup-cron-install: this file holds a live device credential too.
     chmod 600 "$ENV_FILE"
-    cat "$ENV_FILE"
+    # PRINTED REDACTED, NOT `cat`: the file is the interface (config/ci.rb sources it), and CI run
+    # logs are readable by anyone once the repository is public. Under GitHub Actions the values are
+    # also registered as masks, so a later accidental echo is starred out too.
+    if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+      echo "::add-mask::$token"
+      echo "::add-mask::$admin_token"
+    fi
+    echo "wrote $ENV_FILE:"
+    sed -E 's/^([A-Z_]*TOKEN)=.*/\1=[redacted]/' "$ENV_FILE"
     ;;
   start)
     require_checkout start
