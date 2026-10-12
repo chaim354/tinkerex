@@ -1,0 +1,171 @@
+rhino3dm 8.17.0 (MIT) — rhino3dm.min.js and rhino3dm.wasm in this directory, copied unmodified from
+the npm package by bin/build-o3dv (https://registry.npmjs.org/rhino3dm/-/rhino3dm-8.17.0.tgz).
+
+The npm package ships no licence file; its package.json says "license": "MIT" and "author":
+"Robert McNeel & Associates and contributors". The texts below come from the upstream repository
+instead: github.com/mcneel/rhino3dm at tag 8.17.0, commit
+1e0c80e6b9cf7ff3c1579d287e178b21634a2a6d. npm records no gitHead for this version, so what ties
+that tag to the published bytes is the version number, not a recorded commit.
+
+rhino3dm.wasm is more than rhino3dm's own code. At that tag, src/CMakeLists.txt builds the
+WebAssembly target (its EMSCRIPTEN branch: `add_executable(rhino3dm ...)`) from rhino3dm's
+bindings plus, statically, openNURBS (the src/lib/opennurbs submodule), the zlib and android_uuid
+sources that live inside openNURBS, and Draco (the src/lib/draco submodule, McNeel's fork). Each
+of their notices follows. openNURBS also carries a freetype263/ directory; that target does not
+compile it — its source globs are the top level of opennurbs/, opennurbs/zlib/ and
+opennurbs/android_uuid/ only.
+
+Not covered here, for this file or the other two .wasm builds in this directory: the Emscripten
+runtime and the C/C++ standard libraries the toolchain links into every Emscripten build. Those
+were not audited for this notice.
+
+
+--- rhino3dm: LICENSE at tag 8.17.0 ---
+
+MIT License
+
+Copyright (c) 2023 Robert McNeel & Associates
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+--- openNURBS: LICENSE at github.com/mcneel/opennurbs commit
+    6c91d229ab561fe21c92ffdd97934c77ff945e0a (rhino3dm 8.17.0's src/lib/opennurbs submodule) ---
+
+Copyright (c) 1993-2018 Robert McNeel & Associates. All Rights Reserved.
+Rhinoceros is a registered trademark of Robert McNeel & Associates.
+
+THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT EXPRESS OR IMPLIED
+WARRANTY.  ALL IMPLIED WARRANTIES OF FITNESS FOR ANY PARTICULAR
+PURPOSE AND OF MERCHANTABILITY ARE HEREBY DISCLAIMED.
+
+The openNURBS toolkit uses zlib for mesh and bitmap compression.
+The zlib source code distributed with openNURBS is a subset of what
+is available from zlib.  The zlib code itself has not been modified.
+See ftp://ftp.freesoftware.com/pub/infozip/zlib/zlib.html for more 
+details.
+
+Zlib has a generous license that is similar to the one for openNURBS.
+The zlib license shown below was copied from the zlib web page
+ftp://ftp.freesoftware.com/pub/infozip/zlib/zlib_license.html
+on 20 March 2000.
+
+    zlib.h -- interface of the 'zlib' general purpose compression library
+    version 1.1.3, July 9th, 1998
+
+    Copyright (C) 1995-1998 Jean-loup Gailly and Mark Adler
+
+    This software is provided 'as-is', without any express or implied
+    warranty.  In no event will the authors be held liable for any damages
+    arising from the use of this software.
+
+    Permission is granted to anyone to use this software for any purpose,
+    including commercial applications, and to alter it and redistribute it
+    freely, subject to the following restrictions:
+
+    1. The origin of this software must not be misrepresented; you must not
+       claim that you wrote the original software. If you use this software
+       in a product, an acknowledgment in the product documentation would be
+       appreciated but is not required.
+    2. Altered source versions must be plainly marked as such, and must not be
+       misrepresented as being the original software.
+    3. This notice may not be removed or altered from any source distribution.
+
+    Jean-loup Gailly        Mark Adler
+    jloup@gzip.org          madler@alumni.caltech.edu
+
+
+    The data format used by the zlib library is described by RFCs (Request for
+    Comments) 1950 to 1952 in the files ftp://ds.internic.net/rfc/rfc1950.txt
+    (zlib format), rfc1951.txt (deflate format) and rfc1952.txt (gzip format).
+
+
+
+
+--- zlib, as shipped inside openNURBS at that commit (zlib 1.2.3): the notice at the head of
+    opennurbs/zlib/zlib.h, verbatim without the comment delimiters ---
+
+zlib.h -- interface of the 'zlib' general purpose compression library
+  version 1.2.3, July 18th, 2005
+
+  Copyright (C) 1995-2005 Jean-loup Gailly and Mark Adler
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
+
+  Jean-loup Gailly        Mark Adler
+  jloup@gzip.org          madler@alumni.caltech.edu
+
+
+  The data format used by the zlib library is described by RFCs (Request for
+  Comments) 1950 to 1952 in the files http://www.ietf.org/rfc/rfc1950.txt
+  (zlib format), rfc1951.txt (deflate format) and rfc1952.txt (gzip format).
+
+
+--- android_uuid, as shipped inside openNURBS at that commit: opennurbs/android_uuid/COPYING,
+    verbatim. The copyright holder is named in the source files' headers, not in COPYING:
+    Theodore Ts'o, years 1996 to 1999 and 2007 (e.g. gen_uuid.c: "Copyright (C) 1996, 1997,
+    1998, 1999 Theodore Ts'o."). ---
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, and the entire permission notice in its entirety,
+   including the disclaimer of warranties.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. The name of the author may not be used to endorse or promote
+   products derived from this software without specific prior
+   written permission.
+
+THIS SOFTWARE IS PROVIDED ``AS IS'' AND ANY EXPRESS OR IMPLIED
+WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE, ALL OF
+WHICH ARE HEREBY DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
+OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+USE OF THIS SOFTWARE, EVEN IF NOT ADVISED OF THE POSSIBILITY OF SUCH
+DAMAGE.
+
+
+--- Draco: github.com/mcneel/draco commit 9036ecd96bfe9746046117607bc17366894ec8e1 (rhino3dm
+    8.17.0's src/lib/draco submodule) ---
+
+Apache-2.0. That commit's LICENSE file is byte-identical to google/draco's at tag 1.5.7, which is
+reproduced whole in license.draco3d.txt beside this file; its AUTHORS file likewise reads "Google
+Inc. and other contributors".

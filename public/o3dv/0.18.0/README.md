@@ -7,9 +7,9 @@ directory name and `/o3dv/0.18.0/` is baked into the bundle.
 
 | file | package | version | licence |
 |---|---|---|---|
-| `occt-import-js.{js,wasm}`, `occt-import-js-worker.js` | occt-import-js | 0.0.22 | **LGPL-2.1** (`license.occt-import-js.txt`), wrapping OpenCASCADE (`license.occt.txt`) |
-| `rhino3dm.min.js`, `rhino3dm.wasm` | rhino3dm | 8.17.0 | MIT |
-| `draco_decoder_nodejs.js`, `draco_decoder.wasm` | draco3d | 1.5.7 | Apache-2.0 |
+| `occt-import-js.{js,wasm}`, `occt-import-js-worker.js` | occt-import-js | 0.0.22 | **LGPL-2.1** (`license.occt-import-js.txt`), wrapping OpenCASCADE (`license.occt.txt`); where the source lives: `source.occt-import-js.txt` |
+| `rhino3dm.min.js`, `rhino3dm.wasm` | rhino3dm | 8.17.0 | MIT, with the libraries it links (`license.rhino3dm.txt`) |
+| `draco_decoder_nodejs.js`, `draco_decoder.wasm` | draco3d | 1.5.7 | Apache-2.0 (`license.draco3d.txt`) |
 
 **occt-import-js is the one LGPL thing this app ships to a browser** (STEP/IGES/BREP/FCStd). It is
 a separate file the browser fetches and runs on its own; nothing links against it and no part of
