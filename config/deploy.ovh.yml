@@ -162,18 +162,25 @@ env:
     # should still answer 200 (that is what the ssl_options exclusion protects).
     FORCE_SSL: "1"
 
-    # ENABLE_TEST_SIGNUP IS INHERITED HERE, DELIBERATELY AND WITH EYES OPEN (2026-07-29).
+    # ENABLE_TEST_SIGNUP IS BLANKED HERE, AND THIS BOX MUST NEVER INHERIT IT (2026-10-12).
     #
-    # deploy.yml's env.clear sets ENABLE_TEST_SIGNUP: true, and Kamal DEEP-MERGES env.clear — the same
-    # mechanism the two blank lines above exist to defeat. So this box, unlike the LAN-only Unraid one
-    # the base comment justifies, serves POST /v1/test/users: an unverified signup that mints CONFIRMED
-    # accounts, reachable by anyone who can reach the host.
+    # deploy.yml's env.clear sets ENABLE_TEST_SIGNUP: true for the LAN-only Unraid box, and Kamal
+    # DEEP-MERGES env.clear -- the same mechanism the blank lines above exist to defeat. Inherited,
+    # this box served POST /v1/test/users: an unverified signup that mints CONFIRMED accounts,
+    # reachable by anyone who can reach the host. It was accepted on 2026-07-29 as a prod-LIKE test
+    # box "until it holds anything real" -- and it does: LIBRARY_BACKEND=s3 above points every
+    # account at ONE bucket prefix (FileLayer::S3 has no per-user key, and Library::ScanJob.scan_all!
+    # indexes that prefix into EVERY user's catalog), so a stranger's self-made account got read,
+    # write and delete on the owner's library one scan later. Closed ahead of making the source
+    # public, where the route stops being obscure.
     #
-    # Accepted for now because this is a prod-LIKE TEST box, not the managed SaaS. Blanking it is one
-    # line (`ENABLE_TEST_SIGNUP: ""`) beside the sidecar blanks above, and that is the fix the day this
-    # box holds anything real. The boot warning fires either way
-    # (config/initializers/test_signup_warning.rb).
+    # BLANK, NOT `false`: the controller and routes.rb gate on ENV.present?, and Kamal renders a YAML
+    # `false` as the literal string "false" -- present, so the seam stays OPEN. Same trap the
+    # sidecar-URL blanks guard against. test/deploy_hygiene_test.rb asserts this off the MERGED
+    # config for every destination that is not LAN-only, so a new internet-facing destination is
+    # closed by default rather than by someone remembering.
     #
-    # NOT blanked at the base instead, because the Unraid box needs it:
+    # NOT blanked at the base, because the Unraid box still uses it:
     # client/test-conformance/two-device-cfapi.ps1 enrolls against http://192.168.1.95 through this
     # seam. The other harnesses boot their own server and set the var themselves.
+    ENABLE_TEST_SIGNUP: ""
