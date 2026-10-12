@@ -355,9 +355,9 @@ longer worked.
 
 | backend | container name prefix | account | password |
 |---|---|---|---|
-| chunk | `tinkerex-web-<sha>` | `demo@tinkerex.local` | `MakerDemo2026!` |
-| share | `tinkerex-web-share-<sha>` | `demo@tinkerex.local` | `MakerDemo2026!` |
-| s3 | `tinkerex-web-s3-<sha>` | `demo@tinkerex.local` | `MakerDemo2026!` |
+| chunk | `tinkerex-web-<sha>` | `demo@tinkerex.local` | `op://tinkerex/unraid demo account/password` |
+| share | `tinkerex-web-share-<sha>` | `demo@tinkerex.local` | `op://tinkerex/unraid demo account/password` |
+| s3 | `tinkerex-web-s3-<sha>` | `demo@tinkerex.local` | `op://tinkerex/unraid demo account/password` |
 
 **THE THREE ROWS BEING IDENTICAL IS A CONVENTION, NOT A MECHANISM** — they are three separate
 accounts in three separate databases that happen to have been given the same address and password.
@@ -366,12 +366,13 @@ added to one backend only is an ordinary state, not a bug. Keep the table per-ro
 even while the rows agree; collapsing it to a single line is how the next reader concludes that
 fixing one fixed all three.
 
-**A PASSWORD IS IN GIT HERE ON PURPOSE, AND THE REASON IS LOAD-BEARING.** This box is a
-non-production test/dev deploy (despite `RAILS_ENV=production`), its `ENABLE_TEST_SIGNUP` seam is
-deliberately open, and it is reachable only on the LAN and the tailnet. **Never record a managed-SaaS
-or internet-facing credential here** — those resolve through 1Password per §2b and must not acquire
-a second, plaintext home. If this box ever stops being a throwaway, this table moves to 1Password
-with it.
+**THE PASSWORD LIVES IN 1PASSWORD, NOT HERE (moved 2026-10-12).** It used to sit in this table in
+plaintext, on the argument that this box is a LAN/tailnet-only test deploy. That argument held only
+while the repository was private: once the source is public, a plaintext password here is a working
+login for anyone who later reaches the LAN or the tailnet. Resolve it the way every other credential
+resolves (§2b), through `bin/secret`. **The value that sat here is still in git history, so it was
+retired with the move — reset all three accounts to the 1Password value (below) rather than
+reusing it.** Never record any credential here in plaintext, LAN-only or not.
 
 **EACH BACKEND HAS ITS OWN SQLite VOLUME** (`tinkerex_storage`, `tinkerex_storage_share`,
 `tinkerex_storage_s3`) — so each has its **own `users` table**. That is the mechanism behind the
@@ -404,18 +405,24 @@ Create one (the seam is open on all three; it creates a **confirmed** account, n
 verification — `app/controllers/v1/test_users_controller.rb`):
 
 ```sh
-curl -X POST http://share.tinkerex.home/v1/test/users \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"demo@tinkerex.local","password":"MakerDemo2026!"}'
+DEMO_PASSWORD=$(bin/secret DEMO_PASSWORD 'op://tinkerex/unraid demo account/password')
+DEMO_PASSWORD="$DEMO_PASSWORD" ruby -rjson -e \
+  'print({ email: "demo@tinkerex.local", password: ENV.fetch("DEMO_PASSWORD") }.to_json)' |
+  curl -X POST http://share.tinkerex.home/v1/test/users \
+    -H 'Content-Type: application/json' --data-binary @-
 ```
+
+The body is built by `to_json`, not spliced into a quoted string, so a password containing `"`, `\`
+or `!` survives intact and never appears in your shell history.
 
 Reset a forgotten one, keeping its library, attachments and BOM links:
 
 ```sh
-ssh kamal1@192.168.1.95 'docker exec -i $(docker ps -qf name=tinkerex-web-share) bin/rails runner -' <<'RUBY'
+DEMO_PASSWORD=$(bin/secret DEMO_PASSWORD 'op://tinkerex/unraid demo account/password')
+ssh kamal1@192.168.1.95 "DEMO_PASSWORD=$(printf '%q' "$DEMO_PASSWORD") docker exec -i -e DEMO_PASSWORD \$(docker ps -qf name=tinkerex-web-share) bin/rails runner -" <<'RUBY'
 u = User.find_by(email: "demo@tinkerex.local")
 abort "no such user" unless u
-u.update!(password: "MakerDemo2026!", confirmed_at: u.confirmed_at || Time.current)
+u.update!(password: ENV.fetch("DEMO_PASSWORD"), confirmed_at: u.confirmed_at || Time.current)
 puts "#{u.email} updated"
 RUBY
 ```
@@ -425,7 +432,7 @@ an account predating confirmation otherwise resets fine and still bounces to the
 which reads as a wrong password. **It aborts on nil** instead of raising `NoMethodError` on a
 mistyped address. And **the heredoc is quoted (`<<'RUBY'`)**, which is not styling: interactive
 **zsh performs history expansion on `!` inside DOUBLE quotes**, so the obvious one-liner dies on
-`MakerDemo2026!` — and on `update!` — with `zsh: event not found`. Single quotes suppress it;
+`update!` (and on any `!` in a typed password) with `zsh: event not found`. Single quotes suppress it;
 `%q(...)` in Ruby avoids nesting quotes at all if you want a one-liner.
 
 ---
