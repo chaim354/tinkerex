@@ -133,6 +133,37 @@ class DeployHygieneTest < ActiveSupport::TestCase
     end
   end
 
+  test "no destination outside the LAN opens the unverified test-signup seam" do
+    # POST /v1/test/users mints CONFIRMED accounts with no email check (V1::TestUsersController), and
+    # on a share/s3 deployment every account is indexed the SAME library, so an open seam hands a
+    # stranger read/write/delete on the owner's files. deploy.yml sets it for the LAN-only Unraid
+    # box, and kamal DEEP-MERGES env.clear, so every overlay inherits it unless it blanks it. OVH did,
+    # for two months, on the one internet-facing host.
+    #
+    # FAIL-SAFE BY CONSTRUCTION: the set checked is every destination EXCEPT the known LAN ones, so a
+    # new destination is required closed until someone argues it onto the LAN list -- not open until
+    # someone remembers. Read off the MERGED config (deep-merge reflected, not re-implemented), and
+    # `.to_s.blank?` rather than `.blank?`: the gate is ENV.present?, and kamal renders a YAML
+    # `false` as the string "false", which is present -- so `false` would read closed here and run open.
+    outside_lan = LIBRARY_DESTINATIONS - UNRAID_DESTINATIONS.keys
+    assert_includes outside_lan, "ovh", "the internet-facing destination fell out of the checked set"
+
+    require "kamal"
+    outside_lan.each do |destination|
+      clear = at(Kamal::Configuration.create_from(
+        config_file: ROOT.join("config/deploy.yml"), destination: destination
+      ).raw_config, "env", "clear").to_h
+      # Non-vacuity: an absent key is CLOSED (nil.to_s is blank), so a raw_config shape change that
+      # made every lookup nil would pass the real assertion over nothing.
+      assert clear.key?("LIBRARY_BACKEND"),
+             "#{destination}: merged env.clear has no LIBRARY_BACKEND -- raw_config shape changed?"
+      assert clear["ENABLE_TEST_SIGNUP"].to_s.blank?,
+             "deploy.#{destination}.yml must set ENABLE_TEST_SIGNUP: \"\" -- merged with deploy.yml " \
+             "it resolves to #{clear['ENABLE_TEST_SIGNUP'].inspect}, which serves the unverified " \
+             "POST /v1/test/users signup to anyone who can reach that host"
+    end
+  end
+
   test "every GPL sidecar image carries its own licence text" do
     # CLAUDE.md §9: we build these images and push them to a registry, which is REDISTRIBUTION —
     # so the licence has to be INSIDE the image, not merely beside the Dockerfile in this repo.

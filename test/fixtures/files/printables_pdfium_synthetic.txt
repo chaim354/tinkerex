@@ -1,0 +1,69 @@
+
+2.15 hrs 
+
+1 pcs 
+f
+0.20 mm
+k
+0.40 mm
+h
+PETG
+
+41 g 
+d
+Original Prusa
+MK4
+Summary
+Interlocking hex panel for mounting tool hooks and small bins. Panels clip
+together edge to edge, so the wall grows one tile at a time.
+Household > Other House Equipment
+Tags: organizer pegboard hooks storage
+News
+January 5, 2026 first upload
+January 9, 2026 added a deeper bin
+Fixture Maker
+Hex Pegboard
+Panel
+VIEW IN BROWSER
+updated 9. 1. 2026 | published 5. 1. 2026 
+• 
+• 
+• 
+
+January 12, 2026 added a screwdriver rack
+Hex panel
+A synthetic stand-in for a Printables model PDF. Every word of it was written
+for this test suite; only the LINE STRUCTURE copies what pdfium produces for a
+real Printables PDF (values exploded across lines, icon glyphs as stray single
+letters, the author/title block after the changelog).
+• 
+• 
+
+Printing settings
+layer height: 0.2
+perimeters: 3
+Model files
+ Panels 2 files
+• 
+hex-panel.stl 
+hex-panel-half.stl 
+
+ Hooks and bins 3 files
+hook-short.stl 
+hook-long.stl 
+bin-deep.stl 
+
+Print files
+ hex-panel
+h PETG k 0.40 mm f 0.20 mm  2.15 hrs  41 g d Original Prusa MK4
+License 
+This work is licensed under a 
+Creative Commons (4.0 International License)
+Attribution-NonCommercial 
+✖ | Sharing without ATTRIBUTION 
+✔ | Remix Culture allowed 
+✖ | Commercial Use 
+✖ | Free Cultural Works 
+✖ | Meets Open Definition 
+hex-panel.stl 
+hex-panel_020mm_petg_mk4_2h09m.gcode

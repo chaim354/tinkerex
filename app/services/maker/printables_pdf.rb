@@ -4,7 +4,9 @@ module Maker
   # Printables PDF (values exploded across lines, icon-font glyphs as stray single letters, the
   # title/author block emitted AFTER the changelog), so every field is anchored by pattern, never
   # by absolute position; a miss omits the key instead of raising. A non-Printables PDF yields
-  # little, gracefully. Validated against test/fixtures/files/printables_honeycomb_pdfium.txt.
+  # little, gracefully. Tuned against a real Printables PDF's pdfium dump; the suite now pins it with
+  # test/fixtures/files/printables_pdfium_synthetic.txt, which keeps that dump's LINE STRUCTURE with
+  # every word replaced (the original was a third-party CC BY-NC page).
   module PrintablesPdf
     module_function
 

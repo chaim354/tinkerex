@@ -84,7 +84,8 @@ class BinSyncServerTest < ActiveSupport::TestCase
         "TINKEREX_SYNC_DIR" => sync_dir,
         "TINKEREX_SYNC_BIN" => bin_stub,
         "SYNC_IMPL" => "rust",
-        "SYNC_SERVER_ENV_FILE" => env_file.to_s
+        "SYNC_SERVER_ENV_FILE" => env_file.to_s,
+        "GITHUB_ACTIONS" => nil # unset even when this suite itself runs in Actions; set below
       }
       out, status = Open3.capture2e(run_env, SCRIPT.to_s, "prepare")
 
@@ -93,6 +94,20 @@ class BinSyncServerTest < ActiveSupport::TestCase
       assert_includes written, "CHUNK_REMOTE_URL="
       assert_includes written, "CHUNK_REMOTE_TOKEN=stub-rust-devtoken-1a2b3c4d5e6f"
       assert_match(/^SYNC_ADMIN_TOKEN=[0-9a-f]{64}$/, written)
+      admin_token = written[/^SYNC_ADMIN_TOKEN=(\h{64})$/, 1]
+
+      # THE FILE IS THE INTERFACE; STDOUT IS A LOG, and CI logs are public once the repo is. The
+      # tokens go in the file above and must not be echoed beside it.
+      assert_not_includes out, "stub-rust-devtoken-1a2b3c4d5e6f", "prepare echoed the device token"
+      assert_not_includes out, admin_token, "prepare echoed the admin token"
+      assert_includes out, "CHUNK_REMOTE_TOKEN=[redacted]"
+
+      # Under Actions each value is ALSO registered as a mask, so a later accidental echo is starred.
+      out, status = Open3.capture2e(run_env.merge("GITHUB_ACTIONS" => "true"), SCRIPT.to_s, "prepare")
+      assert status.success?, out
+      fresh_admin = env_file.read[/^SYNC_ADMIN_TOKEN=(\h{64})$/, 1]
+      assert_includes out, "::add-mask::stub-rust-devtoken-1a2b3c4d5e6f"
+      assert_includes out, "::add-mask::#{fresh_admin}"
 
       seen = File.read(File.join(sync_dir, "seen-env"))
       assert_includes seen, "STORAGE_BACKEND=local"

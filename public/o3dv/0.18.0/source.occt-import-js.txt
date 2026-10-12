@@ -1,0 +1,37 @@
+Where the source of occt-import-js.wasm, occt-import-js.js and occt-import-js-worker.js lives.
+
+Those three files are occt-import-js 0.0.22, copied unmodified by bin/build-o3dv from the npm
+package's dist/ directory. occt-import-js is LGPL-2.1 (license.occt-import-js.txt, beside this
+file), and its .wasm is a WebAssembly build of OpenCASCADE Technology (OCCT), also LGPL-2.1
+(license.occt.txt, which is OCCT's own LICENSE_LGPL_21.txt). This app has not modified either. The
+object code here corresponds to the following source.
+
+occt-import-js 0.0.22
+  repository:   https://github.com/kovacsv/occt-import-js
+  tag:          0.0.22
+  commit:       cdc60c8245d875d134f4fea860dfc3276ef124f7
+                (the commit the tag points to, and the gitHead npm records for 0.0.22)
+  npm tarball:  https://registry.npmjs.org/occt-import-js/-/occt-import-js-0.0.22.tgz
+                integrity sha512-pqvP0hJGMgAoFKji+nL+2zIHJ2NJeFTpI2oEEJrVQtvLErDApd2TeAJNhPO9oU+aWUKIUSWoxSfIrF0KisrPtw==
+                It carries the wrapper's own C++ source (occt-import-js/src/), the root
+                CMakeLists.txt and the build scripts (tools/), but NOT OpenCASCADE itself.
+
+OpenCASCADE Technology, as compiled into occt-import-js.wasm
+  The repository includes OCCT as the git submodule `occt`, which at the tag above is pinned to
+  commit 185d29b92f6764ffa9fc195b7dbe7bba3c4ac855 — the commit OCCT tagged V7_7_0.
+  submodule URL: https://git.dev.opencascade.org/repos/occt.git
+  mirror:        https://github.com/Open-Cascade-SAS/OCCT (tag V7_7_0)
+
+How it is built, per the files at that tag: the root CMakeLists.txt names every OCCT module
+compiled in; tools/setup_emscripten_win.bat installs Emscripten 3.1.58; and
+tools/build_wasm_win_dist.bat builds the release and copies occt-import-js.js and
+occt-import-js.wasm into dist/, together with the two licence files beside this one.
+
+How the correspondence was checked (2026-10-12): the three files here are byte-identical to the
+npm 0.0.22 tarball's dist/ files. occt-import-js.wasm is also byte-identical to the
+dist/occt-import-js.wasm committed at the 0.0.22 tag (the same git blob,
+5aed39ce792225f41c7132ba17cc9ca8d52ef696), and occt-import-js.js and occt-import-js-worker.js
+match the tag's committed copies except for line endings (the npm tarball's are CRLF). The tag's
+.github/workflows/npm_publish.yml publishes that committed dist/ rather than rebuilding it.
+
+This file points to the upstream source; it is not a written offer to provide that source.

@@ -4,9 +4,9 @@ module Maker
   class ExtractPdfMetadataJobTest < ActiveSupport::TestCase
     setup do
       @user  = User.create!(email: "pdf-#{SecureRandom.hex(3)}@example.com")
-      @model = @user.maker_models.create!(title: "Honeycomb Storage Wall")
-      @node  = @user.nodes.create!(node_id: "pdf1", name: "152592-honeycomb-x.pdf", kind: "file")
-      @text  = File.read(Rails.root.join("test/fixtures/files/printables_honeycomb_pdfium.txt"), encoding: "UTF-8")
+      @model = @user.maker_models.create!(title: "Hex Pegboard Panel")
+      @node  = @user.nodes.create!(node_id: "pdf1", name: "100001-hex-pegboard-x.pdf", kind: "file")
+      @text  = File.read(Rails.root.join("test/fixtures/files/printables_pdfium_synthetic.txt"), encoding: "UTF-8")
     end
 
     # Stub the byte-read + pdfium (the repo's define_singleton_method idiom, e.g.
@@ -29,12 +29,12 @@ module Maker
     test "fills empty fields from the parsed PDF" do
       run_job
       @model.reload
-      assert_equal "RostaP", @model.designer
+      assert_equal "Fixture Maker", @model.designer
       assert_equal "CC BY-NC 4.0", @model.license
-      assert_equal "https://www.printables.com/model/152592", @model.source_url
-      assert_match(/Wall for attaching hooks/, @model.notes)
-      assert_equal "PET", @model.print_settings["material"]
-      assert_equal "0.28 mm", @model.print_settings["layer_height"]
+      assert_equal "https://www.printables.com/model/100001", @model.source_url
+      assert_match(/Interlocking hex panel/, @model.notes)
+      assert_equal "PETG", @model.print_settings["material"]
+      assert_equal "0.20 mm", @model.print_settings["layer_height"]
       assert_includes @model.tags.map(&:name), "organizer"
     end
 
@@ -48,7 +48,7 @@ module Maker
       assert_equal "my own notes", @model.notes                    # not clobbered
       assert_equal({ "material" => "MYPLA" }, @model.print_settings) # not clobbered
       # source_url WAS blank -> it still gets filled
-      assert_equal "https://www.printables.com/model/152592", @model.source_url
+      assert_equal "https://www.printables.com/model/100001", @model.source_url
     end
 
     test "tags are additive (union), not replaced" do

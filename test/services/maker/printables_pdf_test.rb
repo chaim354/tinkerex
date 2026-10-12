@@ -2,24 +2,27 @@ require "test_helper"
 
 module Maker
   class PrintablesPdfTest < ActiveSupport::TestCase
-    TEXT = File.read(Rails.root.join("test/fixtures/files/printables_honeycomb_pdfium.txt"), encoding: "UTF-8")
+    TEXT = File.read(Rails.root.join("test/fixtures/files/printables_pdfium_synthetic.txt"), encoding: "UTF-8")
 
-    test "extracts every field from a real Printables PDF's pdfium text" do
-      d = Maker::PrintablesPdf.extract(text: TEXT, filename: "152592-honeycomb-storage-wall-x.pdf",
-                                       title: "Honeycomb Storage Wall")
-      assert_equal "RostaP", d[:designer]
+    # The fixture is SYNTHETIC: its words were written for this suite, and only its line structure
+    # copies what pdfium produced for a real Printables PDF. The real dump it replaced was a
+    # third-party CC BY-NC page, which a commercial repository cannot redistribute.
+    test "extracts every field from a Printables PDF's pdfium text" do
+      d = Maker::PrintablesPdf.extract(text: TEXT, filename: "100001-hex-pegboard-panel-x.pdf",
+                                       title: "Hex Pegboard Panel")
+      assert_equal "Fixture Maker", d[:designer]
       assert_equal "CC BY-NC 4.0", d[:license]
-      assert_match(/Wall for attaching hooks/, d[:description])
-      assert_equal %w[organizer wall hooks storrage], d[:tags]
-      assert_equal "https://www.printables.com/model/152592", d[:source_url]
+      assert_match(/Interlocking hex panel/, d[:description])
+      assert_equal %w[organizer pegboard hooks storage], d[:tags]
+      assert_equal "https://www.printables.com/model/100001", d[:source_url]
       ps = d[:print_settings]
-      assert_equal "0.28 mm", ps["layer_height"]
+      assert_equal "0.20 mm", ps["layer_height"]
       assert_equal "0.40 mm", ps["nozzle"]
-      assert_equal "PET", ps["material"]
-      assert_equal "58 g", ps["filament"]
-      assert_equal "3.88 hrs", ps["print_time"]
+      assert_equal "PETG", ps["material"]
+      assert_equal "41 g", ps["filament"]
+      assert_equal "2.15 hrs", ps["print_time"]
       assert_equal "Household > Other House Equipment", ps["category"]
-      assert_match(/Prusa MINI/, ps["printer"])
+      assert_equal "Original Prusa MK4", ps["printer"]
     end
 
     test "non-Printables / blank text yields {} and never raises" do

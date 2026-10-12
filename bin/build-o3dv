@@ -50,7 +50,8 @@
 # Maker::FileAttachment::VIEWABLE_3D_EXTS so nothing can reach that importer. Its URL is rewritten
 # with the others (so the no-jsdelivr check stays total) and the file simply is not there.
 #
-# LICENCES (§9): online-3d-viewer MIT, three MIT, fflate MIT (all bundled into the artifact);
+# LICENCES (§9): online-3d-viewer MIT, three MIT, fflate MIT, and three's prebuilt chevrotain
+# Apache-2.0 with its regexp-to-ast MIT (all bundled into the artifact);
 # rhino3dm MIT and draco3d Apache-2.0 (shipped as separate files); occt-import-js LGPL-2.1 —
 # a separately shipped WebAssembly file the browser fetches at runtime and that nothing links
 # against, the same posture the Dockerfile already takes for OCCT inside the F3D subprocess
@@ -206,6 +207,45 @@ for NAME in occt-import-js-worker.js rhino3dm.min.js draco_decoder_nodejs.js; do
     echo "REFUSING TO SHIP: $LIB_BASE$NAME is not referenced by the bundle." >&2; exit 1; }
 done
 
+# THE NOTICES NO PACKAGE HANDS US, GATHERED BEFORE ANYTHING IS WRITTEN, so a refusal here leaves the
+# tree as it was. The header's "every notice ships beside the bytes it covers" was untrue, in two
+# ways, until 2026-10-12:
+#
+#   chevrotain rides in through THREE, not through our package.json: VRMLLoader imports three's own
+#   prebuilt examples/jsm/libs/chevrotain.module.min.js, so esbuild bundles it and npm never
+#   installs a chevrotain whose LICENSE could be copied. Its version is read off that file's banner
+#   and asserted to be in the artifact; the texts come from the npm tarballs of that version and of
+#   the regexp-to-ast it pins, which the prebuilt file carries too.
+#
+#   rhino3dm and draco3d publish NO licence file, and occt-import-js's tarball does not say where its
+#   LGPL-2.1 source lives. Those three notices are written by hand, from the upstream repositories at
+#   the exact tag, into the versioned directory (the 0.18.0 ones show the shape) — so a bump finds no
+#   notice naming the new version, and this refuses rather than ship bytes with nothing beside them.
+CHEVROTAIN_JS="$WORK/node_modules/three/examples/jsm/libs/chevrotain.module.min.js"
+CHEVROTAIN_VERSION=$(head -n 1 "$CHEVROTAIN_JS" | sed -n 's|^/\*! chevrotain - v\([0-9][0-9.]*\) \*/$|\1|p')
+if [ -z "$CHEVROTAIN_VERSION" ] || ! grep -qF ".VERSION=\"$CHEVROTAIN_VERSION\"" "$WORK/o3dv.js"; then
+  echo "REFUSING TO SHIP: cannot tie chevrotain's licence to the bundle (banner version" \
+       "'$CHEVROTAIN_VERSION' from $CHEVROTAIN_JS, which the bundle must carry)." >&2
+  exit 1
+fi
+NOTICES="$WORK/notices"
+mkdir -p "$NOTICES/chevrotain" "$NOTICES/regexp-to-ast"
+(cd "$NOTICES" && npm pack --silent --ignore-scripts "chevrotain@$CHEVROTAIN_VERSION" >/dev/null)
+tar -xzf "$NOTICES/chevrotain-$CHEVROTAIN_VERSION.tgz" -C "$NOTICES/chevrotain"
+CHEVROTAIN_PKG="$NOTICES/chevrotain/package/package.json"
+REGEXP_TO_AST_VERSION=$(node -p "require(process.argv[1]).dependencies['regexp-to-ast']" "$CHEVROTAIN_PKG")
+CHEVROTAIN_AUTHOR=$(node -p "const a = require(process.argv[1]).author; a.name || a" "$CHEVROTAIN_PKG")
+(cd "$NOTICES" && npm pack --silent --ignore-scripts "regexp-to-ast@$REGEXP_TO_AST_VERSION" >/dev/null)
+tar -xzf "$NOTICES/regexp-to-ast-$REGEXP_TO_AST_VERSION.tgz" -C "$NOTICES/regexp-to-ast"
+
+for NOTICE in "license.rhino3dm.txt:rhino3dm $RHINO_VERSION" "license.draco3d.txt:draco3d $DRACO_VERSION" \
+              "source.occt-import-js.txt:occt-import-js $OCCT_VERSION"; do
+  grep -qF "${NOTICE#*:}" "$ROOT/$LIB_DIR/${NOTICE%%:*}" 2>/dev/null || {
+    echo "REFUSING TO SHIP: $LIB_DIR/${NOTICE%%:*} is missing or does not name ${NOTICE#*:}." >&2
+    echo "The npm package carries no such notice; write it from upstream at that exact tag." >&2
+    exit 1; }
+done
+
 mkdir -p "$ROOT/vendor/javascript" "$ROOT/$LIB_DIR"
 cp "$WORK/o3dv.js" "$ROOT/vendor/javascript/o3dv.js"
 
@@ -238,9 +278,9 @@ directory name and \`$LIB_BASE\` is baked into the bundle.
 
 | file | package | version | licence |
 |---|---|---|---|
-| \`occt-import-js.{js,wasm}\`, \`occt-import-js-worker.js\` | occt-import-js | $OCCT_VERSION | **LGPL-2.1** (\`license.occt-import-js.txt\`), wrapping OpenCASCADE (\`license.occt.txt\`) |
-| \`rhino3dm.min.js\`, \`rhino3dm.wasm\` | rhino3dm | $RHINO_VERSION | MIT |
-| \`draco_decoder_nodejs.js\`, \`draco_decoder.wasm\` | draco3d | $DRACO_VERSION | Apache-2.0 |
+| \`occt-import-js.{js,wasm}\`, \`occt-import-js-worker.js\` | occt-import-js | $OCCT_VERSION | **LGPL-2.1** (\`license.occt-import-js.txt\`), wrapping OpenCASCADE (\`license.occt.txt\`); where the source lives: \`source.occt-import-js.txt\` |
+| \`rhino3dm.min.js\`, \`rhino3dm.wasm\` | rhino3dm | $RHINO_VERSION | MIT, with the libraries it links (\`license.rhino3dm.txt\`) |
+| \`draco_decoder_nodejs.js\`, \`draco_decoder.wasm\` | draco3d | $DRACO_VERSION | Apache-2.0 (\`license.draco3d.txt\`) |
 
 **occt-import-js is the one LGPL thing this app ships to a browser** (STEP/IGES/BREP/FCStd). It is
 a separate file the browser fetches and runs on its own; nothing links against it and no part of
@@ -258,12 +298,24 @@ EOF
   printf 'The WebAssembly importers it loads at runtime are NOT in this file — they are separate\n'
   printf 'files under public/o3dv/%s/, with their own notices beside them (see the README\n' "$O3DV_VERSION"
   printf 'there). occt-import-js is LGPL-2.1 and is shipped, unmodified, as one of those files.\n\n'
+  cat <<NOTE
+three's VRMLLoader also brings in three's own prebuilt copy of chevrotain $CHEVROTAIN_VERSION (Apache-2.0,
+examples/jsm/libs/chevrotain.module.min.js), which carries regexp-to-ast $REGEXP_TO_AST_VERSION (MIT) and
+@chevrotain/utils (published from the chevrotain repository under the same LICENSE.txt). Both texts
+are from the npm tarballs of those versions. chevrotain's is the bare Apache-2.0 text with no
+copyright line; its package.json names $CHEVROTAIN_AUTHOR as author.
+
+NOTE
   printf -- '--- online-3d-viewer ---\n\n'
   cat "$PKG/LICENSE.md"
   printf '\n\n--- three.js (bundled) ---\n\n'
   cat "$WORK/node_modules/three/LICENSE" 2>/dev/null || printf 'MIT License, Copyright (c) 2010-2025 three.js authors\n'
   printf '\n\n--- fflate (bundled) ---\n\n'
   cat "$WORK/node_modules/fflate/LICENSE" 2>/dev/null || printf 'MIT License, Copyright (c) 2023 Arjun Barrett\n'
+  printf '\n\n--- chevrotain %s (bundled, through three) ---\n\n' "$CHEVROTAIN_VERSION"
+  cat "$NOTICES/chevrotain/package/LICENSE.txt"
+  printf '\n\n--- regexp-to-ast %s (bundled, inside chevrotain) ---\n\n' "$REGEXP_TO_AST_VERSION"
+  cat "$NOTICES/regexp-to-ast/package/LICENSE"
 } > "$ROOT/vendor/javascript/LICENSE-o3dv.md"
 
 SIZE=$(wc -c < "$ROOT/vendor/javascript/o3dv.js")
