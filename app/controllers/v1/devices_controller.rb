@@ -12,6 +12,16 @@ module V1
     # credentials, not a device token — so skip the Bearer gate here.
     skip_before_action :authenticate_device!, only: :login
 
+    # PER-IP, ON TOP OF Devise :lockable, which is per-ACCOUNT — the same numbers as the web
+    # login (users/sessions_controller.rb) so the two human-credential doors agree. Lockable stops
+    # 10 guesses at one address; this stops one guess each at ten thousand addresses, and it stops
+    # an attacker from locking a known account over and over (the lock also blocks web sign-in).
+    # It gates the ACTION, not just failures: a correct guess on attempt 11 is still refused.
+    # Counts in config.action_controller.cache_store (Solid Cache in production). Pinned by
+    # test/integration/v1/device_login_throttle_test.rb.
+    rate_limit to: 10, within: 3.minutes, only: :login,
+               with: -> { render json: { error: "too_many_attempts" }, status: :too_many_requests }
+
     # POST /v1/devices/login { email, password, device_name } -> a device token.
     # Authenticates the human credentials via Devise (confirmable + lockable enforced),
     # then mints a Device. One generic 401 for unknown/bad/unconfirmed/locked (no

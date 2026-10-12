@@ -68,14 +68,21 @@ module V1
 
     test "the account LOCKS after too many failed attempts (lockable)" do
       User.create!(email: "lock@example.com", password: PASSWORD, confirmed_at: Time.current)
-      # Devise maximum_attempts = 10 (config/initializers/devise.rb).
-      11.times { login(email: "lock@example.com", password: "wrong") }
+      # Devise maximum_attempts = 10 (config/initializers/devise.rb). Exactly 10, not 11: the
+      # per-IP throttle on this endpoint (device_login_throttle_test.rb) allows 10 attempts in its
+      # window, so an 11th would be answered 429 by the throttle before lockable ever saw it.
+      10.times { login(email: "lock@example.com", password: "wrong") }
       assert User.find_by(email: "lock@example.com").access_locked?,
              "account is locked after exceeding maximum_attempts"
-      # Even the CORRECT password is now refused while locked.
+      # Even the CORRECT password is now refused while locked. The throttle counter is cleared
+      # first so the 401 below is the LOCK's answer and not the throttle's 429 -- this test is
+      # about lockable; the throttle has its own file. The API's store, not Base's: each
+      # controller base class holds its own MemoryStore (test_helper.rb explains).
+      ActionController::API.cache_store.clear
       assert_no_difference -> { Device.count } do
         r = login(email: "lock@example.com", password: PASSWORD)
         assert_response :unauthorized
+        assert_equal "invalid_credentials", JSON.parse(r.body)["error"]
       end
     end
   end
