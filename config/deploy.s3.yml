@@ -42,6 +42,8 @@ env:
     # deploy.yml, which Kamal's deep_merge cannot delete. That env is gone (Arc D Part 2)
     # and nothing in this app reads the name any more, so there is nothing to neutralise.
     LIBRARY_BACKEND: s3
+    # Mail links carry this name (deploy.yml explains); must be one of the proxy hosts above.
+    APP_HOST: s3.tinkerex.home
     # 192.168.1.2, NOT .8, AND THE DIFFERENCE IS A WHOLE BACKEND. SeaweedFS is the `miniweeed`
     # container on Unraid's `br0`, a MACVLAN network whose IPAM allocates in container start order
     # and never consults DHCP, so the 2026-08-17 reboot moved it from .8 to .2 and put Redis on .8.

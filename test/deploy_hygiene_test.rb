@@ -15,11 +15,11 @@ class DeployHygieneTest < ActiveSupport::TestCase
 
   # The four Unraid destinations and the backend name each one's hostnames are built from. "remote"
   # (Arc D Task 2, LIBRARY_BACKEND=chunk_remote) joined chunk/share/s3 here the same way s3 once
-  # joined chunk/share — same host, own container, own proxy hostnames. OVH is absent on purpose: it
-  # sets no `proxy` block, so it INHERITS the base's (verified pre-existing — it read
-  # ["chunk.tinkerex.local"] before .home was added and ["chunk.tinkerex.local",
-  # "chunk.tinkerex.home"] after). That inheritance looks wrong for an internet-facing host with
-  # FORCE_SSL=1, but it is a separate question from this guard and predates it.
+  # joined chunk/share — same host, own container, own proxy hostnames. OVH is absent here because
+  # it is not an Unraid destination: it carries its OWN `proxy:` block (the public names and the
+  # Cloudflare origin certificate), pinned by "the internet-facing destination routes its public
+  # names" below. Until 2026-10-12 it declared none and INHERITED the base's chunk.tinkerex.*
+  # names, which is why www.tinkerex.com answered 525 at Cloudflare's edge.
   # THREE AGAIN, AND THE BASE ONE IS THE CHUNK-FAMILY DESTINATION. `remote` was a fourth entry
   # (Arc D Part 1, LIBRARY_BACKEND=chunk_remote beside embedded chunk); Part 2 retired embedded
   # chunk and folded remote into the base, so the base's hostnames are still `chunk.tinkerex.*` --
@@ -69,6 +69,56 @@ class DeployHygieneTest < ActiveSupport::TestCase
     assert_empty duplicates,
                  "two destinations registered the same proxy hostname: #{duplicates.inspect} — " \
                  "one box, one kamal-proxy, so the last deploy silently wins the name"
+  end
+
+  # The one internet-facing destination. Cloudflare (orange cloud, Full strict) terminates the
+  # visitor's TLS and opens a SECOND TLS connection to the origin, which succeeds only if
+  # kamal-proxy serves a certificate for that SNI — and Cloudflare intercepts the HTTP-01
+  # challenge, so kamal-proxy's own ACME can never mint one. The Cloudflare ORIGIN certificate
+  # (op://tinkerex/tinkerex-origin) is the only cert that works there, and it reaches the proxy
+  # through `proxy.ssl.certificate_pem` / `private_key_pem`, which name SECRETS (resolved from
+  # .kamal/secrets.ovh — the secrets test below requires both to be defined there).
+  PUBLIC_HOSTS = %w[tinkerex.com www.tinkerex.com].freeze
+
+  test "the internet-facing destination routes its public names with a custom certificate, never a LAN name" do
+    # Until 2026-10-12 the OVH overlay declared no `proxy:` block and INHERITED the base's
+    # chunk.tinkerex.{local,home} — kamal-proxy then routed only those names, so www.tinkerex.com
+    # answered 525 at Cloudflare's edge and a redeploy would have taken the apex down too.
+    # (docs/AUDIT-2026-10-12-readiness.md §0.)
+    require "kamal"
+    ovh = Kamal::Configuration.create_from(
+      config_file: ROOT.join("config/deploy.yml"), destination: "ovh"
+    ).proxy
+    assert_equal PUBLIC_HOSTS.sort, ovh.hosts.sort,
+                 "deploy.ovh.yml must carry its own `proxy: hosts:` list (kamal REPLACES arrays " \
+                 "on merge, so an overlay list wins; without one it inherits the LAN names)"
+    assert ovh.ssl?, "the public host must terminate TLS at kamal-proxy (Cloudflare Full strict)"
+    assert ovh.custom_ssl_certificate?,
+           "Cloudflare intercepts ACME, so `ssl: true` alone never gets a certificate — name the " \
+           "origin cert and key via ssl.certificate_pem / ssl.private_key_pem"
+
+    lan = UNRAID_DESTINATIONS.keys.flat_map { |destination| proxy_hosts(destination) }
+    assert_empty ovh.hosts & lan, "an internet-facing destination must not route a LAN-only name"
+  end
+
+  test "every destination names the host its mail links are built from, and kamal-proxy routes that name" do
+    # config/environments/production.rb builds confirmation and reset links from APP_HOST and
+    # falls back to a loud `.invalid` placeholder. Until 2026-10-12 NO destination set it, so the
+    # one link a new maker must click pointed nowhere on every box. Read off the MERGED config so
+    # an overlay that forgets it inherits the base's answer rather than passing on a nil — and
+    # require the name to be one the destination's proxy actually routes, so a link that is
+    # emitted can be followed.
+    require "kamal"
+    LIBRARY_DESTINATIONS.each do |destination|
+      config = Kamal::Configuration.create_from(
+        config_file: ROOT.join("config/deploy.yml"), destination: destination
+      )
+      host = at(config.raw_config, "env", "clear").to_h["APP_HOST"].to_s
+      assert host.present?, "#{destination || 'base'}: env.clear must set APP_HOST"
+      assert_includes config.proxy.hosts, host,
+                      "#{destination || 'base'}: APP_HOST=#{host} is not a name kamal-proxy routes " \
+                      "for that destination (#{config.proxy.hosts.inspect}) — a mail link to it 404s"
+    end
   end
 
   test "the sync accessory's device door registers BOTH names, publishes no port, and collides with no destination" do
@@ -133,34 +183,32 @@ class DeployHygieneTest < ActiveSupport::TestCase
     end
   end
 
-  test "no destination outside the LAN opens the unverified test-signup seam" do
-    # POST /v1/test/users mints CONFIRMED accounts with no email check (V1::TestUsersController), and
-    # on a share/s3 deployment every account is indexed the SAME library, so an open seam hands a
-    # stranger read/write/delete on the owner's files. deploy.yml sets it for the LAN-only Unraid
-    # box, and kamal DEEP-MERGES env.clear, so every overlay inherits it unless it blanks it. OVH did,
-    # for two months, on the one internet-facing host.
+  test "no committed destination opens the unverified test-signup seam" do
+    # POST /v1/test/users mints CONFIRMED accounts with no email check (V1::TestUsersController),
+    # answers `user_id` for an existing address with no password, and has no throttle. On a
+    # share/s3 deployment every account is indexed the SAME library, so an open seam hands a
+    # stranger read/write/delete on the owner's files. deploy.yml set it for the LAN-only Unraid
+    # box for a year, kamal DEEP-MERGES env.clear, and the one internet-facing overlay inherited it
+    # for two months. Since 2026-10-12 NO committed destination sets it: the seam is a deliberate,
+    # temporary opt-in for a harness run (`kamal env push` after exporting it, or a local
+    # `ENABLE_TEST_SIGNUP=1 bin/rails server`), never a standing property of a box — which is
+    # also what makes this fail-safe: a new destination is closed until someone opens it on purpose.
     #
-    # FAIL-SAFE BY CONSTRUCTION: the set checked is every destination EXCEPT the known LAN ones, so a
-    # new destination is required closed until someone argues it onto the LAN list -- not open until
-    # someone remembers. Read off the MERGED config (deep-merge reflected, not re-implemented), and
-    # `.to_s.blank?` rather than `.blank?`: the gate is ENV.present?, and kamal renders a YAML
-    # `false` as the string "false", which is present -- so `false` would read closed here and run open.
-    outside_lan = LIBRARY_DESTINATIONS - UNRAID_DESTINATIONS.keys
-    assert_includes outside_lan, "ovh", "the internet-facing destination fell out of the checked set"
-
+    # Read off the MERGED config (deep-merge reflected, not re-implemented), and `.to_s.blank?`
+    # rather than `.blank?`: the gate is ENV.present?, and kamal renders a YAML `false` as the
+    # string "false", which is present -- so `false` would read closed here and run open.
     require "kamal"
-    outside_lan.each do |destination|
+    LIBRARY_DESTINATIONS.each do |destination|
       clear = at(Kamal::Configuration.create_from(
         config_file: ROOT.join("config/deploy.yml"), destination: destination
       ).raw_config, "env", "clear").to_h
       # Non-vacuity: an absent key is CLOSED (nil.to_s is blank), so a raw_config shape change that
       # made every lookup nil would pass the real assertion over nothing.
       assert clear.key?("LIBRARY_BACKEND"),
-             "#{destination}: merged env.clear has no LIBRARY_BACKEND -- raw_config shape changed?"
+             "#{destination || 'base'}: merged env.clear has no LIBRARY_BACKEND -- raw_config shape changed?"
       assert clear["ENABLE_TEST_SIGNUP"].to_s.blank?,
-             "deploy.#{destination}.yml must set ENABLE_TEST_SIGNUP: \"\" -- merged with deploy.yml " \
-             "it resolves to #{clear['ENABLE_TEST_SIGNUP'].inspect}, which serves the unverified " \
-             "POST /v1/test/users signup to anyone who can reach that host"
+             "#{destination || 'base'} resolves ENABLE_TEST_SIGNUP=#{clear['ENABLE_TEST_SIGNUP'].inspect}: " \
+             "the unverified POST /v1/test/users signup would be open to anyone who can reach that host"
     end
   end
 

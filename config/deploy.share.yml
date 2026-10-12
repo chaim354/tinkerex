@@ -50,6 +50,8 @@ env:
     # and nothing in this app reads the name any more, so there is nothing to neutralise.
     LIBRARY_BACKEND: share
     LIBRARY_PATH: /library
+    # Mail links carry this name (deploy.yml explains); must be one of the proxy hosts above.
+    APP_HOST: share.tinkerex.home
     # Box Generator sidecar (the one `boxes` accessory booted by the default config), shared across
     # all three app deployments on this host via the kamal network.
     BOXES_SIDECAR_URL: http://tinkerex-boxes:8000
