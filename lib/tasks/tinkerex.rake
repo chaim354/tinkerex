@@ -14,7 +14,7 @@ namespace :tinkerex do
     email = args[:email].to_s.strip.downcase
     abort "usage: bin/rails tinkerex:owner[EMAIL]" if email.blank?
     abort "#{email} already exists — use tinkerex:password[EMAIL] to reset it" if User.exists?(email:)
-    pw = tinkerex_password!
+    pw = tinkerex_password.call
     User.create!(email:, password: pw, confirmed_at: Time.current)
     puts "created #{email} (confirmed)"
   end
@@ -23,7 +23,7 @@ namespace :tinkerex do
   task :password, [ :email ] => :environment do |_t, args|
     email = args[:email].to_s.strip.downcase
     u = User.find_by(email:) or abort "no account #{email.inspect}"
-    pw = tinkerex_password!
+    pw = tinkerex_password.call
     u.update!(password: pw, confirmed_at: u.confirmed_at || Time.current)
     puts "#{email} updated"
   end
