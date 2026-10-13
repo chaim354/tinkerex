@@ -97,5 +97,29 @@ module Maker
 
       assert_nil names_of(job)
     end
+
+    # AN OUTAGE IS SAID; A MISSING FILE IS NOT (F onboarding). Both answer nil, but only the store
+    # not answering raises the layout's banner flag (app/models/current.rb). The port's `read` is
+    # replaced to raise each condition in turn; Current is reset between them, as a request would be.
+    test "an unreachable store answers nil and raises the banner flag; a missing job raises nothing" do
+      dir = gerber_dir!(name: "pcb")
+      job = write_gerber!(name: "board.gbrjob", parent_node_id: dir.node_id,
+                          body: gerber_job("board.gtl"))
+
+      answers = [ FileLayer::FetchError, FileLayer::NotFound ].to_h do |error|
+        Current.reset
+        port = FileLayer.current
+        port.define_singleton_method(:read) { |_user, **_kw| raise error, "share not mounted" }
+        begin
+          assert_nil names_of(job), error.name
+        ensure
+          port.singleton_class.remove_method(:read)
+        end
+        [ error, Current.library_unreachable ]
+      end
+
+      assert answers[FileLayer::FetchError], "a FetchError did not raise the banner flag"
+      assert_nil answers[FileLayer::NotFound], "a NotFound raised the banner flag; nothing is down"
+    end
   end
 end

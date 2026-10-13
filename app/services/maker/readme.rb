@@ -91,7 +91,12 @@ module Maker
       # the project folder with the same arithmetic, so the two cannot drift.
       html = Maker::Markdown.render(text, &Maker::Markdown.folder_resolver(base_path, listing.path_index) { |id| link.call(id) })
       new(html:, note: (truncated ? "Showing the first #{CAP / 1024} KB of this README." : nil))
-    rescue FileLayer::NotFound, FileLayer::FetchError
+    # TWO ARMS, ONE NOTE. The store not answering is an outage the layout's banner names
+    # (app/models/current.rb); a README that is gone is not, so its arm raises nothing.
+    rescue FileLayer::FetchError
+      Current.library_unreachable = true
+      new(html: nil, note: "README unavailable.")
+    rescue FileLayer::NotFound
       new(html: nil, note: "README unavailable.")
     end
   end

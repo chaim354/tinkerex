@@ -8,7 +8,9 @@ module Maker
     # `Enqueue.current_preview?`, shared with `FilesController`'s two single-node doors.
     # If the backend is unreachable (FetchError), we return an empty map so callers show a spinner
     # /icon rather than 503-ing a page of maker data that does not depend on the file backend.
-    # That rescue also raises `Current.library_unreachable`, which the layout's banner reads.
+    # That rescue also raises `Current.library_unreachable`, which the layout's banner reads. It
+    # cannot fire in production today: `stat_all` is catalog-only on all three adapters
+    # (app/models/current.rb lists the setters that can).
     #
     # THIS IS THE ONE IMPLEMENTATION, and `FilesController` calls it rather than keeping its own.
     # It held the only copy of both rules below, which is how the Models page, the project covers

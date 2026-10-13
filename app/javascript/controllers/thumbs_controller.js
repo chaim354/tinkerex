@@ -119,14 +119,11 @@ export default class extends Controller {
     if (!thumb || thumb.querySelector(".thumb-icon")) return
     const icon = document.createElement("span")
     icon.className = "thumb-icon"
-    // Mirrors files/_thumb.html.erb's terminal branch — same title, same em-dash fallback for a
+    // Mirrors files/_thumb.html.erb's terminal branch — same titles (one for a failed render, one
+    // for an unsupported type), the same `thumb-failed` mark, the same em-dash fallback for a
     // cover cell with no extension. The two must agree: one of them renders on load and the other
     // replaces a spinner, and a user seeing both would otherwise get two different answers to
     // "why is there no picture".
-    //
-    // THE FAILED ARM HAS NO TWIN THERE YET. That partial renders a row that had ALREADY failed at
-    // page load through its one terminal branch ("Preview not supported", no mark), so until it
-    // grows a failed arm a failure only says so when it lands while the page is open.
     //
     // The mark is a class on the `.thumb` box, not on the cell: a cell can be a whole grid card or
     // table cell, and the mark belongs in the corner of the picture (components.css).
