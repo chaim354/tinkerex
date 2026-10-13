@@ -634,6 +634,9 @@ class FilesController < ApplicationController
     @note_count = current_user.maker_notes.where(node_id: @node.node_id).count
     @addon_origins = addon_origins_for([ @node.node_id ])
     @library_path = library_path_for(@node)
+    # RENAME OR MOVE IS NOT OFFERED INSIDE A GIT WORKING TREE (F) — #show's walk, asked here too, so
+    # the panel and the page hide the control for the same files #rename and #move refuse.
+    @repo_root = Library::WorkingTree.new(current_user).root_for(@node)
     render layout: false
   rescue FileLayer::NotFound
     render "inspector_gone", layout: false, status: :not_found
@@ -1002,6 +1005,101 @@ class FilesController < ApplicationController
     node = current_user.nodes.find_by!(node_id: params[:id])
     FileLayer.current.delete(current_user, node_id: node.node_id)
     redirect_to files_path, notice: "Deleted #{node.name}."
+  end
+
+  # FOLDERS ARE REFUSED BY #rename AND #move UNTIL Share#move REWRITES THE SUBTREE'S PATHS IN THE
+  # SAME CALL. Today it rewrites only the moved folder's own row: every node beneath keeps a stale
+  # storage_path until the next scan pairs it back (FileLayer::Subtree's header; §14a), so on share
+  # every file inside a renamed folder answers "File not found." until then, and nested folders come
+  # back from that scan under new node_ids. s3 refuses a folder move outright and chunk_remote's
+  # server moves the subtree whole — three answers to one click, the first of them wrong. Do not
+  # "simplify" the check away: lift it with that port change, as its own slice. Anything that is not
+  # a FILE is refused, a symlink included — the Library already lists one in the folder branch.
+  FOLDERS_NOT_YET = "Folders can't be renamed or moved from the browser yet.".freeze
+
+  # PATCH /files/:id/rename {name, return_to?} and PATCH /files/:id/move {parent_node_id, return_to?}
+  # — RENAME AND MOVE TO FOLDER, FROM THE BROWSER (F; user stories 1.3 and 4.7). Both are
+  # Maker::MoveNode, the one door that keeps the node_id (so every attachment, BOM link and tag
+  # survives) and that checks the source, the parent and the leaf's SHAPE. It raises Collision for
+  # a taken name before the port is asked — the one refusal a maker hits routinely, so it is
+  # answered as a sentence on the page they came from. FetchError and UnsupportedOperation keep this
+  # controller's mappings above (an unmounted share; a file on disk the catalog had not yet seen),
+  # the way every other port door here answers them.
+  #
+  # FILES ONLY, AND THAT REFUSAL COMES FIRST — FOLDERS_NOT_YET above says why.
+  #
+  # A NODE INSIDE A GIT WORKING TREE IS REFUSED HERE AS WELL AS HIDDEN IN THE VIEWS: bytes git owns
+  # never go through the port (docs/invariants/git-editing.md), and a rename git did not make reads
+  # to git as a deletion plus an untracked file. Hiding the form is the courtesy and this is the
+  # rule — the split #update keeps for its size cap.
+  #
+  # A RENAME MINTS A LEAF NAME, so it asks both halves of the door check §14b names: MoveNode's
+  # `leaf!` is the syntax half, and Library::ReservedNames is asked here. On share and s3 the port
+  # would refuse a reserved name too, but as a NotFound this controller turns into "File not found."
+  # about a file in plain sight; on chunk_remote nothing downstream refuses one at all.
+  def rename
+    node = current_user.nodes.present.find_by!(node_id: params[:id])
+    return redirect_to(rename_move_landing(node), alert: FOLDERS_NOT_YET) unless node.file?
+    if in_working_tree?(node)
+      return redirect_to(rename_move_landing(node), alert: "Files inside a repository are renamed in git, not here.")
+    end
+
+    # STRIPPED, as the New folder door strips (LibraryBrowseController#create_folder): a typed name
+    # with a stray space is a typo, not a name. BLANK IS REFUSED rather than handed on, because
+    # MoveNode reads a blank name as "keep the name" — right for a move, and for a rename a report
+    # of "Renamed" that changed nothing.
+    name = params[:name].is_a?(String) ? params[:name].strip : params[:name]
+    return redirect_to(rename_move_landing(node), alert: "Type the new name first.") if name.blank?
+    # `valid_leaf_name?` FIRST because ReservedNames is defined over leaves; a name that is not one
+    # is MoveNode's to refuse below, with its own reason.
+    if Maker::MoveNode.valid_leaf_name?(name) && Library::ReservedNames.reserved?(name)
+      return redirect_to(rename_move_landing(node),
+                         alert: "That name isn't allowed: #{name.inspect} is kept for the library's own files.")
+    end
+
+    Maker::MoveNode.call(current_user, node:, new_parent_node_id: node.parent_node_id, new_name: name)
+    redirect_to rename_move_landing(node), notice: "Renamed to #{node.name}."
+  rescue Maker::MoveNode::Collision
+    redirect_to rename_move_landing(node), alert: "Something named #{name} is already in this folder."
+  rescue Maker::MoveNode::InvalidName => e
+    redirect_to rename_move_landing(node), alert: "That name isn't allowed: #{e.message}."
+  end
+
+  # FILES ONLY, like #rename (FOLDERS_NOT_YET). That is also what keeps Maker::MoveNode's missing
+  # cycle guard out of reach: a file has no descendants to land under. The slice that lets a folder
+  # through owes MoveNode that guard (its header), measured here once already — without it share's
+  # rename() answers EINVAL, Share#move raises that as FetchError, and this controller maps it to the
+  # RETRYABLE "Couldn't reach your library", a retry that can never succeed.
+  def move
+    node = current_user.nodes.present.find_by!(node_id: params[:id])
+    return redirect_to(rename_move_landing(node), alert: FOLDERS_NOT_YET) unless node.file?
+    if in_working_tree?(node)
+      return redirect_to(rename_move_landing(node), alert: "Files inside a repository are moved in git, not here.")
+    end
+
+    # "" IS THE LIBRARY ROOT — the chooser's answer for it (lib/file_chooser.js), written into the
+    # hidden field by shared/_folder_field. A MISSING KEY IS NOT: Share#move's own header records
+    # that a nil parent cannot tell "move to the root" from "the caller forgot", and guessing the
+    # root sends the file to the top of the library. A non-String (`parent_node_id[]=x`) is refused
+    # with it, before it can reach a column as an Array.
+    raw = params[:parent_node_id]
+    return redirect_to(rename_move_landing(node), alert: "Choose a folder to move it to.") unless raw.is_a?(String)
+
+    parent_id = raw.presence
+    dest = parent_id && current_user.nodes.present.find_by(node_id: parent_id, kind: "dir")
+    if parent_id && dest.nil?
+      return redirect_to(rename_move_landing(node), alert: "That folder isn't in your library any more.")
+    end
+
+    Maker::MoveNode.call(current_user, node:, new_parent_node_id: parent_id)
+    redirect_to rename_move_landing(node), notice: "Moved #{node.name} to #{dest&.name || 'the library root'}."
+  rescue Maker::MoveNode::Collision
+    redirect_to rename_move_landing(node),
+                alert: "Something named #{node.name} is already in #{dest&.name || 'the library root'}."
+  rescue Maker::MoveNode::InvalidName => e
+    # The name is the node's OWN, so there is nothing to correct here; it is reachable on
+    # chunk_remote, where a device can sync a name (a backslash) no web door would mint.
+    redirect_to rename_move_landing(node), alert: "#{node.name} can't be moved here: #{e.message}."
   end
 
   # POST /files/rescan — trigger an immediate reconcile of a share/s3 library instead of waiting
@@ -1731,5 +1829,24 @@ class FilesController < ApplicationController
     return Maker::Git::History::DEFAULT_WALK_LIMIT if requested <= 0
 
     requested.clamp(1, Maker::Git::History::MAX_WALK_LIMIT)
+  end
+
+  # --- Rename and move (F) ------------------------------------------------------------------
+
+  # THE SAME WALK #show and #inspector make into `@repo_root`, which is what decides whether their
+  # views offer the control at all — so the views hide it for exactly the nodes these doors refuse.
+  def in_working_tree?(node) = Library::WorkingTree.new(current_user).in_working_tree?(node)
+
+  # WHERE A RENAME OR MOVE LANDS, whichever way it went. `return_to` IS AN ALLOWLISTED FLAG, NOT A
+  # URL — the attach control's rule (Projects::AttachmentsController#attach_redirect_path), so it
+  # cannot become an open redirect. "library" is the inspector: back to the Library at the folder
+  # the file is in NOW (MoveNode reloads the node it moved), selected so its panel reopens on the
+  # result; otherwise the file's own page. A FOLDER (refused, FOLDERS_NOT_YET) has no file page, so
+  # it lands in the listing that shows it, the one its refusal is about.
+  def rename_move_landing(node)
+    return files_path(folder: node.parent_node_id) unless node.file?
+    return files_path(folder: node.parent_node_id, selected: node.node_id) if params[:return_to] == "library"
+
+    file_path(node.node_id)
   end
 end

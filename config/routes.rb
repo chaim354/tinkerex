@@ -123,6 +123,8 @@ Rails.application.routes.draw do
            constraints: { oid: /[0-9a-f]{7,40}/ }
       post "restore/:oid",  to: "files#restore",      as: :restore,
            constraints: { oid: /[0-9a-f]{7,40}/ }
+      patch "rename"
+      patch "move"
     end
   end
 
@@ -197,10 +199,12 @@ Rails.application.routes.draw do
     get :preview, on: :member
     resources :attachments, only: %i[new create destroy], module: :projects, shallow: true do
       # Finish an attach whose auto-move hit a name collision: move the file in under a new name.
-      # DELIBERATELY SCOPED TO THE PROJECT rather than a general POST /files/:id/move — the
-      # conflict flow needs a move endpoint either way, and this one can only ever move a file
-      # into the named project's own folder. A general move is a larger web surface than any
-      # feature here wants. `on: :collection` keeps it nested despite `shallow: true`.
+      # SCOPED TO THE PROJECT, and still its own door now that general ones exist: this one can only
+      # ever move a file into the named project's own folder, which is the whole of the conflict
+      # prompt's job. The general doors are the files member routes PATCH /files/:id/rename and
+      # PATCH /files/:id/move (F) — both Maker::MoveNode and both FILE-ONLY: a folder is refused
+      # until Share#move rewrites a subtree's paths, FilesController::FOLDERS_NOT_YET says why.
+      # `on: :collection` keeps it nested despite `shallow: true`.
       post :relocate, on: :collection
     end
     resources :build_log_entries, only: %i[create destroy], module: :projects, shallow: true
