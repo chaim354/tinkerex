@@ -212,6 +212,24 @@ class DeployHygieneTest < ActiveSupport::TestCase
     end
   end
 
+  test "no committed destination opens registration on a single-library backend" do
+    # Tinkerex::Registration refuses REGISTRATION=open at boot on share and s3 (every account
+    # indexes the same library). This pins the same rule one step earlier, on the MERGED deploy
+    # config, so the refusal is never first discovered as a crash loop on the box.
+    require "kamal"
+    LIBRARY_DESTINATIONS.each do |destination|
+      clear = at(Kamal::Configuration.create_from(
+        config_file: ROOT.join("config/deploy.yml"), destination: destination
+      ).raw_config, "env", "clear").to_h
+      assert clear.key?("LIBRARY_BACKEND"), "#{destination || 'base'}: raw_config shape changed?"
+      next unless %w[share s3].include?(clear["LIBRARY_BACKEND"].to_s)
+
+      assert_not_equal "open", clear["REGISTRATION"].to_s,
+                       "#{destination || 'base'} runs LIBRARY_BACKEND=#{clear['LIBRARY_BACKEND']} and sets " \
+                       "REGISTRATION=open: every account there indexes the same library"
+    end
+  end
+
   test "every GPL sidecar image carries its own licence text" do
     # CLAUDE.md §9: we build these images and push them to a registry, which is REDISTRIBUTION —
     # so the licence has to be INSIDE the image, not merely beside the Dockerfile in this repo.
