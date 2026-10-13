@@ -83,7 +83,12 @@ module Maker
         return [ nil, [], local.refusal ] unless local.refusal.nil?
 
         [ local.head_summary, local.tags_at_head, nil ]
-      rescue Rugged::Error, Rugged::OSError, FileLayer::NotFound, FileLayer::FetchError => e
+      # The store not answering is an outage the layout's banner names (app/models/current.rb); a
+      # missing folder or a git error is not, so that arm raises nothing. Same sentence from both.
+      rescue FileLayer::FetchError => e
+        Current.library_unreachable = true
+        [ nil, [], "History unavailable (#{e.class.name.demodulize})." ]
+      rescue Rugged::Error, Rugged::OSError, FileLayer::NotFound => e
         [ nil, [], "History unavailable (#{e.class.name.demodulize})." ]
       end
     end

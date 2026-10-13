@@ -21,18 +21,23 @@
   after its project went private, so `url_for` is refused in this file by the Public seam guard's
   third arm (test/architecture_invariants_test.rb) — pass it in, never derive it.
 %>
-<span class="thumb<%= " photo" if photo %>" data-thumbs-target="thumb">
+<% failed = thumb&.status == "failed" %>
+<span class="thumb<%= " photo" if photo %><%= " thumb-failed" if failed %>" data-thumbs-target="thumb">
   <% if thumb&.status == "ready" && thumb.asset.attached? %>
     <img src="<%= url %>" alt="" loading="lazy">
   <% elsif thumb.nil? || %w[pending processing].include?(thumb&.status) %>
     <span class="thumb-spinner" aria-hidden="true"></span>
   <% else %>
-    <%# THE TERMINAL STATE: unsupported, failed, or no row at all. It SAYS SO rather than showing a
-        bare badge — a cover card passes `ext_label: ""`, so this rendered an empty box that read
-        as "still loading" next to a real spinner. `title` is what a hover reveals; the badge text
-        stays the extension where there is one, because that is the more useful glance. Not
-        aria-hidden any more: the label is the only thing telling a screen reader this file has no
-        preview, and hiding it left nothing at all. %>
-    <span class="thumb-icon" title="Preview not supported"><%= ext_label.presence || "—" %></span>
+    <%# THE TERMINAL STATE: unsupported, failed, or a ready row whose asset is gone. It SAYS SO
+        rather than showing a bare badge — a cover card passes `ext_label: ""`, so this rendered an
+        empty box that read as "still loading" next to a real spinner. `title` is what a hover
+        reveals; the badge text stays the extension where there is one, because that is the more
+        useful glance. Not aria-hidden any more: the label is the only thing telling a screen
+        reader this file has no preview, and hiding it left nothing at all.
+
+        A FAILED RENDER IS NOT AN UNSUPPORTED TYPE, AND SAYS WHICH (F onboarding): the
+        `thumb-failed` mark on the box above and its own title. thumbs_controller.js#setIcon gives
+        a failure that lands while the page is open the same class and title, so the two agree. %>
+    <span class="thumb-icon" title="<%= failed ? "Preview couldn't be rendered" : "Preview not supported" %>"><%= ext_label.presence || "—" %></span>
   <% end %>
 </span>
