@@ -236,6 +236,12 @@
 
 <aside class="workspace-side" aria-label="About this file">
 <%= render "files/meta", info: @info, addon_origin: addon_origin, library_path: @library_path %>
+<%# RENAME OR MOVE, under the facts it changes rather than in the page head: an open composer there
+    would stretch the head's row of buttons. Not inside a git working tree, by the same @repo_root
+    the banner and History read; FilesController#rename and #move refuse one anyway. %>
+<% unless @repo_root %>
+  <%= render "files/rename_move", node: @node, library_path: @library_path, return_to: "file" %>
+<% end %>
 <%= render "files/attach", node: @node, attached_projects: @attached_projects, projects: @projects,
                            return_to: "file" %>
 

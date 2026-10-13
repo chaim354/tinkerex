@@ -35,6 +35,12 @@
 
   <%= render "files/meta", info: @info, addon_origin: addon_origin, library_path: @library_path %>
 
+  <%# Not inside a git working tree: FilesController#inspector's @repo_root, the walk #rename and
+      #move refuse on. `return_to: "library"` brings the maker back here, file selected. %>
+  <% unless @repo_root %>
+    <%= render "files/rename_move", node: @node, library_path: @library_path, return_to: "library" %>
+  <% end %>
+
   <% if addon_origin %>
     <p class="inspector-origin">
       <span class="group-head">Made with</span>

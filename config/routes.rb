@@ -123,6 +123,8 @@ Rails.application.routes.draw do
            constraints: { oid: /[0-9a-f]{7,40}/ }
       post "restore/:oid",  to: "files#restore",      as: :restore,
            constraints: { oid: /[0-9a-f]{7,40}/ }
+      patch "rename"
+      patch "move"
     end
   end
 
