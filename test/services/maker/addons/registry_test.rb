@@ -425,11 +425,13 @@ module Maker
           addon = Registry.find("generators")
           assert_not_nil addon, "the addon must still be listed, exactly as a too-new one is"
           assert_not addon.available?
-          # BOTH the service and the env var. "Not configured on this deployment" was the fixed
-          # label this whole method exists to replace; an operator needs to know WHICH variable to
-          # set, and an addon with two sidecars makes the bare sentence ambiguous in the old way.
-          assert_match(/boxes/, addon.unavailable_reason)
-          assert_match(/BOXES_SIDECAR_URL/, addon.unavailable_reason)
+          # THE SERVICE, IN THE MAKER'S WORDS, AND NOT THE ENV VAR (onboarding, 2026-10-13).
+          # "Not configured on this deployment" was the fixed label this whole method exists to
+          # replace, and an addon with two sidecars makes the bare sentence ambiguous in the old
+          # way, so WHICH service is still named. The variable is the operator's and moved to the
+          # Help page's operator section; the card is read by someone who cannot set it.
+          assert_equal "Needs the boxes service, which this server doesn't run", addon.unavailable_reason
+          assert_no_match(/SIDECAR_URL/, addon.unavailable_reason)
         end
       end
 
@@ -473,7 +475,7 @@ module Maker
           addon = Registry.find("generators")
           assert_not addon.available?
           assert_match(/openscad/, addon.unavailable_reason)
-          assert_match(/OPENSCAD_SIDECAR_URL/, addon.unavailable_reason)
+          assert_no_match(/boxes/, addon.unavailable_reason, "the configured sibling was named instead")
         end
       end
 

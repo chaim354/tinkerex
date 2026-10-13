@@ -35,7 +35,8 @@ module Maker
     #
     # `rescue JSON::ParserError` BESIDE THE PORT'S OWN TWO, NEVER A BARE `rescue`: a job file is
     # user data and malformed JSON is routine, but a NoMethodError in this method is a bug and must
-    # stay loud.
+    # stay loud. FetchError has an arm of its own because it is the one failure that is an OUTAGE:
+    # it also raises the layout's banner (app/models/current.rb), and the answer is still nil.
     def self.job_layer_names(user:, node:)
       return nil if node.size.to_i > READ_LIMIT
 
@@ -47,7 +48,10 @@ module Maker
         File.basename(entry["Path"].to_s) if entry.is_a?(Hash) && entry["Path"].present?
       end
       names.any? ? names.to_set : nil
-    rescue FileLayer::NotFound, FileLayer::FetchError, JSON::ParserError
+    rescue FileLayer::FetchError
+      Current.library_unreachable = true
+      nil
+    rescue FileLayer::NotFound, JSON::ParserError
       nil
     end
   end

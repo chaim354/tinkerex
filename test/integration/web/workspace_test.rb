@@ -38,14 +38,16 @@ module Web
       assert_select ".workspace .page-head", count: 0
     end
 
-    # The side column reads facts, projects, connections, notes — outward-in, the order the page
-    # already had. A project exists so the attach block renders at all (it is absent with none).
-    test "the side column holds its four blocks in order" do
+    # The side column reads facts, the rename/move composer under the facts it changes (F,
+    # 2026-10-13 — a file outside a git working tree only), projects, connections, notes —
+    # outward-in, the order the page already had. A project exists so the attach block renders at
+    # all (it is absent with none).
+    test "the side column holds its five blocks in order" do
       @user.maker_projects.create!(name: "Shop Stool")
 
       get file_path(@file.node_id)
       side = css_select(".workspace-side > *").map { |el| el["class"].to_s.split.first }
-      assert_equal %w[meta attach-to-project connections-panel notes-panel], side
+      assert_equal %w[meta rename-move attach-to-project connections-panel notes-panel], side
     end
 
     test "the breadcrumb walks to the file's folder and that link reselects the file" do

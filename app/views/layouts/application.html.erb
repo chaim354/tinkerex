@@ -26,6 +26,11 @@
   </head>
 
   <body class="<%= body_classes %>">
+    <%# THE FIRST ELEMENT IN BODY ON BOTH BRANCHES: a keyboard user's first Tab lands here and jumps
+        past the rail and the top bar to main#main, which both main elements below carry
+        (skip_link_test.rb). Hidden above the viewport until focused; positioned absolutely, so it
+        never takes a cell of body.app-shell's grid (components.css). %>
+    <a href="#main" class="skip-link">Skip to content</a>
     <%# `shell_signed_in?`, not `user_signed_in?` — a PUBLIC page (Public::BaseController, stage 3,
         S3-4) renders the visitor's shell even for its signed-in owner, because what a maker wants
         from their own public URL is an honest preview of what a visitor sees. %>
@@ -36,7 +41,11 @@
         <%= render "layouts/flash" %>
         <%# Pages that need the full width opt in with content_for :container_class, "container-wide"
             (the addon host page does, from its manifest). Inert everywhere else. %>
-        <main class="container <%= content_for(:container_class) %>">
+        <main id="main" class="container <%= content_for(:container_class) %>">
+          <%# Renders nothing unless this request's port call failed (the partial decides). Signed-in
+              only: a visitor is never told about the owner's storage, and a Public:: controller
+              has no `capabilities` helper to name a cause with. %>
+          <%= render "layouts/library_unreachable" %>
           <%= yield %>
         </main>
       </div>
@@ -51,7 +60,7 @@
           class: a PUBLIC page (stage 3, S3-4) renders on this same anonymous branch and needs the
           full width the signed-in pages get. A page opts out by naming its own container class;
           anything that names none — every Devise page — keeps exactly the auth card's layout. %>
-      <main class="container <%= content_for(:container_class).presence || "auth-main" %>">
+      <main id="main" class="container <%= content_for(:container_class).presence || "auth-main" %>">
         <%= yield %>
       </main>
     <% end %>

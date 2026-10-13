@@ -94,10 +94,15 @@
     </button>
     <span class="rail-user" title="<%= current_user.email %>"><%= current_user.email %></span>
     <%# ICONS ONLY IN THE COLLAPSED RAIL (and below 1100px), where shell.css hides each
-        `.rail-btn span` — so a foot control's NAME cannot live in its span alone: Settings and
-        Sign out carry `aria-label` for a screen reader, as Theme and Collapse already did, and
+        `.rail-btn span` — so a foot control's NAME cannot live in its span alone: Help, Settings
+        and Sign out carry `aria-label` for a screen reader, as Theme and Collapse already did, and
         `title` for a pointer. Sign out was a bare-text `button_to` with no span to hide, and in
-        the 40px button it wrapped onto two lines (slice 7; shell_test.rb measures it). %>
+        the 40px button it wrapped onto two lines (slice 7; shell_test.rb measures it).
+        Help sits beside Settings and lights on its own page the same way (onboarding, 2026-10-13). %>
+    <%= link_to help_path, class: "rail-btn rail-help", title: "Help", "aria-label": "Help",
+                "aria-current": (sidebar_current == [ :help ] ? "page" : nil) do %>
+      <%= rail_icon(:help) %><span>Help</span>
+    <% end %>
     <%= link_to settings_path, class: "rail-btn rail-settings", title: "Settings", "aria-label": "Settings",
                 "aria-current": (sidebar_current == [ :settings ] ? "page" : nil) do %>
       <%= rail_icon(:settings) %><span>Settings</span>

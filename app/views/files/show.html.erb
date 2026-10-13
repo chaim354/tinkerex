@@ -236,6 +236,13 @@
 
 <aside class="workspace-side" aria-label="About this file">
 <%= render "files/meta", info: @info, addon_origin: addon_origin, library_path: @library_path %>
+<%# RENAME OR MOVE, under the facts it changes rather than in the page head: an open composer there
+    would stretch the head's row of buttons. FILES ONLY, and not inside a git working tree (the same
+    @repo_root the banner and History read): exactly what FilesController#rename and #move accept,
+    since a folder reached by its URL renders this page too (FilesController::FOLDERS_NOT_YET). %>
+<% if @node.file? && @repo_root.nil? %>
+  <%= render "files/rename_move", node: @node, library_path: @library_path, return_to: "file" %>
+<% end %>
 <%= render "files/attach", node: @node, attached_projects: @attached_projects, projects: @projects,
                            return_to: "file" %>
 

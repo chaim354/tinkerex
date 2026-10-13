@@ -29,9 +29,10 @@ module Maker
       #
       # `tr("-", "_")` because a service name is manifest-supplied and may be kebab-case (the test
       # fixture's `fixture-svc` is), while an env var cannot carry a hyphen portably. Exposed rather
-      # than kept private: `unavailable_reason` NAMES this key in the sentence it shows an operator,
-      # and a greying message that says "configure the service" without saying which variable sends
-      # them hunting through config/deploy.yml.
+      # than kept private so there is ONE derivation to cite: until F (2026-10-13) `unavailable_reason`
+      # named this key in the greyed card; the card now speaks to the maker and names only the
+      # SERVICE, and the variable reaches the operator through Help's collapsed "for the person
+      # running this server" section and docs/INSTALL.md instead.
       def env_key_for(name) = "#{name.to_s.upcase.tr('-', '_')}_SIDECAR_URL"
 
       # -> the configured base URL, or nil. `.presence` because Kamal's `env.clear` blanks a key

@@ -13,13 +13,36 @@
     is /files?selected=… (files/show.html.erb relies on the same). A wrapping grid, not a row that
     scrolls sideways: sixteen tiles are a page of their own, and pages/home.css wraps them.
 
-    THE ONE EMPTY STATE ON THIS PAGE. With no files it points at the top bar's Upload rather than
-    rendering a second upload control, which would duplicate the input's id and the accent. %>
-<section class="panel home-section home-files">
-  <div class="panel-head"><h2>Recently changed</h2><%= link_to "Library", files_path, class: "muted" %></div>
-  <% if @recent_files.empty? %>
-    <p class="empty home-empty">No files yet. Upload, in the top bar, puts your first one in the folder you choose.</p>
-  <% else %>
+    GETTING STARTED IN ITS PLACE WHILE THERE IS NO LIVE FILE (F onboarding, 2026-10-13), and it is
+    the one empty state on this page. `@recent_files.empty?` is exactly "no live, visible file"
+    (HomeController#index), so the panel leaves on its own once a file exists: no cookie, no
+    dismissal row, nothing stored. It replaces the Recently changed panel rather than sitting inside
+    it, which would frame a panel inside a panel around nothing. Its first two steps are the shared
+    partial's two halves, so they say what the Library's and the Projects page's empty states say.
+    It points at the top bar's Upload rather than rendering a second upload control, which would
+    duplicate the input's id and the accent; nothing in it is accent (design-system.md rule 13). %>
+<% if @recent_files.empty? %>
+  <section class="panel home-section getting-started">
+    <div class="panel-head"><h2>Getting started</h2><%= link_to "Help explains all of this", "/help", class: "muted" %></div>
+    <ol class="getting-started-steps">
+      <li>
+        <h3>Bring your files in</h3>
+        <%= render "shared/where_files_come_from", projects: false %>
+      </li>
+      <li>
+        <h3>Let your folders become projects</h3>
+        <%= render "shared/where_files_come_from", sources: false %>
+      </li>
+      <li>
+        <h3>Make things with Tools</h3>
+        <p>Tools are small apps that run inside Tinkerex, such as a box generator, and save what
+          they make straight into your library. <%= link_to "Open Tools", tools_path %></p>
+      </li>
+    </ol>
+  </section>
+<% else %>
+  <section class="panel home-section home-files">
+    <div class="panel-head"><h2>Recently changed</h2><%= link_to "Library", files_path, class: "muted" %></div>
     <div class="recent-grid" data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
       <% @recent_files.each do |node| %>
         <% ext_label = File.extname(node.name).delete(".").upcase.first(4) %>
@@ -39,10 +62,10 @@
         <% end %>
       <% end %>
     </div>
-  <% end %>
-</section>
+  </section>
+<% end %>
 
-<%# ACTIVE PROJECTS, ONLY WHEN THERE ARE ANY: an empty account has one empty state, the files one above. %>
+<%# ACTIVE PROJECTS, ONLY WHEN THERE ARE ANY: an empty account has one empty state, the getting-started panel above. %>
 <% if @recent_projects.any? %>
   <section class="panel home-section home-projects">
     <div class="panel-head"><h2>Active projects</h2><%= link_to "All projects", projects_path, class: "muted" %></div>

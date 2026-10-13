@@ -97,10 +97,11 @@ module Projects
       # kind: "file" IS A GUARD, NOT A FILTER. #create reaches the move behind the service's own
       # `node.file?` rule, but here BOTH ids come from the request — and Maker::MoveNode
       # deliberately has no cycle check (see its header). A crafted node_id naming a DIRECTORY would
-      # move a dir under its own descendant on share and chunk (s3 alone refuses it, via
-      # movable_file!), and a cycle in `nodes` makes the WITH RECURSIVE walk in Sync::Search spin
-      # unboundedly — fatal on SQLite, which has no statement timeout. Same hazard
-      # V1::NodesController#move spends would_create_cycle? on; a project folder only ever holds
+      # move a dir under its own descendant on share and chunk_remote (s3 alone refuses it, via
+      # movable_file!), and a cycle in `nodes` makes an unbounded tree walk spin — fatal on SQLite,
+      # which has no statement timeout (the walks here are depth-capped or cycle-guarded for exactly
+      # this reason: ProjectIntake's cap, Maker::LibraryTree#path_for). The web rename/move doors
+      # refuse directories too (FilesController::FOLDERS_NOT_YET); a project folder only ever holds
       # files, so refusing is cheaper than detecting. (The service answers :not_a_file for the same
       # input; this stops it a query earlier and with the plainer sentence.)
       #

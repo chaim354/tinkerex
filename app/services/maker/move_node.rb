@@ -38,11 +38,18 @@ module Maker
   #
   # WHAT THIS DOES NOT CHECK, stated so it is not mistaken for covered: a CYCLE — moving a
   # directory under one of its own descendants. Every caller today moves a FILE (a file has no
-  # descendants, so it cannot be its own ancestor), which is why the guard is absent rather than
-  # forgotten. The first caller that can pass a `dir` must bring one: V1::NodesController#move has
-  # `would_create_cycle?`, and the reason it is not optional there is that an uncaught cycle makes
-  # the WITH RECURSIVE search CTE spin unboundedly — fatal on SQLite, which has no statement
-  # timeout.
+  # descendants, so it cannot be its own ancestor): Maker::AttachToProject and
+  # Maker::ProjectIntake#place file files, and FilesController#rename/#move refuse anything that is
+  # not one before they reach here (FilesController::FOLDERS_NOT_YET). That is why the guard is
+  # absent rather than forgotten. The first caller that can pass a `dir` must bring one — a walk UP
+  # from the new parent by `parent_node_id` that refuses on meeting the moved node, with a seen-set
+  # so a cycle already in the catalog ends the walk (the sync server keeps the same walk on its own
+  # move door). It is not optional: `parent_node_id` has no constraint against a cycle, every tree
+  # walk here is capped for exactly that reason (FileLayer::Subtree, Library::WorkingTree,
+  # Maker::LibraryTree), and a capped walk over a cycle does not hang — it stops and answers wrong.
+  # (On share, rename() itself refuses one with EINVAL, which Share#move raises as the RETRYABLE
+  # FetchError — the wrong answer for a move that can never succeed; measured once, by the slice
+  # that added the browser doors.)
   class MoveNode
     # A live node already holds the destination name. The caller decides what to do about it —
     # the attach flow turns it into the "rename or leave it" prompt.

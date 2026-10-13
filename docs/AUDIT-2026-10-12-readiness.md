@@ -208,6 +208,22 @@ see the install-path audit's tables, reproduced in §5 below.
 
 ### 2.3 The web app itself (a stranger's first hour)
 
+**Fixed by sub-project F (`docs/superpowers/plans/2026-10-13-f-onboarding.md`, 2026-10-13):** items 1
+(the Projects page, the Files page's project-folder line and Help say what a `Projects/` folder becomes
+and that loose root files are filed, before anything moves), 2 (one partial, branching on the port's
+capabilities, names every way a file arrives on the deployed backend — Upload, the folder or bucket with
+its 15-minute scan and Rescan, the desktop app — in the Home, Files and Projects empty states; Home's is
+a getting-started panel that disappears once a file exists), 3 (a session-authed `/help` page reached
+from the rail; the Tools page speaks to the maker and the environment-variable names sit behind a
+collapsed operator line — the error pages, manifest and locale were G's), 4 (Rename and Move to folder
+for FILES from the inspector and the file page, folders deliberately refused until `Share#move` rewrites
+a subtree's paths in the same call; a failed preview carries a mark and its own title; an unreachable
+library is said by one banner the layout renders when a `FetchError` was rescued into degraded output —
+**worse than recorded here**: the thumbnail degrade in `page_nodes.rb` can never fire, `stat_all` is
+catalog-only on all three adapters, so the flag is set at the README, repo-card, Gerber-set and
+3MF-manifest readers, the places that really read the store during a render), and 7 (a skip link to
+`main#main`). Still open: 5 (story 4.6 needs its own spec) and 6 (collections and items have no web UI).
+
 1. **Silent file moves are explained only after the fact.** The intake sweep files loose files and discovery
    turns `Projects/<folder>` into projects (`docs/invariants/project-intake.md`); the only user-facing
    sentences are post-hoc (`projects/_attachments.html.erb:44,104`; `settings/filing_rules/index.html.erb:8-11`).

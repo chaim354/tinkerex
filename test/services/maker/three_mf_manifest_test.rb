@@ -259,6 +259,29 @@ module Maker
       assert_nil ThreeMfManifest.for(user: @user, node:)
     end
 
+    # AN OUTAGE IS SAID; A MISSING FILE IS NOT (F onboarding). Both answer nil, but only the store
+    # not answering raises the layout's banner flag (app/models/current.rb). The port's `read` is
+    # replaced to raise each condition in turn; Current is reset between them, as a request would be.
+    # The test cache is the null store, so each `for` really reaches `read`.
+    test "an unreachable store answers nil and raises the banner flag; a missing package raises nothing" do
+      node = write_threemf!
+
+      answers = [ FileLayer::FetchError, FileLayer::NotFound ].to_h do |error|
+        Current.reset
+        adapter = FileLayer.current
+        adapter.define_singleton_method(:read) { |_user, **_kw| raise error, "share not mounted" }
+        begin
+          assert_nil ThreeMfManifest.for(user: @user, node:), error.name
+        ensure
+          adapter.singleton_class.remove_method(:read)
+        end
+        [ error, Current.library_unreachable ]
+      end
+
+      assert answers[FileLayer::FetchError], "a FetchError did not raise the banner flag"
+      assert_nil answers[FileLayer::NotFound], "a NotFound raised the banner flag; nothing is down"
+    end
+
     # --- the bound ---------------------------------------------------------------
 
     # THE SIZE CHECK IS ON THE CATALOG'S OWN COLUMN, so an oversized package costs NO READ — and a

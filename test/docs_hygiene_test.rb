@@ -65,7 +65,7 @@ class DocsHygieneTest < ActiveSupport::TestCase
   # LOWERED 1,364 -> 1,363 ON 2026-10-09 (redesign slice 7): dropping the retired current-project
   # columns removed §14e's parenthetical about user.rb's stale comment, one line, and a ratchet banks
   # nothing.
-  MAX_LINES = 1_363
+  MAX_LINES = 1_362
 
   test "CLAUDE.md stays under its line ceiling" do
     lines = CLAUDE_MD.readlines.size

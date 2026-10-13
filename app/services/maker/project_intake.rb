@@ -142,7 +142,8 @@ module Maker
 
     # How deep the tree walks go before giving up. A project folder is shallow; this is a backstop
     # against a CYCLE in `nodes`, which makes an unbounded walk spin — fatal on SQLite, which has
-    # no statement timeout (the same hazard V1::NodesController#move spends would_create_cycle? on).
+    # no statement timeout (the hazard that makes Maker::MoveNode's header charge the first caller
+    # that moves a DIRECTORY with bringing a cycle guard; no caller in this repo does yet).
     #
     # THE TRADE-OFF: this bound cannot tell a cycle from a genuinely deep, cycle-free tree. A
     # project folder is not expected to nest 32 levels — but if one somehow does, files past the

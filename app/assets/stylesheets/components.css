@@ -324,6 +324,19 @@
   /* A user's PHOTO on a tile: the neutral matte and a crop, never letterboxed in white. */
   .thumb.photo { background: var(--photo-stage); }
   .thumb.photo img { object-fit: cover; }
+  /* A FAILED RENDER KEEPS ITS TYPE ICON AND GAINS A MARK, so "no preview for this type" and "the
+     render failed" stop looking identical (F onboarding). thumbs_controller.js adds the class, with
+     the icon's title, when the poll answers `failed`; an unsupported file gets neither. A STATE OF
+     THE COMPONENT, so it lives here and not in a page sheet: the poll runs on Recent, Projects, the
+     project page and the model pages as well as the Library. The mark is a glyph, not colour alone
+     (design-system.md rule 13), painted in the stage's own pair, `--thumb-ink` and `--thumb-stage`,
+     which do not flip (rule 5), so it reads the same in both themes. The second `content` hides the
+     glyph from a screen reader where the alt syntax is understood; the title carries the words. */
+  .thumb.thumb-failed::after {
+    content: "!"; content: "!" / "";
+    position: absolute; top: 3px; right: 3px; display: grid; place-items: center; width: 14px; height: 14px;
+    border-radius: var(--radius-pill); background: var(--thumb-ink); color: var(--thumb-stage); font: 700 10px/1 var(--font-ui);
+  }
   /* The folder glyph (ShellHelper#folder_glyph): the rail's `files` icon, inline beside a name. */
   .folder-glyph, .file-glyph { width: 16px; height: 16px; flex: 0 0 auto; vertical-align: -3px; }
   .filechooser-row .folder-glyph, .filechooser-row .file-glyph { margin-right: 6px; }
@@ -575,5 +588,25 @@
   @media (max-width: 640px) {
     .filechooser-col { flex-basis: 100%; }
     .filechooser-col:not(:last-child) { display: none; }
+  }
+
+  /* --- Shell: the skip link and the unreachable-library banner (F onboarding, 2026-10-13) --- */
+  /* THE SKIP LINK is the first element in <body> (layouts/application.html.erb) and jumps to
+     main#main. ABSOLUTELY POSITIONED, so it takes no cell of body.app-shell's grid and the rail
+     keeps the first column; translated above the viewport until it has focus. `:focus` rather than
+     `:focus-visible`, so it shows for any focus that lands on it. */
+  .skip-link {
+    position: absolute; top: var(--space-2); left: var(--space-2); z-index: 100;
+    padding: var(--space-2) var(--space-3); border: 1px solid var(--line-strong); border-radius: var(--radius-control);
+    background: var(--surface); color: var(--fg); font: 500 14px/20px var(--font-ui); white-space: nowrap;
+    transform: translateY(-200%);
+  }
+  .skip-link:focus { transform: none; text-decoration: none; }
+  /* THE BANNER (layouts/_library_unreachable) sits INLINE at the top of main. It is not a `.flash`:
+     only the flash stack floats (rule 10). It leads with its words in <strong>, so the warn tone is
+     never the only signal (rule 13). */
+  .library-unreachable {
+    margin: 0 0 var(--space-4); padding: 10px 12px; border: 1px solid var(--warn); border-radius: var(--radius-panel);
+    background: var(--warn-soft); color: var(--fg); font-size: 14px; overflow-wrap: anywhere;
   }
 }

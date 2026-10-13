@@ -93,9 +93,15 @@ module Maker
       end
     end
 
+    # The store not answering is an outage the layout's banner names (app/models/current.rb); a file
+    # that is gone is not, so that arm raises nothing. Both answer nil. A view served from `for`'s
+    # cache read nothing, so it raises nothing either: the banner speaks only for this request.
     def self.read(user:, node:)
       manifest_from(FileLayer.current.read(user, node_id: node.node_id))
-    rescue FileLayer::NotFound, FileLayer::FetchError
+    rescue FileLayer::FetchError
+      Current.library_unreachable = true
+      nil
+    rescue FileLayer::NotFound
       nil
     end
 

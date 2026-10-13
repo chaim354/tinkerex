@@ -110,6 +110,7 @@ module Web
                            password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
       @user.nodes.create!(node_id: "d-laser", name: "laser", kind: "dir")
+      @user.nodes.create!(node_id: "d-empty", name: "empty", kind: "dir")
       file!("n-stl", "bracket.stl")
       file!("n-bak", "sign_backup.lbrn2", parent_node_id: "d-laser")
       file!("n-mill", "panel.mage", parent_node_id: "d-laser")
@@ -453,6 +454,11 @@ module Web
         "files (grid)" => files_path(view: "grid"),
         "files (filtered)" => files_path(ext: "stl"),
         "files (in a folder)" => files_path(folder: "d-laser"),
+        # F onboarding (2026-10-13): an EMPTY folder, the one page here that renders
+        # shared/_where_files_come_from. Every other page that does (Recent's getting-started
+        # panel, the Library root and Projects' empty states) needs an account with no files or no
+        # projects, and this fixture deliberately has both.
+        "files (an empty folder)" => files_path(folder: "d-empty"),
         # Slice 5: a catalogued model's folder, the one page that renders files/_model_strip.
         "model folder" => files_path(folder: "d-wall-bracket"),
         "file detail (3d)" => file_path("n-stl"),
@@ -534,6 +540,9 @@ module Web
         "settings/tags" => settings_tags_path,
         # Stage 3, S3-1. Needs no fixture: #index seeds its own rows on first visit.
         "settings/filing" => settings_filing_rules_path,
+        # Onboarding (2026-10-13): the Help page needs no fixture. Its three backend arms are
+        # rendered by help_page_test.rb, which swaps the capabilities the page reads.
+        "help" => help_path,
         # STAGE 3, S3-4: THE PUBLIC SURFACE, five pages over ten templates. Signed in, which is
         # neither a mistake nor a weakening: Public::BaseController stands on
         # ActionController::Base and never reads the session (the seam guard in

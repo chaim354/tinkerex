@@ -69,10 +69,25 @@
   </div>
 <% end %>
 
+<%# THE EMPTY STATE SAYS WHAT A Projects/ FOLDER BECOMES BEFORE ANYTHING IS MOVED (F onboarding,
+    2026-10-13), through the same partial as Recent and the Library, its `projects` half only: how
+    FILES arrive is the Library's question. The other emptinesses are not "you have none": a filter
+    (tag, kind or the search page's `q`) that matched nothing, asked first because it can be on in
+    either view, and a maker whose every project is archived, where "No projects yet" would deny the
+    link to them rendered just below. %>
 <% if @projects.empty? %>
-  <p class="empty">
-    <%= @archived_view ? "No archived projects." : "No projects yet. Create your first build." %>
-  </p>
+  <% if @tag || @kind || @q %>
+    <p class="empty">No projects match.</p>
+  <% elsif @archived_view %>
+    <p class="empty">No archived projects.</p>
+  <% else %>
+    <div class="empty">
+      <p><%= @archived_count.positive? ? "Every project is archived." : "No projects yet." %></p>
+      <%= render "shared/where_files_come_from", sources: false %>
+      <p>Or <%= link_to "start one now", new_project_path %>, and its folder under
+        <code>Projects/</code> is made for you.</p>
+    </div>
+  <% end %>
 <% else %>
   <div class="projects-grid" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
     <% @projects.each do |project| %>
