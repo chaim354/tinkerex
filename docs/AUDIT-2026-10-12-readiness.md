@@ -31,6 +31,13 @@ Companion gates that ran clean today: `bin/ci scan` (brakeman: 0 warnings, 2 obs
 **Fixed by sub-project A (`docs/superpowers/plans/2026-10-12-a-stop-the-bleeding.md`, same day):**
 items 4, 5, 7, 8 and 10 below, and the §0 OVH proxy row — on `main` once that PR merges, on the
 live OVH box once it is deployed (`-d ovh`, explicit request per CLAUDE.md §7). The rest stand.
+*(A merged as PR #389 and was deployed to OVH and the three Unraid destinations on 2026-10-13.)*
+
+**Fixed by sub-project B (`docs/superpowers/plans/2026-10-13-b-accounts-that-work.md`, 2026-10-13):**
+items 1 and 2 below (registration closed by default, the first account is the owner, `REGISTRATION=open`
+refused at boot on share/s3), §2.1 item 6 (mail by environment, console doors), and the Cloudflare
+residual of item 5 (tinkerex#345: Cloudflare's ranges are trusted proxies). Item 9's idle timeout and
+item 11's supplier URL still stand.
 
 1. **On `share` and `s3` every account indexes the same library root.** Open registration there hands a
    stranger read/write/delete on the operator's files. `app/jobs/library/scan_job.rb:126-131,155-158`
