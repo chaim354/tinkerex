@@ -2,8 +2,10 @@
 <%# RENAME OR MOVE (F; user stories 1.3 and 4.7), shared by the Library's inspector and the file
     page the way files/_meta and files/_attach are, and placed under _meta on both, beside the name
     and the location it changes. Both forms post to Maker::MoveNode behind FilesController#rename
-    and #move. Neither caller renders this for a node inside a git working tree, and the controller
-    refuses one anyway (docs/invariants/git-editing.md).
+    and #move. Both callers render it for a FILE outside a git working tree and for nothing else,
+    which is exactly what the controller accepts: folders wait for Share#move to rewrite a subtree's
+    paths (FilesController::FOLDERS_NOT_YET), and bytes git owns never go through the port
+    (docs/invariants/git-editing.md).
 
     CLOSED UNTIL ASKED FOR, as the note and link composers on the file page are. A details.menu was
     the other candidate and is the wrong one: menu_controller.js closes a menu on any click outside

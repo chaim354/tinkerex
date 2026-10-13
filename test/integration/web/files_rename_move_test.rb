@@ -4,9 +4,10 @@ require "support/git_repo_fixture"
 
 module Web
   # RENAME AND MOVE TO FOLDER FROM THE BROWSER (F; user stories 1.3 and 4.7 were `rough` for the
-  # lack of them). Both are Maker::MoveNode behind two member routes: a collision and a bad name
-  # answer the page with a sentence, not a 500, and a node inside a git working tree is offered
-  # neither and refused by both (docs/invariants/git-editing.md).
+  # lack of them). Both are Maker::MoveNode behind two member routes, for FILES: a collision and a
+  # bad name answer the page with a sentence, not a 500, and a folder or a node inside a git working
+  # tree is offered neither and refused by both (FilesController::FOLDERS_NOT_YET;
+  # docs/invariants/git-editing.md).
   #
   # A FRESH SHARE LIBRARY ON EVERY LEG, PINNED FIRST. A rename here has to reach a REAL file through
   # the port, so the fixtures are create_node!/make_dir!/make_file!, which write the entry under
@@ -154,38 +155,39 @@ module Web
       assert_redirected_to files_path(folder: @docs.node_id, selected: @file.node_id)
     end
 
-    # A FOLDER RENAME IS A MOVE OF THE FOLDER'S OWN ROW: the node keeps its id, and the parent edge
-    # its children hang from is that id, so they come along. Landing inside the folder, because a
-    # folder has no file page to land on.
-    test "a folder can be renamed, keeping its node and its children" do
-      patch rename_file_path(@dir.node_id), params: { name: "laser-cut" }
+    # FOLDERS WAIT FOR Share#move TO REWRITE A SUBTREE'S PATHS (FilesController::FOLDERS_NOT_YET):
+    # on share a renamed folder leaves every file inside it answering "File not found." until the
+    # next scan. The first two PATCHes carry realistic params, so a regression would really rename or
+    # move the folder; the last two carry what a LATER check refuses with its own sentence (a blank
+    # name, no parent), which is what pins the refusal as the first thing either door does.
+    test "a folder is refused by both doors before anything else runs, and neither surface offers it" do
+      refusal = "Folders can't be renamed or moved from the browser yet."
+      [ [ rename_file_path(@docs.node_id), { name: "papers" } ],
+        [ move_file_path(@docs.node_id), { parent_node_id: "" } ],
+        [ rename_file_path(@docs.node_id), { name: "" } ],
+        [ move_file_path(@docs.node_id), {} ] ].each do |door, params|
+        patch door, params: params
 
-      assert_redirected_to files_path(folder: @dir.node_id)
-      assert_equal "laser-cut", @dir.reload.name
-      assert_equal [ @docs.node_id, @file.node_id ].sort,
-                   @user.nodes.present.where(parent_node_id: @dir.node_id).pluck(:node_id).sort
-      assert @root.join("laser-cut/part.stl").file?
-      assert_not @root.join("laser").exist?
-    end
-
-    # MAKER::MOVENODE LEAVES THE CYCLE GUARD TO ITS FIRST CALLER THAT CAN PASS A DIRECTORY, and this
-    # door is that caller. Without it share's rename() answers EINVAL, which this controller maps to
-    # the RETRYABLE "Couldn't reach your library": the wrong sentence, inviting a retry that can
-    # never succeed. The last move is the control: the guard refuses a cycle, not every folder.
-    test "a folder cannot be moved into itself or below itself, and can be moved anywhere else" do
-      [ @dir, @docs ].each do |target|
-        patch move_file_path(@dir.node_id), params: { parent_node_id: target.node_id }
-
-        assert_equal "A folder can't be moved inside itself.", flash[:alert], target.name
-        assert_nil @dir.reload.parent_node_id, target.name
-        assert @root.join("laser/docs").directory?, target.name
+        assert_redirected_to files_path(folder: @dir.node_id)
+        assert_equal refusal, flash[:alert], "#{door} #{params}"
       end
+      @docs.reload
+      assert_equal [ "docs", @dir.node_id ], [ @docs.name, @docs.parent_node_id ]
+      assert @root.join("laser/docs").directory?
 
-      archive = create_node!(@user, node_id: SecureRandom.uuid, name: "archive", kind: "dir")
-      patch move_file_path(@dir.node_id), params: { parent_node_id: archive.node_id }
-      assert_equal "Moved laser to archive.", flash[:notice]
-      assert_equal archive.node_id, @dir.reload.parent_node_id
-      assert @root.join("archive/laser/part.stl").file?
+      # The control that keeps the `count: 0` assertions below about the folder, not the page.
+      get file_path(@file.node_id)
+      assert_select "form[action=?]", rename_file_path(@file.node_id), { count: 1 }
+      # The inspector holds only a file: a folder answers its gone frame.
+      get inspector_file_path(@docs.node_id)
+      assert_response :not_found
+      assert_select "form[action=?]", rename_file_path(@docs.node_id), { count: 0 }
+      # A folder's URL still renders the file page, without the toggle.
+      get file_path(@docs.node_id)
+      assert_response :success
+      assert_select "details.rename-move", { count: 0 }
+      assert_select "form[action=?]", rename_file_path(@docs.node_id), { count: 0 }
+      assert_select "form[action=?]", move_file_path(@docs.node_id), { count: 0 }
     end
 
     # BYTES GIT OWNS NEVER GO THROUGH THE PORT (git-editing.md), and a rename git did not make is a

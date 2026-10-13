@@ -1007,14 +1007,26 @@ class FilesController < ApplicationController
     redirect_to files_path, notice: "Deleted #{node.name}."
   end
 
+  # FOLDERS ARE REFUSED BY #rename AND #move UNTIL Share#move REWRITES THE SUBTREE'S PATHS IN THE
+  # SAME CALL. Today it rewrites only the moved folder's own row: every node beneath keeps a stale
+  # storage_path until the next scan pairs it back (FileLayer::Subtree's header; §14a), so on share
+  # every file inside a renamed folder answers "File not found." until then, and nested folders come
+  # back from that scan under new node_ids. s3 refuses a folder move outright and chunk_remote's
+  # server moves the subtree whole — three answers to one click, the first of them wrong. Do not
+  # "simplify" the check away: lift it with that port change, as its own slice. Anything that is not
+  # a FILE is refused, a symlink included — the Library already lists one in the folder branch.
+  FOLDERS_NOT_YET = "Folders can't be renamed or moved from the browser yet.".freeze
+
   # PATCH /files/:id/rename {name, return_to?} and PATCH /files/:id/move {parent_node_id, return_to?}
   # — RENAME AND MOVE TO FOLDER, FROM THE BROWSER (F; user stories 1.3 and 4.7). Both are
   # Maker::MoveNode, the one door that keeps the node_id (so every attachment, BOM link and tag
   # survives) and that checks the source, the parent and the leaf's SHAPE. It raises Collision for
   # a taken name before the port is asked — the one refusal a maker hits routinely, so it is
   # answered as a sentence on the page they came from. FetchError and UnsupportedOperation keep this
-  # controller's mappings above (an unmounted share; S3#move refusing a folder), the way every other
-  # port door here answers them.
+  # controller's mappings above (an unmounted share; a file on disk the catalog had not yet seen),
+  # the way every other port door here answers them.
+  #
+  # FILES ONLY, AND THAT REFUSAL COMES FIRST — FOLDERS_NOT_YET above says why.
   #
   # A NODE INSIDE A GIT WORKING TREE IS REFUSED HERE AS WELL AS HIDDEN IN THE VIEWS: bytes git owns
   # never go through the port (docs/invariants/git-editing.md), and a rename git did not make reads
@@ -1027,6 +1039,7 @@ class FilesController < ApplicationController
   # about a file in plain sight; on chunk_remote nothing downstream refuses one at all.
   def rename
     node = current_user.nodes.present.find_by!(node_id: params[:id])
+    return redirect_to(rename_move_landing(node), alert: FOLDERS_NOT_YET) unless node.file?
     if in_working_tree?(node)
       return redirect_to(rename_move_landing(node), alert: "Files inside a repository are renamed in git, not here.")
     end
@@ -1052,13 +1065,14 @@ class FilesController < ApplicationController
     redirect_to rename_move_landing(node), alert: "That name isn't allowed: #{e.message}."
   end
 
-  # A FOLDER MOVES TOO, and that is why the cycle guard below exists: Maker::MoveNode leaves it to
-  # its first caller that can pass a directory, and this door is that caller. Every backend would
-  # refuse the cycle on its own today — share's rename() answers EINVAL, chunk_remote's server a 422,
-  # and S3#move refuses folders outright — but share's refusal reaches the maker as FetchError, the
-  # RETRYABLE "Couldn't reach your library", inviting a retry that can never succeed.
+  # FILES ONLY, like #rename (FOLDERS_NOT_YET). That is also what keeps Maker::MoveNode's missing
+  # cycle guard out of reach: a file has no descendants to land under. The slice that lets a folder
+  # through owes MoveNode that guard (its header), measured here once already — without it share's
+  # rename() answers EINVAL, Share#move raises that as FetchError, and this controller maps it to the
+  # RETRYABLE "Couldn't reach your library", a retry that can never succeed.
   def move
     node = current_user.nodes.present.find_by!(node_id: params[:id])
+    return redirect_to(rename_move_landing(node), alert: FOLDERS_NOT_YET) unless node.file?
     if in_working_tree?(node)
       return redirect_to(rename_move_landing(node), alert: "Files inside a repository are moved in git, not here.")
     end
@@ -1075,9 +1089,6 @@ class FilesController < ApplicationController
     dest = parent_id && current_user.nodes.present.find_by(node_id: parent_id, kind: "dir")
     if parent_id && dest.nil?
       return redirect_to(rename_move_landing(node), alert: "That folder isn't in your library any more.")
-    end
-    if would_create_cycle?(node, parent_id)
-      return redirect_to(rename_move_landing(node), alert: "A folder can't be moved inside itself.")
     end
 
     Maker::MoveNode.call(current_user, node:, new_parent_node_id: parent_id)
@@ -1829,34 +1840,13 @@ class FilesController < ApplicationController
   # WHERE A RENAME OR MOVE LANDS, whichever way it went. `return_to` IS AN ALLOWLISTED FLAG, NOT A
   # URL — the attach control's rule (Projects::AttachmentsController#attach_redirect_path), so it
   # cannot become an open redirect. "library" is the inspector: back to the Library at the folder
-  # the node is in NOW (MoveNode reloads the node it moved), with a file selected so its panel
-  # reopens on the result. Otherwise a file lands on its own page, and a folder inside itself: a
-  # folder has no file page worth landing on (search links one to its listing for the same reason).
+  # the file is in NOW (MoveNode reloads the node it moved), selected so its panel reopens on the
+  # result; otherwise the file's own page. A FOLDER (refused, FOLDERS_NOT_YET) has no file page, so
+  # it lands in the listing that shows it, the one its refusal is about.
   def rename_move_landing(node)
-    if params[:return_to] == "library"
-      return files_path(folder: node.parent_node_id, selected: (node.node_id if node.file?))
-    end
+    return files_path(folder: node.parent_node_id) unless node.file?
+    return files_path(folder: node.parent_node_id, selected: node.node_id) if params[:return_to] == "library"
 
-    node.dir? ? files_path(folder: node.node_id) : file_path(node.node_id)
-  end
-
-  # Would hanging `node` under `new_parent_node_id` make it its own ancestor? V1::NodesController#move
-  # spent this walk before the engine left (it is the sync server's `would_create_cycle?` now): up
-  # from the destination by the parent edge to the root, with a `seen` set so a cycle a corrupt
-  # catalog already holds ends the walk rather than spinning it. TOMBSTONES ARE WALKED TOO, because
-  # the edge is what any later walk follows, live or not. A file has no descendants, so only a
-  # folder pays for the walk, one query per level of the destination's depth.
-  def would_create_cycle?(node, new_parent_node_id)
-    return false unless node.dir? && new_parent_node_id.present?
-
-    seen = {}
-    current = new_parent_node_id
-    while current.present? && !seen[current]
-      return true if current == node.node_id
-
-      seen[current] = true
-      current = current_user.nodes.where(node_id: current).pick(:parent_node_id)
-    end
-    false
+    file_path(node.node_id)
   end
 end
