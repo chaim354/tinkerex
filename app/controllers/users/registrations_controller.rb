@@ -1,5 +1,6 @@
 # Devise registration (sign-up). :registerable + :confirmable means a new account is created
-# unconfirmed and a confirmation email is sent; it cannot sign in until confirmed.
+# unconfirmed and a confirmation email is sent; it cannot sign in until confirmed. The one
+# exception is the server's FIRST account, the owner, confirmed on the spot (build_resource below).
 module Users
   class RegistrationsController < Devise::RegistrationsController
     # Bounds automated signup floods (each one also sends a confirmation email). Deliberately
@@ -10,6 +11,12 @@ module Users
                  redirect_to new_user_registration_path,
                              alert: "Too many sign-up attempts. Try again later."
                }
+
+    # CLOSED BY DEFAULT IN PRODUCTION, AND THE FIRST ACCOUNT IS THE OWNER (Tinkerex::Registration
+    # has the argument). A closed server answers the sign-up page with a 403 that says so, rather
+    # than a 404 that pretends the route does not exist — a visitor who was sent here by the
+    # person running the box should learn to ask them, not to retype the address.
+    before_action :require_registration_open!, only: %i[new create]
 
     # A DELIVERY FAILURE MUST NOT LOOK LIKE A BROKEN APP, BECAUSE THE ACCOUNT ALREADY EXISTS.
     # Devise mails the confirmation from an `after_commit` on the user, so the row is COMMITTED
@@ -92,6 +99,26 @@ module Users
         set_minimum_password_length
         respond_with_navigational(resource) { render :edit, status: :unprocessable_entity }
       end
+    end
+
+    protected
+
+    # The first account is confirmed on the spot: a self-hoster has no mail server on day one,
+    # and Devise's own create path (build, save, then branch on active_for_authentication?)
+    # signs a confirmed account straight in. skip_confirmation! must run BEFORE save, which is
+    # why this hooks build_resource rather than an after_create. Protected, as Devise's own is:
+    # a public method on a controller is an action.
+    def build_resource(hash = {})
+      super
+      resource.skip_confirmation! if Tinkerex::Registration.first_owner?
+    end
+
+    private
+
+    def require_registration_open!
+      return if Tinkerex::Registration.open?
+
+      render "users/registrations/closed", status: :forbidden
     end
   end
 end

@@ -24,7 +24,10 @@ Devise.setup do |config|
   # Configure the e-mail address which will be shown in Devise::Mailer,
   # note that it will be overwritten if you use your own mailer class
   # with default "from" parameter.
-  config.mailer_sender = "no-reply@tinkerex.app"
+  require "tinkerex/mail_settings"
+  # MAIL_FROM, else no-reply at APP_HOST, else the historical literal — one owner for the address
+  # (devise_auth_flow_test pins that every message agrees with it).
+  config.mailer_sender = Tinkerex::MailSettings.sender
 
   # Configure the class responsible to send e-mails.
   # config.mailer = 'Devise::Mailer'

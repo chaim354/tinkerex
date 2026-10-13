@@ -17,6 +17,15 @@ module Web
   class RegistrationFlowTest < ActionDispatch::IntegrationTest
     PASSWORD = "plywood and glue and clamps".freeze
 
+    # THE FIRST ACCOUNT IS THE OWNER (Tinkerex::Registration, 2026-10-13): it is confirmed on the
+    # spot, signed in and sent no mail, whatever REGISTRATION says. Every test here is about the
+    # SECOND and later accounts — the unconfirmed flow — so one confirmed account exists before
+    # each; on an empty database the sign-up under test would be the owner and none of these
+    # messages would be sent. registration_mode_test.rb covers the first account.
+    setup do
+      User.create!(email: "owner@example.test", password: PASSWORD, confirmed_at: Time.current)
+    end
+
     # A REAL DELIVERY METHOD THAT FAILS, rather than a stub on the mailer: the defect is in what
     # happens when the SMTP CONNECTION fails, which is downstream of everything `mail` does, so
     # stubbing the mailer would prove the rescue catches a raise from a place the real failure
