@@ -31,4 +31,20 @@
   /* Low stock (stage 2, S2-3): a milder signal than a failed print — warn, not danger. */
   .attention-row--warn .attention-mark { background: var(--warn); }
   .attention-text { flex: 1; min-width: 0; }
+
+  /* GETTING STARTED (F onboarding, 2026-10-13): Recent's panel while the library holds no live file.
+     A NATIVE <ol>, so the three steps stay a numbered list to a screen reader (a counter drawn in
+     `::before` over `list-style: none` stops being a list in Safari); the numbers are muted ink and
+     nothing here is accent — the top bar's Upload is this page's one (design-system.md rule 13).
+     The measure is the prose one: these are sentences to read, not tiles to scan. Scoped under
+     `.getting-started` throughout, because `.file-sources` and `.projects-intake` also render in
+     the Library's and Projects' empty-state boxes, which lay them out on their own. */
+  .getting-started-steps { margin: 0; padding-left: 20px; max-width: var(--prose-measure); }
+  .getting-started-steps > li + li { margin-top: var(--space-4); }
+  .getting-started-steps > li::marker { color: var(--fg-muted); font-weight: 600; }
+  .getting-started-steps h3 { margin-bottom: var(--space-1); }
+  .getting-started-steps p { color: var(--fg-muted); }
+  .getting-started-steps strong { color: var(--fg); font-weight: 600; }
+  .getting-started-steps > li > :last-child,
+  .getting-started .file-sources > :last-child { margin-bottom: 0; }
 }

@@ -1,0 +1,51 @@
+<%# locals: (sources: true, projects: true) %>
+<%#
+  WHERE FILES COME FROM, AND WHAT A Projects/ FOLDER BECOMES (F onboarding, 2026-10-13). ONE
+  definition of both sentences, rendered by Recent's getting-started panel, the Library's empty
+  state and the Projects page's, so the three cannot drift about what this deployment does.
+
+  ASKED OF `capabilities`, NEVER OF AN ADAPTER CLASS: scannable means a poll fills the catalog
+  (share, s3), presignable is what tells a bucket from a folder, and syncable means the desktop
+  app. Every timing here is a schedule in config/recurring.yml: library_scan, project_discovery and
+  project_folder_intake all run every 15 minutes, and a scan runs discovery and the filing sweep
+  inline (Library::ScanJob#perform), so a scannable library's new folder is a project, and its loose
+  files filed, within one scan.
+
+  THE FILING SENTENCE NAMES ITS EXCEPTIONS because the sweep moves files: a README at a project's
+  root is never filed, and nothing inside a git working tree is (Maker::AttachToProject's
+  refusals; docs/invariants/project-intake.md). A sentence that over-promised a move would be the
+  one place this copy could frighten someone into moving their own repository.
+
+  PARAGRAPHS, NOT A BULLETED LIST: the Library and Projects render this inside an empty-state box,
+  which centres its text, and the tools first-run state is the precedent for that box holding
+  paragraphs. `sources:` and `projects:` let Recent put the two halves under two numbered steps.
+%>
+<% if sources %>
+  <div class="file-sources">
+    <p><strong>Upload</strong>, in the top bar, puts files from this computer in the folder you
+      are viewing, or in one you choose.</p>
+    <% if capabilities.scannable? %>
+      <% if capabilities.presignable? %>
+        <p><strong>The storage bucket</strong> this server uses is your library. Files another
+          program or a sync tool puts there appear here within 15 minutes, or right away with
+          Rescan library, under More actions (⋯) on the <%= link_to "Library", files_path %> page.</p>
+      <% else %>
+        <p><strong>The library folder on the server</strong> is your library. Anything put there,
+          over a NAS share, by another program or by a plain copy, appears here within 15 minutes,
+          or right away with Rescan library, under More actions (⋯) on the
+          <%= link_to "Library", files_path %> page.</p>
+      <% end %>
+    <% end %>
+    <% if capabilities.syncable? %>
+      <p><strong>The desktop app</strong> keeps a folder on your computer in sync with this
+        library; what you save there appears here within a few minutes.</p>
+    <% end %>
+  </div>
+<% end %>
+<% if projects %>
+  <p class="projects-intake">A folder directly inside <code>Projects/</code>, at the top of the
+    library, becomes a project within 15 minutes. Files left loose at the top of a project's folder
+    are then filed into type folders such as <code>models/</code> and <code>docs/</code>, except a
+    README and anything in a git repository; your
+    <%= link_to "Filing", settings_filing_rules_path %> settings decide which type goes where.</p>
+<% end %>
