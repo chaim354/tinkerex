@@ -1,5 +1,11 @@
 # File-Format Processing & Preview — Library Survey
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 > **Purpose.** Survey the libraries that can parse / convert / render / thumbnail every file
 > format the maker app handles (CLAUDE.md §1: 3D **STL / 3MF / OBJ**, CAD **STEP / IGES** +
 > native Fusion/FreeCAD/SolidWorks, LightBurn **`.lbrn2`**, plus the vector formats **SVG / DXF**

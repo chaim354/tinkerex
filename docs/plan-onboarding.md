@@ -1,5 +1,11 @@
 # Plan: New-User Onboarding Flow
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 **Date:** 2026-06-16 · **Status:** PLAN / RESEARCH (no code) · **Scope:** first-run +
 getting-started experience for both the **Tauri desktop app** (`client/maker-app`) and the
 **web UI** (Rails `app/views`). Covers the file/sync layer *and* the maker product layer

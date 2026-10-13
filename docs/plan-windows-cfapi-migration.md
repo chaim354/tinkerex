@@ -1,5 +1,11 @@
 # Windows CfAPI mount — status + handoff plan
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 The driverless Windows mount (Cloud Filter API / `cldapi.dll` — the OneDrive model: a
 registered sync-root folder with on-demand placeholders and hydrate-on-read), replacing the
 GPL-WinFsp path (CLAUDE.md §9). **Verified live on Windows 11.** This doc is the source of

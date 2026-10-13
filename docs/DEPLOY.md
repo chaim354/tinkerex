@@ -1,4 +1,7 @@
-# Deploy the sync server with Kamal (build on the Mac → ghcr → both boxes pull)
+# Deploy the maker app with Kamal — the author's runbook (build on the Mac → ghcr → both boxes pull)
+
+> **This is the author's runbook for the author's hosts** — Kamal, 1Password, an Unraid VM and an
+> OVH box. Installing on your own box is `docs/INSTALL.md` (docker compose; nothing here is needed).
 
 The image is built **once on the Mac** (the control machine) and pushed to **GitHub Container
 Registry** (`ghcr.io/chaim354/tinkerex`). Both target servers pull that same amd64 image — no
@@ -39,7 +42,7 @@ Docker build, no repo checkout, and no source transfer to either server.
   An exported shell value still WINS over 1Password, so a one-off deploy can point at a different
   credential without editing a tracked file:
   ```sh
-  export CHUNK_SECRET_ACCESS_KEY=<some other secret>   # optional override
+  export LIBRARY_S3_SECRET_ACCESS_KEY=<some other secret>   # optional override
   ```
 
 ### On each server (one time)
@@ -88,14 +91,14 @@ builds.
 
 | destination | files read | credential |
 |---|---|---|
-| base (chunk, Unraid) | `secrets-common` + `secrets` | `CHUNK_SECRET_ACCESS_KEY` ← SeaweedFS `seaweednew` |
-| `-d s3` | `secrets-common` + `secrets.s3` | `LIBRARY_S3_SECRET_ACCESS_KEY` ← same `seaweednew` |
+| base (chunk_remote, Unraid) | `secrets-common` + `secrets` | `SYNC_ADMIN_TOKEN` ← `tinkerex-sync-admin-token` (the sync accessory's own copy must match) |
+| `-d s3` | `secrets-common` + `secrets.s3` | `LIBRARY_S3_SECRET_ACCESS_KEY` ← SeaweedFS `seaweednew` |
 | `-d share` | `secrets-common` + `secrets.share` | none — a share container holds no storage credential |
-| `-d ovh` | `secrets-common` + `secrets.ovh` | `CHUNK_SECRET_ACCESS_KEY` ← **Cloudflare R2**, plus `CHUNK_ACCESS_KEY_ID` |
+| `-d ovh` | `secrets-common` + `secrets.ovh` | `LIBRARY_S3_ACCESS_KEY_ID` + `LIBRARY_S3_SECRET_ACCESS_KEY` ← **Cloudflare R2**; `SYNC_ADMIN_TOKEN`; the origin certificate pair `OVH_ORIGIN_CERTIFICATE_PEM` + `OVH_ORIGIN_PRIVATE_KEY_PEM` ← `tinkerex-origin` |
 
-`CHUNK_SECRET_ACCESS_KEY` names a **different credential** on Unraid than on OVH. That is the
-whole reason these are per-destination files: `secrets-common` cannot tell the two apart, and
-whichever one it hardcoded would be pushed to the other box.
+`LIBRARY_S3_SECRET_ACCESS_KEY` names a **different credential** on Unraid (`-d s3`, SeaweedFS)
+than on OVH (R2). That is the whole reason these are per-destination files: `secrets-common`
+cannot tell the two apart, and whichever one it hardcoded would be pushed to the other box.
 
 **Only truly-common keys may go in `secrets-common`, and that is correctness, not tidiness.**
 Kamal expands secrets with `::Dotenv.parse`, and `InlineCommandSubstitution` runs every `$(…)` in
@@ -784,8 +787,9 @@ survives redeploys.
 
 - **No sudo for Kamal.** After `usermod -aG docker`, Kamal drives Docker without sudo on the
   servers; `sudo` is only for the one-time Docker install.
-- **Bytes never flow through Rails.** The server only signs presigned URLs (local HMAC); each
-  client PUT/GETs `CHUNK_ENDPOINT` directly, so that host must be reachable from every client.
+- **Bytes never flow through Rails.** On the s3 backend the app only signs presigned URLs and the
+  browser PUT/GETs the bucket directly, so the bucket endpoint must be reachable from every client;
+  on chunk_remote the sync server does the signing (its own env, in `chaim354/tinkerex-sync`).
 - **In-browser viewers & bucket CORS (the s3 backend).** The 3D viewer, KiCanvas, the Gerber
   viewer and the public bundle all `fetch` a file's bytes from `/files/:id/blob` (or the public
   file route). On the **s3** library backend that endpoint 302-redirects to a cross-origin presigned
@@ -830,12 +834,8 @@ survives redeploys.
   is why this is an env gate rather than a line in `production.rb` — before this, neither setting
   was enabled anywhere, so the internet-facing host had no HSTS and its session cookie was sent
   on plain-HTTP requests to the same host.
-- **Control-plane-only smoke test:** set `STORAGE_BACKEND: memory` (drop the `CHUNK_*`) to test
-  tree/changelog/nudge without a chunk store.
 - **Persistence:** the SQLite DBs live on the `tinkerex_storage` volume and survive redeploys —
   `kamal app exec 'bin/rails db:version'` to inspect.
-</content>
-</invoke>
 
 ## Box Generator sidecar (addon framework, Plan B)
 

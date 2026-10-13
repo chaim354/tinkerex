@@ -1,5 +1,11 @@
 # Migrating chunk storage to Cloudflare R2
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 **Goal:** point the managed deployment's chunk data plane at a real Cloudflare **R2**
 bucket (replacing the SeaweedFS box in `config/deploy.yml`), and confirm latency is
 usable for sync. R2 is the §4/§7 managed object-storage choice: S3-compatible, **zero

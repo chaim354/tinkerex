@@ -1,5 +1,11 @@
 # Cost model & cheapest-hosting recommendation
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 **Maker Server** — a self-hostable + managed-SaaS, local-first file **sync engine** for
 makers. This doc models the cost of running the **managed (SaaS)** deployment and
 recommends the cheapest **prod-like remote test box** for latency/perf work.

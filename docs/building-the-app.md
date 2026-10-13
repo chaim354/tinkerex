@@ -1,5 +1,11 @@
 # Building the desktop app (cross-OS, downloadable installers)
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 The `.github/workflows/build-app.yml` workflow builds the **Maker** Tauri desktop app
 (`client/maker-app`) on macOS, Windows, and Linux and uploads runnable installers as
 workflow artifacts. Dispatch it on demand, download the artifact for your OS, and run it

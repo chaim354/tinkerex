@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 Project context and architecture for an AI coding agent (Claude Code) and human
-developers. Working name: **Maker Server** (rename freely).
+developers. The product is **Tinkerex** (an earlier working name, "Maker Server", survives in old docs).
 
 > **How this file is scoped.** It holds what is *permanently* true about **this repo — the maker
 > app**: architecture, the data model, and the **invariants a future editor must not undo** (§14).

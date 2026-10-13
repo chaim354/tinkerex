@@ -26,7 +26,9 @@ and fixtures that restate each other drift, and only one of them can be run agai
 live server to catch that drift. **This document does not duplicate any scenario file's
 content** — where one exists, it is named instead of re-described.
 
-**Endpoint count: 25**, drawn from `lib/tinkerex_sync/v1_routes.rb`'s `V1_ROUTES` lambda
+**Endpoint count: 26** (re-counted 2026-10-13 against `v1_routes.rb` in `chaim354/tinkerex-sync`;
+that repo's `conformance/README.md` ends with the command that reports it), drawn from
+`lib/tinkerex_sync/v1_routes.rb`'s `V1_ROUTES` lambda
 — the single, authoritative list (see `chaim354/tinkerex-sync`'s own comment on that file
 for why it is a drawer called from inside `namespace :v1`, not a mounted engine). Counted
 by hand from that file, verb by verb, because it is exactly the kind of count that goes
@@ -135,7 +137,7 @@ Three real processes answer this wire today:
 |---|---|---|
 | Embedded engine | `chaim354/tinkerex` (this repo), `LIBRARY_BACKEND=chunk` | The engine mounted in-process via `Sync.draw_v1_routes`; `FileLayer::Chunk` is the in-process adapter. |
 | Standalone host | `chaim354/tinkerex-sync`'s own `host/` | A small dedicated Rails app: the engine, the three host models, device enrollment, nothing else. What `LIBRARY_BACKEND=chunk_remote` clients (`FileLayer::ChunkRemote`, this repo) talk to over plain HTTP. Verified end-to-end 2026-08-22: upload, finalize, changelog pull, local `stat`, byte read, `mkdir`, `move` (with `node_id` preserved), two separate processes, `Sync` undefined in the maker app's process throughout. |
-| Rust rewrite | `chaim354/tinkerex-sync`, `crates/tinkerex-sync` (branch `claude/rust-rewrite` as of 2026-09-30; not yet deployed) | What this document was written for. Same wire, same paths and env as the Ruby host, free choice of internals. Graded not by this document alone but by that repo's recorded corpus — sixteen scenario files, `18 runs, 284 assertions, 0 failures, 0 skips` against both the Ruby host and the binary — and by this repo's `SYNC_IMPL=rust bin/sync-server`, which boots it for `bin/ci test-chunk-remote`. |
+| Rust rewrite | `chaim354/tinkerex-sync`, `crates/tinkerex-sync` — **what production runs since 2026-10-07** (the `sync` Kamal accessory, image `…-rust`; rollback `ruby-4148fcd6…`; cutover plan in that repo) | What this document was written for. Same wire, same paths and env as the Ruby host, free choice of internals. Graded not by this document alone but by that repo's recorded corpus — sixteen scenario files, `18 runs, 284 assertions, 0 failures, 0 skips` against both the Ruby host and the binary — and by this repo's `SYNC_IMPL=rust bin/sync-server`, which boots it for `bin/ci test-chunk-remote`. |
 
 A **device** holds a local SQLite mirror of the tree and a local chunk cache; metadata
 reads never touch the network. Bytes move **client ⇄ object storage directly** —

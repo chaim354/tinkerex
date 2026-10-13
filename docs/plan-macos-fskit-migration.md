@@ -1,5 +1,11 @@
 # macOS FSKit migration — sketch
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 A forward-looking design sketch (NOT an implementation) for moving the macOS mount path from
 **WebDAV** (`fs-webdav`, native `mount_webdav`) to **FSKit**, Apple's native, kext-free
 filesystem-extension framework. Scoped per `docs/superpowers/specs/2026-06-12-phase2b-ci-fskit-design.md`.

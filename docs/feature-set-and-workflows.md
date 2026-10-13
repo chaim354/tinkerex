@@ -1,5 +1,11 @@
 # Feature set & workflows — what the file system does TODAY
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 **Date:** 2026-06-14 · **Branch:** `auth-caching-security` · **Scope:** the file-sync layer
 (the maker product layer — projects/inventory/BOM/preview — is not built; see §12 step 9 in
 `CLAUDE.md`).

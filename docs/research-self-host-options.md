@@ -1,5 +1,11 @@
 # Research — self-hosted server options + bring-your-own-storage
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 **Status:** research / recommendation (docs only — no code changes).
 **Date:** 2026-06-16.
 **Audience:** founder + the coding agent. Answers three open self-host questions and

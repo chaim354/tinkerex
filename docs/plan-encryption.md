@@ -1,5 +1,11 @@
 # At-Rest / End-to-End Chunk Encryption Implementation Plan
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Encrypt every chunk with an AEAD on the client *before* the presigned PUT, so object storage (R2/SeaweedFS) and the Rails control plane only ever hold ciphertext and **keyed** content addresses — the SaaS trust story for makers shipping commercial/IP-sensitive CAD.

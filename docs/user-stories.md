@@ -29,7 +29,7 @@ git repo, a firmware + PCB project, a 3D-print project, and `designs/`, `cnc/`, 
 
 ## The persona
 
-**Charles at the bench.** Self-hosts on Unraid; the NAS share is the library. Saves straight from
+**The bench maker.** Self-hosts on Unraid; the NAS share is the library. Saves straight from
 desktop programs onto the share and expects the app to notice within minutes.
 
 | work | programs | on the share |
@@ -146,8 +146,11 @@ again, catch up.*
 | T3 | 7 | 1 | 4 | 1 | 1 built-unused |
 | T4 | 8 | 1 | 4 | 2 | 1 by design |
 | T5 | 8 | 4 | 4 | 0 | |
-| T6 | 8 | 3 | 4 | 0 | 1 by design |
-| **all** | **50** | **15** | **29** | **3** | **3** |
+| T6 | 8 | 4 | 4 | 0 | |
+| **all** | **50** | **16** | **29** | **3** | **2** |
+
+Re-counted 2026-10-13: 6.7 moved to `works` on 2026-09-09 (the page editor) and the table had kept it
+under `by design`.
 
 Re-measured after S4-1 (2026-09-07): 6.6 and 6.8 moved to `works`; 1.4, 2.9, 6.1, 6.2, 6.3 gained new evidence and stay `rough`; 5.3 gained its render half and stays `missing`.
 
