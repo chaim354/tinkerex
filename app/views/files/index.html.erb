@@ -222,6 +222,24 @@
 <div class="library<%= " has-inspector" if @selected %>" data-controller="selection"
      data-selection-inspector-url-value="<%= inspector_file_path("__ID__") %>">
   <div class="library-main">
+    <%# A PROJECT'S FOLDER SAYS WHAT THE SWEEP WILL DO TO IT, BEFORE IT DOES IT (F onboarding,
+        2026-10-13). Only the folder a project claims (`@folder_project` is an exact match on
+        folder_node_id, so a subfolder carries no line), because only its top level is the sweep's
+        inbox. `autofile?` picks the sentence: off, Maker::ProjectIntake attaches and files
+        nothing, and a line promising a move would be false. On, the exceptions are named because
+        they are the files a maker would worry about: a README is never filed, and nothing inside a
+        git working tree is. One line, not a panel: it sits above the files it is about. %>
+    <% if @folder_project %>
+      <p class="muted project-folder-note">
+        This is the folder of the project <%= link_to @folder_project.name, project_path(@folder_project) %>.
+        <% if @folder_project.autofile? %>
+          Files left loose here are filed into type folders within 15 minutes, except a README and
+          anything in a git repository (<%= link_to "Filing", settings_filing_rules_path %>).
+        <% else %>
+          Automatic filing is off for this project, so files here stay where you put them.
+        <% end %>
+      </p>
+    <% end %>
     <%# THE MODEL STRIP (structural redesign §5.4, slice 5): set by FilesController#index only on a
         folder view whose folder a catalogued model names and no project claims. %>
     <% if @folder_model %>
@@ -265,8 +283,12 @@
 <% end %>
 
 <% if @nodes.empty? %>
-  <%# Three emptinesses. "No files yet" is advice for a new library; said to someone who searched
-      or filtered, it reads as "your library is empty" and is a lie. %>
+  <%# Three emptinesses. "How files arrive" is advice for an empty library or folder; said to
+      someone who searched or filtered, it reads as "your library is empty" and is a lie.
+
+      THE LAST ONE SAYS WHERE FILES COME FROM (F onboarding, 2026-10-13), through the partial Recent
+      and Projects render too, and says which kind of empty it is: no `@folder` is the library root,
+      so a new library; a folder is a folder the maker opened. Both are told the same ways in. %>
   <% if @q && @exts.any? %>
     <p class="empty">No files match “<%= @q %>” among <%= @exts.map { |e| ".#{e}" }.to_sentence %>.</p>
   <% elsif @q %>
@@ -274,7 +296,10 @@
   <% elsif @flat %>
     <p class="empty">No files match <%= @exts.map { |e| ".#{e}" }.to_sentence %>.</p>
   <% else %>
-    <p class="empty">No files yet. Upload one to get started.</p>
+    <div class="empty">
+      <p><%= @folder ? "This folder is empty." : "Your library is empty." %></p>
+      <%= render "shared/where_files_come_from" %>
+    </div>
   <% end %>
 <% elsif @view == "grid" %>
   <%= render "grid" %>
