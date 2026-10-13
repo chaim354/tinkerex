@@ -20,7 +20,16 @@
 # ActiveRecord::Encryption.config ends up with. Verified by probe, not assumed: a throwaway
 # initializer flipping this to `true` and reading `ActiveRecord::Encryption.config
 # .support_unencrypted_data` back in a fresh `bin/rails runner` showed the override took.
-#
+
+# KEYS FROM THE ENVIRONMENT, FOR A BOX WITH NO MASTER KEY (C, 2026-10-13; lib/tinkerex/encryption_keys.rb
+# says why only-when-present matters). The author's deployments set none of these and keep reading
+# credentials. A stranger's chunk_remote deployment sets all three (any 32+ character strings) and
+# never RAILS_MASTER_KEY — a wrong key crashes the boot, an absent one reads empty credentials.
+require "tinkerex/encryption_keys"
+Tinkerex::EncryptionKeys.from_env.each do |name, value|
+  Rails.application.config.active_record.encryption.public_send("#{name}=", value)
+end
+
 # SUPPORT_UNENCRYPTED_DATA: FALSE -- SET EXPLICITLY RATHER THAN LEFT ON THE FRAMEWORK DEFAULT
 # (which is also false today; see activerecord's encryption/config.rb#set_defaults). Explicit
 # because relying on a default that happens to already match is exactly the kind of thing a later
