@@ -1,0 +1,24 @@
+<%# THE UNREACHABLE-LIBRARY BANNER (F onboarding, 2026-10-13). The signed-in layout renders this on
+    every page and the partial DECIDES, so it renders nothing unless Current.library_unreachable is
+    up (app/models/current.rb), which only a port call that already failed on THIS request can
+    raise. It never probes the store itself. `capabilities` is the adapter's constant answer about
+    what kind of backend it is, not a round trip, and the cause is read off it, never off a backend
+    name. Rendered unconditionally rather than guarded in the layout so that
+    template_hygiene_test.rb's sweep still reaches this file; library_unreachable_test.rb renders the
+    populated arm.
+
+    Not a .flash: only the flash stack floats (design-system.md rule 10). This sits inline at the
+    top of main, so the skip link lands on it first. %>
+<% if Current.library_unreachable %>
+  <% cause = if capabilities.syncable?
+               "the sync server may be down"
+             elsif capabilities.presignable?
+               "the storage bucket isn't answering"
+             else
+               "the library folder may be unmounted"
+             end %>
+  <div class="library-unreachable" role="status">
+    <strong>Your library can't be reached right now</strong> — <%= cause %>. Files are shown from
+    the catalog; opening, uploading and downloading will fail until it is back.
+  </div>
+<% end %>

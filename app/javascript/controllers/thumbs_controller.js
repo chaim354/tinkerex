@@ -69,10 +69,12 @@ export default class extends Controller {
           }
           // A terminal non-ready state (no permissive renderer for this file here, or a render
           // error) resolves the spinner to a static icon — otherwise it would spin forever and
-          // keep the cell in the poll set.
+          // keep the cell in the poll set. THE TWO ARE DIFFERENT ANSWERS AND THE TILE SAYS WHICH
+          // (F onboarding): they resolved identically, so a render that broke read as a file type
+          // with no preview. A failed one keeps its type icon and gains a mark and its own title.
           else if (entry.status === "unsupported" || entry.status === "failed") {
             delete cell.dataset.thumbsPending
-            this.setIcon(cell)
+            this.setIcon(cell, { failed: entry.status === "failed" })
           }
         }
       }
@@ -112,7 +114,7 @@ export default class extends Controller {
     }
   }
 
-  setIcon(cell) {
+  setIcon(cell, { failed = false } = {}) {
     const thumb = cell.querySelector(".thumb")
     if (!thumb || thumb.querySelector(".thumb-icon")) return
     const icon = document.createElement("span")
@@ -121,9 +123,17 @@ export default class extends Controller {
     // cover cell with no extension. The two must agree: one of them renders on load and the other
     // replaces a spinner, and a user seeing both would otherwise get two different answers to
     // "why is there no picture".
-    icon.title = "Preview not supported"
+    //
+    // THE FAILED ARM HAS NO TWIN THERE YET. That partial renders a row that had ALREADY failed at
+    // page load through its one terminal branch ("Preview not supported", no mark), so until it
+    // grows a failed arm a failure only says so when it lands while the page is open.
+    //
+    // The mark is a class on the `.thumb` box, not on the cell: a cell can be a whole grid card or
+    // table cell, and the mark belongs in the corner of the picture (components.css).
+    icon.title = failed ? "Preview couldn't be rendered" : "Preview not supported"
     icon.textContent = cell.dataset.ext || "—"
     thumb.innerHTML = ""
     thumb.appendChild(icon)
+    thumb.classList.toggle("thumb-failed", failed)
   }
 }
