@@ -1,7 +1,9 @@
 # Console doors for a server with no mail (docs/DEPLOY.md "Accounts"). The password is read from
 # TINKEREX_PASSWORD so it never sits in argv — `ps`, shell history and the deploy log all see argv.
 namespace :tinkerex do
-  def tinkerex_password!
+  # A lambda, not a `def`: a method defined inside a rake namespace block lands on Object,
+  # process-wide, and every other rake file and the app itself can then see it.
+  tinkerex_password = lambda do
     pw = ENV["TINKEREX_PASSWORD"].to_s
     abort "set TINKEREX_PASSWORD (#{Devise.password_length.min}+ characters); never pass it on the command line" if pw.length < Devise.password_length.min
     pw
