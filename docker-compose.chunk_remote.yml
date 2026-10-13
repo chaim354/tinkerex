@@ -1,0 +1,58 @@
+# The sync server overlay (docs/INSTALL.md section 5):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.chunk_remote.yml up -d --build
+#
+# Switches the app to the chunk_remote backend, drops the /library mount (the files live in the
+# sync server's volume as chunks, not in a folder), and adds the sync service, built from a sibling
+# checkout of chaim354/tinkerex-sync — its Dockerfile.rust, one static binary. The variables under
+# sync are that server's own, taken from crates/tinkerex-sync/README.md there, not this app's.
+services:
+  web:
+    environment:
+      LIBRARY_BACKEND: chunk_remote
+      LIBRARY_PATH: ""
+      CHUNK_REMOTE_URL: http://sync:3000
+      # Refused here, at compose time, rather than at the first account's first write. With no
+      # master key the app reads these from the environment and nowhere else; the sync admin token
+      # has to be the same value the sync service gets below.
+      ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY: ${ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY:?set it in .env (openssl rand -hex 16) and keep it}
+      ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY: ${ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY:?set it in .env (openssl rand -hex 16) and keep it}
+      ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT: ${ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT:?set it in .env (openssl rand -hex 16) and keep it}
+      SYNC_ADMIN_TOKEN: ${SYNC_ADMIN_TOKEN:?set it in .env (openssl rand -hex 32), one value for both services}
+    # !override replaces the base file's list; a plain list here would be MERGED with it by target
+    # path and the /library bind mount would stay. Verified with docker compose config.
+    volumes: !override
+      - tinkerex_storage:/rails/storage
+    depends_on:
+      - sync
+
+  sync:
+    build:
+      context: ${TINKEREX_SYNC_PATH:-../tinkerex-sync}
+      dockerfile: Dockerfile.rust
+    environment:
+      # Required by the server and deliberately without a default there; local keeps every chunk
+      # in the volume below. CHUNK_LOCAL_DIR is the image's own default, spelled out.
+      STORAGE_BACKEND: local
+      CHUNK_LOCAL_DIR: /rails/host/storage/chunk-store
+      # The server's own secret, signing the URLs chunks are fetched from; distinct from the app's.
+      SECRET_KEY_BASE: ${SYNC_SECRET_KEY_BASE:?set it in .env (openssl rand -hex 64), the sync server's own}
+      SYNC_ADMIN_TOKEN: ${SYNC_ADMIN_TOKEN:?set it in .env (openssl rand -hex 32), one value for both services}
+      # Unset, chunk links carry the host each client connected through, which is right for this
+      # layout. Only a reverse proxy that changes the public address needs this (INSTALL.md section 8).
+      # CHUNK_PUBLIC_URL: https://sync.example.net
+    ports:
+      # What devices and the desktop client connect to; it must be reachable from them.
+      - "${TINKEREX_SYNC_PORT:-3001}:3000"
+    volumes:
+      - tinkerex_sync_storage:/rails/host/storage
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/up"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  tinkerex_sync_storage: {}
