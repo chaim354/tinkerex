@@ -186,6 +186,9 @@ env:
     # config/environments/production.rb). Must be a name the proxy block above routes --
     # test/deploy_hygiene_test.rb checks exactly that for every destination.
     APP_HOST: tinkerex.com
+    # Closed is the production default; stated here because this box is the one strangers reach
+    # and runs a single-library backend (s3), where `open` is refused at boot anyway.
+    REGISTRATION: closed
 
     # ENABLE_TEST_SIGNUP: SET NOWHERE SINCE 2026-10-12. This overlay blanked it on 2026-10-12
     # morning because deploy.yml's base env.clear set it and Kamal deep-merges env.clear; the same
