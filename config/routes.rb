@@ -413,6 +413,7 @@ Rails.application.routes.draw do
     # credential.
     resource :handle, only: :update
   end
+  get "help", to: "help#show", as: :help
 
   # --- Addons (Tools) — the /tools gallery + every addon's UI ---
   # EVERY addon is now manifest-driven and served by the generic surface (Tools::AddonsController,

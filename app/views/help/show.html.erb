@@ -1,0 +1,128 @@
+<% content_for :title, "Help — Tinkerex" %>
+
+<div class="page-head"><h1>Help</h1></div>
+
+<%#
+  WHAT A MAKER NEEDS TO KNOW TO USE THIS SERVER, IN THEIR WORDS (onboarding, 2026-10-13; spec
+  docs/superpowers/specs/2026-10-13-f-onboarding-design.md). Every sentence is a claim about the
+  app, so each was checked against the code or the invariants file that owns it before it was
+  written here: docs/invariants/project-intake.md for Projects/ and filing,
+  docs/invariants/model-intake.md for shelves, docs/invariants/addons.md for tools, and
+  docs/INSTALL.md for accounts and mail. Change the behaviour, change the sentence.
+
+  THE SENTENCES THAT DIFFER PER BACKEND ASK `capabilities`, never an adapter class or a backend
+  name (CLAUDE.md section 14a): scannable for a library polled from a folder or a bucket,
+  presignable to say bucket rather than folder, syncable for the desktop app, versioned for
+  history. help_page_test.rb renders all three shapes by swapping the capabilities, because every
+  leg's fixture is a share library and the other two arms would otherwise never render in a test.
+
+  WHERE FILES COME FROM IS WRITTEN INLINE BELOW, and the same change gives the empty states a
+  shared/_where_files_come_from partial saying it. Once both have merged, render that partial in
+  place of the folder or bucket, sync-server and Upload paragraphs of Your library, so the two
+  cannot drift apart.
+
+  NO SETTING NAMES OUTSIDE THE LAST SECTION. The person running the server is a different reader:
+  their variables and console commands sit in its collapsed details, and help_page_test.rb holds
+  every other section to that.
+%>
+<div class="prose">
+  <section aria-labelledby="library">
+    <h2 id="library">Your library</h2>
+    <% if capabilities.scannable? %>
+      <% if capabilities.presignable? %>
+        <p>Your library is a storage bucket. Anything put into it by other means appears here
+          within 15 minutes, or straight away with <em>Rescan library</em> under ⋯ on the
+          <%= link_to "Files", files_path %> page.</p>
+      <% else %>
+        <p>Your library is a folder on this server. Anything put there — over a NAS share, by a
+          slicer or another program, by copying it in — appears here within 15 minutes, or
+          straight away with <em>Rescan library</em> under ⋯ on the <%= link_to "Files", files_path %>
+          page.</p>
+      <% end %>
+      <p>Renaming or moving a file there keeps its notes, tags and project links, as long as its
+        content has not changed.</p>
+    <% end %>
+    <% if capabilities.syncable? %>
+      <p>Your library lives on a sync server. The desktop app keeps a folder on your computer in
+        sync with it, and changes made on another device appear here within a few minutes.</p>
+    <% end %>
+    <p><em>Upload</em>, in the top bar, puts files in the folder you are looking at; on a page with
+      no folder it asks which one.</p>
+    <% if capabilities.versioned? %>
+      <p>Saving over a file keeps the version before it.</p>
+    <% else %>
+      <p>Saving over a file replaces it: this library keeps no older versions.</p>
+    <% end %>
+    <p>Deleting a file or a folder moves it to <%= link_to "Trash", trash_index_path %>, where
+      <em>Restore</em> puts it back. A file whose folder was deleted too comes back only after its
+      folder does, so restore the folder first.</p>
+  </section>
+
+  <section aria-labelledby="projects">
+    <h2 id="projects">Projects</h2>
+    <p>A folder directly under <code>Projects/</code> becomes a project within 15 minutes, with its
+      files attached. <em>New project</em> makes a project and its folder together, and
+      <em>Make this folder a project</em>, under ⋯ on a folder's Files page, turns a folder
+      anywhere else into one where it stands.</p>
+    <p>Files dropped loose at the top of a project's folder are filed into type folders —
+      <code>models/</code>, <code>docs/</code>, <code>images/</code> and so on — by the next
+      sweep, following the rules in <%= link_to "Filing", settings_filing_rules_path %>. A README
+      stays at the top, and nothing inside a git repository is moved.</p>
+    <p><em>Archive</em> puts a project away and leaves its folder where it is; the app will not make
+      that folder into a project again. <em>Unarchive</em> brings it back.</p>
+    <p>A project is private until you publish it from its Publish panel. Pick a handle first (also
+      on your <%= link_to "Account", edit_user_registration_path %> page), then choose
+      <em>Unlisted</em>, for anyone with the link, or <em>Public</em>, listed on
+      <%= link_to "Explore", public_explore_path %> and on your handle's page. Visitors see the
+      project page and can download every visible file in its folder and every file attached to
+      it or its build log; <em>Preview</em> shows you exactly what they see.</p>
+  </section>
+
+  <section aria-labelledby="models">
+    <h2 id="models">3D models and shelves</h2>
+    <p>The <%= link_to "3D models", files_models_path %> view gathers your 3D files into models,
+      by shelves. A shelf is a folder that is not itself a model: a 3D file loose on a shelf is a
+      model of its own, and a folder on a shelf is one model holding what is inside it. The first
+      shelves are the top of the library, every folder at the top, <code>Models/</code> and each
+      project's <code>models/</code> folder; change them in
+      <%= link_to "Shelves", settings_shelves_path %>. A shelf is a path, so renaming its folder on
+      disk means updating the shelf too. A project's own folder is never a model, and removing a
+      model from the catalog leaves its files where they are.</p>
+  </section>
+
+  <section aria-labelledby="tools">
+    <h2 id="tools">Tools</h2>
+    <p><%= link_to "Tools", tools_path %> are add-ons — small apps that run inside Tinkerex and save
+      what they make straight into your library. Some need a service that the person running the
+      server sets up beside it; until they do, the tool's card is greyed out and names the service
+      it needs. The Box Generator needs the boxes service and OpenSCAD the openscad service;
+      Generators needs none.</p>
+  </section>
+
+  <section aria-labelledby="account">
+    <h2 id="account">Your account</h2>
+    <p>The first account made on this server is its owner. After that, sign-ups are closed unless
+      the person running the server opens them, and they can also add an account for you.</p>
+    <p>Your email, password and public handle are on your
+      <%= link_to "Account", edit_user_registration_path %> page. Tinkerex sends email, to confirm
+      an account or reset a password, only once the person running the server has set up mail: if
+      you forget your password and no reset email arrives, ask them to reset it.</p>
+  </section>
+
+  <details id="server">
+    <summary>For the person running this server</summary>
+    <p><%= link_to "docs/INSTALL.md", "https://github.com/chaim354/tinkerex/blob/main/docs/INSTALL.md" %>
+      covers installing, the three library backends, mail, accounts and backups.</p>
+    <p>Tools: <code>ADDON_SOURCE_URL</code> points at an addon bundle server, or
+      <code>ADDON_SOURCE_PATH</code> at a directory of bundles. A tool that needs a service stays
+      greyed out until <code>&lt;NAME&gt;_SIDECAR_URL</code> points at it:
+      <code>BOXES_SIDECAR_URL</code>, <code>OPENSCAD_SIDECAR_URL</code>.</p>
+    <p>Accounts: <code>REGISTRATION</code> is closed by default, and <code>REGISTRATION=open</code>
+      is accepted only on the sync-server backend, where every account has a library of its own.
+      <code>SMTP_ADDRESS</code> turns mail on. Without mail,
+      <code>bin/rails 'tinkerex:owner[EMAIL]'</code> adds a confirmed account and
+      <code>bin/rails 'tinkerex:password[EMAIL]'</code> resets a password, each reading the new
+      password from <code>TINKEREX_PASSWORD</code>.</p>
+    <p>The source is at <%= link_to "github.com/chaim354/tinkerex", "https://github.com/chaim354/tinkerex" %>.</p>
+  </details>
+</div>

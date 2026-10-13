@@ -29,7 +29,10 @@ module ShellHelper
     # make URL and light agree: Models stopped being a section, so the rule for what counts as a
     # model has no section to serve but Settings. That is why `shelves` left the "models" entry —
     # a top-level `shelves` controller no longer exists for it to name.
-    "settings" => %w[settings]
+    "settings" => %w[settings],
+    # /help lights the rail foot's Help, as the hub lights Settings: a page the rail links to must
+    # not render with nothing lit (design-system.md rule 8).
+    "help" => %w[help]
   }.freeze
 
   ICON_PATHS = {
@@ -49,6 +52,10 @@ module ShellHelper
     # A door and an arrow leaving it, for the rail foot's Sign out (slice 7): collapsed, the foot
     # draws icons only, and a bare-text button wrapped "Sign out" onto two lines in a 40px column.
     sign_out: "M6 3H3v10h3 M10 5l3 3-3 3 M13 8H7",
+    # A question mark in Recent's own circle, for the rail foot's Help (onboarding, 2026-10-13). The
+    # hook is r1.6 and the dot sits a full pixel below the stem, so at 16px it reads as a "?" rather
+    # than a blot; the dot is a .01 segment because a zero-length one draws nothing in some engines.
+    help: "M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2z M6.4 5.9a1.6 1.6 0 1 1 2.73 1.13c-.4.4-1.13.72-1.13 1.27v.35 M8 11.35v.01",
     # A page with a folded corner and two lines: a file's note-count badge (slice 7), which drew
     # the last emoji in the interface (test/no_emoji_test.rb). The count and its title stay.
     note: "M3 2h7l3 3v9H3z M5 7h6 M5 10h6"
@@ -140,7 +147,7 @@ module ShellHelper
 
   # THE ONE ANSWER TO "WHICH LINK IS LIT", so exactly one is. A key, compared by sidebar_aria:
   #   [:home] [:library] [:pin, node_id] [:project, id] [:all_projects] [:models] [:inventory]
-  #   [:tools] [:trash] [:settings]
+  #   [:tools] [:trash] [:settings] [:help]
   # The Library's 3D models view (`files/models`) lights [:models], not Library, though its section
   # is files (slice 5).
   # On the Files page AND a file's own page the DEEPEST pinned folder on the breadcrumb wins over
@@ -168,6 +175,7 @@ module ShellHelper
       when "tools" then [ :tools ]
       when "trash" then [ :trash ]
       when "settings" then [ :settings ]
+      when "help" then [ :help ]
       end
   end
 
