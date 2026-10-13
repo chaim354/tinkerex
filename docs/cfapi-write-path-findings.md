@@ -1,5 +1,11 @@
 # CfAPI write-path fixes — findings & status
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 Working notes for the Windows CfAPI write-path hardening (branch
 `worktree-agent-af328b23f11a2dc23`, off `auth-caching-security`). Live-verified against the
 self-hosted Windows runner via `gh workflow run rust-client.yml -f target=cfapi`

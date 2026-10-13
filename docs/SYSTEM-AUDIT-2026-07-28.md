@@ -1,5 +1,11 @@
 # System audit & architecture reference — 2026-07-28
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 **Subject:** Maker Server (`tinkerex`) — Rails 8 sync server + Rust local-first client + maker web layer
 **Commit audited:** `6ca3dd7` (merge of PR #91)
 **Method:** every claim below was *executed or read*, not inferred. Reproduction commands are in [§8](#8-appendix--how-every-claim-here-was-verified).

@@ -1,5 +1,11 @@
 # File versioning & restore — design sketch
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 How we keep full version history while storing **close to only the delta** per version,
 and restore any version cheaply. Most of this is already built; this doc names the pieces,
 explains *why* it's storage-efficient, and sketches the retention/GC policy that bounds

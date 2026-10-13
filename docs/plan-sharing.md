@@ -1,5 +1,11 @@
 # Sharing / Multi-User Implementation Plan
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps
 > use checkbox (`- [ ]`) syntax for tracking.

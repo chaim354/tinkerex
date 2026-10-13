@@ -1,5 +1,11 @@
 # Research: the Maker App Layer — what to build, in what order, and why
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 **Date:** 2026-06-15 · **Audience:** project owner (engineer) · **Scope:** the product layer
 (§12 step 9) that sits on top of the already-built local-first sync engine —
 **Projects, Inventory, BOM, and file preview** for hardware / 3D-print / CNC / laser /

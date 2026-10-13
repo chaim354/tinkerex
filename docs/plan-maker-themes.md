@@ -1,5 +1,11 @@
 # Plan — swappable visual themes for the Maker app
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 **Status:** plan only (do not implement yet).
 **Scope:** the Tauri desktop app frontend (`client/maker-app/src`). A user-selectable
 visual theme, persisted, applied instantly app-wide, with at least four built-in themes:

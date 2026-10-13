@@ -1,5 +1,11 @@
 # Git on the mounted sync filesystem — findings + MVP
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 **Question:** does a `git` repository work *inside* the Maker Server mounted sync
 filesystem (the `fs-provider` tree surfaced via FUSE/WebDAV/CfAPI)?
 

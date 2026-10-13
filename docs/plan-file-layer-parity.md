@@ -1,5 +1,11 @@
 # Plan — File/Sync Layer to Full Parity
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 **Date:** 2026-06-15 · **HEAD:** `bab90bb` · **Audience:** project owner + coding agent.
 **Scope:** close the *remaining* gaps between Maker Server's file/sync layer and production
 sync products (Dropbox / Google Drive / OneDrive / Nextcloud / Seafile / Syncthing). The data

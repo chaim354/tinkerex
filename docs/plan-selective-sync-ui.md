@@ -1,5 +1,11 @@
 # Plan — selective-sync UI in the Tauri app
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 **Status:** plan only (the engine + provider APIs exist; the app wiring is the gap).
 **Context:** while building the maker product surfaces (§12 step 9), the Settings surface
 needed selective-sync (per-folder include/exclude) controls. The sync engine and provider

@@ -1,5 +1,11 @@
 # Torn writes (partial-upload corruption) & change-batching
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 **Status:** research note · **Date:** 2026-06-15 · **Scope:** read-only investigation
 
 The question: when a file is mid-edit and only **some** of its chunks reach the

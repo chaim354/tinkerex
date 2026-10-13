@@ -1,5 +1,11 @@
 # POSIX compatibility of the file layer
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 What the `fs-provider` seam (and the mounts over it) does and does **not** guarantee about
 POSIX filesystem semantics, and **why** — so a maker's tools behave predictably and we
 don't re-litigate the deliberate gaps. This is the file-layer companion to `CLAUDE.md` §14

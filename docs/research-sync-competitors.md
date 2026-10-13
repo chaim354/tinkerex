@@ -1,5 +1,11 @@
 # Research: tinkerex sync vs. major virtual-drive systems (2026-06-14)
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 Comparison of our file-sync architecture against Dropbox, Google Drive, Nextcloud,
 ownCloud/oCIS, OpenCloud, Seafile, and Syncthing — with a ranked list of what to build
 next. Grounded in our docs (`CLAUDE.md`, `architecture-sync-engine.md`,

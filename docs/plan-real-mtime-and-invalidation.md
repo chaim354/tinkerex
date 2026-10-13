@@ -1,5 +1,11 @@
 # Plan: preserve real mtime + active cache invalidation (Option B)
 
+> **HISTORICAL — not re-verified.** Written before the repository split of 2026-08-20, when the
+> sync engine and the Rust client still lived here (they are `chaim354/tinkerex-sync` and
+> `chaim354/tinkerex-client` now). Kept for its reasoning and its measurements; it does not
+> describe what this repository contains today. The current map is `docs/README.md`.
+
+
 **Status:** ✅ **implemented 2026-06-12** (mtime in unix-nanos end-to-end; `EngineInvalidate`
 → FUSE `notify_inval_inode`; bigint server columns). Hermetic + server + integration tests
 green; rclone⇄WebDAV conformance re-run clean (caught + fixed a nanos-overflow in the
