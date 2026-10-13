@@ -5,6 +5,11 @@ module Tinkerex
   module MailSettings
     def self.configured?(env = ENV) = env["SMTP_ADDRESS"].to_s.strip.present?
 
+    # Whether a message sent from this environment reaches anyone. Production needs SMTP; the
+    # other environments deliver to the log or the test mailbox, so a "this server can't send
+    # email" note there would be wrong — and it is the note that keys on this, not delivery.
+    def self.deliverable?(env = ENV, production: Rails.env.production?) = !production || configured?(env)
+
     # The Hash ActionMailer::Base.smtp_settings takes, or nil when mail is not configured.
     def self.from_env(env = ENV)
       return nil unless configured?(env)

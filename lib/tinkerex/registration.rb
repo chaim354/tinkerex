@@ -54,7 +54,7 @@ module Tinkerex
     def self.first_owner?(users_exist: User.exists?) = !users_exist
 
     # What the sign-up page should tell the visitor.
-    def self.state(mode: self.mode, users_exist: User.exists?, mail_configured: MailSettings.configured?)
+    def self.state(mode: self.mode, users_exist: User.exists?, mail_configured: MailSettings.deliverable?)
       return :first_owner unless users_exist
       return :closed if mode == "closed"
 

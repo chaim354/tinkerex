@@ -22,6 +22,12 @@ class MailSettingsTest < ActiveSupport::TestCase
                    password: "p", authentication: :login, enable_starttls_auto: false }, s)
   end
 
+  test "deliverable outside production whatever the env, and only with SMTP in production" do
+    assert Tinkerex::MailSettings.deliverable?({}, production: false)
+    assert_not Tinkerex::MailSettings.deliverable?({}, production: true)
+    assert Tinkerex::MailSettings.deliverable?({ "SMTP_ADDRESS" => "smtp.example.net" }, production: true)
+  end
+
   test "the sender is MAIL_FROM, else no-reply at the mail-link host, else the historical literal" do
     assert_equal "hi@x.example", Tinkerex::MailSettings.sender({ "MAIL_FROM" => "hi@x.example", "APP_HOST" => "y" })
     assert_equal "no-reply@maker.example", Tinkerex::MailSettings.sender({ "APP_HOST" => "maker.example" })

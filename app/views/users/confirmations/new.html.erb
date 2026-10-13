@@ -2,7 +2,7 @@
   <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></div>
   <h2>Resend confirmation instructions</h2>
 
-  <% unless Tinkerex::MailSettings.configured? %>
+  <% unless Tinkerex::MailSettings.deliverable? %>
     <p class="auth-hint">This server can't send email yet (<code>SMTP_ADDRESS</code> is not set), so nothing will arrive until whoever runs it configures mail.</p>
   <% end %>
 
