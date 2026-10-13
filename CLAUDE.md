@@ -277,13 +277,9 @@ forward everywhere, where rewriting history does not** — a rewrite invents tim
 already-migrated databases fail with "table already exists," fixable only by hand-inserting
 `schema_migrations` rows on every live database.
 
-> **Both stale `/docs` files were dealt with on 2026-08-25 (§12.13).** `docs/SYNC_SERVER.md`
-> **moved** to `chaim354/tinkerex-sync` — it was not stale about its subject, it was in the wrong
-> repository — leaving a redirect stub here because ~8 documents and `config/database.yml` cite the
-> old path. `docs/architecture-sync-engine.md` is **marked HISTORICAL**: it is the pre-split v1
-> design and describes all three repos at once, so it is kept for the *why* (the WAN measurement,
-> the coarse-protocol argument) and explicitly not for what any repo contains.
-> `docs/sync-protocol.md` is current and remains the normative wire spec.
+> **The two pre-split `/docs` files were dealt with on 2026-08-25 (§12.13):** `docs/SYNC_SERVER.md`
+> moved to `chaim354/tinkerex-sync` (a redirect stub stays — ~8 documents cite the path) and
+> `docs/architecture-sync-engine.md` is marked HISTORICAL, kept for the *why* only. `docs/sync-protocol.md` is current.
 
 ---
 
@@ -940,6 +936,9 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   Supplier/Location, because it writes this user's data into a row: clearing a pointer can only
   repair an illegal cross-tenant reference, whereas writing a name into someone else's row would
   disclose one.
+- **`Current.library_unreachable` IS SET ONLY WHERE A `FetchError` WAS RESCUED INTO DEGRADED OUTPUT
+  (`Maker::Previews::ThumbnailMap.for`), AND THE LAYOUT BANNER THAT READS IT NEVER PROBES THE PORT** —
+  a page that did not touch the port says nothing, so no read pays a WAN round trip for the sentence (§2).
 
 ### 14e. Architecture and process
 
