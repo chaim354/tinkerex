@@ -119,6 +119,7 @@ env:
     # the tailnet (*.tinkerex.home is a wildcard to the NPM front proxy), `.local` only where an
     # /etc/hosts line was added by hand.
     APP_HOST: chunk.tinkerex.home
+    # REGISTRATION is not set: closed is the production default (lib/tinkerex/registration.rb); the first account is the owner.
 
     # THE TEST-SIGNUP SEAM IS NOT SET HERE, OR IN ANY DESTINATION (2026-10-12). POST /v1/test/users
     # mints confirmed accounts with no email check and no throttle, and env.clear deep-merges into

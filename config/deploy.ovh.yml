@@ -48,6 +48,14 @@ proxy:
   ssl:
     certificate_pem: OVH_ORIGIN_CERTIFICATE_PEM
     private_key_pem: OVH_ORIGIN_PRIVATE_KEY_PEM
+  # LOAD-BEARING WITH `ssl:` SET: kamal-proxy stops forwarding the incoming X-Forwarded-* headers
+  # once it terminates TLS unless told otherwise (kamal 2.12 docs/proxy.yml:79-81). Cloudflare puts
+  # the VISITOR in X-Forwarded-For; without this the app received only the proxy's own peer (the
+  # Cloudflare edge), every address in the chain was a trusted proxy, and ActionDispatch::RemoteIp
+  # fell back to that edge node -- so config/initializers/trusted_proxies.rb would have changed
+  # nothing here (found in review, 2026-10-13, by measurement with the fallback shape). Pinned by
+  # test/deploy_hygiene_test.rb's internet-facing test.
+  forward_headers: true
 
 # No builder override: this overlay inherits `builder: arch: amd64` from deploy.yml, so the
 # image is cross-built ONCE on the Mac (QEMU, ~84 s cold / cache-fast incremental) and pushed
@@ -186,6 +194,9 @@ env:
     # config/environments/production.rb). Must be a name the proxy block above routes --
     # test/deploy_hygiene_test.rb checks exactly that for every destination.
     APP_HOST: tinkerex.com
+    # Closed is the production default; stated here because this box is the one strangers reach
+    # and runs a single-library backend (s3), where `open` is refused at boot anyway.
+    REGISTRATION: closed
 
     # ENABLE_TEST_SIGNUP: SET NOWHERE SINCE 2026-10-12. This overlay blanked it on 2026-10-12
     # morning because deploy.yml's base env.clear set it and Kamal deep-merges env.clear; the same

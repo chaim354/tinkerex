@@ -65,13 +65,16 @@ bin/secrets-preflight --all                  # unlock 1Password if this reports 
 # Unraid (SeaweedFS):
 kamal setup            # first time on this box;  later: kamal deploy
 
-# OVH (R2) — credentials come from .kamal/secrets.ovh, no export needed:
-kamal setup -d ovh     # first time;  later: kamal deploy -d ovh
+# OVH (R2) — credentials come from .kamal/secrets.ovh, no export needed. ALWAYS --hosts: the
+# accessories carry host: 192.168.1.95 and an overlay never overrides them, so without the filter
+# kamal takes its deploy lock on the Unraid box too, as this overlay's ssh user `ubuntu`, and dies
+# with Errno::ENODEV AFTER the four-minute build (measured 2026-10-13, tinkerex#346):
+kamal setup -d ovh --hosts 15.204.216.249     # first time;  later: kamal deploy -d ovh --hosts 15.204.216.249
 ```
 
 Kamal builds the amd64 image on the Mac **once per deploy**, pushes it to ghcr, then each target
 pulls and boots it. (To push once and deploy to both without rebuilding: `kamal build push`
-then `kamal deploy --skip-push` / `kamal deploy -d ovh --skip-push`.)
+then `kamal deploy --skip-push` / `kamal deploy -d ovh --skip-push --hosts 15.204.216.249`.)
 
 ## 2b. How secrets resolve
 
@@ -345,6 +348,43 @@ curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer <token>" \
 
 Then set **Sync server URL** to `http://sync.tinkerex.home` in the Tauri app (`../tinkerex-client`,
 its CLAUDE.md §5 for the daemons) and Mount. The token is printed once; keep it in the shell.
+
+## Accounts — who can sign up, the first owner, and mail
+
+Three environment variables decide this; none of them needs a code change (since 2026-10-13,
+`docs/superpowers/specs/2026-10-13-b-accounts-that-work-design.md`).
+
+| variable | values | default | what it does |
+|---|---|---|---|
+| `REGISTRATION` | `closed` / `open` | `closed` in production, `open` in dev and test | Whether strangers may create accounts. **`open` is refused at boot on `LIBRARY_BACKEND=share` and `s3`** — every account there indexes the same library, so an open sign-up hands a stranger the owner's files. Use it on `chunk_remote` (per-user libraries) or the managed service. |
+| `SMTP_ADDRESS` (+ `SMTP_PORT`, `SMTP_USER_NAME`, `SMTP_PASSWORD`, `SMTP_DOMAIN`, `SMTP_AUTHENTICATION`, `SMTP_STARTTLS`) | | unset = no mail | Turns on SMTP delivery for confirmation and password-reset mail. Defaults: port 587, STARTTLS on, HELO domain = `APP_HOST`, `plain` auth when a user name is given. |
+| `MAIL_FROM` | an address | `no-reply@<APP_HOST>` | The sender of every message the app sends. |
+
+**The first account is the owner.** On a server with no user yet, the sign-up page works once
+even when registration is closed, and the account it creates is confirmed on the spot — no mail
+server needed on day one — and signed straight in. After that the page answers "Sign-ups are
+closed" (403) and the link disappears, unless `REGISTRATION=open`.
+
+**Single sign-on is its own door.** With `OMNIAUTH_ENABLED` set, an identity-provider login creates
+a confirmed account whatever `REGISTRATION` says — enabling OIDC is the opt-in, and the provider
+decides who may sign in. It is off by default (`config/initializers/omniauth.rb`).
+
+**Every later account needs mail, or a console door.** With `SMTP_ADDRESS` unset the sign-up and
+resend pages say so, the boot log says so once, and these two tasks do the job from a shell on the
+box. The password is read from `TINKEREX_PASSWORD` — never put it on the command line, which `ps`,
+shell history and the deploy log all see:
+
+```sh
+# create a confirmed account (refuses an existing address and a password under 10 characters)
+ssh kamal1@192.168.1.95 "TINKEREX_PASSWORD=$(printf '%q' "$(bin/secret TINKEREX_PASSWORD 'op://tinkerex/unraid demo account/password')") docker exec -e TINKEREX_PASSWORD \$(docker ps -qf name=^tinkerex-web-share-) bin/rails 'tinkerex:owner[demo@tinkerex.local]'"
+
+# reset a password and confirm the account
+ssh kamal1@192.168.1.95 "TINKEREX_PASSWORD=$(printf '%q' "$(bin/secret TINKEREX_PASSWORD 'op://tinkerex/unraid demo account/password')") docker exec -e TINKEREX_PASSWORD \$(docker ps -qf name=^tinkerex-web-share-) bin/rails 'tinkerex:password[demo@tinkerex.local]'"
+```
+
+`test/deploy_hygiene_test.rb` refuses a committed destination that sets `REGISTRATION=open` on a
+single-library backend, and `lib/tinkerex/registration.rb` refuses the same at boot — the first is
+how you learn before the deploy, the second is what stops a hand-edited env on the box.
 
 ## 5. Test accounts on the Unraid box
 

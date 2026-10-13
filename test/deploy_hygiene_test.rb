@@ -97,6 +97,15 @@ class DeployHygieneTest < ActiveSupport::TestCase
            "Cloudflare intercepts ACME, so `ssl: true` alone never gets a certificate — name the " \
            "origin cert and key via ssl.certificate_pem / ssl.private_key_pem"
 
+    # With `ssl:` set, kamal-proxy drops the incoming X-Forwarded-* headers unless told to forward
+    # them (kamal 2.12 docs/proxy.yml:79-81). Cloudflare puts the visitor there; without this the
+    # app sees only the edge node and every per-IP throttle keys on Cloudflare
+    # (config/initializers/trusted_proxies.rb). Read off deploy_options so what kamal-proxy is
+    # actually told is what is asserted, not a YAML key.
+    assert_equal true, ovh.deploy_options[:"forward-headers"],
+                 "deploy.ovh.yml must set `proxy: forward_headers: true` beside `ssl:` -- the TLS " \
+                 "terminator otherwise discards Cloudflare's X-Forwarded-For and the app sees the edge node"
+
     lan = UNRAID_DESTINATIONS.keys.flat_map { |destination| proxy_hosts(destination) }
     assert_empty ovh.hosts & lan, "an internet-facing destination must not route a LAN-only name"
   end
@@ -209,6 +218,24 @@ class DeployHygieneTest < ActiveSupport::TestCase
       assert clear["ENABLE_TEST_SIGNUP"].to_s.blank?,
              "#{destination || 'base'} resolves ENABLE_TEST_SIGNUP=#{clear['ENABLE_TEST_SIGNUP'].inspect}: " \
              "the unverified POST /v1/test/users signup would be open to anyone who can reach that host"
+    end
+  end
+
+  test "no committed destination opens registration on a single-library backend" do
+    # Tinkerex::Registration refuses REGISTRATION=open at boot on share and s3 (every account
+    # indexes the same library). This pins the same rule one step earlier, on the MERGED deploy
+    # config, so the refusal is never first discovered as a crash loop on the box.
+    require "kamal"
+    LIBRARY_DESTINATIONS.each do |destination|
+      clear = at(Kamal::Configuration.create_from(
+        config_file: ROOT.join("config/deploy.yml"), destination: destination
+      ).raw_config, "env", "clear").to_h
+      assert clear.key?("LIBRARY_BACKEND"), "#{destination || 'base'}: raw_config shape changed?"
+      next unless %w[share s3].include?(clear["LIBRARY_BACKEND"].to_s)
+
+      assert_not_equal "open", clear["REGISTRATION"].to_s,
+                       "#{destination || 'base'} runs LIBRARY_BACKEND=#{clear['LIBRARY_BACKEND']} and sets " \
+                       "REGISTRATION=open: every account there indexes the same library"
     end
   end
 

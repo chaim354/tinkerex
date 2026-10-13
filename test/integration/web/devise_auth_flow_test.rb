@@ -12,7 +12,17 @@ module Web
 
     # The per-IP rate-limit counter is cleared globally in test_helper.rb — see the comment
     # there for why every test needs that and not just this file's.
-    setup { ActionMailer::Base.deliveries.clear }
+    #
+    # THE FIRST ACCOUNT IS THE OWNER (Tinkerex::Registration, 2026-10-13): confirmed on the spot,
+    # signed in, no mail, whatever REGISTRATION says. The sign-ups here are about the ordinary
+    # SECOND-and-later account — unconfirmed until the mail is followed — so one confirmed account
+    # exists first. It is created before the deliveries are cleared and sends none anyway
+    # (confirmed on create, so no confirmation is required). registration_mode_test.rb covers the
+    # first account.
+    setup do
+      User.create!(email: "owner@example.test", password: PASSWORD, confirmed_at: Time.current)
+      ActionMailer::Base.deliveries.clear
+    end
 
     # --- sign up ----------------------------------------------------------------------
     test "sign up creates an unconfirmed account and sends a confirmation email" do

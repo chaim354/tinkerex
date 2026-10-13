@@ -225,14 +225,14 @@ Deploy OVH only on explicit request. `docs/DEPLOY.md`.
   the old shared memo reproduces the leak deterministically, `200 of 400` threaded observations
   carrying the wrong user's token (`test/services/file_layer/chunk_remote/transport_isolation_test.rb`).
   Full argument, including why the fix is deliberately NOT thread-local caching either: §14a.
-- **Bytes never flow through Rails.** Rails is the control plane only. (§15; the one deliberate
-  departure is the share backend — §14a.)
-- **Registration creates a new account only** (no `find_or_create_by` takeover); a device joins an
-  existing library via **`POST /v1/devices/login`** (email + password → a 256-bit device token) or,
-  from an already-authenticated device, `POST /v1/devices` to add a sibling. **Pairing codes were
-  the earlier mechanism and are gone** (`DevicePairing` / `device_pairings` dropped, `18c623a`).
-  Web auth is Rails 8 built-in (signup/confirm/login/reset) with an OmniAuth seam. Real OAuth/OIDC
-  email verification is the later upgrade; the device-token mechanism underneath stays.
+- **Bytes never flow through Rails** — control plane only (§15; the share backend is the one departure, §14a).
+- **Registration creates a new account only** (no `find_or_create_by` takeover), and **it is CLOSED
+  by default in production: the first account is the owner, confirmed without mail, and
+  `REGISTRATION=open` is REFUSED at boot on `share`/`s3`**, where every account indexes ONE library
+  (`lib/tinkerex/registration.rb`; pinned by `deploy_hygiene_test` and `registration_mode_test`).
+  A device joins via **`POST /v1/devices/login`** (email + password → a 256-bit device token) or
+  `POST /v1/devices` from an authenticated device. Pairing codes are gone (`18c623a`). Web auth is
+  Rails 8 built-in with an OmniAuth seam; real OAuth/OIDC email verification is the later upgrade.
 - **Device tokens are 256-bit, SHA256-digested at rest.** A device token is the **only** credential
   the whole v1 API accepts, including all fourteen `v1/maker/*` controllers — which is why
   `devices` is deliberately ungated (§14a) and why `Device` is owned here, not by the sync server.
