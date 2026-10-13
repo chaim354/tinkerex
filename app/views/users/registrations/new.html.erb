@@ -2,6 +2,13 @@
   <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></div>
   <h2>Sign up</h2>
 
+  <% case Tinkerex::Registration.state
+     when :first_owner %>
+    <p class="auth-hint">This is the server's first account. It becomes the owner and needs no email confirmation; sign-ups close after it unless <code>REGISTRATION=open</code> is set.</p>
+  <% when :open_no_mail %>
+    <p class="auth-hint">This server can't send email yet, so a new account can't be confirmed. Ask whoever runs it to set <code>SMTP_ADDRESS</code>, or to create your account for you.</p>
+  <% end %>
+
   <%= form_for(resource, as: resource_name, url: registration_path(resource_name)) do |f| %>
     <%= render "users/shared/error_messages", resource: resource %>
 
