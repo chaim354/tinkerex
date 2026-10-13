@@ -154,6 +154,27 @@ class CiHygieneTest < ActiveSupport::TestCase
                  "config/ci.rb's LOCAL_ONLY_GATES only when CI deliberately must not run it."
   end
 
+  # The expression every job must carry. `github.repository` is "owner/name" of THIS repo and
+  # `head.repo.full_name` is where the PR's branch lives; they differ exactly for a fork.
+  FORK_GUARD = "github.event.pull_request.head.repo.full_name == github.repository".freeze
+
+  test "every ci.yml job refuses a pull request from a fork" do
+    # The runners are self-hosted containers on the LAN with SYS_PTRACE and seccomp unconfined
+    # (ops/ci-runner-stack.yml), and `bin/ci` runs the branch's own code. A fork's pull request is
+    # therefore code execution on the LAN by whoever opened it. GitHub's "require approval for all
+    # outside collaborators" setting is the other half and CANNOT be set while the repo is private
+    # (the API refuses: "Fork PR approval is not allowed for private repositories", 2026-10-12) —
+    # so the workflow carries the guard itself, on EVERY job: a guard on preflight alone would not
+    # stop the gate jobs, which do not `needs:` it (the preflight exemption below).
+    jobs = ci_yml_jobs
+    assert jobs.any?, "expected ci.yml to declare jobs"
+    jobs.each do |name, job|
+      assert_includes job["if"].to_s, FORK_GUARD,
+                      "ci.yml job `#{name}` must carry `if: ${{ #{FORK_GUARD} }}` (a fork's PR " \
+                      "runs its own code on the LAN runners otherwise)"
+    end
+  end
+
   test "setup is the only gate exempt from needing a ci.yml job" do
     # The escape hatch above must not become the drift it replaced. `setup` is `bin/setup
     # --skip-server`: local convenience, and every ci.yml job does its own `bundle install`.

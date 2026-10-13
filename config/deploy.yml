@@ -111,12 +111,20 @@ env:
     # remain the real answer for SaaS scale, since a thread count only raises the ceiling.
     RAILS_MAX_THREADS: 16
 
-    # Opens the POST /v1/test/users signup seam so the automated E2E tests + dev can enroll
-    # accounts against THIS box. SAFE here: this Unraid instance is a NON-production test/dev
-    # deploy (despite running as RAILS_ENV=production for deploy reasons). The seam creates
-    # unverified confirmed accounts, so NEVER set this on the managed SaaS production. A boot
-    # warning fires whenever it's on (config/initializers/test_signup_warning.rb).
-    ENABLE_TEST_SIGNUP: true
+    # THE HOST MAIL LINKS ARE BUILT FROM (config/environments/production.rb). Confirmation and
+    # password-reset links carry this name; the fallback there is a loud `.invalid`, and until
+    # 2026-10-12 every destination shipped that fallback because none set this. Each overlay sets
+    # its own, and test/deploy_hygiene_test.rb requires the name to be one kamal-proxy routes for
+    # that destination. `.home` rather than `.local`: it resolves from every client on the LAN and
+    # the tailnet (*.tinkerex.home is a wildcard to the NPM front proxy), `.local` only where an
+    # /etc/hosts line was added by hand.
+    APP_HOST: chunk.tinkerex.home
+
+    # THE TEST-SIGNUP SEAM IS NOT SET HERE, OR IN ANY DESTINATION (2026-10-12). POST /v1/test/users
+    # mints confirmed accounts with no email check and no throttle, and env.clear deep-merges into
+    # every overlay -- the internet-facing OVH box inherited it for two months. A harness run that
+    # needs it exports ENABLE_TEST_SIGNUP=1 for that run only (`kamal env push`, or a local
+    # `bin/rails server`); test/deploy_hygiene_test.rb refuses any committed destination that sets it.
 
     # THE EMBEDDED CHUNK STORE'S ENV IS GONE (Arc D Part 2). STORAGE_BACKEND, CHUNK_ENDPOINT,
     # CHUNK_BUCKET, CHUNK_REGION and CHUNK_ACCESS_KEY_ID configured Sync::Storage::ChunkStore,

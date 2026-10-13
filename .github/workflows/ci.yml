@@ -141,8 +141,18 @@ jobs:
   # this repo's coverage stops at linux and where the rest went. Keep it: the moment a macos or
   # windows job returns it MUST be gated, and the guard enforces that. The siblings carry their own
   # copies (a workflow file's job outputs don't cross files) and gate real jobs on it.
+  #
+  # EVERY JOB BELOW CARRIES `if: head.repo.full_name == github.repository`. The runners are
+  # self-hosted containers on the LAN (ops/ci-runner-stack.yml: SYS_PTRACE, seccomp unconfined)
+  # and bin/ci runs the branch's own code, so a pull request from a FORK is code execution on
+  # the LAN by whoever opened it. Harmless while the repo is private (no fork can exist) and the
+  # thing that matters the day it is public. GitHub's own "require approval for all outside
+  # collaborators" setting is the other half; it cannot be set on a private repo, so flipping the
+  # repo public and setting it are ONE step (docs/AUDIT-2026-10-12-readiness.md, the going-public
+  # checklist). Pinned on every job by test/ci_hygiene_test.rb.
   preflight:
     runs-on: [self-hosted, linux]
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
     outputs:
       macos:   ${{ steps.p.outputs.macos }}
       linux:   ${{ steps.p.outputs.linux }}
@@ -165,6 +175,7 @@ jobs:
   # continues, so all three report whatever any one of them does.
   scan:
     runs-on: [self-hosted, linux]
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
     steps:
       - uses: actions/checkout@v7
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
@@ -174,6 +185,7 @@ jobs:
 
   lint:
     runs-on: [self-hosted, linux]
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
     env:
       RUBOCOP_CACHE_ROOT: tmp/rubocop
     steps:
@@ -194,6 +206,7 @@ jobs:
 
   test:
     runs-on: [self-hosted, linux]
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
     steps:
       - uses: actions/checkout@v7
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
@@ -206,6 +219,7 @@ jobs:
         run: bin/ci test
   test-s3-backend:
     runs-on: [self-hosted, linux]
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
     steps:
       - uses: actions/checkout@v7
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
@@ -218,6 +232,7 @@ jobs:
         run: bin/ci test-s3
   test-chunk-remote:
     runs-on: [self-hosted, linux]
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
     steps:
       - uses: actions/checkout@v7
       - name: Check out tinkerex-sync
@@ -237,6 +252,7 @@ jobs:
 
   system-test:
     runs-on: [self-hosted, linux]
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
     steps:
       - uses: actions/checkout@v7
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)

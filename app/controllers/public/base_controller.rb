@@ -6,6 +6,16 @@ module Public
   class BaseController < ActionController::Base
     layout "application"
     helper_method :public_surface?
+
+    # ONE PER-IP BUDGET OVER THE WHOLE ANONYMOUS SURFACE. Every action here is unauthenticated and
+    # does real work — a cover page enqueues up to ThumbnailMap's render cap, `files#view` enqueues
+    # geometry, and on share the byte route streams the file through Puma — bounded per content
+    # but free per request to the visitor. Far above a person (a page of sixty covers is 61
+    # requests) and far below a scraper. Counts in config.action_controller.cache_store (Solid
+    # Cache in production); pinned by test/integration/web/public_throttle_test.rb.
+    ANONYMOUS_REQUESTS_PER_MINUTE = 600
+    rate_limit to: ANONYMOUS_REQUESTS_PER_MINUTE, within: 1.minute,
+               with: -> { head :too_many_requests }
     # AN UNMOUNTED OR UNREACHABLE LIBRARY IS A 503 ON EVERY PUBLIC PAGE, MAPPED ONCE HERE — the
     # answer §14a gives for FetchError (retryable, never "gone") and the one FilesController makes
     # once for the maker's pages. Without it a public byte route or file page answered a bare 500

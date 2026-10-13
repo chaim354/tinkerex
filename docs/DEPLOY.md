@@ -401,19 +401,25 @@ ssh kamal1@192.168.1.95 'docker exec $(docker ps -qf name="^tinkerex-web-share-"
 ssh kamal1@192.168.1.95 'docker exec $(docker ps -qf name="^tinkerex-web-s3-")       bin/rails runner "puts User.pluck(:email)"'   # s3
 ```
 
-Create one (the seam is open on all three; it creates a **confirmed** account, no email
-verification — `app/controllers/v1/test_users_controller.rb`):
+Create one. **The HTTP seam (`POST /v1/test/users`) is closed on every committed destination since
+2026-10-12** — `ENABLE_TEST_SIGNUP` is set in no deploy file, and `test/deploy_hygiene_test.rb`
+refuses one that sets it — so create the account in a console. It is a **confirmed** account, no
+email verification; the same ssh/`docker exec` shape as the reset below, so the password reaches
+the box as an environment variable and never sits in a quoted string or your shell history:
 
 ```sh
 DEMO_PASSWORD=$(bin/secret DEMO_PASSWORD 'op://tinkerex/unraid demo account/password')
-DEMO_PASSWORD="$DEMO_PASSWORD" ruby -rjson -e \
-  'print({ email: "demo@tinkerex.local", password: ENV.fetch("DEMO_PASSWORD") }.to_json)' |
-  curl -X POST http://share.tinkerex.home/v1/test/users \
-    -H 'Content-Type: application/json' --data-binary @-
+ssh kamal1@192.168.1.95 "DEMO_PASSWORD=$(printf '%q' "$DEMO_PASSWORD") docker exec -i -e DEMO_PASSWORD \$(docker ps -qf name=^tinkerex-web-share-) bin/rails runner -" <<'RUBY'
+User.find_by(email: "demo@tinkerex.local") and abort "already exists — use the reset below"
+User.create!(email: "demo@tinkerex.local", password: ENV.fetch("DEMO_PASSWORD"), confirmed_at: Time.current)
+puts "created"
+RUBY
 ```
 
-The body is built by `to_json`, not spliced into a quoted string, so a password containing `"`, `\`
-or `!` survives intact and never appears in your shell history.
+A harness that genuinely needs the HTTP seam exports `ENABLE_TEST_SIGNUP=1` for that run only —
+`export ENABLE_TEST_SIGNUP=1 && bin/kamal env push -d share && bin/kamal app boot -d share`, and the
+same with the variable blank afterwards. Never commit it to a destination: the seam mints confirmed
+accounts with no email check and no throttle, and on share/s3 every account indexes the same library.
 
 Reset a forgotten one, keeping its library, attachments and BOM links:
 

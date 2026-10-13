@@ -28,6 +28,27 @@ servers:
 ssh:
   user: ubuntu
 
+# THE PUBLIC NAMES AND THE ORIGIN CERTIFICATE. Kamal REPLACES arrays on merge, so this `hosts:`
+# list wins over the base's chunk.tinkerex.{local,home} outright -- without this block the overlay
+# INHERITED those LAN names and kamal-proxy answered 404 for tinkerex.com (measured 2026-10-12:
+# www.tinkerex.com was a 525 at Cloudflare's edge for exactly this reason, and the apex survived
+# only because the box had not been redeployed since the base grew its `hosts:` list). Cloudflare
+# proxies the apex and www (orange cloud, Full strict) and opens its own TLS connection to this
+# box, which succeeds only if kamal-proxy serves a certificate for the SNI; Cloudflare also
+# intercepts the HTTP-01 challenge, so `ssl: true` alone can never obtain one. The Cloudflare
+# ORIGIN certificate (op://tinkerex/tinkerex-origin, SANs tinkerex.com + *.tinkerex.com, valid to
+# 2041) is the one that works, and it reaches the proxy as two SECRETS resolved from
+# .kamal/secrets.ovh -- test/deploy_hygiene_test.rb requires both to be defined there and pins
+# this block. Design and the Cloudflare-side steps:
+# docs/superpowers/specs/2026-07-26-ovh-tinkerex-domain-tls-design.md.
+proxy:
+  hosts:
+    - tinkerex.com
+    - www.tinkerex.com
+  ssl:
+    certificate_pem: OVH_ORIGIN_CERTIFICATE_PEM
+    private_key_pem: OVH_ORIGIN_PRIVATE_KEY_PEM
+
 # No builder override: this overlay inherits `builder: arch: amd64` from deploy.yml, so the
 # image is cross-built ONCE on the Mac (QEMU, ~84 s cold / cache-fast incremental) and pushed
 # to ghcr. Both this OVH box and the Unraid box pull that same amd64 image — no build, no repo
@@ -161,26 +182,17 @@ env:
     # and `kamal app exec 'curl -sS -o /dev/null -w "%{http_code}" http://localhost:3000/up'`
     # should still answer 200 (that is what the ssl_options exclusion protects).
     FORCE_SSL: "1"
+    # THE HOST MAIL LINKS ARE BUILT FROM: https://tinkerex.com/... (FORCE_SSL picks the scheme,
+    # config/environments/production.rb). Must be a name the proxy block above routes --
+    # test/deploy_hygiene_test.rb checks exactly that for every destination.
+    APP_HOST: tinkerex.com
 
-    # ENABLE_TEST_SIGNUP IS BLANKED HERE, AND THIS BOX MUST NEVER INHERIT IT (2026-10-12).
-    #
-    # deploy.yml's env.clear sets ENABLE_TEST_SIGNUP: true for the LAN-only Unraid box, and Kamal
-    # DEEP-MERGES env.clear -- the same mechanism the blank lines above exist to defeat. Inherited,
-    # this box served POST /v1/test/users: an unverified signup that mints CONFIRMED accounts,
-    # reachable by anyone who can reach the host. It was accepted on 2026-07-29 as a prod-LIKE test
-    # box "until it holds anything real" -- and it does: LIBRARY_BACKEND=s3 above points every
-    # account at ONE bucket prefix (FileLayer::S3 has no per-user key, and Library::ScanJob.scan_all!
-    # indexes that prefix into EVERY user's catalog), so a stranger's self-made account got read,
-    # write and delete on the owner's library one scan later. Closed ahead of making the source
-    # public, where the route stops being obscure.
-    #
-    # BLANK, NOT `false`: the controller and routes.rb gate on ENV.present?, and Kamal renders a YAML
-    # `false` as the literal string "false" -- present, so the seam stays OPEN. Same trap the
-    # sidecar-URL blanks guard against. test/deploy_hygiene_test.rb asserts this off the MERGED
-    # config for every destination that is not LAN-only, so a new internet-facing destination is
-    # closed by default rather than by someone remembering.
-    #
-    # NOT blanked at the base, because the Unraid box still uses it:
-    # client/test-conformance/two-device-cfapi.ps1 enrolls against http://192.168.1.95 through this
-    # seam. The other harnesses boot their own server and set the var themselves.
-    ENABLE_TEST_SIGNUP: ""
+    # ENABLE_TEST_SIGNUP: SET NOWHERE SINCE 2026-10-12. This overlay blanked it on 2026-10-12
+    # morning because deploy.yml's base env.clear set it and Kamal deep-merges env.clear; the same
+    # day the base stopped setting it, and test/deploy_hygiene_test.rb now refuses ANY committed
+    # destination that resolves it -- so there is nothing left to blank here. The reason it
+    # mattered on this box in particular: LIBRARY_BACKEND=s3 above points every account at ONE
+    # bucket prefix (FileLayer::S3 has no per-user key, and Library::ScanJob.scan_all! indexes
+    # that prefix into EVERY user's catalog), so a stranger's self-made account got read, write
+    # and delete on the owner's library one scan later. If a harness ever needs the seam here,
+    # export it for that run only (`kamal env push -d ovh`), never commit it.

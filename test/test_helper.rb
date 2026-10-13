@@ -67,7 +67,15 @@ module ActiveSupport
     # `config.action_controller.cache_store` is a real MemoryStore precisely so they can fire —
     # and auth_throttle_test drives each one past its limit inside a single test, which this
     # per-test clear does not touch.
-    setup { ActionController::Base.cache_store.clear }
+    #
+    # BOTH STORES, NOT ONE. `config.action_controller.cache_store` is applied to ActionController::Base
+    # AND to ActionController::API, and each `cache_store=` call builds its OWN MemoryStore — so the
+    # v1 API's throttle (V1::DevicesController#login) counts in a store that clearing Base's never
+    # touches. Measured: with Base alone cleared, device_login_test's third test answered 429.
+    setup do
+      ActionController::Base.cache_store.clear
+      ActionController::API.cache_store.clear
+    end
 
     # Run a block on a box that has no SVG rasterizer.
     #

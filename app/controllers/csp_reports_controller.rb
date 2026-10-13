@@ -59,6 +59,12 @@ class CspReportsController < ActionController::Base
   # an accidental PII sink. Keep the fields that identify WHICH RULE broke WHERE, and truncate.
   FIELDS = %w[document-uri violated-directive effective-directive blocked-uri
               source-file line-number status-code disposition].freeze
+
+  # The three URL-valued fields. A same-origin document-uri is the page's own URL, which for an
+  # unlisted project IS the credential (`?k=<token>`, Public::BaseController); a blocked-uri can
+  # carry a signed URL. The path is what a violation needs; the query is dropped before anything
+  # is written. Pinned by csp_report_test "a URL field's query string is not logged".
+  URL_FIELDS = %w[document-uri blocked-uri source-file].freeze
   MAX_FIELD_CHARS = 300
 
   def summary(report)
@@ -66,6 +72,7 @@ class CspReportsController < ActionController::Base
       value = report[field]
       next if value.nil? || value == ""
 
+      value = value.split("?", 2).first if URL_FIELDS.include?(field) && value.is_a?(String)
       out[field] = value.is_a?(String) ? value.truncate(MAX_FIELD_CHARS) : value
     end
   end
