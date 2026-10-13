@@ -745,10 +745,10 @@ area belongs there too, with a stub here.
   driven directly and no `observable!` exists to reach. Probed through the real doors: a
   `.DS_Store`/`.trash`/`.maker-tmp-x` output was **302 + a live node on chunk** and **422 on
   share/s3** — §14a's one-condition-two-answers, with the main deployment on the wrong side.
-  **THREE web doors mint a leaf name and all three now ask two questions in the same breath**:
+  **FOUR web doors mint a leaf name and all four ask two questions in the same breath**:
   `Maker::MoveNode.valid_leaf_name?` (syntax) then `ReservedNames.reserved?` (the library's own
   namespace) — `Tools::AddonsController#parse_files`, `LibraryBrowseController#create_folder`,
-  `FilesController#begin_upload`. The last had **neither** and was the weakest door in the app
+  `FilesController#begin_upload`, `FilesController#rename` (F, 2026-10-13). `begin_upload` had **neither** and was the weakest door in the app
   (`begin=200, finalize=200`, a live node named `"../../escape.txt"` in the changelog); it is
   `syncable`-gated, so **no cross-backend leg could ever have caught it**. Three things not to
   undo: the predicate is the **UNION** of the two adapters' guards, because a door cannot know
