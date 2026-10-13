@@ -14,7 +14,11 @@ FROM docker.io/library/ruby:$RUBY_VERSION-slim AS base
 # Rails app lives here
 WORKDIR /rails
 
-# Install base packages
+# Install base packages. THE IMAGE BUILDS FOR linux/amd64 AND linux/arm64, and this line is already
+# arch-neutral: `uname -m` runs INSIDE the stage, so it answers x86_64 on an amd64 build and aarch64
+# on an arm64 one, and each is the Debian multiarch directory libjemalloc2 installs into. The only
+# stages that are NOT neutral by construction are the two that download a prebuilt upstream asset,
+# pdfium and F3D below, and each picks by TARGETARCH.
 RUN apt-get update -qq && \
     apt-get install --no-install-recommends -y curl libjemalloc2 libvips libvips-tools sqlite3 && \
     ln -s /usr/lib/$(uname -m)-linux-gnu/libjemalloc.so.2 /usr/local/lib/libjemalloc.so && \
@@ -86,6 +90,8 @@ RUN SECRET_KEY_BASE_DUMMY=1 ./bin/rails assets:precompile
 # source, it is not part of the client/ desktop app and has no path dependency from anything
 # there. That is also why .dockerignore needs no re-include exception for it: tools/ is never
 # excluded in the first place.
+# Arch-neutral with no TARGETARCH plumbing: rust:1-slim is a multi-arch image and cargo compiles for
+# the platform the stage runs on, so an arm64 build gets a native arm64 binary from the same line.
 FROM docker.io/library/rust:1-slim AS stl-thumbnailer
 WORKDIR /build
 COPY tools/stl-thumbnailer ./
@@ -95,7 +101,8 @@ RUN cargo build --release && strip target/release/stl-thumbnailer
 # ---- resvg: SVG→PNG rasterizer (Rust, MPL-2.0/Apache — permissive, CLAUDE.md §9). A single
 # static binary, NO GPU/OpenGL/Mesa. Powers the SVG/DXF/LightBurn thumbnail path
 # (Maker::Previews::SvgRasterizer). Built here, copied to PATH in the final stage. Independent of
-# `base`, so it builds in parallel.
+# `base`, so it builds in parallel. Arch-neutral for the same reason as stl-thumbnailer: cargo
+# builds it from source for the stage's own platform.
 FROM docker.io/library/rust:1-slim AS resvg
 RUN cargo install resvg --version 0.47.0 --root /out && strip /out/bin/resvg
 
@@ -104,9 +111,12 @@ RUN cargo install resvg --version 0.47.0 --root /out && strip /out/bin/resvg
 # permissive per CLAUDE.md §9). The self-contained WebAssembly build embeds pdfium, so there is NO
 # libpdfium.so to ship alongside and NO GPL/AGPL PDF stack (poppler/mupdf/ghostscript). `base` already
 # has curl. Independent of the app build, so it fetches in parallel.
+# TARGETARCH picks the asset: v0.11.0 ships pdfium-webassembly-linux-amd64 AND -arm64, and BuildKit
+# spells TARGETARCH exactly the way klippa names the suffix, so the ARG goes into the URL verbatim.
 FROM base AS pdfium
+ARG TARGETARCH
 ARG PDFIUM_VERSION=v0.11.0
-RUN curl -fsSL "https://github.com/klippa-app/pdfium-cli/releases/download/${PDFIUM_VERSION}/pdfium-webassembly-linux-amd64" \
+RUN curl -fsSL "https://github.com/klippa-app/pdfium-cli/releases/download/${PDFIUM_VERSION}/pdfium-webassembly-linux-${TARGETARCH}" \
       -o /tmp/pdfium && chmod +x /tmp/pdfium
 
 
@@ -120,17 +130,45 @@ RUN curl -fsSL "https://github.com/klippa-app/pdfium-cli/releases/download/${PDF
 # xz-utils IS required: ruby:slim has GNU tar but no `xz`, and `tar -J` shells out to it, so the
 # plain `tar -xJf` fails with "Cannot exec". Installing it here rather than switching to the .tar.gz
 # asset keeps the download at 58 MB instead of 87 MB, and this whole stage is thrown away.
-# The deploy builds linux/amd64 (config/deploy.yml `arch: amd64`), so x86_64 is the right asset.
+#
+# ONLY amd64 GETS F3D, BECAUSE ONLY amd64 CAN. Upstream publishes Linux builds for x86_64 alone:
+# v3.5.0 ships F3D-3.5.0-Linux-x86_64.tar.xz and no Linux arm64 asset at all (macOS gets an arm64
+# build; Linux does not). The Kamal deploy builds linux/amd64 (config/deploy.yml `arch: amd64`) and
+# takes the tarball as before. An arm64 build -- a stranger's Pi, an Apple-silicon `docker build` --
+# gets an EMPTY /opt/f3d holding only a README that says why, instead of a failed build. The final
+# stage's COPY and F3D_BIN stay the same on both: Maker::Previews::Mesh#available? rescues ENOENT on
+# the absent binary and answers false, so on arm64 .obj/.step/.iges and the other F3D formats show
+# the generic icon where amd64 shows a thumbnail. That is the whole cost -- STL, SVG/DXF/LightBurn,
+# PDF and Gerber are rendered by the arch-neutral binaries above and are unaffected. Building F3D
+# from source for arm64 means building VTK and OCCT too; that is a project, not a stage.
 FROM base AS f3d
+ARG TARGETARCH
 ARG F3D_VERSION=3.5.0
-RUN apt-get update -qq && \
-    apt-get install --no-install-recommends -y xz-utils && \
-    curl -fsSL "https://github.com/f3d-app/f3d/releases/download/v${F3D_VERSION}/F3D-${F3D_VERSION}-Linux-x86_64.tar.xz" \
-      -o /tmp/f3d.tar.xz && \
-    mkdir -p /opt/f3d && \
-    tar -xJf /tmp/f3d.tar.xz -C /opt/f3d --strip-components=1 && \
-    rm /tmp/f3d.tar.xz && \
-    rm -rf /var/lib/apt/lists /var/cache/apt/archives
+RUN if [ "${TARGETARCH}" = "amd64" ]; then \
+      apt-get update -qq && \
+      apt-get install --no-install-recommends -y xz-utils && \
+      curl -fsSL "https://github.com/f3d-app/f3d/releases/download/v${F3D_VERSION}/F3D-${F3D_VERSION}-Linux-x86_64.tar.xz" \
+        -o /tmp/f3d.tar.xz && \
+      mkdir -p /opt/f3d && \
+      tar -xJf /tmp/f3d.tar.xz -C /opt/f3d --strip-components=1 && \
+      rm /tmp/f3d.tar.xz && \
+      rm -rf /var/lib/apt/lists /var/cache/apt/archives; \
+    else \
+      mkdir -p /opt/f3d && \
+      printf '%s\n' \
+        "F3D is not installed in this image." \
+        "" \
+        "F3D (f3d-app/f3d) publishes Linux builds for x86_64 only: release v${F3D_VERSION} ships" \
+        "F3D-${F3D_VERSION}-Linux-x86_64.tar.xz and no Linux arm64 asset. This image was built for" \
+        "linux/${TARGETARCH} ($(uname -m)), so the Dockerfile's f3d stage left this directory empty" \
+        "on purpose rather than fail the build." \
+        "" \
+        "What that costs: Maker::Previews::Mesh#available? answers false when /opt/f3d/bin/f3d is" \
+        "absent, so STEP/IGES/OBJ (and gltf/glb/ply/off/dae/wrl/3ds/fbx) files show the generic" \
+        "icon instead of a rendered thumbnail. STL, SVG/DXF/LightBurn, PDF and Gerber thumbnails" \
+        "are unaffected: those renderers are built for every architecture." \
+        > /opt/f3d/README.txt; \
+    fi
 
 
 # Final stage for app image
@@ -150,6 +188,8 @@ FROM base
 #                  render fails, which is why libegl1 alone is not enough
 #   libgl1-mesa-dri  the gallium/llvmpipe software rasterizer that does the actual drawing
 # Verified sufficient by rendering both tetra.obj and a real 4.7 MB STEP file to PNG in this image.
+# On arm64 there is no F3D to use them (see the f3d stage) and they are installed anyway: one
+# derived list kept unconditional beats a TARGETARCH-gated second copy of it that must stay derived.
 #
 # `nodejs` IS THE GERBER THUMBNAILER'S RUNTIME AND NOTHING ELSE'S. tools/gerber-svg is the pinned
 # tracespace bundle (MIT) under node; Maker::Previews::Gerber exec's it as a SUBPROCESS exactly the

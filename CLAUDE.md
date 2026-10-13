@@ -29,9 +29,7 @@ developers. Working name: **Maker Server** (rename freely).
 > cited as `§12.7`, `§12.12`, "§12 item 11" — which is why a CLOSED item keeps its slot.
 > **A section that MOVES keeps its anchor here:** §14c/g/h/i are now stubs pointing into
 > `docs/invariants/`, so every existing citation still resolves.
-> *(Until 2026-08-25 this read "`§15` ~141, `§9` ~175, `§10` ~107, `§5` ~95" — four figures summing
-> to 518 in a tree containing 323 in total. The rule was right; its evidence was invented. §15's
-> "verify a commit reference the way you verify a guard" binds on counts too.)*
+> *(An earlier version of those counts was invented; §15's "verify a commit reference" binds on counts too.)*
 
 ---
 
@@ -202,11 +200,8 @@ sync server's address.
 **Bare "deploy" means the three Unraid destinations — `chunk_remote` (the base), `share`, `s3`.**
 Deploy OVH only on explicit request. `docs/DEPLOY.md`.
 
-> **Historical note, kept because the cost was real:** Arc D Part 1 added a fourth destination,
-> `remote`, and bare "deploy" excluded it — **an excluded destination drifts**, which is how
-> `chunk_remote` reached Stage 5 having never run on hardware. Arc D Part 2 folded `remote` into
-> the base, so the base destination IS `chunk_remote` now (`config/deploy.yml`) and bare "deploy"
-> covers it. Discharged, not deleted quietly.
+> **Historical note:** a fourth destination, `remote`, once sat outside bare "deploy" — **an excluded
+> destination drifts** (`chunk_remote` reached Stage 5 never having run on hardware). It is the base now.
 
 ---
 
@@ -658,6 +653,11 @@ area belongs there too, with a stub here.
   earlier. A port that cannot be CONSTRUCTED is not a scannable one — `Library::RepoMetadataPurge`
   declines with a `reason`, rescuing `LibraryBackendCheck::Error` alone, never `KeyError` (too
   broad) and never around the sweep (§15's silent-success shape).
+- **PRODUCTION REFUSES TO BOOT WITH `LIBRARY_BACKEND` BLANK (`required_in_production!`); the lib
+  default stays `chunk`-shaped** — blank, the CSP `connect_src` lambda resolved `FileLayer.current`
+  on EVERY response and 500'd `/up` from middleware. `ACTIVE_RECORD_ENCRYPTION_*` ENV keys apply ONLY
+  WHEN PRESENT (a nil splats over the credential). `docs/INSTALL.md` is the env reference a stranger
+  installs from, kept complete by `test/install_docs_test.rb`; `RAILS_MASTER_KEY` is never theirs.
 - **`write(..., replace: true)` IS AN OPT-IN BESIDE THE CLOBBER REFUSAL, NOT A RELAXATION OF IT.** The
   refusal is still the default on both writable adapters and every existing caller omits the kwarg;
   `replace:` exists for a door that has just asked a user "this would replace `design/x.svg` —

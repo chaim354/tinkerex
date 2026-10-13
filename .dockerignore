@@ -46,9 +46,12 @@
 # Ignore development files
 /.devcontainer
 
-# Ignore Docker-related files
+# Ignore Docker-related files, and the install files the image never needs (the compose files
+# and the Unraid template describe how to RUN the image; they are not part of it).
 /.dockerignore
 /Dockerfile*
+/docker-compose*.yml
+/unraid/
 
 # Rust sync-client workspace — NOT part of the Rails server image. ~15 GB of build
 # artifacts (client/*/target) + source that the server never builds or ships (it

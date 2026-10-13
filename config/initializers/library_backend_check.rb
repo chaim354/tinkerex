@@ -18,5 +18,8 @@ require "library_backend_check"
 # raise aborts before Puma binds a port. Verified both ways (a NameError before, a clean refusal
 # after); no test can catch it, because the test env skips this file.
 Rails.application.config.after_initialize do
-  LibraryBackendCheck.check! unless Rails.env.test?
+  unless Rails.env.test?
+    LibraryBackendCheck.required_in_production!
+    LibraryBackendCheck.check!
+  end
 end

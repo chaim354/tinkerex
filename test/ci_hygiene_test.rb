@@ -214,7 +214,8 @@ class CiHygieneTest < ActiveSupport::TestCase
     # stub<->file pairing. Until 2026-09-02 both sat in PATHS_THAT_MUST_SKIP_CI, so the one PR
     # that gate could never run on was a PR changing only what it guards.
     "CLAUDE.md",
-    "docs/invariants/addons.md"
+    "docs/invariants/addons.md",
+    "docs/INSTALL.md"                       # install_docs_test: the env reference the code is checked against
   ].freeze
 
   # client/maker-app/package.json, client/maker-app/test/session.test.js (RUN), and

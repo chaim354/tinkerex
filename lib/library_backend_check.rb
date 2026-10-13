@@ -102,6 +102,21 @@ module LibraryBackendCheck
     # Duplicating it here would give the operator two different messages for one typo.
   end
 
+  # PRODUCTION REFUSES TO BOOT WITH NO BACKEND NAMED. check!'s own default (`chunk`, deliberately
+  # NOT the factory's `share` — §14a) lets an unconfigured development box boot; in production the
+  # same gap used to boot cleanly and then 500 on EVERY request, /up included, because the CSP
+  # header's connect_src lambda resolves FileLayer.current per response and the raise happens in
+  # middleware. Exempt: the image build's assets:precompile, which Rails marks with
+  # SECRET_KEY_BASE_DUMMY and which boots production with nothing set.
+  def self.required_in_production!(env: ENV, production: Rails.env.production?)
+    return nil unless production
+    return nil if env["SECRET_KEY_BASE_DUMMY"].present?
+    return nil if env["LIBRARY_BACKEND"].to_s.strip.present?
+
+    raise Error, "LIBRARY_BACKEND is not set (share | s3 | chunk_remote). A production deployment " \
+                 "must name its library backend; without one every request, /up included, answers 500."
+  end
+
   # Config PRESENCE only — this must never reach the network, and that is a design decision rather
   # than an omission. The share leg touch-probes because File.writable? genuinely lies under the
   # NFS/SMB ACLs it targets, so the filesystem is the only honest oracle. S3 is different in kind:
