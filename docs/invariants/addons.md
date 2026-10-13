@@ -83,8 +83,9 @@
   green to 12 failures + 2 errors. It does **not** collide with `tools/addon_states/:id/params`
   (four segments; Rails requires a segment-count match) — an earlier draft of the routes comment
   claimed it did and was verified false via `Rails.application.routes.recognize_path`.
-- **AN ADDON DECLARING A SERVICE THIS DEPLOYMENT HAS NO URL FOR GREYS OUT, NAMING THE SERVICE AND
-  ITS ENV VAR.** This is a REGRESSION the openscad retirement would otherwise have shipped: the
+- **AN ADDON DECLARING A SERVICE THIS DEPLOYMENT HAS NO URL FOR GREYS OUT, NAMING THE SERVICE** (the
+  maker's sentence; since F, 2026-10-13, the ENV VAR is named in Help's operator section and
+  `docs/INSTALL.md`, not on the card). This is a REGRESSION the openscad retirement would otherwise have shipped: the
   hardcoded gallery card greyed itself out on `OpenscadClient.configured?` — an env check living in
   a view — so deleting the card deleted the only thing that asked before rendering, and a
   deployment without the accessory would show an ENABLED tile whose bundle 404s on its first
