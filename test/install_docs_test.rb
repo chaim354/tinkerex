@@ -25,13 +25,20 @@ class InstallDocsTest < ActiveSupport::TestCase
   # LIBRARY_S3_* knobs as `env.fetch("...")` on an injected hash, and a pattern that only knew
   # `env[` missed the audit's own required-for-s3 row. Loosening is never the answer to a name the
   # scan surfaces (add it to NOT_FOR_INSTALLERS, with a reason); widening what it catches is.
+  #
+  # THE BOOT GUARD'S REQUIRED KNOBS COUNT AS READ, though no literal names them: LibraryBackendCheck
+  # reads each one as `env[knob]` over a constant, which the pattern cannot see. They are the names
+  # a stranger most needs a row for -- the refusal that stops their boot names them, and this page
+  # is where they look them up. SYNC_PUBLIC_URL arrived that way (D1, 2026-10-13), required at boot
+  # one task before any code read it by name.
   def names_read_by_the_code
     pattern = /\b(?:ENV|env)(?:\.fetch\(|\[)\s*["']([A-Z][A-Z0-9_]+)["']/
-    ROOTS.flat_map { |root|
+    scanned = ROOTS.flat_map { |root|
       path = Rails.root.join(root)
       files = path.directory? ? Dir[path.join("**/*.{rb,erb,yml,rake}")] : [ path.to_s ]
       files.flat_map { |f| File.read(f).scan(pattern).flatten.compact }
-    }.uniq.sort
+    }
+    (scanned + LibraryBackendCheck::CHUNK_REMOTE_REQUIRED + LibraryBackendCheck::S3_REQUIRED).uniq.sort
   end
 
   # A NAME COUNTS AS DOCUMENTED ONLY WHEN IT HEADS A ROW OF THE TABLE — the backticked names in a

@@ -177,6 +177,12 @@ env:
     # leaving it to drift, the cost §7 had to name when it was excluded.
     LIBRARY_BACKEND: chunk_remote
     CHUNK_REMOTE_URL: http://tinkerex-sync:3000
+    # THE SAME SERVER AS DEVICES REACH IT, handed to every desktop app that signs in (D1). Not the
+    # alias above, which only the kamal network resolves: the two addresses differ on purpose. It
+    # is the `sync` accessory's own door (its proxy.hosts below, the .home name), plain HTTP like
+    # that door; test/deploy_hygiene_test.rb derives both from it. Every overlay inherits it, and
+    # only chunk_remote reads it.
+    SYNC_PUBLIC_URL: http://sync.tinkerex.home
 
     # Set number of processes dedicated to Solid Queue (default: 1)
     # JOB_CONCURRENCY: 3

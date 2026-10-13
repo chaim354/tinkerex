@@ -192,6 +192,10 @@ In `.env`, fill in the block under "The sync server":
 - `SYNC_ADMIN_TOKEN` — `openssl rand -hex 32`. **The same value reaches both services**: the app
   uses it to create a library on the sync server for each new account, and the sync server checks it
   against its own copy.
+- `SYNC_PUBLIC_URL` — the address your other devices reach the sync server at, scheme included:
+  `http://<this host>:3001` (the published port below), or the name a reverse proxy in front of it
+  answers to. The desktop app is handed it when it signs in. The app itself keeps using
+  `http://sync:3000`, a name only the compose network resolves, so the two are never the same.
 - `ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY`, `ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY` and
   `ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT` — `openssl rand -hex 16` each (any string of 32 or
   more characters works). They encrypt each account's sync credential in the database. **Keep them
@@ -208,7 +212,8 @@ docker compose -f docker-compose.yml -f docker-compose.chunk_remote.yml up -d --
 plain `docker compose`). The overlay switches the app to `LIBRARY_BACKEND=chunk_remote`, drops the
 `/library` mount, points it at `http://sync:3000` on the compose network, and publishes the sync
 server on port **3001** (`TINKEREX_SYNC_PORT`) — that published port is what devices and the desktop
-client connect to, so it has to be reachable from them. `REGISTRATION=open` is allowed here.
+client connect to, so it has to be reachable from them, and `SYNC_PUBLIC_URL` has to name it as they
+see it. `REGISTRATION=open` is allowed here.
 
 The sync server keeps its database and every chunk in the `tinkerex_sync_storage` volume; it has
 its own small set of variables, listed at the end of the table in section 8.
@@ -308,6 +313,7 @@ compose*; the rest come from `.env`.
 | `LIBRARY_S3_PREFIX` | no | — (the whole bucket) | A key prefix that is the library's root, e.g. `library/`. |
 | **The sync server** (section 5) | | | |
 | `CHUNK_REMOTE_URL` | chunk_remote, *set by compose* (`http://sync:3000`) | — | The sync server's address as seen from the app. |
+| `SYNC_PUBLIC_URL` | chunk_remote | — | The sync server's address as seen from your other devices, scheme included; the desktop app is handed it when it signs in. With compose, `http://<this host>:3001` or the name a reverse proxy in front of that port answers to. `CHUNK_REMOTE_URL` is the same server as seen from the app, a name only the app's own network resolves, so the two differ on purpose. The boot refuses chunk_remote without it. |
 | `SYNC_ADMIN_TOKEN` | chunk_remote | — | The operator credential the app uses to create each new account's library on the sync server. **Identical on both services.** `openssl rand -hex 32`. |
 | `ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY` | chunk_remote | — (read from credentials, which a stranger's image cannot decrypt) | Encrypts each account's sync credential at rest. 32+ characters; **keep it**. |
 | `ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY` | chunk_remote | — | Same; the key for deterministic encryption. |
