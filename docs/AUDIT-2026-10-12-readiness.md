@@ -129,6 +129,17 @@ over HTTP; F3D/OCCT as a subprocess; rugged is GPLv2-with-linking-exception).
 
 ## 2. USABLE — what blocks a stranger, in the order they hit it
 
+**Fixed by sub-project C (`docs/superpowers/plans/2026-10-13-c-install-path.md`, 2026-10-13):** §2.1
+items 1 (a real `README.md`, `docs/INSTALL.md`, `docker-compose.yml` + a chunk_remote overlay,
+`.env.example`, `unraid/tinkerex.xml`; the image also builds for arm64, minus F3D), 3 (the three
+`ACTIVE_RECORD_ENCRYPTION_*` keys from the environment; strangers never set `RAILS_MASTER_KEY`),
+4 (production refuses to boot with `LIBRARY_BACKEND` blank — worse than recorded here: the CSP
+`connect_src` lambda 500'd EVERY request, `/up` included), 5 (Solid Queue in Puma on by default in
+production), 6 (B's first-owner flow, driven end to end against a fresh container: owner created
+through the form, sign-ups closed behind it, the mounted folder scanned), and 9 (the `tools` compose
+profile builds the sidecars and serves the addon bundle). Still the owner's: the ghcr packages are
+private (§6.3), and the compose file builds the image locally until they are flipped.
+
 ### 2.1 Installing the web app (self-host)
 
 1. **Nothing tells them anything.** `README.md:1-24` is the Rails scaffold; `docs/DEPLOY.md:1` is titled
