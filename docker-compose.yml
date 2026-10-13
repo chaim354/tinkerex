@@ -1,0 +1,53 @@
+# A single-owner Tinkerex on the share backend: one container, your files in a folder you point it
+# at. Copy .env.example to .env first. docs/INSTALL.md explains every variable; the two the app
+# itself needs to pick this backend are set below, where .env cannot change them by accident.
+#
+#   docker compose up -d --build                     the app
+#   docker compose --profile tools up -d --build     plus the Tools gallery (INSTALL.md section 3)
+#   docker-compose.chunk_remote.yml                  the overlay that adds the sync server (section 5)
+
+services:
+  web:
+    image: ${TINKEREX_IMAGE:-tinkerex:local}
+    build: .
+    ports:
+      - "${TINKEREX_PORT:-8080}:80"
+    env_file: .env
+    environment:
+      LIBRARY_BACKEND: share
+      LIBRARY_PATH: /library
+    volumes:
+      - tinkerex_storage:/rails/storage
+      # The folder must be writable by uid 1000, which the container runs as; the boot probes it
+      # and refuses with a message if it is not (INSTALL.md section 2).
+      - ${LIBRARY_HOST_PATH:-./library}:/library
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost/up"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
+
+  # The Tools gallery, started only with --profile tools. The two sidecars are GPL-licensed and run
+  # as their own processes, reached over HTTP and never linked into the app (CLAUDE.md section 9);
+  # addons is an nginx image serving the bundle files from a sibling checkout of
+  # chaim354/tinkerex-addons. The openscad image is x86_64-only (an AppImage).
+  boxes:
+    profiles: [tools]
+    build: sidecar/boxes
+    restart: unless-stopped
+  openscad:
+    profiles: [tools]
+    build: sidecar/openscad
+    volumes:
+      - openscad_cache:/cache
+    restart: unless-stopped
+  addons:
+    profiles: [tools]
+    build: ${TINKEREX_ADDONS_PATH:-../tinkerex-addons}
+    restart: unless-stopped
+
+volumes:
+  tinkerex_storage: {}
+  openscad_cache: {}

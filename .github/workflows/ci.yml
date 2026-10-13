@@ -66,6 +66,10 @@ on:
       # executes"; by its own criterion these never belonged in it.
       - 'CLAUDE.md'
       - 'docs/invariants/**'
+      # AND THE ENVIRONMENT REFERENCE, FOR THE SAME REASON: test/install_docs_test.rb checks every
+      # variable the code reads against docs/INSTALL.md, so a PR editing only the doc is a PR that
+      # gate exists to police. Below the negations, like the two above it.
+      - 'docs/INSTALL.md'
   # NO `push:` TRIGGER, AND THE ARGUMENT IS A PROBE RATHER THAN AN ASSUMPTION.
   #
   # A `pull_request` run does NOT test the branch tip — `actions/checkout` resolves
