@@ -11,6 +11,13 @@ module Tinkerex
   # and the account it creates is confirmed on the spot: a self-hoster has no mail server on day
   # one, and the alternative — a console incantation before the first page works — is the thing
   # a stranger never finds. After that the page closes (403) unless REGISTRATION=open.
+  #
+  # TWO DOORS THIS DOES NOT GOVERN, ON PURPOSE. `User.from_omniauth` mints a confirmed account for
+  # any identity the provider vouches for whatever the mode: enabling OMNIAUTH_ENABLED is the
+  # opt-in, and the provider decides who may sign in (docs/DEPLOY.md "Accounts"). And
+  # `first_owner?` is a plain `User.exists?` with no database-level claim, so two sign-ups
+  # interleaving inside one request's window on an EMPTY server would both become owners — a
+  # millisecond window on a box nobody else knows exists yet; recorded, not guarded.
   module Registration
     Error = Class.new(StandardError)
     MODES = %w[open closed].freeze

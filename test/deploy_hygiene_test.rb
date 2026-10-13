@@ -97,6 +97,15 @@ class DeployHygieneTest < ActiveSupport::TestCase
            "Cloudflare intercepts ACME, so `ssl: true` alone never gets a certificate — name the " \
            "origin cert and key via ssl.certificate_pem / ssl.private_key_pem"
 
+    # With `ssl:` set, kamal-proxy drops the incoming X-Forwarded-* headers unless told to forward
+    # them (kamal 2.12 docs/proxy.yml:79-81). Cloudflare puts the visitor there; without this the
+    # app sees only the edge node and every per-IP throttle keys on Cloudflare
+    # (config/initializers/trusted_proxies.rb). Read off deploy_options so what kamal-proxy is
+    # actually told is what is asserted, not a YAML key.
+    assert_equal true, ovh.deploy_options[:"forward-headers"],
+                 "deploy.ovh.yml must set `proxy: forward_headers: true` beside `ssl:` -- the TLS " \
+                 "terminator otherwise discards Cloudflare's X-Forwarded-For and the app sees the edge node"
+
     lan = UNRAID_DESTINATIONS.keys.flat_map { |destination| proxy_hosts(destination) }
     assert_empty ovh.hosts & lan, "an internet-facing destination must not route a LAN-only name"
   end

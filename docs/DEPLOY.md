@@ -365,6 +365,10 @@ even when registration is closed, and the account it creates is confirmed on the
 server needed on day one — and signed straight in. After that the page answers "Sign-ups are
 closed" (403) and the link disappears, unless `REGISTRATION=open`.
 
+**Single sign-on is its own door.** With `OMNIAUTH_ENABLED` set, an identity-provider login creates
+a confirmed account whatever `REGISTRATION` says — enabling OIDC is the opt-in, and the provider
+decides who may sign in. It is off by default (`config/initializers/omniauth.rb`).
+
 **Every later account needs mail, or a console door.** With `SMTP_ADDRESS` unset the sign-up and
 resend pages say so, the boot log says so once, and these two tasks do the job from a shell on the
 box. The password is read from `TINKEREX_PASSWORD` — never put it on the command line, which `ps`,

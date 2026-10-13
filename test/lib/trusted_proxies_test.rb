@@ -1,12 +1,16 @@
 require "test_helper"
 
-# Behind Cloudflare the visitor's address is the LEFT-most X-Forwarded-For entry and the edge
-# node is appended after it; Rails' RemoteIp returns the RIGHT-most address that is not a trusted
-# proxy, so with only the default (private-range) proxies trusted, `request.remote_ip` was the
-# edge node — every per-IP throttle keyed on Cloudflare (tinkerex#345, measured: four edge IPs for
-# ten probes). Trusting Cloudflare's published ranges makes the visitor the answer there and
-# changes nothing elsewhere: a direct request never carries a Cloudflare hop, and a forged
-# X-Forwarded-For still loses to the right-most-untrusted rule.
+# Behind Cloudflare the visitor's address is the LEFT-most X-Forwarded-For entry (Cloudflare puts
+# it there) and kamal-proxy appends its peer, the edge node, after it; Rails' RemoteIp walks the
+# chain from the right skipping trusted proxies, so with only the default (private-range) proxies
+# trusted, `request.remote_ip` was the edge node — every per-IP throttle keyed on Cloudflare
+# (tinkerex#345, measured: four edge IPs for ten probes). Trusting Cloudflare's published ranges
+# makes the visitor the answer there and changes nothing elsewhere: a direct request never carries
+# a Cloudflare hop.
+#
+# WHAT DEFEATS A FORGED HEADER IS THE PEER kamal-proxy APPENDS, not the trusted list — the last
+# two tests pin that shape, and the one before them records the shape that would be forgeable if
+# the proxy ever stopped appending (config/initializers/trusted_proxies.rb has the argument).
 class TrustedProxiesTest < ActiveSupport::TestCase
   PINNED = Rails.root.join("config/cloudflare_ips.yml")
 
@@ -44,8 +48,23 @@ class TrustedProxiesTest < ActiveSupport::TestCase
   end
 
   test "a non-Cloudflare hop is still the client — nothing else became trusted" do
-    # The right-most untrusted address wins, so a forged left entry cannot impersonate anyone.
     assert_equal "198.51.100.7", remote_ip_for(remote_addr: "172.18.0.5",
                                                forwarded_for: "203.0.113.9, 198.51.100.7")
+  end
+
+  test "a request straight at the origin is attributed to the peer kamal-proxy appends, not to its forged chain" do
+    # The attacker sends "203.0.113.9, <a Cloudflare address>" directly; kamal-proxy appends the
+    # real peer. The Cloudflare entry is filtered as a proxy, the peer is public and untrusted, and
+    # it is the right-most survivor — the forgery never reaches the answer.
+    assert_equal "198.51.100.7", remote_ip_for(remote_addr: "172.18.0.5",
+                                               forwarded_for: "203.0.113.9, 104.23.190.84, 198.51.100.7")
+  end
+
+  test "RECORDED, NOT RELIED ON: without the appended peer the forged chain would win" do
+    # This is why kamal-proxy must stay the only door and must keep forwarding AND appending
+    # (config/deploy.ovh.yml `forward_headers: true`, no published port). Rails consults
+    # REMOTE_ADDR only after the whole chain, and a bare forged header won before this change too.
+    assert_equal "203.0.113.9", remote_ip_for(remote_addr: "198.51.100.7",
+                                              forwarded_for: "203.0.113.9, 104.23.190.84")
   end
 end
