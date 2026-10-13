@@ -936,9 +936,9 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   Supplier/Location, because it writes this user's data into a row: clearing a pointer can only
   repair an illegal cross-tenant reference, whereas writing a name into someone else's row would
   disclose one.
-- **`Current.library_unreachable` IS SET ONLY WHERE A `FetchError` WAS RESCUED INTO DEGRADED OUTPUT
-  (`Maker::Previews::ThumbnailMap.for`), AND THE LAYOUT BANNER THAT READS IT NEVER PROBES THE PORT** —
-  a page that did not touch the port says nothing, so no read pays a WAN round trip for the sentence (§2).
+- **`Current.library_unreachable` IS SET ONLY WHERE A `FetchError` WAS RESCUED INTO DEGRADED OUTPUT** —
+  the `Readme`/`RepoCard`/`GerberSets`/`ThreeMfManifest` readers (`ThumbnailMap`'s setter cannot fire: `stat_all`
+  is catalog-only on every adapter) — **AND THE BANNER NEVER PROBES THE PORT**: a page that did not touch the port says nothing (§2).
 
 ### 14e. Architecture and process
 
