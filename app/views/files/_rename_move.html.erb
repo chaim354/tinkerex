@@ -31,7 +31,7 @@
                  else "/#{folder}"
                  end
 %>
-<details class="composer rename-move">
+<details class="rename-move composer">
   <summary class="btn small">Rename or move…</summary>
   <%= form_with url: rename_file_path(node.node_id), method: :patch, class: "menu-form",
                 data: { turbo: false } do %>
