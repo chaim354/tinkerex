@@ -7,18 +7,32 @@
     self-host, since a box with no addon source configured lands here with nothing. It says what a
     tool IS before it says there are none, and it distinguishes "none configured" from "configured
     but nothing came back", because those need different things done about them and the only
-    existing signal was a `Rails.logger.warn` nobody reads. %>
+    existing signal was a `Rails.logger.warn` nobody reads.
+
+    TWO READERS, SO TWO LAYERS (onboarding, 2026-10-13). The maker reads the paragraph and can do
+    nothing about either state but ask, so it says what is true in their words and points at Help.
+    The settings that fix it belong to the person running the server and sit behind the collapsed
+    line, where help_page_test.rb asserts they still are: moved, not deleted. %>
 <% if @addons.empty? %>
   <div class="empty">
     <p>Tools are add-ons — small apps that run inside Tinkerex and save their output straight into
       your library. The box generator and the OpenSCAD editor are two.</p>
     <% if @addon_source_configured %>
-      <p class="muted">An addon source is configured, but it returned nothing. It may be
-        unreachable, or it may be serving no bundles yet.</p>
+      <p class="muted">No tools came back from this server just now. The person running it can
+        check on them — <%= link_to "Help", help_path(anchor: "tools") %> says how.</p>
+      <details class="muted">
+        <summary>For the person running this server</summary>
+        An addon source is configured, but it returned nothing. It may be unreachable, or it may
+        be serving no bundles yet.
+      </details>
     <% else %>
-      <p class="muted">No addon source is configured on this deployment. Point
-        <code>ADDON_SOURCE_URL</code> at a bundle server, or <code>ADDON_SOURCE_PATH</code> at a
-        directory of bundles, and they appear here.</p>
+      <p class="muted">No tools are installed on this server. The person running it can add
+        them — <%= link_to "Help", help_path(anchor: "tools") %> says how.</p>
+      <details class="muted">
+        <summary>For the person running this server</summary>
+        Point <code>ADDON_SOURCE_URL</code> at a bundle server, or <code>ADDON_SOURCE_PATH</code>
+        at a directory of bundles, and they appear here.
+      </details>
     <% end %>
   </div>
 <% end %>

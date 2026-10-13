@@ -29,10 +29,15 @@ module Maker
       # page instead of a greyed tile with a sentence. `boxes` already had this hole and it was
       # unobserved only because every leg that serves addons happens to set BOXES_SIDECAR_URL.
       #
-      # NAMES THE SERVICE *AND* ITS ENV VAR. "Not configured" was the old label this method exists
-      # to replace, and an addon with two sidecars makes it ambiguous in exactly the way that label
-      # was — the operator has to know WHICH one to set. Maker::Addons::Services owns the derivation
-      # so this sentence and the proxy's own lookup cannot disagree about the spelling.
+      # NAMES THE SERVICE, IN THE MAKER'S WORDS — AND NO LONGER ITS ENV VAR (onboarding,
+      # 2026-10-13). "Not configured" was the old label this method exists to replace, and an addon
+      # with two sidecars makes it ambiguous in exactly the way that label was, so the sentence
+      # still says WHICH service is missing. What it stopped saying is "(set BOXES_SIDECAR_URL)":
+      # the card is read by the maker, who cannot set anything, and the variable belongs to the
+      # person running the server. For them it is `Maker::Addons::Services.env_key_for(missing)` —
+      # `<NAME>_SIDECAR_URL`, so BOXES_SIDECAR_URL for boxes — and it is named on the Help page's
+      # "For the person running this server" section and in docs/INSTALL.md, never on the card.
+      # Maker::Addons::Services still owns the derivation the lookup below uses.
       #
       # ORDER IS min_host FIRST, and it matters only for an addon that is BOTH too new and
       # unconfigured. The host level is the more fundamental answer: on a host that cannot run the
@@ -51,8 +56,7 @@ module Maker
         missing = services.find { |name| Maker::Addons::Services.url_for(name).blank? }
         return if missing.nil?
 
-        "This deployment has no #{missing} service configured " \
-          "(set #{Maker::Addons::Services.env_key_for(missing)})"
+        "Needs the #{missing} service, which this server doesn't run"
       end
 
       # DOES THIS MANIFEST SAY IT WANTS `name`? Read by Tools::AddonsController#file, the one

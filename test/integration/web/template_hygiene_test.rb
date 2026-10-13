@@ -534,6 +534,9 @@ module Web
         "settings/tags" => settings_tags_path,
         # Stage 3, S3-1. Needs no fixture: #index seeds its own rows on first visit.
         "settings/filing" => settings_filing_rules_path,
+        # Onboarding (2026-10-13): the Help page needs no fixture. Its three backend arms are
+        # rendered by help_page_test.rb, which swaps the capabilities the page reads.
+        "help" => help_path,
         # STAGE 3, S3-4: THE PUBLIC SURFACE, five pages over ten templates. Signed in, which is
         # neither a mistake nor a weakening: Public::BaseController stands on
         # ActionController::Base and never reads the session (the seam guard in

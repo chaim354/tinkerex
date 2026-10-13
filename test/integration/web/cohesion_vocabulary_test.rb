@@ -63,10 +63,13 @@ module Web
       # The fixture environment configures a source (ADDON_SOURCE_PATH in test), so this is the
       # "configured but returned nothing" arm. Asserting WHICH arm is what makes the branch real
       # rather than two spellings of one sentence.
+      # Since the onboarding change (2026-10-13) the arm's operator half sits in a collapsed
+      # <details> inside `.empty` and the maker's half outside it; `text:` reads both, so this
+      # still tells the arms apart. help_page_test.rb pins which half says what.
       if Maker::Addons::Source.configured?
         assert_select ".empty", text: /returned nothing/
       else
-        assert_select ".empty", text: /No addon source is configured/
+        assert_select ".empty", text: /No tools are installed on this server/
       end
     end
 
