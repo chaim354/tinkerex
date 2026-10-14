@@ -41,6 +41,11 @@ services:
       # The server's own secret, signing the URLs chunks are fetched from; distinct from the app's.
       SECRET_KEY_BASE: ${SYNC_SECRET_KEY_BASE:?set it in .env (openssl rand -hex 64), the sync server's own}
       SYNC_ADMIN_TOKEN: ${SYNC_ADMIN_TOKEN:?set it in .env (openssl rand -hex 32), one value for both services}
+      # The server's own housekeeping, on by default here as it is on the author's deployment since
+      # E (2026-10-14): expired pending commits reaped every hour at :30, orphaned chunk bytes weekly
+      # (Sundays 04:15 UTC), and retention that keeps every version (it prunes nothing). Without it
+      # a self-hosted install never reclaims the bytes of an upload that never finalised.
+      SYNC_SCHEDULER: "1"
       # Unset, chunk links carry the host each client connected through, which is right for this
       # layout. Only a reverse proxy that changes the public address needs this (INSTALL.md section 8).
       # CHUNK_PUBLIC_URL: https://sync.example.net
