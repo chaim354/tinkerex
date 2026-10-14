@@ -6,6 +6,11 @@ module Settings
   #
   # Session-authed web layer (§14d), so ApplicationController and its signed-in requirement.
   class HandlesController < ApplicationController
+    # THE SHARED DEMO KEEPS ITS HANDLE (Tinkerex::Demo). Its handle is part of what the nightly reset
+    # restores and what its public-looking URLs would carry; a visitor renaming it renames the demo
+    # for everyone until morning. Refused the way the account doors refuse: a sentence, a redirect.
+    before_action :refuse_demo!
+
     # ALWAYS A REDIRECT, NEVER A RE-RENDER: the form's only field is the handle, so the whole of an
     # error fits in a flash and there is no half-filled page to preserve.
     #
@@ -20,6 +25,12 @@ module Settings
       else
         redirect_to return_path, alert: "Handle #{current_user.errors[:handle].first}."
       end
+    end
+
+    def refuse_demo!
+      return unless Tinkerex::Demo.demo?(current_user)
+
+      redirect_to return_path, alert: "The shared demo account keeps its handle."
     end
 
     # WHERE A CLAIM RETURNS TO (stage 4, S4-4). The Publish panel claims a handle inline, and

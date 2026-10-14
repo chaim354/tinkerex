@@ -5,7 +5,7 @@
 
   <%- if devise_mapping.registerable? && controller_name != 'registrations' && Tinkerex::Registration.open? %>
     <li><%= link_to "Sign up", new_registration_path(resource_name) %></li>
-  <%- elsif !Tinkerex::Registration.open? && controller_name != 'sessions' && Tinkerex::Demo.account %>
+  <%- elsif !Tinkerex::Registration.open? && controller_name != 'sessions' && Tinkerex::Demo.available? %>
     <%# Where "Sign up" stands when sign-ups are closed and there is a demo: the way in a stranger
         does have (Tinkerex::Demo). Not on the sign-in page, whose card carries the button and this
         sentence above its form already. %>

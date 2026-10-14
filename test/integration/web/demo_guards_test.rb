@@ -45,9 +45,14 @@ module Web
       %w[DEMO_ACCOUNT_EMAIL DEMO_MAX_UPLOAD_BYTES].each { |k| @prior.key?(k) ? ENV[k] = @prior[k] : ENV.delete(k) }
     end
 
+    # WITH ITS PASSWORD, NOT ITS BUTTON. This suite keeps a CONTROL account on the same share library,
+    # and that is exactly the state the button refuses (Tinkerex::Demo.available?: on share and s3
+    # every account indexes the one library, so the door stays shut while another account exists --
+    # demo_session_test.rb proves the refusal). The guards below key on the ACCOUNT, not on how it
+    # signed in, which is what this suite is for.
     def sign_in_demo!
-      post demo_session_path
-      assert_redirected_to root_path, "the demo signs in by its button"
+      sign_in_as(@demo)
+      assert_redirected_to root_path, "the demo signs in with the password this suite knows"
     end
 
     def upload(name, bytes)
@@ -226,6 +231,58 @@ module Web
       post files_path, params: { file: [ upload("big.stl", 1025) ] }
       assert_match(%r{/files/[^/]+\z}, response.location, flash[:alert].to_s)
       assert @root.join("big.stl").exist?
+    end
+
+    # THE THIRD UPLOAD DOOR: Projects::UploadsController, which the project page renders for each
+    # build-log entry (the entry-photo uploader) and which the project-level route still reaches by
+    # URL. Live on s3 -- what the public box runs -- and so capped like the other two.
+    test "the demo's build-log upload over the cap is refused naming the limit, and nothing is written" do
+      sign_in_demo!
+      project = @demo.maker_projects.create!(name: "Desk Lamp")
+      entry = project.build_log_entries.create!(user: @demo, body: "step one", logged_at: Time.current)
+      get project_path(project)
+      assert_select "form.uploader[action=?] input[type=file][name=?]", build_log_entry_uploads_path(entry), "file[]"
+
+      sentence = "big.stl is larger than 1 KB, the most the shared demo takes in one file."
+      post build_log_entry_uploads_path(entry), params: { file: [ upload("big.stl", 1025) ] }
+      assert_response :redirect
+      assert_equal sentence, flash[:alert]
+      assert_not @demo.nodes.exists?(name: "big.stl")
+      assert_empty entry.file_attachments
+
+      # The project-level route is the same controller, reachable by URL.
+      post project_uploads_path(project), params: { file: [ upload("big.stl", 1025) ] }
+      assert_equal sentence, flash[:alert]
+      assert_empty project.file_attachments
+    end
+
+    test "control: an ordinary account's identical build-log upload lands" do
+      sign_in_as(@maker)
+      project = @maker.maker_projects.create!(name: "Desk Lamp")
+      entry = project.build_log_entries.create!(user: @maker, body: "step one", logged_at: Time.current)
+      post build_log_entry_uploads_path(entry), params: { file: [ upload("big.stl", 1025) ] }
+      assert_redirected_to project_path(project)
+      assert_equal 1, entry.file_attachments.count, flash[:alert].to_s
+    end
+
+    # --- the handle ----------------------------------------------------------------------------
+
+    test "the demo account cannot change its handle; the reset restores it anyway, but a visitor must not rename the demo for everyone" do
+      sign_in_demo!
+      get edit_user_registration_path
+      assert_select "form[action=?] input[name=?]", settings_handle_path, "user[handle]"
+
+      patch settings_handle_path, params: { user: { handle: "stolen" } }
+      assert_redirected_to edit_user_registration_path
+      assert_match(/shared demo account keeps its handle/, flash[:alert].to_s)
+      assert_equal "demo", @demo.reload.handle
+    end
+
+    test "control: an ordinary account's identical handle change lands" do
+      sign_in_as(@maker)
+      patch settings_handle_path, params: { user: { handle: "renamed" } }
+      assert_redirected_to edit_user_registration_path
+      assert_equal "renamed", @maker.reload.handle
     end
 
     # THE PRESIGNED DOOR IS `syncable`-GATED, so the deployment is made syncable for these two --

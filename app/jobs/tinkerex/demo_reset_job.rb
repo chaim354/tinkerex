@@ -17,12 +17,12 @@ module Tinkerex
     queue_as :background
 
     def perform
-      email = ENV["DEMO_ACCOUNT_EMAIL"].presence
+      email = Tinkerex::Demo.email
       return unless email
 
-      user = User.find_by(email:)
+      user = Tinkerex::Demo.account
       unless user
-        Rails.logger.warn("Tinkerex::DemoResetJob: DEMO_ACCOUNT_EMAIL is #{email.strip}, which names " \
+        Rails.logger.warn("Tinkerex::DemoResetJob: DEMO_ACCOUNT_EMAIL is #{email}, which names " \
                           "no account; run bin/rails tinkerex:demo:setup to create it")
         return
       end

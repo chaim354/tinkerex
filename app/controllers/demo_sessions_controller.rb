@@ -34,6 +34,17 @@ class DemoSessionsController < DeviseController
       return head(:not_found)
     end
 
+    # THE SHARED-LIBRARY REFUSAL, AT THE FRONT DOOR. On share and s3 every account indexes the one
+    # library, so signing a stranger into the demo beside another account hands them that account's
+    # files -- the condition the nightly reset refuses too (Tinkerex::DemoReset). The page shows no
+    # button in this state (Tinkerex::Demo.available?); a hand-posted click meets the same answer.
+    others = Tinkerex::DemoReset.accounts_sharing_library(except: account)
+    if others.positive?
+      Rails.logger.warn("[demo] #{others} other #{others == 1 ? 'account shares' : 'accounts share'} " \
+                        "the demo's library, so POST /demo answers 404 until they are removed")
+      return head(:not_found)
+    end
+
     # LOCKABLE MUST NOT BECOME AN OFF SWITCH FOR THE DEMO. The address is public and lockable counts
     # wrong passwords per ACCOUNT, so ten bad tries at the ordinary sign-in form would lock this one
     # for an hour, and Devise's activatable hook would then refuse every visitor's click below. The

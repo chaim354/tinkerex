@@ -39,6 +39,17 @@ module Tinkerex
       address && User.find_by(email: address)
     end
 
+    # WHETHER THE DOOR MAY OPEN: demo mode on, the account present, AND no other account sharing its
+    # library. On share and s3 every account indexes the one library (§8), so a visitor signed into
+    # the demo beside another account would be handed that account's files; the nightly reset refuses
+    # the same condition (Tinkerex::DemoReset.refusal), and this is the same rule at the front door.
+    # Behind a sync server (chunk_remote) every account has its own library and the count is 0. Costs
+    # the sign-in page one COUNT; the button, the links and POST /demo all ask this and nothing else.
+    def self.available?
+       account = self.account
+       !account.nil? && Tinkerex::DemoReset.accounts_sharing_library(except: account).zero?
+    end
+
     def self.demo?(user) = !user.nil? && demo_email?(user.email)
 
     # For the doors that hold an address before they hold a user (a reset request).

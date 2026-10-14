@@ -8,6 +8,12 @@ module Projects
   # backends. One controller serves both a project target and a build-log-entry target.
   class UploadsController < ApplicationController
     before_action :require_port_writable!
+    # THE SHARED DEMO'S PER-FILE CAP ON THE THIRD UPLOAD DOOR (Tinkerex::Demo) -- FilesController caps
+    # its two; this door is the project page's build-log uploader and the project-level route, live
+    # on s3, which is what the public box runs. The whole selection is refused if one file is over, so
+    # nothing is written (the same rule as FilesController#refuse_oversized_demo_upload!, whose
+    # comment has the argument).
+    before_action :refuse_oversized_demo_upload!, only: :create
 
     # The eager nudge (Task 11) — #intake_project_folder, called from #create below. Shared with
     # FilesController, the other two upload doors; see the concern's header for why a shared module
@@ -27,6 +33,15 @@ module Projects
     end
     rescue_from FileLayer::FetchError do
       redirect_back_or_to projects_path, alert: "Couldn't reach your library. Try again."
+    end
+
+    def refuse_oversized_demo_upload!
+      return unless Tinkerex::Demo.demo?(current_user)
+
+      refusal = Array(params[:file]).select { |u| u.respond_to?(:original_filename) }.lazy.filter_map { |u|
+        Tinkerex::Demo.upload_refusal(current_user, name: u.original_filename, size: u.size)
+      }.first
+      redirect_back_or_to(projects_path, alert: refusal) if refusal
     end
 
     def create

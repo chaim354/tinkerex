@@ -124,6 +124,24 @@ module Web
       assert_includes log, "tinkerex:demo:setup"
     end
 
+    # ON SHARE AND S3 EVERY ACCOUNT INDEXES THE ONE LIBRARY (§8), so a visitor signed into the demo
+    # beside another account would be handed that account's files. The door stays shut while any other
+    # account exists -- the same condition the nightly reset refuses (Tinkerex::DemoReset) -- and the
+    # share root this suite pins is exactly such a library.
+    test "while another account shares the library, there is no button and the click is a logged 404" do
+      demo_on!
+      User.create!(email: "owner@example.com", password: PASSWORD, confirmed_at: Time.current)
+
+      get new_user_session_path
+      assert_select "form[action=?]", demo_session_path, { count: 0 }, "no button beside another account's library"
+
+      log = capture_log { post demo_session_path }
+      assert_response :not_found
+      assert_includes log, "1 other account shares"
+      get root_path
+      assert_redirected_to new_user_session_path, "nobody was signed in"
+    end
+
     # LOCKABLE MUST NOT BECOME AN OFF SWITCH. The demo address is public; ten wrong passwords at the
     # ordinary sign-in form lock the account for an hour, and Warden would then refuse every click.
     test "a locked demo account still signs in by the click, which unlocks it" do
