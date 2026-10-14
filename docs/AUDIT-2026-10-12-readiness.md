@@ -184,6 +184,20 @@ see the install-path audit's tables, reproduced in §5 below.
 
 ### 2.2 The desktop client (tinkerex-client)
 
+**Fixed by sub-project D1 (`docs/superpowers/plans/2026-10-13-d-desktop-sign-in.md`, 2026-10-13; tinkerex
+PR #394 and the matching tinkerex-client PR):** item 1 — the maker app now brokers the enrolment: its
+`POST /v1/devices/login` answers a sync-server grant (a sibling device minted with the user's own
+bootstrap token, `head_seq` read back with the new token) plus `library: {backend, syncable}`, and
+`SYNC_PUBLIC_URL` names the devices' door (`http://sync.tinkerex.home` on the base destination — plain
+HTTP, measured: the LAN names fail a TLS handshake); the app signs in to the Tinkerex server, stores a
+`{maker_token, sync_url, sync_token}` record and syncs against the grant, a legacy bare token still
+meaning "sync against the typed server" so the `device issue` workaround survives; proved over the wire
+against a real sync server (9 of 9 checks) and by the chunk_remote gate on every run. Item 3 — the app is
+`Tinkerex` / `com.tinkerex.desktop`, the Cargo metadata is real, the first-run form is empty with
+placeholders and defaults to `~/Tinkerex`, and the client repo has a root README. Still open: item 2
+(nothing runnable: signing, releases, updater — record D3), item 4 (prerequisite checks, offline
+indicator, CI legs — record D2), item 5's remaining stale comments, item 6's parked PRs.
+
 1. **The GUI's only sign-in door does not exist on the production sync server.** `index.html:30-52` →
    `main.js:209-214` → `src-tauri/src/lib.rs:488-497` → `sync-client/src/lib.rs:455-469` posts
    `/v1/devices/login`; the sync server draws no such route (`v1_routes.rb:33-83`; Rust `http/mod.rs:49-79`)
