@@ -75,7 +75,19 @@ module LibraryBackendCheck
   # LOCAL sync server and prove that specific mint was accepted (`GET /v1/devices/whoami`); neither
   # asks "can a real deployment run," which is the only question this module answers. See each
   # file's own comment for why they keep it.
-  CHUNK_REMOTE_REQUIRED = %w[CHUNK_REMOTE_URL SYNC_ADMIN_TOKEN].freeze
+  #
+  # SYNC_PUBLIC_URL (D1, 2026-10-13) IS THE SYNC SERVER'S ADDRESS AS DEVICES REACH IT, AND IT IS NOT
+  # CHUNK_REMOTE_URL. A desktop app signs in to THIS app and is handed a sync grant whose URL is this
+  # value; CHUNK_REMOTE_URL is where THIS PROCESS dials the same server. On one box they differ on
+  # purpose: the app's address is a name only its own container network resolves (Kamal's
+  # http://tinkerex-sync:3000, compose's http://sync:3000), and no device is on that network -- they
+  # come in through a proxied host name or a published port. Neither is derivable from the other, so
+  # both are configured. Required at boot for the reason SYNC_ADMIN_TOKEN is: unset, the deployment
+  # boots cleanly and then every desktop sign-in fails. PRESENCE ONLY, like everything here, and for
+  # this knob not merely by policy -- the devices' address need not even resolve from inside the
+  # container (split DNS, a front proxy on another host), so no probe from this process could tell a
+  # good value from a bad one.
+  CHUNK_REMOTE_REQUIRED = %w[CHUNK_REMOTE_URL SYNC_ADMIN_TOKEN SYNC_PUBLIC_URL].freeze
 
   # Reads the same ENV vars, with the same defaults, as FileLayer.build — the factory calls this
   # too, so a bad configuration gets this explanation even when the boot guard did not run (the
@@ -133,14 +145,22 @@ module LibraryBackendCheck
     missing = CHUNK_REMOTE_REQUIRED.reject { |knob| env[knob].present? }
     return if missing.empty?
 
-    raise Error, "LIBRARY_BACKEND=chunk_remote requires #{missing.join(', ')} — the sync server " \
-                 "this app syncs against, and the operator credential this deployment auto-" \
-                 "provisions every new user's library with (FileLayer::ChunkRemote::Provisioning " \
-                 "calls POST /v1/admin/libraries on that server with it). Without SYNC_ADMIN_TOKEN " \
-                 "this deployment cannot provision a library for ANY user -- it must be the SAME " \
-                 "value the sync server's own SYNC_ADMIN_TOKEN carries, or every provisioning " \
-                 "attempt gets refused as an unrecognised credential (a mismatch is not caught " \
-                 "here, only on a user's first write, as a FetchError)."
+    # The list comes first and ends at the dash; everything after it explains all three knobs
+    # whichever are missing, so a test asserts on the list (library_backend_check_test.rb).
+    raise Error, "LIBRARY_BACKEND=chunk_remote requires #{missing.join(', ')} — " \
+                 "CHUNK_REMOTE_URL is the sync server's address as THIS APP dials it, and " \
+                 "SYNC_PUBLIC_URL is the same server's address as DEVICES reach it: a desktop app " \
+                 "that signs in here is handed it in the login answer. They are different addresses " \
+                 "on purpose -- on one box the app dials a name only its own container network " \
+                 "resolves (http://sync:3000 under compose, http://tinkerex-sync:3000 under Kamal), " \
+                 "while devices come in through the published port or a proxied host name -- so " \
+                 "neither can stand in for the other. SYNC_ADMIN_TOKEN is the operator credential " \
+                 "this deployment auto-provisions every new user's library with " \
+                 "(FileLayer::ChunkRemote::Provisioning calls POST /v1/admin/libraries on that " \
+                 "server with it); without it this deployment cannot provision a library for ANY " \
+                 "user -- it must be the SAME value the sync server's own SYNC_ADMIN_TOKEN carries, " \
+                 "or every provisioning attempt gets refused as an unrecognised credential (a " \
+                 "mismatch is not caught here, only on a user's first write, as a FetchError)."
   end
 
   def self.check_s3!(env)

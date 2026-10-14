@@ -189,10 +189,11 @@ module FileLayer
       # yet. The arm is what turns twelve implemented verbs into something an operator can select.
       #
       # `check!` for the same reason S3 asks: ChunkRemote's transport fetches CHUNK_REMOTE_URL
-      # lazily, and FileLayer::ChunkRemote::Provisioning fetches SYNC_ADMIN_TOKEN just as lazily to
-      # auto-provision a library on a user's first write -- so without this call, either missing
+      # lazily, FileLayer::ChunkRemote::Provisioning fetches SYNC_ADMIN_TOKEN just as lazily to
+      # auto-provision a library on a user's first write, and FileLayer::ChunkRemote::SyncGrant
+      # fetches SYNC_PUBLIC_URL at a device's first login (D1) -- so without this call, any missing
       # knob would surface as a KeyError/FetchError on somebody's first request rather than at boot,
-      # and name only one of the two. (Not CHUNK_REMOTE_TOKEN: Arc C moved ordinary per-user traffic
+      # and name only one of the three. (Not CHUNK_REMOTE_TOKEN: Arc C moved ordinary per-user traffic
       # off that single process-wide credential entirely -- lib/library_backend_check.rb's
       # CHUNK_REMOTE_REQUIRED has the full history.)
       when "chunk_remote"

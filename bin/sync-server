@@ -176,6 +176,9 @@ case "${1:-}" in
     fi
     {
       echo "CHUNK_REMOTE_URL=http://127.0.0.1:$PORT"
+      # The address a signing-in device is handed (D1); chunk_remote refuses to boot without it.
+      # This leg is one box, so both addresses are the local server -- on a deployment they differ.
+      echo "SYNC_PUBLIC_URL=http://127.0.0.1:$PORT"
       echo "CHUNK_REMOTE_TOKEN=$token"
       echo "SYNC_ADMIN_TOKEN=$admin_token"
     } > "$ENV_FILE"

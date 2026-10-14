@@ -349,8 +349,12 @@ curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer <token>" \
   http://sync.tinkerex.local/v1/devices/whoami                                               # 200
 ```
 
-Then set **Sync server URL** to `http://sync.tinkerex.home` in the Tauri app (`../tinkerex-client`,
-its CLAUDE.md §5 for the daemons) and Mount. The token is printed once; keep it in the shell.
+Since D1 (2026-10-13) the desktop app does not need this token: it signs in to the **maker app**
+(`http://chunk.tinkerex.home`) with the account's email and password and receives the sync server's
+address and its own sync token in the answer (`SYNC_PUBLIC_URL`, which is why the base destination
+sets it to `http://sync.tinkerex.home`). A hand-issued token is still the door for the CLI daemons
+(`../tinkerex-client`, its CLAUDE.md §5) and for signing the app in to a sync server directly — a bare
+token in its `credentials.json` means exactly that. The token is printed once; keep it in the shell.
 
 ## Accounts — who can sign up, the first owner, and mail
 

@@ -225,4 +225,65 @@ class LibraryBackendCheckTest < ActiveSupport::TestCase
       assert_equal [], Dir.children(d)
     end
   end
+
+  # --- chunk_remote --------------------------------------------------------------------------
+  #
+  # EVERY KNOB IS INJECTED THROUGH `env:`, NEVER LEFT AMBIENT. The chunk_remote leg runs with all
+  # three set (bin/sync-server prepare writes them into tmp/sync-server.env), so a test that read
+  # the process ENV would assert a refusal that cannot happen there -- build_chunk_remote_test.rb
+  # records exactly that failure.
+  CHUNK_REMOTE_ENV = {
+    "CHUNK_REMOTE_URL" => "http://tinkerex-sync:3000",
+    "SYNC_ADMIN_TOKEN" => "admin-token",
+    "SYNC_PUBLIC_URL" => "http://sync.example.net"
+  }.freeze
+
+  # The knobs a refusal LISTS, read off the head of the message ("requires A, B — ..."), never
+  # anywhere in it: the explanation after the dash names all three knobs whichever are missing, so
+  # `assert_match(/SYNC_PUBLIC_URL/, err.message)` would pass for a refusal that listed the wrong ones.
+  def chunk_remote_refusal(env)
+    err = assert_raises(LibraryBackendCheck::Error) do
+      LibraryBackendCheck.check!(backend: "chunk_remote", env: env)
+    end
+    [ err.message[/\ALIBRARY_BACKEND=chunk_remote requires (.+?) — /, 1].to_s.split(", "), err.message ]
+  end
+
+  test "chunk_remote boots with both of the sync server's addresses and the admin token" do
+    assert_nothing_raised { LibraryBackendCheck.check!(backend: "chunk_remote", env: CHUNK_REMOTE_ENV) }
+  end
+
+  # D1 (2026-10-13): a device that signs in to the maker app is handed SYNC_PUBLIC_URL as its sync
+  # server. Booting without it would surface as a failed sign-in on somebody's first device rather
+  # than as a refused start -- the trade this whole module exists to make the other way round.
+  test "chunk_remote refuses to boot without SYNC_PUBLIC_URL, and says how it differs from CHUNK_REMOTE_URL" do
+    listed, message = chunk_remote_refusal(CHUNK_REMOTE_ENV.except("SYNC_PUBLIC_URL"))
+
+    assert_equal %w[SYNC_PUBLIC_URL], listed
+    assert_match(/SYNC_PUBLIC_URL is the same server's address as DEVICES reach it/, message,
+                 "the refusal must say what the knob is for, not just name it")
+    assert_match(/CHUNK_REMOTE_URL is the sync server's address as THIS APP dials it/, message,
+                 "and why the address the app already has cannot stand in for it")
+  end
+
+  # The s3 rule (blank?, not key?) for the same class of mistake: an empty line in a .env, or a
+  # compose variable that expanded to nothing.
+  test "a blank SYNC_PUBLIC_URL is missing, not configured" do
+    listed, = chunk_remote_refusal(CHUNK_REMOTE_ENV.merge("SYNC_PUBLIC_URL" => "  "))
+    assert_equal %w[SYNC_PUBLIC_URL], listed
+  end
+
+  test "chunk_remote names every missing knob at once, not one per restart" do
+    listed, = chunk_remote_refusal({})
+    assert_equal %w[CHUNK_REMOTE_URL SYNC_ADMIN_TOKEN SYNC_PUBLIC_URL], listed
+  end
+
+  # SYNC_PUBLIC_URL IS chunk_remote's ALONE. A share or s3 deployment hands a signing-in device no
+  # sync grant at all (D1's login answer carries `sync: null` there), so requiring the knob would
+  # refuse a perfectly good install over a value nothing on that backend reads.
+  test "share and s3 boot without any of the sync server's knobs" do
+    Dir.mktmpdir do |d|
+      assert_nothing_raised { LibraryBackendCheck.check!(backend: "share", env: { "LIBRARY_PATH" => d }) }
+    end
+    assert_nothing_raised { LibraryBackendCheck.check!(backend: "s3", env: S3_ENV) }
+  end
 end

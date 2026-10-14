@@ -140,7 +140,8 @@ module Library
     test "purge_all! no-ops when the deployment is not share-backed" do
       with_env("LIBRARY_BACKEND" => "chunk_remote",
                "CHUNK_REMOTE_URL" => "http://sync.invalid",
-               "SYNC_ADMIN_TOKEN" => "test-token") do
+               "SYNC_ADMIN_TOKEN" => "test-token",
+               "SYNC_PUBLIC_URL" => "http://sync.invalid") do
         assert_no_enqueued_jobs { Library::TrashPurgeJob.purge_all! }
       end
     end

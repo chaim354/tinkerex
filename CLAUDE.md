@@ -231,6 +231,10 @@ Deploy OVH only on explicit request. `docs/DEPLOY.md`.
 - **Device tokens are 256-bit, SHA256-digested at rest.** A device token is the **only** credential
   the whole v1 API accepts, including all fourteen `v1/maker/*` controllers — which is why
   `devices` is deliberately ungated (§14a) and why `Device` is owned here, not by the sync server.
+- **A DEVICE ENROLS THROUGH THE MAKER APP AND IS HANDED A SYNC-SERVER SIBLING TOKEN** minted with the
+  user's own bootstrap token (`FileLayer::ChunkRemote::SyncGrant`, D1, 2026-10-13) inside the login
+  answer; its URL is **`SYNC_PUBLIC_URL`, the devices' door — never `CHUNK_REMOTE_URL`, the app's own
+  alias** (different addresses on one box, on purpose). A dead sync server is a 503 with NO maker device minted.
 
 ---
 
@@ -397,15 +401,11 @@ gh repo clone chaim354/tinkerex-client ../tinkerex-client   # its CLAUDE.md has 
 ```
 
 **NO CI LEG HERE REACHES INTO `tinkerex-client` ANY MORE (2026-08-25).** `nightly.yml` and
-`client-contract.yml` are deleted: both tested sync↔client with **no code from this repo
-involved**, and both were broken in ways only measurement showed. `client-contract.yml` had never
-run once — its only real job is linux-gated and `CI_RUNNERS` is `macos`, so every run reported
-SUCCESS having run only `preflight`. `nightly.yml` still booted THIS app's Rails and pointed the
-Rust client at it, three hours after Arc D Part 2 stopped routing `/v1/commit` here. Corrected
-recipes went to the siblings in
-`docs/superpowers/specs/2026-08-25-cross-repo-ci-handoff.md`. **`ci.yml` is the only workflow
-left** — seven jobs, all macos: `preflight` plus one per gate, each invoking `bin/ci <gate>`. This repo's half of the wire contract
-is `bin/ci test-chunk-remote`, which is not moving.
+`client-contract.yml` are deleted — both tested sync↔client with no code from this repo involved,
+and both were broken in ways only measurement showed (the record, §11; the corrected recipes went to
+the siblings in `docs/superpowers/specs/2026-08-25-cross-repo-ci-handoff.md`). **`ci.yml` is the only
+workflow left**: `preflight` plus one job per gate, each invoking `bin/ci <gate>`. This repo's half of
+the wire contract is `bin/ci test-chunk-remote`, which is not moving.
 
 **Env gotchas in this build box (may differ on yours):** no local Postgres/libpq (dev & test run
 on SQLite); macOS keeps creating `" 2"`-suffixed duplicate files in the repo (some sync client?) —

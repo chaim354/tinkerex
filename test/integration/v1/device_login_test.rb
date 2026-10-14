@@ -7,11 +7,28 @@ module V1
   class DeviceLoginTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
     # Enrollment itself is NOT capability-gated and must never be (a device token is the only
-    # credential the whole v1 API takes, maker layer included -- see V1::DevicesController). This
-    # suite pins chunk because one test proves the minted token works by fetching /v1/tree, and
-    # /v1/tree is the sync surface. The share-mode counterpart -- that enrollment still works and
-    # still opens the maker layer -- is in capability_gating_test.rb.
+    # credential the whole v1 API takes, maker layer included -- see V1::DevicesController). The
+    # share-mode counterpart -- that enrollment still works and still opens the maker layer -- is in
+    # capability_gating_test.rb.
+    #
+    # THIS SUITE RUNS ON THE LEG'S OWN BACKEND, AND ON chunk_remote THAT IS A REAL SYNC SERVER: a
+    # login that succeeds there brokers a sync grant, provisioning a remote library for its email,
+    # and that server's database does not roll back with this one. So every email that reaches a
+    # SUCCESSFUL login is unique per test -- a fixed one provisions once and then answers 503 on
+    # every later run (the journey helper's sign_in makes the same argument). The refusals below
+    # never reach the grant and keep their fixed emails.
     setup do
+      # The devices' door (lib/library_backend_check.rb). Kept when the leg sets it; otherwise a
+      # placeholder, which only a syncable answer echoes.
+      @prior_public_url = ENV["SYNC_PUBLIC_URL"]
+      ENV["SYNC_PUBLIC_URL"] = @prior_public_url.presence || "https://sync.example.test"
+      # Built from THIS leg's configuration, never an adapter an earlier test in the worker left.
+      FileLayer.reset!
+    end
+
+    teardown do
+      @prior_public_url.nil? ? ENV.delete("SYNC_PUBLIC_URL") : ENV["SYNC_PUBLIC_URL"] = @prior_public_url
+      FileLayer.reset!
     end
 
     def login(email:, password:, device_name: "laptop")
@@ -20,10 +37,15 @@ module V1
       response
     end
 
+    def unique_user(prefix)
+      User.create!(email: "#{prefix}-#{SecureRandom.hex(4)}@example.com", password: PASSWORD,
+                   confirmed_at: Time.current)
+    end
+
     test "valid credentials of a confirmed account return a device token" do
-      User.create!(email: "dev@example.com", password: PASSWORD, confirmed_at: Time.current)
+      user = unique_user("dev")
       assert_difference -> { Device.count }, 1 do
-        r = login(email: "dev@example.com", password: PASSWORD)
+        r = login(email: user.email, password: PASSWORD)
         assert_response :created
         body = JSON.parse(r.body)
         assert body["device_token"].present?
@@ -32,8 +54,8 @@ module V1
     end
 
     test "the returned token works against the owner's library" do
-      User.create!(email: "dev2@example.com", password: PASSWORD, confirmed_at: Time.current)
-      token = JSON.parse(login(email: "dev2@example.com", password: PASSWORD).body)["device_token"]
+      user = unique_user("dev2")
+      token = JSON.parse(login(email: user.email, password: PASSWORD).body)["device_token"]
       # `/v1/maker/projects`, not `/v1/tree`. The claim is that a token minted here OPENS THE API,
       # and /v1/tree is the sync engine's endpoint -- gone from this app since Arc D Part 2, so it
       # would 404 for a reason that has nothing to do with the token. The maker layer is this app's
@@ -84,6 +106,103 @@ module V1
         assert_response :unauthorized
         assert_equal "invalid_credentials", JSON.parse(r.body)["error"]
       end
+    end
+
+    # --- the library and the sync grant (D1, 2026-10-13) ----------------------------------------
+
+    # THE ANSWER ALWAYS NAMES THE LIBRARY, AND CARRIES A SYNC GRANT ONLY WHERE THERE IS SOMETHING TO
+    # SYNC. The expected values come from the LEG, never from the controller's own derivation: the
+    # backend is the LIBRARY_BACKEND this leg was launched with (FileLayer.build's default when it is
+    # unset), syncable is the serving adapter's capability. On share and s3 `sync` is present and
+    # null; on chunk_remote it is a real grant from a real sync server, whose token the journey suite
+    # (test/integration/chunk_remote_journey_test.rb) proves that server accepts.
+    def assert_library_and_sync(body)
+      syncable = FileLayer.current.capabilities.syncable?
+      assert_equal({ "backend" => ENV.fetch("LIBRARY_BACKEND", "share"), "syncable" => syncable },
+                   body["library"])
+      assert body.key?("sync"), "sync is ALWAYS answered -- null is the statement that there is nothing to sync"
+      if syncable
+        assert_equal %w[device_id device_token head_seq url user_id], body["sync"].keys.sort
+        assert_equal ENV.fetch("SYNC_PUBLIC_URL"), body["sync"]["url"],
+                     "a device is handed the devices' door, never the app's own CHUNK_REMOTE_URL"
+      else
+        assert_nil body["sync"], "nothing to sync on #{body.dig('library', 'backend')}: the grant must be null"
+      end
+    end
+
+    test "login names the library and carries a sync grant only on a syncable deployment" do
+      user = unique_user("lib")
+      r = login(email: user.email, password: PASSWORD)
+      assert_response :created
+      body = JSON.parse(r.body)
+      assert_equal %w[device_id device_token head_seq library sync user_id], body.keys.sort,
+                   "the four original fields stay; library and sync are added, nothing else"
+      assert_library_and_sync body
+    end
+
+    test "a sibling enrolled through POST /v1/devices answers the same two fields" do
+      user = unique_user("sib")
+      token = JSON.parse(login(email: user.email, password: PASSWORD).body).fetch("device_token")
+
+      post "/v1/devices", params: { name: "desktop" },
+                          headers: { "Authorization" => "Bearer #{token}" }, as: :json
+      assert_response :created
+      body = JSON.parse(response.body)
+      assert_equal %w[device_id device_token library sync], body.keys.sort
+      assert_library_and_sync body
+    end
+
+    # A SYNC SERVER THAT CANNOT BE REACHED ANSWERS 503 AND MINTS NO MAKER DEVICE. The order inside
+    # both actions is grant, THEN Device.register!: a device holding a maker token and no way to sync
+    # would have to sign in again anyway, so a clear retry beats a half-enrolled device. Driven on
+    # every leg by making the deployment syncable -- constructing a ChunkRemote dials nothing -- and
+    # standing in for the grant with one that raises what Transport raises for a refused connection.
+    test "a sync server that cannot be reached answers 503 and mints no maker device" do
+      user = unique_user("down")
+      FileLayer.current = FileLayer::ChunkRemote.new
+
+      with_sync_server_down do
+        assert_no_difference -> { Device.count } do
+          r = login(email: user.email, password: PASSWORD)
+          assert_response :service_unavailable
+          assert_equal({ "error" => "sync_unavailable" }, JSON.parse(r.body),
+                       "the body names no cause -- the message can carry the sync server's internal address")
+        end
+      end
+    end
+
+    test "POST /v1/devices answers the same 503 and mints no sibling" do
+      token = bootstrap_token(email: "down-sib-#{SecureRandom.hex(4)}@example.com")
+      FileLayer.current = FileLayer::ChunkRemote.new
+
+      with_sync_server_down do
+        assert_no_difference -> { Device.count } do
+          post "/v1/devices", params: { name: "desktop" },
+                              headers: { "Authorization" => "Bearer #{token}" }, as: :json
+          assert_response :service_unavailable
+          assert_equal({ "error" => "sync_unavailable" }, JSON.parse(response.body))
+        end
+      end
+    end
+
+    # The house stub helper (web/new_menu_test.rb carries the same body; Minitest 6 has no
+    # Object#stub). Replaces a SINGLETON method for the block, removing an inherited one after.
+    def replacing(owner, name, replacement)
+      mod = owner.singleton_class
+      own = mod.instance_methods(false).include?(name)
+      original = mod.instance_method(name)
+      mod.define_method(name, &replacement)
+      yield
+    ensure
+      own ? mod.define_method(name, original) : mod.remove_method(name)
+    end
+
+    def with_sync_server_down(&)
+      down = Object.new
+      down.define_singleton_method(:call) do |*, **|
+        raise FileLayer::FetchError, "sync server unreachable (Errno::ECONNREFUSED): http://tinkerex-sync:3000"
+      end
+      replacing(FileLayer::ChunkRemote::SyncGrant, :new, ->(*, **) { down }, &)
     end
   end
 end

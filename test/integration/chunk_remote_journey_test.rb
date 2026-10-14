@@ -441,4 +441,68 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
                  "a batch of 3 moves pulled the changelog #{pulls} times; batch must defer the " \
                  "refresh so an eager project-intake sweep is not 2 WAN round-trips per file"
   end
+
+  # D1 (2026-10-13): THE DESKTOP APP SIGNS IN HERE AND SYNCS THERE. POST /v1/devices/login answers a
+  # sync grant brokered with the user's own bootstrap token (FileLayer::ChunkRemote::SyncGrant), and
+  # this is the test that hands that grant to a REAL sync server: its token must be accepted at the
+  # URL it came with, must open the same remote library as the user's bootstrap device, and must be a
+  # SIBLING of that device -- never the bootstrap token itself handed out.
+  #
+  # IT LIVES IN THIS FILE, NOT IN A v1/ FILE OF ITS OWN, because this is the file config/ci.rb's
+  # test-chunk-remote gate runs ALONE and fails on any skip. A separate file would run only in that
+  # gate's full-suite pass, where skips are tolerated, so a gate that broke into always-skipping
+  # would report green there -- the vacuous-skip failure that check exists to make impossible.
+  test "a device that signs in receives a sync grant the real sync server accepts" do
+    skip_unless_remote_server
+    with_sync_public_url do
+      email = "#{journey_prefix}@example.com"
+      user = User.create!(email:, password: ChunkRemoteJourney::PASSWORD, confirmed_at: Time.current)
+
+      post "/v1/devices/login", params: { email:, password: ChunkRemoteJourney::PASSWORD,
+                                          device_name: "#{journey_prefix} laptop" }, as: :json
+      assert_response :created, "login failed: #{response.body}"
+      answer = JSON.parse(response.body)
+      assert_equal({ "backend" => "chunk_remote", "syncable" => true }, answer["library"])
+      grant = answer.fetch("sync")
+      assert_equal ENV.fetch("SYNC_PUBLIC_URL"), grant.fetch("url"),
+                   "a device is handed the devices' door, never the app's own CHUNK_REMOTE_URL"
+
+      # The grant's token at the grant's URL -- what the desktop app does with it. The bootstrap
+      # token at the app's own address -- what this app syncs as. Login provisioned it.
+      granted = sync_whoami(grant.fetch("url"), grant.fetch("device_token"))
+      bootstrap = sync_whoami(ENV.fetch("CHUNK_REMOTE_URL"), user.reload.sync_device_token)
+
+      assert_equal bootstrap.fetch("user_id"), granted.fetch("user_id"),
+                   "the grant must open the user's OWN remote library"
+      assert_not_equal bootstrap.fetch("device_id"), granted.fetch("device_id"),
+                       "the grant must be a SIBLING device, never the bootstrap token handed out"
+      assert_equal granted.slice("user_id", "device_id", "head_seq"),
+                   grant.slice("user_id", "device_id", "head_seq"),
+                   "the grant must report what the sync server says about its own token"
+
+      post "/v1/devices", params: { name: "#{journey_prefix} desktop" },
+                          headers: { "Authorization" => "Bearer #{answer.fetch('device_token')}" }, as: :json
+      assert_response :created, "sibling enrolment failed: #{response.body}"
+      second = JSON.parse(response.body).fetch("sync")
+      second_who = sync_whoami(second.fetch("url"), second.fetch("device_token"))
+      assert_equal bootstrap.fetch("user_id"), second_who.fetch("user_id")
+      assert_not_includes [ bootstrap.fetch("device_id"), granted.fetch("device_id") ], second_who.fetch("device_id"),
+                          "every enrolment is its own sync device -- nothing is cached"
+    end
+  end
+
+  def sync_whoami(url, token)
+    FileLayer::ChunkRemote::Transport.new(base_url: url, token:).get("/v1/devices/whoami")
+  end
+
+  # SYNC_PUBLIC_URL IS THE DEVICES' DOOR. bin/sync-server prepare writes it into tmp/sync-server.env
+  # (one box, so the same server CHUNK_REMOTE_URL names); absent, it falls back to that. A block
+  # inside the test rather than a `setup`, for the reason this class has none.
+  def with_sync_public_url
+    prior = ENV["SYNC_PUBLIC_URL"]
+    ENV["SYNC_PUBLIC_URL"] = prior.presence || ENV.fetch("CHUNK_REMOTE_URL")
+    yield
+  ensure
+    prior.nil? ? ENV.delete("SYNC_PUBLIC_URL") : ENV["SYNC_PUBLIC_URL"] = prior
+  end
 end

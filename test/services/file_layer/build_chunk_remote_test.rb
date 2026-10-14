@@ -36,7 +36,8 @@ module FileLayer
 
     CONFIGURED = { "LIBRARY_BACKEND" => "chunk_remote",
                    "CHUNK_REMOTE_URL" => "http://sync.example",
-                   "SYNC_ADMIN_TOKEN" => "admin-token" }.freeze
+                   "SYNC_ADMIN_TOKEN" => "admin-token",
+                   "SYNC_PUBLIC_URL" => "http://sync.example.net" }.freeze
 
     test "LIBRARY_BACKEND=chunk_remote builds the remote adapter" do
       build_with(CONFIGURED) do
@@ -63,23 +64,26 @@ module FileLayer
     # only LIBRARY_BACKEND leaves the others AMBIENT, and on the test-chunk-remote leg the ambient
     # env has both -- so this asserted a refusal that could not happen and failed as "Error expected
     # but nothing was raised". A test about a MISSING knob has to make it missing rather than
-    # assume the surrounding environment does not supply it.
+    # assume the surrounding environment does not supply it -- and the converse holds for the
+    # knob each test keeps PRESENT, which is why SYNC_PUBLIC_URL is spelled out below.
+    #
+    # BOTH READ THE LIST AT THE HEAD OF THE MESSAGE, NOT THE WHOLE MESSAGE. Since D1 (2026-10-13)
+    # the explanation after the dash names every knob whichever are missing, so matching a name
+    # anywhere in it passes for any refusal at all.
     test "it refuses to boot without a server URL and an admin token, naming BOTH at once" do
-      build_with("LIBRARY_BACKEND" => "chunk_remote",
+      build_with("LIBRARY_BACKEND" => "chunk_remote", "SYNC_PUBLIC_URL" => "http://sync.example.net",
                  "CHUNK_REMOTE_URL" => nil, "SYNC_ADMIN_TOKEN" => nil) do
         err = assert_raises(LibraryBackendCheck::Error) { FileLayer.build }
-        assert_match(/CHUNK_REMOTE_URL/, err.message)
-        assert_match(/SYNC_ADMIN_TOKEN/, err.message,
-                     "an operator must learn both knobs at once, not one restart at a time")
+        assert_equal "CHUNK_REMOTE_URL, SYNC_ADMIN_TOKEN", err.message[/requires (.+?) — /, 1],
+                     "an operator must learn both knobs at once, not one restart at a time"
       end
     end
 
     test "a URL without an admin token is still refused, and names only what is missing" do
       build_with("LIBRARY_BACKEND" => "chunk_remote", "CHUNK_REMOTE_URL" => "http://sync.example",
-                 "SYNC_ADMIN_TOKEN" => nil) do
+                 "SYNC_PUBLIC_URL" => "http://sync.example.net", "SYNC_ADMIN_TOKEN" => nil) do
         err = assert_raises(LibraryBackendCheck::Error) { FileLayer.build }
-        assert_match(/SYNC_ADMIN_TOKEN/, err.message)
-        assert_no_match(/CHUNK_REMOTE_URL,/, err.message, "it named a knob that was set")
+        assert_equal "SYNC_ADMIN_TOKEN", err.message[/requires (.+?) — /, 1], "it named a knob that was set"
       end
     end
 
