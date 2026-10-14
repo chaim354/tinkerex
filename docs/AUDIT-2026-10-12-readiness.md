@@ -307,7 +307,7 @@ endpoint change, five things still move — three once Phase 6 merges), item 7 u
 
 ## 3. PRESENTABLE
 
-1. **Licence.** Maker repo: **no LICENSE** (all rights reserved by default); sync: MIT (`MIT-LICENSE`,
+1. **Licence — DONE 2026-10-14: Apache-2.0 (`LICENSE`), the owner's call ("make it open source").** Was: maker repo **no LICENSE** (all rights reserved by default); sync: MIT (`MIT-LICENSE`,
    `gemspec:17`, both `Cargo.toml`); client: Apache-2.0 in all ten crates, root `LICENSE` added today in
    PR #11; addons: MIT. CLAUDE.md §1 says "commercial product" and governs dependencies only.
 2. **README.** Maker: scaffold stub. Sync: sells "a mountable Rails engine" (`README.md:1-10`), says "the maker
