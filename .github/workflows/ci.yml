@@ -252,7 +252,7 @@ jobs:
           RAILS_ENV: test
           TINKEREX_SYNC_DIR: ${{ github.workspace }}/tinkerex-sync
           SYNC_PORT: "3002"
-          # bin/sync-server BUILDS tinkerex-sync's Rust binary by default (the Rust cutover's D4,
+          # bin/sync-server BUILDS tinkerex-sync's Rust binary (its only implementation since Phase 6,
           # 2026-10-14), with the image's rustup (on PATH, ci/runner/Dockerfile). All three cargo
           # locations sit under /_work, the runner's bind mount (ops/ci-runner-stack.yml): it
           # survives between runs, and the job's user owns it.

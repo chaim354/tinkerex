@@ -75,11 +75,11 @@ echo "    integrity_check          $(sqlite3 "$PRIMARY" 'PRAGMA integrity_check;
 # printed either and a successful backup reported as a failure. The sync server (chaim354/
 # tinkerex-sync) has no maker layer and no Active Storage; what it holds is the chunk catalog.
 #
-# TABLE NAMES, NOT MODEL NAMES. The engine's models are namespaced (`Sync::Version`) while its
-# TABLES are bare — `versions`, `chunks`, `manifest_chunks`, `changelog_entries` — which is CLAUDE
-# .md §14j's `isolate_namespace` rule (`Sync::Version.table_name` must read `"versions"`, not
-# `"sync_versions"`). Querying sqlite means the bare names are the correct spelling here; a reader
-# porting this to `bin/rails runner` would need the namespaced ones instead.
+# THE TABLE NAMES ARE BARE — `versions`, `chunks`, `manifest_chunks`, `changelog_entries`, never
+# `sync_`-prefixed — because the Rust binary keeps the schema exactly as the Ruby engine left it
+# (crates/tinkerex-sync/src/schema/sqlite.sql there is that engine's DDL, verbatim). sqlite3 is the
+# instrument, not `bin/rails runner`: the server's image has no Rails in it (the binary since the
+# 2026-10-07 cutover; Phase 6 retired the Ruby image on 2026-10-14).
 if [ "$DEST" = sync ]; then
   sqlite3 "$PRIMARY" <<'SQL' | sed 's/^/    /'
 .mode list

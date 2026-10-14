@@ -248,12 +248,12 @@ else
   # in-container probe below is STILL the right instrument: a restore must not depend on kamal-proxy
   # or on a registration being up to report that the database it just restored answers.
   #
-  # THE ROW COUNT: `Maker::Project` DOES NOT EXIST on the sync server. It is a different Rails app
-  # (chaim354/tinkerex-sync) with no maker layer in it whatsoever — the whole point of Arc D — so
-  # the original line raises NameError and the restore's final proof step dies having restored
-  # perfectly well. `Node` is the one model BOTH apps define, which is why it stays in both arms;
-  # the second count differs because the two databases hold different things, and `Sync::Version`
-  # is the sync side's equivalent evidence that real rows came back rather than an empty schema.
+  # THE ROW COUNT: `Maker::Project` DOES NOT EXIST on the sync server. It is a different app
+  # (chaim354/tinkerex-sync's Rust binary) with no maker layer in it whatsoever — the whole point of
+  # Arc D — so the maker arm's line would kill the restore's final proof step having restored
+  # perfectly well (against the Ruby host it raised NameError; the binary's image has no `bin/rails`
+  # at all). The sync arm asks the binary instead: `nodes` is the one table BOTH databases hold, and
+  # `versions` is the sync side's evidence that real rows came back rather than an empty schema.
   case "$DEST" in
     sync)
       for _ in $(seq 30); do
@@ -262,16 +262,10 @@ else
         sleep 2
       done
       echo "    /up (in-container) -> ${code:-no answer}"
-      # THE SYNC CONTAINER IS EITHER IMAGE during the Rust cutover (tinkerex-sync's plan §7): the
-      # Rust binary prints this exact line as `tinkerex-sync stats --brief`; the Ruby image has no
-      # such command and answers through bin/rails runner as before. Probe for the binary, never
-      # for a version -- a rolled-back container must verify the same way a rolled-forward one does.
-      ssh "$HOST" "c=\$(docker ps -qf name='$FILTER' | head -1); \
-        if docker exec \$c sh -c 'command -v tinkerex-sync >/dev/null 2>&1'; then \
-          docker exec \$c tinkerex-sync stats --brief; \
-        else \
-          docker exec \$c bin/rails runner 'puts \"#{Node.count} nodes, #{Sync::Version.count} versions\"'; \
-        fi" \
+      # THE BINARY PRINTS THE COUNTS ITSELF -- `<n> nodes, <m> versions`, the shape `tinkerex-sync
+      # stats --brief` was written to print for this line. The `bin/rails runner` fallback that
+      # served the Ruby image during the cutover left with that image in Phase 6 (2026-10-14).
+      ssh "$HOST" "docker exec \$(docker ps -qf name='$FILTER' | head -1) tinkerex-sync stats --brief" \
         | sed 's/^/    /'
       ;;
     *)

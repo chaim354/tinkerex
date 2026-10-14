@@ -50,8 +50,8 @@ module LibraryBackendCheck
   # first time each one actually touches their library (FileLayer::ChunkRemote::Provisioning),
   # authenticated against the sync server's admin door with SYNC_ADMIN_TOKEN — a single
   # deployment-wide OPERATOR credential, distinct from any device token, that the sync server
-  # compares against its OWN copy of the same env var name (Sync::V1::Admin::
-  # LibrariesController#authenticate_admin! on the far side). No runtime request-serving code reads
+  # compares against its OWN copy of the same env var name (`authorize_admin` in
+  # crates/tinkerex-sync/src/auth.rs on the far side). No runtime request-serving code reads
   # CHUNK_REMOTE_TOKEN any more (grep app/ and lib/: every remaining hit is a comment, this one
   # included).
   #

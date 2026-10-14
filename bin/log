@@ -14,7 +14,7 @@
 # inherits both. Loading no gem means this script never needs `bundle install` — a fresh clone, a
 # worktree and a cloud session all run it. It is NOT full immunity: an inherited RUBYOPT is applied
 # by the ruby binary before line 1, so a caller launching this from inside a bundled process must
-# clear those names itself, exactly as bin/sync-server does.
+# clear those names itself, exactly as test/log_cli_test.rb's BUNDLER_ENV does.
 #
 # NOTHING BELOW CALLS `exit`. Helpers raise; Log.main decides the code in ONE place. A helper that
 # exited raised SystemExit — not a StandardError, not Unreachable — so it sailed straight past the

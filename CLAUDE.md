@@ -100,7 +100,7 @@ The sync engine's own design — chunking, versions, the changelog, conflict rec
 
 | repo | role | how it reaches us |
 |---|---|---|
-| `chaim354/tinkerex-sync` | The chunk/version/changelog engine + its own host app, being replaced by a Rust binary (`crates/tinkerex-sync` there) that serves the same wire from the same image paths and env. **Not a dependency of this repo** — no gem, `Sync::` is undefined in this process. | Runs as the **`sync` Kamal accessory**; this app talks to it over HTTP as a client (§6). Devices sync against it directly, never against this app. **Cut over 2026-10-07**: the accessory runs the Rust image (`:38931307…-rust`; rollback `:ruby-4148fcd6…`; plan `docs/superpowers/plans/2026-10-07-rust-cutover.md` there). `bin/sync-server` boots the Rust binary by default (D4, 2026-10-14); `SYNC_IMPL=ruby` boots the Ruby host until Phase 6 (§9 of `docs/superpowers/plans/2026-09-30-rust-rewrite.md` there) deletes it. |
+| `chaim354/tinkerex-sync` | The chunk/version/changelog sync server: a Rust binary (`crates/tinkerex-sync` there). Its Ruby engine and host app were deleted in Phase 6 (2026-10-14). **Not a dependency of this repo** — no gem, `Sync::` is undefined in this process. | Runs as the **`sync` Kamal accessory**; this app talks to it over HTTP as a client (§6). Devices sync against it directly, never against this app. The accessory has run the binary since the **2026-10-07 cutover** (`:<sha>-rust` images; plan `docs/superpowers/plans/2026-10-07-rust-cutover.md` there); the Ruby image `ruby-4148fcd6…` stays in the registry as a historical artefact only. `bin/sync-server` builds and boots the binary. |
 | `chaim354/tinkerex-client` | Rust crates (`fs-provider`, the per-OS mounts, `sync-client`, `sync-engine`) + the Tauri desktop app. Extracted 2026-08-20. | Syncs against the sync server. Clone as a sibling (`../tinkerex-client`) for the CI legs in §13 that need it. |
 
 ---
@@ -174,8 +174,8 @@ Three things about that client matter enough to be invariants, and all three are
 - **`presignable` is FALSE** — this app cannot verify that a URL another server signed points
   off-box, so it streams.
 
-What checks the wire is **`bin/ci test-chunk-remote`**, which boots a real `tinkerex-sync` host
-app and runs the full suite against it, plus that repo's own conformance corpus.
+What checks the wire is **`bin/ci test-chunk-remote`**, which boots the real `tinkerex-sync`
+binary and runs the full suite against it, plus that repo's own conformance corpus.
 
 ---
 
@@ -357,7 +357,7 @@ bin/rails test
 LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test
 # The s3 leg additionally needs the five LIBRARY_S3_* stub knobs -- see ci.yml's test-s3-backend.
 
-# Boot a local sync server on $SYNC_PORT, default 3002 (the Rust binary; SYNC_IMPL=ruby for host/):
+# Boot a local sync server (the Rust binary, built by cargo) on $SYNC_PORT, default 3002:
 bin/sync-server prepare && bin/sync-server start
 
 # SECRETS: no `export` before a deploy. `bin/secret VAR op://tinkerex/Item/field` resolves every
@@ -375,13 +375,12 @@ bin/log open "<t>" | close N | deploy --image SHA | note N "<text>" | search "<q
 # tmp/log-pending/<branch>.md); a 502 counts as unreachable, there is NO auto-replay, and
 # `bin/log status` exits 4 until you file it. 5 = a BUG in bin/log -- NOT spooled, do not proceed.
 # It needs no gem, but an inherited RUBYOPT force-requiring bundler applies before its first line,
-# so a caller inside a bundled process must clear those names, as bin/sync-server does (§14j).
+# so a caller inside a bundled process must clear those names, as test/log_cli_test.rb does (§14j).
 
 # THE SYNC SERVER runs as a Kamal ACCESSORY, not a service -- that is what gives it the FIXED
 # container name `tinkerex-sync`, the stable network alias this app puts in CHUNK_REMOTE_URL. A
-# Kamal *service* gets a per-deploy `<name>-<sha>` name, so `http://tinkerex-sync:3000` does not
-# resolve to one (measured: 000). A standalone service deployed from tinkerex-sync's own
-# deploy.yml COLLIDES with this accessory on the `service=tinkerex-sync` label -- one shape per box.
+# Kamal *service* gets a per-deploy `<name>-<sha>` name (`http://tinkerex-sync:3000` measured 000),
+# and one named tinkerex-sync COLLIDES with this accessory's `service=` label -- one shape per box.
 kamal accessory boot sync            # first time
 kamal accessory reboot sync          # pick up a new :latest, or an env change
 
@@ -397,7 +396,7 @@ nothing to edit here, and since 2026-08-25 neither is a dependency of this one (
 the **wire**, checked by `bin/ci test-chunk-remote` here and by each sibling's own suite.
 
 ```sh
-gh repo clone chaim354/tinkerex-sync   ../tinkerex-sync     # then: bundle install && bundle exec rake test
+gh repo clone chaim354/tinkerex-sync   ../tinkerex-sync     # then: cargo test && bin/conformance
 gh repo clone chaim354/tinkerex-client ../tinkerex-client   # its CLAUDE.md has the cargo/mount cheatsheet
 ```
 
@@ -961,7 +960,7 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   its starting changelog cursor. The method's lock-ordering rule — take `FOR UPDATE` on the user
   row FIRST, before any FK insert takes `FOR KEY SHARE`, or two concurrent commits deadlock on
   the upgrade — governs the sync server's commit path and lives in **that repo's** CLAUDE.md now.
-  Its five callers are all there. Do not reintroduce that rule, or a pooler boot guard for it,
+  Its callers are all there. Do not reintroduce that rule, or a pooler boot guard for it,
   here: nothing in this process takes the lock.
   **A statement-mode pooler still breaks the sync server** — that constraint did not disappear,
   it relocated.
@@ -1139,30 +1138,28 @@ including the unencrypted-archives decision. Nothing was dropped; this anchor st
 > ZERO references with **no allowlist**, which is stronger than anything those exception lists
 > could express.
 >
-> **The engine-side rules moved to `chaim354/tinkerex-sync`'s own CLAUDE.md** — `isolate_namespace`
-> and the `sync_` table-prefix trap, the route drawer, `Sync::Hooks`, host obligations, the dummy
-> app, refcount GC and `next_seq!` ordering. Do not re-derive them here; if you need one, you are
-> working in the wrong repo.
+> **The engine-side rules moved to `chaim354/tinkerex-sync`'s own CLAUDE.md** — refcount GC and
+> `next_seq` ordering live there in Rust form; the Rails engine's own (`isolate_namespace`, the route
+> drawer, `Sync::Hooks`, the dummy app) died with it in Phase 6 (2026-10-14). Do not re-derive them
+> here; if you need one, you are working in the wrong repo.
 >
 > **What couples the two repos now is the WIRE**, and what checks it is `bin/ci test-chunk-remote`
-> here (the full suite against a booted sync-server host app) plus the conformance corpus there.
+> here (the full suite against the booted sync-server binary) plus the conformance corpus there.
 
 Four rules survive on **this** side of the boundary:
 
 - **A BUNDLED RUBY PROCESS THAT SPAWNS A SECOND RAILS APP MUST STRIP `BUNDLE_GEMFILE`/`RUBYOPT`
   FIRST, OR THE CHILD SILENTLY BOOTS AGAINST THE WRONG GEMFILE.** `bin/ci` (via `config/boot.rb`'s
   `require "bundler/setup"`) sets `BUNDLE_GEMFILE` to THIS repo's Gemfile and a `RUBYOPT` that
-  force-requires `bundler/setup`, **process-wide** — every child inherits both. A second Rails
-  app's own ordinary `config/boot.rb` does `ENV["BUNDLE_GEMFILE"] ||= …`, and `||=` means the
-  INHERITED value wins. Reproduced directly: exporting those three and nothing else turned a working
-  `POST /v1/admin/libraries` into a bare 404 on an otherwise-identical boot, while `/up` and
-  `/v1/devices/whoami` kept answering — the two locked versions are close enough to boot either way,
-  and ROUTE DRAWING was where they had diverged. `bin/sync-server`'s `unset_inherited_bundler_env`
-  clears `BUNDLE_GEMFILE`/`BUNDLE_BIN_PATH`/`BUNDLE_LOCKFILE`/`BUNDLER_VERSION`/`BUNDLER_SETUP`/
-  `RUBYOPT`/`RUBYLIB` — deliberately **not** `PATH`/`GEM_HOME`/`GEM_PATH`, which is how the shell
-  finds `ruby` at all. **This protects only `bin/sync-server`.** The next script shelling out to a
-  second bundled Ruby process from inside a `bin/ci`-launched one gets no protection and hits the
-  identical failure: silent, plausible-looking, invisible until the lockfiles drift.
+  force-requires `bundler/setup`, **process-wide**, and a second app's own `config/boot.rb` does
+  `ENV["BUNDLE_GEMFILE"] ||= …`, so the INHERITED value wins. Reproduced on the Ruby sync host
+  `bin/sync-server` booted until Phase 6: a working `POST /v1/admin/libraries` became a bare 404
+  while `/up` and `whoami` answered — ROUTE DRAWING was where the two lockfiles had diverged. Clear
+  `BUNDLE_GEMFILE`/`BUNDLE_BIN_PATH`/`BUNDLE_LOCKFILE`/`BUNDLER_VERSION`/`BUNDLER_SETUP`/`RUBYOPT`/
+  `RUBYLIB`, never `PATH`/`GEM_HOME`/`GEM_PATH` (how the shell finds `ruby`). **Nothing here spawns
+  a second Rails app since that host left** (`test/log_cli_test.rb` clears the seven for `bin/log`),
+  so the next script that does must clear them itself — or fail silently and plausibly, invisible
+  until the lockfiles drift.
 - **`V1::BaseController` STANDS ON `ActionController::API`.** It briefly inherited the engine's
   base controller so the fourteen `v1/maker/*` controllers rode the engine's v1 infrastructure — a
   superclass resolves when the class body loads, so with no engine this app's own API had no base
@@ -1177,7 +1174,8 @@ Four rules survive on **this** side of the boundary:
   require the other in the case that matters. There was a parity test comparing the two method
   bodies while they shared a process; it went with the extraction, and **nothing checks that
   agreement now.** If you change device-token verification here, change it there in the same
-  breath — that obligation has no guard behind it. Since 2026-09-30 "there" is two places in two languages: `Sync::V1::Authentication` (Ruby host) and `crates/tinkerex-sync/src/auth.rs`'s `authenticate` (the Rust binary replacing it).
+  breath — that obligation has no guard behind it. Since Phase 6 (2026-10-14) "there" is one place
+  again: `crates/tinkerex-sync/src/auth.rs`'s `authenticate` (`Sync::V1::Authentication` is gone).
 
 ### 14k. The model catalog and shelves → **`docs/invariants/model-intake.md`**
 

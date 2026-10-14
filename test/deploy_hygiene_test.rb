@@ -196,10 +196,12 @@ class DeployHygieneTest < ActiveSupport::TestCase
   # four): `accessories:` is never overlaid, so the base block is what each of them boots.
   # SYNC_SCHEDULER (D3, 2026-10-14) turns on the binary's in-process maintenance, which is OFF unless
   # set -- losing the line is a scheduler that silently never runs, and nothing else would notice.
-  # CABLE_ADAPTER and RAILS_LOG_TO_STDOUT are read only by the Ruby rollback image and leave with it
-  # in Phase 6 (docs/superpowers/plans/2026-10-13-e-cutover-finish.md, Task 4 flips these two to
-  # absence); dropping either sooner breaks the rollback while changing nothing the Rust image reads.
-  test "the sync accessory runs its scheduler, and keeps the rollback image's two knobs, on every destination" do
+  # CABLE_ADAPTER and RAILS_LOG_TO_STDOUT were the Ruby image's, and Phase 6 (2026-10-14) retired it,
+  # so they are pinned ABSENT: the binary reads neither, and a knob nothing reads is one a reader
+  # trusts to do something (CABLE_ADAPTER's own comment once argued that a second container would
+  # need Redis). deploy.yml's comment names what booting the retired image again would need. The
+  # SYNC_SCHEDULER presence check is also what keeps the absence ones from passing over an empty hash.
+  test "the sync accessory runs its scheduler and carries none of the retired Ruby image's knobs, on every destination" do
     require "kamal"
     SECRETS_FILES.each_key do |destination|
       clear = Kamal::Configuration.create_from(
@@ -209,8 +211,9 @@ class DeployHygieneTest < ActiveSupport::TestCase
 
       assert_equal "true", clear["SYNC_SCHEDULER"].to_s, "#{label}: the sync accessory's scheduler is off"
       %w[CABLE_ADAPTER RAILS_LOG_TO_STDOUT].each do |key|
-        assert clear.key?(key),
-               "#{label}: #{key} left the sync accessory's env before Phase 6 -- the Ruby rollback image reads it"
+        assert_not clear.key?(key),
+                   "#{label}: #{key} is back in the sync accessory's env -- only the Ruby image read it, " \
+                   "and Phase 6 retired that image"
       end
     end
   end

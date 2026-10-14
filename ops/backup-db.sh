@@ -207,7 +207,7 @@ container_for() {
 }
 volume_for() {
   # `sync` IS THE SYNC SERVER'S OWN DATABASE, NOT A FOURTH COPY OF THE MAKER'S. It is a different
-  # Rails app (chaim354/tinkerex-sync) holding the chunk catalog — versions, manifest_chunks,
+  # app (chaim354/tinkerex-sync's binary) holding the chunk catalog — versions, manifest_chunks,
   # changelog_entries. A restore that recovers the maker database and not this one recovers a
   # library whose every file resolves to nothing. The volume happens to have the SAME internal
   # shape (production.sqlite3 at its root, plus a `nodes` table for the verify step to count), so

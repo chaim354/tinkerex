@@ -89,7 +89,7 @@ module FileLayer
         # Tools::AddonsController) renders this correctly with no new wiring. The message here is
         # written for whoever reads logs, not the flash banner, and says plainly that automatic
         # retry will not fix it — recovery is an operator reissuing a device by hand (e.g.
-        # `sync:device:issue` on the sync host) and setting `users.sync_device_token`.
+        # `tinkerex-sync device issue` in the sync container) and setting `users.sync_device_token`.
         raise FileLayer::FetchError,
               "cannot auto-provision a library for #{user.email.inspect}: the sync server " \
               "refused (#{e.message}) -- most likely it already has one and this app has no " \
@@ -113,12 +113,12 @@ module FileLayer
 
       # Built lazily, from SYNC_ADMIN_TOKEN -- NOT CHUNK_REMOTE_TOKEN. The two are different
       # credentials for different doors: CHUNK_REMOTE_TOKEN is a DEVICE token, and the admin
-      # endpoint structurally cannot accept one (its own comment: `Sync::V1::Admin::
-      # LibrariesController` inherits `ActionController::API` directly, never
-      # `Sync::V1::BaseController`, specifically so no ancestor in its chain calls
-      # `Device.authenticate` — a device token presented here is not "checked and rejected", it is
-      # simply not a credential any path in that controller reads). Reads CHUNK_REMOTE_URL because
-      # the admin endpoint lives on the same sync server every per-user request already talks to —
+      # endpoint structurally cannot accept one (`authorize_admin` in chaim354/tinkerex-sync's
+      # crates/tinkerex-sync/src/auth.rs compares the bearer against SYNC_ADMIN_TOKEN and nothing
+      # else — a device token presented there is not "checked and rejected", it is simply not a
+      # credential that path reads; until Phase 6 the Ruby engine's admin controller kept the same
+      # rule by never inheriting its device-authenticating base). Reads CHUNK_REMOTE_URL because the
+      # admin endpoint lives on the same sync server every per-user request already talks to —
       # there is no separate "admin host" to configure.
       #
       # UNSET IS A FetchError, NOT A KeyError -- an operator who has not configured auto-
@@ -132,8 +132,8 @@ module FileLayer
             raise FileLayer::FetchError,
                   "cannot auto-provision a library: SYNC_ADMIN_TOKEN is not set on this " \
                   "deployment -- either set it (matching the sync server's own SYNC_ADMIN_TOKEN) " \
-                  "or provision this user's device by hand with `sync:device:issue` on the sync " \
-                  "host and set users.sync_device_token"
+                  "or provision this user's device by hand with `tinkerex-sync device issue` in " \
+                  "the sync container and set users.sync_device_token"
           }
         )
       end

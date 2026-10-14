@@ -100,7 +100,8 @@ GATES = {
   # with it -- what remains of that claim is build_chunk_remote_test's structural assertion that
   # Sync is not even defined here, which goes red if the gem is ever re-added.
 
-  # THE chunk_remote JOURNEY, AGAINST A REAL STANDALONE tinkerex-sync HOST.
+  # THE chunk_remote JOURNEY, AGAINST A REAL tinkerex-sync SERVER -- the Rust binary bin/sync-server
+  # builds from the sibling checkout and boots, the only implementation since Phase 6 (2026-10-14).
   #
   # Used to be .github/workflows/sync-contract.yml -- a SEPARATE workflow, deliberately kept OUT of
   # bin/ci, because test/ci_hygiene_test.rb asserts SET EQUALITY between `bin/ci --list-ci` and
@@ -162,17 +163,17 @@ GATES = {
       SRV=$!
       trap 'kill "$SRV" 2>/dev/null || true' EXIT
 
-      # TWO PROBES, TWO DIFFERENT QUESTIONS, and neither substitutes for the other. /up runs
-      # User.count on that host and answers 503 on an empty schema -- it exists because its first
-      # real deploy reported healthy with no tables. whoami then proves the credential
+      # TWO PROBES, TWO DIFFERENT QUESTIONS, and neither substitutes for the other. /up counts the
+      # server's users and answers 503 when it cannot -- it exists because the server's first real
+      # deploy reported healthy with no tables. whoami then proves the credential
       # bin/sync-server just minted is actually accepted. A bare port check answers neither, and a
       # schema-less server would otherwise surface as ten confusing journey failures instead of
       # one clear failure here.
       #
       # $CHUNK_REMOTE_TOKEN HERE IS A LOCAL SMOKE-TEST CREDENTIAL, NOT A DEPLOYMENT REQUIREMENT --
-      # this is the one legitimate place it still belongs. It answers "did sync:device:issue mint a
-      # device this ephemeral server actually accepts," a narrower question than "can a real
-      # deployment run." That second question is lib/library_backend_check.rb's
+      # this is the one legitimate place it still belongs. It answers "did `tinkerex-sync device
+      # issue` mint a device this ephemeral server actually accepts," a narrower question than
+      # "can a real deployment run." That second question is lib/library_backend_check.rb's
       # CHUNK_REMOTE_REQUIRED, which stopped naming this var once Arc C moved ordinary traffic to
       # per-user `users.sync_device_token` and named SYNC_ADMIN_TOKEN instead -- see that constant's
       # own comment for the full history. Do not read this probe's continued use of
