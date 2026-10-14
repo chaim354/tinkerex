@@ -4,11 +4,12 @@ require "test_helper"
 require "open3"
 require "fileutils"
 
-# GUARDS THE ONE THING THAT CAN BE GUARDED WITHOUT A CHECKOUT: that a missing sibling repo fails
-# LOUDLY and names the fix. This is the shape scripts/r2-cutover/smoke.sh already uses for
-# tinkerex-client, and the reason is the same -- nothing in bin/ci boots a sync server, so the
-# script's failure message IS its error handling (CLAUDE.md §14i: some things cannot go red in CI,
-# so the message has to carry the whole story).
+# GUARDS WHAT CAN BE GUARDED WITHOUT A CHECKOUT: that a missing sibling repo fails LOUDLY and
+# names the fix, and that the script's own switches behave. `bin/ci test-chunk-remote` DOES boot a
+# real sync server through this script -- but only with `../tinkerex-sync` present, which this
+# test must not assume (CLAUDE.md §13); the arms that need the checkout are stubbed here, so the
+# script's failure messages ARE the error handling a stranger meets (§14i's shape: the message has
+# to carry the whole story).
 class BinSyncServerTest < ActiveSupport::TestCase
   SCRIPT = Rails.root.join("bin/sync-server")
 

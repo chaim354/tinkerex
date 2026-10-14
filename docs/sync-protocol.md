@@ -65,6 +65,7 @@ routes, not one:
 | 23 | POST | `/v1/share/:token/download` |
 | 24 | PUT | `/v1/chunks/blob/:user_id/:hash` |
 | 25 | GET | `/v1/chunks/blob/:user_id/:hash` |
+| 26 | POST | `/v1/admin/libraries` |
 
 This excludes device enrollment (`POST /v1/devices`, `POST /v1/devices/login` on this
 app; `POST /v1/devices`, `GET /v1/devices/whoami` on the sync server, served by the Ruby
