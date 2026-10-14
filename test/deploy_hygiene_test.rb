@@ -192,6 +192,29 @@ class DeployHygieneTest < ActiveSupport::TestCase
                  "(#{clear['CHUNK_REMOTE_URL'].inspect}), a name only the kamal network resolves"
   end
 
+  # THE ACCESSORY'S OWN ENV, READ OFF EVERY DESTINATION'S MERGED CONFIG (SECRETS_FILES names all
+  # four): `accessories:` is never overlaid, so the base block is what each of them boots.
+  # SYNC_SCHEDULER (D3, 2026-10-14) turns on the binary's in-process maintenance, which is OFF unless
+  # set -- losing the line is a scheduler that silently never runs, and nothing else would notice.
+  # CABLE_ADAPTER and RAILS_LOG_TO_STDOUT are read only by the Ruby rollback image and leave with it
+  # in Phase 6 (docs/superpowers/plans/2026-10-13-e-cutover-finish.md, Task 4 flips these two to
+  # absence); dropping either sooner breaks the rollback while changing nothing the Rust image reads.
+  test "the sync accessory runs its scheduler, and keeps the rollback image's two knobs, on every destination" do
+    require "kamal"
+    SECRETS_FILES.each_key do |destination|
+      clear = Kamal::Configuration.create_from(
+        config_file: ROOT.join("config/deploy.yml"), destination: destination
+      ).accessory("sync").env.clear
+      label = destination || "base"
+
+      assert_equal "1", clear["SYNC_SCHEDULER"].to_s, "#{label}: the sync accessory's scheduler is off"
+      %w[CABLE_ADAPTER RAILS_LOG_TO_STDOUT].each do |key|
+        assert clear.key?(key),
+               "#{label}: #{key} left the sync accessory's env before Phase 6 -- the Ruby rollback image reads it"
+      end
+    end
+  end
+
   test "the OVH overlay clears every Unraid-host-only service URL it cannot reach" do
     # Kamal DEEP-MERGES env.clear (a hash), so the overlay inherits deploy.yml's accessory hostnames.
     # Those resolve only on the Unraid host, where the accessories actually run. Inheriting one makes

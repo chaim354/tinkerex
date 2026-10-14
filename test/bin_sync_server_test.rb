@@ -17,18 +17,25 @@ class BinSyncServerTest < ActiveSupport::TestCase
     assert SCRIPT.executable?, "bin/sync-server must be chmod +x or CI cannot invoke it"
   end
 
-  test "a missing sibling checkout exits non-zero and names the clone command" do
-    # BLOCK FORM of mktmpdir: the directory only needs to outlive the one child process, and the
-    # non-block arm cleans up after nobody -- it left one `absent*` tmpdir behind per run.
-    out, status = Dir.mktmpdir("absent") do |absent|
-      Open3.capture2e({ "TINKEREX_SYNC_DIR" => absent }, SCRIPT.to_s, "prepare")
-    end
+  test "a missing sibling checkout exits non-zero and names the clone command, on either arm" do
+    # BOTH ARMS, PINNED rather than inherited: the bare invocation is the Rust arm (D4), which looks
+    # for the checkout's Cargo workspace, and SYNC_IMPL=ruby looks for host/ -- each must fail the
+    # same loud way. TINKEREX_SYNC_BIN is cleared because a binary named there needs no checkout.
+    [ nil, "ruby" ].each do |impl|
+      # BLOCK FORM of mktmpdir: the directory only needs to outlive the one child process, and the
+      # non-block arm cleans up after nobody -- it left one `absent*` tmpdir behind per run.
+      out, status = Dir.mktmpdir("absent") do |absent|
+        Open3.capture2e({ "TINKEREX_SYNC_DIR" => absent, "SYNC_IMPL" => impl, "TINKEREX_SYNC_BIN" => nil },
+                        SCRIPT.to_s, "prepare")
+      end
 
-    assert_not status.success?, "a missing tinkerex-sync must fail, not fall through:\n#{out}"
-    assert_includes out, "chaim354/tinkerex-sync",
-                     "the failure must name the repo, not just the path it looked in"
-    assert_includes out, "gh repo clone",
-                     "the failure must name the command that fixes it"
+      arm = impl ? "SYNC_IMPL=#{impl}" : "the bare invocation"
+      assert_not status.success?, "#{arm}: a missing tinkerex-sync must fail, not fall through:\n#{out}"
+      assert_includes out, "chaim354/tinkerex-sync",
+                       "#{arm}: the failure must name the repo, not just the path it looked in"
+      assert_includes out, "gh repo clone",
+                       "#{arm}: the failure must name the command that fixes it"
+    end
   end
 
   test "an unknown SYNC_IMPL is refused and names the two it knows" do
@@ -76,8 +83,8 @@ class BinSyncServerTest < ActiveSupport::TestCase
         esac
       STUB
       File.chmod(0o755, bin_stub)
-      # require_checkout still wants host/ to exist -- the checkout is one repo holding both.
-      FileUtils.mkdir_p(File.join(sync_dir, "host"))
+      # NO host/ AND NO Cargo.toml in this checkout: with TINKEREX_SYNC_BIN naming a built binary,
+      # the Rust arm needs nothing else from it -- and it never needed host/, which Phase 6 deletes.
       env_file = Pathname.new(File.join(sync_dir, "sync-server.env"))
 
       run_env = {
@@ -194,9 +201,8 @@ class BinSyncServerTest < ActiveSupport::TestCase
       # bin/sync-server for why a save-and-restore of the real file isn't safe here.
       env_file = Pathname.new(File.join(sync_dir, "sync-server.env"))
 
-      # SYNC_IMPL PINNED, not inherited: this is the RUBY arm's happy path, and a caller running the
-      # suite under `SYNC_IMPL=rust bin/ci ...` would otherwise hand the script the Rust arm, which
-      # looks for a Cargo.toml this stub checkout does not have. Measured, not supposed.
+      # SYNC_IMPL PINNED: this is the RUBY arm's happy path, and the bare invocation is the Rust arm
+      # since D4 (2026-10-14), which looks for a Cargo.toml this stub checkout does not have.
       run_env = {
         "TINKEREX_SYNC_DIR" => sync_dir,
         "PATH" => "#{stub_path_dir}:#{ENV.fetch("PATH")}",
@@ -229,6 +235,114 @@ class BinSyncServerTest < ActiveSupport::TestCase
                         "two prepare runs wrote the SAME admin token -- it must be freshly " \
                         "generated per run, not a fixed or cached value"
     end
+  end
+
+  # THE CUTOVER'S D4 (2026-10-14): THE BARE INVOCATION IS THE RUST ARM -- the server production has
+  # run since the 2026-10-07 cutover, so the chunk_remote gate grades the one devices meet -- and
+  # SYNC_IMPL=ruby still boots the Ruby host until the rewrite plan's §9 (Phase 6) deletes it. ONE
+  # checkout holds a stub of each, minting DIFFERENT tokens, so the env file names the arm that ran.
+  test "a bare invocation runs the Rust binary, and SYNC_IMPL=ruby still the Ruby host" do
+    Dir.mktmpdir("sync-default") do |sync_dir|
+      binary = File.join(sync_dir, "tinkerex-sync")
+      write_binary_stub(binary, token: "stub-rust-default-0a1b2c")
+      path_dir = write_ruby_host_stub(sync_dir, token: "stub-ruby-host-3d4e5f")
+      env_file = File.join(sync_dir, "sync-server.env")
+      base_env = { "TINKEREX_SYNC_DIR" => sync_dir, "TINKEREX_SYNC_BIN" => binary,
+                   "SYNC_SERVER_ENV_FILE" => env_file, "PATH" => "#{path_dir}:#{ENV.fetch("PATH")}",
+                   "GITHUB_ACTIONS" => nil }
+
+      { nil => "stub-rust-default-0a1b2c", "ruby" => "stub-ruby-host-3d4e5f" }.each do |impl, token|
+        arm = impl ? "SYNC_IMPL=#{impl}" : "the bare invocation"
+        FileUtils.rm_f(env_file)
+        out, status = Open3.capture2e(base_env.merge("SYNC_IMPL" => impl), SCRIPT.to_s, "prepare")
+
+        assert status.success?, "#{arm}: prepare failed:\n#{out}"
+        assert_equal token, File.read(env_file)[/^CHUNK_REMOTE_TOKEN=(.*)$/, 1], "#{arm} ran the wrong arm"
+      end
+    end
+  end
+
+  # WHERE CARGO PUTS THE BINARY IS WHERE THE SCRIPT MUST RUN IT FROM. ci.yml's test-chunk-remote job
+  # sets CARGO_TARGET_DIR -- a directory the runner keeps, outside the checkout actions/checkout
+  # cleans -- and cargo then builds into $CARGO_TARGET_DIR/release, relative to the directory it
+  # runs in (the checkout), never into the checkout's target/. A script that ran
+  # target/release/tinkerex-sync regardless built the binary in one place and looked in another.
+  # `cargo` is stubbed on PATH and compiles nothing: it drops a stub binary where cargo's documented
+  # rule puts it (a relative CARGO_TARGET_DIR is relative to cargo's working directory). The real
+  # cargo was driven by hand, unset and absolute.
+  #
+  # ONE CHECKOUT PER CASE, deliberately: a binary left behind by an earlier case is found by a
+  # script that looks in the wrong place, and the mutation check then stays green.
+  test "the Rust arm runs the binary from wherever CARGO_TARGET_DIR made cargo put it" do
+    # unset: the checkout's own target/. Absolute: ci.yml's shape. Relative: resolved against the
+    # checkout, where cargo runs -- not against wherever bin/sync-server was invoked from.
+    [ nil, :absolute, "relative-target" ].each do |shape|
+      Dir.mktmpdir("sync-cargo") do |sync_dir|
+        target_dir = shape == :absolute ? File.join(sync_dir, "kept", "cargo-target") : shape
+        File.write(File.join(sync_dir, "Cargo.toml"), "") # what the Rust arm checks a checkout for
+        built = File.join(sync_dir, "what-cargo-builds")
+        write_binary_stub(built, token: "stub-cargo-built-6a7b8c")
+        path_dir = File.join(sync_dir, "stub-path")
+        FileUtils.mkdir_p(path_dir)
+        File.write(File.join(path_dir, "cargo"), <<~STUB)
+          #!/usr/bin/env bash
+          # Answers only the build bin/sync-server runs, laying the artifact out the way cargo does.
+          set -euo pipefail
+          [ "$*" = "build --release --quiet -p tinkerex-sync" ] || { echo "stub cargo: unhandled '$*'" >&2; exit 1; }
+          out="${CARGO_TARGET_DIR:-target}/release"
+          mkdir -p "$out"
+          cp "#{built}" "$out/tinkerex-sync"
+          chmod +x "$out/tinkerex-sync"
+        STUB
+        File.chmod(0o755, File.join(path_dir, "cargo"))
+        env_file = File.join(sync_dir, "sync-server.env")
+
+        run_env = { "TINKEREX_SYNC_DIR" => sync_dir, "TINKEREX_SYNC_BIN" => nil, "SYNC_IMPL" => "rust",
+                    "CARGO_TARGET_DIR" => target_dir, "SYNC_SERVER_ENV_FILE" => env_file,
+                    "PATH" => "#{path_dir}:#{ENV.fetch("PATH")}", "GITHUB_ACTIONS" => nil }
+        out, status = Open3.capture2e(run_env, SCRIPT.to_s, "prepare")
+
+        assert status.success?, "CARGO_TARGET_DIR=#{target_dir.inspect}: prepare did not run what cargo built:\n#{out}"
+        assert_includes File.read(env_file), "CHUNK_REMOTE_TOKEN=stub-cargo-built-6a7b8c"
+      end
+    end
+  end
+
+  # A stand-in for the tinkerex-sync binary: the two subcommands `prepare` runs, answered the way
+  # crates/tinkerex-sync/src/main.rs answers them, with the device token given.
+  def write_binary_stub(path, token:)
+    File.write(path, <<~STUB)
+      #!/usr/bin/env bash
+      set -euo pipefail
+      case "${1:-} ${2:-}" in
+        "migrate ") echo "Created" ;;
+        "device issue") echo "device_token: #{token}" ;;
+        *) echo "stub tinkerex-sync: unhandled '$*'" >&2; exit 1 ;;
+      esac
+    STUB
+    File.chmod(0o755, path)
+  end
+
+  # A stand-in for the Ruby host: host/bin/rails answering the two tasks `prepare` runs, and a
+  # do-nothing `bundle` in a directory the caller puts on PATH, which is returned.
+  def write_ruby_host_stub(sync_dir, token:)
+    rails = File.join(sync_dir, "host", "bin", "rails")
+    FileUtils.mkdir_p(File.dirname(rails))
+    File.write(rails, <<~STUB)
+      #!/usr/bin/env bash
+      set -euo pipefail
+      case "${1:-}" in
+        db:prepare) ;;
+        sync:device:issue) echo "device_token: #{token}" ;;
+        *) echo "stub bin/rails: unhandled task '${1:-}'" >&2; exit 1 ;;
+      esac
+    STUB
+    File.chmod(0o755, rails)
+    path_dir = File.join(sync_dir, "stub-path")
+    FileUtils.mkdir_p(path_dir)
+    File.write(File.join(path_dir, "bundle"), "#!/usr/bin/env bash\nexit 0\n")
+    File.chmod(0o755, File.join(path_dir, "bundle"))
+    path_dir
   end
 
   # SYNC_PUBLIC_URL (D1, 2026-10-13): the address a device that signs in to the maker app is handed
