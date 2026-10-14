@@ -1,6 +1,6 @@
 # Sync Protocol — the v1 HTTP API
 
-**Status:** normative reference · **Last updated:** 2026-09-30
+**Status:** normative reference · **Last updated:** 2026-10-13
 
 This document specifies the wire protocol between a sync client (a device) and a sync
 server, well enough that an implementer who has never seen the Ruby source could build
@@ -180,11 +180,34 @@ token `Device.authenticate` (or your equivalent) accepts:
 
 - **This app** (`chaim354/tinkerex`) already has web users with passwords and sessions,
   so it exposes `POST /v1/devices/login {email, password, device_name}` → `201` with
-  `{user_id, device_id, device_token, head_seq}` (one generic `401
+  `{user_id, device_id, device_token, head_seq, library, sync}` (one generic `401
   {"error":"invalid_credentials"}` for any authentication failure — unknown email, wrong
   password, unconfirmed, locked — deliberately not distinguished, to avoid email
   enumeration), and `POST /v1/devices {name}` (authenticated by an existing device token)
-  to enroll a sibling device for the same user.
+  to enroll a sibling device for the same user → `201 {device_id, device_token, library,
+  sync}`. Since the engine left this process, the top-level `device_token` opens **this
+  app's own** v1 API (`/v1/maker/*`) and no sync route; a device syncs with the **sync
+  grant** instead (since 2026-10-13):
+  - `library: {backend, syncable}` — always; `backend` is `share`, `s3` or `chunk_remote`.
+  - `sync: {url, device_token, user_id, device_id, head_seq}` on a syncable deployment
+    (`chunk_remote`), `null` on share and s3. This app brokers it with the user's own
+    bootstrap token on the sync server (`users.sync_device_token`, provisioned through the
+    operator door `POST /v1/admin/libraries` if blank): it mints a sibling device there
+    (`POST /v1/devices {name: device_name}`) and reads `head_seq` back **with the new
+    token** (`GET /v1/devices/whoami`), which also proves the server accepts that token
+    before it is handed out. `user_id`, `device_id` and `head_seq` are the sync server's;
+    the top-level ones are this app's. `url` is `SYNC_PUBLIC_URL`, **the devices' door** to
+    the sync server — deliberately not `CHUNK_REMOTE_URL`, the address this app itself
+    dials; on a Kamal box the two differ. A device sends every route in this document to
+    `sync.url` with `sync.device_token`.
+  - A grant is minted per enrolment and never cached: a device that signs in twice is two
+    sync devices, as it is two maker devices.
+  - A sync server that cannot be reached, or refuses, answers `503
+    {"error":"sync_unavailable"}` and **no maker device is minted** — the grant is brokered
+    before the maker device, so a retry signs in from scratch.
+
+  No sync-server route is added for this: the broker uses the standalone host's own two,
+  below.
 - **The standalone `host/` app** has no users-with-passwords surface at all and
   deliberately does not invent one for a server whose only job is holding chunks. The
   *first* token for a user is minted by an operator: `EMAIL=you@example.com bin/rails
@@ -193,7 +216,8 @@ token `Device.authenticate` (or your equivalent) accepts:
   recovered). Every subsequent device is enrolled by an *already-authenticated* one via
   `POST /v1/devices {name}` → `201 {device_id, device_token}`. `GET /v1/devices/whoami`
   (authenticated) answers `{user_id, device_id, head_seq}` — a debugging aid, not something
-  the reference client's sync loop calls.
+  the reference client's sync loop calls (this app's broker, above, calls it once per
+  enrolment).
 
 ---
 

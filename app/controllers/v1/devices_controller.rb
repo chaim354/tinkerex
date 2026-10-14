@@ -8,6 +8,9 @@ module V1
     # maker layer -- the entire product in that mode -- down with it, at the login endpoint,
     # where nobody would look for it.
     #
+    # `syncable` IS READ BELOW, AND IT IS STILL NOT A GATE: every deployment enrols a device; a
+    # syncable one also hands it a sync grant, and the others answer `sync: null` (D1, 2026-10-13).
+    #
     # Device-login enrollment is the ONE v1 endpoint that authenticates by human
     # credentials, not a device token — so skip the Bearer gate here.
     skip_before_action :authenticate_device!, only: :login
@@ -22,7 +25,17 @@ module V1
     rate_limit to: 10, within: 3.minutes, only: :login,
                with: -> { render json: { error: "too_many_attempts" }, status: :too_many_requests }
 
-    # POST /v1/devices/login { email, password, device_name } -> a device token.
+    # A GRANT THAT CANNOT BE BROKERED ANSWERS 503 AND MINTS NO MAKER DEVICE -- the sync server
+    # unreachable, erroring, or rejecting a credential, all FileLayer::FetchError (SyncGrant#call).
+    # Both actions broker the grant BEFORE Device.register!, so the raise lands first: a device
+    # holding a maker token and no way to sync must sign in again anyway, and a clear retry beats a
+    # half-enrolled device. The body names no cause -- the message can carry the sync server's
+    # internal address -- so the cause goes to the log. Pinned by
+    # test/integration/v1/device_login_test.rb.
+    rescue_from FileLayer::FetchError, with: :sync_unavailable
+
+    # POST /v1/devices/login { email, password, device_name } -> a device token, the library it
+    # opens, and a sync grant where there is something to sync.
     # Authenticates the human credentials via Devise (confirmable + lockable enforced),
     # then mints a Device. One generic 401 for unknown/bad/unconfirmed/locked (no
     # enumeration). The password crosses the wire once (TLS); the client stores only the
@@ -43,17 +56,56 @@ module V1
         return render json: { error: "invalid_credentials" }, status: :unauthorized
       end
 
-      device = Device.register!(user:, name: params[:device_name].presence || "device")
+      # authenticate -> grant -> register -> render. The order is the 503 rule above.
+      name = params[:device_name].presence || "device"
+      sync = sync_grant_for(user, name)
+      device = Device.register!(user:, name:)
       render json: {
         user_id: user.id, device_id: device.id,
-        device_token: device.plaintext_token, head_seq: user.head_seq
+        device_token: device.plaintext_token, head_seq: user.head_seq,
+        library: library_info, sync:
       }, status: :created
     end
 
-    # POST /v1/devices { name } -> register an additional device for the current user.
+    # POST /v1/devices { name } -> register an additional device for the current user, with the
+    # same two extra fields, in the same order.
     def create
-      device = Device.register!(user: current_user, name: params[:name].presence || "device")
-      render json: { device_id: device.id, device_token: device.plaintext_token }, status: :created
+      name = params[:name].presence || "device"
+      sync = sync_grant_for(current_user, name)
+      device = Device.register!(user: current_user, name:)
+      render json: { device_id: device.id, device_token: device.plaintext_token, library: library_info, sync: },
+             status: :created
+    end
+
+    private
+
+    # WHICH LIBRARY THIS DEPLOYMENT KEEPS -- so the desktop app can tell a maker on share or s3 that
+    # there is nothing for it to sync, rather than mounting nothing. Asked of the adapter actually
+    # SERVING, never re-read from ENV; the names are the LIBRARY_BACKEND values FileLayer.build
+    # selects each adapter by, and test/integration/v1/device_login_test.rb holds every leg to the
+    # value it was launched with.
+    def library_info
+      adapter = FileLayer.current
+      backend = case adapter
+      when FileLayer::Share then "share"
+      when FileLayer::S3 then "s3"
+      when FileLayer::ChunkRemote then "chunk_remote"
+      end
+      { backend:, syncable: adapter.capabilities.syncable? }
+    end
+
+    # nil where there is nothing to sync; otherwise a fresh grant per enrolment, never cached
+    # (FileLayer::ChunkRemote::SyncGrant -- chunk_remote is the one syncable backend, and its sync
+    # server is the separate process a device is pointed at).
+    def sync_grant_for(user, device_name)
+      return nil unless FileLayer.current.capabilities.syncable?
+
+      FileLayer::ChunkRemote::SyncGrant.new.call(user, device_name:)
+    end
+
+    def sync_unavailable(error)
+      Rails.logger.warn("V1::DevicesController##{action_name}: no sync grant: #{error.message}")
+      render json: { error: "sync_unavailable" }, status: :service_unavailable
     end
   end
 end
