@@ -33,6 +33,10 @@ class ProjectsController < ApplicationController
   # empty folder panel stays quiet (docs/invariants/design-system.md rule 14).
   ON_DEMAND = %w[build_log tasks bom wiring releases sheets].freeze
 
+  # The sentence #demo_may_publish? refuses with (Tinkerex::Demo; the argument is at the method).
+  DEMO_PUBLISH_REFUSAL = "The shared demo can't publish projects: everything made here stays " \
+                         "private and is reset every night.".freeze
+
   # One flat list of live projects, newest activity first. `?archived=1` swaps in the archived
   # ones. ARCHIVED IS THE ONE STATUS THAT DECIDES WHICH LIST A PROJECT IS IN; the other four are
   # shown and set rather than filtered on — the form offers active, paused and done (stage 4,
@@ -507,7 +511,7 @@ class ProjectsController < ApplicationController
 
   def create
     @project = current_user.maker_projects.new(project_params)
-    if @project.save
+    if demo_may_publish?(@project) && @project.save
       failure = ensure_project_folder(@project)
       redirect_to project_path(@project), notice: created_notice(@project, failure)
     else
@@ -517,8 +521,13 @@ class ProjectsController < ApplicationController
 
   def edit; end
 
+  # ASSIGN, THEN ASK, THEN SAVE -- `update` in two steps so the demo's refusal below sees the state
+  # the save would leave and can stop it reaching the database. What `update` adds is a transaction
+  # around the assignment, and assigning these attributes writes nothing (a tag list is held until
+  # after save, Maker::Taggable).
   def update
-    if @project.update(project_params)
+    @project.assign_attributes(project_params)
+    if demo_may_publish?(@project) && @project.save
       redirect_to project_path(@project), notice: publish_notice
     else
       # THE PANEL POSTS THE SAME TWO FIELDS AS THE EDIT FORM (stage 4, S4-4), and there is no edit
@@ -567,6 +576,20 @@ class ProjectsController < ApplicationController
 
   def set_project
     @project = current_user.maker_projects.find_by!(slug: params[:id])
+  end
+
+  # THE SHARED DEMO PUBLISHES NOTHING (Tinkerex::Demo), so this server never hosts a visitor's project
+  # at /u/demo/... -- refused on create (a hand-posted value; the new form has no visibility field)
+  # and on update (the Publish panel and the edit form), through the same failure branch a validation
+  # error takes, so each surface shows the sentence where it shows any other refusal. It asks about
+  # the state the save would LEAVE, not about the change: a demo project published by any other route
+  # cannot be edited while it stays published, and saving it private always works. Every other
+  # account is answered by the model exactly as before.
+  def demo_may_publish?(project)
+    return true unless project.published? && Tinkerex::Demo.demo?(current_user)
+
+    project.errors.add(:base, DEMO_PUBLISH_REFUSAL)
+    false
   end
 
   # DOES THIS ON-DEMAND PANEL HOLD A ROW? Read off what #show already loaded, so it costs no query.

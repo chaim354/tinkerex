@@ -2,6 +2,17 @@
   <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></div>
   <h2>Log in</h2>
 
+  <%# THE PUBLIC DEMO'S DOOR (Tinkerex::Demo): one click into the shared account, above the form a
+      stranger cannot use, and only while there is an account to sign into -- a button that answered
+      404 would be a broken page. A plain .btn: the card's accent stays on Log in, the way every auth
+      card spends it on its own form's submit, and this one is found by coming first. %>
+  <% if Tinkerex::Demo.account %>
+    <div class="demo-entry">
+      <%= button_to "Try the demo", demo_session_path, class: "btn" %>
+      <p class="auth-hint">A shared account that resets every night; nothing you do here is private.</p>
+    </div>
+  <% end %>
+
   <%= form_for(resource, as: resource_name, url: session_path(resource_name)) do |f| %>
     <div class="field">
       <%= f.label :email %>
