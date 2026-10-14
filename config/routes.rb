@@ -40,8 +40,19 @@ Rails.application.routes.draw do
     [ 404, { "content-type" => "text/plain" }, [ "Not Found" ] ]
   }
 
-  # --- Web UI (server-rendered file browser) ---
-  root to: "home#index"
+# --- Web UI (server-rendered file browser) ---
+# THE FRONT DOOR HAS TWO ANSWERS (the landing, 2026-10-14). Signed out, `/` is the landing: the
+# sign-in view with the pitch and three screenshots beside its card, and no redirect -- a stranger
+# typing tinkerex.com met a bare sign-in form before. Signed in, `/` is Recent, as it always was.
+# `unauthenticated` is Devise's REQUEST-TIME constraint (Warden reads the session and the remember
+# cookie, the same question `user_signed_in?` asks), so a visitor matches this route and a signed-in
+# user falls through to `root` below. DECLARED FIRST BECAUSE ROUTES MATCH IN DECLARATION ORDER:
+# below `root` it is unreachable and a visitor is redirected to /users/sign_in again
+# (landing_test.rb). `root` keeps its name, so every `root_path` in the app still means "/" and
+# Devise still lands a sign-in and a sign-out there. `devise_scope` sets the mapping the sessions
+# controller needs and also resolves per request, which is why this may sit above `devise_for`.
+devise_scope(:user) { unauthenticated(:user) { root to: "users/sessions#new", as: :unauthenticated_root } }
+root to: "home#index"
 
   # --- Human-identity web auth (Devise) ---
   # Governs the server-rendered web UI only. The v1 device-token machinery (namespace :v1

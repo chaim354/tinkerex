@@ -1,40 +1,94 @@
-<div class="auth-card">
-  <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></div>
-  <h2>Log in</h2>
+<%# THE LANDING (2026-10-14): what a stranger sees at `/` and at /users/sign_in -- ONE view, because
+    a sign-in page that is also the site's front door has to say what the thing is before it asks
+    for a password. The pitch and three screenshots stand beside the SAME auth card every Devise
+    page renders: auth_pages_test.rb pins the card's markup and Devise's field names,
+    demo_session_test.rb its demo button, and nothing inside the card below is the landing's own.
+    `landing-main` opts out of the layout's 440px auth column (pages/landing.css owns the layout);
+    the hero's controls are quiet and the accent stays on Log in (landing_test.rb). The screenshots
+    under app/assets/images/landing are the app at 1280x800 in the light theme with the demo banner
+    removed; retake them when the interface moves, never doctor them. %>
+<% content_for :title, "Tinkerex — a self-hosted library for a maker's files" %>
+<% content_for :head do %>
+  <meta name="description" content="Tinkerex indexes the folder your 3D models, CAD, laser and PCB files already live in, renders a preview of each one, and keeps a project's files, tasks and build log together. Self-hosted and open source.">
+<% end %>
+<% content_for :container_class, "landing-main" %>
 
-  <%# THE PUBLIC DEMO'S DOOR (Tinkerex::Demo): one click into the shared account, above the form a
-      stranger cannot use, and only while there is an account to sign into -- a button that answered
-      404 would be a broken page. A plain .btn: the card's accent stays on Log in, the way every auth
-      card spends it on its own form's submit, and this one is found by coming first. %>
-  <% if Tinkerex::Demo.available? %>
-    <div class="demo-entry">
-      <%= button_to "Try the demo", demo_session_path, class: "btn" %>
-      <p class="auth-hint">A shared account that resets every night; nothing you do here is private.</p>
+<div class="landing">
+  <section class="landing-hero" aria-labelledby="landing-title">
+    <p class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></p>
+    <h1 id="landing-title" class="landing-title">The files a workshop makes, in one library.</h1>
+    <p class="landing-lede">Tinkerex indexes the folder your 3D models, CAD, laser and PCB files already live in, renders a preview of each one, and keeps a project's files, tasks and build log together. It runs on your own box, and your files stay plain files.</p>
+    <p class="landing-actions">
+      <a class="btn" href="https://github.com/chaim354/tinkerex/blob/main/docs/INSTALL.md">Install it yourself</a>
+      <a class="landing-source" href="https://github.com/chaim354/tinkerex">Source on GitHub, Apache-2.0</a>
+    </p>
+  </section>
+
+  <aside class="landing-auth" aria-label="Sign in">
+    <div class="auth-card">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></div>
+      <h2>Log in</h2>
+
+      <%# THE PUBLIC DEMO'S DOOR (Tinkerex::Demo): one click into the shared account, above the form
+          a stranger cannot use, and only while there is an account to sign into -- a button that
+          answered 404 would be a broken page. A plain .btn: the card's accent stays on Log in, the
+          way every auth card spends it on its own form's submit, and this one is found by coming
+          first. %>
+      <% if Tinkerex::Demo.available? %>
+        <div class="demo-entry">
+          <%= button_to "Try the demo", demo_session_path, class: "btn" %>
+          <p class="auth-hint">A shared account that resets every night; nothing you do here is private.</p>
+        </div>
+      <% end %>
+
+      <%= form_for(resource, as: resource_name, url: session_path(resource_name)) do |f| %>
+        <div class="field">
+          <%= f.label :email %>
+          <%= f.email_field :email, autofocus: true, autocomplete: "email" %>
+        </div>
+
+        <div class="field">
+          <%= f.label :password %>
+          <%= f.password_field :password, autocomplete: "current-password" %>
+        </div>
+
+        <% if devise_mapping.rememberable? %>
+          <label class="field-inline">
+            <%= f.check_box :remember_me %>
+            <span>Remember me</span>
+          </label>
+        <% end %>
+
+        <div class="actions">
+          <%= f.submit "Log in", class: "primary" %>
+        </div>
+      <% end %>
+
+      <%= render "users/shared/links" %>
     </div>
-  <% end %>
+  </aside>
 
-  <%= form_for(resource, as: resource_name, url: session_path(resource_name)) do |f| %>
-    <div class="field">
-      <%= f.label :email %>
-      <%= f.email_field :email, autofocus: true, autocomplete: "email" %>
-    </div>
-
-    <div class="field">
-      <%= f.label :password %>
-      <%= f.password_field :password, autocomplete: "current-password" %>
-    </div>
-
-    <% if devise_mapping.rememberable? %>
-      <label class="field-inline">
-        <%= f.check_box :remember_me %>
-        <span>Remember me</span>
-      </label>
-    <% end %>
-
-    <div class="actions">
-      <%= f.submit "Log in", class: "primary" %>
-    </div>
-  <% end %>
-
-  <%= render "users/shared/links" %>
+  <ul class="landing-shots">
+    <li>
+      <figure>
+        <%= image_tag "landing/library.jpg", width: 800, height: 500,
+                      alt: "The Library: a folder's files with a preview, type, size and date for each" %>
+        <figcaption>The Library is the folder you point it at, indexed every few minutes and on every upload.</figcaption>
+      </figure>
+    </li>
+    <li>
+      <figure>
+        <%= image_tag "landing/project.jpg", width: 800, height: 506, loading: "lazy",
+                      alt: "A project page: its README, its files, tasks and build log" %>
+        <figcaption>A folder under Projects becomes a project, with its files, tasks and build log in one place.</figcaption>
+      </figure>
+    </li>
+    <li>
+      <figure>
+        <%= image_tag "landing/viewer.jpg", width: 800, height: 500, loading: "lazy",
+                      alt: "A file page: a rendered preview of an STL, where it lives and which project it belongs to" %>
+        <figcaption>Every 3D file gets a rendered preview, and opens in a viewer in the browser.</figcaption>
+      </figure>
+    </li>
+  </ul>
 </div>

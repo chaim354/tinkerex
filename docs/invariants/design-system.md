@@ -147,3 +147,18 @@ already records. Guards: `files_search_test.rb`, `page_query_budget_test.rb`.
     is no new key in the stored `panels` JSON, so `Maker::LayoutDocument`'s Save has nothing to carry
     or lose, and a maker who opens a panel and adds nothing finds it gone on the next visit, which is
     what "on demand" means.
+
+## The front door
+
+15. **Signed out, `/` is the landing — the sign-in view with the pitch and three screenshots beside
+    its card — and signed in it is Recent.** Devise's `unauthenticated` constraint routes `/` to
+    `users/sessions#new` (`unauthenticated_root` in `config/routes.rb`), declared before `root`
+    because routes match in declaration order: move it below and a stranger is redirected to
+    `/users/sign_in` again (`test/integration/web/landing_test.rb`). The landing opts out of the 440px
+    auth column with `content_for :container_class, "landing-main"` (`pages/landing.css`, a bare
+    class that wins on layer order the way `.public-main` does); the card inside it is the same
+    `.auth-card` every auth page renders, so its markup, its demo button and its one accent (Log in)
+    are unchanged, and the hero's install button is a quiet `.btn` (rule 13). The screenshots under
+    `app/assets/images/landing/` are the app at 1280×800 in the light theme with the demo banner
+    removed; retake them when the interface moves, never doctor them. `test/system/landing_test.rb`
+    reads the computed width and the 375px overflow, which a request test cannot see.
