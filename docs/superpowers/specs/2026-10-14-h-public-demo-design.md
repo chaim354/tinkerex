@@ -56,7 +56,14 @@ deployments with a password in 1Password — a way for the author to test, not a
    preview, the board view and the filing sweep all have something to show), a `Models/cube.3mf` and
    a `Laser/*.lbrn2`. Small, deterministic, replaceable by the owner's own files later (the task
    takes a directory argument).
-6. **OVH carries `DEMO_ACCOUNT_EMAIL: demo@tinkerex.com`**; the Unraid destinations carry nothing
+6. **On `share` and `s3` the demo IS the deployment** — every account there indexes the one library
+   (§8; the reason `REGISTRATION=open` is refused on them), so the demo's library is the whole box's
+   and the nightly wipe is the whole box's. Found by Task 3 while documenting the OVH setting. The
+   reset therefore **refuses to run on a non-syncable backend while any other account exists**,
+   naming the count, and the setup and reset tasks surface that sentence; on `chunk_remote` every
+   account has its own library and the demo is just one of them. OVH is demo-only by decision, and
+   the runbook says to count the accounts there before the first setup.
+7. **OVH carries `DEMO_ACCOUNT_EMAIL: demo@tinkerex.com`**; the Unraid destinations carry nothing
    (their console demo account stays what it is). `docs/INSTALL.md` documents the two knobs for a
    self-hoster who wants a demo of their own; `docs/DEPLOY.md` §5 becomes the OVH demo's runbook
    (setup, reset by hand, what resets, what a visitor sees).
