@@ -336,7 +336,7 @@ been registered that fails with "service not found" and aborts the command, leav
 stopped — measured 2026-10-07, about a minute of sync-server downtime. `start` starts the existing
 container and registers it. Once the service exists, `reboot` is the ordinary roll command again.
 
-**The accessory runs its own maintenance** (`SYNC_SCHEDULER: "1"` in its `env.clear`, the Rust
+**The accessory runs its own maintenance** (`SYNC_SCHEDULER: "true"` in its `env.clear`, the Rust
 cutover's D3): the binary reaps the chunks of expired pending commits hourly at :30, runs retention
 at 03:15 UTC (pruning nothing while the policy is `keep_all`) and reaps store objects no row names
 on Sundays at 04:15 UTC, and the morning after the reboot that turns it on,

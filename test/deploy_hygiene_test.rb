@@ -207,7 +207,7 @@ class DeployHygieneTest < ActiveSupport::TestCase
       ).accessory("sync").env.clear
       label = destination || "base"
 
-      assert_equal "1", clear["SYNC_SCHEDULER"].to_s, "#{label}: the sync accessory's scheduler is off"
+      assert_equal "true", clear["SYNC_SCHEDULER"].to_s, "#{label}: the sync accessory's scheduler is off"
       %w[CABLE_ADAPTER RAILS_LOG_TO_STDOUT].each do |key|
         assert clear.key?(key),
                "#{label}: #{key} left the sync accessory's env before Phase 6 -- the Ruby rollback image reads it"

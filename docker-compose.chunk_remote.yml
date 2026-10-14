@@ -45,7 +45,7 @@ services:
       # E (2026-10-14): expired pending commits reaped every hour at :30, orphaned chunk bytes weekly
       # (Sundays 04:15 UTC), and retention that keeps every version (it prunes nothing). Without it
       # a self-hosted install never reclaims the bytes of an upload that never finalised.
-      SYNC_SCHEDULER: "1"
+      SYNC_SCHEDULER: "true"
       # Unset, chunk links carry the host each client connected through, which is right for this
       # layout. Only a reverse proxy that changes the public address needs this (INSTALL.md section 8).
       # CHUNK_PUBLIC_URL: https://sync.example.net
