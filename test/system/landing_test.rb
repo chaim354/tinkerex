@@ -17,9 +17,13 @@ class LandingSystemTest < ApplicationSystemTestCase
     main_width = page.evaluate_script("document.querySelector('main#main').getBoundingClientRect().width")
     assert_operator main_width, :>, 900,
                     "main is #{main_width}px wide: the landing is still inside the 440px auth column"
-    hero_top = page.evaluate_script("document.querySelector('.landing-hero').getBoundingClientRect().top")
-    card_top = page.evaluate_script("document.querySelector('.landing-auth').getBoundingClientRect().top")
-    assert_in_delta hero_top, card_top, 1, "the card should stand beside the hero at desktop width"
+    # Beside, not below: the card's top is level with the masthead's, and the hero ends left of it.
+    brand_top = page.evaluate_script("document.querySelector('.landing-brand').getBoundingClientRect().top")
+    card = page.evaluate_script("(r => [r.left, r.top])(document.querySelector('.landing-auth').getBoundingClientRect())")
+    hero = page.evaluate_script("(r => [r.right, r.top])(document.querySelector('.landing-hero').getBoundingClientRect())")
+    assert_in_delta brand_top, card[1], 1, "the card should stand level with the masthead at desktop width"
+    assert_operator hero[0], :<=, card[0], "the hero should end left of the card, not run under it"
+    assert_operator hero[1], :>=, card[1] - 1, "the hero should sit beside the card, not above it"
     # The three screenshots run in one row under both.
     shot_tops = page.evaluate_script("[...document.querySelectorAll('.landing-shots li')].map(li => li.getBoundingClientRect().top)")
     assert_equal 1, shot_tops.uniq.size, "the screenshots should share one row at desktop width: #{shot_tops.inspect}"

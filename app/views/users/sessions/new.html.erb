@@ -14,8 +14,8 @@
 <% content_for :container_class, "landing-main" %>
 
 <div class="landing">
+  <p class="brand landing-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></p>
   <section class="landing-hero" aria-labelledby="landing-title">
-    <p class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></p>
     <h1 id="landing-title" class="landing-title">The files a workshop makes, in one library.</h1>
     <p class="landing-lede">Tinkerex indexes the folder your 3D models, CAD, laser and PCB files already live in, renders a preview of each one, and keeps a project's files, tasks and build log together. It runs on your own box, and your files stay plain files.</p>
     <p class="landing-actions">
@@ -26,7 +26,8 @@
 
   <aside class="landing-auth" aria-label="Sign in">
     <div class="auth-card">
-      <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></div>
+      <%# No brand here, alone among the auth cards: the landing's masthead above carries it, and a
+          second mark at the card's top read as a header with a logo at both ends. %>
       <h2>Log in</h2>
 
       <%# THE PUBLIC DEMO'S DOOR (Tinkerex::Demo): one click into the shared account, above the form
@@ -78,7 +79,7 @@
     </li>
     <li>
       <figure>
-        <%= image_tag "landing/project.jpg", width: 800, height: 506, loading: "lazy",
+        <%= image_tag "landing/project.jpg", width: 800, height: 500, loading: "lazy",
                       alt: "A project page: its README, its files, tasks and build log" %>
         <figcaption>A folder under Projects becomes a project, with its files, tasks and build log in one place.</figcaption>
       </figure>
@@ -86,8 +87,8 @@
     <li>
       <figure>
         <%= image_tag "landing/viewer.jpg", width: 800, height: 500, loading: "lazy",
-                      alt: "A file page: a rendered preview of an STL, where it lives and which project it belongs to" %>
-        <figcaption>Every 3D file gets a rendered preview, and opens in a viewer in the browser.</figcaption>
+                      alt: "A file page: an STL open in the 3D viewer, with its size in millimetres, where it lives and which project it belongs to" %>
+        <figcaption>Every 3D file gets a rendered preview and opens in a viewer in the browser, measured in millimetres.</figcaption>
       </figure>
     </li>
   </ul>

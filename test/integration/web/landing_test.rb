@@ -30,7 +30,8 @@ module Web
       assert_response :success
 
       assert_select "main#main.container.landing-main", 1
-      assert_select ".landing-hero .brand-name", text: "Tinkerex"
+      assert_select ".landing > .landing-brand .brand-name", text: "Tinkerex"
+      assert_select ".auth-card .brand", 0, "the masthead carries the brand; the card does not repeat it"
       assert_select ".landing-hero h1", 1
       assert_select ".landing-hero a.btn[href=?]", INSTALL_URL, text: "Install it yourself"
       assert_select ".landing-hero a[href=?]", SOURCE_URL

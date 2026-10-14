@@ -10,34 +10,39 @@
      variant from the view and checks that it wins. */
   .landing-main { max-width: 1200px; padding-top: var(--space-6); padding-bottom: var(--space-8); }
 
-  /* ONE GRID, TWO SHAPES. A phone reads hero, card, screenshots down the page; from 900px the card
-     stands beside the hero and the screenshots run the full width under both. Named areas rather
-     than source order, so the card's DOM position (after the hero, before the shots) is the phone
-     order and the desktop placement is this sheet's business alone. `minmax(0, 1fr)` and not `1fr`:
+  /* ONE GRID, TWO SHAPES. A phone reads masthead, hero, card, screenshots down the page; from
+     900px the card stands beside the masthead and the hero, spanning both rows, and the screenshots
+     run the full width under everything. Named areas rather than source order, so the card's DOM
+     position (after the hero, before the shots) is the phone order and the desktop placement is
+     this sheet's business alone. The hero centres itself against the card (align-self), so the
+     headline sits level with the form rather than leaving a hole under itself. `minmax(0, 1fr)` and not `1fr`:
      a grid track's default minimum is its content's min-width, and an 800px image in a figure would
      hold the track open past the viewport, which is the sideways scroll rule 11 forbids. */
   .landing {
     display: grid; gap: var(--space-6);
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "hero" "auth" "shots";
+    grid-template-areas: "brand" "hero" "auth" "shots";
   }
+  .landing-brand { grid-area: brand; }
   .landing-hero { grid-area: hero; }
   .landing-auth { grid-area: auth; }
   .landing-shots { grid-area: shots; }
   @media (min-width: 900px) {
     .landing {
       grid-template-columns: minmax(0, 1fr) 380px;
-      grid-template-areas: "hero auth" "shots shots";
-      column-gap: var(--space-7); row-gap: var(--space-7);
+      grid-template-areas: "brand auth" "hero auth" "shots shots";
+      grid-template-rows: auto 1fr auto;
+      column-gap: var(--space-7); row-gap: var(--space-6);
       align-items: start;
     }
+    .landing-hero { align-self: center; }
   }
 
   /* The masthead is the rail's own `.brand` markup, reused (shell.css defines it once). The ≤1099px
-     rail rules hide `.brand-name` for the collapsed rail; the public header restores it with the
-     same one-line override this does. */
-  .landing-hero .brand { padding: 0; margin-bottom: var(--space-6); }
-  .landing-hero .brand-name { display: inline; }
+     rail rules hide `.brand-name` and centre `.brand` for the collapsed rail; the public header
+     restores the name with the same one-line override this does. */
+  .landing-brand { justify-content: flex-start; padding: 0; margin: 0; }
+  .landing-brand .brand-name { display: inline; }
   .landing-title { font-size: 36px; line-height: 42px; font-weight: 600; letter-spacing: -0.02em; max-width: 20ch; margin: 0 0 var(--space-4); }
   .landing-lede { font-size: 17px; line-height: 26px; color: var(--fg-muted); max-width: 56ch; margin: 0 0 var(--space-5); }
   .landing-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5); margin: 0; }

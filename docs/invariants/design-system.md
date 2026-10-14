@@ -159,6 +159,6 @@ already records. Guards: `files_search_test.rb`, `page_query_budget_test.rb`.
     class that wins on layer order the way `.public-main` does); the card inside it is the same
     `.auth-card` every auth page renders, so its markup, its demo button and its one accent (Log in)
     are unchanged, and the hero's install button is a quiet `.btn` (rule 13). The screenshots under
-    `app/assets/images/landing/` are the app at 1280×800 in the light theme with the demo banner
-    removed; retake them when the interface moves, never doctor them. `test/system/landing_test.rb`
+    `app/assets/images/landing/` are the app at 1280×800 in the light theme over a small sample library, the demo
+    banner removed; retake them when the interface moves, never doctor them. `test/system/landing_test.rb`
     reads the computed width and the 375px overflow, which a request test cannot see.
