@@ -264,6 +264,24 @@ catalog-only on all three adapters, so the flag is set at the README, repo-card,
 
 ### 2.4 The sync server (tinkerex-sync)
 
+**Addressed by sub-project E (`docs/superpowers/plans/2026-10-13-e-cutover-finish.md`, 2026-10-14; the
+measured table is in its design):** item 1 — the watch week is recorded in the cutover plan's §0.5 and
+the rewrite plan's §7.3/§7.4 are ticked (six nightly backups all `status=0`, zero `ERROR`/`response
+failed` lines in 150 h, zero `FileLayer::FetchError`, stats 13/4 → 20/7, volume 982 kB, `gc` dry-runs
+0/0/0, no rollback; tinkerex-sync PR #22); item 2 — `bin/build-and-push` defaults to `rust` and
+`Dockerfile.rust` is pinned to the toolchain CI pins (#22); item 3 — D3 (`SYNC_SCHEDULER: "1"` on the
+accessory and in the compose overlay) and D4 (`bin/sync-server` boots the binary by default; the
+blocker was already gone, the runner image has cargo — the job keeps its toolchain and target under the
+runners' persistent `/_work` because the image's rustup directories are root-owned) are tinkerex PR
+#395, and Phase 6 — the Ruby engine, host, dummy, db, gemspec, Dockerfile and standalone Kamal service
+deleted (159 files, 11,132 lines), the route-coverage guard reading a checked-in list the binary
+prints, `bin/conformance`, CLAUDE.md and README rewritten for the binary — is tinkerex-sync PR #23,
+stacked on #22, **to be merged only when the operator closes the rollback window**; its maker half
+(delete `bin/sync-server`'s Ruby arm, drop `CABLE_ADAPTER`/`RAILS_LOG_TO_STDOUT`) follows it. The
+client's row is tinkerex-client PR #13. Still open: item 5 (the auth-parity pins → record #360), item 6
+(Postgres in CI needs a runner with a Postgres → record #359; the `rust:1` float is fixed), item 4 (per
+endpoint change, five things still move — three once Phase 6 merges), item 7 unchanged.
+
 1. **Cutover is done (2026-10-07 18:22 UTC) but the watch week is unrecorded:** nothing records a daily check
    or the first nightly `sync` backup succeeding (cutover plan §0.5 `:210-212`); `bin/backup-status` is the check.
 2. **Footgun:** `bin/build-and-push` defaults `SYNC_IMPL=ruby` and moves `:latest` (`:66,76,106-110`); a bare
