@@ -230,3 +230,16 @@ production:
   remote_changelog_pull:
     command: "FileLayer::RemoteChangelogPullJob.pull_all!"
     schedule: every 2 minutes
+
+  # The public demo's nightly reset: the demo account's library is wiped and re-seeded from
+  # db/seeds/demo (Tinkerex::DemoReset). A NO-OP UNLESS DEMO_ACCOUNT_EMAIL IS SET, and it names an
+  # account `bin/rails tinkerex:demo:setup` created — so it is inert on every deployment but the
+  # demo's. On a share/s3 library another account shares it refuses, logs why, and changes nothing.
+  #
+  # `class:` rather than `command:`: the gate lives in #perform, which reads the one setting, so there
+  # is no class-method fan-out to call. UTC SPELLED OUT, because the banner a visitor reads promises
+  # 04:00 UTC and an unzoned schedule follows the server's local zone.
+  demo_reset:
+    class: Tinkerex::DemoResetJob
+    queue: background
+    schedule: every day at 4am UTC

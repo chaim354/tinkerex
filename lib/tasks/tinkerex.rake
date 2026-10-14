@@ -27,4 +27,49 @@ namespace :tinkerex do
     u.update!(password: pw, confirmed_at: u.confirmed_at || Time.current)
     puts "#{email} updated"
   end
+
+  # THE PUBLIC DEMO (Tinkerex::DemoReset). Both tasks take the address from DEMO_ACCOUNT_EMAIL, never
+  # argv: that setting is what makes an account the demo, so a task aimed anywhere else would wipe an
+  # account the deployment does not treat as one.
+  namespace :demo do
+    demo_email = lambda do
+      email = ENV["DEMO_ACCOUNT_EMAIL"].to_s.strip.downcase
+      if email.blank?
+        abort "set DEMO_ACCOUNT_EMAIL to the demo account's address first: it turns demo mode on, " \
+              "and these tasks wipe and re-seed the account it names"
+      end
+      email
+    end
+
+    # A refusal has changed nothing; it is said in its own words and exits non-zero.
+    run_reset = lambda do |user|
+      fresh = Tinkerex::DemoReset.new(user:).call
+      puts "#{fresh.email} reset from db/seeds/demo (now user #{fresh.id})"
+    rescue Tinkerex::DemoReset::Refused => e
+      abort "refused: #{e.message}"
+    end
+
+    desc "Create the demo account DEMO_ACCOUNT_EMAIL names (if absent) and seed its library: bin/rails tinkerex:demo:setup"
+    task setup: :environment do
+      email = demo_email.call
+      user = User.find_by(email:)
+      unless user
+        # ASKED BEFORE MINTING, not left to the reset: on a library other accounts share, the account
+        # alone is the harm — the next scan indexes their files into it, and the demo button signs
+        # strangers in to it.
+        why = Tinkerex::DemoReset.refusal
+        abort "refused: #{why}" if why
+        user = Tinkerex::DemoReset.create_account!(email)
+        puts "created #{email} (confirmed, handle #{Tinkerex::DemoReset::HANDLE}, a password nobody is told)"
+      end
+      run_reset.call(user)
+    end
+
+    desc "Wipe the demo account's library and re-seed it from db/seeds/demo, as the nightly job does: bin/rails tinkerex:demo:reset"
+    task reset: :environment do
+      email = demo_email.call
+      user = User.find_by(email:) or abort "no account #{email}: run bin/rails tinkerex:demo:setup first"
+      run_reset.call(user)
+    end
+  end
 end
