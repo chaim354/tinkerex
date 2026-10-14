@@ -156,7 +156,7 @@ jobs:
   # checklist). Pinned on every job by test/ci_hygiene_test.rb.
   preflight:
     runs-on: [self-hosted, linux]
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
     outputs:
       macos:   ${{ steps.p.outputs.macos }}
       linux:   ${{ steps.p.outputs.linux }}
@@ -179,7 +179,7 @@ jobs:
   # continues, so all three report whatever any one of them does.
   scan:
     runs-on: [self-hosted, linux]
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
     steps:
       - uses: actions/checkout@v7
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
@@ -189,7 +189,7 @@ jobs:
 
   lint:
     runs-on: [self-hosted, linux]
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
     env:
       RUBOCOP_CACHE_ROOT: tmp/rubocop
     steps:
@@ -210,7 +210,7 @@ jobs:
 
   test:
     runs-on: [self-hosted, linux]
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
     steps:
       - uses: actions/checkout@v7
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
@@ -223,7 +223,7 @@ jobs:
         run: bin/ci test
   test-s3-backend:
     runs-on: [self-hosted, linux]
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
     steps:
       - uses: actions/checkout@v7
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
@@ -236,7 +236,7 @@ jobs:
         run: bin/ci test-s3
   test-chunk-remote:
     runs-on: [self-hosted, linux]
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
     steps:
       - uses: actions/checkout@v7
       - name: Check out tinkerex-sync
@@ -270,7 +270,7 @@ jobs:
 
   system-test:
     runs-on: [self-hosted, linux]
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}  # never a fork -- see the note above preflight
     steps:
       - uses: actions/checkout@v7
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)

@@ -158,6 +158,13 @@ class CiHygieneTest < ActiveSupport::TestCase
   # `head.repo.full_name` is where the PR's branch lives; they differ exactly for a fork.
   FORK_GUARD = "github.event.pull_request.head.repo.full_name == github.repository".freeze
 
+  # AND THE GUARD MUST LET EVERY OTHER EVENT THROUGH. `github.event.pull_request` is empty on a
+  # `workflow_dispatch` run, so the bare comparison is false there and every job is SKIPPED — which is
+  # exactly what happened from 2026-10-13 (the guard landed) to 2026-10-14 (found while adding the
+  # same guard to the sibling repos): a manual run reported success having run nothing. The clause
+  # below makes a non-pull-request event pass unconditionally; a fork can only ever arrive as one.
+  NON_PR_PASS = "github.event_name != 'pull_request' ||".freeze
+
   test "every ci.yml job refuses a pull request from a fork" do
     # The runners are self-hosted containers on the LAN with SYS_PTRACE and seccomp unconfined
     # (ops/ci-runner-stack.yml), and `bin/ci` runs the branch's own code. A fork's pull request is
@@ -172,6 +179,9 @@ class CiHygieneTest < ActiveSupport::TestCase
       assert_includes job["if"].to_s, FORK_GUARD,
                       "ci.yml job `#{name}` must carry `if: ${{ #{FORK_GUARD} }}` (a fork's PR " \
                       "runs its own code on the LAN runners otherwise)"
+      assert_includes job["if"].to_s, NON_PR_PASS,
+                      "ci.yml job `#{name}`'s guard must begin `#{NON_PR_PASS}` — without it a " \
+                      "workflow_dispatch run skips the job (github.event.pull_request is empty there)"
     end
   end
 
