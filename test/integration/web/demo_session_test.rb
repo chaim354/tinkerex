@@ -46,7 +46,9 @@ module Web
       assert_response :not_found
       assert_not_includes log, "DEMO_ACCOUNT_EMAIL", "off is a deployment's choice, not a misconfiguration to warn about"
       get root_path
-      assert_redirected_to new_user_session_path, "an account merely carrying the address is not a demo, and nobody was signed in"
+      assert_response :success, "the landing, not Recent: an account merely carrying the address is not a demo, and nobody was signed in"
+      assert_select ".demo-banner", 0
+      assert_select ".auth-card form[action=?]", user_session_path
     end
 
     test "on, the sign-in page offers the demo above the form, says what it is once, and keeps its accent on Log in" do
@@ -139,7 +141,9 @@ module Web
       assert_response :not_found
       assert_includes log, "1 other account shares"
       get root_path
-      assert_redirected_to new_user_session_path, "nobody was signed in"
+      assert_response :success, "the landing, not Recent: nobody was signed in"
+      assert_select ".demo-banner", 0
+      assert_select ".auth-card form[action=?]", user_session_path
     end
 
     # LOCKABLE MUST NOT BECOME AN OFF SWITCH. The demo address is public; ten wrong passwords at the
@@ -169,7 +173,9 @@ module Web
       assert_redirected_to new_user_session_path
       assert_match(/too many/i, flash[:alert].to_s)
       get root_path
-      assert_redirected_to new_user_session_path, "the refused click signed nobody in"
+      assert_response :success, "the landing, not Recent: the refused click signed nobody in"
+      assert_select ".demo-banner", 0
+      assert_select ".auth-card form[action=?]", user_session_path
     end
   end
 end

@@ -178,8 +178,11 @@ class ShellTest < ApplicationSystemTestCase
     # can race it, arrive still authenticated, render /files with no alert at all, and fail on the
     # next line looking like a broken toast. Seen for real — this file went green, then red on the
     # same code with a different seed. Waiting for the sign-in page makes the sign-out a fact.
+    # Since the landing (2026-10-14) that page is `/` itself: Devise lands a sign-out on root_path,
+    # which a visitor sees as the sign-in view with the hero beside the card (landing_test.rb).
     find("aside.rail button", text: "Sign out").click
-    assert_current_path new_user_session_path
+    assert_current_path root_path
+    assert_selector ".landing-hero"
     visit files_path
     assert_selector ".flash-stack .flash-alert", text: /sign in/i
     sleep 7

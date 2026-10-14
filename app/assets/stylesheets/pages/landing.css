@@ -1,0 +1,67 @@
+/* The landing (2026-10-14): what a stranger sees at `/` and on the sign-in page — the pitch, three
+   screenshots and the auth card, in that reading order. Shared pieces are NOT restyled here:
+   `.auth-card`, `.brand` and the auth column come from shell.css, `.btn` from components.css
+   (design-system.md rule 3). What follows is the landing's own layout and type. */
+@layer pages {
+  /* The anonymous layout branch defaults `main` to `.auth-main`, a 440px column for the card alone.
+     The landing opts out with `content_for :container_class, "landing-main"`. A BARE class is enough
+     here because `pages` comes after `shell` in the layer order, so it beats `main.container` on
+     layer regardless of specificity — the same way `.public-main` does; css_hygiene_test derives the
+     variant from the view and checks that it wins. */
+  .landing-main { max-width: 1200px; padding-top: var(--space-6); padding-bottom: var(--space-8); }
+
+  /* ONE GRID, TWO SHAPES. A phone reads masthead, hero, card, screenshots down the page; from
+     900px the card stands beside the masthead and the hero, spanning both rows, and the screenshots
+     run the full width under everything. Named areas rather than source order, so the card's DOM
+     position (after the hero, before the shots) is the phone order and the desktop placement is
+     this sheet's business alone. The hero centres itself against the card (align-self), so the
+     headline sits level with the form rather than leaving a hole under itself. `minmax(0, 1fr)` and not `1fr`:
+     a grid track's default minimum is its content's min-width, and an 800px image in a figure would
+     hold the track open past the viewport, which is the sideways scroll rule 11 forbids. */
+  .landing {
+    display: grid; gap: var(--space-6);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "brand" "hero" "auth" "shots";
+  }
+  .landing-brand { grid-area: brand; }
+  .landing-hero { grid-area: hero; }
+  .landing-auth { grid-area: auth; }
+  .landing-shots { grid-area: shots; }
+  @media (min-width: 900px) {
+    .landing {
+      grid-template-columns: minmax(0, 1fr) 380px;
+      grid-template-areas: "brand auth" "hero auth" "shots shots";
+      grid-template-rows: auto 1fr auto;
+      column-gap: var(--space-7); row-gap: var(--space-6);
+      align-items: start;
+    }
+    .landing-hero { align-self: center; }
+  }
+
+  /* The masthead is the rail's own `.brand` markup, reused (shell.css defines it once). The ≤1099px
+     rail rules hide `.brand-name` and centre `.brand` for the collapsed rail; the public header
+     restores the name with the same one-line override this does. */
+  .landing-brand { justify-content: flex-start; padding: 0; margin: 0; }
+  .landing-brand .brand-name { display: inline; }
+  .landing-title { font-size: 36px; line-height: 42px; font-weight: 600; letter-spacing: -0.02em; max-width: 20ch; margin: 0 0 var(--space-4); }
+  .landing-lede { font-size: 17px; line-height: 26px; color: var(--fg-muted); max-width: 56ch; margin: 0 0 var(--space-5); }
+  .landing-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5); margin: 0; }
+  /* A text link beside the button, underlined so it reads as one without a second control. */
+  .landing-source { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+  .landing-source:hover { text-decoration-color: var(--fg); }
+  @media (max-width: 899px) {
+    .landing-title { font-size: 28px; line-height: 34px; }
+    .landing-lede { font-size: 15px; line-height: 23px; }
+  }
+
+  /* Three screenshots in a row from 720px, one under another below it. Each is an 800px JPEG shown
+     at under half that width, so it stays sharp on a 2x display; `width: 100%; height: auto` with
+     the width/height attributes on the <img> reserves the box before the bytes arrive. The thin
+     line and the panel radius are what a `.panel` has, so a screenshot reads as a framed picture of
+     the app and not as the app itself. */
+  .landing-shots { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-5); grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 720px) { .landing-shots { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .landing-shots figure { margin: 0; }
+  .landing-shots img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
+  .landing-shots figcaption { margin-top: var(--space-2); font-size: 13px; line-height: 18px; color: var(--fg-muted); }
+}
