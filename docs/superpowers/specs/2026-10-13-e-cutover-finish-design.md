@@ -42,7 +42,7 @@ ordinary use instead. The week ends 2026-10-14 18:22 UTC.
    resvg. The `test-chunk-remote` job gets a persistent `CARGO_TARGET_DIR` under the runner's
    `/_work` bind mount so only the first run on each runner pays a cold build. The Ruby arm stays
    until Phase 6 deletes it.
-4. **D3 now, as a PR that is merged and rebooted at the week's end:** `SYNC_SCHEDULER: "1"` under
+4. **D3 now, as a PR that is merged and rebooted at the week's end:** `SYNC_SCHEDULER: "true"` under
    the accessory's `env.clear`. The dry-runs read 0 / 0 / 0 and retention is `keep_all`, so the
    scheduler's first real `reap-pending` at :30 reaps nothing; the morning log is the proof.
 5. **Phase 6 (the decommission of the Ruby) is prepared as a stacked PR and merged only when the

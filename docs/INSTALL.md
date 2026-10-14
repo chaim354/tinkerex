@@ -213,7 +213,7 @@ plain `docker compose`). The overlay switches the app to `LIBRARY_BACKEND=chunk_
 `/library` mount, points it at `http://sync:3000` on the compose network, and publishes the sync
 server on port **3001** (`TINKEREX_SYNC_PORT`) — that published port is what devices and the desktop
 client connect to, so it has to be reachable from them, and `SYNC_PUBLIC_URL` has to name it as they
-see it. The sync server runs with its scheduler on (`SYNC_SCHEDULER: "1"` in the overlay): expired
+see it. The sync server runs with its scheduler on (`SYNC_SCHEDULER: "true"` in the overlay): expired
 pending commits are reaped hourly, orphaned chunk bytes weekly, and retention keeps every version —
 nothing you uploaded is ever pruned. `REGISTRATION=open` is allowed here.
 
@@ -295,7 +295,7 @@ compose*; the rest come from `.env`.
 | `TINKEREX_SYNC_PATH` | chunk_remote | `../tinkerex-sync` | Path to a checkout of `chaim354/tinkerex-sync`, the build context for the sync server. |
 | `TINKEREX_SYNC_PORT` | no | `3001` | The host port the sync server is published on; what devices connect to. |
 | `SYNC_SECRET_KEY_BASE` | chunk_remote | — | Becomes the sync server's own `SECRET_KEY_BASE`. `openssl rand -hex 64`; distinct from the app's. |
-| `SYNC_SCHEDULER` | chunk_remote, *set by compose* (`"1"`) | — | The sync server's housekeeping: expired pending commits reaped hourly, orphaned chunk bytes weekly, retention that keeps every version. The app never reads it. |
+| `SYNC_SCHEDULER` | chunk_remote, *set by compose* (`"true"`) | — | The sync server's housekeeping: expired pending commits reaped hourly, orphaned chunk bytes weekly, retention that keeps every version. The app never reads it. |
 | `COMPOSE_FILE`, `COMPOSE_PROFILES` | no | — | Docker's own: putting `COMPOSE_FILE=docker-compose.yml:docker-compose.chunk_remote.yml` or `COMPOSE_PROFILES=tools` in `.env` saves typing `-f` / `--profile` on every command. |
 | **Accounts and mail** (section 4) | | | |
 | `REGISTRATION` | no | `closed` in production | `closed`: only the first account (the owner) can sign up. `open`: anyone can — **refused at boot on share and s3**, where every account indexes one library. |

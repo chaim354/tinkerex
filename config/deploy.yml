@@ -401,7 +401,7 @@ accessories:
         # run: the :30 after the reboot that applies this line; the proof is the next morning's
         # `bin/kamal accessory logs sync --since 24h --grep reap-pending` (each tick logs
         # `scheduler: job done`). The Ruby rollback image ignores it — that host never ran these jobs.
-        SYNC_SCHEDULER: "1"
+        SYNC_SCHEDULER: "true"
       secret:
         - SECRET_KEY_BASE
         - SYNC_ADMIN_TOKEN
