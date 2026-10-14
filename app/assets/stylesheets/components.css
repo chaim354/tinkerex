@@ -609,4 +609,15 @@
     margin: 0 0 var(--space-4); padding: 10px 12px; border: 1px solid var(--warn); border-radius: var(--radius-panel);
     background: var(--warn-soft); color: var(--fg); font-size: 14px; overflow-wrap: anywhere;
   }
+  /* THE DEMO BANNER (layouts/_demo_banner, H 2026-10-14): the same inline box in the INFO tone, because
+     it states a fact about the account rather than a fault -- and when both show, the warning must
+     still read as the different thing. Leads with its words in <strong>, like the one above. */
+  .demo-banner {
+    margin: 0 0 var(--space-4); padding: 10px 12px; border: 1px solid var(--info); border-radius: var(--radius-panel);
+    background: var(--info-soft); color: var(--fg); font-size: 14px; overflow-wrap: anywhere;
+  }
+  /* The demo's door on the sign-in card (users/sessions/new): its button and one sentence, set off
+     from the form below by the hairline the card's links use above them. */
+  .demo-entry { margin: 0 0 var(--space-4); padding: 0 0 var(--space-4); border-bottom: 1px solid var(--line); }
+  .demo-entry .auth-hint { margin: var(--space-2) 0 0; }
 }

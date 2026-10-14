@@ -83,6 +83,10 @@ class FilesController < ApplicationController
                                             "presigned flow. Chunk mode accepts uploads; it " \
                                             "just does not take the bytes through Rails (§15)."
 
+  # THE SHARED DEMO'S PER-FILE CAP (Tinkerex::Demo), on BOTH upload doors, after the capability gates
+  # above and before either door touches the port. See #refuse_oversized_demo_upload!.
+  before_action :refuse_oversized_demo_upload!, only: %i[create begin_upload]
+
   # THE RESCAN GATE, AND WHY IT IS NOT require_capability!. That concern renders a JSON 501 --
   # the v1 API's shape, right for a machine client. #rescan is a browser action reached from a
   # button, so its refusal is the SAME idiom every rescue_from below uses: redirect to files_path
@@ -1254,6 +1258,36 @@ class FilesController < ApplicationController
 
     redirect_to files_path,
                 alert: "This library doesn't support manual rescans."
+  end
+
+  # THE SHARED DEMO'S PER-FILE CAP. The demo library is every visitor's and is emptied only by the
+  # nightly reset, so the reset and this cap together are what bound it. Every other account passes
+  # straight through, whatever the size.
+  #
+  # THE WHOLE REQUEST, NOT FILE BY FILE. The cap is knowable before any write, so a selection holding
+  # one file over it writes nothing and names that file; UploadBatch isolates per file only what the
+  # port can discover mid-batch. The HTML door answers as a refused batch does, a redirect with the
+  # sentence; the JSON callers (lib/chunk_upload.js, both doors) read `error` off a 413.
+  #
+  # ON THE PRESIGNED DOOR THE SIZE IS THE BROWSER'S DECLARATION, because the bytes never reach Rails
+  # there (§15): `size` is what this door has, and it is the same value #begin_upload commits.
+  def refuse_oversized_demo_upload!
+    return unless Tinkerex::Demo.demo?(current_user)
+
+    refusal =
+      if action_name == "begin_upload"
+        Tinkerex::Demo.upload_refusal(current_user, name: params[:name].to_s, size: params[:size].to_s.to_i)
+      else
+        Array(params[:file]).select { |upload| upload.respond_to?(:original_filename) }.lazy.filter_map { |upload|
+          Tinkerex::Demo.upload_refusal(current_user, name: upload.original_filename, size: upload.size)
+        }.first
+      end
+    return unless refusal
+
+    respond_to do |format|
+      format.html { redirect_back_or_to files_path, alert: refusal }
+      format.any  { render json: { error: refusal }, status: :content_too_large }
+    end
   end
 
   # List or grid. An explicit `?view=` wins and is remembered in a cookie (so it persists as the
