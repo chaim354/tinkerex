@@ -18,6 +18,16 @@ module Users
     # person running the box should learn to ask them, not to retype the address.
     before_action :require_registration_open!, only: %i[new create]
 
+    # THE SHARED DEMO ACCOUNT KEEPS ITS ADDRESS, ITS PASSWORD AND ITS EXISTENCE (Tinkerex::Demo). Its
+    # current password is random and told to nobody, so Devise would refuse both anyway; this says
+    # why instead of "Current password is invalid", and holds for whoever does know it. After
+    # Devise's prepended authenticate_scope!, so it reads the signed-in account; every other account
+    # reaches Devise's update and the destroy below exactly as before.
+    before_action :refuse_demo_account!, only: %i[update destroy]
+
+    DEMO_ACCOUNT_REFUSAL = "This is the shared demo account: its email and password can't be " \
+                           "changed and it can't be deleted. It resets every night.".freeze
+
     # A DELIVERY FAILURE MUST NOT LOOK LIKE A BROKEN APP, BECAUSE THE ACCOUNT ALREADY EXISTS.
     # Devise mails the confirmation from an `after_commit` on the user, so the row is COMMITTED
     # before the SMTP connection is even attempted. Production leaves `raise_delivery_errors` at
@@ -119,6 +129,12 @@ module Users
       return if Tinkerex::Registration.open?
 
       render "users/registrations/closed", status: :forbidden
+    end
+
+    def refuse_demo_account!
+      return unless Tinkerex::Demo.demo?(current_user)
+
+      redirect_to edit_user_registration_path, alert: DEMO_ACCOUNT_REFUSAL, status: :see_other
     end
   end
 end

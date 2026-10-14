@@ -185,6 +185,52 @@ module V1
       end
     end
 
+    # --- the shared demo account (H, 2026-10-14) ---------------------------------------------------
+
+    # THE DEMO ENROLS NO DEVICE, BY EITHER DOOR, AND THE REFUSAL COMES FIRST: before a grant is
+    # brokered or a Device minted, and at login before the password is checked, so lockable counts
+    # nothing (Tinkerex::Demo; V1::DevicesController). The demo's password is known here and random in
+    # production, so the 403 below is the guard's and never the generic 401 a wrong password earns;
+    # every other test in this file is the control -- an ordinary account's identical login, 201. The
+    # address is unique per test for the reason this file's header gives: were the guard ever gone,
+    # the login would reach a real sync server on the chunk_remote leg.
+    def with_demo(email)
+      prior = ENV.fetch("DEMO_ACCOUNT_EMAIL", nil)
+      ENV["DEMO_ACCOUNT_EMAIL"] = email
+      yield
+    ensure
+      prior.nil? ? ENV.delete("DEMO_ACCOUNT_EMAIL") : ENV["DEMO_ACCOUNT_EMAIL"] = prior
+    end
+
+    test "the shared demo account is refused a device at login, before its password is checked" do
+      demo = unique_user("demo")
+      with_demo(demo.email.upcase) do
+        assert_no_difference -> { Device.count } do
+          r = login(email: demo.email, password: PASSWORD)
+          assert_response :forbidden
+          assert_equal({ "error" => "demo_account" }, JSON.parse(r.body))
+
+          login(email: demo.email, password: "wrong")
+          assert_response :forbidden, "a wrong password gets the same answer: nothing was checked"
+        end
+      end
+      assert_equal 0, demo.reload.failed_attempts, "refused before lockable counted anything"
+    end
+
+    test "the shared demo account is refused a sibling device through POST /v1/devices" do
+      demo = unique_user("demo-sib")
+      # A token the demo could only hold from before demo mode was on, or by a console: minted directly.
+      token = Device.register!(user: demo, name: "before the demo").plaintext_token
+      with_demo(demo.email) do
+        assert_no_difference -> { Device.count } do
+          post "/v1/devices", params: { name: "desktop" },
+                              headers: { "Authorization" => "Bearer #{token}" }, as: :json
+          assert_response :forbidden
+          assert_equal({ "error" => "demo_account" }, JSON.parse(response.body))
+        end
+      end
+    end
+
     # The house stub helper (web/new_menu_test.rb carries the same body; Minitest 6 has no
     # Object#stub). Replaces a SINGLETON method for the block, removing an inherited one after.
     def replacing(owner, name, replacement)

@@ -1,0 +1,15 @@
+<%# THE SHARED DEMO'S BANNER (H, 2026-10-14). The signed-in layout renders this on every page and the
+    partial DECIDES, as layouts/_library_unreachable does and for its reason: rendered
+    unconditionally, template_hygiene_test.rb's sweep still reaches this file; demo_session_test.rb
+    renders the populated arm. Tinkerex::Demo.demo? reads the setting and compares two strings, so
+    asking on every page costs no query.
+
+    A standing note, not a .flash -- only the flash stack floats (design-system.md rule 10) -- and
+    not a status either: nothing changed, so it is no live region. It leads with its words in
+    <strong>, so the info tone is never the only signal (rule 13). %>
+<% if Tinkerex::Demo.demo?(current_user) %>
+  <div class="demo-banner" role="note">
+    <strong>You're in the shared demo.</strong> It resets every night at 04:00 UTC; nothing you do
+    here is private, and the account can't change its password, publish, or sign in a device.
+  </div>
+<% end %>

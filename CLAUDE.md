@@ -235,6 +235,9 @@ Deploy OVH only on explicit request. `docs/DEPLOY.md`.
   user's own bootstrap token (`FileLayer::ChunkRemote::SyncGrant`, D1, 2026-10-13) inside the login
   answer; its URL is **`SYNC_PUBLIC_URL`, the devices' door — never `CHUNK_REMOTE_URL`, the app's own
   alias** (different addresses on one box, on purpose). A dead sync server is a 503 with NO maker device minted.
+- **A demo account (`DEMO_ACCOUNT_EMAIL`) is signed in by one click, cannot change its credentials,
+  publish, or enrol a device, and is destroyed and re-seeded nightly through the port; nothing of it
+  exists unless the variable is set** (`lib/tinkerex/demo.rb`; OVH alone sets it, `deploy_hygiene_test`).
 
 ---
 
@@ -337,10 +340,8 @@ bin/ci                 # bin/ci --list for gate names; config/ci.rb is the singl
                        # 7 gates (6 under CI -- `setup` is local-only, bin/ci --list-ci):
                        #   setup style scan test test-s3 test-chunk-remote system
                        # THE THREE BACKEND LEGS ARE share / s3 / chunk_remote and must report
-                       # IDENTICAL run counts (§15). `test` IS the share leg -- it ran embedded
-                       # chunk until 2026-08-25, and `test-share` was folded into it rather than
-                       # left as the same leg twice. `test-no-engine` is gone: no engine is the
-                       # only mode there is now, and every gate exercises it.
+                       # IDENTICAL run counts (§15). `test` IS the share leg; `test-share` and
+                       # `test-no-engine` were folded away with embedded chunk (2026-08-25).
 
 # ONE gate needs a SIBLING CHECKOUT. `test-chunk-remote` drives this app against a real
 # chaim354/tinkerex-sync server -- its Rust binary since 2026-10-14, which bin/sync-server builds
@@ -407,9 +408,8 @@ the siblings in `docs/superpowers/specs/2026-08-25-cross-repo-ci-handoff.md`). *
 workflow left**: `preflight` plus one job per gate, each invoking `bin/ci <gate>`. This repo's half of
 the wire contract is `bin/ci test-chunk-remote`, which is not moving.
 
-**Env gotchas in this build box (may differ on yours):** no local Postgres/libpq (dev & test run
-on SQLite); macOS keeps creating `" 2"`-suffixed duplicate files in the repo (some sync client?) —
-they broke a build once; `find . -name '* 2.*' -delete` to sweep.
+**Env gotchas in this build box:** no local Postgres/libpq (dev and test run SQLite); macOS keeps
+making `" 2"`-suffixed duplicates in the repo, which can break a build: `find . -name '* 2.*' -delete`.
 
 ## 14. Invariants and hard-won learnings (don't relitigate)
 

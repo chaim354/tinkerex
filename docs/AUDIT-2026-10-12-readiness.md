@@ -238,6 +238,10 @@ catalog-only on all three adapters, so the flag is set at the README, repo-card,
 3MF-manifest readers, the places that really read the store during a render), and 7 (a skip link to
 `main#main`). Still open: 5 (story 4.6 needs its own spec) and 6 (collections and items have no web UI).
 
+**Sub-project H (`docs/superpowers/plans/2026-10-14-h-public-demo.md`, 2026-10-14):** the hosted deployment
+is a demo with sign-ups closed — **Try the demo** on tinkerex.com's sign-in page signs a stranger into one
+shared account that is reset every night; live once `-d ovh` is deployed and `tinkerex:demo:setup` has run.
+
 1. **Silent file moves are explained only after the fact.** The intake sweep files loose files and discovery
    turns `Projects/<folder>` into projects (`docs/invariants/project-intake.md`); the only user-facing
    sentences are post-hoc (`projects/_attachments.html.erb:44,104`; `settings/filing_rules/index.html.erb:8-11`).

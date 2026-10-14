@@ -400,7 +400,52 @@ ssh kamal1@192.168.1.95 "TINKEREX_PASSWORD=$(printf '%q' "$(bin/secret TINKEREX_
 single-library backend, and `lib/tinkerex/registration.rb` refuses the same at boot — the first is
 how you learn before the deploy, the second is what stops a hand-edited env on the box.
 
-## 5. Test accounts on the Unraid box
+## 5. The public demo on OVH, and test accounts on the Unraid box
+
+### The public demo on tinkerex.com
+
+`config/deploy.ovh.yml` sets `DEMO_ACCOUNT_EMAIL: demo@tinkerex.com` and no other destination sets
+it (`test/deploy_hygiene_test.rb` pins both halves). With it set the sign-in page offers **Try the
+demo**, one click into that shared account, while sign-ups stay closed. Nobody knows the account's
+password — it is random and replaced at every reset — so you reach it through the button like anyone.
+
+**On this box the demo's library is the whole library.** OVH runs `LIBRARY_BACKEND=s3`: one R2 prefix
+(`library/`) that every account on the box indexes, which is why `REGISTRATION=open` is refused there.
+Every account sees what visitors upload, and the reset replaces all of it. Keep nothing else on OVH,
+and before the FIRST setup count what is there, because that first reset deletes it:
+
+```sh
+kamal app exec -d ovh --hosts 15.204.216.249 --reuse "bin/rails runner 'p User.pluck(:email), Node.where(deleted: false).group(:user_id).count'"
+```
+
+Set it up once, after the first deploy that carries the variable (this creates the account and runs
+the first reset); reset by hand whenever it needs it; read the nightly run the morning after:
+
+```sh
+kamal app exec -d ovh --hosts 15.204.216.249 --reuse "bin/rails tinkerex:demo:setup"
+kamal app exec -d ovh --hosts 15.204.216.249 --reuse "bin/rails tinkerex:demo:reset"
+kamal app logs -d ovh --hosts 15.204.216.249 --since 24h --grep DemoReset
+```
+
+**What resets, every night at 04:00 UTC (`Tinkerex::DemoResetJob`, `config/recurring.yml`) and on each
+setup or reset:** every file and folder in the demo library is deleted through the port and the trash
+purged; the `User` row is destroyed with every row it owns (projects, notes, devices, previews) and
+recreated with the same address, the handle `demo` and a new random password; then `db/seeds/demo` is
+written back through the port and scanned, so `Projects/Desk Lamp` is a project again. Whoever is
+signed in as the demo at that moment is signed out.
+
+**What a visitor sees:** the ordinary app under a banner saying it is the shared demo, that it resets
+at 04:00 UTC and that nothing in it is private. Everything a maker does works — uploads up to 25 MB a
+file (`DEMO_MAX_UPLOAD_BYTES`), folders, projects, notes, previews, the 3D viewer (the Tools gallery is
+empty here: OVH has no addon host) — and the doors out of the sandbox are shut: the account's email,
+password and handle cannot be changed and it cannot be deleted; a password reset for it sends nothing
+and answers as for any other address; no project can be made public or unlisted; no device can sign
+in to it (`403 demo_account`).
+
+### Test accounts on the Unraid box
+
+These are the author's own LAN accounts, created and reset by hand with the console recipes below;
+the demo above never touches them.
 
 **THIS SECTION IS THE ONE PLACE THESE ARE RECORDED.** A credential that lives only in a session
 transcript is gone the moment that session ends — which is exactly how the account below got lost

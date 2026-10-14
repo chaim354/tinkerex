@@ -296,6 +296,43 @@ class DeployHygieneTest < ActiveSupport::TestCase
     end
   end
 
+  # THE PUBLIC DEMO IS OVH'S AND NO OTHER DESTINATION'S (H, 2026-10-14). DEMO_ACCOUNT_EMAIL turns on
+  # the one-click sign-in AND the nightly reset, which deletes every file the demo account's library
+  # holds and re-seeds it from db/seeds/demo. On share and s3 that library is EVERY account's (the
+  # test above), so on an Unraid share or s3 destination the reset would replace, every night, the
+  # library the author's own accounts work in. The base is chunk_remote, where each account has its
+  # own library, so there the absence is the design's choice rather than a data-loss guard: the
+  # Unraid boxes keep their console demo account (docs/DEPLOY.md §5).
+  #
+  # WHICH WAY AN OVERLAY-ONLY KEY INHERITS, MEASURED rather than assumed (2026-10-14, kamal 2.12.0,
+  # probe keys planted in a scratch copy of the four files): `-d <dest>` deep-merges deploy.yml with
+  # deploy.<dest>.yml and nothing else, so a key in deploy.ovh.yml alone reaches ovh ONLY -- base,
+  # share and s3 do not carry the key at all -- while a key in deploy.yml reaches all four. ABSENCE
+  # is therefore the true state, and it is what is asserted: blank would also be off, but the key
+  # appearing here at all means it went into deploy.yml, which hands it to every destination at
+  # once, or into that destination's own overlay.
+  test "the public demo is set on OVH and on no other destination" do
+    require "kamal"
+    clears = LIBRARY_DESTINATIONS.to_h { |destination|
+      [ destination, at(Kamal::Configuration.create_from(
+        config_file: ROOT.join("config/deploy.yml"), destination: destination
+      ).raw_config, "env", "clear").to_h ]
+    }
+
+    assert_equal "demo@tinkerex.com", clears.fetch("ovh")["DEMO_ACCOUNT_EMAIL"].to_s,
+                 "ovh is the public demo on tinkerex.com: deploy.ovh.yml's env.clear must name its " \
+                 "shared account, or the sign-in page offers no demo and the nightly reset does nothing"
+
+    clears.except("ovh").each do |destination, clear|
+      label = destination || "base"
+      assert clear.key?("LIBRARY_BACKEND"), "#{label}: raw_config shape changed?"
+      refute clear.key?("DEMO_ACCOUNT_EMAIL"),
+             "#{label} resolves DEMO_ACCOUNT_EMAIL=#{clear['DEMO_ACCOUNT_EMAIL'].inspect}: the demo is " \
+             "OVH's alone, and its nightly reset replaces the demo account's whole library -- on share " \
+             "and s3, every account's. Keep the key in deploy.ovh.yml and nowhere else."
+    end
+  end
+
   test "every GPL sidecar image carries its own licence text" do
     # CLAUDE.md §9: we build these images and push them to a registry, which is REDISTRIBUTION —
     # so the licence has to be INSIDE the image, not merely beside the Dockerfile in this repo.

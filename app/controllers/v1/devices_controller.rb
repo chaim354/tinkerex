@@ -34,6 +34,15 @@ module V1
     # test/integration/v1/device_login_test.rb.
     rescue_from FileLayer::FetchError, with: :sync_unavailable
 
+    # THE SHARED DEMO ACCOUNT ENROLS NO DEVICE (Tinkerex::Demo). A device token is a credential to the
+    # whole v1 API that outlives the visitor's browser session until the nightly reset destroys the
+    # row, and on a syncable deployment enrolling brokers a sync grant onto a library every visitor
+    # shares. Refused on both doors BEFORE anything is brokered or minted -- and, at login, before the
+    # password is even checked, so a stranger cannot spend the demo's lockable attempts here. 403
+    # with its own code rather than the generic 401: the demo address is public, so naming it hides
+    # nothing, and a client can tell the visitor why. Pinned by device_login_test.rb.
+    DEMO_REFUSAL = { error: "demo_account" }.freeze
+
     # POST /v1/devices/login { email, password, device_name } -> a device token, the library it
     # opens, and a sync grant where there is something to sync.
     # Authenticates the human credentials via Devise (confirmable + lockable enforced),
@@ -44,6 +53,7 @@ module V1
       email    = params.require(:email)
       password = params.require(:password)
       user = User.find_for_authentication(email: email)
+      return render(json: DEMO_REFUSAL, status: :forbidden) if Tinkerex::Demo.demo?(user)
 
       # valid_for_authentication? runs the password check AND the lockable bookkeeping
       # (increments failed_attempts on a miss; locks at maximum_attempts). active_for_
@@ -70,6 +80,8 @@ module V1
     # POST /v1/devices { name } -> register an additional device for the current user, with the
     # same two extra fields, in the same order.
     def create
+      return render(json: DEMO_REFUSAL, status: :forbidden) if Tinkerex::Demo.demo?(current_user)
+
       name = params[:name].presence || "device"
       sync = sync_grant_for(current_user, name)
       device = Device.register!(user: current_user, name:)

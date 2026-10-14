@@ -54,6 +54,9 @@ Rails.application.routes.draw do
                passwords:          "users/passwords",
                omniauth_callbacks: "users/omniauth_callbacks"
              }
+  # The public demo's one click (Tinkerex::Demo). Inside `devise_scope` because DemoSessionsController
+  # is a Devise controller and `sign_in` needs the :user mapping; drawn everywhere, 404 without a demo.
+  devise_scope(:user) { post "demo", to: "demo_sessions#create", as: :demo_session }
 
   # Trash / undelete: list tombstoned nodes + restore (re-points at the kept version).
   resources :trash, only: %i[index] do
