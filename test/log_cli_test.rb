@@ -37,11 +37,12 @@ class LogCliTest < ActiveSupport::TestCase
     { "id" => "lbl#{i + 1}", "name" => n, "taskId" => nil }
   end.freeze
 
-  # The seven names bin/sync-server's unset_inherited_bundler_env already clears. §14j: a bundled
-  # parent exports these process-wide and every child inherits them, so a harness that MERGES its
-  # own environment runs bin/log as a bundled child every time — exercising "needs no gem" only in
-  # the direction that cannot fail. Deliberately NOT PATH/GEM_HOME/GEM_PATH, which is how the shell
-  # finds ruby at all.
+  # The seven names that pin a Ruby process to one Gemfile — CLAUDE.md §14j lists them, and this is
+  # the one place in the repo that still clears them (bin/sync-server did too, for the Ruby sync host
+  # it booted, until Phase 6). A bundled parent exports these process-wide and every child inherits
+  # them, so a harness that MERGES its own environment runs bin/log as a bundled child every time —
+  # exercising "needs no gem" only in the direction that cannot fail. Deliberately NOT
+  # PATH/GEM_HOME/GEM_PATH, which is how the shell finds ruby at all.
   BUNDLER_ENV = %w[BUNDLE_GEMFILE BUNDLE_BIN_PATH BUNDLE_LOCKFILE BUNDLER_VERSION
                    BUNDLER_SETUP RUBYOPT RUBYLIB].freeze
 

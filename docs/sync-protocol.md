@@ -1,17 +1,19 @@
 # Sync Protocol — the v1 HTTP API
 
-**Status:** normative reference · **Last updated:** 2026-10-13
+**Status:** normative reference · **Last updated:** 2026-10-14
 
 This document specifies the wire protocol between a sync client (a device) and a sync
 server, well enough that an implementer who has never seen the Ruby source could build
 a compatible server from it alone. It was written for the person who would
-**rewrite the sync server in Rust**, and that rewrite now exists: `chaim354/tinkerex-sync`
-holds both the Ruby implementation (a mountable Rails engine plus the standalone `host/`
-Rails app that `LIBRARY_BACKEND=chunk_remote` clients talk to) and, since 2026-09-30, the
-Rust binary under `crates/tinkerex-sync`, which serves the same wire from the same paths
-and env. The embedded form (`LIBRARY_BACKEND=chunk`) was retired on 2026-08-25. Whichever
-process answers `/v1/*`, the wire is what this document describes — and what that repo's
-recorded conformance corpus pins, exchange by exchange.
+**rewrite the sync server in Rust**, and that rewrite is now the server: `chaim354/tinkerex-sync`
+is the Rust binary under `crates/tinkerex-sync`, which production has run since 2026-10-07.
+The Ruby implementation it replaced — a mountable Rails engine plus the standalone `host/`
+Rails app that `LIBRARY_BACKEND=chunk_remote` clients talked to — was deleted in Phase 6
+(2026-10-14), and the embedded form (`LIBRARY_BACKEND=chunk`) was retired on 2026-08-25.
+**The `Sync::*` classes and Ruby paths cited below name where a rule was first read in that
+implementation;** read them where its `main` last had them (`git show 36bb82e:<path>` in that
+repo). The wire is what this document describes — and what that repo's recorded conformance
+corpus pins, exchange by exchange, against the binary.
 
 **How to use this document alongside the conformance corpus.** `chaim354/tinkerex-sync`
 is growing a recorded conformance corpus at `conformance/` — `runner.rb` (the matcher:
@@ -28,10 +30,11 @@ content** — where one exists, it is named instead of re-described.
 
 **Endpoint count: 26** (re-counted 2026-10-13 against `v1_routes.rb` in `chaim354/tinkerex-sync`;
 that repo's `conformance/README.md` ends with the command that reports it), drawn from
-`lib/tinkerex_sync/v1_routes.rb`'s `V1_ROUTES` lambda
-— the single, authoritative list (see `chaim354/tinkerex-sync`'s own comment on that file
-for why it is a drawer called from inside `namespace :v1`, not a mounted engine). Counted
-by hand from that file, verb by verb, because it is exactly the kind of count that goes
+`lib/tinkerex_sync/v1_routes.rb`'s `V1_ROUTES` lambda — the Ruby engine's single,
+authoritative list, deleted with it in Phase 6. **The authoritative list is now the binary's
+own:** `tinkerex-sync routes` prints every route it serves, and that repo checks the output
+in as `conformance/routes.txt`, held to the binary byte for byte. Counted
+by hand from the Ruby file, verb by verb, because it is exactly the kind of count that goes
 wrong by hand — `resources :share_links, only: %i[create destroy]` alone expands to two
 routes, not one:
 
@@ -64,10 +67,11 @@ routes, not one:
 | 25 | GET | `/v1/chunks/blob/:user_id/:hash` |
 
 This excludes device enrollment (`POST /v1/devices`, `POST /v1/devices/login` on this
-app; `POST /v1/devices`, `GET /v1/devices/whoami` on the standalone `host/` app) —
-**the drawer defines no device route at all.** `Device` is a declared host obligation
-(`TinkerexSync::HOST_MODELS`), and its token is the only credential this API accepts, so
-every real deployment supplies its own enrollment endpoints outside the 25. See
+app; `POST /v1/devices`, `GET /v1/devices/whoami` on the sync server, served by the Ruby
+`host/` app until Phase 6 and by the binary since) — **the drawer defined no device route
+at all.** `Device` was a declared host obligation (`TinkerexSync::HOST_MODELS`), and its
+token is the only credential this API accepts, so every real deployment supplies its own
+enrollment endpoints outside the 25. See
 [§3 Authentication](#3-authentication-device-tokens) for both real shapes. It also
 excludes this app's own `V1::TestUsersController` (`/v1/test/users`, test-environment
 only, this app's own bootstrapping helper, nothing to do with the sync engine).
@@ -131,13 +135,13 @@ direct-to-storage), and the versioning-is-native, chunks-are-refcounted picture.
    └──────────────────────────────────────────────────────────────────────
 ```
 
-Three real processes answer this wire today:
+Three real processes have answered this wire; one does today:
 
 | Deployment | Where | Notes |
 |---|---|---|
-| Embedded engine | `chaim354/tinkerex` (this repo), `LIBRARY_BACKEND=chunk` | The engine mounted in-process via `Sync.draw_v1_routes`; `FileLayer::Chunk` is the in-process adapter. |
-| Standalone host | `chaim354/tinkerex-sync`'s own `host/` | A small dedicated Rails app: the engine, the three host models, device enrollment, nothing else. What `LIBRARY_BACKEND=chunk_remote` clients (`FileLayer::ChunkRemote`, this repo) talk to over plain HTTP. Verified end-to-end 2026-08-22: upload, finalize, changelog pull, local `stat`, byte read, `mkdir`, `move` (with `node_id` preserved), two separate processes, `Sync` undefined in the maker app's process throughout. |
-| Rust rewrite | `chaim354/tinkerex-sync`, `crates/tinkerex-sync` — **what production runs since 2026-10-07** (the `sync` Kamal accessory, image `…-rust`; rollback `ruby-4148fcd6…`; cutover plan in that repo) | What this document was written for. Same wire, same paths and env as the Ruby host, free choice of internals. Graded not by this document alone but by that repo's recorded corpus — sixteen scenario files, `18 runs, 284 assertions, 0 failures, 0 skips` against both the Ruby host and the binary — and by this repo's `SYNC_IMPL=rust bin/sync-server`, which boots it for `bin/ci test-chunk-remote`. |
+| Embedded engine — **retired 2026-08-25** | `chaim354/tinkerex` (this repo), `LIBRARY_BACKEND=chunk` | The engine mounted in-process via `Sync.draw_v1_routes`; `FileLayer::Chunk` was the in-process adapter. |
+| Standalone host — **deleted in Phase 6, 2026-10-14** | `chaim354/tinkerex-sync`'s own `host/` | A small dedicated Rails app: the engine, the three host models, device enrollment, nothing else. What `LIBRARY_BACKEND=chunk_remote` clients (`FileLayer::ChunkRemote`, this repo) talked to over plain HTTP until the 2026-10-07 cutover. Verified end-to-end 2026-08-22: upload, finalize, changelog pull, local `stat`, byte read, `mkdir`, `move` (with `node_id` preserved), two separate processes, `Sync` undefined in the maker app's process throughout. |
+| Rust rewrite — **the server** | `chaim354/tinkerex-sync`, `crates/tinkerex-sync` — **what production runs since 2026-10-07** (the `sync` Kamal accessory, image `…-rust`; cutover plan in that repo) | What this document was written for. Same wire, same paths and env as the Ruby host it replaced, free choice of internals. Graded not by this document alone but by that repo's recorded corpus — sixteen scenario files, `18 runs, 284 assertions, 0 failures, 0 skips`, against both the Ruby host and the binary until Phase 6 and against the binary alone since — and by this repo's `bin/sync-server`, which builds and boots it for `bin/ci test-chunk-remote`. |
 
 A **device** holds a local SQLite mirror of the tree and a local chunk cache; metadata
 reads never touch the network. Bytes move **client ⇄ object storage directly** —
@@ -157,9 +161,10 @@ endpoints (`PUT`/`GET /v1/chunks/blob/...`) requires:
 Authorization: Bearer <device_token>
 ```
 
-The engine's own `Sync::V1::Authentication` concern (`before_action :authenticate_device!`
-on `Sync::V1::BaseController`, which every JSON-family controller inherits) reads the
-header, strips a `Bearer ` prefix, and calls `Device.authenticate(token)` — a lookup by
+The server's device auth (`authenticate` in `crates/tinkerex-sync/src/auth.rs`; in the Ruby
+engine, the `Sync::V1::Authentication` concern's `before_action :authenticate_device!` on
+`Sync::V1::BaseController`, which every JSON-family controller inherited) reads the
+header, strips a `Bearer ` prefix, and looks the token up by
 `SHA256(token)` against `devices.token_digest` (the plaintext token is never stored). A
 missing or unrecognized token is:
 
@@ -172,11 +177,11 @@ There is no distinct "expired" or "revoked" status — a device's access is bina
 row exists and its digest matches, or it doesn't); there is no token TTL or refresh flow
 in this version of the API.
 
-**Device enrollment is a declared host obligation, not part of the 25.** The engine draws
-no device route at all (`TinkerexSync::HOST_MODELS` names `Device`; the engine's own
-README: "obtaining a token is entirely yours"). The two real hosts differ from each other,
-and a third implementation is free to differ from both as long as it produces a bearer
-token `Device.authenticate` (or your equivalent) accepts:
+**Device enrollment is a declared host obligation, not part of the 25.** The Ruby engine drew
+no device route at all (`TinkerexSync::HOST_MODELS` named `Device`; the engine's own
+README: "obtaining a token is entirely yours"). The two real implementations differ from each
+other, and a third is free to differ from both as long as it produces a bearer
+token the server's device auth accepts:
 
 - **This app** (`chaim354/tinkerex`) already has web users with passwords and sessions,
   so it exposes `POST /v1/devices/login {email, password, device_name}` → `201` with
@@ -206,12 +211,13 @@ token `Device.authenticate` (or your equivalent) accepts:
     {"error":"sync_unavailable"}` and **no maker device is minted** — the grant is brokered
     before the maker device, so a retry signs in from scratch.
 
-  No sync-server route is added for this: the broker uses the standalone host's own two,
+  No sync-server route is added for this: the broker uses the sync server's own two,
   below.
-- **The standalone `host/` app** has no users-with-passwords surface at all and
-  deliberately does not invent one for a server whose only job is holding chunks. The
-  *first* token for a user is minted by an operator: `EMAIL=you@example.com bin/rails
-  sync:device:issue` creates the user if absent and prints `user_id` / `device_id` /
+- **The sync server** (the binary; the standalone `host/` app until Phase 6) has no
+  users-with-passwords surface at all and deliberately does not invent one for a server
+  whose only job is holding chunks. The *first* token for a user is minted by an operator:
+  `tinkerex-sync device issue --email you@example.com` (the Ruby host's `bin/rails
+  sync:device:issue`, same output) creates the user if absent and prints `user_id` / `device_id` /
   `device_token` **once** (only the digest is persisted — a lost token is reissued, not
   recovered). Every subsequent device is enrolled by an *already-authenticated* one via
   `POST /v1/devices {name}` → `201 {device_id, device_token}`. `GET /v1/devices/whoami`
@@ -1389,15 +1395,17 @@ or named here instead:
 
 ## 15. Where to look next
 
-- `chaim354/tinkerex-sync`'s own `lib/tinkerex_sync/v1_routes.rb`, `app/controllers/sync/v1/*.rb`,
-  `app/services/sync/*.rb` — the source this document was derived from; read them directly
-  for anything this document doesn't cover.
+- `chaim354/tinkerex-sync`'s `crates/tinkerex-sync` — the server, and its README (subcommands,
+  env, the two stores); `src/http/mod.rs` holds the route table `tinkerex-sync routes` prints.
+- `chaim354/tinkerex-sync`'s Ruby `lib/tinkerex_sync/v1_routes.rb`, `app/controllers/sync/v1/*.rb`,
+  `app/services/sync/*.rb` — the source this document was derived from, deleted in Phase 6;
+  `git show 36bb82e:<path>` there for anything this document doesn't cover.
 - `chaim354/tinkerex-sync`'s `conformance/` — the corpus this document points at rather than
   duplicates. Check whether `conformance/scenarios/*.yml` exists yet before trusting this
   document's prose over a recorded scenario.
-- `chaim354/tinkerex-sync`'s own `README.md` — the standalone `host/` app, what a host must
-  supply (`TinkerexSync::HOST_MODELS`, Action Cable adapter, `limits_concurrency`), and the
-  2026-08-22 end-to-end verification.
+- `chaim354/tinkerex-sync`'s `README.md` as of `36bb82e` — the standalone `host/` app, what a
+  host had to supply (`TinkerexSync::HOST_MODELS`, Action Cable adapter, `limits_concurrency`),
+  and the 2026-08-22 end-to-end verification.
 - This repo's `docs/architecture-sync-engine.md`, `docs/SYNC_SERVER.md`, `docs/STATUS.md` —
   broader architecture, deployment, and the canonical, dated record of what's built and
   what's still open (this document deliberately does not narrate history — see its own

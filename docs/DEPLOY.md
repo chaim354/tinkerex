@@ -343,15 +343,12 @@ on Sundays at 04:15 UTC, and the morning after the reboot that turns it on,
 `bin/kamal accessory logs sync --since 24h --grep reap-pending` shows each hourly tick as
 `scheduler: job done`.
 
-Verify, then issue a device token. The command depends on which image the accessory runs, and the
-revision label cannot tell them apart (a Ruby and a Rust build of one commit share it): probe for the
-binary instead, as `bin/restore-db` does — `ssh kamal1@192.168.1.95 "docker exec tinkerex-sync sh -c
-'command -v tinkerex-sync'"` prints a path on the Rust image and nothing on the Ruby one.
+Verify, then issue a device token. The accessory runs the Rust binary — the only implementation
+since Phase 6 retired the Ruby image (2026-10-14) — so the token comes from its own `device issue`:
 
 ```sh
 curl -s http://sync.tinkerex.local/up; echo                                                  # ok
-bin/kamal accessory exec sync --reuse "bin/rails sync:device:issue EMAIL=you@example.com"    # Ruby image
-bin/kamal accessory exec sync --reuse "tinkerex-sync device issue --email you@example.com"   # Rust image
+bin/kamal accessory exec sync --reuse "tinkerex-sync device issue --email you@example.com"
 curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer <token>" \
   http://sync.tinkerex.local/v1/devices/whoami                                               # 200
 ```
@@ -884,19 +881,20 @@ the tag unique, which would imply a dirty build is reproducible.
 `kamal accessory details` cannot answer this — they print the run reference, `:latest`, and the
 registry has no digest→tag reverse lookup, so the tags say only which builds exist.
 
-**The `sync` accessory has two implementations, and the revision label cannot tell them apart** — a
-Ruby and a Rust build of one commit share it. Read the description label (`tinkerex-sync (rust)` or
-`tinkerex-sync (ruby)`), or probe for the binary as `bin/restore-db` does:
+**The `sync` accessory runs the Rust binary** — since the cutover of 2026-10-07, and as the only
+implementation since Phase 6 retired the Ruby image (2026-10-14). The description label names it:
 
 ```sh
 ssh kamal1@192.168.1.95 'docker inspect tinkerex-sync --format \
   "{{index .Config.Labels \"org.opencontainers.image.description\"}} {{index .Config.Labels \"org.opencontainers.image.revision\"}}"'
-ssh kamal1@192.168.1.95 "docker exec tinkerex-sync sh -c 'command -v tinkerex-sync'"   # a path on Rust, nothing on Ruby
 ```
 
-A blank description beside a revision is the pre-label Ruby image. Since the cutover of 2026-10-07
-the answer is `tinkerex-sync (rust) 38931307…`; the rollback target is
-`ghcr.io/chaim354/tinkerex-sync:ruby-4148fcd68ef16bb29f536ced13cd56c0a5237975`, and the rollback is
-the reverse retag of `:latest` plus `bin/kamal accessory reboot sync` — **verified with `docker pull`
-on the box before the reboot**, because on 2026-10-07 a retag read back from the Mac for a minute and
-then reverted at the registry, and the reboot inside that window silently redeployed the old image.
+The answer is `tinkerex-sync (rust)` beside a revision (`38931307…` at the cutover). Anything else —
+`tinkerex-sync (ruby)`, or a blank description beside a revision, which is the pre-label Ruby image —
+is a retired image that should not be running.
+`ghcr.io/chaim354/tinkerex-sync:ruby-4148fcd68ef16bb29f536ced13cd56c0a5237975` stays in the registry
+as a historical artefact only: the rollback window closed with Phase 6, and booting it again would
+also need back the `CABLE_ADAPTER: async` and `RAILS_LOG_TO_STDOUT: "1"` lines `config/deploy.yml`
+dropped then. **After any `:latest` move, verify with `docker pull` on the box before the reboot** —
+on 2026-10-07 a retag read back from the Mac for a minute and then reverted at the registry, and the
+reboot inside that window silently redeployed the old image.

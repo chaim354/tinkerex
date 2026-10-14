@@ -17,45 +17,58 @@ class BinSyncServerTest < ActiveSupport::TestCase
     assert SCRIPT.executable?, "bin/sync-server must be chmod +x or CI cannot invoke it"
   end
 
-  test "a missing sibling checkout exits non-zero and names the clone command, on either arm" do
-    # BOTH ARMS, PINNED rather than inherited: the bare invocation is the Rust arm (D4), which looks
-    # for the checkout's Cargo workspace, and SYNC_IMPL=ruby looks for host/ -- each must fail the
-    # same loud way. TINKEREX_SYNC_BIN is cleared because a binary named there needs no checkout.
-    [ nil, "ruby" ].each do |impl|
-      # BLOCK FORM of mktmpdir: the directory only needs to outlive the one child process, and the
-      # non-block arm cleans up after nobody -- it left one `absent*` tmpdir behind per run.
-      out, status = Dir.mktmpdir("absent") do |absent|
-        Open3.capture2e({ "TINKEREX_SYNC_DIR" => absent, "SYNC_IMPL" => impl, "TINKEREX_SYNC_BIN" => nil },
-                        SCRIPT.to_s, "prepare")
+  test "a missing sibling checkout exits non-zero and names the clone command" do
+    # The script looks for the checkout's Cargo workspace. TINKEREX_SYNC_BIN is cleared because a
+    # binary named there needs no checkout, and SYNC_IMPL because a stray one is refused first.
+    # BLOCK FORM of mktmpdir: the directory only needs to outlive the one child process, and the
+    # non-block arm cleans up after nobody -- it left one `absent*` tmpdir behind per run.
+    out, status = Dir.mktmpdir("absent") do |absent|
+      Open3.capture2e({ "TINKEREX_SYNC_DIR" => absent, "SYNC_IMPL" => nil, "TINKEREX_SYNC_BIN" => nil },
+                      SCRIPT.to_s, "prepare")
+    end
+
+    assert_not status.success?, "a missing tinkerex-sync must fail, not fall through:\n#{out}"
+    assert_includes out, "chaim354/tinkerex-sync",
+                     "the failure must name the repo, not just the path it looked in"
+    assert_includes out, "gh repo clone", "the failure must name the command that fixes it"
+  end
+
+  # PHASE 6 (2026-10-14) DELETED THE RUBY HOST, AND SYNC_IMPL CHOOSES NOTHING ANY MORE -- so any
+  # value but `rust` is REFUSED, not ignored. `ruby` is the one anyone would type (the two-arm era's
+  # spelling for the host), and ignoring it would grade the Rust server while the caller believed
+  # they were testing the Ruby one; `python` stands for anything else. Refused BEFORE ANYTHING RUNS,
+  # on both subcommands: the stub binary records every call it gets, and a refusal after it ran is
+  # too late.
+  test "any SYNC_IMPL but rust is refused before the binary runs, on both subcommands" do
+    Dir.mktmpdir("sync-impl") do |sync_dir|
+      binary = File.join(sync_dir, "tinkerex-sync")
+      write_binary_stub(binary, token: "stub-refused-0f1e2d")
+      env_file = File.join(sync_dir, "sync-server.env")
+
+      %w[ruby python].product(%w[prepare start]).each do |impl, subcommand|
+        run_env = { "TINKEREX_SYNC_DIR" => sync_dir, "TINKEREX_SYNC_BIN" => binary,
+                    "SYNC_SERVER_ENV_FILE" => env_file, "SYNC_IMPL" => impl, "GITHUB_ACTIONS" => nil }
+        out, status = Open3.capture2e(run_env, SCRIPT.to_s, subcommand)
+
+        arm = "SYNC_IMPL=#{impl} bin/sync-server #{subcommand}"
+        assert_equal 64, status.exitstatus, "#{arm} must be refused, not run:\n#{out}"
+        assert_includes out, "SYNC_IMPL='#{impl}': bin/sync-server boots only the Rust binary", arm
+        assert_not File.exist?(File.join(sync_dir, "calls")), "#{arm} reached the binary before refusing"
+        assert_not File.exist?(env_file), "#{arm} wrote an env file before refusing"
       end
-
-      arm = impl ? "SYNC_IMPL=#{impl}" : "the bare invocation"
-      assert_not status.success?, "#{arm}: a missing tinkerex-sync must fail, not fall through:\n#{out}"
-      assert_includes out, "chaim354/tinkerex-sync",
-                       "#{arm}: the failure must name the repo, not just the path it looked in"
-      assert_includes out, "gh repo clone",
-                       "#{arm}: the failure must name the command that fixes it"
     end
   end
 
-  test "an unknown SYNC_IMPL is refused and names the two it knows" do
-    out, status = Dir.mktmpdir("impl") do |dir|
-      Open3.capture2e({ "TINKEREX_SYNC_DIR" => dir, "SYNC_IMPL" => "python" }, SCRIPT.to_s, "prepare")
-    end
-
-    assert_not status.success?
-    assert_includes out, "SYNC_IMPL must be ruby or rust"
-  end
-
-  # THE RUST ARM (tinkerex-sync's crates/tinkerex-sync), through the same seam as the Ruby arm's
-  # happy path below: the binary is stubbed by TINKEREX_SYNC_BIN so no cargo, no build and no
-  # database are involved, and the stub answers exactly the two subcommands `prepare` runs
-  # (`migrate`, then `device issue`, whose output lines are the rake task's own so the awk is
-  # shared). What this pins: the arm reaches the binary with STORAGE_BACKEND=local and its own
-  # SQLITE_DATABASE under tmp/ (never host/storage/development.sqlite3), parses the token, and
-  # writes the same keys the Ruby arm writes -- the client (config/ci.rb) cannot tell them apart,
-  # which is the point.
-  test "prepare's Rust arm migrates, issues a device through the stubbed binary and writes the same env file" do
+  # THE HAPPY PATH, with the binary stubbed by TINKEREX_SYNC_BIN so no cargo, no build and no
+  # database are involved: the stub answers exactly the two subcommands `prepare` runs (`migrate`,
+  # then `device issue`, in the shape crates/tinkerex-sync/src/main.rs prints them). What this pins:
+  # the script reaches the binary with STORAGE_BACKEND=local, its own SQLITE_DATABASE under this
+  # repo's tmp/ and a SECRET_KEY_BASE, parses the token, and writes the four keys config/ci.rb sources.
+  #
+  # `openssl` (SYNC_ADMIN_TOKEN's generator, Arc C) IS DELIBERATELY NOT STUBBED: `openssl rand -hex
+  # 32` touches no network, no gem environment and no database, so a fake would have nothing real to
+  # protect against.
+  test "prepare migrates, issues a device through the stubbed binary and writes the env file" do
     Dir.mktmpdir("sync-rust-stub") do |sync_dir|
       bin_stub = File.join(sync_dir, "tinkerex-sync")
       File.write(bin_stub, <<~STUB)
@@ -83,20 +96,20 @@ class BinSyncServerTest < ActiveSupport::TestCase
         esac
       STUB
       File.chmod(0o755, bin_stub)
-      # NO host/ AND NO Cargo.toml in this checkout: with TINKEREX_SYNC_BIN naming a built binary,
-      # the Rust arm needs nothing else from it -- and it never needed host/, which Phase 6 deletes.
+      # NO Cargo.toml in this checkout: with TINKEREX_SYNC_BIN naming a built binary, the script
+      # needs nothing else from it.
       env_file = Pathname.new(File.join(sync_dir, "sync-server.env"))
 
       run_env = {
         "TINKEREX_SYNC_DIR" => sync_dir,
         "TINKEREX_SYNC_BIN" => bin_stub,
-        "SYNC_IMPL" => "rust",
+        "SYNC_IMPL" => nil,
         "SYNC_SERVER_ENV_FILE" => env_file.to_s,
         "GITHUB_ACTIONS" => nil # unset even when this suite itself runs in Actions; set below
       }
       out, status = Open3.capture2e(run_env, SCRIPT.to_s, "prepare")
 
-      assert status.success?, "the Rust arm's prepare should succeed against a stubbed binary:\n#{out}"
+      assert status.success?, "prepare should succeed against a stubbed binary:\n#{out}"
       written = env_file.read
       assert_includes written, "CHUNK_REMOTE_URL="
       assert_includes written, "CHUNK_REMOTE_TOKEN=stub-rust-devtoken-1a2b3c4d5e6f"
@@ -116,11 +129,14 @@ class BinSyncServerTest < ActiveSupport::TestCase
       fresh_admin = env_file.read[/^SYNC_ADMIN_TOKEN=(\h{64})$/, 1]
       assert_includes out, "::add-mask::stub-rust-devtoken-1a2b3c4d5e6f"
       assert_includes out, "::add-mask::#{fresh_admin}"
+      # FRESH EVERY prepare, NOT A FIXED VALUE LIKE THE STUB'S DEVICE TOKEN: nothing on the server
+      # mints this one, so `prepare` generates it, and a second run must not reuse the first's.
+      assert_not_equal admin_token, fresh_admin, "two prepare runs wrote the SAME admin token"
 
       seen = File.read(File.join(sync_dir, "seen-env"))
       assert_includes seen, "STORAGE_BACKEND=local"
       assert_match(%r{SQLITE_DATABASE=.*/tmp/sync-server-rust\.sqlite3}, seen,
-                   "the Rust arm must use its own database under tmp/, never the host's")
+                   "the server must use its own database under this repo's tmp/")
       assert_not_includes seen, "SECRET_KEY_BASE=unset", "the binary refuses to boot without one"
     end
   end
@@ -133,131 +149,32 @@ class BinSyncServerTest < ActiveSupport::TestCase
     # {prepare|start}") -- that summary already contains the words "prepare" and "start" on its
     # own, so asserting only their bare presence stays green even if BOTH detail lines below it
     # were deleted. Match usage()'s real strings verbatim, spacing included.
-    assert_includes out, "prepare  migrate the sync host DB",
+    assert_includes out, "prepare  build tinkerex-sync, migrate its DB",
                      "the usage message must describe prepare, not just name it"
-    assert_includes out, "start    boot the sync host in the foreground",
+    assert_includes out, "start    boot the sync server in the foreground",
                      "the usage message must describe start, not just name it"
   end
 
-  # THE THREE TESTS ABOVE ALL SHORT-CIRCUIT AT require_checkout, so a wrong rake task name, a
-  # wrong awk field, or a wrong env-file key would be invisible to this suite. This test stubs the
-  # two things `prepare` actually shells out to once a checkout exists -- host/bin/rails (a
-  # relative path, resolved against the checkout, never PATH) and `bundle` (a bare command,
-  # resolved via PATH) -- so it can exercise the awk extraction and the env-file write with NO
-  # gems, NO network and NO database. Stubbing `bundle` rather than dropping a real (even empty)
-  # Gemfile into the fake checkout is the point: a real Gemfile hands Bundler's own
-  # version-dependent behaviour -- which this test does not control and must not depend on -- a
-  # chance to touch this box's gem environment or reach for the network.
-  #
-  # `openssl` (SYNC_ADMIN_TOKEN's generator, Arc C) IS DELIBERATELY NOT STUBBED, UNLIKE `bundle`
-  # AND `host/bin/rails`. `openssl rand -hex 32` touches no network, no gem environment and no
-  # database -- it is a local, side-effect-free CLI call this box is already known to have (git and
-  # curl-https both depend on it), so stubbing it would only add a fake with nothing real to
-  # protect against.
-  #
-  # RESIDUAL, NOT CLOSED: the bundle stub always exits 0, so this cannot tell
-  # `bundle install --quiet && bin/rails db:prepare` from a weakened `;`-joined version that
-  # would run db:prepare after a failed install.
-  test "prepare's happy path writes all four keys, admin token freshly generated" do
-    Dir.mktmpdir("sync-stub") do |sync_dir|
-      host_bin = File.join(sync_dir, "host", "bin")
-      FileUtils.mkdir_p(host_bin)
-      rails_stub = File.join(host_bin, "rails")
-      File.write(rails_stub, <<~STUB)
-        #!/usr/bin/env bash
-        # Answers only the two invocations bin/sync-server's prepare case makes -- shaped after
-        # the real host/lib/tasks/devices.rake output in chaim354/tinkerex-sync.
-        set -euo pipefail
-        case "${1:-}" in
-          db:prepare)
-            exit 0
-            ;;
-          sync:device:issue)
-            echo "user_id:      1"
-            echo "device_id:    1"
-            echo "device_token: stub-devtoken-9f8e7d6c5b4a"
-            echo
-            echo "Store it now -- only its digest is kept, so this cannot be shown again."
-            ;;
-          *)
-            echo "stub bin/rails: unhandled task '${1:-}'" >&2
-            exit 1
-            ;;
-        esac
-      STUB
-      File.chmod(0o755, rails_stub)
-
-      stub_path_dir = File.join(sync_dir, "stub-path")
-      FileUtils.mkdir_p(stub_path_dir)
-      bundle_stub = File.join(stub_path_dir, "bundle")
-      File.write(bundle_stub, <<~STUB)
-        #!/usr/bin/env bash
-        # No Gemfile exists anywhere under this stub checkout -- prepare must not need one.
-        exit 0
-      STUB
-      File.chmod(0o755, bundle_stub)
-
-      # An ISOLATED path, never the real tmp/sync-server.env -- see ENV_FILE's own comment in
-      # bin/sync-server for why a save-and-restore of the real file isn't safe here.
-      env_file = Pathname.new(File.join(sync_dir, "sync-server.env"))
-
-      # SYNC_IMPL PINNED: this is the RUBY arm's happy path, and the bare invocation is the Rust arm
-      # since D4 (2026-10-14), which looks for a Cargo.toml this stub checkout does not have.
-      run_env = {
-        "TINKEREX_SYNC_DIR" => sync_dir,
-        "PATH" => "#{stub_path_dir}:#{ENV.fetch("PATH")}",
-        "SYNC_SERVER_ENV_FILE" => env_file.to_s,
-        "SYNC_IMPL" => "ruby"
-      }
-
-      out, status = Open3.capture2e(run_env, SCRIPT.to_s, "prepare")
-
-      assert status.success?, "prepare should succeed against a stubbed checkout:\n#{out}"
-      written = env_file.read
-      assert_includes written, "CHUNK_REMOTE_URL="
-      assert_includes written, "CHUNK_REMOTE_TOKEN=stub-devtoken-9f8e7d6c5b4a"
-      assert_sync_public_url_names_the_local_server(written)
-
-      # SYNC_ADMIN_TOKEN: 64 lowercase hex chars (openssl rand -hex 32), on its own line so the
-      # match cannot accidentally span into whatever key follows it in the file.
-      admin_line = written[/^SYNC_ADMIN_TOKEN=.*$/]
-      assert admin_line, "SYNC_ADMIN_TOKEN was not written:\n#{written}"
-      assert_match(/\ASYNC_ADMIN_TOKEN=[0-9a-f]{64}\z/, admin_line,
-                   "expected 64 lowercase hex chars from `openssl rand -hex 32`, got: #{admin_line.inspect}")
-
-      # FRESH EVERY prepare, NOT A FIXED STUB VALUE LIKE THE DEVICE TOKEN ABOVE -- unlike
-      # sync:device:issue, nothing on the sync host mints this value, so `prepare` has to generate
-      # it itself, and a second run must not silently reuse the first's.
-      second_out, second_status = Open3.capture2e(run_env, SCRIPT.to_s, "prepare")
-      assert second_status.success?, "a second prepare should also succeed:\n#{second_out}"
-      second_admin_line = env_file.read[/^SYNC_ADMIN_TOKEN=.*$/]
-      assert_not_equal admin_line, second_admin_line,
-                        "two prepare runs wrote the SAME admin token -- it must be freshly " \
-                        "generated per run, not a fixed or cached value"
-    end
-  end
-
-  # THE CUTOVER'S D4 (2026-10-14): THE BARE INVOCATION IS THE RUST ARM -- the server production has
-  # run since the 2026-10-07 cutover, so the chunk_remote gate grades the one devices meet -- and
-  # SYNC_IMPL=ruby still boots the Ruby host until the rewrite plan's §9 (Phase 6) deletes it. ONE
-  # checkout holds a stub of each, minting DIFFERENT tokens, so the env file names the arm that ran.
-  test "a bare invocation runs the Rust binary, and SYNC_IMPL=ruby still the Ruby host" do
+  # THE CUTOVER-ERA SPELLING STILL MEANS THE BINARY. From the cutover (2026-10-07) until Phase 6 the
+  # documented command was `SYNC_IMPL=rust bin/sync-server`, and the plans and the client repo's notes
+  # still spell it that way; refusing a caller for asking for exactly what it gets would protect
+  # nothing. tinkerex-sync's bin/build-and-push accepts it for the same reason.
+  test "a bare invocation and SYNC_IMPL=rust both run the binary" do
     Dir.mktmpdir("sync-default") do |sync_dir|
       binary = File.join(sync_dir, "tinkerex-sync")
       write_binary_stub(binary, token: "stub-rust-default-0a1b2c")
-      path_dir = write_ruby_host_stub(sync_dir, token: "stub-ruby-host-3d4e5f")
       env_file = File.join(sync_dir, "sync-server.env")
       base_env = { "TINKEREX_SYNC_DIR" => sync_dir, "TINKEREX_SYNC_BIN" => binary,
-                   "SYNC_SERVER_ENV_FILE" => env_file, "PATH" => "#{path_dir}:#{ENV.fetch("PATH")}",
-                   "GITHUB_ACTIONS" => nil }
+                   "SYNC_SERVER_ENV_FILE" => env_file, "GITHUB_ACTIONS" => nil }
 
-      { nil => "stub-rust-default-0a1b2c", "ruby" => "stub-ruby-host-3d4e5f" }.each do |impl, token|
+      [ nil, "rust" ].each do |impl|
         arm = impl ? "SYNC_IMPL=#{impl}" : "the bare invocation"
         FileUtils.rm_f(env_file)
         out, status = Open3.capture2e(base_env.merge("SYNC_IMPL" => impl), SCRIPT.to_s, "prepare")
 
         assert status.success?, "#{arm}: prepare failed:\n#{out}"
-        assert_equal token, File.read(env_file)[/^CHUNK_REMOTE_TOKEN=(.*)$/, 1], "#{arm} ran the wrong arm"
+        assert_equal "stub-rust-default-0a1b2c", File.read(env_file)[/^CHUNK_REMOTE_TOKEN=(.*)$/, 1],
+                     "#{arm} did not run the binary"
       end
     end
   end
@@ -273,13 +190,13 @@ class BinSyncServerTest < ActiveSupport::TestCase
   #
   # ONE CHECKOUT PER CASE, deliberately: a binary left behind by an earlier case is found by a
   # script that looks in the wrong place, and the mutation check then stays green.
-  test "the Rust arm runs the binary from wherever CARGO_TARGET_DIR made cargo put it" do
+  test "the script runs the binary from wherever CARGO_TARGET_DIR made cargo put it" do
     # unset: the checkout's own target/. Absolute: ci.yml's shape. Relative: resolved against the
     # checkout, where cargo runs -- not against wherever bin/sync-server was invoked from.
     [ nil, :absolute, "relative-target" ].each do |shape|
       Dir.mktmpdir("sync-cargo") do |sync_dir|
         target_dir = shape == :absolute ? File.join(sync_dir, "kept", "cargo-target") : shape
-        File.write(File.join(sync_dir, "Cargo.toml"), "") # what the Rust arm checks a checkout for
+        File.write(File.join(sync_dir, "Cargo.toml"), "") # what the script checks a checkout for
         built = File.join(sync_dir, "what-cargo-builds")
         write_binary_stub(built, token: "stub-cargo-built-6a7b8c")
         path_dir = File.join(sync_dir, "stub-path")
@@ -297,7 +214,7 @@ class BinSyncServerTest < ActiveSupport::TestCase
         File.chmod(0o755, File.join(path_dir, "cargo"))
         env_file = File.join(sync_dir, "sync-server.env")
 
-        run_env = { "TINKEREX_SYNC_DIR" => sync_dir, "TINKEREX_SYNC_BIN" => nil, "SYNC_IMPL" => "rust",
+        run_env = { "TINKEREX_SYNC_DIR" => sync_dir, "TINKEREX_SYNC_BIN" => nil, "SYNC_IMPL" => nil,
                     "CARGO_TARGET_DIR" => target_dir, "SYNC_SERVER_ENV_FILE" => env_file,
                     "PATH" => "#{path_dir}:#{ENV.fetch("PATH")}", "GITHUB_ACTIONS" => nil }
         out, status = Open3.capture2e(run_env, SCRIPT.to_s, "prepare")
@@ -309,11 +226,13 @@ class BinSyncServerTest < ActiveSupport::TestCase
   end
 
   # A stand-in for the tinkerex-sync binary: the two subcommands `prepare` runs, answered the way
-  # crates/tinkerex-sync/src/main.rs answers them, with the device token given.
+  # crates/tinkerex-sync/src/main.rs answers them, with the device token given. Every call is
+  # appended to a `calls` file beside the stub, so a test can tell "never ran" from "ran and failed".
   def write_binary_stub(path, token:)
     File.write(path, <<~STUB)
       #!/usr/bin/env bash
       set -euo pipefail
+      echo "$*" >> "$(dirname "$0")/calls"
       case "${1:-} ${2:-}" in
         "migrate ") echo "Created" ;;
         "device issue") echo "device_token: #{token}" ;;
@@ -321,28 +240,6 @@ class BinSyncServerTest < ActiveSupport::TestCase
       esac
     STUB
     File.chmod(0o755, path)
-  end
-
-  # A stand-in for the Ruby host: host/bin/rails answering the two tasks `prepare` runs, and a
-  # do-nothing `bundle` in a directory the caller puts on PATH, which is returned.
-  def write_ruby_host_stub(sync_dir, token:)
-    rails = File.join(sync_dir, "host", "bin", "rails")
-    FileUtils.mkdir_p(File.dirname(rails))
-    File.write(rails, <<~STUB)
-      #!/usr/bin/env bash
-      set -euo pipefail
-      case "${1:-}" in
-        db:prepare) ;;
-        sync:device:issue) echo "device_token: #{token}" ;;
-        *) echo "stub bin/rails: unhandled task '${1:-}'" >&2; exit 1 ;;
-      esac
-    STUB
-    File.chmod(0o755, rails)
-    path_dir = File.join(sync_dir, "stub-path")
-    FileUtils.mkdir_p(path_dir)
-    File.write(File.join(path_dir, "bundle"), "#!/usr/bin/env bash\nexit 0\n")
-    File.chmod(0o755, File.join(path_dir, "bundle"))
-    path_dir
   end
 
   # SYNC_PUBLIC_URL (D1, 2026-10-13): the address a device that signs in to the maker app is handed

@@ -282,20 +282,19 @@ accessories:
   # Arc D Part 2 folded the old `remote` overlay into it. share/s3 never open this door; ovh
   # declares no backend at all (see deploy.ovh.yml).
   #
-  # STORAGE_BACKEND=local: chunk bytes AND this host's own SQLite catalog both live on the volume
+  # STORAGE_BACKEND=local: chunk bytes AND this server's own SQLite catalog both live on the volume
   # below, so it needs no SeaweedFS/S3 credential of its own (unlike the maker app's `s3`
-  # leg) — a first deployment works with nothing else standing, matching that repo's own Dockerfile
-  # comment. CABLE_ADAPTER=async because this is ONE container; a second would need Redis, or devices
-  # attached to one would never hear the other's broadcasts (host/config/cable.yml over there).
+  # leg) — a first deployment works with nothing else standing.
   #
-  # SINCE THE CUTOVER OF 2026-10-07 THE IMAGE IS THE RUST BINARY (`crates/tinkerex-sync` in that
-  # repo; `:latest` is `:<sha>-rust`, the rollback target is `:ruby-4148fcd6…`, the plan is
-  # docs/superpowers/plans/2026-10-07-rust-cutover.md there). It reads STORAGE_BACKEND,
-  # CHUNK_LOCAL_DIR, SECRET_KEY_BASE and SYNC_ADMIN_TOKEN under the same names and IGNORES
-  # CABLE_ADAPTER and RAILS_LOG_TO_STDOUT — the two sentences above describe the previous image.
-  # Both lines stay until that plan's §9 retires the Ruby image: the rollback target still reads
-  # them. Its own Dockerfile already defaults CHUNK_LOCAL_DIR to the volume path, so the line below
-  # is belt-and-braces on Rust and load-bearing for the rollback.
+  # THE IMAGE IS THE RUST BINARY (`crates/tinkerex-sync` in that repo; `:latest` is `:<sha>-rust`),
+  # since the cutover of 2026-10-07 (docs/superpowers/plans/2026-10-07-rust-cutover.md there), and
+  # the only implementation since Phase 6 retired the Ruby image on 2026-10-14. It reads
+  # STORAGE_BACKEND, CHUNK_LOCAL_DIR, SECRET_KEY_BASE, SYNC_ADMIN_TOKEN and SYNC_SCHEDULER below.
+  # `:ruby-4148fcd6…` stays in the registry as a historical artefact only; booting it again would
+  # also need back the two knobs only it read, CABLE_ADAPTER: async and RAILS_LOG_TO_STDOUT: "1"
+  # (git history). Its image's ENV points CHUNK_LOCAL_DIR at the volume too, so the line below is
+  # belt-and-braces today, and kept: were a future image to drop that ENV, the binary would fall back
+  # to the ephemeral `tmp/chunk-store` (src/config.rs there) — the loss its own comment records.
   #
   # SECRET_KEY_BASE and SYNC_ADMIN_TOKEN are THIS ACCESSORY's own env, resolved through Kamal like any
   # other secret — but they end up referenced from DIFFERENT files, and that split is deliberate, not
@@ -304,7 +303,7 @@ accessories:
   # Kamal::Configuration.raw_config for all four, not assumed — five until `remote` folded into the
   # base; test/deploy_hygiene_test.rb re-derives it every run) — exactly the shape
   # TINKEREX_SYNC_DEPLOY_KEY already has via `builder:`, which is the same kind of never-overlaid
-  # block. SECRET_KEY_BASE has ONLY that one consumer (this accessory's own Rails boot), so it follows
+  # block. SECRET_KEY_BASE has ONLY that one consumer (this accessory's own boot), so it follows
   # TINKEREX_SYNC_DEPLOY_KEY straight into `.kamal/secrets-common` (see the comment there). SYNC_ADMIN_TOKEN
   # does NOT, on explicit instruction (§14g) — it also has a genuine per-destination story, since only
   # the BASE destination's maker app additionally SENDS it (it is the chunk_remote one) — so it is
@@ -315,10 +314,11 @@ accessories:
   # SYNC_ADMIN_TOKEN must resolve to the IDENTICAL value the maker app's own copy resolves to
   # (the base destination: config/deploy.yml's env.secret + .kamal/secrets) — both read the SAME item
   # (op://tinkerex/tinkerex-sync-admin-token/password). That shared reference is what GUARANTEES the
-  # match; a divergent value here would make FileLayer::ChunkRemote::Provisioning's admin call 503
-  # against Sync::V1::Admin::LibrariesController#authenticate_admin! on the far side (chaim354/
-  # tinkerex-sync, admin/libraries_controller.rb — read directly, not assumed, per that class's own
-  # comment). SECRET_KEY_BASE reuses the item already provisioned for this repo's own image testing
+  # match; with a divergent value here the far side refuses FileLayer::ChunkRemote::Provisioning's
+  # admin call (401 from `authorize_admin`, chaim354/tinkerex-sync crates/tinkerex-sync/src/auth.rs —
+  # read directly, not assumed), which reaches the user as a FetchError's 503. (Until Phase 6 that
+  # check was Sync::V1::Admin::LibrariesController#authenticate_admin!.)
+  # SECRET_KEY_BASE reuses the item already provisioned for this repo's own image testing
   # (op://tinkerex/tinkerex-sync/secret key base, created 2026-08-03) rather than minting a second one.
   sync:
     image: ghcr.io/chaim354/tinkerex-sync:latest
@@ -364,13 +364,11 @@ accessories:
     env:
       clear:
         STORAGE_BACKEND: local
-        CABLE_ADAPTER: async
-        RAILS_LOG_TO_STDOUT: "1"
-        # WITHOUT THIS LINE EVERY CHUNK BYTE IN THE LIBRARY IS DESTROYED BY ANY CONTAINER
-        # REPLACEMENT, AND THE CATALOG SURVIVES TO GO ON CLAIMING THE FILES EXIST.
+        # WITHOUT THIS LINE (OR AN IMAGE THAT SETS IT) EVERY CHUNK BYTE IN THE LIBRARY IS DESTROYED
+        # BY ANY CONTAINER REPLACEMENT, AND THE CATALOG SURVIVES TO GO ON CLAIMING THE FILES EXIST.
         #
-        # In the Ruby image — what ran until 2026-10-07, and the rollback target —
-        # Sync::Storage::LocalChunkStore defaults to `Rails.root.join("tmp", "chunk-store")` —
+        # In the Ruby image — what ran until 2026-10-07 —
+        # Sync::Storage::LocalChunkStore defaulted to `Rails.root.join("tmp", "chunk-store")` —
         # `/rails/host/tmp/chunk-store`, which is the container's EPHEMERAL layer, not the volume
         # mounted below. So a `kamal accessory reboot sync`, an image bump, or any redeploy took
         # the bytes with it while `versions`/`manifest_chunks`/`chunks` sat safely on the volume
@@ -400,7 +398,7 @@ accessories:
         # unfinalized (hourly, at :30) and store objects no row names (Sundays, 04:15 UTC). First
         # run: the :30 after the reboot that applies this line; the proof is the next morning's
         # `bin/kamal accessory logs sync --since 24h --grep reap-pending` (each tick logs
-        # `scheduler: job done`). The Ruby rollback image ignores it — that host never ran these jobs.
+        # `scheduler: job done`).
         SYNC_SCHEDULER: "true"
       secret:
         - SECRET_KEY_BASE
@@ -409,10 +407,9 @@ accessories:
     # volume holds both the SQLite catalog and every chunk byte; losing it loses the files. (Read
     # that env comment before trusting this sentence: it was true of the DESIGN and false of the
     # BOX until 2026-08-24, and it is the line that has to be re-checked if CHUNK_LOCAL_DIR ever
-    # moves.) Matches the path the image's own Dockerfile creates (`host/storage`) and the volume
-    # name chaim354/tinkerex-sync's own (currently unused) standalone deploy.yml already chose, so
-    # the name stays recognizable if that alternate deployment shape is ever revisited instead of
-    # this accessory.
+    # moves.) Matches the path the image's Dockerfile.rust creates (`/rails/host/storage`, kept from
+    # the Ruby image so this volume mounted unchanged at the cutover) and the volume name
+    # chaim354/tinkerex-sync's standalone deploy.yml chose before Phase 6 deleted it.
     volumes:
       - "tinkerex_sync_storage:/rails/host/storage"
 

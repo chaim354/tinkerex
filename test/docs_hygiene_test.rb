@@ -65,7 +65,10 @@ class DocsHygieneTest < ActiveSupport::TestCase
   # LOWERED 1,364 -> 1,363 ON 2026-10-09 (redesign slice 7): dropping the retired current-project
   # columns removed §14e's parenthetical about user.rb's stale comment, one line, and a ratchet banks
   # nothing.
-  MAX_LINES = 1_362
+  #
+  # LOWERED 1,362 -> 1,360 ON 2026-10-14 (Phase 6, the maker half): §14j's first bullet lost the
+  # bin/sync-server function it described, and §13 a sentence about a deploy.yml the sync repo deleted.
+  MAX_LINES = 1_360
 
   test "CLAUDE.md stays under its line ceiling" do
     lines = CLAUDE_MD.readlines.size
