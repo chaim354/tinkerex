@@ -31,7 +31,8 @@ module Library
 
         with_env("LIBRARY_BACKEND" => "chunk_remote",
                "CHUNK_REMOTE_URL" => "http://sync.invalid",
-               "SYNC_ADMIN_TOKEN" => "test-token") do
+               "SYNC_ADMIN_TOKEN" => "test-token",
+               "SYNC_PUBLIC_URL" => "http://sync.invalid") do
           Library::ScanJob.perform_now(user_id: user.id, root: dir)
         end
 
@@ -117,7 +118,8 @@ module Library
       user!
       with_env("LIBRARY_BACKEND" => "chunk_remote",
                "CHUNK_REMOTE_URL" => "http://sync.invalid",
-               "SYNC_ADMIN_TOKEN" => "test-token") do
+               "SYNC_ADMIN_TOKEN" => "test-token",
+               "SYNC_PUBLIC_URL" => "http://sync.invalid") do
         assert_no_enqueued_jobs { Library::ScanJob.scan_all! }
       end
     end
@@ -194,7 +196,8 @@ module Library
       user = user!
       with_env("LIBRARY_BACKEND" => "chunk_remote",
                "CHUNK_REMOTE_URL" => "http://sync.invalid",
-               "SYNC_ADMIN_TOKEN" => "test-token") do
+               "SYNC_ADMIN_TOKEN" => "test-token",
+               "SYNC_PUBLIC_URL" => "http://sync.invalid") do
         err = assert_raises(ArgumentError) { Library::ScanJob.perform_now(user_id: user.id) }
         assert_match(/not a scanned backend/, err.message)
       end

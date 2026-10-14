@@ -158,6 +158,40 @@ class DeployHygieneTest < ActiveSupport::TestCase
     end
   end
 
+  # THE ADDRESS EVERY DEVICE IS HANDED AT SIGN-IN (D1, 2026-10-13). The maker app answers a desktop
+  # login with a sync grant whose URL is SYNC_PUBLIC_URL, so on the base -- the chunk_remote
+  # destination -- it must be the door above, derived from the merged config rather than restated:
+  # a name kamal-proxy routes to the sync accessory; the `.home` one, which resolves on the LAN and
+  # over the tailnet with no /etc/hosts line (`.local` resolves only where one was added by hand --
+  # APP_HOST's argument in deploy.yml); and the scheme that door serves. Never CHUNK_REMOTE_URL's
+  # http://tinkerex-sync:3000, a name only the kamal network resolves, and no device is on it: the
+  # two addresses differ on purpose.
+  #
+  # THE SCHEME FOLLOWS THE DOOR, AND THE DOOR IS PLAIN HTTP -- `ssl: false` above, and nothing in
+  # front of it holds a certificate for the name: measured 2026-10-13, http://sync.tinkerex.home/up
+  # answered 200 and https:// failed the TLS handshake ("unrecognized name"). An https URL here would
+  # hand every desktop app a door that refuses it while this whole file stayed green. If a front
+  # proxy ever terminates TLS for the name, change this assertion together with that measurement.
+  #
+  # NOT ASSERTED ON share AND s3: kamal deep-merges env.clear, so they inherit this value exactly as
+  # they inherit CHUNK_REMOTE_URL, and on a backend that is not syncable nothing reads it.
+  test "the base destination hands devices the sync accessory's own door, never the app's internal alias" do
+    require "kamal"
+    config = Kamal::Configuration.create_from(config_file: ROOT.join("config/deploy.yml"), destination: nil)
+    clear = at(config.raw_config, "env", "clear").to_h
+    assert_equal "chunk_remote", clear["LIBRARY_BACKEND"].to_s,
+                 "the base is the chunk_remote destination -- raw_config shape changed?"
+
+    door = config.accessory("sync").proxy
+    home = door.hosts.find { |host| host.end_with?(".home") }
+    assert home, "the sync accessory's door registers no .home name: #{door.hosts.inspect}"
+
+    assert_equal "#{door.ssl? ? 'https' : 'http'}://#{home}", clear["SYNC_PUBLIC_URL"].to_s,
+                 "SYNC_PUBLIC_URL is what every signing-in device syncs against, so it must be the " \
+                 "sync accessory's door as devices reach it -- not CHUNK_REMOTE_URL " \
+                 "(#{clear['CHUNK_REMOTE_URL'].inspect}), a name only the kamal network resolves"
+  end
+
   test "the OVH overlay clears every Unraid-host-only service URL it cannot reach" do
     # Kamal DEEP-MERGES env.clear (a hash), so the overlay inherits deploy.yml's accessory hostnames.
     # Those resolve only on the Unraid host, where the accessories actually run. Inheriting one makes

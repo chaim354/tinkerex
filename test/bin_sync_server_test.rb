@@ -46,8 +46,8 @@ class BinSyncServerTest < ActiveSupport::TestCase
   # (`migrate`, then `device issue`, whose output lines are the rake task's own so the awk is
   # shared). What this pins: the arm reaches the binary with STORAGE_BACKEND=local and its own
   # SQLITE_DATABASE under tmp/ (never host/storage/development.sqlite3), parses the token, and
-  # writes the same three keys the Ruby arm writes -- the client (config/ci.rb) cannot tell them
-  # apart, which is the point.
+  # writes the same keys the Ruby arm writes -- the client (config/ci.rb) cannot tell them apart,
+  # which is the point.
   test "prepare's Rust arm migrates, issues a device through the stubbed binary and writes the same env file" do
     Dir.mktmpdir("sync-rust-stub") do |sync_dir|
       bin_stub = File.join(sync_dir, "tinkerex-sync")
@@ -94,6 +94,7 @@ class BinSyncServerTest < ActiveSupport::TestCase
       assert_includes written, "CHUNK_REMOTE_URL="
       assert_includes written, "CHUNK_REMOTE_TOKEN=stub-rust-devtoken-1a2b3c4d5e6f"
       assert_match(/^SYNC_ADMIN_TOKEN=[0-9a-f]{64}$/, written)
+      assert_sync_public_url_names_the_local_server(written)
       admin_token = written[/^SYNC_ADMIN_TOKEN=(\h{64})$/, 1]
 
       # THE FILE IS THE INTERFACE; STDOUT IS A LOG, and CI logs are public once the repo is. The
@@ -150,7 +151,7 @@ class BinSyncServerTest < ActiveSupport::TestCase
   # RESIDUAL, NOT CLOSED: the bundle stub always exits 0, so this cannot tell
   # `bundle install --quiet && bin/rails db:prepare` from a weakened `;`-joined version that
   # would run db:prepare after a failed install.
-  test "prepare's happy path writes all three keys, admin token freshly generated" do
+  test "prepare's happy path writes all four keys, admin token freshly generated" do
     Dir.mktmpdir("sync-stub") do |sync_dir|
       host_bin = File.join(sync_dir, "host", "bin")
       FileUtils.mkdir_p(host_bin)
@@ -209,6 +210,7 @@ class BinSyncServerTest < ActiveSupport::TestCase
       written = env_file.read
       assert_includes written, "CHUNK_REMOTE_URL="
       assert_includes written, "CHUNK_REMOTE_TOKEN=stub-devtoken-9f8e7d6c5b4a"
+      assert_sync_public_url_names_the_local_server(written)
 
       # SYNC_ADMIN_TOKEN: 64 lowercase hex chars (openssl rand -hex 32), on its own line so the
       # match cannot accidentally span into whatever key follows it in the file.
@@ -227,5 +229,16 @@ class BinSyncServerTest < ActiveSupport::TestCase
                         "two prepare runs wrote the SAME admin token -- it must be freshly " \
                         "generated per run, not a fixed or cached value"
     end
+  end
+
+  # SYNC_PUBLIC_URL (D1, 2026-10-13): the address a device that signs in to the maker app is handed
+  # as its sync server, and LibraryBackendCheck refuses chunk_remote without it -- so if `prepare`
+  # stopped writing it, the chunk_remote gate's first FileLayer.build would refuse before a single
+  # test ran. The leg is ONE box, so it is the very server CHUNK_REMOTE_URL names.
+  def assert_sync_public_url_names_the_local_server(written)
+    public_url = written[/^SYNC_PUBLIC_URL=(.*)$/, 1]
+    assert_match(%r{\Ahttp://127\.0\.0\.1:\d+\z}, public_url.to_s, "SYNC_PUBLIC_URL was not written:\n#{written}")
+    assert_equal written[/^CHUNK_REMOTE_URL=(.*)$/, 1], public_url,
+                 "one box: the devices' address and the app's are the same local server"
   end
 end
