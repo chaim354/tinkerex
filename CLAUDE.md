@@ -100,7 +100,7 @@ The sync engine's own design — chunking, versions, the changelog, conflict rec
 
 | repo | role | how it reaches us |
 |---|---|---|
-| `chaim354/tinkerex-sync` | The chunk/version/changelog engine + its own host app, being replaced by a Rust binary (`crates/tinkerex-sync` there) that serves the same wire from the same image paths and env. **Not a dependency of this repo** — no gem, `Sync::` is undefined in this process. | Runs as the **`sync` Kamal accessory**; this app talks to it over HTTP as a client (§6). Devices sync against it directly, never against this app. **Cut over 2026-10-07**: the accessory runs the Rust image (`:38931307…-rust`; rollback `:ruby-4148fcd6…`; plan `docs/superpowers/plans/2026-10-07-rust-cutover.md` there). `SYNC_IMPL=rust bin/sync-server` boots the binary for `bin/ci test-chunk-remote`; the default arm stays Ruby until that plan's §9 (D4). |
+| `chaim354/tinkerex-sync` | The chunk/version/changelog engine + its own host app, being replaced by a Rust binary (`crates/tinkerex-sync` there) that serves the same wire from the same image paths and env. **Not a dependency of this repo** — no gem, `Sync::` is undefined in this process. | Runs as the **`sync` Kamal accessory**; this app talks to it over HTTP as a client (§6). Devices sync against it directly, never against this app. **Cut over 2026-10-07**: the accessory runs the Rust image (`:38931307…-rust`; rollback `:ruby-4148fcd6…`; plan `docs/superpowers/plans/2026-10-07-rust-cutover.md` there). `bin/sync-server` boots the Rust binary by default (D4, 2026-10-14); `SYNC_IMPL=ruby` boots the Ruby host until Phase 6 (§9 of `docs/superpowers/plans/2026-09-30-rust-rewrite.md` there) deletes it. |
 | `chaim354/tinkerex-client` | Rust crates (`fs-provider`, the per-OS mounts, `sync-client`, `sync-engine`) + the Tauri desktop app. Extracted 2026-08-20. | Syncs against the sync server. Clone as a sibling (`../tinkerex-client`) for the CI legs in §13 that need it. |
 
 ---
@@ -343,10 +343,10 @@ bin/ci                 # bin/ci --list for gate names; config/ci.rb is the singl
                        # only mode there is now, and every gate exercises it.
 
 # ONE gate needs a SIBLING CHECKOUT. `test-chunk-remote` drives this app against a real
-# chaim354/tinkerex-sync HOST app, booting it via bin/sync-server. A missing checkout fails
-# loudly and names the clone command rather than falling through to a connection error. It runs
-# the FULL suite there, not just a journey file, because there is no in-process chunk backend
-# left to carry that coverage:
+# chaim354/tinkerex-sync server -- its Rust binary since 2026-10-14, which bin/sync-server builds
+# with cargo and boots. A missing checkout fails loudly and names the clone command rather than
+# falling through to a connection error. It runs the FULL suite there, not just a journey file,
+# because there is no in-process chunk backend left to carry that coverage:
 gh repo clone chaim354/tinkerex-sync ../tinkerex-sync
 
 # Server tests (SQLite; proves adapter-agnosticism)
@@ -356,7 +356,7 @@ bin/rails test
 LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test
 # The s3 leg additionally needs the five LIBRARY_S3_* stub knobs -- see ci.yml's test-s3-backend.
 
-# Boot a sync server locally (its own repo's app, on $SYNC_PORT, default 3002):
+# Boot a local sync server on $SYNC_PORT, default 3002 (the Rust binary; SYNC_IMPL=ruby for host/):
 bin/sync-server prepare && bin/sync-server start
 
 # SECRETS: no `export` before a deploy. `bin/secret VAR op://tinkerex/Item/field` resolves every

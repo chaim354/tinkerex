@@ -392,6 +392,16 @@ accessories:
         # ops/backup-db.sh's single `sync` archive holds the catalog and the bytes it references,
         # taken together, and `bin/restore-db sync` puts both back at one point in time.
         CHUNK_LOCAL_DIR: /rails/host/storage/chunk-store
+        # THE BINARY'S OWN MAINTENANCE, ON — D3 of the cutover plan named above. `tinkerex-sync
+        # serve` runs it only when this is set, and it was set only after the watch week's dry-runs:
+        # on 2026-10-14 `gc reap-pending`, `gc reap-storage` and `gc retention` (each --dry-run) read
+        # 0 / 0 / 0. Retention is keep_all, so the nightly pass (03:15 UTC) prunes no version; what
+        # the scheduler deletes is orphaned BYTES — the chunks of a pending commit that expired
+        # unfinalized (hourly, at :30) and store objects no row names (Sundays, 04:15 UTC). First
+        # run: the :30 after the reboot that applies this line; the proof is the next morning's
+        # `bin/kamal accessory logs sync --since 24h --grep reap-pending` (each tick logs
+        # `scheduler: job done`). The Ruby rollback image ignores it — that host never ran these jobs.
+        SYNC_SCHEDULER: "1"
       secret:
         - SECRET_KEY_BASE
         - SYNC_ADMIN_TOKEN

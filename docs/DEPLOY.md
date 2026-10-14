@@ -336,6 +336,13 @@ been registered that fails with "service not found" and aborts the command, leav
 stopped — measured 2026-10-07, about a minute of sync-server downtime. `start` starts the existing
 container and registers it. Once the service exists, `reboot` is the ordinary roll command again.
 
+**The accessory runs its own maintenance** (`SYNC_SCHEDULER: "1"` in its `env.clear`, the Rust
+cutover's D3): the binary reaps the chunks of expired pending commits hourly at :30, runs retention
+at 03:15 UTC (pruning nothing while the policy is `keep_all`) and reaps store objects no row names
+on Sundays at 04:15 UTC, and the morning after the reboot that turns it on,
+`bin/kamal accessory logs sync --since 24h --grep reap-pending` shows each hourly tick as
+`scheduler: job done`.
+
 Verify, then issue a device token. The command depends on which image the accessory runs, and the
 revision label cannot tell them apart (a Ruby and a Rust build of one commit share it): probe for the
 binary instead, as `bin/restore-db` does — `ssh kamal1@192.168.1.95 "docker exec tinkerex-sync sh -c

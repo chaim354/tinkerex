@@ -252,6 +252,20 @@ jobs:
           RAILS_ENV: test
           TINKEREX_SYNC_DIR: ${{ github.workspace }}/tinkerex-sync
           SYNC_PORT: "3002"
+          # bin/sync-server BUILDS tinkerex-sync's Rust binary by default (the Rust cutover's D4,
+          # 2026-10-14), with the image's rustup (on PATH, ci/runner/Dockerfile). All three cargo
+          # locations sit under /_work, the runner's bind mount (ops/ci-runner-stack.yml): it
+          # survives between runs, and the job's user owns it.
+          # - CARGO_TARGET_DIR: outside the checkout, which actions/checkout cleans every run, so the
+          #   build is cold once per runner and incremental after.
+          # - CARGO_HOME, RUSTUP_HOME: the image ran rustup-init as ROOT into /usr/local/cargo and
+          #   /usr/local/rustup, and jobs run as uid 1001, so both defaults are read-only here -- cargo
+          #   cannot fill its registry and rustup cannot install the toolchain the checkout's
+          #   rust-toolchain.toml pins (each probed against a read-only home: Permission denied). A
+          #   fresh RUSTUP_HOME installs that toolchain on first use, once per runner and per pin.
+          CARGO_TARGET_DIR: /_work/cargo-target
+          CARGO_HOME: /_work/cargo-home
+          RUSTUP_HOME: /_work/rustup
         run: bin/ci test-chunk-remote
 
   system-test:
