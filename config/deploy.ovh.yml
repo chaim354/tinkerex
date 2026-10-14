@@ -197,6 +197,9 @@ env:
     # Closed is the production default; stated here because this box is the one strangers reach
     # and runs a single-library backend (s3), where `open` is refused at boot anyway.
     REGISTRATION: closed
+    # THE PUBLIC DEMO (docs/DEPLOY.md §5): one click signs visitors into this shared account, made once
+    # by `bin/rails tinkerex:demo:setup`; the nightly reset replaces the ONE library all accounts share.
+    DEMO_ACCOUNT_EMAIL: demo@tinkerex.com
 
     # ENABLE_TEST_SIGNUP: SET NOWHERE SINCE 2026-10-12. This overlay blanked it on 2026-10-12
     # morning because deploy.yml's base env.clear set it and Kamal deep-merges env.clear; the same

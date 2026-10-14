@@ -299,6 +299,8 @@ compose*; the rest come from `.env`.
 | `COMPOSE_FILE`, `COMPOSE_PROFILES` | no | — | Docker's own: putting `COMPOSE_FILE=docker-compose.yml:docker-compose.chunk_remote.yml` or `COMPOSE_PROFILES=tools` in `.env` saves typing `-f` / `--profile` on every command. |
 | **Accounts and mail** (section 4) | | | |
 | `REGISTRATION` | no | `closed` in production | `closed`: only the first account (the owner) can sign up. `open`: anyone can — **refused at boot on share and s3**, where every account indexes one library. |
+| `DEMO_ACCOUNT_EMAIL` | no | — (no demo) | Set it to turn the sign-in page into a demo: one click signs visitors into the shared account it names, which cannot change its credentials, publish or enrol a device, and is destroyed and re-seeded from `db/seeds/demo` every night at 04:00 UTC (run `bin/rails tinkerex:demo:setup` once to create it). **On share and s3 every account indexes the same library, so visitors see all of it and the reset replaces all of it: set it only on a server that holds nothing else.** |
+| `DEMO_MAX_UPLOAD_BYTES` | no | `26214400` (25 MB) | The largest single file the demo account may upload. |
 | `SMTP_ADDRESS` | for mail | — (no mail) | The SMTP host. Setting it turns delivery on; everything below has a sensible default. |
 | `SMTP_PORT` | no | `587` | |
 | `SMTP_USER_NAME`, `SMTP_PASSWORD` | if the relay needs auth | — | Authentication is attempted only when a user name is given. |
