@@ -47,9 +47,9 @@ Two deployment modes:
 1. **Self-hosted** — runs on the user's own box (e.g. Unraid).
 2. **Managed (SaaS)** — we host it; we monetize hosting.
 
-Commercial product. **Licensing: prefer permissive (MIT/Apache/BSD) for full
-commercial rights** — avoid copyleft (GPL/AGPL) in anything we depend on or ship
-(see §9). Everything built so far is permissive.
+Commercial product, **open source under Apache-2.0** (`LICENSE`, the owner's call, 2026-10-14).
+**Dependencies: permissive only (MIT/Apache/BSD)** — avoid copyleft (GPL/AGPL) in anything we
+depend on or ship (see §9). Everything built so far is permissive.
 
 ---
 

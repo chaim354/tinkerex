@@ -12,8 +12,8 @@ It runs on real hardware, every day, for its author. There are three ways to hol
 per deployment: a **folder you point it at** (a NAS share, a directory on the box), **your own S3
 bucket**, or the **sync server** (`chaim354/tinkerex-sync`), which adds per-account libraries,
 versions and restore, and is what the desktop client syncs against. The first two keep your files as
-plain files you can edit with anything else. It is not yet a product: there is no public image to
-pull, and the repository's licence has not been chosen.
+plain files you can edit with anything else. It is open source under the Apache License 2.0. It is
+not yet a product: there is no public image to pull.
 
 ## Quick start
 
@@ -57,7 +57,7 @@ folder with anything. Both recipes are in the guide.
 
 | repository | what it is | licence |
 |---|---|---|
-| `chaim354/tinkerex` (this one) | The web app: library, previews, projects, inventory, Tools. | not yet chosen |
+| `chaim354/tinkerex` (this one) | The web app: library, previews, projects, inventory, Tools. | Apache-2.0 |
 | `chaim354/tinkerex-sync` | The sync server: chunks, versions, the changelog; a single Rust binary. | MIT |
 | `chaim354/tinkerex-client` | The desktop client: the mounts and the sync engine, in Rust. | Apache-2.0 |
 | `chaim354/tinkerex-addons` | The addon bundles the Tools gallery serves. | MIT |
@@ -72,5 +72,8 @@ data model, and the invariants that a change must not undo.
 
 ## Licence
 
-This repository's licence has not been chosen yet; until it is, all rights are reserved. The sibling
-repositories are MIT (`tinkerex-sync`, `tinkerex-addons`) and Apache-2.0 (`tinkerex-client`).
+Copyright 2026 Charles Schwartz. Licensed under the Apache License, Version 2.0 (`LICENSE`); you may
+not use this repository except in compliance with it. The sibling repositories are MIT
+(`tinkerex-sync`, `tinkerex-addons`) and Apache-2.0 (`tinkerex-client`). Every dependency shipped
+is permissive as well (`CLAUDE.md` §9); the two GPL sidecars are separate images invoked over HTTP,
+never linked.
