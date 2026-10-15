@@ -1,7 +1,18 @@
 require "active_support/core_ext/integer/time"
+require "tinkerex/secret_key_base"
 
 Rails.application.configure do
   # Settings specified here will take precedence over those in config/application.rb.
+
+  # THE SESSION SECRET NEEDS NO HAND-SET VALUE (I, 2026-10-14; lib/tinkerex/secret_key_base.rb has
+  # the order and the reasons). Assigned here rather than left to Rails' own getter because that
+  # getter raises in production when neither the environment nor the credentials carry one, and a
+  # stranger's image carries neither. A nil answer (the precompile's SECRET_KEY_BASE_DUMMY boot)
+  # leaves the getter alone, which is exactly the throwaway Rails wants there.
+  if (secret = Tinkerex::SecretKeyBase.resolve(dir: Rails.root.join("storage"),
+                                                credential: Rails.application.credentials.secret_key_base))
+    config.secret_key_base = secret
+  end
 
   # Code is not reloaded between requests.
   config.enable_reloading = false
