@@ -30,11 +30,14 @@ class ComposeHygieneTest < ActiveSupport::TestCase
     assert_equal "http://openscad:8000", env["OPENSCAD_SIDECAR_URL"]
     assert_equal "http://addons", env["ADDON_SOURCE_URL"]
     assert_equal "${RAILS_MAX_THREADS:-16}", env["RAILS_MAX_THREADS"], "Puma's stock 3 starves once a sidecar is proxied"
-    assert_equal "${PUID:-1000}", env["PUID"]
-    assert_equal "${PGID:-1000}", env["PGID"]
+    assert_equal "${PUID:-}", env["PUID"], "empty when unset, so the entrypoint infers the folder's owner (J)"
+    assert_equal "${PGID:-}", env["PGID"]
     assert_not_includes env.keys, "LIBRARY_BACKEND", "the backend is the image's default now (Dockerfile)"
     assert_not_includes env.keys, "LIBRARY_PATH"
-    assert_equal [ "tinkerex_storage:/rails/storage", "${LIBRARY_HOST_PATH:-./library}:/library" ], web["volumes"]
+    assert_equal [ "tinkerex_storage:/rails/storage", "${LIBRARY_HOST_PATH:-.}:/library" ], web["volumes"],
+                 "the compose file's own folder is the library (J): '.' resolves against the file, not the shell's cwd"
+    assert_equal "${LIBRARY_HOST_PATH:-}", env["LIBRARY_HOST_PATH"],
+                 "passed through DISPLAY-ONLY: empty when unset, so the app can say 'the folder your docker-compose.yml is in'"
     assert_equal [ "${TINKEREX_PORT:-8080}:80" ], web["ports"]
   end
 
@@ -55,5 +58,8 @@ class ComposeHygieneTest < ActiveSupport::TestCase
       assert s["build"].present?, "#{name} must build in the overlay"
       assert_match(/:local\z/, s.fetch("image"), "#{name}'s built image must not shadow the ghcr tag")
     end
+    assert_equal [ "./library:/library" ], services.dig("web", "volumes"),
+                 "in a clone '.' is the repository; the overlay puts the mount back to ./library " \
+                 "(compose merges volumes by container path, so the storage volume survives)"
   end
 end
