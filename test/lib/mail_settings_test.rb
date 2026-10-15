@@ -33,4 +33,25 @@ class MailSettingsTest < ActiveSupport::TestCase
     assert_equal "no-reply@maker.example", Tinkerex::MailSettings.sender({ "APP_HOST" => "maker.example" })
     assert_equal "no-reply@tinkerex.app", Tinkerex::MailSettings.sender({})
   end
+
+  test "SMTP without APP_HOST is refused at boot, naming both; with a host, or without SMTP, it passes" do
+    e = assert_raises(Tinkerex::MailSettings::Error) do
+      Tinkerex::MailSettings.validate!({ "SMTP_ADDRESS" => "smtp.example.net" })
+    end
+    assert_includes e.message, "APP_HOST"
+    assert_includes e.message, "SMTP_ADDRESS"
+    assert_raises(Tinkerex::MailSettings::Error) do
+      Tinkerex::MailSettings.validate!({ "SMTP_ADDRESS" => "smtp.example.net", "APP_HOST" => " " })
+    end
+    assert_nil Tinkerex::MailSettings.validate!({ "SMTP_ADDRESS" => "smtp.example.net", "APP_HOST" => "maker.example" })
+    assert_nil Tinkerex::MailSettings.validate!({})
+    assert_nil Tinkerex::MailSettings.validate!({ "APP_HOST" => "" }), "no SMTP: the host is not needed at all"
+  end
+
+  test "the mail initializer validates before it applies, so the refusal is a boot refusal" do
+    source = Rails.root.join("config/initializers/mail.rb").read
+    assert_includes source, "Tinkerex::MailSettings.validate!"
+    assert_operator source.index("Tinkerex::MailSettings.validate!"), :<, source.index("Tinkerex::MailSettings.from_env"),
+                    "validate! must run before from_env applies the settings"
+  end
 end
