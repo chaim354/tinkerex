@@ -132,20 +132,6 @@ class User < ApplicationRecord
   end
   private :skip_passwordless_confirmation_notification
 
-  # THE FIRST SCAN FOLLOWS THE ACCOUNT, NOT THE BOOT (J, 2026-10-15). Library::ScanJob is enqueued
-  # per user, so a scan at boot has no one to scan for on a fresh install -- measured: config/puma.rb's
-  # on_booted ran, enqueued nothing, and a folder full of files sat unindexed until Rescan. Creating
-  # an account is the moment the library gets a reader, so every new account on a scannable backend
-  # gets one scan enqueued. On share and s3 every account shares the folder, so a second account's
-  # scan is a cheap no-op; on chunk_remote `scannable` is false and nothing is enqueued.
-  # after_create_commit, so the job can never run before the row it names is visible.
-  after_create_commit :enqueue_first_library_scan
-
-  def enqueue_first_library_scan
-    Library::ScanJob.enqueue_for(self) if FileLayer.current.capabilities.scannable?
-  end
-  private :enqueue_first_library_scan
-
   normalizes :email, with: ->(e) { e.to_s.strip.downcase }
 
   # THE HANDLE IS THE FIRST SEGMENT OF EVERY PUBLIC URL (/u/<handle>/<slug>, spec §2.2), so it is

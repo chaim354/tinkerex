@@ -84,7 +84,13 @@ module Users
         return
       end
 
-      super
+      # THE FIRST ACCOUNT TRIGGERS THE FIRST SCAN (J, 2026-10-15): decided BEFORE super, because once
+      # the owner exists first_owner? is false forever. Library::ScanJob.enqueue_first_for says why
+      # this is a door's job and not a User callback.
+      first = Tinkerex::Registration.first_owner?
+      super do |user|
+        Library::ScanJob.enqueue_first_for(user) if first && user.persisted?
+      end
     end
 
     # Devise's #destroy is a bare `resource.destroy` with no confirmation of any kind. Account

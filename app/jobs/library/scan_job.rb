@@ -130,6 +130,20 @@ module Library
       perform_later(user_id: user.id, **args)
     end
 
+    # THE FIRST ACCOUNT TRIGGERS THE FIRST SCAN (J, 2026-10-15). Scans are enqueued PER USER, so the
+    # boot-time hook in config/puma.rb has no one to scan for on a fresh install -- measured: it ran,
+    # enqueued nothing, and a folder full of files sat unindexed until Rescan while the guide said
+    # "indexed on start". The two doors that create an account on a fresh server -- the sign-up form
+    # (Users::RegistrationsController) and `bin/rails tinkerex:owner` -- call this for the FIRST
+    # account only. Deliberately NOT a User callback: 241 test files create users, and a callback
+    # dragged FileLayer.current and a real scan into every one of them (red on all three legs,
+    # including an S3 listing against stub credentials). The gate is the same one scan_all! obeys.
+    def self.enqueue_first_for(user)
+      return unless FileLayer.current.capabilities.scannable?
+
+      enqueue_for(user)
+    end
+
     # recurring.yml has no per-user fan-out pattern (every existing entry is an all-users sweep),
     # so the schedule calls this and it fans out internally. Tenant = user, and a share-backed
     # deployment is single-user in practice, so this stays small.

@@ -43,6 +43,24 @@ module Web
       assert_select "a[href=?]", new_user_registration_path, count: 0, text: "Sign up"
     end
 
+    # THE FIRST ACCOUNT TRIGGERS THE FIRST SCAN (J, 2026-10-15), and only the first: scans are
+    # enqueued per user, so a boot-time scan found no one to scan for on a fresh install and the
+    # folder sat unindexed until Rescan. Enqueued, never performed here: on the s3 leg a performed
+    # scan would list a bucket with stub credentials.
+    test "the first account's sign-up enqueues the first library scan; a later account's does not" do
+      if FileLayer.current.capabilities.scannable?
+        assert_enqueued_with(job: Library::ScanJob) { sign_up("owner@example.com") }
+        assert_equal User.find_by!(email: "owner@example.com").id,
+                     enqueued_jobs.map { |j| j[:args].first }.find { |a| a.is_a?(Hash) && a.key?("user_id") }["user_id"]
+      else
+        assert_no_enqueued_jobs(only: Library::ScanJob) { sign_up("owner@example.com") }
+      end
+      delete destroy_user_session_path
+      ENV["REGISTRATION"] = "open"
+      assert_no_enqueued_jobs(only: Library::ScanJob) { sign_up("second@example.com") }
+      assert User.exists?(email: "second@example.com"), "the second account was created (open sign-ups), with no scan"
+    end
+
     test "a second sign-up on a closed server creates nothing" do
       User.create!(email: "owner@example.com", password: PASSWORD, confirmed_at: Time.current)
       assert_no_difference -> { User.count } do

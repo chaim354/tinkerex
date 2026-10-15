@@ -11,6 +11,7 @@ require "rake"
 # only the first time per process, so without that the next invoke in this file would silently do
 # nothing and fail for the wrong reason.
 class TinkerexTasksTest < ActiveSupport::TestCase
+  include ActiveJob::TestHelper
   PASSWORD = "correct horse battery staple".freeze
 
   setup do
@@ -42,6 +43,19 @@ class TinkerexTasksTest < ActiveSupport::TestCase
     u = User.find_by!(email: "maker@example.com")
     assert u.confirmed?
     assert u.valid_password?(PASSWORD)
+  end
+
+  # The console door matches the sign-up form: the FIRST account on an empty server enqueues the
+  # first library scan (J, 2026-10-15), a later one does not. Enqueued, never performed.
+  test "owner on an empty server enqueues the first library scan, and a second account does not" do
+    User.delete_all
+    if FileLayer.current.capabilities.scannable?
+      assert_enqueued_with(job: Library::ScanJob) { invoke!("tinkerex:owner", "first@example.com") }
+    else
+      assert_no_enqueued_jobs(only: Library::ScanJob) { invoke!("tinkerex:owner", "first@example.com") }
+    end
+    assert_no_enqueued_jobs(only: Library::ScanJob) { invoke!("tinkerex:owner", "second@example.com") }
+    assert_equal 2, User.count
   end
 
   test "owner refuses an existing address and a short password" do
