@@ -216,13 +216,19 @@ volumes:
 asset_path: /rails/public/assets
 
 
-# Configure the image builder. Both target servers (Unraid + OVH) are amd64; the Mac control
-# machine is arm64, so Kamal uses buildx to cross-build amd64 (QEMU emulation) ON THE MAC and
-# push to ghcr — both servers then pull the same image. Measured cold build ~84 s (incremental
-# deploys hit the gem/apt layer cache and are far faster), so no remote/on-box builder is needed.
-# A fat build context kills this — keep client/, docs/, test/, .claude/ out via .dockerignore.
+# Configure the image builder. Both target servers (Unraid + OVH) are amd64; the PUBLISHED image is
+# multi-arch since I (2026-10-14) so that Docker Desktop on an Apple-silicon Mac, and a Pi-class
+# box, pull a native arm64 half instead of emulating amd64. Kamal uses buildx on the Mac control
+# machine: the arm64 half is the native build there and amd64 the QEMU-emulated one (the only one
+# it built before, measured cold at ~84 s; expect roughly double now). Every Dockerfile stage is
+# arch-neutral or picks by TARGETARCH, F3D leaving a README on arm64. Verify a push with
+#   docker buildx imagetools inspect ghcr.io/chaim354/tinkerex:latest
+# which must list linux/amd64 and linux/arm64. A fat build context kills this — keep client/, docs/,
+# test/, .claude/ out via .dockerignore.
 builder:
-  arch: amd64
+  arch:
+    - amd64
+    - arm64
 
   # `secrets:` WAS HERE, holding TINKEREX_SYNC_DEPLOY_KEY alone -- the read-only key the build
   # used to fetch the private sync-engine gem. With that gem gone (Arc D Part 2) the list was
