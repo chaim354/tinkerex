@@ -182,7 +182,14 @@ module LibraryBackendCheck
   def self.check_share!(path)
     raise Error, "LIBRARY_BACKEND=share requires LIBRARY_PATH (the mounted directory to index)" if path.blank?
     unless File.exist?(path)
-      raise Error, "LIBRARY_PATH #{path.inspect} does not exist — check the path is spelled " \
+      # THE COMMON CASE IS A CONTAINER WITH NOTHING MOUNTED AT /library (I, 2026-10-14): the image
+      # defaults LIBRARY_PATH to /library, so a bare `docker run` with no -v lands here. It must keep
+      # REFUSING -- an unmounted /library inside the container would take uploads into the container's
+      # own filesystem, which reads as data loss on the next recreate -- and say how the mount is made.
+      raise Error, "LIBRARY_PATH #{path.inspect} does not exist — the library folder is not mounted " \
+                   "there. With the compose file, LIBRARY_HOST_PATH in .env names the folder bound " \
+                   "to /library (default: ./library beside the compose file); with docker run, " \
+                   "-v /path/to/your/files:/library. Outside a container, check the path is spelled " \
                    "correctly and that the mount point has been created"
     end
     raise Error, "LIBRARY_PATH #{path.inspect} is not a directory" unless File.directory?(path)
