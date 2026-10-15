@@ -34,6 +34,15 @@ view at `/` with the pitch, three screenshots and the card: `app/views/users/ses
 
 ## 2. Install — what a stranger hits, in order
 
+**Shipped by sub-project I (`docs/superpowers/specs/2026-10-14-i-simple-self-host-design.md`,
+2026-10-14):** 2.1 (the compose file pulls four ghcr images and builds nothing; building is the
+`docker-compose.build.yml` overlay), 2.2 (`PUID`/`PGID` and an entrypoint that drops privileges; the
+library folder is never chowned), the Tools gallery on by default, Docker Desktop on Mac and Windows
+as hosts, and zero required settings (the session secret is generated into the volume, the backend
+and path are image defaults, `APP_HOST` is needed only with SMTP). Still the owner's: the four ghcr
+packages' visibility. Still open: 2.3 (the sync overlay builds from a checkout) and 2.4 (the Unraid
+template on a real box).
+
 Verified against `docs/INSTALL.md`, `docker-compose.yml`, `docker-compose.chunk_remote.yml` and
 `unraid/tinkerex.xml` as of 86308876. `test/install_docs_test.rb` guards the env table (first-cell
 rule: every variable the code reads has a row); `test/deploy_hygiene_test.rb` pins the Kamal side.
