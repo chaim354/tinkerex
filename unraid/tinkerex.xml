@@ -3,13 +3,12 @@
   Unraid Community Applications template for Tinkerex on the share backend (docs/INSTALL.md is the
   full reference). It pulls ghcr.io/chaim354/tinkerex:latest, which works once that package is made
   public; until then the docker compose path in docs/INSTALL.md is the way to run it on Unraid too
-  (build the image on the box with docker compose up -d --build).
+  (build the image on the box with the build-from-source overlay in docs/INSTALL.md).
 
-  The container runs as uid 1000, not Unraid's nobody:users (99:100). Both host paths below must be
-  writable by that uid: an Unraid share with the default permissions (nobody:users, 0777) already is;
-  the appdata folder is created by Docker as root and is not, so create it first and chown it:
-    mkdir -p /mnt/user/appdata/tinkerex/storage && chown -R 1000:1000 /mnt/user/appdata/tinkerex
-  A path the container cannot write refuses the boot with a message naming it.
+  The container runs as PUID:PGID, 99:100 by default here (Unraid's own nobody:users), so the
+  appdata folder and the share need no chown: the entrypoint makes its own app-data folder that
+  user's, and an Unraid share with the default permissions is writable by it already. A path the
+  container cannot write refuses the boot with a message naming it.
 -->
 <Container version="2">
   <Name>Tinkerex</Name>
@@ -20,7 +19,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/chaim354/tinkerex</Support>
   <Project>https://github.com/chaim354/tinkerex</Project>
-  <Overview>A self-hosted library for a maker's files (3D models, CAD, laser, PDFs, images) with thumbnails, projects, inventory and a Tools gallery. Point it at a share that holds your files; it indexes them every 15 minutes and on demand, uploads land in the share as plain files, and the first account you create becomes the owner. Both paths below must be writable by uid 1000 (see the template's comment). Full reference: docs/INSTALL.md in the repository.</Overview>
+  <Overview>A self-hosted library for a maker's files (3D models, CAD, laser, PDFs, images) with thumbnails, projects, inventory and a Tools gallery. Point it at a share that holds your files; it indexes them every 15 minutes and on demand, uploads land in the share as plain files, and the first account you create becomes the owner. It runs as PUID:PGID, 99:100 by default (nobody:users), so uploads land on the share owned the way your other files are. Full reference: docs/INSTALL.md in the repository.</Overview>
   <Category>Tools: Productivity:</Category>
   <WebUI>http://[IP]:[PORT:80]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/chaim354/tinkerex/main/unraid/tinkerex.xml</TemplateURL>
@@ -33,15 +32,17 @@
   <DonateLink/>
   <Requires/>
   <Config Name="Web port" Target="80" Default="8080" Mode="tcp" Description="The port the web app is reached on." Type="Port" Display="always" Required="true" Mask="false">8080</Config>
-  <Config Name="App data (database and thumbnails)" Target="/rails/storage" Default="/mnt/user/appdata/tinkerex/storage" Mode="rw" Description="Holds the SQLite databases and the thumbnails. Create it first and make it writable by uid 1000: chown -R 1000:1000 /mnt/user/appdata/tinkerex" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/tinkerex/storage</Config>
-  <Config Name="Library (your files)" Target="/library" Default="/mnt/user/" Mode="rw" Description="The share that holds your files. Indexed every 15 minutes and on the Rescan button; uploads and deletions happen inside it (deleted files move to its .trash folder). Must be writable by uid 1000; Unraid's default share permissions allow it." Type="Path" Display="always" Required="true" Mask="false"></Config>
-  <Config Name="SECRET_KEY_BASE" Target="SECRET_KEY_BASE" Default="" Mode="" Description="Signs sessions. Generate once with: openssl rand -hex 64. Keep it; changing it signs everyone out." Type="Variable" Display="always" Required="true" Mask="true"></Config>
-  <Config Name="APP_HOST" Target="APP_HOST" Default="" Mode="" Description="The host name or IP people type to reach this server, with no scheme (e.g. 192.168.1.20 or maker.example.net). Links in email point at it." Type="Variable" Display="always" Required="true" Mask="false"></Config>
+  <Config Name="App data (database and thumbnails)" Target="/rails/storage" Default="/mnt/user/appdata/tinkerex/storage" Mode="rw" Description="Holds the SQLite databases, the thumbnails and the session secret. Created on first start; nothing to prepare." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/tinkerex/storage</Config>
+  <Config Name="Library (your files)" Target="/library" Default="/mnt/user/" Mode="rw" Description="The share that holds your files. Indexed every 15 minutes and on the Rescan button; uploads and deletions happen inside it (deleted files move to its .trash folder). Writable by PUID:PGID; Unraid's default share permissions allow it." Type="Path" Display="always" Required="true" Mask="false"></Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="The user the app runs as, and the owner of every file it writes into the share. 99 is Unraid's nobody." Type="Variable" Display="always" Required="true" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="The group the app runs as. 100 is Unraid's users." Type="Variable" Display="always" Required="true" Mask="false">100</Config>
+  <Config Name="SECRET_KEY_BASE" Target="SECRET_KEY_BASE" Default="" Mode="" Description="Optional. Generated on the first start and kept in the app data folder; set it only to use your own (openssl rand -hex 64)." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="APP_HOST" Target="APP_HOST" Default="" Mode="" Description="Only needed with SMTP_ADDRESS: the host name or IP people reach this server at, with no scheme (e.g. 192.168.1.20). Links in email point at it." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
   <Config Name="LIBRARY_BACKEND" Target="LIBRARY_BACKEND" Default="share" Mode="" Description="Fixed for this template: the library is the share mounted at /library." Type="Variable" Display="advanced-hide" Required="true" Mask="false">share</Config>
   <Config Name="LIBRARY_PATH" Target="LIBRARY_PATH" Default="/library" Mode="" Description="Fixed for this template: where the library share is mounted inside the container." Type="Variable" Display="advanced-hide" Required="true" Mask="false">/library</Config>
   <Config Name="RAILS_MAX_THREADS" Target="RAILS_MAX_THREADS" Default="16" Mode="" Description="Web server threads and the database pool." Type="Variable" Display="advanced" Required="false" Mask="false">16</Config>
   <Config Name="REGISTRATION" Target="REGISTRATION" Default="" Mode="" Description="Leave empty (closed): the first account you create is the owner and sign-ups close after it. 'open' is refused on this backend, because every account would see the same share; add accounts from the console instead (docs/INSTALL.md section 4)." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
-  <Config Name="SMTP_ADDRESS" Target="SMTP_ADDRESS" Default="" Mode="" Description="SMTP host for confirmation and password-reset mail. Empty means no mail; the first account needs none." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="SMTP_ADDRESS" Target="SMTP_ADDRESS" Default="" Mode="" Description="SMTP host for confirmation and password-reset mail. Empty means no mail, and APP_HOST with it; the first account needs none." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
   <Config Name="SMTP_USER_NAME" Target="SMTP_USER_NAME" Default="" Mode="" Description="SMTP user, if the relay needs authentication." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
   <Config Name="SMTP_PASSWORD" Target="SMTP_PASSWORD" Default="" Mode="" Description="SMTP password." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
   <Config Name="MAIL_FROM" Target="MAIL_FROM" Default="" Mode="" Description="Sender address for mail; defaults to no-reply at APP_HOST." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
