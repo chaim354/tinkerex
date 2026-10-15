@@ -43,3 +43,18 @@ plugin :solid_queue if Tinkerex::SolidQueueInPuma.enabled?
 # Specify the PID file. Defaults to tmp/pids/server.pid in development.
 # In other environments, only set the PID file if requested.
 pidfile ENV["PIDFILE"] if ENV["PIDFILE"]
+
+# A LIBRARY SCAN RUNS ONCE PUMA IS UP (J, 2026-10-15). The schedule in config/recurring.yml runs
+# every 15 minutes on its own clock, so until now a fresh install's first scan could be a quarter of
+# an hour away while the guide said "indexed on start" -- measured on a Mac and on Linux: an empty
+# catalog twenty seconds after boot, with the folder full. Puma's on_booted runs after the app has
+# loaded and the server is listening, which is when the job table exists and the in-Puma worker (or
+# a bin/jobs container) can pick the job up. Library::ScanJob.scan_all! carries the backend gate
+# (a no-op unless the backend is scannable), and a failure here is logged, never fatal: a boot must
+# not die because an enqueue did. Capybara starts its own Puma without this file, so the system
+# tests never enqueue one.
+on_booted do
+  Library::ScanJob.scan_all!
+rescue StandardError => e
+  Rails.logger.warn("boot scan not enqueued: #{e.class}: #{e.message}")
+end

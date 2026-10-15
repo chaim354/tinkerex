@@ -15,7 +15,12 @@ namespace :tinkerex do
     abort "usage: bin/rails tinkerex:owner[EMAIL]" if email.blank?
     abort "#{email} already exists — use tinkerex:password[EMAIL] to reset it" if User.exists?(email:)
     pw = tinkerex_password.call
-    User.create!(email:, password: pw, confirmed_at: Time.current)
+    # The first account on a fresh server triggers the first library scan, the same way the sign-up
+    # form does (Library::ScanJob.enqueue_first_for says why it is the door's job). Decided before
+    # the create, because afterwards there is always an account.
+    first = !User.exists?
+    user = User.create!(email:, password: pw, confirmed_at: Time.current)
+    Library::ScanJob.enqueue_first_for(user) if first
     puts "created #{email} (confirmed)"
   end
 

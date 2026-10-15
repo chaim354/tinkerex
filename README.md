@@ -18,8 +18,8 @@ images are published on ghcr.io under `chaim354`.
 ## Quick start
 
 You need Docker: Docker Desktop on a Mac or Windows machine, or Docker Engine with the Compose
-plugin on Linux. Make a folder, download [`docker-compose.yml`](docker-compose.yml) into it, and in
-that folder:
+plugin on Linux. Download [`docker-compose.yml`](docker-compose.yml) into the folder that holds your
+files, or into an empty folder, and in that folder:
 
 ```sh
 docker compose up -d
@@ -32,9 +32,9 @@ setting you can change, is **[`docs/INSTALL.md`](docs/INSTALL.md)**.
 
 The first account you create is the owner: it is confirmed on the spot, without a mail server, and
 sign-ups close behind it. Later accounts come from the console, as section 4 of the guide shows; open
-sign-ups exist only with the sync server, where each account has its own library. A `library/` folder has appeared beside the compose file: that is your library. To use a
-folder you already have, put `LIBRARY_HOST_PATH=/path/to/files` in a `.env` file beside the compose
-file and run `docker compose up -d` again.
+sign-ups exist only with the sync server, where each account has its own library. The folder the
+compose file is in is your library, files and all. To keep the file somewhere else,
+`LIBRARY_HOST_PATH=/path/to/files` in a `.env` beside it names the folder instead.
 
 ## Where files come from
 

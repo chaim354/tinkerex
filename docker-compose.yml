@@ -1,13 +1,15 @@
-# Tinkerex with the Tools gallery: four containers, your files in a folder beside this file. Nothing
-# to set before the first start. docs/INSTALL.md is the guide and names every override.
+# Tinkerex with the Tools gallery: four containers, and THE FOLDER THIS FILE IS IN is the library.
+# Put the file in the folder that holds your files, or in an empty one, and in that folder:
 #
 #   docker compose up -d                           pull and start; then http://localhost:8080
 #   docker compose pull && docker compose up -d    update
 #
-# Overrides go in an optional .env beside this file: LIBRARY_HOST_PATH to use an existing folder,
-# PUID/PGID to run as a particular user on Linux, TINKEREX_PORT, and the accounts/mail knobs
-# (.env.example lists them). docker-compose.build.yml rebuilds all four images from a clone instead
-# of pulling them; docker-compose.chunk_remote.yml adds the sync server (INSTALL.md section 5).
+# Whatever folder the file is in becomes the library, with a .trash/ inside it, so not Downloads.
+# Overrides go in an optional .env beside this file: LIBRARY_HOST_PATH to keep the file here and the
+# library elsewhere, PUID/PGID to run as someone other than the folder's owner, TINKEREX_PORT, and
+# the accounts/mail knobs (.env.example lists them; docs/INSTALL.md explains them).
+# docker-compose.build.yml rebuilds all four images from a clone instead of pulling them;
+# docker-compose.chunk_remote.yml adds the sync server (INSTALL.md section 5).
 
 services:
   web:
@@ -18,10 +20,14 @@ services:
       - path: .env
         required: false
     environment:
-      # The user the app runs as inside the container; files it writes into your folder are owned
-      # by it. Docker Desktop (Mac, Windows) needs nothing here; on Linux match your folder's owner.
-      PUID: ${PUID:-1000}
-      PGID: ${PGID:-1000}
+      # The user the app runs as inside the container. Unset, the entrypoint uses the library
+      # folder's owner (so a folder that is yours, or an Unraid share, needs nothing); set them to
+      # run as someone else. Docker Desktop (Mac, Windows) needs nothing either way.
+      PUID: ${PUID:-}
+      PGID: ${PGID:-}
+      # Display only, never a path the app opens. Its one reader (LibraryFolderHelper) turns this into "the folder your
+      # docker-compose.yml is in" when empty, or the path as typed.
+      LIBRARY_HOST_PATH: ${LIBRARY_HOST_PATH:-}
       # Puma's stock 3 threads starve once a tool call is proxied through the app; 16 is what the
       # author runs.
       RAILS_MAX_THREADS: ${RAILS_MAX_THREADS:-16}
@@ -31,7 +37,7 @@ services:
       ADDON_SOURCE_URL: http://addons
     volumes:
       - tinkerex_storage:/rails/storage
-      - ${LIBRARY_HOST_PATH:-./library}:/library
+      - ${LIBRARY_HOST_PATH:-.}:/library
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost/up"]
       interval: 30s

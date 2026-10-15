@@ -63,7 +63,37 @@ class DockerEntrypointTest < ActiveSupport::TestCase
     assert_empty calls.grep(/\Achown /), "owner already matches: #{calls}"
     assert_equal 1, calls.grep(/\Asetpriv /).size
     assert_empty calls.grep(/\Arails /)
-    assert_equal "hi", out.strip
+    assert_equal [ "PUID=#{Process.uid} PGID=#{Process.gid} (set)", "hi" ], out.lines(chomp: true)
+  end
+
+  test "PUID unset: the library folder's owner becomes the app user, and the log says so" do
+    out, status, calls = run_entrypoint("echo", "hi")
+    assert status.success?, out
+    assert_includes calls, "setpriv --reuid=#{Process.uid} --regid=#{Process.gid} --clear-groups #{@entrypoint} echo hi",
+                    "the temp library is owned by this process, so that is the user to run as: #{calls}"
+    assert_empty calls.grep(/library/), "inferring the owner never chowns the folder: #{calls}"
+    assert_match(/PUID=#{Process.uid} PGID=#{Process.gid} \(inferred from .*library's owner\)/, out)
+
+    # The compose file passes PUID="" when nothing is set; empty must mean unset, not uid "".
+    # The recorder log appends, so the first run's lines are cleared before the second is counted.
+    FileUtils.rm_f(@log)
+    out, status, calls = run_entrypoint("echo", "hi", env: { "PUID" => "", "PGID" => "" })
+    assert status.success?, out
+    assert_equal 1, calls.grep(/\Asetpriv --reuid=#{Process.uid} --regid=#{Process.gid} /).size, calls.inspect
+  end
+
+  test "PUID unset and no library folder: 1000:1000, the default, and the log says so" do
+    out, status, calls = run_entrypoint("echo", "hi", env: { "LIBRARY_PATH" => File.join(@root, "absent") })
+    assert status.success?, out
+    assert_equal 1, calls.grep(/\Asetpriv --reuid=1000 --regid=1000 /).size, calls.inspect
+    assert_match(/PUID=1000 PGID=1000 \(default\)/, out)
+  end
+
+  test "PUID set and PGID unset: no inference, PUID wins and PGID is 1000" do
+    out, status, calls = run_entrypoint("echo", "hi", env: { "PUID" => "99" })
+    assert status.success?, out
+    assert_equal 1, calls.grep(/\Asetpriv --reuid=99 --regid=1000 /).size, calls.inspect
+    assert_match(/PUID=99 PGID=1000 \(set\)/, out)
   end
 
   test "not root (started with --user): no chown, no setpriv, the command runs as given" do
@@ -76,7 +106,7 @@ class DockerEntrypointTest < ActiveSupport::TestCase
   test "PUID=0 means stay root: no setpriv, no loop, the command runs" do
     out, status, calls = run_entrypoint("echo", "hi", env: { "PUID" => "0", "PGID" => "0" })
     assert status.success?, out
-    assert_equal "hi", out.strip
+    assert_equal [ "PUID=0 PGID=0 (set)", "hi" ], out.lines(chomp: true)
     assert_empty calls.grep(/\Asetpriv /), "re-executing as uid 0 would see root again and loop forever: #{calls}"
   end
 

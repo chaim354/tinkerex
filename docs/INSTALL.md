@@ -16,8 +16,8 @@ is the second path. Pointing the app at your own S3 bucket is a third, at the en
 - **Docker.** On a Mac or a Windows machine, [Docker Desktop](https://www.docker.com/products/docker-desktop/).
   On Linux, Docker Engine with the Compose plugin. Either way `docker compose version` must say
   2.24 or newer.
-- **A folder for your files**, or nothing: the first start makes an empty `library/` folder beside
-  the compose file, and you can point it at an existing folder afterwards (section 3).
+- **A folder for your files**, or an empty one: the folder you put the compose file in is the
+  library.
 - Nothing else: no Ruby, no database server, no mail server, no secrets to generate. The database is
   SQLite in a Docker volume, and the session secret is generated on the first start and kept there.
 
@@ -32,13 +32,16 @@ an arm64 Linux box. The author runs this on a Mac and on Linux; the Windows path
 
 ## 2. Quick start
 
-Make a folder, put [`docker-compose.yml`](../docker-compose.yml) in it (download it from this
-repository), and in that folder:
+Put [`docker-compose.yml`](../docker-compose.yml) (download it from this repository) in the folder
+that holds your files — or in an empty folder — and in that folder:
 
 ```sh
 docker compose up -d
 docker compose logs -f web      # until Puma reports it is listening; Ctrl-C leaves it running
 ```
+
+Whatever folder the file is in becomes the library: it is indexed, uploads land in it, and deleted
+files move to a `.trash/` inside it. So not your Downloads folder.
 
 The first start pulls the four images. `curl http://localhost:8080/up` answers `200` once the app is
 ready; the compose healthcheck polls the same path. Open `http://localhost:8080`.
@@ -56,8 +59,8 @@ No mail server is involved in any of this.
 
 ### Where your files come from
 
-- **The `library/` folder beside the compose file is your library** — or the folder you name in
-  section 3. It is indexed on start, every 15 minutes after that, and whenever you press
+- **The folder the compose file is in is your library** — or the folder you name in section 3. It
+  is indexed on start, every 15 minutes after that, and whenever you press
   **Rescan library** on the Files page. Anything you put in the folder by other means — a copy
   over the network, a slicer saving into it — appears on the next scan.
 - **Uploads in the browser land in the folder** as ordinary files, so the folder remains the
@@ -89,20 +92,23 @@ Everything here is optional. A setting goes in a file named `.env` beside the co
 `NAME=value` per line, followed by `docker compose up -d` again; `.env.example` in the repository
 lists every line with its default.
 
-- **`LIBRARY_HOST_PATH`** — the folder that holds your files, instead of `./library`. An absolute
-  path (`/mnt/user/files`, `/Users/you/Workshop`, `C:\Users\you\Workshop`) or one relative to the
-  compose file. On a Mac or Windows the folder must be under a location Docker Desktop shares with
-  containers, which by default includes your home directory. On Windows a folder on the Windows
-  drive works; a large library is faster inside the WSL2 filesystem. The app is a view of that
-  folder, not a copy: uploads land in it, deleted files move to its `.trash/`, and anything another
-  program puts there is indexed within 15 minutes.
-- **`PUID` and `PGID`** (Linux) — the user and group the app runs as inside the container, default
-  `1000`. Files the app writes into your folder are owned by that user, and the boot checks it can
-  write there. Set them to the owner of your folder (`id -u` and `id -g` print yours); on Unraid,
-  `99` and `100`. Docker Desktop on Mac and Windows presents your folders as writable by any user,
-  so there is nothing to set there. The app never changes your folder's ownership — it only probes
-  it — with one exception: an empty folder owned by root (the one Docker itself creates on Linux
-  for a missing `./library`) is made the app user's, so the default works on the first start.
+- **`LIBRARY_HOST_PATH`** — the folder that holds your files, when it is not the compose file's own
+  folder. An absolute path (`/mnt/user/files`, `/Users/you/Workshop`, `C:\Users\you\Workshop`) or
+  one relative to the compose file. On a Mac or Windows the folder must be under a location Docker
+  Desktop shares with containers, which by default includes your home directory. On Windows a
+  folder on the Windows drive works; a large library is faster inside the WSL2 filesystem. The app
+  is a view of that folder, not a copy: uploads land in it, deleted files move to its `.trash/`, and
+  anything another program puts there is indexed within 15 minutes.
+- **`PUID` and `PGID`** (Linux) — the user and group the app runs as inside the container. By
+  default it runs as **the owner of your folder**, so there is nothing to set when the folder is
+  yours or an Unraid share (`99`/`100`). Set them when the folder is owned by root (the default is
+  then `1000`; `id -u` and `id -g` print yours) or to run as a different user on purpose. Set both
+  or neither: with `PUID` alone, `PGID` is `1000`. Files the app writes into your folder are owned
+  by that user, and the boot checks it can write there.
+  Docker Desktop on Mac and Windows presents your folders as writable by any user, so there is
+  nothing to set there. The app never changes your folder's ownership — it only probes it — with
+  one exception: an empty folder owned by root (the one Docker itself creates on Linux for a
+  missing bind-mount source) is made the app user's, so a fresh install works on the first start.
 - **`TINKEREX_PORT`** — the port on this machine, default `8080`.
 - Accounts and mail are section 4; the sync server is section 5; every other variable is in
   section 8.
@@ -123,7 +129,8 @@ The first build downloads a few hundred megabytes of renderers and compiles two 
 allow several minutes. It is the path for an arm64 Linux box (the OpenSCAD image cannot be built
 there without x86 emulation — start the other three by name: `… up -d --build web boxes addons`;
 the box generator and the bundle server build natively), for a machine without registry access,
-and for working on the app.
+and for working on the app. In a clone the overlay binds `./library` (gitignored) to `/library`
+instead of the clone's own folder, so the repository itself is never indexed.
 
 ### Your own S3 bucket instead of a folder
 
@@ -311,9 +318,9 @@ compose*; the rest come from `.env`.
 | `FORCE_SSL` | when behind TLS | off | Set to `1` when the server is reached over HTTPS through a reverse proxy: redirects plain HTTP, marks cookies secure, makes mail links `https`. Setting it with no TLS in front locks you out. |
 | `RAILS_MAX_THREADS` | no | 3 (Puma), 5 (database pool); **the compose file sets 16** | Puma's thread count and the SQLite connection pool. 3 starves once a tool call is proxied through the app; 16 is what the author runs. |
 | `SOLID_QUEUE_IN_PUMA` | no | **on** in production | Runs the background workers (scans, thumbnails, trash purge, project intake, the changelog pull) inside the web container. `false`, `0` or `no` turns it off, for a split `bin/jobs` container. Outside production it is an opt-in, as it always was. |
-| **Compose only** (`docker-compose.yml` reads these; the app never sees them, except `PUID`/`PGID`, which reach the container's entrypoint) | | | |
-| `LIBRARY_HOST_PATH` | no | `./library` | The folder on the host bound to `/library`; a relative path is resolved against the compose file's directory. Section 3. |
-| `PUID`, `PGID` | no | `1000`, `1000` | The user and group the app runs as inside the container, and so the owner of every file it writes into your folder (section 3). Linux: the folder's owner, or `99`/`100` on Unraid. Docker Desktop needs nothing. The container starts as root and drops to them; `--user` on the container skips that and runs as given. |
+| **Compose only** (`docker-compose.yml` reads these; the app never sees them, except `LIBRARY_HOST_PATH`, passed through display-only, and `PUID`/`PGID`, which reach the entrypoint) | | | |
+| `LIBRARY_HOST_PATH` | no | the compose file's own folder (`.`) | The folder on the host bound to `/library`; a relative path is resolved against the compose file's directory. Also passed into the container display-only, so the Getting started panel can name the folder ("the folder your docker-compose.yml is in", or the path as typed). Section 3. |
+| `PUID`, `PGID` | no | the library folder's owner, else `1000` | The user and group the app runs as inside the container, and so the owner of every file it writes into your folder (section 3). Both unset, the folder's owner when it is not root, otherwise `1000`; with `PUID` set alone, `PGID` is `1000`. An Unraid share gives `99`/`100`; Docker Desktop needs nothing. The container starts as root and drops to them; `--user` on the container skips that and runs as given. |
 | `TINKEREX_PORT` | no | `8080` | The host port the web app is published on. |
 | `TINKEREX_IMAGE` | no | `ghcr.io/chaim354/tinkerex:latest` | The app image. `docker-compose.build.yml` builds `tinkerex:local` from the checkout instead. |
 | `TINKEREX_ADDONS_PATH` | build overlay | `../tinkerex-addons` | Path to a checkout of `chaim354/tinkerex-addons`, the build context for the addon bundle server in `docker-compose.build.yml`. |

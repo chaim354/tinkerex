@@ -188,7 +188,7 @@ module LibraryBackendCheck
       # own filesystem, which reads as data loss on the next recreate -- and say how the mount is made.
       raise Error, "LIBRARY_PATH #{path.inspect} does not exist — the library folder is not mounted " \
                    "there. With the compose file, LIBRARY_HOST_PATH in .env names the folder bound " \
-                   "to /library (default: ./library beside the compose file); with docker run, " \
+                   "to /library (default: the compose file's own folder); with docker run, " \
                    "-v /path/to/your/files:/library. Outside a container, check the path is spelled " \
                    "correctly and that the mount point has been created"
     end

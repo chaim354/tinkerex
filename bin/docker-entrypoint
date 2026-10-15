@@ -2,7 +2,7 @@
 
 # THE ENTRYPOINT DROPS PRIVILEGES ITSELF (I, 2026-10-14). The image has no USER line, so a container
 # starts as root; this script makes the app's own writable directories the requested user's and
-# re-executes itself as PUID:PGID (default 1000:1000) through setpriv, which util-linux ships in the
+# re-executes itself as PUID:PGID (default: the library folder's owner, else 1000:1000) through setpriv, which util-linux ships in the
 # base image. A build-time USER cannot take an env value, and it is what forced every install to
 # chown its folder to uid 1000.
 #
@@ -23,8 +23,26 @@ app_root="$(cd "$(dirname "$0")/.." && pwd)"
 owned_by() { [ -n "$(find "$1" -maxdepth 0 -user "$2" -group "$3" 2>/dev/null)" ]; }
 
 if [ "$(id -u)" = "0" ]; then
+  # RUN AS THE FOLDER'S OWNER WHEN NOTHING SAYS OTHERWISE (J, 2026-10-15). A folder that is yours,
+  # an Unraid share (nobody:users), a NAS export owned by some other uid: its owner is the only
+  # user that can write there, so with PUID unset that owner is the app's user. A root-owned folder
+  # (Docker Desktop's bind mounts read that way; a fresh root-made directory too) keeps the 1000
+  # default and the share guard decides. Explicit PUID/PGID win, each on its own; PUID set with
+  # PGID unset keeps PGID at 1000, so an operator who pins one is not surprised by the other.
+  # `stat -c` is GNU (the image); the `stat -f` arm is BSD, for the test suite on a Mac.
+  library="${LIBRARY_PATH:-/library}"
+  puid_source="set"
+  if [ -z "${PUID:-}" ]; then
+    owner=""
+    [ -d "$library" ] && owner=$(stat -c '%u:%g' "$library" 2>/dev/null || stat -f '%u:%g' "$library" 2>/dev/null || true)
+    case "$owner" in
+      ""|0:*) puid_source="default" ;;
+      *) PUID="${owner%%:*}"; PGID="${PGID:-${owner##*:}}"; puid_source="inferred from $library's owner" ;;
+    esac
+  fi
   PUID="${PUID:-1000}"
   PGID="${PGID:-1000}"
+  echo "PUID=$PUID PGID=$PGID ($puid_source)" >&2
   case "$PUID$PGID" in
     *[!0-9]*) echo "PUID and PGID must be whole numbers (got PUID=$PUID PGID=$PGID)" >&2; exit 1 ;;
   esac
@@ -37,7 +55,6 @@ if [ "$(id -u)" = "0" ]; then
 
   # Best effort, and the share guard decides: on an NFS export with root_squash even root cannot
   # chown, and a boot that died here would hide the guard's own message (found in review).
-  library="${LIBRARY_PATH:-/library}"
   if [ -d "$library" ] && [ -n "$(find "$library" -maxdepth 0 -user 0 2>/dev/null)" ] && [ -z "$(ls -A "$library" 2>/dev/null)" ]; then
     chown "$PUID:$PGID" "$library" 2>/dev/null || true
   fi
