@@ -128,8 +128,8 @@ owner" vs "PUID default" vs "PUID set"), so a surprising uid is one `docker comp
   overrides `web`'s volumes to `./library` (and keeps the storage volume).
 - `test/docker_entrypoint_test.rb`: with `PUID` unset and a library folder owned by the test's own
   uid:gid, `setpriv` is called with those ids and the folder is not chowned; with the folder
-  absent, 1000:1000; with `PUID` set and `PGID` unset, `PUID` wins and `PGID` is the inferred gid.
-  The root-owned case still belongs to the Linux run.
+  absent, 1000:1000; with `PUID` set and `PGID` unset, no inference runs: `PUID` wins and `PGID`
+  is 1000, today's behaviour. The root-owned case still belongs to the Linux run.
 - `test/integration/web/where_files_come_from_test.rb`: the three sentences, driven by setting the
   environment variable absent, empty and to a path; the empty-state pages say the same.
 - `test/install_docs_test.rb` keeps the env table honest (the `LIBRARY_HOST_PATH` row moves, the
