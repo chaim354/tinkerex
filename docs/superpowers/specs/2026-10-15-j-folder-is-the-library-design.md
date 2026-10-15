@@ -109,12 +109,16 @@ of an hour. Measured twice on the Mac run (a catalog empty 20–25 s after boot,
 Two changes make the claim true. `config/puma.rb` enqueues `Library::ScanJob.scan_all!` in
 `on_booted`, logging rather than dying on failure, which covers every restart (a file changed while
 the app was down is picked up at once). That hook alone could not cover the first run — the job is
-enqueued per user and at boot there is no account yet, measured — so `User` enqueues one scan for
-itself `after_create_commit` when the backend is scannable: creating the account is the moment the
-library gets a reader. On share and s3 a second account's scan is a cheap no-op; on chunk_remote
-nothing is enqueued. Pinned by `test/boot_scan_test.rb` (static, because Puma's hooks are not
-reachable from a Rails test) and `test/models/user_first_scan_test.rb`; proved by the Mac run with
-no Rescan.
+enqueued per user and at boot there is no account yet, measured — so the two doors that create an
+account on a fresh server, the sign-up form and `bin/rails tinkerex:owner`, enqueue one scan for
+the FIRST account through `Library::ScanJob.enqueue_first_for`, decided before the account exists:
+creating it is the moment the library gets a reader. **Not a `User` callback**, which was the first
+attempt: 241 test files create users, and the callback dragged `FileLayer.current` and a real scan
+into every one of them — a test double port without `capabilities`, a preview test counting every
+enqueued job, and on the s3 leg a sign-up flow that performs its jobs and so listed a bucket with
+stub credentials (red on all three legs). On chunk_remote nothing is enqueued. Pinned by
+`test/boot_scan_test.rb` (static, because Puma's hooks are not reachable from a Rails test), the
+registration-mode test and the console-task test; proved by the Mac run with no Rescan.
 
 ## 4. Docs and the template
 
