@@ -47,6 +47,15 @@ module Web
 
     def text_of(selector) = css_select(selector).map(&:text).join(" ").squish
 
+    def with_library_host_path(value)
+      had = ENV.key?("LIBRARY_HOST_PATH")
+      was = ENV["LIBRARY_HOST_PATH"]
+      value.nil? ? ENV.delete("LIBRARY_HOST_PATH") : ENV["LIBRARY_HOST_PATH"] = value
+      yield
+    ensure
+      had ? ENV["LIBRARY_HOST_PATH"] = was : ENV.delete("LIBRARY_HOST_PATH")
+    end
+
     # --- Recent ----------------------------------------------------------------------------------
 
     test "Recent's getting-started panel names every way a file arrives on this library" do
@@ -98,6 +107,27 @@ module Web
       assert_match(/becomes a project within 15 minutes/, text_of(".getting-started .projects-intake"))
     end
 
+    test "with the compose file's default the panel says the folder the file is in; with a path, the path" do
+      with_library_host_path("") do
+        get root_path
+        assert_response :success
+        sources = text_of(".getting-started .file-sources")
+        assert_match(/The folder your docker-compose\.yml is in is your library.*within 15 minutes.*Rescan library/, sources)
+        assert_no_match(/library folder on the server/, sources)
+      end
+      with_library_host_path("/Users/me/Workshop") do
+        get root_path
+        sources = text_of(".getting-started .file-sources")
+        assert_match(%r{/Users/me/Workshop is your library.*within 15 minutes}, sources)
+        assert_select ".getting-started .file-sources code", text: "/Users/me/Workshop"
+      end
+      with_library_host_path("<b>x</b>") do
+        get root_path
+        assert_select ".getting-started .file-sources code", text: "<b>x</b>"
+        assert_select ".getting-started .file-sources b", 0, "the value is shown as typed, escaped"
+      end
+    end
+
     # --- The Library -----------------------------------------------------------------------------
 
     test "the Library's new-library state says the same" do
@@ -110,6 +140,14 @@ module Web
       assert_match(/library folder on the server.*within 15 minutes/, empty)
       assert_match(/becomes a project/, empty)
       assert_select ".library-main .empty .projects-intake a[href=?]", settings_filing_rules_path
+    end
+
+    test "the Library's empty state names the folder the same way" do
+      with_library_host_path("") do
+        get files_path
+        assert_response :success
+        assert_match(/The folder your docker-compose\.yml is in is your library/, text_of(".library-main .empty"))
+      end
     end
 
     test "an empty folder says so, and how to fill it" do
