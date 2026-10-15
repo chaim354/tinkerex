@@ -12,6 +12,11 @@ services:
   web:
     image: tinkerex:local
     build: .
+    # In a clone "." is the repository: nobody wants it indexed with a .trash/ inside, so the mount
+    # goes back to ./library here (gitignored). Compose merges volumes by container path, which is
+    # why this one line replaces the base file's /library mount and keeps the storage volume.
+    volumes:
+      - ./library:/library
   boxes:
     image: boxes-sidecar:local
     build: sidecar/boxes
