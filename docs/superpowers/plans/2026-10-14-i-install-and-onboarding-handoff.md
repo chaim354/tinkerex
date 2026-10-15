@@ -100,6 +100,9 @@ rule: every variable the code reads has a row); `test/deploy_hygiene_test.rb` pi
 ## 3. Onboarding — what the first hour still gets wrong
 
 ### 3.1 The empty state does not name the folder
+**Shipped by J (2026-10-15):** the shared partial's subject comes from `LibraryFolderHelper`,
+reading `LIBRARY_HOST_PATH` display-only — "the folder your docker-compose.yml is in" when the
+compose file sets it empty, the path as typed when set, today's sentence when absent.
 - `app/views/shared/_where_files_come_from.html.erb:31-37` says "The library folder on the
   server is your library" without saying which folder. Inside the container it is always
   `/library` (INSTALL.md:285); the host path is only known to compose (`LIBRARY_HOST_PATH`,
