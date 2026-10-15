@@ -12,28 +12,29 @@ It runs on real hardware, every day, for its author. There are three ways to hol
 per deployment: a **folder you point it at** (a NAS share, a directory on the box), **your own S3
 bucket**, or the **sync server** (`chaim354/tinkerex-sync`), which adds per-account libraries,
 versions and restore, and is what the desktop client syncs against. The first two keep your files as
-plain files you can edit with anything else. It is open source under the Apache License 2.0. It is
-not yet a product: there is no public image to pull.
+plain files you can edit with anything else. It is open source under the Apache License 2.0, and the
+images are published on ghcr.io under `chaim354`.
 
 ## Quick start
 
-You need Docker with the Compose plugin on a Linux box and a folder of files. The full guide, with
-the reference for every setting, is **[`docs/INSTALL.md`](docs/INSTALL.md)**.
+You need Docker: Docker Desktop on a Mac or Windows machine, or Docker Engine with the Compose
+plugin on Linux. Make a folder, download [`docker-compose.yml`](docker-compose.yml) into it, and in
+that folder:
 
 ```sh
-git clone https://github.com/chaim354/tinkerex.git
-cd tinkerex
-cp .env.example .env            # then set SECRET_KEY_BASE, LIBRARY_HOST_PATH and APP_HOST in it
-docker compose up -d --build    # several minutes the first time
+docker compose up -d
 ```
 
-Open `http://<host>:8080`.
+Open `http://localhost:8080`. Nothing to generate, edit or chown first; the full guide, with every
+setting you can change, is **[`docs/INSTALL.md`](docs/INSTALL.md)**.
 
 ## First run
 
 The first account you create is the owner: it is confirmed on the spot, without a mail server, and
-sign-ups close behind it. Later accounts come from the console or from opening registration, both in
-the guide.
+sign-ups close behind it. Later accounts come from the console, as section 4 of the guide shows; open
+sign-ups exist only with the sync server, where each account has its own library. A `library/` folder has appeared beside the compose file: that is your library. To use a
+folder you already have, put `LIBRARY_HOST_PATH=/path/to/files` in a `.env` file beside the compose
+file and run `docker compose up -d` again.
 
 ## Where files come from
 
@@ -43,14 +44,14 @@ it; folders under `Projects/` become projects. The app is a view of the folder, 
 
 ## The Tools gallery
 
-Add-ons — a box generator and an OpenSCAD editor — run as separate containers started with
-`docker compose --profile tools up -d --build` and a sibling checkout of `chaim354/tinkerex-addons`.
-Without the profile the gallery is empty and says so.
+Add-ons — a box generator and an OpenSCAD editor — are the other three containers the compose file
+starts, so the gallery is live from the first start. They run as separate processes reached over
+HTTP (the two tools are GPL-licensed and are never linked into the app).
 
 ## Updating and backups
 
-Update with `git pull && docker compose up -d --build`; the database migrates on start. Back up the
-`tinkerex_storage` volume's database with SQLite's `.backup` (never copy the live file) and your
+Update with `docker compose pull && docker compose up -d`; the database migrates on start. Back up
+the `tinkerex_storage` volume's database with SQLite's `.backup` (never copy the live file) and your
 folder with anything. Both recipes are in the guide.
 
 ## The repositories

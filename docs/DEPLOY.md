@@ -419,10 +419,15 @@ Set it up once, after the first deploy that carries the variable (this creates t
 the first reset); reset by hand whenever it needs it; read the nightly run the morning after:
 
 ```sh
-kamal app exec -d ovh --hosts 15.204.216.249 --reuse "bin/rails tinkerex:demo:setup"
-kamal app exec -d ovh --hosts 15.204.216.249 --reuse "bin/rails tinkerex:demo:reset"
+kamal app exec -d ovh --hosts 15.204.216.249 --reuse "bin/docker-entrypoint bin/rails tinkerex:demo:setup"
+kamal app exec -d ovh --hosts 15.204.216.249 --reuse "bin/docker-entrypoint bin/rails tinkerex:demo:reset"
 kamal app logs -d ovh --hosts 15.204.216.249 --since 24h --grep DemoReset
 ```
+
+`bin/docker-entrypoint` in front of the command is load-bearing since I (2026-10-14): the image starts
+as root and the entrypoint drops to the app's user, while `--reuse` is a bare `docker exec` that would
+otherwise run the reset as root and leave every seeded file root-owned on a share library (OVH is s3,
+where writes go to the bucket, but the recipe is the same everywhere).
 
 **What resets, every night at 04:00 UTC (`Tinkerex::DemoResetJob`, `config/recurring.yml`) and on each
 setup or reset:** every file and folder in the demo library is deleted through the port and the trash

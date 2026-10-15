@@ -23,7 +23,12 @@ class LibraryBackendCheckTest < ActiveSupport::TestCase
     end
     assert_match(/does not exist/, err.message,
                  "must name the actual problem — a path that is not there is a typo'd " \
-                 "LIBRARY_PATH, NOT an unmounted share (an unmounted share exists and is empty)")
+                 "LIBRARY_PATH or a container /library nothing was bound to, NOT an unmounted " \
+                 "host share (an unmounted host share exists and is empty)")
+    assert_match(%r{:/library}, err.message,
+                 "a stranger's container is the common case: the message must say how the folder " \
+                 "is mounted (-v …:/library, or LIBRARY_HOST_PATH with the compose file)")
+    assert_includes err.message, "LIBRARY_HOST_PATH"
   end
 
   test "share mode refuses to boot when the root is a file rather than a directory" do

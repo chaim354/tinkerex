@@ -1,25 +1,36 @@
-# A single-owner Tinkerex on the share backend: one container, your files in a folder you point it
-# at. Copy .env.example to .env first. docs/INSTALL.md explains every variable; the two the app
-# itself needs to pick this backend are set below, where .env cannot change them by accident.
+# Tinkerex with the Tools gallery: four containers, your files in a folder beside this file. Nothing
+# to set before the first start. docs/INSTALL.md is the guide and names every override.
 #
-#   docker compose up -d --build                     the app
-#   docker compose --profile tools up -d --build     plus the Tools gallery (INSTALL.md section 3)
-#   docker-compose.chunk_remote.yml                  the overlay that adds the sync server (section 5)
+#   docker compose up -d                           pull and start; then http://localhost:8080
+#   docker compose pull && docker compose up -d    update
+#
+# Overrides go in an optional .env beside this file: LIBRARY_HOST_PATH to use an existing folder,
+# PUID/PGID to run as a particular user on Linux, TINKEREX_PORT, and the accounts/mail knobs
+# (.env.example lists them). docker-compose.build.yml rebuilds all four images from a clone instead
+# of pulling them; docker-compose.chunk_remote.yml adds the sync server (INSTALL.md section 5).
 
 services:
   web:
-    image: ${TINKEREX_IMAGE:-tinkerex:local}
-    build: .
+    image: ${TINKEREX_IMAGE:-ghcr.io/chaim354/tinkerex:latest}
     ports:
       - "${TINKEREX_PORT:-8080}:80"
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     environment:
-      LIBRARY_BACKEND: share
-      LIBRARY_PATH: /library
+      # The user the app runs as inside the container; files it writes into your folder are owned
+      # by it. Docker Desktop (Mac, Windows) needs nothing here; on Linux match your folder's owner.
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      # Puma's stock 3 threads starve once a tool call is proxied through the app; 16 is what the
+      # author runs.
+      RAILS_MAX_THREADS: ${RAILS_MAX_THREADS:-16}
+      # The Tools gallery, wired to the three services below.
+      BOXES_SIDECAR_URL: http://boxes:8000
+      OPENSCAD_SIDECAR_URL: http://openscad:8000
+      ADDON_SOURCE_URL: http://addons
     volumes:
       - tinkerex_storage:/rails/storage
-      # The folder must be writable by uid 1000, which the container runs as; the boot probes it
-      # and refuses with a message if it is not (INSTALL.md section 2).
       - ${LIBRARY_HOST_PATH:-./library}:/library
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost/up"]
@@ -29,23 +40,26 @@ services:
       start_period: 90s
     restart: unless-stopped
 
-  # The Tools gallery, started only with --profile tools. The two sidecars are GPL-licensed and run
-  # as their own processes, reached over HTTP and never linked into the app (CLAUDE.md section 9);
-  # addons is an nginx image serving the bundle files from a sibling checkout of
-  # chaim354/tinkerex-addons. The openscad image is x86_64-only (an AppImage).
+  # The Tools gallery. The two sidecars are GPL-licensed and run as their own processes, reached
+  # over HTTP and never linked into the app (CLAUDE.md section 9); addons serves the bundle files.
+  # ALL THREE ARE PINNED TO linux/amd64: openscad is an x86-only AppImage, and the other two are
+  # published for amd64 alone today (measured 2026-10-14 with docker buildx imagetools inspect). The
+  # pin makes an arm64 Docker Desktop pull and emulate them instead of failing with "no matching
+  # manifest". An arm64 Linux box without emulation loses the three Tools services and keeps the
+  # app; the gallery then says so.
   boxes:
-    profiles: [tools]
-    build: sidecar/boxes
+    image: ghcr.io/chaim354/boxes-sidecar:latest
+    platform: linux/amd64
     restart: unless-stopped
   openscad:
-    profiles: [tools]
-    build: sidecar/openscad
+    image: ghcr.io/chaim354/openscad-sidecar:latest
+    platform: linux/amd64
     volumes:
       - openscad_cache:/cache
     restart: unless-stopped
   addons:
-    profiles: [tools]
-    build: ${TINKEREX_ADDONS_PATH:-../tinkerex-addons}
+    image: ghcr.io/chaim354/tinkerex-addons:latest
+    platform: linux/amd64
     restart: unless-stopped
 
 volumes:

@@ -50,3 +50,6 @@
 .claude/*
 !.claude/commands/
 .superpowers/
+
+# The compose file's default library folder, created beside it on the first start (docs/INSTALL.md section 3).
+/library/

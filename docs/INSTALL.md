@@ -1,66 +1,50 @@
 # Installing Tinkerex
 
-A self-hosted library for a maker's files, run with Docker Compose on your own machine. This page
-is the whole of what a new install needs: the quick start, the optional pieces, and — in section 8
-— **the reference for every environment variable the app reads**. That table is guarded by
-`test/install_docs_test.rb`, which fails the build when the code reads a variable this page does
-not name, so it is current by construction rather than by promise.
+A self-hosted library for a maker's files, run with Docker Compose on your own machine — a Mac, a
+Windows machine or a Linux box. This page is the whole of what a new install needs: the quick start,
+the settings you can change, the optional pieces, and — in section 8 — **the reference for every
+environment variable the app reads**. That table is guarded by `test/install_docs_test.rb`, which
+fails the build when the code reads a variable this page does not name, so it is current by
+construction rather than by promise.
 
-The first path here is the **`share` backend**: you point the app at a folder of files, it
-indexes them, and that folder stays yours — plain files on disk, editable with anything else. The
-sync server (section 5) is the second path. Pointing the app at your own S3 bucket is a third,
-described at the end of section 2.
+The first path here is the **`share` backend**: your files stay plain files in a folder, the app
+indexes them, and that folder stays yours — editable with anything else. The sync server (section 5)
+is the second path. Pointing the app at your own S3 bucket is a third, at the end of section 3.
 
 ## 1. What you need
 
-- **Docker Engine with the Compose plugin**, v2.24 or newer (`docker compose version`). The
-  chunk_remote overlay uses Compose's `!override` tag, which arrived in 2.24.
-- **A Linux box, amd64.** arm64 also works, with two gaps: F3D ships no Linux arm64 build, so
-  STEP, IGES, OBJ and the other mesh formats get a generic icon instead of a thumbnail (everything
-  else — STL, SVG, DXF, LightBurn, PDF, images, Gerber — renders); and the OpenSCAD tool's image is
-  x86_64-only (an AppImage), so that one addon is unavailable there.
-- **A folder of files**, or an empty folder to start with. The first build downloads a few hundred
-  megabytes of renderers and compiles two small Rust tools; allow several minutes.
-- Nothing else: no Ruby, no database server, no mail server on day one. SQLite is the database and
-  lives in a Docker volume.
+- **Docker.** On a Mac or a Windows machine, [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+  On Linux, Docker Engine with the Compose plugin. Either way `docker compose version` must say
+  2.24 or newer.
+- **A folder for your files**, or nothing: the first start makes an empty `library/` folder beside
+  the compose file, and you can point it at an existing folder afterwards (section 3).
+- Nothing else: no Ruby, no database server, no mail server, no secrets to generate. The database is
+  SQLite in a Docker volume, and the session secret is generated on the first start and kept there.
 
-## 2. Quick start (the share backend)
+Four images are pulled: the app, the two tools (a box generator and OpenSCAD) and the small server
+that holds the tool bundles. The app image is built for amd64 and arm64, so an Apple-silicon Mac or a
+Raspberry Pi-class box runs it natively; STEP, IGES, OBJ and the other mesh formats get a generic
+icon instead of a thumbnail on arm64 (F3D ships no Linux arm64 build; STL, SVG, DXF, LightBurn, PDF,
+images and Gerber all render). The three Tools images are published for amd64 only (OpenSCAD is an
+x86 AppImage; the other two are built that way today), and the compose file says so, so Docker
+Desktop on an Apple-silicon Mac pulls them and runs them under emulation; section 3 has the note for
+an arm64 Linux box. The author runs this on a Mac and on Linux; the Windows path has not been run.
 
-```sh
-git clone https://github.com/chaim354/tinkerex.git
-cd tinkerex
-cp .env.example .env
-```
+## 2. Quick start
 
-Open `.env` and set the three lines at the top:
-
-1. **`SECRET_KEY_BASE`** — `openssl rand -hex 64`. It signs sessions; keep it, because changing it
-   signs everyone out.
-2. **`LIBRARY_HOST_PATH`** — the folder that holds (or will hold) your files, on this machine.
-   The container runs as **user id 1000** and must be able to write there (uploads land in it,
-   deleted files move to its `.trash/`). If uid 1000 is your own account — it is the first
-   ordinary user on most Linux systems; `id -u` tells you — there is nothing to do. Otherwise:
-   `sudo chown -R 1000:1000 /path/to/files`, or grant that uid write access another way (a group,
-   an ACL). A folder that is not writable refuses the boot with a message that says so; it is not
-   indexed read-only.
-3. **`APP_HOST`** — the host name or address people will type to reach this server, without a
-   scheme: `maker.example.net`, or `192.168.1.20`. It is what links in email point at.
-
-Then:
+Make a folder, put [`docker-compose.yml`](../docker-compose.yml) in it (download it from this
+repository), and in that folder:
 
 ```sh
-docker compose up -d --build
+docker compose up -d
 docker compose logs -f web      # until Puma reports it is listening; Ctrl-C leaves it running
 ```
 
-Open `http://<that host>:8080` (`TINKEREX_PORT` in `.env` changes the port). `curl
-http://localhost:8080/up` answers `200` once the app is ready; the compose healthcheck polls the
-same path.
+The first start pulls the four images. `curl http://localhost:8080/up` answers `200` once the app is
+ready; the compose healthcheck polls the same path. Open `http://localhost:8080`.
 
-**If the container exits**, `docker compose logs web` has the reason, and it is almost always one
-sentence naming a setting: a missing `.env` (`env file … not found` — you skipped the `cp`), a
-library folder that is not writable by uid 1000, or a blank `SECRET_KEY_BASE`. The app refuses to
-boot on a misconfiguration rather than starting and failing later.
+**If a container exits**, `docker compose logs web` has the reason, and it is one sentence naming the
+problem. The app refuses to boot on a misconfiguration rather than starting and failing later.
 
 ### First run: the first account is the owner
 
@@ -72,7 +56,8 @@ No mail server is involved in any of this.
 
 ### Where your files come from
 
-- **The folder is indexed** on start, every 15 minutes after that, and whenever you press
+- **The `library/` folder beside the compose file is your library** — or the folder you name in
+  section 3. It is indexed on start, every 15 minutes after that, and whenever you press
   **Rescan library** on the Files page. Anything you put in the folder by other means — a copy
   over the network, a slicer saving into it — appears on the next scan.
 - **Uploads in the browser land in the folder** as ordinary files, so the folder remains the
@@ -89,13 +74,64 @@ No mail server is involved in any of this.
   the content is unchanged; a scan that would remove more than `LIBRARY_SCAN_MAX_DELETE_PCT` (20%)
   of the library at once is refused and logged, because that is what an unmounted share looks like.
 
+### The Tools gallery
+
+Tools are add-ons that run inside the app and save their output into your library — a box generator
+and an OpenSCAD editor are the two that exist. They are the other three containers the compose file
+starts, so the gallery is live from the first start. The two tool images are GPL-licensed, which is
+why they are separate processes talked to over HTTP and never linked into the app. All three Tools
+images are amd64-only today, so on an arm64 Linux box without x86 emulation those three containers
+cannot start; the app comes up on its own, and the gallery says its tools are unavailable.
+
+## 3. Settings: your folder, your user, your port
+
+Everything here is optional. A setting goes in a file named `.env` beside the compose file, one
+`NAME=value` per line, followed by `docker compose up -d` again; `.env.example` in the repository
+lists every line with its default.
+
+- **`LIBRARY_HOST_PATH`** — the folder that holds your files, instead of `./library`. An absolute
+  path (`/mnt/user/files`, `/Users/you/Workshop`, `C:\Users\you\Workshop`) or one relative to the
+  compose file. On a Mac or Windows the folder must be under a location Docker Desktop shares with
+  containers, which by default includes your home directory. On Windows a folder on the Windows
+  drive works; a large library is faster inside the WSL2 filesystem. The app is a view of that
+  folder, not a copy: uploads land in it, deleted files move to its `.trash/`, and anything another
+  program puts there is indexed within 15 minutes.
+- **`PUID` and `PGID`** (Linux) — the user and group the app runs as inside the container, default
+  `1000`. Files the app writes into your folder are owned by that user, and the boot checks it can
+  write there. Set them to the owner of your folder (`id -u` and `id -g` print yours); on Unraid,
+  `99` and `100`. Docker Desktop on Mac and Windows presents your folders as writable by any user,
+  so there is nothing to set there. The app never changes your folder's ownership — it only probes
+  it — with one exception: an empty folder owned by root (the one Docker itself creates on Linux
+  for a missing `./library`) is made the app user's, so the default works on the first start.
+- **`TINKEREX_PORT`** — the port on this machine, default `8080`.
+- Accounts and mail are section 4; the sync server is section 5; every other variable is in
+  section 8.
+
+### Building from source instead of pulling
+
+With a clone of this repository and a sibling checkout of `chaim354/tinkerex-addons` at
+`../tinkerex-addons` (or `TINKEREX_ADDONS_PATH`), the overlay `docker-compose.build.yml` builds all
+four images on this machine:
+
+```sh
+git clone https://github.com/chaim354/tinkerex.git && git clone https://github.com/chaim354/tinkerex-addons.git
+cd tinkerex
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+The first build downloads a few hundred megabytes of renderers and compiles two small Rust tools;
+allow several minutes. It is the path for an arm64 Linux box (the OpenSCAD image cannot be built
+there without x86 emulation — start the other three by name: `… up -d --build web boxes addons`;
+the box generator and the bundle server build natively), for a machine without registry access,
+and for working on the app.
+
 ### Your own S3 bucket instead of a folder
 
 The `s3` backend indexes an S3-compatible bucket (SeaweedFS, MinIO, R2, AWS) the same way: the
 object is the truth, no versions, current state only. There is no template for it; the recipe is a
-small overlay, because `docker-compose.yml` fixes `LIBRARY_BACKEND` and the `/library` mount for the
-share path. Save this as `docker-compose.s3.yml`, put the five `LIBRARY_S3_*` values in `.env`, and
-start with `-f docker-compose.yml -f docker-compose.s3.yml`:
+small overlay, because the image defaults to the share backend and `docker-compose.yml` binds the
+`/library` folder. Save this as `docker-compose.s3.yml`, put the five `LIBRARY_S3_*` values in
+`.env`, and start with `-f docker-compose.yml -f docker-compose.s3.yml`:
 
 ```yaml
 services:
@@ -112,35 +148,14 @@ services:
 bucket. The boot checks that they are present and nothing more — a wrong credential surfaces on
 first use, never as a crash loop.
 
-## 3. The Tools gallery (optional)
-
-Tools are add-ons that run inside the app and save their output into your library — a box
-generator and an OpenSCAD editor are the two that exist. They need three more containers: two
-sidecars built from this repo's `sidecar/` directory (GPL-licensed, which is why they are separate
-processes talked to over HTTP and never linked into the app), and a tiny static server for the addon
-bundles, built from a sibling checkout.
-
-```sh
-git clone https://github.com/chaim354/tinkerex-addons.git ../tinkerex-addons
-```
-
-In `.env`, uncomment the three lines under "The Tools gallery" — `BOXES_SIDECAR_URL`,
-`OPENSCAD_SIDECAR_URL` and `ADDON_SOURCE_URL` — then:
-
-```sh
-docker compose --profile tools up -d --build
-```
-
-Without the profile the gallery page is empty and says why. On arm64, where the OpenSCAD image
-cannot be built, start the other two by name: `docker compose --profile tools up -d --build web boxes
-addons`; the OpenSCAD tool then shows as unavailable and the box generator works. To make the profile
-stick so that plain `docker compose up -d` includes it, put `COMPOSE_PROFILES=tools` in `.env`.
-
 ## 4. Mail and more accounts
 
 **Mail.** The app sends two kinds of message: account confirmation and password reset. Nothing is
 sent until `SMTP_ADDRESS` is set; with it unset the boot log says so once, and the sign-up page tells
-a visitor that the server cannot send email yet. `SMTP_PORT` (587), `SMTP_USER_NAME` and
+a visitor that the server cannot send email yet. **`APP_HOST`** — the host name or address people
+reach this server at, with no scheme (`maker.example.net`, `192.168.1.20`) — is required as soon as
+`SMTP_ADDRESS` is set, and the boot refuses the pair without it: it is what the links in mail point
+at. Without mail it need not be set. `SMTP_PORT` (587), `SMTP_USER_NAME` and
 `SMTP_PASSWORD` (authentication is used only when a user name is given), `SMTP_AUTHENTICATION`
 (`plain`), `SMTP_DOMAIN` (the HELO name, default `APP_HOST`) and `SMTP_STARTTLS` (on unless set to
 `false`) are the rest. `MAIL_FROM` is the sender address, default `no-reply@<APP_HOST>`.
@@ -157,10 +172,14 @@ out of your shell history and out of `ps`; the `read -rs` below prompts for it w
 
 ```sh
 read -rs TINKEREX_PASSWORD && export TINKEREX_PASSWORD
-docker compose exec -e TINKEREX_PASSWORD web bin/rails 'tinkerex:owner[someone@example.net]'
-docker compose exec -e TINKEREX_PASSWORD web bin/rails 'tinkerex:password[someone@example.net]'
+docker compose exec -e TINKEREX_PASSWORD web bin/docker-entrypoint bin/rails 'tinkerex:owner[someone@example.net]'
+docker compose exec -e TINKEREX_PASSWORD web bin/docker-entrypoint bin/rails 'tinkerex:password[someone@example.net]'
 unset TINKEREX_PASSWORD
 ```
+
+`bin/docker-entrypoint` in front of the command runs it as the same user the server runs as
+(`PUID`). A bare `docker compose exec` runs as root, and a task that creates files would leave them
+owned by root.
 
 The first refuses an address that already exists and a password under 10 characters; the second
 resets the password and confirms the account if it was not.
@@ -202,7 +221,8 @@ In `.env`, fill in the block under "The sync server":
   with your backups**: losing them makes every stored sync credential unreadable, and there is
   nothing to derive them from.
 
-Then start with both files:
+The sync server image is not yet pulled by the overlay — it is built from the checkout — so this
+path still needs the clone above. Then start with both files:
 
 ```sh
 docker compose -f docker-compose.yml -f docker-compose.chunk_remote.yml up -d --build
@@ -223,16 +243,16 @@ its own small set of variables, listed at the end of the table in section 8.
 ## 6. Updating
 
 ```sh
-git pull
-docker compose up -d --build        # with the same -f overlay or --profile as before,
-                                    # or set COMPOSE_FILE / COMPOSE_PROFILES in .env once
+docker compose pull
+docker compose up -d                # with the same -f overlay as before, if you use one,
+                                    # or set COMPOSE_FILE in .env once
 ```
 
 The database migrates itself when the container starts (the entrypoint runs `db:prepare` before
-Puma). `.env` is not tracked by git, so `git pull` never touches it; `.env.example` is, and a new
-release may add lines to it — `diff .env.example .env` after an update shows anything new to
-consider. A library scan runs on start, so a file that changed on disk while the app was down is
-picked up.
+Puma). `.env` is yours and nothing here touches it; `.env.example` in the repository may gain lines
+in a new release, so `diff` it against yours now and then. A library scan runs on start, so a file
+that changed on disk while the app was down is picked up. Building from source instead: `git pull`
+in the clone, then the overlay command from section 3 with `--build`.
 
 ## 7. Backups
 
@@ -240,7 +260,9 @@ Everything the app keeps is in two places:
 
 - **The `tinkerex_storage` volume**, mounted at `/rails/storage` in the `web` container: four
   SQLite files (`production.sqlite3` is the one that matters; the cache, queue and cable files are
-  disposable) and the thumbnails. Compose names the volume `<project>_tinkerex_storage`;
+  disposable), the thumbnails, and `secret_key_base`, the session secret generated on the first
+  start — a restored volume keeps everyone signed in, a lost one only signs everyone out. Compose
+  names the volume `<project>_tinkerex_storage`;
   `docker volume ls` shows it.
 - **Your library folder** (share) — or, on chunk_remote, the **`tinkerex_sync_storage`** volume at
   `/rails/host/storage` in the `sync` container, which holds the sync server's database and every
@@ -250,23 +272,25 @@ SQLite runs in WAL mode, so **never `docker cp` or `tar` a live `production.sqli
 alone is not the database. Ask SQLite for a consistent copy instead, then take that:
 
 ```sh
-docker compose exec web sqlite3 /rails/storage/production.sqlite3 ".backup /rails/storage/backup.sqlite3"
+docker compose exec web bin/docker-entrypoint sqlite3 /rails/storage/production.sqlite3 ".backup /rails/storage/backup.sqlite3"
 docker compose cp web:/rails/storage/backup.sqlite3 "./tinkerex-$(date +%F).sqlite3"
-docker compose exec web rm /rails/storage/backup.sqlite3
+docker compose exec web bin/docker-entrypoint rm /rails/storage/backup.sqlite3
 ```
 
 Keep that file with a copy of your library folder (any file-level tool; the folder is plain files).
-Thumbnails need no backup: `docker compose exec web bin/rails previews:backfill_missing` regenerates
-any that are missing. For the sync server, the same `.backup` against
+Thumbnails need no backup:
+`docker compose exec web bin/docker-entrypoint bin/rails previews:backfill_missing` regenerates any
+that are missing. For the sync server, the same `.backup` against
 `/rails/host/storage/production.sqlite3` in the `sync` container plus a copy of its
 `chunk-store/` directory — or stop the stack and copy the whole volume.
 
-**Restore**: stop the stack, put the backup file in place with a one-off container, start it:
+**Restore**: stop the stack, put the backup file in place with a one-off container, start it. The
+copy goes through the image's entrypoint, so the restored file belongs to the app's user (`PUID`):
 
 ```sh
 docker compose down
 docker compose run --rm --no-deps -v "$PWD/tinkerex-2026-10-13.sqlite3:/restore.sqlite3" \
-  --entrypoint sh web -c 'rm -f /rails/storage/production.sqlite3-wal /rails/storage/production.sqlite3-shm && cp /restore.sqlite3 /rails/storage/production.sqlite3'
+  web sh -c 'rm -f /rails/storage/production.sqlite3-wal /rails/storage/production.sqlite3-shm && cp /restore.sqlite3 /rails/storage/production.sqlite3'
 docker compose up -d
 ```
 
@@ -280,23 +304,24 @@ compose*; the rest come from `.env`.
 | variable | required? | default | what it does |
 |---|---|---|---|
 | **Core** | | | |
-| `SECRET_KEY_BASE` | yes | — | Signs sessions and cookies. `openssl rand -hex 64`. Changing it signs everyone out. The only secret a share or s3 install needs. |
-| `LIBRARY_BACKEND` | yes, *set by compose* | — (the boot refuses a blank value in production) | Where the files live: `share` (a folder), `s3` (a bucket) or `chunk_remote` (the sync server). Chosen per deployment, never per user. |
-| `LIBRARY_PATH` | share, *set by compose* (`/library`) | — | The folder inside the container to index. The boot checks that it exists, is a directory, and is writable by uid 1000 — by writing a probe file, because mode bits lie on network mounts. |
-| `APP_HOST` | for mail links | `APP_HOST-IS-NOT-SET.invalid` | The host name (no scheme) that links in email point at; also the default HELO domain and the domain of the default sender. |
+| `SECRET_KEY_BASE` | no | generated on the first start, kept at `storage/secret_key_base` in the volume | Signs sessions and cookies. Set it to use your own (`openssl rand -hex 64`); a blank value counts as unset. Changing or losing it signs everyone out and nothing else. |
+| `LIBRARY_BACKEND` | no (the image defaults to `share`) | `share` | Where the files live: `share` (a folder), `s3` (a bucket) or `chunk_remote` (the sync server). Chosen per deployment, never per user; the two overlays set it. An explicit blank refuses the boot. |
+| `LIBRARY_PATH` | no | `/library` (the image default) | The folder inside the container to index. The boot checks that it exists, is a directory, and is writable by the app's user — by writing a probe file, because mode bits lie on network mounts. |
+| `APP_HOST` | with `SMTP_ADDRESS` | `APP_HOST-IS-NOT-SET.invalid`, which without SMTP only ever lands in a message nothing can deliver | The host name (no scheme) that links in email point at; also the default HELO domain and the domain of the default sender. The boot refuses `SMTP_ADDRESS` without it. |
 | `FORCE_SSL` | when behind TLS | off | Set to `1` when the server is reached over HTTPS through a reverse proxy: redirects plain HTTP, marks cookies secure, makes mail links `https`. Setting it with no TLS in front locks you out. |
-| `RAILS_MAX_THREADS` | no | 3 (Puma), 5 (database pool) | Puma's thread count and the SQLite connection pool. `.env.example` sets 16, which is what the author runs. |
+| `RAILS_MAX_THREADS` | no | 3 (Puma), 5 (database pool); **the compose file sets 16** | Puma's thread count and the SQLite connection pool. 3 starves once a tool call is proxied through the app; 16 is what the author runs. |
 | `SOLID_QUEUE_IN_PUMA` | no | **on** in production | Runs the background workers (scans, thumbnails, trash purge, project intake, the changelog pull) inside the web container. `false`, `0` or `no` turns it off, for a split `bin/jobs` container. Outside production it is an opt-in, as it always was. |
-| **Compose only** (`docker-compose.yml` reads these; the app never sees them) | | | |
-| `LIBRARY_HOST_PATH` | share | `./library` | The folder on the host bound to `/library`. Writable by uid 1000 (section 2). A relative path is resolved against the compose file's directory. |
+| **Compose only** (`docker-compose.yml` reads these; the app never sees them, except `PUID`/`PGID`, which reach the container's entrypoint) | | | |
+| `LIBRARY_HOST_PATH` | no | `./library` | The folder on the host bound to `/library`; a relative path is resolved against the compose file's directory. Section 3. |
+| `PUID`, `PGID` | no | `1000`, `1000` | The user and group the app runs as inside the container, and so the owner of every file it writes into your folder (section 3). Linux: the folder's owner, or `99`/`100` on Unraid. Docker Desktop needs nothing. The container starts as root and drops to them; `--user` on the container skips that and runs as given. |
 | `TINKEREX_PORT` | no | `8080` | The host port the web app is published on. |
-| `TINKEREX_IMAGE` | no | `tinkerex:local` | The image to run. The default is built from this checkout by `--build`; set `ghcr.io/chaim354/tinkerex:latest` and run `docker compose pull` instead once that package is public. |
-| `TINKEREX_ADDONS_PATH` | tools profile | `../tinkerex-addons` | Path to a checkout of `chaim354/tinkerex-addons`, the build context for the addon bundle server. |
+| `TINKEREX_IMAGE` | no | `ghcr.io/chaim354/tinkerex:latest` | The app image. `docker-compose.build.yml` builds `tinkerex:local` from the checkout instead. |
+| `TINKEREX_ADDONS_PATH` | build overlay | `../tinkerex-addons` | Path to a checkout of `chaim354/tinkerex-addons`, the build context for the addon bundle server in `docker-compose.build.yml`. |
 | `TINKEREX_SYNC_PATH` | chunk_remote | `../tinkerex-sync` | Path to a checkout of `chaim354/tinkerex-sync`, the build context for the sync server. |
 | `TINKEREX_SYNC_PORT` | no | `3001` | The host port the sync server is published on; what devices connect to. |
 | `SYNC_SECRET_KEY_BASE` | chunk_remote | — | Becomes the sync server's own `SECRET_KEY_BASE`. `openssl rand -hex 64`; distinct from the app's. |
 | `SYNC_SCHEDULER` | chunk_remote, *set by compose* (`"true"`) | — | The sync server's housekeeping: expired pending commits reaped hourly, orphaned chunk bytes weekly, retention that keeps every version. The app never reads it. |
-| `COMPOSE_FILE`, `COMPOSE_PROFILES` | no | — | Docker's own: putting `COMPOSE_FILE=docker-compose.yml:docker-compose.chunk_remote.yml` or `COMPOSE_PROFILES=tools` in `.env` saves typing `-f` / `--profile` on every command. |
+| `COMPOSE_FILE` | no | — | Docker's own: `COMPOSE_FILE=docker-compose.yml:docker-compose.chunk_remote.yml` in `.env` saves typing `-f` on every command. |
 | **Accounts and mail** (section 4) | | | |
 | `REGISTRATION` | no | `closed` in production | `closed`: only the first account (the owner) can sign up. `open`: anyone can — **refused at boot on share and s3**, where every account indexes one library. |
 | `DEMO_ACCOUNT_EMAIL` | no | — (no demo) | Set it to turn the sign-in page into a demo: one click signs visitors into the shared account it names, which cannot change its credentials, publish or enrol a device, and is destroyed and re-seeded from `db/seeds/demo` every night at 04:00 UTC (run `bin/rails tinkerex:demo:setup` once to create it). **On share and s3 every account indexes the same library, so visitors see all of it and the reset replaces all of it: set it only on a server that holds nothing else.** |
@@ -311,7 +336,7 @@ compose*; the rest come from `.env`.
 | `TINKEREX_PASSWORD` | for the console tasks | — | The password `bin/rails tinkerex:owner` / `tinkerex:password` read, so that it never sits on a command line. |
 | `OMNIAUTH_ENABLED` | no | off | Any value turns on OpenID Connect login. |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI` | with `OMNIAUTH_ENABLED` | — | The provider's issuer URL (discovery is used), the client credentials, and the callback URL registered with the provider. |
-| **The s3 backend** (section 2) | | | |
+| **The s3 backend** (section 3) | | | |
 | `LIBRARY_S3_BUCKET`, `LIBRARY_S3_ACCESS_KEY_ID`, `LIBRARY_S3_SECRET_ACCESS_KEY` | s3 | — | The bucket and credentials. The boot checks they are present; it never touches the network. |
 | `LIBRARY_S3_ENDPOINT` | for non-AWS | — | The endpoint URL (SeaweedFS, MinIO, R2). Path-style requests are used. |
 | `LIBRARY_S3_REGION` | no | `auto` | |
@@ -326,10 +351,10 @@ compose*; the rest come from `.env`.
 | `STORAGE_BACKEND` | *sync*, set by the overlay | — | The sync server's chunk store: `local` (a directory in its volume) or `s3`. The overlay sets `local`. |
 | `CHUNK_LOCAL_DIR` | *sync* | `/rails/host/storage/chunk-store` | Where the local chunk store lives, inside the `tinkerex_sync_storage` volume. |
 | `CHUNK_PUBLIC_URL` | *sync*, no | the request's own host | The base URL the sync server writes into chunk download links. Unset, each client gets links on the host it connected through, which is right for this layout; set it only when a reverse proxy in front changes the public address. |
-| **The Tools gallery** (section 3) | | | |
-| `ADDON_SOURCE_URL` | tools profile | — | The addon bundle server; `http://addons` with the profile. Takes precedence over the path below. |
+| **The Tools gallery** (section 2) | | | |
+| `ADDON_SOURCE_URL` | *set by compose* (`http://addons`) | — | The addon bundle server. Takes precedence over the path below. |
 | `ADDON_SOURCE_PATH` | no | `/rails/public/addons` in the image (empty) | A directory of addon bundles on disk, the alternative to a bundle server. Empty means an empty gallery. |
-| `BOXES_SIDECAR_URL`, `OPENSCAD_SIDECAR_URL` | tools profile | — (that addon shows as unavailable) | Where each sidecar listens: `http://boxes:8000`, `http://openscad:8000` with the profile. The variable name is `<SERVICE>_SIDECAR_URL`, so a future sidecar needs no code change. |
+| `BOXES_SIDECAR_URL`, `OPENSCAD_SIDECAR_URL` | *set by compose* (`http://boxes:8000`, `http://openscad:8000`) | — (that addon shows as unavailable) | Where each sidecar listens. The variable name is `<SERVICE>_SIDECAR_URL`, so a future sidecar needs no code change. |
 | `ADDON_SERVICE_MAX_TIMEOUT` | no | `120` | Ceiling, in seconds, on one sidecar call. |
 | `ADDON_SAVE_MAX_FILES`, `ADDON_SAVE_MAX_BYTES` | no | `8`, `4000000` | How many files, and how many bytes in total, one addon save may write into the library. |
 | **Library behaviour** | | | |
@@ -356,9 +381,10 @@ compose*; the rest come from `.env`.
 ## 9. Never set `RAILS_MASTER_KEY`
 
 The repository ships `config/credentials.yml.enc`, encrypted with a key only the author holds. The
-app does not need it: with no master key, Rails reads that file as empty and takes
-`SECRET_KEY_BASE` and the `ACTIVE_RECORD_ENCRYPTION_*` values from the environment instead, which is
-what the compose files arrange. A master key that is *present but wrong* is a different case — Rails
+app does not need it: with no master key, Rails reads that file as empty and takes the
+`ACTIVE_RECORD_ENCRYPTION_*` values from the environment instead, and the session secret from
+`SECRET_KEY_BASE` or, when that is unset, from the file generated into the volume on the first
+start. A master key that is *present but wrong* is a different case — Rails
 tries to decrypt the file, fails, and the boot crashes with `ActiveSupport::MessageEncryptor::InvalidMessage`.
 So leave it unset. The only reason to set it is if you have deleted `config/credentials.yml.enc` and
 generated your own with `bin/rails credentials:edit`, in which case it is your key and your file.

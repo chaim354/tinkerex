@@ -1,0 +1,23 @@
+# Build every image from source instead of pulling it: a clone of this repository plus a sibling
+# checkout of chaim354/tinkerex-addons (TINKEREX_ADDONS_PATH, default ../tinkerex-addons). For an
+# arm64 Linux box, a machine without registry access, or working on the app:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# The openscad image is an x86-only AppImage: an arm64 Docker Desktop builds and runs it under
+# emulation (the base file's platform pin carries over), while an arm64 Linux box without emulation
+# cannot build it; start the other three by name there (… up -d --build web boxes addons). The
+# :local names keep a built image from shadowing the ghcr tag.
+services:
+  web:
+    image: tinkerex:local
+    build: .
+  boxes:
+    image: boxes-sidecar:local
+    build: sidecar/boxes
+  openscad:
+    image: openscad-sidecar:local
+    build: sidecar/openscad
+  addons:
+    image: tinkerex-addons:local
+    build: ${TINKEREX_ADDONS_PATH:-../tinkerex-addons}

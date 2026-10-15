@@ -34,6 +34,21 @@ view at `/` with the pitch, three screenshots and the card: `app/views/users/ses
 
 ## 2. Install — what a stranger hits, in order
 
+**Shipped by sub-project I (`docs/superpowers/specs/2026-10-14-i-simple-self-host-design.md`,
+2026-10-14):** 2.1 (the compose file pulls four ghcr images and builds nothing; building is the
+`docker-compose.build.yml` overlay), 2.2 (`PUID`/`PGID` and an entrypoint that drops privileges; the
+library folder is never chowned), the Tools gallery on by default, Docker Desktop on Mac and Windows
+as hosts, and zero required settings (the session secret is generated into the volume, the backend
+and path are image defaults, `APP_HOST` is needed only with SMTP). Still the owner's: the four ghcr
+packages' visibility, and publishing `boxes-sidecar` and `tinkerex-addons` for arm64 as well —
+review measured both as amd64-only (`bin/build-boxes-sidecar` hard-codes `--platform linux/amd64`;
+the addons image is built in its own repo), so the compose file pins all three Tools images to
+amd64 and an Apple-silicon Mac emulates them; the pins stay correct once the manifests go
+multi-arch. Still open: 2.3 (the sync overlay builds from a checkout) and 2.4 (the Unraid template
+on a real box). Also surfaced in review and not this sub-project's: without SMTP the password-reset
+and resend-confirmation forms still render a message with the placeholder host and attempt delivery
+to `localhost:25`, ungated on `deliverable?` (`Users::PasswordsController`, `Users::ConfirmationsController`).
+
 Verified against `docs/INSTALL.md`, `docker-compose.yml`, `docker-compose.chunk_remote.yml` and
 `unraid/tinkerex.xml` as of 86308876. `test/install_docs_test.rb` guards the env table (first-cell
 rule: every variable the code reads has a row); `test/deploy_hygiene_test.rb` pins the Kamal side.

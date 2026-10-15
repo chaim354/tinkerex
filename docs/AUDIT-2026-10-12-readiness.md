@@ -165,7 +165,7 @@ private (§6.3), and the compose file builds the image locally until they are fl
    (`users/registrations_controller.rb:20-23`). No admin role, no first-user bootstrap (`users` has no role
    column; `user.rb:164-170` only reserves the handle "admin"). Escape hatches: the test seam or `rails runner`.
 7. **share** needs `LIBRARY_PATH` writable as uid/gid 1000 by a real touch-probe (`library_backend_check.rb:147-206`;
-   `Dockerfile:167-169`); an unmounted mount point is indistinguishable at boot; `.trash/` lives inside the
+   `Dockerfile:167-169`) *(since I, 2026-10-14: writable as `PUID:PGID`, default 1000:1000 — `bin/docker-entrypoint`)*; an unmounted mount point is indistinguishable at boot; `.trash/` lives inside the
    share; **every user indexes the same path** (§1.1). **s3**: three required knobs, path-style forced, bucket
    CORS manual (`DEPLOY.md:743-776`), validated live only on SeaweedFS and R2. **chunk_remote**: the sync
    server (private image), `SYNC_ADMIN_TOKEN` byte-identical on both, the encryption keys (item 3), and a
