@@ -99,6 +99,23 @@ reads as root-owned and writable by anyone, so the default stays 1000 and nothin
 The one boot-time log line says which uid was chosen and why ("PUID inferred from /library's
 owner" vs "PUID default" vs "PUID set"), so a surprising uid is one `docker compose logs web` away.
 
+## 3b. The first scan follows the first account (found in the Mac run)
+
+The guide said "indexed on start" since C, and nothing scanned at start: the only enqueues were the
+15-minute schedule, the Rescan button and the demo reset. With the compose file now sitting in a
+folder full of files, that gap is the stranger's first minute: an empty Library for up to a quarter
+of an hour. Measured twice on the Mac run (a catalog empty 20–25 s after boot, full after Rescan).
+
+Two changes make the claim true. `config/puma.rb` enqueues `Library::ScanJob.scan_all!` in
+`on_booted`, logging rather than dying on failure, which covers every restart (a file changed while
+the app was down is picked up at once). That hook alone could not cover the first run — the job is
+enqueued per user and at boot there is no account yet, measured — so `User` enqueues one scan for
+itself `after_create_commit` when the backend is scannable: creating the account is the moment the
+library gets a reader. On share and s3 a second account's scan is a cheap no-op; on chunk_remote
+nothing is enqueued. Pinned by `test/boot_scan_test.rb` (static, because Puma's hooks are not
+reachable from a Rails test) and `test/models/user_first_scan_test.rb`; proved by the Mac run with
+no Rescan.
+
 ## 4. Docs and the template
 
 - **README** quick start: steps 2 and 3 become "download `docker-compose.yml` into the folder that
