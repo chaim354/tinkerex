@@ -243,11 +243,12 @@ ENV F3D_BIN="/opt/f3d/bin/f3d"
 # LIBRARY_BACKEND at all indexes whatever is mounted at /library, and the share guard refuses a boot
 # with nothing mounted there (lib/library_backend_check.rb). The production guard that refuses a
 # BLANK value still fires on an explicit `LIBRARY_BACKEND=`, the shape of a misconfigured
-# destination. Every Kamal destination and both compose overlays set the backend explicitly.
+# destination. Every Kamal destination sets the backend explicitly; docker-compose.yml relies on
+# this default, and the chunk_remote overlay overrides it.
 ENV LIBRARY_BACKEND="share" \
     LIBRARY_PATH="/library"
 
-# Entrypoint prepares the database.
+# The entrypoint drops to PUID:PGID and prepares the database (bin/docker-entrypoint).
 ENTRYPOINT ["/rails/bin/docker-entrypoint"]
 
 # Start server via Thruster by default, this can be overwritten at runtime

@@ -31,8 +31,8 @@ setting you can change, is **[`docs/INSTALL.md`](docs/INSTALL.md)**.
 ## First run
 
 The first account you create is the owner: it is confirmed on the spot, without a mail server, and
-sign-ups close behind it. Later accounts come from the console or from opening registration, both in
-the guide. A `library/` folder has appeared beside the compose file: that is your library. To use a
+sign-ups close behind it. Later accounts come from the console, as section 4 of the guide shows; open
+sign-ups exist only with the sync server, where each account has its own library. A `library/` folder has appeared beside the compose file: that is your library. To use a
 folder you already have, put `LIBRARY_HOST_PATH=/path/to/files` in a `.env` file beside the compose
 file and run `docker compose up -d` again.
 

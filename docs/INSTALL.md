@@ -25,8 +25,10 @@ Four images are pulled: the app, the two tools (a box generator and OpenSCAD) an
 that holds the tool bundles. The app image is built for amd64 and arm64, so an Apple-silicon Mac or a
 Raspberry Pi-class box runs it natively; STEP, IGES, OBJ and the other mesh formats get a generic
 icon instead of a thumbnail on arm64 (F3D ships no Linux arm64 build; STL, SVG, DXF, LightBurn, PDF,
-images and Gerber all render). The OpenSCAD image is x86-only; Docker Desktop runs it under
-emulation, and section 3 has the note for an arm64 Linux box.
+images and Gerber all render). The three Tools images are published for amd64 only (OpenSCAD is an
+x86 AppImage; the other two are built that way today), and the compose file says so, so Docker
+Desktop on an Apple-silicon Mac pulls them and runs them under emulation; section 3 has the note for
+an arm64 Linux box. The author runs this on a Mac and on Linux; the Windows path has not been run.
 
 ## 2. Quick start
 
@@ -77,9 +79,9 @@ No mail server is involved in any of this.
 Tools are add-ons that run inside the app and save their output into your library — a box generator
 and an OpenSCAD editor are the two that exist. They are the other three containers the compose file
 starts, so the gallery is live from the first start. The two tool images are GPL-licensed, which is
-why they are separate processes talked to over HTTP and never linked into the app. On an arm64 Linux
-box without x86 emulation the OpenSCAD container cannot start; the other three come up, and that one
-card shows as unavailable.
+why they are separate processes talked to over HTTP and never linked into the app. All three Tools
+images are amd64-only today, so on an arm64 Linux box without x86 emulation those three containers
+cannot start; the app comes up on its own, and the gallery says its tools are unavailable.
 
 ## 3. Settings: your folder, your user, your port
 
@@ -90,16 +92,17 @@ lists every line with its default.
 - **`LIBRARY_HOST_PATH`** — the folder that holds your files, instead of `./library`. An absolute
   path (`/mnt/user/files`, `/Users/you/Workshop`, `C:\Users\you\Workshop`) or one relative to the
   compose file. On a Mac or Windows the folder must be under a location Docker Desktop shares with
-  containers, which by default includes your home directory. The app is a view of that folder, not
-  a copy: uploads land in it, deleted files move to its `.trash/`, and anything another program
-  puts there is indexed within 15 minutes.
+  containers, which by default includes your home directory. On Windows a folder on the Windows
+  drive works; a large library is faster inside the WSL2 filesystem. The app is a view of that
+  folder, not a copy: uploads land in it, deleted files move to its `.trash/`, and anything another
+  program puts there is indexed within 15 minutes.
 - **`PUID` and `PGID`** (Linux) — the user and group the app runs as inside the container, default
   `1000`. Files the app writes into your folder are owned by that user, and the boot checks it can
   write there. Set them to the owner of your folder (`id -u` and `id -g` print yours); on Unraid,
   `99` and `100`. Docker Desktop on Mac and Windows presents your folders as writable by any user,
   so there is nothing to set there. The app never changes your folder's ownership — it only probes
-  it — with one exception: a brand-new, empty folder that Docker itself created on Linux (which
-  would be root's) is made the app user's, so the default works on the first start.
+  it — with one exception: an empty folder owned by root (the one Docker itself creates on Linux
+  for a missing `./library`) is made the app user's, so the default works on the first start.
 - **`TINKEREX_PORT`** — the port on this machine, default `8080`.
 - Accounts and mail are section 4; the sync server is section 5; every other variable is in
   section 8.
@@ -118,8 +121,9 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 The first build downloads a few hundred megabytes of renderers and compiles two small Rust tools;
 allow several minutes. It is the path for an arm64 Linux box (the OpenSCAD image cannot be built
-there — start the other three by name: `… up -d --build web boxes addons`), for a machine without
-registry access, and for working on the app.
+there without x86 emulation — start the other three by name: `… up -d --build web boxes addons`;
+the box generator and the bundle server build natively), for a machine without registry access,
+and for working on the app.
 
 ### Your own S3 bucket instead of a folder
 
@@ -303,11 +307,11 @@ compose*; the rest come from `.env`.
 | `SECRET_KEY_BASE` | no | generated on the first start, kept at `storage/secret_key_base` in the volume | Signs sessions and cookies. Set it to use your own (`openssl rand -hex 64`); a blank value counts as unset. Changing or losing it signs everyone out and nothing else. |
 | `LIBRARY_BACKEND` | no (the image defaults to `share`) | `share` | Where the files live: `share` (a folder), `s3` (a bucket) or `chunk_remote` (the sync server). Chosen per deployment, never per user; the two overlays set it. An explicit blank refuses the boot. |
 | `LIBRARY_PATH` | no | `/library` (the image default) | The folder inside the container to index. The boot checks that it exists, is a directory, and is writable by the app's user — by writing a probe file, because mode bits lie on network mounts. |
-| `APP_HOST` | with `SMTP_ADDRESS` | `APP_HOST-IS-NOT-SET.invalid`, never rendered without mail | The host name (no scheme) that links in email point at; also the default HELO domain and the domain of the default sender. The boot refuses `SMTP_ADDRESS` without it. |
+| `APP_HOST` | with `SMTP_ADDRESS` | `APP_HOST-IS-NOT-SET.invalid`, which without SMTP only ever lands in a message nothing can deliver | The host name (no scheme) that links in email point at; also the default HELO domain and the domain of the default sender. The boot refuses `SMTP_ADDRESS` without it. |
 | `FORCE_SSL` | when behind TLS | off | Set to `1` when the server is reached over HTTPS through a reverse proxy: redirects plain HTTP, marks cookies secure, makes mail links `https`. Setting it with no TLS in front locks you out. |
 | `RAILS_MAX_THREADS` | no | 3 (Puma), 5 (database pool); **the compose file sets 16** | Puma's thread count and the SQLite connection pool. 3 starves once a tool call is proxied through the app; 16 is what the author runs. |
 | `SOLID_QUEUE_IN_PUMA` | no | **on** in production | Runs the background workers (scans, thumbnails, trash purge, project intake, the changelog pull) inside the web container. `false`, `0` or `no` turns it off, for a split `bin/jobs` container. Outside production it is an opt-in, as it always was. |
-| **Compose only** (`docker-compose.yml` reads these; the app never sees them) | | | |
+| **Compose only** (`docker-compose.yml` reads these; the app never sees them, except `PUID`/`PGID`, which reach the container's entrypoint) | | | |
 | `LIBRARY_HOST_PATH` | no | `./library` | The folder on the host bound to `/library`; a relative path is resolved against the compose file's directory. Section 3. |
 | `PUID`, `PGID` | no | `1000`, `1000` | The user and group the app runs as inside the container, and so the owner of every file it writes into your folder (section 3). Linux: the folder's owner, or `99`/`100` on Unraid. Docker Desktop needs nothing. The container starts as root and drops to them; `--user` on the container skips that and runs as given. |
 | `TINKEREX_PORT` | no | `8080` | The host port the web app is published on. |

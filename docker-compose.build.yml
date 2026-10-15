@@ -4,8 +4,10 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 #
-# The openscad image is x86-only and cannot be built on arm64; start the other three by name there
-# (… up -d --build web boxes addons). The :local names keep a built image from shadowing the ghcr tag.
+# The openscad image is an x86-only AppImage: an arm64 Docker Desktop builds and runs it under
+# emulation (the base file's platform pin carries over), while an arm64 Linux box without emulation
+# cannot build it; start the other three by name there (… up -d --build web boxes addons). The
+# :local names keep a built image from shadowing the ghcr tag.
 services:
   web:
     image: tinkerex:local

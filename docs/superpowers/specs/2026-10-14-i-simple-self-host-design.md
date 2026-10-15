@@ -88,6 +88,7 @@ services:
     restart: unless-stopped
   boxes:
     image: ghcr.io/chaim354/boxes-sidecar:latest
+    platform: linux/amd64   # published for amd64 only today; Docker Desktop emulates it
     restart: unless-stopped
   openscad:
     image: ghcr.io/chaim354/openscad-sidecar:latest
@@ -97,6 +98,7 @@ services:
     restart: unless-stopped
   addons:
     image: ghcr.io/chaim354/tinkerex-addons:latest
+    platform: linux/amd64   # published for amd64 only today; Docker Desktop emulates it
     restart: unless-stopped
 volumes:
   tinkerex_storage: {}
@@ -120,9 +122,15 @@ What changed and why:
   exist, because the registry greys out a tool whose URL is blank, and a Kamal destination names
   its own. The three names are the same wiring the Kamal accessories use
   (`config/deploy.yml:143-156`, ports 8000 and 80).
-- **`openscad` is pinned to `linux/amd64`.** Without the pin, Compose on an arm64 host fails that
-  one service with "no matching manifest". With it, Docker Desktop runs it under emulation; a Linux
-  arm64 host without emulation still fails it, and the other three come up — documented, not fixed.
+- **All three Tools images are pinned to `linux/amd64`.** `openscad` is an x86-only AppImage, and
+  review measured (2026-10-14, `docker buildx imagetools inspect`) that `boxes-sidecar:latest` and
+  `tinkerex-addons:latest` are published for amd64 alone too — `bin/build-boxes-sidecar` hard-codes
+  `--platform linux/amd64`. Without the pin, Compose on an arm64 host fails each of them with "no
+  matching manifest". With it, Docker Desktop runs them under emulation (boxes is Python, addons is
+  nginx; both are fine emulated); a Linux arm64 host without emulation loses the three Tools services
+  and keeps the app — documented, not fixed. Publishing the two arch-neutral images multi-arch is a
+  follow-up for the owner (one is this repo's build script, one is `tinkerex-addons`'); the pins stay
+  correct either way, since a platform pin only selects the amd64 half of a multi-arch manifest.
 - **The library default is `./library`**, a folder beside the compose file. On Linux, Docker creates
   a missing bind-mount source as root, which section 3 handles.
 

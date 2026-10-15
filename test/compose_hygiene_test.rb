@@ -38,8 +38,14 @@ class ComposeHygieneTest < ActiveSupport::TestCase
     assert_equal [ "${TINKEREX_PORT:-8080}:80" ], web["ports"]
   end
 
-  test "openscad, the one x86-only image, is pinned to amd64" do
-    assert_equal "linux/amd64", compose("docker-compose.yml").dig("services", "openscad", "platform")
+  test "the three Tools images are pinned to amd64 and the app image is not" do
+    services = compose("docker-compose.yml").fetch("services")
+    %w[boxes openscad addons].each do |name|
+      assert_equal "linux/amd64", services.dig(name, "platform"),
+                   "#{name} is published for amd64 only (openscad is an x86 AppImage; the other two are built " \
+                   "with --platform linux/amd64, measured 2026-10-14): without the pin an arm64 pull fails"
+    end
+    assert_nil services.dig("web", "platform"), "the app image is multi-arch; a pin would force emulation on Apple silicon"
   end
 
   test "the build overlay restores a build for every service under a :local name" do

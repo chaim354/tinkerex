@@ -73,6 +73,13 @@ class DockerEntrypointTest < ActiveSupport::TestCase
     assert_empty calls
   end
 
+  test "PUID=0 means stay root: no setpriv, no loop, the command runs" do
+    out, status, calls = run_entrypoint("echo", "hi", env: { "PUID" => "0", "PGID" => "0" })
+    assert status.success?, out
+    assert_equal "hi", out.strip
+    assert_empty calls.grep(/\Asetpriv /), "re-executing as uid 0 would see root again and loop forever: #{calls}"
+  end
+
   test "a PUID that is not a whole number is refused before anything is touched" do
     out, status, calls = run_entrypoint("echo", "hi", env: { "PUID" => "rails" })
     assert_not status.success?

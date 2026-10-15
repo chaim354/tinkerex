@@ -199,11 +199,19 @@ env:
 
 # Aliases are triggered with "bin/kamal <alias>". You can overwrite arguments on invocation:
 # "bin/kamal logs -r job" will tail logs from the first server in the job section.
+#
+# EVERY --reuse ALIAS GOES THROUGH bin/docker-entrypoint (I, 2026-10-14). The image has no USER line
+# any more: the container starts as root and the entrypoint drops to PUID:PGID. `app exec --reuse`
+# is a bare `docker exec` into the running container, so without the prefix a console runs as ROOT
+# and anything it writes through the port (a share library's files, .trash/, the bootsnap cache)
+# comes out root-owned and the app can no longer touch it. The entrypoint runs the command as the
+# same user the server runs as. (`app exec` WITHOUT --reuse starts a fresh container and so goes
+# through the entrypoint on its own.)
 aliases:
-  console: app exec --interactive --reuse "bin/rails console"
-  shell: app exec --interactive --reuse "bash"
+  console: app exec --interactive --reuse "bin/docker-entrypoint bin/rails console"
+  shell: app exec --interactive --reuse "bin/docker-entrypoint bash"
   logs: app logs -f
-  dbc: app exec --interactive --reuse "bin/rails dbconsole --include-password"
+  dbc: app exec --interactive --reuse "bin/docker-entrypoint bin/rails dbconsole --include-password"
 
 # Use a persistent storage volume for sqlite database files and local Active Storage files.
 # Recommended to change this to a mounted volume path that is backed up off server.

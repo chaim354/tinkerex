@@ -42,20 +42,24 @@ services:
 
   # The Tools gallery. The two sidecars are GPL-licensed and run as their own processes, reached
   # over HTTP and never linked into the app (CLAUDE.md section 9); addons serves the bundle files.
+  # ALL THREE ARE PINNED TO linux/amd64: openscad is an x86-only AppImage, and the other two are
+  # published for amd64 alone today (measured 2026-10-14 with docker buildx imagetools inspect). The
+  # pin makes an arm64 Docker Desktop pull and emulate them instead of failing with "no matching
+  # manifest". An arm64 Linux box without emulation loses the three Tools services and keeps the
+  # app; the gallery then says so.
   boxes:
     image: ghcr.io/chaim354/boxes-sidecar:latest
+    platform: linux/amd64
     restart: unless-stopped
   openscad:
     image: ghcr.io/chaim354/openscad-sidecar:latest
-    # x86-only (an AppImage): the pin makes an arm64 Docker Desktop pull and emulate it instead of
-    # failing with "no matching manifest". An arm64 Linux box without emulation loses this one
-    # service and keeps the other three; the OpenSCAD card then shows as unavailable.
     platform: linux/amd64
     volumes:
       - openscad_cache:/cache
     restart: unless-stopped
   addons:
     image: ghcr.io/chaim354/tinkerex-addons:latest
+    platform: linux/amd64
     restart: unless-stopped
 
 volumes:
