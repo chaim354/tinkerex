@@ -177,8 +177,12 @@ default sender (`lib/tinkerex/mail_settings.rb:20,34`). None is reached while `S
 unset. `Tinkerex::MailSettings.validate!` (new) refuses the boot when `SMTP_ADDRESS` is set and
 `APP_HOST` is blank, with a message saying links in mail need the host people reach the server at;
 it is wired beside the existing boot validations (`config/initializers/registration.rb` is the
-pattern). The `APP_HOST-IS-NOT-SET.invalid` placeholder stays as the no-mail default and is never
-rendered, because no mail is sent. The env row changes from "for mail links" to "required when
+pattern). The `APP_HOST-IS-NOT-SET.invalid` placeholder stays as the no-mail default. It is not
+"never rendered": the password-reset and resend-confirmation forms are not gated on
+`deliverable?`, so without SMTP the app still renders a message carrying that host and attempts
+delivery to `localhost:25`, where nothing listens (measured in review, 2026-10-14; pre-existing
+behaviour, unchanged here). The placeholder is rendered only into a message that cannot be
+delivered, which is the honest claim. The env row changes from "for mail links" to "required when
 `SMTP_ADDRESS` is set".
 
 ### 3.4 The container takes PUID and PGID
