@@ -66,9 +66,10 @@ class InstallDocsTest < ActiveSupport::TestCase
 
   test "the compose files and the env example name no variable the table does not" do
     documented = documented_names
-    %w[docker-compose.yml docker-compose.chunk_remote.yml .env.example].each do |file|
+    %w[docker-compose.yml docker-compose.build.yml docker-compose.chunk_remote.yml .env.example].each do |file|
       used = Rails.root.join(file).read.scan(/\b([A-Z][A-Z0-9_]{3,})(?:=|:)/).flatten.uniq - NOT_FOR_INSTALLERS
-      assert_operator used.size, :>=, 3, "#{file} names almost no variables — did the file or the pattern break?"
+      floor = file == "docker-compose.build.yml" ? 1 : 3 # the build overlay names one: TINKEREX_ADDONS_PATH
+      assert_operator used.size, :>=, floor, "#{file} names almost no variables — did the file or the pattern break?"
       undocumented = used - documented
       assert_empty undocumented, "#{file} uses #{undocumented.join(', ')} but docs/INSTALL.md's table has no row for them"
     end
