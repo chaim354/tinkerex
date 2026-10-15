@@ -58,7 +58,7 @@ class ComposeHygieneTest < ActiveSupport::TestCase
       assert s["build"].present?, "#{name} must build in the overlay"
       assert_match(/:local\z/, s.fetch("image"), "#{name}'s built image must not shadow the ghcr tag")
     end
-    assert_equal [ "./library:/library" ], services.dig("web", "volumes"),
+    assert_equal [ "${LIBRARY_HOST_PATH:-./library}:/library" ], services.dig("web", "volumes"),
                  "in a clone '.' is the repository; the overlay puts the mount back to ./library " \
                  "(compose merges volumes by container path, so the storage volume survives)"
   end
