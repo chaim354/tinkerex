@@ -1,6 +1,49 @@
 #!/bin/bash -e
 
-# If running the rails server then create or migrate existing database
+# THE ENTRYPOINT DROPS PRIVILEGES ITSELF (I, 2026-10-14). The image has no USER line, so a container
+# starts as root; this script makes the app's own writable directories the requested user's and
+# re-executes itself as PUID:PGID (default 1000:1000) through setpriv, which util-linux ships in the
+# base image. A build-time USER cannot take an env value, and it is what forced every install to
+# chown its folder to uid 1000.
+#
+# THE LIBRARY FOLDER IS NEVER CHOWNED. It is the user's, and the boot probes it instead
+# (lib/library_backend_check.rb). One narrow exception: an EMPTY folder OWNED BY ROOT is one Docker
+# auto-created for a missing bind-mount source, and it becomes the app user's so the first boot on
+# Linux does not refuse its own default. A folder with anything in it, or owned by anyone else, is
+# only probed.
+#
+# Started with --user (a `user:` line in compose) the script is not root, cannot chown or setpriv,
+# and runs the command as given: the behaviour the image had before this script existed.
+#
+# `docker compose exec web bin/docker-entrypoint <cmd>` runs <cmd> as the same user as the server.
+# A bare `docker exec` runs as root, and a task that creates files would leave them root-owned.
+
+app_root="$(cd "$(dirname "$0")/.." && pwd)"
+
+owned_by() { [ -n "$(find "$1" -maxdepth 0 -user "$2" -group "$3" 2>/dev/null)" ]; }
+
+if [ "$(id -u)" = "0" ]; then
+  PUID="${PUID:-1000}"
+  PGID="${PGID:-1000}"
+  case "$PUID$PGID" in
+    *[!0-9]*) echo "PUID and PGID must be whole numbers (got PUID=$PUID PGID=$PGID)" >&2; exit 1 ;;
+  esac
+
+  for dir in "$app_root/storage" "$app_root/tmp" "$app_root/log" /home/rails; do
+    [ -d "$dir" ] || continue
+    owned_by "$dir" "$PUID" "$PGID" || chown -R "$PUID:$PGID" "$dir"
+  done
+
+  library="${LIBRARY_PATH:-/library}"
+  if [ -d "$library" ] && [ -n "$(find "$library" -maxdepth 0 -user 0 2>/dev/null)" ] && [ -z "$(ls -A "$library")" ]; then
+    chown "$PUID:$PGID" "$library"
+  fi
+
+  export HOME=/home/rails
+  exec setpriv --reuid="$PUID" --regid="$PGID" --clear-groups "$0" "$@"
+fi
+
+# Unprivileged from here. If running the rails server then create or migrate existing database.
 if [ "${@: -2:1}" == "./bin/rails" ] && [ "${@: -1:1}" == "server" ]; then
   ./bin/rails db:prepare
 fi

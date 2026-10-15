@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
 # check=error=true
 
-# This Dockerfile is designed for production, not development. Use with Kamal or build'n'run by hand:
-# docker build -t tinkerex .
-# docker run -d -p 80:80 -e RAILS_MASTER_KEY=<value from config/master.key> --name tinkerex tinkerex
+# This Dockerfile is designed for production, not development. docker-compose.yml is how it is run;
+# by hand: docker build -t tinkerex . && docker run -d -p 8080:80 -v /path/to/files:/library \
+#   -v tinkerex_storage:/rails/storage --name tinkerex tinkerex
 
 # For a containerized dev environment, see Dev Containers: https://guides.rubyonrails.org/getting_started_with_devcontainer.html
 
@@ -133,14 +133,15 @@ RUN curl -fsSL "https://github.com/klippa-app/pdfium-cli/releases/download/${PDF
 #
 # ONLY amd64 GETS F3D, BECAUSE ONLY amd64 CAN. Upstream publishes Linux builds for x86_64 alone:
 # v3.5.0 ships F3D-3.5.0-Linux-x86_64.tar.xz and no Linux arm64 asset at all (macOS gets an arm64
-# build; Linux does not). The Kamal deploy builds linux/amd64 (config/deploy.yml `arch: amd64`) and
-# takes the tarball as before. An arm64 build -- a stranger's Pi, an Apple-silicon `docker build` --
-# gets an EMPTY /opt/f3d holding only a README that says why, instead of a failed build. The final
-# stage's COPY and F3D_BIN stay the same on both: Maker::Previews::Mesh#available? rescues ENOENT on
-# the absent binary and answers false, so on arm64 .obj/.step/.iges and the other F3D formats show
-# the generic icon where amd64 shows a thumbnail. That is the whole cost -- STL, SVG/DXF/LightBurn,
-# PDF and Gerber are rendered by the arch-neutral binaries above and are unaffected. Building F3D
-# from source for arm64 means building VTK and OCCT too; that is a project, not a stage.
+# build; Linux does not). The Kamal deploy builds both linux/amd64 and linux/arm64
+# (config/deploy.yml `builder.arch`); the amd64 half takes the tarball as before. An arm64 build --
+# a stranger's Pi, an Apple-silicon `docker build` -- gets an EMPTY /opt/f3d holding only a README
+# that says why, instead of a failed build. The final stage's COPY and F3D_BIN stay the same on
+# both: Maker::Previews::Mesh#available? rescues ENOENT on the absent binary and answers false, so
+# on arm64 .obj/.step/.iges and the other F3D formats show the generic icon where amd64 shows a
+# thumbnail. That is the whole cost -- STL, SVG/DXF/LightBurn, PDF and Gerber are rendered by the
+# arch-neutral binaries above and are unaffected. Building F3D from source for arm64 means building
+# VTK and OCCT too; that is a project, not a stage.
 FROM base AS f3d
 ARG TARGETARCH
 ARG F3D_VERSION=3.5.0
@@ -174,9 +175,9 @@ RUN if [ "${TARGETARCH}" = "amd64" ]; then \
 # Final stage for app image
 FROM base
 
-# F3D's runtime libraries — must precede the USER switch below, since apt needs root. These are the
-# only packages in this image that exist for ONE renderer; every other one is a static binary, which
-# is why they are listed here rather than folded into `base`.
+# F3D's runtime libraries. These are the only packages in this image that exist for ONE renderer;
+# every other one is a static binary, which is why they are listed here rather than folded into
+# `base`.
 #
 # The list is DERIVED, not guessed: `readelf -d` across the f3d binary and every bundled .so shows
 # libX11 as the only external NEEDED beyond glibc/libstdc++/libcrypto (all already in base). The
@@ -203,10 +204,14 @@ RUN apt-get update -qq && \
       nodejs && \
     rm -rf /var/lib/apt/lists /var/cache/apt/archives
 
-# Run and own only the runtime files as a non-root user for security
+# THE APP USER IS CHOSEN AT RUN TIME, NOT HERE (I, 2026-10-14). `rails` (1000:1000) is still created
+# and still owns the copied tree, but there is NO `USER` line: the container starts as root and
+# bin/docker-entrypoint drops to PUID:PGID (default 1000:1000) with setpriv after making the app's
+# own writable directories that user's. A build-time USER cannot take an env value, and it is what
+# forced every install to chown its folder to uid 1000. Started with --user, the entrypoint finds
+# itself non-root and runs as given, which is what a `user:` line in compose still means.
 RUN groupadd --system --gid 1000 rails && \
     useradd rails --uid 1000 --gid 1000 --create-home --shell /bin/bash
-USER 1000:1000
 
 # Copy built artifacts: gems, application
 COPY --chown=rails:rails --from=build "${BUNDLE_PATH}" "${BUNDLE_PATH}"
@@ -228,13 +233,19 @@ COPY --from=pdfium /tmp/pdfium /usr/local/bin/pdfium
 # formats gltf/glb/ply/off/dae/wrl/3ds/fbx get a thumbnail
 # instead of falling through to `unsupported`.
 #
-# F3D_BIN RATHER THAN A PATH SYMLINK: the renderer already reads ENV["F3D_BIN"], and the final stage
-# has switched to USER 1000:1000 by the time these COPYs run, so a `RUN ln -s` into /usr/local/bin
-# would need root back. Pointing the existing knob at the tree is the smaller change and keeps F3D's
-# own bin/../lib layout intact — the binary resolves its bundled libraries and its OCCT plugin
+# F3D_BIN RATHER THAN A PATH SYMLINK: the renderer already reads ENV["F3D_BIN"], and F3D's own
+# bin/../lib layout must stay intact — the binary resolves its bundled libraries and its OCCT plugin
 # relative to itself, so it must NOT be lifted out of the tree the way the static binaries above are.
 COPY --from=f3d /opt/f3d /opt/f3d
 ENV F3D_BIN="/opt/f3d/bin/f3d"
+
+# THE SHARE BACKEND AT /library IS THE IMAGE'S DEFAULT (I, 2026-10-14). A container started with no
+# LIBRARY_BACKEND at all indexes whatever is mounted at /library, and the share guard refuses a boot
+# with nothing mounted there (lib/library_backend_check.rb). The production guard that refuses a
+# BLANK value still fires on an explicit `LIBRARY_BACKEND=`, the shape of a misconfigured
+# destination. Every Kamal destination and both compose overlays set the backend explicitly.
+ENV LIBRARY_BACKEND="share" \
+    LIBRARY_PATH="/library"
 
 # Entrypoint prepares the database.
 ENTRYPOINT ["/rails/bin/docker-entrypoint"]
