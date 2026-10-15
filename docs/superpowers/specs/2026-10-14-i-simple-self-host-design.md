@@ -315,3 +315,7 @@ enough to run it, and the file can be handed over by any other means.
   `tinkerex-addons`), one at a time on each package's GitHub page. Nothing in the plan blocks on
   it: both verification runs use locally built images through the build overlay.
 - The first deploy after this merges builds multi-arch; expect it to be slower.
+- Publish `boxes-sidecar` and `tinkerex-addons` for arm64 as well (`bin/build-boxes-sidecar` here
+  hard-codes `--platform linux/amd64`; the addons image is built in `chaim354/tinkerex-addons`).
+  Until then the compose file pins all three Tools images to amd64 and Apple silicon emulates them;
+  the pins stay correct afterwards.
