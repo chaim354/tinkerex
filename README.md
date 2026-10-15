@@ -32,8 +32,8 @@ setting you can change, is **[`docs/INSTALL.md`](docs/INSTALL.md)**.
 
 The first account you create is the owner: it is confirmed on the spot, without a mail server, and
 sign-ups close behind it. Later accounts come from the console, as section 4 of the guide shows; open
-sign-ups exist only with the sync server, where each account has its own library. That folder is
-your library: the compose file's own folder, files and all. To keep the file somewhere else,
+sign-ups exist only with the sync server, where each account has its own library. The folder the
+compose file is in is your library, files and all. To keep the file somewhere else,
 `LIBRARY_HOST_PATH=/path/to/files` in a `.env` beside it names the folder instead.
 
 ## Where files come from

@@ -2,7 +2,7 @@
 
 # THE ENTRYPOINT DROPS PRIVILEGES ITSELF (I, 2026-10-14). The image has no USER line, so a container
 # starts as root; this script makes the app's own writable directories the requested user's and
-# re-executes itself as PUID:PGID (default 1000:1000) through setpriv, which util-linux ships in the
+# re-executes itself as PUID:PGID (default: the library folder's owner, else 1000:1000) through setpriv, which util-linux ships in the
 # base image. A build-time USER cannot take an env value, and it is what forced every install to
 # chown its folder to uid 1000.
 #

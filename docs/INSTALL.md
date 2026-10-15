@@ -102,8 +102,9 @@ lists every line with its default.
 - **`PUID` and `PGID`** (Linux) — the user and group the app runs as inside the container. By
   default it runs as **the owner of your folder**, so there is nothing to set when the folder is
   yours or an Unraid share (`99`/`100`). Set them when the folder is owned by root (the default is
-  then `1000`; `id -u` and `id -g` print yours) or to run as a different user on purpose. Files the
-  app writes into your folder are owned by that user, and the boot checks it can write there.
+  then `1000`; `id -u` and `id -g` print yours) or to run as a different user on purpose. Set both
+  or neither: with `PUID` alone, `PGID` is `1000`. Files the app writes into your folder are owned
+  by that user, and the boot checks it can write there.
   Docker Desktop on Mac and Windows presents your folders as writable by any user, so there is
   nothing to set there. The app never changes your folder's ownership — it only probes it — with
   one exception: an empty folder owned by root (the one Docker itself creates on Linux for a
@@ -319,7 +320,7 @@ compose*; the rest come from `.env`.
 | `SOLID_QUEUE_IN_PUMA` | no | **on** in production | Runs the background workers (scans, thumbnails, trash purge, project intake, the changelog pull) inside the web container. `false`, `0` or `no` turns it off, for a split `bin/jobs` container. Outside production it is an opt-in, as it always was. |
 | **Compose only** (`docker-compose.yml` reads these; the app never sees them, except `LIBRARY_HOST_PATH`, passed through display-only, and `PUID`/`PGID`, which reach the entrypoint) | | | |
 | `LIBRARY_HOST_PATH` | no | the compose file's own folder (`.`) | The folder on the host bound to `/library`; a relative path is resolved against the compose file's directory. Also passed into the container display-only, so the Getting started panel can name the folder ("the folder your docker-compose.yml is in", or the path as typed). Section 3. |
-| `PUID`, `PGID` | no | the library folder's owner, else `1000` | The user and group the app runs as inside the container, and so the owner of every file it writes into your folder (section 3). Unset, the folder's owner when it is not root; otherwise `1000`. An Unraid share gives `99`/`100`; Docker Desktop needs nothing. The container starts as root and drops to them; `--user` on the container skips that and runs as given. |
+| `PUID`, `PGID` | no | the library folder's owner, else `1000` | The user and group the app runs as inside the container, and so the owner of every file it writes into your folder (section 3). Both unset, the folder's owner when it is not root, otherwise `1000`; with `PUID` set alone, `PGID` is `1000`. An Unraid share gives `99`/`100`; Docker Desktop needs nothing. The container starts as root and drops to them; `--user` on the container skips that and runs as given. |
 | `TINKEREX_PORT` | no | `8080` | The host port the web app is published on. |
 | `TINKEREX_IMAGE` | no | `ghcr.io/chaim354/tinkerex:latest` | The app image. `docker-compose.build.yml` builds `tinkerex:local` from the checkout instead. |
 | `TINKEREX_ADDONS_PATH` | build overlay | `../tinkerex-addons` | Path to a checkout of `chaim354/tinkerex-addons`, the build context for the addon bundle server in `docker-compose.build.yml`. |

@@ -25,8 +25,8 @@ services:
       # run as someone else. Docker Desktop (Mac, Windows) needs nothing either way.
       PUID: ${PUID:-}
       PGID: ${PGID:-}
-      # DISPLAY-ONLY: the app's one reader (LibraryFolderHelper) turns this into "the folder your
-      # docker-compose.yml is in" when empty, or the path as typed. Never a path the app opens.
+      # Display only, never a path the app opens. Its one reader (LibraryFolderHelper) turns this into "the folder your
+      # docker-compose.yml is in" when empty, or the path as typed.
       LIBRARY_HOST_PATH: ${LIBRARY_HOST_PATH:-}
       # Puma's stock 3 threads starve once a tool call is proxied through the app; 16 is what the
       # author runs.
