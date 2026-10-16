@@ -65,13 +65,14 @@
 - **`available_for?(kind)` EXISTS ONLY WHERE IT CAN ANSWER DIFFERENTLY FROM `available?`** — i.e.
   on `Svg`/`Dxf`, whose thumbnail needs resvg while the measure payload (Nokogiri + arithmetic)
   does not. `Lbrn2` and `Mage` **do not define it**: with `available?` already true it could only
-  repeat them, and `GeneratePreviewJob#available_for?` falls through to `available?` for a
-  renderer that omits it. A test asking `available_for?("geometry")` on a box that HAS resvg
-  passes however it is implemented; **stub the rasterizer absent or it proves nothing** — and the
-  same trap has a second mouth: `RendererContractTest` does `next unless renderer.available?`, so
-  flipping a renderer to unconditionally-true **stops it skipping** and its fixture must then be
-  one that renders with no toolchain (hence `embedded-thumb.lbrn2` beside `sample.mage`). Both
-  halves are invisible on a box that has the binary.
+  repeat them, and `Maker::Previews::Registry.available_for?` (what `GeneratePreviewJob` asks) falls
+  through to `available?` for a renderer that omits it. A test asking `available_for?("geometry")`
+  on a box that HAS resvg passes however it is implemented; **stub the rasterizer absent or it
+  proves nothing** — and the same trap has a second mouth: `RendererContractTest` does
+  `next unless renderer.available?`, so flipping a renderer to unconditionally-true **stops it
+  skipping** and its fixture must then be one that renders with no toolchain (hence
+  `embedded-thumb.lbrn2` beside `sample.mage`). Both halves are invisible on a box that has the
+  binary.
 - **A MillMage `<Shape>` CARRIES `OpIndex`, A LIGHTBURN ONE `CutIndex`** — `Lbrn2.layer_index`
   reads either, and the `||` is unambiguous because no file writes both. The thumbnail cannot see
   the difference (a MillMage file has no `<CutSetting>`, so a nil index and a real one both fall

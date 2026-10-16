@@ -80,9 +80,13 @@ module Maker
       # The row moves to v2 while the job is between reading its target and writing its result.
       superseded = false
       hook = ->(*) { @user.maker_previews.find(preview.id).update_columns(version_id: "v2") unless superseded.tap { superseded = true } }
-      Maker::Previews::Svg.singleton_class.prepend(Module.new do
-        define_method(:render) { |*a, **k| hook.call; super(*a, **k) }
-      end)
+      # CAPTURE AND RESTORE, NEVER `prepend`. This hook was once a prepended module, which cannot be
+      # taken off: it outlived this test and wrapped `Svg.render` as `(*a, **k)` for the rest of the
+      # process. `Registry.render` passes `kind:` only to a renderer whose signature DECLARES it, so
+      # every later SVG geometry render silently became a PNG thumbnail -- seed-dependent, red only
+      # when this test ran first.
+      original = Maker::Previews::Svg.method(:render)
+      Maker::Previews::Svg.define_singleton_method(:render) { |*a, **k| hook.call; original.call(*a, **k) }
 
       forcing_available(Maker::Previews::Svg) do
         assert_nothing_raised { Maker::GeneratePreviewJob.perform_now(preview.id, filename: "drawing.svg") }
@@ -93,6 +97,8 @@ module Maker
       assert_not_equal "ready", preview.status,
                        "a v1 render must not mark the row ready — it would show v1's image as v2"
       assert_not preview.asset.attached?, "v1's bytes must not be attached to a row claiming v2"
+    ensure
+      Maker::Previews::Svg.define_singleton_method(:render, original) if original
     end
 
     test "renders SVG to a PNG when resvg is present; unsupported when absent" do
@@ -331,6 +337,25 @@ module Maker
       preview.reload
       assert_equal "ready", preview.status
       assert_equal "image/png", preview.asset.content_type
+    end
+
+    # THE JOB ASKS THE REGISTRY WHETHER IT CAN BUILD **THIS KIND**, NEVER THE BARE TOOLCHAIN. An
+    # .svg's Measure payload is Nokogiri and arithmetic, so it must come back `ready` on a box with
+    # no rasterizer; asking `renderer.available?` instead marks it `unsupported`. Nothing pinned that
+    # once `available_for?` moved out of this job into Maker::Previews::Registry -- the gate could be
+    # reverted with the suite green. Svg is the subject because it is the renderer whose two answers
+    # DIFFER: Lbrn2's and Mage's `available?` are always true, so neither can tell the gates apart.
+    test "an SVG's geometry payload renders with no rasterizer, because the job gates on the kind" do
+      stage_version(node_id: "plate.svg", version_id: "vgeo", bytes: @svg)
+      preview = @user.maker_previews.create!(node_id: "plate.svg", version_id: "vgeo", kind: "geometry")
+
+      without_svg_rasterizer do
+        Maker::GeneratePreviewJob.perform_now(preview.id, filename: "plate.svg")
+      end
+
+      preview.reload
+      assert_equal "ready", preview.status, preview.error
+      assert_equal "application/json", preview.asset.content_type
     end
 
     test "persists parsed metadata for a LightBurn file" do

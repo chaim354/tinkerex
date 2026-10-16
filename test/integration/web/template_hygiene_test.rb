@@ -92,8 +92,15 @@ module Web
     # answer for a node that is not a live file), and every sweep below asserts :success. Its
     # rendered output is checked by InspectorTest#"a folder, a tombstone or another user's file
     # answers a gone frame, not a page", which asserts its body carries neither ERB delimiter.
+    #
+    # `landings/show.html.erb` IS THE FOURTH, EXCUSED FOR THE REASON `users/` IS AND WITH ITS DEBT
+    # PAID THE SAME WAY AS THE TWO ABOVE. The marketing landing (2026-10-16) renders only SIGNED OUT
+    # and only in demo mode (config/routes.rb), and this sweep is a signed-in session in which `/` is
+    # Recent. Its rendered output is checked by LandingTest#"demo mode on, / is the landing: …", which
+    # asserts its body carries neither ERB delimiter.
     UNSWEPT_TEMPLATES = %w[
       repo_commits/show.html.erb repo_histories/show.html.erb files/inspector_gone.html.erb
+      landings/show.html.erb
     ].freeze
 
     setup do

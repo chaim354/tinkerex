@@ -135,6 +135,21 @@ class AccentSpendTest < ApplicationSystemTestCase
     assert_equal expected, actual
   end
 
+  # THE LANDING (2026-10-16): signed out on a demo deployment, its one action is Try the demo
+  # (design-system.md rule 15). Its own test because every route above is signed in. The setup's
+  # account doubles as the demo account -- the only account, so on share and s3 no other library
+  # sharer closes the demo's door and the expectation is the same on every leg.
+  test "the landing spends the accent on Try the demo" do
+    prior = ENV["DEMO_ACCOUNT_EMAIL"]
+    ENV["DEMO_ACCOUNT_EMAIL"] = @user.email
+    Capybara.reset_sessions!
+    visit "/"
+    assert_selector ".landing-hero h1"
+    assert_equal [ "Try the demo" ], accent_controls
+  ensure
+    prior.nil? ? ENV.delete("DEMO_ACCOUNT_EMAIL") : ENV["DEMO_ACCOUNT_EMAIL"] = prior
+  end
+
   private
 
     # The labels of every accent-filled control inside the top bar or `main`, in document order (the

@@ -139,8 +139,8 @@ module Maker
       #
       # NO `available_for?` BESIDE IT, matching Mage: with `available?` unconditionally true the
       # kind-aware override is a tautology, and a method that cannot answer differently from the
-      # one it wraps is a second place to keep in step for no gain. `GeneratePreviewJob
-      # #available_for?` falls through to `available?` for a renderer that does not define it.
+      # one it wraps is a second place to keep in step for no gain. `Maker::Previews::Registry
+      # .available_for?` falls through to `available?` for a renderer that does not define it.
       #
       # DELIBERATELY NO `THUMBNAIL_REVISION` BUMP. The rendered bytes are identical on every box
       # that has resvg — which is every shipped deployment, since the Dockerfile copies it in — so
