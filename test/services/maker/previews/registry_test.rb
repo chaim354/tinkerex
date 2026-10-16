@@ -148,6 +148,34 @@ module Maker
         assert_equal Maker::Previews::Mesh,  Maker::Previews::Registry.for_filename("part.STEP")
         assert_nil Maker::Previews::Registry.for_filename("part.sldprt")
       end
+
+      # THE JOB'S TWO QUESTIONS LIVE HERE (2026-10-16), so a second caller -- Tinkerex::Landing,
+      # which renders the landing's wall -- draws exactly what the library would for the same file.
+      test "render passes ext: and kind: only to a renderer whose signature declares them" do
+        seen = {}
+        plain = Module.new
+        plain.define_singleton_method(:render) { |bytes, size:| seen[:plain] = { bytes:, size: } }
+        full = Module.new
+        full.define_singleton_method(:render) { |_bytes, size:, ext: nil, kind: "thumbnail"| seen[:full] = { size:, ext:, kind: } }
+
+        Maker::Previews::Registry.render(plain, "b", ext: "stl", kind: "thumbnail", size: 64)
+        Maker::Previews::Registry.render(full, "b", ext: "step", kind: "geometry")
+
+        assert_equal({ bytes: "b", size: 64 }, seen[:plain])
+        assert_equal({ size: 512, ext: "step", kind: "geometry" }, seen[:full])
+      end
+
+      test "available_for? asks a kind-aware renderer about the kind and any other about itself" do
+        aware = Module.new
+        aware.define_singleton_method(:available_for?) { |kind| kind == "geometry" }
+        aware.define_singleton_method(:available?) { false }
+        plain = Module.new
+        plain.define_singleton_method(:available?) { true }
+
+        assert Maker::Previews::Registry.available_for?(aware, "geometry")
+        assert_not Maker::Previews::Registry.available_for?(aware, "thumbnail")
+        assert Maker::Previews::Registry.available_for?(plain, "anything")
+      end
     end
   end
 end

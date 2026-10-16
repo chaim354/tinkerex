@@ -16,7 +16,7 @@ module Maker
 
       def available? = Maker::Previews::SvgRasterizer.available?
 
-      # THE MEASURE PAYLOAD NEEDS NO RASTERIZER — see `GeneratePreviewJob#available_for?`, which
+      # THE MEASURE PAYLOAD NEEDS NO RASTERIZER — see `Maker::Previews::Registry.available_for?`, which
       # is what asks. `available?` stays the answer for the thumbnail (and for the registry
       # contract, which is about rendering an image), so a box without resvg still measures.
       def available_for?(kind) = kind == "geometry" || available?

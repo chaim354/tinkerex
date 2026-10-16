@@ -36,7 +36,7 @@ module Maker
       def available? = Maker::Previews::Svg.available?
 
       # THE MEASURE PAYLOAD NEEDS NO RASTERIZER — parsing group-code pairs is pure Ruby. See
-      # `GeneratePreviewJob#available_for?`.
+      # `Maker::Previews::Registry.available_for?`.
       def available_for?(kind) = kind == "geometry" || available?
 
       # Which build produced a stored artifact — see `Enqueue.revision_for`. PER KIND, so bumping
@@ -63,7 +63,7 @@ module Maker
       # THE GEOMETRY ARM RUNS EVEN WHERE `available?` IS FALSE, deliberately. `available?` asks
       # whether resvg is on this box, because the THUMBNAIL is a rasterized SVG; the measure
       # payload is JSON built from parsed numbers and needs nothing external. That is what
-      # `available_for?` above declares and what `GeneratePreviewJob#available_for?` asks.
+      # `available_for?` above declares and what `Maker::Previews::Registry.available_for?` asks.
       def render(dxf_bytes, size: 512, kind: "thumbnail")
         return Maker::Previews::DxfGeometry.render(dxf_bytes) if kind == "geometry"
 

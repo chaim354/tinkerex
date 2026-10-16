@@ -136,6 +136,41 @@ module Maker
 
         Maker::Previews::TextThumb
       end
+
+      # IS THIS RENDERER ABLE TO BUILD **THIS KIND** ON THIS BOX? Asked by GeneratePreviewJob before
+      # every render and by Tinkerex::Landing before every wall tile -- one answer, so the landing
+      # can never show a tile the library would have marked `unsupported`.
+      #
+      # `available?` asks about the TOOLCHAIN, and for the 2D vector formats that toolchain is resvg
+      # — because their THUMBNAIL is a rasterized SVG. The Measure payload from the same renderers is
+      # Nokogiri and arithmetic and needs nothing external, so a single `available?` gate marks a
+      # perfectly measurable .svg/.dxf/.lbrn2 `unsupported` on any box without the rasterizer. That
+      # reads to a user as "we cannot handle this file", which is false, and it would have made the
+      # measure feature silently backend-dependent: `Mage.available?` is unconditionally true, so
+      # .mage would measure on such a box while the other three did not.
+      #
+      # `respond_to?` WITH A FALLBACK TO `available?`, the same shape `Enqueue.revision_for` already
+      # uses for `payload_revision` — so the ten renderers that produce only a thumbnail are
+      # untouched and the registry's published contract (available?/render/EXTENSIONS) still holds.
+      def available_for?(renderer, kind)
+        return renderer.available_for?(kind) if renderer.respond_to?(:available_for?)
+
+        renderer.available?
+      end
+
+      # Renderers share a `render(bytes, size:)` contract; some (e.g. Mesh/F3D) also accept
+      # `ext:` (to pick the loader) and `kind:`. Accepting `kind:` is not a promise to produce
+      # every kind — Mesh takes it only to REFUSE `model_glb` (f3d renders rasters and cannot
+      # export GLB), raising Unsupported, which GeneratePreviewJob maps to that terminal status.
+      # Pass each kwarg only when the renderer's signature declares it, so the simpler
+      # renderers stay unchanged.
+      def render(renderer, bytes, ext:, kind:, size: 512)
+        accepted = renderer.method(:render).parameters.select { |t, _| %i[key keyreq].include?(t) }.map(&:last)
+        opts = { size: }
+        opts[:ext]  = ext  if accepted.include?(:ext)
+        opts[:kind] = kind if accepted.include?(:kind)
+        renderer.render(bytes, **opts)
+      end
     end
   end
 end

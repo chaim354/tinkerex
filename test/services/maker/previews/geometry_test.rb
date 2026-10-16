@@ -183,38 +183,37 @@ module Maker
       # with no rasterizer, but THUMBNAIL-ABLE, because the embedded PNG is right there and
       # extracting it is pure Ruby. Neither declares `available_for?` at all — with `available?`
       # unconditionally true the override could only ever repeat it — so this asserts through the
-      # JOB'S gate, which is what actually decides, rather than through a method one of them does
-      # not have.
+      # gate the job asks, `Registry.available_for?`, which is what actually decides, rather than
+      # through a method one of them does not have.
       test "lbrn2 and mage need no rasterizer for either kind" do
-        job = Maker::GeneratePreviewJob.new
         without_svg_rasterizer do
           %w[lbrn2 mage].each do |ext|
             renderer = Registry.for(ext)
             assert_not Maker::Previews::SvgRasterizer.available?,
                        "precondition: the rasterizer must read absent, or this proves nothing"
-            assert job.send(:available_for?, renderer, "geometry"),
+            assert Registry.available_for?(renderer, "geometry"),
                    ".#{ext} must be measurable with no rasterizer on the box"
-            assert job.send(:available_for?, renderer, "thumbnail"),
+            assert Registry.available_for?(renderer, "thumbnail"),
                    ".#{ext} carries an embedded raster, so its thumbnail must not need the toolchain"
           end
         end
       end
 
       # THE JOB IS WHAT ASKS, and it asking `available?` directly is the bug this replaced. Driven
-      # through `GeneratePreviewJob`'s own gate rather than the renderer's, because a renderer
-      # answering correctly to a caller that never calls it changes nothing.
+      # through the gate `GeneratePreviewJob` calls — `Registry.available_for?`, moved there from the
+      # job on 2026-10-16 so Tinkerex::Landing asks the same question — rather than the renderer's,
+      # because a renderer answering correctly to a caller that never calls it changes nothing.
       test "the job's gate asks the kind-aware question" do
-        job = Maker::GeneratePreviewJob.new
         without_svg_rasterizer do
-          assert job.send(:available_for?, Svg, "geometry"),
+          assert Registry.available_for?(Svg, "geometry"),
                  "the job must let a geometry render through on a box with no rasterizer"
-          assert_not job.send(:available_for?, Svg, "thumbnail")
+          assert_not Registry.available_for?(Svg, "thumbnail")
         end
 
         # A renderer that does NOT declare available_for? must still be gated on available? —
         # ten of them produce only a thumbnail and must be untouched by this.
         assert_equal Maker::Previews::Stl.available?,
-                     job.send(:available_for?, Maker::Previews::Stl, "thumbnail")
+                     Registry.available_for?(Maker::Previews::Stl, "thumbnail")
       end
 
       # `add` DROPS a degenerate contour rather than raising: a zero-length line or a Rect with no
