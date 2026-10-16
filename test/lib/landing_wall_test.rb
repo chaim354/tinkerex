@@ -76,4 +76,18 @@ class LandingWallTest < ActiveSupport::TestCase
   ensure
     prior.nil? ? ENV.delete("DEMO_ACCOUNT_EMAIL") : ENV["DEMO_ACCOUNT_EMAIL"] = prior
   end
+
+  # THE COMMITTED WALL IS COMPLETE. Every tile names a file the seed holds and a PNG
+  # `bin/rails landing:wall` wrote, so a tile added to TILES without a render -- or a sample removed
+  # from the seed -- is red here before the landing renders a broken image.
+  test "the wall is twelve tiles, each a seed file with a rendered PNG and alt text" do
+    tiles = Tinkerex::Landing::TILES
+    assert_equal 12, tiles.size
+    assert_equal tiles.size, tiles.map(&:asset).uniq.size, "two tiles would write one PNG"
+    tiles.each do |t|
+      assert Tinkerex::Landing::SEED_DIR.join(t.source).file?, "#{t.source} is not in db/seeds/demo"
+      assert Rails.root.join("app/assets/images", t.asset).file?, "#{t.asset} is not rendered: bin/rails landing:wall"
+      assert_predicate t.alt, :present?
+    end
+  end
 end
