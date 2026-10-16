@@ -1,0 +1,153 @@
+<%# THE LANDING, SECOND PASS (2026-10-16): the marketing page at `/` on the public demo's box, and
+    nowhere else -- config/routes.rb asks Tinkerex::Landing.enabled?, which is demo mode, because a
+    self-hosted box has nobody to pitch to and this page's one action IS the demo. The spec is
+    docs/superpowers/specs/2026-10-16-landing-format-wall-design.md; design-system.md rule 15 holds
+    the rules, and three bind every edit here:
+      * THE ACCENT IS SPENT ONCE: Try the demo while there is an account to sign into, else Install
+        (landing_test.rb, accent_spend_test.rb). The closing call to action repeats both, quiet.
+      * THE WALL IS RENDERED, NEVER DRAWN: each tile is the app's own preview of a file in
+        db/seeds/demo, written by `bin/rails landing:wall`; Tinkerex::Landing::TILES lists them.
+      * THE CROPS ARE THE APP, PHOTOGRAPHED by script/landing/capture_crops.rb at 1120x700 from a demo
+        seeded with the same files, the demo banner removed and nothing else touched. Retake them when
+        the pages they show move; never edit them by hand.
+    No script on this page: plain HTML and CSS, nothing for the CSP to nonce. %>
+<% content_for :title, "Tinkerex: every file your workshop makes, previewed" %>
+<% content_for :head do %>
+  <meta name="description" content="Tinkerex indexes the folder your STL, STEP, LightBurn, DXF and Gerber files already live in, draws a preview of each, and opens them in the browser, measured in millimetres. Self-hosted and open source.">
+<% end %>
+<% content_for :container_class, "landing-main" %>
+<% install_url = Tinkerex::Landing::INSTALL_URL %>
+<% source_url = Tinkerex::Landing::SOURCE_URL %>
+
+<div class="landing">
+  <header class="landing-nav">
+    <p class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></p>
+    <nav class="landing-nav-links" aria-label="Tinkerex">
+      <a href="<%= install_url %>">Install</a>
+      <a href="<%= source_url %>">Source</a>
+      <%= link_to "Log in", new_user_session_path %>
+    </nav>
+  </header>
+
+  <section class="landing-hero" aria-labelledby="landing-title">
+    <div class="landing-pitch">
+      <h1 id="landing-title" class="landing-title">Every file your workshop makes, previewed.</h1>
+      <p class="landing-lede">Tinkerex indexes the folder your STL, STEP, LightBurn, DXF and Gerber files already live in, draws a preview of each (more than a hundred file types), and opens them in the browser, measured in millimetres. It runs on your own box, and your files stay plain files.</p>
+      <div class="landing-actions">
+        <% if @demo_available %>
+          <%= button_to "Try the demo", demo_session_path, class: "btn primary" %>
+          <%= link_to "Install it yourself", install_url, class: "btn" %>
+        <% else %>
+          <%= link_to "Install it yourself", install_url, class: "btn primary" %>
+        <% end %>
+      </div>
+      <% if @demo_available %>
+        <p class="landing-hint">No sign-up. A shared account that resets every night.</p>
+      <% end %>
+    </div>
+
+    <figure class="landing-wall-figure">
+      <ul class="landing-wall" aria-label="Twelve files from one project, as Tinkerex previews them">
+        <% Tinkerex::Landing::TILES.each do |tile| %>
+          <li class="landing-tile">
+            <%= image_tag tile.asset, alt: tile.alt, width: Tinkerex::Landing::SIZE, height: Tinkerex::Landing::SIZE %>
+            <span class="landing-tile-ext" aria-hidden="true">.<%= tile.ext %></span>
+          </li>
+        <% end %>
+      </ul>
+      <figcaption>Twelve files from one maker's laser-cut board-game set, as Tinkerex previews them. The demo holds the whole project.</figcaption>
+    </figure>
+  </section>
+
+  <section class="landing-steps" aria-labelledby="landing-steps-title">
+    <h2 id="landing-steps-title" class="landing-section-title">How it works</h2>
+    <ol>
+      <li>
+        <h3>Point it at a folder</h3>
+        <p>A NAS share, an S3 bucket or a sync server. Nothing is imported or copied.</p>
+      </li>
+      <li>
+        <h3>It keeps up on its own</h3>
+        <p>Save from LightBurn, a slicer or KiCad, and the file appears within minutes.</p>
+      </li>
+      <li>
+        <h3>Open anything, anywhere</h3>
+        <p>Spin a model, measure a cut file, read a README, from any browser.</p>
+      </li>
+    </ol>
+  </section>
+
+  <div class="landing-features">
+    <section class="landing-feature" aria-labelledby="landing-feature-viewer">
+      <div class="landing-feature-text">
+        <h2 id="landing-feature-viewer">A 3D viewer that speaks millimetres</h2>
+        <p>STL, 3MF, STEP and a dozen more open in the browser with their size on three axes.</p>
+      </div>
+      <figure class="landing-feature-shot">
+        <%= image_tag "landing/viewer.jpg", width: 1120, height: 700, loading: "lazy",
+                      alt: "The 3D viewer: the board game's robber turned in the browser, 25.9 × 24 × 37.6 mm beneath it" %>
+      </figure>
+    </section>
+    <section class="landing-feature" aria-labelledby="landing-feature-measure">
+      <div class="landing-feature-text">
+        <h2 id="landing-feature-measure">Cut files, measured</h2>
+        <p>LightBurn, SVG and DXF files show their real size, and print at 1:1 to check against stock.</p>
+      </div>
+      <figure class="landing-feature-shot">
+        <%= image_tag "landing/measure.jpg", width: 1120, height: 700, loading: "lazy",
+                      alt: "The Measure view: the hex tiles' LightBurn file, 1,475 shapes to click and measure, beside its laser settings" %>
+      </figure>
+    </section>
+    <section class="landing-feature" aria-labelledby="landing-feature-project">
+      <div class="landing-feature-text">
+        <h2 id="landing-feature-project">A folder becomes a project</h2>
+        <p>Make a folder under Projects and it gets a page: its README, its files by kind, its git repository.</p>
+      </div>
+      <figure class="landing-feature-shot">
+        <%= image_tag "landing/project.jpg", width: 1120, height: 700, loading: "lazy",
+                      alt: "A project page: the board-game set's cover, its file count and its recently changed files" %>
+      </figure>
+    </section>
+    <section class="landing-feature" aria-labelledby="landing-feature-tools">
+      <div class="landing-feature-text">
+        <h2 id="landing-feature-tools">Generate the next file</h2>
+        <p>Tools like the box generator save straight into your library, next to everything else.</p>
+      </div>
+      <figure class="landing-feature-shot">
+        <%= image_tag "landing/boxes.jpg", width: 1120, height: 700, loading: "lazy",
+                      alt: "The box generator: a box's size and material settings beside a live preview of its cut sheet" %>
+      </figure>
+    </section>
+  </div>
+
+  <section class="landing-own" aria-labelledby="landing-own-title">
+    <h2 id="landing-own-title" class="landing-section-title">Yours, on your box</h2>
+    <ul>
+      <li><h3>Your box</h3><p>Docker on Unraid, Linux, a Mac or Windows.</p></li>
+      <li><h3>Plain files</h3><p>Uninstall it and your folder is unchanged.</p></li>
+      <li><h3>No database to run</h3><p>SQLite out of the box.</p></li>
+      <li><h3>Apache-2.0</h3><p>Open source, every line.</p></li>
+    </ul>
+  </section>
+
+  <section class="landing-closing" aria-labelledby="landing-closing-title">
+    <div>
+      <h2 id="landing-closing-title">See it with real files</h2>
+      <p>The demo is the same app, over a small sample library.</p>
+    </div>
+    <div class="landing-actions">
+      <% if @demo_available %>
+        <%= button_to "Try the demo", demo_session_path, class: "btn" %>
+      <% end %>
+      <%= link_to "Install guide", install_url, class: "btn" %>
+    </div>
+  </section>
+
+  <footer class="landing-footer">
+    <span>Tinkerex</span>
+    <span>Apache-2.0</span>
+    <a href="<%= source_url %>">Source</a>
+    <a href="<%= install_url %>">Install guide</a>
+    <%= link_to "Log in", new_user_session_path %>
+  </footer>
+</div>

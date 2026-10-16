@@ -41,16 +41,24 @@ Rails.application.routes.draw do
   }
 
 # --- Web UI (server-rendered file browser) ---
-# THE FRONT DOOR HAS TWO ANSWERS (the landing, 2026-10-14). Signed out, `/` is the landing: the
-# sign-in view with the pitch and three screenshots beside its card, and no redirect -- a stranger
-# typing tinkerex.com met a bare sign-in form before. Signed in, `/` is Recent, as it always was.
-# `unauthenticated` is Devise's REQUEST-TIME constraint (Warden reads the session and the remember
-# cookie, the same question `user_signed_in?` asks), so a visitor matches this route and a signed-in
-# user falls through to `root` below. DECLARED FIRST BECAUSE ROUTES MATCH IN DECLARATION ORDER:
-# below `root` it is unreachable and a visitor is redirected to /users/sign_in again
-# (landing_test.rb). `root` keeps its name, so every `root_path` in the app still means "/" and
-# Devise still lands a sign-in and a sign-out there. `devise_scope` sets the mapping the sessions
-# controller needs and also resolves per request, which is why this may sit above `devise_for`.
+# THE FRONT DOOR HAS THREE ANSWERS (the landing's second pass, 2026-10-16). Signed out on the public
+# demo's box (Tinkerex::Landing.enabled?, which is demo mode), `/` is the marketing landing
+# (LandingsController). Signed out anywhere else it is the plain sign-in card -- a self-hosted box has
+# nobody to pitch to. Signed in, `/` is Recent. `unauthenticated` is Devise's REQUEST-TIME constraint
+# (Warden reads the session and the remember cookie, the question `user_signed_in?` asks); the
+# landing's own constraint is read per request too, never at boot, because a test flips
+# DEMO_ACCOUNT_EMAIL between requests (Tinkerex::Demo's rule). DECLARED IN THIS ORDER BECAUSE ROUTES
+# MATCH IN DECLARATION ORDER: the landing first, or the card answers every visitor; both before
+# `root`, or a visitor is redirected to /users/sign_in (landing_test.rb). `root` keeps its name, so
+# every `root_path` still means "/" and Devise lands a sign-in and a sign-out there. `devise_scope`
+# sets the mapping the sessions controller needs; the landing needs none. THE LANDING'S CONSTRAINT IS A
+# NESTED `constraints` BLOCK, NEVER A `constraints:` OPTION ON ITS `root`: a callable route-level
+# constraint REPLACES the enclosing scope's rather than joining it (ActionDispatch's Mapping#blocks), so
+# that spelling silently drops `unauthenticated` and serves the landing to a signed-in user -- measured,
+# landing_test.rb's "signed in, / is Recent" went red on it. Nested blocks accumulate.
+unauthenticated(:user) do
+  constraints(->(_request) { Tinkerex::Landing.enabled? }) { root to: "landings#show", as: :landing_root }
+end
 devise_scope(:user) { unauthenticated(:user) { root to: "users/sessions#new", as: :unauthenticated_root } }
 root to: "home#index"
 

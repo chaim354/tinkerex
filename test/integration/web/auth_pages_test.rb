@@ -126,8 +126,8 @@ module Web
     test "sign in renders the card with Devise's fields" do
       get new_user_session_path
       assert_response :success
-      # The sign-in page is the landing (2026-10-14): its masthead carries the brand, not the card.
-      assert_select ".landing-brand .brand-name", text: "Tinkerex"
+      # The card carries the brand again (the landing's second pass, 2026-10-16, gave `/` its own page).
+      assert_select ".auth-card .brand .brand-name", text: "Tinkerex"
       assert_select ".auth-card form[action=?] input[name='user[email]'][type='email']", user_session_path
       assert_select ".auth-card form input[name='user[password]'][type='password']"
       assert_select ".auth-card form input[name='user[remember_me]'][type='checkbox']"
