@@ -37,13 +37,15 @@
   /* THE WALL: three across on a phone, four from 900px. Each tile is the app's own render, so it
      sits on the thumb stage, white in both themes (rule 5): most tiles are TRANSPARENT PNGs of dark
      lines, drawn for a white stage, and would vanish on the dark theme's surface.
-     The extension is mono because it is data, on a stage-coloured chip so it reads over any render. */
+     The extension is mono because it is data, on a stage-coloured chip. The render is INSET, with the
+     bottom 24px kept for that chip (6px off the edge plus its 16px line), so no drawing runs into the
+     frame or under its own label -- seen on the first look at the page, where both did. */
   .landing-wall-figure { margin: 0; }
   .landing-wall-figure figcaption { margin-top: var(--space-3); font-size: 13px; line-height: 18px; color: var(--fg-muted); }
   .landing-wall { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); grid-template-columns: repeat(3, minmax(0, 1fr)); }
   @media (min-width: 900px) { .landing-wall { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); } }
   .landing-tile { position: relative; aspect-ratio: 1; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--thumb-stage); }
-  .landing-tile img { display: block; width: 100%; height: 100%; object-fit: contain; }
+  .landing-tile img { display: block; width: 100%; height: 100%; object-fit: contain; padding: var(--space-2) var(--space-2) var(--space-5); }
   .landing-tile-ext { position: absolute; left: 6px; bottom: 6px; padding: 0 4px; border-radius: var(--radius-control); background: var(--thumb-stage); color: var(--thumb-ink); font-family: var(--font-mono); font-size: 11px; line-height: 16px; }
 
   .landing .landing-section-title { font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: var(--space-5); }
@@ -84,5 +86,8 @@
     .landing { gap: var(--space-7); }
     .landing-title { font-size: 30px; line-height: 36px; }
     .landing .landing-lede { font-size: 15px; line-height: 23px; }
+    /* The panel's desktop padding left each of the four cells about 130px at 375, wrapping a
+       two-word heading onto two lines. */
+    .landing-own { padding: var(--space-5) var(--space-4); }
   }
 }
