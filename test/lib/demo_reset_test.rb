@@ -214,20 +214,22 @@ class DemoResetTest < ActiveSupport::TestCase
   # ships in the image and is rewritten every night, so the ceiling still matters: it catches a
   # whole library committed by accident.
   test "the committed seed set stays within its budget" do
-    bytes = Dir.glob("**/*", base: SEED_DIR).sum { |rel| File.file?(SEED_DIR.join(rel)) ? File.size(SEED_DIR.join(rel)) : 0 }
+    # FNM_DOTMATCH: a dot-directory (a firmware project's `.pio/`) ships in the image like anything else.
+    bytes = Dir.glob("**/*", File::FNM_DOTMATCH, base: SEED_DIR).sum { |rel| File.file?(SEED_DIR.join(rel)) ? File.size(SEED_DIR.join(rel)) : 0 }
     assert_operator bytes, :<, 70 * 1024 * 1024,
                     "db/seeds/demo ships in the image and is rewritten every night; keep it under 70 MB"
   end
 
-  # EVERY NAME IN THE SHIPPED SEED IS ONE THE PORT ACCEPTS. The reset writes each entry through
-  # mkdir/write, and a single name the doors refuse (a `.git`, a `.trash`, a slash) would fail the
-  # nightly reset on the public box -- found by a visitor, not by this suite, unless this asks. It
+  # EVERY NAME IN THE SHIPPED SEED IS ONE THE DOORS ACCEPT. The reset writes each entry through
+  # mkdir/write: a name the port reserves (`.git`, `.trash`) fails the nightly reset on the public box,
+  # and a name only the doors refuse (a backslash) is written but leaves visitors a file they cannot
+  # move or rename -- either found by a visitor, not by this suite, unless this asks. It
   # reads the reset's OWN walk, never `seed_paths`: a glob skips dot-names, the very names (`.git`,
   # `.trash`) this exists to catch, and an empty `.trash` in the seed left it green (mutation-checked).
   test "every name in the shipped seed is one the doors accept" do
     names = Tinkerex::DemoReset.seed_entries(SEED_DIR).flat_map { |rel, _path| rel.split("/") }.uniq
     assert_operator names.size, :>, 20, "the scan found too few names; did SEED_DIR move?"
     refused = names.reject { |n| Maker::MoveNode.valid_leaf_name?(n) && !Library::ReservedNames.reserved?(n) }
-    assert_empty refused, "the reset would refuse these seed names: #{refused.inspect}"
+    assert_empty refused, "the reset or the doors would refuse these seed names: #{refused.inspect}"
   end
 end
