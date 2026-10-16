@@ -84,7 +84,13 @@ module Tinkerex
         raise Error, "#{renderer.name}'s toolchain is not on this machine, so #{tile.source} cannot render here"
       end
 
-      result = Maker::Previews::Registry.render(renderer, path.binread, ext: tile.ext, kind: "thumbnail", size:)
+      # A renderer's own failure is re-raised NAMING THE TILE, so `landing:wall` says which file broke.
+      # StandardError, never Exception: NotImplementedError is a ScriptError and stays loud (§14a).
+      result = begin
+        Maker::Previews::Registry.render(renderer, path.binread, ext: tile.ext, kind: "thumbnail", size:)
+      rescue StandardError => e
+        raise Error, "#{tile.source} could not be rendered: #{e.class}: #{e.message}"
+      end
       raise Error, "#{tile.source} rendered #{result[:content_type].inspect}, not a PNG" unless result[:content_type] == "image/png"
       raise Error, "#{tile.source} rendered no bytes" if result[:bytes].to_s.empty?
 

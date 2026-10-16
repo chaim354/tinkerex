@@ -57,6 +57,20 @@ class LandingWallTest < ActiveSupport::TestCase
     assert_equal expected.b, @out.join("a-svg.png").binread
   end
 
+  # A RENDERER THAT RAISES IS REFUSED BY THE TILE'S NAME. Unwrapped, resvg's own error reached
+  # `bin/rails landing:wall` as a backtrace naming no file. Real bytes through the real renderer --
+  # resvg rejects a file that is not SVG -- never a stubbed one.
+  test "a renderer's own failure is refused naming the tile, and writes nothing" do
+    skip "resvg is not on this machine" unless Maker::Previews::Svg.available?
+    seed!("Laser/broken.svg", "not svg")
+
+    err = assert_raises(Tinkerex::Landing::Error) do
+      Tinkerex::Landing.render_wall(seed_dir: @seed, out_dir: @out, tiles: [ tile("Laser/broken.svg") ])
+    end
+    assert_match "Laser/broken.svg could not be rendered", err.message
+    assert_empty @out.children
+  end
+
   test "a refused tile writes nothing, not even the tiles before it" do
     skip "resvg is not on this machine" unless Maker::Previews::Svg.available?
     seed!("Laser/a.svg", SVG)
