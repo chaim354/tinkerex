@@ -59,7 +59,8 @@ module Tinkerex
                alt: "A MillMage file: a hexagonal frame and its pieces, for the CNC"),
       Tile.new(source: "Projects/catan/models/robber.3mf",
                alt: "A 3MF file: the robber, ready to slice"),
-      Tile.new(source: "Projects/catan/models/Screenshot 2024-07-16 at 10.35.23 AM.stl",
+      # macOS writes a NARROW NO-BREAK SPACE (U+202F) before AM/PM in a screenshot's name.
+      Tile.new(source: "Projects/catan/models/Screenshot 2024-07-16 at 10.35.23\u202FAM.stl",
                alt: "An STL file: a robber figure as a print mesh")
     ].freeze
 

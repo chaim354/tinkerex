@@ -408,7 +408,7 @@ workflow left**: `preflight` plus one job per gate, each invoking `bin/ci <gate>
 the wire contract is `bin/ci test-chunk-remote`, which is not moving.
 
 **Env gotchas in this build box:** no local Postgres/libpq (dev and test run SQLite); macOS keeps
-making `" 2"`-suffixed duplicates in the repo, which can break a build: `find . -name '* 2.*' -delete`.
+making `" 2"`-suffixed duplicates in the repo, which can break a build: `find . -name '* 2.*' -not -path './db/seeds/*' -delete` (the demo seed holds real files named that way, e.g. `catan/laser/game box 2.lbrn2`).
 
 ## 14. Invariants and hard-won learnings (don't relitigate)
 
