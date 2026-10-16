@@ -150,15 +150,23 @@ already records. Guards: `files_search_test.rb`, `page_query_budget_test.rb`.
 
 ## The front door
 
-15. **Signed out, `/` is the landing — the sign-in view with the pitch and three screenshots beside
-    its card — and signed in it is Recent.** Devise's `unauthenticated` constraint routes `/` to
-    `users/sessions#new` (`unauthenticated_root` in `config/routes.rb`), declared before `root`
-    because routes match in declaration order: move it below and a stranger is redirected to
-    `/users/sign_in` again (`test/integration/web/landing_test.rb`). The landing opts out of the 440px
-    auth column with `content_for :container_class, "landing-main"` (`pages/landing.css`, a bare
-    class that wins on layer order the way `.public-main` does); the card inside it is the same
-    `.auth-card` every auth page renders, so its markup, its demo button and its one accent (Log in)
-    are unchanged, and the hero's install button is a quiet `.btn` (rule 13). The screenshots under
-    `app/assets/images/landing/` are the app at 1280×800 in the light theme over a small sample library, the demo
-    banner removed; retake them when the interface moves, never doctor them. `test/system/landing_test.rb`
-    reads the computed width and the 375px overflow, which a request test cannot see.
+15. **Signed out, `/` has two answers and demo mode picks; signed in it is Recent.** On the public
+    demo's box (`Tinkerex::Landing.enabled?`, which is `Tinkerex::Demo.enabled?`) it is the marketing
+    landing; anywhere else it is the plain sign-in card, because a self-hosted box has nobody to pitch
+    to and the landing's one action IS the demo. `config/routes.rb` declares three roots in this
+    order: the landing (`landing_root`, a request-time constraint on demo mode, written as a nested
+    `constraints` block because a callable `constraints:` option on the route REPLACES the enclosing
+    `unauthenticated` and serves the landing to a signed-in user), the card
+    (`unauthenticated_root`), then `root` — any other order and a visitor meets the wrong door
+    (`test/integration/web/landing_test.rb`). `LandingsController` stands on `ActionController::Base`,
+    never on `ApplicationController` with a skip (`architecture_invariants_test.rb`'s default-deny),
+    and outside `Public::` because its demo button's CSRF token writes the session. The accent is Try
+    the demo while `Tinkerex::Demo.available?`, else Install — exactly once either way (rule 13;
+    `accent_spend_test.rb`). `/users/sign_in` is the plain card everywhere. **The wall's twelve tiles
+    are the app's own renders** of twelve files of the owner's `catan` project, which `db/seeds/demo`
+    holds whole (the seed's 70 MB budget is that decision, `demo_reset_test.rb`), written by `bin/rails landing:wall`
+    (`Tinkerex::Landing`, which refuses rather than skips); **the four feature crops are the app
+    photographed** by `script/landing/capture_crops.rb`, the demo banner removed and nothing else
+    touched. Retake both when the renderers or the pages move; never draw or edit them.
+    `test/system/landing_test.rb` reads the computed width, every tile's load and the 375px overflow,
+    which a request test cannot see.
