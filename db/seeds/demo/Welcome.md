@@ -6,6 +6,9 @@ exactly as you first found it.
 
 Things to try:
 
+- Open **Projects**, then **catan**: a maker's real laser-cut board-game set, the hex tiles, tokens,
+  cards and game box in LightBurn, SVG and DXF, a MillMage file for the CNC, and the robber to
+  print. It is the project the tinkerex.com front page shows.
 - Open **Projects**, then **Desk Lamp**. The project page lists its folder, renders its README and
   links the parts.
 - Open `Projects/Desk Lamp/models/base.stl` to turn the part in 3D and measure it.

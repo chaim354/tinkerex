@@ -91,8 +91,10 @@ class DemoResetTest < ActiveSupport::TestCase
   test "the scan runs its whole sequence: the project is discovered and its folder swept" do
     fresh = reset!
 
+    # The seed's two project folders, each discovered, and nothing else.
+    assert_equal [ "Desk Lamp", "catan" ], fresh.maker_projects.pluck(:name).sort
     folder = fresh.nodes.present.find_by!(storage_path: FOLDER)
-    project = fresh.maker_projects.sole
+    project = fresh.maker_projects.find_by!(name: "Desk Lamp")
     assert_equal "Desk Lamp", project.name
     assert_equal folder.node_id, project.folder_node_id
     assert project.discovered_at.present?, "the project was not made by discovery"
@@ -121,7 +123,7 @@ class DemoResetTest < ActiveSupport::TestCase
   test "a second reset lands on the same state" do
     first = reset!
     first_paths = library_paths(first)
-    first_projects = first.maker_projects.pluck(:name)
+    first_projects = first.maker_projects.pluck(:name).sort
 
     second = reset!(first)
 
@@ -130,7 +132,7 @@ class DemoResetTest < ActiveSupport::TestCase
     assert_equal "demo", second.handle
     assert_equal first_paths, library_paths(second)
     assert_equal seed_paths, library_paths(second)
-    assert_equal first_projects, second.maker_projects.pluck(:name)
+    assert_equal first_projects, second.maker_projects.pluck(:name).sort
     assert_empty trash_entries
   end
 
@@ -206,9 +208,26 @@ class DemoResetTest < ActiveSupport::TestCase
     assert User.exists?(@user.id), "the account was destroyed before the refusal"
   end
 
-  test "the committed seed set stays small" do
+  # THE SEED IS THE OWNER'S WHOLE `catan` PROJECT (about 61 MB) beside the small Desk Lamp set: the
+  # landing on tinkerex.com shows twelve of its files and the demo holds all of them, by the owner's
+  # decision (2026-10-16; docs/superpowers/specs/2026-10-16-landing-format-wall-design.md §3). It
+  # ships in the image and is rewritten every night, so the ceiling still matters: it catches a
+  # whole library committed by accident.
+  test "the committed seed set stays within its budget" do
     bytes = Dir.glob("**/*", base: SEED_DIR).sum { |rel| File.file?(SEED_DIR.join(rel)) ? File.size(SEED_DIR.join(rel)) : 0 }
-    assert_operator bytes, :<, 200 * 1024,
-                    "db/seeds/demo ships in the image and is rewritten every night; keep it under 200 KB"
+    assert_operator bytes, :<, 70 * 1024 * 1024,
+                    "db/seeds/demo ships in the image and is rewritten every night; keep it under 70 MB"
+  end
+
+  # EVERY NAME IN THE SHIPPED SEED IS ONE THE PORT ACCEPTS. The reset writes each entry through
+  # mkdir/write, and a single name the doors refuse (a `.git`, a `.trash`, a slash) would fail the
+  # nightly reset on the public box -- found by a visitor, not by this suite, unless this asks. It
+  # reads the reset's OWN walk, never `seed_paths`: a glob skips dot-names, the very names (`.git`,
+  # `.trash`) this exists to catch, and an empty `.trash` in the seed left it green (mutation-checked).
+  test "every name in the shipped seed is one the doors accept" do
+    names = Tinkerex::DemoReset.seed_entries(SEED_DIR).flat_map { |rel, _path| rel.split("/") }.uniq
+    assert_operator names.size, :>, 20, "the scan found too few names; did SEED_DIR move?"
+    refused = names.reject { |n| Maker::MoveNode.valid_leaf_name?(n) && !Library::ReservedNames.reserved?(n) }
+    assert_empty refused, "the reset would refuse these seed names: #{refused.inspect}"
   end
 end
