@@ -9,7 +9,7 @@ class LandingsController < ActionController::Base
   layout "application"
 
   def show
-    # One COUNT, the one the sign-in card pays (Tinkerex::Demo.available?): the demo button exists only
+    # A find_by and a COUNT, what the sign-in card pays (Tinkerex::Demo.available?): the demo button exists only
     # while there is an account to sign into, and Install takes the accent when there is none.
     @demo_available = Tinkerex::Demo.available?
   end

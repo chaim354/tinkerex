@@ -54,8 +54,9 @@ Rails.application.routes.draw do
 # sets the mapping the sessions controller needs; the landing needs none. THE LANDING'S CONSTRAINT IS A
 # NESTED `constraints` BLOCK, NEVER A `constraints:` OPTION ON ITS `root`: a callable route-level
 # constraint REPLACES the enclosing scope's rather than joining it (ActionDispatch's Mapping#blocks), so
-# that spelling silently drops `unauthenticated` and serves the landing to a signed-in user -- measured,
-# landing_test.rb's "signed in, / is Recent" went red on it. Nested blocks accumulate.
+# that spelling silently drops `unauthenticated` and sends a signed-in user to LandingsController, whose
+# Base-controller layout then 500s -- measured, landing_test.rb's "signed in, / is Recent" errored on it.
+# Nested blocks accumulate.
 unauthenticated(:user) do
   constraints(->(_request) { Tinkerex::Landing.enabled? }) { root to: "landings#show", as: :landing_root }
 end

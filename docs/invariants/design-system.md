@@ -156,13 +156,13 @@ already records. Guards: `files_search_test.rb`, `page_query_budget_test.rb`.
     to and the landing's one action IS the demo. `config/routes.rb` declares three roots in this
     order: the landing (`landing_root`, a request-time constraint on demo mode, written as a nested
     `constraints` block because a callable `constraints:` option on the route REPLACES the enclosing
-    `unauthenticated` and serves the landing to a signed-in user), the card
+    `unauthenticated` and sends a signed-in user to the landing, which 500s), the card
     (`unauthenticated_root`), then `root` — any other order and a visitor meets the wrong door
     (`test/integration/web/landing_test.rb`). `LandingsController` stands on `ActionController::Base`,
     never on `ApplicationController` with a skip (`architecture_invariants_test.rb`'s default-deny),
     and outside `Public::` because its demo button's CSRF token writes the session. The accent is Try
-    the demo while `Tinkerex::Demo.available?`, else Install — exactly once either way (rule 13;
-    `accent_spend_test.rb`). `/users/sign_in` is the plain card everywhere. **The wall's twelve tiles
+    the demo while `Tinkerex::Demo.available?`, else Install — exactly once either way (rule 13; the Try the demo state in
+    `accent_spend_test.rb`, both states in `landing_test.rb`). `/users/sign_in` is the plain card everywhere. **The wall's twelve tiles
     are the app's own renders** of twelve files of the owner's `catan` project, which `db/seeds/demo`
     holds whole (the seed's 70 MB budget is that decision, `demo_reset_test.rb`), written by `bin/rails landing:wall`
     (`Tinkerex::Landing`, which refuses rather than skips); **the four feature crops are the app
