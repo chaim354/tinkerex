@@ -86,4 +86,9 @@
 **/.DS_Store
 **/* 2.*
 **/* 2
+# ...EXCEPT the demo seed, which holds real files named that way (the catan project's
+# `laser/game box 2.lbrn2`): a seed file the image lacks is one the nightly reset never writes
+# (deploy_hygiene_test.rb, tinkerex#384).
+!db/seeds/**/* 2.*
+!db/seeds/**/* 2
 /library/
