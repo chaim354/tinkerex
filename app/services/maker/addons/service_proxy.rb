@@ -119,7 +119,7 @@ module Maker
         end
       # URI::Error for the same reason Source#get rescues it: `URI.parse` is the first statement
       # here and is not a network error, so a path that survives validate_asset_path! (which
-      # rejects traversal but not spaces, newlines, NULs or non-ASCII) raised straight out of the
+      # rejects traversal and NULs but not spaces, newlines or non-ASCII) raised straight out of the
       # action as a 500. -> Error, which the controller already maps to 404.
       rescue URI::Error, SystemCallError, Net::OpenTimeout, Net::ReadTimeout, SocketError,
              OpenSSL::SSL::SSLError => e
