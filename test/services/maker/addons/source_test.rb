@@ -54,14 +54,24 @@ module Maker
         end
       end
 
+      # A NUL has no `/` and no `..`, so it rode through every refusal above — and then Pathname raised
+      # ArgumentError: a backtrace from addons:check, and a 500 from Source::Local in dev.
+      test "asset_path! refuses a NUL byte" do
+        error = assert_raises(Source::Error) { Source.new("http://addons.test").asset_path!("a\u0000b.js") }
+        assert_includes error.message, "NUL byte refused"
+        Dir.mktmpdir do |dir|
+          assert_raises(Source::Error) { Source::Local.new(dir).asset("generators", "a\u0000b.js") }
+        end
+      end
+
       test "asset_path! accepts an ordinary nested path" do
         source = Source.new("http://addons.test")
         assert_equal "generators/makerjs.js", source.asset_path!("generators/makerjs.js")
       end
 
       # THE HTTP SOURCE ONLY — WHICH IS PRECISELY WHY THIS WAS GREEN FOR MONTHS OVER A LIVE 500.
-      # validate_asset_path! rejects traversal, absolute paths and empty segments; it does NOT
-      # reject spaces, newlines, NULs or non-ASCII, all of which make URI.parse raise. Source::Local
+      # validate_asset_path! rejects traversal, absolute paths, empty segments and NULs; it does NOT
+      # reject spaces, newlines or non-ASCII, all of which make URI.parse raise. Source::Local
       # (the dev/test default) reads with Pathname#read and never parses a URI, so the entire suite
       # ran past a condition only the production code path can reach — the same shape as §14a's
       # STORAGE_BACKEND 500, a guard whose precondition is never established in test. These
@@ -125,6 +135,22 @@ module Maker
       test "Local#manifests raises Source::Error, not Errno, when the file is missing" do
         Dir.mktmpdir do |dir|
           assert_raises(Source::Error) { Source::Local.new(dir).manifests }
+        end
+      end
+
+      # Root reads a mode-000 file anyway, so there the precondition cannot be established — skipped,
+      # rather than passing for a reason that has nothing to do with the rescue.
+      test "Local#manifests raises Source::Error, not Errno, when the file is unreadable" do
+        skip "running as root, where a mode-000 file is still readable" if Process.euid.zero?
+
+        Dir.mktmpdir do |dir|
+          index = File.join(dir, "manifests.json")
+          File.write(index, "[]")
+          File.chmod(0o000, index)
+          error = assert_raises(Source::Error) { Source::Local.new(dir).manifests }
+          assert_includes error.message, "EACCES"
+        ensure
+          File.chmod(0o644, index) if index && File.exist?(index)
         end
       end
 

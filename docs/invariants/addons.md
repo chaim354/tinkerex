@@ -70,8 +70,11 @@
   `Registry.problem_with` is the ONE definition of why `build` refuses a manifest, and
   `Registry.problems` reports it with the two whole-index problems (an unreciprocated `states_key`;
   a duplicate key, reported but still served) in three places: `bin/rails "addons:check[PATH]"`
-  (`Maker::Addons::Check`, which adds the on-disk `<key>/`, `entry` and `pins` checks and exits 1
-  naming each problem — what tinkerex-addons' `bin/publish` runs); a notice on `/tools` in
+  (`Maker::Addons::Check`, which adds the on-disk checks — `key` a single path segment, refused
+  BEFORE any join and refused there rather than in Registry, which would change what production
+  serves; `<key>/`, `entry` and `pins` present, NUL-free, and resolving INSIDE PATH by realpath on
+  both sides, because the addons image copies a symlink as a symlink and one pointing out dangles —
+  and exits 1 naming each problem — what tinkerex-addons' `bin/publish` runs); a notice on `/tools` in
   development and test only, never production, where the cards are read by the maker; and one
   `Rails.logger.warn` per problem per `Registry.all` call, i.e. per request, in every environment.
 - **ONE generic surface serves EVERY addon, with NO EXCEPTIONS LEFT** — `Tools::AddonsController`

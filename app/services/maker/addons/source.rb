@@ -38,11 +38,13 @@ module Maker
         # one guard, not two copies that can drift. `path` is attacker-influenced (it comes off the
         # URL), so it is REJECTED, never normalized — expand_path would turn "a/../../b" into a
         # *valid* path and silently fetch the wrong file. Same rule, same reason, as
-        # FileLayer::S3#key_for (§14a).
+        # FileLayer::S3#key_for (§14a). A NUL is refused for a different reason: Pathname raises
+        # ArgumentError on one, which escaped as a backtrace from addons:check and a 500 from Local.
         def validate_asset_path!(path)
           p = path.to_s
           raise Error, "empty asset path" if p.empty?
           raise Error, "absolute asset path refused: #{p.inspect}" if p.start_with?("/")
+          raise Error, "NUL byte refused: #{p.inspect}" if p.include?("\0")
           raise Error, "traversal refused: #{p.inspect}" if p.split("/").any? { |seg| seg == ".." || seg == "." || seg.empty? }
 
           p
@@ -102,7 +104,7 @@ module Maker
       #
       # URI::Error is here because `URI.parse` is the FIRST thing this method does and it is not a
       # network error, so the five below never covered it. validate_asset_path! rejects `..`, `.`,
-      # empty segments and a leading `/` — it does NOT reject spaces, newlines, NULs or non-ASCII,
+      # empty segments, a leading `/` and a NUL — it does NOT reject spaces, newlines or non-ASCII,
       # all of which make URI.parse raise. The result was a 500 for any authenticated user who
       # requested `/tools/<key>/asset/a%20b.js`, and a 500 rather than the intended 404 for an
       # addon that legitimately shipped `café.js` — which reads as "my fix didn't deploy", exactly
@@ -170,7 +172,7 @@ module Maker
 
         def read(relative_path)
           @root.join(relative_path).read
-        rescue Errno::ENOENT, Errno::EISDIR, Errno::ENOTDIR => e
+        rescue Errno::ENOENT, Errno::EISDIR, Errno::ENOTDIR, Errno::EACCES => e
           raise Error, "#{relative_path} -> #{e.class}: #{e.message}"
         end
       end

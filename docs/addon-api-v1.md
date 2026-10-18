@@ -96,7 +96,7 @@ the gallery your addon is simply *absent* from `/tools` — no error page. The r
 own words (`missing title, icon`, `api_version "2" — this host speaks "1"`, `not a JSON object`, a
 keyless entry named by its position as `entry 3`), surfaces in three places:
 `bin/rails "addons:check[PATH]"` (next paragraph — run it before you ship); a notice at the top of
-`/tools` naming each skipped manifest, **in development and test only** — production never shows
+`/tools` naming each problem, **in development and test only** — production never shows
 it, because the gallery is read by the maker, who can do nothing with "missing icon"; and the server
 log, one `warn` per problem on every request that reads the addon index, which in production is the
 only place it appears.
@@ -106,9 +106,13 @@ only place it appears.
 it reads `ADDON_SOURCE_PATH`, which development points at `../tinkerex-addons/addons`). It applies
 the host's own rules — the ones that decide what `/tools` serves, not a copy of them: the required
 keys and `api_version` above, a duplicate `key`, and an unreciprocated `states_key` (below). Then it
-checks what only a directory on disk can answer: your `<key>/` folder exists beside
-`manifests.json`, and so do `entry` and every `pins` file inside it — each path refused, never
-resolved, if it is absolute or climbs out with `..`, exactly as the asset proxy refuses it. It exits
+checks your files on disk. `key` must be a single path segment — no `/`, not `.` or `..`, no NUL
+byte — because it becomes both `/tools/<key>` and the `<key>/` folder; that folder must exist beside
+`manifests.json`, and so must `entry` and every `pins` file inside it — each path refused, never
+resolved, if it is absolute, climbs out with `..` or holds a NUL byte, exactly as the asset proxy
+refuses it. Nothing may resolve outside `PATH`: a symlinked folder or file is fine while its target
+stays inside, and refused when it points outside, because the addons image copies a symlink as a
+symlink and there it would dangle. It exits
 0 printing `addons:check: N tools OK in PATH`, or 1 with one `key: reason` line per problem;
 tinkerex-addons' `bin/publish` runs it before anything ships. **A duplicate key is reported but
 still served:** both entries stay in the gallery and `/tools/<key>` opens whichever sorts first by
