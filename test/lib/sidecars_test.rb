@@ -1,9 +1,20 @@
 require "test_helper"
 
 # Tinkerex::Sidecars over a TEMP COPY of the real files, so a fixture can never drift from the
-# configs it stands in for: each test copies the eight touchpoint files and every sidecar's
+# configs it stands in for: each test copies the six touchpoint files and every sidecar's
 # Dockerfile, then breaks exactly one thing and asserts exactly that problem.
 class SidecarsTest < ActiveSupport::TestCase
+  # `foo` and `bar` are SCRATCH names these tests rely on NOT existing, while every real sidecar is
+  # copied in. A real sidecar/foo/ would fail half this file for a reason unrelated to each test —
+  # so fail here instead, saying so.
+  setup do
+    %w[foo bar].each do |scratch|
+      assert_not Rails.root.join("sidecar", scratch).exist?,
+                 "sidecar/#{scratch}/ now exists for real, but these tests use `#{scratch}` as a scratch name that must " \
+                 "not — pick other scratch names in #{__FILE__}"
+    end
+  end
+
   def with_tree
     Dir.mktmpdir do |dir|
       root = Pathname.new(dir)
@@ -117,11 +128,24 @@ class SidecarsTest < ActiveSupport::TestCase
     end
   end
 
-  test "INSTALL.md not naming the URL is named" do
+  test "INSTALL.md not naming the env key is named" do
     with_tree do |root, sidecars|
       edit(root, "docs/INSTALL.md") { |t| t.gsub("`OPENSCAD_SIDECAR_URL`", "`OPENSCAD_URL`") }
       p = only_problem(sidecars)
       assert_equal [ "openscad", "docs/INSTALL.md" ], [ p.sidecar, p.file ]
+      assert_equal sidecars.snippets("openscad").fetch(:install), p.snippet
+    end
+  end
+
+  # The row carries TWO lists — the variables and the compose URLs they are set to — and the
+  # generator writes both, so following sidecars:check by hand must not be able to skip the second.
+  test "INSTALL.md naming the env key but not the compose URL is named" do
+    with_tree do |root, sidecars|
+      edit(root, "docs/INSTALL.md") { |t| t.sub(", `http://openscad:8000`", "") }
+      p = only_problem(sidecars)
+      assert_equal [ "openscad", "docs/INSTALL.md" ], [ p.sidecar, p.file ]
+      assert_equal "http://openscad:8000 in the sidecar-URL row", p.missing
+      assert_equal "`http://openscad:8000`", p.snippet
     end
   end
 
@@ -133,13 +157,14 @@ class SidecarsTest < ActiveSupport::TestCase
     end
   end
 
-  test "a new sidecar directory with nothing else reports all eight touchpoints, in order" do
+  test "a new sidecar directory with nothing else reports all nine touchpoints, in order" do
     with_tree do |root, sidecars|
       root.join("sidecar/foo").mkpath
       root.join("sidecar/foo/Dockerfile").write("FROM scratch\n")
       problems = sidecars.problems.select { |p| p.sidecar == "foo" }
       assert_equal %w[config/deploy.yml config/deploy.yml config/deploy.ovh.yml docker-compose.yml
-                      docker-compose.yml docker-compose.build.yml docs/INSTALL.md app/views/help/show.html.erb],
+                      docker-compose.yml docker-compose.build.yml docs/INSTALL.md docs/INSTALL.md
+                      app/views/help/show.html.erb],
                    problems.map(&:file)
     end
   end
@@ -295,7 +320,7 @@ class SidecarsTest < ActiveSupport::TestCase
     end
   end
 
-  # A sidecar named `no` becomes a `false:` KEY the moment its snippet is inserted, so its eight
+  # A sidecar named `no` becomes a `false:` KEY the moment its snippet is inserted, so its nine
   # checks could never pass — the only fix is a different name.
   test "valid_name? is the generator's rule minus every name YAML reads back as something else" do
     %w[openscad foo-bar boxes2].each { |n| assert Tinkerex::Sidecars.valid_name?(n), n }

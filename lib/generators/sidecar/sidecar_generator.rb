@@ -7,8 +7,8 @@ require "rails/generators"
 # reverses every insert.
 #
 # ALL REFUSALS COME BEFORE THE FIRST WRITE (Thor runs public methods in definition order): a bad
-# name, an existing sidecar, a missing licence, and any marker or prose anchor not present exactly
-# once. A half-inserted config is worse than none.
+# name, an existing sidecar, a missing licence, any marker or prose anchor not present exactly once,
+# and a name the config still mentions as a stray. A half-inserted config is worse than none.
 class SidecarGenerator < Rails::Generators::Base
   source_root File.expand_path("templates", __dir__)
   argument :sidecar_name, type: :string
@@ -46,6 +46,7 @@ class SidecarGenerator < Rails::Generators::Base
         raise Thor::Error, "#{rel}: expected exactly one sidecar-URL list matching #{re.source} (found #{count})" unless count == 1
       end
     end
+    refuse_leftovers unless behavior == :revoke
   end
 
   def scaffold
@@ -67,7 +68,7 @@ class SidecarGenerator < Rails::Generators::Base
       inject_into_file Tinkerex::Sidecars::FILES.fetch(file), snippets.fetch(point), before: marker_line(marker)
     end
     inject_into_file Tinkerex::Sidecars::FILES[:install], ", #{snippets[:install]}", after: INSTALL_VARS
-    inject_into_file Tinkerex::Sidecars::FILES[:install], ", `#{sidecars.compose_url(sidecar_name)}`", after: INSTALL_URLS
+    inject_into_file Tinkerex::Sidecars::FILES[:install], ", #{snippets[:install_url]}", after: INSTALL_URLS
     inject_into_file Tinkerex::Sidecars::FILES[:help], ", #{snippets[:help]}", after: HELP_VARS
   end
 
@@ -96,6 +97,22 @@ class SidecarGenerator < Rails::Generators::Base
   end
 
   private
+
+  # A NAME THE CONFIG STILL MENTIONS IS REFUSED: a removed sidecar's leftover (its env key, its
+  # accessory or service) plus the copy inserted here is a DUPLICATE KEY, and YAML silently keeps
+  # the last of two — so every check passed, "complete", over a compose file `docker compose config`
+  # refuses ("mapping key already defined"). Measured. `generate` only: `destroy` runs against a
+  # sidecar that exists, whose entries are not strays.
+  def refuse_leftovers
+    leftovers = sidecars.problems.select do |p|
+      p.file == "(stray)" && [ sidecar_name, sidecars.env_key(sidecar_name) ].include?(p.sidecar)
+    end
+    return if leftovers.empty?
+
+    raise Thor::Error, "the config still names #{sidecar_name} — a removed sidecar's leftovers. Remove them first; " \
+                       "inserting beside them would write duplicate keys YAML silently collapses:\n" +
+                       leftovers.map { |p| "  #{p.message}" }.join("\n")
+  end
 
   # A FRESH instance per call, never memoized: Tinkerex::Sidecars caches each file's parsed YAML,
   # and `snippets` reads deploy.yml (for the accessory host) BEFORE insert_config writes it — a

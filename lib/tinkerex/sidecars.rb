@@ -4,7 +4,7 @@ module Tinkerex
   # WHAT A SIDECAR IS, AND EVERYTHING ONE NEEDS — the one definition. A sidecar is a GPL service an
   # addon reaches over HTTP through the host's proxy, never a library this app links (CLAUDE.md §9,
   # §14c). It is discovered as `sidecar/<name>/Dockerfile` — the licence guard's own discovery — and
-  # each one needs eight touchpoints in five files, which used to be remembered by hand.
+  # each one needs nine touchpoints in the six FILES (`problems_for`), which used to be remembered by hand.
   #
   # THREE READERS, ONE ANSWER: test/sidecar_hygiene_test.rb (bin/ci), `bin/rails sidecars:check`
   # (bin/publish-sidecar runs it) and `bin/rails generate sidecar`, which INSERTS `snippets` — the
@@ -22,6 +22,10 @@ module Tinkerex
       # ONE SENTENCE for every reader (sidecars:check, the bin/ci guard, the generator). A stray is not
       # missing from a file, so it reads as what it is.
       def message = file == "(stray)" ? "#{sidecar}: stray — #{missing}" : "#{sidecar}: #{file} is missing #{missing}"
+
+      # A touchpoint's snippet is TEXT for its file, exact to the byte (indentation included); a
+      # stray's or a misnamed directory's is an INSTRUCTION. sidecars:check prints the two differently.
+      def touchpoint? = FILES.value?(file)
     end
 
     REGISTRY = "ghcr.io/chaim354".freeze
@@ -71,7 +75,8 @@ module Tinkerex
     end
 
     # The exact text each touchpoint needs. YAML snippets are whole indented lines, ready to insert
-    # above their marker; the two prose ones are the token that must appear.
+    # above their marker; the three prose ones are the token that must appear (INSTALL.md's row
+    # lists both the variable and the compose URL it is set to).
     def snippets(name)
       key = env_key(name)
       {
@@ -101,11 +106,12 @@ module Tinkerex
             build: sidecar/#{name}
         YAML
         install: "`#{key}`",
+        install_url: "`#{compose_url(name)}`",
         help: "<code>#{key}</code>"
       }
     end
 
-    # A sidecar/<name>/ whose name YAML cannot keep is ONE problem — rename it — rather than eight
+    # A sidecar/<name>/ whose name YAML cannot keep is ONE problem — rename it — rather than nine
     # snippets that could never clear.
     def problems = names.flat_map { |name| self.class.valid_name?(name) ? problems_for(name) : [ misnamed(name) ] } + strays
 
@@ -132,6 +138,7 @@ module Tinkerex
         [ :compose_build, "service #{name} building sidecar/#{name}", s[:compose_build],
           at(compose_build, "services", name, "build") == "sidecar/#{name}" ],
         [ :install, "#{key} in the sidecar-URL row", s[:install], text(:install).include?(s[:install]) ],
+        [ :install, "#{compose_url(name)} in the sidecar-URL row", s[:install_url], text(:install).include?(s[:install_url]) ],
         [ :help, "#{key} in the operator list", s[:help], text(:help).include?(s[:help]) ]
       ].reject(&:last).map do |file, missing, snippet, _|
         Problem.new(sidecar: name, file: FILES.fetch(file), missing:, snippet:)
