@@ -4,9 +4,11 @@ module Maker
     # listed here — that is what lets an addon ship without editing this repo, and what makes
     # republishing a bundle the deploy.
     #
-    # `available?` is retained from the frozen-hash design and still earns its place: an addon whose
-    # source is unreachable, whose api_version we don't speak, or whose manifest is malformed greys
-    # out rather than 500ing. One bad addon must never take /tools down.
+    # `available?` is retained from the frozen-hash design and still earns its place: an addon that
+    # builds but cannot run here (`min_host`, an unconfigured service) greys out rather than 500ing.
+    # A manifest that does not build at all — malformed, or an api_version we don't speak — is
+    # SKIPPED instead, never greyed, and `Registry.problems` says why (`Registry.problem_with`).
+    # Either way, one bad addon must never take /tools down.
     Addon = Data.define(:key, :title, :icon, :description, :entry, :pins, :services, :layout,
                         :states_key, :version, :author, :license, :homepage, :permissions,
                         :min_host, :shares_states_with, :service_timeouts) do
@@ -91,12 +93,68 @@ module Maker
       # question is about a PAIR of manifests, so it is asked where both are in scope.
       def all
         index = manifests
+        # ONE warn per problem, per call — the cadence the states_key warn always had (see
+        # states_key_permitted?'s note). Before problems existed, a manifest `build` refused was
+        # skipped with NO log line at all, so a typo'd manifest left an operator nothing to find.
+        problems(index).each { |p| Rails.logger.warn("addon #{p[:key].inspect}: #{p[:reason]}") }
         index.filter_map { |m| build(m) }
              .select { |addon| states_key_permitted?(addon, index) }
              .sort_by { |a| [ a.title, a.key ] }
       end
 
       def find(key) = all.find { |a| a.key == key.to_s }
+
+      # WHY `build` WOULD REFUSE THIS MANIFEST, OR nil. The ONE definition of those refusals:
+      # `build` asks it first, and `problems` — read by `addons:check` and the local /tools notice —
+      # reports it, so an author learns why a tool never appeared instead of finding nothing.
+      # Production behaviour is unchanged: a manifest with a problem is still SKIPPED, never raised
+      # on (§14c — one bad addon must never take /tools down).
+      def problem_with(manifest)
+        return "not a JSON object" unless manifest.is_a?(Hash)
+
+        missing = REQUIRED.reject { |k| manifest[k].present? }
+        return "missing #{missing.join(', ')}" if missing.any?
+        unless manifest["api_version"].to_s == API_VERSION
+          return "api_version #{manifest['api_version'].to_s.inspect} — this host speaks #{API_VERSION.inspect}"
+        end
+
+        nil
+      end
+
+      # THE WHOLE-INDEX REPORT, `[{key:, reason:}]` in index order. Every manifest `build` refuses,
+      # plus the two problems only a whole index can show:
+      #
+      #   - an unreciprocated states_key — `states_key_permitted?` DECIDES; this only reports it.
+      #   - a DUPLICATE key among the addons `all` serves — REPORTED, NOT SKIPPED. `find` answers
+      #     whichever sorts first by [title, key]; changing what production serves is not this
+      #     method's business. A skipped manifest sharing a served one's key is reported as skipped,
+      #     not as a duplicate, because only one of the two is actually reachable.
+      #
+      # A keyless entry is named by its position, counting from 1 ("entry 3"), so it can be found.
+      # Handed no index, it reads `manifests` — so an unreachable source reports [] exactly as `all`
+      # serves [].
+      def problems(index = manifests)
+        served = index.filter_map { |m| build(m) }.select { |addon| states_key_permitted?(addon, index) }
+        counts = served.map(&:key).tally
+        reported = Set.new
+
+        index.each_with_index.filter_map do |manifest, position|
+          reason = problem_with(manifest)
+          if reason.nil?
+            addon = build(manifest)
+            if !states_key_permitted?(addon, index)
+              reason = "claims states_key #{addon.states_key.inspect}, which does not name it back in shares_states_with"
+            elsif counts[addon.key] > 1 && reported.add?(addon.key)
+              reason = "duplicate key — #{counts[addon.key]} entries share it and only one is reachable"
+            end
+          end
+          { key: problem_key(manifest, position), reason: } if reason
+        end
+      end
+
+      def problem_key(manifest, position)
+        manifest.is_a?(Hash) && manifest["key"].present? ? manifest["key"].to_s : "entry #{position + 1}"
+      end
 
       # A fetch failure returns [] for THIS request and caches nothing — rescuing outside
       # `Rails.cache.fetch` is deliberate. Rescuing inside would cache the empty result, so a
@@ -126,9 +184,7 @@ module Maker
       end
 
       def build(manifest)
-        return unless manifest.is_a?(Hash)
-        return unless REQUIRED.all? { |k| manifest[k].present? }
-        return unless manifest["api_version"].to_s == API_VERSION
+        return if problem_with(manifest)
 
         Addon.new(
           key: manifest["key"].to_s, title: manifest["title"].to_s, icon: manifest["icon"].to_s,
@@ -208,9 +264,10 @@ module Maker
       # THE TARGET MUST ALSO BUILD, NOT MERELY APPEAR IN THE RAW INDEX. Finding the entry by key is
       # not enough: an entry `build` itself REJECTS — missing a REQUIRED key, or declaring an
       # api_version this host doesn't speak — would otherwise CONFER a grant on its own behalf while
-      # never appearing in `Registry.all`, leaving an operator no surface on which to see it, let
-      # alone audit what it granted. `build` is pure and reads only the one manifest handed to it, so
-      # calling it again here costs nothing and introduces no ordering dependency on `index`.
+      # never appearing in `Registry.all`. `Registry.problems` names such an entry as skipped, but no
+      # surface shows what it would have GRANTED, so an operator could never audit it. `build` is
+      # pure and reads only the one manifest handed to it, so calling it again here costs nothing
+      # and introduces no ordering dependency on `index`.
       #
       # WHAT THIS DOES *NOT* CLOSE, STATED PLAINLY BECAUSE AN EARLIER DRAFT OF THIS COMMENT CLAIMED
       # OTHERWISE AND WAS FALSE. There are TWO ways a target can be invisible in the gallery, and
@@ -236,15 +293,17 @@ module Maker
       # two decisions is the mistake to watch for — don't.
       #
       # A refusal SKIPS the addon, exactly as an unsupported api_version does, rather than raising:
-      # one bad manifest must never take /tools down. The consequence is worth stating because it is
-      # silent — an addon that gets this wrong simply does not appear, and the operator's only clue
-      # is the log line below. That line fires ONCE PER `Registry.all`, i.e. once per request, NOT
-      # once per deploy: only `manifests` is cached, and `.all` re-filters the cached index on every
-      # call — which is every `/tools` render and every `Registry.find` through `load_addon`.
-      # Measured: 5 calls, 5 lines, with the index cached. Left as-is deliberately (deduplicating it
-      # means process-global state for a log line), but a standing unreciprocated claim in production
-      # is one warn per request until the manifest is fixed, and that is a log-volume fact worth
-      # knowing before reading it as a loop.
+      # one bad manifest must never take /tools down. THE SKIP IS NO LONGER SILENT, AND THIS METHOD
+      # ONLY DECIDES. `Registry.problems` REPORTS the refusal — read by `bin/rails addons:check` and
+      # the /tools notice in local environments — and `all` LOGS it, one warn per problem per call.
+      # Do not put a log line back here: `all` and `problems` both call this method, so a warn here
+      # would repeat the one `all` already writes, several times over. That warn fires ONCE PER
+      # `Registry.all`, i.e. once per request, NOT once per deploy: only `manifests` is cached, and
+      # `.all` re-filters the cached index on every call — which is every `/tools` render and every
+      # `Registry.find` through `load_addon`. Measured: 5 calls, 5 lines, with the index cached.
+      # Left as-is deliberately (deduplicating it means process-global state for a log line), but a
+      # standing unreciprocated claim in production is one warn per request until the manifest is
+      # fixed, and that is a log-volume fact worth knowing before reading it as a loop.
       #
       # A↔B CYCLES ARE ADMITTED, NOT A BUG. Two addons each naming the other in both `states_key` AND
       # `shares_states_with` are both admitted, and their saved-state namespaces SWAP rather than one
@@ -258,13 +317,7 @@ module Maker
         return true if addon.states_key == addon.key
 
         target = index.find { |m| m.is_a?(Hash) && m["key"].to_s == addon.states_key }
-        permitted = target && build(target) &&
-                    Array(target["shares_states_with"]).map(&:to_s).include?(addon.key)
-        unless permitted
-          Rails.logger.warn("addon #{addon.key.inspect} claims states_key #{addon.states_key.inspect} " \
-                            "without a matching shares_states_with — skipping it")
-        end
-        permitted
+        !!(target && build(target) && Array(target["shares_states_with"]).map(&:to_s).include?(addon.key))
       end
     end
   end

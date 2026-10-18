@@ -499,6 +499,103 @@ module Maker
         end
       end
 
+      # WHY A MANIFEST IS SKIPPED — the ONE definition that build, problems, addons:check and the
+      # local /tools notice share. The reasons are asserted as TEXT because the text is the feature:
+      # an author who reads "missing title" fixes it; one who reads nothing does not.
+      test "problem_with is nil for a manifest that builds" do
+        assert_nil Registry.problem_with(MANIFEST)
+      end
+
+      test "problem_with names a non-object entry" do
+        assert_equal "not a JSON object", Registry.problem_with([ "generators" ])
+      end
+
+      test "problem_with names every missing required key, in REQUIRED order" do
+        assert_equal "missing title, entry", Registry.problem_with(MANIFEST.except("entry", "title"))
+      end
+
+      test "problem_with treats a blank required value as missing, as build always has" do
+        assert_equal "missing icon", Registry.problem_with(MANIFEST.merge("icon" => ""))
+      end
+
+      test "problem_with names both api versions" do
+        assert_equal %(api_version "99" — this host speaks "1"),
+                     Registry.problem_with(MANIFEST.merge("api_version" => "99"))
+      end
+
+      test "problems is empty for a clean index" do
+        assert_equal [], Registry.problems
+      end
+
+      test "problems reports each skipped manifest by key, in index order" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("key" => "a", "title" => "A", "api_version" => "99"),
+          MANIFEST,
+          MANIFEST.merge("key" => "b", "title" => "B").except("icon")
+        ])
+        assert_equal [ { key: "a", reason: %(api_version "99" — this host speaks "1") },
+                       { key: "b", reason: "missing icon" } ], Registry.problems
+      end
+
+      test "problems names a keyless entry by its position, counting from 1" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST, MANIFEST.except("key"), "junk" ])
+        assert_equal [ { key: "entry 2", reason: "missing key" },
+                       { key: "entry 3", reason: "not a JSON object" } ], Registry.problems
+      end
+
+      test "problems reports an unreciprocated states_key claim, which all skips" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST,
+          MANIFEST.merge("key" => "thief", "title" => "Thief", "states_key" => "generators")
+        ])
+        assert_equal [ { key: "thief",
+                         reason: %(claims states_key "generators", which does not name it back in shares_states_with) } ],
+                     Registry.problems
+      end
+
+      # REPORTED, NOT SKIPPED. Registry.find serves whichever duplicate sorts first by [title, key];
+      # changing what production serves is not this report's business.
+      test "problems reports a duplicate key once, and both entries are still served" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST, MANIFEST.merge("title" => "Generators Again")
+        ])
+        assert_equal [ { key: "generators",
+                         reason: "duplicate key — 2 entries share it and only one is reachable" } ],
+                     Registry.problems
+        assert_equal 2, Registry.all.size
+      end
+
+      test "a skipped manifest sharing a served one's key is reported as skipped, not as a duplicate" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST, MANIFEST.merge("api_version" => "99") ])
+        assert_equal [ { key: "generators", reason: %(api_version "99" — this host speaks "1") } ],
+                     Registry.problems
+      end
+
+      test "problems answers [] when the source is unreachable, exactly as all does" do
+        down = Object.new
+        def down.cacheable? = false
+        def down.manifests = raise(Source::Error, "down")
+        Source.stub = down
+        assert_equal [], Registry.problems
+      end
+
+      test "problems reads an index it is handed and never asks the source" do
+        Source.stub = Object.new # answers nothing: any source call raises NoMethodError
+        assert_equal [ { key: "x", reason: "missing title" } ],
+                     Registry.problems([ MANIFEST.merge("key" => "x").except("title") ])
+      end
+
+      test "all logs each problem, so production still leaves the operator a clue" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.except("icon") ])
+        io = StringIO.new
+        previous = Rails.logger
+        Rails.logger = ActiveSupport::Logger.new(io)
+        Registry.all
+        assert_match(/addon "generators": missing icon/, io.string)
+      ensure
+        Rails.logger = previous
+      end
+
       private
 
       def with_env(pairs)
