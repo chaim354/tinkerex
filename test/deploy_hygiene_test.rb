@@ -260,9 +260,11 @@ end
     # and every call fails.
     host_only_url_keys = base.dig("env", "clear").to_h.keys
       .grep(/_SIDECAR_URL\z|\AADDON_SOURCE_URL\z|\ACHUNK_REMOTE_URL\z/)
-    assert_equal 4, host_only_url_keys.size,
-                 "expected BOXES_SIDECAR_URL, OPENSCAD_SIDECAR_URL, ADDON_SOURCE_URL and " \
-                 "CHUNK_REMOTE_URL in deploy.yml"
+    expected_keys = Tinkerex::Sidecars.new.names.map { |n| Maker::Addons::Services.env_key_for(n) } +
+                    %w[ADDON_SOURCE_URL CHUNK_REMOTE_URL]
+    assert_equal expected_keys.sort, host_only_url_keys.sort,
+                 "expected one <NAME>_SIDECAR_URL per sidecar/<name>/, plus ADDON_SOURCE_URL and " \
+                 "CHUNK_REMOTE_URL, in deploy.yml"
 
     cleared = overlay.dig("env", "clear").to_h
     host_only_url_keys.each do |key|
