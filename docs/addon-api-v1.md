@@ -107,7 +107,7 @@ it reads `ADDON_SOURCE_PATH`, which development points at `../tinkerex-addons/ad
 the host's own rules — the ones that decide what `/tools` serves, not a copy of them: the required
 keys and `api_version` above, a duplicate `key`, and an unreciprocated `states_key` (below). Then it
 checks your files on disk. `key` must be a single path segment — no `/`, not `.` or `..`, no NUL
-byte — because it becomes both `/tools/<key>` and the `<key>/` folder; that folder must exist beside
+byte — because it becomes both `/tools/<key>` and the `<key>/` folder, and the host's router must send `/tools/<key>` to your tool (a dotted key like `a.b` is split into key `a` and format `b`; `new_menu` is already a route); that folder must exist beside
 `manifests.json`, and so must `entry` and every `pins` file inside it — each path refused, never
 resolved, if it is absolute, climbs out with `..` or holds a NUL byte, exactly as the asset proxy
 refuses it. Nothing may resolve outside `PATH`: a symlinked folder or file is fine while its target

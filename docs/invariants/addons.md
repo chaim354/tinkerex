@@ -72,7 +72,8 @@
   a duplicate key, reported but still served) in three places: `bin/rails "addons:check[PATH]"`
   (`Maker::Addons::Check`, which adds the on-disk checks — `key` a single path segment, refused
   BEFORE any join and refused there rather than in Registry, which would change what production
-  serves; `<key>/`, `entry` and `pins` present, NUL-free, and resolving INSIDE PATH by realpath on
+  serves; `/tools/<key>` asked of the ROUTER (`recognize_path`), never a reserved-name list, since
+  `a.b` splits into a format and `new_menu` is shadowed; `<key>/`, `entry` and `pins` present, NUL-free, and resolving INSIDE PATH by realpath on
   both sides, because the addons image copies a symlink as a symlink and one pointing out dangles —
   and exits 1 naming each problem — what tinkerex-addons' `bin/publish` runs); a notice on `/tools` in
   development and test only, never production, where the cards are read by the maker; and one
