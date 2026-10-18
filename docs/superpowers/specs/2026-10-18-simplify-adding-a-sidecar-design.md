@@ -85,8 +85,9 @@ so `sidecars:check` alone is a complete pre-publish answer.
   `{"error": <prose>, "code": <machine code>}` with 422 for a refused value — §14c: a consumer branches
   on `code`, never the prose), `README.md` (what it wraps, its licence, how an addon reaches it —
   `services: ["<name>"]` + `host.service.post`, how to publish).
-- **Inserts** at marker comments added once by this work — one per insertion point, each reading
-  `bin/rails generate sidecar inserts above this line`: `deploy.yml` env and accessories,
+- **Inserts** at marker comments added once by this work — one per insertion point, each a distinct
+  `# bin/rails generate sidecar inserts sidecar <URLs|accessories|services|builds> above this line`
+  (`Tinkerex::Sidecars::MARKERS`), present exactly once: `deploy.yml` env and accessories,
   `deploy.ovh.yml`, `docker-compose.yml` web env and services, `docker-compose.build.yml`. The
   `INSTALL.md` row and the Help list are prose, so those two insert after the LAST existing
   `_SIDECAR_URL` in their sentence (regex anchored to that row / that `<p>`). Every insertion point is
