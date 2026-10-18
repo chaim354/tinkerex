@@ -106,6 +106,19 @@ The binary is invoked through a **one-line wrapper** at `/usr/local/bin/openscad
 (the AppImage bundles an older `libcrypto.so.3`, so `_ssl` fails to load and every outbound HTTPS
 call dies) while all six OpenSCAD assertions stay green.
 
+## Build-time assertions
+
+`bin/build-sidecar openscad` builds and pushes this image. The box is amd64, so it builds for it
+(buildx emulates on an arm64 Mac, like the app image), and the build runs the six capability
+assertions (openscad runs / `--backend` parsed / manifold actually used / 3MF wrote real bytes /
+`--export-format=param` / `-p`/`-P` injection reaches the geometry), so **a push implies they
+passed** — Manifold and 3MF are compile-time optional and fail INVISIBLY at runtime.
+
+That promise is only auditable AFTER the fact because of the revision the build stamps (the OCI
+label, and `/revision` inside the image): `bin/ci` never runs `assert-capabilities.sh` (its one
+executor is this Dockerfile's own `RUN`), so the assertions are this image's ONLY gate and "which
+build ran them" has to be answerable from the container itself.
+
 ## Security
 
 User-supplied `.scad` is **arbitrary code execution by design** — that is what a generator is.

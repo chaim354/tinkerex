@@ -902,7 +902,7 @@ the forked `boxes.py`). It is internal-only (never published) and the Rails app 
 the kamal network via `BOXES_SIDECAR_URL` (declared in `config/deploy*.yml`). Build/push + boot:
 
 ```sh
-bin/build-boxes-sidecar        # the ghcr token comes from 1Password via bin/secret
+bin/build-sidecar boxes        # the ghcr token comes from 1Password via bin/secret
 bin/kamal accessory boot boxes        # first time; later: bin/kamal accessory reboot boxes
 ```
 

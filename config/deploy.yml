@@ -269,7 +269,7 @@ accessories:
     host: 192.168.1.95
 
   # The OpenSCAD addon's sidecar (sidecar/openscad) — a SEPARATE GPL-2.0 image, built + pushed with
-  # bin/build-openscad-sidecar. NO `port:` -> internal-only, reachable on the kamal network as
+  # `bin/build-sidecar openscad`. NO `port:` -> internal-only, reachable on the kamal network as
   # `tinkerex-openscad`. One accessory serves all three app deployments on this host.
   openscad:
     image: ghcr.io/chaim354/openscad-sidecar:latest

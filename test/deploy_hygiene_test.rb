@@ -399,43 +399,64 @@ end
     end
   end
 
-  test "every sidecar build script bakes the source revision into the image" do
+  test "the one sidecar build script bakes the source revision into the image, both ways" do
     # WHAT THIS COVERS, AND — the more important half — WHAT IT CANNOT.
-    # It reads the build scripts as TEXT and asserts only that each one passes an
-    # `org.opencontainers.image.revision` label whose value is computed rather than written down.
+    # It reads the build script and the sidecar Dockerfiles as TEXT and asserts only that the script
+    # passes an `org.opencontainers.image.revision` label and a SIDECAR_REVISION build arg carrying
+    # one computed value, and that every Dockerfile writes that arg to /revision.
     # Nothing in `bin/ci` builds or pushes a Docker image, so this test does NOT and CANNOT show
     # that the pushed image carries the label, or that the accessory running on the box carries one.
-    # Read it as "the scripts still ask for provenance", never as "provenance is present".
+    # Read it as "the script still asks for provenance", never as "provenance is present".
     #
-    # WHY THE LABEL AT ALL: both scripts push `:latest` and config/deploy.yml pulls `:latest`, so
+    # WHY THE LABEL AT ALL: the script pushes `:latest` and config/deploy.yml pulls `:latest`, so
     # before this there was nothing on the box that could name the build it was running — and for
     # sidecar/openscad that matters twice over, because assert-capabilities.sh runs ONLY inside its
     # own Dockerfile (`bin/ci` never executes it), making those assertions the image's only gate.
     # A git-SHA TAG does not close it: the OCI distribution API has no digest->tag reverse lookup,
     # and `kamal accessory details` is `docker ps`, which prints `:latest` rather than a digest. The
     # label answers from the container itself. An extra `-t <sha>` is fine beside it and is NOT
-    # asserted here — it is inventory, not the mechanism.
+    # asserted here — it is inventory, not the mechanism. /revision is the same answer readable
+    # through `kamal accessory exec`, where the label needs `docker inspect` on the host.
     #
-    # DIRECTORY-DRIVEN, never a hard-coded pair, for the reason the licence test above records: a
-    # third sidecar's build script is covered the day it appears, not the day someone remembers.
-    scripts = ROOT.glob("bin/build-*-sidecar")
-    assert scripts.any?, "expected at least one bin/build-<name>-sidecar"
+    # COMMENT LINES ARE DROPPED BEFORE MATCHING: the script's header explains these flags at length,
+    # and a comment that spelled one out would satisfy the regex with the real line deleted.
+    #
+    # DIRECTORY-DRIVEN over the Dockerfiles, never a hard-coded pair, for the reason the licence test
+    # above records: a third sidecar is covered the day it appears, not the day someone remembers.
+    code = ->(path) { path.read.lines.reject { |l| l.lstrip.start_with?("#") }.join }
 
-    scripts.each do |script|
-      where = script.relative_path_from(ROOT)
-      label = script.read[/--label\s+"?org\.opencontainers\.image\.revision=([^"'\s]*)/, 1]
+    script = ROOT.join("bin/build-sidecar")
+    assert script.exist?, "bin/build-sidecar is the one sidecar build script"
+    assert_empty ROOT.glob("bin/build-*-sidecar").map { |p| p.basename.to_s },
+                 "per-sidecar build scripts are retired — bin/build-sidecar <name> builds any of them"
 
-      assert label,
-             "#{where} must pass --label org.opencontainers.image.revision=… to docker buildx " \
-             "build. Without it a running accessory cannot name the build it came from: both " \
-             "scripts push :latest and config/deploy.yml pulls :latest, and no tag scheme can " \
-             "recover it (no digest->tag reverse lookup; `kamal accessory details` is docker ps)."
-      # A LITERAL VALUE WOULD SATISFY THE LINE ABOVE AND MEAN NOTHING — a pasted SHA goes stale on
-      # the next commit, silently, and a stale provenance label is worse than none because it is
-      # believed. Requiring a shell expansion is the narrowest way to say "computed at build time".
-      assert_includes label, "$",
-                      "#{where}'s revision label must be computed from the tree at build time " \
-                      "(a shell expansion), not a literal — got #{label.inspect}."
+    body = code.(script)
+    label = body[/--label\s+"?org\.opencontainers\.image\.revision=([^"'\s]*)/, 1]
+    assert label,
+           "bin/build-sidecar must pass --label org.opencontainers.image.revision=… to docker buildx " \
+           "build. Without it a running accessory cannot name the build it came from: the script " \
+           "pushes :latest and config/deploy.yml pulls :latest, and no tag scheme can recover it " \
+           "(no digest->tag reverse lookup; `kamal accessory details` is docker ps)."
+    # A LITERAL VALUE WOULD SATISFY THE LINE ABOVE AND MEAN NOTHING — a pasted SHA goes stale on
+    # the next commit, silently, and a stale provenance label is worse than none because it is
+    # believed. Requiring a shell expansion is the narrowest way to say "computed at build time".
+    assert_includes label, "$",
+                    "the revision label must be computed from the tree at build time " \
+                    "(a shell expansion), not a literal — got #{label.inspect}."
+    arg = body[/--build-arg\s+"?SIDECAR_REVISION=([^"'\s]*)/, 1]
+    assert arg, "bin/build-sidecar must pass --build-arg SIDECAR_REVISION=… (read back as /revision)"
+    assert_equal label, arg, "the label and /revision must carry ONE value"
+    assert_match %r{ghcr\.io/chaim354/\$\{?NAME\}?-sidecar}, body,
+                 "the pushed image name must be Tinkerex::Sidecars#image's convention"
+
+    # EVERY sidecar writes /revision from that build arg — directory-driven, like the licence test.
+    dockerfiles = ROOT.glob("sidecar/*/Dockerfile")
+    assert dockerfiles.any?, "expected at least one sidecar/<name>/Dockerfile"
+    dockerfiles.each do |df|
+      text = code.(df)
+      where = df.relative_path_from(ROOT)
+      assert_match(/^ARG SIDECAR_REVISION\b/, text, "#{where} must declare ARG SIDECAR_REVISION")
+      assert_match(%r{\$SIDECAR_REVISION"?\s*>\s*/revision}, text, "#{where} must write $SIDECAR_REVISION to /revision")
     end
   end
 
