@@ -6,7 +6,7 @@ namespace :sidecars do
     sidecars = Tinkerex::Sidecars.new
     problems = sidecars.problems
     unless problems.empty?
-      abort problems.map { |p| "#{p.sidecar}: #{p.file} is missing #{p.missing}\n  add:\n#{p.snippet.gsub(/^/, '    ')}" }.join("\n")
+      abort problems.map { |p| "#{p.message}\n  add:\n#{p.snippet.gsub(/^/, '    ')}" }.join("\n")
     end
     puts "sidecars:check: #{sidecars.names.size} #{'sidecar'.pluralize(sidecars.names.size)} complete (#{sidecars.names.join(', ')})"
   end

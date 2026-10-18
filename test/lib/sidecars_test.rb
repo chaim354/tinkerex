@@ -147,6 +147,13 @@ class SidecarsTest < ActiveSupport::TestCase
   # Still TWO although five places now name openscad as a stray (deploy env, web env, OVH env,
   # accessory + compose service, build overlay): strays are one problem per stray NAME, and the
   # key and the service are the two names a removal leaves.
+  test "a problem reads as one sentence, and a stray reads as a stray" do
+    missing = Tinkerex::Sidecars::Problem.new(sidecar: "foo", file: "config/deploy.yml", missing: "env.clear X", snippet: "")
+    stray = Tinkerex::Sidecars::Problem.new(sidecar: "foo", file: "(stray)", missing: "service foo has no sidecar/foo/", snippet: "")
+    assert_equal "foo: config/deploy.yml is missing env.clear X", missing.message
+    assert_equal "foo: stray — service foo has no sidecar/foo/", stray.message
+  end
+
   test "config naming a sidecar with no directory behind it is a stray" do
     with_tree do |root, sidecars|
       FileUtils.rm(root.join("sidecar/openscad/Dockerfile"))

@@ -8,6 +8,6 @@ class SidecarHygieneTest < ActiveSupport::TestCase
     sidecars = Tinkerex::Sidecars.new
     assert_not_empty sidecars.names, "no sidecar/*/Dockerfile — this guard would pass over nothing (§14e)"
     problems = sidecars.problems
-    assert problems.empty?, problems.map { |p| "#{p.sidecar}: #{p.file} is missing #{p.missing}; add:\n#{p.snippet}" }.join("\n")
+    assert problems.empty?, problems.map { |p| "#{p.message}; add:\n#{p.snippet}" }.join("\n")
   end
 end

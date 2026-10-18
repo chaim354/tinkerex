@@ -18,7 +18,11 @@ module Tinkerex
   # an implied `http://tinkerex-<name>:8000` would make every declared service read "available"
   # before its accessory exists — and on OVH every call would fail instead of greying out.
   class Sidecars
-    Problem = Data.define(:sidecar, :file, :missing, :snippet)
+    Problem = Data.define(:sidecar, :file, :missing, :snippet) do
+      # ONE SENTENCE for every reader (sidecars:check, the bin/ci guard, the generator). A stray is not
+      # missing from a file, so it reads as what it is.
+      def message = file == "(stray)" ? "#{sidecar}: stray — #{missing}" : "#{sidecar}: #{file} is missing #{missing}"
+    end
 
     REGISTRY = "ghcr.io/chaim354".freeze
     PORT = 8000

@@ -83,7 +83,7 @@ class SidecarGenerator < Rails::Generators::Base
     problems = sidecars.problems
     unless problems.empty?
       raise Thor::Error, "generated, but Tinkerex::Sidecars still reports:\n" +
-                         problems.map { |p| "  #{p.sidecar}: #{p.file} is missing #{p.missing}" }.join("\n")
+                         problems.map { |p| "  #{p.message}" }.join("\n")
     end
     say <<~NEXT
 
