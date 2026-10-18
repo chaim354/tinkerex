@@ -29,6 +29,27 @@
   filter silently skipped the **worse** case: a sidecar whose author never committed a
   `LICENSE` at all was invisible to the guard written to catch exactly that. Found by
   planting a synthetic sidecar and watching the test stay green, not by reading it.
+- **`Tinkerex::Sidecars` IS THE ONE DEFINITION OF A SIDECAR AND ITS NINE TOUCHPOINTS, AND THE
+  GENERATOR INSERTS ITS SNIPPETS — never a template of its own.** `bin/rails generate sidecar`,
+  `sidecars:check` (which `bin/publish-sidecar` runs first) and `test/sidecar_hygiene_test.rb` all ask
+  `lib/tinkerex/sidecars.rb`, so "complete" cannot mean two things; the env name is still
+  `Services.env_key_for`'s, never a second spelling. Four things not to undo:
+  1. **The six `# bin/rails generate sidecar inserts …` marker comments stay**, each exactly once, in
+     `deploy.yml` (×2), `deploy.ovh.yml`, `docker-compose.yml` (×2) and `docker-compose.build.yml`.
+     They look like litter; without one the generator refuses before writing anything, and
+     `bin/rails destroy` reverses by removing the EXACT text it inserted, so a hand-tidied insert is
+     left behind.
+  2. **A sidecar's URL stays EXPLICIT per deployment — no `http://tinkerex-<name>:8000` fallback when
+     unset.** A convention reads every declared service as "available" before its accessory exists,
+     and on OVH (no accessories) every call would fail instead of greying out — the deep-merge bug
+     above from a new direction. The price kept: a NEW sidecar needs the three app legs redeployed,
+     which `bin/publish-sidecar` prints on a first boot.
+  3. **`Sidecars.valid_name?` asks Psych whether YAML keeps the name as itself.** Every snippet makes
+     it a bare key, and YAML 1.1 reads `no:`/`on:`/`null:` as `false:`/`true:`/`nil:`, so such a
+     sidecar's touchpoints could never match — `[a-z][a-z0-9-]*` alone admits them.
+  4. **`generators` stays in `config.autoload_lib`'s `ignore:`.** Production eager-loads `lib/`, and
+     a generator is not server code (`Rails::Generators` is not loaded there, and the constant is not
+     the one Zeitwerk expects at its path) — a boot crash. `bin/rails zeitwerk:check` says so.
 - **A BUNDLED THIRD-PARTY `.scad` MUST CARRY ITS OWN LICENCE, AND THAT IS GUARDED IN RUBY BECAUSE
   `bin/ci` DOES NOT RUN pytest.** `sidecar/openscad/catalog/` redistributes other people's designs
   inside an image we push, so §9 binds per FILE, not per repo — and the catalog's own `NOTICE`

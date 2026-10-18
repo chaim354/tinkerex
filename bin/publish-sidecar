@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# ONE COMMAND FROM "I CHANGED A SIDECAR" TO "IT IS LIVE" — the sidecar twin of tinkerex-addons'
+# bin/publish. Stops at the first failure:
+#
+#   1. bin/rails sidecars:check — every touchpoint present (Tinkerex::Sidecars), nothing stray.
+#   2. bin/secrets-preflight — kamal expands secrets through Ruby backticks, which discard exit status,
+#      so an unreadable one becomes EMPTY silently (docs/invariants/deploy-secrets.md). The BASE
+#      destination, because `accessories:` is never overlaid and the accessory commands run without -d.
+#   3. bin/build-sidecar <name> — build + push, stamping the OCI label and /revision.
+#   4. BOOT the first time, REBOOT after — decided by whether `kamal accessory exec --reuse` reaches a
+#      running container. A network failure fails the probe too; boot then fails as well, loudly. A
+#      STOPPED container also fails the probe, and boot skips a host whose container exists — so that
+#      case reaches step 5 and fails there, reading /revision as unreadable, never a silent success.
+#   5. VERIFY /revision equals the revision just pushed (a ghcr tag move once silently reverted and a
+#      reboot redeployed the old image while reporting success, 2026-10-07) and /up answers ok, read
+#      with Python's urllib inside the container — the slim image has no curl.
+#
+# On a FIRST boot the three app legs must be redeployed to carry the sidecar's URL; this prints that
+# and does not do it — a three-destination deploy is its own decision.
+#
+# THIS SCRIPT READS NO SECRET, AND SHOULD STAY THAT WAY: the ghcr token is bin/build-sidecar's, which
+# turns xtrace off before reading it. Should one ever land here, the rules of tinkerex-addons'
+# bin/publish apply verbatim: `{ set +x; } 2>/dev/null` first, presence tested with `${VAR:+set}`
+# (never `:-`, which expands to the value), no secret in a pipeline or after a redirection, and a
+# failure branch prints a pattern or a count, never a captured buffer — which is also why step 5
+# below keeps only a WHOLE LINE shaped like a revision, and a count of `ok` lines.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+[ $# -eq 1 ] || { echo "usage: bin/publish-sidecar <name>" >&2; exit 2; }
+NAME="$1"
+
+# The name and its sidecar/<name>/Dockerfile are bin/build-sidecar's to judge — and the revision is
+# its ONE definition, which step 5 verifies against. Asked FIRST because --revision touches no secret
+# and no network, so a typo fails here rather than after a Rails boot and a vault round-trip.
+REVISION="$(bin/build-sidecar --revision "$NAME")"
+
+echo "==> 1/5 checking sidecars"
+bin/rails sidecars:check
+
+echo "==> 2/5 preflighting secrets"
+bin/secrets-preflight
+
+echo "==> 3/5 building and pushing $REVISION"
+bin/build-sidecar "$NAME"
+
+echo "==> 4/5 rolling the $NAME accessory"
+if bin/kamal accessory exec "$NAME" --reuse -q true >/dev/null 2>&1; then
+  first=no
+  bin/kamal accessory reboot "$NAME"
+else
+  first=yes
+  bin/kamal accessory boot "$NAME"
+fi
+
+echo "==> 5/5 verifying what is running"
+# `-q` drops kamal's "App Host:" header; the command's own output is printed on a line of its own
+# (kamal 2.12.0 `puts_by_host`). `grep -x` keeps a line only if the WHOLE line is a revision, so no
+# fragment of anything else kamal printed can reach the terminal; a miss prints NOTHING from the
+# buffer (how this repo has leaked before). To look yourself:
+#   bin/kamal accessory exec <name> --reuse "cat /revision"
+running="$(bin/kamal accessory exec "$NAME" --reuse -q "cat /revision" 2>/dev/null \
+  | grep -xE '[0-9a-f]{40}(-dirty)?' | head -1 || true)"
+if [ -z "$running" ]; then
+  echo "publish-sidecar: could not read /revision from tinkerex-$NAME (expected $REVISION)." >&2
+  echo "  Is it running? bin/kamal accessory details $NAME — boot skips a STOPPED container, so" >&2
+  echo "  bin/kamal accessory reboot $NAME, then re-run." >&2
+  exit 1
+fi
+if [ "$running" != "$REVISION" ]; then
+  echo "publish-sidecar: tinkerex-$NAME is running $running, not $REVISION." >&2
+  echo "  The registry tag may not have persisted (2026-10-07). Re-run — a fresh push persisted then." >&2
+  exit 1
+fi
+up="$(bin/kamal accessory exec "$NAME" --reuse -q \
+  "python -c \"import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8000/up',timeout=5).read().decode())\"" \
+  2>/dev/null | grep -c '^ok$' || true)"
+if [ "${up:-0}" -lt 1 ]; then
+  echo "publish-sidecar: tinkerex-$NAME is running $REVISION but /up did not answer ok." >&2
+  echo "  bin/kamal accessory logs $NAME" >&2
+  exit 1
+fi
+echo "==> live: tinkerex-$NAME is serving $REVISION."
+if [ "$first" = yes ]; then
+  echo "    FIRST BOOT: redeploy chunk_remote, share and s3 so the app carries the sidecar URL"
+  echo "    (config/deploy.yml env.clear) — bin/secrets-preflight --all first, docs/DEPLOY.md §2."
+fi

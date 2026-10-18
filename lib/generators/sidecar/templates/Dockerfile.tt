@@ -1,0 +1,15 @@
+# The <%= sidecar_name %> sidecar — a SEPARATE image from the Rails app, built and pushed by
+# `bin/publish-sidecar <%= sidecar_name %>`. The app never links it (CLAUDE.md §9).
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY app.py ./
+# The upstream licence travels INSIDE the image: pushing to a registry is redistribution.
+COPY LICENSE README.md ./
+# WHICH BUILD IS RUNNING, read back through `kamal accessory exec` by bin/publish-sidecar. Late, so a
+# new revision invalidates only this layer.
+ARG SIDECAR_REVISION=unknown
+RUN printf '%s\n' "$SIDECAR_REVISION" > /revision
+EXPOSE 8000
+CMD ["gunicorn", "-b", "0.0.0.0:8000", "-w", "2", "--timeout", "60", "app:app"]

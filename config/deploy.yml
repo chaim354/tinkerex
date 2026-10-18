@@ -148,6 +148,7 @@ env:
     # OVH box would otherwise inherit a hostname that does not resolve there and every call would
     # fail instead of the addon greying out (spec §8.1; guarded by test/deploy_hygiene_test.rb).
     OPENSCAD_SIDECAR_URL: http://tinkerex-openscad:8000
+    # bin/rails generate sidecar inserts sidecar URLs above this line
 
     # The addon bundle host (the `addons` accessory below, repo chaim354/tinkerex-addons). Takes
     # precedence over ADDON_SOURCE_PATH's on-disk fallback (config/environments/production.rb).
@@ -258,9 +259,10 @@ builder:
 # ssh:
 #   user: app
 
-# Accessory services (booted with `kamal accessory boot boxes`). The boxes sidecar is the forked
-# boxes.py Python service (sidecar/boxes) — a SEPARATE, GPL-3.0 image built + pushed separately from
-# the Rails app (see docs/DEPLOY.md). NO `port:` -> internal-only, reachable on the kamal network as
+# Accessory services. A sidecar is built, booted (first time) or rebooted, and verified by
+# `bin/publish-sidecar <name>`; a new one is added by `bin/rails generate sidecar` (docs/DEPLOY.md).
+# The boxes sidecar is the forked boxes.py Python service (sidecar/boxes) — a SEPARATE, GPL-3.0
+# image built + pushed separately from the Rails app. NO `port:` -> internal-only, reachable on the kamal network as
 # `tinkerex-boxes`; the app's BOXES_SIDECAR_URL points at it. One accessory serves all three app
 # deployments on this host.
 accessories:
@@ -269,7 +271,7 @@ accessories:
     host: 192.168.1.95
 
   # The OpenSCAD addon's sidecar (sidecar/openscad) — a SEPARATE GPL-2.0 image, built + pushed with
-  # bin/build-openscad-sidecar. NO `port:` -> internal-only, reachable on the kamal network as
+  # `bin/build-sidecar openscad`. NO `port:` -> internal-only, reachable on the kamal network as
   # `tinkerex-openscad`. One accessory serves all three app deployments on this host.
   openscad:
     image: ghcr.io/chaim354/openscad-sidecar:latest
@@ -278,6 +280,7 @@ accessories:
       # The content-addressed render cache. On a volume so it survives an accessory reboot —
       # a cold cache just means the first render of each design pays full price.
       - openscad-cache:/cache
+  # bin/rails generate sidecar inserts sidecar accessories above this line
 
   # The addon bundle host (repo: chaim354/tinkerex-addons) — a tiny nginx image serving each addon's
   # manifest + plain-ESM bundle. NO `port:` -> internal-only, reachable on the Kamal network as

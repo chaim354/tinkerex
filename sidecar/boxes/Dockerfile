@@ -30,6 +30,12 @@ COPY app.py ./
 # test/deploy_hygiene_test.rb, which can see this file — the Rails process never loads it.
 COPY LICENSE README.md ./
 
+# WHICH BUILD IS RUNNING, readable through `kamal accessory exec` (bin/publish-sidecar verifies it)
+# beside the OCI label, which needs `docker inspect` on the host. Declared LATE so a new revision
+# invalidates only this layer.
+ARG SIDECAR_REVISION=unknown
+RUN printf '%s\n' "$SIDECAR_REVISION" > /revision
+
 EXPOSE 8000
 # 2 workers is plenty for one user; a generate call is CPU-bound and short. Bind on all interfaces
 # (the internal Kamal network); never published to the host/internet.

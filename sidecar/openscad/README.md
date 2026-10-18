@@ -69,7 +69,8 @@ plus `catalog/NOTICE`), because someone who runs `docker pull` never sees
 `sidecar/openscad/` — without them they would receive GPL binaries with no licence and no
 written offer beside them. The AppImage brings no `COPYING` of its own (searched: only
 Liberation-fonts, CC0-examples and bundled-Python licences are in there), so this is the
-only copy. **Note the boxes sidecar still has this gap** — worth closing there too.
+only copy. `sidecar/boxes` does the same for its GPL-3.0 text, and `test/deploy_hygiene_test.rb`
+holds every sidecar to it.
 
 Bundled third-party `.scad` generators are **permissive-licensed only** and credited individually in
 `catalog/NOTICE`. See spec §2 before adding one: a generator whose *output* carries a NonCommercial
@@ -105,6 +106,19 @@ The binary is invoked through a **one-line wrapper** at `/usr/local/bin/openscad
 `LD_LIBRARY_PATH` to that one process. Setting it globally instead breaks the image's *own* Python
 (the AppImage bundles an older `libcrypto.so.3`, so `_ssl` fails to load and every outbound HTTPS
 call dies) while all six OpenSCAD assertions stay green.
+
+## Build-time assertions
+
+`bin/build-sidecar openscad` builds and pushes this image. The box is amd64, so it builds for it
+(buildx emulates on an arm64 Mac, like the app image), and the build runs the six capability
+assertions (openscad runs / `--backend` parsed / manifold actually used / 3MF wrote real bytes /
+`--export-format=param` / `-p`/`-P` injection reaches the geometry), so **a push implies they
+passed** — Manifold and 3MF are compile-time optional and fail INVISIBLY at runtime.
+
+That promise is only auditable AFTER the fact because of the revision the build stamps (the OCI
+label, and `/revision` inside the image): `bin/ci` never runs `assert-capabilities.sh` (its one
+executor is this Dockerfile's own `RUN`), so the assertions are this image's ONLY gate and "which
+build ran them" has to be answerable from the container itself.
 
 ## Security
 

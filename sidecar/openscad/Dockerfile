@@ -1,6 +1,6 @@
 # openscad-sidecar — GPL-2.0 image (ships OpenSCAD; see LICENSE / README.md). Internal-only; the
 # permissive Rails app calls it over HTTP on the kamal network and never links it. Built + pushed
-# SEPARATELY from the Rails app image (bin/build-openscad-sidecar).
+# SEPARATELY from the Rails app image (bin/build-sidecar openscad).
 FROM python:3.12-slim
 
 # THE PIN. There is deliberately no "latest" here, for two reasons: openscad.org publishes no
@@ -111,6 +111,12 @@ RUN mkdir -p /cache && \
     useradd --create-home --uid 10001 openscad && \
     chown -R openscad:openscad /cache /app
 ENV OPENSCAD_CACHE_DIR=/cache
+
+# WHICH BUILD IS RUNNING, readable through `kamal accessory exec` (bin/publish-sidecar verifies it)
+# beside the OCI label, which needs `docker inspect` on the host. Declared LATE so a new revision
+# invalidates only this layer — and BEFORE `USER` below, because a non-root RUN cannot write `/`.
+ARG SIDECAR_REVISION=unknown
+RUN printf '%s\n' "$SIDECAR_REVISION" > /revision
 
 # NON-ROOT (spec §10). This container execs user-supplied .scad, which is arbitrary code execution
 # BY DESIGN — that is what a generator is. The bound is resource-shaped (timeout + RLIMIT_AS) and

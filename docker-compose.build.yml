@@ -25,6 +25,7 @@ services:
   openscad:
     image: openscad-sidecar:local
     build: sidecar/openscad
+  # bin/rails generate sidecar inserts sidecar builds above this line
   addons:
     image: tinkerex-addons:local
     build: ${TINKEREX_ADDONS_PATH:-../tinkerex-addons}

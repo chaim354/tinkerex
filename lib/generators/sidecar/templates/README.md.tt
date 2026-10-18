@@ -1,0 +1,16 @@
+# <%= sidecar_name %>-sidecar
+
+A **GPL** service the Tinkerex app reaches only over HTTP, on the internal network. It wraps
+<!-- name and link the upstream project, and its licence -->. `LICENSE` is the upstream licence; the
+image carries it, because pushing an image is redistribution (CLAUDE.md §9).
+
+- `GET /up` — health (`ok`).
+- `POST /render` `{text}` — the scaffold's example; replace it.
+
+Errors are `{"error": <prose>, "code": <machine code>}`; a refused value is **422** with
+`code: "invalid_params"`. A bundle branches on `code`, never the prose.
+
+An addon reaches it with `"services": ["<%= sidecar_name %>"]` in its manifest and
+`host.service.post("<%= sidecar_name %>", "render", {...})`.
+
+Deploy: `bin/publish-sidecar <%= sidecar_name %>` (from the tinkerex repo root).

@@ -34,6 +34,7 @@ services:
       # The Tools gallery, wired to the three services below.
       BOXES_SIDECAR_URL: http://boxes:8000
       OPENSCAD_SIDECAR_URL: http://openscad:8000
+      # bin/rails generate sidecar inserts sidecar URLs above this line
       ADDON_SOURCE_URL: http://addons
     volumes:
       - tinkerex_storage:/rails/storage
@@ -63,6 +64,7 @@ services:
     volumes:
       - openscad_cache:/cache
     restart: unless-stopped
+  # bin/rails generate sidecar inserts sidecar services above this line
   addons:
     image: ghcr.io/chaim354/tinkerex-addons:latest
     platform: linux/amd64
