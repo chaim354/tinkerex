@@ -82,8 +82,8 @@ then `kamal deploy --skip-push` / `kamal deploy -d ovh --skip-push --hosts 15.20
 ## 2b. How secrets resolve
 
 Every credential goes through **`bin/secret VAR op://Vault/Item/field`**: an exported shell value
-wins, otherwise it reads 1Password. One definition, used by `.kamal/secrets*` and both sidecar
-builds.
+wins, otherwise it reads 1Password. One definition, used by `.kamal/secrets*` and
+`bin/build-sidecar`.
 
 **Which file feeds which destination.** Kamal reads exactly
 `[.kamal/secrets-common, .kamal/secrets.<destination>]` — so **`.kamal/secrets` is NOT read when
@@ -895,24 +895,77 @@ survives redeploys.
 - **Persistence:** the SQLite DBs live on the `tinkerex_storage` volume and survive redeploys —
   `kamal app exec 'bin/rails db:version'` to inspect.
 
-## Box Generator sidecar (addon framework, Plan B)
+## Sidecars
 
-The Box Generator addon is backed by a **separate, GPL-3.0 Python container** (`sidecar/boxes`,
-the forked `boxes.py`). It is internal-only (never published) and the Rails app talks to it over
-the kamal network via `BOXES_SIDECAR_URL` (declared in `config/deploy*.yml`). Build/push + boot:
+A sidecar is a **separate GPL image** an addon reaches over HTTP through the app's proxy — never a
+library the app links (CLAUDE.md §9). Two run today: `boxes` (the Box Generator, GPL-3.0, the forked
+`boxes.py`) and `openscad` (GPL-2.0). Each is a Kamal accessory with **no `port:`** — internal-only,
+reachable on the kamal network as `tinkerex-<name>:8000` — and one accessory serves all three Unraid
+app deployments. The app finds it through `<NAME>_SIDECAR_URL`, set **explicitly** in
+`config/deploy.yml` and blanked in `deploy.ovh.yml` (the accessories run on the Unraid host, and Kamal
+deep-merges `env.clear`). What a sidecar needs is defined once, in `lib/tinkerex/sidecars.rb`.
+
+### Adding one
 
 ```sh
-bin/build-sidecar boxes        # the ghcr token comes from 1Password via bin/secret
-bin/kamal accessory boot boxes        # first time; later: bin/kamal accessory reboot boxes
+bin/rails generate sidecar <name> --license path/to/the/UPSTREAM/LICENSE
 ```
 
-Then redeploy the app leg(s) so they pick up `BOXES_SIDECAR_URL`. Verify from an app container:
-`curl -s http://tinkerex-boxes:8000/up` → `ok`. The addon then shows as available at `/tools`.
+The licence is the **upstream project's**: the image redistributes its GPL code, so the generator
+copies it into `sidecar/<name>/LICENSE` and cannot invent one. It scaffolds `sidecar/<name>/`
+(Dockerfile, a Flask `app.py` with `/up` and an example `POST /render`, README) and inserts every
+touchpoint — the accessory and URL in `config/deploy.yml`, the blank in `deploy.ovh.yml`, the compose
+service, build entry and web env, the `docs/INSTALL.md` row and the Help page's list — then checks the
+result. It refuses, writing nothing, a bad name (including words YAML reads as booleans, like `no` or
+`on`), an existing `sidecar/<name>/`, an unreadable licence, or a missing marker comment.
+`--pretend` lists what it would do; `bin/rails destroy sidecar <name>` undoes it. Then the four steps
+it prints:
+
+1. Write the service in `sidecar/<name>/app.py` (and its README).
+2. In the addon's manifest (`chaim354/tinkerex-addons`): `"services": ["<name>"]`.
+3. `bin/publish-sidecar <name>` (below).
+4. Redeploy chunk_remote, share and s3 (§2) so the app carries `<NAME>_SIDECAR_URL`.
+
+A sidecar added or edited **by hand** is checked by `bin/rails sidecars:check`, which names each
+missing touchpoint with the exact snippet to add; `bin/ci` runs the same check
+(`test/sidecar_hygiene_test.rb`).
+
+### Deploying one
+
+```sh
+bin/publish-sidecar <name>        # e.g. bin/publish-sidecar boxes
+```
+
+Five steps, stopping at the first failure:
+
+1. `bin/rails sidecars:check`.
+2. `bin/secrets-preflight` — kamal cannot notice an unreadable secret (§2b).
+3. `bin/build-sidecar <name>` — builds `sidecar/<name>` for amd64 and pushes
+   `ghcr.io/chaim354/<name>-sidecar:latest` (and `:<revision>`), stamping the revision into the image.
+   The ghcr token comes from 1Password via `bin/secret`.
+4. `bin/kamal accessory boot <name>` the first time, `reboot` after — chosen by probing for a running
+   container.
+5. Verify: `/revision` in the running container is the revision just pushed (a ghcr tag move once
+   reverted silently and a reboot redeployed the old image, 2026-10-07), and `/up` answers `ok`.
+
+After a **first** boot it says to redeploy the three app legs, and does not do it. By hand the same is
+`bin/build-sidecar <name>` then `bin/kamal accessory boot <name>` (`reboot` after) — with nothing
+verifying what is running. Whether the APP reaches it:
+`bin/kamal app exec --reuse "curl -s http://tinkerex-<name>:8000/up"` → `ok` (`-d share`, `-d s3` for
+those legs).
 
 ## Which build is a sidecar accessory running?
 
-Both sidecar build scripts bake the source commit into the image as an OCI label, so a **running**
-accessory can name its own build — no registry access, no tag enumeration. Ask the container:
+`bin/build-sidecar` bakes the source commit into every sidecar image twice, so a **running**
+accessory can name its own build — no registry access, no tag enumeration. As `/revision`, read
+through kamal with no host IP at all (the reading `bin/publish-sidecar` verifies):
+
+```sh
+bin/kamal accessory exec openscad --reuse "cat /revision"
+```
+
+`unknown` means an image built without `bin/build-sidecar`; no `/revision` at all means one built
+before it existed. And as an OCI label, read on the host:
 
 ```sh
 ssh unraid 'docker inspect tinkerex-openscad \

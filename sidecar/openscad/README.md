@@ -69,7 +69,8 @@ plus `catalog/NOTICE`), because someone who runs `docker pull` never sees
 `sidecar/openscad/` — without them they would receive GPL binaries with no licence and no
 written offer beside them. The AppImage brings no `COPYING` of its own (searched: only
 Liberation-fonts, CC0-examples and bundled-Python licences are in there), so this is the
-only copy. **Note the boxes sidecar still has this gap** — worth closing there too.
+only copy. `sidecar/boxes` does the same for its GPL-3.0 text, and `test/deploy_hygiene_test.rb`
+holds every sidecar to it.
 
 Bundled third-party `.scad` generators are **permissive-licensed only** and credited individually in
 `catalog/NOTICE`. See spec §2 before adding one: a generator whose *output* carries a NonCommercial
