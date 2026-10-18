@@ -2,6 +2,21 @@
 
 <div class="page-head"><h1>Tools</h1></div>
 
+<%# WHY A TOOL NEVER APPEARED, for the author editing a bundle — development and test only
+    (Tools::HomeController#index decides). Production makers never see it; the log keeps the clue. %>
+<% if @addon_problems.any? %>
+  <div class="form-errors flash-alert addon-problems" role="status">
+    <%# "PROBLEMS", NOT "TOOLS THAT WEREN'T LOADED": a duplicate key is reported while both entries
+        are still served (Registry.problems), so the count is of problems, not of missing tools. %>
+    <p><%= pluralize(@addon_problems.size, "problem") %> in <code>manifests.json</code>:</p>
+    <ul>
+      <% @addon_problems.each do |problem| %>
+        <li><code><%= problem[:key] %></code> — <%= problem[:reason] %></li>
+      <% end %>
+    </ul>
+  </div>
+<% end %>
+
 <%# THE FIRST-RUN STATE. With no addons this page was a title and a thousand pixels of void — the
     worst first-run surface in the app (UI-cohesion spec §2.4), and reached by every fresh
     self-host, since a box with no addon source configured lands here with nothing. It says what a

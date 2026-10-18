@@ -66,6 +66,18 @@
   `rescue` sits **outside** `Rails.cache.fetch` — inside, a two-second blip greys every addon out
   for the whole TTL (also mutation-checked, and only against a real `MemoryStore`: the suite's
   default `:null_store` can't observe caching at all — same shape as §14e's rate-limiting note).
+  **The skip is REPORTED, never silent, and reporting changes nothing that is served.**
+  `Registry.problem_with` is the ONE definition of why `build` refuses a manifest, and
+  `Registry.problems` reports it with the two whole-index problems (an unreciprocated `states_key`;
+  a duplicate key, reported but still served) in three places: `bin/rails "addons:check[PATH]"`
+  (`Maker::Addons::Check`, which adds the on-disk checks — `key` a single path segment, refused
+  BEFORE any join and refused there rather than in Registry, which would change what production
+  serves; `/tools/<key>` asked of the ROUTER (`recognize_path`), never a reserved-name list, since
+  `a.b` splits into a format and `new_menu` is shadowed; `<key>/`, `entry` and `pins` present, NUL-free, and resolving INSIDE PATH by realpath on
+  both sides, because the addons image copies a symlink as a symlink and one pointing out dangles —
+  and exits 1 naming each problem — what tinkerex-addons' `bin/publish` runs); a notice on `/tools` in
+  development and test only, never production, where the cards are read by the maker; and one
+  `Rails.logger.warn` per problem per `Registry.all` call, i.e. per request, in every environment.
 - **ONE generic surface serves EVERY addon, with NO EXCEPTIONS LEFT** — `Tools::AddonsController`
   (shell / same-origin asset proxy / save), which is why a new addon needs no Rails redeploy.
   `generators`, `boxes` and — last, 2026-08-12 — `openscad` have all migrated:
@@ -514,8 +526,10 @@
   index** (the permissive "no target, no harm" reading lets a typo reserve a namespace and start
   colliding the day the real addon ships). Closes the 2026-08-03 audit's §2.1. The check lives in
   `Registry.all`, **not `build`**, because it is a question about a PAIR of manifests and `build` is
-  handed one. **It is NOT recursive, and an earlier comment claiming otherwise was false:** a target
-  skipped by this same check still confers a grant (probed — A admitted, B absent). Harmless, and
+  handed one. The skip is reported like any other — `Registry.problems` names it in the three places
+  the manifest-driven bullet above lists. **It is NOT recursive, and an earlier comment claiming
+  otherwise was false:** a target skipped by this same check still confers a grant (probed — A
+  admitted, B absent). Harmless, and
   the reason is the invariant: that target still wrote `shares_states_with` itself, so **consent**,
   not gallery visibility, is the property being enforced.
 - **THAT REFUSAL MUST SKIP, NOT GREY OUT — AND IT IS THE OPPOSITE CHOICE FROM `min_host` ONE METHOD

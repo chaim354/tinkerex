@@ -11,6 +11,11 @@ module Tools
       # gets an empty gallery on purpose. Asking the SOURCE, not the addon list, is what tells them
       # apart.
       @addon_source_configured = Maker::Addons::Source.configured?
+      # WHY A TOOL NEVER APPEARED — Registry.problems, the host's own definition of a skipped
+      # manifest. LOCAL ENVIRONMENTS ONLY: the author editing a bundle is looking at this page, and
+      # in production the cards are read by the maker, who can act on none of it. Production keeps
+      # the log line Registry.all writes per problem.
+      @addon_problems = Rails.env.local? ? Maker::Addons::Registry.problems : []
     end
 
     # The top bar's New ▾ menu loads this into a lazy frame when it opens (layouts/_topbar.html.erb).

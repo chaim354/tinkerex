@@ -72,7 +72,7 @@ Every one of these must be present and non-empty, and `api_version` must be exac
 | `title` | string | Display name in the gallery and the page heading. |
 | `icon` | string | An emoji shown beside the title. |
 | `description` | string | One line, shown in the gallery and under the page heading. |
-| `api_version` | string | `"1"`. A manifest declaring any other value is skipped. |
+| `api_version` | string | `"1"`. A manifest declaring any other value is skipped, and the reason reported — see below. |
 | `entry` | string | Path to the entry module, relative to your addon's directory. |
 
 A complete, minimal, working manifest:
@@ -90,10 +90,33 @@ A complete, minimal, working manifest:
 ]
 ```
 
-**A manifest that fails validation is skipped, not reported.** One bad addon must never take the
-whole gallery down, so the host drops it and serves the rest. The symptom you will see is that your
-addon is simply *absent* from `/tools` — no error page, no message. If your addon does not appear,
-check the required keys and the exact string `"1"` first.
+**A manifest that fails validation is skipped, not raised on — but the reason is reported.** One
+bad addon must never take the whole gallery down, so the host drops it and serves the rest, and in
+the gallery your addon is simply *absent* from `/tools` — no error page. The reason, in the host's
+own words (`missing title, icon`, `api_version "2" — this host speaks "1"`, `not a JSON object`, a
+keyless entry named by its position as `entry 3`), surfaces in three places:
+`bin/rails "addons:check[PATH]"` (next paragraph — run it before you ship); a notice at the top of
+`/tools` naming each problem, **in development and test only** — production never shows
+it, because the gallery is read by the maker, who can do nothing with "missing icon"; and the server
+log, one `warn` per problem on every request that reads the addon index, which in production is the
+only place it appears.
+
+**Checking a manifest before you ship it.** From a tinkerex checkout, run
+`bin/rails "addons:check[PATH]"` against the directory holding your `manifests.json` (with no `PATH`
+it reads `ADDON_SOURCE_PATH`, which development points at `../tinkerex-addons/addons`). It applies
+the host's own rules — the ones that decide what `/tools` serves, not a copy of them: the required
+keys and `api_version` above, a duplicate `key`, and an unreciprocated `states_key` (below). Then it
+checks your files on disk. `key` must be a single path segment — no `/`, not `.` or `..`, no NUL
+byte — because it becomes both `/tools/<key>` and the `<key>/` folder, and the host's router must send `/tools/<key>` to your tool (a dotted key like `a.b` is split into key `a` and format `b`; `new_menu` is already a route); that folder must exist beside
+`manifests.json`, and so must `entry` and every `pins` file inside it — each path refused, never
+resolved, if it is absolute, climbs out with `..` or holds a NUL byte, exactly as the asset proxy
+refuses it. Nothing may resolve outside `PATH`: a symlinked folder or file is fine while its target
+stays inside, and refused when it points outside, because the addons image copies a symlink as a
+symlink and there it would dangle. It exits
+0 printing `addons:check: N tools OK in PATH`, or 1 with one `key: reason` line per problem;
+tinkerex-addons' `bin/publish` runs it before anything ships. **A duplicate key is reported but
+still served:** both entries stay in the gallery and `/tools/<key>` opens whichever sorts first by
+title, so treat the report as an error even though the gallery does not.
 
 ### Optional keys this host accepts today
 
@@ -288,8 +311,10 @@ Claiming another addon's key **requires that addon to name you back**:
 ```
 
 **If the claim is not reciprocated, your addon disappears from the gallery entirely.** Not greyed
-out — absent, exactly as if a required key were missing, with only a line in the server log to say
-why. Three cases all produce that same silence:
+out — absent, exactly as if a required key were missing, and reported the same way (`addons:check`,
+the development notice on `/tools`, the server log — see *Required keys*) as
+`claims states_key "boxes", which does not name it back in shares_states_with`. Three cases all
+produce that same absence:
 
 - the target addon does not name you in `shares_states_with`;
 - the target addon **is not in the index at all** (a typo in the key — the permissive reading, "no
