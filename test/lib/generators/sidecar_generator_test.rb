@@ -39,6 +39,16 @@ class SidecarGeneratorTest < Rails::Generators::TestCase
     assert_equal [], sidecars.problems
   end
 
+  # --pretend WRITES NOTHING, so the completeness check would find no sidecar/foo/ to judge and say
+  # "complete" about a sidecar that does not exist. It must say nothing was checked instead.
+  test "--pretend writes nothing and does not claim the sidecar is complete" do
+    output = run_generator([ "foo", "--license", @license, "--pretend" ], debug: true)
+    assert_no_file "sidecar/foo/Dockerfile"
+    @originals.each { |rel, bytes| assert_equal bytes, File.binread(File.join(destination_root, rel)), rel }
+    assert_match(/nothing was written, so nothing was checked/, output)
+    assert_no_match(/is complete/, output)
+  end
+
   test "destroy restores every touchpoint file byte-for-byte and removes the directory" do
     generate
     generate(behavior: :revoke)

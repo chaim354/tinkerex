@@ -70,6 +70,12 @@ class SidecarGenerator < Rails::Generators::Base
 
   def verify_and_explain
     return if behavior == :revoke
+    # UNDER --pretend NOTHING WAS WRITTEN, so the check below would find no sidecar/<name>/ to judge
+    # and report "complete" about a sidecar that does not exist. Say what actually happened instead.
+    if options[:pretend]
+      say "\n(--pretend: nothing was written, so nothing was checked. Run without it to generate.)"
+      return
+    end
 
     problems = sidecars.problems
     unless problems.empty?
