@@ -29,7 +29,7 @@
   filter silently skipped the **worse** case: a sidecar whose author never committed a
   `LICENSE` at all was invisible to the guard written to catch exactly that. Found by
   planting a synthetic sidecar and watching the test stay green, not by reading it.
-- **`Tinkerex::Sidecars` IS THE ONE DEFINITION OF A SIDECAR AND ITS EIGHT TOUCHPOINTS, AND THE
+- **`Tinkerex::Sidecars` IS THE ONE DEFINITION OF A SIDECAR AND ITS NINE TOUCHPOINTS, AND THE
   GENERATOR INSERTS ITS SNIPPETS — never a template of its own.** `bin/rails generate sidecar`,
   `sidecars:check` (which `bin/publish-sidecar` runs first) and `test/sidecar_hygiene_test.rb` all ask
   `lib/tinkerex/sidecars.rb`, so "complete" cannot mean two things; the env name is still

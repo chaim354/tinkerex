@@ -179,6 +179,28 @@ class SidecarsTest < ActiveSupport::TestCase
     assert_equal "foo: stray — service foo has no sidecar/foo/", stray.message
   end
 
+  test "a removed sidecar's URL left in the INSTALL row or the Help list is a stray" do
+    with_tree do |root, sidecars|
+      edit(root, "docs/INSTALL.md") { |t| t + "\n`ZED_SIDECAR_URL`\n" }
+      edit(root, "app/views/help/show.html.erb") { |t| t.sub("<code>OPENSCAD_SIDECAR_URL</code>", "<code>OPENSCAD_SIDECAR_URL</code>, <code>YOK_SIDECAR_URL</code>") }
+      assert_equal %w[YOK_SIDECAR_URL ZED_SIDECAR_URL], sidecars.problems.map(&:sidecar).sort
+      assert sidecars.problems.none?(&:touchpoint?), "both are strays, not missing touchpoints"
+    end
+  end
+
+  test "the Help page's <NAME>_SIDECAR_URL placeholder is not read as a stray" do
+    with_tree do |root, sidecars|
+      assert_includes root.join("app/views/help/show.html.erb").read, "&lt;NAME&gt;_SIDECAR_URL",
+                      "the placeholder this test protects is gone — the test proves nothing now"
+      assert_equal [], sidecars.problems
+    end
+  end
+
+  test "taken_names lists every service key, sidecar or not" do
+    taken = Tinkerex::Sidecars.new.taken_names
+    %w[boxes openscad addons sync web].each { |name| assert_includes taken, name }
+  end
+
   test "config naming a sidecar with no directory behind it is a stray" do
     with_tree do |root, sidecars|
       FileUtils.rm(root.join("sidecar/openscad/Dockerfile"))

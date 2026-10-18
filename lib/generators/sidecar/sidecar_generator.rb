@@ -46,7 +46,15 @@ class SidecarGenerator < Rails::Generators::Base
         raise Thor::Error, "#{rel}: expected exactly one sidecar-URL list matching #{re.source} (found #{count})" unless count == 1
       end
     end
-    refuse_leftovers unless behavior == :revoke
+    return if behavior == :revoke
+
+    # Leftovers FIRST: a removed sidecar's stray key is also a taken name, and "remove these" is the
+    # actionable answer for it. What remains taken is a non-sidecar service (addons, sync, web).
+    refuse_leftovers
+    if sidecars.taken_names.include?(sidecar_name)
+      raise Thor::Error, "#{sidecar_name} is already a service in config/deploy.yml or the compose files " \
+                         "(not a sidecar) — pick another name"
+    end
   end
 
   def scaffold

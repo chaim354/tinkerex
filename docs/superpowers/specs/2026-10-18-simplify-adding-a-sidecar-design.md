@@ -54,7 +54,9 @@ the base anyway (Kamal deep-merges `env.clear`) — historical, and left alone h
   5. `docker-compose.yml` — `services.web.environment[env_key] == compose_url`
   6. `docker-compose.build.yml` — `services.<name>.build == "sidecar/<name>"`
   7. `docs/INSTALL.md` — names `` `<env_key>` ``
-  8. `app/views/help/show.html.erb` — names `<code><env_key></code>`
+  8. `docs/INSTALL.md` — names `` `<compose_url>` `` in the row's "set by compose" list (added in
+     review: the generator wrote it and nothing checked it)
+  9. `app/views/help/show.html.erb` — names `<code><env_key></code>`
 
   and, **in reverse**, a stray: any `*_SIDECAR_URL` key in `deploy.yml`'s or `web`'s env, any
   accessory or compose service whose image ends `-sidecar:latest`, with no `sidecar/<name>/` behind it.
@@ -135,12 +137,12 @@ failure branch prints a pattern or a count, never a captured buffer.
 
 ## 7. Testing
 
-- **`Tinkerex::Sidecars`** — a temp tree holding minimal copies of the eight files and one sidecar;
+- **`Tinkerex::Sidecars`** — a temp tree holding copies of the six touchpoint files and one sidecar;
   delete each touchpoint in turn and assert exactly that problem (with its snippet); plant a stray
   `*_SIDECAR_URL` and a stray `-sidecar` image; assert the real tree reports `[]`. Every arm
   mutation-checked.
 - **The generator** — `Rails::Generators::TestCase` with the destination seeded by COPIES of the real
-  eight files: after `generate`, `Sidecars.new(root: dest).problems == []` and the scaffold exists;
+  six touchpoint files: after `generate`, `Sidecars.new(root: dest).problems == []` and the scaffold exists;
   `destroy` restores every file byte-identically; each refusal writes nothing. Mutation-checked.
 - **`bin/build-sidecar` and `bin/publish-sidecar`** — hermetic runs with stub `docker`, `kamal`,
   `bin/secret` and a fake token, as tinkerex-addons' `bin/publish` was reviewed: the token never

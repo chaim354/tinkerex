@@ -115,6 +115,14 @@ module Tinkerex
     # snippets that could never clear.
     def problems = names.flat_map { |name| self.class.valid_name?(name) ? problems_for(name) : [ misnamed(name) ] } + strays
 
+    # Every service key already in use — Kamal accessories, compose services, build-overlay services.
+    # A new sidecar may not take one: `addons`, `web` and `sync` are not sidecars, so they are never
+    # strays, and inserting a sidecar under the same key writes a duplicate YAML silently collapses.
+    def taken_names
+      [ hash_at(deploy, "accessories"), hash_at(compose, "services"), hash_at(compose_build, "services") ]
+        .flat_map(&:keys).map(&:to_s).uniq
+    end
+
     private
 
     def misnamed(name) =
@@ -153,7 +161,11 @@ module Tinkerex
     # `filter_map { svc if … }`, which drops a stray whose key YAML read as `false` or `nil`.
     def strays
       known = names
-      stray_keys = (deploy_env.keys + web_env.keys + ovh_env.keys).grep(/_SIDECAR_URL\z/).uniq - known.map { |n| env_key(n) }
+      # The two prose touchpoints count too: a removed sidecar's name left in the INSTALL row or the
+      # Help list is the same leftover as one left in env, and the generator's insert sits beside it.
+      prose_keys = (text(:install) + text(:help)).scan(/\b[A-Z][A-Z0-9_]*_SIDECAR_URL\b/)
+      stray_keys = (deploy_env.keys + web_env.keys + ovh_env.keys).grep(/_SIDECAR_URL\z/)
+        .concat(prose_keys).uniq - known.map { |n| env_key(n) }
       runners = [ hash_at(deploy, "accessories"), hash_at(compose, "services") ]
         .flat_map { |services| services.select { |_svc, cfg| runs_sidecar_image?(cfg) }.keys }
         .map { |svc| [ svc, "service #{svc} runs a -sidecar image with no sidecar/#{svc}/" ] }
