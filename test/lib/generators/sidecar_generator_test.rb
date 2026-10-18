@@ -60,7 +60,7 @@ class SidecarGeneratorTest < Rails::Generators::TestCase
   end
 
   test "refuses a bad name, an existing sidecar, and a missing licence — writing nothing" do
-    [ [ "Foo", @license ], [ "boxes", @license ], [ "foo", "/nonexistent/LICENSE" ] ].each do |name, license|
+    [ [ "Foo", @license ], [ "no", @license ], [ "boxes", @license ], [ "foo", "/nonexistent/LICENSE" ] ].each do |name, license|
       assert_raises(SystemExit) { capture(:stderr) { run_generator [ name, "--license", license ] } }
       @originals.each { |rel, bytes| assert_equal bytes, File.binread(File.join(destination_root, rel)), "#{name}: #{rel}" }
       assert_no_file "sidecar/#{name.downcase}/app.py" unless name == "boxes"

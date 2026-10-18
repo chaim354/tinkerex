@@ -24,7 +24,10 @@ class SidecarGenerator < Rails::Generators::Base
   def self.exit_on_failure? = true
 
   def refuse_before_writing_anything
-    raise Thor::Error, "sidecar name #{sidecar_name.inspect} must be lowercase letters, digits and dashes, starting with a letter" unless sidecar_name.match?(/\A[a-z][a-z0-9-]*\z/)
+    unless Tinkerex::Sidecars.valid_name?(sidecar_name)
+      raise Thor::Error, "sidecar name #{sidecar_name.inspect} must be lowercase letters, digits and dashes, starting " \
+                         "with a letter, and not a word YAML reads as a boolean or null (no, on, null…)"
+    end
     # `destroy` runs against a sidecar that DOES exist — only `generate` refuses one.
     if behavior != :revoke && File.exist?(File.join(destination_root, "sidecar", sidecar_name))
       raise Thor::Error, "sidecar/#{sidecar_name}/ already exists"

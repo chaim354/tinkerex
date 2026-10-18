@@ -191,10 +191,9 @@ module Tinkerex
       env.grep(String).to_h { |entry| entry.split("=", 2).values_at(0, 1) }
     end
 
-    def yaml(file)
-      data = YAML.safe_load(text(file), aliases: true, filename: FILES.fetch(file))
-      data.is_a?(Hash) ? data : {}
-    end
+    # No Hash check here: every reader goes through `at`/`hash_at`, which already answer nil for a
+    # file that parsed to a list or a scalar, so a second check could never fail (mutation-checked).
+    def yaml(file) = YAML.safe_load(text(file), aliases: true, filename: FILES.fetch(file))
 
     def text(file)
       path = @root.join(FILES.fetch(file))
