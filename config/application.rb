@@ -21,7 +21,7 @@ module Tinkerex
     # Please, add to the `ignore` list any other `lib` subdirectories that do
     # not contain `.rb` files, or that should not be reloaded or eager loaded.
     # Common ones are `templates`, `generators`, or `middleware`, for example.
-    config.autoload_lib(ignore: %w[assets tasks library_backend.rb])
+    config.autoload_lib(ignore: %w[assets tasks generators library_backend.rb])
 
     # ACTIVE STORAGE VARIANTS ARE OFF, and this is a security setting, not a tuning one.
     #

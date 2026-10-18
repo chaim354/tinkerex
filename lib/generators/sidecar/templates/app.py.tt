@@ -1,0 +1,32 @@
+"""The <%= sidecar_name %> sidecar, scaffolded by `bin/rails generate sidecar`.
+
+A SEPARATE process the Tinkerex app reaches over HTTP through its service proxy — never a library it
+links; this is where GPL code runs (CLAUDE.md §9). An addon reaches it by declaring
+"services": ["<%= sidecar_name %>"] in its manifest and calling
+host.service.post("<%= sidecar_name %>", "render", {...}) — the proxy forwards a JSON body.
+"""
+from flask import Flask, jsonify, request
+
+app = Flask(__name__)
+
+
+@app.get("/up")
+def up():
+    return "ok", 200, {"Content-Type": "text/plain"}
+
+
+@app.post("/render")
+def render():
+    params = request.get_json(silent=True)
+    if not isinstance(params, dict):
+        return error(400, "bad_request", "send a JSON object")
+    text = params.get("text")
+    if not isinstance(text, str):
+        # A refused VALUE is 422 with a machine `code` a bundle branches on — never the prose, which
+        # a release may reword (docs/invariants/addons.md).
+        return error(422, "invalid_params", "text must be a string")
+    return jsonify({"result": text.upper()})
+
+
+def error(status, code, message):
+    return jsonify({"error": message[:200], "code": code}), status

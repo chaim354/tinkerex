@@ -116,6 +116,7 @@ env:
     # real URL if a sidecar is ever booted on OVH.
     BOXES_SIDECAR_URL: ""
     OPENSCAD_SIDECAR_URL: ""
+    # bin/rails generate sidecar inserts sidecar URLs above this line
 
     # The addons accessory runs on the Unraid host too, so `tinkerex-addons` does not resolve here.
     # Blank -> the Rails app falls back to production.rb's ADDON_SOURCE_PATH default, which points at

@@ -148,6 +148,7 @@ env:
     # OVH box would otherwise inherit a hostname that does not resolve there and every call would
     # fail instead of the addon greying out (spec §8.1; guarded by test/deploy_hygiene_test.rb).
     OPENSCAD_SIDECAR_URL: http://tinkerex-openscad:8000
+    # bin/rails generate sidecar inserts sidecar URLs above this line
 
     # The addon bundle host (the `addons` accessory below, repo chaim354/tinkerex-addons). Takes
     # precedence over ADDON_SOURCE_PATH's on-disk fallback (config/environments/production.rb).
@@ -278,6 +279,7 @@ accessories:
       # The content-addressed render cache. On a volume so it survives an accessory reboot —
       # a cold cache just means the first render of each design pays full price.
       - openscad-cache:/cache
+  # bin/rails generate sidecar inserts sidecar accessories above this line
 
   # The addon bundle host (repo: chaim354/tinkerex-addons) — a tiny nginx image serving each addon's
   # manifest + plain-ESM bundle. NO `port:` -> internal-only, reachable on the Kamal network as

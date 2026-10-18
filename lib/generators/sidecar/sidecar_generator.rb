@@ -1,0 +1,97 @@
+require "rails/generators"
+
+# `bin/rails generate sidecar <name> --license <upstream LICENSE>` — scaffolds sidecar/<name>/ and
+# inserts every touchpoint a sidecar needs, then asks Tinkerex::Sidecars whether anything is missing.
+# The YAML it inserts IS Tinkerex::Sidecars#snippets — the text the guard prints — so the generator
+# and the guard cannot disagree about what complete means. `bin/rails destroy sidecar <name>`
+# reverses every insert.
+#
+# ALL REFUSALS COME BEFORE THE FIRST WRITE (Thor runs public methods in definition order): a bad
+# name, an existing sidecar, a missing licence, and any marker or prose anchor not present exactly
+# once. A half-inserted config is worse than none.
+class SidecarGenerator < Rails::Generators::Base
+  source_root File.expand_path("templates", __dir__)
+  argument :sidecar_name, type: :string
+  class_option :license, type: :string, required: true,
+               desc: "Path to the UPSTREAM project's LICENSE — a sidecar's image redistributes its GPL code (§9)"
+
+  # The two prose touchpoints have no marker: each is a sentence listing every sidecar URL, and the
+  # new one goes after the last.
+  INSTALL_VARS = /^\| `[A-Z0-9_]+_SIDECAR_URL`(?:, `[A-Z0-9_]+_SIDECAR_URL`)*/
+  INSTALL_URLS = /\*set by compose\* \(`http:\/\/[a-z0-9-]+:8000`(?:, `http:\/\/[a-z0-9-]+:8000`)*/
+  HELP_VARS = /<code>[A-Z0-9_]+_SIDECAR_URL<\/code>(?:, <code>[A-Z0-9_]+_SIDECAR_URL<\/code>)*/
+
+  def self.exit_on_failure? = true
+
+  def refuse_before_writing_anything
+    raise Thor::Error, "sidecar name #{sidecar_name.inspect} must be lowercase letters, digits and dashes, starting with a letter" unless sidecar_name.match?(/\A[a-z][a-z0-9-]*\z/)
+    # `destroy` runs against a sidecar that DOES exist — only `generate` refuses one.
+    if behavior != :revoke && File.exist?(File.join(destination_root, "sidecar", sidecar_name))
+      raise Thor::Error, "sidecar/#{sidecar_name}/ already exists"
+    end
+    raise Thor::Error, "--license #{options[:license]} is not a readable file" unless File.file?(options[:license]) && File.readable?(options[:license])
+
+    Tinkerex::Sidecars::MARKERS.each_value do |file, marker|
+      rel = Tinkerex::Sidecars::FILES.fetch(file)
+      count = read(rel).scan(marker_line(marker)).size
+      raise Thor::Error, "#{rel} must carry the marker '#{marker}' exactly once (found #{count})" unless count == 1
+    end
+    { install: [ INSTALL_VARS, INSTALL_URLS ], help: [ HELP_VARS ] }.each do |file, patterns|
+      rel = Tinkerex::Sidecars::FILES.fetch(file)
+      patterns.each do |re|
+        count = read(rel).scan(re).size
+        raise Thor::Error, "#{rel}: expected exactly one sidecar-URL list matching #{re.source} (found #{count})" unless count == 1
+      end
+    end
+  end
+
+  def scaffold
+    dir = "sidecar/#{sidecar_name}"
+    # The DIRECTORY is an action of its own so `destroy` removes it: revoking only the files below
+    # leaves an empty sidecar/<name>/, which the existence refusal above then reads as a sidecar —
+    # and `generate` of the same name refuses forever after (measured).
+    empty_directory dir
+    template "Dockerfile.tt", "#{dir}/Dockerfile"
+    template "app.py.tt", "#{dir}/app.py"
+    copy_file "requirements.txt", "#{dir}/requirements.txt"
+    template "README.md.tt", "#{dir}/README.md"
+    create_file "#{dir}/LICENSE", File.binread(options[:license])
+  end
+
+  def insert_config
+    snippets = sidecars.snippets(sidecar_name)
+    Tinkerex::Sidecars::MARKERS.each do |point, (file, marker)|
+      inject_into_file Tinkerex::Sidecars::FILES.fetch(file), snippets.fetch(point), before: marker_line(marker)
+    end
+    inject_into_file Tinkerex::Sidecars::FILES[:install], ", #{snippets[:install]}", after: INSTALL_VARS
+    inject_into_file Tinkerex::Sidecars::FILES[:install], ", `#{sidecars.compose_url(sidecar_name)}`", after: INSTALL_URLS
+    inject_into_file Tinkerex::Sidecars::FILES[:help], ", #{snippets[:help]}", after: HELP_VARS
+  end
+
+  def verify_and_explain
+    return if behavior == :revoke
+
+    problems = sidecars.problems
+    unless problems.empty?
+      raise Thor::Error, "generated, but Tinkerex::Sidecars still reports:\n" +
+                         problems.map { |p| "  #{p.sidecar}: #{p.file} is missing #{p.missing}" }.join("\n")
+    end
+    say <<~NEXT
+
+      sidecar/#{sidecar_name}/ is complete (sidecars:check would pass). Next:
+        1. Write the service in sidecar/#{sidecar_name}/app.py (and its README).
+        2. In the addon's manifest (chaim354/tinkerex-addons): "services": ["#{sidecar_name}"]
+        3. bin/publish-sidecar #{sidecar_name}     — builds, boots the accessory, verifies it
+        4. Redeploy chunk_remote, share and s3 so the app carries #{sidecars.env_key(sidecar_name)}.
+    NEXT
+  end
+
+  private
+
+  # A FRESH instance per call, never memoized: Tinkerex::Sidecars caches each file's parsed YAML,
+  # and `snippets` reads deploy.yml (for the accessory host) BEFORE insert_config writes it — a
+  # memoized one makes verify_and_explain judge the pre-insert deploy.yml and refuse a complete run.
+  def sidecars = Tinkerex::Sidecars.new(root: destination_root)
+  def read(rel) = File.read(File.join(destination_root, rel))
+  def marker_line(marker) = /^ *#{Regexp.escape(marker)}\n/
+end
