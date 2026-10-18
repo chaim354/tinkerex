@@ -24,8 +24,14 @@ class SidecarGeneratorTest < Rails::Generators::TestCase
 
   def sidecars = Tinkerex::Sidecars.new(root: destination_root)
 
+  # THE SUCCESS PATH RAISES INSTEAD OF EXITING. Without `debug:`, Thor answers a Thor::Error with
+  # exit(false), and SystemExit is a Minitest PASSTHROUGH: a broken generator ends the whole run —
+  # or one parallel worker — with no failure reported (measured). The refusal tests below keep the
+  # CLI path on purpose, because exit 1 is what a refusal must do.
+  def generate(**config) = run_generator([ "foo", "--license", @license ], debug: true, **config)
+
   test "generates a complete sidecar: scaffold, config, and no problems" do
-    run_generator [ "foo", "--license", @license ]
+    generate
     %w[Dockerfile app.py requirements.txt README.md LICENSE].each { |f| assert_file "sidecar/foo/#{f}" }
     assert_file("sidecar/foo/LICENSE") { |c| assert_equal "GNU GENERAL PUBLIC LICENSE (test)\n", c }
     assert_file("sidecar/foo/Dockerfile") { |c| assert_match(/^COPY .*LICENSE/, c); assert_match(%r{> /revision}, c) }
@@ -34,8 +40,8 @@ class SidecarGeneratorTest < Rails::Generators::TestCase
   end
 
   test "destroy restores every touchpoint file byte-for-byte and removes the directory" do
-    run_generator [ "foo", "--license", @license ]
-    run_generator [ "foo", "--license", @license ], behavior: :revoke
+    generate
+    generate(behavior: :revoke)
     @originals.each { |rel, bytes| assert_equal bytes, File.binread(File.join(destination_root, rel)), rel }
     assert_no_file "sidecar/foo/Dockerfile"
     # The directory itself, not just its files: an empty sidecar/foo/ makes the next `generate foo`
