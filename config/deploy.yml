@@ -259,9 +259,10 @@ builder:
 # ssh:
 #   user: app
 
-# Accessory services (booted with `kamal accessory boot boxes`). The boxes sidecar is the forked
-# boxes.py Python service (sidecar/boxes) — a SEPARATE, GPL-3.0 image built + pushed separately from
-# the Rails app (see docs/DEPLOY.md). NO `port:` -> internal-only, reachable on the kamal network as
+# Accessory services. A sidecar is built, booted (first time) or rebooted, and verified by
+# `bin/publish-sidecar <name>`; a new one is added by `bin/rails generate sidecar` (docs/DEPLOY.md).
+# The boxes sidecar is the forked boxes.py Python service (sidecar/boxes) — a SEPARATE, GPL-3.0
+# image built + pushed separately from the Rails app. NO `port:` -> internal-only, reachable on the kamal network as
 # `tinkerex-boxes`; the app's BOXES_SIDECAR_URL points at it. One accessory serves all three app
 # deployments on this host.
 accessories:
