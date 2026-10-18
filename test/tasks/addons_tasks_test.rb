@@ -47,6 +47,16 @@ class AddonsTasksTest < ActiveSupport::TestCase
     assert_match(%r{addons:check: /nonexistent/addons is not a directory}, stderr)
   end
 
+  test "a malformed manifests.json exits non-zero with the parse error" do
+    Dir.mktmpdir do |root|
+      File.write(File.join(root, "manifests.json"), "[{")
+      _stdout, stderr = capture_io do
+        assert_raises(SystemExit) { Rake::Task["addons:check"].invoke(root) }
+      end
+      assert_match(/addons:check: malformed manifests\.json: /, stderr)
+    end
+  end
+
   test "with no PATH it reads ADDON_SOURCE_PATH" do
     addons_dir([ MANIFEST ]) do |root|
       prior = ENV["ADDON_SOURCE_PATH"]

@@ -50,7 +50,7 @@ more than one manifest in scope:
 
 - **unreciprocated `states_key`** — the condition `states_key_permitted?` already refuses (today it
   reaches only the log). `problems` reuses that predicate; it does not restate it.
-- **duplicate `key`** — `"duplicate key — only one of N entries is reachable"`.
+- **duplicate `key`** — `"duplicate key — N entries share it and only one is reachable"`.
 
 `key` is the manifest's `key` when it has one, else `"entry N"` (counting from 1), so a keyless entry is
 still locatable. The report is ordered by index position.

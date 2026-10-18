@@ -6,8 +6,9 @@
     (Tools::HomeController#index decides). Production makers never see it; the log keeps the clue. %>
 <% if @addon_problems.any? %>
   <div class="form-errors flash-alert addon-problems" role="status">
-    <p><%= pluralize(@addon_problems.size, "tool") %> <%= @addon_problems.size == 1 ? "wasn't" : "weren't" %>
-      loaded from <code>manifests.json</code>:</p>
+    <%# "PROBLEMS", NOT "TOOLS THAT WEREN'T LOADED": a duplicate key is reported while both entries
+        are still served (Registry.problems), so the count is of problems, not of missing tools. %>
+    <p><%= pluralize(@addon_problems.size, "problem") %> in <code>manifests.json</code>:</p>
     <ul>
       <% @addon_problems.each do |problem| %>
         <li><code><%= problem[:key] %></code> — <%= problem[:reason] %></li>
