@@ -45,6 +45,9 @@ module Maker
       def files_for(addon)
         key = addon.key
         return [ { key:, reason: KEY_REASON } ] unless segment?(key)
+        unless routable?(key)
+          return [ { key:, reason: "/tools/#{key} does not reach this tool — the host routes that URL elsewhere" } ]
+        end
 
         dir = @root.join(key)
         return [ { key:, reason: "no #{key}/ directory beside manifests.json" } ] unless dir.directory?
@@ -58,6 +61,17 @@ module Maker
       end
 
       def segment?(key) = !key.empty? && !key.include?("/") && !key.include?("\0") && !%w[. ..].include?(key)
+
+      # THE ROUTER DECIDES WHETHER /tools/<key> REACHES THIS TOOL — never a list of reserved names
+      # here, which would drift the day a route is added. A key the router splits (`a.b` -> key "a",
+      # format "b") or an earlier route shadows (`new_menu`) builds, lists and links fine, then opens
+      # a different page. Asked of the real route set, so it answers for exactly this host.
+      def routable?(key)
+        route = Rails.application.routes.recognize_path("/tools/#{ERB::Util.url_encode(key)}")
+        route[:controller] == "tools/addons" && route[:action] == "show" && route[:key] == key
+      rescue ActionController::RoutingError
+        false
+      end
 
       # REJECT, NEVER NORMALIZE — the same guard the asset proxy uses, so a path this check passes is
       # one the host will actually serve.

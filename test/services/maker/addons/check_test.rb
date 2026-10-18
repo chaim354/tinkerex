@@ -81,6 +81,24 @@ module Maker
       # that isn't. Each escape below has the addon's files PLANTED where the join would land, so an
       # empty result can only mean the key was never joined. The nested key has nothing planted: it is
       # the case that shows the files are not checked at all (one problem, not "no <key>/ directory").
+      # THE ROUTER IS ASKED, NOT A LIST. `a.b` is split into key "a" + format "b", and `new_menu` is an
+      # earlier route (Tools::HomeController#new_menu) — both build, list and link, then open a
+      # different page. Their folders and files exist, so only the routing question can report them.
+      test "a key the host routes somewhere else is reported" do
+        %w[a.b new_menu].each do |key|
+          with_addons([ MANIFEST.merge("key" => key) ], files: { "#{key}/widget.js" => "", "#{key}/dep.js" => "" }) do |root|
+            assert_equal [ { key:, reason: "/tools/#{key} does not reach this tool — the host routes that URL elsewhere" } ],
+                         Check.run(root).problems, "key #{key.inspect}"
+          end
+        end
+      end
+
+      test "a key the host routes to the tool page passes the routing question" do
+        with_addons([ MANIFEST.merge("key" => "wid-get_2") ], files: { "wid-get_2/widget.js" => "", "wid-get_2/dep.js" => "" }) do |root|
+          assert_equal [], Check.run(root).problems
+        end
+      end
+
       test "a key that is not a single path segment is reported and its files are not checked" do
         with_parent do |root, parent|
           [ root, parent, parent.join("outside/addondir") ].each do |dir|
