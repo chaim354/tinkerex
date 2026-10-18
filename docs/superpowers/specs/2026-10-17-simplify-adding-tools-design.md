@@ -52,7 +52,7 @@ more than one manifest in scope:
   reaches only the log). `problems` reuses that predicate; it does not restate it.
 - **duplicate `key`** — `"duplicate key — only one of N entries is reachable"`.
 
-`key` is the manifest's `key` when it has one, else `"#<index position>"`, so a keyless entry is
+`key` is the manifest's `key` when it has one, else `"entry N"` (counting from 1), so a keyless entry is
 still locatable. The report is ordered by index position.
 
 `Registry.all` logs one `warn` per problem, matching the existing per-request `states_key` warn
@@ -104,7 +104,7 @@ log. The invariant itself is unchanged.
   and `permissions: [{name: "library:write", reasoning: "Saves the file it makes into the library
   folder you pick."}]`. Written with `JSON.pretty_generate` + trailing newline — verified to
   round-trip today's file byte-identically, so sibling entries do not churn.
-- If `../tinkerex` exists (or `TINKEREX_DIR`), runs `addons:check` against this checkout; otherwise
+- If `../tinkerex` exists (or `TINKEREX_PATH`), runs `addons:check` against this checkout; otherwise
   says it skipped it.
 - Prints the dev loop: start the tinkerex dev server, open `/tools/<key>` — dev reads this checkout
   directly through `Source::Local`, uncached.
@@ -114,7 +114,7 @@ step anything ships through).
 
 ### 4.2 `bin/publish`
 
-Requires the tinkerex checkout (`TINKEREX_DIR`, default `../tinkerex`) — the Kamal config lives
+Requires the tinkerex checkout (`TINKEREX_PATH`, default `../tinkerex` — the name `bin/check-fixture-drift` already uses) — the Kamal config lives
 there. Stops at the first failure, in order:
 
 1. `addons:check` against `addons/` — refuse to publish a manifest the host would skip.
