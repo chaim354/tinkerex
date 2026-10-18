@@ -91,5 +91,45 @@ module Tools
       assert_response :success
       assert_select ".addon-permissions", count: 0
     end
+
+    # The house stub helper (help_page_test.rb carries the same body). Replaces a SINGLETON method
+    # for the block, removing an inherited one after.
+    def replacing(owner, name, replacement)
+      mod = owner.singleton_class
+      own = mod.instance_methods(false).include?(name)
+      original = mod.instance_method(name)
+      mod.define_method(name, &replacement)
+      yield
+    ensure
+      own ? mod.define_method(name, original) : mod.remove_method(name)
+    end
+
+    # WHY A TOOL NEVER APPEARED, SHOWN WHERE THE AUTHOR IS LOOKING — but only in a local
+    # environment. In production the cards are read by the maker, who can do nothing with
+    # "missing icon" (the onboarding rule that moved sidecar env-var names off the cards).
+    test "a skipped manifest is named, with its reason, in a local environment" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [
+        MANIFEST, MANIFEST.merge("key" => "broken", "title" => "Broken").except("icon")
+      ])
+      get tools_path
+      assert_response :success
+      assert_select ".addon-problems li", count: 1, text: /broken.*missing icon/
+      assert_select ".addon-card", count: 1, message: "the notice must not add or remove a card"
+    end
+
+    test "a clean index renders no notice" do
+      get tools_path
+      assert_response :success
+      assert_select ".addon-problems", count: 0
+    end
+
+    test "production never renders the notice, whatever the index holds" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.except("icon") ])
+      replacing(Rails, :env, -> { ActiveSupport::EnvironmentInquirer.new("production") }) do
+        get tools_path
+      end
+      assert_response :success
+      assert_select ".addon-problems", count: 0
+    end
   end
 end
