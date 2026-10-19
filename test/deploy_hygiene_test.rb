@@ -401,6 +401,28 @@ end
     end
   end
 
+  # A `kamal accessory exec` COMMAND THAT IS A BOOLEAN WORD IS SWALLOWED BY THE FLAG BEFORE IT. Thor
+  # reads `--reuse -q true` as "--quiet = true", so docker exec runs with no command and fails on a
+  # RUNNING container. bin/publish-sidecar's existence probe did exactly that on its first real run
+  # (2026-10-19): it read "absent", `kamal accessory boot` skipped the existing container and exited
+  # 0, and only the /revision check stopped a deploy that rolled nothing. The hermetic tests could
+  # not see it — the stub kamal ignored its arguments, a fake sharing the code's misunderstanding
+  # (§14e). Read as TEXT across every script that drives kamal, comments stripped.
+  test "no kamal accessory exec hands a boolean word to a flag as its command" do
+    scripts = ROOT.glob("bin/*").select(&:file?).select { |p| p.read.include?("accessory exec") }
+    assert scripts.any?, "expected at least one bin/ script that runs `kamal accessory exec`"
+
+    swallowed = /accessory exec\b[^\n]*?\s(?:-q|--quiet|--reuse|-i|--interactive|-v|--verbose|-p|--primary)\s+(["']?)(?:true|false|yes|no|on|off)\1(?=\s|$)/
+    offenders = scripts.flat_map do |script|
+      script.read.lines.each_with_index.filter_map do |line, i|
+        next if line.lstrip.start_with?("#")
+        "#{script.relative_path_from(ROOT)}:#{i + 1}: #{line.strip}" if line.match?(swallowed)
+      end
+    end
+    assert_empty offenders, "a boolean word after a kamal flag is eaten as the flag's value, leaving docker exec " \
+                            "with no command — use a command that is not true/false/yes/no/on/off (e.g. \"echo probe\")"
+  end
+
   test "the one sidecar build script bakes the source revision into the image, both ways" do
     # WHAT THIS COVERS, AND — the more important half — WHAT IT CANNOT.
     # It reads the build script and the sidecar Dockerfiles as TEXT and asserts only that the script
