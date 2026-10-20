@@ -31,10 +31,15 @@ module V1
   class BaseController < ActionController::API
     include ::V1::Authentication
 
+    # NO `rescue_from ArgumentError`, AND ITS ABSENCE IS THE RULE (F-S18-1, 2026-10-19). That entry
+    # came from the sync engine, whose raisers left with it; what it caught afterwards was arity
+    # drift, a renamed keyword and a misconfigured backend, each answered 422 with the interpreter's
+    # message and reported nowhere. A bare ArgumentError is a programming error and 500s here as it
+    # does on the web. A client-input one gets a NAMED SUBCLASS and its own rescue_from, as
+    # Maker::MoveNode::InvalidName does. test/integration/v1/base_controller_errors_test.rb.
     rescue_from ActiveRecord::RecordNotFound, with: :not_found
     rescue_from ActionController::ParameterMissing, with: :bad_request
     rescue_from ActiveRecord::RecordInvalid, with: :unprocessable
-    rescue_from ArgumentError, with: :unprocessable
     rescue_from ActiveRecord::RecordNotUnique, with: :conflict
 
     private

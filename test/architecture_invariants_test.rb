@@ -971,6 +971,36 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
                  "Gate on the capability before the call instead — see LibraryCapabilities."
   end
 
+  # A BARE ArgumentError IS A PROGRAMMING ERROR, SO NO CONTROLLER ANSWERS ONE (F-S18-1, 2026-10-19):
+  # V1::BaseController's `rescue_from ArgumentError` turned arity drift and misconfiguration into a
+  # 422 carrying the interpreter's message. READ OFF EACH CLASS'S rescue_handlers, NOT ITS FILE, so a
+  # multi-line, quoted or inherited declaration cannot hide. The probes pin BOTH directions: the bare
+  # class is seen, and a NAMED SUBCLASS (Maker::MoveNode::InvalidName, the shape a client-input case
+  # takes) is not -- a check widened to subclasses would pass today only because none is rescued yet.
+  test "no controller rescue_froms a bare ArgumentError" do
+    bare = ->(klass) { klass.rescue_handlers.map(&:first).select { |name| name.safe_constantize == ArgumentError } }
+    probe = ->(error) { Class.new { include ActiveSupport::Rescuable; rescue_from(error) { } } }
+    assert_equal [ "ArgumentError" ], bare.(probe.(ArgumentError)), "the check must see the bare class"
+    assert_empty bare.(probe.(Maker::MoveNode::InvalidName)), "a named subclass is the sanctioned shape"
+
+    # AN ANONYMOUS CONTROLLER HAS NO NAME, and const_source_location raises on one (NameError for "",
+    # TypeError for nil) in whichever test order first builds it. Skipped before the lookup; probed here.
+    Rails.application.eager_load!
+    anonymous = Class.new(ActionController::API)
+    scanned = [ ActionController::Base, ActionController::API ].flat_map(&:descendants)
+    assert_includes scanned, anonymous, "the probe must be in the set the scan walks"
+    controllers = scanned.select do |klass|
+      next false unless klass.name
+      Object.const_source_location(klass.name)&.first.to_s.start_with?(ROOT.join("app/controllers/").to_s)
+    end
+    assert_includes controllers, V1::BaseController, "the scan must reach the class it was written for (§14e)"
+
+    offenders = controllers.flat_map { |klass| bare.(klass).map { |name| "#{klass.name}: rescue_from #{name}" } }
+    assert_empty offenders, "a bare ArgumentError must 500 with its backtrace (F-S18-1), but these answer " \
+                            "it:\n  #{offenders.join("\n  ")}\nRescue a NAMED subclass instead " \
+                            "(Maker::MoveNode::InvalidName is the precedent)"
+  end
+
   test "every ApplicationController descendant requires a signed-in session" do
     # CLAUDE.md §14d: the web app is session-authed, and "every server-rendered page requires a
     # session" was stated sixteen times — once per controller — and enforced nowhere. A NEW
