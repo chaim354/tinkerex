@@ -231,8 +231,8 @@ module Web
     end
 
     # THE THIRD UPLOAD DOOR: Projects::UploadsController, which the project page renders for each
-    # build-log entry (the entry-photo uploader) and which the project-level route still reaches by
-    # URL. Live on s3 -- what the public box runs -- and so capped like the other two.
+    # build-log entry (the entry-photo uploader). Its project-level route was retired in F-S21-1.
+    # Live on s3 -- what the public box runs -- and so capped like the other two.
     test "the demo's build-log upload over the cap is refused naming the limit, and nothing is written" do
       sign_in_demo!
       project = @demo.maker_projects.create!(name: "Desk Lamp")
@@ -246,11 +246,6 @@ module Web
       assert_equal sentence, flash[:alert]
       assert_not @demo.nodes.exists?(name: "big.stl")
       assert_empty entry.file_attachments
-
-      # The project-level route is the same controller, reachable by URL.
-      post project_uploads_path(project), params: { file: [ upload("big.stl", 1025) ] }
-      assert_equal sentence, flash[:alert]
-      assert_empty project.file_attachments
     end
 
     test "control: an ordinary account's identical build-log upload lands" do

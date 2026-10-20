@@ -1048,9 +1048,10 @@ module Tools
     # ---- save: the eager project-folder nudge --------------------------------------------
     #
     # THE ADDON SAVE WAS THE ONE BROWSER-FACING DOOR WITH NO NUDGE. §14f names seven ways a file
-    # reaches `Projects/<slug>/`; the three web upload doors call
-    # ProjectFolderIntake#intake_project_folder inline (FilesController#create, #finalize_upload,
-    # Projects::UploadsController#create) and a device push got one in 2b9ca85 — but this door, where
+    # reaches `Projects/<slug>/`; the web upload doors call
+    # ProjectFolderIntake#intake_project_folder inline (FilesController#create, #finalize_upload, and
+    # Projects::UploadsController#create until F-S21-1 retired its project-level route) and a device
+    # push got one in 2b9ca85 — but this door, where
     # the user is WATCHING the save complete and the save dialog defaults by Tools::AddonsController
     # #tool_destination_node_id (a tool whose last output was filed inside a project starts at that
     # project's folder), silently left the file at the project root for up to 15 minutes. On a

@@ -223,4 +223,72 @@ class Maker::Git::CommitPathsTest < ActiveSupport::TestCase
     assert_equal "one changed\n", rugged_at.lookup(tree.path("a.txt")[:oid]).content
     assert_raises(Rugged::TreeError) { tree.path("ghost.txt") }
   end
+
+  # ---- one read per selected path (F-S13-2) -----------------------------------------------------
+  #
+  # THE TREE AND THE INDEX ARE WRITTEN FROM ONE READ OF EACH SELECTED PATH. The index used to be
+  # refreshed by reading the working tree a SECOND time, after the ref had moved, so a write landing
+  # between the two reads (the maker's editor, or desktop sync over SMB) committed one blob and
+  # staged another. `git status` then reported the path staged-and-different, which is the "the app
+  # half-did something" state the index refresh exists to prevent. "the committed path reports clean
+  # afterwards" cannot see it, because nothing in that case changes the file between the reads.
+  #
+  # The writer is simulated at the one read site: `Rugged::Blob.from_workdir` reads and hashes the
+  # file, then the file changes. Any second read, before the commit or after it, sees the change.
+  test "the index records exactly the blob the commit recorded, even if the file changes after it was read" do
+    root = make_repo!(files: { "a.txt" => "one\n" })
+    path = File.join(library_root, "demo", "a.txt")
+    File.write(path, "two\n")
+
+    after_each_read(-> { File.write(path, "raced\n") }) do
+      Maker::Git::CommitPaths.new(local(root)).call(paths: [ "a.txt" ], message: "m")
+    end
+
+    committed = rugged_at.head.target.tree.path("a.txt")[:oid]
+    # NON-VACUITY: the commit took the bytes that were read, and the race really happened.
+    assert_equal "two\n", rugged_at.lookup(committed).content
+    assert_equal "raced\n", File.read(path)
+    assert_equal committed, rugged_at.index["a.txt"]&.fetch(:oid),
+                 "the index must hold the blob the commit recorded, not a second read of the file"
+  end
+
+  # THE DELETION TWIN. A file deleted after it was read was still committed with the bytes that were
+  # read, so the index keeps that blob and git reports the deletion as UNSTAGED, which is the truth.
+  # A second read finds nothing and removes the index entry instead: a staged deletion of a file the
+  # commit just recorded, which nobody asked for.
+  test "a file deleted after it was read is committed, and git reports an unstaged deletion" do
+    root = make_repo!(files: { "a.txt" => "one\n" })
+    path = File.join(library_root, "demo", "a.txt")
+    File.write(path, "two\n")
+
+    after_each_read(-> { FileUtils.rm_f(path) }) do
+      Maker::Git::CommitPaths.new(local(root)).call(paths: [ "a.txt" ], message: "m")
+    end
+
+    assert_equal "two\n", rugged_at.lookup(rugged_at.head.target.tree.path("a.txt")[:oid]).content
+    refute File.exist?(path), "the race must really have happened"
+    assert_equal [ :worktree_deleted ], git_statuses(rugged_at)["a.txt"]
+  end
+
+  private
+    # The house mutation/stub helper (text_file_creation_test.rb, readme_edit_test.rb and others
+    # carry the same body; there is no shared copy in test_helper.rb, and this suite has no
+    # Object#stub, because Minitest 6 dropped minitest/mock). Replaces a SINGLETON method for the
+    # block's duration, so an INHERITED one is removed again rather than left behind.
+    def replacing(owner, name, replacement)
+      mod = owner.singleton_class
+      own = mod.instance_methods(false).include?(name)
+      original = mod.instance_method(name)
+      mod.define_method(name, &replacement)
+      yield
+    ensure
+      own ? mod.define_method(name, original) : mod.remove_method(name)
+    end
+
+    # Runs `writer` every time a file is read out of the working tree, once its bytes are hashed:
+    # a concurrent write landing just after the read, before anything else happens.
+    def after_each_read(writer, &)
+      read = Rugged::Blob.method(:from_workdir)
+      replacing(Rugged::Blob, :from_workdir, ->(repo, rel) { read.call(repo, rel).tap { writer.call } }, &)
+    end
 end

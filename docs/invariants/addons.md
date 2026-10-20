@@ -182,20 +182,38 @@
   `app/<x>/maker/` is covered the day it is created. Change the code and the test tells you; if a
   new direct exception ever becomes genuinely unavoidable, update the test and this bullet
   together, deliberately.
-- **IT NOW HAS ONE CALLER OUTSIDE THE ADDON SYSTEM, NAMED HERE RATHER THAN LEFT SILENT** — the
-  editor's Save (`FilesController#update`, `tinkerex#178`) calls `LibraryOutput.write_bytes!`, the
-  `port_writable?` branch extracted out of `#write` **in place**. It is still the ONE output path
-  and §14d's count of that branch is still **exactly one**: `#write` calls `write_bytes!` too, so
-  there is genuinely one copy, and an addon save and an editor save are the same operation seen
-  twice — server-side bytes into a library file, replacing what is there, **reusing the node**. The
-  only difference is that an addon save additionally records a `maker_addon_files` row, which is
-  why `write_bytes!` takes no `state:` and returns a bare `node_id`. **A second copy of the branch
-  was refused, and so was moving the class**: relocating it to suit a non-addon caller would put
-  both this bullet's claim and §14d's count in question to save an awkward namespace. **An
-  invariant that silently acquires an exception is worse than one that names it** — which is what
-  this bullet is. `write_bytes!` is deliberately not called `write`: two methods of that name on
-  one module, with different arities and different return types, is the drift this repo names
-  services to end.
+- **IT HAS FOUR CALLERS OUTSIDE THE ADDON SYSTEM, EVERY ONE NAMED HERE RATHER THAN LEFT SILENT.**
+  This bullet named one, the editor's Save, and was already stale before F-S21-2 (2026-10-19)
+  added two more. Two of the four write bytes through `LibraryOutput.write_bytes!`, the
+  `port_writable?` branch extracted out of `#write` **in place**:
+  - `Maker::TextSave`, the one save behind the editor's Save (`FilesController#update`,
+    `tinkerex#178`), the project README door (`Projects::ReadmesController#update`) and New text
+    file (`Files::TextFilesController#create`). It also calls `enqueue_preview` for the save.
+  - `FilesController#restore`, which writes an earlier git version back into the working tree as
+    a pending edit.
+
+  The other two call only `LibraryOutput.enqueue_preview`, the one stat-then-enqueue, for bytes an
+  upload door landed rather than this module:
+  - `UploadBatch#write_batch`, the multipart doors on share/s3 (`FilesController#create` and the
+    build-log photo uploader, `Projects::UploadsController#create`).
+  - `FilesController#finalize_upload`, the presigned door on chunk_remote, whose bytes the browser
+    PUT straight to storage.
+
+  It is still the ONE output path and §14d's count of that branch is still **exactly one**:
+  `#write` calls `write_bytes!` too, so there is genuinely one copy, and an addon save and an
+  editor save are the same operation seen twice — server-side bytes into a library file, replacing
+  what is there, **reusing the node**. The only difference is that an addon save additionally
+  records a `maker_addon_files` row, which is why `write_bytes!` takes no `state:` and returns a
+  bare `node_id`. **THE RULE A FUTURE CALLER FOLLOWS:** a door that writes bytes server-side calls
+  `write_bytes!` and never spells the branch again; a door that only needs a preview re-enqueued
+  calls `enqueue_preview`, which writes nothing to the library and carries no `port_writable?`
+  branch, so §14d's count stays one either way; and either kind of caller is added to the list
+  above in the same change. **A second copy of the branch was refused, and so was moving the
+  class**: relocating it to suit a non-addon caller would put both this bullet's claim and §14d's
+  count in question to save an awkward namespace. **An invariant that silently acquires an
+  exception is worse than one that names it** — which is what this bullet is. `write_bytes!` is
+  deliberately not called `write`: two methods of that name on one module, with different arities
+  and different return types, is the drift this repo names services to end.
 - **Addon bundles are served by the `addons` Kamal accessory** (`chaim354/tinkerex-addons`), not
   shipped inside the Rails image — **publishing the bundle image IS the addon deploy; Rails is
   never rebuilt.** `deploy.yml` sets `ADDON_SOURCE_URL: http://tinkerex-addons`. Read the
