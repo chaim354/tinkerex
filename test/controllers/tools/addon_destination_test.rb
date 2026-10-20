@@ -50,6 +50,23 @@ module Tools
       state
     end
 
+    # ONE STATE WHOSE TWO SAVES PUT THEIR OUTPUT IN TWO FOLDERS: revision 1 in `d-old`, revision 2 in
+    # `d-new`. A revision that renamed its output, or was saved into another folder, leaves the earlier
+    # row in place on purpose (Maker::Addons::LibraryOutput#upsert_file!). Both rows hold position 0
+    # and the revision-1 row is created FIRST, so creation order and the old (position, id) tiebreak
+    # both answer `d-old`; only the stored revision answers `d-new`.
+    def revised_across_folders(at:)
+      dir("d-old", "old")
+      dir("d-new", "new")
+      file("n-v1", "v1.svg", "d-old")
+      file("n-v2", "v2.svg", "d-new")
+      state = @user.maker_addon_states.create!(addon_key: "destkit", name: "revised box", data: {}, revision: 2)
+      state.files.create!(node_id: "n-v1", role: "output", revision: 1)
+      state.files.create!(node_id: "n-v2", role: "output", revision: 2)
+      state.update_columns(updated_at: at)
+      state
+    end
+
     def assert_default(node_id, label)
       assert_response :success
       assert_select "[data-controller='addon'][data-addon-default-folder-value=?]", node_id.to_s
@@ -175,6 +192,41 @@ module Tools
       saved("n-new", at: 1.minute.ago)
       get tools_addon_path("destkit", state: reopened.id)
       assert_default "d-design", "/Projects/desk-lamp/design"
+    end
+
+    # STEP 2 READS THE STATE'S LATEST SAVE, NOT ITS OLDEST ROW. While the tiebreak answered, "Edit in
+    # <tool>" on the current file started in the stale folder, and #resolve_placements' owned arm
+    # then rewrote the OLD file there. The newer box elsewhere is what makes this step 2's answer:
+    # were step 2 to answer nothing, step 3 would start the tool in `d-newer`.
+    test "?state= starts where that state's LATEST save put its output" do
+      reopened = revised_across_folders(at: 3.days.ago)
+      dir("d-newer", "newer")
+      file("n-newer", "newer.svg", "d-newer")
+      saved("n-newer", at: 1.minute.ago)
+      get tools_addon_path("destkit", state: reopened.id)
+      assert_default "d-new", "/new"
+    end
+
+    # STEP 3, THE SAME QUESTION ONE STEP LATER: the newest box decides, and within it the latest save.
+    test "with no ?state=, the newest box's latest save decides where the tool starts" do
+      revised_across_folders(at: 1.minute.ago)
+      get tools_addon_path("destkit")
+      assert_default "d-new", "/new"
+    end
+
+    # WITHIN ONE SAVE, THE FILE IT LISTED FIRST DECIDES. Both rows carry the same revision and the
+    # position-1 row is created FIRST, so `revision DESC, id` alone answers its folder; only
+    # `position` in #latest_output_folder's ORDER BY answers the first-listed file's.
+    test "within one save, the file it listed first decides where the tool starts" do
+      dir("d-first", "first")
+      dir("d-second", "second")
+      file("n-second", "second.svg", "d-second")
+      file("n-first", "first.svg", "d-first")
+      state = @user.maker_addon_states.create!(addon_key: "destkit", name: "two-file box", data: {}, revision: 2)
+      state.files.create!(node_id: "n-second", role: "output", position: 1, revision: 2)
+      state.files.create!(node_id: "n-first", role: "output", position: 0, revision: 2)
+      get tools_addon_path("destkit")
+      assert_default "d-first", "/first"
     end
 
     # STEP 2'S ROOT IS AN ANSWER TOO, AND THIS IS THE ONE TEST THAT CAN SEE `empty?`-NOT-`any?` in

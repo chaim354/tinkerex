@@ -104,15 +104,16 @@ module Maker
       # BOM, and "a migration must not delete user bytes" (§14c) binds a save door too — the row is
       # the only record that this state produced it.
       #
-      # THE COST, STATED PROPERLY: `position` IS NOW ONLY UNIQUE WITHIN ONE SAVE, AND NOTHING ON
-      # THE ROW SAYS WHICH SAVE THAT WAS. A revision emitting a differently-named file leaves the
-      # old row at position 0 and writes a new one at position 0 — verified, two rows, both zero —
-      # so the relative order of a stale row and a current one is arbitrary and unrecoverable.
-      # Maker::AddonState orders by (position, id) so at least the JSON #states hands a bundle is
-      # stable request to request; that is a tiebreak, not a repair.
+      # SO `position` IS ONLY UNIQUE WITHIN ONE SAVE, AND `revision` SAYS WHICH SAVE. A revision
+      # emitting a differently-named file leaves the old row at position 0 and writes a new one at
+      # position 0. Each row is therefore stamped with `state.revision`, which the door has already
+      # bumped for this save inside the same transaction, and a state's CURRENT outputs are its rows
+      # at its highest revision (Maker::AddonState lists those first). STAMPED ON EVERY CALL, the
+      # update as much as the create: a replace finds the row an earlier save wrote, and a row left
+      # at that save's number would read as stale while its file holds the newest bytes.
       def upsert_file!(state, node_id:, role:, content_type:, position:)
         row = state.files.find_or_initialize_by(node_id:)
-        row.update!(role:, content_type:, position:)
+        row.update!(role:, content_type:, position:, revision: state.revision)
         row
       end
 
