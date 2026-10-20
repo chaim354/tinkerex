@@ -15,9 +15,9 @@
     promise: the sentence is honest (a job IS running — the page render enqueued it) and a reload
     resolves it. The same trade public/projects/_files makes by rendering files/_thumb's spinner,
     which stands still outside a poll cell (components.css). %>
-<% if kind == :thumbnail && thumbnail&.status == "ready" && thumbnail.asset.attached? %>
+<% if kind == :thumbnail && thumbnail&.showable? %>
   <img src="<%= thumbnail_url %>" alt="Preview of <%= name %>" class="preview-image">
-<% elsif kind == :thumbnail && %w[pending processing].include?(thumbnail&.status) %>
+<% elsif kind == :thumbnail && thumbnail&.in_flight? %>
   <div class="preview-fallback muted">
     <p>Generating preview…</p>
   </div>

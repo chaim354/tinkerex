@@ -77,21 +77,40 @@ module Maker
       # was compared. Four had to be found and destroyed by hand on the live box.
       test "a renderer revision bump makes an otherwise current preview stale" do
         current = Maker::Previews::Enqueue.revision_for_name("design.lbrn2", "geometry")
-        @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "geometry",
-                                     status: "ready", renderer_revision: current - 1)
+        row = @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "geometry",
+                                           status: "ready", renderer_revision: current - 1)
+        row.asset.attach(io: StringIO.new("{}"), filename: "g.json", content_type: "application/json")
 
         assert_enqueued_with(job: Maker::GeneratePreviewJob) do
           Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "design.lbrn2",
                                         version_id: "v1", kind: "geometry")
         end
-        row = @user.maker_previews.find_by!(node_id: "n1", kind: "geometry")
+        row.reload
         assert_equal current, row.renderer_revision
-        # STATUS IS LEFT ALONE on a renderer-only rebuild — the artifact still depicts this exact
-        # file, and blanking it strands a spinner on the (non-polling) file page. Consumers that
-        # cannot tolerate an older build's output say so themselves: FilesController#geometry
-        # answers "pending" whenever it had to enqueue, without reading this status at all.
-        assert_equal "ready", row.status,
-                     "a renderer rebuild must not blank an artifact that is still of this file"
+        # A RENDERER-ONLY REBUILD IS `rebuilding` (F-S08-2), WHICH IS TWO TRUE THINGS AT ONCE: the
+        # artifact still depicts this exact file, so a picture surface keeps showing it; and it is
+        # not the build its coordinates now name, so a surface that MEASURES from it refuses it.
+        # It used to stay `ready`, which said only the first — and the Measure poll then served
+        # the older build's payload as current until the job ran.
+        assert_equal "rebuilding", row.status
+        assert row.showable?, "a renderer rebuild must not blank an artifact that is still of this file"
+        assert_not row.current_build?, "an older build's artifact must not read as the current build"
+        assert row.in_flight?, "a rebuild is a job believed coming, which the stall window verifies"
+      end
+
+      # THE OTHER HALF OF THE RULE: `rebuilding` is for a row that HAS a picture to keep. Anything
+      # else a renderer bump finds has nothing on screen worth protecting, so it goes `pending`
+      # like any other row that is waiting for a job — `unsupported` included, which used to keep
+      # claiming "no renderer here" through the very render that might prove otherwise.
+      test "a renderer bump on a row with no picture to keep goes pending" do
+        current = Maker::Previews::Enqueue.revision_for_name("part.stl", "thumbnail")
+        { "n-unsupported" => "unsupported", "n-no-asset" => "ready", "n-busy" => "processing" }.each do |node_id, status|
+          @user.maker_previews.create!(node_id:, version_id: "v1", kind: "thumbnail", status:,
+                                       renderer_revision: current - 1)
+          Maker::Previews::Enqueue.call(user: @user, node_id:, name: "part.stl", version_id: "v1")
+
+          assert_equal "pending", @user.maker_previews.find_by!(node_id:).status, "#{status} with no picture"
+        end
       end
 
       test "a preview already at the current revision is left alone" do
@@ -226,6 +245,27 @@ module Maker
         end
       end
 
+      # A REBUILD WHOSE JOB WAS LOST IS HEALED LIKE ANY OTHER IN-FLIGHT ROW, AND KEEPS ITS PICTURE.
+      # `ready` was never in the stall set, so a renderer rebuild whose job vanished used to show
+      # the older build for good, with nothing anywhere to say a newer one was owed. The heal
+      # changes nothing but the job and the stamp: a lost rebuild is still a rebuild.
+      test "a rebuilding row stalled past the window is re-enqueued and still shows its picture" do
+        row = @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail",
+                                           status: "rebuilding",
+                                           renderer_revision: Enqueue.revision_for_name("part.stl", "thumbnail"))
+        row.asset.attach(io: StringIO.new("PNG"), filename: "t.png", content_type: "image/png")
+        # AGED AFTER THE ATTACH, which touches the row: aged first, the attach would leave it fresh
+        # and the test would fail for a reason that has nothing to do with the heal.
+        row.update_column(:updated_at, 3.days.ago)
+
+        assert_enqueued_with(job: Maker::GeneratePreviewJob) do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
+        end
+        row.reload
+        assert_equal "rebuilding", row.status, "the heal blanked a picture that is still of this file"
+        assert_operator row.updated_at, :>, 1.minute.ago, "the heal did not restamp the row"
+      end
+
       # THE TRANSITION TABLE, ASKED DIRECTLY: `needs_job?` is the one answer `call` and every door
       # that already holds a row give to "does this row need a job?". Every arm is a row a door
       # really meets, and `retry_failed:` is the one place the two policies differ — the eager seams
@@ -253,7 +293,9 @@ module Maker
         assert_not ask.call(failed), "a read door retried a failed render"
         assert ask.call(failed, retry_failed: true), "an eager seam did not retry a failed render"
 
-        %w[pending processing].each do |status|
+        # NAMED HERE, NOT READ FROM `Maker::Preview::IN_FLIGHT`: iterating the constant would let a
+        # status dropped from it drop out of this assertion too.
+        %w[pending processing rebuilding].each do |status|
           assert_not ask.call(row.call(status)), "#{status} inside the window: its job is believed"
           assert ask.call(row.call(status, at: (Enqueue::STALLED_AFTER + 1.minute).ago)),
                  "#{status} past STALLED_AFTER: nothing verifies the job is still coming"

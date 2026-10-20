@@ -17,11 +17,12 @@ module Maker
     #
     # `status = "pending"` ON A CONTENT REPOINT is deliberate and is what keeps the page honest: the
     # row still holds the PREVIOUS render until the job finishes, and `_thumb.html.erb` shows an
-    # image only when `ready`, so the user sees a spinner rather than the old picture labelled as
-    # the new content. Same thing they saw before, when the superseded row simply was not found.
+    # image only for a `showable?` row, so the user sees a spinner rather than the old picture
+    # labelled as the new content. Same thing they saw before, when the superseded row simply was
+    # not found.
     #
-    # A RENDERER REPOINT DELIBERATELY DOES NOT — see the branch in `call`. The artifact still
-    # depicts this exact file; only the code that built it moved on.
+    # A RENDERER REPOINT DELIBERATELY DOES NOT — it writes `rebuilding`; see the branch in `call`.
+    # The artifact still depicts this exact file; only the code that built it moved on.
     #
     # THE NON-RENDERABLE BRANCH IS THE ONLY POLICY V1::Maker::PreviewsController#create DOES NOT
     # SHARE, and it is now a `skip_unrenderable:` kwarg rather than a second implementation. That
@@ -41,13 +42,15 @@ module Maker
       # renderer only invalidates its cache by bumping PAST this — silence changes nothing.
       BASE_REVISION = 1
 
-      # HOW LONG A `pending`/`processing` ROW IS BELIEVED WHEN IT CLAIMS A JOB IS COMING.
+      # HOW LONG AN IN-FLIGHT ROW IS BELIEVED WHEN IT CLAIMS A JOB IS COMING.
       #
-      # Those two statuses (`Maker::Preview::IN_FLIGHT`) are ASSERTIONS about work that exists
-      # elsewhere, and nothing verified them. When the assertion was false the row became
-      # unrecoverable: every branch of the guard in `call` returned early, so a lost job wedged its
-      # row while the grid spun until its poll gave up. `failed` re-enqueues, `ready` is done and
-      # `unsupported` is terminal by design — these two were the only statuses with no way back.
+      # `pending`, `processing` and `rebuilding` (`Maker::Preview::IN_FLIGHT`) are ASSERTIONS about
+      # work that exists elsewhere, and nothing verified them. When the assertion was false the row
+      # became unrecoverable: every branch of the guard in `call` returned early, so a lost job
+      # wedged its row while the grid spun until its poll gave up. `failed` re-enqueues, `ready` is
+      # done and `unsupported` is terminal by design — the in-flight statuses were the only ones with
+      # no way back. (`rebuilding` joined them on 2026-10-20: a lost rebuild used to sit at `ready`,
+      # showing the older build for good with nothing owed a newer one.)
       # Three rows were wedged this way on the live share library, the oldest for over a week (the
       # record, CLAUDE.md §11).
       #
@@ -107,6 +110,7 @@ module Maker
         return preview unless needs_job?(preview, version_id:, revision:, retry_failed:)
 
         content_moved = preview.version_id != version_id
+        rebuilt       = preview.renderer_revision != revision
         stalled       = stalled?(preview)
         preview.version_id = version_id
         preview.renderer_revision = revision
@@ -121,11 +125,24 @@ module Maker
         # correct, for the whole render, on every renderer bump. Shipped that way briefly (before the
         # poll existed) and it read as "generating preview is broken", which is fair.
         #
-        # Leaving `ready` alone means the old artifact stays visible until the job swaps it. The
-        # job is safe either way: `commit_if_current` compares BOTH axes against what it captured,
-        # and both are written here before it is enqueued, so a run that started under an older
-        # revision still cannot stamp its output onto this row.
-        preview.status = "pending" if preview.new_record? || content_moved || preview.status == "failed"
+        # A RENDERER BUMP ON A ROW WITH A PICTURE IS `rebuilding` (F-S08-2), NOT A `ready` LEFT
+        # ALONE. Leaving it `ready` kept the picture up, but it also said "this asset is the build
+        # these coordinates name" the moment the new revision was stamped — false until the job
+        # ran — and the Measure poll, which must refuse an older build, served one as current.
+        # `rebuilding` says both true things: `showable?` (the picture stays up through the queue
+        # wait AND the render, since the job's start moves only `pending`), and not
+        # `current_build?` (every surface that measures waits). It is in `IN_FLIGHT`, so a lost
+        # rebuild heals. A row with NO picture to keep — `unsupported`, `processing`, a `ready`
+        # whose asset is gone — has nothing on screen worth protecting and goes `pending`.
+        #
+        # The job is safe either way: `commit_if_current` compares BOTH axes against what it
+        # captured, and both are written here before it is enqueued, so a run that started under an
+        # older revision still cannot stamp its output onto this row.
+        if preview.new_record? || content_moved || preview.failed?
+          preview.status = "pending"
+        elsif rebuilt
+          preview.status = preview.showable? ? "rebuilding" : "pending"
+        end
         # RESTAMP A HEALED ROW, OR THE HEAL REPEATS ON EVERY CALLER FOREVER. Re-enqueueing a
         # stalled row changes no other attribute, and `save!` on an unchanged record is a NO-OP
         # that leaves `updated_at` where it was — so the row would still read as stalled to the
@@ -167,7 +184,7 @@ module Maker
       def needs_job?(preview, version_id:, revision:, retry_failed:)
         return true if preview.nil? || preview.new_record?
         return true if preview.version_id != version_id || preview.renderer_revision != revision
-        return retry_failed if preview.status == "failed"
+        return retry_failed if preview.failed?
 
         stalled?(preview)
       end
@@ -175,8 +192,7 @@ module Maker
       # A saved row that has claimed a job for longer than STALLED_AFTER. `persisted?` first: an
       # unsaved row has no `updated_at` to compare.
       def stalled?(preview)
-        preview.persisted? && Maker::Preview::IN_FLIGHT.include?(preview.status) &&
-          preview.updated_at < STALLED_AFTER.ago
+        preview.persisted? && preview.in_flight? && preview.updated_at < STALLED_AFTER.ago
       end
 
       # The revision a renderer claims for one kind, or BASE_REVISION when it claims none.
@@ -233,12 +249,12 @@ module Maker
       #
       # DO NOT FOLD `status` INTO EITHER OF THESE. It is the obvious next thought — "current" sounds
       # like it should mean servable — and it is wrong in both directions at once: `#current_thumbnail`
-      # deliberately serves a `ready` artifact straight through a renderer rebuild (the picture is
-      # still of this file), while `#geometry` deliberately never reads `status` here at all and
-      # answers `pending` on any miss (an older build's payload is DATA that is wrong, not merely
+      # deliberately serves a `rebuilding` artifact straight through a renderer rebuild (`showable?`:
+      # the picture is still of this file), while `#geometry` serves only `current_build?` and
+      # answers `pending` otherwise (an older build's payload is DATA that is wrong, not merely
       # old). §14h states the rule outright — "Same mechanism, opposite right answers; do not unify
       # them." What is shared is only WHICH ROW IS CURRENT; what each door does with the answer is
-      # each door's own business and must stay there.
+      # each door's own business, asked of the row's own predicates.
       def current_preview(user:, node_id:, name:, version_id:, kind:)
         return nil if name.blank? || version_id.blank?
 

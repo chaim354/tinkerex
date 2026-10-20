@@ -21,11 +21,11 @@
   after its project went private, so `url_for` is refused in this file by the Public seam guard's
   third arm (test/architecture_invariants_test.rb) — pass it in, never derive it.
 %>
-<% failed = thumb&.status == "failed" %>
+<% failed = thumb&.failed? %>
 <span class="thumb<%= " photo" if photo %><%= " thumb-failed" if failed %>" data-thumbs-target="thumb">
-  <% if thumb&.status == "ready" && thumb.asset.attached? %>
+  <% if thumb&.showable? %>
     <img src="<%= url %>" alt="" loading="lazy">
-  <% elsif thumb.nil? || %w[pending processing].include?(thumb&.status) %>
+  <% elsif thumb.nil? || thumb.in_flight? %>
     <span class="thumb-spinner" aria-hidden="true"></span>
   <% else %>
     <%# THE TERMINAL STATE: unsupported, failed, or a ready row whose asset is gone. It SAYS SO

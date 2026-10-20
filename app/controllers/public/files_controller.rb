@@ -84,9 +84,16 @@ module Public
     # nothing about the project.
     #
     # `current_preview` IS THE SAME "current content, current renderer build" RULE THE PAGE RENDERED
-    # FROM, so this route cannot serve a picture of content the file no longer holds. A row that is
-    # not ready is a 404 exactly as an unpermitted node is, because an <img> cannot use a status —
-    # and because the two must be indistinguishable to a stranger for #deliverable!'s reason.
+    # FROM, so this route cannot serve a picture of content the file no longer holds. A row with
+    # nothing to serve is a 404 exactly as an unpermitted node is, because an <img> cannot use a
+    # status — and because the two must be indistinguishable to a stranger for #deliverable!'s reason.
+    #
+    # ONE DOOR, TWO KINDS, TWO QUESTIONS — the split the maker's side draws across two doors, asked
+    # as `servable?`. A thumbnail is a PICTURE, served while `showable?` (an older build's picture of
+    # this content stays up through its rebuild, as the page that names this URL renders it); the
+    # Measure payload is DATA, served only as `current_build?`, because an older build's is wrong
+    # (§14h). The v1 API answers `ready` whenever this predicate holds, so the two doors cannot
+    # disagree about a row either of them can serve.
     def preview
       pub = public_project!
       node = pub.deliverable!(params[:id])
@@ -94,18 +101,28 @@ module Public
       row = token && Maker::Previews::Enqueue.current_preview(user: pub.owner, node_id: node.node_id,
                                                               name: node.name, version_id: token,
                                                               kind: params[:kind])
-      raise ActiveRecord::RecordNotFound unless row&.status == "ready" && row.asset.attached?
+      raise ActiveRecord::RecordNotFound unless row&.servable?
 
-      # ONE MINUTE OF PRIVATE CACHE ON THE REDIRECT (tinkerex#291). Each image request costs the byte
-      # route's whole permission path plus three queries, and a page of sixty covers is sixty of them
-      # per view; a browser that may keep the 302 for a minute skips all of that on a reload. The
-      # bound is what makes it safe: the target URL itself expires in `service_urls_expire_in` (five
-      # minutes), so a cached redirect can never outlive the URL it names — the test below pins that
-      # ordering — and a project that goes private is stale in a browser for at most a minute, the
-      # same window the target already allowed. `private`, not `public`: nothing here is per-visitor,
-      # but no shared cache on the deployment needs it and a CDN keeping redirects is a decision to
-      # make deliberately, not by default.
-      expires_in 1.minute
+      # ONE MINUTE OF PRIVATE CACHE ON A THUMBNAIL'S REDIRECT (tinkerex#291). Each image request costs
+      # the byte route's whole permission path plus three queries, and a page of sixty covers is sixty
+      # of them per view; a browser that may keep the 302 for a minute skips all of that on a reload.
+      # The bound is what makes it safe: the target URL itself expires in `service_urls_expire_in`
+      # (five minutes), so a cached redirect can never outlive the URL it names — the test below pins
+      # that ordering — and a project that goes private is stale in a browser for at most a minute,
+      # the same window the target already allowed. `private`, not `public`: nothing here is
+      # per-visitor, but no shared cache on the deployment needs it and a CDN keeping redirects is a
+      # decision to make deliberately, not by default.
+      #
+      # AND NONE ON THE MEASURE PAYLOAD'S (F-S08-2). This URL is the same for every build of the file,
+      # so a kept 302 answers the next Measure open after a rebuild — or a re-save — with the OLDER
+      # payload, for up to the cache's minute after `current_build?` above began refusing it; and an
+      # older build's payload is wrong, not merely old (§14h). A thumbnail may show an older build of
+      # this content (that is `showable?`), so it keeps its minute. The payload is fetched once per
+      # Measure open, not sixty times a page, so `no-store` costs one permission check where the cache
+      # saved next to nothing; the signed URL it redirects to names one blob, so it keeps its own
+      # expiry and cannot outlive its build. Keying the poll's URL on the build was the alternative:
+      # a parameter this route must then ignore or check, for a cache that buys almost nothing here.
+      row.measured? ? no_store : expires_in(1.minute)
       redirect_to row.asset.url, allow_other_host: true
     end
 
@@ -132,15 +149,17 @@ module Public
       # NO ROW YET IS `pending`, TRUTHFULLY: the page render that sent this poller here enqueued one.
       return render json: { status: "pending" } if preview.nil?
 
+      # THE PUBLIC PREVIEW ROUTE, NOT `url_for(preview.asset)` (hardening, 2026-09-08;
+      # tinkerex#278). The URL this poller hands measure_controller.js outlives the response, so a
+      # blob URL here is the same never-expiring, permission-free link the thumbnails were — and
+      # this one is the whole Measure payload. #preview re-asks `deliverable!` when it is fetched,
+      # which is what makes a payload stop answering when its project stops being public.
+      # `current_build?` for FilesController#geometry's reason: this is data, not a picture.
+      if preview.current_build?
+        return render json: { status: "ready", url: pub.preview_url_for(node.node_id, kind: "geometry") }
+      end
+
       case preview.status
-      when "ready"
-        # THE PUBLIC PREVIEW ROUTE, NOT `url_for(preview.asset)` (hardening, 2026-09-08;
-        # tinkerex#278). The URL this poller hands measure_controller.js outlives the response, so
-        # a blob URL here is the same never-expiring, permission-free link the thumbnails were —
-        # and this one is the whole Measure payload. #preview re-asks `deliverable!` when it is
-        # fetched, which is what makes a payload stop answering when its project stops being public.
-        render json: { status: "ready",
-                       url: (pub.preview_url_for(node.node_id, kind: "geometry") if preview.asset.attached?) }
       when "failed", "unsupported"
         render json: { status: preview.status, error: preview.error }
       else

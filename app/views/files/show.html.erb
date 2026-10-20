@@ -93,9 +93,11 @@
   <%# THE POLL SET, DECLARED RATHER THAN INFERRED. Grid cells announce themselves as pending by
       holding a `.thumb-spinner`; there is no spinner here, so this element says so outright and
       the controller clears the flag the moment an answer arrives. Rendered ONLY while a render is
-      genuinely in flight: a name with no renderer has no row and nothing coming, and a ready row
-      has arrived. %>
-  <% if %w[pending processing].include?(@thumbnail&.status) %>
+      genuinely in flight AND there is nothing to show yet: a name with no renderer has no row and
+      nothing coming, a ready row has arrived, and a rebuilding row is already showing its picture
+      of this content. That last one must not poll — /files/thumbnails answers ready for a row with
+      a picture, so the reload would render the same rebuilding row and poll again, in a loop. %>
+  <% if @thumbnail&.in_flight? && !@thumbnail.showable? %>
     <span class="preview-poll" hidden data-thumbs-target="cell"
           data-node-id="<%= @node.node_id %>" data-thumbs-pending="true"></span>
   <% end %>

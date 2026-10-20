@@ -207,6 +207,67 @@ module Web
       assert_empty enqueued_preview_ids, "a render already under way was enqueued again"
     end
 
+    # ----------------------------------------------------------------------------------
+    # GAP 4 — a renderer REBUILD (F-S08-2). A renderer bump re-renders a picture that is still of
+    # this file, so the row keeps showing it as `rebuilding` — through the queue wait AND the
+    # render. The job's start used to write `processing` over it, which every surface drew as a
+    # spinner (or "Generating preview…") for as long as the render took, and the file page polled
+    # and reloaded to get back the picture it had just taken down.
+    # ----------------------------------------------------------------------------------
+
+    CUBE_3MF = File.binread(Rails.root.join("test/fixtures/files/cube.3mf")).freeze
+
+    # Runs `look` while the preview job is under way — after its start, at its byte read, before
+    # its render — then hands the job a real 3MF so it finishes normally. The read is answered here
+    # rather than by the backend because these fixtures carry no bytes on any leg. Captured and
+    # restored, never prepended (generate_preview_job_test.rb says why).
+    def during_its_job(row, look)
+      original = Maker::FileBytes.method(:read)
+      Maker::FileBytes.define_singleton_method(:read) { |*, **| look.call; CUBE_3MF }
+      Maker::GeneratePreviewJob.perform_now(row.id)
+    ensure
+      Maker::FileBytes.define_singleton_method(:read, original)
+    end
+
+    # `.3mf` because its renderer needs no toolchain (it lifts the slicer's embedded thumbnail), so
+    # the job reaches its render on every box; `.stl` would stop at a missing binary first.
+    test "a renderer rebuild keeps the old picture up on the Files page and the file page" do
+      name = "case.3mf"
+      node = file!("rebuild", name)
+      row = preview!(node, name, revision: current_revision(name) - 1)
+      old = row.asset.blob.signed_id
+
+      get files_path # the render after the bump: its backfill queues the rebuild
+      assert_equal [ row.id ], enqueued_preview_ids
+
+      seen = nil
+      during_its_job(row, lambda {
+        seen = row.reload.then { |r| [ r.showable?, r.in_flight? ] }
+
+        get files_path
+        assert_select "[data-node-id=?] .thumb img[src*=?]", node, old
+        assert_select "[data-node-id=?] .thumb-spinner", node, count: 0
+
+        # THE POLL'S ANSWER for a cell that was spinning when the rebuild began: `ready`, with the
+        # picture. `rebuilding` there matches neither of thumbs_controller.js's arms, so the cell
+        # would poll out its 40 tries and settle on "Preview not supported".
+        get thumbnails_files_path(ids: node)
+        answer = response.parsed_body[node]
+        assert_equal "ready", answer["status"]
+        assert_includes answer["url"].to_s, old
+
+        get file_path(node)
+        assert_select ".model-viewer-fallback img.preview-image[src*=?]", old
+        # NO POLL CELL: /files/thumbnails answers `ready` for a row with a picture, so a page that
+        # polled here would reload into this same state, forever.
+        assert_select "[data-thumbs-pending]", { count: 0 },
+                      "a page showing its picture declared itself pending — it would reload in a loop"
+      })
+
+      assert_equal [ true, true ], seen, "mid-render the row must show its picture and be in flight"
+      assert row.reload.current_build?, "the rebuild did not land as the current build"
+    end
+
     # THE DEGRADE PATH SURVIVES THE ENQUEUE. `ThumbnailMap` swallows a FetchError so a backend
     # blip degrades a thumbnail rather than 503-ing a page of maker data that does not depend on
     # the file backend — and the backfill must not reintroduce the raise by writing rows for

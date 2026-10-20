@@ -280,15 +280,34 @@
   honestly replaces. A renderer bump is not that case: the stored artifact still depicts this exact
   file, only the code that built it moved on. Blanking it swapped a correct picture for a spinner
   for the whole render — and before stage 4, S4-3 the page did not poll, so it stayed a spinner
-  until someone reloaded — and read as "generating preview is broken". The page now polls a
-  `pending`/`processing` row and reloads once (`thumbs_controller.js`'s reload mode); the decision
-  stands on the first half alone.
-- **A CONSUMER THAT CANNOT TOLERATE AN OLDER BUILD'S OUTPUT SAYS SO ITSELF.**
-  `FilesController#geometry` answers `pending` whenever it had to enqueue, **without reading the
-  row's status** — geometry is DATA the client measures from (an older build's payload is wrong,
-  not merely old) and its client polls, so pending resolves itself. The thumbnail is a picture whose
-  `ready` row renders no poll cell at all (S4-3 polls only `pending`/`processing`). Same mechanism,
-  opposite right answers; do not unify them.
+  until someone reloaded — and read as "generating preview is broken". The page now polls an
+  in-flight row with nothing to show and reloads once (`thumbs_controller.js`'s reload mode); the
+  decision stands on the first half alone.
+  - **THE REBUILD HAS ITS OWN STATUS, `rebuilding`, AND IT IS NOT `ready` (F-S08-2, 2026-10-20).**
+    `Enqueue` used to stamp the new revision and leave the row `ready`, which said "this asset IS
+    the build these coordinates name" the moment the stamp landed — false until the job ran. The
+    picture surfaces were right to keep showing it; the Measure poll was wrong to serve it, and
+    could not tell the two apart. And the job's start wrote `processing` over the row anyway, so
+    the picture this rule protects went dark for the whole render regardless. Now a renderer bump
+    on a row with a picture writes `rebuilding` (a row with none goes `pending`), the job's start
+    moves `pending → processing` and nothing else, compare-and-set like its other writes, and a
+    lost rebuild heals through `STALLED_AFTER` because `rebuilding` is in `IN_FLIGHT`.
+- **A CONSUMER THAT CANNOT TOLERATE AN OLDER BUILD'S OUTPUT SAYS SO ITSELF, BY ASKING THE ROW.** The
+  classes are named once on `Maker::Preview`: a surface that SHOWS an artifact asks `showable?`
+  (`ready`, or `rebuilding` with its old asset — a picture of this content, any build); a surface
+  that MEASURES from one asks `current_build?` (`ready` only). `FilesController#geometry` and the
+  public poll ask `current_build?`, so they answer `pending` through a rebuild — geometry is DATA,
+  an older build's payload is wrong rather than merely old, and its client polls, so pending
+  resolves itself. The thumbnail is a picture: a showable row renders no poll cell at all, and
+  `/files/thumbnails` answers `ready` for one. Same mechanism, opposite right answers; do not unify
+  them. The two doors that hand out EITHER kind — the public payload route and the v1 API — ask
+  `servable?`, which is that split by kind (`MEASURED_KINDS`), so the payload route 404s and v1
+  says `pending` with no url for geometry mid-rebuild while both keep serving the picture.
+  Outside the model, never compare `status` to `ready` or `rebuilding`, nor re-spell the in-flight
+  set. `architecture_invariants_test.rb` refuses them in their `==`/`!=`/`when`/`%w[]` spellings; a
+  pattern cannot see every spelling (`where(status: "ready")`, `status.in?([...])`, `.eql?` pass it),
+  so the rule binds where the guard is blind. A literal that means one thing is not policed — the
+  job's start reads `pending`, the geometry polls' terminal arm `failed` and `unsupported`.
 - **A REVISION CHECK IN `Enqueue` IS USELESS UNLESS THE READ PATH ASKS FOR IT — and for thumbnails
   it did not.** `Enqueue` compared revisions correctly from the day it shipped, but only something
   that CALLS it can act on that, and the caller skips any node the read reports a row for. That
@@ -317,10 +336,11 @@
   came back GREEN under mutation, while `budget -= 1` runs unconditionally, so a wall of `.gcode`
   ahead of the models would spend the whole budget on files that can never have a thumbnail and the
   backlog would never drain.
-- **`pending` AND `processing` (`Maker::Preview::IN_FLIGHT`) ARE ASSERTIONS THAT A JOB EXISTS, AND
-  `Enqueue::STALLED_AFTER` IS THE ONLY THING THAT EVER VERIFIES THEM.** `failed` re-enqueues,
-  `ready` is done, `unsupported` is terminal by design — those two were the only statuses with **no
-  way back**, so a lost job wedged the row FOREVER. Three rows sat wedged on the live share library,
+- **`pending`, `processing` AND `rebuilding` (`Maker::Preview::IN_FLIGHT`) ARE ASSERTIONS THAT A JOB
+  EXISTS, AND `Enqueue::STALLED_AFTER` IS THE ONLY THING THAT EVER VERIFIES THEM.** `failed`
+  re-enqueues, `ready` is done, `unsupported` is terminal by design — the in-flight statuses were
+  the only ones with **no way back**, so a lost job wedged the row FOREVER (a lost rebuild sat at
+  `ready`, showing the older build for good). Three rows sat wedged on the live share library,
   the oldest over a week, spinning. **THE HEAL IS `Enqueue.needs_job?`, AND EVERY DOOR THAT HOLDS A
   ROW MUST ASK IT.** This bullet said the scan, `ThumbnailMap`'s backfill, `#current_thumbnail` and
   the addon door reached the heal through `call`; until 2026-10-19 none did. Each door asked "is
@@ -395,7 +415,7 @@
   at upload time, wrong for a poll. Unconditional, it makes the action's own `"failed"` branch
   **dead code** and re-enqueues a doomed render on every poll of a broken file. Accepted: a `failed`
   geometry preview is terminal until the content changes, which is honest because a transient
-  byte-store failure is a `FetchError` that leaves the row `processing` and self-heals — through
+  byte-store failure is a `FetchError` that leaves the row in flight and self-heals — through
   `Enqueue.needs_job?`, which the poll asks of the row it read once that row is past
   `STALLED_AFTER` (the `IN_FLIGHT` bullet above). Until 2026-10-19 the poll enqueued only on a
   MISSING row, so nothing healed it and this sentence was false.

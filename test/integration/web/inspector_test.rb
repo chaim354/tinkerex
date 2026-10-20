@@ -101,12 +101,14 @@ module Web
       assert_select "turbo-frame#inspector", text: /isn't here any more/
     end
 
-    # THE PANEL OPENS ON EVERY SELECTION, SO IT MUST ASK FOR THE EXISTING ROW BEFORE IT ENQUEUES
-    # (files-preview.md: `Enqueue.call` resets a `failed` row to `pending` and re-enqueues on every
-    # call). A `failed` row is the ONE state where the two spellings differ — `call` returns a
-    # current `ready` or `pending` row untouched too — so it is the fixture. And the assertion is on
-    # the row's status and the job queue, never on a row count: the table's key is one row per
-    # (node, kind), so a count cannot exceed 1 whatever this door does.
+    # THE PANEL OPENS ON EVERY SELECTION, SO IT MUST NOT RETRY A FAILED RENDER (files-preview.md:
+    # `Enqueue.call`'s default resets a `failed` row to `pending` and re-enqueues on every call).
+    # `#current_thumbnail` asks `Enqueue.needs_job?` with `retry_failed: false`, and a current
+    # `failed?` row is the ONE state where that and a bare `call` differ: both leave a `showable?`
+    # row (ready, or rebuilding) and a fresh `in_flight?` one alone, both heal one stalled past
+    # STALLED_AFTER, and both repoint a stale one — so the failed row is the fixture. And the
+    # assertion is on the row's status and the job queue, never on a row count: the table's key is
+    # one row per (user, node, kind), so a count cannot exceed 1 whatever this door does.
     test "a failed render stays failed: opening the panel twice never re-enqueues it" do
       @file.update_columns(content_hash: "h-leg")
       row = @user.maker_previews.create!(

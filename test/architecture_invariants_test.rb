@@ -1359,4 +1359,73 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     end
     assert_same FileDelivery::SAFE_INLINE_TYPES, FilesController::SAFE_INLINE_TYPES
   end
+
+  # A PREVIEW'S `ready` AND `rebuilding` ARE ASKED OF Maker::Preview, NEVER COMPARED AT THE CONSUMER,
+  # AND NOTHING RE-SPELLS THE IN-FLIGHT SET (F-S08-2, 2026-10-20). `rebuilding` split `ready` in two —
+  # "a picture of this content" and "the build these coordinates name" — and a reader still
+  # comparing `status == "ready"` picks one meaning by accident: a picture surface blanks a correct
+  # picture for a whole rebuild, and a re-spelled `%w[pending processing]` silently leaves
+  # `rebuilding` out of what it calls in flight. The predicates (`in_flight?`, `showable?`,
+  # `current_build?`, `servable?`, `failed?`) are the vocabulary, defined in the one file this sweep
+  # exempts.
+  #
+  # THOSE TWO WORDS AND THAT ONE SET, IN THEIR `==`/`!=`/`when`/`%w[]` SPELLINGS. A pattern cannot
+  # see every spelling — `where(status: "ready")`, `status.in?([...])` and `.eql?` all pass it — so
+  # the rule binds where this guard is blind. A literal that means one thing is not policed: the
+  # job's start asks `status == "pending"`, and the geometry polls' terminal arm is `when "failed",
+  # "unsupported"`. COMPARISONS ONLY: a wire answer that SAYS "ready" (`render json: { status:
+  # "ready" }`) and the job's writes (`update!(status: "ready")`) are not readers and do not match.
+  # Whole-line Ruby comments and ERB comments are skipped: several partials describe the old
+  # spelling in prose.
+  PREVIEW_STATUS_COMPARISON = /
+    (?:[!=]=|\bwhen\b[^\n]*?)\s*["'](?:ready|rebuilding)["']   # status == "ready", when "ready"
+    | ["'](?:ready|rebuilding)["']\s*[!=]=                       # "ready" == status
+    | %w[\[(][^\])]*\b(?:ready|rebuilding)\b                     # %w[ready rebuilding].include?
+    | %w[\[(](?=[^\])]*\bpending\b)(?=[^\])]*\bprocessing\b)    # the in-flight set, re-spelled
+  /x
+
+  test "no consumer compares a preview's status to ready or rebuilding, or re-spells the in-flight set" do
+    # THE PATTERN ITSELF, ASKED FIRST. A regex that stopped matching would sweep every file below and
+    # find nothing, which `assert_empty` reads as success — §14e's vacuous guard, one level in. One
+    # sample per ALTERNATIVE, each matched by that alternative alone, so breaking any one of the four
+    # goes red here instead of leaving the sweep blind to that spelling.
+    samples = [
+      'thumb&.status == "ready"',          # 1: a comparison
+      'when "rebuilding"',                 # 1: a case arm
+      '"ready" == s',                      # 2: the reversed comparison
+      "%w[ready rebuilding].include?(s)",  # 3: a %w list naming either word
+      "%w[pending processing].include?(s)" # 4: the in-flight set, re-spelled
+    ]
+    samples.each do |offender|
+      assert_match PREVIEW_STATUS_COMPARISON, offender, "the pattern no longer catches #{offender}"
+    end
+    [ 'render json: { status: "ready", url: u }', 'update!(status: "ready")', 'status == "pending"' ].each do |fine|
+      assert_no_match PREVIEW_STATUS_COMPARISON, fine, "the pattern now refuses #{fine}"
+    end
+
+    model = ROOT.join("app/models/maker/preview.rb").to_s
+    files = Dir.glob(ROOT.join("app", "**", "*.{rb,erb}").to_s).sort - [ model ]
+    # NON-EMPTY ON BOTH HALVES (§14e): the readers are mostly templates, so an ERB glob that stopped
+    # matching would retire most of this guard while the Ruby half kept it looking alive.
+    assert_operator files.size, :>=, 300, "app/**/*.{rb,erb} matched only #{files.size} files"
+    assert_operator files.count { |f| f.end_with?(".erb") }, :>=, 100, "the ERB half matched too few files"
+
+    offenders = files.flat_map do |file|
+      text = File.read(file)
+      text = text.gsub(/<%#.*?%>/m) { |comment| "\n" * comment.count("\n") } if file.end_with?(".erb")
+      text.lines.each_with_index.filter_map do |line, idx|
+        next if file.end_with?(".rb") && line.lstrip.start_with?("#")
+        next unless line.match?(PREVIEW_STATUS_COMPARISON)
+
+        "#{Pathname.new(file).relative_path_from(ROOT)}:#{idx + 1}: #{line.strip}"
+      end
+    end
+
+    assert_empty offenders,
+                 "A preview's status compared to ready or rebuilding, or the in-flight set re-spelled, " \
+                 "outside Maker::Preview:\n  " \
+                 "#{offenders.join("\n  ")}\nAsk the row: `showable?` to SHOW its asset (ready, or an " \
+                 "older build while it rebuilds), `current_build?` to MEASURE from it, `in_flight?` " \
+                 "for a job believed coming, `failed?` for the retryable terminal state."
+  end
 end

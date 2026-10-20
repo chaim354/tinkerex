@@ -46,10 +46,11 @@ module ApplicationHelper
   # can tell — the same design `named_url:` already uses (docs/invariants/files-preview.md), now
   # enforced by a third arm of the Public seam guard that refuses `url_for` in those files.
   #
-  # NIL IS THE ANSWER FOR EVERY NON-READY STATE, which is what lets a caller pass it unconditionally
-  # beside a `thumb&.status == "ready"` branch without a second condition to keep in step.
+  # NIL FOR EVERY ROW WITH NO PICTURE TO SHOW, which is what lets a caller pass it unconditionally
+  # beside a `thumb&.showable?` branch without a second condition to keep in step. `showable?`, not
+  # `current_build?`: an older build's picture of this same content stays up while its rebuild runs.
   def preview_src(preview)
-    return nil unless preview&.status == "ready" && preview.asset.attached?
+    return nil unless preview&.showable?
 
     url_for(preview.asset)
   end

@@ -379,13 +379,18 @@ class FilesController < ApplicationController
     #   - the name IS renderable and the row simply has not been created yet -> OMIT, so the client
     #     keeps polling. `backfill: false` above means this door never creates one, so saying
     #     "unsupported" here would freeze a thumbnail that is genuinely on its way.
+    #
+    # A ROW WITH A PICTURE ANSWERS `ready`, A REBUILD INCLUDED — `Maker::Preview#wire_status`, the
+    # mapping the v1 API answers by too, so the two wires cannot drift apart. The poll asks "is there
+    # something to show in this cell yet?", and an older build's picture of this same content is
+    # that; a `rebuilding` status on this wire would match neither of thumbs_controller.js's arms and
+    # leave the cell polling until it gave up and drew "Preview not supported" over a picture it had.
     live = nodes.index_by(&:node_id)
     out = ids.each_with_object({}) do |id, h|
       node = live[id]
       preview = node && map.thumb(id)
       if preview
-        h[id] = { status: preview.status,
-                  url: (preview.status == "ready" && preview.asset.attached? ? url_for(preview.asset) : nil) }
+        h[id] = { status: preview.wire_status, url: (url_for(preview.asset) if preview.servable?) }
       elsif node.nil? || Maker::Previews::Registry.for_filename(node.name).nil?
         h[id] = { status: "unsupported", url: nil }
       end
@@ -469,22 +474,25 @@ class FilesController < ApplicationController
     # only in that string. Note the finder answers WHICH ROW IS CURRENT and nothing more. Both doors
     # now decide whether to enqueue the same way — `Enqueue.needs_job?(…, retry_failed: false)`,
     # which reads `status` only to spot a lost job and to leave a failed one alone — and what
-    # differs is what each SAYS once it has: this action answers "pending" whenever it enqueued,
-    # without consulting the row, while `#current_thumbnail` returns the row `call` hands back,
-    # which stays `ready`, picture and all, through a renderer-only rebuild. That split is
-    # deliberate, and §14h forbids unifying it.
+    # differs is what each SAYS once it has: this action answers "pending" whenever it enqueued, and
+    # serves a row only as `current_build?`, while `#current_thumbnail` returns the row `call` hands
+    # back, which stays `showable?` — `rebuilding`, picture and all — through a renderer-only
+    # rebuild. That split is deliberate, and §14h forbids unifying it.
     preview = Maker::Previews::Enqueue.current_preview(user: current_user, node_id: node.node_id,
                                                        name: node.name, version_id: token,
                                                        kind: "geometry")
     # NOTHING CURRENT EXISTS -> TRIGGER A BUILD AND SAY "pending", WITHOUT CONSULTING THE ROW'S
-    # STATUS. Enqueue deliberately leaves a `ready` artifact visible through a renderer-only
-    # rebuild, because a thumbnail is a PICTURE of this same file — blanking it would put a spinner
-    # over a correct picture for the whole render (and, before S4-3's page poll, until someone
-    # reloaded). Geometry is the opposite on both counts: it is
-    # the DATA the client measures and draws from, so an older build's payload is wrong rather than
-    # merely old, and this endpoint's client polls, so "pending" costs nothing and resolves itself.
-    # Reading `preview.status` here instead would hand back the stale blob URL — exactly the bug
-    # the revision check exists to stop.
+    # STATUS. Enqueue deliberately keeps an artifact visible through a renderer-only rebuild,
+    # because a thumbnail is a PICTURE of this same file — blanking it would put a spinner over a
+    # correct picture for the whole render (and, before S4-3's page poll, until someone reloaded).
+    # Geometry is the opposite on both counts: it is the DATA the client measures and draws from,
+    # so an older build's payload is wrong rather than merely old, and this endpoint's client polls,
+    # so "pending" costs nothing and resolves itself.
+    #
+    # THE NEXT POLL IS WHERE THAT USED TO LEAK (F-S08-2). Enqueue stamped the new revision onto the
+    # row and left it `ready`, so the poll 250 ms later found a "current" ready row and served the
+    # older build's payload until the job ran. The row reads `rebuilding` now, and `current_build?`
+    # below is what refuses it.
     #
     # A CURRENT ROW WHOSE JOB WAS LOST IS THE OTHER TRIGGER, and `Enqueue.needs_job?` is what reads
     # its status — only to tell "in flight past STALLED_AFTER" from everything else, never to serve
@@ -498,10 +506,12 @@ class FilesController < ApplicationController
                                     name: node.name, version_id: token, kind: "geometry")
       return render json: { status: "pending" }
     end
+    # `current_build?`, NEVER `showable?`: this payload is the DATA the Measure view draws from. A
+    # ready row whose asset is gone answers "pending" where it once answered "ready" with no URL;
+    # measure_controller.js keeps polling on both, so nothing a user sees moved.
+    return render json: { status: "ready", url: url_for(preview.asset) } if preview.current_build?
+
     case preview.status
-    when "ready"
-      render json: { status: "ready",
-                     url: (url_for(preview.asset) if preview.asset.attached?) }
     when "failed", "unsupported"
       render json: { status: preview.status, error: preview.error }
     else
@@ -1245,8 +1255,10 @@ class FilesController < ApplicationController
   # flight past STALLED_AFTER) is healed here, and a `failed` one never is (`retry_failed: false`) —
   # the file page and the inspector are opened again and again (files-preview.md).
   #
-  # Enqueue returns the repointed row (status "pending", so the view shows "Generating preview…"
-  # rather than an older artifact labelled as current) or nil when nothing can render this name.
+  # Enqueue returns the repointed row — `pending` after a content change, so the view shows
+  # "Generating preview…" rather than an older artifact labelled as current; `rebuilding` after a
+  # renderer bump, which keeps its picture of this same content up — or nil when nothing can render
+  # this name.
   def current_thumbnail(node, token)
     row = Maker::Previews::Enqueue.current_preview(user: current_user, node_id: node.node_id,
                                                    name: node.name, version_id: token,

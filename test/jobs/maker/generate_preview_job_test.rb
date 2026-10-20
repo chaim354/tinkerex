@@ -101,6 +101,125 @@ module Maker
       Maker::Previews::Svg.define_singleton_method(:render, original) if original
     end
 
+    # --- the start transition (F-S08-2) ------------------------------------------------------
+    #
+    # Asked from INSIDE the render, because that is the only place the in-between state exists:
+    # before it the job has not started, after it the terminal write has landed.
+
+    CUBE_3MF = File.binread(Rails.root.join("test/fixtures/files/cube.3mf")).freeze
+    OLD_PICTURE = "\x89PNG old build".b.freeze
+
+    # `look` runs inside the job's render, then the render happens for real. Registry.render is the
+    # one call every renderer is reached through; captured and restored, never prepended (the test
+    # above says why).
+    def during_render(look)
+      original = Maker::Previews::Registry.method(:render)
+      Maker::Previews::Registry.define_singleton_method(:render) { |*a, **k| look.call; original.call(*a, **k) }
+      yield
+    ensure
+      Maker::Previews::Registry.define_singleton_method(:render, original)
+    end
+
+    # The row moves on AFTER the job has read it and BEFORE its first write — the window the start
+    # transition used to write through blind. One-shot, so the job's own later reads see the truth.
+    def moving_the_row_after_the_job_reads_it(id, **columns)
+      original = Maker::Preview.method(:find)
+      moved = false
+      Maker::Preview.define_singleton_method(:find) do |*args|
+        found = original.call(*args)
+        Maker::Preview.where(id:).update_all(columns) unless moved
+        moved = true
+        found
+      end
+      yield
+    ensure
+      Maker::Preview.singleton_class.remove_method(:find)
+    end
+
+    def threemf_row!(node_id, status:, revision: Maker::Previews::ThreeMf::THUMBNAIL_REVISION, picture: true)
+      stage_version(node_id:, version_id: "v1", bytes: CUBE_3MF)
+      row = @user.maker_previews.create!(node_id:, version_id: "v1", kind: "thumbnail", status:,
+                                         renderer_revision: revision)
+      row.asset.attach(io: StringIO.new(OLD_PICTURE), filename: "old.png", content_type: "image/png") if picture
+      row
+    end
+
+    # THE DEFECT, END TO END: a renderer bump on a row with a picture. Enqueue leaves it showing
+    # (`rebuilding`), and the job's start must not take that back — it used to write `processing`
+    # over it, so every surface drew a spinner over a correct picture for the whole render.
+    test "a renderer rebuild keeps the old picture up through its whole render" do
+      row = threemf_row!("cube.3mf", status: "ready",
+                         revision: Maker::Previews::ThreeMf::THUMBNAIL_REVISION - 1)
+      Maker::Previews::Enqueue.call(user: @user, node_id: "cube.3mf", name: "cube.3mf", version_id: "v1")
+
+      seen = nil
+      during_render(-> { live = Maker::Preview.find(row.id); seen = [ live.showable?, live.in_flight? ] }) do
+        Maker::GeneratePreviewJob.perform_now(row.id)
+      end
+
+      assert_equal [ true, true ], seen,
+                   "mid-render the row must still show its picture AND still be a job in flight"
+      row.reload
+      assert row.current_build?, "the rebuild did not land as the current build: #{row.status}"
+      assert_not_equal OLD_PICTURE, row.asset.download.b, "the new build did not replace the old picture"
+    end
+
+    # THE TRANSITION TABLE. `pending → processing` is the one move the start makes: it is the v1
+    # wire's "a worker has it" and restarts the stall clock. Every other status the job can find
+    # already says something true about what is on screen, so the start leaves it alone — `ready`
+    # included, which a duplicate job used to blank for a render that changes nothing.
+    test "the start moves a pending row to processing and leaves every other status alone" do
+      { "pending" => "processing", "rebuilding" => "rebuilding", "ready" => "ready" }.each do |start, during|
+        row = threemf_row!("#{start}.3mf", status: start, picture: start != "pending")
+
+        seen = nil
+        during_render(-> { seen = Maker::Preview.find(row.id).status }) do
+          Maker::GeneratePreviewJob.perform_now(row.id)
+        end
+
+        assert_equal during, seen, "a #{start} row read #{seen.inspect} while its job rendered"
+        assert_equal "ready", row.reload.status
+      end
+    end
+
+    # A REBUILD THAT FAILS IS `failed`: THE OLD PICTURE COMES DOWN AND NO READ DOOR RETRIES IT. The
+    # asset stays attached, but no surface shows it — a failed render is the honest answer, not an
+    # older build kept up as if nothing happened — and `failed` is outside `IN_FLIGHT`, so the stall
+    # heal cannot turn a broken renderer into one doomed job per page view, however old the row gets.
+    test "a rebuild whose render raises goes failed, shows nothing, and is not retried by a read door" do
+      row = threemf_row!("broken.3mf", status: "rebuilding")
+
+      during_render(-> { raise "renderer bug" }) { Maker::GeneratePreviewJob.perform_now(row.id) }
+
+      row.reload
+      assert_equal [ true, false, false ], [ row.failed?, row.showable?, row.in_flight? ],
+                   "failed?, showable?, in_flight? after a rebuild's render raised"
+      row.update_column(:updated_at, 3.days.ago)
+      assert_not Maker::Previews::Enqueue.needs_job?(row.reload, version_id: "v1",
+                                                     revision: Maker::Previews::ThreeMf::THUMBNAIL_REVISION,
+                                                     retry_failed: false),
+                 "a read door would re-enqueue a failed rebuild on every view"
+    end
+
+    # THE START IS COMPARE-AND-SET LIKE EVERY OTHER WRITE THIS JOB MAKES. It was a bare `update!` on
+    # the row as the job first read it, so a row that moved on in between was overwritten: here a
+    # renderer bump lands on it, and the stale object's `pending → processing` flipped the newer
+    # `rebuilding` row and blanked its picture — and the job then rendered for coordinates nobody
+    # had asked for. Whoever moved the row enqueued the job for what it names now.
+    test "a job whose row moved on before its first write leaves the row alone" do
+      row = threemf_row!("moved.3mf", status: "pending", picture: false)
+
+      rendered = false
+      moving_the_row_after_the_job_reads_it(row.id, renderer_revision: 99, status: "rebuilding") do
+        during_render(-> { rendered = true }) { Maker::GeneratePreviewJob.perform_now(row.id) }
+      end
+
+      row.reload
+      assert_equal "rebuilding", row.status, "a job holding a superseded read flipped the newer row"
+      assert_equal 99, row.renderer_revision
+      assert_not rendered, "the job rendered for coordinates the row no longer names"
+    end
+
     test "renders SVG to a PNG when resvg is present; unsupported when absent" do
       stage_version(node_id: "n1.svg", version_id: "v1", bytes: @svg)
       preview = @user.maker_previews.create!(node_id: "n1.svg", version_id: "v1", kind: "thumbnail")

@@ -464,15 +464,18 @@ carries `ActiveStorage.service_urls_expire_in` (5 minutes). It needs `include
 ActiveStorage::SetCurrent` — a public controller stands on `ActionController::Base` (§14d) so it
 inherits nothing of Active Storage's own, and `blob.url` raises without `Current.url_options`. A
 global `urls_expire_in` was the alternative and is worse: it breaks a `loading="lazy"` image a
-visitor scrolls to after the window, and still checks nothing about the project. **Every non-ready
-state and every unpermitted node is the same 404**, because an `<img>` cannot use a status and
-because a stranger must not be able to tell the two apart.
+visitor scrolls to after the window, and still checks nothing about the project. **Every row with
+nothing to serve and every unpermitted node is the same 404**, because an `<img>` cannot use a
+status and because a stranger must not be able to tell the two apart. "Nothing to serve" is the
+row's own predicate, split by kind: a thumbnail is served while `showable?` (an older build's
+picture stays up through its rebuild, as the page that names the URL renders it), the Measure
+payload only as `current_build?` (F-S08-2).
 
 **THE SHARED PARTIALS THEREFORE BUILD NO ASSET URL EITHER.** `files/_thumb.html.erb` — fourteen
 render sites, eleven private and three under `app/views/public/projects/` — and the four viewer
 partials that poster a thumbnail (`_static`, `_model3d`, `_measure`, `_gerber`) take it as a strict
 local (`url:`, `thumbnail_url:`), built by the maker's page with `ApplicationHelper#preview_src`
-(the one private spelling, nil for any non-ready row) and by a visitor's with
+(the one private spelling, nil for any row that is not `showable?`) and by a visitor's with
 `Maker::PublicProject#preview_url_for`, which carries `link_params` so an unlisted project's hero
 keeps its `k`. **A THIRD ARM of the Public seam guard** refuses `\burl_for\b` AND `\bpreview_src\b`
 outside ERB comments in those nine files and in EVERY PUBLIC TEMPLATE, and it exists precisely
@@ -656,9 +659,11 @@ Collapsing them trades a hung spinner for a **wrong** one, which is worse becaus
 reachable even if the endpoint is wrong.
 
 **NO PUBLIC SURFACE POLLS, BECAUSE THIS ENDPOINT IS SESSION-AUTHED** — so a visitor's poster is
-whatever is READY at render time, and every public page says so honestly: the ready thumbs, and for
-the rest either `files/_thumb`'s spinner markup standing still or `files/viewers/_static`'s
-"Generating preview…", **a statement a reload resolves rather than a promise the page can keep**.
+whatever is SHOWABLE at render time (`Maker::Preview#showable?`: the current build, or an older
+build's picture of this content while it rebuilds), and every public page says so honestly: those
+thumbs, and for the rest either `files/_thumb`'s spinner markup standing still or
+`files/viewers/_static`'s "Generating preview…", **a statement a reload resolves rather than a
+promise the page can keep**.
 What makes that statement true is the RENDER, not a poll:
 `Maker::Previews::ThumbnailMap.for` backfills on an anonymous GET — the public project page has done
 that since S3-4, and the public file page does it for its one node. Do not answer a missing public
