@@ -664,6 +664,175 @@ module Library
                          "per directory again, which is the N+1 this closed"
     end
 
+    # EVERY FILE A PASS CREATES, AND EVERY DIRECTORY IT WRITES, FIRST ASKS FOR A TOMBSTONE AT ITS
+    # PATH (#create_or_revive!, #ensure_dirs). The only index carrying `storage_path` used to be the
+    # live-row one, partial on `deleted = false`, which a `deleted = true` query cannot use — so each
+    # lookup read every row the user owns, and a first scan or a large import of N files cost ~N^2/2
+    # row visits. The query-COUNT guard above cannot see that: the count stays linear, it is the rows
+    # each query visits that grow. So this asserts the plan.
+    #
+    # EXPLAINED WITH ITS BINDS, OR IT PROVES NOTHING. SQLite may use a partial index only when the
+    # query's WHERE implies the index's, and it can tell that `deleted = ?` implies `deleted = true`
+    # only once the 1 is BOUND (binding re-prepares the statement). The bare SQL — what
+    # addon_origin_test's `explain_plan` explains — reports the user_id scan whether or not a real
+    # pass uses the index, so a bind-less version of this test could never go green.
+    #
+    # Postgres skips on the wording, as addon_origin_test does; all three bin/ci legs run SQLite, so
+    # the skip cannot fire there, and a skip is still a run. On Postgres a partial index is chosen
+    # only under a plan that sees the bound value — EXPLAIN both lookups there before relying on it.
+    test "both revive-by-path lookups reach the tombstone index rather than every row of the user" do
+      skip "EXPLAIN QUERY PLAN wording is SQLite's" unless ActiveRecord::Base.connection.adapter_name == "SQLite"
+
+      lookups = capture_revive_lookups do
+        reconcile([ s3_dir_obs("cad"), obs("cad/a.stl", "aaa") ], { "cad/a.stl" => "aaa" })
+      end
+      assert_equal %w[dir file], lookups.keys.sort,
+                   "expected exactly one revive-by-path lookup per kind, got #{lookups.keys.inspect}"
+
+      # Every lookup is planned before anything is asserted, so a failure names ALL the kinds that
+      # lost the index — dropping the index reads `["dir", "file"]`, dropping one lookup's `deleted`
+      # term reads that kind alone.
+      plans = lookups.to_h { |kind, (sql, binds)| [ kind, explain_plan(sql, binds) ] }
+      # The index NAME alone would pass a plan that seeks it on `user_id` only, so the match names
+      # both bound columns, the way SQLite prints a two-column seek.
+      scanning = plans.reject { |_kind, plan| plan.include?("index_nodes_on_user_id_and_storage_path_tombstones (user_id=? AND storage_path=?)") }
+      assert_equal [], scanning.keys.sort,
+                   "these revive lookups do not reach the tombstone index, so each reads every node the " \
+                   "user owns, once per node a pass writes:\n" +
+                   scanning.map { |kind, plan| "  #{kind}: #{plan}\n    #{lookups[kind].first}" }.join("\n")
+    end
+
+    # The revive-by-path SELECTs of one pass, keyed by the `kind` each one binds. Recognised by what
+    # they ASK — a whole row, by `storage_path` and `kind`, newest first — rather than by their full
+    # text, so a lookup that loses a term is still captured and its plan is still checked.
+    def capture_revive_lookups
+      found = {}
+      sub = ActiveSupport::Notifications.subscribe("sql.active_record") do |_, _, _, _, payload|
+        sql = payload[:sql]
+        next unless sql.start_with?('SELECT "nodes".*') && sql.include?('ORDER BY "nodes"."id" DESC')
+
+        binds = payload[:binds]
+        names = binds.map { |b| b.respond_to?(:name) ? b.name : nil }
+        next unless names.include?("storage_path") && names.include?("kind")
+
+        kind = binds.find { |b| b.respond_to?(:name) && b.name == "kind" }.value_for_database
+        found[kind] = [ sql, binds ]
+      end
+      yield
+      found
+    ensure
+      ActiveSupport::Notifications.unsubscribe(sub)
+    end
+
+    def explain_plan(sql, binds)
+      ActiveRecord::Base.connection.select_all("EXPLAIN QUERY PLAN #{sql}", "EXPLAIN", binds)
+                        .rows.map(&:last).join("\n")
+    end
+
+    # ----------------------------------------------- #live has ONE owner: #write! and #tombstone!
+
+    # #live MIRRORS `present` BECAUSE #write! AND #tombstone! ARE THE ONLY WAYS A PASS WRITES
+    # `nodes`. It used to be kept by hand at each write site, one of them was missed (0a160454,
+    # found in review), and nothing could notice: a stale key is silent until something reads it.
+    # So this drives passes through EVERY write site — new file and dir, edit, move, delete, revive,
+    # file→dir, dir→file, vanished dir — and after each pass compares the pass's OWN index with a
+    # fresh read of `present`. A write that bypasses the two helpers and leaves a key stale, missing
+    # or out of date goes red here, at whichever site it is. Mutation-checked at all eight: six go
+    # red, and the two kind-collision tombstones cannot: at #ensure_dirs the key is rewritten in the
+    # same iteration, and at #match_live_paths by #create_or_revive!/#apply_moves! or, for an
+    # unreadable new file, removed by #tombstone_vanished_dirs re-tombstoning the already-deleted
+    # row — no pass can observe a bypass there. The fresh read is
+    # spelled out below rather than taken through LiveRow.from, so a fault in that constructor
+    # cannot agree with itself.
+    #
+    # The facts asserted between passes are not decoration: each proves a site actually ran, so a
+    # fixture edit that stops reaching one fails here instead of quietly narrowing the property.
+    test "after every pass #live equals a fresh read of present, through all eight write sites" do
+      digest = ->(bytes) { Digest::SHA256.hexdigest(bytes) }
+
+      assert_live_is_present_after(
+        "create: dirs, and files under them and at the root",
+        [ dir_obs("cad"), dir_obs("old"),
+          obs("cad/a.stl", "a1"), obs("old/b.stl", "b"), obs("c.stl", "c"),
+          obs("thing", "t"), obs("gone.stl", "g") ],
+        { "cad/a.stl" => "a1", "old/b.stl" => "b", "c.stl" => "c", "thing" => "t", "gone.stl" => "g" }
+      )
+      ids = @user.nodes.present.pluck(:storage_path, :node_id).to_h
+      assert_equal 7, ids.size
+
+      assert_live_is_present_after(
+        "edit, move, delete, file->dir, vanished dir",
+        [ dir_obs("cad"), dir_obs("thing"),
+          obs("cad/a.stl", "a2-longer", mtime: T0 + 1), obs("cad/c.stl", "c"),
+          obs("thing/inner.stl", "i") ],
+        { "cad/a.stl" => "a2-longer", "cad/c.stl" => "c", "thing/inner.stl" => "i" }
+      )
+      assert_equal digest.call("a2-longer"), @user.nodes.present.find_by!(storage_path: "cad/a.stl").content_hash,
+                   "the in-place edit must have been re-stamped"
+      assert_equal ids["c.stl"], @user.nodes.present.find_by!(storage_path: "cad/c.stl").node_id,
+                   "c.stl must have MOVED, keeping its node_id"
+      assert_equal "dir", @user.nodes.present.find_by!(storage_path: "thing").kind,
+                   "the file at `thing` must have been tombstoned for the directory"
+      assert @user.nodes.find_by!(node_id: ids["old"]).deleted, "the vanished dir must be tombstoned"
+      assert @user.nodes.find_by!(node_id: ids["gone.stl"]).deleted, "the doomed file must be tombstoned"
+
+      assert_live_is_present_after(
+        "dir->file, two revives, a doomed file under the old dir",
+        [ dir_obs("cad"), obs("cad/a.stl", "a2-longer", mtime: T0 + 1), obs("cad/c.stl", "c"),
+          obs("thing", "t"), obs("gone.stl", "g") ],
+        { "cad/a.stl" => "a2-longer", "cad/c.stl" => "c", "thing" => "t", "gone.stl" => "g" }
+      )
+      assert_equal ids["thing"], @user.nodes.present.find_by!(storage_path: "thing").node_id,
+                   "the dir at `thing` must have been tombstoned and the FILE tombstone revived"
+      assert_equal ids["gone.stl"], @user.nodes.present.find_by!(storage_path: "gone.stl").node_id,
+                   "a restored file must revive its tombstone"
+      assert_nil @user.nodes.present.find_by(storage_path: "thing/inner.stl"),
+                 "the file under the old dir must be tombstoned"
+    end
+
+    # #live's rows are REPLACED, never re-stamped: a row that could be written in place would let a
+    # site update #live without going through #write!, which is the bypass the test above exists to
+    # catch. Both constructors are covered — `a.stl` is plucked unchanged, `b.stl` is written.
+    test "a #live row is immutable, whether it was plucked or written this pass" do
+      reconcile([ obs("a.stl", "aaa") ], { "a.stl" => "aaa" })
+      rec = Library::Reconciler.new(@user, observations: [ obs("a.stl", "aaa"), obs("b.stl", "bbbb") ],
+                                           unreadable_dirs: [], max_delete_pct: 100,
+                                           reader: ->(rel) { { "a.stl" => "aaa", "b.stl" => "bbbb" }.fetch(rel) })
+      rec.call
+      rows = rec.instance_variable_get(:@live)
+      assert_equal %w[a.stl b.stl], rows.keys.sort
+
+      rows.each do |path, row|
+        assert_kind_of Library::Reconciler::LiveRow, row
+        assert_raises(NoMethodError, FrozenError, "#{path}'s row accepted an in-place write") { row.size = 99 }
+      end
+    end
+
+    # Runs one pass, then asserts the pass's own #live equals `present` read fresh. `label` names
+    # the pass in the failure, with the keys that are stale (in #live, not present), missing, or
+    # out of date. Named assert_* so Minitest reports a failure at the CALL — which pass — rather
+    # than inside this helper.
+    def assert_live_is_present_after(label, observations, contents)
+      rec = Library::Reconciler.new(@user, observations:, unreadable_dirs: [], max_delete_pct: 100,
+                                           reader: ->(rel) { contents.fetch(rel) })
+      rec.call
+      mirror = rec.instance_variable_get(:@live)
+      assert_kind_of Hash, mirror, "#{label}: the pass kept no #live index to compare"
+
+      truth = @user.nodes.present.where.not(storage_path: nil)
+                   .pluck(:storage_path, :id, :node_id, :kind, :name, :mtime, :size, :content_hash, :parent_node_id)
+                   .to_h { |path, id, node_id, kind, name, mtime, size, hash, parent|
+                     [ path, Library::Reconciler::LiveRow.new(id:, node_id:, kind:, name:, mtime:, size:,
+                                                             content_hash: hash, parent_node_id: parent) ]
+                   }
+      stale   = mirror.keys - truth.keys
+      missing = truth.keys - mirror.keys
+      changed = (mirror.keys & truth.keys).reject { |path| mirror[path] == truth[path] }
+      assert_equal truth, mirror,
+                   "after the #{label} pass, #live is not `present`: stale #{stale.sort.inspect}, " \
+                   "missing #{missing.sort.inspect}, out of date #{changed.sort.inspect}"
+    end
+
     # THE FRESHNESS MITIGATION, and it is NOT optional. #live is plucked before the first write;
     # ensure_dirs then creates a LIVE dir node at "cad" and must write that back, or
     # match_live_paths reads a snapshot in which "cad" is unclaimed, the file observation falls

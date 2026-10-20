@@ -1316,10 +1316,14 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
         indexes.filter_map do |wide|
           next if wide.name == narrow.name
           next unless wide.where.nil?
-          # STRICT, so two indexes on EXACTLY the same columns slip through — equally redundant,
-          # and this guard says nothing about them. Zero such pairs exist today (checked at review),
-          # so it is a recorded limit rather than a defect; widening it means deciding WHICH of an
-          # identical pair to name, which a `>` comparison never has to.
+          # STRICT, so two indexes on EXACTLY the same columns slip through, and this guard says
+          # nothing about them. One such pair exists, and it is NOT a redundancy: `nodes` carries
+          # `(user_id, storage_path)` twice, `WHERE deleted = false` (unique, the live rows) and
+          # `WHERE deleted = true` (the tombstones Library::Reconciler revives by path). Their
+          # predicates are disjoint, so neither holds a row the other does. Widening this check to
+          # identical column lists would have to compare predicates too or it would flag that pair,
+          # and for a truly identical pair it would have to decide WHICH to name, which a `>`
+          # comparison never has to.
           next unless wide.columns.length > narrow.columns.length
           next unless wide.columns.first(narrow.columns.length) == narrow.columns
           next if PREFIX_INDEX_EXEMPTIONS[table] == narrow.name
