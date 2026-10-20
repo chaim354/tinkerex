@@ -10,8 +10,8 @@ module Maker
   #                 type simply isn't renderable here).
   #   failed      — a real error while fetching bytes or rendering (e.g. missing chunk).
   #
-  # Phase 1 registers ONLY SVG (Maker::Previews::Registry). Later phases add renderers to
-  # the registry; this orchestrator is unchanged.
+  # The renderer comes from Maker::Previews::Registry; adding a format changes the registry, never
+  # this orchestrator.
   class GeneratePreviewJob < ApplicationJob
     queue_as :default
 

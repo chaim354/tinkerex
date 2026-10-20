@@ -24,9 +24,12 @@ module Maker
       assert @user.maker_previews.build(node_id: "n", status: "unsupported").valid?
     end
 
-    test "uniqueness on node_id+version_id+kind, scoped to user" do
+    # ONE ROW PER (user, node, kind), NOT PER VERSION (§14b): the second row carries a DIFFERENT
+    # version_id and is still a duplicate, which is the half that pins the key — a row per version
+    # leaked a row and a blob on every save.
+    test "uniqueness on node_id+kind, scoped to user, whatever the version" do
       @user.maker_previews.create!(node_id: "n", version_id: "v", kind: "thumbnail")
-      dup = @user.maker_previews.build(node_id: "n", version_id: "v", kind: "thumbnail")
+      dup = @user.maker_previews.build(node_id: "n", version_id: "v2", kind: "thumbnail")
       assert_not dup.valid?
     end
 

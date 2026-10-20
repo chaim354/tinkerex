@@ -53,8 +53,8 @@ and can also be measured.
    traversal.
 
 Thumbnails generate eagerly: `Maker::Previews::Enqueue.call(user:, node_id:, name:, version_id:)`
-fires from the upload, API-commit, and scan seams (see `FilesController#enqueue_preview`,
-`V1::CommitsController#finalize`, `Library::Reconciler`), so no extra wiring is needed once the
+fires from the upload and scan seams (see `Maker::Addons::LibraryOutput.enqueue_preview`, which
+every upload door calls, and `Library::Reconciler`), so no extra wiring is needed once the
 renderer is registered — a newly registered extension is picked up automatically.
 
 **Licensing:** permissive only (CLAUDE.md §9) — no GPL/AGPL toolchains in shipped artifacts. The

@@ -1,8 +1,9 @@
 module Maker
-  # Catalog-side preview record: one per (node_id, version_id, kind). References a synced
-  # file ONLY by its stable string node_id + immutable version_id (never synced into the
-  # local SQLite tree). Carries a rendered thumbnail/render as an ActiveStorage attachment;
-  # bytes are served via the blob URL (off Rails), consistent with CLAUDE.md §8/§15.
+  # Catalog-side preview record: ONE PER (user, node_id, kind), repointed as the file's content and
+  # renderer move (§14b) — `version_id` records which content the attached asset was rendered from,
+  # it is not part of the key. References a file ONLY by its stable string node_id. Carries a
+  # rendered thumbnail/render as an ActiveStorage attachment; bytes are served via the blob URL
+  # (off Rails), consistent with CLAUDE.md §8/§15.
   class Preview < ApplicationRecord
     self.table_name = "maker_previews"
 

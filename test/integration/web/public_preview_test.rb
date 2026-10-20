@@ -170,6 +170,34 @@ module Web
       assert_equal GEOMETRY_JSON, response.body
     end
 
+    # THE MEASURE PAYLOAD'S REDIRECT IS NEVER KEPT (F-S08-2, folding the audit's §4 note). Its URL is
+    # the same for every build of the file, so the minute of private cache a thumbnail's 302 carries
+    # (tinkerex#291, the test above) let a visitor's browser answer the next Measure open after a
+    # rebuild with the OLDER payload, for up to a minute after `current_build?` began refusing it on
+    # the server. Driven through a real rebuild: neither 302 may be reusable — the one a browser
+    # holds when the rebuild lands, nor the one after it — and the second names the rebuilt payload.
+    test "the Measure payload's redirect is never cached, so a rebuild cannot be answered from an older one" do
+      row = ready_preview!(@user, @laser, kind: "geometry", body: GEOMETRY_JSON, content_type: "application/json")
+
+      get preview_path_for(@laser.node_id, kind: "geometry")
+      assert_response :redirect
+      assert_match(/\bno-store\b/, response.headers["Cache-Control"].to_s,
+                   "a browser may keep this 302 and replay the older payload after a rebuild")
+
+      # THE REBUILD: the row was built by an older renderer, and the visitor's render queues the job.
+      row.update!(renderer_revision: row.renderer_revision - 1)
+      get public_file_view_path("ada", @project.slug, @laser.node_id)
+      get preview_path_for(@laser.node_id, kind: "geometry")
+      assert_response :not_found, "mid-rebuild the older payload must not be served at all"
+
+      Maker::GeneratePreviewJob.perform_now(row.id)
+      get preview_path_for(@laser.node_id, kind: "geometry")
+      assert_response :redirect
+      assert_match(/\bno-store\b/, response.headers["Cache-Control"].to_s)
+      follow_redirect!
+      assert_not_equal GEOMETRY_JSON, response.body, "the redirect still named the older build's payload"
+    end
+
     # THE HEADLINE. The picture is what a visitor keeps a copy of, so the URL outliving the
     # publication is the failure the whole slice exists to close.
     test "the same URL stops answering the moment the project goes private" do
