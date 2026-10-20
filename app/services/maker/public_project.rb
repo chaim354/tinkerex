@@ -142,13 +142,14 @@ module Maker
     # line's file link are things the maker wrote that name a file, so they read `listing` and
     # `permits?` (decision 2: hidden is not unpermitted).
     #
-    # HIDDEN IS DECIDED BY ANCESTRY, NEVER BY THE CAPPED LISTING. `permits?` keeps the same rule for
-    # the same reason. The Sets this replaced were built from the listing, which stops at FILE_CAP in
-    # name order across the whole folder. A picture in a hidden folder whose name sorted past the
-    # cap was in neither Set, so the hero (`find_by`) and an image block (`page_nodes`), which resolve
-    # nodes outside the listing, showed it as the page's largest image (public_project_test.rb
-    # drives it). Backups are out because a visitor's page renders none: a rescue copy is noise to
-    # everyone but the maker.
+    # HIDDEN IS DECIDED BY ANCESTRY, walking up from a file to the project folder and no further
+    # (`.depth_one_dir`), NEVER BY THE CAPPED LISTING. `permits?` refuses the capped listing as its
+    # basis for the same reason. The Sets this replaced were built from the listing, which stops at
+    # FILE_CAP in name order across the whole folder. A picture in a hidden folder whose name sorted
+    # past the cap was in neither Set, so the hero (`find_by`) and an image block (`page_nodes`),
+    # which resolve nodes outside the listing, showed it as the page's largest image
+    # (public_project_test.rb drives it). Backups are out because a visitor's page renders none: a
+    # rescue copy is noise to everyone but the maker.
     def shown_rows = @shown_rows ||= listing.all_rows.reject { |row| row.backup? || hidden?(row.node) }
 
     # The same answer for ONE node resolved outside the listing (the hero, an image block): permitted,
@@ -483,40 +484,50 @@ module Maker
     # cover chosen from outside the folder, while /u/:handle's card asked nobody and rendered it. A
     # second spelling of this rule is how that happens again.
     #
-    # The node's `.lineage`: its parent first, then the parent's ancestors. The folder arm applies
-    # only when the project HAS a folder the tree knows (`ProjectFolderListing#available?` is the
-    # same two checks); a project with none falls to its attachments alone.
+    # The parent itself first, then its ancestors: `ancestors_of` may or may not include its
+    # argument, and a file DIRECTLY inside `.git/` must fail the name check either way. The folder
+    # arm applies only when the project HAS a folder the tree knows (`ProjectFolderListing#available?`
+    # is the same two checks); a project with none falls to its attachments alone.
     def self.claimed?(node, tree:, folder_node_id:, attached:)
       if folder_node_id && tree.dir?(folder_node_id)
-        chain = lineage(node.parent_node_id, tree:)
-        return false if chain.any? { |id| tree.name_of(id) == Library::RepoMetadata::DIR_NAME }
-        return true if chain.include?(folder_node_id)
+        lineage = [ node.parent_node_id, *Array(tree.ancestors_of(node.parent_node_id)) ].compact.uniq
+        return false if lineage.any? { |id| tree.name_of(id) == Library::RepoMetadata::DIR_NAME }
+        return true if lineage.include?(folder_node_id)
       end
 
       attached.include?(node.node_id)
     end
 
     # THE DEPTH-ONE FOLDER A DIR SITS UNDER, or the dir itself when it is one. nil at the folder's
-    # own root, outside the folder, or on a broken chain. Depth one is where a panel is (spec
-    # decision 3), so this is the folder whose `folder:` key hides everything beneath it
-    # (`#hidden_dir?`). It walks `.lineage`, the chain `claimed?` walks, so hiding and permission
-    # cannot disagree about where a file sits. A broken chain reads as not hidden, and `permits?`
-    # still gates anything shown. It is a class method beside `claimed?` so that a caller with no
-    # listing in hand can ask it too. `permitted_cover_ids` would be that caller, and does not ask
-    # it yet (see the note there).
+    # own root, outside the folder, or when the walk breaks before it reaches the folder. Depth one is
+    # where a panel is (spec decision 3), so this is the folder whose `folder:` key hides everything
+    # beneath it (`#hidden_dir?`).
+    #
+    # IT WALKS UP FROM THE DIR AND STOPS AT THE PROJECT FOLDER, so nothing ABOVE the folder takes part
+    # (review of #430). `ancestors_of` is the wrong walk here: it answers nil for the whole chain when
+    # any ancestor is missing. A tombstoned `Projects/` above a live project folder therefore read
+    # every hidden folder as shown, while the listing, which walks DOWN from the folder, still held
+    # their files for the bundle, the Photos and Schematics panels and the repo cards
+    # (public_project_test.rb). A break BELOW the folder still reads as not hidden: a missing dir, or a
+    # cycle, which the `seen` set stops. A file there is neither listed nor permitted by ancestry, so
+    # only an attachment can show it, and `permits?` still gates that.
+    #
+    # It is a class method beside `claimed?` so that a caller with no listing in hand can ask it too.
+    # `permitted_cover_ids` would be that caller, and does not ask it yet (see the note there).
     def self.depth_one_dir(dir_id, tree:, folder_node_id:)
-      chain = lineage(dir_id, tree:)
-      at = folder_node_id && chain.index(folder_node_id)
-      chain[at - 1] if at&.positive?
-    end
+      return nil unless folder_node_id
 
-    # A DIR AND EVERY ANCESTOR, NEAREST FIRST, the library root dropped. This is the one chain both
-    # `claimed?` and `depth_one_dir` walk. The dir itself comes first because `ancestors_of` may or
-    # may not include its argument, and a file DIRECTLY inside `.git/` must fail `claimed?`'s name
-    # check either way. `Array(...)` is there because `ancestors_of` answers nil for a broken chain,
-    # which leaves only the dir itself.
-    def self.lineage(dir_id, tree:) = [ dir_id, *Array(tree.ancestors_of(dir_id)) ].compact.uniq
-    private_class_method :lineage
+      seen = Set.new
+      below = nil
+      current = dir_id
+      while current && seen.add?(current)
+        return below if current == folder_node_id
+
+        below = current
+        current = tree.parent_of(current)
+      end
+      nil
+    end
 
     # EVERY PROJECT'S PERMITTED COVER ON ONE OWNER'S PAGE, IN A CONSTANT NUMBER OF QUERIES. One
     # PublicProject per card would ask `cover_node` at a tree, a listing and two attachment queries

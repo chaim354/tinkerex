@@ -61,12 +61,14 @@ The owner asked for each group to be its own panel so its view can be chosen per
     bundle**: the Photos panel, the repo cards, the Schematics panel and the hero all drop its files
     (review found the first three leaking). AUTHORED prose does not filter — a README's own links
     and a BOM line's file still point at the file, which still delivers, because hidden is not
-    unpermitted. The rule is written once, on `Maker::PublicProject#shown_rows` (every derived
-    reader starts there, the thumbnail map included) and `#shown?` (the hero and an image block).
-    Hidden is decided by ANCESTRY against the saved layout, never by the capped listing. The walk
-    §5 describes (`hidden_folder_ids` over `Dir#subtree_file_ids`, later the `hidden_file_ids` set)
-    was built from the listing, so it missed a hidden folder's files past FILE_CAP (2026-10-19,
-    F-S14-1).
+    unpermitted. The rule is written once, in `Maker::PublicProject`. `#shown_rows` is the list
+    the bundle, its CSV paths, the Schematics panel and the thumbnail map read. The Photos panel
+    and the repo cards ask the same `hidden?` question of the nodes they resolve elsewhere. And
+    `#shown?` (permitted and not hidden) answers for the hero and an image block. Hidden is decided
+    by ANCESTRY against the saved layout, walking up from a file to the project folder and no
+    further, never by the capped listing. The walk §5 describes (`hidden_folder_ids` over
+    `Dir#subtree_file_ids`, later the `hidden_file_ids` set) was built from the listing, so it
+    missed a hidden folder's files past FILE_CAP (2026-10-19, F-S14-1).
 11. **A repository panel switched off the browser gets its thumbnails backfilled.** The thumbnail
     map's exclusion of repository files predates folder panels; a depth-one repository whose view is
     tiles or list keeps its subtree in the map, a nested one stays a closed browser section.

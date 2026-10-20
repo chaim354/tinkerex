@@ -91,6 +91,12 @@ module Maker
     # folder of this user's at all", which are different answers on that surface.
     def name_of(node_id) = @dirs[node_id]&.name
 
+    # The PARENT of one dir: nil for a dir at the library root, and nil for an id this index does not
+    # hold. One step at a time, for a caller whose walk must STOP at a dir it knows rather than reach
+    # the root. `#ancestors_of` answers nil for the whole chain when ANY ancestor is missing,
+    # including one above the dir that caller stops at (Maker::PublicProject.depth_one_dir).
+    def parent_of(node_id) = @dirs[node_id]&.parent_node_id
+
     private
 
     # Climbs parent_node_id, yielding each dir Entry nearest-first, stopping at the root. Yields
