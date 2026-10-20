@@ -108,18 +108,22 @@ module V1
         params.require(:preview).permit(:node_id, :version_id, :kind, :filename)
       end
 
-      # A ROW WITH A PICTURE IS `ready` ON THIS WIRE, A REBUILD INCLUDED. `rebuilding` is a status
-      # this app added after the wire was written, and tinkerex-client's `Preview` documents "`url`
-      # is null until `status == "ready"`" — so a client told `rebuilding` would hold a URL its own
-      # contract says it cannot have. The row it describes is an older build's picture of this same
-      # content, which is exactly what `ready` promised before the status was split (the renderer
-      # rebuild note on #create). Exposing the new value is a wire change to make deliberately,
-      # with the client, not by default.
+      # `ready` AND `url` MOVE TOGETHER, AND BOTH ARE `servable?` (F-S08-2). tinkerex-client's
+      # `Preview` documents "`url` is null until `status == "ready"`", and this wire kept neither half:
+      #   - a picture mid-rebuild is `ready`, an older build's picture of this same content, which is
+      #     what `ready` promised before the status was split (the rebuild note on #create) — while a
+      #     MEASURED kind mid-rebuild is not: its older payload is wrong, so it reads `pending`, the
+      #     web Measure poll's answer for the same row. `rebuilding` itself never reaches this wire;
+      #     exposing a new value is a change to make deliberately, with the client.
+      #   - `url` was emitted for ANY attached asset, so a row repointed at new content (`pending`) or
+      #     one whose render failed handed out an OLDER asset beside a status saying it was not ready.
+      #     No client reads a url off a row that is not ready: tinkerex-client asserts it only on a
+      #     ready one.
       def preview_json(p)
         {
           id: p.id, node_id: p.node_id, version_id: p.version_id, kind: p.kind,
-          status: (p.showable? ? "ready" : p.status), error: p.error, width: p.width, height: p.height,
-          url: (p.asset.attached? ? url_for(p.asset) : nil),
+          status: p.wire_status, error: p.error, width: p.width, height: p.height,
+          url: (url_for(p.asset) if p.servable?),
           created_at: p.created_at, updated_at: p.updated_at
         }
       end

@@ -1356,17 +1356,21 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     assert_same FileDelivery::SAFE_INLINE_TYPES, FilesController::SAFE_INLINE_TYPES
   end
 
-  # A PREVIEW'S STATUS IS CLASSIFIED ON Maker::Preview, NEVER BY A LITERAL AT THE CONSUMER (F-S08-2,
-  # 2026-10-20). `rebuilding` split `ready` in two — "a picture of this content" and "the build these
-  # coordinates name" — and a reader still comparing `status == "ready"` picks one meaning by
-  # accident: a picture surface blanks a correct picture for a whole rebuild, and a re-spelled
-  # `%w[pending processing]` silently leaves `rebuilding` out of what it calls in flight. The
-  # predicates (`in_flight?`, `showable?`, `current_build?`, `failed?`) are the vocabulary, defined
-  # in the one file this sweep exempts.
+  # A PREVIEW'S `ready` AND `rebuilding` ARE ASKED OF Maker::Preview, NEVER COMPARED AT THE CONSUMER,
+  # AND NOTHING RE-SPELLS THE IN-FLIGHT SET (F-S08-2, 2026-10-20). `rebuilding` split `ready` in two —
+  # "a picture of this content" and "the build these coordinates name" — and a reader still
+  # comparing `status == "ready"` picks one meaning by accident: a picture surface blanks a correct
+  # picture for a whole rebuild, and a re-spelled `%w[pending processing]` silently leaves
+  # `rebuilding` out of what it calls in flight. The predicates (`in_flight?`, `showable?`,
+  # `current_build?`, `servable?`, `failed?`) are the vocabulary, defined in the one file this sweep
+  # exempts.
   #
-  # COMPARISONS ONLY. A wire answer that SAYS "ready" (`render json: { status: "ready" }`) and the
-  # job's writes (`update!(status: "ready")`) are not readers and do not match. Whole-line Ruby
-  # comments and ERB comments are skipped: several partials describe the old spelling in prose.
+  # EXACTLY THOSE TWO WORDS AND THAT ONE SET. A literal that means one thing is not policed: the
+  # job's start asks `status == "pending"`, and the geometry polls' terminal arm is `when "failed",
+  # "unsupported"`. COMPARISONS ONLY: a wire answer that SAYS "ready" (`render json: { status:
+  # "ready" }`) and the job's writes (`update!(status: "ready")`) are not readers and do not match.
+  # Whole-line Ruby comments and ERB comments are skipped: several partials describe the old
+  # spelling in prose.
   PREVIEW_STATUS_COMPARISON = /
     (?:[!=]=|\bwhen\b[^\n]*?)\s*["'](?:ready|rebuilding)["']   # status == "ready", when "ready"
     | ["'](?:ready|rebuilding)["']\s*[!=]=                       # "ready" == status
@@ -1374,7 +1378,16 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     | %w[\[(](?=[^\])]*\bpending\b)(?=[^\])]*\bprocessing\b)    # the in-flight set, re-spelled
   /x
 
-  test "no consumer compares a preview's status to a literal or re-spells the in-flight set" do
+  test "no consumer compares a preview's status to ready or rebuilding, or re-spells the in-flight set" do
+    # THE PATTERN ITSELF, ASKED FIRST. A regex that stopped matching would sweep every file below and
+    # find nothing, which `assert_empty` reads as success — §14e's vacuous guard, one level in.
+    [ 'thumb&.status == "ready"', 'when "rebuilding"', '%w[pending processing].include?(s)' ].each do |offender|
+      assert_match PREVIEW_STATUS_COMPARISON, offender, "the pattern no longer catches #{offender}"
+    end
+    [ 'render json: { status: "ready", url: u }', 'update!(status: "ready")', 'status == "pending"' ].each do |fine|
+      assert_no_match PREVIEW_STATUS_COMPARISON, fine, "the pattern now refuses #{fine}"
+    end
+
     model = ROOT.join("app/models/maker/preview.rb").to_s
     files = Dir.glob(ROOT.join("app", "**", "*.{rb,erb}").to_s).sort - [ model ]
     # NON-EMPTY ON BOTH HALVES (§14e): the readers are mostly templates, so an ERB glob that stopped
@@ -1394,7 +1407,8 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     end
 
     assert_empty offenders,
-                 "A preview's status compared to a literal outside Maker::Preview:\n  " \
+                 "A preview's status compared to ready or rebuilding, or the in-flight set re-spelled, " \
+                 "outside Maker::Preview:\n  " \
                  "#{offenders.join("\n  ")}\nAsk the row: `showable?` to SHOW its asset (ready, or an " \
                  "older build while it rebuilds), `current_build?` to MEASURE from it, `in_flight?` " \
                  "for a job believed coming, `failed?` for the retryable terminal state."

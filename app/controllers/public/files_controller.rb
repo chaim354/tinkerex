@@ -88,10 +88,11 @@ module Public
     # nothing to serve is a 404 exactly as an unpermitted node is, because an <img> cannot use a
     # status — and because the two must be indistinguishable to a stranger for #deliverable!'s reason.
     #
-    # ONE DOOR, TWO KINDS, TWO QUESTIONS — the split the maker's side draws across two doors. A
-    # thumbnail is a PICTURE, served while `showable?` (an older build's picture of this content
-    # stays up through its rebuild, as the page that names this URL renders it); the Measure
-    # payload is DATA, served only as `current_build?`, because an older build's is wrong (§14h).
+    # ONE DOOR, TWO KINDS, TWO QUESTIONS — the split the maker's side draws across two doors, asked
+    # as `servable?`. A thumbnail is a PICTURE, served while `showable?` (an older build's picture of
+    # this content stays up through its rebuild, as the page that names this URL renders it); the
+    # Measure payload is DATA, served only as `current_build?`, because an older build's is wrong
+    # (§14h). The v1 API answers `ready` by the same predicate, so the two doors cannot disagree.
     def preview
       pub = public_project!
       node = pub.deliverable!(params[:id])
@@ -99,8 +100,7 @@ module Public
       row = token && Maker::Previews::Enqueue.current_preview(user: pub.owner, node_id: node.node_id,
                                                               name: node.name, version_id: token,
                                                               kind: params[:kind])
-      servable = row && (row.kind == "geometry" ? row.current_build? : row.showable?)
-      raise ActiveRecord::RecordNotFound unless servable
+      raise ActiveRecord::RecordNotFound unless row&.servable?
 
       # ONE MINUTE OF PRIVATE CACHE ON A THUMBNAIL'S REDIRECT (tinkerex#291). Each image request costs
       # the byte route's whole permission path plus three queries, and a page of sixty covers is sixty
@@ -121,7 +121,7 @@ module Public
       # saved next to nothing; the signed URL it redirects to names one blob, so it keeps its own
       # expiry and cannot outlive its build. Keying the poll's URL on the build was the alternative:
       # a parameter this route must then ignore or check, for a cache that buys almost nothing here.
-      row.kind == "geometry" ? no_store : expires_in(1.minute)
+      row.measured? ? no_store : expires_in(1.minute)
       redirect_to row.asset.url, allow_other_host: true
     end
 

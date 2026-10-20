@@ -280,9 +280,9 @@
   honestly replaces. A renderer bump is not that case: the stored artifact still depicts this exact
   file, only the code that built it moved on. Blanking it swapped a correct picture for a spinner
   for the whole render — and before stage 4, S4-3 the page did not poll, so it stayed a spinner
-  until someone reloaded — and read as "generating preview is broken". The page now polls a
-  row with nothing to show and reloads once (`thumbs_controller.js`'s reload mode); the decision
-  stands on the first half alone.
+  until someone reloaded — and read as "generating preview is broken". The page now polls an
+  in-flight row with nothing to show and reloads once (`thumbs_controller.js`'s reload mode); the
+  decision stands on the first half alone.
   - **THE REBUILD HAS ITS OWN STATUS, `rebuilding`, AND IT IS NOT `ready` (F-S08-2, 2026-10-20).**
     `Enqueue` used to stamp the new revision and leave the row `ready`, which said "this asset IS
     the build these coordinates name" the moment the stamp landed — false until the job ran. The
@@ -295,13 +295,18 @@
 - **A CONSUMER THAT CANNOT TOLERATE AN OLDER BUILD'S OUTPUT SAYS SO ITSELF, BY ASKING THE ROW.** The
   classes are named once on `Maker::Preview`: a surface that SHOWS an artifact asks `showable?`
   (`ready`, or `rebuilding` with its old asset — a picture of this content, any build); a surface
-  that MEASURES from one asks `current_build?` (`ready` only). `FilesController#geometry`, the
-  public poll and the public payload route ask `current_build?`, so they answer `pending` (or 404)
-  through a rebuild — geometry is DATA, an older build's payload is wrong rather than merely old,
-  and its client polls, so pending resolves itself. The thumbnail is a picture: a showable row
-  renders no poll cell at all, and `/files/thumbnails` answers `ready` for one. Same mechanism,
-  opposite right answers; do not unify them — and never compare `status` to a literal outside the
-  model, which `architecture_invariants_test.rb` refuses.
+  that MEASURES from one asks `current_build?` (`ready` only). `FilesController#geometry` and the
+  public poll ask `current_build?`, so they answer `pending` through a rebuild — geometry is DATA,
+  an older build's payload is wrong rather than merely old, and its client polls, so pending
+  resolves itself. The thumbnail is a picture: a showable row renders no poll cell at all, and
+  `/files/thumbnails` answers `ready` for one. Same mechanism, opposite right answers; do not unify
+  them. The two doors that hand out EITHER kind — the public payload route and the v1 API — ask
+  `servable?`, which is that split by kind (`MEASURED_KINDS`), so the payload route 404s and v1
+  says `pending` with no url for geometry mid-rebuild while both keep serving the picture.
+  Outside the model, never compare `status` to `ready` or `rebuilding`, nor re-spell the in-flight
+  set: `architecture_invariants_test.rb` refuses exactly those. A literal that means one thing is
+  not policed — the job's start reads `pending`, the geometry polls' terminal arm `failed` and
+  `unsupported`.
 - **A REVISION CHECK IN `Enqueue` IS USELESS UNLESS THE READ PATH ASKS FOR IT — and for thumbnails
   it did not.** `Enqueue` compared revisions correctly from the day it shipped, but only something
   that CALLS it can act on that, and the caller skips any node the read reports a row for. That

@@ -182,6 +182,25 @@ module Maker
       end
     end
 
+    # A REBUILD THAT FAILS IS `failed`: THE OLD PICTURE COMES DOWN AND NO READ DOOR RETRIES IT. The
+    # asset stays attached, but no surface shows it — a failed render is the honest answer, not an
+    # older build kept up as if nothing happened — and `failed` is outside `IN_FLIGHT`, so the stall
+    # heal cannot turn a broken renderer into one doomed job per page view, however old the row gets.
+    test "a rebuild whose render raises goes failed, shows nothing, and is not retried by a read door" do
+      row = threemf_row!("broken.3mf", status: "rebuilding")
+
+      during_render(-> { raise "renderer bug" }) { Maker::GeneratePreviewJob.perform_now(row.id) }
+
+      row.reload
+      assert_equal [ true, false, false ], [ row.failed?, row.showable?, row.in_flight? ],
+                   "failed?, showable?, in_flight? after a rebuild's render raised"
+      row.update_column(:updated_at, 3.days.ago)
+      assert_not Maker::Previews::Enqueue.needs_job?(row.reload, version_id: "v1",
+                                                     revision: Maker::Previews::ThreeMf::THUMBNAIL_REVISION,
+                                                     retry_failed: false),
+                 "a read door would re-enqueue a failed rebuild on every view"
+    end
+
     # THE START IS COMPARE-AND-SET LIKE EVERY OTHER WRITE THIS JOB MAKES. It was a bare `update!` on
     # the row as the job first read it, so a row that moved on in between was overwritten: here a
     # renderer bump lands on it, and the stale object's `pending → processing` flipped the newer

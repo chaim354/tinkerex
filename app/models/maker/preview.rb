@@ -14,6 +14,9 @@ module Maker
     # It is the FIRST kind to exercise the kind seam end to end: `model_glb` is declared here but
     # refused by Mesh, so nothing in production produced a second artifact until this one.
     KINDS = %w[thumbnail model_glb render geometry].freeze
+    # THE KIND WHOSE ARTIFACT IS DATA, MEASURED FROM RATHER THAN LOOKED AT: an older build of it is
+    # wrong, not merely old (§14h). Every other kind is a picture of the file.
+    MEASURED_KINDS = %w[geometry].freeze
     # pending → processing → ready | failed | unsupported, and ready → rebuilding → ready when only
     # the RENDERER moved. `unsupported` = no permissive renderer for this file type (a deliberate,
     # non-error terminal state; distinct from `failed` = a real render/fetch error).
@@ -66,5 +69,24 @@ module Maker
 
     # A real render or fetch error — the one terminal state an eager seam retries.
     def failed? = status == "failed"
+
+    # This row's artifact is data a surface measures from (`MEASURED_KINDS`), not a picture.
+    def measured? = MEASURED_KINDS.include?(kind)
+
+    # WHAT A DOOR THAT HANDS THIS ROW'S ASSET OUT MAY CALL READY, BY KIND: a picture while it is
+    # `showable?` (an older build of this content is still a correct picture), measured data only as
+    # the `current_build?`. `Public::FilesController#preview` and the v1 API serve rows of either
+    # kind and answer by this one predicate, so they cannot disagree about a row.
+    def servable? = measured? ? current_build? : showable?
+
+    # THE STATUS A WIRE THAT PREDATES `rebuilding` IS TOLD — the v1 API, whose client documents "url
+    # is null until status == ready". `ready` exactly when `servable?`; a rebuild that is not (measured
+    # data mid-rebuild) is a job still coming, which that vocabulary calls `pending` — the answer the
+    # web Measure poll gives for the same row. Every other status is already a word that wire knows.
+    def wire_status
+      return "ready" if servable?
+
+      status == "rebuilding" ? "pending" : status
+    end
   end
 end
