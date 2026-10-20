@@ -21,7 +21,8 @@ module Maker
   # ONE BOUNDED PORT READ, CACHED BY CONTENT TOKEN, NIL INCLUDED — Maker::GerberArchive's shape and
   # its argument: judged on the catalog's own `size` first (an unknown size is refused, because
   # `nil.to_i` is 0 and would pass the guard into the port's own 256 MB cap), never opened past
-  # READ_LIMIT, and a file that answers nil stays nil until its bytes change.
+  # READ_LIMIT, and a file whose BYTES answer nil stays nil until they change. A store that did not
+  # answer is never cached — that nil is one request's, not the content's (`for`).
   #
   # NOT HANDLED, ON PURPOSE FOR NOW: painted triangles (Bambu `paint_color`, PrusaSlicer
   # `slic3rpe:mmu_segmentation`). Those are per-triangle extruder assignments three's loader drops
@@ -53,6 +54,9 @@ module Maker
     # project takes 0.2 s, so the DOM parse is not what this bound is protecting against.)
     READ_LIMIT = 64 * 1024 * 1024
     CACHE_TTL = 30.days
+    # "-v2" SINCE 2026-10-19, for Maker::GerberArchive::CACHE_NAMESPACE's reason: the old namespace
+    # holds nils that outages wrote (`for`), and moving it is what stops them being served.
+    CACHE_NAMESPACE = "threemf-manifest-v2".freeze
 
     # The 3MF core spec's unit vocabulary, to millimetres. Absent or unknown -> 1 (the spec's own
     # default is millimeter).
@@ -77,27 +81,29 @@ module Maker
     def self.threemf?(name) = File.extname(name.to_s).downcase.delete(".") == EXT
 
     # nil unless this node is a 3MF we could read something from. `user` is whose library the bytes
-    # are read from — the file page's current user; nothing public reads a manifest.
+    # are read from — the file page's current user, or a public project's OWNER on a visitor's page
+    # (Public::FilesController#view), which is why the bound below has to hold before any read.
     #
     # THE TOKEN IS `content_hash` OR `current_version_id`, the port's own `content_token` spelled
     # from the catalog: a hash on share/s3, a version id on chunk_remote. Read off the two columns
     # rather than asking the port for `stat`, which would cost a second call per page view just to
     # build a cache key.
+    #
+    # THE PORT'S TWO FAILURES ARE RESCUED OUTSIDE THE FETCH — Maker::GerberArchive.for's rule and
+    # reason: a rescue inside the block returned nil INTO the cache (activesupport writes nil unless
+    # `skip_nil`), so one outage cost the file its colours and its unit factor for CACHE_TTL. The
+    # store not answering is an outage the layout's banner names (app/models/current.rb); a file
+    # that is gone is not, so that arm raises nothing. Both answer nil, and neither is written. A
+    # view served from the cache read nothing, so it raises nothing either: the banner speaks only
+    # for this request.
     def self.for(user:, node:)
       return nil unless threemf?(node.name)
       return nil if node.size.nil? || node.size > READ_LIMIT
 
       token = node.content_hash.presence || node.current_version_id.presence
-      Rails.cache.fetch([ "threemf-manifest", node.node_id, token ], expires_in: CACHE_TTL) do
-        read(user:, node:)
+      Rails.cache.fetch([ CACHE_NAMESPACE, node.node_id, token ], expires_in: CACHE_TTL) do
+        manifest_from(FileLayer.current.read(user, node_id: node.node_id))
       end
-    end
-
-    # The store not answering is an outage the layout's banner names (app/models/current.rb); a file
-    # that is gone is not, so that arm raises nothing. Both answer nil. A view served from `for`'s
-    # cache read nothing, so it raises nothing either: the banner speaks only for this request.
-    def self.read(user:, node:)
-      manifest_from(FileLayer.current.read(user, node_id: node.node_id))
     rescue FileLayer::FetchError
       Current.library_unreachable = true
       nil

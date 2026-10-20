@@ -145,6 +145,68 @@ module Web
       assert_select ".thumb img"
     end
 
+    # ----------------------------------------------------------------------------------
+    # GAP 3 — a row whose job was LOST. `pending`/`processing` assert that a job is coming, and
+    # `Enqueue::STALLED_AFTER` is what stops believing them — but it lived only inside
+    # `Enqueue.call`, and every door that renders a row asked "is this row current?" first and
+    # never called it for one that was. A row wedged on current content (a share unmounted through
+    # the job's five retries, a job lost between claim and start) stayed wedged: the grid spun its
+    # 40 polls and gave up, the file page sat on "Generating preview…", forever. The doors now ask
+    # `Enqueue.needs_job?`, the predicate `call` itself answers by.
+    # ----------------------------------------------------------------------------------
+
+    # A row stamped three days ago, at the file's CURRENT content and build — so nothing but its
+    # status and its age can make a door enqueue for it.
+    def stalled_thumbnail!(node_id, name)
+      travel_to(3.days.ago) { in_flight_thumbnail!(node_id, name) }
+    end
+
+    def in_flight_thumbnail!(node_id, name)
+      @user.maker_previews.create!(node_id:, version_id: token_for(node_id), kind: "thumbnail",
+                                   status: "processing", renderer_revision: current_revision(name))
+    end
+
+    def enqueued_preview_ids
+      enqueued_jobs.select { |j| j[:job] == Maker::GeneratePreviewJob }.map { |j| j[:args].first }
+    end
+
+    # MUTATION: drop the restamp from `Enqueue.call` and the second load enqueues a duplicate;
+    # delete the stall line from `needs_job?` and the first load enqueues nothing.
+    test "the Files page re-enqueues a thumbnail whose job was lost, and only once per window" do
+      node = file!("lost-grid", "bracket.stl")
+      row = stalled_thumbnail!(node, "bracket.stl")
+
+      get files_path
+      assert_response :success
+      assert_equal [ row.id ], enqueued_preview_ids, "the Files page left a wedged row wedged"
+
+      clear_enqueued_jobs
+      get files_path
+      assert_empty enqueued_preview_ids, "a second load enqueued the same heal again"
+    end
+
+    test "the file page re-enqueues a thumbnail whose job was lost" do
+      node = file!("lost-page", "bracket.stl")
+      row = stalled_thumbnail!(node, "bracket.stl")
+
+      get file_path(node)
+      assert_response :success
+      assert_equal [ row.id ], enqueued_preview_ids, "the file page left a wedged row wedged"
+    end
+
+    # THE WINDOW'S OTHER HALF: a row that only just went in flight is believed, or every spinner on
+    # screen would enqueue a duplicate job on every load.
+    test "a row that only just went processing is believed by both pages" do
+      node = file!("busy", "bracket.stl")
+      in_flight_thumbnail!(node, "bracket.stl")
+
+      get files_path
+      assert_response :success
+      get file_path(node)
+      assert_response :success
+      assert_empty enqueued_preview_ids, "a render already under way was enqueued again"
+    end
+
     # THE DEGRADE PATH SURVIVES THE ENQUEUE. `ThumbnailMap` swallows a FetchError so a backend
     # blip degrades a thumbnail rather than 503-ing a page of maker data that does not depend on
     # the file backend — and the backfill must not reintroduce the raise by writing rows for

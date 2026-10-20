@@ -20,10 +20,12 @@ module Maker
   # file: the size is already known, so refusing costs nothing), and the job member is read only if
   # its own uncompressed size is under the job cap. The listing is a pure function of the bytes, so
   # it is cached in Rails.cache by `(node_id, content token)` — a re-exported zip has a new token
-  # and reads again; an unchanged one is never opened twice. nil IS CACHED TOO: a zip of firmware
-  # is not a board and stays not-a-board until its content changes, and re-reading a 10 MB archive
-  # on every project-page view to re-learn that would be the cost this cache exists to avoid.
-  # (test: null_store, so every test really reads; production: Solid Cache, one query per fetch.)
+  # and reads again; an unchanged one is never opened twice. A nil FROM THE BYTES IS CACHED TOO: a
+  # zip of firmware is not a board and stays not-a-board until its content changes, and re-reading a
+  # 10 MB archive on every project-page view to re-learn that would be the cost this cache exists to
+  # avoid. A nil from the PORT never is — an outage is a fact about one request, not about the
+  # content (`for`). (test: null_store, so every test really reads; production: Solid Cache, one
+  # query per fetch.)
   #
   # A `.gbrjob` MEMBER PICKS THE STACK, DOWNWARD ONLY — `Maker::GerberSets.job_layer_names`'s rule
   # for a folder's job file, applied inside the archive: where a job parses and names members this
@@ -43,7 +45,8 @@ module Maker
   # EVERY FAILURE COLLAPSES TO nil — not a zip, a corrupt zip, an unreadable or unmounted store, a
   # zip with no Gerber member at all — because every caller answers all of them the same way (not
   # a board). `rescue Zip::Error` beside the port's own two, never a bare rescue: a NoMethodError
-  # here is a bug and must stay loud.
+  # here is a bug and must stay loud. The port's two are the ones that are NOT cached, and an
+  # unmounted store also raises the layout's banner (app/models/current.rb) — `for` says why.
   class GerberArchive
     # `members`: every pcb-role member path in the zip (String, name-ordered) — what the archive
     # HOLDS. `stacked`: the subset the VIEWER renders (never the .gbrjob), and the one field `app/`
@@ -63,6 +66,10 @@ module Maker
     # would stream that much off the user's store into a page request for nothing.
     READ_LIMIT = 16 * 1024 * 1024
     CACHE_TTL = 30.days
+    # "-v2" SINCE 2026-10-19. Until then a port failure was cached as nil under the old namespace
+    # (`for` says how), and production's Solid Cache still holds those nils for up to CACHE_TTL;
+    # moving the namespace is what stops them being served. Nothing reads the old one again.
+    CACHE_NAMESPACE = "gerber-archive-v2".freeze
 
     def self.archive?(name) = File.extname(name.to_s).downcase.delete(".") == EXT
 
@@ -80,19 +87,30 @@ module Maker
     # would pass the guard and hand the read to the port's own 256 MB cap, sixteen times this
     # class's. Nothing writes a NULL size today (the scan and the mirror both set it); if one ever
     # appears, "bounded before any read" still has to mean what it says.
+    #
+    # THE PORT'S TWO FAILURES ARE RESCUED OUTSIDE THE FETCH, AND THAT PLACEMENT IS THE WHOLE RULE.
+    # activesupport writes a nil block result unless `skip_nil`, so the rescue that sat inside the
+    # block cached "the store did not answer" and "the path is not there right now" as "not a board"
+    # for CACHE_TTL, under a key that does not move when the store comes back — both file pages lost
+    # the board, and `Maker::ProjectIntake` filed the zip into the source folder on its next sweep.
+    # Raised out of the block, either one leaves the fetch before anything is written, so the cache
+    # holds only what the BYTES said and an outage costs one bounded read per view until it ends:
+    # `Maker::Addons::Registry.manifests`' rule for its own fetch. A FetchError also raises the
+    # layout's banner; a NotFound does not, because a file that is gone is not an outage
+    # (app/models/current.rb). The banner speaks only for a view that really read: a cache hit
+    # reads nothing and says nothing.
     def self.for(user:, node:)
       return nil unless archive?(node.name)
       return nil if node.size.nil? || node.size > READ_LIMIT
 
       token = node.content_hash.presence || node.current_version_id.presence
-      Rails.cache.fetch([ "gerber-archive", node.node_id, token ], expires_in: CACHE_TTL) do
-        read(user:, node:)
+      Rails.cache.fetch([ CACHE_NAMESPACE, node.node_id, token ], expires_in: CACHE_TTL) do
+        listing_from(FileLayer.current.read(user, node_id: node.node_id))
       end
-    end
-
-    def self.read(user:, node:)
-      listing_from(FileLayer.current.read(user, node_id: node.node_id))
-    rescue FileLayer::NotFound, FileLayer::FetchError
+    rescue FileLayer::FetchError
+      Current.library_unreachable = true
+      nil
+    rescue FileLayer::NotFound
       nil
     end
 

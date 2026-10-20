@@ -7,19 +7,21 @@ module Maker
     # preview for the current content" means either no row at all or a row still pointing at
     # superseded content. Both are handled the same way — `Enqueue` creates or repoints.
     #
-    # THE `seen` KEY IS THE (node_id, version_id, renderer_revision) TRIPLE, AND IT MUST BE THE
-    # SAME TRIPLE THE READ PATH RESOLVES ON — which has ONE definition, `Enqueue.current_preview`
-    # / `.current_preview?`, used by `FilesController#current_thumbnail`, `#geometry` and
-    # `Maker::Previews::ThumbnailMap`. This sweep cannot call either: it holds a plucked TUPLE for
-    # a whole batch, not a row and not one node, so what it needs is a `where` it can compare a
-    # Set against rather than a per-node membership test — an N+1 is the thing the batching
-    # exists to avoid. Keeping the triple in step by hand is the price of that; if a FOURTH
-    # coordinate is ever added to `current_preview?`, it must be added here too. It was the
-    # PAIR (node_id, version_id) until 2026-08-07, and that omission is the whole reason this sweep
-    # could not repair a renderer bump: a row built by an older build sits at the current content,
-    # so it satisfied a pair-keyed check and was skipped — while the read path, which does compare
-    # revisions, treated the very same row as absent and re-enqueued it. Two answers to one
-    # question, and the sweep held the wrong one.
+    # THE SWEEP ASKS `Enqueue.needs_job?` — THE QUESTION EVERY READ DOOR ASKS — OF THE BATCH'S OWN
+    # ROWS, loaded in ONE query per batch (an N+1 is the thing the batching exists to avoid). Until
+    # 2026-10-19 it compared a plucked (node_id, version_id, renderer_revision) TRIPLE kept in step
+    # with `current_preview?` by hand, and the hand-kept copy had already failed twice. It was the
+    # PAIR (node_id, version_id) until 2026-08-07, so it could not repair a renderer bump: a row
+    # built by an older build sits at the current content, satisfied the pair and was skipped —
+    # while the read path, which compares revisions, treated the very same row as absent. And the
+    # triple was status-blind, so a row wedged at `processing` by a lost job matched it exactly and
+    # `rake previews:backfill_missing` reported 0 over every such spinner. Two answers to one
+    # question both times, and the sweep held the wrong one. Asking the predicate leaves nothing to
+    # keep in step: a fourth coordinate or a new status lands here the day it lands there.
+    #
+    # `retry_failed: false`, THE READ DOORS' POLICY: this sweep repairs what the read path would not
+    # serve, and a `failed` row IS served — as the failed badge — so retrying it here would answer a
+    # different question than the pages do.
     #
     # The consequence was not theoretical. `Stl`/`ThreeMf` moved to revision 2 (the Z-up camera
     # fix), which means every STL and 3MF thumbnail already in a library depicts a model lying on
@@ -83,11 +85,10 @@ module Maker
           # A missing node is an ABSENT KEY from stat_all, never a raise — so `info[id]` may be nil
           # for a row tombstoned since the batch was read, and that is a skip, not an error.
           #
-          # THE TRIPLE, matching the read path. One query per batch, unchanged: adding a column to
-          # a pluck costs nothing, where asking per node would be the N+1 this batching exists to
-          # avoid.
-          seen = user.maker_previews.where(kind: KIND, node_id: ids)
-                     .pluck(:node_id, :version_id, :renderer_revision).to_set
+          # THE BATCH'S OWN ROWS, for `needs_job?` below. One query per batch, as the plucked triple
+          # was: asking per node would be the N+1 this batching exists to avoid. One row per
+          # (user, node, kind), so `index_by` loses nothing.
+          rows = user.maker_previews.where(kind: KIND, node_id: ids).index_by(&:node_id)
 
           nodes.each do |node|
             token = info[node.node_id]&.content_token
@@ -106,7 +107,8 @@ module Maker
             next if renderer.nil?
 
             revision = Maker::Previews::Enqueue.revision_for(renderer, KIND)
-            next if seen.include?([ node.node_id, token, revision ])
+            next unless Maker::Previews::Enqueue.needs_job?(rows[node.node_id], version_id: token,
+                                                            revision:, retry_failed: false)
 
             count += 1
             next if dry_run

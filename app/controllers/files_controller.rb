@@ -439,9 +439,11 @@ class FilesController < ApplicationController
   # the retry storm `Unsupported` exists elsewhere in this file to avoid — and would make the
   # "failed" branch below DEAD CODE, since preview.status could never still read "failed" by the
   # time this method reads it. Reading the row first and only falling through to Enqueue when
-  # nothing exists YET for the current content_token keeps Enqueue as the one-time trigger for the
-  # first render (or a re-render after content genuinely changes, via Enqueue's own staleness
-  # check) while leaving a terminal ready/failed/unsupported status alone to be reported as is.
+  # nothing exists YET for the current content_token — or when the row it found is one whose job
+  # was LOST, which `Enqueue.needs_job?` answers (with `retry_failed: false`, never for a failed
+  # row) — keeps Enqueue as the one-time trigger for the first render (or a re-render after content
+  # genuinely changes, via Enqueue's own staleness check) while leaving a terminal
+  # ready/failed/unsupported status alone to be reported as is.
   def geometry
     node = current_user.nodes.present.find_by!(node_id: params[:id])
     token = FileLayer.current.stat(current_user, node_id: node.node_id)&.content_token
@@ -461,9 +463,13 @@ class FilesController < ApplicationController
     # the `find_by` — with nothing coupling them, so mis-spelling either half made this lookup
     # silently never match (a re-enqueue on every poll, forever) or match on the wrong kind's
     # revision. `#current_thumbnail` carried the identical three lines 330 lines below, differing
-    # only in that string. Note the finder answers WHICH ROW IS CURRENT and nothing more: what
-    # this action does with the answer — never reading `status` before deciding to enqueue — is
-    # deliberately the OPPOSITE of `#current_thumbnail`'s choice, and §14h forbids unifying that.
+    # only in that string. Note the finder answers WHICH ROW IS CURRENT and nothing more. Both doors
+    # now decide whether to enqueue the same way — `Enqueue.needs_job?(…, retry_failed: false)`,
+    # which reads `status` only to spot a lost job and to leave a failed one alone — and what
+    # differs is what each SAYS once it has: this action answers "pending" whenever it enqueued,
+    # without consulting the row, while `#current_thumbnail` returns the row `call` hands back,
+    # which stays `ready`, picture and all, through a renderer-only rebuild. That split is
+    # deliberate, and §14h forbids unifying it.
     preview = Maker::Previews::Enqueue.current_preview(user: current_user, node_id: node.node_id,
                                                        name: node.name, version_id: token,
                                                        kind: "geometry")
@@ -476,7 +482,15 @@ class FilesController < ApplicationController
     # merely old, and this endpoint's client polls, so "pending" costs nothing and resolves itself.
     # Reading `preview.status` here instead would hand back the stale blob URL — exactly the bug
     # the revision check exists to stop.
-    if preview.nil?
+    #
+    # A CURRENT ROW WHOSE JOB WAS LOST IS THE OTHER TRIGGER, and `Enqueue.needs_job?` is what reads
+    # its status — only to tell "in flight past STALLED_AFTER" from everything else, never to serve
+    # anything (`retry_failed: false` keeps the `failed` branch below reachable). This poll used to
+    # answer "pending" over such a row forever; the heal restamps it, so a client polling every 2 s
+    # enqueues at most once per window.
+    revision = preview && Maker::Previews::Enqueue.revision_for_name(node.name, preview.kind)
+    if preview.nil? || Maker::Previews::Enqueue.needs_job?(preview, version_id: token, revision:,
+                                                           retry_failed: false)
       Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
                                     name: node.name, version_id: token, kind: "geometry")
       return render json: { status: "pending" }
@@ -621,7 +635,8 @@ class FilesController < ApplicationController
   # about one node, so its cost is constant in the size of the folder (page_query_budget_test.rb).
   #
   # `current_thumbnail` ASKS FOR THE EXISTING ROW FIRST, so a panel opened again and again never
-  # re-enqueues — files-preview.md's Enqueue asymmetry (`call` resets `failed`).
+  # re-enqueues a failed render — files-preview.md's Enqueue asymmetry (`call` resets `failed`) —
+  # and heals a lost one at most once per `Enqueue::STALLED_AFTER`.
   #
   # A MISSING NODE ANSWERS A FRAME, NOT THE CONTROLLER'S REDIRECT: rescue_from sends HTML to
   # files_path, which inside a frame would put the whole Library into the panel. That holds for the
@@ -1225,13 +1240,19 @@ class FilesController < ApplicationController
   # Laser Settings panel is drawn from that metadata, which is how a deploy that added layer
   # colours left them invisible on 172 of 174 files.
   #
+  # A CURRENT ROW IS ASKED `Enqueue.needs_job?` BEFORE IT IS RETURNED: one whose job was lost (in
+  # flight past STALLED_AFTER) is healed here, and a `failed` one never is (`retry_failed: false`) —
+  # the file page and the inspector are opened again and again (files-preview.md).
+  #
   # Enqueue returns the repointed row (status "pending", so the view shows "Generating preview…"
   # rather than an older artifact labelled as current) or nil when nothing can render this name.
   def current_thumbnail(node, token)
     row = Maker::Previews::Enqueue.current_preview(user: current_user, node_id: node.node_id,
                                                    name: node.name, version_id: token,
                                                    kind: "thumbnail")
-    return row if row
+    revision = row && Maker::Previews::Enqueue.revision_for_name(node.name, row.kind)
+    return row if row && !Maker::Previews::Enqueue.needs_job?(row, version_id: token, revision:,
+                                                              retry_failed: false)
 
     Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
                                   name: node.name, version_id: token, kind: "thumbnail")

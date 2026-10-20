@@ -164,6 +164,31 @@ module Web
                    stale.reload.version_id, "the row must be repointed at the current content"
     end
 
+    # A ROW WHOSE JOB WAS LOST IS RE-ENQUEUED BY THE POLL — ONCE PER WINDOW, AND NEVER BEFORE IT.
+    # This door enqueued only when it found NO current row, so a `processing` row from a lost job
+    # answered "pending" on every poll for good and the Measure view spun with nothing coming —
+    # while measure-view.md said a FetchError's `processing` row "self-heals". It asks
+    # `Enqueue.needs_job?` now, with `retry_failed: false`, so a `failed` row stays the terminal
+    # answer the test above reads. The window is half the assertion: this endpoint is POLLED, so a
+    # row that only just went in flight must be believed, or every tick would enqueue a duplicate.
+    # MUTATION: delete the stall line from `needs_job?` and the heal never comes.
+    test "the poll believes a fresh processing row and heals one whose job was lost" do
+      row = preview_for(@node_id)
+      row.update!(status: "processing")
+      clear_enqueued_jobs
+      assert_no_enqueued_jobs(only: Maker::GeneratePreviewJob) { get geometry_file_path(@node_id) }
+      assert_equal "pending", response.parsed_body["status"]
+
+      row.update_columns(updated_at: 3.days.ago)
+      get geometry_file_path(@node_id)
+      assert_equal "pending", response.parsed_body["status"]
+      assert_equal [ row.id ], enqueued_jobs.select { |j| j[:job] == Maker::GeneratePreviewJob }.map { |j| j[:args].first },
+                   "the poll left a wedged geometry row wedged"
+
+      clear_enqueued_jobs
+      assert_no_enqueued_jobs(only: Maker::GeneratePreviewJob) { get geometry_file_path(@node_id) }
+    end
+
     # THE PANEL LABELS A LAYER BY COLOUR, BUT ONLY WHEN LIGHTBURN NAMED IT AFTER ITS INDEX.
     # "C01" tells a reader nothing the swatch beside it does not already show; a name its owner
     # chose tells them everything, and substituting a colour over it would destroy information.

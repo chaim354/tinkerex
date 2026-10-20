@@ -245,6 +245,40 @@ module Maker
       end
 
       # ------------------------------------------------------------------------------------
+      # GAP 3: a row whose job was LOST. The backfill skipped every node whose row was current, so
+      # a row wedged at `pending`/`processing` on current content never reached the
+      # `Enqueue::STALLED_AFTER` heal that lives behind it. It asks `Enqueue.needs_job?` now, with
+      # the read doors' policy: a stall is healed, a fresh render is believed, a failure stays put.
+      # maker_page_thumbnails_test.rb drives the same thing through the Files page.
+      # ------------------------------------------------------------------------------------
+
+      test "re-enqueues a current row whose job was lost, and restamps it" do
+        serve info("n-lost", name: "part.stl", token: "tok")
+        row = travel_to(3.days.ago) do
+          @user.maker_previews.create!(node_id: "n-lost", version_id: "tok", kind: "thumbnail",
+                                       status: "processing", renderer_revision: revision_of("part.stl"))
+        end
+
+        assert_enqueued_with(job: Maker::GeneratePreviewJob) { ThumbnailMap.for(@user, [ "n-lost" ]) }
+        assert_operator row.reload.updated_at, :>, 1.minute.ago, "the heal did not restamp the row"
+        assert_no_enqueued_jobs { ThumbnailMap.for(@user, [ "n-lost" ]) }
+      end
+
+      # A FAILED RENDER IS NOT RETRIED FROM A PAGE RENDER — every Files, Models and Projects view
+      # would otherwise queue a doomed render per failed file per view. MUTATION: give the backfill
+      # `retry_failed: true` and this goes red.
+      test "leaves a current failed row and a fresh in-flight row alone" do
+        serve info("n-fail", name: "part.stl", token: "tok"), info("n-busy", name: "part.stl", token: "tok")
+        @user.maker_previews.create!(node_id: "n-fail", version_id: "tok", kind: "thumbnail",
+                                     status: "failed", renderer_revision: revision_of("part.stl"))
+        @user.maker_previews.create!(node_id: "n-busy", version_id: "tok", kind: "thumbnail",
+                                     status: "processing", renderer_revision: revision_of("part.stl"))
+
+        assert_no_enqueued_jobs { ThumbnailMap.for(@user, [ "n-fail", "n-busy" ]) }
+        assert_equal "failed", @user.maker_previews.find_by!(node_id: "n-fail").status
+      end
+
+      # ------------------------------------------------------------------------------------
       # The constraints the fix must not break.
       # ------------------------------------------------------------------------------------
 

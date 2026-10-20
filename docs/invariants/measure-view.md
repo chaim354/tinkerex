@@ -317,18 +317,29 @@
   came back GREEN under mutation, while `budget -= 1` runs unconditionally, so a wall of `.gcode`
   ahead of the models would spend the whole budget on files that can never have a thumbnail and the
   backlog would never drain.
-- **`pending` AND `processing` ARE ASSERTIONS THAT A JOB EXISTS, AND `Enqueue::STALLED_AFTER` IS THE
-  ONLY THING THAT EVER VERIFIES THEM.** `failed` re-enqueues, `ready` is done, `unsupported` is
-  terminal by design — those two were the only statuses with **no way back**, so a lost job wedged
-  the row FOREVER: `Enqueue`'s early return fires for every caller, so the 15-minute scan,
-  `ThumbnailMap`'s backfill, `#current_thumbnail` and the addon door all no-op'd on it, and
-  `MissingBackfill` looks only for content with NO row. Three rows sat wedged on the live share
-  library, the oldest over a week, spinning. **The window is what keeps the escape from becoming a
-  stampede** (the backfill calls `Enqueue` per row on every Files render), and **the
-  explicit `updated_at` restamp is what keeps the heal from repeating** — healing changes no other
-  attribute and `save!` on an unchanged record is a NO-OP that leaves the timestamp alone, so
-  without it every scan and page load adds another duplicate job. All three halves are
-  mutation-checked; dropping `|| stalled` must produce **two** failures, not one.
+- **`pending` AND `processing` (`Maker::Preview::IN_FLIGHT`) ARE ASSERTIONS THAT A JOB EXISTS, AND
+  `Enqueue::STALLED_AFTER` IS THE ONLY THING THAT EVER VERIFIES THEM.** `failed` re-enqueues,
+  `ready` is done, `unsupported` is terminal by design — those two were the only statuses with **no
+  way back**, so a lost job wedged the row FOREVER. Three rows sat wedged on the live share library,
+  the oldest over a week, spinning. **THE HEAL IS `Enqueue.needs_job?`, AND EVERY DOOR THAT HOLDS A
+  ROW MUST ASK IT.** This bullet said the scan, `ThumbnailMap`'s backfill, `#current_thumbnail` and
+  the addon door reached the heal through `call`; until 2026-10-19 none did. Each door asked "is
+  this row current?" first (`current_preview`, status-blind on purpose) and never called `call` for
+  a row that was, `MissingBackfill` compared a status-blind triple, and the scan enqueues nothing
+  for an unchanged file — so every stall test passed by calling `call` directly while nothing a user
+  opens reached it. Now `ThumbnailMap`'s backfill, `#current_thumbnail` (file page and inspector),
+  `#geometry`'s poll and `MissingBackfill` ask the predicate of the row they hold, and
+  `Public::FilesController#enqueue_geometry` asks it through `call` — every one with `retry_failed:
+  false`, the read doors' policy, which `needs_job?` REQUIRES rather than defaults (a door that
+  forgets to choose raises). The scan still does not ask, and does not need to. **The window is what
+  keeps the escape from becoming a stampede** (the backfill asks per row on every Files render, and
+  `#geometry` is polled every 2 s), and **the explicit `updated_at` restamp is what keeps the heal
+  from repeating** — healing changes no other attribute and `save!` on an unchanged record is a
+  NO-OP that leaves the timestamp alone, so without it every page load adds another duplicate job.
+  All three halves are mutation-checked AT THE DOORS (`maker_page_thumbnails_test.rb`,
+  `lbrn_geometry_test.rb`, `public_file_view_test.rb`, `missing_backfill_test.rb`), not only through
+  `call`: deleting the stall arm of `needs_job?` reddens 10 tests in 7 files, the v1 API's own
+  stall test among them.
 - **A JOB WHOSE ARGUMENT IS A PRIMARY-DB ROW ID MUST SET `enqueue_after_transaction_commit`, BECAUSE
   THE JOB LIVES IN A DIFFERENT DATABASE FROM THE ROW.** Rails 8.1 defaults it to **false**, so
   `perform_later` commits to the QUEUE database on its own connection **immediately** while the row
@@ -384,7 +395,10 @@
   at upload time, wrong for a poll. Unconditional, it makes the action's own `"failed"` branch
   **dead code** and re-enqueues a doomed render on every poll of a broken file. Accepted: a `failed`
   geometry preview is terminal until the content changes, which is honest because a transient
-  byte-store failure is a `FetchError` that leaves the row `processing` and self-heals.
+  byte-store failure is a `FetchError` that leaves the row `processing` and self-heals — through
+  `Enqueue.needs_job?`, which the poll asks of the row it read once that row is past
+  `STALLED_AFTER` (the `IN_FLIGHT` bullet above). Until 2026-10-19 the poll enqueued only on a
+  MISSING row, so nothing healed it and this sentence was false.
 - **`#geometry` RESCUES `RecordNotFound` LOCALLY**, because the class-level `rescue_from` branches
   on format and answers a plain `get` — html, the default with no Accept header — with a **302 to
   `files_path`**. Right for `#show`/`#blob`, which render a page; wrong for a JSON poller, which
