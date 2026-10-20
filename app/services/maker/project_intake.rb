@@ -18,11 +18,12 @@ module Maker
   # §10 BOUNDARY: maker-layer policy. It reaches bytes only through those two services, and nothing
   # here touches Sync::*, the changelog, conflicts, locks or the mounts.
   class ProjectIntake
-    # WHAT HAPPENED TO ONE INBOX FILE — one row per file #file_all reached. `skip` is why the file
-    # stayed at the project root (a Symbol), nil when it was filed. `folder` is the destination
-    # #place decided on: where the file now is, where a DRY run says it WOULD go, or the folder a
-    # failed move tried (for a `:conflict`, the occupied one the flash names); nil when #place
-    # never decided one — a refusal, or a file a FetchError abort left unreached.
+    # WHAT HAPPENED TO ONE INBOX FILE — one row for every file #file_all was handed, the ones a
+    # FetchError abort never reached included. `skip` is why the file stayed at the project root (a
+    # Symbol), nil when it was filed. `folder` is the destination #place decided on: where the file
+    # now is, where a DRY run says it WOULD go, or the folder a failed move tried (for a
+    # `:conflict`, the occupied one the flash names). It is nil for a refusal, and on every row the
+    # abort writes — the file that raised included, whatever #place had picked for it.
     #
     # THE FOLDER RIDES ON THE ROW, NEVER IN A MAP BESIDE IT (F-S06-1). A collision's folder once
     # lived in a name-keyed hash next to the skips, and ProjectFolderIntake re-derived it from the
@@ -616,9 +617,11 @@ module Maker
     #
     # ORDER FOLLOWS THE WALK, because `where(node_id: [...])` returns rows in whatever order the
     # adapter likes. The inbox order is the order of `filings`, so it decides which files a
-    # FetchError abort leaves `:unavailable` (every file after the one that raised; see #file_all)
-    # — and nothing else. It does NOT decide which files a capped run files: both caps are
-    # all-or-nothing (.for_user withholds the whole run's filing, .for_node the whole project's).
+    # FetchError abort leaves `:unavailable` (the file that raised and every file after it; see
+    # #file_all), and the order `plan` and `skips` list files in — which is which collision the
+    # scan door's flash names when several collide in one sweep (it takes the first). It does NOT
+    # decide which files a capped run files: both caps are all-or-nothing (.for_user withholds the
+    # whole run's filing, .for_node the whole project's).
     def full_records(light_nodes)
       return [] if light_nodes.empty?
 

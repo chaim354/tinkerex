@@ -400,11 +400,12 @@
   bundle here or in `chaim354/tinkerex-addons` reaches the divergence. What keeps the user-facing
   sentence true anyway is the conflict's own row: the flash names the folder `#place` **actually
   tried**, recorded as it tried it, never re-derived from a name.
-  **`ProjectIntake::Result` HOLDS ONE `Filing` PER INBOX FILE — `name`, `folder`, `skip` — AND
-  NOTHING BESIDE THEM (F-S06-1).** `plan`, `skips`, `moved` and `skipped` are readers over those
-  rows, so no count can disagree with its list; `#place` answers a `Filing` on every path, so there
-  is no String-or-Symbol return to dispatch on; and a `:conflict` row carries the folder it tried,
-  so there is no name-keyed map beside the skips for that folder to go missing from.
+  **`ProjectIntake::Result` HOLDS `attached`, `status` AND ONE `Filing` PER INBOX FILE — `name`,
+  `folder`, `skip` — AND NO COUNT OR LIST BESIDE THEM (F-S06-1).** `plan`, `skips`, `moved` and
+  `skipped` are readers over those rows, so no count can disagree with its list; `#place` answers
+  a `Filing` on every path, so there is no String-or-Symbol return to dispatch on; and a
+  `:conflict` row carries the folder it tried, so there is no name-keyed map beside the skips for
+  that folder to go missing from.
   `ProjectFolderIntake#left_unfiled_by_conflict?` and `#conflict_folder` both read
   `Result#conflict_folder(name)` **WITH NO FALLBACK**: re-deriving from the name is the wrong flash
   521bfb30 fixed, and the fallback that outlived the fix hid a conflict recorded without its folder

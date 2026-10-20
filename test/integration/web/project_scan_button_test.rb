@@ -257,12 +257,12 @@ module Web
 
     # THE FOLDER A COLLISION NAMES IS THE ONE THE SWEEP TRIED, CARRIED ON THE CONFLICT'S OWN ROW
     # (F-S06-1). A board zip is the one file whose NAME and DESTINATION disagree: its extension
-    # files it into archives/, while #place reads the bytes and tries pcb/. 521bfb30 shipped this
-    # flash naming archives/, a folder the file was never near; its fix recorded the tried folder in
-    # a name-keyed map BESIDE the skips and kept a fallback that re-derived it from the name for a
-    # Result built without the map — which every stub in this file was. Built that way, this case
-    # read "already in archives/" again. A Filing has no second place for the folder to be missing
-    # from, and no fallback is left to guess it.
+    # files it into archives/, while #place reads the bytes and tries pcb/. 521bfb30 found that
+    # sentence wrong while adding the board-zip rule, and fixed it with a name-keyed map BESIDE the
+    # skips plus a fallback that re-derived the folder from the name for a Result built without the
+    # map — which every stub in this file was. Built that way on the old shape, this case read
+    # "already in archives/", a folder the file was never near (measured, F-S06-1). A Filing has no
+    # second place for the folder to be missing from, and no fallback is left to guess it.
     test "a collision names the folder the sweep tried, never one re-derived from the file's name" do
       FileLayer.current = FileLayer::ChunkRemote.new
       assert_equal "archives", Maker::ProjectFolders.folder_for(@user, "Gerber_lamp.zip"),

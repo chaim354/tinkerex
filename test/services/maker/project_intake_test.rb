@@ -804,6 +804,11 @@ module Maker
       assert_equal 1, result.moved
       assert_equal 1, result.skipped
       assert_equal [ [ bad.name, :bad_name ] ], result.skips
+      # A SKIP THAT IS NOT A COLLISION NAMES NO COLLISION FOLDER. This row carries the folder #place
+      # tried (`design`), as every row written after a destination was decided does, so only the
+      # `:conflict` filter in Result#conflict_folder keeps a bad name from reading in a flash as
+      # "already in design/".
+      assert_nil result.conflict_folder(bad.name)
       assert_equal "cnc", parent_name(ok), "a bad name must not abort the rest of the sweep"
       assert_match @project.slug, log.string
       assert_match "not a valid file name", log.string

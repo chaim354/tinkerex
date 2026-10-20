@@ -202,9 +202,10 @@ module ProjectFolderIntake
   # NO FALLBACK, AND THAT IS THE POINT (F-S06-1). Re-deriving the folder from the file's NAME is
   # right for every file whose destination comes from its name and wrong for the one whose
   # destination comes from its CONTENT: a board zip collides in `pcb/` while its name says
-  # `archives/` (stage 4, S4-2; 521bfb30 shipped that sentence). A fallback also hid a conflict
-  # recorded without its folder behind a plausible answer, so a broken record reddened one test
-  # instead of every conflict sentence.
+  # `archives/`. 521bfb30 found that sentence wrong while adding the board-zip rule (stage 4, S4-2)
+  # and fixed it with a name-keyed map beside the skips, keeping this fallback for a Result built
+  # without the map. The fallback hid a conflict recorded without its folder behind a plausible
+  # answer, so a broken record reddened one test instead of every conflict sentence.
   def conflict_folder(intake_result, filename)
     intake_result.conflict_folder(filename)
   end
