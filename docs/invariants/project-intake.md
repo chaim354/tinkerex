@@ -131,14 +131,23 @@
   turns it on. **`discovered_at` STAYS NIL ON AN ADOPTED PROJECT ON PURPOSE**: the maker made this
   one, so it is never "new to you" and never wears the badge.
 
-- **DISCOVERY RUNS STRICTLY BEFORE THE FILING SWEEP, AND THE ORDER CHANGES THE ANSWER, NOT THE
-  TIMING.** A newly-discovered project's loose files sitting at its folder's root have no shelf
-  nearer than `Projects` itself (the seeded `*` shelf), so if the model catalog looked first, the
-  WHOLE FOLDER becomes one model — and nothing reaps an auto model, so the wrong row is permanent.
-  **Verified by mutation** in `test/jobs/library/scan_job_test.rb`'s `DiscoveryOrderTest`: swapping
-  the order leaves a `Maker::Model` titled after the project folder with `auto_node_id` and
-  `folder_node_id` both equal to the folder's own `node_id` — a real folder swallowed whole, not
-  merely a file left unfiled. `Library::ScanJob#perform` sequences `discover_projects` →
+- **DISCOVERY RUNS STRICTLY BEFORE THE FILING SWEEP, AND SINCE F-S07-1 (2026-10-19) THE ORDER
+  CHANGES THE TIMING, NOT THE ANSWER**: a discovered project's loose files are filed in the SAME
+  pass rather than the next. It used to change the answer — those files have no shelf nearer than
+  `Projects` itself (the seeded `*`), so a model catalog that reached the folder before discovery
+  made the WHOLE FOLDER one model, permanently — and **no ordering could close that**: discovery
+  is CAPPED (`MAX_PROJECTS`) even inside `Library::ScanJob`'s own sequence, and on `chunk_remote`
+  discovery and the catalog are independent schedules. `Maker::ModelIntake.claimed_folders` closes
+  it instead, by asking discovery for **every folder it owns BY POSITION** —
+  `Maker::ProjectDiscovery.positional_claims`, public and UNCAPPED, with `adoptable` defined as it
+  minus what is already claimed — so a folder discovery has not reached is claimed all the same.
+  **Any rule that decides what discovery will EVER adopt belongs in `positional_claims`**, never
+  only in `adoptable` and never as a path test in the catalog, so the catalog follows it. Pinned in
+  `test/jobs/library/scan_job_test.rb`'s `DiscoveryOrderTest`: every ordering mutation of `#perform`
+  goes RED (a file left unfiled, or catalogued a scan late), and a capped run
+  (`PROJECT_DISCOVERY_MAX=1`) must leave no auto model over the folder it has not reached — the
+  assertion that used to stand on the ordering, moved there because no ordering can fail it any
+  more. `Library::ScanJob#perform` sequences `discover_projects` →
   `intake_project_folders` → `intake_models` inline, all via `perform_now`, inside one call. There
   is no scan to sequence inside on `chunk_remote`, so `Maker::ProjectDiscoveryJob#chain_intake`
   enqueues the intake itself once a run has created something — **gated off scannable backends**,
@@ -146,11 +155,13 @@
   below already records (a move racing the Scanner's own observations).
 
 - **THE SCAN BUTTON IS A SECOND SYNCHRONOUS CALLER OF DISCOVERY, ON `chunk_remote` ONLY, AND IT SITS
-  BETWEEN THE PULL AND THE INTAKE** (`Projects::ScansController#pull_and_file`, stage 4, S4-6). Same
-  ordering rule as the bullet above and for the same reason — it changes the ANSWER, not the timing:
-  the pull is what makes a folder another device pushed visible at all, and a newly discovered
-  project's loose files have no shelf nearer than `Projects` itself, so filing before adopting hands
-  the whole folder to the model catalog, permanently. **It calls the JOB with `perform_now`, not
+  BETWEEN THE PULL AND THE INTAKE** (`Projects::ScansController#pull_and_file`, stage 4, S4-6). The
+  pull comes first because a folder another device pushed is not in the mirror until it lands, so
+  discovery cannot adopt it before; discovery then precedes the intake in the order
+  `Library::ScanJob` uses. That order no longer protects the model catalog — it used to read
+  "filing before adopting hands the whole folder to the model catalog, permanently", and since
+  F-S07-1 a folder discovery has not adopted yet is claimed by position (the bullet above), so it is
+  never one model whichever runs first. **It calls the JOB with `perform_now`, not
   `Maker::ProjectDiscovery` directly** — the idiom `Library::ScanJob` already uses, and for the same
   two reasons: the job is the only place a run is LOGGED, and `#chain_intake` is what sweeps a
   project this call has just created (`.for_project` below it sweeps THAT project only). **`perform_now`

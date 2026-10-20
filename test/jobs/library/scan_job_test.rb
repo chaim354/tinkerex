@@ -376,35 +376,34 @@ module Library
     end
 
     # THE MODEL CATALOG RUNS TOO, AND AFTER THE PROJECT INTAKE — proved by EFFECT, like the test
-    # above, because what the swap changes is the ANSWER and not merely the timing.
+    # above.
     #
     # `bracket.stl` exists only on disk, so a model keyed on it at all is proof the reconcile ran
-    # first. WHICH model it is proves the rest: a file loose at `Projects/desk-lamp/` has no shelf
-    # nearer than the library root (one of Maker::Shelf::SEEDS), so the nearest-shelf rule makes
-    # the whole `Projects` FOLDER its model, titled "Projects". The project intake then files it
-    # into `Projects/desk-lamp/models/`, under the seeded `Projects/*/models` shelf, where it is
-    # its own model titled "bracket". Run the catalog first and the sweep mints "Projects" in the
-    # same job that is about to make that false — and nothing later removes it, because an auto
-    # model is only ever created, never reaped.
+    # first. WHICH model it is proves the rest: loose at `Projects/desk-lamp/`, the seeded `*` shelf
+    # makes the project's own folder its key; the intake then files it into
+    # `Projects/desk-lamp/models/`, under the seeded `Projects/*/models` shelf, where it is its own
+    # model titled "bracket".
     #
     # MUTATION-CHECKED: moving intake_models(user) above intake_project_folders(user) in
-    # Library::ScanJob#perform turns this RED with ["desk-lamp"].
+    # Library::ScanJob#perform turns this RED with [] — re-measured 2026-10-19 (F-S07-1).
     #
-    # THAT VALUE USED TO BE ["Projects"], AND THE COMMENT WENT ON SAYING SO AFTER IT STOPPED BEING
-    # TRUE — re-measured 2026-08-26. `Maker::Shelf::SEEDS` gained `"*"` (every top-level folder is
-    # a shelf), which moves the swallowed-model boundary one level DOWN: `Projects` is now itself a
-    # shelf, so the folder that gets swallowed is the project's own `desk-lamp`, not `Projects`.
-    # The hazard is unchanged and the test still pins it; only the name it comes back under moved.
+    # THAT VALUE HAS MOVED THREE TIMES, AND THIS COMMENT TRAILED EVERY MOVE. ["Projects"] until
+    # `Maker::Shelf::SEEDS` gained `"*"` (re-measured 2026-08-26); then ["desk-lamp"], the project's
+    # whole folder as one model nothing reaps, until the catalog began dropping a folder a project
+    # claims (2026-09-02). Since then the key it would mint is CLAIMED, so the swap catalogues
+    # nothing at the old path and the model arrives a scan late: under `Projects/` this ordering
+    # changes the TIMING, not the answer — and a folder discovery has not adopted yet is claimed by
+    # position too (F-S07-1). It still changes the ANSWER where a project's root is itself a shelf;
+    # Library::ScanJob#intake_models has that case, which this test does not reach.
     test "cataloguing runs after the project intake, so a filed file is its own model" do
       File.binwrite(File.join(@root, @folder.storage_path, "bracket.stl"), "solid")
 
       Library::ScanJob.perform_now(user_id: @user.id, root: @root)
 
       assert_equal [ "bracket" ], @user.maker_models.pluck(:title),
-                   "a model titled after the PROJECT FOLDER (desk-lamp) rather than the file " \
-                   "means the catalog ran BEFORE the intake moved it: the file was still loose " \
-                   "at the project root, whose nearest shelf is `Projects` itself, so the whole " \
-                   "folder became one model"
+                   "no model, or one not titled after the file, means the catalog ran BEFORE the " \
+                   "intake moved bracket.stl: still loose at the project root, it keyed to the " \
+                   "project's claimed folder, so it was left for a later scan"
       model = @user.maker_models.sole
       node = @user.nodes.find_by!(node_id: model.auto_node_id)
       assert_equal "models", @user.nodes.find_by(node_id: node.parent_node_id).name
@@ -588,9 +587,12 @@ module Library
     end
   end
 
-  # DISCOVERY RUNS AFTER THE RECONCILE AND BEFORE THE FILING SWEEP, and both orderings change the
-  # ANSWER rather than the timing. This drives the whole feature end to end through the only door a
-  # share deployment has: someone makes Projects/Desk Lamp/ in Finder and drops a file in it.
+  # DISCOVERY RUNS AFTER THE RECONCILE AND BEFORE THE FILING SWEEP, so ONE perform adopts a folder,
+  # files its loose files and catalogues what it filed. This drives the whole feature end to end
+  # through the only door a share deployment has: someone makes Projects/Desk Lamp/ in Finder and
+  # drops a file in it. SINCE F-S07-1 (2026-10-19) NO ORDERING CAN MAKE A FOLDER ONE MODEL: the
+  # catalog counts a folder discovery owns by position as claimed, so the order decides what one
+  # pass achieves, and the last test pins the not-swallowed half against discovery's cap instead.
   class DiscoveryOrderTest < ActiveSupport::TestCase
     setup do
       @root = Dir.mktmpdir
@@ -626,8 +628,8 @@ module Library
                    "this goes red earlier, at `project.file_attachments.sole` above: with no " \
                    "project row yet when the intake runs, it has nothing to sweep, so panel.svg " \
                    "is never attached or filed at all. (`panel.svg` is role \"vector\", never " \
-                   "MODEL-role, so it cannot show the whole-folder-becomes-one-model hazard the " \
-                   "ordering comment also names — see the model-role test below for that one.)"
+                   "MODEL-role, so it says nothing about the model catalog — the two model-role " \
+                   "tests below do.)"
     end
 
     # THE CATEGORY FOLDER GOES UNDER THE FOLDER THE USER MADE, not a second `Projects/desk-lamp/`
@@ -640,46 +642,75 @@ module Library
              "no second Projects/<slug> tree may be minted"
     end
 
-    # THE HAZARD #discover_projects' OWN COMMENT NAMES, DRIVEN FOR REAL. `panel.svg` above cannot
-    # exercise it: role "vector" is never MODEL-role, so Maker::ModelIntake.classify never looks at
-    # it regardless of which order the two calls run in — the two tests above only pin the
-    # PROJECT-INTAKE half of the ordering, not the model-catalog half. This adds a model-role file
-    # (.stl) so the nearest-shelf rule in #classify is actually exercised: `Projects/` is a shelf
-    # (the seeded `*`), `Desk Lamp` is not, so a file loose there when the catalog looks makes the
-    # WHOLE `Desk Lamp` FOLDER the nearest-shelf model, titled after the folder — permanently,
-    # because an auto model is only ever created, never reaped.
+    # A DISCOVERED PROJECT'S MESH IS FILED AND CATALOGUED IN THE SAME PERFORM. `panel.svg` above is
+    # role "vector", so Maker::ModelIntake.classify never looks at it; `bracket.stl` it does.
+    # `Projects/` is a shelf (the seeded `*`) and `Desk Lamp` is not, so while bracket.stl is loose
+    # at the folder's root its key is the folder; one intake later it sits under the seeded
+    # `Projects/*/models` shelf and is its own model, titled "bracket".
     #
-    # THE HAZARD CHECK RUNS BEFORE THE "FILED CORRECTLY" ASSERTIONS BELOW IT, DELIBERATELY. A
-    # failed assertion halts the rest of the test method, and EITHER of #perform's two mutations —
-    # discover_projects swapped with intake_project_folders, or discover_projects moved ahead of
-    # observer.call — ALSO leaves bracket.stl unfiled, the identical symptom the test above already
-    # pins. Asserting "filed correctly" first would hide this hazard's own evidence behind that
-    # earlier, already-covered failure. Checked here first and by itself, so a red run reports what
-    # actually happened: verified against BOTH mutations (driven directly, not assumed) to name a
-    # model titled "Desk Lamp" whose auto_node_id AND folder_node_id both equal the Desk Lamp
-    # folder's own node_id — a real folder swallowed, not merely an absent file.
-    test "the model catalog never swallows the discovered folder as one model" do
+    # THE ORDER NOW DECIDES WHEN, NOT WHETHER (F-S07-1, 2026-10-19). This test used to assert first
+    # that the WHOLE `Desk Lamp` folder never became one model — what a catalog reaching an
+    # unadopted folder left behind, permanently — and its comment said that assertion was "verified
+    # against BOTH" #perform mutations below. That stopped being true when the catalog began
+    # dropping a folder a project claims (2026-09-02): measured on the code just before this change,
+    # the discover/intake swap left it green and only the reconcile mutation reached it. Since the
+    # catalog also counts a folder discovery owns BY POSITION, NO ordering reaches it — measured,
+    # all four below left it green — and a guard that cannot fail is §15's vacuous shape. So it
+    # moved to the next test, where discovery's cap still puts an unadopted folder in front of the
+    # catalog. These two assertions are what every ordering mutation of #perform now fails, each
+    # measured:
+    #   discover_projects swapped with intake_project_folders -> the path (nothing filed);
+    #   discover_projects moved above observer.call          -> the path (nothing adopted);
+    #   intake_models moved above discovery, or above the intake -> the titles, with [] — nothing
+    #     catalogued at the old path, because its key is a claimed folder; the next scan would.
+    test "one perform files the discovered project's mesh AND catalogues it as its own model" do
       File.binwrite(File.join(@root, "Projects", "Desk Lamp", "bracket.stl"), "solid")
 
       Library::ScanJob.perform_now(user_id: @user.id, root: @root)
 
-      folder = @user.nodes.present.find_by!(name: "Desk Lamp", kind: "dir")
-      swallowed = @user.maker_models.find_by(auto_node_id: folder.node_id) ||
-                  @user.maker_models.find_by(folder_node_id: folder.node_id)
-      # NAMES THE PRIMARY CAUSE THIS CLASS EXISTS TO CATCH, NOT THE ONLY ONE THAT CAN REACH HERE.
-      # Any ordering that leaves bracket.stl loose at the Desk Lamp folder root by the time
-      # #intake_models runs reaches this same wrong state — driven and confirmed for both #perform
-      # mutations, not merely this one.
-      assert_nil swallowed,
-                 "the whole Desk Lamp FOLDER became a model — title #{swallowed&.title.inspect}, " \
-                 "auto_node_id #{swallowed&.auto_node_id.inspect} — instead of the file getting " \
-                 "its own. bracket.stl was still loose at the project root when the model catalog " \
-                 "ran (most directly: discover_projects swapped with intake_project_folders in " \
-                 "ScanJob#perform, so the intake had no project yet to file it into)."
-
       assert_path_exists File.join(@root, "Projects", "Desk Lamp", "models", "bracket.stl"),
                           "discovery ran before the intake, so the intake had a project folder to file this into"
-      assert_equal [ "bracket" ], @user.maker_models.pluck(:title)
+      assert_equal [ "bracket" ], @user.maker_models.pluck(:title),
+                   "the catalog ran before the intake filed bracket.stl, so it is catalogued a scan late"
+    end
+
+    # THE SWALLOW ASSERTION, RE-POINTED (F-S07-1) from the test above, where no ordering of #perform
+    # can fail it any more. Discovery's CAP binds inside this job's own sequence, so with
+    # PROJECT_DISCOVERY_MAX=1 one of these two folders is necessarily still unadopted — its mesh
+    # loose at its root — when #intake_models runs: the state the old assertion guarded, reached the
+    # one way that is left. Which folder depends on the node_ids the reconcile mints, so the test
+    # finds it rather than naming it, and asserts that precondition before the claim: without a
+    # folder left waiting, "nothing was swallowed" proves nothing (§14e). RED when Maker::ModelIntake
+    # stops asking Maker::ProjectDiscovery.positional_claims, or when that reader is capped.
+    test "a folder past discovery's cap is never swallowed as one model" do
+      File.binwrite(File.join(@root, "Projects", "Desk Lamp", "bracket.stl"), "solid")
+      FileUtils.mkdir_p(File.join(@root, "Projects", "Rack"))
+      File.binwrite(File.join(@root, "Projects", "Rack", "rail.stl"), "solid rail")
+      prior = ENV["PROJECT_DISCOVERY_MAX"]
+      ENV["PROJECT_DISCOVERY_MAX"] = "1"
+      begin
+        Library::ScanJob.perform_now(user_id: @user.id, root: @root)
+      ensure
+        ENV["PROJECT_DISCOVERY_MAX"] = prior
+      end
+
+      folders = @user.nodes.present.where(parent_node_id: @user.nodes.present
+                                            .find_by!(name: "Projects", parent_node_id: nil).node_id,
+                                          kind: "dir").to_a
+      adopted = @user.maker_projects.pluck(:folder_node_id)
+      waiting = folders.reject { |f| adopted.include?(f.node_id) }
+      assert_equal [ 2, 1, 1 ], [ folders.size, adopted.size, waiting.size ],
+                   "precondition: the cap must leave exactly one of the two folders unadopted"
+      assert(@user.nodes.present.where(parent_node_id: waiting.sole.node_id, kind: "file")
+                  .pluck(:name).any? { |name| Maker::FileAttachment.role_for(name) == "model" },
+             "precondition: the unadopted folder still holds a mesh at its root")
+
+      ids = folders.map(&:node_id)
+      swallowed = @user.maker_models.where(auto_node_id: ids)
+                       .or(@user.maker_models.where(folder_node_id: ids)).pluck(:title)
+      assert_empty swallowed,
+                   "#{waiting.sole.name.inspect}, past discovery's cap, became one model: the catalog " \
+                   "no longer counts a folder discovery owns by position as claimed"
     end
   end
 

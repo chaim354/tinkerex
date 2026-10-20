@@ -236,17 +236,22 @@ module Library
       )
     end
 
-    # STRICTLY AFTER THE RECONCILE AND STRICTLY BEFORE THE PROJECT INTAKE, and BOTH orderings
-    # change the ANSWER rather than the timing.
+    # STRICTLY AFTER THE RECONCILE AND STRICTLY BEFORE THE PROJECT INTAKE. The first ordering
+    # changes the ANSWER; since F-S07-1 (2026-10-19) the second changes only the TIMING.
     #
     # After the RECONCILE because discovery reads names and parentage, and a folder the Scanner has
     # not settled is a wrong answer — the same reason the two methods below give.
     #
-    # Before the PROJECT INTAKE because a discovered project's loose files must be filed in the SAME
-    # pass. Left at `Projects/new-thing/`, the seeded `*` shelf makes `Projects` the nearest shelf
-    # above them, so the whole `new-thing` FOLDER becomes one model titled "new-thing" — and nothing
-    # reaps an auto model, so the wrong row is permanent. That is #intake_models' own IntakeOrderTest
-    # hazard, one step earlier in the chain. Pinned by DiscoveryOrderTest, which is RED on the swap.
+    # Before the PROJECT INTAKE so a discovered project's loose files are filed in the SAME pass, not
+    # the next. This used to change the answer as well: left at `Projects/new-thing/`, the seeded `*`
+    # shelf makes `Projects` the nearest shelf above them, so a catalog that reached the folder
+    # before it was adopted made the whole `new-thing` FOLDER one model, permanently. Ordering never
+    # closed that and could not: this call is CAPPED (Maker::ProjectDiscovery::MAX_PROJECTS), so a
+    # folder past the cap reached #intake_models unadopted inside this very sequence, and on
+    # chunk_remote the three sweeps are independent schedules. The catalog closes it instead, by
+    # counting every folder discovery owns BY POSITION as claimed (Maker::ModelIntake
+    # .claimed_folders). Pinned by DiscoveryOrderTest: RED on the swap as a file left unfiled, and a
+    # capped run must leave no model behind.
     #
     # CALLS THE JOB, NOT Maker::ProjectDiscovery DIRECTLY, for the reason #intake_project_folders
     # records as a finding rather than a preference: the SERVICE logs nothing, so the JOB is the
@@ -324,13 +329,17 @@ module Library
     # answer.
     #
     # After the PROJECT INTAKE because that step MOVES files, and the model a file belongs to is
-    # decided by the nearest SHELF above it — so a move changes the answer rather than merely the
-    # location. A loose `panel.stl` at `Projects/desk-lamp/` has no shelf nearer than the library
-    # root, which makes the whole `Projects` FOLDER its model; one intake later it sits at
-    # `Projects/desk-lamp/models/panel.stl`, under the seeded `Projects/*/models` shelf, and it is
-    # its own model titled "panel". Catalogue first and the sweep mints the first answer, in the
-    # same job that is about to make it false. Pinned by scan_job_test.rb's IntakeOrderTest
-    # ("cataloguing runs after the project intake…"), which is RED on the swap.
+    # decided by the nearest SHELF above it — so a move can change the answer rather than merely the
+    # location. Measured 2026-10-19 on a project adopted at a TOP-LEVEL folder with filing on: its
+    # root is itself a shelf (the seeded `*`), so a loose `lid.stl` there is its own one-file model.
+    # Catalogue first and that row makes the intake refuse to move the file (`:model_bundle`, a file
+    # a model holds stays put), so it sits at the root for good; in this order it is filed into
+    # `models/` and joins that folder's model. UNDER `Projects/` THE SAME SWAP NOW COSTS ONLY A SCAN:
+    # a file loose at a project's root keys to the project's folder, which is claimed — by its
+    # project, or by discovery's position before the project exists (F-S07-1) — so the catalog
+    # leaves it alone until the intake has moved it under the seeded `Projects/*/models` shelf.
+    # Pinned by scan_job_test.rb's IntakeOrderTest ("cataloguing runs after the project intake…"),
+    # which is RED on the swap with [] — the `Projects/` half; the top-level half has no test yet.
     #
     # CALLS THE JOB, NOT Maker::ModelIntake DIRECTLY, for the reason #intake_project_folders
     # records as a finding rather than a preference: Maker::ModelIntake logs NOTHING itself, so

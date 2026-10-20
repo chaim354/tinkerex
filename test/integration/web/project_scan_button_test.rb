@@ -108,10 +108,10 @@ module Web
     end
 
     # ORDER IS THE ASSERTION, and it is now THREE steps. The pull first, because a folder another
-    # device pushed exists only after it. DISCOVERY SECOND, because Library::ScanJob sequences
-    # discover -> file for a reason that changes the ANSWER and not the timing: a newly discovered
-    # project's loose files have no shelf nearer than `Projects` itself, so filing before adopting
-    # leaves them for the model catalog to swallow whole (docs/invariants/project-intake.md).
+    # device pushed exists only after it. DISCOVERY SECOND, the order Library::ScanJob uses. This
+    # used to add that filing before adopting left a folder for the model catalog to swallow whole;
+    # since F-S07-1 a folder discovery has not adopted yet is claimed by position, so that reason
+    # is gone; this pins the order the door runs in (docs/invariants/project-intake.md).
     test "on chunk_remote the pull runs first, discovery second and the intake third" do
       FileLayer.current = FileLayer::ChunkRemote.new
       order = []

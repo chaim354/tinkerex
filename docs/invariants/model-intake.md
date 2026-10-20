@@ -88,14 +88,25 @@
 - **A FOLDER A PROJECT CLAIMS IS THE PROJECT'S, NOT THE CATALOG'S**, on exactly the terms an
   IMPORT-origin model's folder already was — look, do not take. `*` makes `Projects` a shelf, so
   without this a folder directly under it became one model holding its whole tree. It asks **who
-  claims the folder**, never "does this path start with `Projects/`": `Maker::ProjectDiscovery`
-  adopts every folder under `Projects/` and `Library::ScanJob` runs it BEFORE this sweep, so the
-  ordering invariant below is what lets the rule be stated once instead of copied. **Both queries
-  are unscoped on status** — an ARCHIVED project keeps `folder_node_id` and still claims its
-  folder, the same reading `adoptable`'s own `claimed` set and the `catalogued` scope run on. A
-  user who DELETES the project releases the folder, which is the row-is-the-memory rule again.
-  **The claim is applied BEFORE `existing` is looked up**, so a row the old rule already wrote
-  stops accreting too rather than only new folders being spared.
+  claims the folder**, never "does this path start with `Projects/`", and `claimed_folders` has
+  **THREE CLAIMANTS since F-S07-1 (2026-10-19)**: an import, a project row, and **discovery BY
+  POSITION** — `Maker::ProjectDiscovery.positional_claims`, every folder discovery owns whether or
+  not it has adopted it yet, public and UNCAPPED, with discovery's own `adoptable` defined through
+  it. The third replaced an ordering invariant that never held: this rule used to lean on
+  `Library::ScanJob` running discovery first, but discovery is capped (`MAX_PROJECTS`) even inside
+  that sequence and is an independent schedule on `chunk_remote`, so a folder it had not reached
+  became one auto model and then a project too — both, until `rake models:prune`. A positional
+  claim always becomes a real one (archiving keeps the claim; a v1 hard delete is re-adopted), so
+  "not yet" reads as "claimed". **It is discovery's reader, never a path test here**: a dot-folder
+  under `Projects/` is nobody's and is still catalogued — pinned, and a path test goes red. **Both
+  row queries are unscoped on status** — an ARCHIVED project keeps `folder_node_id` and still claims
+  its folder, the same reading `adoptable`'s own `claimed` set and the `catalogued` scope run on. A
+  user who DELETES a project releases a folder nothing else claims (one adopted outside
+  `Projects/`), which is the row-is-the-memory rule again; a folder directly under `Projects/`
+  stays discovery's, which adopts it again. `Maker::ModelIntake::Prune` asks this same method, so
+  it also destroys an auto row over a folder discovery has not adopted yet — one it would destroy
+  after the adoption anyway. **The claim is applied BEFORE `existing` is looked up**, so a row the
+  old rule already wrote stops accreting too rather than only new folders being spared.
   **THERE ARE TWO WAYS A PROJECT COMES TO CLAIM A FOLDER SINCE STAGE 4, S4-6 — the sweep and
   `Projects::AdoptionsController`, which adopts one folder ANYWHERE — AND THE RULE ABOVE IS
   UNCHANGED BY THAT**, precisely because it asks WHO CLAIMS and never where the folder sits. What
@@ -202,13 +213,19 @@
   falls back rather than crashing:** `Integer("-5")` SUCCEEDS, so the rescue never sees a negative —
   it reaches `todo.first(-5)` and raises "negative array size" from inside the recurring job, far
   from the typo that caused it.
-- **IN `Library::ScanJob` THE CATALOG RUNS AFTER THE RECONCILE *AND* AFTER THE PROJECT INTAKE, and
-  both orderings change the ANSWER, not the timing.** After the reconcile because the catalog reads
-  paths and an unsettled path is a wrong answer (§14f). After the project intake because that step
-  MOVES files: a `.stl` loose at `Projects/desk-lamp/` has no shelf nearer than the library root, so
-  catalogue first and the whole `Projects` folder becomes its model — where after the move it sits
-  under the seeded `Projects/*/models` shelf and is its own. Nothing reaps an auto model, so the
-  wrong row is permanent. Pinned by a test that fails on the swapped order.
+- **IN `Library::ScanJob` THE CATALOG RUNS AFTER THE RECONCILE *AND* AFTER THE PROJECT INTAKE. The
+  first ordering changes the ANSWER everywhere; the second still can, but not under `Projects/`.**
+  After the reconcile because the catalog reads paths and an unsettled path is a wrong answer
+  (§14f). After the project intake because that step MOVES files, and a move can re-key a file —
+  measured (2026-10-19) on a project adopted at a TOP-LEVEL folder with filing on, whose root is
+  itself a `*` shelf: catalogue first and a loose `lid.stl` becomes its own one-file model, which
+  then makes the intake refuse to move it (`:model_bundle`), for good. Under `Projects/` the swap
+  costs a scan and nothing more: a file loose at a project's root keys to the project's folder,
+  which is claimed (the bullet above), so it is catalogued once the intake has moved it under
+  `Projects/*/models`. This bullet used to say the `Projects/` case made one permanent model; that
+  stopped being true in two steps (the `*` seed, then the claim rule) while the sentence stayed.
+  `IntakeOrderTest` is RED on the swap with `[]`; the top-level case has no test yet. Discovery's
+  own place before the catalog is timing only since F-S07-1 (`project-intake.md` says why).
 - **`Maker::LibraryTree`'s ancestor walk MUST keep its cycle guard, and BOTH callers must check the
   `:broken` sentinel.** A parent cycle is unrepresentable on a mount and perfectly representable in
   a row set; an unguarded walk HANGS the sweep rather than failing it. Forgetting the sentinel check
