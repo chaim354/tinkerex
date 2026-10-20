@@ -632,10 +632,13 @@ end
   # tests below — until 2026-10-19 (F-S25-1) this file and the preflight each held a copy, and only
   # this file's was ever run by a test. Widen the walk and this test in the same commit.
   test "the shared walk covers every site kamal reads a secret from" do
-    # The real config exercises three arms; the other six are empty in it, so only a synthetic
-    # config can show they are reached at all. Set EQUALITY, not inclusion — the two decoys below
-    # are half of what this pins, and an over-collecting version fails LOUD but it still fails:
-    # every name it invents is reported MISSING and blocks the deploy.
+    # The real config exercises four of the eleven arms planted below — root and accessory
+    # env.secret, the root registry, and ovh's root proxy TLS pair (measured 2026-10-19) — and the
+    # other seven are empty in it, so only a synthetic config can show they are reached at all. (The
+    # preflight's own fixture run, in test/lib/deploy_secrets_test.rb, plants those four.) Set
+    # EQUALITY, not inclusion — the two decoys below are half of what this pins, and an
+    # over-collecting version fails LOUD but it still fails: every name it invents is reported
+    # MISSING and blocks the deploy.
     raw = {
       "env" => { "secret" => [ "ROOT_ENV", "CONTAINER_VAR:ALIASED_ENV" ],
                  "tags" => { "beta" => { "secret" => [ "TAG_ENV" ] } } },

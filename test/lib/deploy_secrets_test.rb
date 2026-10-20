@@ -15,16 +15,26 @@ require "tmpdir"
 class DeploySecretsTest < ActiveSupport::TestCase
   PREFLIGHT = Rails.root.join("bin/secrets-preflight")
 
-  # A minimal VALID kamal config with a secret at three arms. FIXTURE_ACCESSORY_SECRET is the planted
-  # reference: an accessory's env.secret is where the real config's SECRET_KEY_BASE and
-  # SYNC_ADMIN_TOKEN live, it is an arm the walk once missed (e2fafea1), and no fixture secrets file
-  # defines it.
+  # A minimal VALID kamal config with a secret planted at EVERY KIND OF LOCATION THE REAL CONFIG
+  # RESOLVES ONE FROM — four, measured 2026-10-19 across all four destinations: root env.secret, the
+  # registry password, an accessory's env.secret (where SECRET_KEY_BASE and SYNC_ADMIN_TOKEN live, an
+  # arm the walk once missed, e2fafea1), and a custom TLS pair under `proxy: ssl:` (ovh's Cloudflare
+  # origin certificate and key). Every one the real config uses must be here, because the preflight
+  # run below is the only test of the deploy-gating reader: with three of them, a walk covering only
+  # those three, pasted back into the preflight, passed this whole file (review of #423). No fixture
+  # secrets file defines the accessory's secret or either TLS name, so all three must come back MISSING.
   DEPLOY = <<~YAML.freeze
     service: fixture
     image: fixture/app
     servers:
       web:
         - 10.0.0.1
+    proxy:
+      hosts:
+        - fixture.example
+      ssl:
+        certificate_pem: FIXTURE_TLS_CERTIFICATE_PEM
+        private_key_pem: FIXTURE_TLS_PRIVATE_KEY_PEM
     registry:
       username: fixture
       password:
@@ -59,23 +69,26 @@ class DeploySecretsTest < ActiveSupport::TestCase
   YAML
 
   # `-d solo`. env.secret is an ARRAY, which kamal REPLACES on merge, so this list is the whole of the
-  # app's own; `accessories:` it does not mention, so the base's is merged in unchanged.
+  # app's own; `accessories:` and `proxy:` it does not mention, so the base's are merged in unchanged.
   OVERLAY = <<~YAML.freeze
     env:
       secret:
         - FIXTURE_OVERLAY_SECRET
   YAML
 
-  test "required walks the MERGED config on disk and finds the secret planted on an accessory, under -d too" do
+  test "required walks the MERGED config on disk and finds every planted secret, under -d too" do
     with_fixture do |root|
       config = root.join("config/deploy.yml")
 
-      assert_equal %w[FIXTURE_ACCESSORY_SECRET FIXTURE_APP_SECRET FIXTURE_REGISTRY_PASSWORD],
+      assert_equal %w[FIXTURE_ACCESSORY_SECRET FIXTURE_APP_SECRET FIXTURE_REGISTRY_PASSWORD
+                      FIXTURE_TLS_CERTIFICATE_PEM FIXTURE_TLS_PRIVATE_KEY_PEM],
                    Tinkerex::DeploySecrets.required(nil, config_file: config).sort
       # The overlay's env.secret REPLACED the base's (FIXTURE_APP_SECRET is gone), while the accessory's
-      # secret is still required: `accessories:` is never overlaid, which is why SECRET_KEY_BASE is
-      # needed by every real destination (docs/invariants/deploy-secrets.md).
-      assert_equal %w[FIXTURE_ACCESSORY_SECRET FIXTURE_OVERLAY_SECRET FIXTURE_REGISTRY_PASSWORD],
+      # secret and the TLS pair are still required: the overlay names neither block, so the base's
+      # are merged in. No real overlay redeclares `accessories:` either, which is why SECRET_KEY_BASE
+      # is needed by every real destination (docs/invariants/deploy-secrets.md).
+      assert_equal %w[FIXTURE_ACCESSORY_SECRET FIXTURE_OVERLAY_SECRET FIXTURE_REGISTRY_PASSWORD
+                      FIXTURE_TLS_CERTIFICATE_PEM FIXTURE_TLS_PRIVATE_KEY_PEM],
                    Tinkerex::DeploySecrets.required("solo", config_file: config).sort
     end
   end
@@ -106,12 +119,14 @@ class DeploySecretsTest < ActiveSupport::TestCase
                  "Tinkerex::DeploySecrets::DESTINATIONS must name the base (nil) and every config/deploy.<name>.yml"
   end
 
-  test "bin/secrets-preflight blocks the deploy on the planted secret, resolving through the shared walk" do
+  test "bin/secrets-preflight blocks the deploy on the planted secrets, resolving through the shared walk" do
     with_fixture do |root|
       out, status = preflight(root)
 
       assert_not status.success?, out
-      assert_match(/^  MISSING     FIXTURE_ACCESSORY_SECRET\b/, out, "the preflight never collected the planted secret")
+      %w[FIXTURE_ACCESSORY_SECRET FIXTURE_TLS_CERTIFICATE_PEM FIXTURE_TLS_PRIVATE_KEY_PEM].each do |planted|
+        assert_match(/^  MISSING     #{planted}\b/, out, "the preflight never collected the planted #{planted}")
+      end
       assert_match(/^  ok          FIXTURE_APP_SECRET \(17 bytes\)$/, out)
       assert_match(/^FAILED: base$/, out)
       assert_not_includes out, "fixture-app-value", "the preflight printed a secret's VALUE"
