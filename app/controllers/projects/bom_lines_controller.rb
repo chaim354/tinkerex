@@ -83,6 +83,10 @@ module Projects
       Maker::InventoryTransaction.apply!(item:, user: current_user, delta: -line.quantity, reason: "consumed",
                                          project_id: project.id, note: "BOM: #{line_label(line)}")
       back_to(project, notice: "Consumed #{fmt_qty(line.quantity)} #{item.unit} of #{item.name} for #{project.name}.")
+    # The ledger decides what it will post. A line's quantity passes BomLine's greater_than: 0 and can
+    # still be one the ledger refuses (Infinity does), so the refusal comes back here as the alert.
+    rescue ActiveRecord::RecordInvalid => e
+      back_to(project, alert: "Nothing was consumed: #{e.record.errors.full_messages.to_sentence}.")
     end
 
     private

@@ -318,6 +318,24 @@ module Web
       end
     end
 
+    # A LINE WHOSE QUANTITY THE LEDGER CANNOT TAKE POSTS NOTHING. BomLine validates only
+    # greater_than: 0, which Infinity passes ("1e400" through either door stores Infinity), and
+    # Consume posted -quantity into the immutable ledger. The ledger refuses it now, and Consume
+    # answers with the project page's alert rather than a 422.
+    test "Consume of a line whose quantity the ledger refuses posts nothing and says why" do
+      item = item!(name: "NEMA17", balance: 4)
+      line = line!(bom!, inventory_item: item, quantity: 2, unit: "each")
+      line.update_columns(quantity: BigDecimal("Infinity"))
+      assert line.reload.quantity.infinite?, "the planted quantity did not survive the round trip"
+
+      assert_no_difference -> { Maker::InventoryTransaction.count } do
+        post consume_bom_line_path(line)
+      end
+      assert_redirected_to project_path(@project)
+      assert_match(/Nothing was consumed: Delta must be a non-zero number/, flash[:alert])
+      assert_equal 4, item.reload.quantity_cached
+    end
+
     test "Consume on a foreign line 404s" do
       other = other_user!
       other_bom = other.maker_projects.create!(name: "Other").boms.create!(user: other)

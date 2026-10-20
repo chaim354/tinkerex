@@ -42,6 +42,50 @@ module Maker
       assert_equal 0, @item.reload.quantity_cached
     end
 
+    # A ZERO, NON-FINITE OR OUT-OF-COLUMN DELTA NEVER REACHES THE LEDGER, whichever door posts it.
+    # A non-finite row is permanent damage: the ledger is immutable, and rebuild_quantity_cached!
+    # writes the Infinity back. The STRINGS are what the web and v1 doors hand over; as strings
+    # "Infinity"/"-Infinity"/"NaN" already fail numericality's Kernel.Float. The PARSED forms are what
+    # a door that parses first hands over (BOM consume posts a BigDecimal read from the column; a JSON
+    # number 1e400 decodes to Float::INFINITY), and only the range refuses those — drop `in:` and
+    # every one of them posts. "0.0001" rounds to a zero row at the column's scale; "1000000000" is
+    # finite and one step past the column.
+    REFUSED_DELTAS = [
+      *%w[Infinity -Infinity NaN 1e400 0 0.0001 1000000000],
+      BigDecimal("Infinity"), BigDecimal("-Infinity"), BigDecimal("NaN"),
+      Float::INFINITY, -Float::INFINITY, Float::NAN
+    ].freeze
+
+    test "apply! refuses a zero, non-finite or out-of-column delta and leaves the ledger and balance as they were" do
+      Maker::InventoryTransaction.apply!(item: @item, user: @user, delta: 12, reason: "initial")
+
+      REFUSED_DELTAS.each do |bad|
+        assert_no_difference -> { Maker::InventoryTransaction.count }, "#{bad.inspect} reached the ledger" do
+          assert_raises(ActiveRecord::RecordInvalid, "#{bad.inspect} was not refused as invalid") do
+            Maker::InventoryTransaction.apply!(item: @item, user: @user, delta: bad, reason: "adjusted")
+          end
+        end
+        assert_equal 12, @item.reload.quantity_cached, "#{bad.inspect} moved the cached balance"
+      end
+    end
+
+    # THE OPTIONAL FIELDS ARE NORMALISED, NEVER REFUSED, and the stock change still posts. A project
+    # the item's owner does not own is dropped (TENANCY: every door gets this from apply!, not from a
+    # lookup of its own), and a blank note is stored as no note.
+    test "apply! keeps the owner's own project and drops anyone else's, and a blank note" do
+      mine = @user.maker_projects.create!(name: "Desk Lamp")
+      theirs = User.create!(email: "txn-other@example.com").maker_projects.create!(name: "Not yours")
+
+      kept = Maker::InventoryTransaction.apply!(item: @item, user: @user, delta: 1, project_id: mine.id, note: "lamp")
+      dropped = Maker::InventoryTransaction.apply!(item: @item, user: @user, delta: 1, project_id: theirs.id, note: "")
+
+      assert_equal mine.id, kept.project_id
+      assert_equal "lamp", kept.note
+      assert_nil dropped.project_id
+      assert_nil dropped.note
+      assert_equal 2, @item.reload.quantity_cached
+    end
+
     test "project_id is a soft reference (optional, nullable)" do
       txn = @item.transactions.create!(user: @user, delta: -1, reason: "consumed", project_id: nil)
       assert_nil txn.project_id
