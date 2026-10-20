@@ -35,11 +35,21 @@ module FileLayer
     # with no derivable checksum has none next pass either. Nothing from this ladder may reach
     # that branch, so the ladder answers for every object it is ever shown.
     #
+    # NOR BLANK, which is the same guard from the other side. An object whose ETag is blank has no
+    # identity to give, and `etag: ` would be ONE identity shared by every such object -- equal
+    # sizes then PAIR, the false positive below says cannot happen. So a blank ETag RAISES
+    # (BlankEtag), and `for_reported` is the one place that turns that into nil, for the callers
+    # that hold a previous value or can skip: the observer keeps `for`, and its raise refuses a scan.
+    #
     # Why the failure direction is acceptable where the ladder is weak: an ETag collision
     # requires an MD5 collision, and pairing additionally requires equal size, so the errors are
     # false NEGATIVES (a missed move) and never false POSITIVES (two unrelated files fused into
     # one identity, taking each other's attachments). The safe direction.
     class ObjectIdentity
+      # The store reported no usable ETag. Still an ArgumentError, so every caller that rescued or
+      # asserted the plain raise answers exactly as before; only `for_reported` names it.
+      class BlankEtag < ArgumentError; end
+
       # A real single-part ETag is the MD5: exactly 32 hex digits. Case-insensitive here only so
       # `for` can canonicalize -- see the downcase in the md5 rung.
       MD5_ETAG = /\A\h{32}\z/
@@ -47,7 +57,20 @@ module FileLayer
       CONTENT_DETERMINED_PREFIXES = %w[ md5: sha256: ].freeze
 
       class << self
-        # -> String, always. Never nil (see the class header).
+        # -> String, or nil when the store reported no usable ETag. FileLayer::S3's sites that
+        # derive an identity from a PUT, COPY or HEAD response, each of which decides what nil
+        # means there: #move and #restored_stat keep the row's previous value (by then the store
+        # holds the bytes, and raising strands them -- §14a's landmine), #store_identity skips its
+        # check, #write refuses (a new row has no previous value). Rescuing BlankEtag ALONE, so a
+        # bug in the ladder still raises; and never testing blankness itself, which would be a
+        # second place the quotes come off.
+        def for_reported(etag:)
+          self.for(etag:)
+        rescue BlankEtag
+          nil
+        end
+
+        # -> String, always. Never nil, never blank (see the class header).
         def for(etag:, checksum_sha256: nil, checksum_type: nil)
           tag = normalize_etag(etag)
 
@@ -111,8 +134,11 @@ module FileLayer
           # S3 always sends an ETag, so a blank one means a store is doing something we do not
           # model. Returning nil here would silently un-index the object (see the class header);
           # a bug we can see beats a file that quietly is not there.
-          if tag.empty?
-            raise ArgumentError, "etag is required to derive an object identity (got #{etag.inspect})"
+          #
+          # BLANK AFTER THE UNQUOTING, NOT EMPTY: `" "` is S3's quotes around whitespace, and
+          # `empty?` let it through to mint `etag: ` (see the class header's NOR BLANK).
+          if tag.blank?
+            raise BlankEtag, "etag is required to derive an object identity (got #{etag.inspect})"
           end
 
           tag

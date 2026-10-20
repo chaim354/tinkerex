@@ -356,19 +356,29 @@ module FileLayer
         raise FetchError, "#{rel.inspect}: #{e.class} (#{e.message})"
       end
 
+      # Through ObjectIdentity — the ONE normalizer, the same ladder the observer climbs. NEVER the
+      # raw ETag: S3 wraps every one in literal quotes, in put responses exactly as in listings, so
+      # a write storing the quoted form and a scan storing the stripped one give one object two
+      # identities. Every written file then reads as changed on the next pass and move-pairing never
+      # pairs — the phase's headline promise, inverted by two quotes.
+      #
+      # A PUT ANSWERING NO USABLE ETAG IS REFUSED — the one identity site that refuses rather than
+      # keep a previous value, because it has none: a new row never had one, and a replaced row's
+      # identity names bytes the key no longer holds. FetchError, this adapter's answer for a store
+      # that did not answer usefully (never the bare BlankEtag, an unmapped 500), and BEFORE any row
+      # is written, so the catalog never holds a nil or blank identity. The bytes have landed and
+      # are left for the next scan — the self-healing case the header above accepts.
+      identity = ObjectIdentity.for_reported(etag: put.etag) ||
+                 raise(FetchError, "#{rel.inspect}: the store answered the write with no usable " \
+                                   "ETag (#{put.etag.inspect}); the object is left for the next scan")
+      # AND THE DATE, refused for the same reason — see #head_mtime!.
+      mtime = head_mtime!(rel, head)
+
       # INDEX ONLY AFTER THE PUT LANDS. The order is the point: a node indexed for bytes that
       # never arrived is an attachment resolving to a permanent NotFound, which is strictly worse
       # than no attachment at all — the user can retry an upload that failed loudly, and cannot
       # fix a file that browses fine and 404s forever. Pinned by the write contract.
-      attrs = {
-        size: bytes.bytesize, mtime: nanos(head.last_modified),
-        # Through ObjectIdentity.for — the ONE normalizer, the same call the observer makes.
-        # NEVER the raw ETag: S3 wraps every one in literal quotes, in put responses exactly as in
-        # listings, so a write storing the quoted form and a scan storing the stripped one give
-        # one object two identities. Every written file then reads as changed on the next pass and
-        # move-pairing never pairs — the phase's headline promise, inverted by two quotes.
-        content_hash: ObjectIdentity.for(etag: put.etag)
-      }
+      attrs = { size: bytes.bytesize, mtime:, content_hash: identity }
       node =
         if existing
           # UPDATE, so node_id survives (see the header). A replace resolves to the SAME rel, so
@@ -427,9 +437,13 @@ module FileLayer
       rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
         raise FetchError, "#{rel.inspect}: #{e.class} (#{e.message})"
       end
+      # A HEAD WITHOUT A DATE IS NOT A REFUSAL HERE, unlike #write's: S3 has no directory dates, and
+      # the scan records every folder with mtime nil (S3Observer#dir_observations), which is the
+      # authority — so this writes that same nil rather than turn "New folder" into "try again".
+      mtime = head.last_modified && nanos(head.last_modified)
       node = user.nodes.create!(
         node_id: SecureRandom.uuid, name:, kind: "dir", deleted: false,
-        storage_path: rel, parent_node_id:, mtime: nanos(head.last_modified)
+        storage_path: rel, parent_node_id:, mtime:
       )
       stat(user, node_id: node.node_id)
     end
@@ -618,11 +632,11 @@ module FileLayer
     # of the library. A caller renaming must pass the current parent_node_id.
     #
     # A MOVE CHANGES THE FILE'S MODIFICATION DATE, and Share's does not. A copy IS a new object, so
-    # the destination carries a fresh Last-Modified; the next scan observes it and rewrites
-    # nodes.mtime, and the user sees a file they moved report as modified today. Share#move is one
-    # rename() and preserves it. Inherent — S3 has no rename, and no way to set Last-Modified —
-    # and self-healing (the date is merely newer, never wrong about the bytes). Recorded so it is
-    # not rediscovered as a bug; not worth a copy-back or a stored original.
+    # the destination carries a fresh Last-Modified, which the row takes from the copy's own
+    # response (below), and the user sees a file they moved report as modified today. Share#move is
+    # one rename() and preserves it. Inherent — S3 has no rename, and no way to set Last-Modified —
+    # and harmless (the date is merely newer, never wrong about the bytes). Recorded so it is not
+    # rediscovered as a bug; not worth a copy-back or a stored original.
     def move(user, node_id: nil, new_parent_node_id: nil, new_name: nil)
       leaf!(new_name)
       node = live_node!(user, node_id)
@@ -692,23 +706,31 @@ module FileLayer
       # though its bytes did not change. The scan produced exactly that re-render 15 minutes later
       # anyway — this only moves it earlier, and it is the price of the row being true NOW.
       #
-      # PRESENCE-GUARDED, and the guard is load-bearing rather than defensive. ObjectIdentity.for
-      # RAISES ArgumentError on a blank ETag (deliberately — see its normalize_etag), ArgumentError
-      # is NOT a ServiceError so the rescue above would not catch it, and by this line
-      # delete_object has ALREADY removed the source. An unguarded call against a store that
-      # answers no ETag would raise with the bytes only at the new key and the row still naming the
-      # old one — the orphaning landmine, from a store being merely unhelpful. Absent an ETag we
-      # keep the PREVIOUS value (never nil: Reconciler#plan_moves DROPS a nil-hash observation, so
-      # the object would never be indexed at all) and let the scan correct it.
+      # A BLANK ANSWER KEEPS THE PREVIOUS VALUE, and that is load-bearing rather than defensive.
+      # ObjectIdentity.for RAISES BlankEtag on a blank ETag (deliberately — see its normalize_etag),
+      # which is NOT a ServiceError so the rescue above would not catch it, and by this line
+      # delete_object has ALREADY removed the source. A raise against a store that answers no ETag
+      # leaves the bytes only at the new key and the row still naming the old one — the orphaning
+      # landmine, from a store being merely unhelpful. So `for_reported`, whose nil keeps the
+      # PREVIOUS value (never nil or blank — see ObjectIdentity's header) for the scan to correct.
+      # NOT a `present?` test: quoted-empty `""` passes one and raises anyway.
       #
-      # mtime is deliberately NOT refreshed here. copy_object's response carries no last_modified,
-      # and the fake returns none either — so a "refresh" of it would be reading nil through
-      # nanos() and would be green against the fake and wrong against every real store, which is
-      # the exact defect this change exists to close. The header above already records that the
-      # scan owns a moved object's mtime.
+      # THE COPY'S DATE, FROM THE SAME RESPONSE AND FOR THE SAME REASON. Reconciler#unchanged?
+      # compares the row's mtime with the LISTING's, so a row left on the SOURCE's date reads as
+      # changed on the next scan — one UPDATE and one thumbnail enqueue per moved file, for bytes
+      # that did not change. CopyObjectResult carries LastModified on the wire (aws-sdk-s3's
+      # CopyObjectResult#last_modified); this comment used to say it did not, citing the FakeS3 that
+      # had left it out (§14e's fake that shares the code's misunderstanding). PRESENCE-GUARDED like
+      # the ETag, and as load-bearing: nanos(nil) raises NoMethodError, again after delete_object, so
+      # a response without one keeps the row's previous mtime for the scan to correct. UNMEASURED ON
+      # A REAL STORE: this relies on the store filling CopyObjectResult.LastModified, and its
+      # precision against the listing's must be compared on the self-host SeaweedFS before relying
+      # on it to spare that rewrite — a mismatch costs exactly the rewrite, never a wrong date.
       attrs = { storage_path: rel, name: new_name, parent_node_id: new_parent_node_id }
-      copied_etag = copied&.copy_object_result&.etag
-      attrs[:content_hash] = ObjectIdentity.for(etag: copied_etag) if copied_etag.present?
+      result = copied&.copy_object_result
+      identity = ObjectIdentity.for_reported(etag: result&.etag)
+      attrs[:content_hash] = identity if identity
+      attrs[:mtime] = nanos(result.last_modified) if result&.last_modified
 
       node.update!(**attrs)
       stat(user, node_id: node.node_id)
@@ -1051,14 +1073,19 @@ module FileLayer
     # skips it") is defeated by the very column it omits. The HEAD is already made and already
     # carries `.etag`; this adds no request.
     #
-    # PRESENCE-GUARDED for the same reason as #move's: ObjectIdentity.for raises ArgumentError on a
-    # blank ETag, which no rescue here is written for, and the undelete has already put the bytes
-    # back by the time this runs. No ETag -> keep the previous value (never nil) and let the scan
-    # correct it, which is what the rest of this method already does on a HEAD blip.
+    # A BLANK OR MISSING ANSWER KEEPS THE PREVIOUS VALUE, for #move's reason: neither BlankEtag nor
+    # the NoMethodError nanos(nil) raises on a HEAD with no Last-Modified is a ServiceError, so no
+    # rescue here catches them, and the undelete has already put the bytes back by the time this
+    # runs. `for_reported`'s nil, or an absent date, keeps the row's previous identity or mtime
+    # (never nil or blank) for the scan to correct — what the rest of this method already does on
+    # a HEAD blip. NOT a refusal either: a FetchError here strands the copy exactly as the raise
+    # did. So nothing a store answers makes this raise, and a caller may loop over it.
     def restored_stat(key)
       head = @client.head_object(bucket: @bucket, key:)
-      attrs = { size: head.content_length, mtime: nanos(head.last_modified) }
-      attrs[:content_hash] = ObjectIdentity.for(etag: head.etag) if head.etag.present?
+      attrs = { size: head.content_length }
+      attrs[:mtime] = nanos(head.last_modified) if head.last_modified
+      identity = ObjectIdentity.for_reported(etag: head.etag)
+      attrs[:content_hash] = identity if identity
       attrs
     rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError
       {}
@@ -1162,13 +1189,13 @@ module FileLayer
     # exists for. Share answers the same through its `File.exist?(dest)` term. A plain `replace: true`
     # with no token keeps the vacant-path create.
     #
-    # A BLANK ETAG SKIPS THE CHECK rather than refusing, which is the direction #move and
-    # #restored_stat already take for the same store being unhelpful. ObjectIdentity.for RAISES on
-    # one — including the literally quoted-empty `""`, which is `present?` (found in review) — and
-    # the alternative, treating "we cannot tell" as stale, makes every save against such a store a
-    # permanent conflict the user can do nothing about, where skipping is exactly the behaviour
-    # every caller that passes no token already gets. The raise is rescued rather than the string
-    # inspected: unquoting it here to test blankness would be the second place quotes come off.
+    # A BLANK ETAG SKIPS THE CHECK rather than refusing, the direction #move and #restored_stat take
+    # for the same store being unhelpful, through the same `for_reported` — whose nil covers the
+    # literally quoted-empty `""` (which is `present?`, found in review) and quoted whitespace, which
+    # minted `etag: ` and refused every such save. Treating "we cannot tell" as stale makes every
+    # save against such a store a permanent conflict the user can do nothing about, where skipping
+    # is exactly the behaviour every caller that passes no token already gets. Blankness is never
+    # tested here: unquoting to test it would be the second place quotes come off.
     def stale_content!(rel, key, expect_token)
       current = store_identity(key)
       raise StaleContent, "#{rel.inspect} is gone since it was read" if current == :missing
@@ -1177,14 +1204,9 @@ module FileLayer
     end
 
     def store_identity(key)
-      head = @client.head_object(bucket: @bucket, key:)
-      return nil unless head.etag.present?
-
-      ObjectIdentity.for(etag: head.etag)
+      ObjectIdentity.for_reported(etag: @client.head_object(bucket: @bucket, key:).etag)
     rescue ::Aws::S3::Errors::NotFound, ::Aws::S3::Errors::NoSuchKey
       :missing
-    rescue ArgumentError
-      nil
     end
 
     # prefix + storage_path, and the guard that makes that concatenation safe.
@@ -1329,6 +1351,21 @@ module FileLayer
     # observer applies to a listing's last_modified — the two must agree or every written file
     # looks changed on the next scan.
     def nanos(time) = time.to_i * 1_000_000_000 + time.nsec
+
+    # THE STORE'S OWN CLOCK FOR A FILE ROW BEING WRITTEN, OR A REFUSAL. #write dates its row from the
+    # HEAD it makes after the PUT, and a HEAD with no Last-Modified — absent, or one the SDK could
+    # not parse, which it hands back as nil — gives that row no date. Time.now is refused (#write's
+    # header: the next scan would read every written file as changed), and nanos(nil) raised a bare
+    # NoMethodError, an unmapped 500, after the object had landed. FetchError, BEFORE any row is
+    # written — #write's answer to a blank ETag — and the next scan, which dates the object off the
+    # listing, indexes it. The other three answer differently on purpose: #mkdir writes the scan's
+    # own nil (a directory has no date on S3), and #move and #restored_stat keep the mtime they have.
+    def head_mtime!(rel, head)
+      return nanos(head.last_modified) if head.last_modified
+
+      raise FetchError, "#{rel.inspect}: the store's HEAD carried no usable Last-Modified; " \
+                        "the object is left for the next scan"
+    end
 
     # Is there a library at this prefix at all? The mirror of Share#library_present?, and the
     # emptiness signal is the same one: a wrong bucket/prefix or a revoked credential is an empty

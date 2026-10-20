@@ -623,6 +623,32 @@ module Library
       assert_no_match(/content-determined/, log)
     end
 
+    # ---------------------------------------------------------------- a listing with no ETag
+
+    # THE LADDER'S RAISE IS THE REFUSAL, and this observer keeps it rather than rescuing it: a
+    # listing whose ETag is blank — any of the four wire shapes — has no identity to give, so the
+    # whole scan refuses and NOTHING is reconciled. Neither alternative is survivable. Indexing it
+    # under a blank identity (quoted-whitespace did: `etag: `) gives every such object ONE identity,
+    # and Reconciler#plan_moves pairs unrelated files of a size by it. Dropping the key with a log
+    # line is worse than it sounds: an object already indexed then reads as VANISHED, and the scan
+    # tombstones the row while its bytes sit in the bucket — which is why the guard is disabled
+    # here, so only the refusal stands between this library and that.
+    FakeS3::BLANK_ETAGS.each do |shape, blank|
+      test "a listing answering a #{shape} ETag refuses the scan: nothing indexed, nothing tombstoned" do
+        @fake.seed!("#{PREFIX}/kept.stl", "kept")
+        scan!
+        before = @user.nodes.find_by!(storage_path: "kept.stl").content_hash
+        @fake.seed!("#{PREFIX}/new.stl", "new")
+        @fake.answer_etag!(:list_objects_v2, blank)
+
+        error = assert_raises(ArgumentError) { scan!(max_delete_pct: 100) }
+        assert_instance_of FileLayer::S3::ObjectIdentity::BlankEtag, error
+
+        assert_equal [ [ "kept.stl", before ] ], files.pluck(:storage_path, :content_hash),
+                     "the indexed row is untouched and nothing new was indexed"
+      end
+    end
+
     # ---------------------------------------------------------------- what a scan costs
 
     # The identity is FREE in the listing, so the observer must never HEAD or GET to get it. A HEAD
