@@ -42,18 +42,23 @@ module FileLayer
     #                         on its own — from its own entry, or NotFound (purged?) for want of one.
     #   a trashed parent   -> UnsupportedOperation, the same sentence: an entry root deleted on its own
     #                         before its folder was can only come back into a folder that is back.
+    #
+    # "IN THE TRASH" IS THE COLUMN AND THE TRASH SHAPE TOGETHER, never the column alone: code from before
+    # the column revives a row without clearing it, so an image rolled back past the migration can leave
+    # a LIVE folder still naming itself — and a member sent to restore it would be refused for good.
     def self.restorable!(user, node)
       root_id = node.trash_root_node_id
       if root_id.nil?
         raise NotFound, "#{node.node_id.inspect} is not in the trash: it was removed outside the app, " \
                         "so there is nothing to restore"
       end
-      if root_id != node.node_id && user.nodes.exists?(node_id: root_id, trash_root_node_id: root_id)
+      if root_id != node.node_id &&
+         user.nodes.exists?(node_id: root_id, trash_root_node_id: root_id, deleted: true, storage_path: nil)
         raise UnsupportedOperation, "#{node.node_id.inspect}: its folder is in the trash too — restore the folder first"
       end
 
       parent = user.nodes.find_by(node_id: node.parent_node_id) if node.parent_node_id.present?
-      return unless parent&.trash_root_node_id.present?
+      return unless parent&.trash_root_node_id.present? && parent.deleted? && parent.storage_path.nil?
 
       raise UnsupportedOperation, "#{node.node_id.inspect}: its folder is in the trash too — restore the folder first"
     end
@@ -99,6 +104,9 @@ module FileLayer
     # Callers run it whatever the revive did, including when it raised partway (a scan racing the
     # restore, the residual both adapters accept) — but only once the ROOT is back: a restore that
     # failed before that leaves its whole entry in the trash, which is where a retry finds it.
+    # DELIBERATELY UNGUARDED in those `ensure`s: if this raises too, its error replaces the revive's. It
+    # is plain UPDATEs on the connection the revive just used, so it fails only when the database does,
+    # and that failure is the one to report; rescuing it to re-raise the first would hide it instead.
     def self.release!(user, members, revived)
       roots = {}
       members.each do |row, _|

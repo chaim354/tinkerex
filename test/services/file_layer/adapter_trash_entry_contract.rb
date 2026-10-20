@@ -199,6 +199,20 @@ module FileLayerTrashEntryContract
     assert_raises(FileLayer::NotFound) { adapter.undelete(@user, node_id: member_id) }
   end
 
+  # A LIVE ROW THAT NAMES ITSELF IS NOT A TRASH ROOT. Code from before the column revives a row without
+  # clearing it, so an image rolled back past the migration and redeployed can leave a folder LIVE while
+  # its own value still names it, and a member it left behind still naming it too. Read as "in the
+  # trash", that sent the member to restore a folder that is already back: a refusal nobody can act on.
+  def test_trash_entry_contract_a_member_is_never_sent_to_restore_a_live_folder
+    dir_id = make_dir(name: "F")
+    member_id = adapter.write(@user, parent_node_id: dir_id, name: "m.stl", io: StringIO.new("m")).node_id
+    adapter.delete(@user, node_id: member_id) # its bytes in an entry of its own
+    @user.nodes.where(node_id: [ member_id, dir_id ]).update_all(trash_root_node_id: dir_id)
+
+    assert_nothing_raised { adapter.undelete(@user, node_id: member_id) }
+    assert_equal "m", adapter.read(@user, node_id: member_id)
+  end
+
   # A RESTORE THAT FAILS PARTWAY STILL RE-ROOTS WHAT IT LEFT BEHIND, once the folder itself is back. The
   # one failure a revive accepts is a live row already holding a member's path (a scan racing the
   # restore, the residual both adapters record): that member's revive raises RecordNotUnique, and the

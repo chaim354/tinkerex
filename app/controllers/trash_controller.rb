@@ -125,12 +125,13 @@ class TrashController < ApplicationController
 
   # THE FOLDER WHOSE DELETE TOOK THIS ROW, where the catalog records one — share and s3 write
   # `trash_root_node_id` (FileLayer::TrashMembership); chunk_remote's mirror writes none and keeps the
-  # parent above. The row's own entry root first, else its parent's, and only one STILL IN THE TRASH.
-  # Naming the parent instead sent the maker to a folder refused the same way, one level at a time
-  # up a nested delete.
+  # parent above. The row's own entry root first, else its parent's, and only one STILL IN THE TRASH —
+  # the column AND the trash shape, as TrashMembership.restorable! asks, since a live folder can still
+  # name itself after code from before the column revived it. Naming the parent instead sent the maker
+  # to a folder refused the same way, one level at a time up a nested delete.
   def trashed_entry_root(node, parent)
     [ node.trash_root_node_id, parent&.trash_root_node_id ].compact.without(node.node_id).each do |id|
-      root = current_user.nodes.find_by(node_id: id, trash_root_node_id: id)
+      root = current_user.nodes.find_by(node_id: id, trash_root_node_id: id, deleted: true, storage_path: nil)
       return root if root
     end
     nil
