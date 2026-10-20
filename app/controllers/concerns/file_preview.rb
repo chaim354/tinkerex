@@ -1,7 +1,8 @@
 # WHICH VIEWER A FILE'S PAGE GETS, and the Gerber layer list that one of them needs — shared by
 # FilesController#show (the maker's own file page) and Public::FilesController#view (a visitor's,
-# stage 4, S4-5). ONE ANSWER: a public page that decided for itself which viewer a .gbrjob gets
-# would be the one-condition-two-answers divergence §14a forbids, one surface at a time.
+# stage 4, S4-5), each asking `#viewer_for` once. ONE ANSWER: a public page that decided for itself
+# which viewer a .gbrjob or a zipped export gets would be the one-condition-two-answers divergence
+# §14a forbids, one surface at a time.
 #
 # IT IS A CONCERN RATHER THAN A SHARED SUPERCLASS FOR `FileDelivery`'S REASON, WHICH IS THE SAME
 # REASON: FilesController descends from ApplicationController (session, `authenticate_user!`) and
@@ -60,6 +61,49 @@ module FilePreview
   GERBER_EXTS = Maker::FileAttachment::ROLE_BY_EXT.select { |_ext, role| role == "pcb" }.keys.freeze
 
   private
+
+  # WHICH VIEWER THE PAGE GETS AND, FOR A BOARD, WHAT IT DRAWS: `[kind, layers, single]`, the three
+  # facts one rule fixes together, asked by BOTH file pages (F-S10-2). Each controller used to spell
+  # this out line for line, differing only in the user and the URL builder, so a change to the zip
+  # rule, the layer list or the stackup choice had to land twice, and the visitor's copy had no test
+  # that would notice a miss. `user` and `url` are `gerber_layers_for`'s two arguments below, for
+  # its reasons; the session is never read here, because a public page asks this too (§14d).
+  #
+  # A ZIP IS A BOARD WHEN ITS CONTENTS SAY SO — the one kind decided by a READ rather than by the
+  # name. `preview_kind` stays NAME-ONLY for the whole vocabulary (files-preview.md);
+  # `Maker::GerberArchive.for` is one bounded port read, cached by content token, and answers nil
+  # by NAME for anything that is not a zip. The kind is final when this returns, so nothing on
+  # either page can read a provisional one.
+  #
+  # THE LAYER LIST IS nil FOR EVERY OTHER KIND, so the view's branch and this one cannot disagree
+  # about whether the page has a Gerber on it. An ordinary layer is itself and a `.gbrjob` is the
+  # siblings it names (`gerber_layers_for`); a zip is ONE entry — its own URL plus the member paths
+  # the BROWSER extracts — spelled by `FilesHelper#gerber_archive_entry`, the one wire shape.
+  #
+  # A REFUSED URL IS AN ABSENT LAYER ON ALL THREE ARMS. The public builder answers nil for a node
+  # its project does not publish; the single-layer arm `.compact`s, the job arm `filter_map`s, and
+  # the archive arm `.compact`s too. A refusal of the zip's own URL is unreachable after the public
+  # page's `deliverable!`, but `[{ url: nil }]` is not empty, and a viewer handed it draws board
+  # chrome around a layer that does not exist (files-preview.md, "absent on every arm or on none").
+  #
+  # SINGLE OR STACKUP IS THIS ONE FACT, never the size of the list: a folder holding one layer beside
+  # a job file would read as single and lose its Top/Bottom toggle. A job file and an archive are
+  # never single — each is a whole board, so the honest render has a Top and a Bottom.
+  #
+  # NOT HERE, DELIBERATELY: the 3MF manifest (a read with no decision in it, one line on each page)
+  # and the `colors`/`unit_factor` defaults, which stay in the two templates.
+  def viewer_for(user:, node:, url:)
+    archive = Maker::GerberArchive.for(user:, node:)
+    kind = archive ? :gerber : preview_kind(node.name)
+    layers =
+      if archive
+        href = url.call(node)
+        [ href && helpers.gerber_archive_entry(name: node.name, url: href, members: archive.stacked) ].compact
+      elsif kind == :gerber
+        gerber_layers_for(user:, node:, url:)
+      end
+    [ kind, layers, kind == :gerber && !archive && !gerber_job?(node.name) ]
+  end
 
   # WHAT gerber_controller.js FETCHES on a file page: `[{ name:, url: }]`, name-ordered.
   #

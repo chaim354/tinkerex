@@ -1,5 +1,8 @@
 require "test_helper"
 require "support/public_fixture"
+require "support/gerber_fixture"
+require "support/mesh_fixture"
+require "support/three_mf_fixture"
 
 module Web
   # A VISITOR'S FILE PAGE (stage 4, S4-5; spec §2 D5 and §5's S4-5 row; stories 5.5, 5.7). The same
@@ -11,6 +14,11 @@ module Web
   # there would be a change to four other suites for this one's convenience.
   class PublicFileViewTest < ActionDispatch::IntegrationTest
     include PublicFixture
+    # REAL BYTES the server opens on a visitor's page: a zipped Gerber export (Maker::GerberArchive)
+    # and a slicer's 3MF (Maker::ThreeMfManifest). Only the BYTES come from these two; every node is
+    # still PublicFixture#make_file!'s, so it lands where the port reads it on this pinned share.
+    include GerberFixture
+    include ThreeMfFixture
     # `assert_no_enqueued_jobs` needs this EXPLICITLY — it is not on ActiveSupport::TestCase here
     # (test/integration/web/maker_page_thumbnails_test.rb and s3_write_test.rb both include it).
     include ActiveJob::TestHelper
@@ -45,6 +53,23 @@ module Web
 
     def view_path_for(node_id, **opts) = public_file_view_path("ada", @project.slug, node_id, **opts)
 
+    # What gerber_controller.js will fetch, as the page handed it over (gerber_preview_test.rb's own).
+    def layers_of(selector) = JSON.parse(css_select(selector).first["data-gerber-layers-value"])
+
+    # EVERY Maker::PublicProject IN THE BLOCK REFUSES EVERY LAYER URL — the public side's refusal,
+    # reaching all three Gerber arms at once. `deliverable!` asks `permits?`, not this method, so the
+    # page itself still renders and the refusal reaches the URL builder alone, which is what the rule
+    # under test is about. Replaced on the CLASS because the controller builds its own instance per
+    # request, and restored to the original UnboundMethod (project_adoptions_test.rb's shape;
+    # Minitest 6 has no Object#stub).
+    def refusing_layer_urls
+      real = Maker::PublicProject.instance_method(:layer_url_for)
+      Maker::PublicProject.define_method(:layer_url_for) { |_node| nil }
+      yield
+    ensure
+      Maker::PublicProject.define_method(:layer_url_for, real)
+    end
+
     # `assert_no_private_urls` IS PublicFixture's, NOT A LOCAL COPY. This file carried its own
     # until 2026-09-08; when the fixture's version gained the `/rails/active_storage/` arm
     # (hardening, tinkerex#278) the local one SHADOWED it, so this suite alone kept the weaker
@@ -61,6 +86,23 @@ module Web
                     public_file_path("ada", @project.slug, @f[:base].node_id, filename: "base.stl")
       assert_select "[data-modelviewer-lazy-value=?]", "true"
       assert_no_private_urls
+    end
+
+    # A 3MF's COLOURS AND ITS UNIT REACH A VISITOR'S VIEWER AS DATA — the server half files_flow_test.rb
+    # pins on the maker's page, unpinned on this one until F-S10-2. three's 3MFLoader reads neither,
+    # so without them a Bambu plate renders grey and a part in metres measures 1000x short.
+    # `unit: "meter"` is what makes the factor an assertion: at 1.0 the template's own default would
+    # pass it with no manifest read at all.
+    test "a published 3MF carries its slicer colours and its unit factor to the visitor's viewer" do
+      plate = make_file!(@user, "plate.3mf", @f[:models],
+                         body: bambu_3mf(filaments: %w[#161616 #F98C36 #FFFFFF], unit: "meter"))
+      plate.update!(content_hash: "h-#{plate.node_id}", current_version_id: "v-#{plate.node_id}")
+
+      get view_path_for(plate.node_id)
+
+      assert_response :success
+      assert_select ".model-viewer[data-modelviewer-colors-value=?]", '["#161616","#F98C36"]'
+      assert_select ".model-viewer[data-modelviewer-unit-factor-value=?]", "1000.0"
     end
 
     # THE ROUTE'S ORDER IS THE GUARD, NOT A PREFERENCE (Amendment 6). `files/:id(/*filename)` matches
@@ -125,6 +167,57 @@ module Web
       assert_select "[data-controller=?]", "codeview"
       assert_select "[data-controller=?]", "editor", 0, "a visitor must never get the editor mount"
       assert_select "form", 0, "a visitor's file page carries no form at all"
+    end
+
+    # A ZIPPED EXPORT IS A BOARD ON A VISITOR'S PAGE TOO, AND THE SAME BOARD (F-S10-2). Which viewer a
+    # file gets, the layer list and the single-or-stackup choice are ONE answer, FilePreview#viewer_for,
+    # asked by both file pages; while each controller spelled it out, this page's copy of the zip
+    # branch had no test, so a change landing in one controller could not be noticed in the other.
+    # gerber_preview_test.rb pins the maker's half; this is the visitor's, on the PUBLIC named route.
+    test "a published Gerber zip is a stackup of ONE archive entry on the public named route" do
+      zip = make_file!(@user, "board.zip", @f[:models], body: fusion_zip)
+      zip.update!(content_hash: "h-#{zip.node_id}", current_version_id: "v-#{zip.node_id}")
+
+      get view_path_for(zip.node_id)
+
+      assert_response :success
+      assert_select ".model-viewer.gerber-viewer[data-controller=?]", "gerber"
+      assert_select ".gerber-viewer[data-gerber-single-value=?]", "false"
+      assert_equal [ { "name" => "board.zip",
+                       "url" => public_file_path("ada", @project.slug, zip.node_id, filename: "board.zip"),
+                       "archive" => true,
+                       "members" => fusion_zip_members } ],
+                   layers_of(".gerber-viewer")
+      assert_no_private_urls
+    end
+
+    # A REFUSED LAYER URL IS ABSENT ON EVERY ARM OR ON NONE (files-preview.md, "A .gbrjob's SIBLING
+    # WALK IS ONE ANSWER"). The single-layer arm `.compact`s and the job arm `filter_map`s; the ZIP
+    # arm used to skip the page's URL builder entirely and so could not drop anything. A refusal of
+    # the zip's own URL is unreachable after `deliverable!`, but the rule is about the SHAPE: a
+    # viewer handed `url: null` draws board chrome around a layer that does not exist. Both halves
+    # are asserted, because "absent on none" is the half a builder refusing everything would break.
+    test "a layer URL the page refuses is absent on all three Gerber arms, and one it permits present on all three" do
+      job = make_file!(@user, "board.gbrjob", @f[:models], body: gerber_job("driver.gtl"))
+      zip = make_file!(@user, "board.zip", @f[:models], body: fusion_zip)
+      [ job, zip ].each { |n| n.update!(content_hash: "h-#{n.node_id}", current_version_id: "v-#{n.node_id}") }
+      arms = { "a layer" => @gtl, "a job file" => job, "a zipped export" => zip }
+
+      arms.each do |arm, node|
+        get view_path_for(node.node_id)
+        assert_response :success
+        assert_select ".gerber-viewer", 1, "#{arm}: a layer URL the page permits must reach the viewer"
+      end
+
+      refusing_layer_urls do
+        arms.each do |arm, node|
+          get view_path_for(node.node_id)
+          assert_response :success, "#{arm}: the refusal is the URL builder's alone; the page still renders"
+          assert_select ".gerber-viewer", 0,
+                        "#{arm}: a refused URL must reach the viewer as an ABSENT layer, never as a null one"
+          assert_select "p.muted", text: /No Gerber layers/
+        end
+      end
     end
 
     test "the Measure view ships whole: the launch, the paper picker, Print and Download SVG" do

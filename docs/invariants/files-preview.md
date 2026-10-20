@@ -211,8 +211,8 @@ layers beside it**: an export is complete by construction, so a zip beside a loo
 folder is TWO boards.
 
 The zip's **own file page IS the board** (a stackup, with Top and Bottom, like a `.gbrjob`'s).
-`preview_kind` stays **NAME-ONLY** — the zip branch is decided in `FilesController#show` by a READ,
-the one preview kind that is, beside the `.gbrjob` read that already lives there. **Filing reads the
+`preview_kind` stays **NAME-ONLY** — `FilePreview#viewer_for` decides the zip branch by a READ,
+the one preview kind that is, beside the `.gbrjob` read that lives there too. **Filing reads the
 zip, and the vocabulary does not** (stage 4, S4-2; story 2.8): `zip` stays role `source_archive` —
 right for a Printables download, and what `preview_kind`, the badge and `ROLE_BY_EXT` still answer —
 but `Maker::ProjectIntake#place` asks `Maker::GerberArchive.for` about a `.zip` loose at a project's
@@ -221,7 +221,12 @@ source folder. It is the ONE filing decision in that class that reads bytes, and
 bounded, cached reader this page does, so the sweep and the file page cannot disagree about what a
 board is. A zip already in a subfolder is still never moved — root = inbox is unchanged. The rule is stated beside the code in three places that must sweep together:
 `Maker::GerberArchive`'s header, `FilesHelper#gerber_archive_entry` (the ONE wire shape, built by
-`FilesController#show`), and `gerber_controller.js`'s `filesFor`.
+`FilePreview#viewer_for` for both file pages), and `gerber_controller.js`'s `filesFor`.
+
+**`viewer_for` IS ONE ANSWER, ASKED BY BOTH FILE PAGES** (F-S10-2): the kind, the layer list and
+the single-or-stackup choice, with only the user and the URL builder the caller's. Each controller
+spelled that assembly out line for line until then, and the visitor's copy of the zip branch had no
+test, so a change landing in one controller could not be noticed in the other.
 
 **A GERBER IS A FILE LIKE ANY OTHER ON THE PROJECT PAGES, AND THE BOARD RENDERS ONLY ON ITS OWN
 FILE PAGE** (2026-09-06, at the user's request). The private and public project pages' Fabrication
@@ -239,15 +244,20 @@ viewer on" — true of the pages that existed, false of the pages that exist, an
 a rule's *condition* rather than its conclusion.
 
 **A `.gbrjob`'s SIBLING WALK IS ONE ANSWER AND THE URL IS THE CALLING PAGE'S.**
-`FilePreview#gerber_layers_for` takes a `url:` lambda, so the two pages cannot disagree about which
-layers a board HAS — only about how to address one. The private lambda never refuses; the public one
-is `Maker::PublicProject#layer_url_for`, which asks the same `permits?` that `deliverable!` asks and
-answers **nil** for a sibling this project does not publish. **BOTH arms drop the refusal** — the
-job arm `filter_map`s, the single-layer arm `.compact`s — so a board renders WITHOUT an unpublished
-layer instead of pointing a visitor at a URL the byte route would refuse, and **a board built
-entirely of unpublished layers is no board**, not board chrome drawn around a null layer. The
-single-layer arm shipped returning `[nil]`, which is not empty; a refusal must reach the viewer as
-an absent layer on both arms or on neither.
+`FilePreview#viewer_for` takes a `url:` lambda and hands it to every arm, `gerber_layers_for`'s
+sibling walk among them, so the two pages cannot disagree about which layers a board HAS — only
+about how to address one. The private lambda never refuses; the public one is
+`Maker::PublicProject#layer_url_for`, which asks the same `permits?` that `deliverable!` asks and
+answers **nil** for a node this project does not publish. **ALL THREE arms drop the refusal** — the
+job arm `filter_map`s, the single-layer arm and the zip's archive arm `.compact` — so a board
+renders WITHOUT an unpublished layer instead of pointing a visitor at a URL the byte route would
+refuse, and **a board built entirely of unpublished layers is no board**, not board chrome drawn
+around a null layer. The single-layer arm shipped returning `[nil]`, which is not empty; a refusal
+must reach the viewer as an absent layer on every arm or on none. The archive arm is the third
+since F-S10-2: each page used to build its byte URL there itself, past the lambda, so the rule could
+not even be asked of it. A refusal of the zip's own URL is unreachable after `deliverable!`, but
+the rule is about the shape, and `public_file_view_test.rb` asserts both halves on all three arms,
+with the public builder made to refuse.
 
 **THE STAGE'S PAN, ZOOM AND FIT ARE `app/javascript/lib/svg_pan_zoom.js`, SHARED WITH THE MEASURE
 VIEW — never a second copy.** The maths was `measure_controller.js`'s (the wheel-zoom-about-the-
