@@ -12,6 +12,10 @@ landed it (§11).
 1. **`application.css` opens with `@layer tokens, base, components, shell, pages;` and every rule of
    ours sits in one of those layers.** The first `@layer` statement the browser meets fixes the order
    for the document, so the statement must be the first rule of the first sheet the layout links.
+   **The `hidden` attribute is authoritative once, in `@layer base`** (`[hidden]:not([hidden="until-found"])
+   { display: none !important; }`, which beats every later layer and the unlayered vendor sheet), so
+   a component gives itself any `display` it likes and never restates `[hidden]`; `css_hygiene_test.rb`
+   refuses a restatement (F-S34-2 deleted seven, and found the YAML drawer that lacked one).
 2. **`vendor-overrides.css` is the ONE unlayered sheet, linked last.** An unlayered rule outranks
    every layered one, which is why the Lexxy / CodeMirror / spreadsheet skins have to live outside
    the layers to beat those libraries' own unlayered CSS — and why nothing else may. The CodeMirror
@@ -70,7 +74,12 @@ landed it (§11).
    `shell_layout_test.rb` pins one lit link per page. **Collapsed (or below 1100px) the project
    and pin links are hidden**, so `sidebar_family_lit?` marks their visible parent — Library for a
    pin, All projects for a project — with `.rail-family-lit`, a CLASS and not a second
-   aria-current, which shell.css draws only in the icon rail. **The top bar's Upload and New ▾
+   aria-current, which shell.css draws only in the icon rail. **The icon rail is ONE container query
+   on `.rail`** (`@container rail`): the collapse cookie and the ≤1099px media query each set only
+   the grid track, so both triggers draw one rule block, and nothing outside the rail can match it
+   (its unscoped viewport copy hid the sign-in card's wordmark). The rail's width must stay the grid
+   track's, a length, because inline-size containment stops its content from sizing it
+   (`css_hygiene_test.rb`, `shell_test.rb`). **The top bar's Upload and New ▾
    create in `FolderDestination`'s folder, set by the action that renders a folder** and by nothing
    else, never from session or user state (the current project it replaced is guarded out by
    `architecture_invariants_test.rb`). A page with none asks with the folder chooser

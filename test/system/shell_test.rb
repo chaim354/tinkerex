@@ -74,9 +74,10 @@ class ShellTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  # BELOW 1100px THE RAIL IS ICONS WHATEVER THE COOKIE SAYS, and shell.css carries a SECOND copy of
-  # the family-lit rules inside that media query — which the collapsed-cookie test above cannot
-  # reach. Expanded cookie, 900px viewport (CDP, for the reason the 375px sweep below records).
+  # BELOW 1100px THE RAIL IS ICONS WHATEVER THE COOKIE SAYS: the viewport narrows the rail's track, and
+  # the one icon-rail block (a container query on `.rail`, shell.css) follows the width — the other
+  # trigger to the collapsed-cookie test above, which is what this one reaches. Expanded cookie, 900px
+  # viewport (CDP, for the reason the 375px sweep below records).
   test "below 1100px the icon rail marks a lit pin's family link without the collapse cookie" do
     @root.join("laser").mkpath
     Library::ScanJob.perform_now(user_id: @user.id)
@@ -133,6 +134,113 @@ class ShellTest < ApplicationSystemTestCase
     page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
   end
 
+  # ONE ICON RAIL, TWO TRIGGERS (F-S20-1, 2026-10-19). The collapse cookie and a viewport below 1100px
+  # each set only the grid TRACK; the icon rail itself is ONE container query on `.rail` (shell.css),
+  # so both triggers must draw the identical rail. Read as a fingerprint of COMPUTED styles, each arm
+  # against the same expected icon rail, because only a browser resolves a container query. Until
+  # 2026-10-19 each trigger had its own hand-synced copy of the rules, so a rail edit landed twice.
+  # Mutation-checked: dropping `.rail-label` from the `@container` block reddens both arms; deleting
+  # `body.app-shell.rail--collapsed`'s track rule reddens the cookie arm alone; deleting `container`
+  # from `.rail` reddens both.
+  test "the collapse cookie and a narrow viewport draw the same icon rail" do
+    @root.join("laser").mkpath
+    Library::ScanJob.perform_now(user_id: @user.id)
+    laser = @user.nodes.present.find_by!(name: "laser", kind: "dir")
+    @user.maker_pins.create!(node_id: laser.node_id)
+    parts = [ ".brand-name", ".rail-label", ".rail-user", ".rail-btn span", ".rail-group-head", ".rail-pin" ]
+    fingerprint = lambda do
+      page.evaluate_script(<<~JS)
+        (() => {
+          const rail = document.querySelector("aside.rail");
+          const style = (sel) => getComputedStyle(rail.querySelector(sel));
+          return {
+            container: `${getComputedStyle(rail).containerType} ${getComputedStyle(rail).containerName}`,
+            width: Math.round(rail.getBoundingClientRect().width),
+            hidden: #{parts.to_json}.filter((sel) => style(sel).display === "none"),
+            brand: style(".brand").justifyContent,
+            link: `${style(".rail-link").justifyContent} ${style(".rail-link").paddingLeft}`,
+            lit: Array.from(rail.querySelectorAll("a.rail-link"))
+              .filter((a) => a.offsetParent !== null && getComputedStyle(a, "::before").content !== "none")
+              .map((a) => a.title)
+          };
+        })()
+      JS
+    end
+    icon_rail = { "container" => "inline-size rail", "width" => 56, "hidden" => parts,
+                  "brand" => "center", "link" => "center 0px", "lit" => [ "Library" ] }
+
+    visit files_path(folder: laser.node_id)
+    expanded = fingerprint.call
+    assert_equal [ [], [ "laser" ] ], [ expanded["hidden"], expanded["lit"] ], "the expanded rail (#{expanded.inspect})"
+
+    find("aside.rail [data-action='rail#toggle']").click
+    assert_selector "body.rail--collapsed"
+    cookie = fingerprint.call
+
+    find("aside.rail [data-action='rail#toggle']").click
+    assert_no_selector "body.rail--collapsed"
+    page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
+                                    width: 900, height: 900, deviceScaleFactor: 1, mobile: false)
+    visit files_path(folder: laser.node_id)
+    assert_no_selector "body.rail--collapsed"
+    # BOTH ARMS IN ONE ASSERTION, so a failure shows which trigger drew a different rail.
+    assert_equal({ "collapse cookie at 1400px" => icon_rail, "expanded cookie at 900px" => icon_rail },
+                 { "collapse cookie at 1400px" => cookie, "expanded cookie at 900px" => fingerprint.call },
+                 "the two triggers must draw the one icon rail")
+    assert_no_console_errors
+  ensure
+    page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
+  end
+
+  # A `.brand` OUTSIDE THE RAIL KEEPS ITS WORDMARK BELOW 1100px (F-S20-1, 2026-10-19). The viewport's
+  # copy of the icon-rail rules sat UNSCOPED in shell.css's ≤1099px media query, so it hid
+  # `.brand-name` on every `.brand` on the page: the visitor's header and the landing each carried an
+  # override, and the sign-in card — `/` on every self-hosted box — had none. That copy did a second
+  # thing to every `.brand`, which is why the brand's own box is read too: it centred it and took
+  # its padding (`justify-content: center; padding: 4px 0`), so the card's mark sat alone in the
+  # middle and the header's brand lost its 8px. Signed out, because the card and the landing are the
+  # signed-out doors; demo mode on, because only there is `/` the landing. COMPUTED style at a CDP
+  # viewport (the 375px sweep below says why not resize_to). Mutation-checked: putting the unscoped
+  # `.brand-name { display: none }` back into the ≤1099px block reddens all three surfaces at both
+  # widths, and so does the unscoped `.brand { justify-content: center; padding: 4px 0 }` alone
+  # (every brand centred, the header's padding 0px).
+  test "below 1100px a brand outside the rail keeps its wordmark" do
+    prior_demo = ENV["DEMO_ACCOUNT_EMAIL"]
+    find("aside.rail button", text: "Sign out").click
+    assert_current_path root_path
+    assert_selector ".auth-card"
+    ENV["DEMO_ACCOUNT_EMAIL"] = "demo@example.com"
+    User.create!(email: "demo@example.com", password: SecureRandom.base58(32), confirmed_at: Time.current, handle: "demo")
+    seen = {}
+    [ 900, 375 ].each do |width|
+      page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
+                                      width:, height: 900, deviceScaleFactor: 1, mobile: false)
+      { new_user_session_path => ".auth-card", public_explore_path => ".public-header", root_path => ".landing-nav" }.each do |path, surface|
+        visit path
+        assert_selector "#{surface} .brand .brand-name", visible: :all
+        seen["#{surface} at #{width}px"] = page.evaluate_script(<<~JS)
+          (() => {
+            const name = document.querySelector(#{"#{surface} .brand-name".to_json});
+            const brand = getComputedStyle(name.closest(".brand"));
+            return { display: getComputedStyle(name).display, width: Math.round(name.getBoundingClientRect().width),
+                     justify: brand.justifyContent, padding: brand.paddingLeft };
+          })()
+        JS
+      end
+    end
+    # The wordmark draws, the brand is not centred like the icon rail's, and the visitor's header keeps
+    # its own 8px (the card and the landing set their padding to 0 themselves).
+    drawn_as_icon_rail = seen.reject do |key, brand|
+      brand["display"] != "none" && brand["width"].positive? && brand["justify"] != "center" &&
+        (!key.start_with?(".public-header") || brand["padding"] == "8px")
+    end
+    assert_empty drawn_as_icon_rail, "a brand outside the rail is drawn as the icon rail's below 1100px; every surface: #{seen.inspect}"
+    assert_no_console_errors
+  ensure
+    page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
+    prior_demo.nil? ? ENV.delete("DEMO_ACCOUNT_EMAIL") : ENV["DEMO_ACCOUNT_EMAIL"] = prior_demo
+  end
+
   test "the theme button cycles light, dark, system and persists" do
     visit files_path
     theme = -> { page.evaluate_script("document.documentElement.dataset.theme") }
@@ -153,19 +261,41 @@ class ShellTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  # `.flash { display: flex }` outranks the UA's `[hidden] { display: none }`, and the openscad
-  # addon bundle ships `p.flash.flash-alert[hidden]` as a notice slot — so until components.css
-  # restored `[hidden]` it rendered as an empty PROBLEM box on every openscad load. Injected rather
-  # than rendered by a fixture because the markup is the ADDON's, not a template of ours; the CSS
-  # is what is under test. Mutation-checked: deleting `.flash[hidden]` turns this red.
-  test "a flash rendered hidden stays hidden" do
+  # THE `hidden` ATTRIBUTE BEATS EVERY COMPONENT'S `display` (F-S34-2, 2026-10-19). An author
+  # `display` outranks the user agent's `[hidden] { display: none }`, so the attribute used to work
+  # only where a component restated it: seven restatements, each added after a shipped bug (the
+  # openscad bundle's `p.flash.flash-alert[hidden]` notice slot showed as an empty PROBLEM box on
+  # every load; the file chooser's Back; the tab panes), while the page editor's YAML drawer, which
+  # had none, rendered while hidden. One rule in application.css's base layer decides it now. A probe
+  # per formerly-restated selector, the drawer, and a bare `.btn` (an addon bundle removes one rather
+  # than hide it, because `hidden` was decorative there). Injected rather than rendered, because much
+  # of this markup is the ADDONS'; the CSS is under test, read as the COMPUTED display.
+  # Mutation-checked: deleting the base rule reddens the six whose component sets a `display`
+  # (.tab-pane, .flash, .filechooser-back, .btn, .addon-card, .layout-drawer). The `li`, `.box-group`
+  # and the caption set none, so the user agent's own rule hides them either way: their
+  # restatements were belt and braces.
+  test "a hidden element stays hidden whatever display its component gives it" do
     visit files_path
     page.execute_script(<<~JS)
-      document.querySelector("main").insertAdjacentHTML("beforeend",
-        '<p class="flash flash-alert" data-role="notice" id="hidden-flash-probe" hidden></p>')
+      document.querySelector("main").insertAdjacentHTML("beforeend", `<div id="hidden-probes">
+        <div class="tab-pane" data-probe="tab-pane" hidden>pane</div>
+        <p class="flash flash-alert" data-role="notice" data-probe="flash" hidden></p>
+        <button type="button" class="btn small filechooser-back" data-probe="filechooser-back" hidden>Back</button>
+        <button type="button" class="btn" data-probe="btn" hidden>Save</button>
+        <span class="topbar-upload-caption" data-probe="topbar-upload-caption" hidden>Saves to cad</span>
+        <ul class="box-toc-list"><li data-probe="box-toc-list li" hidden><a href="#trays">Trays</a></li></ul>
+        <a class="addon-card" data-probe="addon-card" hidden>Box</a>
+        <details class="box-group" data-probe="box-group" hidden><summary>Trays</summary></details>
+        <aside class="layout-drawer" data-probe="layout-drawer" hidden>YAML</aside>
+      </div>`)
     JS
-    assert_selector "#hidden-flash-probe", visible: :hidden
-    assert_no_selector "#hidden-flash-probe", visible: true
+    shown = page.evaluate_script(<<~JS).to_h
+      Array.from(document.querySelectorAll("#hidden-probes [data-probe]"))
+        .map((el) => [el.dataset.probe, getComputedStyle(el).display])
+    JS
+    assert_equal 9, shown.size, "the probes did not all land: #{shown.inspect}"
+    assert_empty shown.reject { |_, display| display == "none" }, "a hidden element renders: #{shown.inspect}"
+    assert_no_console_errors
   end
 
   test "a notice toast leaves on its own and an alert waits to be dismissed" do

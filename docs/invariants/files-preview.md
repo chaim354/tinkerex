@@ -660,14 +660,20 @@ reachable even if the endpoint is wrong.
 
 **NO PUBLIC SURFACE POLLS, BECAUSE THIS ENDPOINT IS SESSION-AUTHED** — so a visitor's poster is
 whatever is READY at render time, and every public page says so honestly: the ready thumbs, and for
-the rest either `files/_thumb`'s spinner markup with its animation stopped (`pages/public.css`) or
-`files/viewers/_static`'s "Generating preview…", **a statement a reload resolves rather than a
-promise the page can keep**. What makes that statement true is the RENDER, not a poll:
+the rest either `files/_thumb`'s spinner markup standing still or `files/viewers/_static`'s
+"Generating preview…", **a statement a reload resolves rather than a promise the page can keep**.
+What makes that statement true is the RENDER, not a poll:
 `Maker::Previews::ThumbnailMap.for` backfills on an anonymous GET — the public project page has done
 that since S3-4, and the public file page does it for its one node. Do not answer a missing public
 poster by opening the poll to visitors; the write-on-render is the sanctioned mechanism and it is
 bounded per `(node, content token, renderer build)`, plus one re-enqueue per
 `Enqueue::STALLED_AFTER` for a row whose job was lost (`Enqueue.needs_job?`, restamped as it heals).
+
+**A SPINNER TURNS ONLY INSIDE A POLL CELL.** components.css keys its animation on
+`[data-thumbs-target~="cell"]`, the poll's own markup, so a surface with no cell, public or not, shows a
+still ring and needs no rule of its own. F-S34-1 deleted `pages/public.css`'s hand-kept list of
+non-polling containers, which had missed two of the six public render sites
+(`test/system/thumb_spinner_test.rb`).
 
 **S4-5 ADDED ONE ASYMMETRY DELIBERATELY: `FilesController#geometry` ENQUEUES AND
 `Public::FilesController#geometry` NEVER WRITES.** The visitor's enqueue moved to the page render

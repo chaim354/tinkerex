@@ -14,8 +14,9 @@
   NO `data-controller="thumbs"` AND THAT IS DELIBERATE, not an omission. The poll exists to turn a
   spinner into an image while the owner watches their own upload render; a visitor has no such
   expectation and the endpoint it polls is signed-in-only anyway. So this renders READY thumbs and,
-  for anything else, the spinner markup `files/_thumb` emits with its animation stopped
-  (pages/public.css) — a static badge rather than a promise the page will never keep.
+  for anything else, the spinner markup `files/_thumb` emits, which turns only inside a poll cell
+  (components.css) and so stands still here — a static badge rather than a promise the page will
+  never keep.
 
   THE NAME OPENS THE FILE'S OWN PAGE SINCE STAGE 4, S4-5; DOWNLOAD IS UNCHANGED. Until then both
   cells pointed at the BYTES, so clicking an .stl downloaded it and there was nowhere on the public

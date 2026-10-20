@@ -152,6 +152,15 @@
   }
 
   *, *::before, *::after { box-sizing: border-box; }
+  /* THE `hidden` ATTRIBUTE IS AUTHORITATIVE, HERE AND ONCE (F-S34-2). Any author `display` outranks
+     the user agent's `[hidden] { display: none }`, so a component that hid with the attribute had to
+     restate it: seven restatements in three sheets, each added after a shipped bug, and the page
+     editor's YAML drawer, which had none, rendered while hidden. `!important` in this EARLY layer is
+     the cascade's own tool for it: important declarations reverse the layer order, so this beats
+     every component, shell, page and unlayered vendor rule, and no component restates `[hidden]`.
+     `until-found` keeps the user agent's behaviour, which find-in-page reveals. css_hygiene_test.rb
+     refuses a `[hidden]` rule anywhere else; shell_test.rb probes it in a browser. */
+  [hidden]:not([hidden="until-found"]) { display: none !important; }
   html { -webkit-text-size-adjust: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--fg);
