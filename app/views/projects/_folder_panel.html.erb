@@ -24,9 +24,10 @@
 
   ITS OWN `thumbs filemenu` PAIR. The Files panel wraps its groups in one instance because they
   share a subtree; a panel is a sibling subtree, so a controller mounted over there would not find
-  these cells at all. Every tile id here is already in @page_thumbs — tile_ids is built from
-  @listing.node_ids, which is every row of the whole tree — so this polls, and never builds a
-  second ThumbnailMap.
+  these cells at all. Every tile id here is already in @page_thumbs: ProjectsController#show's union
+  takes every listed file except those beneath a Dir its #dirs_without_tiles names, and those are
+  exactly the files no panel draws a tile for (a hidden panel outside the editor, the browser view,
+  a repository nested as a closed section) — so this polls, and never builds a second ThumbnailMap.
 %>
 <% visible = dir.files.reject { |row| @generated_ids.include?(row.node_id) } %>
 <% count = dir.repo? ? dir.subtree_file_count : dir.subtree_file_ids.count { |id| !@generated_ids.include?(id) } %>
