@@ -109,12 +109,13 @@ module Public
       redirect_to row.asset.url, allow_other_host: true
     end
 
-    # THE POLL, AND IT NEVER WRITES. FilesController#geometry enqueues when it finds no current row,
-    # which is right for a door only the file's owner can open and wrong for one anybody can: a
-    # `failed` row is re-enqueued by `Enqueue.call` on EVERY call (§14h), so a stranger reloading a
-    # broken file would enqueue a doomed render per poll. The enqueue lives on the page render above
-    # instead, guarded by `current_preview` so it fires once per (content, renderer build) — the same
-    # split `Maker::Previews::ThumbnailMap`'s required `backfill:` flag draws between `#index`
+    # THE POLL, AND IT NEVER WRITES. FilesController#geometry enqueues when it finds no current row
+    # (or one whose job was lost), which is right for a door only the file's owner can open and wrong
+    # for one anybody can: a `failed` row is re-enqueued by `Enqueue.call`'s default on EVERY call
+    # (§14h), so a stranger reloading a broken file would enqueue a doomed render per poll. The
+    # enqueue lives on the page render above instead, with `retry_failed: false` so it fires once per
+    # (content, renderer build) and once per STALLED_AFTER for a lost job — the same split
+    # `Maker::Previews::ThumbnailMap`'s required `backfill:` flag draws between `#index`
     # (self-heals) and `#thumbnails` (polled every 2 s, must not write).
     #
     # `head :not_found` RATHER THAN THE PAGE'S 404, and rescued LOCALLY for FilesController#geometry's
@@ -151,19 +152,21 @@ module Public
 
     private
 
-    # ONE JOB PER (node, content token, renderer build), and the `current_preview` guard is what
-    # makes that true rather than "one job per page view": `Enqueue.call` resets a `failed` row to
-    # pending and re-enqueues whenever it is called. `FilesController#current_thumbnail` is this
-    # method's shape, with kind "thumbnail".
+    # ONE JOB PER (node, content token, renderer build), plus at most one per STALLED_AFTER window
+    # for a row whose job was lost — and `retry_failed: false` is what makes that true rather than
+    # "one job per page view": `Enqueue.call`'s default resets a `failed` row to pending and
+    # re-enqueues whenever it is called, which on a door a stranger can issue is a doomed render per
+    # reload. ONE CALL, because this door does nothing with the row: `call` asks `needs_job?` of it,
+    # so a current row costs the same single query the `current_preview` guard that stood here did.
+    # That guard returned on ANY current row, which is why a visitor's Measure view could spin over
+    # a lost job for good. `FilesController#current_thumbnail` keeps the two-step because it
+    # RETURNS the row, including one for a name no renderer claims, where `call` answers nil.
     def enqueue_geometry(owner)
       token = @info&.content_token
       return if token.blank?
-      return if Maker::Previews::Enqueue.current_preview(user: owner, node_id: @node.node_id,
-                                                         name: @node.name, version_id: token,
-                                                         kind: "geometry")
 
       Maker::Previews::Enqueue.call(user: owner, node_id: @node.node_id, name: @node.name,
-                                    version_id: token, kind: "geometry")
+                                    version_id: token, kind: "geometry", retry_failed: false)
     rescue FileLayer::NotFound, FileLayer::FetchError
       nil
     end

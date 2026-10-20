@@ -17,6 +17,10 @@ module Maker
     # `unsupported` = no permissive renderer for this file type (a deliberate, non-error
     # terminal state; distinct from `failed` = a real render/fetch error).
     STATUSES = %w[pending processing ready failed unsupported].freeze
+    # THE TWO STATUSES THAT CLAIM A JOB IS COMING — named once, because nothing verifies the claim
+    # but `Maker::Previews::Enqueue::STALLED_AFTER`, and a status added to this set later must be
+    # healed by the same window.
+    IN_FLIGHT = %w[pending processing].freeze
 
     validates :node_id, presence: true
     validates :kind,    inclusion: { in: KINDS }

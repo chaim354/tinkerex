@@ -272,6 +272,24 @@ module Web
       assert_equal "boom", preview.error
     end
 
+    # A ROW WHOSE JOB WAS LOST IS HEALED BY THE PAGE RENDER, ONCE PER WINDOW, AND STILL NEVER BY THE
+    # POLL. The render's guard returned on ANY current row, so a `processing` row from a lost job sat
+    # there for good and a visitor's Measure view spun with nothing coming. It asks
+    # `Enqueue.needs_job?` now with `retry_failed: false` — the test above is what keeps a FAILED row
+    # terminal — and the heal's restamp is what keeps a reloading stranger to one job per window.
+    test "a visitor's render re-enqueues a geometry row whose job was lost; the poll still does not" do
+      get view_path_for(@laser.node_id)
+      preview = @user.maker_previews.find_by!(node_id: @laser.node_id, kind: "geometry")
+      preview.update_columns(status: "processing", updated_at: 3.days.ago)
+      clear_enqueued_jobs
+
+      assert_no_enqueued_jobs(only: Maker::GeneratePreviewJob) do
+        get public_file_geometry_path("ada", @project.slug, @laser.node_id)
+      end
+      assert_enqueued_jobs(1, only: Maker::GeneratePreviewJob) { get view_path_for(@laser.node_id) }
+      assert_no_enqueued_jobs(only: Maker::GeneratePreviewJob) { get view_path_for(@laser.node_id) }
+    end
+
     test "the geometry endpoint refuses a node the project does not permit, as JSON not a redirect" do
       get public_file_geometry_path("ada", @project.slug, @f[:outsider].node_id)
       assert_response :not_found

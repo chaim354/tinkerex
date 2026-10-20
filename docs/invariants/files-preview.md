@@ -168,12 +168,18 @@ board over as a `.zip` (Fusion's "CAM outputs", Altium, KiCad's fabrication plug
 a board where it lies — nobody has to unzip it into the library, which is the report this came
 from. **ONE bounded port read per archive, judged on the catalog's own `size` column FIRST**
 (`GerberArchive::READ_LIMIT`, 16 MB — past it the zip is something else and is never opened), and
-the answer is cached in `Rails.cache` by `(node_id, content token)` with **nil cached too**, so a
-zip of firmware stays known-not-a-board until its content changes. The token is `content_hash` or
-`current_version_id` — the port's own `content_token`, read off the catalog's two columns rather
-than through a second `stat` call (`Maker::Previews::MissingBackfill` gets the same value from the
-port's bulk `stat_all`; this is the one reader of the pair off the catalog). An unknown `size`
-(NULL) is refused, never read: the bound has to hold before any read, and `nil.to_i` would pass it.
+the answer is cached in `Rails.cache` by `(node_id, content token)` with **a nil from the BYTES
+cached too**, so a zip of firmware stays known-not-a-board until its content changes — **and a nil
+from the PORT never**. The port's `FetchError`/`NotFound` are rescued OUTSIDE the fetch, because
+activesupport writes a nil block result unless `skip_nil`: rescued inside it, an unmounted share
+was cached as "not a board" for the cache's 30 days under a key that does not move when the share
+comes back (both file pages lost the board, and `ProjectIntake` filed the zip as source). The
+namespace is `-v2` since that fix (2026-10-19), which is what retired the nils already written.
+The token is `content_hash` or `current_version_id` — the port's own `content_token`, read off the
+catalog's two columns rather than through a second `stat` call (`Maker::Previews::MissingBackfill`
+gets the same value from the port's bulk `stat_all`; this is the one reader of the pair off the
+catalog). An unknown `size` (NULL) is refused, never read: the bound has to hold before any read,
+and `nil.to_i` would pass it.
 
 **rubyzip LISTS and never extracts; JSZip in the BROWSER does** (§15 — Rails serving extracted
 layers would put bytes through the control plane on every backend, and the browser must fetch the
@@ -515,12 +521,12 @@ already converted by their importer" was FALSE and is corrected. And it cannot s
 **filament colours**: Bambu Studio and PrusaSlicer keep the palette and the per-object extruder in
 their own `Metadata/*.config`, so every part of a Bambu project rendered in the viewer's default
 grey. `Maker::ThreeMfManifest` reads both — **one bounded port read, judged on the catalog's `size`
-column first and cached in `Rails.cache` by content token with nil cached, `Maker::GerberArchive`'s
-shape exactly** — and `FilesController#show` / `ModelsController#show` hand it over as data
-attributes (per `<option>` on the model page: the manifest is a fact about one FILE and the switcher
-swaps files). Since slice 5 the model page renders only for a model with no folder strip to land on;
-the Library's model strip carries no viewer, so in a model folder the manifest reaches the viewer
-through the file page.
+column first and cached in `Rails.cache` by content token with the bytes' nil cached and a port
+failure never, `Maker::GerberArchive`'s shape exactly** — and `FilesController#show` /
+`ModelsController#show` hand it over as data attributes (per `<option>` on the model page: the
+manifest is a fact about one FILE and the switcher swaps files). Since slice 5 the model page
+renders only for a model with no folder strip to land on; the Library's model strip carries no
+viewer, so in a model folder the manifest reaches the viewer through the file page.
 
 **The colours are applied BY THE ENGINE'S MESH INDEX, and three rules keep that safe.** The match is
 `userData.originalMeshInstance.id.meshIndex`, never a name — a Bambu `<object>` carries no `name`
@@ -607,17 +613,20 @@ promise the page can keep**. What makes that statement true is the RENDER, not a
 `Maker::Previews::ThumbnailMap.for` backfills on an anonymous GET — the public project page has done
 that since S3-4, and the public file page does it for its one node. Do not answer a missing public
 poster by opening the poll to visitors; the write-on-render is the sanctioned mechanism and it is
-bounded per `(node, content token, renderer build)`.
+bounded per `(node, content token, renderer build)`, plus one re-enqueue per
+`Enqueue::STALLED_AFTER` for a row whose job was lost (`Enqueue.needs_job?`, restamped as it heals).
 
 **S4-5 ADDED ONE ASYMMETRY DELIBERATELY: `FilesController#geometry` ENQUEUES AND
 `Public::FilesController#geometry` NEVER WRITES.** The visitor's enqueue moved to the page render
-(`#view`, once, guarded by `Maker::Previews::Enqueue.current_preview`) because `Enqueue.call` resets
-a `failed` row to `pending` and re-enqueues on EVERY call (§14h): on a door a stranger can issue,
-an unguarded poll is a doomed render every two seconds for as long as a tab is open. The guard is
-load-bearing, not politeness — dropping it leaves the suite green, since `Enqueue.call` is already
-self-idempotent for a `pending` row and only a `failed` one shows the cost. This is
-`ThumbnailMap`'s required `backfill:` flag drawn a second time: the render self-heals, the polled
-door must not write.
+(`#view`, once, through `Enqueue.call(…, retry_failed: false)`) because `Enqueue.call`'s DEFAULT
+resets a `failed` row to `pending` and re-enqueues on EVERY call (§14h): on a door a stranger can
+issue, an unguarded poll is a doomed render every two seconds for as long as a tab is open. The
+flag is load-bearing, not politeness — dropping it reddens exactly one test, the failed-render
+reload in `public_file_view_test.rb`, since `Enqueue.call` is already self-idempotent for a
+`pending` row and only a `failed` one shows the cost. (It replaced a `current_preview` guard on
+2026-10-19 that refused the failed row just as well but also skipped a row whose job was lost, so a
+visitor's Measure view could spin with nothing coming.) This is `ThumbnailMap`'s required
+`backfill:` flag drawn a second time: the render self-heals, the polled door must not write.
 
 **THE MEASURE BAR'S SAVE CONTROLS EXIST ONLY WHERE THERE IS A LIBRARY TO SAVE INTO.**
 `files/viewers/_measure.html.erb` takes a required `save:` local; the public page passes **false**

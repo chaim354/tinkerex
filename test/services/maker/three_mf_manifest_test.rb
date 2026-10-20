@@ -28,12 +28,18 @@ module Maker
     teardown { FileLayer.reset! }
 
     # Every port read this block performs, by node_id — the singleton-method technique
-    # gerber_archive_test.rb uses, because this suite has no Object#stub (Minitest 6).
-    def counting_reads
+    # gerber_archive_test.rb uses, because this suite has no Object#stub (Minitest 6). `raising:`
+    # makes each of those reads fail with the port's own error instead, as that file's does.
+    def counting_reads(raising: nil)
       adapter = FileLayer.current
       original = adapter.method(:read)
       reads = []
-      adapter.define_singleton_method(:read) { |user, **kw| reads << kw[:node_id]; original.call(user, **kw) }
+      adapter.define_singleton_method(:read) do |user, **kw|
+        reads << kw[:node_id]
+        raise raising, "the store did not answer" if raising
+
+        original.call(user, **kw)
+      end
       begin
         yield reads
       ensure
@@ -336,7 +342,62 @@ module Maker
       end
     end
 
+    # A STORE THAT DID NOT ANSWER IS THIS VIEW'S nil, NEVER THE CONTENT'S — gerber_archive_test.rb's
+    # pair of tests, for this reader's copy of the same wrapper. The rescue sat INSIDE the fetch, so
+    # an outage cached "no manifest" for CACHE_TTL and an inch or metre export measured 25.4x or
+    # 1000x short, in grey, until its bytes changed. The banner arm was already here; the cache was
+    # not, and the null store this suite runs on could not see it.
+    #
+    # MUTATION: move the rescue back inside `Rails.cache.fetch` and the view after the outage answers
+    # the cached nil without reading.
+    test "an unreachable store is nil for that view, raises the banner, and is never cached" do
+      node = write_threemf!
+      seen = outage_then_recovery(node, FileLayer::FetchError)
+
+      assert_nil seen[:during]
+      assert seen[:banner], "an outage degraded the manifest to nil without raising the banner"
+      assert_equal [ "#161616", "#F98C36" ], seen[:after]&.colors,
+                   "the outage's nil was cached, so the project stayed grey after the store came back"
+      assert_equal [ node.node_id, node.node_id ], seen[:reads], "the view after the outage did not read again"
+    end
+
+    test "a missing package is nil without the banner, and that nil is never cached either" do
+      node = write_threemf!
+      seen = outage_then_recovery(node, FileLayer::NotFound)
+
+      assert_nil seen[:during]
+      assert_nil seen[:banner], "a missing package raised the banner; nothing is down"
+      assert_equal [ "#161616", "#F98C36" ], seen[:after]&.colors,
+                   "a missing package's nil was cached, so the project stayed grey once it was back"
+      assert_equal [ node.node_id, node.node_id ], seen[:reads], "the view after the miss did not read again"
+    end
+
+    # THE NAMESPACE MOVED WITH THE FIX, for gerber_archive_test.rb's reason: production already holds
+    # nils that outages wrote under the old one. MUTATION: put it back and the planted nil is served.
+    test "an answer cached under the namespace outages poisoned is never read" do
+      node = write_threemf!
+
+      with_memory_cache do
+        Rails.cache.write([ "threemf-manifest", node.node_id, node.content_hash ], nil)
+        assert_equal [ "#161616", "#F98C36" ], ThreeMfManifest.for(user: @user, node:)&.colors,
+                     "a nil cached under the pre-fix namespace was served"
+      end
+    end
+
     private
+
+    # ONE VIEW WHILE EVERY PORT READ RAISES `error`, THEN ONE AFTER THE STORE IS BACK, against a fresh
+    # MemoryStore — gerber_archive_test.rb's helper of the same name, for this reader.
+    def outage_then_recovery(node, error)
+      with_memory_cache do
+        Current.reset
+        during, failed_reads = counting_reads(raising: error) { |r| [ ThreeMfManifest.for(user: @user, node:), r ] }
+        banner = Current.library_unreachable
+        Current.reset
+        after, reads = counting_reads { |r| [ ThreeMfManifest.for(user: @user, node:), r ] }
+        { during:, banner:, after:, reads: failed_reads + reads }
+      end
+    end
 
     # The plain fixture's root `<model>` document on its own, for the tests that need to damage it.
     def plain_3mf_document

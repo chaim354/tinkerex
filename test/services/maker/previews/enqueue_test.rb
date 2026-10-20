@@ -197,9 +197,9 @@ module Maker
       end
 
       # THE OTHER HALF, and the one that keeps the recovery from becoming a stampede: a row that
-      # only just went pending is believed. `backfill_thumbnails` calls this once per row on every
-      # Files page load, so a window-less "re-enqueue any pending" would enqueue a duplicate job
-      # for every spinner on screen, every render.
+      # only just went pending is believed. `ThumbnailMap`'s backfill asks this (as `needs_job?`) of
+      # every row on every Files page load, so a window-less "re-enqueue any pending" would enqueue a
+      # duplicate job for every spinner on screen, every render.
       test "a freshly pending row is left alone — its job really is still coming" do
         Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
         clear_enqueued_jobs
@@ -224,6 +224,53 @@ module Maker
         assert_enqueued_with(job: Maker::GeneratePreviewJob) do
           Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
         end
+      end
+
+      # THE TRANSITION TABLE, ASKED DIRECTLY: `needs_job?` is the one answer `call` and every door
+      # that already holds a row give to "does this row need a job?". Every arm is a row a door
+      # really meets, and `retry_failed:` is the one place the two policies differ — the eager seams
+      # retry a failed render (`call`'s default), the read doors never do.
+      test "needs_job? answers a missing row, moved coordinates, a stall, and a failure only on request" do
+        rev = Enqueue.revision_for_name("part.stl", "thumbnail")
+        row = lambda do |status, version_id: "v1", revision: rev, at: Time.current|
+          travel_to(at) do
+            @user.maker_previews.create!(node_id: "n-#{SecureRandom.hex(4)}", kind: "thumbnail",
+                                         version_id:, status:, renderer_revision: revision)
+          end
+        end
+        ask = lambda do |preview, retry_failed: false|
+          Enqueue.needs_job?(preview, version_id: "v1", revision: rev, retry_failed:)
+        end
+
+        assert ask.call(nil), "no row at all"
+        assert ask.call(@user.maker_previews.new(node_id: "n-new", kind: "thumbnail")), "a row never saved"
+        assert ask.call(row.call("ready", version_id: "v0")), "the content moved"
+        assert ask.call(row.call("ready", revision: rev + 1)), "the renderer moved"
+        assert_not ask.call(row.call("ready")), "current and done"
+        assert_not ask.call(row.call("unsupported")), "terminal by design"
+
+        failed = row.call("failed")
+        assert_not ask.call(failed), "a read door retried a failed render"
+        assert ask.call(failed, retry_failed: true), "an eager seam did not retry a failed render"
+
+        %w[pending processing].each do |status|
+          assert_not ask.call(row.call(status)), "#{status} inside the window: its job is believed"
+          assert ask.call(row.call(status, at: (Enqueue::STALLED_AFTER + 1.minute).ago)),
+                 "#{status} past STALLED_AFTER: nothing verifies the job is still coming"
+        end
+      end
+
+      # THE SAME POLICY THROUGH `call`, for a caller that holds no row: `retry_failed: false` leaves a
+      # current failed render alone, where the default ("re-enqueues a previously failed preview",
+      # above) retries it.
+      test "call with retry_failed: false leaves a failed render alone" do
+        @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail", status: "failed",
+                                     renderer_revision: Enqueue.revision_for_name("part.stl", "thumbnail"))
+        assert_no_enqueued_jobs do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1",
+                                        retry_failed: false)
+        end
+        assert_equal "failed", @user.maker_previews.find_by!(node_id: "n1").status
       end
 
       # THE RESTAMP IS LOAD-BEARING AND IS THE EASIEST HALF TO LEAVE OUT. Healing a stalled row

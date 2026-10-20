@@ -10,7 +10,12 @@
 #   Maker::Readme.for                   the project page's README card, and a repository's README
 #   Maker::RepoCard.git_facts           a repository card's history facts
 #   Maker::GerberSets.job_layer_names   a .gbrjob's file page
-#   Maker::ThreeMfManifest.read         a 3MF's file and model pages
+#   Maker::GerberArchive.for            a Gerber zip's file page
+#   Maker::ThreeMfManifest.for          a 3MF's file and model pages
+#
+# THE LAST TWO CACHE WHAT THEY READ, so each rescues OUTSIDE its `Rails.cache.fetch`: a rescue
+# inside the block returns its nil INTO the cache, and an outage then reads as "not a board" or "no
+# manifest" for the cache's whole lifetime. A setter that caches keeps the failure out of it.
 #
 # AND ONE THAT CANNOT, TODAY: Maker::Previews::ThumbnailMap.for. `stat_all` is catalog-only on all
 # three adapters (it answers from the local `nodes` table and never touches the store;
