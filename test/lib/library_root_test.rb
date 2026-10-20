@@ -55,9 +55,15 @@ class LibraryRootTest < ActiveSupport::TestCase
 
   # ============================================================ choose!
 
+  # THROUGH THE REAL FACTORY, ON EVERY LEG: LIBRARY_BACKEND is pinned to share for this test, because
+  # the claim is that FileLayer.build's Share lands on the new root -- which an injected adapter could
+  # not show, and the s3 and chunk_remote legs' ambient adapter has no root at all.
   test "choose! writes the choice, joins it onto the mount and resets the adapter" do
+    prior_backend = ENV["LIBRARY_BACKEND"]
+    ENV["LIBRARY_BACKEND"] = "share"
+    FileLayer.reset!
     mkdirs("Workshop/3d")
-    FileLayer.current # build the adapter over the mount, so the reset is what moves it
+    assert_equal @mount, FileLayer.current.root, "built over the mount, so the reset is what moves it"
 
     assert_equal "Workshop/3d", Tinkerex::LibraryRoot.choose!("Workshop/3d")
 
@@ -65,6 +71,8 @@ class LibraryRootTest < ActiveSupport::TestCase
     assert_equal @mount.join("Workshop/3d"), Tinkerex::LibraryRoot.path
     assert_equal @mount.join("Workshop/3d"), FileLayer.current.root,
                  "choose! must reset FileLayer.current, or this process keeps serving the old root"
+  ensure
+    prior_backend.nil? ? ENV.delete("LIBRARY_BACKEND") : ENV["LIBRARY_BACKEND"] = prior_backend
   end
 
   test "choose! with an empty string chooses the whole mount" do

@@ -76,8 +76,13 @@ module ActiveSupport
       ActionController::Base.cache_store.clear
       ActionController::API.cache_store.clear
       # Setting.get is memoised per process (app/models/setting.rb) and the memo outlives each test's
-      # rollback, so a test that wrote or forgot a setting would leak it into the next.
+      # rollback, so a test that wrote or forgot a setting would leak it into the next. REFILLED from
+      # the fixture straight away: the library redirect reads it on every signed-in request, and a
+      # query budget measured across two requests (page_query_budget_test.rb and kin, which assert
+      # constancy in N) must not count the memo's first fill inside the first one -- measured, it
+      # made three of them read N+1 queries for the small case on every leg.
       Setting.reset_cache!
+      Tinkerex::LibraryRoot.relative
     end
 
     # Run a block on a box that has no SVG rasterizer.

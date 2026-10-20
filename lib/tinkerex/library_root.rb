@@ -42,8 +42,9 @@ module Tinkerex
     # folder, so every gate that asks `pending?` is a no-op there.
     def self.share? = FileLayer.current.is_a?(FileLayer::Share)
 
-    # The row first: once chosen, a deployment pays one memoised read and never builds the adapter.
-    def self.pending? = relative.nil? && share?
+    # The adapter first (memoised per process), so s3 and chunk_remote never read the setting at all;
+    # on share, a chosen library then pays one memoised read and no query.
+    def self.pending? = share? && relative.nil?
 
     # FileLayer::Share's default root. ENV.fetch, as Share always did: FileLayer.build runs
     # LibraryBackendCheck first, so a missing LIBRARY_PATH is explained before it gets here.
