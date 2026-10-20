@@ -34,6 +34,11 @@ class AddTrashRootNodeIdMigrationTest < ActiveSupport::TestCase
     seed_pre_column_library!
   end
 
+  # AND ONCE MORE AFTER THE TEST, BEFORE THE FIXTURE ROLLBACK, for the reason #439's migration tests
+  # found: `up` re-adds the column at the END of `nodes`, where db/schema.rb's load put it in the
+  # middle, and a statement prepared in between keeps the column names it first reported. Probed: with
+  # this line gone, a later share_test read `trash_root_node_id` as "1" (the shifted `user_id`) on
+  # seeds 1, 3 and 4 of 1-8; `reset_column_information` clears the connection's statement cache.
   teardown { Node.reset_column_information }
 
   test "every trash tombstone records the entry its own delete made, and nothing else records one" do
