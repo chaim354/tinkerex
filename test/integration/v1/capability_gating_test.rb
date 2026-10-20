@@ -40,11 +40,6 @@ module V1
     def auth = { "Authorization" => "Bearer #{@account['device_token']}" }
     def error = JSON.parse(response.body)["error"].to_s
 
-    def sign_in_web(user)
-      post user_session_path, params: { user: { email: user.email, password: PASSWORD } }
-      assert_redirected_to root_path
-    end
-
     def web_user
       User.create!(email: "cap-#{SecureRandom.hex(4)}@example.com",
                    password: PASSWORD, confirmed_at: Time.current)
@@ -56,7 +51,7 @@ module V1
     # anything here. The refusal must NAME the door that does work -- a bare 501 reads as
     # "uploads are off", which is exactly wrong (§14a).
     test "begin_upload answers 501 on a share backend, naming the door that does work" do
-      sign_in_web(web_user)
+      sign_in_web!(web_user, password: PASSWORD)
       post begin_upload_files_path,
            params: { name: "a.stl", size: 3, manifest: [ { hash: "0" * 64, offset: 0, length: 3 } ] },
            as: :json
@@ -78,7 +73,7 @@ module V1
     # call, which is the one thing §14a says it must always be.
     test "POST /files answers 501 on chunk_remote, naming the two-phase flow" do
       user = web_user
-      sign_in_web(user)
+      sign_in_web!(user, password: PASSWORD)
       FileLayer.current = FileLayer::ChunkRemote.new
       post files_path, params: {
         file: Rack::Test::UploadedFile.new(StringIO.new("bytes"), "application/octet-stream",

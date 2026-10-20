@@ -115,7 +115,7 @@ module Web
       # the only one that works, not a preference.
       @user = User.create!(email: "hygiene-#{SecureRandom.hex(4)}@example.com", handle: "hygiene",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @user.nodes.create!(node_id: "d-laser", name: "laser", kind: "dir")
       @user.nodes.create!(node_id: "d-empty", name: "empty", kind: "dir")
       file!("n-stl", "bracket.stl")

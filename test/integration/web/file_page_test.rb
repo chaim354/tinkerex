@@ -11,7 +11,7 @@ module Web
     setup do
       @user = User.create!(email: "fp-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @node = @user.nodes.create!(node_id: "n-coaster", name: "coaster.lbrn2", kind: "file",
                                   mtime: 1_000_000_000, size: 2_400)
     end

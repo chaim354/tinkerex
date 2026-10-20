@@ -57,7 +57,7 @@ module Tools
       # test/support/chunk_remote_journey.rb's own per-test email.
       @user = User.create!(email: "addons-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       # Mirrors GeneratorsControllerTest/BoxesControllerTest: on the s3 CI leg, FileLayer.current
       # otherwise resolves to a REAL FileLayer::S3 pointed at CI's stub (non-existent) bucket
       # creds, so an unstubbed save 403s against actual AWS instead of exercising the save path.

@@ -22,7 +22,7 @@ module Web
       @root = use_fresh_share_library!
       @user = User.create!(email: "amb-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @project = @user.maker_projects.create!(name: "Desk Lamp")
 
       # A model as the importer leaves it: a folder, three files in it, all three attached.

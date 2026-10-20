@@ -18,7 +18,7 @@ module Web
     setup do
       @user = User.create!(email: "menu-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       # One thumbnailable file (takes the .file-cell branch) and one that is not (the plain-link
       # branch) — the two views each have both, and only one of them was wired at first.
       @user.nodes.create!(node_id: "n-stl", name: "widget.stl", kind: "file", mtime: 1, size: 5)

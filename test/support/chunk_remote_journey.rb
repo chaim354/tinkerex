@@ -51,14 +51,7 @@ module ChunkRemoteJourney
   def sign_in(email = "#{journey_prefix}@example.com")
     user = User.find_by(email:) ||
            User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
-    post user_session_path, params: { user: { email:, password: PASSWORD } }
-    # NOT `assert_response :redirect` -- a FAILED sign-in redirects too (Devise's own
-    # FailureApp#redirect, and this app's per-IP rate-limit hook in Users::SessionsController,
-    # both `redirect_to`), so a bare 3xx cannot tell success from failure and every request this
-    # helper's caller makes afterward would silently run unauthenticated while this reported fine.
-    # `root_path` is the real destination -- ApplicationController#after_sign_in_path_for.
-    assert_redirected_to root_path
-    user
+    sign_in_web!(user, password: PASSWORD)
   end
 
   # THE UPLOAD, AND THE ONE PLACE THIS DIFFERS STRUCTURALLY FROM Web::FilesFlowTest.

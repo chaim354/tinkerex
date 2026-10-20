@@ -48,7 +48,7 @@ module Web
       @root = use_fresh_share_library!
       @user = User.create!(email: "origins-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       # Same two node shapes file_menu_wiring_test.rb uses: one the preview registry can render
       # (the `.file-cell` branch in both views) and one it cannot (the plain-link branch). Only the
       # first was produced by an addon, so every assertion below has a negative case beside it.

@@ -18,7 +18,7 @@ module Tools
 
     setup do
       @user = User.create!(email: "tools@example.com", password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @prior_cache = Rails.cache
       Rails.cache = ActiveSupport::Cache::MemoryStore.new
       Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ MANIFEST ])

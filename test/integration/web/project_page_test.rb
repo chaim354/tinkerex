@@ -11,7 +11,7 @@ module Web
     setup do
       @user = User.create!(email: "pp-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @project = @user.maker_projects.create!(name: "Desk Lamp", description: "An articulated lamp.")
       # BOTH FILES LIVE IN THE PROJECT'S FOLDER, not at the library root: the stats line's file
       # count is now Maker::ProjectFolderListing#total (the folder), not maker_file_attachments —

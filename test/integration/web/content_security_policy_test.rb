@@ -12,9 +12,8 @@ module Web
     PASSWORD = "correct horse battery staple".freeze
 
     setup do
-      email = "csp@example.com"
-      User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email:, password: PASSWORD } }
+      user = User.create!(email: "csp@example.com", password: PASSWORD, confirmed_at: Time.current)
+      sign_in_web!(user, password: PASSWORD)
     end
 
     test "a page sends the report-only header and NOT the enforcing one" do

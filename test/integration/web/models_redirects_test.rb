@@ -9,7 +9,7 @@ module Web
 
     setup do
       @user = User.create!(email: "mr-#{SecureRandom.hex(4)}@example.com", password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @user.nodes.create!(node_id: "d-bracket", name: "bracket", kind: "dir", mtime: 1, size: 0)
       @user.nodes.create!(node_id: "n-bracket", name: "bracket.stl", kind: "file", parent_node_id: "d-bracket",
                           mtime: 1, size: 1, content_hash: "h", current_version_id: "v")

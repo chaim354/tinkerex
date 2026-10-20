@@ -16,7 +16,7 @@ module Web
     setup do
       @user = User.create!(email: "owner@example.com", password: PASSWORD,
                            confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
     end
 
     # --- edit ------------------------------------------------------------------

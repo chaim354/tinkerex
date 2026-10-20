@@ -9,7 +9,7 @@ module Web
 
     setup do
       @user = User.create!(email: "blocks-#{SecureRandom.hex(4)}@example.com", password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @project = @user.maker_projects.create!(name: "Desk Lamp", description: "A lamp.")
       @folder = project_folder_rows!(@user, @project)
       @photos = dir!("photos", @folder.node_id)

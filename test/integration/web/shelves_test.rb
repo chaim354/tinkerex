@@ -19,14 +19,9 @@ module Web
       sign_in_as(@user)
     end
 
-    # DEVIATION FROM THE PLAN, the same one models_catalog_test.rb records: `sign_in_as` does not
-    # exist in test_helper.rb. The only method by that name is a Capybara helper in
-    # test/system/support/web_helpers.rb, which takes an EMAIL and drives the real form. This is a
-    # plain ActionDispatch::IntegrationTest, so -- like every other web integration test here -- it
-    # defines its own, taking the already-built @user the test bodies attach rows to.
-    def sign_in_as(user)
-      post user_session_path, params: { user: { email: user.email, password: PASSWORD } }
-    end
+    # The harness's verifying sign-in (test_helper.rb's `sign_in_web!`), with this suite's own
+    # PASSWORD rather than WEB_PASSWORD.
+    def sign_in_as(user) = sign_in_web!(user, password: PASSWORD)
 
     test "the page seeds the default shelves on first visit" do
       get settings_shelves_path

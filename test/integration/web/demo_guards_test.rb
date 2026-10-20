@@ -50,10 +50,7 @@ module Web
     # every account indexes the one library, so the door stays shut while another account exists --
     # demo_session_test.rb proves the refusal). The guards below key on the ACCOUNT, not on how it
     # signed in, which is what this suite is for.
-    def sign_in_demo!
-      sign_in_as(@demo)
-      assert_redirected_to root_path, "the demo signs in with the password this suite knows"
-    end
+    def sign_in_demo! = sign_in_as(@demo)
 
     def upload(name, bytes)
       Rack::Test::UploadedFile.new(StringIO.new("x" * bytes), "application/octet-stream", original_filename: name)

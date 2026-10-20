@@ -16,7 +16,7 @@ module Web
     setup do
       @root = use_fresh_share_library!
       @user = User.create!(email: "txt@example.com", password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
     end
 
     teardown { FileLayer.reset!; FileUtils.remove_entry(@root) if @root&.exist? }

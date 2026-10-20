@@ -34,7 +34,7 @@ module Web
     setup do
       @user = User.create!(email: "budget@example.com", password: PASSWORD,
                            confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
     end
 
     # Only the addon-origins test below stubs the source; a reset is harmless for every other test
@@ -409,7 +409,7 @@ module Web
         end
       end
       sign_out = -> { delete destroy_user_session_path }
-      sign_in = -> { post user_session_path, params: { user: { email: @user.email, password: PASSWORD } } }
+      sign_in = -> { sign_in_web!(@user, password: PASSWORD) }
       public_path = public_project_path("blockbudget", project.slug)
 
       measure = lambda do
@@ -447,7 +447,7 @@ module Web
       project_folder_rows!(@user, project)
       public_path = public_project_path("tabbudget", project.slug)
       sign_out = -> { delete destroy_user_session_path }
-      sign_in = -> { post user_session_path, params: { user: { email: @user.email, password: PASSWORD } } }
+      sign_in = -> { sign_in_web!(@user, password: PASSWORD) }
 
       measure = lambda do |n|
         keys = (1..n).map { |i| Maker::ProjectKind.tab_key(format("%012x", i)) }

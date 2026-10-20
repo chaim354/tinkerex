@@ -20,8 +20,7 @@ module Web
     def sign_in(email = "maker@example.com")
       user = User.find_by(email:) ||
              User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email:, password: PASSWORD } }
-      user
+      sign_in_web!(user, password: PASSWORD)
     end
 
     # NotesController had no refusal assertion of its own — roughly seven of the sixteen

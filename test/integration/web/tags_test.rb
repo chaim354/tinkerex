@@ -10,7 +10,7 @@ module Web
     setup do
       @user = User.create!(email: "tags-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
     end
 
     test "the page groups by kind, each with a count and links" do
