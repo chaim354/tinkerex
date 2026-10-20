@@ -2,11 +2,17 @@
    container, the toast stack, the auth card, and the three widths. */
 @layer shell {
   body.app-shell { display: grid; grid-template-columns: var(--rail-width) minmax(0, 1fr); min-height: 100vh; }
+  /* The collapse cookie sets the rail's TRACK and nothing else; the icon rail below follows the width. */
   body.app-shell.rail--collapsed { grid-template-columns: var(--rail-collapsed-width) minmax(0, 1fr); }
 
+  /* THE RAIL IS A SIZE CONTAINER, `rail`, and the icon-rail block below asks its width. That width
+     must stay the grid TRACK's, a length: inline-size containment means the rail's content no longer
+     sizes it, so a content-sized track (`auto`, `min-content`) would collapse it to nothing. It also
+     makes the rail the containing block of any `position: fixed` descendant (it holds none). */
   .rail {
     position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: var(--space-4);
     padding: 14px 8px; background: var(--bg); border-right: 1px solid var(--line); overflow: hidden auto;
+    container: rail / inline-size;
   }
   .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px; color: var(--fg); font-size: 15px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; }
   .brand:hover { text-decoration: none; }
@@ -19,14 +25,13 @@
      `.brand` rather than restyling it, which is why it lives here beside it and not in
      pages/public.css: that sheet is about page CONTENT, and a `pages`-layer rule would outrank
      `shell` and start a cascade fight over the wordmark.
-     THE `.brand-name` OVERRIDE IS NOT TIDINESS: the ≤1099px block below hides `.brand-name`
-     UNQUALIFIED, because the RAIL narrows to icons at that width. This header does not narrow, and
-     a visitor's only wordmark must not vanish with the rail's. Higher specificity, so it wins from
-     here rather than needing to sit after the media query. --- */
+     IT NEEDS NO `.brand-name` OVERRIDE, and neither does any `.brand` outside the rail: the icon
+     rail is a container query on `.rail` (below), which matches the rail's descendants and nothing
+     else. Until F-S20-1 the ≤1099px copy of those rules was unscoped, so this header and the
+     landing each restored their wordmark and the sign-in card, which did not, lost it. --- */
   .public-header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
                    max-width: 1360px; margin: 0 auto; padding: 10px 16px;
                    border-bottom: 1px solid var(--line); }
-  .public-header .brand-name { display: inline; }
   .public-header .public-author { color: var(--fg-muted); font-size: 12px; }
   .public-header .public-intro { margin: 0; font-size: 12px; }
 
@@ -68,18 +73,23 @@
   .rail-foot .rail-btn[aria-current="page"] { color: var(--fg); background: var(--surface); }
   .rail-user { padding: 4px 10px; font: 400 12px/16px var(--font-mono); color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  /* Collapsed: icons only. The same rules apply below 1100px whatever the cookie says. */
-  .rail--collapsed .rail { padding-inline: 8px; }
-  .rail--collapsed .brand { justify-content: center; padding: 4px 0; }
-  .rail--collapsed .brand-name, .rail--collapsed .rail-label, .rail--collapsed .rail-user,
-  .rail--collapsed .rail-btn span { display: none; }
-  .rail--collapsed .rail-link, .rail--collapsed .rail-btn { justify-content: center; padding-inline: 0; }
-  .rail--collapsed .rail-foot form button { justify-content: center; }
-  .rail--collapsed .rail-group-head, .rail--collapsed .rail-project, .rail--collapsed .rail-pin { display: none; }
-  /* The lit project or pin just hid, so its family link (ShellHelper#sidebar_family_lit?) wears the
-     lit look instead — otherwise a collapsed rail shows nothing lit. The same pair below 1100px. */
-  .rail--collapsed .rail-family-lit { color: var(--fg); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
-  .rail--collapsed .rail-family-lit::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 2px 2px 0; background: var(--fg); }
+  /* THE ICON RAIL, ONCE (F-S20-1): icons only, whichever trigger narrowed the rail, the collapse
+     cookie (`body.app-shell.rail--collapsed`, above) or a viewport below 1100px (the media block
+     below). Both set only the grid track; this asks the rail's own content width (39px narrow, 199px
+     wide, so any threshold between serves), so it matches the rail's descendants and nothing else.
+     It was two hand-synced copies, a `.rail--collapsed`-prefixed one and an UNSCOPED one in the
+     ≤1099px media query, and every rail edit landed twice. css_hygiene_test.rb refuses a second
+     copy; shell_test.rb draws both triggers and the sign-in card's wordmark. */
+  @container rail (max-width: 120px) {
+    .brand { justify-content: center; padding: 4px 0; }
+    .brand-name, .rail-label, .rail-user, .rail-btn span,
+    .rail-group-head, .rail-project, .rail-pin { display: none; }
+    .rail-link, .rail-btn { justify-content: center; padding-inline: 0; }
+    /* The lit project or pin just hid, so its family link (ShellHelper#sidebar_family_lit?) wears the
+       lit look instead; otherwise the icon rail shows nothing lit. */
+    .rail-family-lit { color: var(--fg); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+    .rail-family-lit::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 2px 2px 0; background: var(--fg); }
+  }
 
   .shell-main { min-width: 0; display: flex; flex-direction: column; }
   .topbar {
@@ -155,14 +165,8 @@
   .account-delete { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
 
   @media (max-width: 1099px) {
+    /* The narrow viewport's half of the icon rail: the TRACK, whatever the cookie says. */
     body.app-shell { grid-template-columns: var(--rail-collapsed-width) minmax(0, 1fr); }
-    .rail { padding-inline: 8px; }
-    .brand { justify-content: center; padding: 4px 0; }
-    .brand-name, .rail-label, .rail-user, .rail-btn span { display: none; }
-    .rail-link, .rail-btn { justify-content: center; padding-inline: 0; }
-    .rail-group-head, .rail-project, .rail-pin { display: none; }
-    .rail-family-lit { color: var(--fg); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
-    .rail-family-lit::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 2px 2px 0; background: var(--fg); }
     .topbar { padding: 0 16px; }
     .topbar-upload-caption { display: none; }
     main.container { padding: 16px 16px 64px; }

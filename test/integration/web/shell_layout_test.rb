@@ -97,7 +97,8 @@ module Web
       assert_response :success
       assert_select "aside.rail", count: 0
       assert_select "body.app-shell", count: 0
-      # The collapsed rules hide `.brand-name`, and the auth card has one (found in review).
+      # The collapsed rules once hid `.brand-name`, and the auth card has one (found in review). The
+      # class sets only the rail's track since F-S20-1, and it still belongs to the shell alone.
       assert_select "body.rail--collapsed", count: 0
     end
 

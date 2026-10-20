@@ -74,9 +74,10 @@ class ShellTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  # BELOW 1100px THE RAIL IS ICONS WHATEVER THE COOKIE SAYS, and shell.css carries a SECOND copy of
-  # the family-lit rules inside that media query — which the collapsed-cookie test above cannot
-  # reach. Expanded cookie, 900px viewport (CDP, for the reason the 375px sweep below records).
+  # BELOW 1100px THE RAIL IS ICONS WHATEVER THE COOKIE SAYS: the viewport narrows the rail's track, and
+  # the one icon-rail block (a container query on `.rail`, shell.css) follows the width — the other
+  # trigger to the collapsed-cookie test above, which is what this one reaches. Expanded cookie, 900px
+  # viewport (CDP, for the reason the 375px sweep below records).
   test "below 1100px the icon rail marks a lit pin's family link without the collapse cookie" do
     @root.join("laser").mkpath
     Library::ScanJob.perform_now(user_id: @user.id)
@@ -131,6 +132,102 @@ class ShellTest < ApplicationSystemTestCase
     assert_equal "Sign out", sign_out["aria-label"]
   ensure
     page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
+  end
+
+  # ONE ICON RAIL, TWO TRIGGERS (F-S20-1, 2026-10-19). The collapse cookie and a viewport below 1100px
+  # each set only the grid TRACK; the icon rail itself is ONE container query on `.rail` (shell.css),
+  # so both triggers must draw the identical rail. Read as a fingerprint of COMPUTED styles, each arm
+  # against the same expected icon rail, because only a browser resolves a container query. Until
+  # 2026-10-19 each trigger had its own hand-synced copy of the rules, so a rail edit landed twice.
+  # Mutation-checked: dropping `.rail-label` from the `@container` block reddens both arms; deleting
+  # `body.app-shell.rail--collapsed`'s track rule reddens the cookie arm alone; deleting `container`
+  # from `.rail` reddens both.
+  test "the collapse cookie and a narrow viewport draw the same icon rail" do
+    @root.join("laser").mkpath
+    Library::ScanJob.perform_now(user_id: @user.id)
+    laser = @user.nodes.present.find_by!(name: "laser", kind: "dir")
+    @user.maker_pins.create!(node_id: laser.node_id)
+    parts = [ ".brand-name", ".rail-label", ".rail-user", ".rail-btn span", ".rail-group-head", ".rail-pin" ]
+    fingerprint = lambda do
+      page.evaluate_script(<<~JS)
+        (() => {
+          const rail = document.querySelector("aside.rail");
+          const style = (sel) => getComputedStyle(rail.querySelector(sel));
+          return {
+            container: `${getComputedStyle(rail).containerType} ${getComputedStyle(rail).containerName}`,
+            width: Math.round(rail.getBoundingClientRect().width),
+            hidden: #{parts.to_json}.filter((sel) => style(sel).display === "none"),
+            brand: style(".brand").justifyContent,
+            link: `${style(".rail-link").justifyContent} ${style(".rail-link").paddingLeft}`,
+            lit: Array.from(rail.querySelectorAll("a.rail-link"))
+              .filter((a) => a.offsetParent !== null && getComputedStyle(a, "::before").content !== "none")
+              .map((a) => a.title)
+          };
+        })()
+      JS
+    end
+    icon_rail = { "container" => "inline-size rail", "width" => 56, "hidden" => parts,
+                  "brand" => "center", "link" => "center 0px", "lit" => [ "Library" ] }
+
+    visit files_path(folder: laser.node_id)
+    expanded = fingerprint.call
+    assert_equal [ [], [ "laser" ] ], [ expanded["hidden"], expanded["lit"] ], "the expanded rail (#{expanded.inspect})"
+
+    find("aside.rail [data-action='rail#toggle']").click
+    assert_selector "body.rail--collapsed"
+    cookie = fingerprint.call
+
+    find("aside.rail [data-action='rail#toggle']").click
+    assert_no_selector "body.rail--collapsed"
+    page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
+                                    width: 900, height: 900, deviceScaleFactor: 1, mobile: false)
+    visit files_path(folder: laser.node_id)
+    assert_no_selector "body.rail--collapsed"
+    # BOTH ARMS IN ONE ASSERTION, so a failure shows which trigger drew a different rail.
+    assert_equal({ "collapse cookie at 1400px" => icon_rail, "expanded cookie at 900px" => icon_rail },
+                 { "collapse cookie at 1400px" => cookie, "expanded cookie at 900px" => fingerprint.call },
+                 "the two triggers must draw the one icon rail")
+    assert_no_console_errors
+  ensure
+    page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
+  end
+
+  # A `.brand` OUTSIDE THE RAIL KEEPS ITS WORDMARK BELOW 1100px (F-S20-1, 2026-10-19). The viewport's
+  # copy of the icon-rail rules sat UNSCOPED in shell.css's ≤1099px media query, so it hid
+  # `.brand-name` on every `.brand` on the page: the visitor's header and the landing each carried an
+  # override, and the sign-in card — `/` on every self-hosted box — had none. Signed out, because the
+  # card and the landing are the signed-out doors; demo mode on, because only there is `/` the
+  # landing. COMPUTED style at a CDP viewport (the 375px sweep below says why not resize_to).
+  # Mutation-checked: putting the unscoped `.brand-name { display: none }` back into the ≤1099px block
+  # reddens all three surfaces at both widths.
+  test "below 1100px a brand outside the rail keeps its wordmark" do
+    prior_demo = ENV["DEMO_ACCOUNT_EMAIL"]
+    find("aside.rail button", text: "Sign out").click
+    assert_current_path root_path
+    assert_selector ".auth-card"
+    ENV["DEMO_ACCOUNT_EMAIL"] = "demo@example.com"
+    User.create!(email: "demo@example.com", password: SecureRandom.base58(32), confirmed_at: Time.current, handle: "demo")
+    seen = {}
+    [ 900, 375 ].each do |width|
+      page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
+                                      width:, height: 900, deviceScaleFactor: 1, mobile: false)
+      { new_user_session_path => ".auth-card", public_explore_path => ".public-header", root_path => ".landing-nav" }.each do |path, surface|
+        visit path
+        assert_selector "#{surface} .brand .brand-name", visible: :all
+        seen["#{surface} at #{width}px"] = page.evaluate_script(<<~JS)
+          (() => {
+            const el = document.querySelector(#{"#{surface} .brand-name".to_json});
+            return `display ${getComputedStyle(el).display}, width ${Math.round(el.getBoundingClientRect().width)}`;
+          })()
+        JS
+      end
+    end
+    hidden = seen.reject { |_, v| v.match?(/\Adisplay (?!none,).*width [1-9]/) }
+    assert_empty hidden, "a wordmark outside the rail is hidden below 1100px; every surface: #{seen.inspect}"
+    assert_no_console_errors
+  ensure
+    page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
+    prior_demo.nil? ? ENV.delete("DEMO_ACCOUNT_EMAIL") : ENV["DEMO_ACCOUNT_EMAIL"] = prior_demo
   end
 
   test "the theme button cycles light, dark, system and persists" do
