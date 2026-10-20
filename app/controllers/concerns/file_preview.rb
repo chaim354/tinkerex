@@ -84,7 +84,8 @@ module FilePreview
   # its project does not publish; the single-layer arm `.compact`s, the job arm `filter_map`s, and
   # the archive arm `.compact`s too. A refusal of the zip's own URL is unreachable after the public
   # page's `deliverable!`, but `[{ url: nil }]` is not empty, and a viewer handed it draws board
-  # chrome around a layer that does not exist (files-preview.md, "absent on every arm or on none").
+  # chrome around a layer that does not exist (files-preview.md, "an absent layer on every arm or
+  # on none").
   #
   # SINGLE OR STACKUP IS THIS ONE FACT, never the size of the list: a folder holding one layer beside
   # a job file would read as single and lose its Top/Bottom toggle. A job file and an archive are

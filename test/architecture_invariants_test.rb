@@ -1120,7 +1120,14 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
              # STAGE 4, S4-5: THE VISITOR'S HEADER lives under layouts/ because the layout's anonymous
              # branch renders it, and a public controller's view context DOES resolve `current_user`
              # (probed in review) — so a session read there would render silently, not raise.
-             Dir.glob(ROOT.join("app", "views", "layouts", "_public_header.html.erb"))).sort
+             Dir.glob(ROOT.join("app", "views", "layouts", "_public_header.html.erb")) +
+             # F-S10-2 (2026-10-20): THE VIEWER AND DELIVERY CONCERNS ARE SHARED TOO. Both file
+             # pages now ask `FilePreview#viewer_for` for their viewer, so a visitor's page runs
+             # that concern's code — and `current_user` RESOLVES on Public::FilesController (Devise's
+             # helper is on ActionController::Base; probed in review), so a session read planted in
+             # the concern rendered for a visitor with this guard green. Mutation-checked: `_who =
+             # current_user` inside `viewer_for` goes red here and nowhere else.
+             Dir.glob(ROOT.join("app", "controllers", "concerns", "file_{preview,delivery}.rb"))).sort
     assert_operator files.size, :>=, 18,
                     "the Public scan matched #{files.size} file(s), below the plausibility floor " \
                     "of 18 — so `assert_empty` below cannot fail for the reason it exists " \
