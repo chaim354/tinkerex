@@ -141,6 +141,33 @@ module Web
       assert_equal current_revision, stale.reload.renderer_revision
     end
 
+    # THE SECOND POLL, WHICH THE TEST ABOVE NEVER ASKS — the defect `rebuilding` exists for
+    # (F-S08-2). The first poll after a renderer bump enqueues and says "pending"; but `Enqueue` had
+    # already stamped the new revision onto the row and left it `ready`, so the NEXT poll found a
+    # "current" row and served the older build's payload as this file's geometry, for as long as the
+    # rebuild sat in the queue. measure_controller.js polls again 250 ms later, so on any backlog
+    # that was the answer the Measure view drew. MUTATION: drop Enqueue's `rebuilding` write.
+    test "a renderer rebuild answers pending until it lands, never the older build's payload" do
+      stale = preview_for(@node_id, revision: current_revision - 1)
+      stale.update!(status: "ready")
+      stale.asset.attach(io: StringIO.new('{"v":1,"shapes":[]}'), filename: "old.json",
+                         content_type: "application/json")
+
+      get geometry_file_path(@node_id)
+      assert_equal "pending", response.parsed_body["status"]
+
+      get geometry_file_path(@node_id) # the rebuild has not run
+      assert_equal "pending", response.parsed_body["status"],
+                   "the poll served an older build's payload as this file's geometry"
+      assert_nil response.parsed_body["url"]
+
+      perform_enqueued_jobs(only: Maker::GeneratePreviewJob)
+      get geometry_file_path(@node_id)
+      assert_equal "ready", response.parsed_body["status"], "the rebuild never landed"
+      assert_equal 4, JSON.parse(stale.reload.asset.download)["shapes"].length,
+                   "the payload served is the new build's, not the one it replaced"
+    end
+
     # THE OTHER STALENESS AXIS AT THE SAME DOOR, AND IT WAS COMPLETELY UNGUARDED. `version_id`
     # asks "was this payload made from the file's CURRENT CONTENT?" and `renderer_revision` asks
     # "was it made by the CURRENT CODE?" — two independent questions (Enqueue says so in those
@@ -225,6 +252,7 @@ module Web
     test "opening a file page re-enqueues a thumbnail left by an older build" do
       current = current_thumbnail_revision
       stale = thumbnail_at(current - 1)
+      stale.asset.attach(io: StringIO.new("\x89PNG\r\n\x1A\n".b), filename: "t.png", content_type: "image/png")
 
       assert_enqueued_with(job: Maker::GeneratePreviewJob) { get file_path(@node_id) }
 
@@ -236,8 +264,11 @@ module Web
       # replace a correct image with a spinner for the whole render (the page polls a pending row
       # and reloads since S4-3, but a spinner over a correct picture is still the wrong trade). Only a CONTENT change
       # earns the spinner. Shipping it the other way read as "generating preview is broken".
-      assert_equal "ready", stale.status,
-                   "a renderer rebuild must not blank an artifact that is still of this file"
+      # `rebuilding` since F-S08-2: still a picture to show, no longer the current build.
+      assert_equal "rebuilding", stale.status
+      assert_select ".measure-fallback img.preview-image[src*=?]", stale.asset.blob.signed_id,
+                    { count: 1 }, "a renderer rebuild must not blank an artifact that is still of this file"
+      assert_select "[data-thumbs-pending]", { count: 0 }, "a page showing its picture must not poll"
     end
 
     test "a CONTENT change still blanks the artifact rather than showing the wrong picture" do

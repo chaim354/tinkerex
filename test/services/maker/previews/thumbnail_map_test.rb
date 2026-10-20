@@ -236,12 +236,15 @@ module Maker
         row = @user.maker_previews.create!(node_id: "n-stale", version_id: "tok", kind: "thumbnail",
                                            status: "ready",
                                            renderer_revision: revision_of(name) - 1)
+        row.asset.attach(io: StringIO.new("\x89PNG".b), filename: "t.png", content_type: "image/png")
         assert_enqueued_with(job: Maker::GeneratePreviewJob) { ThumbnailMap.for(@user, [ "n-stale" ]) }
         assert_equal revision_of(name), row.reload.renderer_revision
         # A RENDERER bump does NOT blank the artifact — the stored picture still depicts exactly
         # this file, only the code that built it moved on (Enqueue's own rule). Asserted here so a
-        # future "reset it to pending for consistency" has something to go red.
-        assert_equal "ready", row.status
+        # future "reset it to pending for consistency" has something to go red. The row says so as
+        # `rebuilding` since F-S08-2, and the NEXT render serves it: current coordinates, a picture.
+        assert_equal "rebuilding", row.status
+        assert_predicate ThumbnailMap.for(@user, [ "n-stale" ]).thumb("n-stale"), :showable?
       end
 
       # ------------------------------------------------------------------------------------

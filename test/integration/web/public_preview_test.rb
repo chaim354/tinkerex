@@ -242,6 +242,29 @@ module Web
       assert_response :not_found
     end
 
+    # A RENDERER REBUILD SPLITS THE TWO KINDS THIS ROUTE SERVES (F-S08-2), and that split is the
+    # point: the thumbnail is a PICTURE of this same content and stays served while its rebuild is
+    # queued, the Measure payload is DATA and an older build's is wrong. The visitor's page render
+    # queues both rebuilds; until the jobs run, the geometry poll and the payload route must refuse
+    # the older payload — `Enqueue` left the geometry row `ready`, so both served it as current.
+    # MUTATION: drop Enqueue's `rebuilding` write.
+    test "a renderer rebuild keeps serving the picture but never an older build's Measure payload" do
+      thumb = ready_preview!(@user, @laser)
+      geometry = ready_preview!(@user, @laser, kind: "geometry", body: GEOMETRY_JSON, content_type: "application/json")
+      [ thumb, geometry ].each { |row| row.update!(renderer_revision: row.renderer_revision - 1) }
+
+      get public_file_view_path("ada", @project.slug, @laser.node_id)
+      assert_response :success
+
+      get public_file_geometry_path("ada", @project.slug, @laser.node_id)
+      assert_equal "pending", JSON.parse(response.body)["status"],
+                   "the visitor's poll served an older build's payload as current"
+      get preview_path_for(@laser.node_id, kind: "geometry")
+      assert_response :not_found
+      get preview_path_for(@laser.node_id)
+      assert_response :redirect, "the picture of this same content stopped answering mid-rebuild"
+    end
+
     # A STALE ROW IS NOT THE FILE'S PICTURE. `current_preview` is the same "current content, current
     # renderer build" rule the page rendered from, so this route cannot serve a picture of content
     # the file no longer holds.

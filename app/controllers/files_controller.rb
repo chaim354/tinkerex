@@ -475,22 +475,25 @@ class FilesController < ApplicationController
     # only in that string. Note the finder answers WHICH ROW IS CURRENT and nothing more. Both doors
     # now decide whether to enqueue the same way — `Enqueue.needs_job?(…, retry_failed: false)`,
     # which reads `status` only to spot a lost job and to leave a failed one alone — and what
-    # differs is what each SAYS once it has: this action answers "pending" whenever it enqueued,
-    # without consulting the row, while `#current_thumbnail` returns the row `call` hands back,
-    # which stays `ready`, picture and all, through a renderer-only rebuild. That split is
-    # deliberate, and §14h forbids unifying it.
+    # differs is what each SAYS once it has: this action answers "pending" whenever it enqueued, and
+    # serves a row only as `current_build?`, while `#current_thumbnail` returns the row `call` hands
+    # back, which stays `showable?` — `rebuilding`, picture and all — through a renderer-only
+    # rebuild. That split is deliberate, and §14h forbids unifying it.
     preview = Maker::Previews::Enqueue.current_preview(user: current_user, node_id: node.node_id,
                                                        name: node.name, version_id: token,
                                                        kind: "geometry")
     # NOTHING CURRENT EXISTS -> TRIGGER A BUILD AND SAY "pending", WITHOUT CONSULTING THE ROW'S
-    # STATUS. Enqueue deliberately leaves a `ready` artifact visible through a renderer-only
-    # rebuild, because a thumbnail is a PICTURE of this same file — blanking it would put a spinner
-    # over a correct picture for the whole render (and, before S4-3's page poll, until someone
-    # reloaded). Geometry is the opposite on both counts: it is
-    # the DATA the client measures and draws from, so an older build's payload is wrong rather than
-    # merely old, and this endpoint's client polls, so "pending" costs nothing and resolves itself.
-    # Reading `preview.status` here instead would hand back the stale blob URL — exactly the bug
-    # the revision check exists to stop.
+    # STATUS. Enqueue deliberately keeps an artifact visible through a renderer-only rebuild,
+    # because a thumbnail is a PICTURE of this same file — blanking it would put a spinner over a
+    # correct picture for the whole render (and, before S4-3's page poll, until someone reloaded).
+    # Geometry is the opposite on both counts: it is the DATA the client measures and draws from,
+    # so an older build's payload is wrong rather than merely old, and this endpoint's client polls,
+    # so "pending" costs nothing and resolves itself.
+    #
+    # THE NEXT POLL IS WHERE THAT USED TO LEAK (F-S08-2). Enqueue stamped the new revision onto the
+    # row and left it `ready`, so the poll 250 ms later found a "current" ready row and served the
+    # older build's payload until the job ran. The row reads `rebuilding` now, and `current_build?`
+    # below is what refuses it.
     #
     # A CURRENT ROW WHOSE JOB WAS LOST IS THE OTHER TRIGGER, and `Enqueue.needs_job?` is what reads
     # its status — only to tell "in flight past STALLED_AFTER" from everything else, never to serve
@@ -1257,8 +1260,10 @@ class FilesController < ApplicationController
   # flight past STALLED_AFTER) is healed here, and a `failed` one never is (`retry_failed: false`) —
   # the file page and the inspector are opened again and again (files-preview.md).
   #
-  # Enqueue returns the repointed row (status "pending", so the view shows "Generating preview…"
-  # rather than an older artifact labelled as current) or nil when nothing can render this name.
+  # Enqueue returns the repointed row — `pending` after a content change, so the view shows
+  # "Generating preview…" rather than an older artifact labelled as current; `rebuilding` after a
+  # renderer bump, which keeps its picture of this same content up — or nil when nothing can render
+  # this name.
   def current_thumbnail(node, token)
     row = Maker::Previews::Enqueue.current_preview(user: current_user, node_id: node.node_id,
                                                    name: node.name, version_id: token,

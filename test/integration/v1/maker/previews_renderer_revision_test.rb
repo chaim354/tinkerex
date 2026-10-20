@@ -86,6 +86,7 @@ module V1
         synced_node(name: "part.stl")
         current = ::Maker::Previews::Stl::THUMBNAIL_REVISION
         row = existing_preview(status: "ready", revision: current - 1)
+        row.asset.attach(io: StringIO.new("\x89PNG".b), filename: "t.png", content_type: "image/png")
 
         assert_enqueued_with(job: ::Maker::GeneratePreviewJob) { post_preview }
         assert_response :ok
@@ -93,8 +94,19 @@ module V1
         assert_equal current, row.reload.renderer_revision
         # §14h: A CONTENT REPOINT BLANKS THE ARTIFACT; A RENDERER REBUILD DOES NOT. This is the
         # observable wire change — the API used to answer a fresh `pending` here.
-        assert_equal "ready", row.status
-        assert_equal "ready", JSON.parse(response.body)["status"]
+        #
+        # THE ROW SAYS `rebuilding` AND THE WIRE STILL SAYS `ready` (F-S08-2), ON BOTH ANSWERS THAT
+        # CARRY IT. tinkerex-client's Preview documents "url is null until status == ready", and the
+        # url IS present — an older build's picture of this same content — so `ready` is the answer
+        # that keeps a client's own contract true. Exposing `rebuilding` is a wire change to make
+        # deliberately, with the client.
+        assert_equal "rebuilding", row.status
+        body = JSON.parse(response.body)
+        assert_equal "ready", body["status"]
+        assert body["url"].present?, "a ready answer must carry the picture it describes"
+
+        get "/v1/maker/previews", params: { node_id: UUID }, headers: auth(@token)
+        assert_equal [ "ready" ], JSON.parse(response.body)["previews"].map { |p| p["status"] }
       end
 
       # (c) THE `stalled` AXIS. `processing` is an ASSERTION that a job exists; nothing else ever

@@ -290,6 +290,47 @@ module Web
       assert_no_enqueued_jobs(only: Maker::GeneratePreviewJob) { get view_path_for(@laser.node_id) }
     end
 
+    # A RENDERER REBUILD KEEPS A VISITOR'S POSTER, AND THE URL THE POSTER NAMES (F-S08-2). The page
+    # and `#preview` ask the same question of the row — is there a picture of this content? — so a
+    # rebuild cannot leave the page naming an image that 404s. Looked at from INSIDE the job: its
+    # start used to write `processing` over the row, and both the poster and its route went dark
+    # for as long as the render took.
+    CUBE_3MF = File.binread(Rails.root.join("test/fixtures/files/cube.3mf")).freeze
+
+    # maker_page_thumbnails_test.rb's helper, for the same reasons: `look` runs at the job's byte
+    # read, after its start and before its render, and the read answers a real 3MF.
+    def during_its_job(row, look)
+      original = Maker::FileBytes.method(:read)
+      Maker::FileBytes.define_singleton_method(:read) { |*, **| look.call; CUBE_3MF }
+      Maker::GeneratePreviewJob.perform_now(row.id)
+    ensure
+      Maker::FileBytes.define_singleton_method(:read, original)
+    end
+
+    test "a renderer rebuild keeps a visitor's poster up, and the poster's URL keeps answering" do
+      model = make_file!(@user, "case.3mf", @f[:models], body: CUBE_3MF)
+      model.update!(content_hash: "h-#{model.node_id}", current_version_id: "v-#{model.node_id}")
+      row = ready_preview!(@user, model)
+      row.update!(renderer_revision: row.renderer_revision - 1)
+      poster = public_file_preview_path("ada", @project.slug, model.node_id, "thumbnail")
+
+      get view_path_for(model.node_id) # the render after the bump: its backfill queues the rebuild
+      assert_response :success
+
+      seen = nil
+      during_its_job(row, lambda {
+        seen = row.reload.then { |r| [ r.showable?, r.in_flight? ] }
+
+        get view_path_for(model.node_id)
+        assert_select ".model-viewer-fallback img.preview-image[src=?]", poster
+        get poster
+        assert_response :redirect, "the page named a poster whose route 404'd mid-rebuild"
+      })
+
+      assert_equal [ true, true ], seen, "mid-render the row must show its picture and be in flight"
+      assert row.reload.current_build?
+    end
+
     test "the geometry endpoint refuses a node the project does not permit, as JSON not a redirect" do
       get public_file_geometry_path("ada", @project.slug, @f[:outsider].node_id)
       assert_response :not_found

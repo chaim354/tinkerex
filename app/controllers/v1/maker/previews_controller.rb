@@ -31,7 +31,8 @@ module V1
       # OBSERVABLE WIRE CHANGE, AND IT IS THE CORRECT ONE: after a renderer bump this endpoint now
       # answers `ready` (the old artifact stays served while the rebuild runs) rather than a fresh
       # `pending`. That is CLAUDE.md §14h's "A CONTENT REPOINT BLANKS THE ARTIFACT; A RENDERER
-      # REBUILD DOES NOT" arriving at the API, which never had it.
+      # REBUILD DOES NOT" arriving at the API, which never had it. The row itself reads
+      # `rebuilding` since F-S08-2; `preview_json` below keeps this wire's `ready`, and says why.
       #
       # `skip_unrenderable: false` IS THE ONE POLICY THAT STAYS THIS DOOR'S OWN — see
       # `Enqueue`'s own comment. An API client must get a pollable row for a name no renderer
