@@ -380,18 +380,17 @@ class FilesController < ApplicationController
     #     keeps polling. `backfill: false` above means this door never creates one, so saying
     #     "unsupported" here would freeze a thumbnail that is genuinely on its way.
     #
-    # A ROW WITH A PICTURE ANSWERS `ready`, A REBUILD INCLUDED. The poll asks "is there something to
-    # show in this cell yet?", and an older build's picture of this same content is that; a
-    # `rebuilding` status on this wire would match neither of thumbs_controller.js's arms and leave
-    # the cell polling until it gave up and drew "Preview not supported" over a picture it had.
+    # A ROW WITH A PICTURE ANSWERS `ready`, A REBUILD INCLUDED — `Maker::Preview#wire_status`, the
+    # mapping the v1 API answers by too, so the two wires cannot drift apart. The poll asks "is there
+    # something to show in this cell yet?", and an older build's picture of this same content is
+    # that; a `rebuilding` status on this wire would match neither of thumbs_controller.js's arms and
+    # leave the cell polling until it gave up and drew "Preview not supported" over a picture it had.
     live = nodes.index_by(&:node_id)
     out = ids.each_with_object({}) do |id, h|
       node = live[id]
       preview = node && map.thumb(id)
-      if preview&.showable?
-        h[id] = { status: "ready", url: url_for(preview.asset) }
-      elsif preview
-        h[id] = { status: preview.status, url: nil }
+      if preview
+        h[id] = { status: preview.wire_status, url: (url_for(preview.asset) if preview.servable?) }
       elsif node.nil? || Maker::Previews::Registry.for_filename(node.name).nil?
         h[id] = { status: "unsupported", url: nil }
       end

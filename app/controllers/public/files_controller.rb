@@ -92,7 +92,8 @@ module Public
     # as `servable?`. A thumbnail is a PICTURE, served while `showable?` (an older build's picture of
     # this content stays up through its rebuild, as the page that names this URL renders it); the
     # Measure payload is DATA, served only as `current_build?`, because an older build's is wrong
-    # (§14h). The v1 API answers `ready` by the same predicate, so the two doors cannot disagree.
+    # (§14h). The v1 API answers `ready` whenever this predicate holds, so the two doors cannot
+    # disagree about a row either of them can serve.
     def preview
       pub = public_project!
       node = pub.deliverable!(params[:id])

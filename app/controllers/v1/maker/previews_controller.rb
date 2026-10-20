@@ -108,8 +108,10 @@ module V1
         params.require(:preview).permit(:node_id, :version_id, :kind, :filename)
       end
 
-      # `ready` AND `url` MOVE TOGETHER, AND BOTH ARE `servable?` (F-S08-2). tinkerex-client's
-      # `Preview` documents "`url` is null until `status == "ready"`", and this wire kept neither half:
+      # `ready` WHENEVER THE ROW IS `servable?`, AND A `url` ONLY THEN (F-S08-2). tinkerex-client's
+      # `Preview` documents "`url` is null until `status == "ready"`", and this wire kept neither half
+      # (a ready row whose asset is gone still reads `ready` with no url, as it always has; the
+      # client's card offers a retry for it, client/maker-app/src/preview-status.js):
       #   - a picture mid-rebuild is `ready`, an older build's picture of this same content, which is
       #     what `ready` promised before the status was split (the rebuild note on #create) — while a
       #     MEASURED kind mid-rebuild is not: its older payload is wrong, so it reads `pending`, the

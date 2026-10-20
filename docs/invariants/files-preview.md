@@ -659,9 +659,11 @@ Collapsing them trades a hung spinner for a **wrong** one, which is worse becaus
 reachable even if the endpoint is wrong.
 
 **NO PUBLIC SURFACE POLLS, BECAUSE THIS ENDPOINT IS SESSION-AUTHED** — so a visitor's poster is
-whatever is READY at render time, and every public page says so honestly: the ready thumbs, and for
-the rest either `files/_thumb`'s spinner markup standing still or `files/viewers/_static`'s
-"Generating preview…", **a statement a reload resolves rather than a promise the page can keep**.
+whatever is SHOWABLE at render time (`Maker::Preview#showable?`: the current build, or an older
+build's picture of this content while it rebuilds), and every public page says so honestly: those
+thumbs, and for the rest either `files/_thumb`'s spinner markup standing still or
+`files/viewers/_static`'s "Generating preview…", **a statement a reload resolves rather than a
+promise the page can keep**.
 What makes that statement true is the RENDER, not a poll:
 `Maker::Previews::ThumbnailMap.for` backfills on an anonymous GET — the public project page has done
 that since S3-4, and the public file page does it for its one node. Do not answer a missing public

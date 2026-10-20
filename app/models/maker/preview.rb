@@ -79,10 +79,12 @@ module Maker
     # kind and answer by this one predicate, so they cannot disagree about a row.
     def servable? = measured? ? current_build? : showable?
 
-    # THE STATUS A WIRE THAT PREDATES `rebuilding` IS TOLD — the v1 API, whose client documents "url
-    # is null until status == ready". `ready` exactly when `servable?`; a rebuild that is not (measured
-    # data mid-rebuild) is a job still coming, which that vocabulary calls `pending` — the answer the
-    # web Measure poll gives for the same row. Every other status is already a word that wire knows.
+    # THE STATUS A WIRE THAT PREDATES `rebuilding` IS TOLD — /files/thumbnails and the v1 API, whose
+    # client documents "url is null until status == ready". `ready` whenever `servable?`; a rebuild
+    # that is not (measured data mid-rebuild) is a job still coming, which that vocabulary calls
+    # `pending` — the answer the web Measure poll gives for the same row. Every other status is
+    # already a word those wires know, `ready` included: a ready row whose asset is gone still reads
+    # `ready`, with no url, as it always has.
     def wire_status
       return "ready" if servable?
 

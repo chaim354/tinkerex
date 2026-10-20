@@ -304,9 +304,10 @@
   `servable?`, which is that split by kind (`MEASURED_KINDS`), so the payload route 404s and v1
   says `pending` with no url for geometry mid-rebuild while both keep serving the picture.
   Outside the model, never compare `status` to `ready` or `rebuilding`, nor re-spell the in-flight
-  set: `architecture_invariants_test.rb` refuses exactly those. A literal that means one thing is
-  not policed — the job's start reads `pending`, the geometry polls' terminal arm `failed` and
-  `unsupported`.
+  set. `architecture_invariants_test.rb` refuses them in their `==`/`!=`/`when`/`%w[]` spellings; a
+  pattern cannot see every spelling (`where(status: "ready")`, `status.in?([...])`, `.eql?` pass it),
+  so the rule binds where the guard is blind. A literal that means one thing is not policed — the
+  job's start reads `pending`, the geometry polls' terminal arm `failed` and `unsupported`.
 - **A REVISION CHECK IN `Enqueue` IS USELESS UNLESS THE READ PATH ASKS FOR IT — and for thumbnails
   it did not.** `Enqueue` compared revisions correctly from the day it shipped, but only something
   that CALLS it can act on that, and the caller skips any node the read reports a row for. That
