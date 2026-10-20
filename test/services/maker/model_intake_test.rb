@@ -98,10 +98,10 @@ module Maker
     # A FOLDER A PROJECT CLAIMS IS THE PROJECT'S, NOT THE CATALOG'S (2026-09-02). `*` makes
     # `Projects` a shelf, so before this a folder directly under it became a MODEL holding its whole
     # tree: measured on a real share library, `Projects/TheFlightWall_OSS` -- a firmware repo --
-    # became a "3D model" with 2305 attachments, 1273 of them source files. Maker::ProjectDiscovery
-    # adopts every folder under `Projects/` and Library::ScanJob runs it BEFORE this sweep (§14k),
-    # so asking who claims the folder is what expresses the rule without a second copy of
-    # ProjectDiscovery's policy living here.
+    # became a "3D model" with 2305 attachments, 1273 of them source files. Asking WHO CLAIMS the
+    # folder -- a project row, or Maker::ProjectDiscovery by position before the row exists (the
+    # positional tests below) -- is what expresses the rule without a second copy of
+    # ProjectDiscovery's policy living here, and without depending on discovery having run first.
     test "a folder a project claims is not catalogued" do
       @user.maker_projects.create!(name: "Enclosure", slug: "enclosure", folder_node_id: "d-enc")
 
@@ -137,6 +137,64 @@ module Maker
       Maker::ModelIntake.for_user(user: @user)
 
       assert_not_includes model.file_attachments.reload.pluck(:node_id), "f-late"
+    end
+
+    # A FOLDER DISCOVERY WILL ADOPT IS CLAIMED BEFORE IT IS ADOPTED (F-S07-1). The claim used to be
+    # only the ROWS that existed when this sweep ran, and "not adopted YET" was left to running
+    # discovery first -- which discovery's cap and chunk_remote's three unsequenced schedules both
+    # defeat, leaving a project AND a model. Maker::ProjectDiscovery.positional_claims is the third
+    # claimant: there is no project row here at all, and `lamp` is still not the catalog's.
+    # `3D Models/Enclosure` from setup is the POSITIVE CONTROL -- a sweep that catalogued nothing
+    # at all would pass every assertion before it.
+    test "a folder discovery will adopt is not catalogued before it is adopted" do
+      dir("d-projects", "Projects", nil)
+      dir("d-lamp", "lamp", "d-projects")
+      dir("d-cad", "cad", "d-lamp")
+      file("f-part", "part.stl", "d-cad")
+
+      Maker::ModelIntake.for_user(user: @user)
+
+      assert_nil @user.maker_models.find_by(auto_node_id: "d-lamp"),
+                 "`lamp` became one model before discovery reached it -- the claim lost discovery's position"
+      assert_empty Maker::FileAttachment.where(user: @user, node_id: "f-part")
+      assert @user.maker_models.exists?(auto_node_id: "d-enc"), "the sweep still catalogues"
+    end
+
+    # DISCOVERY'S OWN RULE DECIDES, NEVER A PATH TEST. `.scratch` sits directly under `Projects/`,
+    # but discovery will never adopt it (`ProjectDiscovery.adoptable_name?`'s dot rule), so it is
+    # nobody's claim and stays an ordinary folder under the `*` shelf. A reader spelled "the parent
+    # is the Projects root" would hide it from the catalog forever while no project could hold it.
+    test "a dot-folder under Projects is still catalogued" do
+      dir("d-projects", "Projects", nil)
+      dir("d-scratch", ".scratch", "d-projects")
+      file("f-x", "x.stl", "d-scratch")
+
+      Maker::ModelIntake.for_user(user: @user)
+
+      model = @user.maker_models.find_by(auto_node_id: "d-scratch")
+      assert model, "a folder discovery will never adopt was treated as claimed"
+      assert_equal [ "f-x" ], model.file_attachments.pluck(:node_id)
+    end
+
+    # A CAPPED DISCOVERY LEAVES NO MODEL BEHIND IT -- the hole the cap opened even inside
+    # Library::ScanJob's own discover -> file -> catalogue sequence. `cap: 1` adopts Alpha (ORDER BY
+    # node_id); Beta waits for discovery's next run, and until then it is still discovery's. The
+    # projects assertion is the PRECONDITION: without a folder left unadopted this proves nothing.
+    test "a capped discovery leaves no auto model over the folders it has not reached" do
+      dir("d-projects", "Projects", nil)
+      dir("d-alpha", "Alpha", "d-projects")
+      file("f-a", "a.stl", "d-alpha")
+      dir("d-beta", "Beta", "d-projects")
+      file("f-b", "b.stl", "d-beta")
+      Maker::ProjectDiscovery.for_user(user: @user, cap: 1)
+      assert_equal %w[d-alpha], @user.maker_projects.pluck(:folder_node_id),
+                   "precondition: the cap must leave Beta unadopted"
+
+      Maker::ModelIntake.for_user(user: @user)
+
+      assert_empty @user.maker_models.where(auto_node_id: %w[d-alpha d-beta]).pluck(:title),
+                   "a folder past discovery's cap became one model"
+      assert_empty Maker::FileAttachment.where(user: @user, node_id: %w[f-a f-b])
     end
 
     test "a folder an imported model already claims is skipped" do

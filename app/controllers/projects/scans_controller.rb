@@ -91,10 +91,11 @@ module Projects
     def pull_and_file
       FileLayer::RemoteChangelogPullJob.perform_now(user_id: current_user.id)
       # DISCOVERY BETWEEN THE PULL AND THE FILE (stage 4, S4-6; story 1.1). The pull is what makes
-      # a folder another device pushed visible at all; discovery must run BEFORE the intake for the
-      # reason Library::ScanJob#discover_projects gives at length — a newly adopted project's loose
-      # files have no shelf nearer than `Projects` itself, so the wrong order hands the whole folder
-      # to the model catalog, permanently.
+      # a folder another device pushed visible at all, so discovery follows it; discovery then
+      # precedes the intake in the order Library::ScanJob#discover_projects uses. That order no
+      # longer protects the model catalog (F-S07-1). This comment used to say the wrong order hands
+      # the whole folder to the catalog, permanently; a folder discovery has not adopted yet is now
+      # claimed by position (Maker::ModelIntake.claimed_folders), so it is never one model either way.
       #
       # THE JOB, NOT Maker::ProjectDiscovery — the idiom Library::ScanJob already uses, and for the
       # same two reasons: the job is the only place a run is LOGGED, and #chain_intake is what

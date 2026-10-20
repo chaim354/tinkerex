@@ -349,6 +349,37 @@ module Maker
       refute Maker::ProjectDiscovery.adoptable_name?(nil)
     end
 
+    # THE POSITIONAL CLAIM (F-S07-1): every folder this sweep owns BY POSITION, adopted or not yet,
+    # and UNCAPPED. Maker::ModelIntake.claimed_folders asks it, so a folder discovery has not
+    # reached yet is never catalogued as one model in the meantime.
+    #
+    # THE FIXTURE SPANS EVERY RULE #adoptable APPLIES, because #adoptable is defined through this:
+    # a dot-folder, a folder two levels down, a file directly under Projects/ and a tombstone are
+    # none of them discovery's. A CLAIMED folder IS — it is owned by position whether or not its
+    # project exists yet, so this is not "what is left to adopt". The rows go in out of node_id
+    # order so the ORDER BY is what sorts them (see the cap test above). And ENV caps discovery at
+    # 1: a reader that honoured the cap would re-open the hole it exists to close.
+    test "positional claims are every folder the sweep owns by position, claimed or not, uncapped" do
+      ENV["PROJECT_DISCOVERY_MAX"] = "1"
+      dir("d-c", "Gamma", "d-projects")
+      dir("d-a", "Alpha", "d-projects")
+      dir("d-b", "Beta", "d-projects")
+      @user.maker_projects.create!(name: "Beta", slug: "beta", folder_node_id: "d-b")
+      dir("d-hidden", ".scratch", "d-projects")
+      dir("d-deep", "models", "d-a")
+      file("f-stray", "stray.stl", "d-projects")
+      dir("d-gone", "Gone", "d-projects").update!(deleted: true)
+
+      assert_equal [ %w[d-a Alpha], %w[d-b Beta], %w[d-c Gamma] ],
+                   Maker::ProjectDiscovery.positional_claims(@user)
+
+      @root.update!(deleted: true)
+      assert_equal [], Maker::ProjectDiscovery.positional_claims(@user),
+                   "no Projects/ folder is nowhere to look, not an error"
+    ensure
+      ENV.delete("PROJECT_DISCOVERY_MAX")
+    end
+
     # STAGE 4, S4-7 (decision D4): the sweep names what it adopted. A discovered folder is the ONE
     # case where the app has files in front of it at creation time, so it is where a kind can be
     # suggested at all — the web form mints an empty folder and has nothing to read.
