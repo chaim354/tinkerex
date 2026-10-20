@@ -75,12 +75,14 @@ class FakeS3
     @faults_after[operation] = [ @calls[operation] + calls, error ]
   end
 
-  # Make `operation` ANSWER `value` for one field on the wire in place of the object's own — nil
-  # included, which is the field absent. THE OBJECT KEEPS ITS REAL VALUES, and that is the honest
-  # half: what is modelled is one operation answering unhelpfully (the audit's shape — a blank ETag
-  # on a COPY or HEAD, real ones on LIST; a HEAD with no Last-Modified), not a store whose objects
-  # lack them. So a later HEAD or LIST still reports the truth unless it, too, is told otherwise,
-  # and every other field stays real.
+  # Make EVERY response of `operation`, for every key, ANSWER `value` for one field on the wire in
+  # place of the object's own — nil included, which is the field absent — until clear_faults!. It
+  # models a store that always answers that operation this way, not one bad response, so a test
+  # whose setup HEADs or copies after setting it gets the same answer there too. THE OBJECTS KEEP
+  # THEIR REAL VALUES, and that is the honest half: what is modelled is one operation answering
+  # unhelpfully (the audit's shape — a blank ETag on a COPY or HEAD, real ones on LIST; a HEAD with
+  # no Last-Modified), not a store whose objects lack them. So every OTHER operation still reports
+  # the truth unless it, too, is told otherwise, and every other field stays real.
   def answer_etag!(operation, etag) = answer!(operation, :etag, etag, ETAG_ANSWERS)
 
   def answer_last_modified!(operation, time)

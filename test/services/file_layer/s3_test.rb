@@ -1417,6 +1417,38 @@ module FileLayer
       assert_equal 1_600_000_000 * 1_000_000_000, node.mtime, "keep the previous mtime — never nil"
     end
 
+    # THE TWO DOORS THAT DATE A NEW ROW FROM A HEAD, #write and #mkdir, have no previous mtime to
+    # keep, so they REFUSE — beside #write's blank-ETag refusal and for its reason. Time.now is not
+    # a substitute (the next scan would read every written file as changed), and nanos(nil) raised a
+    # bare NoMethodError, an unmapped 500, after the object had landed. FetchError, nothing indexed,
+    # and the next scan — which dates the object off the listing — indexes it. Remove the guard at
+    # either door and its test goes red with NoMethodError.
+    test "a write whose HEAD reports no Last-Modified is refused, indexes nothing, and a scan does" do
+      @fake.answer_last_modified!(:head_object, nil)
+
+      assert_raises(FileLayer::FetchError) do
+        adapter.write(@user, parent_node_id: nil, name: "undated-write.stl", io: StringIO.new("bytes"))
+      end
+      assert_nil @user.nodes.find_by(storage_path: "undated-write.stl"),
+                 "no row for an object the store gave no date — not even one with a nil mtime"
+      assert @fake.objects.key?("#{PREFIX}/undated-write.stl"), "the bytes landed: a PUT is not undone"
+
+      scan!(max_delete_pct: 100) # the listing carries the date
+      assert_equal "md5:#{Digest::MD5.hexdigest('bytes')}",
+                   @user.nodes.find_by!(storage_path: "undated-write.stl").content_hash
+    end
+
+    test "a mkdir whose HEAD reports no Last-Modified is refused, and the next scan indexes it" do
+      @fake.answer_last_modified!(:head_object, nil)
+
+      assert_raises(FileLayer::FetchError) { adapter.mkdir(@user, parent_node_id: nil, name: "undated") }
+      assert_nil @user.nodes.find_by(storage_path: "undated"), "no row for the folder yet"
+      assert @fake.objects.key?("#{PREFIX}/undated/"), "the marker landed: a PUT is not undone"
+
+      scan!(max_delete_pct: 100) # the marker is a folder to the observer
+      assert_equal "dir", @user.nodes.present.find_by!(storage_path: "undated").kind
+    end
+
     # --- the 5GB copy cap -----------------------------------------------------------------
 
     # copy_object is capped at 5GiB: it ERRORS, it does not truncate. Both delete and move are

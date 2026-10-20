@@ -371,12 +371,14 @@ module FileLayer
       identity = ObjectIdentity.for_reported(etag: put.etag) ||
                  raise(FetchError, "#{rel.inspect}: the store answered the write with no usable " \
                                    "ETag (#{put.etag.inspect}); the object is left for the next scan")
+      # AND THE DATE, refused for the same reason — see #head_mtime!.
+      mtime = head_mtime!(rel, head)
 
       # INDEX ONLY AFTER THE PUT LANDS. The order is the point: a node indexed for bytes that
       # never arrived is an attachment resolving to a permanent NotFound, which is strictly worse
       # than no attachment at all — the user can retry an upload that failed loudly, and cannot
       # fix a file that browses fine and 404s forever. Pinned by the write contract.
-      attrs = { size: bytes.bytesize, mtime: nanos(head.last_modified), content_hash: identity }
+      attrs = { size: bytes.bytesize, mtime:, content_hash: identity }
       node =
         if existing
           # UPDATE, so node_id survives (see the header). A replace resolves to the SAME rel, so
@@ -435,9 +437,10 @@ module FileLayer
       rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
         raise FetchError, "#{rel.inspect}: #{e.class} (#{e.message})"
       end
+      mtime = head_mtime!(rel, head) # BEFORE the row, as #write does — see #head_mtime!
       node = user.nodes.create!(
         node_id: SecureRandom.uuid, name:, kind: "dir", deleted: false,
-        storage_path: rel, parent_node_id:, mtime: nanos(head.last_modified)
+        storage_path: rel, parent_node_id:, mtime:
       )
       stat(user, node_id: node.node_id)
     end
@@ -1345,6 +1348,21 @@ module FileLayer
     # observer applies to a listing's last_modified — the two must agree or every written file
     # looks changed on the next scan.
     def nanos(time) = time.to_i * 1_000_000_000 + time.nsec
+
+    # THE STORE'S OWN CLOCK FOR A ROW BEING CREATED, OR A REFUSAL. #write and #mkdir date a new row
+    # from the HEAD they make after the PUT, and a HEAD with no Last-Modified — absent, or one the
+    # SDK could not parse, which it hands back as nil — gives that row no date. Time.now is refused
+    # (#write's header: the next scan would read every written file as changed), and nanos(nil)
+    # raised a bare NoMethodError, an unmapped 500, after the object had landed. FetchError, BEFORE
+    # any row is written — #write's answer to a blank ETag — and the next scan, which dates the
+    # object off the listing, indexes it. #move and #restored_stat keep the previous mtime instead:
+    # they have one, and a raise there strands bytes already moved.
+    def head_mtime!(rel, head)
+      return nanos(head.last_modified) if head.last_modified
+
+      raise FetchError, "#{rel.inspect}: the store's HEAD carried no usable Last-Modified; " \
+                        "the object is left for the next scan"
+    end
 
     # Is there a library at this prefix at all? The mirror of Share#library_present?, and the
     # emptiness signal is the same one: a wrong bucket/prefix or a revoked credential is an empty
