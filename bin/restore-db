@@ -48,17 +48,32 @@ done
 
 HOST="${DEPLOY_HOST:-kamal1@192.168.1.95}"
 
-case "$DEST" in
-  chunk) FILTER='^tinkerex-web-[0-9a-f]'; VOLUME=tinkerex_storage       ;;
-  share) FILTER='^tinkerex-web-share-';   VOLUME=tinkerex_storage_share ;;
-  s3)    FILTER='^tinkerex-web-s3-';      VOLUME=tinkerex_storage_s3    ;;
-  # ANCHORED ($), for the reason ops/backup-db.sh's container_for says at length: `sync` is a Kamal
-  # ACCESSORY with a fixed container name, and unanchored this would also match the exited
-  # `tinkerex-sync-web-<sha>` containers the STANDALONE deployment of chaim354/tinkerex-sync leaves
-  # behind — restoring THIS database using THAT image's sqlite3.
-  sync)  FILTER='^tinkerex-sync$';        VOLUME=tinkerex_sync_storage  ;;
-  *) echo "usage: bin/restore-db <chunk|share|s3|sync> <archive.tar.gz> [--yes] [--into SUFFIX] [--no-pre-backup]" >&2; exit 64 ;;
-esac
+# WHICH CONTAINER TO STOP AND WHICH VOLUME TO WRITE COME FROM ops/backup-db.sh's DESTINATION TABLE,
+# READ THROUGH `--describe`, NEVER KEPT HERE AS A COPY. A restore must write back into the volume
+# the backup READ, and a copy drifts silently: `docker volume create` below would make an EMPTY
+# volume of a stale name, the restore would land in it, the container would restart on its REAL
+# volume, and a rehearsal would verify the wrong one. `--describe` is read-only (no docker, no
+# ping) and runs here, on this Mac, from this checkout: the same file bin/backup-db pushes to the
+# box. The sync row's filter is ANCHORED ($) for a reason the table gives beside it, and this
+# script leans on that twice: for the container it stops, and for the image whose sqlite3 restores.
+IMPL="$(dirname "$0")/../ops/backup-db.sh"
+if ! ROW=$(bash "$IMPL" --describe "$DEST"); then
+  echo "usage: bin/restore-db <$(bash "$IMPL" --list | paste -s -d '|' -)> <archive.tar.gz> [--yes] [--into SUFFIX] [--no-pre-backup]" >&2
+  exit 64
+fi
+FILTER=""; VOLUME=""
+while IFS='=' read -r key value; do
+  case "$key" in
+    container_filter) FILTER=$value ;;
+    volume)           VOLUME=$value ;;
+  esac
+done <<<"$ROW"
+# NEVER AN EMPTY FILTER: `docker ps -a -qf name=` with nothing after the `=` matches EVERY
+# container, and this script stops the one it finds.
+if [ -z "$FILTER" ] || [ -z "$VOLUME" ]; then
+  echo "ops/backup-db.sh --describe $DEST named no container_filter or no volume — refusing to restore" >&2
+  exit 70
+fi
 
 # THE SECOND ROW COUNT IS PER-DESTINATION, AND ON `sync` THE MAKER SPELLING DOES NOT MERELY READ
 # ODDLY -- IT ERRORS. The archive pre-check counts two tables as evidence the snapshot holds real
