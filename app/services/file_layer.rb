@@ -158,10 +158,10 @@ module FileLayer
       backend = LibraryBackendCheck.configured || "share"
       case backend
       when "share"
-        # Validate before constructing: Share.new defaults to ENV.fetch("LIBRARY_PATH"), which
-        # raises a bare KeyError naming nothing. The boot guard normally catches this first, but
-        # it is skipped in the test env and reads ENV once at boot — so the factory asks too, and
-        # the operator gets the same explanation either way.
+        # Validate before constructing: Share.new defaults to Tinkerex::LibraryRoot.path, which
+        # ENV.fetches LIBRARY_PATH and raises a bare KeyError naming nothing. The boot guard
+        # normally catches this first, but it is skipped in the test env and reads ENV once at boot
+        # — so the factory asks too, and the operator gets the same explanation either way.
         LibraryBackendCheck.check!(backend:)
         Share.new
       when "s3"

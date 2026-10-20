@@ -7,7 +7,9 @@ module FileLayer
   # `nodes` is still the catalog — the scanner indexes into it — so browse/search/tags and the
   # maker layer work unmodified.
   class Share
-    def initialize(root: ENV.fetch("LIBRARY_PATH"))
+    # THE ROOT IS THE MOUNT PLUS THE CHOSEN FOLDER (K, 2026-10-20; Tinkerex::LibraryRoot). `root:`
+    # stays a keyword because ~240 tests build adapters over their own tmpdirs and must keep doing so.
+    def initialize(root: Tinkerex::LibraryRoot.path)
       @root = Pathname.new(root).expand_path
     end
 
