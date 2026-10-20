@@ -818,12 +818,21 @@ module Web
     end
 
     # Same reasoning as projects#index above: a model with no attachment has no derived cover, so
-    # the grid's `@covers` map was being budgeted while resolving nothing.
+    # the grid's `@covers` map was being budgeted while resolving nothing. EVERY MODEL SITS IN ITS
+    # OWN PROJECT'S FOLDER, one level down, so the page's grouping (Maker::ModelProjects) walks a
+    # chain and forms a group per model -- a model at the root would skip the walk entirely and the
+    # budget would say nothing about it.
     test "files/models#index does not grow with the number of models" do
       add = lambda do |prefix, count|
         count.times do |i|
+          project = @user.maker_projects.create!(name: "P #{prefix}#{i}")
+          folder = @user.nodes.create!(node_id: "mp-#{prefix}#{i}", name: "p#{prefix}#{i}", kind: "dir",
+                                       size: 0, mtime: 1_700_000_000_000_000_000)
+          @user.nodes.create!(node_id: "mm-#{prefix}#{i}", name: "models", kind: "dir", parent_node_id: folder.node_id,
+                              size: 0, mtime: 1_700_000_000_000_000_000)
+          project.update_column(:folder_node_id, folder.node_id)
           model = @user.maker_models.create!(title: "#{prefix}#{i}", slug: "#{prefix}#{i}")
-          node!("mc-#{prefix}#{i}", "mc-#{prefix}#{i}.stl")
+          node!("mc-#{prefix}#{i}", "mc-#{prefix}#{i}.stl").update_column(:parent_node_id, "mm-#{prefix}#{i}")
           model.file_attachments.create!(user: @user, node_id: "mc-#{prefix}#{i}", role: "image")
         end
       end

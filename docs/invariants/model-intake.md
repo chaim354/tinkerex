@@ -4,6 +4,7 @@
 > `app/services/maker/library_tree.rb`, `app/models/maker/shelf.rb`,
 > `app/controllers/settings/shelves_controller.rb`, `app/jobs/maker/model_intake_job.rb`,
 > `app/services/maker/model_intake/prune.rb`, `app/services/maker/model_folder.rb`,
+> `app/services/maker/model_projects.rb`,
 > `app/views/files/_model_strip.html.erb`, `Files::ModelsController` (the 3D models view),
 > `ModelsController`'s file-tree helpers and redirects, or the `origin` / `auto_node_id` /
 > `folder_node_id` / `dismissed_at` columns on `maker_models`. The arc that produced it —
@@ -177,6 +178,17 @@
   `ensure_library_folder!`** — rendering a folder or following a link must not mint one, the
   sweep's own rule below. Pinned by `test/services/maker/model_folder_test.rb` and
   `test/integration/web/models_redirects_test.rb`.
+- **THE 3D MODELS VIEW IS GROUPED BY PROJECT (`Maker::ModelProjects`, 2026-10-20), AND A MODEL'S
+  PROJECT IS THE NEAREST PROJECT-CLAIMED FOLDER AT-OR-ABOVE ITS KEY — WALKED FROM THE KEY'S PARENT
+  WHEN THE KEY IS A FILE.** A one-file auto model's `auto_node_id` is the file (the bullet above),
+  and `Maker::LibraryTree` indexes dirs only, so walking from the key itself finds no chain and
+  files every one-file model under "Not in a project" — the first live probe made exactly that
+  mistake and reported 0 of 42 models in a project where 9 were. Groups come AFTER the filters and
+  the sort (a filtered-out group never renders, the sort holds inside each), projects by name, loose
+  last, and a page with no model in any project is the plain grid with no headings. Archived
+  projects keep their group, on the claim rule above. Constant in queries, pinned with models nested
+  in project folders by `page_query_budget_test.rb`; `model_projects_test.rb` and
+  `models_by_project_test.rb` carry the rest, each mutation-checked.
 - **SHELVES ARE A SETTINGS RULE AT `Settings::ShelvesController` / `/settings/shelves` (slice 5),
   AND ONLY ONE REDIRECT MAY EXIST BETWEEN THE TWO PATHS.** It reverses the 2026-09-10 move to
   `/models/shelves`: with Models a Library view, Settings is the only section shelves serve.

@@ -78,6 +78,9 @@
 
   /* The 3D models view's one pointer at the Settings rule that decides what counts as a model. */
   .models-shelves-hint { margin: 0 0 14px; font-size: 13px; }
+  /* The 3D models view grouped by project: the head is the .group-head component, and only the
+     space between groups is this page's. */
+  .models-group + .models-group { margin-top: var(--space-5); }
 
   .print-log details.composer { margin: 0 0 10px; }
   .print-form { display: grid; gap: 8px; max-width: 480px; }
