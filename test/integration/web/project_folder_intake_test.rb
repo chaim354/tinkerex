@@ -4,14 +4,16 @@ module Web
   # A file uploaded INTO a project folder attaches and files itself in the same request, rather than
   # waiting for the next sweep — which would read as broken.
   #
-  # THREE DOORS, because they are different flows: chunk drives the two-phase presigned upload
-  # (begin_upload/finalize_upload) and share drives a multipart POST to FilesController#create. s3
-  # shares share's port_writable branch. The THIRD, added after a review found it missing
-  # (Projects::UploadsController#create, the project page's own inline share/s3 uploader), is
-  # covered separately below rather than folded into ShareTest above: it is a different controller,
-  # with its own pre-existing attach step ahead of the nudge, not a variant of the same request.
-  # Chunk mode's project-page upload has no fourth variant — it is the SAME two-phase flow as
-  # ChunkTest below, so it is already covered there.
+  # TWO UPLOAD DOORS CAN LAND A FILE IN A PROJECT FOLDER, one per flow, and both are the top bar's.
+  # share/s3 POST the bytes to FilesController#create (ShareTest below; s3 shares share's
+  # port_writable branch). chunk_remote drives the two-phase presigned upload, whose
+  # #finalize_upload runs the same nudge. This file has had no request test for that door since the
+  # ChunkTest that drove it here left with embedded chunk (Arc D Part 2).
+  #
+  # A third door, Projects::UploadsController's project-level route, was the project page's own
+  # uploader until redesign slice 4 moved Upload into the top bar, and was retired in F-S21-1. What
+  # is left of that controller is the build-log photo upload, which writes at the library root, so
+  # nothing there is under a project folder (BuildLogUploadTest below).
   class ProjectFolderIntakeTest < ActionDispatch::IntegrationTest
     include ActiveJob::TestHelper # an upload enqueues a preview job; keep it recorded, not run
     PASSWORD = "correct horse battery staple".freeze
@@ -101,13 +103,21 @@ module Web
                      "no owning project -> #intake_project_folder answers nil -> a clean message"
       end
 
-      # THE SHARE DOOR'S OWN COPY OF project_upload_attach_test.rb's "duplicate filename" scenario —
-      # same underlying mechanism (FileLayer::Share#write's clobber guard only sees a vacated project
-      # root because the FIRST upload's own eager nudge already moved it out of the way before the
-      # SECOND upload's write ever runs), a different controller. See that file's test for the full
-      # accounting of the mechanism and why it is not this fix's concern; this test exists because
-      # FilesController#create had NO coverage of this scenario at all before this fix — restoring
-      # the feedback here was otherwise unverified on this door.
+      # A SECOND COPY OF A NAME IS NO LONGER REFUSED HERE, AND THE FLASH SAYS WHERE IT LANDED. The
+      # eager nudge (Task 11) narrowed a guarantee on purpose. Before it, the second same-named upload
+      # collided with the first at the project root, where FileLayer::Share#write checks, and was
+      # refused with a flash. Now the first upload's nudge files it into models/ within its own
+      # request, which vacates the root, so the second write succeeds too. Its own nudge then collides
+      # in models/ and leaves it at the root: the :conflict outcome a later sweep gives any same-named
+      # collision (Maker::ProjectIntake#place), reached one upload sooner. Nothing is lost. Two nodes
+      # with distinct bytes both attach, one filed and one not.
+      #
+      # What briefly went missing was the FEEDBACK: the door threw the nudge's Result away and said a
+      # bare "Uploaded dup.stl.". ProjectFolderIntake#left_unfiled_by_conflict? reads the Result's
+      # `:conflict` skip for this filename, and #project_intake_notice says where the copy stayed. No
+      # write, move or sweep was changed for it. Whether an upload into a project should check the
+      # WHOLE project for a name is still open (§12 item 11). This was pinned on
+      # Projects::UploadsController's project-level route as well, until F-S21-1 retired the route.
       test "a duplicate filename via the Files-page uploader is filed apart, and the flash says where the second copy landed" do
         upload("dup.stl")
         assert_response :redirect
@@ -125,15 +135,15 @@ module Web
         assert_equal 1, filed.size, "the first upload's eager nudge files it into models/"
         assert_equal 1, stuck.size, "the second collides at the destination and stays at the project root"
         assert_equal @folder.node_id, stuck.first.parent_node_id
-        # FilesController#create has no explicit `file_attachments.create!` of its own (unlike
-        # Projects::UploadsController) -- BOTH rows here exist only because #intake_project_folder's
-        # own #attach step made them, and attach is the durable half regardless of whether filing
-        # succeeded (Maker::AttachToProject's rule, applied by Maker::ProjectIntake#call).
+        # FilesController#create makes no `file_attachments.create!` of its own -- BOTH rows here
+        # exist only because #intake_project_folder's own #attach step made them, and attach is the
+        # durable half regardless of whether filing succeeded (Maker::AttachToProject's rule, applied
+        # by Maker::ProjectIntake#call).
         assert_equal 2, @project.file_attachments.count
       end
 
       # BEST-EFFORT: the upload already succeeded, so a failing intake must not turn it into an
-      # error (the same rule enqueue_preview follows immediately above it) -- AND it must not turn
+      # error (the same rule the preview enqueue before it follows) -- AND it must not turn
       # into a misleading flash either: a rescued failure has nothing true to report about a
       # conflict, so the message must read exactly like the ordinary, nothing-unusual-happened case.
       #
@@ -156,63 +166,28 @@ module Web
       end
     end
 
-    # THE THIRD DOOR: Projects::UploadsController#create, the project-target upload route — the
-    # project page's OWN inline uploader until redesign slice 4 moved the hub's Upload into the top
-    # bar (which posts to FilesController, the first door); the route still answers, and build-log
-    # entries still post to its sibling (share/s3 only — before_action :require_port_writable!
-    # keeps chunk mode off this action entirely). Wired via the SAME ProjectFolderIntake concern FilesController uses, not a second
-    # copy — see the concern's header for why.
-    #
-    # THIS CONTROLLER ALREADY DOES ITS OWN EXPLICIT ATTACH (`target.file_attachments.create!`)
-    # BEFORE THE NUDGE, unlike FilesController's doors, so the interesting proof here is not merely
-    # "did it attach" (it already did, before the nudge existed) but that the nudge's OWN attach
-    # step recognizes that row and skips it (idempotent — Maker::ProjectIntake#attach's pluck-and-
-    # reject dedup, backed by insert_all's unique_by:) rather than raising or duplicating, AND that
-    # the file is actually FILED into its category subfolder, which the pre-existing attach alone
-    # never did. See project_upload_attach_test.rb for the full behavioral suite on this controller
-    # (roles, redirect targets, the FetchError/UnsupportedOperation rescues) — including the one
-    # trade-off this door's nudge introduces (a same-named second upload is no longer refused once
-    # the first is filed away, and what the flash now says about it — see that file's "no longer
-    # refused" test for the full accounting).
-    class ProjectPageUploadTest < ProjectFolderIntakeTest
+    # THE BUILD-LOG PHOTO UPLOAD: Projects::UploadsController#create, share/s3 only
+    # (before_action :require_port_writable! keeps chunk mode off it). It writes at the library
+    # ROOT (v1 scope, spec "Out of scope"), and no project owns the root. So a photo attaches to its
+    # entry and never to the project, and the door calls no nudge, which would answer nil for every
+    # file it writes. ShareTest's library-root test pins the same guarantee for the other door. See
+    # project_upload_attach_test.rb for the rest of this controller's behaviour.
+    class BuildLogUploadTest < ProjectFolderIntakeTest
       setup do
-        @root = Dir.mktmpdir("pfi-project-page")
-        FileLayer.current = FileLayer::Share.new(root: @root)
+        @root = use_fresh_share_library!
         @user = User.create!(email: "pfip-#{SecureRandom.hex(4)}@example.com",
                              password: PASSWORD, confirmed_at: Time.current)
         sign_in_web!(@user, password: PASSWORD)
         @project = @user.maker_projects.create!(name: "Desk Lamp")
       end
 
-      teardown do
-        FileLayer.reset!
-        FileUtils.remove_entry(@root) if @root && File.exist?(@root)
-      end
-
-      test "a project-page upload is attached and filed in the same request" do
-        file = Rack::Test::UploadedFile.new(StringIO.new("<svg/>".b), "application/octet-stream",
-                                            original_filename: "panel.svg")
-        post project_uploads_path(@project), params: { file: }
-        assert_response :redirect
-
-        att = @project.file_attachments.sole
-        node = @user.nodes.find_by!(node_id: att.node_id)
-        assert_equal "vector", att.role
-        assert_equal "design", @user.nodes.find_by(node_id: node.parent_node_id).name
-        assert_equal "Uploaded panel.svg. Filed panel.svg into design/.", flash[:notice],
-                     "this door reads the same sentence as the other two (stage 4, S4-2)"
-      end
-
-      # A build-log-entry upload through this SAME controller lands at the library ROOT
-      # (Projects::UploadsController#upload_parent — v1 scope, spec "Out of scope") — no project
-      # owns the root, so the nudge is a correctly inert no-op, the same guarantee ShareTest's
-      # library-root test pins for the other door.
-      test "a build-log-entry photo upload is untouched by the nudge" do
+      test "a build-log-entry photo lands at the library root and attaches to the entry, never the project" do
         entry = @project.build_log_entries.create!(user: @user, body: "glued")
         file = Rack::Test::UploadedFile.new(StringIO.new("\x89PNG".b), "image/png",
                                             original_filename: "clamp.png")
         post build_log_entry_uploads_path(entry), params: { file: }
         assert_response :redirect
+        assert_nil @user.nodes.present.find_by!(name: "clamp.png").parent_node_id, "the photo is at the root"
         assert_equal 0, @project.file_attachments.count
         assert_equal 1, entry.file_attachments.count
       end

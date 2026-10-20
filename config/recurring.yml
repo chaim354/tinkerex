@@ -118,11 +118,12 @@ production:
   # now sit in front of it, and they are different mechanisms rather than one repeated:
   #
   #   - THE EAGER PER-UPLOAD NUDGE calls Maker::ProjectIntake.for_node INLINE, through
-  #     ProjectFolderIntake#intake_project_folder. Four call sites: the three web upload doors
-  #     (FilesController#create, FilesController#finalize_upload, Projects::UploadsController#
-  #     create) and the addon save (Tools::AddonsController, via Tools::BaseController's include),
-  #     which can write into a project's folder (it starts where the tool last saved, mapped up to
-  #     that project's folder) and needed the same treatment.
+  #     ProjectFolderIntake#intake_project_folder. Three call sites: the two web upload doors
+  #     (FilesController#create, FilesController#finalize_upload) and the addon save
+  #     (Tools::AddonsController, via Tools::BaseController's include), which can write into a
+  #     project's folder (it starts where the tool last saved, mapped up to that project's folder)
+  #     and needed the same treatment. The build-log photo door (Projects::UploadsController) writes
+  #     at the library root, which no project owns, and calls none since F-S21-1.
   #
   #   - A DEVICE PUSH is covered by FileLayer::ChunkRemote::ChangelogSync#nudge_project_intake,
   #     which runs after that pull's apply loop and hands the parents of the live files it just

@@ -42,11 +42,13 @@ class FilesController < ApplicationController
   # either, so the resolution lives in one concern rather than in two actions.
   include MoveConflicts
 
-  # The eager nudge (Task 11) — #intake_project_folder, called from #create and #finalize_upload
-  # below. Shared with Projects::UploadsController (the build-log entries' inline uploader; the
-  # project page's own Upload has been the top bar's, into this controller, since redesign slice 4),
-  # which needed the identical call once it stopped being the only other upload door; see the
-  # concern's header for why that made it a concern rather than a second copy.
+  # The batch loop (#write_batch, from #create) and the eager nudge (Task 11) —
+  # #intake_project_folder, called from #create and #finalize_upload below, with the sentences that
+  # report both. Shared with Projects::UploadsController, the build-log entries' photo uploader,
+  # which takes the loop and the sentences but not the nudge: its photos land at the library root,
+  # which no project owns. The project page's own Upload has been the top bar's, into this
+  # controller, since redesign slice 4. See ProjectFolderIntake's header for why a concern rather
+  # than a second copy.
   include UploadBatch
   include ProjectFolderIntake
 
@@ -431,7 +433,8 @@ class FilesController < ApplicationController
   # this action's shape holds regardless of what the caller's Accept header happens to be.
   #
   # LOOKS UP THE EXISTING ROW BEFORE CALLING Enqueue, RATHER THAN CALLING IT UNCONDITIONALLY. This
-  # is not the same shape as #enqueue_preview's eager, upload-time call: Enqueue.call resets a
+  # is not the same shape as the upload doors' eager call (LibraryOutput.enqueue_preview, through
+  # UploadBatch and #finalize_upload): Enqueue.call resets a
   # `failed` row to "pending" and re-enqueues WHENEVER it is called (documented — "when it
   # previously `failed`"), which is exactly right for a one-shot nudge at upload time and exactly
   # wrong for a passive poll. Calling it on every GET would mean a client polling a permanently
@@ -698,7 +701,8 @@ class FilesController < ApplicationController
     # is now wrong, and the save is where that is said) all live in Maker::TextSave, so the project
     # page's README door gets every one of them too. THIS door keeps its own two rules: the size
     # cap above (the SERVER is what enforces it — git-editing.md) and the FetchError → 503 below.
-    # `#enqueue_preview` further down stays for the two UPLOAD doors, which share no save.
+    # The UPLOAD doors share no save, but they share its re-enqueue: LibraryOutput.enqueue_preview,
+    # the one stat-then-enqueue TextSave calls, is theirs too (F-S21-2).
     result = Maker::TextSave.call(user: current_user, node:, parent_node_id: node.parent_node_id,
                                   name: node.name, body: params[:content], base_token: params[:base_token],
                                   repo_root_node_id: root&.node_id)
@@ -973,7 +977,8 @@ class FilesController < ApplicationController
     # which is what stops them drifting (§14a's one-condition-two-answers).
     notice = nil
     if result.info
-      enqueue_preview(node_id: result.info.node_id, name: result.info.name)
+      # The ONE stat-then-enqueue, the same one UploadBatch calls for #create (F-S21-2).
+      Maker::Addons::LibraryOutput.enqueue_preview(current_user, result.info.node_id, result.info.name)
       notice = project_intake_notice(intake_project_folder(result.info.node_id), result.info.name)
     end
     render json: { version_id: result.version_id, seq: result.seq, notice: }
@@ -1256,19 +1261,6 @@ class FilesController < ApplicationController
 
     Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
                                   name: node.name, version_id: token, kind: "thumbnail")
-  end
-
-  # Eagerly render a thumbnail for a file whose bytes just landed. Backend-neutral: content_token
-  # is the per-backend content id that keys maker_previews.version_id (FileLayer::FileInfo), so a
-  # new content supersedes. Never raises into the request -- a preview is best-effort UX, not part
-  # of the write's success; a vanished/unmounted file just means the scan will catch up later.
-  def enqueue_preview(node_id:, name:)
-    info = FileLayer.current.stat(current_user, node_id:)
-    return unless info&.content_token
-
-    ::Maker::Previews::Enqueue.call(user: current_user, node_id:, name:, version_id: info.content_token)
-  rescue FileLayer::NotFound, FileLayer::FetchError
-    nil
   end
 
   # Chunk mode's catalog is the sync engine's changelog; a manual scan is meaningless there. Reads

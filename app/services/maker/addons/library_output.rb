@@ -217,12 +217,17 @@ module Maker
         user.devices.find_by(name: "addons") || Device.register!(user:, name: "addons")
       end
 
-      # THE ONE STAT-THEN-ENQUEUE FOR A FILE WHOSE BYTES JUST LANDED SERVER-SIDE. Returns the
-      # content token the thumbnail was keyed on (nil when nothing was enqueued), so a caller that
-      # needs the token the write just minted — Maker::TextSave, for its Result — takes it from the
-      # same stat rather than paying a second one or keeping its own copy of these seven lines
-      # (stage 4, S4-4 review: this was briefly the fourth copy). BEST-EFFORT: a vanished or
-      # unmounted library answers nil, because a preview is not part of the write's success.
+      # THE ONE STAT-THEN-ENQUEUE FOR A FILE WHOSE BYTES JUST LANDED IN THE LIBRARY, however they
+      # got there: written by this module (addon output through #write, Maker::TextSave through
+      # #write_bytes!), POSTed through Rails to the port (UploadBatch, share/s3), or PUT by the
+      # browser straight to storage and then finalized (FilesController#finalize_upload,
+      # chunk_remote). It asks the port for the node's current content token, so it never needs to
+      # know which. Returns that token (nil when nothing was enqueued), so a caller that needs the
+      # token the write just minted — Maker::TextSave, for its Result — takes it from the same stat
+      # rather than paying a second one or keeping its own copy of these seven lines (stage 4, S4-4
+      # review: this was briefly the fourth copy; the upload doors' private copies went in F-S21-2).
+      # BEST-EFFORT: a vanished or unmounted library answers nil, because a preview is not part of
+      # the write's success.
       def enqueue_preview(user, node_id, name)
         info = FileLayer.current.stat(user, node_id:)
         return unless info&.content_token
