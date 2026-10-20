@@ -626,11 +626,11 @@ module FileLayer
     # of the library. A caller renaming must pass the current parent_node_id.
     #
     # A MOVE CHANGES THE FILE'S MODIFICATION DATE, and Share's does not. A copy IS a new object, so
-    # the destination carries a fresh Last-Modified; the next scan observes it and rewrites
-    # nodes.mtime, and the user sees a file they moved report as modified today. Share#move is one
-    # rename() and preserves it. Inherent — S3 has no rename, and no way to set Last-Modified —
-    # and self-healing (the date is merely newer, never wrong about the bytes). Recorded so it is
-    # not rediscovered as a bug; not worth a copy-back or a stored original.
+    # the destination carries a fresh Last-Modified, which the row takes from the copy's own
+    # response (below), and the user sees a file they moved report as modified today. Share#move is
+    # one rename() and preserves it. Inherent — S3 has no rename, and no way to set Last-Modified —
+    # and harmless (the date is merely newer, never wrong about the bytes). Recorded so it is not
+    # rediscovered as a bug; not worth a copy-back or a stored original.
     def move(user, node_id: nil, new_parent_node_id: nil, new_name: nil)
       leaf!(new_name)
       node = live_node!(user, node_id)
@@ -709,14 +709,22 @@ module FileLayer
       # PREVIOUS value (never nil or blank — see ObjectIdentity's header) for the scan to correct.
       # NOT a `present?` test: quoted-empty `""` passes one and raises anyway.
       #
-      # mtime is deliberately NOT refreshed here. copy_object's response carries no last_modified,
-      # and the fake returns none either — so a "refresh" of it would be reading nil through
-      # nanos() and would be green against the fake and wrong against every real store, which is
-      # the exact defect this change exists to close. The header above already records that the
-      # scan owns a moved object's mtime.
+      # THE COPY'S DATE, FROM THE SAME RESPONSE AND FOR THE SAME REASON. Reconciler#unchanged?
+      # compares the row's mtime with the LISTING's, so a row left on the SOURCE's date reads as
+      # changed on the next scan — one UPDATE and one thumbnail enqueue per moved file, for bytes
+      # that did not change. CopyObjectResult carries LastModified on the wire (aws-sdk-s3's
+      # CopyObjectResult#last_modified); this comment used to say it did not, citing the FakeS3 that
+      # had left it out (§14e's fake that shares the code's misunderstanding). PRESENCE-GUARDED like
+      # the ETag, and as load-bearing: nanos(nil) raises NoMethodError, again after delete_object, so
+      # a response without one keeps the row's previous mtime for the scan to correct. UNMEASURED ON
+      # A REAL STORE: this relies on the store filling CopyObjectResult.LastModified, and its
+      # precision against the listing's must be compared on the self-host SeaweedFS before relying
+      # on it to spare that rewrite — a mismatch costs exactly the rewrite, never a wrong date.
       attrs = { storage_path: rel, name: new_name, parent_node_id: new_parent_node_id }
-      identity = ObjectIdentity.for_reported(etag: copied&.copy_object_result&.etag)
+      result = copied&.copy_object_result
+      identity = ObjectIdentity.for_reported(etag: result&.etag)
       attrs[:content_hash] = identity if identity
+      attrs[:mtime] = nanos(result.last_modified) if result&.last_modified
 
       node.update!(**attrs)
       stat(user, node_id: node.node_id)
@@ -1059,15 +1067,17 @@ module FileLayer
     # skips it") is defeated by the very column it omits. The HEAD is already made and already
     # carries `.etag`; this adds no request.
     #
-    # A BLANK ANSWER KEEPS THE PREVIOUS VALUE, for #move's reason: BlankEtag is no ServiceError, so
-    # no rescue here catches it, and the undelete has already put the bytes back by the time this
-    # runs. `for_reported`'s nil -> keep the previous value (never nil or blank) for the scan to
-    # correct — what the rest of this method already does on a HEAD blip. NOT a refusal either: a
-    # FetchError here strands the copy exactly as the raise did. So nothing a store answers makes
-    # this raise, and a caller may loop over it.
+    # A BLANK OR MISSING ANSWER KEEPS THE PREVIOUS VALUE, for #move's reason: neither BlankEtag nor
+    # the NoMethodError nanos(nil) raises on a HEAD with no Last-Modified is a ServiceError, so no
+    # rescue here catches them, and the undelete has already put the bytes back by the time this
+    # runs. `for_reported`'s nil, or an absent date, keeps the row's previous identity or mtime
+    # (never nil or blank) for the scan to correct — what the rest of this method already does on
+    # a HEAD blip. NOT a refusal either: a FetchError here strands the copy exactly as the raise
+    # did. So nothing a store answers makes this raise, and a caller may loop over it.
     def restored_stat(key)
       head = @client.head_object(bucket: @bucket, key:)
-      attrs = { size: head.content_length, mtime: nanos(head.last_modified) }
+      attrs = { size: head.content_length }
+      attrs[:mtime] = nanos(head.last_modified) if head.last_modified
       identity = ObjectIdentity.for_reported(etag: head.etag)
       attrs[:content_hash] = identity if identity
       attrs
