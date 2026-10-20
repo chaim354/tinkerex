@@ -72,6 +72,33 @@ production:
     queue: background
     schedule: every day at 5am
 
+  # Attachment ROLES follow the vocabulary (F-S33-1): a row stored `other` whose extension
+  # Maker::FileAttachment::ROLE_BY_EXT now names takes that role, one user at a time, through
+  # Maker::FileAttachment.classify_unclassified!. It replaced a hand-copied data migration per
+  # widening, two of which were never written.
+  #
+  # ITS OWN ENTRY, NOT A STEP OF dead_node_attachment_reaper ABOVE: that sweep destroys rows whose
+  # node is gone, this one re-labels live ones, and the reaper's charter stays "dead nodes only".
+  # Folding it into the reaper's per-user loop is the alternative, and an owner's call.
+  #
+  # DAILY, AND THE CADENCE IS ABOUT WHEN WORK CAN ARRIVE. Every attach door but v1 derives the role
+  # at write time (the photo doors write `image`), so a stale `other` is born only two ways: a
+  # deploy that widens ROLE_BY_EXT (every existing row of the new extensions at once) and a v1
+  # client that posts `other`, or omits the role and gets the column default, for a name the
+  # vocabulary knows. Neither is frequent, so most runs are one query per user and zero writes.
+  # Daily bounds the lag behind either at a day, and `rake maker:classify_roles` closes it the
+  # moment a widening deploy lands, the one time the whole backlog arrives together. Weekly would
+  # leave a widened format's rows wrong for up to a week (an electronics project's hero, the v1
+  # `role`); faster would only shorten a client's wait, at one query per user per run.
+  #
+  # 6AM, AN HOUR AFTER dead_node_attachment_reaper: both write maker_file_attachments, and on a
+  # self-hosted SQLite box two writers queue for its one write lock (database.yml's `timeout:`,
+  # CLAUDE.md §14e). Backend-neutral (no `command:` gate): DB-only, the same on all three backends.
+  classify_attachment_roles:
+    class: Maker::ClassifyAttachmentRolesJob
+    queue: background
+    schedule: every day at 6am
+
   # Auto-create a project for every folder directly under the library's Projects/ that no project
   # claims. CHUNK DEPLOYMENTS ONLY — sweep_all! declines when the backend is `scannable`, because on
   # share/s3 Library::ScanJob calls discovery at the start of its own post-reconcile sequence,
