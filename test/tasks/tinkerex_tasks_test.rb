@@ -69,6 +69,22 @@ class TinkerexTasksTest < ActiveSupport::TestCase
     assert_equal 2, User.count
   end
 
+  # ONLY THE FIRST ACCOUNT CONFIRMS. An owner who signed up in the browser and has not yet answered
+  # /settings/library is still deciding; a console account added meanwhile must not answer for them
+  # (and start the 15-minute scans of the whole mount). Found in review: the test above cannot see
+  # this, because after its first console account the row is already "" and a second write is
+  # invisible. Mutation-checked: `clear! if pending?` without `first &&` turns this red on share.
+  test "a console account added while the web owner is still choosing confirms nothing" do
+    User.delete_all
+    Setting.forget(Tinkerex::LibraryRoot::KEY)
+    User.create!(email: "web-owner@example.com", password: PASSWORD, confirmed_at: Time.current)
+
+    assert_no_enqueued_jobs(only: Library::ScanJob) { invoke!("tinkerex:owner", "second@example.com") }
+
+    assert_nil Setting.get(Tinkerex::LibraryRoot::KEY), "the folder is still the web owner's to choose"
+    assert_equal 2, User.count
+  end
+
   test "owner refuses an existing address and a short password" do
     User.create!(email: "taken@example.com", password: PASSWORD, confirmed_at: Time.current)
     assert_raises(SystemExit) { invoke!("tinkerex:owner", "taken@example.com") }
