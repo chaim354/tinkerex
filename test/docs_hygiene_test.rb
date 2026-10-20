@@ -71,7 +71,10 @@ class DocsHygieneTest < ActiveSupport::TestCase
   #
   # LOWERED 1,360 -> 1,358 ON 2026-10-19 (audit slice S-1, suite honesty): §15's "bin/ci PRINTS the
   # three counts and never COMPARES them" became "bin/ci compares them" (Ci::LegRuns), two lines fewer.
-  MAX_LINES = 1_358
+  #
+  # LOWERED 1,358 -> 1,356 ON 2026-10-19 (audit slice F-S01-1, one reading of LIBRARY_BACKEND): §14a's
+  # two bullets about check!'s `chunk` default became one bullet about the reading that replaced it.
+  MAX_LINES = 1_356
 
   test "CLAUDE.md stays under its line ceiling" do
     lines = CLAUDE_MD.readlines.size

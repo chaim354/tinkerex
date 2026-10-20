@@ -46,7 +46,7 @@ class UploaderTest < ApplicationSystemTestCase
     # PRECONDITION, not on the claim: §14j's recorded trap is a guard that skips on the very thing
     # it asserts, which reports success having asserted nothing.
     skip "needs a chunk-family backend (bin/ci test-chunk-remote boots one)" \
-      unless ChunkRemoteJourney.configured? && LibraryBackend.name == "chunk_remote"
+      unless ChunkRemoteJourney.configured? && LibraryBackendCheck.configured == "chunk_remote"
 
     @user = sign_in_as("uploader@example.com")
   end
