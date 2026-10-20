@@ -56,8 +56,33 @@ module FileLayer
         e = { "seq" => seq, "op" => op, "node_id" => node_id,
               "node" => { "node_id" => node_id, "parent_node_id" => parent, "name" => name,
                           "kind" => kind, "deleted" => deleted, "mode" => nil, "mtime" => 1 } }
-        e["version"] = { "version_id" => "v-#{seq}", "manifest_id" => "m", "size" => size } if size
+        # `version` AND `manifest` TRAVEL TOGETHER, AS THE SERVER SENDS THEM (sync-protocol.md §8.3;
+        # `Change` in tinkerex-sync's services/changes.rs): both on a `put` whose version still
+        # resolves, neither otherwise -- and the manifest rides on the ENTRY, beside `node`.
+        if size
+          e["version"] = { "version_id" => "v-#{seq}", "manifest_id" => "m", "size" => size }
+          e["manifest"] = [ { "hash" => "h-#{seq}", "offset" => 0, "length" => size } ]
+        end
         e
+      end
+
+      # A /v1/tree NODE, IN THE SHAPE THE SERVER SENDS IT (sync-protocol.md §8.4; `TreeNode` in
+      # tinkerex-sync's services/tree.rs): a file's content lies FLAT on the node -- `version_id`,
+      # `size`, `manifest` -- and there is no `deleted`, because the tree lists live nodes only. Keys
+      # a node has no value for are ABSENT, as the server omits them. The one tree fake here that
+      # carried content once nested a `version` object no tree has ever sent -- the applier's own
+      # misreading -- so the only test of the resync arm confirmed the bug instead of catching it
+      # (CLAUDE.md §14e); the other two carried no content at all.
+      def tree_node(node_id, name, kind: "file", parent: nil, size: nil, version_id: "v-#{node_id}",
+                    manifest: [ { "hash" => "h-#{node_id}", "offset" => 0, "length" => size } ])
+        n = { "node_id" => node_id, "parent_node_id" => parent, "name" => name,
+              "kind" => kind, "mode" => nil, "mtime" => 1 }
+        n.merge!("version_id" => version_id, "size" => size, "manifest" => manifest) if size
+        n
+      end
+
+      def manifest_of(version_id)
+        RemoteManifestChunk.where(user: @user).for_version(version_id).pluck(:chunk_hash, :offset, :length)
       end
 
       def sync(transport) = ChangelogSync.new(@user, transport:).call
@@ -79,6 +104,22 @@ module FileLayer
         t = FakeTransport.new(pages: { 0 => [ entry(1, "n1", "a.stl", size: 4096) ] }, head_seq: 1)
         sync(t)
         assert_equal 4096, @user.nodes.find_by(node_id: "n1").size
+      end
+
+      # THE INCREMENTAL ARM'S HALF OF THE CONTRACT THE RESYNC ARM BROKE, pinned because the fix
+      # moved it: the manifest used to reach the applier through an instance variable set around
+      # the call, and is now an argument. A `put` carries its content at the ENTRY level -- `version`
+      # beside `node`, `manifest` beside both (sync-protocol.md §8.3) -- and every other op omits
+      # both keys, so the move after it must leave the content it landed exactly as it was.
+      test "a change entry lands its version, size and manifest, and a later move keeps them" do
+        t = FakeTransport.new(pages: { 0 => [ entry(1, "n1", "a.stl", size: 12),
+                                              entry(2, "n1", "moved.stl", parent: "dirB", op: "move") ] },
+                              head_seq: 2)
+        sync(t)
+
+        node = @user.nodes.find_by(node_id: "n1")
+        assert_equal [ "moved.stl", "v-1", 12 ], [ node.name, node.current_version_id, node.size ]
+        assert_equal [ [ "h-1", 0, 12 ] ], manifest_of("v-1")
       end
 
       test "every op is one upsert -- a move is the node's new state, not a special case" do
@@ -145,14 +186,40 @@ module FileLayer
       test "a cursor below oldest_seq triggers a FULL RESYNC, not a patched-over hole" do
         @user.update_column(:remote_sync_cursor, 5)
         t = FakeTransport.new(pages: { 50 => [] }, oldest_seq: 50, head_seq: 50,
-                              tree: [ { "node_id" => "srv", "parent_node_id" => nil, "name" => "kept.stl",
-                                        "kind" => "file", "mode" => nil, "mtime" => 1,
-                                        "version" => { "version_id" => "v1", "manifest_id" => "m", "size" => 9 } } ])
+                              tree: [ tree_node("srv", "kept.stl", size: 9) ])
         result = sync(t)
 
         assert result.resynced, "a pruned gap must resync"
         assert_equal 50, @user.reload.remote_sync_cursor
         assert_equal 9, @user.nodes.find_by(node_id: "srv").size
+      end
+
+      # THE DEFECT THE CORRECTED FAKES EXPOSED. A resync is the repair for a mirror that fell behind
+      # a pruned changelog, so the files it must get right are exactly the ones the mirror MISSED:
+      # one created while it was behind (no local row at all) and one whose content changed (the row
+      # still names the old version). The applier once looked for a nested `version` no tree sends,
+      # so both came through with their PLACE repaired and their CONTENT not -- the new file listed
+      # at 0 bytes with no version (every read a NotFound), the changed one still naming, sizing and
+      # serving its old bytes -- with no error anywhere, and nothing to heal it before the next put.
+      test "a resync lands each file's version, size and manifest -- a new file AND a changed one" do
+        @user.nodes.create!(node_id: "changed", name: "b.stl", kind: "file", current_version_id: "v-old", size: 3)
+        @user.update_column(:remote_sync_cursor, 5)
+        two_chunks = [ { "hash" => "h-a", "offset" => 0, "length" => 4 },
+                       { "hash" => "h-b", "offset" => 4, "length" => 5 } ]
+        t = FakeTransport.new(pages: { 50 => [] }, oldest_seq: 50, head_seq: 50,
+                              tree: [ tree_node("new", "a.stl", size: 9, manifest: two_chunks),
+                                      tree_node("changed", "b.stl", size: 7) ])
+        assert sync(t).resynced, "a pruned gap must resync"
+
+        fresh = @user.nodes.find_by(node_id: "new")
+        assert_equal [ "v-new", 9 ], [ fresh.current_version_id, fresh.size ],
+                     "a file created while the mirror was behind came through with no content"
+        assert_equal [ [ "h-a", 0, 4 ], [ "h-b", 4, 5 ] ], manifest_of("v-new")
+
+        changed = @user.nodes.find_by(node_id: "changed")
+        assert_equal [ "v-changed", 7 ], [ changed.current_version_id, changed.size ],
+                     "a file changed while the mirror was behind still names its old version"
+        assert_equal [ [ "h-changed", 0, 7 ] ], manifest_of("v-changed")
       end
 
       test "a resync SWEEPS local rows the server no longer lists" do
@@ -161,8 +228,7 @@ module FileLayer
         @user.nodes.create!(node_id: "stale", name: "gone.stl", kind: "file")
         @user.update_column(:remote_sync_cursor, 5)
         t = FakeTransport.new(pages: { 50 => [] }, oldest_seq: 50, head_seq: 50,
-                              tree: [ { "node_id" => "srv", "parent_node_id" => nil, "name" => "kept.stl",
-                                        "kind" => "file", "mode" => nil, "mtime" => 1 } ])
+                              tree: [ tree_node("srv", "kept.stl", size: 9) ])
         sync(t)
 
         assert @user.nodes.find_by(node_id: "stale").deleted, "a row the server never mentioned survived"
@@ -181,9 +247,7 @@ module FileLayer
       test "the pruned-gap check is evaluated ONCE, so an oldest_seq above the post-resync cursor cannot resync forever" do
         @user.update_column(:remote_sync_cursor, 5)
         t = ResyncCountingTransport.new(pages: { 50 => [] }, oldest_seq: 51, head_seq: 50,
-                                        tree: [ { "node_id" => "srv", "parent_node_id" => nil,
-                                                  "name" => "kept.stl", "kind" => "file",
-                                                  "mode" => nil, "mtime" => 1 } ])
+                                        tree: [ tree_node("srv", "kept.stl", size: 9) ])
         sync(t)
 
         assert_equal 1, t.asked.count { |path, _| path == "/v1/tree" },
