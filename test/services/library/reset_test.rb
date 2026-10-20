@@ -7,6 +7,11 @@ module Library
   #
   # ONE ASSERTION PER TABLE, so the list in Library::Reset cannot shrink silently: drop a line there
   # and exactly one assertion here goes red.
+  #
+  # THREE KINDS OF FOLDER, because the reset treats them three ways: `parts` is the project's folder
+  # WITH A PATH (kept as a scan tombstone, re-linked by the next scan); `old-folder` is a project's
+  # folder that is a TRASH tombstone, with no path to find again (forgotten, pointer nulled);
+  # `scratch` is a folder nothing the maker owns names (forgotten, its pin with it).
   class ResetTest < ActiveSupport::TestCase
     include ActiveJob::TestHelper
 
@@ -18,6 +23,9 @@ module Library
       @file  = node!("bracket.stl", parent: @dir)
       @svg   = node!("bracket.svg", parent: @dir)
       @gone  = node!("old.stl", deleted: true)
+      @scratch = node!("scratch", kind: "dir")
+      @trashed_dir = node!("old-folder", kind: "dir", deleted: true)
+      @trashed_dir.update_column(:trash_root_node_id, @trashed_dir.node_id)
       @other = User.create!(email: "reset-other-#{SecureRandom.hex(4)}@example.com")
       @other_dir = @other.nodes.create!(node_id: SecureRandom.uuid, name: "theirs", kind: "dir")
       @other.maker_pins.create!(node_id: @other_dir.node_id)
@@ -28,7 +36,10 @@ module Library
       @user.maker_file_links.create!(from_node_id: @svg.node_id, to_node_id: @file.node_id,
                                      kind: "derived_from")
       @user.maker_pins.create!(node_id: @dir.node_id)
+      @user.maker_pins.create!(node_id: @scratch.node_id)
       @note = @user.maker_notes.create!(node_id: @file.node_id, body: "print at 0.2 mm")
+      @folder_note = @user.maker_notes.create!(node_id: @dir.node_id, body: "the lamp lives here")
+      @trashed_project = @user.maker_projects.create!(name: "Shelf", folder_node_id: @trashed_dir.node_id)
       @preview = @user.maker_previews.create!(node_id: @file.node_id, kind: "thumbnail", status: "ready")
       @preview.asset.attach(io: StringIO.new("png-bytes"), filename: "thumb.png", content_type: "image/png")
       @blob_id = @preview.asset.blob.id
@@ -56,25 +67,27 @@ module Library
       @stock = @user.maker_inventory_items.create!(name: "M3 bolt")
 
       # Vacuity: a builder that persisted nothing would make every "zero rows" below prove nothing.
-      assert_equal 4, @user.nodes.count
+      assert_equal 6, @user.nodes.count
       assert ActiveStorage::Blob.exists?(@blob_id), "the preview must really carry a blob"
 
       @result = perform_enqueued_jobs { Library::Reset.call(@user) }
     end
 
-    test "every row whose identity is a node is destroyed, tombstones included" do
-      assert_equal 0, Node.where(user_id: @user.id).count, "nodes, the tombstone too"
+    test "every row whose identity is a forgotten node is destroyed, tombstones included" do
+      assert_equal [ @dir.node_id ], Node.where(user_id: @user.id).pluck(:node_id),
+                   "nodes: only the kept project folder is left, the tombstones went too"
       assert_equal 0, @user.maker_file_attachments.count, "maker_file_attachments"
       assert_equal 0, @user.maker_file_links.count, "maker_file_links"
-      assert_equal 0, @user.maker_pins.count, "maker_pins"
-      assert_equal 0, @user.maker_notes.count, "maker_notes"
+      assert_equal [ @dir.node_id ], @user.maker_pins.pluck(:node_id), "maker_pins: the scratch folder's went"
+      assert_equal [ @folder_note.id ], @user.maker_notes.pluck(:id), "maker_notes: the file's went"
       assert_not ActionText::RichText.exists?(record_type: "Maker::Note", record_id: @note.id),
                  "a note's rich text goes with it"
       assert_equal 0, @user.maker_previews.count, "maker_previews"
       assert_equal 0, @user.maker_repo_edits.count, "maker_repo_edits"
       assert_equal 0, @addon_state.files.count, "maker_addon_files"
 
-      assert_equal({ nodes: 4, attachments: 2, previews: 1, models: 2 }, @result.to_h)
+      # attachments: 1 -- the project's; the auto model's went with the model, destroyed first.
+      assert_equal({ nodes: 5, attachments: 1, previews: 1, models: 2, kept: 1 }, @result.to_h)
     end
 
     # The blob is the one thing a bare DELETE of maker_previews would leave behind for good.
@@ -82,15 +95,29 @@ module Library
       assert_not ActiveStorage::Blob.exists?(@blob_id)
     end
 
-    test "every pointer that merely names a node is nulled" do
-      @project.reload
-      assert_nil @project[:folder_node_id], "maker_projects.folder_node_id"
-      assert_nil @project[:cover_node_id], "maker_projects.cover_node_id"
-      assert_nil @release.reload.repo_node_id, "maker_releases.repo_node_id"
+    test "every pointer into a forgotten node is nulled" do
+      assert_nil @project.reload[:cover_node_id], "maker_projects.cover_node_id"
+      assert_nil @trashed_project.reload[:folder_node_id],
+                 "maker_projects.folder_node_id, when the folder has no path to find again"
       assert_nil @item.reload.primary_node_id, "maker_items.primary_node_id"
-      @import.reload
-      assert_nil @import.folder_node_id, "an import model's folder_node_id"
-      assert_nil @import[:cover_node_id], "an import model's cover_node_id"
+      assert_nil @import.reload[:cover_node_id], "an import model's cover_node_id"
+    end
+
+    # RE-LINK BY PATH (the owner's call at review): the folder a project, an import model and a
+    # release live in is kept as a SCAN tombstone -- the shape Library::Reconciler#ensure_dirs revives
+    # by path with its old node_id -- and every pointer into it is left alone. Mutation-checked:
+    # forget it like any other node and every assertion here goes red.
+    test "the folders the maker's records live in are kept, as scan tombstones, with their pointers" do
+      kept = Node.find_by!(user_id: @user.id, node_id: @dir.node_id)
+      assert kept.deleted?, "a tombstone until the next scan finds it"
+      assert_equal "parts", kept.storage_path, "a SCAN tombstone keeps its path, which is what revives it"
+      assert_nil kept.trash_root_node_id, "and is no trash entry"
+      assert_nil kept.parent_node_id, "its parent row is gone; the revive recomputes it"
+
+      assert_equal @dir.node_id, @project.reload[:folder_node_id], "maker_projects.folder_node_id"
+      assert_equal @dir.node_id, @release.reload.repo_node_id, "maker_releases.repo_node_id"
+      assert_equal @dir.node_id, @import.reload.folder_node_id, "an import model's folder_node_id"
+      assert @user.maker_pins.exists?(node_id: @dir.node_id), "the folder's pin waits for the folder"
     end
 
     # §14d: nulling alone leaves no target, and `exactly_one_target` then refuses every later save.

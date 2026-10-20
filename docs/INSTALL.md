@@ -74,10 +74,10 @@ outcomes. **Switch to this folder** keeps each file's projects, notes and tags w
 holds the same files (the old one moved or renamed on the host); if it holds a different set, the
 scan refuses, the way it refuses an unmounted share (`LIBRARY_SCAN_MAX_DELETE_PCT`, 20%), and the
 page says so. **Start over with this folder** forgets the catalog — every indexed file, its
-previews, notes, pins and the 3D models found in it. Projects, tasks, inventory and BOMs stay, but
-a project no longer points at a folder, and a folder under `Projects/` in the new library becomes a
-project of its own, beside any old one of the same name. It never deletes or moves anything on
-disk.
+previews, notes, pins and the 3D models found in it. Projects, tasks, inventory and BOMs stay, and
+each project keeps its folder when the new library has a folder at the same path (say
+`Projects/Desk Lamp`); a project whose folder is not there shows it as removed, as it would if you
+deleted the folder. It never deletes or moves anything on disk.
 
 ### Where your files come from
 

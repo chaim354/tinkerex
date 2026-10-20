@@ -113,4 +113,73 @@ module Library
     # Live files by relative path => node_id.
     def catalog = @user.nodes.present.where(kind: "file").pluck(:storage_path, :node_id).to_h
   end
+
+  # START OVER ONTO A LIBRARY WITH THE SAME PROJECT FOLDERS RE-LINKS THEM (the owner's call at review,
+  # 2026-10-20). Before, the reset nulled every project's folder and discovery then adopted each
+  # `Projects/<name>` of the new library as a SECOND project (`desk-lamp-2`) beside the old,
+  # folderless one -- and an archived project lost the claim that kept its folder dismissed. Now
+  # Library::Reset keeps those folders as scan tombstones and the scan revives each one found at the
+  # same path with its old node_id. The files sit in subfolders so no leg's intake has anything loose
+  # to move. Mutation-checked: forget the kept folders like any other node and this goes red with a
+  # `desk-lamp-2`.
+  class StartOverRelinkTest < ActiveSupport::TestCase
+    include ActiveJob::TestHelper
+
+    setup do
+      @saved_library_path = ENV["LIBRARY_PATH"]
+      @mount = Pathname.new(Dir.mktmpdir("relink"))
+      ENV["LIBRARY_PATH"] = @mount.to_s
+      FileLayer.reset!
+      @user = User.create!(email: "relink-#{SecureRandom.hex(4)}@example.com")
+
+      file!("A/Projects/Desk Lamp/parts/shade.txt", "shade v1")
+      file!("A/Projects/Old Shelf/parts/board.txt", "board v1")
+      file!("C/Projects/Desk Lamp/parts/shade-v2.txt", "a different shade")
+      file!("C/Projects/Old Shelf/parts/board-v2.txt", "a different board")
+      file!("C/Projects/New Thing/parts/thing.txt", "something new")
+
+      Tinkerex::LibraryRoot.choose!("A")
+      Library::ScanJob.perform_now(user_id: @user.id, root: @mount.join("A").to_s)
+      @lamp = @user.maker_projects.find_by!(name: "Desk Lamp")
+      @shelf = @user.maker_projects.find_by!(name: "Old Shelf")
+      @shelf.update!(status: "archived")
+    end
+
+    teardown do
+      ENV["LIBRARY_PATH"] = @saved_library_path
+      FileLayer.reset!
+      FileUtils.remove_entry(@mount) if @mount&.exist?
+    end
+
+    test "starting over onto the same project folders re-links them instead of adopting duplicates" do
+      Tinkerex::LibraryRoot.choose!("C")
+
+      Library::RootChangeJob.perform_now(user_id: @user.id, start_over: true)
+
+      if FileLayer.current.is_a?(FileLayer::Share)
+        assert_equal [ "Desk Lamp", "New Thing", "Old Shelf" ], @user.maker_projects.order(:name).pluck(:name),
+                     "one project per folder: no desk-lamp-2 beside the old one"
+        [ @lamp, @shelf ].each do |project|
+          folder = @user.nodes.present.find_by(node_id: project.reload.folder_node_id, kind: "dir")
+          assert folder, "#{project.name} must point at a LIVE folder: the revived one"
+          assert_equal "Projects/#{project.name}", folder.storage_path
+        end
+        assert_equal "archived", @shelf.reload.status, "the archived project keeps its claim, and stays archived"
+        assert @user.nodes.present.exists?(storage_path: "Projects/Desk Lamp/parts/shade-v2.txt"),
+               "the new library's files are indexed inside the re-linked folder"
+      else
+        assert_equal [ "Desk Lamp", "Old Shelf" ], @user.maker_projects.order(:name).pluck(:name),
+                     "off share there is no folder to start over for"
+      end
+      assert @mount.join("A/Projects/Desk Lamp/parts/shade.txt").file?, "nothing on disk is touched"
+    end
+
+    private
+
+    def file!(rel, bytes)
+      path = @mount.join(rel)
+      path.dirname.mkpath
+      path.binwrite(bytes)
+    end
+  end
 end

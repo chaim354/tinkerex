@@ -77,6 +77,14 @@ Minitest (three backend legs: share / s3 / chunk_remote — RUN counts must matc
     Every process follows a change at its next request or job, nothing is reset, and the page's
     "restart the jobs process" sentence is gone. Cost: one indexed query per request or job on
     share; none off share (`pending?` asks the adapter first).
+12. **(The owner's call after review: "relink".)** Start over no longer nulls a project's folder.
+    The folders the maker's surviving records live in -- projects' `folder_node_id`, import models'
+    `folder_node_id`, releases' `repo_node_id` -- are kept as SCAN tombstones (path kept, no trash
+    entry, no parent), with their pins, notes and attachments; the scan of the new folder revives
+    each one found at the same path with its old node_id (`Library::Reconciler#ensure_dirs`). So a
+    start over onto the same `Projects/` layout re-links instead of adopting `desk-lamp-2`, and an
+    archived project keeps its claim. A folder the new library lacks stays a tombstone (the existing
+    "folder was deleted" state, which never re-mints); a pathless trash tombstone is forgotten.
 11. **(Found in review.)** While pending, a non-HTML WRITE is refused 409 (a JSON
     `POST /files/rescan` indexed the whole mount); `tinkerex:demo:setup` confirms the mount for a
     freshly created demo account (refused the choice, it would otherwise face it forever).
