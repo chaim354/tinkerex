@@ -1777,5 +1777,156 @@ module FileLayer
       adapter.delete(@user, node_id: dir_id)
       assert @user.nodes.find_by!(node_id: dir_id).deleted?
     end
+
+    # A SCAN TOMBSTONE IS NOT PART OF THE FOLDER. The walk returns tombstones (FileLayer::Subtree)
+    # and a scan tombstone KEEPS its storage_path (§14a's two kinds), so a file removed out of band
+    # used to re-enter the copy set: the copy of an object that no longer exists failed on every
+    # attempt — NoSuchKey here, InvalidArgument on SeaweedFS — and the user was told to try again,
+    # forever. A folder holding one could never be deleted from the app.
+    test "a folder holding a file the scan tombstoned still deletes" do
+      create_file!(name: "ballast.stl", bytes: "still here")
+      dir_id = make_dir(name: "cad")
+      live_id = adapter.write(@user, parent_node_id: dir_id, name: "a.stl", io: StringIO.new("a")).node_id
+      gone_id = adapter.write(@user, parent_node_id: dir_id, name: "b.stl", io: StringIO.new("b")).node_id
+      @fake.objects.delete("#{PREFIX}/cad/b.stl") # removed with rclone or the console
+      scan!(max_delete_pct: 100)
+      gone = @user.nodes.find_by!(node_id: gone_id)
+      assert gone.deleted?, "precondition: the scan tombstoned it"
+      assert_equal "cad/b.stl", gone.storage_path, "precondition: a SCAN tombstone keeps its path"
+
+      assert_nothing_raised { adapter.delete(@user, node_id: dir_id) }
+
+      assert_equal "a", @fake.objects["#{PREFIX}/.trash/#{dir_id}/cad/a.stl"]&.body
+      refute stored?("cad/a.stl"), "the live file's source survived"
+      [ dir_id, live_id ].each { |id| assert_nil @user.nodes.find_by!(node_id: id).storage_path }
+      assert_equal "cad/b.stl", gone.reload.storage_path,
+                   "the folder delete rewrote a scan tombstone into the trash shape"
+      assert_not_includes adapter.trashed(@user).map(&:node_id), gone_id
+    end
+
+    # A DIRECTORY MARKER IS AN OBJECT, AND THE CASCADE USED TO LEAVE IT BEHIND. `mkdir` puts one so an
+    # empty folder survives a scan, and S3Observer reads a marker as positive evidence of a directory —
+    # so the marker a delete left made the next scan mint the folder again, empty, under a NEW node_id
+    # (the tombstone's path is NULL, so #ensure_dirs cannot revive it). Every app-made folder — a
+    # project folder, a "New folder" — came back within one scan of being deleted.
+    test "a deleted folder stays deleted across a scan" do
+      create_file!(name: "ballast.stl", bytes: "still here")
+      dir_id = make_dir(name: "parts")
+      adapter.write(@user, parent_node_id: dir_id, name: "a.stl", io: StringIO.new("a"))
+
+      adapter.delete(@user, node_id: dir_id)
+      scan!
+
+      assert_empty @user.nodes.present.where(storage_path: "parts"), "the deleted folder came back"
+      refute stored?("parts/"), "the folder's marker survived its delete"
+      assert stored?(".trash/#{dir_id}/parts/"), "the marker did not travel into the entry"
+    end
+
+    # THE ENTRY IS ROOT-RELATIVE — `.trash/<root id>/<root name>/<path beneath it>`, Share's shape —
+    # built from NAMES along the parent edge, never from storage_path. Keyed by each file's whole
+    # storage_path, a NESTED folder's entry carried its ancestors while the cascade NULLed the column
+    # that named them. Read off `@fake.objects`, which is the wire (§14e).
+    test "a nested folder's entry is root-relative" do
+      cad_id = make_dir(name: "cad")
+      parts_id = adapter.mkdir(@user, parent_node_id: cad_id, name: "parts").node_id
+      stl_id = adapter.mkdir(@user, parent_node_id: parts_id, name: "stl").node_id
+      adapter.write(@user, parent_node_id: stl_id, name: "a.stl", io: StringIO.new("solid a\n"))
+
+      adapter.delete(@user, node_id: parts_id)
+
+      assert_equal "solid a\n", @fake.objects["#{PREFIX}/.trash/#{parts_id}/parts/stl/a.stl"]&.body,
+                   "the file is not at its root-relative entry key"
+      assert stored?(".trash/#{parts_id}/parts/"), "the root's marker is not at the entry's root"
+      assert stored?(".trash/#{parts_id}/parts/stl/"), "a nested marker is not root-relative"
+      assert_empty @fake.objects.keys.grep(%r{\A#{PREFIX}/\.trash/#{parts_id}/cad/}),
+                   "the entry carries the deleted folder's ancestors"
+      %w[cad/parts/ cad/parts/stl/ cad/parts/stl/a.stl].each do |rel|
+        refute stored?(rel), "#{rel} survived the delete"
+      end
+      assert stored?("cad/"), "the PARENT's marker is not the deleted folder's to take"
+    end
+
+    # A MARKER IS PUT AFRESH IN THE ENTRY, NEVER COPIED, and the reason is the deployed store: SeaweedFS
+    # keeps `<key>/` as the filer DIRECTORY itself, and its CopyObject answers a directory source with
+    # NoSuchKey (s3api_object_handlers_copy.go, classifyCopySourceError — read in its source, not
+    # probed) — so a copied marker would make every folder with one undeletable there. FakeS3 copies a
+    # marker happily, which is why the count below is the guard. A marker carries no bytes the
+    # library shows; that the folder existed is its whole content, and an empty PUT records it.
+    test "a folder delete copies only files; each marker is put afresh in the entry" do
+      dir_id = make_dir(name: "parts")
+      sub_id = adapter.mkdir(@user, parent_node_id: dir_id, name: "stl").node_id
+      adapter.write(@user, parent_node_id: sub_id, name: "a.stl", io: StringIO.new("a"))
+      copies = @fake.calls[:copy_object]
+
+      adapter.delete(@user, node_id: dir_id)
+
+      assert_equal copies + 1, @fake.calls[:copy_object], "a marker was the source of a COPY"
+      assert_equal "", @fake.objects["#{PREFIX}/.trash/#{dir_id}/parts/stl/"]&.body
+    end
+
+    # ONLY A MARKER THAT EXISTS TRAVELS, and existence is asked by HEAD — never inferred from a
+    # failed COPY. A folder the observer synthesized from its keys has no marker, and the entry must
+    # record only what was there: an invented one costs a PUT and a DELETE, and would come back from
+    # the trash as a folder that outlives its contents.
+    test "a folder synthesized from its keys gets no marker in the entry" do
+      create_file!(name: "cad/x/y.stl", bytes: "y")
+      cad_id = @user.nodes.find_by!(storage_path: "cad", kind: "dir").node_id
+
+      adapter.delete(@user, node_id: cad_id)
+
+      assert_equal "y", @fake.objects["#{PREFIX}/.trash/#{cad_id}/cad/x/y.stl"]&.body
+      assert_empty @fake.objects.keys.grep(%r{/\z}), "a marker was invented for a folder that had none"
+    end
+
+    # FILES, THEN MARKERS DEEPEST FIRST, so each folder is empty when its marker goes. Real S3 does not
+    # care; SeaweedFS keeps a marker as the filer directory and removes it only when nothing is left
+    # under it, DEMOTING one with children to a plain directory (s3api_directory_marker.go). The ids
+    # are chosen so the catalog's own order — by id or by node_id — is parent-first, so the order
+    # asserted is the adapter's and not the database's.
+    test "phase 2 deletes the files, then the markers deepest first" do
+      %w[parts parts/stl parts/stl/deep].each_with_index do |rel, i|
+        @user.nodes.create!(node_id: "d#{i}", name: File.basename(rel), kind: "dir", deleted: false,
+                            storage_path: rel, parent_node_id: (i.zero? ? nil : "d#{i - 1}"), mtime: 1)
+        @fake.seed!("#{PREFIX}/#{rel}/", "")
+      end
+      adapter.write(@user, parent_node_id: "d2", name: "a.stl", io: StringIO.new("a"))
+      deleted = []
+      @fake.client.stub_responses(:delete_object, ->(ctx) { deleted << ctx.params[:key]; {} })
+
+      adapter.delete(@user, node_id: "d0")
+
+      assert_equal %W[#{PREFIX}/parts/stl/deep/a.stl #{PREFIX}/parts/stl/deep/ #{PREFIX}/parts/stl/
+                      #{PREFIX}/parts/], deleted
+    end
+
+    # WHAT TRAVELS IS DECIDED ONCE, BEFORE PHASE 1. Nothing serializes a scan against a port write, so
+    # a scan landing mid-phase-2 sees the sources already deleted and scan-tombstones those members,
+    # paths kept. Phase 3 re-reading `present` then skipped them: bytes in the entry, rows that are
+    # not trash — never listed, never restorable. Both members are asserted, because which one the
+    # scan catches depends on the order phase 2 deletes them in.
+    test "a member a scan tombstoned mid-delete still lands in the trash" do
+      create_file!(name: "ballast.stl", bytes: "still here")
+      dir_id = make_dir(name: "parts")
+      ids = %w[a.stl b.stl].map do |name|
+        adapter.write(@user, parent_node_id: dir_id, name:, io: StringIO.new(name)).node_id
+      end
+      scanned = false
+      @fake.client.stub_responses(:delete_object, lambda { |ctx|
+        @fake.objects.delete(ctx.params[:key])
+        unless scanned
+          scanned = true
+          scan!(max_delete_pct: 100) # the periodic scan, landing once the first source is gone
+        end
+        {}
+      })
+
+      adapter.delete(@user, node_id: dir_id)
+
+      ids.each do |id|
+        assert_nil @user.nodes.find_by!(node_id: id).storage_path,
+                   "#{id}'s bytes are in the entry, but it is not a trash tombstone"
+      end
+      assert_equal ids.sort, (adapter.trashed(@user).map(&:node_id) & ids).sort
+    end
   end
 end

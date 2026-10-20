@@ -254,7 +254,6 @@ module FileLayer
       end
 
       bytes = read_capped!(io)
-      FileUtils.mkdir_p(dest.dirname)
       # Temp-then-rename: the 15-minute scan may be walking this directory right now, and a
       # half-written file would be indexed with a hash of its own torn state. The rename is
       # atomic, and keeping the temp in the DESTINATION'S OWN directory is what makes it so —
@@ -271,6 +270,10 @@ module FileLayer
       # two copies that must match exactly would bring the wedge back the moment they drift.
       tmp = dest.dirname.join("#{Library::Scanner::TEMP_PREFIX}#{SecureRandom.hex(8)}")
       begin
+        # mkdir_p INSIDE the begin, for the reason delete, move and undelete give: it is I/O against
+        # the same share, and outside this rescue a catalog folder missing on disk whose re-creation
+        # fails (a file at that path, a read-only remount) escaped as a raw Errno — a 500.
+        FileUtils.mkdir_p(dest.dirname)
         File.binwrite(tmp, bytes)
         File.rename(tmp, dest)
       rescue SystemCallError => e
@@ -364,6 +367,10 @@ module FileLayer
       node = live_node!(user, node_id)
       src = absolute_path(node) # read BEFORE the update nulls storage_path
       dest_dir = trash_dir(node.node_id)
+      # WHAT TRAVELS, DECIDED BEFORE THE RENAME — see the `update_all` below for why this set, and
+      # why it is captured here rather than read after the move.
+      travelling = user.nodes.present.where(node_id: FileLayer::Subtree.node_ids(user, node.node_id))
+                       .pluck(:node_id)
       begin
         # mkdir_p is INSIDE the begin: it is I/O against the same share as the rename, and it
         # fails for the same transient reasons (a read-only mount, a full disk, an NFS perms
@@ -419,9 +426,17 @@ module FileLayer
       #
       # `update_all`, not a loop of `update!`: one statement for a folder of any size, and — the
       # part that matters — it cannot half-apply, so a subtree is never partly live.
-      ids = FileLayer::Subtree.node_ids(user, node.node_id)
-      user.nodes.where(node_id: ids).update_all(deleted: true, storage_path: nil,
-                                                updated_at: Time.current)
+      #
+      # `travelling`: ONLY THE ROWS THAT WERE LIVE TRAVELLED WITH THE FOLDER. The walk returns
+      # tombstones too (it must — see Subtree), and rewriting one it did not make breaks it: a SCAN
+      # tombstone (removed in Finder, path kept, bytes gone) becomes a trash tombstone listed with a
+      # Restore that can never work, and an older trash tombstone has its "Deleted" date re-stamped,
+      # restarting Maker::DeadNodes' grace. AND IT WAS CAPTURED BEFORE THE RENAME, never re-read
+      # here: nothing serializes a scan against a port write, so a scan landing in between sees the
+      # folder vanished and scan-tombstones what just moved, and a re-read of `present` would skip
+      # those rows — bytes in `.trash`, rows never listed there. s3's phase 3 does the same.
+      user.nodes.where(node_id: travelling).update_all(deleted: true, storage_path: nil,
+                                                       updated_at: Time.current)
       nil
     end
 
@@ -676,8 +691,8 @@ module FileLayer
     #
     # THIS IS WHAT MAKES THE CASCADE UNDOABLE, and therefore what makes it safe to offer at all: a
     # delete whose inverse does not exist is a delete the user cannot undo. `delete` nulled every
-    # descendant's storage_path (so no tombstone could be revived by path), and the rename back has
-    # already put the bytes where they belong — so all that is left is the catalog.
+    # LIVE descendant's storage_path (so no tombstone could be revived by path), and the rename back
+    # has already put the bytes where they belong — so all that is left is the catalog.
     #
     # THE SAME ROWS, NEVER NEW ONES. Every attachment, BOM line and tag is keyed on `node_id`, so a
     # restore that minted ids would look perfect — the files are back, the bytes are right — while
@@ -691,22 +706,45 @@ module FileLayer
     # A file whose bytes did not come back is left TOMBSTONED rather than revived to a path with
     # nothing behind it: a live node over absent bytes is the vanished-file shape the mass-deletion
     # guard exists for, and it would be this method creating it.
+    #
+    # ONLY WHAT WENT INTO THIS ENTRY COMES BACK WITH IT, and two kinds of row in the walk did not:
+    # one that KEPT its path (a scan tombstone — the scan revives it by path when its bytes return)
+    # and one that OWNS an entry, `.trash/<its id>/<name>`, because it was deleted on its own before
+    # the folder was and is restored on its own. Reviving either rebuilt the same path as the live
+    # row that replaced it — a replace, or a re-upload after a Finder delete — so the second revive
+    # hit the partial unique index: a 500 mid-restore, the bytes back on disk, and every row not
+    # yet reached left pathless for the next scan to mint anew. RESIDUAL: an earlier delete whose
+    # entry the purge has reclaimed owns nothing and reads as a member here.
+    #
+    # THE TWO ARE WALKED DIFFERENTLY, and the difference is load-bearing. A row with an entry of its
+    # own is NOT descended into: everything beneath it went into that entry. A row that kept its path
+    # IS walked through, unrevived: a file restored into a folder the scan tombstoned (§14a's
+    # self-healing restore) travels with the folder above it while that folder's row does not, and
+    # stopping there left the file trashed over bytes back on disk — a new node_id at the next scan.
+    # So each child's path is rebuilt from the restored root and CARRIED, never read back off a row.
     def revive_subtree!(user, root)
       ids = FileLayer::Subtree.node_ids(user, root.node_id)
       return if ids.size <= 1
 
       by_parent = user.nodes.where(node_id: ids - [ root.node_id ]).group_by(&:parent_node_id)
-      queue = [ root ]
+      queue = [ [ root, root.storage_path ] ]
       until queue.empty?
-        parent = queue.shift
+        parent, parent_rel = queue.shift
         Array(by_parent[parent.node_id]).each do |child|
-          rel = join_rel(parent.storage_path, child.name)
+          next if File.exist?(trash_dir(child.node_id).join(child.name))
+
+          rel = join_rel(parent_rel, child.name)
+          if child.storage_path.present?
+            queue << [ child, rel ]
+            next
+          end
+
           path = resolve_inside!(rel)
           next unless File.exist?(path)
 
           st = File.stat(path)
           child.update!(deleted: false, storage_path: rel, size: st.size, mtime: nanos(st))
-          queue << child
+          queue << [ child, rel ]
         end
       end
     end
