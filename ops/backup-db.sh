@@ -4,6 +4,7 @@
 #
 #   backup-db.sh --to-volume tinkerex_backups --keep 14 chunk share s3 sync  # what cron runs
 #   backup-db.sh --to-stdout share > local.tar.gz                        # what bin/backup-db runs
+#   backup-db.sh --list | --describe share     # read the destination table (below): no docker, no ping
 #
 # ONE IMPLEMENTATION, TWO CALLERS, ON PURPOSE. The nightly and the ad-hoc Mac command differ only
 # in where the bytes land, and every hard-won detail below (the WAL-safe snapshot, the --anchored
@@ -31,14 +32,168 @@
 set -euo pipefail
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin   # cron's PATH is minimal
 
+# ---- the destination table -------------------------------------------------------------------
+# ONE ROW PER DESTINATION, AND EVERY QUESTION ABOUT DESTINATIONS IS ANSWERED BY READING IT: which
+# names this script accepts (the argument loop below), which ping.env key feeds which push monitor
+# (ping_url), which container's image does the work and which volume a backup reads (the loop at
+# the bottom) — and, through `--describe`, which container bin/restore-db stops and which volume it
+# writes back into. {chunk, share, s3, sync} used to be spelled out five times across this file and
+# bin/restore-db, and the copies drifted where it hurts: `sync` was accepted and backed up nightly
+# while the ping whitelist had no arm for it, so its monitor could never be pinged; and a
+# restore-db copy gone stale would `docker volume create` an EMPTY volume of the old name, restore
+# into it, restart the container on its REAL volume, and let a rehearsal verify the wrong one.
+#
+# Columns: the name; the `docker ps -a -qf name=` filter for the container whose IMAGE does the
+# work (its sqlite3 and tar — and the container bin/restore-db stops); the volume holding that
+# deployment's databases and Active Storage blobs. Blank and `#` lines are skipped.
+# test/ops_backup_table_test.rb holds every row to the merged Kamal config: each filter must find
+# exactly one deployment's container, each volume must be where that deployment keeps its
+# databases, and a database the box runs with no row here fails the build.
+#
+# `--list` and `--describe NAME` print from this table and exit in the argument loop — before any
+# docker call and before any ping — which is what lets bin/restore-db, bin/backup-db and
+# bin/backup-cron-install run them on a Mac. KEEP BOTH BASH-3.2-SAFE for that reason: no
+# associative arrays, no ${x,,}, no mapfile.
+read -r -d '' DEST_TABLE <<'TABLE' || true
+# name  container filter          volume
+#
+# Chunk is the base deployment, so its container is `tinkerex-web-<sha>` — the `[0-9a-f]` is what
+# stops that prefix from also matching -share-/-s3-.
+chunk   ^tinkerex-web-[0-9a-f]    tinkerex_storage
+share   ^tinkerex-web-share-      tinkerex_storage_share
+s3      ^tinkerex-web-s3-         tinkerex_storage_s3
+#
+# THE ONLY ANCHORED PATTERN HERE ($), AND IT MUST STAY ANCHORED. `sync` is a Kamal ACCESSORY,
+# so its container name is the fixed string `tinkerex-sync` rather than a per-deploy
+# `<name>-<sha>` — that is exactly what gives the maker app a stable network alias to put in
+# CHUNK_REMOTE_URL (config/deploy.yml's `sync:` block). Unanchored, `^tinkerex-sync` would
+# ALSO match a `tinkerex-sync-web-<sha>` container, which is what the STANDALONE deployment of
+# chaim354/tinkerex-sync names its containers — that service really was running on this box
+# until 2026-08-24, on the same volume, and `docker ps -a` still lists exited containers by
+# design (see the lookup in the loop below). Matching one of those would source the helper image
+# from a stale revision while `head -1` hid that anything was ambiguous — and bin/restore-db,
+# which reads this same filter to pick the container it stops and the image it restores with,
+# would restore THIS database using THAT image's sqlite3.
+#
+# `sync` IS THE SYNC SERVER'S OWN DATABASE, NOT A FOURTH COPY OF THE MAKER'S. It is a different
+# app (chaim354/tinkerex-sync's binary) holding the chunk catalog — versions, manifest_chunks,
+# changelog_entries. A restore that recovers the maker database and not this one recovers a
+# library whose every file resolves to nothing. The volume happens to have the SAME internal
+# shape (production.sqlite3 at its root, plus a `nodes` table for the verify step to count), so
+# WORKER needs no arm of its own — checked, not assumed.
+sync    ^tinkerex-sync$           tinkerex_sync_storage
+TABLE
+
+# The rows alone, comment and blank lines dropped, so nothing below ever sees anything else.
+dest_rows()    { printf '%s\n' "$DEST_TABLE" | awk 'NF && $1 !~ /^#/'; }
+dest_names()   { dest_rows | awk '{ print $1 }'; }
+dest_choices() { dest_names | paste -s -d '|' -; }   # the names joined by `|`, for the usage lines
+# One destination's row, or status 1 for a name the table does not have — so ask inside an `if` or
+# behind `||`, never as a bare statement, which `set -e` would end the script on. The name reaches
+# awk through the environment rather than `-v`, which would interpret backslashes in it.
+dest_row() { dest_rows | DEST_WANTED="$1" awk '$1 == ENVIRON["DEST_WANTED"] { print; found = 1 } END { exit !found }'; }
+
+# ---- Uptime Kuma push monitors ---------------------------------------------------------------
+# One push URL per destination, in ~/tinkerex-ops/ping.env (written by bin/backup-cron-install,
+# never committed — the tokens are the whole authentication):
+#
+#   PING_CHUNK=http://192.168.1.146:3001/api/push/aBcD1234
+#
+# A PUSH MONITOR IS A DEAD-MAN'S SWITCH: Uptime Kuma alerts on the ABSENCE of a ping, which is the
+# only thing that catches the failures that matter here — cron unloaded, the VM off, the script
+# never reaching its own error handler. A monitor that only reports failures it was told about
+# cannot see any of those.
+PING_FILE="${PING_FILE:-$HOME/tinkerex-ops/ping.env}"
+
+# PARSED, NEVER SOURCED — and this is not defensiveness, it is a bug that was already caught.
+# A Kuma push URL copied out of its UI contains `&` (`…?status=up&msg=OK&ping=`). `. ping.env` on
+# an unquoted line like that makes bash read the `&` as a JOB SEPARATOR: the assignment runs in a
+# background subshell, the variable is never set in this shell, and the ping silently does not
+# happen. Sourcing also means any value in that file is executable shell. Reading the one line a
+# ping needs, with awk, takes every value literally and cannot do either.
+#
+# THE DESTINATION TABLE IS THE WHITELIST; THERE IS NO SECOND ONE. A destination is pinged through
+# the key `PING_<NAME>`, built from a name the table has — never from an argument as typed — and
+# the one line read is the one BEGINNING with exactly that key and `=`, at ping time, its value
+# taken literally; the last such line wins, and every other line is ignored. This replaced an
+# ENUMERATED whitelist, one `case` arm per destination, whose price was that it had to be extended
+# by hand for every destination the argument case accepted, with nothing to catch a missing arm —
+# while `ping_kuma`'s generic `PING_$(upper dest)` made the code READ as though it already handled
+# any destination. `sync` shipped in exactly that state: its push monitor could not be pinged in
+# EITHER direction, so a configured one sat DOWN every night while the backup succeeded (a
+# crying-wolf monitor), and a real failure degraded to a generic 25-hour silence because the
+# `down` ping with its diagnostic message never arrived. Now a destination cannot be accepted
+# without a row, and a row is all its ping needs.
+ping_key() {  # dest -> PING_<DEST>; status 1 for a name the table does not have
+  dest_row "$1" >/dev/null || return 1
+  printf 'PING_%s\n' "$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
+}
+# The push URL ping.env holds for a destination, or nothing. ALWAYS status 0: a lookup that fails —
+# no row, no file, an unreadable file — means "no URL", never a failed backup (see ping_kuma).
+ping_url() {  # dest
+  local key
+  key=$(ping_key "$1") || return 0
+  [ -f "$PING_FILE" ] || return 0
+  PING_KEY="$key=" awk 'index($0, ENVIRON["PING_KEY"]) == 1 { url = substr($0, length(ENVIRON["PING_KEY"]) + 1) }
+                        END { if (url != "") print url }' "$PING_FILE" \
+    || echo "    (could not read $PING_FILE, so no ping for $1)" >&2
+  return 0
+}
+
+# A FAILED PING MUST NEVER FAIL THE BACKUP. The backup is the product; the ping is telemetry about
+# it. Letting curl's exit status reach `status` would turn "Uptime Kuma is rebooting" into "last
+# night's backup failed", and — because a nonzero exit skips the prune — into a slow leak too.
+ping_kuma() {  # dest up|down msg seconds
+  local url
+  url=$(ping_url "$1")
+  [ -n "$url" ] || return 0
+
+  # STRIP ANY QUERY STRING, because Uptime Kuma's own UI hands you the push URL with one already
+  # attached — `…/api/push/TOKEN?status=up&msg=OK&ping=` — and copying it verbatim is the obvious
+  # thing to do. `curl --get` would then append a SECOND status, Express/qs parses the duplicate
+  # into an ARRAY, and Kuma's `req.query.status === "down"` test compares against an array and is
+  # false. Every failure would be recorded as UP: the monitor stays green precisely when it should
+  # not, which is worse than having no monitor at all.
+  url="${url%%\?*}"
+  curl -fsS --max-time 10 --get \
+       --data-urlencode "status=$2" --data-urlencode "msg=$3" --data-urlencode "ping=$4" \
+       "$url" >/dev/null 2>&1 \
+    || echo "    (uptime-kuma ping failed for $1 — the backup itself was fine)" >&2
+}
+
+# `--describe NAME`: one row as `key=value` lines, the shape bin/restore-db reads by key. The push
+# URL itself is NEVER printed — its token is the whole authentication — only whether ping_url finds
+# one in THIS machine's ping.env, through the very lookup the nightly pings with. On the box that
+# answers "will this destination's monitor hear from the nightly?", the question that would have
+# caught `sync`'s unpingable monitor; on a Mac, which pings nothing, it answers `no`.
+describe() {  # dest
+  local row name filter volume rest
+  row=$(dest_row "$1") || { refuse_destination "$1"; exit 64; }
+  read -r name filter volume rest <<<"$row"
+  printf 'name=%s\ncontainer_filter=%s\nvolume=%s\nping_key=%s\n' "$name" "$filter" "$volume" "$(ping_key "$name")"
+  if [ -n "$(ping_url "$name")" ]; then echo ping_configured=yes; else echo ping_configured=no; fi
+}
+refuse_destination() { echo "backup-db.sh: unknown destination '$1' — the table has $(dest_choices)" >&2; }
+usage() {
+  echo "usage: backup-db.sh (--to-volume NAME [--keep N] | --to-stdout) <$(dest_choices)>..." >&2
+  echo "       backup-db.sh --list | --describe <$(dest_choices)>" >&2
+}
+
 OUT_VOLUME=""; TO_STDOUT=false; KEEP="${KEEP:-14}"; DESTS=()
 while [ $# -gt 0 ]; do
   case "$1" in
+    # READ-ONLY, AND THEY EXIT RIGHT HERE: before the guards below, before any docker call, before
+    # any ping. bin/restore-db runs --describe on a Mac before every restore and relies on that.
+    --list)      dest_names; exit 0 ;;
+    --describe)  describe "${2:-}"; exit 0 ;;
     --to-volume) OUT_VOLUME="${2:?--to-volume needs a docker volume name}"; shift 2 ;;
     --to-stdout) TO_STDOUT=true; shift ;;
     --keep)      KEEP="${2:?--keep needs a number}"; shift 2 ;;
-    chunk|share|s3|sync) DESTS+=("$1"); shift ;;
-    *) echo "usage: backup-db.sh (--to-volume NAME [--keep N] | --to-stdout) <chunk|share|s3|sync>..." >&2; exit 64 ;;
+    -*)          usage; exit 64 ;;
+    *)
+      # A destination is a name the table has, and nothing else.
+      if ! dest_row "$1" >/dev/null; then refuse_destination "$1"; usage; exit 64; fi
+      DESTS+=("$1"); shift ;;
   esac
 done
 [ ${#DESTS[@]} -gt 0 ] || { echo "no destinations given" >&2; exit 64; }
@@ -76,65 +231,6 @@ esac
   exit 64
 }
 
-# ---- Uptime Kuma push monitors ---------------------------------------------------------------
-# One push URL per destination, in ~/tinkerex-ops/ping.env (written by bin/backup-cron-install,
-# never committed — the tokens are the whole authentication):
-#
-#   PING_CHUNK=http://192.168.1.146:3001/api/push/aBcD1234
-#
-# A PUSH MONITOR IS A DEAD-MAN'S SWITCH: Uptime Kuma alerts on the ABSENCE of a ping, which is the
-# only thing that catches the failures that matter here — cron unloaded, the VM off, the script
-# never reaching its own error handler. A monitor that only reports failures it was told about
-# cannot see any of those.
-PING_FILE="${PING_FILE:-$HOME/tinkerex-ops/ping.env}"
-
-# PARSED, NEVER SOURCED — and this is not defensiveness, it is a bug that was already caught.
-# A Kuma push URL copied out of its UI contains `&` (`…?status=up&msg=OK&ping=`). `. ping.env` on
-# an unquoted line like that makes bash read the `&` as a JOB SEPARATOR: the assignment runs in a
-# background subshell, the variable is never set in this shell, and the ping silently does not
-# happen. Sourcing also means any value in that file is executable shell. Reading it with an
-# explicit whitelist takes every value literally and cannot do either.
-#
-# THE PRICE OF THE WHITELIST IS THAT IT IS ENUMERATED, SO IT MUST BE EXTENDED BY HAND FOR EVERY NEW
-# DESTINATION ACCEPTED ABOVE — one arm per member of the `chunk|share|s3|sync` case. Nothing catches
-# a missing arm, and `ping_kuma`'s generic `PING_$(upper dest)` below makes the code READ as though
-# it already handles any destination: the variable is simply never set, and `[ -n "$url" ] || return
-# 0` skips that destination silently and for ever. `sync` shipped in exactly that state — its push
-# monitor could not be pinged in EITHER direction, so a configured one sits DOWN every night while
-# the backup succeeds (a crying-wolf monitor), and a real failure degrades to a generic 25-hour
-# silence because the `down` ping with its diagnostic message never arrives.
-if [ -f "$PING_FILE" ]; then
-  while IFS='=' read -r _k _v; do
-    case "$_k" in
-      PING_CHUNK) PING_CHUNK=$_v ;;
-      PING_SHARE) PING_SHARE=$_v ;;
-      PING_S3)    PING_S3=$_v ;;
-      PING_SYNC)  PING_SYNC=$_v ;;
-    esac
-  done < "$PING_FILE"
-  unset _k _v
-fi
-
-# A FAILED PING MUST NEVER FAIL THE BACKUP. The backup is the product; the ping is telemetry about
-# it. Letting curl's exit status reach `status` would turn "Uptime Kuma is rebooting" into "last
-# night's backup failed", and — because a nonzero exit skips the prune — into a slow leak too.
-ping_kuma() {  # dest up|down msg seconds
-  local var="PING_$(echo "$1" | tr '[:lower:]' '[:upper:]')" url
-  url="${!var:-}"
-  [ -n "$url" ] || return 0
-
-  # STRIP ANY QUERY STRING, because Uptime Kuma's own UI hands you the push URL with one already
-  # attached — `…/api/push/TOKEN?status=up&msg=OK&ping=` — and copying it verbatim is the obvious
-  # thing to do. `curl --get` would then append a SECOND status, Express/qs parses the duplicate
-  # into an ARRAY, and Kuma's `req.query.status === "down"` test compares against an array and is
-  # false. Every failure would be recorded as UP: the monitor stays green precisely when it should
-  # not, which is worse than having no monitor at all.
-  url="${url%%\?*}"
-  curl -fsS --max-time 10 --get \
-       --data-urlencode "status=$2" --data-urlencode "msg=$3" --data-urlencode "ping=$4" \
-       "$url" >/dev/null 2>&1 \
-    || echo "    (uptime-kuma ping failed for $1 — the backup itself was fine)" >&2
-}
 if $TO_STDOUT && [ ${#DESTS[@]} -ne 1 ]; then
   echo "--to-stdout takes exactly one destination (two archives cannot share one stream)" >&2; exit 64
 fi
@@ -184,37 +280,6 @@ if [ -n "$OUT_VOLUME" ]; then
   fi
 fi
 
-# `docker ps -a`, not `docker ps`: a STOPPED app container still names the image and the volume,
-# and a nightly that skips a deployment because it happens to be down is a nightly that goes
-# quiet exactly when it matters. Chunk is the base deployment, so its container is
-# `tinkerex-web-<sha>` — the `[0-9a-f]` is what stops that prefix from also matching -share-/-s3-.
-container_for() {
-  case "$1" in
-    chunk) docker ps -a -qf name='^tinkerex-web-[0-9a-f]' | head -1 ;;
-    share) docker ps -a -qf name='^tinkerex-web-share-'   | head -1 ;;
-    s3)    docker ps -a -qf name='^tinkerex-web-s3-'      | head -1 ;;
-    # THE ONLY ANCHORED PATTERN HERE ($), AND IT MUST STAY ANCHORED. `sync` is a Kamal ACCESSORY,
-    # so its container name is the fixed string `tinkerex-sync` rather than a per-deploy
-    # `<name>-<sha>` — that is exactly what gives the maker app a stable network alias to put in
-    # CHUNK_REMOTE_URL (config/deploy.yml's `sync:` block). Unanchored, `^tinkerex-sync` would
-    # ALSO match a `tinkerex-sync-web-<sha>` container, which is what the STANDALONE deployment of
-    # chaim354/tinkerex-sync names its containers — that service really was running on this box
-    # until 2026-08-24, on the same volume, and `docker ps -a` still lists exited containers by
-    # design (see the comment above). Matching one of those would source the helper image from a
-    # stale revision while `head -1` hid that anything was ambiguous.
-    sync)  docker ps -a -qf name='^tinkerex-sync$'        | head -1 ;;
-  esac
-}
-volume_for() {
-  # `sync` IS THE SYNC SERVER'S OWN DATABASE, NOT A FOURTH COPY OF THE MAKER'S. It is a different
-  # app (chaim354/tinkerex-sync's binary) holding the chunk catalog — versions, manifest_chunks,
-  # changelog_entries. A restore that recovers the maker database and not this one recovers a
-  # library whose every file resolves to nothing. The volume happens to have the SAME internal
-  # shape (production.sqlite3 at its root, plus a `nodes` table for the verify step to count), so
-  # WORKER needs no arm of its own — checked, not assumed.
-  case "$1" in chunk) echo tinkerex_storage ;; share) echo tinkerex_storage_share ;; s3) echo tinkerex_storage_s3 ;; sync) echo tinkerex_sync_storage ;; esac
-}
-
 # Everything below runs INSIDE the helper. $1 = "" (stdout) or the archive path under /dst.
 #
 #   --anchored IS LOAD-BEARING. GNU tar matches --exclude patterns unanchored by default, against
@@ -261,7 +326,15 @@ status=0
 $TO_STDOUT || echo "== $(date -u +%Y-%m-%dT%H:%M:%SZ) starting: ${DESTS[*]}"
 
 for dest in "${DESTS[@]}"; do
-  cid=$(container_for "$dest") || true
+  # The row, read once. Every name in DESTS came through the table, so this cannot miss — and if it
+  # somehow did, `set -e` stops here rather than running `docker ps -qf name=` with an EMPTY filter,
+  # which matches every container on the box.
+  row=$(dest_row "$dest")
+  read -r _ filter src _ <<<"$row"
+  # `docker ps -a`, not `docker ps`: a STOPPED app container still names the image and the volume,
+  # and a nightly that skips a deployment because it happens to be down is a nightly that goes
+  # quiet exactly when it matters. The filter is the row's; the table says why each is spelled so.
+  cid=$(docker ps -a -qf name="$filter" | head -1) || true
   # THE NIGHTLY ARM PINGS AND THE AD-HOC ONE MUST NOT — AND THIS GUARD SITS *ABOVE* THE
   # `if $TO_STDOUT` BRANCH BELOW, SO IT IS THE ONE PLACE THAT HAS TO SAY SO ITSELF. A vanished
   # container is a REAL failure of the nightly's backup and is knowable right now; leaving it to
@@ -276,7 +349,6 @@ for dest in "${DESTS[@]}"; do
     continue
   fi
   image=$(docker inspect --format '{{.Config.Image}}' "$cid")
-  src=$(volume_for "$dest")
 
   if $TO_STDOUT; then
     # DELIBERATELY NO PING. An ad-hoc backup to someone's laptop is not the nightly, and letting it

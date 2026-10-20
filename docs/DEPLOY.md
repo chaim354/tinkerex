@@ -581,14 +581,25 @@ files in.
 **Before changing any of these five scripts, read CLAUDE.md §14i** — the CROSS-FILE things not to
 undo, each with the consequence named. The single-site rules are not there and are not weaker for it:
 they live in a comment on the very line you would have to edit, and in this section. `bin/ci` runs
-none of this code, so nothing in the suite goes red for any of it — prove a change against stubs,
-never the live NAS or a real volume.
+only `ops/backup-db.sh`'s read-only `--list` and `--describe` (`test/ops_backup_table_test.rb`, which
+holds the destination table to the Kamal config). Nothing else in the suite goes red for any of it —
+prove a change against stubs, never the live NAS or a real volume.
 
 **`ops/backup-db.sh` IS THE ONLY IMPLEMENTATION; the rest are callers.** It runs on the VM (the
 nightly invokes it from cron, `bin/backup-db` pushes the current copy up and calls it with
 `--to-stdout`). Two copies of this would eventually be two copies with different bugs — that is
 this repo's recorded failure shape, not a hypothetical. Change `ops/backup-db.sh` and re-run
 `bin/backup-cron-install` to push it.
+
+**THE DESTINATIONS ARE ONE TABLE AT THE TOP OF `ops/backup-db.sh`:** each row is a name, the
+container whose image does the work, and the volume holding its databases. The argument check, the
+ping lookup and the backup loop all read it, and so do the callers: `bin/restore-db` asks
+`--describe` for the container it stops and the volume it writes back into, `bin/backup-db`
+validates against it, and `bin/backup-cron-install` defaults to `--list`. Run
+`ops/backup-db.sh --describe <dest>` to see one row, plus whether that machine's `ping.env` wires
+the destination's monitor (it never prints the URL). Adding a destination takes a row there,
+`bin/backup-status`'s closed set (it runs on the box and cannot read the checkout's table, so
+`test/ops_backup_table_test.rb` holds it to the table), and a push monitor below.
 
 **`bin/backup-cron-install` IS THE ONLY THING THAT WRITES `~/tinkerex-ops/backup-db.sh`.** An ad-hoc
 `bin/backup-db` pushes to a **per-run temp path** and deletes it afterwards. It used to `scp` straight
@@ -670,8 +681,8 @@ PING_SYNC=http://192.168.1.146:3001/api/push/gH4 \
   bin/backup-cron-install
 ```
 
-**`(sync)` IS FOURTH AND WAS UNPINGABLE UNTIL 2026-08-26.** `ops/backup-db.sh` reads `ping.env`
-through an enumerated whitelist and had arms for only the first three, so a `PING_SYNC` written
+**`(sync)` IS FOURTH AND WAS UNPINGABLE UNTIL 2026-08-26.** `ops/backup-db.sh` read `ping.env`
+through an enumerated whitelist then, with arms for only the first three, so a `PING_SYNC` written
 into that file was never read: the monitor could not be pinged in either direction. If you created
 that monitor before this fix it has been sitting **DOWN** every night over a backup that succeeded
 — that stuck-red state *is* the symptom, and it clears on the first nightly after the installer is
@@ -711,10 +722,12 @@ Four behaviours are deliberate, and each was mutation-checked by breaking the th
 - **`ping.env` is PARSED, NEVER SOURCED.** That URL contains `&`, so `. ping.env` on an unquoted
   line makes bash read it as a **job separator**: the assignment runs in a background subshell, the
   variable is never set in this shell, and the ping silently does not happen. Sourcing also makes
-  every value in that file executable shell. `ops/backup-db.sh` reads it with an explicit
-  four-key whitelist, which takes values literally and can do neither. **The price is that the
-  whitelist is enumerated: a new destination needs a new arm by hand, or its pings vanish
-  silently** — that is exactly how `(sync)` went unpingable.
+  every value in that file executable shell. `ops/backup-db.sh` reads one line of it per ping, the
+  line beginning `PING_<DEST>=` for a destination in its table, and takes the value literally, so
+  it can do neither. **There is no separate whitelist to extend: the destination table IS the
+  whitelist, so a destination cannot be accepted without also being pingable.** The four-key
+  whitelist this replaced had to be extended by hand, which is exactly how `(sync)` went
+  unpingable; `test/ops_backup_table_test.rb` now pins the lookup through `--describe`.
 - **`ping_kuma` STRIPS ANY QUERY STRING** (`url="${url%%\?*}"`). Left on, `curl --get` appends a
   **second** `status`, Express/qs parses the duplicate into an **array**, and Kuma's
   `req.query.status === "down"` compares against an array and is false — so **every failure is

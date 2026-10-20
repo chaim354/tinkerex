@@ -262,7 +262,7 @@ Deploy OVH only on explicit request. `docs/DEPLOY.md`.
                  gerber-svg (the pinned tracespace bundle under node, Maker::Previews::Gerber).
 /sidecar         GPL services invoked over HTTP only: boxes (GPL-3.0), openscad (GPL-2.0)
 /ops             Scripts that run ON the box, not in the app — backup-db.sh, installed by
-                 bin/backup-cron-install. No gate covers these; invariants in §14i.
+                 bin/backup-cron-install. Only its destination table is gated; invariants in §14i.
 /docs            sync-protocol.md, SYNC_SERVER.md, DEPLOY.md, roads-not-taken.md,
                  architecture-sync-engine.md, adr/
 /docs/invariants §14's AREA rules, one file per area — addons.md, measure-view.md,
@@ -1115,8 +1115,8 @@ binding only inside the preview stack. Nothing was dropped; this anchor stays: c
 ### 14i. Backup and restore → **`docs/invariants/backup-restore.md`**
 
 **Read that file before touching** `ops/backup-db.sh`, `bin/backup-db`, `bin/restore-db`,
-`bin/backup-status`, or `bin/backup-cron-install`. **Nothing in `bin/ci` can go red for any of it** —
-it is shell, cron and docs, and the shared failure mode is *you find out when you need a restore*.
+`bin/backup-status`, or `bin/backup-cron-install`. **`bin/ci` gates only their destination table** —
+the rest is shell, cron and docs, and the shared failure mode is *you find out when you need a restore*.
 The single-site rules live inside `ops/backup-db.sh` itself; that file carries the cross-file ones,
 including the unencrypted-archives decision. Nothing was dropped; this anchor stays.
 

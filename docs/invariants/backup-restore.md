@@ -9,7 +9,9 @@
 > which points here. `docs/DEPLOY.md` §6 restates these for operators.
 
 > **NOTHING IN `bin/ci` CAN GO RED FOR ANY LINE BELOW** — this is shell, cron and docs, and the five
-> scripts have no gate at all. Their shared failure mode is *you find out when you need a restore*.
+> scripts' only gate, `test/ops_backup_table_test.rb`, holds their destination TABLE to the Kamal
+> config and to its readers; it checks none of the rules below. Their shared failure mode is *you
+> find out when you need a restore*.
 > **Only CROSS-FILE rules are here.** The single-site ones (`tar --anchored`, `docker ps -a`,
 > `--keep` ≥ 1 and its deliberate divergence from §14a, `ping.env` parsed-never-sourced, the Active
 > Storage blobs in the archive) carry their whole argument *inside `ops/backup-db.sh` itself* — beside
