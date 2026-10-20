@@ -84,20 +84,26 @@ module Log
   OPEN_STATUS   = "to-do"
   CLOSED_STATUS = "done"
 
-  # THE PAYLOAD RIDES ON THE EXCEPTION, never on a module-level accumulator. `api` knows both what
-  # failed and what was being sent, so it attaches the payload at the ONE raise site. Two things
-  # fall out that a shared accumulator could not give: a GET carries no payload, so a READ verb
-  # spools nothing BY CONSTRUCTION rather than by a rule someone remembers to apply; and nothing
-  # accumulates across calls, so a loop failing on its Nth write cannot re-spool the N-1 already
-  # filed. (PR 2's import is exactly that loop.)
-  class Unreachable < StandardError
-    attr_reader :payload, :path
+  # EACH WRITE PHASE NAMES ITS OWN UNFILED RECORD, AND THE RECORD RIDES ON THE EXCEPTION — never on a
+  # module-level accumulator. `filing(what, payload) { ... }` wraps each write; an Unreachable raised
+  # anywhere in the block, the reads that resolve the write's target included, leaves carrying
+  # Unfiled.new(what, payload), and `main` spools exactly that. Three things fall out:
+  #
+  #   - A FAILURE OUTSIDE EVERY PHASE CARRIES NO RECORD, so a read verb spools nothing by
+  #     construction rather than by a rule someone remembers to apply.
+  #   - THE RECORD EXISTS BEFORE ANY WIRE CALL, because Ruby evaluates `filing`'s arguments before
+  #     its block runs. A write's first wire call is always a READ (the workspace, the project, the
+  #     board), and when Kaneo is down that read is what fails. What this replaced attached the
+  #     payload at `api`'s raise site — the FAILING request, a GET with no body — so the common
+  #     outage reported "nothing to file" for a write. Per-verb rescues were added after measured
+  #     losses to compensate, and `close` never got one: its failed PUT spooled {"status": "done"}
+  #     under an opaque task id, naming no issue.
+  #   - NOTHING ACCUMULATES ACROSS CALLS, so a loop failing on its Nth write cannot re-spool the
+  #     N-1 already filed.
+  Unfiled = Struct.new(:what, :payload)
 
-    def initialize(message, payload: nil, path: nil)
-      super(message)
-      @payload = payload
-      @path = path
-    end
+  class Unreachable < StandardError
+    attr_accessor :unfiled   # nil when no write phase was open: there is nothing to file
   end
 
   class UsageError < StandardError; end
@@ -173,20 +179,28 @@ module Log
     end
   end
 
+  # THE TRANSPORT ATTACHES NOTHING. Whether a failure leaves unfiled work is the WRITE PHASE's
+  # question, answered by `filing` below; this method only says that Kaneo could not be reached.
   def api(method, path, body = nil)
     perform(method, path, body)
-  rescue Unreachable => e
-    # Attach what was being sent, and to what path, at the one place that knows all three. A
-    # failure raised from `token` carries neither payload nor path of its own, and a WRITE must
-    # still be spooled with enough context to refile it. `note` used to depend on this entirely —
-    # its target lived in the PATH (/issues/128/comments) and nowhere else. It no longer does: Kaneo
-    # addresses a comment by an opaque id, so `note` carries its own rescue that puts the number in
-    # the message. This line still matters for every OTHER write, whose payload is the whole record.
-    raise Unreachable.new(e.message, payload: e.payload || body, path: e.path || path)
   rescue SystemCallError, SocketError, EOFError, IOError, Timeout::Error,
          Net::OpenTimeout, Net::ReadTimeout, Net::ProtocolError,
          OpenSSL::SSL::SSLError => e
-    raise Unreachable.new("#{kaneo_url}: #{e.class}: #{e.message}", payload: body, path: path)
+    raise Unreachable, "#{kaneo_url}: #{e.class}: #{e.message}"
+  end
+
+  # THE ONE PLACE AN UNFILED RECORD IS ATTACHED: every write verb wraps its write phase in this, and
+  # names what would be left unfiled in the record's own terms — the issue, the label, the comment.
+  #
+  # `||=`, NOT `=`: THE INNERMOST PHASE WINS. A failure inside a nested phase is THAT phase's unfiled
+  # work, and an outer phase overwriting it would spool the wrong record. create_task keeps its
+  # label attachments as SIBLINGS of the create for the same reason; either alone keeps a failed
+  # attachment from being spooled as the create, whose refile files a duplicate at a new number.
+  def filing(what, payload)
+    yield
+  rescue Unreachable => e
+    e.unfiled ||= Unfiled.new(what, payload)
+    raise
   end
 
   # URI.join DROPS A PATH PREFIX — URI.join("http://host/git", "/api/x") is "http://host/api/x".
@@ -357,15 +371,20 @@ module Log
     end
   end
 
-  # TWO CALLS, AND THE SECOND ONE CAN FAIL ON ITS OWN. `POST /task/:projectId` has no labels field,
-  # so creation is not atomic the way a single issue POST was: the task can exist with no label.
+  # TWO PHASES, AND THEY ARE SIBLINGS. `POST /task/:projectId` has no labels field, so creation is
+  # not atomic the way a single issue POST was: the task can exist with no label.
   #
-  # THE PAYLOAD IS BUILT BEFORE ANY WIRE CALL, and that ordering is load-bearing. Resolving the
-  # project makes a GET the FIRST wire call of every write verb, so a payload built after it would
-  # still be nil when that GET failed — and the rescue below would report "nothing to file" for what
-  # is unambiguously a write. An `open` against a dead server would silently become a no-record.
-  # Measured as a regression the moment id resolution landed, and true again for a different reason
-  # now that the resolution is the workspace and the project rather than the labels.
+  # THE CREATE'S PHASE COVERS THE ID RESOLUTION. The workspace and project lookups are the FIRST
+  # wire calls of every create, so an `open` against a dead server fails on a GET — and must still
+  # spool the task it was about to create. It also covers `parse`: a 2xx with a garbled body (the
+  # shape a broken proxy produces) is an outage after the request succeeded, and the task is just
+  # as unfiled.
+  #
+  # EACH LABEL THEN GETS A PHASE OF ITS OWN, NEVER ONE NESTED IN THE CREATE'S. What is unfiled at that
+  # point is the ATTACHMENT, at the number the create returned; spooling the create's record instead
+  # invites a refile that files a SECOND arc at a new number, which no citation points at and nothing
+  # would flag. The record names the number, so the failure is reported, never swallowed — an arc
+  # with no `arc` label is invisible to every search that filters by kind, and silently so.
   #
   # THE STATUS IS ALWAYS SENT, AND THE DEFAULT IS THE LIVE ONE. There is no "omit it when false"
   # option here the way there was for a `closed:` flag — a task must name a column — so the same
@@ -379,36 +398,18 @@ module Log
     }
     # Through `parse`, not JSON.parse — a WRITE against a broken proxy answers 200 text/html just
     # as readily as a read does, and an unwrapped JSON::ParserError exits 1 instead of spooling.
-    task = parse(api(:post, "/api/task/#{project_id}", payload), "/api/task")
+    task = filing("create #{title.inspect} (#{labels.join(', ')})", payload) do
+      parse(api(:post, "/api/task/#{project_id}", payload), "/api/task")
+    end
 
     labels.each do |name|
-      api(:post, "/api/label", { name: name, color: "#666666",
-                                 workspaceId: workspace_id, taskId: task.fetch("id") })
-    rescue Unreachable => e
-      # REPORTED, NAMING THE TASK THAT DID GET CREATED — never swallowed. An arc with no `arc` label
-      # is invisible to every search that filters by kind, and silently so.
-      #
-      # IT CARRIES THE LABEL PAYLOAD FORWARD, NOT THE CREATE'S. What is unfiled at this point is the
-      # ATTACHMENT; the task exists, at the number named in this message. Letting the create payload
-      # reach the spool instead — which the rescue below does for anything arriving with no payload
-      # of its own — invites a refile that files a SECOND arc at a new number, which no citation
-      # points at and nothing would flag.
-      raise Unreachable.new(
-        "##{task['number']} was created but the #{name.inspect} label failed: #{e.message}",
-        payload: e.payload, path: e.path
-      )
+      attach = { name: name, color: "#666666", workspaceId: workspace_id, taskId: task.fetch("id") }
+      filing("##{task['number']} was created but its #{name.inspect} label was not attached", attach) do
+        api(:post, "/api/label", attach)
+      end
     end
 
     task
-  rescue Unreachable => e
-    # `parse` RAISES WITH NO PAYLOAD OF ITS OWN — it only ever sees the response, never what was
-    # sent. That is fine for a GET (show, search), which has no payload to lose, but `create_task`
-    # calls `parse` AFTER `api` has already returned successfully — outside api's own rescue, which
-    # only wraps the `perform` call inside IT. A 2xx with a garbled body (the exact shape a broken
-    # proxy produces) therefore failed here with payload: nil, was reported as "nothing to file",
-    # and the task being created was silently lost. `e.payload || payload` only fills the gap;
-    # a failure `api` already payloaded (a connection error, a non-2xx) passes through unchanged.
-    raise Unreachable.new(e.message, payload: e.payload || payload, path: e.path || "/api/task")
   end
 
   # NOT `open` — inside this module that name would resolve ahead of Kernel#open for every other
@@ -481,11 +482,16 @@ module Log
   #
   # A LABEL POSTED WITH NO taskId IS A DEFINITION, and that is the whole difference between this
   # call and the one `create_task` makes — see label_index.
+  #
+  # EACH DEFINITION POST IS A PHASE; THE VOCABULARY READ BEFORE THEM IS NOT. Until that read
+  # answers, nothing is known to be missing, so there is nothing to record. Re-running setup files
+  # whatever a failure left out, because it asks what exists.
   def setup
     already = LABELS & label_index.keys
 
     (LABELS - already).each do |name|
-      api(:post, "/api/label", { name: name, color: "#666666", workspaceId: workspace_id })
+      definition = { name: name, color: "#666666", workspaceId: workspace_id }
+      filing("define the #{name.inspect} label", definition) { api(:post, "/api/label", definition) }
     end
 
     @label_index = nil
@@ -539,7 +545,11 @@ module Log
   # A CORRECTION IS A COMMENT, NOT AN EDIT — never rewrite the task description. Unchanged in intent
   # from the previous record; only the endpoint and the payload key moved (`body` became `content`).
   #
-  # THE PAYLOAD IS BUILT BEFORE THE RESOLUTION, for the same reason `create_task`'s is.
+  # THE ISSUE NUMBER IS IN NEITHER THE PAYLOAD NOR THE PATH, so the phase's record names it. Kaneo
+  # addresses a comment by the task's opaque id, and resolving that id is this verb's FIRST wire
+  # call — which is why the resolution sits INSIDE the phase: an outage fails there, and a
+  # correction spooled without its number is unrefilable — the text says what was wrong, and nothing
+  # says about what.
   def note(argv)
     # TWO LINES, NOT `issue_number!(argv.shift or raise ...)`. `or` binds looser than an argument
     # list, so the one-line form is a SyntaxError, not a style choice — `show` reads this way for
@@ -548,20 +558,12 @@ module Log
     number = issue_number!(number)
     text = argv.shift or raise UsageError, "note needs text"
     payload = { content: text }
-    task = task_for(number)
-    api(:post, "/api/comment/#{task.fetch('id')}", payload)
+    filing("comment on ##{number}", payload) do
+      api(:post, "/api/comment/#{task_for(number).fetch('id')}", payload)
+    end
 
     puts "noted on ##{number}"
     EXIT_OK
-  rescue Unreachable => e
-    # THE ISSUE NUMBER IS NOW IN NEITHER THE PAYLOAD NOR THE PATH, WHICH IS WHY THIS RESCUE EXISTS.
-    # The previous record's path carried it (/issues/128/comments), so spooling path + payload was
-    # enough. Kaneo addresses a comment by the task's opaque id, and resolving that id is this
-    # verb's FIRST wire call — so an outage fails inside task_for, whose path names the board and
-    # not the issue. A correction spooled without the number is unrefilable: the text says what was
-    # wrong, and nothing says about what.
-    raise Unreachable.new(e.message, payload: e.payload || payload,
-                                     path: "#{e.path || '/api/comment'} (issue ##{number})")
   end
 
   # CLOSING IS A WRITE, SO IT COMES THROUGH THIS DOOR TOO. It exists because nothing else closes an
@@ -584,11 +586,17 @@ module Log
   # ALREADY-CLOSED IS REPORTED, NOT RE-SENT. A redundant status write is accepted happily, so the
   # naive version is silently idempotent — which reads as "I closed it" for an issue somebody else
   # closed for a different reason. The board this reads is already fetched, so the check is free.
+  #
+  # THE PHASE WRAPS THE PUT ALONE, AND ITS RECORD NAMES EVERY NUMBER NOT YET CLOSED. The board read
+  # stays outside: a board that cannot be read leaves nothing known to close, and inside the phase
+  # `close 99` — a number no task carries — would spool a record nobody can file. The record names
+  # the numbers after this one as well, because a failure stops the loop: they were never attempted,
+  # and a record naming one of three is refiled as one of three.
   def close(argv)
     numbers = argv.map { |a| issue_number!(a) }
     raise UsageError, "close needs at least one issue number" if numbers.empty?
 
-    numbers.each do |number|
+    numbers.each_with_index do |number, i|
       task = task_for(number)
 
       if task["status"] == CLOSED_STATUS
@@ -596,7 +604,10 @@ module Log
         next
       end
 
-      api(:put, "/api/task/status/#{task.fetch('id')}", { status: CLOSED_STATUS })
+      move = { status: CLOSED_STATUS }
+      filing("close #{numbers.drop(i).map { |n| "##{n}" }.join(' ')}", move) do
+        api(:put, "/api/task/status/#{task.fetch('id')}", move)
+      end
       puts "closed ##{number} #{task['title']}"
     end
     EXIT_OK
@@ -624,18 +635,17 @@ module Log
     sha.empty? ? "detached" : "detached-#{sha}"
   end
 
-  def spool!(command, payload, path = nil)
+  # THE HEADER SAYS WHAT IS UNFILED IN THE RECORD'S OWN TERMS — the issue, the label, the comment —
+  # because it is all a human has to refile from: nothing replays the spool. It is what tells a label
+  # attachment from a task create when both sit in one file. An `# endpoint:` line used to do that
+  # job and could not: it recorded whichever request FAILED, so a create against a dead server was
+  # filed under the workspace lookup and a close under an opaque task id.
+  def spool!(command, unfiled)
     FileUtils.mkdir_p(spool_dir)
     file = File.join(spool_dir, "#{current_branch.tr('/', '-')}.md")
     File.open(file, "a") do |f|
-      f.puts("# unfiled: #{command}")
-      # THE ENDPOINT IS RECORDED BECAUSE A PAYLOAD ALONE IS OFTEN NOT ENOUGH TO REFILE. It used to
-      # be `note`'s only link to its issue (/issues/128/comments); under Kaneo `note` names the
-      # number in its own message instead, because the id is opaque and resolving it is the verb's
-      # first wire call. Keep this line: it is what tells a label attachment from a task create when
-      # both are sitting in the same spool file.
-      f.puts("# endpoint: #{path}") if path
-      f.puts("", JSON.pretty_generate(payload), "")
+      f.puts("# unfiled: #{command} — #{unfiled.what}")
+      f.puts("", JSON.pretty_generate(unfiled.payload), "")
     end
     file
   end
@@ -695,10 +705,15 @@ module Log
   rescue Unreachable => e
     warn "bin/log: Kaneo is unreachable — #{e.message}"
 
-    if e.payload.nil?
-      warn "bin/log: nothing to file (#{command} sends no payload)."
+    # No `filing` phase was open when this failed — a read verb, or a write's read that sits outside
+    # its phase on purpose (close, setup). See Unreachable.
+    if e.unfiled.nil?
+      warn "bin/log: nothing to file (no write was in flight)."
       return EXIT_UNREACHABLE
     end
+
+    # NAMED BEFORE THE SPOOL IS TRIED, so the same words reach the user when the spool fails too.
+    warn "bin/log: unfiled: #{e.unfiled.what}"
 
     # THE SPOOL NEEDS ITS OWN RESCUE. Ruby does NOT route an exception raised inside a `rescue`
     # clause to that begin's SIBLING rescues — measured: it escapes straight to the caller. So a
@@ -707,13 +722,13 @@ module Log
     # Ordinary triggers here: a read-only filesystem, a container without git (current_branch
     # shells out to it), tmp/ owned by another user after one sudo run, ENOSPC.
     begin
-      path = spool!(command, e.payload, e.path)
+      path = spool!(command, e.unfiled)
       warn "bin/log: the entry was NOT filed. It is spooled at #{path}"
       warn "bin/log: `bin/log status` will keep reporting it until you file it."
     rescue StandardError => spool_error
       warn "bin/log: THE SPOOL ALSO FAILED (#{spool_error.class}: #{spool_error.message})."
       warn "bin/log: the entry is LOST unless you copy it from here:"
-      warn JSON.pretty_generate(e.payload)
+      warn JSON.pretty_generate(e.unfiled.payload)
     end
 
     EXIT_UNREACHABLE

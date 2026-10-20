@@ -676,17 +676,19 @@ class LogCliTest < ActiveSupport::TestCase
       assert_includes err, '"arc" label',
                       "the failure must name the label, not just say one failed"
 
-      # WHAT IS SPOOLED MUST BE THE LABEL ATTACHMENT, NEVER THE CREATE. This is the assertion the
-      # test was missing, and its absence was a live trap: `create_task`'s rescue passes
-      # `payload: e.payload, path: e.path` forward specifically so the outer rescue cannot
-      # substitute the CREATE payload, and collapsing those three lines to a bare
-      # `raise Unreachable, "..."` reads like noise-removal and keeps every other assertion here
-      # green. With the create payload spooled instead, refiling that entry files a SECOND arc at a
-      # new number -- one that no tinkerex#N citation points at -- while the original stays
-      # unlabelled and invisible to every search that filters by kind.
+      # WHAT IS SPOOLED MUST BE THE LABEL ATTACHMENT, NEVER THE CREATE. With the create record
+      # spooled instead, refiling that entry files a SECOND arc at a new number -- one that no
+      # tinkerex#N citation points at -- while the original stays unlabelled and invisible to every
+      # search that filters by kind. Two things in bin/log keep it out, and either alone suffices:
+      # the attachment is its own `filing` phase, a SIBLING of the create's rather than nested in
+      # it, and `filing` keeps the innermost record (`||=`) if anyone ever does nest them.
+      #
+      # THE RECORD SAYS WHAT IT IS IN THE RECORD'S OWN TERMS — the issue and the label — where it
+      # used to name the endpoint. An endpoint line recorded whichever request FAILED, so a create
+      # against a dead server was filed under the workspace lookup.
       spooled = File.read(Dir.glob(File.join(@spool, "*.md")).first)
-      assert_includes spooled, "/api/label",
-                      "the spooled endpoint must be the attachment that failed"
+      assert_match(/^# unfiled: .*#194 was created.*"arc" label/, spooled,
+                   "the record must name the attachment that failed: the issue and its label")
       assert_includes spooled, '"taskId": "t9"',
                       "the spooled payload must name the task the label belongs to"
       refute_includes spooled, '"description"',
@@ -1258,13 +1260,196 @@ class LogCliTest < ActiveSupport::TestCase
 
   # AN OUTAGE IS EXIT 3, AND FOR close IT SPOOLS NOTHING — WHICH IS TRUE OF THE OLD RECORD TOO,
   # despite what this test used to be called. Both versions resolve the issue BEFORE writing, so an
-  # unreachable server fails on that read, and a read carries no payload to file. The number is not
-  # lost by it: what asked for the close is the branch, which is still there. The default KANEO_URL
-  # in run_log points at a dead port, which is the outage.
+  # unreachable server fails on that read, and the read sits OUTSIDE close's `filing` phase. The
+  # number is not lost by it: what asked for the close is the branch, which is still there. The
+  # default KANEO_URL in run_log points at a dead port, which is the outage.
+  #
+  # THE EMPTY SPOOL IS ASSERTED, NOT ASSUMED. Moving the read inside the phase reads like tidying,
+  # and it would make `close 99` — a number no task carries — spool a record nobody can file.
   test "close during an outage exits 3 rather than reporting a close that never happened" do
     _out, err, code = run_log("close", "152", env: { "KANEO_TOKEN" => "t0ken" })
 
     assert_equal 3, code, "expected EXIT_UNREACHABLE, got #{code}: #{err}"
     refute_match(/closed #152/, err, "an unreachable close claimed to have closed something")
+    assert_empty Dir.glob(File.join(@spool, "*.md")), "close spooled a record for a READ that failed"
+  end
+
+  # --- unfiled records -------------------------------------------------------------------------
+  #
+  # EVERY WRITE NAMES ITS OWN UNFILED RECORD, THROUGH ONE HELPER. bin/log's `filing(what, payload)`
+  # wraps each write phase and puts the record on the Unreachable passing through it; `main` spools
+  # that record, or nothing when no phase was open. These tests pin what each record SAYS, because
+  # the record is all a human has to refile from — nothing replays the spool (CLAUDE.md §13).
+
+  RESOLVED = {
+    "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
+    "GET /project" => [ 200, [ { "id" => "p1", "slug" => "tinkerex" } ] ]
+  }.freeze
+
+  def board(*tasks)
+    [ 200, { "data" => { "columns" => [ { "slug" => "to-do", "tasks" => tasks } ] },
+             "pagination" => { "totalPages" => 1 } } ]
+  end
+
+  # Asserts the file exists first, so a write that spooled nothing fails with a message rather than
+  # erroring on ENOENT.
+  def spooled_record(branch = "claude/example")
+    path = File.join(@spool, "#{branch.tr('/', '-')}.md")
+    assert File.exist?(path), "nothing was spooled for #{branch} — the write is simply lost"
+    File.read(path)
+  end
+
+  # THE DEFECT THE HELPER EXISTS FOR. close had no record of its own: a PUT failing after a good
+  # board read spooled `{"status": "done"}` under the PUT's path, an opaque task id, with no issue
+  # number in the entry or in the message. Nobody could refile it.
+  test "a close whose write fails spools a record naming the issue" do
+    stub = StubKaneo.new(routes: RESOLVED.merge(
+      "GET /task/tasks" => board({ "id" => "a", "number" => 10, "title" => "open one", "status" => "to-do" }),
+      "PUT /task/status" => [ 502, { "message" => "bad gateway" } ]
+    ))
+
+    out, err, code = run_log("close", "10", env: {
+      "KANEO_URL" => stub.url, "KANEO_TOKEN" => "k", "LOG_BRANCH" => "claude/example"
+    })
+
+    assert_equal 3, code, "a failed close must spool and exit 3: #{err}"
+    refute_match(/closed #10/, out, "a close that was never filed reported success")
+    spooled = spooled_record
+    assert_match(/^# unfiled: close .*#10\b/, spooled,
+                 "the record names no issue — a bare {\"status\": \"done\"} cannot be refiled")
+    assert_includes spooled, '"status": "done"'
+    assert_match(/#10\b/, err, "the message must say which close was not filed")
+  ensure
+    stub&.shutdown
+  end
+
+  # A CLOSE THAT FAILS PART WAY NAMES EVERY ISSUE IT DID NOT CLOSE, not only the one whose write
+  # failed: the ones after it were never attempted, and a record naming one of three is refiled as
+  # one of three, leaving the rest open with nothing anywhere saying so. The one that WAS closed is
+  # left out — its close is filed.
+  test "a close that fails part way names every issue it did not close" do
+    stub = StubKaneo.new(routes: RESOLVED.merge(
+      "GET /task/tasks" => board({ "id" => "a", "number" => 10, "title" => "first", "status" => "to-do" },
+                                 { "id" => "b", "number" => 11, "title" => "second", "status" => "to-do" },
+                                 { "id" => "c", "number" => 12, "title" => "third", "status" => "to-do" }),
+      "PUT /task/status" => [ [ 200, { "status" => "done" } ], [ 502, { "message" => "bad gateway" } ] ]
+    ))
+
+    out, err, code = run_log("close", "10", "11", "12", env: {
+      "KANEO_URL" => stub.url, "KANEO_TOKEN" => "k", "LOG_BRANCH" => "claude/example"
+    })
+
+    assert_equal 3, code, err
+    assert_match(/closed #10/, out)
+    header = spooled_record[/^# unfiled: .*$/].to_s
+    assert_match(/#11\b/, header, "the issue whose write failed is not in the record")
+    assert_match(/#12\b/, header, "an issue never attempted after the failure is not in the record")
+    refute_match(/#10\b/, header, "#10 WAS closed; naming it misstates what is unfiled")
+  ensure
+    stub&.shutdown
+  end
+
+  # A 502 ANSWERS EVERY CALL, SO THE FIRST TO FAIL IS THE WORKSPACE LOOKUP. note's issue resolution
+  # sits inside its phase, which is what lets an outage spool the comment at all; the record must
+  # carry the issue and the text, and must not name the lookup that failed — the endpoint line this
+  # replaced filed this very comment under /api/auth/organization/list.
+  test "a note filed against a 502 spools its issue and its text, not the request that failed" do
+    stub = StubKaneo.new(status: 502, response: { "message" => "bad gateway" })
+
+    _out, err, code = run_log("note", "128", "The measured figure was 7.8 ms.", env: {
+      "KANEO_URL" => stub.url, "KANEO_TOKEN" => "k", "LOG_BRANCH" => "claude/example"
+    })
+
+    assert_equal 3, code, err
+    spooled = spooled_record
+    assert_match(/^# unfiled: note .*#128\b/, spooled, "the comment's issue is not in the record")
+    assert_includes spooled, '"content": "The measured figure was 7.8 ms."'
+    refute_includes spooled, "/api/", "the record names a wire path instead of what is unfiled"
+  ensure
+    stub&.shutdown
+  end
+
+  # setup's writes are its definition POSTs. The vocabulary read before them is outside every phase:
+  # until it answers, nothing is known to be missing, so there is nothing to record. Re-running
+  # setup refiles the rest, because it asks what exists.
+  test "a setup whose definition POST fails spools the label it was defining" do
+    stub = StubKaneo.new(routes: {
+      "GET /auth/organization/list" => [ 200, [ { "id" => "w1", "slug" => "tinkerex" } ] ],
+      "GET /label/workspace" => [ 200, LABEL_FIXTURE.reject { |l| l["name"] == "ci" } ],
+      "POST /label" => [ 502, { "message" => "bad gateway" } ]
+    })
+
+    _out, err, code = run_log("setup", env: {
+      "KANEO_URL" => stub.url, "KANEO_TOKEN" => "k", "LOG_BRANCH" => "claude/example"
+    })
+
+    assert_equal 3, code, err
+    spooled = spooled_record
+    assert_match(/^# unfiled: setup .*"ci"/, spooled, "the record does not say which label it was defining")
+    assert_includes spooled, '"name": "ci"'
+    refute_includes spooled, '"taskId"', "a definition carries no taskId; one that does is an attachment"
+  ensure
+    stub&.shutdown
+  end
+
+  # THE FUNNEL. The verbs come from bin/log's own --help, which is derived from SUBCOMMANDS, so a
+  # verb added there arrives here unclassified and this fails until it is listed as one that never
+  # writes or given a failing run whose record is checked. A new write verb that forgets `filing`
+  # then fails here, rather than answering "nothing to file" to the first outage that hits it.
+  #
+  # WHAT EACH RECORD MUST CARRY is what a human needs to refile it through the one door: the title
+  # and body of a create, the PR link of an arc, the image and destination of a deploy, the issue and
+  # text of a note, the issue of a close, the label of a definition. And no wire path — that names
+  # the request that FAILED, not the work that is unfiled.
+  NEVER_WRITES = %w[show search status].freeze
+
+  test "every write verb's spooled record carries what a human needs to refile it" do
+    Dir.mktmpdir do |dir|
+      gh = File.join(dir, "gh")
+      File.write(gh, <<~SH)
+        #!/bin/sh
+        echo '{"title":"Fix the tombstone cascade","body":"Applied per node.","url":"https://github.com/chaim354/tinkerex/pull/261"}'
+      SH
+      File.chmod(0o755, gh)
+
+      # verb => [ argv, routes (nil: the dead default port), what the record must name ]
+      cases = {
+        "open"   => [ [ "open", "Refile me", "with this body" ], nil, [ "Refile me", "with this body" ] ],
+        "arc"    => [ [ "arc", "--from-pr", "261" ], nil,
+                      [ "Fix the tombstone cascade", "github.com/chaim354/tinkerex/pull/261" ] ],
+        "deploy" => [ [ "deploy", "--image", "abc1234", "--dest", "share" ], nil, [ "Deploy abc1234", "- share" ] ],
+        "note"   => [ [ "note", "128", "a correction" ], nil, [ "#128", "a correction" ] ],
+        "close"  => [ [ "close", "10" ],
+                      RESOLVED.merge("GET /task/tasks" => board({ "id" => "a", "number" => 10, "status" => "to-do" }),
+                                     "PUT /task/status" => [ 502, { "message" => "down" } ]),
+                      [ "#10" ] ],
+        "setup"  => [ [ "setup" ],
+                      { "GET /auth/organization/list" => RESOLVED["GET /auth/organization/list"],
+                        "GET /label/workspace" => [ 200, LABEL_FIXTURE.reject { |l| l["name"] == "ci" } ],
+                        "POST /label" => [ 502, { "message" => "down" } ] },
+                      [ '"ci"' ] ]
+      }
+
+      verbs = run_log("--help").first.scan(/^\s+bin\/log ([a-z]+)/).flatten
+      assert_operator verbs.size, :>, NEVER_WRITES.size, "parsed no verbs out of --help, so this is vacuous"
+      assert_equal (verbs - NEVER_WRITES).sort, cases.keys.sort,
+                   "every verb bin/log lists must be classified here: as one that never writes, or with a failing run"
+
+      cases.each do |verb, (argv, routes, names)|
+        stub = routes && StubKaneo.new(routes: routes)
+        env = { "KANEO_TOKEN" => "k", "GH_BIN" => gh, "LOG_BRANCH" => "funnel/#{verb}" }
+        env["KANEO_URL"] = stub.url if stub
+
+        _out, err, code = run_log(*argv, env: env)
+
+        assert_equal 3, code, "#{verb}: expected a spooled write, exit 3: #{err}"
+        spooled = spooled_record("funnel/#{verb}")
+        assert_match(/^# unfiled: #{verb} /, spooled, "#{verb}: the record does not say which command it was")
+        names.each { |name| assert_includes spooled, name, "#{verb}: cannot be refiled without #{name.inspect}" }
+        refute_includes spooled, "/api/", "#{verb}: the record names a wire path instead of what is unfiled"
+      ensure
+        stub&.shutdown
+      end
+    end
   end
 end
