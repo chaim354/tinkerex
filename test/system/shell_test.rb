@@ -195,11 +195,15 @@ class ShellTest < ApplicationSystemTestCase
   # A `.brand` OUTSIDE THE RAIL KEEPS ITS WORDMARK BELOW 1100px (F-S20-1, 2026-10-19). The viewport's
   # copy of the icon-rail rules sat UNSCOPED in shell.css's ≤1099px media query, so it hid
   # `.brand-name` on every `.brand` on the page: the visitor's header and the landing each carried an
-  # override, and the sign-in card — `/` on every self-hosted box — had none. Signed out, because the
-  # card and the landing are the signed-out doors; demo mode on, because only there is `/` the
-  # landing. COMPUTED style at a CDP viewport (the 375px sweep below says why not resize_to).
-  # Mutation-checked: putting the unscoped `.brand-name { display: none }` back into the ≤1099px block
-  # reddens all three surfaces at both widths.
+  # override, and the sign-in card — `/` on every self-hosted box — had none. That copy did a second
+  # thing to every `.brand`, which is why the brand's own box is read too: it centred it and took
+  # its padding (`justify-content: center; padding: 4px 0`), so the card's mark sat alone in the
+  # middle and the header's brand lost its 8px. Signed out, because the card and the landing are the
+  # signed-out doors; demo mode on, because only there is `/` the landing. COMPUTED style at a CDP
+  # viewport (the 375px sweep below says why not resize_to). Mutation-checked: putting the unscoped
+  # `.brand-name { display: none }` back into the ≤1099px block reddens all three surfaces at both
+  # widths, and so does the unscoped `.brand { justify-content: center; padding: 4px 0 }` alone
+  # (every brand centred, the header's padding 0px).
   test "below 1100px a brand outside the rail keeps its wordmark" do
     prior_demo = ENV["DEMO_ACCOUNT_EMAIL"]
     find("aside.rail button", text: "Sign out").click
@@ -216,14 +220,21 @@ class ShellTest < ApplicationSystemTestCase
         assert_selector "#{surface} .brand .brand-name", visible: :all
         seen["#{surface} at #{width}px"] = page.evaluate_script(<<~JS)
           (() => {
-            const el = document.querySelector(#{"#{surface} .brand-name".to_json});
-            return `display ${getComputedStyle(el).display}, width ${Math.round(el.getBoundingClientRect().width)}`;
+            const name = document.querySelector(#{"#{surface} .brand-name".to_json});
+            const brand = getComputedStyle(name.closest(".brand"));
+            return { display: getComputedStyle(name).display, width: Math.round(name.getBoundingClientRect().width),
+                     justify: brand.justifyContent, padding: brand.paddingLeft };
           })()
         JS
       end
     end
-    hidden = seen.reject { |_, v| v.match?(/\Adisplay (?!none,).*width [1-9]/) }
-    assert_empty hidden, "a wordmark outside the rail is hidden below 1100px; every surface: #{seen.inspect}"
+    # The wordmark draws, the brand is not centred like the icon rail's, and the visitor's header keeps
+    # its own 8px (the card and the landing set their padding to 0 themselves).
+    drawn_as_icon_rail = seen.reject do |key, brand|
+      brand["display"] != "none" && brand["width"].positive? && brand["justify"] != "center" &&
+        (!key.start_with?(".public-header") || brand["padding"] == "8px")
+    end
+    assert_empty drawn_as_icon_rail, "a brand outside the rail is drawn as the icon rail's below 1100px; every surface: #{seen.inspect}"
     assert_no_console_errors
   ensure
     page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")

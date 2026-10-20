@@ -249,21 +249,25 @@ class CssHygieneTest < ActiveSupport::TestCase
   # page, so the sign-in card lost its wordmark. Both triggers now set only the grid TRACK, and the
   # icon rail is ONE `@container rail` block that asks the rail's own width. So `.rail` is that
   # container, the body class names one selector (the track rule), and no rule outside the block
-  # hides what the block hides or draws the family-lit mark. The parts are DERIVED from the block,
+  # hides what the block hides, draws the family-lit mark, or restyles one of the block's selectors
+  # UNSCOPED inside a media query — the old copy's `.brand { justify-content: center; padding: 4px 0 }`
+  # centred every brand on the page without hiding anything. The parts are DERIVED from the block,
   # never listed, so a rule added there is covered with no edit here. The browser's half is
   # shell_test.rb. Mutation-checked: restoring the body-class copy reddens this, and so does
-  # restoring the media query's unscoped copy.
+  # restoring the media query's unscoped copy, or only its `.brand` rule.
   test "the icon rail is defined once, as a container query on the rail" do
     in_block = ->(enclosing) { enclosing.any? { |head| head.match?(/\A@container\s+rail\b/) } }
     shell = rules(read("shell.css"))
     hides = shell.select { |_, enclosing, declarations| in_block.(enclosing) && declarations.match?(/display:\s*none/) }
                  .flat_map { |head, _, _| selectors_of(head) }
+    styled = shell.select { |_, enclosing, _| in_block.(enclosing) }.flat_map { |head, _, _| selectors_of(head) }
     assert_includes hides, ".brand-name", "derived #{hides.inspect} from the `@container rail` block; the scan is vacuous"
+    assert_includes styled, ".brand", "derived #{styled.inspect} from the `@container rail` block; the scan is vacuous"
     assert shell.any? { |head, _, declarations| head == ".rail" && declarations.match?(%r{container:\s*rail\s*/\s*inline-size}) },
            "`.rail` is not declared the `rail` inline-size container the icon-rail block asks"
 
     offenders = (OURS + [ OVERRIDES ]).flat_map do |sheet|
-      rules(read(sheet)).reject { |_, enclosing, _| in_block.(enclosing) }.flat_map do |head, _, declarations|
+      rules(read(sheet)).reject { |_, enclosing, _| in_block.(enclosing) }.flat_map do |head, enclosing, declarations|
         selectors_of(head).filter_map do |sel|
           if sel.include?("rail--collapsed") && sel != "body.app-shell.rail--collapsed"
             "#{sheet}: `#{sel}` keys the icon rail on the body class"
@@ -271,6 +275,8 @@ class CssHygieneTest < ActiveSupport::TestCase
             "#{sheet}: `#{sel}` draws the family-lit mark outside the icon-rail block"
           elsif declarations.match?(/display:\s*none/) && hides.any? { |part| sel == part || sel.end_with?(" #{part}") }
             "#{sheet}: `#{sel}` hides an icon-rail part outside the icon-rail block"
+          elsif styled.include?(sel) && enclosing.any? { |at| at.start_with?("@media") }
+            "#{sheet}: `#{sel}` restyles an icon-rail selector, unscoped, inside a media query"
           end
         end
       end
