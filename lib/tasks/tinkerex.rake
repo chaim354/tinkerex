@@ -15,11 +15,15 @@ namespace :tinkerex do
     abort "usage: bin/rails tinkerex:owner[EMAIL]" if email.blank?
     abort "#{email} already exists — use tinkerex:password[EMAIL] to reset it" if User.exists?(email:)
     pw = tinkerex_password.call
-    # The first account on a fresh server triggers the first library scan, the same way the sign-up
-    # form does (Library::ScanJob.enqueue_first_for says why it is the door's job). Decided before
-    # the create, because afterwards there is always an account.
+    # The first account on a fresh server triggers the first library scan (Library::ScanJob
+    # .enqueue_first_for says why it is the door's job). Decided before the create, because
+    # afterwards there is always an account.
     first = !User.exists?
     user = User.create!(email:, password: pw, confirmed_at: Time.current)
+    # An operator at a console chose the mount by mounting it (K §3): confirm it, so the first scan
+    # below is not paused waiting for a browser. After the create, so an account that fails to
+    # save confirms nothing.
+    Tinkerex::LibraryRoot.clear! if first && Tinkerex::LibraryRoot.pending?
     Library::ScanJob.enqueue_first_for(user) if first
     puts "created #{email} (confirmed)"
   end
@@ -65,6 +69,11 @@ namespace :tinkerex do
         why = Tinkerex::DemoReset.refusal
         abort "refused: #{why}" if why
         user = Tinkerex::DemoReset.create_account!(email)
+        # THE DEMO IS THE ONLY ACCOUNT HERE (the refusal above saw to that) and it may not change the
+        # library folder (Settings::LibraryController), so on a fresh share install the console
+        # confirms the mount for it, as tinkerex:owner does -- or every page would send the demo to a
+        # choice it is refused (found in review).
+        Tinkerex::LibraryRoot.clear! if Tinkerex::LibraryRoot.pending?
         puts "created #{email} (confirmed, handle #{Tinkerex::DemoReset::HANDLE}, a password nobody is told)"
       end
       run_reset.call(user)

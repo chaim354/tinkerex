@@ -547,6 +547,9 @@ module Web
         "settings/tags" => settings_tags_path,
         # Stage 3, S3-1. Needs no fixture: #index seeds its own rows on first visit.
         "settings/filing" => settings_filing_rules_path,
+        # K (2026-10-20): the library folder page. One template for its states; the fixture confirms
+        # the library, so the chosen state renders here (and the no-folder state on s3/chunk_remote).
+        "settings/library" => settings_library_path,
         # Onboarding (2026-10-13): the Help page needs no fixture. Its three backend arms are
         # rendered by help_page_test.rb, which swaps the capabilities the page reads.
         "help" => help_path,

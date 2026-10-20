@@ -128,6 +128,16 @@ module Web
       end
     end
 
+    # K (2026-10-20): once a folder inside the mount is chosen at /settings/library, the sentence
+    # names THAT folder, not the mount it was chosen from.
+    test "a folder chosen inside the mount is the one the panel names" do
+      Setting.put(Tinkerex::LibraryRoot::KEY, "Workshop/3d")
+      with_library_host_path("/Users/me") do
+        get root_path
+        assert_match(%r{/Users/me/Workshop/3d is your library}, text_of(".getting-started .file-sources"))
+      end
+    end
+
     # --- The Library -----------------------------------------------------------------------------
 
     test "the Library's new-library state says the same" do

@@ -7,11 +7,20 @@ module FileLayer
   # `nodes` is still the catalog — the scanner indexes into it — so browse/search/tags and the
   # maker layer work unmodified.
   class Share
-    def initialize(root: ENV.fetch("LIBRARY_PATH"))
-      @root = Pathname.new(root).expand_path
+    # `root:` stays a keyword because ~240 tests build adapters over their own tmpdirs and must keep
+    # doing so; a root given here is FIXED.
+    def initialize(root: nil)
+      @root = Pathname.new(root).expand_path if root
     end
 
-    attr_reader :root
+    # THE FACTORY-BUILT ADAPTER FOLLOWS THE LIBRARY FOLDER, ASKED PER CALL (K, 2026-10-20): the mount
+    # plus the folder chosen at /settings/library (Tinkerex::LibraryRoot.path). NOT fixed at
+    # construction, because FileLayer.current memoises ONE adapter per process and the in-Puma job
+    # supervisor FORKS its workers (Solid Queue's plugin, the default mode): a root captured at build
+    # time went on scanning, filing and previewing the old folder in every worker until a restart
+    # (found in review). The setting it reads is cached per request and per job (Setting.get), so this
+    # costs no query after the first, and one request or one job sees one root throughout.
+    def root = @root || Tinkerex::LibraryRoot.path
 
     def capabilities
       # No history (nothing to restore), no sync engine (web-only), nothing to presign (a
@@ -649,7 +658,7 @@ module FileLayer
     # second ".trash" literal: the Scanner's skip and this layout are the SAME fact, and two
     # copies of it is how the trash quietly starts getting indexed. (write's temp prefix makes
     # the identical argument, for the identical reason.)
-    def trash_dir(node_id) = @root.join(Library::Scanner::TRASH_PREFIX, node_id)
+    def trash_dir(node_id) = root.join(Library::Scanner::TRASH_PREFIX, node_id)
 
     # A DIRECTORY DELETE CASCADES HERE NOW (2026-09-10). `deletable_file!` stood in this place and
     # refused one; its argument is kept because it is still true about what would happen WITHOUT the
@@ -738,10 +747,11 @@ module FileLayer
     # (It took an `allow_root:` parameter until that fix, on the read path's behalf; the parameter
     # is gone rather than left switched off, so there is nothing to switch back on.)
     def resolve_inside!(rel)
-      path = @root.join(rel.to_s).expand_path
-      # start_with?("#{@root}/"), never start_with?(@root): a SIBLING directory whose name merely
+      base = root
+      path = base.join(rel.to_s).expand_path
+      # start_with?("#{base}/"), never start_with?(base): a SIBLING directory whose name merely
       # has the root as a prefix would otherwise pass.
-      unless path.to_s.start_with?("#{@root}/")
+      unless path.to_s.start_with?("#{base}/")
         raise NotFound, "path escapes the library root: #{rel.inspect}"
       end
       path
@@ -866,8 +876,9 @@ module FileLayer
     # mountpoint test would be exact, but LIBRARY_PATH may be a SUBDIRECTORY of the mount, where
     # st_dev always matches the parent and every read would look unmounted.
     def library_present?
-      return false unless @root.directory?
-      Dir.each_child(@root.to_s) { return true }
+      base = root
+      return false unless base.directory?
+      Dir.each_child(base.to_s) { return true }
       false
     rescue SystemCallError
       # Can't even list the root: definitely not a healthy library. Retryable.

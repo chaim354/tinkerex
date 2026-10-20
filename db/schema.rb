@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_20_170000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_20_180100) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -525,6 +525,14 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_20_170000) do
     t.index ["user_id", "version_id", "seq"], name: "index_remote_manifest_chunks_on_version_and_seq", unique: true
   end
 
+  create_table "settings", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "key", null: false
+    t.datetime "updated_at", null: false
+    t.text "value", default: "", null: false
+    t.index ["key"], name: "index_settings_on_key", unique: true
+  end
+
   create_table "user_identities", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "provider", null: false
@@ -549,6 +557,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_20_170000) do
     t.bigint "head_seq", default: 0, null: false
     t.datetime "last_sign_in_at"
     t.string "last_sign_in_ip"
+    t.text "library_scan_refusal"
     t.datetime "library_scanned_at"
     t.datetime "locked_at"
     t.datetime "remember_created_at"

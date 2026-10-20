@@ -1,0 +1,89 @@
+<% content_for :title, "Library folder — Tinkerex" %>
+
+<%# WHICH FOLDER IS THE LIBRARY (K, 2026-10-20). ONE TEMPLATE FOR ALL THREE STATES -- pending (the
+    first-run confirmation), chosen (the change form), and a backend with no folder -- so the template
+    sweep (template_hygiene_test.rb) renders it on every backend leg. The form is the same in both
+    share states: shared/_folder_field over Settings::LibraryController#children, with no create_url
+    (a folder is made on the host, not here), writing the path relative to the mount into `relative`.
+
+    THE ACCENT IS SPENT ONCE (design-system.md rule 13): "Use this folder", or with a catalog to keep
+    "Switch to this folder". "Start over" is a quiet button behind a confirmation that says what it
+    forgets and that nothing on disk is touched, because "start over" otherwise reads as "delete". %>
+<div class="page-head">
+  <h1>Library folder</h1>
+  <%= link_to "Settings", settings_path, class: "btn ghost small" unless @pending %>
+</div>
+
+<% if @error %>
+  <div class="form-errors flash-alert" role="alert"><%= @error %></div>
+<% end %>
+
+<% if !@share %>
+  <%= render "shared/where_files_come_from", projects: false %>
+  <p class="muted">There is no folder to choose for this library.</p>
+<% else %>
+  <% if @pending %>
+    <p>Your library will be <strong><%= library_folder_label %></strong>.</p>
+    <ul class="library-facts">
+      <li>It is indexed now and every 15 minutes, and whatever another program puts there appears here.</li>
+      <li>Uploads in the browser land in it, as ordinary files.</li>
+      <li>Deleting in the app moves a file into its <code>.trash/</code> folder, never off the disk.</li>
+    </ul>
+  <% else %>
+    <p>Your library is <strong><%= library_root_label(@relative) %></strong>,
+      with <%= pluralize(@file_count, "file") %> indexed.</p>
+    <% if @root_missing %>
+      <div class="form-errors flash-alert" role="alert">That folder is not there any more, so nothing
+        in it can be read. Put it back on the host, or choose again below.</div>
+    <% end %>
+    <% if @refusal.present? %>
+      <div class="form-errors flash-alert" role="alert">The last scan of this folder was refused:
+        <%= @refusal %> If the folder holds a different set of files, choose it again with
+        <strong>Start over</strong>; otherwise choose the folder that holds your files.</div>
+    <% end %>
+    <%# THE RE-INDEXING NOTE, the Rescan reload's own element and rules (files/index.html.erb):
+        rendered only on the redirect after a change, pointed at this page WITHOUT ?scanning=1 so the
+        reloaded page polls nothing, and carrying the stamp this render read. %>
+    <% if params[:scanning] == "1" %>
+      <p class="muted">Re-indexing the library…
+        <span data-controller="scanreload"
+              data-scanreload-url-value="<%= settings_library_path %>"
+              data-scanreload-status-url-value="<%= scan_status_files_path %>"
+              data-scanreload-since-value="<%= current_user.library_scanned_stamp %>"></span></p>
+    <% end %>
+  <% end %>
+
+  <%= form_with url: settings_library_path, method: :patch, class: "settings-add library-choice" do %>
+    <%= render "shared/folder_field",
+               name: "relative",
+               children_url: children_settings_library_path,
+               value: @relative.to_s,
+               root_label: library_folder_text,
+               label: if @pending then "Choose a folder inside it"
+                      elsif @relative.present? then "/#{@relative}"
+                      else library_folder_text
+                      end %>
+    <% if @pending || @catalog_empty %>
+      <button type="submit" class="btn primary">Use this folder</button>
+    <% else %>
+      <ul class="library-outcomes">
+        <li><strong>Switch to this folder</strong> keeps each file's projects, notes and tags when it
+          holds the same files, moved or renamed. If it holds different files, the scan refuses and
+          says so here.</li>
+        <li><strong>Start over with this folder</strong> forgets the files indexed so far and indexes
+          this folder fresh. Nothing on disk is deleted or moved.</li>
+      </ul>
+      <div class="library-actions">
+        <button type="submit" class="btn primary">Switch to this folder</button>
+        <button type="submit" name="start_over" value="1" class="btn"
+                data-turbo-confirm="Start over? Tinkerex forgets every file it has indexed, with their previews, notes, pins and the 3D models it found, and indexes this folder fresh. Your projects, tasks, inventory and BOMs stay, and each project keeps its folder when this one has a folder at the same path. Nothing is deleted from disk: the old folder and its files are untouched.">Start over with this folder</button>
+      </div>
+    <% end %>
+  <% end %>
+
+  <% if @pending %>
+    <p class="muted">To choose from a wider folder, set <code>LIBRARY_HOST_PATH</code> in the
+      <code>.env</code> beside your <code>docker-compose.yml</code> to it and run
+      <code>docker compose up -d</code> again. <%= link_to "Help", help_path %> says more.</p>
+  <% end %>
+<% end %>

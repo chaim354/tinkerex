@@ -615,26 +615,29 @@ area belongs there too, with a stub here.
 - **An unmounted share must never read as "your file is permanently gone":** `undelete` and
   `read` raise **`FetchError`** (retryable → 503), not `NotFound` (terminal → 404).
   `FetchError` → 503 and `UnsupportedOperation` → 422 are mapped once at `FilesController`.
-- **A clobber is `UnsupportedOperation`, and ALL THREE VERBS moved together.** Both adapters
-  once raised `NotFound`, so a duplicate-name upload said "File not found." about a file in
-  the list behind the alert. "The destination is taken" is ONE condition that
-  `write`/`move`/`undelete` all meet — fixing only `write` leaves one condition with two
-  answers inside one adapter. `FetchError` would be worse: it is the *retryable* answer and a
-  clobber never succeeds on retry. If a caller must branch, the answer is a **subclass**.
-  (This also broke `TrashController`, which rescued `NotFound` but not
-  `UnsupportedOperation` → an uncaught 500, **while its own rescue comment already named
-  that case**. The gap was in the CONTROLLER, which is why no adapter suite could find it.)
+- **A clobber is `UnsupportedOperation`, and ALL THREE VERBS moved together.** Both adapters once
+  raised `NotFound`, so a duplicate-name upload said "File not found." about a file in the list
+  behind the alert. "The destination is taken" is ONE condition that `write`/`move`/`undelete` all
+  meet — fixing only `write` leaves one condition with two answers inside one adapter. `FetchError`
+  would be worse: it is the *retryable* answer and a clobber never succeeds on retry. If a caller
+  must branch, the answer is a **subclass**. (This also broke `TrashController`, which rescued
+  `NotFound` but not `UnsupportedOperation` → an uncaught 500, **while its own rescue comment already
+  named that case**. The gap was in the CONTROLLER, which is why no adapter suite could find it.)
 - **`LIBRARY_TRASH_DAYS`** default **30**; **`0` = keep forever, NOT purge everything**
   (`0.days.ago` is *now*, so the obvious implementation deletes the lot). Purges by
   entry-dir mtime, never touches the row, and **empties `.trash` but never removes `.trash`
   itself** (an empty root reads as unmounted → would flip `undelete`'s error class).
-- **The boot guard touch-probes for writability; `File.writable?` is NOT the check** — it
-  tests POSIX mode bits, not effective access, and is wrong under exactly the NFS/SMB ACLs
-  this backend targets. It must run in **`after_initialize`**: app constants aren't
-  autoloadable while initializers run, so the naive version raised `uninitialized constant
-  Library` and **took the boot down while every test stayed green** (test env skips it).
-  **The S3 boot guard does NO NETWORK** — a boot depending on a third party turns a blip
-  into a crash loop. Config *presence* is what boot can honestly check.
+- **The boot guard touch-probes for writability; `File.writable?` is NOT the check** — it tests POSIX
+  mode bits, not effective access, and is wrong under exactly the NFS/SMB ACLs this backend targets.
+  It must run in **`after_initialize`**: app constants aren't autoloadable while initializers run, so
+  the naive version raised `uninitialized constant Library` and **took the boot down while every test
+  stayed green** (test env skips it). **The S3 boot guard does NO NETWORK** — a boot depending on a
+  third party turns a blip into a crash loop. Config *presence* is what boot can honestly check.
+- **THE SHARE ROOT IS THE MOUNT PLUS A STORED RELATIVE CHOICE (`Tinkerex::LibraryRoot`).** The mount
+  is probed at boot, the choice at selection; changing the choice is a scan under the mass-deletion
+  guard, and only an explicit reset (`Library::Reset`) wipes the catalog, which never touches disk.
+  **The choice is read per request and per job (`Current`), NEVER memoised per process**: the in-Puma
+  job supervisor FORKS its workers, so a process-wide memo left every one on the old folder.
 - **ONE READING OF `LIBRARY_BACKEND`: `LibraryBackendCheck.configured` answers nil (unset or blank),
   a `NAMES` member, or `UnknownBackend` (a typo, `S3`, a stray space, the retired `chunk`) — rejected,
   never normalised.** The boot (`boot!`, the initializer's ONE call, pinned statically: the test env
@@ -676,12 +679,11 @@ area belongs there too, with a stub here.
   key tombstones its row). **Quotes come off in exactly ONE place** (S3 quotes every ETag in list,
   head *and* put). Blind spot: an **SSE-KMS** object's 32-hex ETag is *not* its md5, so the rung-3
   warning reads **zero while no move pairs at all**.
-- **`LIBRARY_S3_HEAD_FOR_CHECKSUM` is NOT implemented — do not document it as working.** An
-  observer cannot know what is new (the Reconciler does), so a HEAD there is
-  per-object-per-**scan**: 2M billed requests every 15 min on a 2M-object bucket, not 2M
-  once. Consequence: the **`sha256:` rung is unreachable from any production path today**.
-  Download-and-hash was rejected on §1's own terms — a full billed egress to index a library
-  the user already has is the cost the on-ramp exists to avoid.
+- **`LIBRARY_S3_HEAD_FOR_CHECKSUM` is NOT implemented — do not document it as working.** An observer
+  cannot know what is new (the Reconciler does), so a HEAD there is per-object-per-**scan**: 2M billed
+  requests every 15 min on a 2M-object bucket, not 2M once. Consequence: the **`sha256:` rung is
+  unreachable from any production path today**. Download-and-hash was rejected on §1's own terms — a
+  full billed egress to index a library the user already has is the cost the on-ramp exists to avoid.
 - **LANDMINE — copy → delete → TOMBSTONE.** "Tombstone only after the copy confirms" is
   necessary but **not sufficient**: if the **delete** fails after a tombstone, the next scan
   finds an unclaimed key with **no tombstone to revive by path** → a **new `node_id`** →

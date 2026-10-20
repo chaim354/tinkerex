@@ -1,0 +1,7 @@
+# EVERY TEST STARTS ON A CONFIRMED LIBRARY -- the state ConfirmExistingLibraryRoot gives an existing
+# deployment. Without it the share leg is a fresh install, every signed-in page redirects to
+# /settings/library, and the scan schedule pauses. A test about the first run deletes this row with
+# Setting.forget(Tinkerex::LibraryRoot::KEY).
+library_root:
+  key: library.root
+  value: ""

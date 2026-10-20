@@ -36,4 +36,11 @@
   .filing-card .chip { display: inline-flex; align-items: center; gap: 4px; }
   .filing-card .chip form { display: inline; margin: 0; }
   .filing-card .settings-add { max-width: none; }
+
+  /* --- The library folder (K, 2026-10-20): /settings/library. Its form borrows .settings-add and
+     stacks, because the choice, the two outcomes and their buttons read top to bottom. */
+  .library-choice { flex-direction: column; align-items: flex-start; }
+  .library-facts, .library-outcomes { max-width: 640px; margin: 0 0 12px; padding-left: 18px; }
+  .library-outcomes { margin: 0; }
+  .library-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 }

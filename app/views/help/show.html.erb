@@ -7,8 +7,9 @@
   docs/superpowers/specs/2026-10-13-f-onboarding-design.md). Every sentence is a claim about the
   app, so each was checked against the code or the invariants file that owns it before it was
   written here: docs/invariants/project-intake.md for Projects/ and filing,
-  docs/invariants/model-intake.md for shelves, docs/invariants/addons.md for tools, and
-  docs/INSTALL.md for accounts and mail. Change the behaviour, change the sentence.
+  docs/invariants/model-intake.md for shelves, docs/invariants/addons.md for tools,
+  docs/INSTALL.md for accounts, mail and the library folder (K, 2026-10-20: Tinkerex::LibraryRoot
+  and /settings/library). Change the behaviour, change the sentence.
 
   THE SENTENCES THAT DIFFER PER BACKEND ASK `capabilities`, never an adapter class or a backend
   name (CLAUDE.md section 14a): scannable for a library polled from a folder or a bucket,
@@ -38,6 +39,15 @@
           slicer or another program, by copying it in — appears here within 15 minutes, or
           straight away with <em>Rescan library</em> under ⋯ on the <%= link_to "Files", files_path %>
           page.</p>
+        <p>The library is the whole folder the server was given, or a folder inside it, chosen in
+          <%= link_to "Library folder", settings_library_path %> under Settings. Changing it keeps
+          your files' projects, notes and tags when the new folder holds the same files, as when the
+          old one was moved or renamed, and is refused when it holds a different set of files.
+          <em>Start over with this folder</em> is for that case: it forgets every file the library
+          had indexed, with their previews, notes and pins and the 3D models found among them. Your
+          projects, tasks, inventory and BOMs stay, and a project keeps its folder when the new
+          library has one at the same path, such as <code>Projects/Desk Lamp</code>. It deletes and
+          moves nothing on disk.</p>
       <% end %>
       <p>Renaming or moving a file there keeps its notes, tags and project links, as long as its
         content has not changed.</p>

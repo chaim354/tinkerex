@@ -94,6 +94,8 @@ module SchemaMap
     { "label" => "Rails plumbing", "group" => "rails",
       "tables" => %w[action_text_rich_texts active_storage_attachments active_storage_blobs
                      active_storage_variant_records] },
+    { "label" => "Deployment settings", "group" => "ops",
+      "tables" => %w[settings] },
     { "label" => "Queue database", "group" => "ops", "sub" => "separate DB",
       "tables" => %w[solid_queue_jobs solid_queue_ready_executions
                      solid_queue_claimed_executions solid_queue_scheduled_executions

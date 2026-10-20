@@ -25,8 +25,9 @@ files, or into an empty folder, and in that folder:
 docker compose up -d
 ```
 
-Open `http://localhost:8080`. Nothing to generate, edit or chown first; the full guide, with every
-setting you can change, is **[`docs/INSTALL.md`](docs/INSTALL.md)**.
+Open `http://localhost:8080`, create the first account, then confirm the folder, or pick one inside
+it. Nothing to generate, edit or chown first; the full guide, with every setting you can change, is
+**[`docs/INSTALL.md`](docs/INSTALL.md)**.
 
 ## First run
 

@@ -439,6 +439,12 @@ root to: "home#index"
     # its own form, because Devise's update demands the current password and a handle is not a
     # credential.
     resource :handle, only: :update
+    # K (2026-10-20): which folder under the mount is the share library. Singular, like /settings
+    # itself; `controller:` because Rails would otherwise pluralise it to `libraries`. `children` is
+    # the chooser's path-based data source (LibraryBrowseController#children is the node-based one).
+    resource :library, only: %i[show update], controller: "library" do
+      get :children
+    end
   end
   get "help", to: "help#show", as: :help
 
