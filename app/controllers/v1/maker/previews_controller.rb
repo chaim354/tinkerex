@@ -107,10 +107,17 @@ module V1
         params.require(:preview).permit(:node_id, :version_id, :kind, :filename)
       end
 
+      # A ROW WITH A PICTURE IS `ready` ON THIS WIRE, A REBUILD INCLUDED. `rebuilding` is a status
+      # this app added after the wire was written, and tinkerex-client's `Preview` documents "`url`
+      # is null until `status == "ready"`" — so a client told `rebuilding` would hold a URL its own
+      # contract says it cannot have. The row it describes is an older build's picture of this same
+      # content, which is exactly what `ready` promised before the status was split (the renderer
+      # rebuild note on #create). Exposing the new value is a wire change to make deliberately,
+      # with the client, not by default.
       def preview_json(p)
         {
           id: p.id, node_id: p.node_id, version_id: p.version_id, kind: p.kind,
-          status: p.status, error: p.error, width: p.width, height: p.height,
+          status: (p.showable? ? "ready" : p.status), error: p.error, width: p.width, height: p.height,
           url: (p.asset.attached? ? url_for(p.asset) : nil),
           created_at: p.created_at, updated_at: p.updated_at
         }

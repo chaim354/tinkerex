@@ -125,7 +125,7 @@ module Maker
         # job is safe either way: `commit_if_current` compares BOTH axes against what it captured,
         # and both are written here before it is enqueued, so a run that started under an older
         # revision still cannot stamp its output onto this row.
-        preview.status = "pending" if preview.new_record? || content_moved || preview.status == "failed"
+        preview.status = "pending" if preview.new_record? || content_moved || preview.failed?
         # RESTAMP A HEALED ROW, OR THE HEAL REPEATS ON EVERY CALLER FOREVER. Re-enqueueing a
         # stalled row changes no other attribute, and `save!` on an unchanged record is a NO-OP
         # that leaves `updated_at` where it was — so the row would still read as stalled to the
@@ -167,7 +167,7 @@ module Maker
       def needs_job?(preview, version_id:, revision:, retry_failed:)
         return true if preview.nil? || preview.new_record?
         return true if preview.version_id != version_id || preview.renderer_revision != revision
-        return retry_failed if preview.status == "failed"
+        return retry_failed if preview.failed?
 
         stalled?(preview)
       end
@@ -175,8 +175,7 @@ module Maker
       # A saved row that has claimed a job for longer than STALLED_AFTER. `persisted?` first: an
       # unsaved row has no `updated_at` to compare.
       def stalled?(preview)
-        preview.persisted? && Maker::Preview::IN_FLIGHT.include?(preview.status) &&
-          preview.updated_at < STALLED_AFTER.ago
+        preview.persisted? && preview.in_flight? && preview.updated_at < STALLED_AFTER.ago
       end
 
       # The revision a renderer claims for one kind, or BASE_REVISION when it claims none.

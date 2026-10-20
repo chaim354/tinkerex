@@ -167,9 +167,9 @@
     %>
     <% if File.extname(name).downcase == ".svg" %>
       <img src="<%= blob_url %>" alt="<%= name %>" class="preview-image">
-    <% elsif thumbnail&.status == "ready" && thumbnail.asset.attached? %>
+    <% elsif thumbnail&.showable? %>
       <img src="<%= thumbnail_url %>" alt="Preview of <%= name %>" class="preview-image">
-    <% elsif %w[pending processing].include?(thumbnail&.status) %>
+    <% elsif thumbnail&.in_flight? %>
       <p class="muted">Generating preview…</p>
     <% else %>
       <p class="muted">No inline preview for this file.</p>

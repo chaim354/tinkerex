@@ -45,8 +45,9 @@ module Maker
     # THE STATUS CLASSES, NAMED ONCE. A consumer asks one of these instead of comparing `status` to
     # a literal: the comparison was hand-spelled at a dozen sites, and `rebuilding` makes a bare
     # `== "ready"` wrong at every one of them in a different way (a picture surface would blank a
-    # correct picture; nothing would refuse an older build). Each reads `status` before `asset`, so
-    # a row with nothing to show costs no attachment query.
+    # correct picture; nothing would refuse an older build). test/architecture_invariants_test.rb
+    # refuses that literal outside this file. Each reads `status` before `asset`, so a row with
+    # nothing to show costs no attachment query.
 
     # A job is believed to be coming for this row — the set `Enqueue.stalled?` stops believing
     # after STALLED_AFTER.

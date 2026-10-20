@@ -379,13 +379,19 @@ class FilesController < ApplicationController
     #   - the name IS renderable and the row simply has not been created yet -> OMIT, so the client
     #     keeps polling. `backfill: false` above means this door never creates one, so saying
     #     "unsupported" here would freeze a thumbnail that is genuinely on its way.
+    #
+    # A ROW WITH A PICTURE ANSWERS `ready`, A REBUILD INCLUDED. The poll asks "is there something to
+    # show in this cell yet?", and an older build's picture of this same content is that; a
+    # `rebuilding` status on this wire would match neither of thumbs_controller.js's arms and leave
+    # the cell polling until it gave up and drew "Preview not supported" over a picture it had.
     live = nodes.index_by(&:node_id)
     out = ids.each_with_object({}) do |id, h|
       node = live[id]
       preview = node && map.thumb(id)
-      if preview
-        h[id] = { status: preview.status,
-                  url: (preview.status == "ready" && preview.asset.attached? ? url_for(preview.asset) : nil) }
+      if preview&.showable?
+        h[id] = { status: "ready", url: url_for(preview.asset) }
+      elsif preview
+        h[id] = { status: preview.status, url: nil }
       elsif node.nil? || Maker::Previews::Registry.for_filename(node.name).nil?
         h[id] = { status: "unsupported", url: nil }
       end
@@ -498,10 +504,12 @@ class FilesController < ApplicationController
                                     name: node.name, version_id: token, kind: "geometry")
       return render json: { status: "pending" }
     end
+    # `current_build?`, NEVER `showable?`: this payload is the DATA the Measure view draws from. A
+    # ready row whose asset is gone answers "pending" where it once answered "ready" with no URL;
+    # measure_controller.js keeps polling on both, so nothing a user sees moved.
+    return render json: { status: "ready", url: url_for(preview.asset) } if preview.current_build?
+
     case preview.status
-    when "ready"
-      render json: { status: "ready",
-                     url: (url_for(preview.asset) if preview.asset.attached?) }
     when "failed", "unsupported"
       render json: { status: preview.status, error: preview.error }
     else

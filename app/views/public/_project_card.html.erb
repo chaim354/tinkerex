@@ -28,7 +28,7 @@
         Maker::Preview, which carries the `node_id` the route needs, so no extra local. NO `k`
         TOKEN: a card only ever renders for a `publicly_listed` project, and an unlisted one is
         excluded from both lists by the scope above this partial. %>
-    <% if thumb&.status == "ready" && thumb.asset.attached? %>
+    <% if thumb&.showable? %>
       <span class="thumb"><img src="<%= public_file_preview_path(project.user.handle, project.slug,
                                                                  thumb.node_id, "thumbnail") %>"
                                alt="" loading="lazy"></span>
