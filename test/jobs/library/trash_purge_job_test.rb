@@ -167,6 +167,24 @@ module Library
       end
     end
 
+    # THE PAUSE (K §3), ScanJobTest's pair in one test: an unconfirmed share library has no trash
+    # to purge yet. The confirmed half proves the no-op is the gate; s3 has no folder to confirm.
+    test "purge_all! enqueues nothing while a share library's folder is unconfirmed" do
+      Dir.mktmpdir do |dir|
+        with_env("LIBRARY_BACKEND" => "share", "LIBRARY_PATH" => dir) do
+          Setting.forget(Tinkerex::LibraryRoot::KEY)
+          assert_no_enqueued_jobs(only: Library::TrashPurgeJob) { Library::TrashPurgeJob.purge_all! }
+
+          Setting.put(Tinkerex::LibraryRoot::KEY, "")
+          assert_enqueued_jobs(1, only: Library::TrashPurgeJob) { Library::TrashPurgeJob.purge_all! }
+        end
+      end
+      with_env(S3_ENV) do
+        Setting.forget(Tinkerex::LibraryRoot::KEY)
+        assert_enqueued_jobs(1, only: Library::TrashPurgeJob) { Library::TrashPurgeJob.purge_all! }
+      end
+    end
+
     # LIBRARY_TRASH_DAYS is read HERE and nowhere else — `perform` takes it as a required argument,
     # exactly as it takes `root`, and for ScanJob's stated reason: a default would only serve a
     # hand-rolled call, and would serve it a raw unvalidated ENV read. One reader, at the schedule.

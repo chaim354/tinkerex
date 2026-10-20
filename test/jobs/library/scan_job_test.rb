@@ -141,6 +141,39 @@ module Library
       end
     end
 
+    # THE PAUSE (K §3): a fresh share install -- no `library.root` row -- schedules nothing until its
+    # owner has said which folder is the library. One assertion per method, so deleting either gate is
+    # its own red; the confirmed half proves the no-op is the gate and not the methods doing nothing.
+    test "while a share library's folder is unconfirmed, scan_all! and enqueue_first_for enqueue nothing" do
+      Dir.mktmpdir do |dir|
+        user = user!
+        with_env("LIBRARY_BACKEND" => "share", "LIBRARY_PATH" => dir) do
+          Setting.forget(Tinkerex::LibraryRoot::KEY)
+          assert_no_enqueued_jobs(only: Library::ScanJob) { Library::ScanJob.scan_all! }
+          assert_no_enqueued_jobs(only: Library::ScanJob) { Library::ScanJob.enqueue_first_for(user) }
+
+          Setting.put(Tinkerex::LibraryRoot::KEY, "")
+          assert_enqueued_jobs(1, only: Library::ScanJob) { Library::ScanJob.scan_all! }
+          assert_enqueued_with(job: Library::ScanJob, args: [ { user_id: user.id, root: File.expand_path(dir) } ]) do
+            Library::ScanJob.enqueue_first_for(user)
+          end
+        end
+      end
+    end
+
+    # THE FOLDER IS A SHARE FACT. An s3 library has a prefix, not a folder to confirm, so a missing
+    # row must not pause its scans -- the regression would be the Phase 3 trap below in a new costume.
+    test "an s3 deployment with no folder setting still schedules its scans" do
+      user = user!
+      with_env(S3_ENV) do
+        Setting.forget(Tinkerex::LibraryRoot::KEY)
+        assert_enqueued_jobs(1, only: Library::ScanJob) { Library::ScanJob.scan_all! }
+        assert_enqueued_with(job: Library::ScanJob, args: [ { user_id: user.id } ]) do
+          Library::ScanJob.enqueue_first_for(user)
+        end
+      end
+    end
+
     # THE PHASE 3 TRAP, PINNED. Until this test existed the gate was `is_a?(FileLayer::Share)` —
     # correct while Share was the only scanned backend, and silently wrong the moment FileLayer::S3
     # landed: scan_all! answered false, enqueued nothing, raised nothing, and an s3 library was
@@ -235,7 +268,96 @@ module Library
       assert_nil user.reload.library_scanned_at
     end
 
+    # THE REFUSAL IS WRITTEN DOWN WHERE THE PAGE CAN READ IT (K §5), and the next scan that works
+    # takes it back: /settings/library shows `library_scan_refusal` with its next step, so a stale one
+    # would go on telling the owner their folder was refused after it had scanned.
+    test "a refused scan records why, and the next scan that succeeds clears it" do
+      Dir.mktmpdir do |dir|
+        user = user!
+
+        assert_raises(Library::Scanner::UnsafeScan) do
+          Library::ScanJob.perform_now(user_id: user.id, root: "/nonexistent-#{SecureRandom.hex(4)}")
+        end
+        assert_match(/is missing/, user.reload.library_scan_refusal)
+
+        Library::ScanJob.perform_now(user_id: user.id, root: dir)
+        assert_nil user.reload.library_scan_refusal
+      end
+    end
+
+    # --- a scan queued before the library folder changed (K §5) ----------------------------------
+    #
+    # The adapter is over the NEW folder and old.stl exists only in the OLD one, so a scan that
+    # indexes it ran on the folder the library left. A DAY separates the setting's write from the
+    # enqueue on purpose: two stamps a moment apart pass whichever way the comparison runs (§15).
+    # perform_enqueued_jobs, not perform_now, because only a job that went through the queue carries
+    # an `enqueued_at`.
+    test "a scan queued before the library folder changed is discarded, not run on the old folder" do
+      with_moved_library do |old_root, _new_root|
+        user = user!
+        travel_to(2.days.ago) { Library::ScanJob.perform_later(user_id: user.id, root: old_root) }
+        travel_to(1.day.ago) { Setting.put(Tinkerex::LibraryRoot::KEY, "new-root") }
+
+        log = capture_log { perform_enqueued_jobs(only: Library::ScanJob) }
+
+        assert_nil user.nodes.find_by(storage_path: "old.stl"), "the queued scan ran on the folder the library left"
+        assert_match(/discarding a scan of #{Regexp.escape(old_root)} queued before/, log,
+                     "the discard must say which root it dropped")
+      end
+    end
+
+    test "a scan queued after the library folder changed runs on the root it names" do
+      with_moved_library do |old_root, _new_root|
+        user = user!
+        travel_to(1.day.ago) { Setting.put(Tinkerex::LibraryRoot::KEY, "new-root") }
+        Library::ScanJob.perform_later(user_id: user.id, root: old_root)
+
+        perform_enqueued_jobs(only: Library::ScanJob)
+
+        assert user.nodes.find_by(storage_path: "old.stl"),
+               "a job queued after the change was judged stale: the enqueued_at comparison is gone"
+      end
+    end
+
+    # The same folder written twice (a confirm clicked again) moves the timestamp and not the root.
+    test "a scan queued before a write that left the root in place still runs" do
+      with_moved_library do |_old_root, new_root|
+        File.binwrite(File.join(new_root, "new.stl"), "n")
+        user = user!
+        travel_to(2.days.ago) { Library::ScanJob.perform_later(user_id: user.id, root: new_root) }
+        travel_to(1.day.ago) { Setting.put(Tinkerex::LibraryRoot::KEY, "new-root") }
+
+        perform_enqueued_jobs(only: Library::ScanJob)
+
+        assert user.nodes.find_by(storage_path: "new.stl"), "a queued scan of the CURRENT root was discarded"
+      end
+    end
+
+    # The command contract (#perform's header) survives the change: perform_now has no enqueued_at.
+    test "perform_now still scans the root it names after the library folder changed" do
+      with_moved_library do |old_root, _new_root|
+        user = user!
+        travel_to(1.day.ago) { Setting.put(Tinkerex::LibraryRoot::KEY, "new-root") }
+
+        Library::ScanJob.perform_now(user_id: user.id, root: old_root)
+
+        assert user.nodes.find_by(storage_path: "old.stl"), "an explicitly commanded scan was discarded"
+      end
+    end
+
     private
+
+    # Two folders and a Share adapter over the second, which is the library's folder after a change.
+    def with_moved_library
+      old_root = Dir.mktmpdir("old-root")
+      new_root = Dir.mktmpdir("new-root")
+      File.binwrite(File.join(old_root, "old.stl"), "o")
+      FileLayer.current = FileLayer::Share.new(root: new_root)
+      yield old_root, new_root
+    ensure
+      FileLayer.reset!
+      [ old_root, new_root ].each { |d| FileUtils.remove_entry(d) if d && File.exist?(d) }
+    end
 
     # FileLayer.current= rather than ENV, because the fake CLIENT has to be injected and the
     # ENV-based idioms rebuild from ENV (FileLayer.build constructs a real client). Prior art:

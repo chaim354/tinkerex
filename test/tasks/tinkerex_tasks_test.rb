@@ -45,14 +45,25 @@ class TinkerexTasksTest < ActiveSupport::TestCase
     assert u.valid_password?(PASSWORD)
   end
 
-  # The console door matches the sign-up form: the FIRST account on an empty server enqueues the
-  # first library scan (J, 2026-10-15), a later one does not. Enqueued, never performed.
-  test "owner on an empty server enqueues the first library scan, and a second account does not" do
+  # The FIRST account on a fresh server enqueues the first library scan (J, 2026-10-15), a later one
+  # does not. Enqueued, never performed. A FRESH install has no `library.root` row, and on share the
+  # console door writes the whole mount before it asks (K §3): an operator who mounted a folder chose
+  # it, and the console path must scan with no browser. Without that write the share branch below is
+  # red -- the scan would wait for a confirmation nobody at a console can give. s3 and chunk_remote
+  # have no folder to confirm and write nothing.
+  test "owner on a fresh server confirms a share mount and enqueues the first scan; a second account does neither" do
     User.delete_all
+    Setting.forget(Tinkerex::LibraryRoot::KEY)
+    share = FileLayer.current.is_a?(FileLayer::Share)
     if FileLayer.current.capabilities.scannable?
       assert_enqueued_with(job: Library::ScanJob) { invoke!("tinkerex:owner", "first@example.com") }
     else
       assert_no_enqueued_jobs(only: Library::ScanJob) { invoke!("tinkerex:owner", "first@example.com") }
+    end
+    if share
+      assert_equal "", Setting.get(Tinkerex::LibraryRoot::KEY), "the console door confirms the whole mount"
+    else
+      assert_nil Setting.get(Tinkerex::LibraryRoot::KEY), "only a share library has a folder to confirm"
     end
     assert_no_enqueued_jobs(only: Library::ScanJob) { invoke!("tinkerex:owner", "second@example.com") }
     assert_equal 2, User.count
