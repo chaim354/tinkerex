@@ -66,6 +66,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_20_170000) do
     t.datetime "created_at", null: false
     t.string "node_id", null: false
     t.integer "position", default: 0, null: false
+    t.integer "revision", default: 1, null: false
     t.string "role", null: false
     t.datetime "updated_at", null: false
     t.index ["addon_state_id", "node_id"], name: "index_maker_addon_files_on_addon_state_id_and_node_id", unique: true

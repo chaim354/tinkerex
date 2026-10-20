@@ -20,6 +20,22 @@ module Maker
       assert_difference("Maker::AddonFile.count", -2) { state.destroy }
     end
 
+    # THE LATEST SAVE'S FILES FIRST, IN SAVE ORDER, THEN THE ROWS EARLIER SAVES LEFT. A state keeps
+    # the row of a file an earlier revision wrote and a later one stopped emitting
+    # (Maker::Addons::LibraryOutput#upsert_file!), so `position` repeats across saves and only
+    # `revision` says which save a row came from. The rows are created in an order that DISAGREES
+    # with the order under test (the stale save first, and the current save's second file before its
+    # first), so neither creation order nor the old (position, id) tiebreak can pass this.
+    test "files list the latest save's outputs first, in save order, then earlier saves' rows" do
+      state = @user.maker_addon_states.create!(addon_key: "boxes", name: "My box", data: {}, revision: 2)
+      state.files.create!(node_id: "n-v1-a", role: "output", position: 0, revision: 1)
+      state.files.create!(node_id: "n-v1-b", role: "output", position: 1, revision: 1)
+      state.files.create!(node_id: "n-v2-b", role: "output", position: 1, revision: 2)
+      state.files.create!(node_id: "n-v2-a", role: "output", position: 0, revision: 2)
+
+      assert_equal %w[n-v2-a n-v2-b n-v1-a n-v1-b], state.reload.files.map(&:node_id)
+    end
+
     test "requires addon_key and name" do
       s = Maker::AddonState.new(user: @user)
       assert_not s.valid?

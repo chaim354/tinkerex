@@ -593,14 +593,12 @@ module Tools
       # THE STALE ROW STAYS AND ITS POSITION COLLIDES WITH THE NEW ONE. This revision emitted a
       # DIFFERENTLY-NAMED file, so it wrote a new node rather than replacing one, and
       # Maker::Addons::LibraryOutput leaves the previous save's row alone on purpose (that file is
-      # still an ordinary library file the user may have renamed or attached, §14c). The visible
-      # cost is here: `position` is this save's index into its own outputs, so two rows now hold 0
-      # and the number means nothing ACROSS saves. Asserted so the wart is recorded rather than
-      # discovered. (Maker::AddonState orders by (position, id) so #states at least serialises them
-      # the same way twice — that tiebreak is deliberately NOT asserted here, because SQLite
-      # returns rowid order for the tied rows anyway and a test that passes with or without the
-      # `:id` cannot show the guard works.)
-      assert_equal [ 0, 0 ], state.files.pluck(:position)
+      # still an ordinary library file the user may have renamed or attached, §14c). `position` is
+      # this save's index into its own outputs, so two rows hold 0 and that number means nothing
+      # ACROSS saves. `revision` is what tells them apart: each row carries the save that last wrote
+      # it, and Maker::AddonState lists the newest save's rows first. Without the stamp both rows read
+      # revision 1 and the order fell back to (position, id), which put the stale row first.
+      assert_equal [ [ 2, 0 ], [ 1, 0 ] ], state.files.pluck(:revision, :position)
     end
 
     # AN EMPTY `state_id` IS "NO TARGET", NOT A TARGET THAT FAILED TO RESOLVE — AND NOTHING GUARDED
@@ -2067,6 +2065,24 @@ module Tools
 
       files = JSON.parse(response.body).first["files"]
       assert_equal [ { "node_id" => "n-1", "role" => "output" } ], files
+    end
+
+    # AFTER A REVISION THAT RENAMED ITS OUTPUT, THE CURRENT FILE COMES FIRST. The renamed file is a
+    # NEW node beside the old one, which stays linked to the state on purpose (§14c: a save door must
+    # not delete user bytes). Both rows hold position 0, so while nothing recorded which save wrote a
+    # row, the (position, id) tiebreak listed the OLD file first — the one both shipped bundles open
+    # (boxes reads `files[0]`, openscad the first `output`). Driven through two real saves, so it
+    # pins the stamp and the order together.
+    test "states lists the latest save's outputs before the files an earlier revision wrote" do
+      old_name = "shelf-box-#{SecureRandom.hex(4)}.svg"
+      new_name = "shelf-box-mk2-#{SecureRandom.hex(4)}.svg"
+      state = save_box(name: "shelf box", file: old_name)
+      save_box(name: "shelf box mk2", file: new_name, state_id: state.id)
+
+      get tools_addon_states_path(FIXTURE_KEY)
+
+      listed = response.parsed_body.sole["files"].map { |f| @user.nodes.find_by!(node_id: f["node_id"]).name }
+      assert_equal [ new_name, old_name ], listed
     end
 
     test "the states payload carries the current revision number" do
