@@ -1,5 +1,6 @@
 require "test_helper"
 require "tmpdir"
+require "prism"
 
 module FileLayer
   class FactoryTest < ActiveSupport::TestCase
@@ -76,10 +77,11 @@ module FileLayer
     # precondition. It surfaced as `bin/ci setup` failing on a clean clone, several frames away,
     # inside the PurgeRepoMetadataNodes migration.
     #
-    # The fix is HERE and not in the guard's own default: `check!` is also called with no arguments
-    # by config/initializers/library_backend_check.rb, so making ITS default "share" refuses the
-    # boot of any dev box with nothing configured — measured, and it breaks `bin/setup` one step
-    # EARLIER rather than fixing it.
+    # `check!` HAS NO DEFAULT SINCE 2026-10-19: the factory and the boot both hand it the name
+    # LibraryBackendCheck.configured resolved, and unset is a state of its own rather than a value —
+    # the factory builds share on it, the boot lets development start. Do not give check! a `share`
+    # default to make the two agree: measured, that refused the boot of any dev box with nothing
+    # configured, breaking `bin/setup` one step EARLIER rather than fixing it.
     test "the DEFAULT backend arm asks the guard, not just the explicit one" do
       with_backend(nil) do
         with_library_path(nil) do
@@ -138,6 +140,34 @@ module FileLayer
       assert_not caps.syncable?
     end
 
+    CHUNK_REMOTE_ENV = {
+      "CHUNK_REMOTE_URL" => "http://sync.example", "SYNC_ADMIN_TOKEN" => "admin-token",
+      "SYNC_PUBLIC_URL" => "http://sync.example.net"
+    }.freeze
+
+    # THE NAMES THE READING ACCEPTS AND THE ARMS OF build's `case` ARE ONE SET, pinned both ways. A
+    # name with no arm would pass the boot (check! has nothing to check for it) and then raise out of
+    # `else` on every response — the 500 the one reading exists to close. An arm with no name is dead
+    # code no deployment can select. NAMES is the list; the `case` stays the factory.
+    ADAPTER_FOR = { "share" => FileLayer::Share, "s3" => FileLayer::S3, "chunk_remote" => FileLayer::ChunkRemote }.freeze
+
+    test "every name LibraryBackendCheck accepts builds its adapter" do
+      assert_equal LibraryBackendCheck::NAMES.sort, ADAPTER_FOR.keys.sort,
+                   "a name this test has no adapter for is a name it cannot prove the factory builds"
+      Dir.mktmpdir do |dir|
+        minimal = { "share" => { "LIBRARY_PATH" => dir }, "s3" => S3_ENV, "chunk_remote" => CHUNK_REMOTE_ENV }
+        LibraryBackendCheck::NAMES.each do |name|
+          with_backend(name) do
+            with_env(minimal.fetch(name)) { assert_instance_of ADAPTER_FOR.fetch(name), FileLayer.build, name }
+          end
+        end
+      end
+    end
+
+    test "build's case has one arm per known name, and no other" do
+      assert_equal LibraryBackendCheck::NAMES.sort, factory_arms.sort
+    end
+
     # Pinned rather than ambient: memoization is backend-agnostic, so the backend should be the
     # test's choice, not the environment's.
     test "current is memoized and reset! clears it" do
@@ -151,6 +181,14 @@ module FileLayer
           end
         end
       end
+    end
+
+    # The `when` labels of FileLayer.build's `case`, read by the parser Ruby ships rather than by a
+    # regex over the file, so the answer is that method's arms and nothing else in file_layer.rb.
+    def factory_arms
+      path, line = FileLayer.method(:build).source_location
+      build = Prism.parse_file(path).value.breadth_first_search { |node| node.is_a?(Prism::DefNode) && node.location.start_line == line }
+      build.breadth_first_search { |node| node.is_a?(Prism::CaseNode) }.conditions.flat_map(&:conditions).map(&:unescaped)
     end
 
     def with_backend(value)

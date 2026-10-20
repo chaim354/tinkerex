@@ -60,9 +60,18 @@ module Maker
       # no parents.
       def unborn? = rugged.head_unborn?
 
+      # git's own binary test: a NUL byte within the first 8 kB of the file (see #binary?).
+      BINARY_SNIFF_BYTES = 8_000
+
       # What the commit box shows for one path. `state` is :modified, :added, :deleted, :unchanged,
-      # :ignored or :missing; only the first three can be committed.
-      Row = Data.define(:path, :state, :additions, :deletions) do
+      # :ignored or :missing; only the first three can be committed. `binary` is true when the
+      # content cannot be handed to a diff view, and is false for a path with no bytes on disk.
+      #
+      # EVERYTHING THE BOX KNOWS ABOUT A PATH IS ON THIS ROW, AND THE ROW IS COMPUTED ONCE PER
+      # REQUEST. `binary` used to be a separate set, built by re-opening every listed file for an 8 kB
+      # sniff right after #row_for had read it in full; a second structure keyed by path is a second
+      # thing that has to agree with this one (F-S13-1).
+      Row = Data.define(:path, :state, :additions, :deletions, :binary) do
         def committable? = state == :modified || state == :added || state == :deleted
       end
 
@@ -255,18 +264,44 @@ module Maker
         # every stale row becomes a committable deletion, or every real deletion vanishes.
         unless File.file?(abs)
           in_head = !unborn? && !head_blob_for(rel).nil?
-          return Row.new(path: rel, state: in_head ? :deleted : :missing, additions: 0, deletions: 0)
+          return Row.new(path: rel, state: in_head ? :deleted : :missing, additions: 0, deletions: 0, binary: false)
         end
 
-        return Row.new(path: rel, state: :ignored, additions: 0, deletions: 0) if rugged.path_ignored?(rel)
+        # THE ONE ROW NOT READ IN FULL, SO IT SNIFFS ITS OWN 8 kB. It still needs the answer: the box
+        # mounts a diff for an ignored path that has a catalog node. An unreadable file is listed,
+        # not binary, rather than failing the whole box.
+        if rugged.path_ignored?(rel)
+          return Row.new(path: rel, state: :ignored, additions: 0, deletions: 0, binary: binary?(sniff(abs)))
+        end
 
         head_blob = unborn? ? nil : head_blob_for(rel)
         current   = File.binread(abs)
-        return Row.new(path: rel, state: :added, additions: current.lines.size, deletions: 0) if head_blob.nil?
-        return Row.new(path: rel, state: :unchanged, additions: 0, deletions: 0) if head_blob == current
+        binary    = binary?(current) # decided from the bytes already in hand, never a second open
+        return Row.new(path: rel, state: :added, additions: current.lines.size, deletions: 0, binary:) if head_blob.nil?
+        return Row.new(path: rel, state: :unchanged, additions: 0, deletions: 0, binary:) if head_blob == current
 
         added, removed = line_delta(head_blob, current)
-        Row.new(path: rel, state: :modified, additions: added, deletions: removed)
+        Row.new(path: rel, state: :modified, additions: added, deletions: removed, binary:)
+      end
+
+      # Which bytes cannot be diffed, by CONTENT: git's own rule, a NUL in the first 8 kB.
+      #
+      # DELIBERATELY NOT `Maker::FileAttachment.text?`, AND THIS IS NOT THE SECOND-VOCABULARY MISTAKE
+      # §14d warns about. That predicate answers a NAME question ("should the file page offer a source
+      # viewer") off an extension allowlist, and it answers FALSE for `.svg`. The measured repository
+      # this whole feature exists for (`catan`, spec part 1) is 58 dirty paths of which the design files
+      # are `.svg`, so the name-based answer would print "binary — no diff" over every one of them. The
+      # question here is whether CodeMirror can be handed these bytes, which is a CONTENT axis
+      # (files-preview.md's own distinction), and answering it the way git does keeps the panel and the
+      # terminal saying the same thing. Adding `.svg` to `ROLE_BY_EXT` is still the fix for the file
+      # page; it is not the fix for this.
+      def binary?(bytes) = bytes.byteslice(0, BINARY_SNIFF_BYTES).include?("\x00".b)
+
+      # `File.binread` with a length answers nil for an empty file, hence `.to_s`.
+      def sniff(abs)
+        File.binread(abs, BINARY_SNIFF_BYTES).to_s
+      rescue SystemCallError
+        ""
       end
 
       # A COUNT, NOT A DIFF -- but it must be the count GIT would report, and for eight months of

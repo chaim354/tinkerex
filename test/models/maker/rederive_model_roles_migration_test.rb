@@ -103,12 +103,21 @@ module Maker
       assert_equal before, [ @user.maker_filing_rules.count, @project.file_attachments.pluck(:role).sort ]
     end
 
-    # THE LIST IS THE VOCABULARY: every `model` extension the app knows beyond the five it shipped
-    # with (stl 3mf obj step stp), and nothing else — a self-contained migration that drifted from
-    # ROLE_BY_EXT would file the wrong extensions and re-derive the wrong roles.
-    test "the migration's extension list is exactly the model role's new extensions" do
-      today = Maker::FileAttachment::ROLE_BY_EXT.select { |_, role| role == "model" }.keys - %w[stl 3mf obj step stp]
-      assert_equal today.sort, NEW_EXTS.sort
+    # THE COPY, PINNED AGAINST THE MODEL PER KEY, the form the other seven migration tests use:
+    # every extension the migration copied is still `model`. A self-contained migration that drifted
+    # from ROLE_BY_EXT would file the wrong extensions and re-derive the wrong roles.
+    #
+    # NOT AN EQUALITY WITH TODAY'S `model` ROLE ANY MORE (F-S33-1, 2026-10-19): that form reddened
+    # this test of a migration that had already run on the next model widening. The vocabulary may
+    # grow past the copy now: attachment rows stored `other` follow it by
+    # Maker::FileAttachment.classify_unclassified!, and existing users' FILING rule for a new key is
+    # a new top-up, never an edit of this one.
+    test "every extension the migration copied is still model, and its folder is ROLE_FOLDERS'" do
+      assert_equal 13, NEW_EXTS.size, "the list is the whole subject of this test"
+      NEW_EXTS.each do |ext|
+        assert_equal RederiveModelRolesAndSeedFilingRules::NEW_ROLE,
+                     Maker::FileAttachment::ROLE_BY_EXT[ext], "migration copies #{ext} as model"
+      end
       assert_equal Maker::ProjectFolders::ROLE_FOLDERS.fetch("model"), RederiveModelRolesAndSeedFilingRules::FOLDER
     end
   end

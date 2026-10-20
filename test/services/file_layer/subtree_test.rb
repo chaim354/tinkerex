@@ -38,14 +38,26 @@ class FileLayer::SubtreeTest < ActiveSupport::TestCase
     assert_includes FileLayer::Subtree.node_ids(@user, "d1"), "f1"
   end
 
-  test "a tombstoned descendant is included, so a re-delete cannot strand it" do
-    # A directory can hold nodes already tombstoned by a scan. They must come along: leaving one
-    # live-by-omission is the same wedge, and `undelete` needs the full set to revive.
+  test "the walk goes THROUGH tombstones, so a live row beneath one is never left out" do
+    # REACH, NOT MEMBERSHIP. A live row can sit beneath a tombstoned directory — `undelete` restores
+    # into a folder the scan tombstoned, and it stays that way until the next scan revives the
+    # folder — so a walk that stopped at tombstones would leave that row live by omission: the wedge.
+    # Which returned rows a delete MOVES is the adapters' question, answered by narrowing their own
+    # UPDATE to `present`; narrowing this walk to answer it would reopen the hole.
+    #
+    # These are SCAN tombstones: the row keeps its storage_path (§14a's two kinds). A NULL path is the
+    # TRASH shape, and this fixture used to write that under this name.
     create_node!(@user, node_id: "d1", name: "parts", kind: "dir")
-    gone = create_node!(@user, node_id: "f1", name: "old.stl", kind: "file", parent_node_id: "d1")
-    gone.update!(deleted: true, storage_path: nil)
+    sub = create_node!(@user, node_id: "d2", name: "stl", kind: "dir", parent_node_id: "d1")
+    create_node!(@user, node_id: "f1", name: "a.stl", kind: "file", parent_node_id: "d2")
+    gone = create_node!(@user, node_id: "f2", name: "old.stl", kind: "file", parent_node_id: "d1")
+    gone.update!(deleted: true)
+    sub.update!(deleted: true)
+    assert_equal "parts/old.stl", gone.reload.storage_path, "the fixture is not a scan tombstone"
 
-    assert_includes FileLayer::Subtree.node_ids(@user, "d1"), "f1"
+    ids = FileLayer::Subtree.node_ids(@user, "d1")
+    assert_includes ids, "f2", "a tombstoned descendant was dropped"
+    assert_includes ids, "f1", "a live row beneath a tombstoned directory was left out"
   end
 
   test "it never leaves the user" do

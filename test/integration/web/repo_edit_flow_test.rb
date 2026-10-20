@@ -434,6 +434,59 @@ class RepoEditFlowTest < ActionDispatch::IntegrationTest
     assert tree.path("kept.txt"), "only the selected path may leave the tree"
   end
 
+  # THE THIRD GROUP COMMITS TOO, AND UNTIL NOW NOTHING POSTED FROM IT. `.DS_Store` is offered
+  # unchecked under "OS clutter", and a maker who ticks it is asking for exactly that. #create's
+  # authority is the committable rows of all three groups, the same row set the page rendered from
+  # (F-S13-1). Leave the clutter group out of that list and only this case goes red: the membership
+  # test still sees the row, and the commit answers "Nothing selected." over a box that offered it.
+  test "a ticked OS-clutter path commits" do
+    root = make_repo_with_every_state!
+
+    post repo_commit_path(root.node_id), params: { paths: [ ".DS_Store" ], message: "clutter, on purpose" }
+
+    repo = Rugged::Repository.new(File.join(library_root, "mixed"))
+    assert_equal "clutter, on purpose", repo.head.target.message
+    assert_equal "\x00clutter".b, repo.lookup(repo.head.target.tree.path(".DS_Store")[:oid]).content
+  end
+
+  # --- One row per path, per request ----------------------------------------------------------
+  #
+  # #show AND #create READ ONE ROW SET, BUILT ONCE (F-S13-1). The box used to compute a pending
+  # path's row twice, once to reconcile it and once more inside full_status, and then re-open every
+  # listed file for an 8 kB binary sniff. #create rebuilt both lists again to decide what it would
+  # accept. Every row is a content read compared against HEAD's blob, about 15 ms per object over
+  # CIFS. And two computations are two definitions of "what the page offered": #create's
+  # intersection disagreed with the render once while the staging panel was being built
+  # (c7539b98), caught by a test before it merged.
+  #
+  # COUNTED AT THE READ, NOT AT A METHOD. `File.binread` under the working tree is every content read
+  # LocalRepo#row_for makes, including the `.gitignore`d branch's sniff, so a second computation of
+  # any row, by any route, shows up here as a 2.
+  test "the box and the commit each read a listed path once" do
+    root = make_repo_with_every_state!
+    kept = @user.nodes.present.find_by!(name: "kept.txt")
+    patch file_path(kept.node_id), params: { content: "via tinkerex\n", base_token: token_for(kept) }
+    workdir = Maker::Git::LocalRepo.open(@user, root).workdir
+
+    shown = reads_under(workdir) { get repo_commit_path(root.node_id) }
+
+    assert_response :success
+    # NON-VACUITY (§14e): a pending row and a wider-group row were both really read, so "once each"
+    # is a claim about the two places a row used to be computed twice, not about an empty tally.
+    assert_includes shown.keys, "kept.txt"
+    assert_includes shown.keys, "edited.txt"
+    assert_equal shown.transform_values { 1 }, shown, "a listed path was read more than once to render the box"
+
+    committed = reads_under(workdir) do
+      post repo_commit_path(root.node_id), params: { paths: [ "kept.txt" ], message: "read once" }
+    end
+
+    assert_equal "read once", Rugged::Repository.new(workdir).head.target.message,
+                 "the commit must land, or the tally below is about a request that did nothing"
+    assert_includes committed.keys, "kept.txt"
+    assert_equal committed.transform_values { 1 }, committed, "a listed path was read more than once to commit"
+  end
+
   # THE PATH IN NO GROUP AT ALL. `secret.log` sits in the working tree, is `.gitignore`d, and
   # therefore appears in NO group — so a POST naming it must be dropped rather than committed.
   # Without the intersection CommitPaths would take it happily: it reads bytes from the working
@@ -500,6 +553,35 @@ class RepoEditFlowTest < ActionDispatch::IntegrationTest
       assert ok, "the terminal-side `git commit` did not happen, so this test would be asserting " \
                  "about a working tree that was never committed. Drop `err: File::NULL` to see " \
                  "git's own reason."
+    end
+
+    # The house mutation/stub helper (text_file_creation_test.rb, readme_edit_test.rb and others
+    # carry the same body; there is no shared copy in test_helper.rb, and this suite has no
+    # Object#stub, because Minitest 6 dropped minitest/mock). Replaces a SINGLETON method for the
+    # block's duration, so an INHERITED one is removed again rather than left behind.
+    def replacing(owner, name, replacement)
+      mod = owner.singleton_class
+      own = mod.instance_methods(false).include?(name)
+      original = mod.instance_method(name)
+      mod.define_method(name, &replacement)
+      yield
+    ensure
+      own ? mod.define_method(name, original) : mod.remove_method(name)
+    end
+
+    # Every `File.binread` of a path under `dir` during the block, tallied by its path relative to
+    # `dir`. Any other read (a template, an asset) passes through uncounted. `File.binread` is
+    # inherited from IO's singleton, which is the case `replacing` removes again afterwards.
+    def reads_under(dir)
+      prefix = "#{dir}/"
+      tally = Hash.new(0)
+      binread = File.method(:binread)
+      counting = lambda do |path, *rest|
+        tally[path.to_s.delete_prefix(prefix)] += 1 if path.to_s.start_with?(prefix)
+        binread.call(path, *rest)
+      end
+      replacing(File, :binread, counting) { yield }
+      tally
     end
 end
 

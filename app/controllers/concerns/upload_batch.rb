@@ -3,16 +3,24 @@
 # Both upload doors took exactly one file — `projects/_upload_control` and `files/index` rendered a
 # file field with no `multiple`, so a maker with a dozen project files opened the picker a dozen
 # times. (The Files page's field has been the top bar's since redesign slice 4,
-# layouts/_topbar_upload.html.erb; it posts to the same door.) The model importer next door has always accepted a batch, so the app already knew how; the
-# two doors a maker actually lives in did not.
+# layouts/_topbar_upload.html.erb; it posts to the same door. The other door is a build-log entry's
+# photo uploader, Projects::UploadsController.) The model importer next door has always accepted a
+# batch, so the app already knew how; the two doors a maker actually lives in did not.
 #
 # ONE FILE'S FAILURE MUST NOT LOSE THE OTHERS, which is the whole reason this is a shared loop
-# rather than `uploads.each` at each call site. Both controllers previously let
-# FileLayer::UnsupportedOperation and FetchError reach a `rescue_from` that redirects — correct for
-# one file, and for a batch it would abandon files 4 and 5 because file 3 hit a name that was
-# already taken. So each write is isolated here and the refusal is REPORTED
-# (ProjectFolderIntake#refused_sentence) instead of thrown away: a batch that silently drops a file
-# is worse than one that refuses loudly.
+# rather than `uploads.each` at each call site. Both controllers previously let the port's
+# refusals reach a `rescue_from` that redirects — correct for one file, and for a batch it would
+# abandon files 4 and 5 because file 3 hit a name that was already taken. So each write is isolated
+# here and the refusal is REPORTED (ProjectFolderIntake#refused_sentence) instead of thrown away: a
+# batch that silently drops a file is worse than one that refuses loudly.
+#
+# THE PER-FILE REFUSALS ARE ALL THREE OF THE PORT'S PER-FILE ANSWERS, NOT TWO (F-S21-2, 2026-10-19).
+# The loop used to isolate UnsupportedOperation and FetchError only, while both writable adapters'
+# `write` raise NotFound for conditions that belong to one file: a reserved or OS-clutter name
+# (`.DS_Store`, `._x`, `.git`), a name that is not a leaf, more than FileLayer::MAX_BYTES, and a
+# parent folder that is gone. So a `.DS_Store` in the middle of a selection escaped the loop.
+# FilesController answered "File not found." with the files before it written and the files after
+# it never tried, and the build-log door had no NotFound arm and answered 500.
 #
 # ORDER IS PRESERVED and writes are sequential, deliberately. The port's clobber check is a
 # head-then-put CHECK, NOT A LOCK on S3 (§14a), and two files of the same name arriving in one
@@ -34,7 +42,7 @@ module UploadBatch
   #             that door.
   #
   # Yields each FileInfo (with its upload) so a caller that must do more per file — attaching to a
-  # project, say — can, without this concern learning what an attachment is.
+  # build-log entry, say — can, without this concern learning what an attachment is.
   def write_batch(uploads, parent_node_id:)
     written = []
     refused = {}
@@ -48,7 +56,11 @@ module UploadBatch
       name = upload.original_filename
       begin
         info = FileLayer.current.write(current_user, parent_node_id:, name:, io: upload)
-        enqueue_preview(node_id: info.node_id, name:)
+        # THE ONE STAT-THEN-ENQUEUE (F-S21-2), the same one Maker::TextSave and addon output use.
+        # This line used to call an `enqueue_preview` the concern did not define, which each
+        # includer supplied as its own private near-copy. Best-effort: it answers nil rather than
+        # raising, because a preview is not part of the write's success.
+        Maker::Addons::LibraryOutput.enqueue_preview(current_user, info.node_id, name)
         yield(info, upload) if block_given?
         written << info
       rescue FileLayer::UnsupportedOperation => e
@@ -60,6 +72,11 @@ module UploadBatch
         errors << e
       rescue FileLayer::FetchError => e
         refused[name] = "the library could not be reached"
+        errors << e
+      rescue FileLayer::NotFound => e
+        # One reason for every NotFound the write path raises (see the header). It has to stay true
+        # for all of them, a vanished parent folder included, which is why it names no cause.
+        refused[name] = "the library cannot store it"
         errors << e
       end
     end

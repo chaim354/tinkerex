@@ -371,6 +371,44 @@ class GerberTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # BACK TO A BOARD PAGE WHOSE VIEWER WAS OPEN RESTS AT THE POSTER. Turbo restores its snapshot of
+  # the page with the stage drawn, the toggles built and `data-gerber-state="ready"` set, and then
+  # connects a fresh controller that holds no render for any of it. `connect()` resets the element
+  # (gerber_controller.js's "AT REST, WHATEVER THE MARKUP SAYS"), and until this test nothing
+  # pinned that: no test drove Back. The 3D viewer and the Measure view lacked the same rule (audit
+  # 2026-10-19, F-S22-1 and F-S09-1), and their twins of this test use the same helper.
+  #
+  # GREEN BEFORE THOSE FIXES, deliberately: it pins existing behaviour that had no test. The toggle
+  # count is the second half. It shows the relaunch builds ONE set of toggles over ONE stage, and
+  # does not add a second set beside the restored one.
+  #
+  # MUTATION (§15; run for real, output in the PR, then reverted): dropping `this.rest()` from
+  # gerber_controller.js's `connect()` reds this on the `--ready` assertion.
+  test "Back to a board page whose viewer was open rests at the poster" do
+    node = write_gerber_zip!
+
+    visit file_path(node.node_id)
+    click_button "View board"
+    assert_selector ".gerber-viewer[data-gerber-state='ready']"
+    toggles = all(".gerber-tools [data-gerber-layer-id]").size
+    assert_operator toggles, :>, 1, "premise: a board builds one toggle per layer"
+
+    back_through_turbo_cache
+
+    assert_no_selector ".gerber-viewer.model-viewer--ready"
+    assert_no_selector ".gerber-viewer[data-gerber-state]"
+    assert_no_selector ".gerber-viewer .model-viewer-stage svg", visible: :all
+    assert_no_selector "[data-gerber-layer-id]", visible: :all
+    assert_selector ".gerber-viewer .mv-launch button", text: "View board"
+
+    click_button "View board"
+
+    assert_selector ".gerber-viewer[data-gerber-state='ready']"
+    assert_selector ".gerber-viewer .model-viewer-stage svg", count: 1, visible: :all
+    assert_selector ".gerber-tools [data-gerber-layer-id]", count: toggles
+    assert_no_console_errors
+  end
+
   # A SINGLE LAYER GETS THE BAR'S OWN ACTIONS AND NOTHING ELSE. There is one layer, so a toggle for
   # it is a button whose only effect is to blank the stage — and the side buttons are absent for the
   # same reason the template omits them (one render, two buttons showing the same picture).

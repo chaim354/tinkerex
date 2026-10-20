@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
 module FileLayer
-  # THE MAKER APP AS A SYNC CLIENT — Stage 4, design doc §6. Not yet selectable: `LibraryBackend`
-  # offers chunk, share and s3 only, and `FileLayer.build` has no "chunk_remote" arm. This class and
-  # its Transport land first so the wire and its error vocabulary can be built and tested against a
-  # real server before anything can route traffic at them. Adding the arm is the LAST step of the
-  # arc, not the first, so a half-implemented adapter can never be reached by a deployment.
+  # THE MAKER APP AS A SYNC CLIENT — Stage 4, design doc §6. Selected by LIBRARY_BACKEND=chunk_remote,
+  # a member of LibraryBackendCheck::NAMES with its own arm in FileLayer.build. That arm was the LAST
+  # step of Stage 4, not the first: this class and its Transport landed before it, so the wire and its
+  # error vocabulary were built and tested against a real server while no deployment could route
+  # traffic at a half-implemented adapter.
   #
   # WHY IT IS NOT A SUBCLASS OF `FileLayer::Chunk`, WHICH IS THE OBVIOUS-LOOKING MOVE. Chunk ships
   # in the tinkerex-sync gem, and a chunk_remote deployment does not load that gem at all -- it
