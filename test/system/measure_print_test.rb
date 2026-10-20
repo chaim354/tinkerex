@@ -2826,6 +2826,113 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert_selector "[data-measure-target='svgButton'][aria-label='Download all as SVG']"
   end
 
+  # A SECOND MEASURE CLICK WHILE THE PAYLOAD LOADS JOINS THE FIRST FETCH, AND THE VIEW IS DRAWN
+  # ONCE. The launch button stays clickable until draw() reveals the stage, so a second click is an
+  # ordinary gesture on a slow payload (the worst real file's is 1.3 MB gzipped, §14h). Before the
+  # fix (audit 2026-10-19, F-S09-1) it started a SECOND poll and a SECOND download, and drew a
+  # second time. The later draw replaced the SVG the user was already selecting on, and the
+  # selection made on the first SVG survived in `marked`. The bar then read "Print 1 part" over a
+  # stage with nothing highlighted.
+  #
+  # THE STUB DELAYS THE FIRST PAYLOAD DOWNLOAD AND COUNTS EVERY ONE, which is gerber_test.rb's
+  # relaunch recipe. Only the payload's own URL is held, so the geometry poll answers at once and
+  # the window is the download alone. `draw` is counted on the live controller.
+  #
+  # THE MARK IS MADE BEFORE A LATE DRAW COULD LAND, AND THE POLL AFTER IT IS THE PART TO KEEP. A
+  # superseded draw replaces the SVG without an event of its own, so the loop gives one every
+  # chance to arrive (it returns the moment a second draw is counted) before the selection is
+  # compared with what is highlighted.
+  #
+  # THE TWO COUNTS COME LAST, IN THIS ORDER, so each half of the fix fails at an assertion of its
+  # own (§15). Dropping the shared fetch keeps ONE draw, because the generation check stops the
+  # superseded load painting, and fails on the download count. Dropping the generation check keeps
+  # ONE download and fails on the draw count.
+  #
+  # RED BEFORE THE FIX, on the marked count (0 highlighted under "Print 1 part").
+  # MUTATIONS (§15; run for real, output in the PR, then reverted): load()'s
+  # `this.pending ||= this.fetchPayload()…` replaced by a bare `this.fetchPayload()` reds the
+  # download count (2 for 1); dropping load()'s `gen !== this.generation` return reds the draw count
+  # (2 for 1).
+  test "a second Measure click while the payload loads joins the first fetch and draws once" do
+    visit file_path(@nested_id)
+    page.execute_script("localStorage.removeItem('measure.paper')")
+    wait_until(message: "the measure controller never connected") do
+      page.evaluate_script(<<~JS)
+        !!(window.Stimulus && window.Stimulus.getControllerForElementAndIdentifier(
+          document.querySelector(".measure-view"), "measure"))
+      JS
+    end
+    page.execute_script(<<~JS)
+      window.__payloadFetches = 0
+      window.__draws = 0
+      const real = window.fetch
+      let delayed = false
+      window.fetch = (...args) => {
+        const url = String(args[0] && args[0].url ? args[0].url : args[0])
+        if (!url.includes("/rails/active_storage/")) return real(...args)
+        window.__payloadFetches++
+        const gate = delayed ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, 1500))
+        delayed = true
+        return gate.then(() => real(...args))
+      }
+      const c = window.Stimulus.getControllerForElementAndIdentifier(
+        document.querySelector(".measure-view"), "measure")
+      const draw = c.draw.bind(c)
+      c.draw = (payload) => { window.__draws++; return draw(payload) }
+    JS
+
+    click_on "Measure"
+    click_on "Measure"
+    assert_selector ".measure-view--ready"
+    click_plate
+    deadline = Time.now + 2
+    sleep 0.05 until Time.now > deadline || page.evaluate_script("window.__draws") > 1
+
+    assert_selector ".measure-contour--marked", count: 1
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print 1 part"
+    assert_equal 1, page.evaluate_script("window.__draws"),
+                 "the second click drew the view again over the first drawing"
+    assert_equal 1, page.evaluate_script("window.__payloadFetches"),
+                 "the second click downloaded the payload again instead of joining the first fetch"
+    assert_no_console_errors
+  end
+
+  # BACK TO A FILE PAGE WHOSE MEASURE VIEW WAS OPEN RESTS AT THE POSTER. Turbo restores its snapshot
+  # of the page, which carries `--ready`, the drawn SVG, the `--marked` classes, "Print 1 part" and
+  # the readout, and connects a fresh controller that drew none of it. Before the fix that
+  # controller had no shapes, no SVG and no pan handle. Contours, pan and zoom were dead, Print,
+  # Download and Save did nothing while the label promised a part, and Reset threw a TypeError out
+  # of restingStatus(). `connect()` now rests the element, which is gerber_controller.js's rule
+  # (docs/invariants/files-preview.md).
+  #
+  # THE RELAUNCH AND RESET ARE THE SECOND HALF. They show the poster is a working one: Measure draws
+  # again, and Reset, the control that used to throw, runs clean under the console guard.
+  #
+  # RED BEFORE THE FIX, on the `--ready` assertion: the snapshot's open view survived the connect.
+  # MUTATION (§15; run for real, output in the PR, then reverted): `connect()` without its
+  # `this.rest()` call (the selection still initialised there, as before the fix) reds it on the
+  # same assertion.
+  test "Back to a file page whose Measure view was open rests at the poster" do
+    open_measure_view(@nested_id)
+    click_plate
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print 1 part"
+
+    back_through_turbo_cache
+
+    assert_no_selector ".measure-view--ready"
+    assert_no_selector ".measure-stage svg", visible: :all
+    assert_selector ".measure-launch button", exact_text: "Measure"
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print all", visible: :all
+    assert_equal "", page.evaluate_script("document.querySelector('.measure-dims').textContent")
+
+    click_on "Measure"
+    assert_selector ".measure-view--ready"
+    click_on "Reset"
+
+    assert_selector ".measure-dims", exact_text: "2 shapes · click one to measure"
+    assert_no_console_errors
+  end
+
   # TWO CLAIMS NOTHING IN THE DOM CAN ANSWER, and neither has a reader until the print wiring
   # lands — which is exactly why they are asserted here rather than left for it to discover.
   # `name` MUST BE DECLARED IN `static values`: Stimulus silently ignores a data-*-value attribute
@@ -3108,12 +3215,15 @@ class MeasurePrintTest < ApplicationSystemTestCase
   end
 
   # PRINT BEFORE THERE IS ANYTHING TO PRINT — the one state `print()`'s `!shapes` guard is for, and
-  # it is only reachable the way this test reaches it: `allShapes` is undefined between connect()
-  # and the first successful draw(), and in that state `.measure-actions` is display:none, so
-  # Capybara cannot click the button and neither can a user. Dropping the guard is GREEN against
-  # every other test in this file — measured — and what it costs is not nothing: buildSheets is
-  # handed `undefined` and the readout fills with "Cannot read properties of undefined (reading
-  # 'length')", a raw TypeError presented to the user as the answer to a button press.
+  # it is only reachable the way this test reaches it. `allShapes` is null whenever nothing is
+  # drawn: rest() clears it, on connect and on ✕ Image, and only draw() sets it, before it reveals
+  # the Print button with --ready. So no click reaches print() without shapes. Until 2026-10-19 the
+  # argument here was "`.measure-actions` is display:none", and a Turbo Back broke it by restoring
+  # the class over a controller with no shapes (the Back test above). Dropping the guard is GREEN
+  # against every other test in this file — measured again on 2026-10-19, 1 failure in 80 — and
+  # what it costs is not nothing: buildSheets is handed null and the readout fills with "Cannot read
+  # properties of null (reading 'length')", a raw TypeError presented to the user as the answer to
+  # a button press.
   test "printing before the geometry has loaded says nothing and spools nothing" do
     visit file_path(@nested_id)
     stub_print!

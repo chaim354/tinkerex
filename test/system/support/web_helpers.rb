@@ -126,6 +126,39 @@ module WebHelpers
     assert yield, message
   end
 
+  # LEAVES THIS PAGE BY A TURBO VISIT, COMES BACK WITH THE BROWSER'S BACK BUTTON, AND PROVES THE PAGE
+  # ON SCREEN IS TURBO'S SNAPSHOT OF IT RATHER THAN A FRESH RENDER. Shared by the three launchable
+  # viewers' suites (Measure, 3D, Gerber), because each one has to survive the same thing.
+  #
+  # WHAT THEY HAVE TO SURVIVE. Turbo caches a CLONE of the page as it leaves it, with the viewer
+  # open, its stage drawn and its state attribute set, and a Back restores that clone without a
+  # request and connects a FRESH controller to it. That controller holds none of what the clone
+  # shows. A viewer that does not reset its element on connect therefore presents a stage nothing
+  # drives (docs/invariants/files-preview.md, the reset-on-connect rule): pan, zoom and Reset are
+  # dead, and Print offers parts the controller no longer holds.
+  #
+  # THE PROBE IS ASSERTED FIRST, AND IT IS WHAT KEEPS THE CALLER'S TEST FROM BEING VACUOUS. A body
+  # attribute set before leaving exists only in the snapshot, because no server render carries it.
+  # If Turbo had re-fetched the page instead, every "it rests at the poster" assertion after this
+  # call would pass against a page that was never open. No test drove Back before this helper (grep
+  # for `go_back`), so nothing else would have noticed that.
+  #
+  # THE WAY OUT IS A REAL LINK, the rail's Trash, because a click is what a user does and every
+  # signed-in page carries that link. Any advance visit caches the snapshot; Trash is also cheap to
+  # render.
+  def back_through_turbo_cache
+    here = page.current_path
+    page.execute_script("document.body.dataset.snapshotProbe = 'cached'")
+    find("a.rail-link[title='Trash']").click
+    assert_current_path trash_index_path
+    page.go_back
+    assert_current_path here
+    wait_until(message: "Back re-rendered #{here} instead of restoring Turbo's snapshot of it, " \
+                        "so nothing after this line is on the path it exists to test") do
+      page.evaluate_script("document.body.dataset.snapshotProbe") == "cached"
+    end
+  end
+
   # Fails the test if the browser logged an error. Cheap, and it catches the whole class of bug
   # where a Stimulus controller throws, the DOM is left half-built, and the assertion below happens
   # to still pass — how the jspreadsheet async-factory bug rendered a permanently empty grid with no
