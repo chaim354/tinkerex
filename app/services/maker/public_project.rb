@@ -424,8 +424,9 @@ module Maker
 
     # READY THUMBNAILS ONLY on a public page — `ThumbnailMap.for` still backfills, which is what
     # makes a first visit start the renders, but nothing here polls: `files/_thumb` renders the
-    # spinner markup for a pending row and `pages/public.css` stops its animation, so it reads as a
-    # static badge rather than a promise the page will never keep (files-preview.md).
+    # spinner markup for a pending row, and a spinner turns only inside a poll cell (components.css),
+    # so with none here it reads as a static badge rather than a promise the page will never keep
+    # (files-preview.md).
     def thumbs
       @thumbs ||= Maker::Previews::ThumbnailMap.for(owner, listing.node_ids + page_nodes.keys)
     end

@@ -314,8 +314,15 @@
   .thumb-icon { font: 500 11px/1 var(--font-mono); letter-spacing: .06em; color: var(--thumb-ink); }
   .thumb-spinner {
     width: 14px; height: 14px; border: 2px solid transparent; border-top-color: var(--thumb-ink); border-right-color: var(--thumb-ink);
-    border-radius: 50%; animation: thumb-spin .8s linear infinite;
+    border-radius: 50%;
   }
+  /* A SPINNER TURNS ONLY WHERE THE POLL WILL ANSWER IT: inside a cell thumbs_controller.js reads
+     (`cellTargets`, where "a cell holding a spinner" IS its pending predicate). Anywhere else, on
+     every public surface (/files/thumbnails is session-authed) and under any mount with no cell,
+     nothing will replace it, so it is a still ring: the render is queued, it will not arrive in this
+     tab. Keyed on the poll's own markup, so no page sheet lists the containers that do not poll —
+     pages/public.css kept that list and missed two (F-S34-1). test/system/thumb_spinner_test.rb. */
+  [data-thumbs-target~="cell"] .thumb-spinner { animation: thumb-spin .8s linear infinite; }
   @keyframes thumb-spin { to { transform: rotate(360deg); } }
   table.files .thumb { width: 32px; height: 32px; flex: 0 0 32px; }
   .folder-thumb, .generic-thumb { background: var(--raised); color: var(--fg-muted); }
