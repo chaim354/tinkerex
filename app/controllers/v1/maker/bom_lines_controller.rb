@@ -1,9 +1,11 @@
 module V1
   module Maker
     class BomLinesController < V1::BaseController
+      # A stock line's `unit` is read from its item (Maker::BomLine#unit), so the items load with the
+      # lines rather than one query per stock line.
       def index
         bom = current_user.maker_boms.find(params[:bom_id])
-        render json: { bom_lines: bom.lines.map { |l| line_json(l) } }
+        render json: { bom_lines: bom.lines.includes(:inventory_item).map { |l| line_json(l) } }
       end
 
       def create

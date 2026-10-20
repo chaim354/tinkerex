@@ -31,6 +31,64 @@ module V1
         assert_equal "inventory_item", body["target_kind"]
       end
 
+      # A STOCK LINE ANSWERS IN ITS ITEM'S UNIT (audit F-S16-2), whatever the client sent. The desktop
+      # composer sends its unit select for every kind of line, and this door saved it as sent, so
+      # every read said "2 each" of an item Consume counts in kg. The edit to the item afterwards is
+      # the half no rule at create time could reach: the index and the rollup both follow it.
+      test "a stock line answers in its item's unit, and follows an edit to the item" do
+        patch "/v1/maker/inventory_items/#{@inv}", params: { inventory_item: { unit: "kg" } },
+              as: :json, headers: auth(@token)
+        post "/v1/maker/boms/#{@bom}/bom_lines",
+             params: { bom_line: { inventory_item_id: @inv, quantity: 2, unit: "each" } },
+             as: :json, headers: auth(@token)
+        assert_response :created
+        assert_equal "kg", JSON.parse(response.body)["unit"]
+
+        patch "/v1/maker/inventory_items/#{@inv}", params: { inventory_item: { unit: "g" } },
+              as: :json, headers: auth(@token)
+        assert_response :success
+        get "/v1/maker/boms/#{@bom}/bom_lines", headers: auth(@token)
+        assert_equal %w[g], JSON.parse(response.body)["bom_lines"].map { |l| l["unit"] }
+        get "/v1/maker/boms/#{@bom}/rollup", headers: auth(@token)
+        assert_equal %w[g], JSON.parse(response.body)["lines"].map { |l| l["unit"] }
+      end
+
+      # THE INDEX READS EACH STOCK LINE'S ITEM FOR ITS UNIT, so it loads the items with the lines.
+      # Constancy rather than a literal, as page_query_budget_test.rb argues: the counts are each
+      # backend leg's own. Every line gets its own item, as on a real BOM.
+      test "the index costs the same queries at one stock line as at five" do
+        add_stock_lines = lambda do |count|
+          user = User.find_by!(email: "bl@example.com")
+          bom = user.maker_boms.find(@bom)
+          count.times do |i|
+            item = user.maker_inventory_items.create!(name: "part #{bom.lines.count}-#{i}", unit: "kg")
+            bom.lines.create!(user:, inventory_item: item, quantity: 1)
+          end
+        end
+        index = -> { get "/v1/maker/boms/#{@bom}/bom_lines", headers: auth(@token) }
+
+        add_stock_lines.(1)
+        index.()
+        small = count_index_queries(&index)
+        add_stock_lines.(4)
+        index.()
+        large = count_index_queries(&index)
+
+        assert_equal 5, JSON.parse(response.body)["bom_lines"].size
+        assert_equal small, large, "the index issued #{small} queries for one stock line and #{large} for five"
+      end
+
+      def count_index_queries
+        n = 0
+        sub = ActiveSupport::Notifications.subscribe("sql.active_record") do |_, _, _, _, payload|
+          n += 1 unless payload[:name].in?([ "SCHEMA", "TRANSACTION" ]) || payload[:sql].start_with?("PRAGMA")
+        end
+        yield
+        n
+      ensure
+        ActiveSupport::Notifications.unsubscribe(sub)
+      end
+
       test "add a design-file line by node_id" do
         post "/v1/maker/boms/#{@bom}/bom_lines",
              params: { bom_line: { node_id: "node-step", quantity: 1 } },
