@@ -80,9 +80,10 @@ module Web
 
       # THE COLLIDING FOLDER IS THE ONE THE SWEEP TRIED, AND FOR A BOARD ZIP THAT IS NOT WHAT THE
       # NAME SAYS (stage 4, S4-2; story 2.8). `zip` is role `source_archive` -> `archives/`, but
-      # Maker::ProjectIntake#place reads the bytes and files a Gerber export into `pcb/`. Before
-      # Result#conflicts the sentence re-derived the folder from the NAME and named `archives/` — a
-      # folder the file had never been near. This is the one case that tells the two apart.
+      # Maker::ProjectIntake#place reads the bytes and files a Gerber export into `pcb/`. Before the
+      # conflict carried the folder it tried (its Filing, since F-S06-1), the sentence re-derived the
+      # folder from the NAME and named `archives/` — a folder the file had never been near. This is
+      # the one case that tells the two apart.
       test "a board zip that collides is told about pcb, the folder the sweep actually tried" do
         board = File.binread(Rails.root.join("test/fixtures/files/gerber-export.zip"))
         upload("Gerber_lamp.zip", board)

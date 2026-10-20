@@ -123,11 +123,11 @@ module Web
       end
       file = lambda do |**|
         order << :file
-        # `plan` CARRIES THE MOVE THIS STUB CLAIMS (stage 4, S4-2): the notice reads what was FILED
-        # off Result#plan now, not off `moved`, so a stub asserting "filed 1" has to carry the pair
-        # #place would have built.
-        Maker::ProjectIntake::Result.new(attached: 2, moved: 1, skipped: 0,
-                                         skips: [], plan: [ [ "panel.svg", "design" ] ], status: :ok)
+        # THE STUB CARRIES THE ROW #place WOULD HAVE BUILT (stage 4, S4-2; F-S06-1): the notice
+        # reads what was FILED off the Result's Filings, so a stub asserting "filed 1" has to carry
+        # one — `moved` is counted from them, never stated beside them.
+        filed = Maker::ProjectIntake::Filing.new(name: "panel.svg", folder: "design", skip: nil)
+        Maker::ProjectIntake::Result.new(attached: 2, status: :ok, filings: [ filed ])
       end
       replacing(FileLayer::RemoteChangelogPullJob, :perform_now, pull) do
         replacing(Maker::ProjectDiscoveryJob, :perform_now, discover) do
@@ -153,8 +153,7 @@ module Web
     test "on chunk_remote a scan that discovers nothing says nothing about discovery" do
       FileLayer.current = FileLayer::ChunkRemote.new
       none = Maker::ProjectDiscovery::RunResult.new(created: 0, candidates: 0, status: :ok, cap: 50)
-      quiet = Maker::ProjectIntake::Result.new(attached: 0, moved: 0, skipped: 0, skips: [],
-                                               plan: [], status: :ok)
+      quiet = Maker::ProjectIntake::Result.new(attached: 0, status: :ok)
       replacing(FileLayer::RemoteChangelogPullJob, :perform_now, ->(**) { }) do
         replacing(Maker::ProjectDiscoveryJob, :perform_now, ->(**) { none }) do
           replacing(Maker::ProjectIntake, :for_project, ->(**) { quiet }) do
@@ -174,8 +173,7 @@ module Web
         created: 4, candidates: 9, status: :capped, cap: 4,
         names: [ "Alpha", "Beta", "Gamma", "Delta" ]
       )
-      quiet = Maker::ProjectIntake::Result.new(attached: 0, moved: 0, skipped: 0, skips: [],
-                                               plan: [], status: :ok)
+      quiet = Maker::ProjectIntake::Result.new(attached: 0, status: :ok)
       replacing(FileLayer::RemoteChangelogPullJob, :perform_now, ->(**) { }) do
         replacing(Maker::ProjectDiscoveryJob, :perform_now, ->(**) { capped }) do
           replacing(Maker::ProjectIntake, :for_project, ->(**) { quiet }) do
@@ -196,7 +194,7 @@ module Web
     # one click could create fifty projects and enqueue fifty intakes in the request.
     test "on chunk_remote the request-path sweep carries the eager cap, never the sweep's" do
       FileLayer.current = FileLayer::ChunkRemote.new
-      quiet = Maker::ProjectIntake::Result.new(attached: 0, moved: 0, skipped: 0, skips: [], plan: [], status: :ok)
+      quiet = Maker::ProjectIntake::Result.new(attached: 0, status: :ok)
       none = Maker::ProjectDiscovery::RunResult.new(created: 0, candidates: 0, status: :ok, cap: 10)
       seen = :unset
       replacing(FileLayer::RemoteChangelogPullJob, :perform_now, ->(**) { }) do
@@ -223,8 +221,7 @@ module Web
 
     test "on chunk_remote a project with no folder is told so, and no folder is created" do
       FileLayer.current = FileLayer::ChunkRemote.new
-      none = Maker::ProjectIntake::Result.new(attached: 0, moved: 0, skipped: 0, skips: [],
-                                              plan: [], status: :no_folder)
+      none = Maker::ProjectIntake::Result.new(attached: 0, status: :no_folder)
       # DISCOVERY STILL SPEAKS ON THIS BRANCH (found in review: the early return dropped it, and a
       # project with no folder is exactly the maker most likely to have just had folders adopted).
       found = Maker::ProjectDiscovery::RunResult.new(created: 1, candidates: 1, status: :ok, cap: 10,
@@ -247,17 +244,38 @@ module Web
     # its fourth caller and must not paraphrase it.
     test "a collision left at the project root is named in the same words every other door uses" do
       FileLayer.current = FileLayer::ChunkRemote.new
-      clash = Maker::ProjectIntake::Result.new(attached: 1, moved: 0, skipped: 1,
-                                               skips: [ [ "panel.stl", :conflict ] ],
-                                               plan: [], status: :ok)
+      collided = Maker::ProjectIntake::Filing.new(name: "panel.stl", folder: "models", skip: :conflict)
+      clash = Maker::ProjectIntake::Result.new(attached: 1, status: :ok, filings: [ collided ])
       replacing(FileLayer::RemoteChangelogPullJob, :perform_now, ->(**) { }) do
         replacing(Maker::ProjectIntake, :for_project, ->(**) { clash }) do
           post project_scan_path(@project)
         end
       end
-      assert_match(/already in #{Maker::ProjectFolders.folder_for(@user, 'panel.stl')}\//,
-                   flash[:notice].to_s)
+      assert_match(%r{already in models/}, flash[:notice].to_s)
       assert_match(/stayed at the project root/i, flash[:notice].to_s)
+    end
+
+    # THE FOLDER A COLLISION NAMES IS THE ONE THE SWEEP TRIED, CARRIED ON THE CONFLICT'S OWN ROW
+    # (F-S06-1). A board zip is the one file whose NAME and DESTINATION disagree: its extension
+    # files it into archives/, while #place reads the bytes and tries pcb/. 521bfb30 shipped this
+    # flash naming archives/, a folder the file was never near; its fix recorded the tried folder in
+    # a name-keyed map BESIDE the skips and kept a fallback that re-derived it from the name for a
+    # Result built without the map — which every stub in this file was. Built that way, this case
+    # read "already in archives/" again. A Filing has no second place for the folder to be missing
+    # from, and no fallback is left to guess it.
+    test "a collision names the folder the sweep tried, never one re-derived from the file's name" do
+      FileLayer.current = FileLayer::ChunkRemote.new
+      assert_equal "archives", Maker::ProjectFolders.folder_for(@user, "Gerber_lamp.zip"),
+                   "the case bites only while the name's folder and the tried folder disagree"
+      board = Maker::ProjectIntake::Filing.new(name: "Gerber_lamp.zip", folder: "pcb", skip: :conflict)
+      clash = Maker::ProjectIntake::Result.new(attached: 1, status: :ok, filings: [ board ])
+      replacing(FileLayer::RemoteChangelogPullJob, :perform_now, ->(**) { }) do
+        replacing(Maker::ProjectIntake, :for_project, ->(**) { clash }) do
+          post project_scan_path(@project)
+        end
+      end
+      assert_match(%r{already in pcb/, so this one stayed at the project root\.}, flash[:notice].to_s)
+      assert_no_match(%r{archives/}, flash[:notice].to_s)
     end
 
     # NOT ONLY ABUSE CONTROL. Library::ScanJob's `on_conflict: :discard` silently DROPS a second

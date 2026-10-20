@@ -509,7 +509,7 @@ module Maker
       result = intake
 
       assert_equal [ [ "Gerber_lamp.zip", :conflict ] ], result.skips
-      assert_equal({ "Gerber_lamp.zip" => "pcb" }, result.conflict_folders)
+      assert_equal "pcb", result.conflict_folder("Gerber_lamp.zip")
     end
 
     test "a loose file at the root is filed into its category folder" do
