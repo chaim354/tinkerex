@@ -5,8 +5,10 @@
   gallery with no pictures is not a quiet panel, it is no panel.
 
   Its own `thumbs` controller: this section sits OUTSIDE the Files panel's polling wrapper, the same
-  reason projects/_log_entry carries one. Every row's thumbnail is already in @page_thumbs, so this
-  polls the pending ones and never builds a second ThumbnailMap.
+  reason projects/_log_entry carries one. Every row's thumbnail is already in @page_thumbs, because
+  @photo_rows is its own term in ProjectsController#show's union (an image inside a browsed
+  repository is drawn by no tile, so nothing else would put it there), so this polls the pending
+  ones and never builds a second ThumbnailMap.
 %>
 <% if @photo_rows.any? %>
   <section class="panel photos-panel">
