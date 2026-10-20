@@ -18,8 +18,8 @@ module Maker
       #   3D Models/
       #     benchy.stl                     -> its own model
       #     Enclosure/body.stl             -> one model, "Enclosure"
-      #   Projects/desk-lamp/
-      #     cad/mount.stl                  -> the project is the model, "desk-lamp"
+      #   Projects/desk-lamp/              -> discovery's by position, so NOT a model (F-S07-1)
+      #     cad/mount.stl                  -> nothing: its key is desk-lamp, which is claimed
       #     models/bracket.stl             -> its own model
       #     models/enclosure/lid.stl       -> one model, "enclosure"
       dir("d-3d", "3D Models", nil)
@@ -48,7 +48,7 @@ module Maker
     test "the seeded shelves produce one model per design, not one per top-level folder" do
       Maker::ModelIntake.for_user(user: @user)
 
-      assert_equal %w[Enclosure benchy bracket desk-lamp enclosure],
+      assert_equal %w[Enclosure benchy bracket enclosure],
                    @user.maker_models.order(:title).pluck(:title)
     end
 
@@ -74,11 +74,18 @@ module Maker
 
     # THE DEEPER PATTERN IS THE NEARER SHELF, so `Projects/*/models` is not shadowed by `*` making
     # `Projects` one. Both seeds are load-bearing and they do different work.
+    #
+    # `desk-lamp` ITSELF IS NOT A MODEL, AND THIS USED TO PIN THE OPPOSITE (until F-S07-1,
+    # 2026-10-19): `*` makes it the shelf's direct child, so `cad/mount.stl` keyed to it and the
+    # whole project folder was one model titled "desk-lamp" -- the state a discovery that has not
+    # reached the folder yet used to leave behind. No project row exists here, and the folder is
+    # discovery's by position all the same (Maker::ProjectDiscovery.positional_claims).
     test "files under a project's models folder are their own models, not part of the project's" do
       Maker::ModelIntake.for_user(user: @user)
 
-      assert_equal %w[f-mount],
-                   @user.maker_models.find_by!(title: "desk-lamp").file_attachments.pluck(:node_id)
+      assert_nil @user.maker_models.find_by(title: "desk-lamp"),
+                 "a folder discovery owns by position became a model"
+      assert_empty Maker::FileAttachment.where(user: @user, node_id: "f-mount")
       assert_equal %w[f-bracket],
                    @user.maker_models.find_by!(title: "bracket").file_attachments.pluck(:node_id)
       assert_equal %w[f-lid],

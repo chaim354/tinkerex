@@ -162,8 +162,17 @@ production:
   # Model catalog: every model-role file in the library belongs to a model, decided by the nearest
   # shelf above it. CHUNK DEPLOYMENTS ONLY -- sweep_all! declines when the backend is `scannable`,
   # because on share/s3 Library::ScanJob calls the intake at the end of its own perform, strictly
-  # after the reconcile AND strictly after the project intake (a file this app is about to move has
-  # no business being catalogued at its old path).
+  # after the reconcile AND after discovery and the project intake (a file this app is about to
+  # move has no business being catalogued at its old path; ScanJob#intake_models says where that
+  # still changes the answer).
+  #
+  # HERE NOTHING ORDERS THIS ENTRY against project_discovery or project_folder_intake, and for a
+  # folder under `Projects/` it does not need to (F-S07-1, 2026-10-19): the catalog counts every
+  # folder discovery owns BY POSITION as claimed, adopted yet or not (Maker::ModelIntake
+  # .claimed_folders), so a folder another device pushes there is never one model, whichever of the
+  # three ticks first or wherever the 2-minute pull lands between them. What the intake-before-
+  # catalog order still decides elsewhere (a project adopted at a top-level folder with filing on)
+  # is not sequenced on this backend either.
   #
   # `command:` rather than `class:`, matching every other gated entry here, because the backend gate
   # lives in a class method rather than in #perform.

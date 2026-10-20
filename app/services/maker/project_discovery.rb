@@ -161,15 +161,29 @@ module Maker
     # the dot rule alone answers "yes, adoptable" for nil.)
     def self.adoptable_name?(name) = name.to_s.present? && !name.to_s.start_with?(".")
 
-    # [[node_id, name], ...] in DETERMINISTIC order, so a capped run is reproducible and the next
-    # run continues where this one stopped instead of re-rolling the dice.
-    def self.adoptable(user, root)
-      # UNSCOPED, AND THAT IS THE ENTIRE DISMISSAL MECHANISM. Archiving a project leaves
-      # folder_node_id intact, so an archived project still claims its folder and this passes over
-      # it. Filtering archived rows out HERE is exactly how a dismissed thing comes back —
-      # docs/invariants/model-intake.md records the identical mistake for the `catalogued` scope.
-      # THE ROW IS THE MEMORY.
-      claimed = user.maker_projects.where.not(folder_node_id: nil).pluck(:folder_node_id).to_set
+    # EVERY FOLDER THIS SWEEP OWNS BY POSITION — adopted already or not yet — and UNCAPPED.
+    # [[node_id, name], ...] in the ORDER BY node_id that makes a capped run reproducible (#adoptable
+    # inherits it). PUBLIC because Maker::ModelIntake.claimed_folders asks it (F-S07-1, 2026-10-19).
+    #
+    # The model catalog used to count only the projects that EXISTED when it ran, and left "discovery
+    # will adopt this" to running discovery first. Sequencing failed three ways: MAX_PROJECTS caps
+    # this sweep even inside Library::ScanJob's own sequence; on chunk_remote discovery and the
+    # catalog are independent schedules; and the changelog pull can land between them. A folder
+    # past the cap became ONE auto model and was adopted on the next run — a project AND a model
+    # until someone ran `rake models:prune`. A positional claim always becomes a real one (archiving
+    # keeps the claim; a v1 hard delete is re-adopted), so the catalog may treat "not yet" as
+    # "claimed".
+    #
+    # THE RULE LIVES HERE, AND #adoptable IS THIS MINUS WHAT IS ALREADY CLAIMED. Anything that decides
+    # what this sweep will EVER adopt belongs in this method — the depth limit, the dot rule, a
+    # tombstone, and any refusal added later — so the catalog follows it instead of keeping a second
+    # copy. A path test in Maker::ModelIntake would claim `.scratch`, which no project can ever hold,
+    # and hide it from the catalog forever.
+    #
+    # UNCAPPED ON PURPOSE: a cap here reopens exactly the hole this closes. `root:` is #for_user's,
+    # which has already looked the root up; every other caller omits it.
+    def self.positional_claims(user, root: projects_root(user))
+      return [] unless root
 
       # DIRECT CHILDREN ONLY. `Projects/desk-lamp/models/` is a category subfolder
       # Maker::ProjectFolders created, and adopting it would mint a project named "models" inside a
@@ -183,7 +197,20 @@ module Maker
           .where(parent_node_id: root.node_id, kind: "dir")
           .order(:node_id)
           .pluck(:node_id, :name)
-          .reject { |node_id, name| claimed.include?(node_id) || !adoptable_name?(name) }
+          .select { |_node_id, name| adoptable_name?(name) }
+    end
+
+    # [[node_id, name], ...] in DETERMINISTIC order, so a capped run is reproducible and the next
+    # run continues where this one stopped instead of re-rolling the dice.
+    def self.adoptable(user, root)
+      # UNSCOPED, AND THAT IS THE ENTIRE DISMISSAL MECHANISM. Archiving a project leaves
+      # folder_node_id intact, so an archived project still claims its folder and this passes over
+      # it. Filtering archived rows out HERE is exactly how a dismissed thing comes back —
+      # docs/invariants/model-intake.md records the identical mistake for the `catalogued` scope.
+      # THE ROW IS THE MEMORY.
+      claimed = user.maker_projects.where.not(folder_node_id: nil).pluck(:folder_node_id).to_set
+
+      positional_claims(user, root:).reject { |node_id, _name| claimed.include?(node_id) }
     end
     private_class_method :adoptable
   end

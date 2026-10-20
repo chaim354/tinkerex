@@ -128,24 +128,33 @@ module Maker
     # question this sweep asks, not a second spelling of it.
     #
     # FOLDERS THAT ARE SOMEONE ELSE'S ALREADY -- look, do not take (§14f's "reads folder_node_id,
-    # never calls ensure_library_folder!" has the same shape). TWO CLAIMANTS:
+    # never calls ensure_library_folder!" has the same shape). THREE CLAIMANTS:
     #
     #   an IMPORT-origin model -- a folder the user imported into is that model's;
-    #   a PROJECT -- a folder under `Projects/` is a build, not a print. `*` makes `Projects` a
-    #     shelf, so without this a project folder became one model holding its whole tree: measured,
-    #     `Projects/TheFlightWall_OSS` had 2305 attachments of which 2 were meshes. Asking WHO
-    #     CLAIMS THE FOLDER rather than re-testing the path keeps ProjectDiscovery's policy in one
-    #     place, and Library::ScanJob already runs discovery before this sweep (§14k). A user who
-    #     deletes the project releases the folder, which is the same "the row is the memory" rule
-    #     dismissal runs on.
+    #   a PROJECT -- a project's folder is a build, not a print. `*` makes `Projects` a shelf, so
+    #     without this a project folder became one model holding its whole tree: measured,
+    #     `Projects/TheFlightWall_OSS` had 2305 attachments of which 2 were meshes. A user who
+    #     deletes the project releases a folder nothing else claims, which is the same "the row is
+    #     the memory" rule dismissal runs on;
+    #   DISCOVERY, BY POSITION (F-S07-1, 2026-10-19) -- a folder Maker::ProjectDiscovery will adopt
+    #     is the project's BEFORE the row exists. This used to be left to running discovery first,
+    #     and that ordering could not hold: discovery is capped even inside Library::ScanJob's own
+    #     sequence, and on chunk_remote the two sweeps are independent schedules. So whatever order
+    #     the sweeps run in, a folder discovery will adopt is never one model, not even for a tick.
     #
-    # BOTH QUERIES ARE UNSCOPED ON STATUS. An ARCHIVED project keeps folder_node_id and still claims
-    # its folder; filtering archived rows out here is exactly how a dismissed thing comes back, the
-    # mistake Maker::ProjectDiscovery#adoptable and the `catalogued` scope both record.
+    # EACH ASKS THE CLAIMANT, NEVER RE-TESTS A PATH, which keeps ProjectDiscovery's policy in one
+    # place: its own reader decides, so a dot-folder it will never adopt is still catalogued here.
+    #
+    # THE TWO ROW QUERIES ARE UNSCOPED ON STATUS. An ARCHIVED project keeps folder_node_id and still
+    # claims its folder; filtering archived rows out here is exactly how a dismissed thing comes
+    # back, the mistake Maker::ProjectDiscovery#adoptable and the `catalogued` scope both record.
+    # The positional reader costs two more queries, CONSTANT in N, and is UNCAPPED for the reason
+    # its own comment gives.
     def self.claimed_folders(user, model_keys)
       user.maker_models.where(origin: "import").where(folder_node_id: model_keys)
           .pluck(:folder_node_id)
           .concat(user.maker_projects.where(folder_node_id: model_keys).pluck(:folder_node_id))
+          .concat(Maker::ProjectDiscovery.positional_claims(user).map(&:first))
           .to_set
     end
 
