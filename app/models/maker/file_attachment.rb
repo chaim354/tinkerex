@@ -167,11 +167,11 @@ module Maker
       # DELIBERATELY ABSENT: `.xnc` — it is a real Excellon extension (KiCad writes one) but it is
       # also the extension of nothing else, and tracespace identifies a drill layer from the
       # FILENAME, so adding it later is a one-line edit here: rows already attached as `other`
-      # follow by `classify_unclassified!` below (F-S33-1). What that line does not reach is an
-      # existing user's FILING map, which needs the top-up migration every widening carries
-      # (`SeedPcbFilingRules`' shape) or their `.xnc` files into `other/`. It is left out only
-      # because no fixture or live library in this repo has produced one; add it the day one does.
-      # `.gbp` above is the solder-paste layer, NOT the `.gbp` some backup tools write.
+      # follow by `classify_unclassified!` below (F-S33-1). What it does not reach is an existing
+      # user's FILING map: without the top-up migration every widening carries
+      # (`SeedPcbFilingRules`' shape), a user seeded earlier files `.xnc` into `other/`. It is left
+      # out only because no fixture or live library in this repo has produced one; add it the day
+      # one does. `.gbp` above is the solder-paste layer, NOT the `.gbp` some backup tools write.
       "gbr" => "pcb", "gtl" => "pcb", "gbl" => "pcb", "gts" => "pcb", "gbs" => "pcb",
       "gto" => "pcb", "gbo" => "pcb", "gtp" => "pcb", "gbp" => "pcb", "gko" => "pcb",
       "gm1" => "pcb", "gm2" => "pcb", "gm3" => "pcb", "gp1" => "pcb", "gp2" => "pcb",
@@ -351,13 +351,14 @@ module Maker
 
     # STORED ROLES FOLLOW THIS VOCABULARY BY ONE RULE, AND THIS IS ITS ONE OWNER (F-S33-1). `role`
     # is written with the row, from `role_for` at the attach doors, so a row written before
-    # ROLE_BY_EXT learned its extension says `other` until something rewrites it. For nine widenings
-    # that was a hand-copied data migration; two widenings never got one (`nc`/`tap`/`ngc`, and the
-    # Gerber layers), so an electronics project showed a photo where its board should be. This
-    # re-reads ONE user's `other` rows against TODAY's table and rewrites those it now names, which
-    # makes the row half of a widening the table edit and nothing else.
-    # Maker::ClassifyAttachmentRolesJob runs it daily for every user and `rake maker:classify_roles`
-    # runs it on demand. -> rows rewritten.
+    # ROLE_BY_EXT learned its extension says `other` until something rewrites it. For seven
+    # widenings that was a hand-copied data migration (eight migrations rewrite stored roles; the
+    # eighth is the one RE-classification, `lbrn2` vector -> laser); two widenings never got one
+    # (`nc`/`tap`/`ngc`, and the Gerber layers, whose SeedPcbFilingRules seeds filing rules only),
+    # so an electronics project showed a photo where its board should be. This re-reads ONE user's
+    # `other` rows against TODAY's table and rewrites those it now names, which makes the row half
+    # of a widening the table edit and nothing else. Maker::ClassifyAttachmentRolesJob runs it daily
+    # for every user and `rake maker:classify_roles` runs it on demand. -> rows rewritten.
     #
     # `other` IS THE ONE VALUE IT TOUCHES, and it means "nothing classified this name when the row
     # was written". The schema keeps no chosen-versus-derived column, so every other value is a

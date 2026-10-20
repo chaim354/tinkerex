@@ -80,14 +80,16 @@ Three consequences of the one table:
   (`Maker::ClassifyAttachmentRolesJob`, `config/recurring.yml`) and on demand with
   `rake maker:classify_roles`, the moment a widening deploy lands. So the ROLE half of a widening is
   the table edit and nothing else: no re-derive migration, and no test of an old migration to touch.
-  Nine widenings carried that half by hand-copied migration and two never got one (`nc`/`tap`/`ngc`
-  on 2026-07-31, the Gerber extensions on 2026-09-06), which left an electronics project's hero on a
-  photo instead of its board. **`other` is the only value it rewrites**: it means "nothing
-  classified this name when the row was written", and every other value is a decision (a photo
-  door's `image`, a v1 client's post) that is never rewritten. Its limits, by construction: a
-  RE-classification (the `lbrn2` vector → laser move) and an extension removed from the table still
-  need a migration, and the per-user FILING map above is a separate store whose existing users still
-  need a top-up migration per widening (`Maker::FilingRules.seed!`'s `exists?` guard).
+  Seven widenings carried that half by hand-copied migration (eight migrations rewrite stored roles;
+  the eighth is the one re-classification, `lbrn2` vector → laser) and two never got one
+  (`nc`/`tap`/`ngc` on 2026-07-31; the Gerber extensions on 2026-09-06, whose `SeedPcbFilingRules`
+  seeds filing rules only), which left an electronics project's hero on a photo instead of its
+  board. **`other` is the only value it rewrites**: it means "nothing classified this name when the
+  row was written", and every other value is a decision (a photo door's `image`, a v1 client's post)
+  that is never rewritten. Its limits, by construction: a RE-classification (the `lbrn2` vector →
+  laser move) and an extension removed from the table still need a migration, and the per-user
+  FILING map above is a separate store whose existing users still need a top-up migration per
+  widening (`Maker::FilingRules.seed!`'s `exists?` guard).
 
 ## `:kicanvas` is a preview kind with NO `ROLE_BY_EXT` entry behind it, on purpose
 

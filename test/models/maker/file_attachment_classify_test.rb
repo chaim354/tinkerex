@@ -3,11 +3,13 @@ require "test_helper"
 module Maker
   # STORED ROLES FOLLOW THE VOCABULARY BY ONE RULE (F-S33-1, 2026-10-19). `role` is written when the
   # row is, so a row written before `ROLE_BY_EXT` learned its extension says `other` until something
-  # rewrites it. That used to be a hand-copied data migration per widening — nine of them — and two
-  # widenings never got one: `nc`/`tap`/`ngc` (2026-07-31) and the 24 Gerber extensions (2026-09-06),
-  # which is how an electronics project came to show a photo where its board should be.
-  # `Maker::FileAttachment.classify_unclassified!` is the one owner now: it re-reads a user's `other`
-  # rows against TODAY's table, so the next widening's row half is the table edit and nothing else.
+  # rewrites it. That used to be a hand-copied data migration per widening — seven of them, beside
+  # an eighth role migration that RE-classified `lbrn2` — and two widenings never got one:
+  # `nc`/`tap`/`ngc` (2026-07-31) and the 24 Gerber extensions (2026-09-06, whose SeedPcbFilingRules
+  # seeds filing rules only), which is how an electronics project came to show a photo where its
+  # board should be. `Maker::FileAttachment.classify_unclassified!` is the one owner now: it
+  # re-reads a user's `other` rows against TODAY's table, so the next widening's row half is the
+  # table edit and nothing else.
   class FileAttachmentClassifyTest < ActiveSupport::TestCase
     setup do
       @user = User.create!(email: "classify-#{SecureRandom.hex(4)}@example.com")
