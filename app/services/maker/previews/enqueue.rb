@@ -1,6 +1,6 @@
 module Maker
   module Previews
-    # THE ONE idempotent entry point the "bytes landed" seams call (web upload, API commit, scan).
+    # THE ONE idempotent entry point the "bytes landed" seams call (web upload, scan).
     # Finds-or-creates the (node, kind: thumbnail) Preview and enqueues GeneratePreviewJob when
     # `needs_job?` says the row needs one: it is new, its content or its renderer has MOVED, it
     # previously `failed`, or it claims a job that has STALLED. Returns the Preview, or

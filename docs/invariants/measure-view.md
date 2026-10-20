@@ -338,7 +338,8 @@
   NO-OP that leaves the timestamp alone, so without it every page load adds another duplicate job.
   All three halves are mutation-checked AT THE DOORS (`maker_page_thumbnails_test.rb`,
   `lbrn_geometry_test.rb`, `public_file_view_test.rb`, `missing_backfill_test.rb`), not only through
-  `call`: deleting the stall arm of `needs_job?` reddens 9 tests in 7 files.
+  `call`: deleting the stall arm of `needs_job?` reddens 10 tests in 7 files, the v1 API's own
+  stall test among them.
 - **A JOB WHOSE ARGUMENT IS A PRIMARY-DB ROW ID MUST SET `enqueue_after_transaction_commit`, BECAUSE
   THE JOB LIVES IN A DIFFERENT DATABASE FROM THE ROW.** Rails 8.1 defaults it to **false**, so
   `perform_later` commits to the QUEUE database on its own connection **immediately** while the row

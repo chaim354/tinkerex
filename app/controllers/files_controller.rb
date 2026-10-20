@@ -463,9 +463,13 @@ class FilesController < ApplicationController
     # the `find_by` — with nothing coupling them, so mis-spelling either half made this lookup
     # silently never match (a re-enqueue on every poll, forever) or match on the wrong kind's
     # revision. `#current_thumbnail` carried the identical three lines 330 lines below, differing
-    # only in that string. Note the finder answers WHICH ROW IS CURRENT and nothing more: what
-    # this action does with the answer — never reading `status` before deciding to enqueue — is
-    # deliberately the OPPOSITE of `#current_thumbnail`'s choice, and §14h forbids unifying that.
+    # only in that string. Note the finder answers WHICH ROW IS CURRENT and nothing more. Both doors
+    # now decide whether to enqueue the same way — `Enqueue.needs_job?(…, retry_failed: false)`,
+    # which reads `status` only to spot a lost job and to leave a failed one alone — and what
+    # differs is what each SAYS once it has: this action answers "pending" whenever it enqueued,
+    # without consulting the row, while `#current_thumbnail` returns the row `call` hands back,
+    # which stays `ready`, picture and all, through a renderer-only rebuild. That split is
+    # deliberate, and §14h forbids unifying it.
     preview = Maker::Previews::Enqueue.current_preview(user: current_user, node_id: node.node_id,
                                                        name: node.name, version_id: token,
                                                        kind: "geometry")
