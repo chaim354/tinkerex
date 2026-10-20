@@ -32,14 +32,6 @@
   .public-files .col-thumb .thumb { width: 40px; height: 40px; flex: 0 0 40px; }
   .public-files .col-thumb { width: 48px; }
   .public-files .col-dl { width: 1%; white-space: nowrap; text-align: right; }
-  /* A PUBLIC PAGE DOES NOT POLL (files-preview.md): there is no `thumbs` controller on it, so a
-     pending thumbnail's spinner would turn forever. Stopping the animation leaves the same box as
-     a static badge, which is honest — the render is queued, it just will not arrive in this tab.
-     `.public-tiles` JOINED THE PAIR when a folder panel started drawing tiles (2026-09-08): a
-     third grid of thumbnails on the same non-polling page needs the same answer, and the rule that
-     is easiest to forget is this one, because a spinner looks like it is working. */
-  .public-files .thumb-spinner, .public-photos .thumb-spinner,
-  .public-tiles .thumb-spinner { animation: none; }
 
   /* A FOLDER PANEL'S TILE GRID (2026-09-08, folder panels). The page's own grid; the CARD inside
      each cell is the shared component (`.grid-card`, `.grid-name` in components.css) and the box

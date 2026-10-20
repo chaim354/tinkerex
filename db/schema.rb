@@ -506,6 +506,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_20_113000) do
     t.index ["user_id", "node_id"], name: "index_nodes_on_user_id_and_node_id", unique: true
     t.index ["user_id", "parent_node_id"], name: "index_nodes_on_user_id_and_parent_node_id"
     t.index ["user_id", "storage_path"], name: "index_nodes_on_user_id_and_storage_path", unique: true, where: "deleted = false"
+    t.index ["user_id", "storage_path"], name: "index_nodes_on_user_id_and_storage_path_tombstones", where: "deleted = true"
     t.index ["user_id", "updated_seq"], name: "index_nodes_on_user_id_and_updated_seq"
     t.index ["user_id"], name: "index_nodes_on_user_id"
   end

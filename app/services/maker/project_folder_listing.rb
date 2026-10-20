@@ -68,12 +68,17 @@ module Maker
       # dir's OWN files — was right while the rest of the repo rendered as nested sections below;
       # with the browser there instead it reads "(3)" over a repository holding 203 files.
       #
-      # `subtree_file_ids` is the set ProjectsController#show keeps OUT of its thumbnail map: a
-      # closed repo draws no tiles, so backfilling a preview row and a render job per file is work
-      # for a picture the page cannot show. BACKUPS ARE NOT IN EITHER ANSWER, and that is correct
-      # rather than an oversight — `#bucket` diverts a backup out of `files` into the cross-cutting
+      # `subtree_file_ids` is the set ProjectsController#show subtracts from the TILE TERM of its
+      # thumbnail map for each Dir its #dirs_without_tiles names (a hidden panel, a browsed folder, a
+      # nested repository): that subtree draws no tiles, so a preview row and a render job per file
+      # would be work for a picture no tile shows. OUT OF THE TILE TERM, NOT OUT OF THE MAP: the map
+      # is the union of what the page paints, so an image in such a subtree comes back through the
+      # Photos term (Photos paints every image at any depth), and a generated file is excepted from
+      # the subtraction itself, because the Generated group tiles it wherever it physically sits
+      # (F-S15-1). BACKUPS ARE NOT IN EITHER ANSWER, and that is correct rather
+      # than an oversight — `#bucket` diverts a backup out of `files` into the cross-cutting
       # `#backups` list, which the panel DOES render as tiles wherever the file physically sits, so
-      # a rescue copy inside a repository must keep its thumbnail.
+      # a rescue copy inside an untiled folder must keep its thumbnail.
       def subtree_file_ids = files.map(&:node_id) + children.flat_map(&:subtree_file_ids)
       # This dir and every dir beneath it — what #recent_files leaves out for a dir it is told to skip.
       def subtree_dir_ids = [ node_id ] + children.flat_map(&:subtree_dir_ids)
@@ -142,8 +147,9 @@ module Maker
     # The row shows only what the page would otherwise show OPENLY, so two kinds of file stay out,
     # both IN the query so the limit still counts files the row can show:
     #   * `skip:` takes Dirs from `#tree` whose WHOLE subtree is left out — the page's answer to
-    #     "which folders draw no tile" (a hidden panel, a browsed repository; ProjectsController#show
-    #     decides).
+    #     "which folders draw no tile" (a hidden panel, a browsed folder, a nested repository;
+    #     ProjectsController#dirs_without_tiles decides, and the page's thumbnail union reads the
+    #     same Dirs).
     #   * BACKUPS. LightBurn rewrites `<stem>_backup.lbrn2` on every save, so a laser project's
     #     newest files are half rescue copies — exactly what `#backups` folds into one closed
     #     section to keep off the panel's eye level (S2-2). #backup_names_sql is that rule in SQL.
@@ -221,15 +227,6 @@ module Maker
 
     # Every repository this folder holds, flattened out of the tree. See the Repo class comment.
     def repos = @repos ||= flatten_dirs(tree).select(&:repo?).map { |d| Repo.new(node_id: d.node_id, name: d.name, path: d.path) }
-
-    # Every file node_id anywhere BENEATH a repository in this folder, repo roots included — the
-    # ids the project page renders no tile for since a repo became a closed browser. A Set because
-    # its one caller subtracts and tests membership; a nested repository inside another one lands in
-    # it twice and the Set makes that a non-question. See Dir#subtree_file_ids for what is and is
-    # not in it.
-    def repo_subtree_ids
-      @repo_subtree_ids ||= flatten_dirs(tree).select(&:repo?).flat_map(&:subtree_file_ids).to_set
-    end
 
     # Is this node INSIDE the folder — anywhere beneath it, listed or not? Answered from the tree's
     # ancestor chain, never from `node_ids`: the listing is capped at FILE_CAP, so a file past the

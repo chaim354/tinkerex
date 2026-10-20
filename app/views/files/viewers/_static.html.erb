@@ -13,8 +13,8 @@
 
     ON A PUBLIC PAGE NOTHING POLLS, and "Generating preview…" is therefore a statement rather than a
     promise: the sentence is honest (a job IS running — the page render enqueued it) and a reload
-    resolves it. The same trade public/projects/_files makes by rendering files/_thumb's spinner
-    with its animation stopped (pages/public.css). %>
+    resolves it. The same trade public/projects/_files makes by rendering files/_thumb's spinner,
+    which stands still outside a poll cell (components.css). %>
 <% if kind == :thumbnail && thumbnail&.status == "ready" && thumbnail.asset.attached? %>
   <img src="<%= thumbnail_url %>" alt="Preview of <%= name %>" class="preview-image">
 <% elsif kind == :thumbnail && %w[pending processing].include?(thumbnail&.status) %>

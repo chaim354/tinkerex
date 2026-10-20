@@ -695,7 +695,7 @@ module Web
     # it BACKFILLS, creating a preview row and enqueueing a render job for every id it is handed
     # that has none. While a repository rendered tiles that was work the page used; since it became
     # a browser (the case above) it is a render per file for a picture the page never draws —
-    # probed at 60 jobs from a page showing none of them. The unit underneath, `#repo_subtree_ids`,
+    # probed at 60 jobs from a page showing none of them. The unit underneath, `Dir#subtree_file_ids`,
     # can be perfect while the controller still hands the ids over, which is §14h's own lesson about
     # the 172 stale LightBurn thumbnails.
     #

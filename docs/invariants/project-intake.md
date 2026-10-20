@@ -398,10 +398,18 @@
   in the library, no node to read them from — so it must never grow a `node:` kwarg no caller can
   fill. Its one caller (`Tools::AddonsController#resolve_placements`) writes SVG and 3MF, so no
   bundle here or in `chaim354/tinkerex-addons` reaches the divergence. What keeps the user-facing
-  sentence true anyway is `Result#conflict_folders`: the flash names the folder `#place` **actually
-  tried**, recorded as it tried it, never re-derived from a name. `ProjectFolderIntake
-  #conflict_folder` reads that map and falls back to `ProjectFolders.folder_for` only for a Result
-  built without it. **The member is not called `conflicts`** — that is one of
+  sentence true anyway is the conflict's own row: the flash names the folder `#place` **actually
+  tried**, recorded as it tried it, never re-derived from a name.
+  **`ProjectIntake::Result` HOLDS `attached`, `status` AND ONE `Filing` PER INBOX FILE — `name`,
+  `folder`, `skip` — AND NO COUNT OR LIST BESIDE THEM (F-S06-1).** `plan`, `skips`, `moved` and
+  `skipped` are readers over those rows, so no count can disagree with its list; `#place` answers
+  a `Filing` on every path, so there is no String-or-Symbol return to dispatch on; and a
+  `:conflict` row carries the folder it tried, so there is no name-keyed map beside the skips for
+  that folder to go missing from.
+  `ProjectFolderIntake#left_unfiled_by_conflict?` and `#conflict_folder` both read
+  `Result#conflict_folder(name)` **WITH NO FALLBACK**: re-deriving from the name is the wrong flash
+  521bfb30 fixed, and the fallback that outlived the fix hid a conflict recorded without its folder
+  behind a plausible answer. **Nothing here is called `conflicts`** — that is one of
   `architecture_invariants_test.rb`'s `ENGINE_ASSOCIATIONS`, matched as a bare ident, and the seam
   guard takes no allowlist.
 - **`maker_projects.autofile` IS A STATEMENT ABOUT DIRECTORIES, NOT ABOUT KNOWING (stage 4, S4-2;
@@ -509,7 +517,7 @@
   EFFECT.** Every caller threw it away until a review caught it: a same-named upload whose eager
   nudge lost a collision at its destination folder reported a silent "Uploaded x." with no sign the
   file had stayed at the project root. `ProjectFolderIntake#left_unfiled_by_conflict?` /
-  `#project_intake_notice` read the `:conflict` entry out of `Result#skips` for exactly this, and
+  `#project_intake_notice` read the `:conflict` Filing out of the Result for exactly this, and
   every door that runs the nudge reads it: `FilesController#create` (the HTML flash and, since stage
   4 S4-3, the JSON `notice`), `#finalize_upload`'s JSON `notice` (S4-3), and the addon save door.
   Save-to-library (`measure_controller.js`) reads `notice` off both upload doors through

@@ -96,9 +96,12 @@ module ShellHelper
     respond_to?(:user_signed_in?) && user_signed_in?
   end
 
-  # `rail--collapsed` only inside the shell: its rules are descendant selectors (`.rail--collapsed
-  # .brand-name`), and the auth card renders a `.brand` too — a user who collapsed the rail and
-  # signed out landed on a sign-in card with its wordmark hidden (found in review, 2026-09-04).
+  # `rail--collapsed` only inside the shell, where it sets the rail's grid TRACK and nothing else
+  # (`body.app-shell.rail--collapsed`, shell.css). The icon rail itself is a container query on
+  # `.rail`, so no rule keyed on this class reaches the `.brand` the auth card renders. Until F-S20-1
+  # its rules were descendant selectors (`.rail--collapsed .brand-name`), and a user who collapsed
+  # the rail and signed out landed on a sign-in card with its wordmark hidden (found in review,
+  # 2026-09-04).
   #
   # READS `shell_signed_in?`, NOT `user_signed_in?`, FOR THE SAME REASON THE LAYOUT DOES.
   # `body.app-shell` is a two-column grid whose first column is the rail's width (shell.css); a
