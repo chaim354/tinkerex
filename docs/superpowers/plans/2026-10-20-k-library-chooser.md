@@ -66,6 +66,9 @@ Minitest (three backend legs: share / s3 / chunk_remote — RUN counts must matc
    - also: `users.library_scanned_at` and `library_scan_refusal` → nil.
 8. **The demo account cannot change the folder** (`Tinkerex::Demo.demo?`), the same refusal it
    gets for its credentials.
+9. **(Found while building Task 4.)** The form posts `start_over=1` from the Start over button only,
+   not `mode=switch|reset`: a plain submit (Switch, Use this folder, Enter) keeps the catalog, and
+   the accent button carries no `value` for `accent_spend_test.rb` to read as its label.
 
 ## File map
 

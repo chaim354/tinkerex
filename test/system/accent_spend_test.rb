@@ -109,7 +109,10 @@ class AccentSpendTest < ApplicationSystemTestCase
       # the next reader has to re-derive that these were looked at.
       "/inventory/suppliers" => [ "Add supplier" ],
       "/inventory/locations" => [ "Add location" ],
-      "/settings/shelves" => [ "Add shelf" ]
+      "/settings/shelves" => [ "Add shelf" ],
+      # K (2026-10-20): the library folder page, with a catalog to keep (the model folder above), spends
+      # it on Switch; Start over is quiet behind its confirmation. Off share there is nothing to choose.
+      "/settings/library" => FileLayer.current.is_a?(FileLayer::Share) ? [ "Switch to this folder" ] : []
     }
     paths = {
       "/" => root_path, "/files" => files_path, "/files/models" => files_models_path,
@@ -118,7 +121,7 @@ class AccentSpendTest < ApplicationSystemTestCase
       "/projects/desk-lamp" => project_path(@project), "/settings" => settings_path,
       "/tools" => tools_path, "/search" => search_path,
       "/inventory/suppliers" => suppliers_path, "/inventory/locations" => locations_path,
-      "/settings/shelves" => settings_shelves_path
+      "/settings/shelves" => settings_shelves_path, "/settings/library" => settings_library_path
     }
 
     actual = paths.transform_values do |path|

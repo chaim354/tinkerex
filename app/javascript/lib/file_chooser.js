@@ -182,6 +182,10 @@ export class FileChooser {
     this.selEl = this.overlay.querySelector(".filechooser-sel")
     this.chooseBtn = this.overlay.querySelector(".filechooser-choose")
     this.newWrap = this.overlay.querySelector(".filechooser-newwrap")
+    // NO createUrl, NO "New Folder" (K, 2026-10-20): the library-folder chooser lists folders on the
+    // host, which the person makes there; this modal has nowhere to post one. `hidden`, the house idiom
+    // (see #render), so the footer keeps its layout.
+    if (!this.createUrl) this.newWrap.hidden = true
 
     this.overlay.addEventListener("click", (e) => { if (e.target === this.overlay) this.close() })
     this.overlay.querySelector(".filechooser-close").addEventListener("click", () => this.close())

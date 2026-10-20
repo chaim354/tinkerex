@@ -86,7 +86,8 @@ module Users
 
       # THE FIRST ACCOUNT TRIGGERS THE FIRST SCAN (J, 2026-10-15): decided BEFORE super, because once
       # the owner exists first_owner? is false forever. Library::ScanJob.enqueue_first_for says why
-      # this is a door's job and not a User callback.
+      # this is a door's job and not a User callback. On a fresh share install the call is a no-op
+      # until /settings/library confirms the folder (K §3); that confirmation makes the same call.
       first = Tinkerex::Registration.first_owner?
       super do |user|
         Library::ScanJob.enqueue_first_for(user) if first && user.persisted?

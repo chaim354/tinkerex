@@ -37,6 +37,15 @@ class ApplicationController < ActionController::Base
   # direct_uploads hole in §15 is closed by the route shadow, not by this.
   before_action :authenticate_user!, unless: :devise_controller?
 
+  # A FRESH SHARE INSTALL CONFIRMS ITS LIBRARY FOLDER BEFORE ANYTHING ELSE (K, 2026-10-20). Every
+  # signed-in HTML page goes to /settings/library while Tinkerex::LibraryRoot.pending?: that page and
+  # Help skip this, Devise's own pages are excluded by the condition (sign-out among them), and
+  # Public:: stands on ActionController::Base and never reaches here (§14d). HTML only, so a poller
+  # or a JSON door answers as itself. Off share, or once chosen, the condition is one memoised read
+  # and no query. After authentication, so a signed-out visitor still meets the sign-in page first.
+  before_action :require_library_folder!,
+                if: -> { !devise_controller? && user_signed_in? && Tinkerex::LibraryRoot.pending? }
+
   # The top bar renders on every signed-in page and needs both: which upload flow this deployment
   # drives (`capabilities.port_writable?`) and which folder it uploads into.
   include LibraryCapabilities
@@ -51,5 +60,11 @@ class ApplicationController < ActionController::Base
   # have to know Devise's default to know where sign-in lands.
   def after_sign_in_path_for(_resource)
     root_path
+  end
+
+  private
+
+  def require_library_folder!
+    redirect_to settings_library_path if request.format.html?
   end
 end
