@@ -73,7 +73,7 @@ module Library
     test "purging the bytes leaves the node tombstoned, and undelete then fails cleanly" do
       id = SecureRandom.uuid
       @user.nodes.create!(node_id: id, name: "p.stl", kind: "file", deleted: true,
-                          storage_path: nil, mtime: 1_700_000_000_000_000_000)
+                          storage_path: nil, trash_root_node_id: id, mtime: 1_700_000_000_000_000_000)
       trash!(id, "p.stl", "bytes", age_days: 45)
 
       Library::TrashPurgeJob.perform_now(root: @root.to_s, trash_days: 30)
@@ -316,7 +316,7 @@ module Library
       fake = FakeS3.new
       id = SecureRandom.uuid
       @user.nodes.create!(node_id: id, name: "p.stl", kind: "file", deleted: true,
-                          storage_path: nil, mtime: 1_700_000_000_000_000_000)
+                          storage_path: nil, trash_root_node_id: id, mtime: 1_700_000_000_000_000_000)
       fake.seed!("library/.trash/#{id}/p.stl", "bytes", last_modified: 45.days.ago)
 
       with_injected_s3(fake) { Library::TrashPurgeJob.perform_now(trash_days: 30) }
@@ -456,7 +456,7 @@ module Library
       fake = FakeS3.new
       id = SecureRandom.uuid
       @user.nodes.create!(node_id: id, name: "p.stl", kind: "file", deleted: true,
-                          storage_path: nil, mtime: 1_700_000_000_000_000_000)
+                          storage_path: nil, trash_root_node_id: id, mtime: 1_700_000_000_000_000_000)
       # The library's ONLY object is this one trashed file — the corner, and the whole of it.
       fake.seed!("library/.trash/#{id}/p.stl", "bytes", last_modified: 45.days.ago)
 

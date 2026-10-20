@@ -448,10 +448,15 @@ module FileLayer
       stat(user, node_id: node.node_id)
     end
 
-    # Copy the object out of the indexed keyspace into `.trash/<node_id>/<name>` and tombstone the
-    # node. Keyed by node_id, not name: two `bracket.stl` from different folders must not collide,
-    # and `undelete` needs one unambiguous place to look. On S3 that is a KEY PREFIX rather than a
-    # directory — there is nothing to mkdir, which is the one way this is simpler than Share.
+    # Copy the node's objects out of the indexed keyspace into its entry, `.trash/<node_id>/<name>`,
+    # and tombstone it — with everything live beneath it when it is a folder. Keyed by node_id, not
+    # name: two `bracket.stl` from different folders must not collide, and `undelete` needs one
+    # unambiguous place to look. On S3 that is a KEY PREFIX rather than a directory — there is
+    # nothing to mkdir, which is the one way this is simpler than Share.
+    #
+    # ONE PATH FOR A FILE AND A FOLDER: a file is the walk of one — one copy, one delete, one row —
+    # and its entry key is byte-identical to the file-only branch this replaced (#entry_key with no
+    # path beneath the root).
     #
     # THE ORDER IS THE WHOLE TASK: copy -> confirm -> delete -> confirm -> TOMBSTONE LAST.
     #
@@ -480,70 +485,33 @@ module FileLayer
     # is the behavior the failure path above hands the user.
     #
     # NO TRANSACTION, for Share's reason: a copy and a delete cannot be rolled back, so a
-    # `transaction do` around both would roll back the ROW while leaving the bytes in .trash —
-    # manufacturing exactly the silent resurrection this ordering exists to avoid. `node.update!`
-    # is a single statement and already atomic, which is the only atomicity this needs.
-    # A CAP ON A DIRECTORY DELETE, AND IT REFUSES RATHER THAN HALF-COMPLETING. Each object costs a
-    # COPY plus a DELETE — two billed requests — so a folder of 5,000 is 10,000 and will exhaust the
-    # request before it exhausts the folder. Refusing above the cap keeps the ordering guarantee in
-    # `delete_directory!` intact; a background job would have to decide what the catalog says while
-    # it runs, which is the landmine spread across time. Lifting this is named follow-on work, not
-    # something to do by raising the number.
-    DIR_DELETE_MAX_OBJECTS = 500
-
-    def delete(user, node_id: nil)
-      node = live_node!(user, node_id)
-      return delete_directory!(user, node) if node.dir?
-
-      copyable_size!(node)
-      src_key = key_for(node) # read BEFORE the update nulls storage_path
-      dest_key = trash_key(node)
-
-      begin
-        copy!(src_key, dest_key, if_match: etag_precondition(node.content_hash))
-        @client.delete_object(bucket: @bucket, key: src_key)
-      rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
-        # EVERY S3 failure here is a FetchError and NOTHING IS TOMBSTONED. Same fail-safe direction
-        # as read's rescue, and the same refusal to enumerate: this backend points at any
-        # S3-compatible store, so the DEFAULT must be the recoverable answer. Includes the
-        # over-cap copy the size guard could not see coming (see COPY_MAX_BYTES).
-        raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
-      end
-
-      # `deleted: true` is what keeps a UI delete out of the mass-deletion guard's numerator:
-      # vanished_paths reads the `present` scope, so a tombstoned node is invisible to it and
-      # deleting most of a library can never make the next scan refuse itself (2b Landmine 1).
-      #
-      # `storage_path: nil` RELEASES the path (2b Landmine 2), and is not merely tidy:
-      # Reconciler#create_or_revive! revives a tombstone BY storage_path, so a trash tombstone that
-      # kept its path would hand a NEW, unrelated object dropped at that key the trashed node's
-      # node_id — and with it every attachment, BOM link and tag — while the old bytes sat in
-      # .trash awaiting an undelete that would then collide. Nulling it is what makes that revive
-      # unable to fire. It is also why `undelete` must exist as a fourth verb rather than being
-      # "a move back": there is no storage_path left to move from.
-      node.update!(deleted: true, storage_path: nil)
-      nil
-    end
-
-    # DELETE A DIRECTORY: COPY EVERY OBJECT, THEN DELETE EVERY SOURCE, THEN TOMBSTONE. That order is
-    # the whole design, and no two of the three may interleave.
+    # `transaction do` around both would roll back the ROWS while leaving the bytes in .trash —
+    # manufacturing exactly the silent resurrection this ordering exists to avoid. The tombstone is
+    # one `update_all`, already atomic, which is the only atomicity this needs.
     #
-    # THE LANDMINE IS A DELETE FAILING *AFTER* A TOMBSTONE (§14a). The next scan then finds an
-    # unclaimed key with no tombstone to revive by path, mints a NEW node_id, and orphans every
-    # attachment, BOM link and tag on it — by a scan that did nothing wrong, with no error anywhere
-    # and nothing in a log. So the catalog is written LAST and only once the bucket agrees, and a
-    # failure at any stage leaves it untouched: some bytes may sit in `.trash` as unreferenced
-    # copies, which is wasted storage and nothing worse, and the next attempt overwrites them.
-    #
-    # THERE IS NO ATOMICITY TO BE HAD HERE and pretending otherwise is the trap. S3 has no rename
-    # and no multi-key transaction, which is exactly why share's single `File.rename` is not a model
-    # for this — that adapter's whole delete is one syscall. What is available is ORDERING, and
-    # ordering is what this buys.
+    # A FOLDER IS COPIED, THEN DELETED, THEN TOMBSTONED, and no two of the three may interleave: a
+    # failure at any stage leaves the catalog untouched, with at worst some unreferenced copies in
+    # `.trash` that the next attempt overwrites. THERE IS NO ATOMICITY TO BE HAD HERE and pretending
+    # otherwise is the trap: S3 has no rename and no multi-key transaction, which is exactly why
+    # share's single `File.rename` is not a model for this. What is available is ORDERING.
     #
     # THE ENTRY IS SHARE'S SHAPE, `.trash/<root id>/<root name>/<path beneath the root>` (#entry_key),
     # with the path built from NAMES along the parent edge (#entry_rels) — never from storage_path,
     # which phase 3 NULLs, and which for a NESTED folder put the ancestors into every key.
-    def delete_directory!(user, node)
+    #
+    # A CAP ON A DIRECTORY DELETE, AND IT REFUSES RATHER THAN HALF-COMPLETING. Each object costs a
+    # COPY plus a DELETE — two billed requests — so a folder of 5,000 is 10,000 and will exhaust the
+    # request before it exhausts the folder. Refusing above the cap keeps the ordering guarantee
+    # intact; a background job would have to decide what the catalog says while it runs, which is
+    # the landmine spread across time. Lifting this is named follow-on work, not something to do by
+    # raising the number.
+    DIR_DELETE_MAX_OBJECTS = 500
+
+    def delete(user, node_id: nil)
+      node = live_node!(user, node_id)
+      # The ROOT must have a key, exactly as Share's `absolute_path` insists: a pathless live row is
+      # data carried over from chunk, and deleting it would tombstone a node with nothing to move.
+      key_for(node)
       ids = FileLayer::Subtree.node_ids(user, node.node_id)
       # LIVE ROWS ONLY: what is in the folder is what is live in it. The walk returns tombstones too
       # (it must — see Subtree), and a SCAN tombstone KEEPS its storage_path (§14a's two kinds) while
@@ -561,13 +529,20 @@ module FileLayer
               "#{DIR_DELETE_MAX_OBJECTS}-object limit for a folder delete — each one costs a copy " \
               "and a delete here. Remove some of its contents first."
       end
-      # The same 5GiB ceiling the single-file path enforces, asked of every member BEFORE anything
-      # moves: finding it on object 400 would be the half-completed state this method exists to
-      # avoid.
+      # copy_object's 5GiB ceiling, asked of every member BEFORE anything moves: finding it on object
+      # 400 would be the half-completed state this method exists to avoid.
       files.each { |f| copyable_size!(f) }
 
       rels = entry_rels(user, node, ids)
-      moves = files.map { |f| [ key_for(f), entry_key(node, rels.fetch(f.node_id)) ] }
+      # ONE PRECONDITION FOR EVERY COPY, members included: each row's identity as copy_source_if_match
+      # (#etag_precondition), so an object another tool overwrote since the scan refuses the copy —
+      # FetchError, nothing moved, nothing tombstoned — instead of being trashed with bytes nobody
+      # indexed and then deleted from its key. A folder holding one refuses until the next scan re-reads
+      # it, which is what the file-only path this replaced always did; its members used to copy
+      # unconditionally (the audit's recorded decision, F-S03-1).
+      moves = files.map do |f|
+        [ key_for(f), entry_key(node, rels.fetch(f.node_id)), etag_precondition(f.content_hash) ]
+      end
       # Each folder's MARKER, `<key>/`: the object #mkdir puts so an empty folder survives a scan, and
       # which S3Observer reads as a folder — so one left behind brings the deleted folder back, empty,
       # under a new node_id. DEEPEST FIRST, for phase 2: a folder's entry key is a strict prefix of
@@ -583,7 +558,7 @@ module FileLayer
         markers.select! { |src, _| object_exists?(src) }
         # PHASE 1 — every copy, and nothing is destroyed yet. A failure here leaves the library
         # exactly as it was plus some orphaned objects under `.trash`.
-        moves.each { |src, dest| copy!(src, dest) }
+        moves.each { |src, dest, if_match| copy!(src, dest, if_match:) }
         # A marker is PUT AFRESH, NEVER COPIED. SeaweedFS keeps `<key>/` as the filer directory
         # itself and refuses a COPY whose source is one (NoSuchKey, its classifyCopySourceError —
         # read in its source, not probed on the box), so copying would make every folder with a
@@ -599,22 +574,30 @@ module FileLayer
         # between two requests, which no ordering closes without a transaction S3 does not have.
         (moves + markers).each { |src, _| @client.delete_object(bucket: @bucket, key: src) }
       rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
-        # FetchError, and NOTHING IS TOMBSTONED — the same fail-safe direction the single-file path
-        # takes, and the same refusal to enumerate which errors are retryable: this backend points
-        # at any S3-compatible store, so the DEFAULT must be the recoverable answer.
+        # EVERY S3 failure here is a FetchError and NOTHING IS TOMBSTONED — the fail-safe direction
+        # read's rescue takes, and the same refusal to enumerate which errors are retryable: this
+        # backend points at any S3-compatible store, so the DEFAULT must be the recoverable answer.
+        # Includes the over-cap copy the size guard could not see coming (see COPY_MAX_BYTES).
         raise FetchError, "#{node.node_id.inspect}: #{e.class} (#{e.message})"
       end
 
-      # PHASE 3 — the catalog, once the bucket agrees. `update_all` so a subtree is never partly
-      # live, and `storage_path: nil` for the reason the file path gives: a trash tombstone that kept
-      # its path would be revived by `create_or_revive!` and hand a new object that node's id.
+      # PHASE 3 — the catalog, once the bucket agrees. `update_all` so a subtree is never partly live.
+      # `deleted: true` keeps a UI delete out of the mass-deletion guard's numerator (vanished_paths
+      # reads `present`, so deleting most of a library can never make the next scan refuse itself).
+      # `storage_path: nil` RELEASES the path (2b Landmine 2): a trash tombstone that kept it would be
+      # revived by `create_or_revive!` and hand a new object at that key this node's id, with every
+      # attachment, BOM link and tag — which is also why `undelete` is a fourth verb and not a move.
+      # `trash_root_node_id` RECORDS THE ENTRY these rows went into, which `undelete` reads back
+      # (FileLayer::TrashMembership).
+      #
       # The rows that were LIVE BEFORE PHASE 1, so a tombstone already in the folder keeps its own
-      # kind and its own date: a scan tombstone rewritten into the trash shape is listed with a
-      # Restore that cannot work, and a re-stamped one moves its "Deleted" date and restarts
-      # Maker::DeadNodes' grace. NEVER RE-READ `present` HERE: nothing serializes a scan against a
-      # port write, so a scan landing mid-phase-2 scan-tombstones members whose sources are already
-      # gone, and a re-read skips them — bytes in the entry, rows never listed in the trash.
+      # kind, its own entry and its own date: a scan tombstone rewritten into the trash shape is
+      # listed with a Restore that cannot work, and a re-stamped one moves its "Deleted" date and
+      # restarts Maker::DeadNodes' grace. NEVER RE-READ `present` HERE: nothing serializes a scan
+      # against a port write, so a scan landing mid-phase-2 scan-tombstones members whose sources are
+      # already gone, and a re-read skips them — bytes in the entry, rows never listed in the trash.
       user.nodes.where(node_id: live.map(&:node_id)).update_all(deleted: true, storage_path: nil,
+                                                                trash_root_node_id: node.node_id,
                                                                 updated_at: Time.current)
       nil
     end
@@ -758,42 +741,42 @@ module FileLayer
     # the revive indexes the observed path under a NEW node_id, and the revive then collides with
     # the partial unique index on (user_id, storage_path) WHERE deleted = false. Every ordering
     # that closes it opens the strictly worse one above.
+    #
+    # A FOLDER COMES BACK WHOLE (F-S03-1 step 2, 2026-10-20), from its entry exactly as `delete`
+    # wrote it, and a file is the walk of one through the same code. WHICH rows come back is what
+    # `trash_root_node_id` recorded (FileLayer::TrashMembership) — never inferred from which keys
+    # happen to exist, which brought an older, separately deleted `x.stl` back over its replacement.
+    # The keys are only asked whether a MEMBER's bytes came back.
     def undelete(user, node_id: nil)
       # NOT live_node!: this operates on a tombstone by definition. `deleted: true` in the lookup
       # is what makes undeleting a live node a clean NotFound instead of a confusing copy.
       node = user.nodes.find_by(node_id:, deleted: true) ||
              raise(NotFound, "node #{node_id.inspect} is not in the trash")
 
-      # AN ORPHANED RESTORE IS REFUSED (§14a), REACHABLE HERE SINCE THE DIRECTORY CASCADE (2026-09-10).
-      # Before it, `delete` could not tombstone a parent out from under a live child on this backend
-      # and the shared contract SKIPPED this case; now restoring a CHILD first is the mainline.
-      # Refuse rather than reparent to the root: a refusal is recoverable — restore the folder, then
-      # the file — and a scatter is not. The message names the ACTION, because a browser Restore
-      # click has no prompt to offer.
-      #
-      # ON THE TOMBSTONE KIND, NOT ON `deleted:` — §14a's two-kinds rule, and share learned this the
-      # hard way. A SCAN tombstone KEEPS its storage_path and restoring into one is self-healing; a
-      # TRASH tombstone NULLs it, and that is what the cascade writes. The NULL is the discriminator.
-      #
-      # BEFORE THE BYTES CHECK BELOW, and that ordering is not cosmetic: a child tombstoned by the
-      # cascade has no object at `.trash/<its id>/<name>` — its bytes were copied to
-      # `.trash/<dir id>/<dir name>/<path beneath it>` — so the existence check would answer
-      # NotFound, "its trashed bytes are gone (purged?)", which is terminal and wrong.
-      parent = user.nodes.find_by(node_id: node.parent_node_id) if node.parent_node_id.present?
-      if parent&.deleted? && parent.storage_path.nil?
-        raise UnsupportedOperation,
-              "#{node_id.inspect}: its folder is in the trash too — restore the folder first"
-      end
+      # WHICH ENTRY THIS ROW IS RESTORED AS, OR THE REFUSAL — Share's prologue, from the same module
+      # (§14a): a scan tombstone records no entry; a row that went in with its folder, or whose own
+      # parent is trash, is refused with "restore the folder first" (a refusal is recoverable, a
+      # scatter to the root is not); a folder the SCAN tombstoned records no entry, so restoring into
+      # one stays self-healing. BEFORE THE BYTES CHECK: a row that went in with its folder has no
+      # object at `.trash/<its id>/<name>`, so the check would answer a terminal and wrong "purged?".
+      key = FileLayer::TrashMembership.restorable!(user, node)
 
-      src_key = trash_key(node)
       # Reconstructed from parent + name, because delete released storage_path (Landmine 2).
       # live: false — see parent_dir_rel!.
       rel = join_rel(parent_dir_rel!(user, node.parent_node_id, live: false), node.name)
       observable!(rel)
       dest_key = key_for_rel(rel)
+      # The root and every member, top-down, each with its path beneath the root: the same names along
+      # the same parent edge #entry_rels walked when the delete composed these keys.
+      walk = [ [ node, nil ] ] + FileLayer::TrashMembership.members(user, node, key)
 
       begin
-        unless object_exists?(src_key)
+        # PHASE 0 — WHAT CAME BACK INTO THE ENTRY, asked by HEAD per object and never inferred from a
+        # failed COPY (NoSuchKey on AWS, InvalidArgument on SeaweedFS). A file's bytes are its object;
+        # a folder's are its marker, which only a folder that had one put into the entry.
+        files = walk.select { |row, beneath| row.file? && object_exists?(entry_key(node, beneath)) }
+        markers = walk.select { |row, beneath| row.dir? && object_exists?("#{entry_key(node, beneath)}/") }
+        if files.empty? && markers.empty?
           # THE ONLY PLACE BESIDES `read` WHERE THIS ADAPTER MINTS A "YOUR FILE IS GONE", and it
           # must ask the same question first, for the same reason. S3's equivalent of Share's
           # unmounted NAS is a credentials outage / a wrong bucket / a mistyped prefix — which is
@@ -804,34 +787,41 @@ module FileLayer
             raise FetchError, "#{node_id.inspect}: the trashed bytes are missing and the library " \
                               "prefix looks empty"
           end
-          # The library is there and the bytes are not. The purge job took them, or this is a SCAN
-          # tombstone, which never had bytes in .trash to begin with. Both terminal, both the same
-          # answer to the user: it is gone.
+          # The library is there and the entry is not: the purge job took it, or this row was a member
+          # its folder's restore could not bring back. Terminal either way: it is gone.
           raise NotFound, "#{node_id.inspect}: its trashed bytes are gone (purged?)"
         end
 
-        # BOTH NAMESPACES (see destination_vacant!), and the same sentence the other three verbs
-        # answer with. It used to have its own ("is occupied — undelete must not clobber"), which
-        # is one condition wearing two answers inside one adapter — the thing §14a forbids — and
-        # its bucket-only half let a restore onto a folder's name copy the bytes back, raise
-        # RecordNotUnique on the revive, and leave the object stray with the trash copy still held.
-        destination_vacant!(user, rel, dest_key, kind: "file")
-
-        # No if_match: the trashed bytes are ours, written by our own delete, and their identity is
-        # not what node.content_hash records (that is the identity of the object at its ORIGINAL
-        # key). There is nothing to match against and nothing racing us for a key named after a
-        # node_id.
-        copy!(src_key, dest_key)
+        restore_vacant!(user, node, rel, dest_key)
+        # PHASE 1 — every byte back at its key, or none (#copy_back!).
+        copy_back!(node, rel, files, markers)
       rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
         raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
       end
 
-      # Re-stat: the bytes are the same, but mtime/size are what the next scan compares against,
-      # and a stale pair would make it re-index the object for nothing. HEAD the DESTINATION —
-      # that is the object the next scan will list. A failure here is not worth failing a restore
-      # the user can already see: the next scan corrects mtime/size on its own.
-      node.update!(deleted: false, storage_path: rel, **restored_stat(dest_key))
-      sweep_trash(src_key)
+      # PHASE 2 — the catalog, TOP-DOWN (a child's path is its parent's plus its name), and only the
+      # rows whose bytes came back: a file its object, a folder its marker or a file beneath it. A
+      # member left behind keeps its row in the trash rather than going live over nothing — the
+      # vanished-file shape the mass-deletion guard exists for — and answers its own restore from its
+      # own entry. Mirrors Share#revive_members!.
+      copied = (files + markers).map { |row, _| row.node_id }.to_set
+      beneath_files = files.filter_map(&:last)
+      walk.each do |row, beneath|
+        came_back = beneath.nil? || copied.include?(row.node_id) ||
+                    (row.dir? && beneath_files.any? { |b| b.start_with?("#{beneath}/") })
+        next unless came_back
+
+        path = beneath_rel(rel, beneath)
+        # Re-stat each file: the bytes are the same, but mtime/size/identity are what the next scan
+        # compares against, and a stale set would make it re-index the object for nothing. HEAD the
+        # DESTINATION — the object the next scan will list. #restored_stat never raises.
+        stats = row.file? ? restored_stat(key_for_rel(path)) : {}
+        row.update!(deleted: false, storage_path: path, trash_root_node_id: nil, **stats)
+      end
+      # PHASE 3 — the entry's own copies, BEST-EFFORT and LAST: the restore has succeeded, and a
+      # leftover is the purge job's (#sweep_trash).
+      discard_objects(files.map { |_, beneath| entry_key(node, beneath) } +
+                      markers.map { |_, beneath| "#{entry_key(node, beneath)}/" })
       stat(user, node_id: node.node_id)
     end
 
@@ -886,8 +876,9 @@ module FileLayer
 
     # THE ONE ENTRY SHAPE: `.trash/<root id>/<root name>[/<path beneath the root>]`, Share's layout,
     # as KEY PREFIXES rather than directories — there is no mkdir here, and no way for it to collide
-    # with a `.trash` object the way Share's EEXIST could. A file is the root of its own entry
-    # (#trash_key); a folder's members sit beneath it, markers as `<path>/` (#delete_directory!).
+    # with a `.trash` object the way Share's EEXIST could. A file deleted on its own is the whole of
+    # its entry (no path beneath); a folder's members sit beneath it, markers as `<path>/`. `delete`
+    # writes it and `undelete` reads it with the same two arguments, so the shapes cannot drift.
     #
     # Composed through key_for_rel so the escape guard covers it: node.name is written by our own
     # observer, but a poisoned name ("../../etc/passwd") would otherwise compose a trash key
@@ -902,7 +893,57 @@ module FileLayer
       key_for_rel([ Library::Scanner::TRASH_PREFIX, root.node_id, root.name, rel ].compact.join("/"))
     end
 
-    def trash_key(node) = entry_key(node)
+    # A RESTORE'S DESTINATION, ASKED BEFORE ANY BYTE MOVES. A file's is #destination_vacant!'s answer
+    # with a marker counted as taken (a folder of that name is there). A FOLDER'S IS A WHOLE PREFIX
+    # as well: a HEAD on `<key>` and `<key>/` cannot see a folder the bucket holds only as keys
+    # beneath it (no marker, not yet indexed), and restoring into one would merge the entry into
+    # somebody else's files. One LIST of at most one key answers it. The same check-not-a-lock caveat
+    # #destination_vacant! states holds here.
+    def restore_vacant!(user, node, rel, key)
+      destination_vacant!(user, rel, key, kind: "file")
+      return unless node.dir?
+      return if @client.list_objects_v2(bucket: @bucket, prefix: "#{key}/", max_keys: 1).contents.empty?
+
+      raise UnsupportedOperation, "#{rel.inspect} already exists"
+    end
+
+    # PHASE 1 OF A RESTORE: every file member copied back from the entry and every marker PUT afresh
+    # (never copied — SeaweedFS refuses a COPY whose source is a directory marker; see the delete),
+    # or NONE OF THEM. S3 has no multi-key transaction, so a failure on the second object leaves the
+    # first back at its key with every row still in the trash: an unclaimed key the next scan indexes
+    # under a NEW node_id, which is §14a's landmine from the restore side. So everything this phase
+    # wrote is deleted again before the error goes up — the library as it was, the entry intact, a
+    # retry that starts clean. The residual is a compensating delete that itself fails, the class of
+    # the scan race the revive already accepts.
+    #
+    # No if_match on these copies: the trashed bytes are ours, written by our own delete, and their
+    # identity is not what a row's content_hash records (that is the object's at its ORIGINAL key,
+    # and a store re-tags a copy). There is nothing to match against and nothing racing us for a key
+    # named after a node_id.
+    def copy_back!(root, rel, files, markers)
+      written = []
+      files.each do |_, beneath|
+        dest = key_for_rel(beneath_rel(rel, beneath))
+        copy!(entry_key(root, beneath), dest)
+        written << dest
+      end
+      markers.each do |_, beneath|
+        dest = "#{key_for_rel(beneath_rel(rel, beneath))}/"
+        @client.put_object(bucket: @bucket, key: dest, body: "")
+        written << dest
+      end
+    rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError
+      discard_objects(written)
+      raise
+    end
+
+    # Delete each key, BEST-EFFORT, files before markers and markers deepest first — the order the
+    # delete's phase 2 argues for SeaweedFS, which removes a marker's directory only once it is empty.
+    # Used where an error must not be raised: the restore's sweep of its entry (#sweep_trash) and its
+    # compensation (#copy_back!).
+    def discard_objects(keys)
+      keys.sort_by { |k| k.end_with?("/") ? [ 1, -k.length ] : [ 0, 0 ] }.each { |k| sweep_trash(k) }
+    end
 
     # Each row's path BENEATH `root`, from NAMES along the parent edge; the root's own is nil. Never
     # from storage_path: the delete NULLs it, and a nested folder's carries its ancestors. Over the
@@ -990,53 +1031,29 @@ module FileLayer
       end
     end
 
-    # Deleting or moving a DIRECTORY, refused — and the argument is NOT Share's, which is why
-    # Share named its guard deletable_file! per-op rather than by kind and told this task to reach
-    # its own answer.
-    #
-    # CAN a dir node even get here? YES. Task 7's observer synthesizes dir nodes from key prefixes,
-    # so a user can click delete on a folder in the browse UI.
-    #
-    # SHARE refuses delete because File.rename on a directory SUCCEEDS — it moves the whole subtree
-    # into .trash while leaving every child node live at a path that no longer exists, and the scan
-    # cannot pair them because .trash is skipped. Its danger is that the primitive works too well.
-    # SHARE ALLOWS move for the mirror reason: one atomic rename() carries the bytes, the children
-    # stay OBSERVABLE at the new path, and the next scan re-homes them with their node_ids.
-    #
-    # NEITHER ARGUMENT SURVIVES HERE, because the primitive does not: there is no directory and
-    # there is no rename. A dir node's storage_path is "cad", so key_for composes "library/cad" —
-    # a key that does not exist. Unguarded, the copy 404s, that maps to FetchError (correctly), and
-    # the user is told to RETRY, forever, an operation that can never succeed. A lie, not a refusal.
-    #
-    # The alternative is a cascade, and Share's objection transfers and gets worse: "a cascade whose
-    # inverse does not exist is a delete the user cannot undo" (undelete restores ONE path under ONE
-    # parent; there is no subtree story). On S3 it is additionally N copies + N deletes with no
-    # atomicity across them — a failure at object 400 of 1000 leaves half the subtree in .trash and
-    # half live, and no undo for either half. For move, the tempting cheap version (rewrite the dir
+    # MOVING A DIRECTORY, refused — and the argument is NOT Share's, which allows it because one
+    # atomic rename() carries the bytes and the children stay OBSERVABLE at the new path, so the next
+    # scan re-homes them with their node_ids. Neither half survives here: there is no directory and
+    # no rename. A dir node's storage_path is "cad", so key_for composes "library/cad" — a key that
+    # does not exist, so an unguarded copy 404s into a FetchError that tells the user to RETRY,
+    # forever, an operation that can never succeed. And the tempting cheap version (rewrite the dir
     # node's storage_path, touch no keys) is silent corruption: the children's KEYS stay at cad/*,
-    # their nodes still say cad/*, and the next scan re-synthesizes a dir node at the cad/ prefix —
-    # the tree then claims a folder the bytes are not in.
-    #
-    # So BOTH verbs refuse, from ONE fact, where Share needed two arguments to reach two different
-    # answers. That is a real capability regression against Share for move, and it is the honest
-    # one: a user renaming a folder in their own S3 console performs the same 2N copies, and the
-    # observer pairs every child back by (content_hash, size). We decline to ORIGINATE the
+    # and the next scan re-synthesizes a dir node at the cad/ prefix — the tree then claims a folder
+    # the bytes are not in. A user renaming a folder in their own S3 console performs the 2N copies,
+    # and the observer pairs every child back by (content_hash, size): we decline to ORIGINATE the
     # operation, not to survive it.
     #
-    # Kept as two per-op names for Share's reason: a future subtree story might land for one verb
-    # and not the other, and one shared guard would make the other's message lie.
-    def trashable_file!(node) = files_only!(node, "delete")
-    def movable_file!(node) = files_only!(node, "move")
-
-    def files_only!(node, verb)
+    # DELETE GOT ITS SUBTREE STORY AND NO LONGER COMES HERE (2026-09-10, and the restore that makes it
+    # undoable, 2026-10-20): copy every member, then delete every source, then tombstone, with a cap
+    # in place of atomicity. Move has no such story yet, so it alone refuses.
+    def movable_file!(node)
       return if node.file?
-      # UnsupportedOperation, not NotImplementedError: a user clicked #{verb} on a folder, so this
-      # is a CLIENT condition (Phase 4 -> 409/422) and it must stay catchable by
-      # `rescue StandardError`. NotImplementedError is a ScriptError and means the DEPLOYMENT is
-      # mis-wired -> 501.
+      # UnsupportedOperation, not NotImplementedError: a user clicked move on a folder, so this is a
+      # CLIENT condition (Phase 4 -> 409/422) and it must stay catchable by `rescue StandardError`.
+      # NotImplementedError is a ScriptError and means the DEPLOYMENT is mis-wired -> 501.
       raise UnsupportedOperation,
-            "#{node.node_id.inspect} is a #{node.kind}: s3-mode #{verb} is files only — S3 has no " \
-            "directory to #{verb} and no rename, so this would mean a non-atomic cascade over " \
+            "#{node.node_id.inspect} is a #{node.kind}: s3-mode move is files only — S3 has no " \
+            "directory to move and no rename, so this would mean a non-atomic cascade over " \
             "every key under the prefix, with no undo for a half-finished one"
     end
 
@@ -1303,6 +1320,10 @@ module FileLayer
     end
 
     def join_rel(dir_rel, name) = dir_rel.blank? ? name.to_s : "#{dir_rel}/#{name}"
+
+    # A restored row's path: the root's own `rel`, plus the path beneath it its entry recorded (nil for
+    # the root itself — which join_rel would turn into a trailing slash, a different key).
+    def beneath_rel(rel, beneath) = beneath ? "#{rel}/#{beneath}" : rel
 
     # Blank means THE ROOT — join_rel turns a nil dir into a bare name, which is what lets
     # `parent_node_id: nil` be a real destination (the write contract's convention throughout).

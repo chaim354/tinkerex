@@ -19,7 +19,9 @@ module FileLayer
   # stays that way until the next scan revives the folder — so a walk that stopped at tombstones
   # would leave that row live by omission. WHICH returned rows a delete moves is not this walk's
   # answer: a tombstone already in the folder was never part of what the user deleted, so each
-  # adapter narrows its own UPDATE to `present` rows. Narrow the consumers, never this walk.
+  # adapter narrows its own UPDATE to `present` rows. Narrow the consumers, never this walk. And
+  # which rows a RESTORE brings back is not its answer either: that is `nodes.trash_root_node_id`,
+  # the entry the delete recorded on exactly the rows it moved (FileLayer::TrashMembership).
   module Subtree
     # A cap on DEPTH, not on size. `parent_node_id` has no constraint forbidding a cycle — the same
     # reason `Maker::LibraryTree#path_for` carries a guard (docs/invariants/model-intake.md) — and

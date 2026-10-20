@@ -119,6 +119,12 @@ module SchemaMap
     #
     # `nodes.current_version_id` SURVIVES AS A COLUMN BUT NOT AS AN EDGE: NOT_EDGES says why.
     [ "nodes.parent_node_id",            "nodes.node_id",               "app", "child of" ],
+    # A TRASH ROW NAMES THE ENTRY IT WENT INTO (2026-10-20, F-S02-1): its own node_id on the node a
+    # delete was asked for, that node's on everything live that travelled with it, NULL on a live row
+    # and on a scan tombstone. SHARE AND S3 ONLY — chunk_remote's trash is the sync server's and its
+    # mirror records no entry. Soft like every arrow into `nodes`: it records MEMBERSHIP, so a member
+    # still names its entry after the purge has taken the bytes (FileLayer::TrashMembership).
+    [ "nodes.trash_root_node_id",        "nodes.node_id",               "app", "trashed with" ],
     # --- the maker layer's grip on the file layer: every one a bare string, §14a ---
     [ "maker_file_attachments.node_id",    "nodes.node_id",       "app", "attaches" ],
     [ "maker_previews.node_id",            "nodes.node_id",       "app", "depicts" ],
