@@ -983,9 +983,15 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     assert_equal [ "ArgumentError" ], bare.(probe.(ArgumentError)), "the check must see the bare class"
     assert_empty bare.(probe.(Maker::MoveNode::InvalidName)), "a named subclass is the sanctioned shape"
 
+    # AN ANONYMOUS CONTROLLER HAS NO NAME, and const_source_location raises on one (NameError for "",
+    # TypeError for nil) in whichever test order first builds it. Skipped before the lookup; probed here.
     Rails.application.eager_load!
-    controllers = [ ActionController::Base, ActionController::API ].flat_map(&:descendants).select do |klass|
-      Object.const_source_location(klass.name.to_s)&.first.to_s.start_with?(ROOT.join("app/controllers/").to_s)
+    anonymous = Class.new(ActionController::API)
+    scanned = [ ActionController::Base, ActionController::API ].flat_map(&:descendants)
+    assert_includes scanned, anonymous, "the probe must be in the set the scan walks"
+    controllers = scanned.select do |klass|
+      next false unless klass.name
+      Object.const_source_location(klass.name)&.first.to_s.start_with?(ROOT.join("app/controllers/").to_s)
     end
     assert_includes controllers, V1::BaseController, "the scan must reach the class it was written for (§14e)"
 

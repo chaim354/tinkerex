@@ -53,8 +53,8 @@ module V1
 
       assert_response :internal_server_error
       assert_not_includes response.body, MESSAGE, "the interpreter's message must never reach the client"
-      assert_equal [ MESSAGE ], reports.map { |report| report.error.message },
-                   "the error must reach Rails.error as unhandled, or no error tracker ever sees it"
+      assert_equal [ [ MESSAGE, false ] ], reports.map { |report| [ report.error.message, report.handled? ] },
+                   "the error must reach Rails.error once, unhandled, or no error tracker ever sees it"
     end
   end
 end
