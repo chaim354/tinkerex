@@ -1898,5 +1898,35 @@ module FileLayer
       assert_equal %W[#{PREFIX}/parts/stl/deep/a.stl #{PREFIX}/parts/stl/deep/ #{PREFIX}/parts/stl/
                       #{PREFIX}/parts/], deleted
     end
+
+    # WHAT TRAVELS IS DECIDED ONCE, BEFORE PHASE 1. Nothing serializes a scan against a port write, so
+    # a scan landing mid-phase-2 sees the sources already deleted and scan-tombstones those members,
+    # paths kept. Phase 3 re-reading `present` then skipped them: bytes in the entry, rows that are
+    # not trash — never listed, never restorable. Both members are asserted, because which one the
+    # scan catches depends on the order phase 2 deletes them in.
+    test "a member a scan tombstoned mid-delete still lands in the trash" do
+      create_file!(name: "ballast.stl", bytes: "still here")
+      dir_id = make_dir(name: "parts")
+      ids = %w[a.stl b.stl].map do |name|
+        adapter.write(@user, parent_node_id: dir_id, name:, io: StringIO.new(name)).node_id
+      end
+      scanned = false
+      @fake.client.stub_responses(:delete_object, lambda { |ctx|
+        @fake.objects.delete(ctx.params[:key])
+        unless scanned
+          scanned = true
+          scan!(max_delete_pct: 100) # the periodic scan, landing once the first source is gone
+        end
+        {}
+      })
+
+      adapter.delete(@user, node_id: dir_id)
+
+      ids.each do |id|
+        assert_nil @user.nodes.find_by!(node_id: id).storage_path,
+                   "#{id}'s bytes are in the entry, but it is not a trash tombstone"
+      end
+      assert_equal ids.sort, (adapter.trashed(@user).map(&:node_id) & ids).sort
+    end
   end
 end

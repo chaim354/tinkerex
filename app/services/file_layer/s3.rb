@@ -536,8 +536,9 @@ module FileLayer
       # its object is gone, so in the copy set it failed every attempt — NoSuchKey here,
       # InvalidArgument on SeaweedFS — and the folder could never be deleted. A live row with no
       # path is reachable by data alone (a catalog carried over from chunk) and has no key to move;
-      # phase 3 still tombstones it.
-      members = user.nodes.present.where(node_id: ids).where.not(storage_path: nil).to_a
+      # phase 3 still tombstones it. CAPTURED ONCE, here, and phase 3 tombstones exactly this set.
+      live = user.nodes.present.where(node_id: ids).to_a
+      members = live.select { |n| n.storage_path.present? }
       files = members.select(&:file?)
 
       if files.size > DIR_DELETE_MAX_OBJECTS
@@ -593,11 +594,14 @@ module FileLayer
       # PHASE 3 — the catalog, once the bucket agrees. `update_all` so a subtree is never partly
       # live, and `storage_path: nil` for the reason the file path gives: a trash tombstone that kept
       # its path would be revived by `create_or_revive!` and hand a new object that node's id.
-      # `present`, so a tombstone already in the folder keeps its own kind and its own date: a scan
-      # tombstone rewritten into the trash shape is listed with a Restore that cannot work, and a
-      # re-stamped one moves its "Deleted" date and restarts Maker::DeadNodes' grace.
-      user.nodes.present.where(node_id: ids).update_all(deleted: true, storage_path: nil,
-                                                        updated_at: Time.current)
+      # The rows that were LIVE BEFORE PHASE 1, so a tombstone already in the folder keeps its own
+      # kind and its own date: a scan tombstone rewritten into the trash shape is listed with a
+      # Restore that cannot work, and a re-stamped one moves its "Deleted" date and restarts
+      # Maker::DeadNodes' grace. NEVER RE-READ `present` HERE: nothing serializes a scan against a
+      # port write, so a scan landing mid-phase-2 scan-tombstones members whose sources are already
+      # gone, and a re-read skips them — bytes in the entry, rows never listed in the trash.
+      user.nodes.where(node_id: live.map(&:node_id)).update_all(deleted: true, storage_path: nil,
+                                                                updated_at: Time.current)
       nil
     end
 

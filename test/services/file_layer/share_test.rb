@@ -1332,5 +1332,60 @@ module FileLayer
       assert gone.deleted?, "a file the NAS removed was revived over another row's bytes"
       assert_equal "F/c.stl", gone.storage_path, "and it is no longer the scan's to revive by path"
     end
+
+    # A ROW THAT KEPT ITS PATH IS NOT THE FOLDER'S, BUT WHAT IS BENEATH IT CAN BE. Delete `F/sub/x.stl`,
+    # remove the emptied `sub` in Finder (the scan tombstones it, path kept), restore x into it — the
+    # self-healing restore §14a allows — and delete F before the next scan. x travelled with F; `sub`
+    # did not. A restore that stopped at `sub` left x trashed over bytes back on disk, and the next scan
+    # minted a new node_id for them: every attachment orphaned, x listed in the trash forever.
+    test "a file restored into a scan-tombstoned folder comes back with the folder above it" do
+      create_file!(name: "ballast.stl", bytes: "still here")
+      f_id = make_dir(name: "F")
+      sub_id = adapter.mkdir(@user, parent_node_id: f_id, name: "sub").node_id
+      x_id = adapter.write(@user, parent_node_id: sub_id, name: "x.stl", io: StringIO.new("x")).node_id
+      adapter.delete(@user, node_id: x_id)
+      FileUtils.rm_rf(@root.join("F/sub"))
+      Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
+      assert_equal "F/sub", @user.nodes.find_by!(node_id: sub_id, deleted: true).storage_path,
+                   "precondition: `sub` is a SCAN tombstone"
+      adapter.undelete(@user, node_id: x_id)
+
+      adapter.delete(@user, node_id: f_id)
+      adapter.undelete(@user, node_id: f_id)
+
+      x = @user.nodes.find_by!(node_id: x_id)
+      assert_not x.deleted?, "the folder's file stayed trashed over bytes that are back on disk"
+      assert_equal "F/sub/x.stl", x.storage_path
+      Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
+      assert_equal x_id, @user.nodes.present.find_by(storage_path: "F/sub/x.stl")&.node_id,
+                   "the next scan minted a new node_id for the restored bytes"
+    end
+
+    # WHAT TRAVELS IS DECIDED BEFORE THE RENAME. Nothing serializes a scan against a port write, so a
+    # scan landing between the rename and the tombstone sees the folder vanished and scan-tombstones
+    # it, paths kept. Re-reading `present` after the rename skipped those rows: the bytes in `.trash`,
+    # the folder never listed there, nothing to click Restore on. Simulated by running the scan inside
+    # File.rename, the window's one syscall.
+    test "a folder a scan tombstoned mid-delete still lands in the trash" do
+      create_file!(name: "ballast.stl", bytes: "still here")
+      dir_id = make_dir(name: "F")
+      leaf_id = adapter.write(@user, parent_node_id: dir_id, name: "a.stl", io: StringIO.new("a")).node_id
+      user, root, rename = @user, @root.to_s, File.method(:rename)
+      File.define_singleton_method(:rename) do |*args|
+        rename.call(*args).tap { Library::Scanner.call(user, root:, max_delete_pct: 100) }
+      end
+      begin
+        adapter.delete(@user, node_id: dir_id)
+      ensure
+        File.define_singleton_method(:rename, rename)
+      end
+
+      [ dir_id, leaf_id ].each do |id|
+        assert_nil @user.nodes.find_by!(node_id: id).storage_path, "#{id} moved into .trash but is not trash"
+      end
+      assert_includes adapter.trashed(@user).map(&:node_id), dir_id
+      adapter.undelete(@user, node_id: dir_id)
+      assert @user.nodes.present.exists?(node_id: leaf_id), "the folder's file did not come back with it"
+    end
   end
 end
