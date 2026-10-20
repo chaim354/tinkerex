@@ -143,6 +143,12 @@ class PageEditorTest < ApplicationSystemTestCase
     # merge — the row's state and the browser's — are asserted at the end of this test.
     @project.update!(panels: { "hidden" => %w[sheets] })
     open_editor
+    # CLOSED MEANS OFF SCREEN (F-S34-2, 2026-10-19). `.layout-drawer { display: flex }` beat the user
+    # agent's `[hidden]`, so from the moment edit mode opened the drawer (Copy, Apply and an empty
+    # textarea) sat under the panel grid, and "closing" it changed only the attribute — which is all
+    # this test used to read. Capybara counts VISIBLE elements, so these lines read what is on screen.
+    # Mutation-checked: deleting application.css's base `[hidden]` rule reddens the first.
+    assert_no_selector "aside.layout-drawer"
     click_on "Edit as YAML"
     assert_selector "aside.layout-drawer:not([hidden])"
     # THE TEXT ARRIVES FROM THE SERVER, NOT WITH THE DRAWER: opening it posts the draft to `yamlUrl`
@@ -195,6 +201,8 @@ class PageEditorTest < ApplicationSystemTestCase
     yaml.set("layout: 1\npanels:\n  - panel: tsaks\n")
     click_on "Apply"
     assert_selector ".layout-note--error", text: "unknown panel “tsaks”"
+    click_on "Edit as YAML"
+    assert_no_selector "aside.layout-drawer"
     assert_no_console_errors
   end
 

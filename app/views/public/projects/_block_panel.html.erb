@@ -40,7 +40,8 @@
         <%# `inline_image?`, NOT the role, the same split the hero makes: a .heic is an image by
             role and a broken picture as raw bytes, so it takes the thumbnail branch. NO POLL here —
             /files/thumbnails is session-authed, so a pending thumbnail reads as a static badge
-            (files/_thumb plus pages/public.css) rather than a spinner that turns forever. %>
+            (files/_thumb's spinner turns only inside a poll cell, components.css) rather than a
+            spinner that turns forever. %>
         <% if Maker::FileAttachment.inline_image?(node.name) %>
           <%= link_to pub.view_url_for(node.node_id) do %>
             <%= image_tag pub.file_url_for(node.node_id), class: "block-image",
