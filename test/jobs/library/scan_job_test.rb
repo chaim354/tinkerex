@@ -865,4 +865,51 @@ module Library
       end
     end
   end
+
+  # ONE SCAN, ONE LIBRARY FOLDER (K, 2026-10-20; found in review). The walk uses the `root:` the job
+  # was queued with, while the intake after it writes through FileLayer.current, whose share root is
+  # read per job (FileLayer::Share#root). Unpinned, the job's FIRST read of the setting came after the
+  # walk, so a folder chosen in the web process mid-walk sent the intake into the NEW folder: it
+  # minted `Workshop/Projects/Desk Lamp/design` there and then failed the move. The write is made
+  # behind this process's back right after the walk, and Current is cleared first, as the executor
+  # does before a real job. Pinned through the real factory (LIBRARY_BACKEND=share), so it runs the
+  # same on every leg. Mutation-checked: delete the pin in #perform and both assertions go red.
+  class FolderChangeMidScanTest < ActiveSupport::TestCase
+    setup do
+      @mount = Pathname.new(Dir.mktmpdir("mid-scan")).expand_path
+      @prior = ENV.to_h.slice("LIBRARY_PATH", "LIBRARY_BACKEND")
+      ENV["LIBRARY_PATH"] = @mount.to_s
+      ENV["LIBRARY_BACKEND"] = "share"
+      FileLayer.reset!
+      @user = User.create!(email: "mid-#{SecureRandom.hex(6)}@example.com")
+      FileUtils.mkdir_p(@mount.join("Projects", "Desk Lamp"))
+      File.binwrite(@mount.join("Projects", "Desk Lamp", "panel.svg"), "<svg/>")
+      FileUtils.mkdir_p(@mount.join("Workshop"))
+    end
+
+    teardown do
+      %w[LIBRARY_PATH LIBRARY_BACKEND].each { |k| @prior.key?(k) ? ENV[k] = @prior[k] : ENV.delete(k) }
+      FileLayer.reset!
+      FileUtils.remove_entry(@mount) if @mount&.exist?
+    end
+
+    test "a folder chosen while a scan walks is the next job's, never this scan's intake" do
+      original = Library::Scanner.instance_method(:call)
+      begin
+        Library::Scanner.define_method(:call) do
+          result = original.bind(self).call
+          Setting.where(key: Tinkerex::LibraryRoot::KEY).update_all(value: "Workshop")
+          result
+        end
+        Current.reset
+        Library::ScanJob.perform_now(user_id: @user.id, root: @mount.to_s)
+      ensure
+        Library::Scanner.define_method(:call, original)
+      end
+
+      assert_not @mount.join("Workshop", "Projects").exist?,
+                 "the intake filed into the folder the library moved to while the scan walked"
+      assert_path_exists @mount.join("Projects", "Desk Lamp", "design", "panel.svg")
+    end
+  end
 end

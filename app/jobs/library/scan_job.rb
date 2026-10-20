@@ -88,6 +88,14 @@ module Library
     # #stale_root?.)
     def perform(user_id:, root: nil)
       user = User.find(user_id)
+      # ONE SCAN, ONE LIBRARY FOLDER (K; found in review). The walk below uses `root:`, fixed when the
+      # job was queued, while the intake after it writes through FileLayer.current, whose share root
+      # is read per job (FileLayer::Share#root). Reading the setting HERE, first, pins that answer for
+      # the whole job: a folder chosen in the web process mid-walk is this process's NEXT job's, never
+      # this job's intake -- which otherwise minted the old library's project folders inside the new
+      # one. Library::RootChangeJob queues behind this job and scans the new folder. `if root`: only a
+      # share scan names a root, and off share there is no setting to pin.
+      Tinkerex::LibraryRoot.relative if root
       return if stale_root?(root)
 
       # `new` + `call` rather than `.call`, which returns the instance only on success: holding
