@@ -392,7 +392,7 @@ module FileLayer
     TWO_PHASE_MSG = "#{name} is port_writable -- uploads go through #write (bytes arrive in one " \
                     "request), not the sync engine's two-phase presigned flow".freeze
 
-    def begin_upload(_user, name: nil, size: nil, manifest: nil, device: nil, parent_node_id: nil,
+    def begin_upload(_user, name: nil, size: nil, manifest: nil, parent_node_id: nil,
                      node_id: nil, base_version_id: nil, mtime: nil, mode: nil)
       raise NotImplementedError, TWO_PHASE_MSG
     end

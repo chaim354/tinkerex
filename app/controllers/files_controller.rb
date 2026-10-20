@@ -939,7 +939,7 @@ class FilesController < ApplicationController
     manifest = (params[:manifest] || []).map { |c| c.permit(:hash, :offset, :length).to_h }
 
     result = FileLayer.current.begin_upload(
-      current_user, device: web_device, name:, parent_node_id: params[:parent_node_id],
+      current_user, name:, parent_node_id: params[:parent_node_id],
       size: params.require(:size).to_i, mtime: (Time.current.to_f * 1e9).to_i, manifest:
     )
 
@@ -959,12 +959,8 @@ class FilesController < ApplicationController
   # Calls FileLayer#finalize_upload (Task 8; verify: true — confirm the bytes actually landed in
   # storage before creating the immutable version + changelog entry).
   #
-  # THE BROADCAST IS THE PORT'S, not this action's, and this comment used to say the opposite.
-  # An earlier draft delegated the nudge to each caller because the two that exist happen to want
-  # different things; that reopened §14f's "N doors that must all agree" shape, where a third
-  # caller forgets and a device silently never hears about a commit. The port now broadcasts by
-  # default and Maker::Addons::LibraryOutput opts out explicitly, which is the same behaviour with
-  # a safe floor. Nothing to do here.
+  # THE NUDGE IS THE SYNC SERVER'S, not this action's and not the port's: it tells the user's
+  # devices on every finalize, so no caller can forget one (§14a). Nothing to do here.
   def finalize_upload
     result = FileLayer.current.finalize_upload(
       current_user, commit_id: params.require(:commit_id), verify: true

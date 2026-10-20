@@ -297,6 +297,26 @@ module FileLayerAdapterContract
     end
   end
 
+  # THE UPLOAD PAIR TAKES NO `device:` AND NO `broadcast:` (F-X-1, 2026-10-19). Both were the retired
+  # embedded engine's vocabulary and no adapter read either: the sync server attributes a commit to
+  # the device its bearer token names, and nudges the user's devices on every finalize. Two callers
+  # still minted a `devices` row -- the table §8 calls the API's ONLY credential -- to have a value
+  # to pass. A keyword nothing reads has no behaviour a test can see, so the REFUSAL is the pin. The
+  # MESSAGE is asserted, not just the class: a missing REQUIRED keyword is an ArgumentError too, and
+  # Ruby reports it first, so a call short of one would satisfy the class alone.
+  def test_contract_the_upload_pair_takes_no_device_and_no_broadcast_keyword
+    manifest = [ { "hash" => "a" * 64, "offset" => 0, "length" => 1 } ]
+    err = assert_raises(ArgumentError) do
+      adapter.begin_upload(@user, name: "x.stl", size: 1, manifest:, device: nil)
+    end
+    assert_match(/unknown keyword: :device/, err.message)
+
+    err = assert_raises(ArgumentError) do
+      adapter.finalize_upload(@user, commit_id: SecureRandom.uuid, broadcast: false)
+    end
+    assert_match(/unknown keyword: :broadcast/, err.message)
+  end
+
   # `presignable` PINNED AGAINST WHETHER A URL IS ACTUALLY REACHABLE — Landmine 1, and the exact
   # capability §9a-3 predicted would drift ("answered statically, but a property of the store").
   #

@@ -45,24 +45,11 @@ class ApplicationController < ActionController::Base
   # Changes to the importmap will invalidate the etag for HTML responses
   stale_when_importmap_changes
 
-  helper_method :web_device
-
   # After a Devise sign-in (or sign-up confirmation), land on Recent — the app's front door
   # (config/routes.rb's `root to: "home#index"`). This IS Devise's own default
   # (root_path); it is stated explicitly rather than left to fall through, so a reader does not
   # have to know Devise's default to know where sign-in lands.
   def after_sign_in_path_for(_resource)
     root_path
-  end
-
-  # A stable, reusable Device for the signed-in web user. Lets the web UI mint per-user
-  # presigned URLs and record commits through the SAME machinery as the desktop client —
-  # the device-token bootstrap is unchanged; the web session just reuses it (CLAUDE.md §8).
-  WEB_DEVICE_NAME = "web-session".freeze
-
-  def web_device
-    return unless user_signed_in?
-    @web_device ||= current_user.devices.find_by(name: WEB_DEVICE_NAME) ||
-                    Device.register!(user: current_user, name: WEB_DEVICE_NAME)
   end
 end

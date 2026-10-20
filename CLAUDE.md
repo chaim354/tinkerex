@@ -486,13 +486,10 @@ area belongs there too, with a stub here.
   **loopback into the same Puma pool** (§14e's reentrancy bug). Only the adapter knows which
   situation it is in, which is why the caller cannot decide. The maker layer now names **zero**
   chunk-internals references (§14c).
-- **`finalize_upload` broadcasts by DEFAULT, with exactly one explicit opt-out** —
-  `Maker::Addons::LibraryOutput` passes `broadcast: false`, preserving what addon saves have
-  always done (never nudged live devices; open item, the record (§11)). `mkdir`/`move`/
-  `delete`/`undelete` broadcast unconditionally, so a caller cannot forget; this verb has two
-  callers wanting different behaviour for one fact, so it defaults to the safe answer (notify)
-  rather than delegating the choice — an unwritten third caller that forgets to opt out gets a
-  working nudge, not a silent gap.
+- **No port verb takes `device:` or `broadcast:`, and no upload mints a `devices` row** (enrolment
+  alone does, §8). The sync server attributes a commit to the device its bearer token names and
+  nudges the user's devices on EVERY commit, mutation and restore — an addon save's included — so
+  no caller here can forget a nudge or opt out of one. The adapter contract refuses both keywords.
 - **AN ORPHANED RESTORE IS REFUSED, ON EVERY BACKEND THAT CAN REACH THE STATE — AND THIS REVERSED
   AN EARLIER RULE** (which reparented an orphan to the library ROOT). Since `delete` cascades a
   whole directory in one call, restoring a CHILD before its PARENT is the **mainline** case, not an
