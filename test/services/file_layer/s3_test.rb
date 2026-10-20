@@ -1417,12 +1417,12 @@ module FileLayer
       assert_equal 1_600_000_000 * 1_000_000_000, node.mtime, "keep the previous mtime — never nil"
     end
 
-    # THE TWO DOORS THAT DATE A NEW ROW FROM A HEAD, #write and #mkdir, have no previous mtime to
-    # keep, so they REFUSE — beside #write's blank-ETag refusal and for its reason. Time.now is not
-    # a substitute (the next scan would read every written file as changed), and nanos(nil) raised a
-    # bare NoMethodError, an unmapped 500, after the object had landed. FetchError, nothing indexed,
-    # and the next scan — which dates the object off the listing — indexes it. Remove the guard at
-    # either door and its test goes red with NoMethodError.
+    # A WRITE WHOSE HEAD CARRIES NO DATE IS REFUSED, beside its blank-ETag refusal and for its
+    # reason: a FILE row's mtime is a fact the scan compares, there is no previous one to keep, and
+    # Time.now is not a substitute (the next scan would read every written file as changed).
+    # nanos(nil) raised a bare NoMethodError, an unmapped 500, after the object had landed.
+    # FetchError, nothing indexed, and the next scan — which dates the object off the listing —
+    # indexes it. Remove the guard and this goes red with NoMethodError.
     test "a write whose HEAD reports no Last-Modified is refused, indexes nothing, and a scan does" do
       @fake.answer_last_modified!(:head_object, nil)
 
@@ -1438,15 +1438,24 @@ module FileLayer
                    @user.nodes.find_by!(storage_path: "undated-write.stl").content_hash
     end
 
-    test "a mkdir whose HEAD reports no Last-Modified is refused, and the next scan indexes it" do
+    # A MKDIR WHOSE HEAD CARRIES NO DATE IS NOT REFUSED, and the difference is the catalog's own: S3
+    # has no directory dates, so S3Observer records every folder with mtime nil and
+    # Reconciler#unchanged_dir? compares on exactly that. The folder is created with that same nil —
+    # the next scan agrees and rewrites nothing — where a refusal would turn "New folder" into "try
+    # again" for a value the scan discards anyway. Put back nanos(head.last_modified) and this goes
+    # red with NoMethodError.
+    test "a mkdir whose HEAD reports no Last-Modified creates the folder with the scan's nil mtime" do
       @fake.answer_last_modified!(:head_object, nil)
 
-      assert_raises(FileLayer::FetchError) { adapter.mkdir(@user, parent_node_id: nil, name: "undated") }
-      assert_nil @user.nodes.find_by(storage_path: "undated"), "no row for the folder yet"
-      assert @fake.objects.key?("#{PREFIX}/undated/"), "the marker landed: a PUT is not undone"
+      info = travel_to(Time.at(1_700_000_000)) { adapter.mkdir(@user, parent_node_id: nil, name: "undated") }
 
-      scan!(max_delete_pct: 100) # the marker is a folder to the observer
-      assert_equal "dir", @user.nodes.present.find_by!(storage_path: "undated").kind
+      node = @user.nodes.present.find_by!(node_id: info.node_id)
+      assert_equal [ "dir", "undated", nil ], [ node.kind, node.storage_path, node.mtime ]
+      assert @fake.objects.key?("#{PREFIX}/undated/"), "the marker landed"
+
+      travel_to(Time.at(1_800_000_000)) { scan!(max_delete_pct: 100) }
+      assert_equal node.updated_at, @user.nodes.find_by!(node_id: info.node_id).updated_at,
+                   "the scan records a folder with mtime nil too, so it has nothing to rewrite"
     end
 
     # --- the 5GB copy cap -----------------------------------------------------------------

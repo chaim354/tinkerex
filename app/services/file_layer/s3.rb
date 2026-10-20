@@ -437,7 +437,10 @@ module FileLayer
       rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
         raise FetchError, "#{rel.inspect}: #{e.class} (#{e.message})"
       end
-      mtime = head_mtime!(rel, head) # BEFORE the row, as #write does — see #head_mtime!
+      # A HEAD WITHOUT A DATE IS NOT A REFUSAL HERE, unlike #write's: S3 has no directory dates, and
+      # the scan records every folder with mtime nil (S3Observer#dir_observations), which is the
+      # authority — so this writes that same nil rather than turn "New folder" into "try again".
+      mtime = head.last_modified && nanos(head.last_modified)
       node = user.nodes.create!(
         node_id: SecureRandom.uuid, name:, kind: "dir", deleted: false,
         storage_path: rel, parent_node_id:, mtime:
@@ -1349,14 +1352,14 @@ module FileLayer
     # looks changed on the next scan.
     def nanos(time) = time.to_i * 1_000_000_000 + time.nsec
 
-    # THE STORE'S OWN CLOCK FOR A ROW BEING CREATED, OR A REFUSAL. #write and #mkdir date a new row
-    # from the HEAD they make after the PUT, and a HEAD with no Last-Modified — absent, or one the
-    # SDK could not parse, which it hands back as nil — gives that row no date. Time.now is refused
-    # (#write's header: the next scan would read every written file as changed), and nanos(nil)
-    # raised a bare NoMethodError, an unmapped 500, after the object had landed. FetchError, BEFORE
-    # any row is written — #write's answer to a blank ETag — and the next scan, which dates the
-    # object off the listing, indexes it. #move and #restored_stat keep the previous mtime instead:
-    # they have one, and a raise there strands bytes already moved.
+    # THE STORE'S OWN CLOCK FOR A FILE ROW BEING WRITTEN, OR A REFUSAL. #write dates its row from the
+    # HEAD it makes after the PUT, and a HEAD with no Last-Modified — absent, or one the SDK could
+    # not parse, which it hands back as nil — gives that row no date. Time.now is refused (#write's
+    # header: the next scan would read every written file as changed), and nanos(nil) raised a bare
+    # NoMethodError, an unmapped 500, after the object had landed. FetchError, BEFORE any row is
+    # written — #write's answer to a blank ETag — and the next scan, which dates the object off the
+    # listing, indexes it. The other three answer differently on purpose: #mkdir writes the scan's
+    # own nil (a directory has no date on S3), and #move and #restored_stat keep the mtime they have.
     def head_mtime!(rel, head)
       return nanos(head.last_modified) if head.last_modified
 
