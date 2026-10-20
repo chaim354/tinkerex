@@ -198,7 +198,8 @@
   once); it leaves **a tombstoned node** to `Maker::AttachmentReaper`'s grace window, since
   `classify` reads `.present` and a tombstone otherwise looks exactly like a file the rule no
   longer claims; it leaves **a node outside the model's own folder that the current rule places in
-  NO model** alone, because the sweep could not have written that row; and an **unresolvable
+  NO model** alone, because it may be a hand attach and nothing in the row says otherwise — NOT
+  because the sweep cannot have written it (see "Not covered" below); and an **unresolvable
   ancestry answers "not inside"**, keeping the row. Its liveness query is deliberately NOT
   `.present` — with `.present` a tombstone has no parent, so `inside?` protects it by accident and
   the liveness clause can be deleted green. **"Places in no model" is F-S07-2's fix (2026-10-19),
@@ -206,14 +207,18 @@
   mesh moved from `Widget/` into `Lamp/` kept its `Widget` row forever beside the `Lamp` row the
   next sweep wrote — one file, two models. A node the rule places under ANOTHER key (another model,
   or a folder a project or an import claims) belongs there wherever it sits. No column tells that
-  moved file from a hand attach of another model's file, so such an attach is listed too; the dry
-  run names it first, and the attach door's only caller today is the importer, posting to the
-  import it has just created. Pinned both ways in `model_intake_prune_test.rb`: the moved mesh is
-  RED under the old guard, and a PDF no model owns is RED with the guard deleted (that fixture must
-  not be another model's file — that is the moved shape). **Not covered, and not this guard's:** a
-  ONE-FILE model whose file moved keeps its row, because the first guard skips one-file models
-  entirely; that state, and retiring Prune into a reconciling sweep, are F-S07-2's full design,
-  which REVERSES this bullet and is the owner's to reopen
+  moved file from a hand attach of another model's file, so such an attach is detached too, and
+  the dry run cannot tell them apart either: it prints a per-model COUNT (`detach 2 files from
+  "Widget"`), never which files. What bounds that risk is that the attach door's only caller today
+  is the importer, posting to the import it has just created. Pinned both ways in
+  `model_intake_prune_test.rb`: the moved mesh is RED under the old guard, and a PDF no model owns
+  is RED with the guard deleted (that fixture must not be another model's file — that is the
+  moved-into-a-model shape). **Not covered:** a file the sweep attached that then MOVED where the
+  rule places it in NO model (`Widget/guide.pdf` to `Manuals/`) keeps its stale `Widget` row — on
+  purpose, by this guard, because that row is indistinguishable from a hand attach and keeping is
+  the safe answer; and a ONE-FILE model whose file moved keeps its row, because the first guard
+  skips one-file models entirely. Those states, and retiring Prune into a reconciling sweep, are
+  F-S07-2's full design, which REVERSES this bullet and is the owner's to reopen
   (`docs/AUDIT-2026-10-19-simplification.md` §4, measure-first).
 - **THE SWEEP NEVER CALLS THE PORT AND NEVER CALLS `ensure_library_folder!`.** It writes database
   rows only, which is what makes it identical on all three backends and testable without a library

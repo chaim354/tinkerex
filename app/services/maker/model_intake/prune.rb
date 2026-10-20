@@ -61,8 +61,12 @@ module Maker
       #   look exactly like a file the rule no longer claims.
       #
       #   A NODE OUTSIDE THE MODEL'S OWN FOLDER THAT THE CURRENT RULE PLACES IN NO MODEL IS LEFT
-      #   ALONE. The sweep could not have written that row, so it was attached by hand and is the
-      #   user's: what survives is exactly what the sweep could not have written.
+      #   ALONE -- BECAUSE IT MAY BE A HAND ATTACH, NOT BECAUSE THE SWEEP CANNOT HAVE WRITTEN IT.
+      #   The sweep can: a file it attached while the file sat inside, which then MOVED somewhere no
+      #   model claims (Widget's guide.pdf moved to Manuals/), leaves exactly this row, and nothing
+      #   in the row tells the two apart. Kept either way -- when the row cannot say whose it is,
+      #   keeping it is the safe answer, the reading .inside? gives a broken ancestry -- so that
+      #   stale row is a known gap (model-intake.md lists it under "Not covered").
       #   "PLACES IN NO MODEL" IS THE HALF F-S07-2 ADDED (2026-10-19), AND A MOVE IS WHY. This guard
       #   used to ask only "outside the folder?", on the premise that the sweep can only ever have
       #   attached from inside it. But a move keeps the node_id (Library::Reconciler pairs by
@@ -72,9 +76,11 @@ module Maker
       #   key belongs there wherever it sits, whether that key is another model or a folder a
       #   project or an import claims.
       #   No column tells that moved file from a hand attach of another model's file -- the door
-      #   writes the same role and position the sweep does -- so such an attach is listed too. The
-      #   dry run names it before anything is written, and no screen can make one today: the
-      #   attach door's only caller is the importer, posting to the IMPORT it has just created.
+      #   writes the same role and position the sweep does -- so such an attach is detached too.
+      #   The dry run cannot tell them apart either: it prints a per-model COUNT (`detach 2 files
+      #   from "Widget"`), never which files. What bounds the risk is that no screen can make such
+      #   an attach today: the attach door's only caller is the importer, posting to the IMPORT it
+      #   has just created.
       def self.stale_attachments(user, models)
         ids = models.flat_map { |m| m.file_attachments.map(&:node_id) }.uniq
         return {} if ids.empty?

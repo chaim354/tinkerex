@@ -85,12 +85,15 @@ module Maker
       assert_includes attached, "f-body"
     end
 
-    # THE SWEEP COULD NOT HAVE WRITTEN THIS ROW -- the node is not under the model's folder AND the
-    # current rule places it in no model -- so it is someone's deliberate attach and this repair
-    # does not get to overrule it. `Manuals` is a shelf (the seeded `*`), and a PDF loose on it is
-    # no model's: nothing model-role keys there. THE FIXTURE USED TO BE `loose.stl`, which the rule
-    # places in its own one-file model -- the shape a MOVE leaves (the next test) -- so it pinned
-    # the F-S07-2 defect as if it were the guard.
+    # A ROW THAT MAY BE A HAND ATTACH IS KEPT -- the node is not under the model's folder AND the
+    # current rule places it in no model, so nothing shows the sweep wrote it and this repair does
+    # not get to overrule it. It is ALSO the row a sweep-attached file leaves when it MOVES
+    # somewhere no model claims, and that one is kept too: the two rows are identical, so this test
+    # pins both (model-intake.md lists the moved one under "Not covered"). `Manuals` is a shelf (the
+    # seeded `*`), and a PDF loose on it is no model's: nothing model-role keys there. THE FIXTURE
+    # USED TO BE `loose.stl`, which the rule places in its own one-file model -- the shape a move
+    # INTO A MODEL leaves (the next test) -- so it pinned the F-S07-2 defect as if it were the
+    # guard.
     test "an attachment from outside the model's folder is left alone" do
       dir("d-manuals", "Manuals", nil)
       file("f-guide", "guide.pdf", "d-manuals")
