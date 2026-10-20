@@ -693,7 +693,9 @@ module Library
       # lost the index — dropping the index reads `["dir", "file"]`, dropping one lookup's `deleted`
       # term reads that kind alone.
       plans = lookups.to_h { |kind, (sql, binds)| [ kind, explain_plan(sql, binds) ] }
-      scanning = plans.reject { |_kind, plan| plan.include?("index_nodes_on_user_id_and_storage_path_tombstones") }
+      # The index NAME alone would pass a plan that seeks it on `user_id` only, so the match names
+      # both bound columns, the way SQLite prints a two-column seek.
+      scanning = plans.reject { |_kind, plan| plan.include?("index_nodes_on_user_id_and_storage_path_tombstones (user_id=? AND storage_path=?)") }
       assert_equal [], scanning.keys.sort,
                    "these revive lookups do not reach the tombstone index, so each reads every node the " \
                    "user owns, once per node a pass writes:\n" +
@@ -736,8 +738,10 @@ module Library
     # file→dir, dir→file, vanished dir — and after each pass compares the pass's OWN index with a
     # fresh read of `present`. A write that bypasses the two helpers and leaves a key stale, missing
     # or out of date goes red here, at whichever site it is. Mutation-checked at all eight: six go
-    # red, and the two kind-collision tombstones cannot, because the same key is rewritten a few
-    # lines later before anything reads it — no pass can observe a bypass there. The fresh read is
+    # red, and the two kind-collision tombstones cannot: at #ensure_dirs the key is rewritten in the
+    # same iteration, and at #match_live_paths by #create_or_revive!/#apply_moves! or, for an
+    # unreadable new file, removed by #tombstone_vanished_dirs re-tombstoning the already-deleted
+    # row — no pass can observe a bypass there. The fresh read is
     # spelled out below rather than taken through LiveRow.from, so a fault in that constructor
     # cannot agree with itself.
     #

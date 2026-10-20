@@ -688,8 +688,11 @@ module Library
     # stale key (0a160454). A write that goes around the two helpers and leaves a key stale fails
     # reconciler_test, which compares this index with a fresh read of `present` after passes that
     # reach every write site. Mutation-checked site by site, with ONE recorded blind spot: a bypass
-    # at either kind-collision tombstone is invisible, because the same key is rewritten a few
-    # lines later, before anything reads it. The helper is what keeps those two right; the call
+    # at either kind-collision tombstone is invisible. At #ensure_dirs the same key is rewritten in
+    # the same iteration, before anything reads it; at #match_live_paths it is rewritten by
+    # #create_or_revive! or #apply_moves!, or — for an unreadable new file, whose observation
+    # #plan_moves drops — removed by #tombstone_vanished_dirs re-tombstoning the already-deleted
+    # row, the same end state either way. The helper is what keeps those two right; the call
     # order only hides it when they are not. Not tidiness: see #ensure_dirs, where a directory
     # missing from here is a RecordNotUnique that kills every scan forever.
     #
@@ -703,7 +706,7 @@ module Library
     # apart by path alone.
     # Keeping those lookups live costs one seek each, not a read of every node the user owns:
     # `index_nodes_on_user_id_and_storage_path_tombstones` (partial, `deleted = true`) is the
-    # database's index over exactly the rows this one leaves out.
+    # database's index over the tombstones this one leaves out.
     def live
       @live ||= @user.nodes.present.where.not(storage_path: nil)
                     .pluck(:storage_path, :id, :node_id, :kind, :name, :mtime, :size,
