@@ -114,10 +114,8 @@ module Web
       tiles = css_select("section.attachments-panel .recent-files .attachment-tile")
       assert_equal %w[r5 r9 r1 r7 r3 r8 r2 r6], tiles.map { |t| t.at_css(".grid-name").text.delete_suffix(".stl") }
       assert_select "section.attachments-panel .recent-files .recent-files-head", text: "Recently changed"
-      assert_select "section.attachments-panel .recent-files .attachment-tile a[href=?]",
-                    files_path(folder: "d-r-old", selected: "r5")
-      assert_select "section.attachments-panel .recent-files .attachment-tile a[href=?]",
-                    files_path(folder: folder.node_id, selected: "r1")
+      assert_select "section.attachments-panel .recent-files .attachment-tile a[href=?]", file_path("r5")
+      assert_select "section.attachments-panel .recent-files .attachment-tile a[href=?]", file_path("r1")
       assert_select ".recent-files .grid-name", { text: "r0.stl", count: 0 }, "a file outside the folder is not recent here"
       assert_select "section.attachments-panel .panel-head a.panel-path[href=?][title=?]",
                     files_path(folder: folder.node_id), "#{Maker::ProjectFolders::ROOT}/#{project.slug}", text: "Open folder →"

@@ -99,12 +99,6 @@ module FilesHelper
                action: [ data[:action], "click->selection#click", "dblclick->selection#open" ].compact.join(" "))
   end
 
-  # WHERE A FILE OPENS FROM A PAGE WITHOUT ITS OWN INSPECTOR (structural redesign §6 and §7): its folder
-  # in the Library with the file selected, so the inspector answers "what is this" and its Open reaches
-  # the file page. Recent and the project hub link here; the Library's own tiles keep file_path, which
-  # selection intercepts. A file at the root has no parent, and Rails drops the nil `folder`.
-  def library_file_path(node) = files_path(folder: node.parent_node_id, selected: node.node_id)
-
   # WHAT THE "Type" COLUMN SHOWS, AND IT MUST AGREE WITH WHAT THE "Type" HEADER SORTS BY
   # (FilesController#sort_key's "type" branch): the file's extension, or "Symlink" for a symlink.
   # This column used to be headed "Kind" and render `node.kind`, which is the word "file" on every
