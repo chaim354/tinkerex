@@ -136,10 +136,10 @@ class FilesControllerPreviewKindTest < ActiveSupport::TestCase
 
   # A ZIP REACHES `:thumbnail` BY NAME, AND THE BOARD BRANCH IS A READ. `Maker::Previews::GerberZip`
   # claims `zip`, so `preview_kind` — which is NAME-ONLY for the whole vocabulary — now answers
-  # `:thumbnail` for every zip. That is not the page a Gerber export gets: `FilesController#show`
-  # overrides `@kind` to `:gerber` after `Maker::GerberArchive` has actually looked inside, which is
-  # the one preview kind decided by content. A zip of firmware keeps the name-only answer, and its
-  # preview row terminates `unsupported` after one bounded read.
+  # `:thumbnail` for every zip. That is not the page a Gerber export gets: `FilePreview#viewer_for`
+  # answers `:gerber` for both file pages after `Maker::GerberArchive` has actually looked inside,
+  # which is the one preview kind decided by content. A zip of firmware keeps the name-only answer,
+  # and its preview row terminates `unsupported` after one bounded read.
   test "a zip previews as :thumbnail by name, and only a read makes it a board" do
     assert_equal :thumbnail, kind("firmware.zip")
     assert_equal :thumbnail, kind("Gerber_board.zip")

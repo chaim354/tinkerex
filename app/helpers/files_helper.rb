@@ -216,9 +216,10 @@ module FilesHelper
   # THE ONE WIRE SHAPE gerber_controller.js READS FOR A ZIPPED EXPORT — one entry, the zip's own
   # name and URL, `archive: true`, and the member paths the browser extracts with JSZip after
   # fetching the zip once through the same URL a download uses (Maker::GerberArchive's header).
-  # Built here rather than as a literal in FilesController#show so that only a browser ever reads
-  # these keys and no second spelling of them exists for a server-side assertion to miss drifting.
-  # Its loose-layer sibling is `FilesController#gerber_layer_for` (`{ name:, url: }`).
+  # Built here rather than as a literal in FilePreview#viewer_for (its one caller, for both file
+  # pages) so that only a browser ever reads these keys and no second spelling of them exists for a
+  # server-side assertion to miss drifting. Its loose-layer sibling is `FilePreview#gerber_layer_for`
+  # (`{ name:, url: }`).
   def gerber_archive_entry(name:, url:, members:)
     { name:, url:, archive: true, members: }
   end
