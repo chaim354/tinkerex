@@ -19,8 +19,7 @@ module Web
     def sign_in(email = "readme@example.com")
       user = User.find_by(email:) ||
              User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email:, password: PASSWORD } }
-      user
+      sign_in_web!(user, password: PASSWORD)
     end
 
     # The house mutation-check helper (project_repo_card_test.rb and project_folder_listing_test.rb

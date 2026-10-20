@@ -26,7 +26,7 @@ module Web
       FileLayer.current = FileLayer::S3.new(bucket: "b", region: "us-east-1", access_key_id: "ak",
                                             secret_access_key: "sk", prefix: PREFIX,
                                             client: @fake.client)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
     end
     # Load-bearing, not decoration: a direct `FileLayer.current =` does not set
     # @file_layer_backend_pinned, so test_helper's teardown will not clean up after it.
@@ -88,7 +88,7 @@ module Web
       other = User.create!(email: "o2-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
       delete destroy_user_session_path
-      post user_session_path, params: { user: { email: other.email, password: PASSWORD } }
+      sign_in_web!(other, password: PASSWORD)
 
       get blob_file_path(id)
       # Both answers are a 302, so the status alone proves nothing here -- assert WHERE to.

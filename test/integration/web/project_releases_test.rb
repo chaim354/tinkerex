@@ -20,7 +20,7 @@ module Web
       @root = use_fresh_share_library!
       @user = User.create!(email: "release-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @project = @user.maker_projects.create!(name: "Desk Lamp")
       @folder = project_folder_rows!(@user, @project)
       @user.nodes.find_by!(node_id: @folder.parent_node_id).update!(storage_path: Maker::ProjectFolders::ROOT)

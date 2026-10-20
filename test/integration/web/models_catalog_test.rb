@@ -28,17 +28,10 @@ module Web
       FileUtils.remove_entry(@root) if @root&.exist?
     end
 
-    # DEVIATION FROM THE PLAN: `sign_in_as` does not exist in test_helper.rb. The only method by
-    # that name lives in test/system/support/web_helpers.rb -- a Capybara helper for
-    # ApplicationSystemTestCase that takes an EMAIL and drives the real sign-in form. This is a
-    # plain ActionDispatch::IntegrationTest; every web integration test in this suite instead
-    # defines its own local sign-in that POSTs credentials directly (models_flow_test.rb,
-    # models_import_test.rb, print_runs_test.rb, ...). This one takes the already-built @user,
-    # matching how the plan's setup builds the user up front so every test body can attach records
-    # to it, rather than an email that creates one.
-    def sign_in_as(user)
-      post user_session_path, params: { user: { email: user.email, password: PASSWORD } }
-    end
+    # The harness's verifying sign-in (test_helper.rb's `sign_in_web!`), with this suite's own
+    # PASSWORD rather than WEB_PASSWORD. It takes the already-built @user so every test body can
+    # attach records to it, rather than an email that creates one.
+    def sign_in_as(user) = sign_in_web!(user, password: PASSWORD)
 
     test "deleting an auto model dismisses it and says so" do
       model = @user.maker_models.create!(title: "Enclosure", origin: "auto", auto_node_id: "d-enc")

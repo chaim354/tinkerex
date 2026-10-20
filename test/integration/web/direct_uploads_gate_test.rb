@@ -35,8 +35,7 @@ module Web
     test "a signed-in direct upload is refused too" do
       user = User.create!(email: "du-#{SecureRandom.hex(4)}@example.com",
                           password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: user.email, password: PASSWORD } }
-      assert_redirected_to root_path, "sign-in did not take — this test proves nothing without it"
+      sign_in_web!(user, password: PASSWORD)
 
       before = ActiveStorage::Blob.count
       post PATH, params: blob_params, as: :json

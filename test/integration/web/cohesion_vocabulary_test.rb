@@ -28,7 +28,7 @@ module Web
 
     setup do
       @user = User.create!(email: "vocab@example.com", password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
     end
 
     test "the chip and the badge must say the same word for one state" do

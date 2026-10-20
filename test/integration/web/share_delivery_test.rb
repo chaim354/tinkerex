@@ -19,7 +19,7 @@ module Web
       @user = User.create!(email: "sd-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
       FileLayer.current = FileLayer::Share.new(root: @root.to_s)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
     end
     teardown do
       FileLayer.reset!
@@ -126,7 +126,7 @@ module Web
       other = User.create!(email: "o-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
       delete destroy_user_session_path
-      post user_session_path, params: { user: { email: other.email, password: PASSWORD } }
+      sign_in_web!(other, password: PASSWORD)
 
       get blob_file_path(id)
       assert_not_equal "secret", response.body, "a node lookup must be scoped to current_user"

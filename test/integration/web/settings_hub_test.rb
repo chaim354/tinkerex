@@ -22,13 +22,9 @@ module Web
       sign_in_as(@user)
     end
 
-    # DEVIATION FROM THE PLAN, the same one settings_reference_test.rb and shelves_test.rb record:
-    # `sign_in_as` is not defined in test_helper.rb (the only method by that name is a Capybara
-    # system-test helper that drives the real form). This plain ActionDispatch::IntegrationTest
-    # defines its own, taking the already-built @user the test bodies attach rows to.
-    def sign_in_as(user)
-      post user_session_path, params: { user: { email: user.email, password: PASSWORD } }
-    end
+    # The harness's verifying sign-in (test_helper.rb's `sign_in_web!`), with this suite's own
+    # PASSWORD rather than WEB_PASSWORD.
+    def sign_in_as(user) = sign_in_web!(user, password: PASSWORD)
 
     def other_user!
       User.create!(email: "sh-o-#{SecureRandom.hex(4)}@example.com",

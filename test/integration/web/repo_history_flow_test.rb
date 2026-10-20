@@ -26,7 +26,7 @@ class RepoHistoryFlowTest < ActionDispatch::IntegrationTest
     @library = use_fresh_share_library!
     @user = User.create!(email: "rh-#{SecureRandom.hex(4)}@example.com",
                          password: PASSWORD, confirmed_at: Time.current)
-    post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+    sign_in_web!(@user, password: PASSWORD)
   end
 
   # THE DOOR, ASSERTED SEPARATELY FROM THE ROOM. A `data-controller` that resolves to nothing is a
@@ -249,7 +249,7 @@ class RepoHistoryAmbientBackendTest < ActionDispatch::IntegrationTest
     stub_the_s3_client_only!
     @user = User.create!(email: "hab-#{SecureRandom.hex(4)}@example.com",
                          password: PASSWORD, confirmed_at: Time.current)
-    post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+    sign_in_web!(@user, password: PASSWORD)
   end
 
   teardown { FileLayer.reset! if @stubbed_s3 }

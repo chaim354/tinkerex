@@ -12,7 +12,7 @@ module Web
     setup do
       @user = User.create!(email: "logger@example.com", password: PASSWORD,
                            confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @project = @user.maker_projects.create!(name: "Logged", status: "active")
       @entry = @project.build_log_entries.create!(user: @user, body: "step one",
                                                   logged_at: Time.current)
@@ -68,13 +68,12 @@ module Web
     end
 
     test "another user cannot attach their own file to this entry" do
-      other_email = "intruder@example.com"
-      other = User.create!(email: other_email, password: PASSWORD, confirmed_at: Time.current)
+      other = User.create!(email: "intruder@example.com", password: PASSWORD, confirmed_at: Time.current)
       other.nodes.create!(node_id: "theirs", name: "theirs.png", kind: "file", size: 1,
                           mtime: 1_700_000_000_000_000_000)
 
       delete destroy_user_session_path
-      post user_session_path, params: { user: { email: other_email, password: PASSWORD } }
+      sign_in_web!(other, password: PASSWORD)
 
       assert_no_difference "Maker::FileAttachment.count" do
         post entry_photos_path(@entry), params: { node_id: "theirs" }
@@ -87,9 +86,8 @@ module Web
       att = @entry.file_attachments.last
 
       delete destroy_user_session_path
-      other_email = "intruder2@example.com"
-      User.create!(email: other_email, password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: other_email, password: PASSWORD } }
+      other = User.create!(email: "intruder2@example.com", password: PASSWORD, confirmed_at: Time.current)
+      sign_in_web!(other, password: PASSWORD)
 
       assert_no_difference "Maker::FileAttachment.count" do
         delete entry_photo_path(att)

@@ -22,7 +22,7 @@ module Web
         FileLayer.current = FileLayer::Share.new(root: @root)
         @user = User.create!(email: "pfi-#{SecureRandom.hex(4)}@example.com",
                              password: PASSWORD, confirmed_at: Time.current)
-        post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+        sign_in_web!(@user, password: PASSWORD)
         @project = @user.maker_projects.create!(name: "Desk Lamp")
         @folder = @project.ensure_library_folder!(@user)
       end
@@ -180,7 +180,7 @@ module Web
         FileLayer.current = FileLayer::Share.new(root: @root)
         @user = User.create!(email: "pfip-#{SecureRandom.hex(4)}@example.com",
                              password: PASSWORD, confirmed_at: Time.current)
-        post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+        sign_in_web!(@user, password: PASSWORD)
         @project = @user.maker_projects.create!(name: "Desk Lamp")
       end
 

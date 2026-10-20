@@ -21,9 +21,7 @@ class RepoEditFlowTest < ActionDispatch::IntegrationTest
     sign_in_as(@user)
   end
 
-  def sign_in_as(user)
-    post user_session_path, params: { user: { email: user.email, password: PASSWORD } }
-  end
+  def sign_in_as(user) = sign_in_web!(user, password: PASSWORD)
 
   # Drives the REAL door. §14e: the suite being green is not evidence a guard works if the
   # guard's precondition is never established in test.
@@ -520,7 +518,7 @@ class RepoEditAmbientBackendTest < ActionDispatch::IntegrationTest
     stub_the_s3_client_only!
     @user = User.create!(email: "ab-#{SecureRandom.hex(4)}@example.com",
                          password: PASSWORD, confirmed_at: Time.current)
-    post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+    sign_in_web!(@user, password: PASSWORD)
   end
 
   teardown { FileLayer.reset! if @stubbed_s3 }
@@ -626,7 +624,7 @@ class RepoCommitSurfacePresenceTest < ActionDispatch::IntegrationTest
   setup do
     @user = User.create!(email: "cs-#{SecureRandom.hex(4)}@example.com",
                          password: PASSWORD, confirmed_at: Time.current)
-    post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+    sign_in_web!(@user, password: PASSWORD)
   end
 
   test "the commit surface exists only where local_worktree is true" do

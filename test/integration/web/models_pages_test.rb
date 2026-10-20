@@ -15,7 +15,7 @@ module Web
     setup do
       @user = User.create!(email: "mp-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @user.nodes.create!(node_id: "n-benchy", name: "benchy.stl", kind: "file", mtime: 1_000_000_000, size: 10)
       @model = @user.maker_models.create!(title: "Benchy", print_status: "printed")
       @model.file_attachments.create!(user: @user, node_id: "n-benchy", role: "model")

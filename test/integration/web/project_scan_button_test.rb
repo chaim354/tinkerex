@@ -14,7 +14,7 @@ module Web
       ActionController::Base.cache_store.clear
       @user = User.create!(email: "scan-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @project = @user.maker_projects.create!(name: "Desk Lamp")
     end
 
@@ -290,7 +290,7 @@ module Web
                            password: PASSWORD, confirmed_at: Time.current)
       theirs = other.maker_projects.create!(name: "Their Lamp")
       delete destroy_user_session_path
-      post user_session_path, params: { user: { email: other.email, password: PASSWORD } }
+      sign_in_web!(other, password: PASSWORD)
 
       assert_enqueued_jobs 1, only: Library::ScanJob do
         post project_scan_path(theirs)
