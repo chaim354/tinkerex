@@ -153,19 +153,41 @@ class ShellTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  # `.flash { display: flex }` outranks the UA's `[hidden] { display: none }`, and the openscad
-  # addon bundle ships `p.flash.flash-alert[hidden]` as a notice slot — so until components.css
-  # restored `[hidden]` it rendered as an empty PROBLEM box on every openscad load. Injected rather
-  # than rendered by a fixture because the markup is the ADDON's, not a template of ours; the CSS
-  # is what is under test. Mutation-checked: deleting `.flash[hidden]` turns this red.
-  test "a flash rendered hidden stays hidden" do
+  # THE `hidden` ATTRIBUTE BEATS EVERY COMPONENT'S `display` (F-S34-2, 2026-10-19). An author
+  # `display` outranks the user agent's `[hidden] { display: none }`, so the attribute used to work
+  # only where a component restated it: seven restatements, each added after a shipped bug (the
+  # openscad bundle's `p.flash.flash-alert[hidden]` notice slot showed as an empty PROBLEM box on
+  # every load; the file chooser's Back; the tab panes), while the page editor's YAML drawer, which
+  # had none, rendered while hidden. One rule in application.css's base layer decides it now. A probe
+  # per formerly-restated selector, the drawer, and a bare `.btn` (an addon bundle removes one rather
+  # than hide it, because `hidden` was decorative there). Injected rather than rendered, because much
+  # of this markup is the ADDONS'; the CSS is under test, read as the COMPUTED display.
+  # Mutation-checked: deleting the base rule reddens the six whose component sets a `display`
+  # (.tab-pane, .flash, .filechooser-back, .btn, .addon-card, .layout-drawer). The `li`, `.box-group`
+  # and the caption set none, so the user agent's own rule hides them either way: their
+  # restatements were belt and braces.
+  test "a hidden element stays hidden whatever display its component gives it" do
     visit files_path
     page.execute_script(<<~JS)
-      document.querySelector("main").insertAdjacentHTML("beforeend",
-        '<p class="flash flash-alert" data-role="notice" id="hidden-flash-probe" hidden></p>')
+      document.querySelector("main").insertAdjacentHTML("beforeend", `<div id="hidden-probes">
+        <div class="tab-pane" data-probe="tab-pane" hidden>pane</div>
+        <p class="flash flash-alert" data-role="notice" data-probe="flash" hidden></p>
+        <button type="button" class="btn small filechooser-back" data-probe="filechooser-back" hidden>Back</button>
+        <button type="button" class="btn" data-probe="btn" hidden>Save</button>
+        <span class="topbar-upload-caption" data-probe="topbar-upload-caption" hidden>Saves to cad</span>
+        <ul class="box-toc-list"><li data-probe="box-toc-list li" hidden><a href="#trays">Trays</a></li></ul>
+        <a class="addon-card" data-probe="addon-card" hidden>Box</a>
+        <details class="box-group" data-probe="box-group" hidden><summary>Trays</summary></details>
+        <aside class="layout-drawer" data-probe="layout-drawer" hidden>YAML</aside>
+      </div>`)
     JS
-    assert_selector "#hidden-flash-probe", visible: :hidden
-    assert_no_selector "#hidden-flash-probe", visible: true
+    shown = page.evaluate_script(<<~JS).to_h
+      Array.from(document.querySelectorAll("#hidden-probes [data-probe]"))
+        .map((el) => [el.dataset.probe, getComputedStyle(el).display])
+    JS
+    assert_equal 9, shown.size, "the probes did not all land: #{shown.inspect}"
+    assert_empty shown.reject { |_, display| display == "none" }, "a hidden element renders: #{shown.inspect}"
+    assert_no_console_errors
   end
 
   test "a notice toast leaves on its own and an alert waits to be dismissed" do

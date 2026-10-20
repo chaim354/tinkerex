@@ -12,6 +12,10 @@ landed it (§11).
 1. **`application.css` opens with `@layer tokens, base, components, shell, pages;` and every rule of
    ours sits in one of those layers.** The first `@layer` statement the browser meets fixes the order
    for the document, so the statement must be the first rule of the first sheet the layout links.
+   **The `hidden` attribute is authoritative once, in `@layer base`** (`[hidden]:not([hidden="until-found"])
+   { display: none !important; }`, which beats every later layer and the unlayered vendor sheet), so
+   a component gives itself any `display` it likes and never restates `[hidden]`; `css_hygiene_test.rb`
+   refuses a restatement (F-S34-2 deleted seven, and found the YAML drawer that lacked one).
 2. **`vendor-overrides.css` is the ONE unlayered sheet, linked last.** An unlayered rule outranks
    every layered one, which is why the Lexxy / CodeMirror / spreadsheet skins have to live outside
    the layers to beat those libraries' own unlayered CSS — and why nothing else may. The CodeMirror

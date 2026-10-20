@@ -42,8 +42,9 @@ class CssHygieneTest < ActiveSupport::TestCase
 
   def strip_comments(css) = css.gsub(%r{/\*.*?\*/}m, "")
 
-  # Every rule as [selector_text, enclosing_block_heads]. A block whose head starts with "@" is an
-  # at-rule (layer, media, font-face, keyframes) and is not itself a rule; its children are.
+  # Every rule as [selector_text, enclosing_block_heads, declarations]. A block whose head starts
+  # with "@" is an at-rule (layer, media, container, font-face, keyframes) and is not itself a rule;
+  # its children are. `declarations` is the rule's body, one "property: value;" after another.
   def rules(css)
     out = []
     stack = []
@@ -53,18 +54,19 @@ class CssHygieneTest < ActiveSupport::TestCase
       when "{"
         head = buf.strip
         stack << head
-        out << [ head, stack.dup ] unless head.start_with?("@")
+        out << [ head, stack.dup, +"" ] unless head.start_with?("@")
         buf = +""
-      when "}"
-        stack.pop
-        buf = +""
-      when ";"
+      when "}", ";"
+        # Inside a rule (rules do not nest here), so the open rule is the last one recorded.
+        in_rule = stack.last && !stack.last.start_with?("@")
+        out.last[2] << " " << buf.strip << ";" if in_rule && !buf.strip.empty?
+        stack.pop if ch == "}"
         buf = +""
       else
         buf << ch
       end
     end
-    out
+    out.each { |rule| rule[2].strip! }
   end
 
   def layered?(enclosing) = enclosing.any? { |head| head.start_with?("@layer ") }
@@ -213,5 +215,29 @@ class CssHygieneTest < ActiveSupport::TestCase
                                      .map { |decl| "#{Pathname.new(path).basename}: #{decl}" }
     end
     assert_empty hits, "a stylesheet draws an emoji; use a glyph helper (folder_glyph, rail_icon) in the markup"
+  end
+
+  # --- THE `hidden` ATTRIBUTE IS AUTHORITATIVE ONCE, IN `@layer base` (F-S34-2, 2026-10-19) ---------
+  #
+  # Any author `display` outranks the user agent's `[hidden] { display: none }`, so a component that
+  # hid with the attribute needed its own `.x[hidden]` restatement: seven of them in three sheets,
+  # each added after a shipped bug, while the page editor's YAML drawer, which had none, rendered
+  # while hidden. ONE `!important` rule in the early base layer beats every later layer and the
+  # unlayered vendor sheet (important declarations reverse the layer order). So a `[hidden]` selector
+  # anywhere else is refused: it would be inert, and it would teach the next component to write its
+  # own. `until-found` keeps the user agent's behaviour (find-in-page reveals it). The browser's half
+  # is shell_test.rb's probe. Mutation-checked: deleting the base rule reddens this, and so does
+  # putting `.addon-card[hidden]` back in pages/tools.css.
+  HIDDEN_ATTRIBUTE = /\[\s*hidden\s*(?:[~|^$*]?=[^\]]*)?\]/
+  HIDDEN_RULE = [ "application.css", "base", '[hidden]:not([hidden="until-found"])', "display: none !important;" ].freeze
+
+  test "the hidden attribute is styled by one rule, in the base layer" do
+    found = (OURS + [ OVERRIDES ]).flat_map do |sheet|
+      rules(read(sheet)).flat_map do |head, enclosing, declarations|
+        selectors_of(head).grep(HIDDEN_ATTRIBUTE).map { |sel| [ sheet, layer_of(enclosing), sel, declarations ] }
+      end
+    end
+    assert_equal [ HIDDEN_RULE ], found,
+                 "the `hidden` attribute has ONE rule, in application.css's base layer; anything else restates it"
   end
 end
