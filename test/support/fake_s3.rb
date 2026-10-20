@@ -26,11 +26,22 @@ class FakeS3
 
   attr_reader :objects, :calls
 
+  # What a store can put on the wire for "no ETag": the field absent, present and empty, or S3's
+  # quotes around nothing — or around whitespace, which the ONE unquoting leaves just as blank. Only
+  # the first two fail the `present?` test the adapter's refresh sites used, and the last also got
+  # past the ladder's own `empty?`, minting `etag: ` — one identity shared by every such object.
+  BLANK_ETAGS = { "absent" => nil, "empty" => "", "quoted-empty" => '""',
+                  "quoted-whitespace" => '" "' }.freeze
+
+  # The four responses the adapter derives an identity from; `answer_etag!` refuses any other.
+  ETAG_ANSWERS = %i[put_object head_object copy_object list_objects_v2].freeze
+
   def initialize
     @objects = {}
     @calls = Hash.new(0)
     @faults = {}
     @faults_after = {}
+    @etag_answers = {}
   end
 
   # Force an operation to fail. `error` is an SDK error name ("NoSuchKey", "AccessDenied",
@@ -60,9 +71,21 @@ class FakeS3
     @faults_after[operation] = [ @calls[operation] + calls, error ]
   end
 
+  # Make `operation` ANSWER `etag` on the wire in place of the object's own — nil included, which
+  # is the field absent. THE OBJECT KEEPS ITS REAL ETAG, and that is the honest half: what is
+  # modelled is one operation answering unhelpfully (the audit's shape — blank on a COPY or HEAD,
+  # real on LIST), not a store whose objects have no identity. So a later HEAD or LIST still
+  # reports the truth unless it, too, is told otherwise, and every other field stays real.
+  def answer_etag!(operation, etag)
+    raise ArgumentError, "#{operation} carries no ETag the adapter reads" unless ETAG_ANSWERS.include?(operation)
+
+    @etag_answers[operation] = etag
+  end
+
   def clear_faults!
     @faults.clear
     @faults_after.clear
+    @etag_answers.clear
   end
 
   def client
@@ -121,11 +144,14 @@ class FakeS3
     error if after && @calls[op] > after
   end
 
+  # `fetch`, not `[]`: an answer of nil (the field absent) must win over the object's own ETag.
+  def wire_etag(op, etag) = @etag_answers.fetch(op, etag)
+
   def do_put(ctx)
     body = ctx.params[:body]
     body = body.read if body.respond_to?(:read)
     seed!(ctx.params[:key], body.b, last_modified: Time.now)
-    { etag: @objects[ctx.params[:key]].etag }
+    { etag: wire_etag(:put_object, @objects[ctx.params[:key]].etag) }
   end
 
   def do_get(ctx)
@@ -135,8 +161,9 @@ class FakeS3
 
   def do_head(ctx)
     o = @objects[ctx.params[:key]] or return "NotFound"
-    { content_length: o.body.bytesize, etag: o.etag, last_modified: o.last_modified,
-      checksum_sha256: o.checksum_sha256, checksum_type: o.checksum_type }
+    { content_length: o.body.bytesize, etag: wire_etag(:head_object, o.etag),
+      last_modified: o.last_modified, checksum_sha256: o.checksum_sha256,
+      checksum_type: o.checksum_type }
   end
 
   def do_delete(ctx)
@@ -202,7 +229,7 @@ class FakeS3
       c.etag = %Q("#{Digest::MD5.hexdigest(o.body)}")
     end
     @objects[ctx.params[:key]] = copy
-    { copy_object_result: { etag: copy.etag } }
+    { copy_object_result: { etag: wire_etag(:copy_object, copy.etag) } }
   end
 
   # Pagination is REAL here, at 2 keys a page: a fake that returns everything in one page
@@ -217,7 +244,8 @@ class FakeS3
     slice = keys[page, per] || []
     { contents: slice.map { |k|
         o = @objects[k]
-        { key: k, size: o.body.bytesize, etag: o.etag, last_modified: o.last_modified,
+        { key: k, size: o.body.bytesize, etag: wire_etag(:list_objects_v2, o.etag),
+          last_modified: o.last_modified,
           checksum_algorithm: (o.checksum_sha256 ? [ "SHA256" ] : nil),
           checksum_type: o.checksum_type }
       },

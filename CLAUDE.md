@@ -663,19 +663,19 @@ area belongs there too, with a stub here.
   created, and the leg splits chunk-green / share-red. **A replace may also NAME what it replaces:
   `expect_token:` is compared against the STORE (content AND existence), not the catalog, raising
   `FileLayer::StaleContent < UnsupportedOperation` with nothing written**; nil means no check.
-- **THE IDENTITY LADDER** (`FileLayer::S3::ObjectIdentity`). One namespaced value answers
-  two different questions: `content_token` need only be an opaque content-*state* token, but
-  `content_hash` must be content-*determined* for move-pairing — and **a multipart ETag is
-  not**. Ladder: **`sha256:`** (FULL_OBJECT only — a COMPOSITE sha256 is a
-  checksum-of-checksums, so the *type* is required, not the checksum alone) → **`md5:`** (a
-  **32-hex** single-part ETag is the md5 — 32-hex, not merely "dash-free") → **`etag:`**
-  (moves degrade to delete+create — a *missed* rename, never a *wrong* pairing). **TOTAL by
-  construction, never nil**: `Reconciler#plan_moves` **drops** a nil-hash observation from
-  `candidates`, and candidates become the leftovers that get indexed → the object is **never
-  indexed at all**, no error, no log. **Quotes come off in exactly ONE place** (S3 quotes
-  every ETag in list, head *and* put). Blind spot: an **SSE-KMS** object has a 32-hex ETag
-  that is *not* the content md5, so the rung-3 warning count reads **zero while no move
-  pairs at all**.
+- **THE IDENTITY LADDER** (`FileLayer::S3::ObjectIdentity`). One namespaced value answers two
+  questions: `content_token` need only be an opaque content-*state* token, but `content_hash` must
+  be content-*determined* for move-pairing — and **a multipart ETag is not**. Ladder: **`sha256:`**
+  (FULL_OBJECT only — a COMPOSITE sha256 is a checksum-of-checksums, so the *type* is required) →
+  **`md5:`** (a **32-hex** single-part ETag, not merely "dash-free") → **`etag:`** (moves degrade
+  to delete+create — a *missed* rename, never a *wrong* pairing). **TOTAL by construction, never
+  nil NOR BLANK**: `Reconciler#plan_moves` **drops** a nil-hash observation (never indexed, no log)
+  and one `etag: ` pairs strangers, so a blank ETag (quoted `""` or `" "` too) raises `BlankEtag`,
+  and **only `for_reported` maps it to nil**: `move`/`restored_stat` keep the old value (the bytes
+  already moved), `write` refuses (`FetchError`), the observer's raise refuses the scan (a dropped
+  key tombstones its row). **Quotes come off in exactly ONE place** (S3 quotes every ETag in list,
+  head *and* put). Blind spot: an **SSE-KMS** object's 32-hex ETag is *not* its md5, so the rung-3
+  warning reads **zero while no move pairs at all**.
 - **`LIBRARY_S3_HEAD_FOR_CHECKSUM` is NOT implemented — do not document it as working.** An
   observer cannot know what is new (the Reconciler does), so a HEAD there is
   per-object-per-**scan**: 2M billed requests every 15 min on a 2M-object bucket, not 2M
