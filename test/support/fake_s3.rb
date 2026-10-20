@@ -26,11 +26,26 @@ class FakeS3
 
   attr_reader :objects, :calls
 
+  # What a store can put on the wire for "no ETag": the field absent, present and empty, or S3's
+  # quotes around nothing — or around whitespace, which the ONE unquoting leaves just as blank. Only
+  # the first two fail the `present?` test the adapter's refresh sites used, and the last also got
+  # past the ladder's own `empty?`, minting `etag: ` — one identity shared by every such object.
+  BLANK_ETAGS = { "absent" => nil, "empty" => "", "quoted-empty" => '""',
+                  "quoted-whitespace" => '" "' }.freeze
+
+  # The four responses the adapter derives an identity from; `answer_etag!` refuses any other.
+  ETAG_ANSWERS = %i[put_object head_object copy_object list_objects_v2].freeze
+  # The two whose Last-Modified the adapter stores over a value it already holds — #restored_stat's
+  # HEAD and #move's copy result; `answer_last_modified!` refuses any other. (A PUT's response has
+  # no such field at all, which is why #write HEADs; a listing's is the observer's, not in scope.)
+  LAST_MODIFIED_ANSWERS = %i[head_object copy_object].freeze
+
   def initialize
     @objects = {}
     @calls = Hash.new(0)
     @faults = {}
     @faults_after = {}
+    @answers = {}
   end
 
   # Force an operation to fail. `error` is an SDK error name ("NoSuchKey", "AccessDenied",
@@ -60,9 +75,24 @@ class FakeS3
     @faults_after[operation] = [ @calls[operation] + calls, error ]
   end
 
+  # Make EVERY response of `operation`, for every key, ANSWER `value` for one field on the wire in
+  # place of the object's own — nil included, which is the field absent — until clear_faults!. It
+  # models a store that always answers that operation this way, not one bad response, so a test
+  # whose setup HEADs or copies after setting it gets the same answer there too. THE OBJECTS KEEP
+  # THEIR REAL VALUES, and that is the honest half: what is modelled is one operation answering
+  # unhelpfully (the audit's shape — a blank ETag on a COPY or HEAD, real ones on LIST; a HEAD with
+  # no Last-Modified), not a store whose objects lack them. So every OTHER operation still reports
+  # the truth unless it, too, is told otherwise, and every other field stays real.
+  def answer_etag!(operation, etag) = answer!(operation, :etag, etag, ETAG_ANSWERS)
+
+  def answer_last_modified!(operation, time)
+    answer!(operation, :last_modified, time, LAST_MODIFIED_ANSWERS)
+  end
+
   def clear_faults!
     @faults.clear
     @faults_after.clear
+    @answers.clear
   end
 
   def client
@@ -121,11 +151,20 @@ class FakeS3
     error if after && @calls[op] > after
   end
 
+  def answer!(operation, field, value, allowed)
+    raise ArgumentError, "#{operation} carries no #{field} the adapter reads" unless allowed.include?(operation)
+
+    @answers[[ operation, field ]] = value
+  end
+
+  # `fetch`, not `[]`: an answer of nil (the field absent) must win over the object's own value.
+  def wire(op, field, real) = @answers.fetch([ op, field ], real)
+
   def do_put(ctx)
     body = ctx.params[:body]
     body = body.read if body.respond_to?(:read)
     seed!(ctx.params[:key], body.b, last_modified: Time.now)
-    { etag: @objects[ctx.params[:key]].etag }
+    { etag: wire(:put_object, :etag, @objects[ctx.params[:key]].etag) }
   end
 
   def do_get(ctx)
@@ -135,7 +174,8 @@ class FakeS3
 
   def do_head(ctx)
     o = @objects[ctx.params[:key]] or return "NotFound"
-    { content_length: o.body.bytesize, etag: o.etag, last_modified: o.last_modified,
+    { content_length: o.body.bytesize, etag: wire(:head_object, :etag, o.etag),
+      last_modified: wire(:head_object, :last_modified, o.last_modified),
       checksum_sha256: o.checksum_sha256, checksum_type: o.checksum_type }
   end
 
@@ -181,6 +221,11 @@ class FakeS3
     # 30-day window purges it the same day, inside the window the operator configured, with no
     # version to restore. The bytes are the ETag's; the timestamp is the copy's.
     #
+    # AND THE RESPONSE CARRIES THAT DATE, as the real wire does: aws-sdk-s3's CopyObjectResult has
+    # `last_modified`, mapped from <LastModified> (types.rb, client_api.rb). This fake once left it
+    # out, and FileLayer::S3#move's comment then cited the fake to argue copy_object reports no
+    # date and declined to store it: §14e's fake that shares the code's misunderstanding.
+    #
     # AND A COPY MINTS ITS OWN ETAG FROM ITS OWN BYTES, which is the SAME LESSON one field over
     # and was left inherited when last_modified was fixed. `seed!`/`do_put` derive the ETag as the
     # md5 of the body; only `do_copy` inherited it -- two contradictory rules for one field, and
@@ -202,7 +247,8 @@ class FakeS3
       c.etag = %Q("#{Digest::MD5.hexdigest(o.body)}")
     end
     @objects[ctx.params[:key]] = copy
-    { copy_object_result: { etag: copy.etag } }
+    { copy_object_result: { etag: wire(:copy_object, :etag, copy.etag),
+                            last_modified: wire(:copy_object, :last_modified, copy.last_modified) } }
   end
 
   # Pagination is REAL here, at 2 keys a page: a fake that returns everything in one page
@@ -217,7 +263,8 @@ class FakeS3
     slice = keys[page, per] || []
     { contents: slice.map { |k|
         o = @objects[k]
-        { key: k, size: o.body.bytesize, etag: o.etag, last_modified: o.last_modified,
+        { key: k, size: o.body.bytesize, etag: wire(:list_objects_v2, :etag, o.etag),
+          last_modified: o.last_modified,
           checksum_algorithm: (o.checksum_sha256 ? [ "SHA256" ] : nil),
           checksum_type: o.checksum_type }
       },

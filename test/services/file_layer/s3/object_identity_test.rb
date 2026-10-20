@@ -80,6 +80,39 @@ module FileLayer
         assert_raises(ArgumentError) { ObjectIdentity.for(etag: "") }
       end
 
+      # BLANK MEANS BLANK AFTER THE ONE UNQUOTING, not before it. S3's quotes around nothing
+      # (`""`) or around whitespace (`" "`) are no more an ETag than nil is — and the second one
+      # used to pass, minting `etag: `: ONE identity for every object a store answers that way, so
+      # Reconciler#plan_moves would pair two unrelated files of one size and hand the second the
+      # first's node_id with every attachment on it. A false POSITIVE — the one direction the ladder
+      # header promises cannot happen.
+      #
+      # A BlankEtag, which is still an ArgumentError: every caller that rescued or asserted the
+      # old raise answers the same, and only for_reported (below) may tell blank from a bug.
+      BLANK = [ nil, "", "  ", "\t\n", '""', '" "', %Q("\t"), %Q(" \n ") ].freeze
+
+      test "a blank ETag, quoted or not, raises BlankEtag rather than minting an identity" do
+        BLANK.each do |etag|
+          err = assert_raises(ObjectIdentity::BlankEtag, "#{etag.inspect} has no identity") do
+            ObjectIdentity.for(etag:)
+          end
+          assert_match(/etag/i, err.message)
+        end
+        assert_operator ObjectIdentity::BlankEtag, :<, ArgumentError
+      end
+
+      # THE ONE PLACE A BLANK ETAG BECOMES nil, so the adapter's refresh sites decide what nil means
+      # for them (keep the previous value; skip a check; refuse a write) without each re-testing
+      # blankness — three hand-rolled `present?` guards were how quoted-empty got past two of them,
+      # and testing blankness outside normalize_etag would be a second place the quotes come off.
+      test "for_reported answers nil for a blank ETag and exactly what `for` answers otherwise" do
+        BLANK.each { |etag| assert_nil ObjectIdentity.for_reported(etag:), etag.inspect }
+
+        [ %q("d41d8cd98f00b204e9800998ecf8427e"), %q("abc-5"), "abc", %q(" abc ") ].each do |etag|
+          assert_equal ObjectIdentity.for(etag:), ObjectIdentity.for_reported(etag:), etag
+        end
+      end
+
       test "content-determined identities are distinguishable from weak ones" do
         assert ObjectIdentity.content_determined?("md5:d41d8cd98f00b204e9800998ecf8427e")
         assert ObjectIdentity.content_determined?("sha256:n4bQ=")

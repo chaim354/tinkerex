@@ -1069,23 +1069,42 @@ module FileLayer
                    "the SOURCE is untouched: only the copy is re-tagged"
     end
 
-    # F-04's three cases below all install this rather than leaning on the fixed do_copy above, and
+    # THE SAME CONTRACT ONE FIELD OVER, pinned rather than trusted for the same reason: the fake
+    # used to answer a copy with its ETag alone, and #move's comment then cited that omission as
+    # evidence that copy_object reports no date. aws-sdk-s3's CopyObjectResult carries
+    # `last_modified` (mapped from <LastModified>), so the fake does too — the COPY's date, which is
+    # its own, never the source's. Drop the field from do_copy's response and this goes red.
+    test "FakeS3: a copy's response carries the copy's own LastModified, as the real wire does" do
+      @fake.seed!("src.stl", "dated", last_modified: Time.at(1_600_000_000))
+
+      res = travel_to(Time.at(1_700_000_000)) do
+        @fake.client.copy_object(bucket: "b", key: "dst.stl", copy_source: "b/src.stl")
+      end
+
+      assert_equal Time.at(1_700_000_000), res.copy_object_result.last_modified,
+                   "the RESPONSE carries the copy's date — the value #move stores as the row's mtime"
+      assert_equal Time.at(1_700_000_000), @fake.objects["dst.stl"].last_modified,
+                   "and the stored copy agrees with what the response claimed"
+    end
+
+    # F-04's two refresh cases below install this rather than leaning on the fixed do_copy above, and
     # the independence is the whole point: if they relied on the fake to produce the re-tag, then
     # reverting do_copy would make them pass vacuously — the false green this pair exists to end.
     # So the re-tag is forced here, by a value the bytes could never produce.
     #
     # It HONORS copy_source_if_match, which is the assertion's entire mechanism: a stub that
     # ignored the precondition would let a stale content_hash through and every test below would
-    # pass with the fix reverted.
+    # pass with the fix reverted. And it answers with the copy's LastModified, as the wire and the
+    # fake's own do_copy do — a re-tag is no reason to model a response with a field missing.
     def retag_copies!(new_etag)
       @fake.client.stub_responses(:copy_object, lambda { |ctx|
         src = URI::DEFAULT_PARSER.unescape(ctx.params[:copy_source].to_s.split("/", 2).last)
         o = @fake.objects[src] or return "NoSuchKey"
         return "PreconditionFailed" if (m = ctx.params[:copy_source_if_match]) && m != o.etag
 
-        @fake.objects[ctx.params[:key]] =
-          o.dup.tap { |c| c.etag = new_etag; c.last_modified = Time.now }
-        { copy_object_result: { etag: new_etag } }
+        copy = o.dup.tap { |c| c.etag = new_etag; c.last_modified = Time.now }
+        @fake.objects[ctx.params[:key]] = copy
+        { copy_object_result: { etag: new_etag, last_modified: copy.last_modified } }
       })
     end
 
@@ -1128,11 +1147,66 @@ module FileLayer
       assert_equal "etag:3c4d5e6f", @user.nodes.find_by!(node_id: id).content_hash
     end
 
-    # THE GUARD, and why it is a presence test rather than a rescue. ObjectIdentity.for RAISES
-    # ArgumentError on a blank ETag (deliberately: the ladder must be total, and a nil identity
-    # means Reconciler#plan_moves drops the object and never indexes it at all). ArgumentError is
-    # not an Aws ServiceError, so #move's rescue would not catch it — and by the line that would
-    # raise, delete_object has ALREADY removed the source.
+    # THE COPY'S DATE, FROM THE SAME RESPONSE AS ITS ETAG. A copy is a new object with its own
+    # Last-Modified, and Reconciler#unchanged? compares the row's mtime with the LISTING's — so a
+    # row left on the SOURCE's date reads as changed on the next scan, which rewrites it and
+    # enqueues a thumbnail for bytes that did not change. The three dates are years apart because
+    # §15's `.to_i` trap is real here: a copy landing in its seed's second would pass with the
+    # refresh gone. Drop the refresh from #move and this goes red on the mtime.
+    test "a move takes the row's mtime from the copy's response, so the next scan rewrites nothing" do
+      @fake.seed!("#{PREFIX}/dated.stl", "when", last_modified: Time.at(1_600_000_000))
+      scan!(max_delete_pct: 100)
+      id = @user.nodes.find_by!(storage_path: "dated.stl").node_id
+
+      travel_to(Time.at(1_700_000_000)) { adapter.move(@user, node_id: id, new_name: "moved.stl") }
+
+      moved = @user.nodes.find_by!(node_id: id)
+      assert_equal 1_700_000_000 * 1_000_000_000, moved.mtime,
+                   "the COPY's date in nanos, not the source's 1_600_000_000"
+
+      travel_to(Time.at(1_800_000_000)) { scan!(max_delete_pct: 100) }
+      assert_equal moved.updated_at, @user.nodes.find_by!(node_id: id).updated_at,
+                   "the listing agrees with the row, so the scan has nothing to rewrite"
+    end
+
+    # --- a store that answers with no usable ETag or date ----------------------------------
+
+    # THE FAKE'S OWN CONTRACT for every blank-ETag test below, asserted on the WIRE field each
+    # response carries — the field the adapter reads, and nothing else — for F-65's reason above: if
+    # `answer_etag!` were inert, every test below would run on the truthful ETag, and the ones that
+    # expect "keep the previous value" would go green over a guard nothing reached. Make `wire`
+    # ignore its overrides and this goes red.
+    test "FakeS3: an operation answers the ETag it was told to, and the object keeps its own" do
+      @fake.seed!("k", "bytes")
+      real = @fake.objects["k"].etag
+
+      FakeS3::BLANK_ETAGS.each do |shape, blank|
+        FakeS3::ETAG_ANSWERS.each { |op| @fake.answer_etag!(op, blank) }
+        answered = {
+          head: @fake.client.head_object(bucket: "b", key: "k").etag,
+          put: @fake.client.put_object(bucket: "b", key: "p", body: "x").etag,
+          copy: @fake.client.copy_object(bucket: "b", key: "c", copy_source: "b/k")
+                     .copy_object_result.etag,
+          list: @fake.client.list_objects_v2(bucket: "b").contents.map(&:etag).uniq
+        }
+        assert_equal({ head: blank, put: blank, copy: blank, list: [ blank ] }, answered, shape)
+        assert_equal real, @fake.objects["k"].etag, "#{shape}: only the ANSWER is blank"
+      end
+
+      @fake.clear_faults!
+      assert_equal real, @fake.client.head_object(bucket: "b", key: "k").etag,
+                   "clear_faults! puts the truthful answer back"
+    end
+
+    # THE GUARD AT #move, and why it keeps the previous value rather than raising. A blank ETag has
+    # no identity — ObjectIdentity RAISES BlankEtag on one, deliberately: the ladder must be total,
+    # and a nil identity means Reconciler#plan_moves drops the object and never indexes it, while a
+    # blank one (`etag: `) is ONE identity shared by every such object, which pairs unrelated files.
+    # BlankEtag is an ArgumentError, not an Aws ServiceError, so #move's rescue would not catch it —
+    # and by the line that would raise, delete_object has ALREADY removed the source.
+    #
+    # ALL FOUR WIRE SHAPES, because only two of them ever failed the `present?` test this site used:
+    # quoted-empty raised past it, and quoted-whitespace minted `etag: ` and stored it.
     #
     # SO THE RAISE IS CAUGHT BY HAND RATHER THAN BY assert_nothing_raised, and "the source is gone"
     # is asserted FIRST and unconditionally. That ordering is the evidence: under the mutation both
@@ -1142,53 +1216,192 @@ module FileLayer
     # A raise in that window leaves the bytes only at the new key with the row still naming the
     # old one: §14a's orphaning landmine, reached by a store merely being unhelpful.
     #
-    # Make the refresh unconditional and this goes red with ArgumentError.
-    test "a copy that reports no ETag leaves the previous identity in place rather than raising" do
-      id = create_file!(name: "quiet.stl", bytes: "hush")
-      before = @user.nodes.find_by!(node_id: id).content_hash
-      retag_copies!("") # a store that answers a copy with no ETag at all
+    # Derive the identity with ObjectIdentity.for here and this goes red with BlankEtag; store the
+    # answer unconditionally and it goes red on a nil content_hash.
+    FakeS3::BLANK_ETAGS.each do |shape, blank|
+      test "a copy that reports a #{shape} ETag leaves the previous identity in place, not raising" do
+        id = create_file!(name: "quiet.stl", bytes: "hush")
+        before = @user.nodes.find_by!(node_id: id).content_hash
+        @fake.answer_etag!(:copy_object, blank)
 
-      raised = nil
-      begin
-        adapter.move(@user, node_id: id, new_name: "quieter.stl")
-      rescue StandardError => e
-        raised = e
+        raised = nil
+        begin
+          adapter.move(@user, node_id: id, new_name: "quieter.stl")
+        rescue StandardError => e
+          raised = e
+        end
+
+        assert_not @fake.objects.key?("#{PREFIX}/quiet.stl"),
+                   "the source is already deleted by the line that derives the new identity"
+        assert_nil raised, "a store that reports no ETag must not blow up a move that landed"
+
+        node = @user.nodes.find_by!(node_id: id)
+        assert_equal "quieter.stl", node.storage_path, "the move itself must still land"
+        assert_equal before, node.content_hash,
+                     "keep the previous value — NEVER nil, which un-indexes the object, nor blank"
       end
-
-      assert_not @fake.objects.key?("#{PREFIX}/quiet.stl"),
-                 "the source is already deleted by the line that derives the new identity"
-      assert_nil raised, "a store that reports no ETag must not blow up a move that landed"
-
-      node = @user.nodes.find_by!(node_id: id)
-      assert_equal "quieter.stl", node.storage_path, "the move itself must still land"
-      assert_equal before, node.content_hash,
-                   "keep the previous value — NEVER nil, which un-indexes the object"
     end
 
-    # THE SAME GUARD, ONE VERB OVER — and it went in unmutated. Removing `if head.etag.present?`
+    # THE SAME GUARD, ONE VERB OVER — and it once went in unmutated: removing `if head.etag.present?`
     # from #restored_stat ALONE left all 286 tests green, so nothing had ever shown that half to
     # work (CLAUDE.md §15: a guard that has never failed has not been shown to work).
     #
     # ITS FAILURE MODE IS WORSE THAN #move'S, which is why it earns its own test rather than an
-    # argument-by-symmetry. #restored_stat's own rescue lists ServiceError/NetworkingError only, so
-    # an ArgumentError from the refresh escapes it AND escapes into #undelete's caller — after the
-    # copy has landed and BEFORE `node.update!(deleted: false, ...)`. That leaves the bytes at BOTH
-    # keys, the node still tombstoned, and the trash copy never swept: the user's file is restored
-    # in the bucket and still in the Trash in the app, and the next undelete hits the
-    # "occupied — undelete must not clobber" refusal against a copy of itself.
+    # argument-by-symmetry — and a FOLDER restore reaches it once per member. #restored_stat's own
+    # rescue lists ServiceError/NetworkingError only, so a BlankEtag from the refresh escapes it AND
+    # escapes into #undelete's caller — after the copy has landed and BEFORE
+    # `node.update!(deleted: false, ...)`. That leaves the bytes at BOTH keys, the node still a trash
+    # tombstone with its path released, and the trash copy never swept: the next scan mints a NEW
+    # node_id for the restored object, orphaning every attachment (§14a), and the next undelete is
+    # refused as "already exists" by a copy of itself. A FetchError raised there would strand the
+    # copy identically, which is why the answer is the previous identity and not a refusal.
     #
-    # Make the refresh unconditional and this goes red with ArgumentError.
-    test "a HEAD that reports no ETag leaves the restore complete rather than raising" do
-      id = create_file!(name: "quietly-restored.stl", bytes: "shade")
-      before = @user.nodes.find_by!(node_id: id).content_hash
-      adapter.delete(@user, node_id: id)
+    # Derive the identity with ObjectIdentity.for here and this goes red with BlankEtag; store the
+    # answer unconditionally and it goes red on a nil content_hash.
+    FakeS3::BLANK_ETAGS.each do |shape, blank|
+      test "a HEAD that reports a #{shape} ETag leaves the restore complete rather than raising" do
+        id = create_file!(name: "quietly-restored.stl", bytes: "shade")
+        before = @user.nodes.find_by!(node_id: id).content_hash
+        adapter.delete(@user, node_id: id)
 
-      # Blank the ETag on HEAD only, delegating everything else to the fake — object_exists? asks
-      # this same verb and must keep answering truthfully, or the test passes for the wrong reason.
-      @fake.client.stub_responses(:head_object, lambda { |ctx|
-        o = @fake.objects[ctx.params[:key]] or return "NotFound"
-        { content_length: o.body.bytesize, etag: "", last_modified: o.last_modified }
-      })
+        # Blank the ETag on HEAD only. object_exists? asks this same verb, and the fake keeps
+        # answering EXISTENCE truthfully — or the test would pass for the wrong reason.
+        @fake.answer_etag!(:head_object, blank)
+
+        raised = nil
+        begin
+          adapter.undelete(@user, node_id: id)
+        rescue StandardError => e
+          raised = e
+        end
+
+        # THE THREE FACTS THAT MUST BE VISIBLE TOGETHER under the mutation, asserted before the
+        # raise so the test cannot pass by proving merely that something raised somewhere.
+        node = @user.nodes.find_by!(node_id: id)
+        assert @fake.objects.key?("#{PREFIX}/quietly-restored.stl"), "the copy back has landed"
+        assert_not node.deleted, "the node must be live again, not stranded mid-restore"
+        assert_nil raised, "a store that reports no ETag must not blow up a restore that landed"
+
+        assert_equal before, node.content_hash,
+                     "keep the previous value — NEVER nil, which un-indexes the object, nor blank"
+      end
+    end
+
+    # WRITE HAS NO PREVIOUS VALUE TO KEEP, so it is the one site that REFUSES. A new row needs the
+    # identity only the store can give it, and a replaced row's identity names bytes the key no
+    # longer holds. FetchError — this adapter's answer for a store that did not answer usefully;
+    # never the bare BlankEtag (an unmapped 500), and never a row with a nil or blank content_hash.
+    # The bytes HAVE landed (a PUT cannot be taken back), so the object sits unindexed until the next
+    # scan lists it truthfully and indexes it: the self-healing case #write's header already
+    # accepts. Never a tombstone, never NotFound.
+    #
+    # Drop the refusal and the write "succeeds", indexing a row whose content_hash is nil: red.
+    FakeS3::BLANK_ETAGS.each do |shape, blank|
+      test "a PUT that answers a #{shape} ETag is refused, indexes nothing, and the next scan does" do
+        @fake.answer_etag!(:put_object, blank)
+
+        assert_raises(FileLayer::FetchError) do
+          adapter.write(@user, parent_node_id: nil, name: "unnamed.stl", io: StringIO.new("bytes"))
+        end
+        assert_nil @user.nodes.find_by(storage_path: "unnamed.stl"),
+                   "no row for an object the store gave no identity — not even one with a nil hash"
+        assert @fake.objects.key?("#{PREFIX}/unnamed.stl"), "the bytes landed: a PUT is not undone"
+
+        scan!(max_delete_pct: 100) # the listing answers truthfully
+        assert_equal "md5:#{Digest::MD5.hexdigest('bytes')}",
+                     @user.nodes.find_by!(storage_path: "unnamed.stl").content_hash
+      end
+
+      test "a replace whose PUT answers a #{shape} ETag is refused and leaves its row as it was" do
+        id = create_file!(name: "kept.stl", bytes: "v1")
+        before = @user.nodes.find_by!(node_id: id).slice(:content_hash, :size, :mtime)
+        @fake.answer_etag!(:put_object, blank)
+
+        assert_raises(FileLayer::FetchError) do
+          adapter.write(@user, parent_node_id: nil, name: "kept.stl", io: StringIO.new("version two"),
+                        replace: true)
+        end
+        assert_equal before, @user.nodes.find_by!(node_id: id).slice(:content_hash, :size, :mtime),
+                     "the row is untouched: no nil or blank hash, and no new size under an old one"
+
+        scan!(max_delete_pct: 100)
+        assert_equal "md5:#{Digest::MD5.hexdigest('version two')}",
+                     @user.nodes.find_by!(node_id: id).content_hash,
+                     "the next scan re-derives it, on the SAME node"
+      end
+    end
+
+    # #store_identity's skip, through all four wire shapes. "We cannot tell" must never read as
+    # "stale": a store whose HEAD answers no usable ETag would then refuse every save that names its
+    # content, forever, with nothing the user can do — which quoted-whitespace did, minting `etag: `
+    # and comparing it with a real token. Derive the identity with ObjectIdentity.for there and this
+    # goes red with BlankEtag.
+    FakeS3::BLANK_ETAGS.each do |shape, blank|
+      test "a replace naming its content saves when the store's HEAD answers a #{shape} ETag" do
+        first = adapter.write(@user, parent_node_id: nil, name: "named.stl", io: StringIO.new("v1"))
+        @fake.answer_etag!(:head_object, blank)
+
+        adapter.write(@user, parent_node_id: nil, name: "named.stl", io: StringIO.new("version two"),
+                      replace: true, expect_token: first.content_token)
+
+        assert_equal "version two", @fake.objects["#{PREFIX}/named.stl"].body
+        assert_equal "md5:#{Digest::MD5.hexdigest('version two')}",
+                     @user.nodes.find_by!(node_id: first.node_id).content_hash
+      end
+    end
+
+    # THE DATE KNOB'S OWN CONTRACT, for the two tests below: a HEAD or a copy told to omit its
+    # Last-Modified answers without one on the WIRE (nil, the field absent) while the object keeps
+    # its own, and a response the adapter never reads a date from cannot be told to. Make
+    # `answer_last_modified!` inert and this goes red.
+    test "FakeS3: a HEAD or a copy can answer with no Last-Modified, and the object keeps its own" do
+      @fake.seed!("k", "bytes", last_modified: Time.at(1_600_000_000))
+      FakeS3::LAST_MODIFIED_ANSWERS.each { |op| @fake.answer_last_modified!(op, nil) }
+
+      assert_nil @fake.client.head_object(bucket: "b", key: "k").last_modified
+      assert_nil @fake.client.copy_object(bucket: "b", key: "c", copy_source: "b/k")
+                      .copy_object_result.last_modified
+      assert_equal Time.at(1_600_000_000), @fake.objects["k"].last_modified, "only the ANSWER omits it"
+      assert_raises(ArgumentError) { @fake.answer_last_modified!(:list_objects_v2, nil) }
+    end
+
+    # THE DATE'S PRESENCE GUARD AT #move, and as load-bearing as the ETag's: nanos(nil) raises
+    # NoMethodError — no ServiceError — and by that line delete_object has ALREADY removed the
+    # source, so a copy result without LastModified would strand the move exactly as a blank ETag
+    # did. Absent a date, the row keeps the one it had for the scan to correct. Store the date
+    # unconditionally and this goes red.
+    test "a copy that reports no LastModified keeps the row's previous mtime, and the move lands" do
+      @fake.seed!("#{PREFIX}/undated.stl", "when", last_modified: Time.at(1_600_000_000))
+      scan!(max_delete_pct: 100)
+      id = @user.nodes.find_by!(storage_path: "undated.stl").node_id
+      @fake.answer_last_modified!(:copy_object, nil)
+
+      raised = nil
+      begin
+        adapter.move(@user, node_id: id, new_name: "still-undated.stl")
+      rescue StandardError => e
+        raised = e
+      end
+
+      assert_not @fake.objects.key?("#{PREFIX}/undated.stl"), "the source is already deleted by then"
+      assert_nil raised, "a store that reports no date must not blow up a move that landed"
+      node = @user.nodes.find_by!(node_id: id)
+      assert_equal "still-undated.stl", node.storage_path, "the move itself must still land"
+      assert_equal 1_600_000_000 * 1_000_000_000, node.mtime, "keep the previous mtime — never nil"
+    end
+
+    # AND AT #restored_stat, where it is the stranding shape this ticket exists for: nanos(nil)
+    # raised after the copy-back and before the revive, leaving the object live behind a trash
+    # tombstone whose path is released — the next scan mints it a NEW node_id, orphaning every
+    # attachment — and a FOLDER restore reaches this once per member. A HEAD with no Last-Modified
+    # keeps the row's previous mtime. Make the mtime unconditional again and this goes red.
+    test "a HEAD that reports no Last-Modified leaves the restore complete with the previous mtime" do
+      @fake.seed!("#{PREFIX}/undated-restore.stl", "shade", last_modified: Time.at(1_600_000_000))
+      scan!(max_delete_pct: 100)
+      id = @user.nodes.find_by!(storage_path: "undated-restore.stl").node_id
+      adapter.delete(@user, node_id: id)
+      # On HEAD only: object_exists? asks the same verb and reads only whether it answered.
+      @fake.answer_last_modified!(:head_object, nil)
 
       raised = nil
       begin
@@ -1197,15 +1410,52 @@ module FileLayer
         raised = e
       end
 
-      # THE THREE FACTS THAT MUST BE VISIBLE TOGETHER under the mutation, asserted before the raise
-      # so the test cannot pass by proving merely that something raised somewhere.
       node = @user.nodes.find_by!(node_id: id)
-      assert @fake.objects.key?("#{PREFIX}/quietly-restored.stl"), "the copy back has landed"
+      assert @fake.objects.key?("#{PREFIX}/undated-restore.stl"), "the copy back has landed"
       assert_not node.deleted, "the node must be live again, not stranded mid-restore"
-      assert_nil raised, "a store that reports no ETag must not blow up a restore that landed"
+      assert_nil raised, "a store that reports no date must not blow up a restore that landed"
+      assert_equal 1_600_000_000 * 1_000_000_000, node.mtime, "keep the previous mtime — never nil"
+    end
 
-      assert_equal before, node.content_hash,
-                   "keep the previous value — NEVER nil, which un-indexes the object"
+    # A WRITE WHOSE HEAD CARRIES NO DATE IS REFUSED, beside its blank-ETag refusal and for its
+    # reason: a FILE row's mtime is a fact the scan compares, there is no previous one to keep, and
+    # Time.now is not a substitute (the next scan would read every written file as changed).
+    # nanos(nil) raised a bare NoMethodError, an unmapped 500, after the object had landed.
+    # FetchError, nothing indexed, and the next scan — which dates the object off the listing —
+    # indexes it. Remove the guard and this goes red with NoMethodError.
+    test "a write whose HEAD reports no Last-Modified is refused, indexes nothing, and a scan does" do
+      @fake.answer_last_modified!(:head_object, nil)
+
+      assert_raises(FileLayer::FetchError) do
+        adapter.write(@user, parent_node_id: nil, name: "undated-write.stl", io: StringIO.new("bytes"))
+      end
+      assert_nil @user.nodes.find_by(storage_path: "undated-write.stl"),
+                 "no row for an object the store gave no date — not even one with a nil mtime"
+      assert @fake.objects.key?("#{PREFIX}/undated-write.stl"), "the bytes landed: a PUT is not undone"
+
+      scan!(max_delete_pct: 100) # the listing carries the date
+      assert_equal "md5:#{Digest::MD5.hexdigest('bytes')}",
+                   @user.nodes.find_by!(storage_path: "undated-write.stl").content_hash
+    end
+
+    # A MKDIR WHOSE HEAD CARRIES NO DATE IS NOT REFUSED, and the difference is the catalog's own: S3
+    # has no directory dates, so S3Observer records every folder with mtime nil and
+    # Reconciler#unchanged_dir? compares on exactly that. The folder is created with that same nil —
+    # the next scan agrees and rewrites nothing — where a refusal would turn "New folder" into "try
+    # again" for a value the scan discards anyway. Put back nanos(head.last_modified) and this goes
+    # red with NoMethodError.
+    test "a mkdir whose HEAD reports no Last-Modified creates the folder with the scan's nil mtime" do
+      @fake.answer_last_modified!(:head_object, nil)
+
+      info = travel_to(Time.at(1_700_000_000)) { adapter.mkdir(@user, parent_node_id: nil, name: "undated") }
+
+      node = @user.nodes.present.find_by!(node_id: info.node_id)
+      assert_equal [ "dir", "undated", nil ], [ node.kind, node.storage_path, node.mtime ]
+      assert @fake.objects.key?("#{PREFIX}/undated/"), "the marker landed"
+
+      travel_to(Time.at(1_800_000_000)) { scan!(max_delete_pct: 100) }
+      assert_equal node.updated_at, @user.nodes.find_by!(node_id: info.node_id).updated_at,
+                   "the scan records a folder with mtime nil too, so it has nothing to rewrite"
     end
 
     # --- the 5GB copy cap -----------------------------------------------------------------
