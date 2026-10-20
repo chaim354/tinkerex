@@ -35,7 +35,9 @@ The first account you create is the owner: it is confirmed on the spot, without 
 sign-ups close behind it. Later accounts come from the console, as section 4 of the guide shows; open
 sign-ups exist only with the sync server, where each account has its own library. The folder the
 compose file is in is your library, files and all. To keep the file somewhere else,
-`LIBRARY_HOST_PATH=/path/to/files` in a `.env` beside it names the folder instead.
+`LIBRARY_HOST_PATH=/path/to/files` in a `.env` beside it names the folder instead. Files on another
+computer's network share work too: the compose file carries the lines for it, commented out, and the
+guide's section 3 walks through them.
 
 ## Where files come from
 
