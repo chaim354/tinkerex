@@ -22,6 +22,12 @@ module Maker
     # THE WRITE WINDOW IS TWO OPERATIONS WIDE (§8 rule 3). Objects are content-addressed and safe
     # to write early, so blobs and trees go in first; only the ref update and the index write need
     # a lock, and share is a NETWORK filesystem where a lock is the risky part.
+    #
+    # AND EACH SELECTED PATH IS READ ONCE, BEFORE EITHER OF THEM (#read_entry). The tree and the
+    # index are both written from that one read, so nothing touches the working tree after the ref
+    # moves. A write that lands mid-commit can leave the working tree newer than the commit, which
+    # `git status` reports truthfully as unstaged; it can never make the index disagree with the
+    # commit about a path the commit just recorded (F-S13-2).
     class CommitPaths
       class RefMoved < StandardError; end
       class NothingToCommit < StandardError; end
@@ -42,15 +48,16 @@ module Maker
           raise RefMoved, "another commit landed while you were reviewing"
         end
 
+        entries = paths.uniq.index_with { |rel| read_entry(rel) }
         builder = tree_builder(parents.first)
-        paths.each { |rel| stage(builder, rel) }
+        entries.each { |rel, entry| stage(builder, rel.split("/"), entry) }
 
         oid = Rugged::Commit.create(@repo,
                                     tree: builder.write, message: message.to_s,
                                     parents: parents.map(&:oid),
                                     update_ref: ref_name,
                                     author: identity, committer: identity)
-        refresh_index(paths)
+        refresh_index(entries)
         oid
       end
 
@@ -63,17 +70,25 @@ module Maker
         head_commit ? Rugged::Tree::Builder.new(@repo, head_commit.tree) : Rugged::Tree::Builder.new(@repo)
       end
 
+      # THE ONE PLACE A SELECTED PATH IS READ: nil when the file is gone from the working tree, else
+      # the blob its bytes hash to and the mode it carries. Everything after this writes from the
+      # answer and never asks the working tree again — #stage and #remove build the tree,
+      # #refresh_index updates the index. A second read anywhere is a second answer, and a write
+      # landing between the two makes the commit record one thing and the index stage another.
+      def read_entry(rel)
+        return nil unless File.exist?(File.join(@local.workdir, rel))
+
+        { oid: Rugged::Blob.from_workdir(@repo, rel), mode: filemode_for(rel) }
+      end
+
       # Nested paths need each intermediate tree rebuilt, so this recurses rather than assuming a
       # flat repository. A repository with everything at the root is the easy case, not the case.
       #
-      # THE WORKDIR PATH AND THE POSITION IN THE TREE ARE TWO DIFFERENT THINGS, and the recursion
-      # has to carry both. Recursing on the JOINED REMAINDER — the plan's spelling,
-      # `stage(sub, segments.drop(1).join("/"))` — re-enters holding "a.txt" for a file that is
-      # really at "src/a.txt", so `Rugged::Blob.from_workdir` raises
-      # `Rugged::OSError: could not find '<workdir>/a.txt' to stat` and `filemode_for` would stat
-      # the wrong path even if it did not. `rel` therefore stays the workdir-relative path the
-      # whole way down and only `segments` shortens.
-      def stage(builder, rel, segments = rel.split("/"))
+      # IT READS NOTHING, so it carries only the position in the tree and the entry #read_entry
+      # decided, exactly like #remove. It used to read bytes at the leaf, which is why it once had
+      # to carry the workdir path beside `segments`; a read put back here is the second read the
+      # class header forbids.
+      def stage(builder, segments, entry)
         # A SELECTED PATH THAT IS GONE FROM THE WORKING TREE IS A DELETION, not an error. "Replaced
         # with nothing" is what a maker who deleted the file is asking for, and it leaves the class
         # rule exactly as it was.
@@ -83,29 +98,25 @@ module Maker
         # about all the others, passing every bytes-oriented assertion — index.clear's shape, one
         # level down. The unselected-deletion test is the one that can see it.
         #
-        # ASKED ONCE, AT THE TOP OF THE FIRST CALL. #remove owns the whole descent from here, so
-        # the recursion below is never re-entered holding a path that is not there.
-        return remove(builder, segments) unless File.exist?(File.join(@local.workdir, rel))
+        # DECIDED ONCE, BY #read_entry. #remove owns the whole descent from here, so the recursion
+        # below never holds a nil entry.
+        return remove(builder, segments) if entry.nil?
 
         if segments.size == 1
-          builder.insert(name: segments.first, oid: Rugged::Blob.from_workdir(@repo, rel),
-                         filemode: filemode_for(rel))
+          builder.insert(name: segments.first, oid: entry[:oid], filemode: entry[:mode])
           return
         end
 
         head = segments.first
         sub_oid = builder[head]&.fetch(:oid, nil)
         sub = sub_oid ? Rugged::Tree::Builder.new(@repo, @repo.lookup(sub_oid)) : Rugged::Tree::Builder.new(@repo)
-        stage(sub, rel, segments.drop(1))
+        stage(sub, segments.drop(1), entry)
         builder.insert(name: head, oid: sub.write, filemode: 0o040000)
       end
 
       # #stage's mirror: the entry goes away instead of being replaced, and every parent tree is
-      # rebuilt on the way back up.
-      #
-      # NO `rel` PARAMETER, AND THE ASYMMETRY WITH #stage IS DELIBERATE. #stage carries the workdir
-      # path all the way down because it reads BYTES from there; a removal reads nothing, so the
-      # only question left is where the entry sits in HEAD's tree, which `segments` alone answers.
+      # rebuilt on the way back up. Like #stage it reads nothing, so `segments`, the entry's place
+      # in HEAD's tree, is the whole question.
       #
       # A PATH IN NEITHER THE WORKING TREE NOR HEAD IS A NO-OP, NOT AN ERROR — LocalRepo's
       # `:missing`, a stale maker_repo_edits row. `Tree::Builder#remove` answers false for a name it
@@ -145,20 +156,24 @@ module Maker
 
       # ONLY THE COMMITTED PATHS. Anything wider is index.clear with extra steps.
       #
-      # A DELETED PATH TAKES `index.remove`, NEVER `index.add`. `Blob.from_workdir` cannot read a
-      # file that is not there, and leaving the old entry behind makes the maker's own `git status`
-      # report the deletion this commit just recorded as STILL PENDING — the class comment's
-      # "the app half-did something", one state along.
+      # FROM THE ENTRIES THE TREE WAS BUILT FROM, NEVER A SECOND READ. This runs after the ref has
+      # moved; re-reading the working tree here let a write that landed since #read_entry put a blob,
+      # a mode or a deletion into the index that the commit does not carry, and the maker's
+      # `git status` then showed the path staged-and-different (F-S13-2).
+      #
+      # A DELETED PATH TAKES `index.remove`, NEVER `index.add`. Leaving the old entry behind makes
+      # the maker's own `git status` report the deletion this commit just recorded as STILL PENDING
+      # — the class comment's "the app half-did something", one state along.
       #
       # `index[rel]` IS ASKED FIRST BECAUSE `Rugged::Index#remove` RAISES on a path the index does
       # not hold: "index does not contain ghost.txt at stage 0" (rugged 1.9.6, probed). Without
       # that guard a selected path in neither the worktree nor HEAD — nothing to commit, and
       # harmless everywhere else — raises AFTER the commit landed and the ref already moved.
-      def refresh_index(paths)
+      def refresh_index(entries)
         index = @repo.index
-        paths.each do |rel|
-          if File.exist?(File.join(@local.workdir, rel))
-            index.add(path: rel, oid: Rugged::Blob.from_workdir(@repo, rel), mode: filemode_for(rel))
+        entries.each do |rel, entry|
+          if entry
+            index.add(path: rel, oid: entry[:oid], mode: entry[:mode])
           elsif index[rel]
             index.remove(rel)
           end

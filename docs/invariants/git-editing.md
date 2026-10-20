@@ -184,6 +184,15 @@ The write window is two operations wide on purpose (spec §8 rule 3): objects ar
 and safe to write early, so only the ref update and the index write happen under a lock — and share
 is a network filesystem, where the lock is the risky part.
 
+**Each selected path is read ONCE, before either of them**, by `CommitPaths#read_entry`, and that one
+answer (`{oid:, mode:}`, or nil for a file gone from the working tree) builds the tree AND refreshes
+the index. `refresh_index` used to read the working tree a second time, after the ref had moved, so a
+write landing between the reads (the maker's editor, desktop sync over SMB) committed one blob and
+staged another. `git status` then showed the path staged-and-different, or a staged deletion nobody
+asked for, and nothing errored. Put a read back into `#stage` or `#refresh_index` and
+`commit_paths_test.rb`'s "the index records exactly the blob the commit recorded, even if the file
+changes after it was read" and its deletion twin go red (F-S13-2).
+
 ## Compare content against HEAD's blob, never a stat
 
 `LocalRepo#row_for` reads the file and compares bytes with HEAD's blob. Not fussiness — the backend:
@@ -464,10 +473,20 @@ with nothing offered in the other groups "none of them is checked" would be true
 reason. A "Select all" control is per-GROUP for the same reason and must never be global: a global
 one commits clutter by accident, which is this rule undone through a different door.
 
+**What the box draws and what the commit accepts are ONE value, computed once per request.**
+`RepoCommitsController#reconcile` builds a `Staging`: three groups of `LocalRepo::Row`, each path's
+row read once. The view renders its groups, and `#create` intersects the posted paths with
+`Staging#offered_paths`, the committable rows of all three. Assembling that list a second time beside
+the render is a second definition of "what the page offered", and the two disagreed once while the
+staging panel was being built (c7539b98: the commit answered "Nothing selected." for every path in the
+wider groups). `checked:` stays a literal in the view. Guarded by "a ticked OS-clutter path commits"
+and by "the box and the commit each read a listed path once", which counts the content reads per path
+across both actions (F-S13-1).
+
 ## An unselected deleted path survives in the new tree, with HEAD's bytes
 
-`CommitPaths#stage` answers a selected path that is gone from the working tree with `#remove`
-instead of reading bytes — "replaced with nothing" is what a maker who deleted the file in Finder is
+`CommitPaths#stage` answers a selected path that `#read_entry` found gone from the working tree with
+`#remove` — "replaced with nothing" is what a maker who deleted the file in Finder is
 asking for, and the class rule does not move. **The danger is not dropping the entry you selected;
 it is dropping one you did not.**
 
@@ -483,6 +502,12 @@ in `commit_paths_test.rb` red** — "an UNSELECTED deleted path survives in the 
 bytes", failing `Rugged::TreeError: the path 'a.txt' does not exist in the given tree` — and leaves
 the other **fifteen green**. `repo_edit_flow_test.rb`'s "a path from Other changes commits, and only
 it" asserts the same property through the real request. Delete either and the mutation is invisible.
+
+Re-measured on 2026-10-19, after F-S13-2 added two tests (eighteen now). A sweep that stats the
+working tree AFTER `#read_entry` turns **two** red: that one, with the same error, and the new
+"a file deleted after it was read is committed, and git reports an unstaged deletion". The second is
+incidental: the same sweep decided BEFORE the reads turns only the first red, so the deletion twin
+guards the single read, not this property, and the sentence above still holds.
 
 ## `:deleted` and `:missing` are distinct, and conflating them is silent in both directions
 
@@ -582,7 +607,13 @@ shared predicate, not by a list of names" uses the first.
 ## Binary is decided by CONTENT, never by `Maker::FileAttachment.text?`
 
 git's own rule, and the panel takes it: a NUL byte within the first 8 kB
-(`RepoCommitsController::BINARY_SNIFF_BYTES`).
+(`Maker::Git::LocalRepo::BINARY_SNIFF_BYTES`). It is a field on the row, `LocalRepo::Row#binary`,
+decided by `#row_for` from the bytes it has already read. It used to be a separate pass that re-opened
+every listed file to sniff it: a second read per path, and a second path-keyed structure the view had
+to keep in step with the rows (F-S13-1). The `.gitignore`d row is the one exception and reads 8 kB of
+its own, because `#row_for` returns before reading that file in full. Pinned at both edges of the
+window by `local_repo_test.rb`'s "a NUL in the first 8 kB marks a row binary; text, and a NUL after
+8 kB, do not".
 
 **This is not the second-vocabulary mistake §14d warns about; it is a second AXIS.**
 `Maker::FileAttachment.text?` answers a NAME question — "should the file page offer a source
@@ -606,8 +637,8 @@ index["ghost.txt"]        # => nil
 index.remove("ghost.txt") # => Rugged::IndexError: index does not contain ghost.txt at stage 0
 ```
 
-`CommitPaths#refresh_index` therefore branches three ways — `File.exist?` → `add`, `elsif index[rel]`
-→ `remove`, else nothing. Drop the guard and a selected path in neither the working tree nor HEAD
+`CommitPaths#refresh_index` therefore branches three ways on the entry `#read_entry` recorded — an
+entry → `add`, `elsif index[rel]` → `remove`, else nothing. Drop the guard and a selected path in neither the working tree nor HEAD
 (`:missing`, a stale row, harmless everywhere else in this class) raises **after
 `Rugged::Commit.create` has written the commit and moved the ref**. The maker sees a 500, the commit
 landed anyway, and the index was never written — the worst position in the whole write path, reached
