@@ -8,8 +8,9 @@ fails the build when the code reads a variable this page does not name, so it is
 construction rather than by promise.
 
 The first path here is the **`share` backend**: your files stay plain files in a folder, the app
-indexes them, and that folder stays yours — editable with anything else. The sync server (section 5)
-is the second path. Pointing the app at your own S3 bucket is a third, at the end of section 3.
+indexes them, and that folder stays yours — editable with anything else; it can also be a network
+share on another computer (section 3). The sync server (section 5) is the second path. Pointing the
+app at your own S3 bucket is a third, at the end of section 3.
 
 ## 1. What you need
 
@@ -140,6 +141,59 @@ lists every line with its default.
 - **`TINKEREX_PORT`** — the port on this machine, default `8080`.
 - Accounts and mail are section 4; the sync server is section 5; every other variable is in
   section 8.
+
+### A network share instead of a folder
+
+When your files are on another computer — a NAS, or a folder shared from a Mac or a Windows
+machine — Docker can connect to the SMB share itself, with nothing mounted on this machine first and
+no `.env`. Everything goes in `docker-compose.yml`, which carries the lines commented out:
+
+1. In the `web` service's `volumes:`, delete the `${LIBRARY_HOST_PATH:-.}:/library` line and
+   uncomment `- library:/library` below it.
+2. At the end of the file, uncomment the `library:` volume and fill in the share:
+
+   ```yaml
+     library:
+       driver_opts:
+         type: cifs
+         device: "//192.168.1.50/Files"
+         o: "username=you,password=your-password,vers=3.0,uid=1000,gid=1000,file_mode=0664,dir_mode=0775"
+   ```
+
+   `device` is `//<server>/<share name>`; a space in the share name stays as it is inside the
+   quotes. The server can be a DNS name or an IP address; if it does not connect by name (a `.local`
+   name often does not resolve inside Docker), use the IP. For a guest share, `guest` replaces
+   `username=…,password=…`. In the password, write `$` as `$$` (compose reads `$` as the start of a
+   variable) and a comma as `,,` (the options are a comma-separated list). `uid=1000,gid=1000` make
+   the share's files belong to the user the app runs as, which is what lets it write there; leave
+   them. `vers=3.0` suits a Mac, Windows 10 or later and current NAS systems; an older NAS may need
+   `vers=2.1`.
+3. Optionally, set `LIBRARY_HOST_PATH:` in the `web` service's `environment:` to the share's address
+   (`//192.168.1.50/Files`). It only names the folder on the setup page, which otherwise says "the
+   folder your docker-compose.yml is in".
+
+Then `docker compose up -d`. The first run is the same as with a folder (section 2): the share is
+the mounted folder, and you can choose a folder inside it.
+
+**The share must be reachable when the app starts.** Docker connects to it as the container starts,
+so while the other computer is off or asleep the app does not start: `docker compose up -d` stops
+with an error naming the share (`no route to host`, or `permission denied` for a wrong password),
+and Docker does not retry by itself. Run it again once the share is reachable; the same goes for a
+container Docker could not start after this machine restarted. Once the app is running, a share that
+drops — the other computer restarting — reconnects by itself within seconds of coming back.
+Meanwhile pages answer from the catalog, and a scan is refused rather than mistaking the missing
+share for deleted files.
+
+**Changing the share settings.** Docker keeps them in the volume, so editing the file is not enough:
+`docker compose up -d` asks *"Volume … exists but doesn't match configuration in compose file.
+Recreate (data will be lost)?"* and, unanswered, keeps the old settings. The data it means is only
+those settings; your files stay on the share. Run `docker compose down`, then
+`docker volume rm <folder>_library` (`<folder>` is the name of the folder the compose file is in;
+`docker volume ls` shows it), then `docker compose up -d`.
+
+The password is in `docker-compose.yml` in plain text, and in Docker's record of the volume
+(`docker volume inspect`), so keep the file to yourself (`chmod 600 docker-compose.yml` on a Mac or
+Linux). Docker masks it in its error messages.
 
 ### Building from source instead of pulling
 
