@@ -365,6 +365,18 @@ module Web
       assert_select "table.public-bom .col-supplier", false
     end
 
+    # A STOCK LINE IS PUBLISHED IN ITS ITEM'S UNIT (audit F-S16-2), the unit the maker's own Consume
+    # counts it in. The fixture saved the line in "each", so after this edit only a table that asks
+    # the item can say "pack"; one that prints the line's own column still says "2 each".
+    test "a public BOM stock line shows its item's current unit" do
+      @f[:item].update!(unit: "pack")
+
+      get path
+      assert_select "table.public-bom tbody tr", text: /M3 bolt/ do
+        assert_select "td.col-qty", text: "2 pack"
+      end
+    end
+
     test "a BOM file line links to the public file URL" do
       get path
       assert_select "table.public-bom a[href=?]", public_file_path("ada", @project.slug, @f[:base].node_id)

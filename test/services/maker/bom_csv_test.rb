@@ -40,6 +40,15 @@ module Maker
       assert_equal [ "B1", "M3 bolt", "2.0", "each", nil ], row_for("B1")
     end
 
+    # THE PUBLIC TABLE'S UNIT RULE, IN THE SECOND MEDIUM (audit F-S16-2): a stock line's unit is its
+    # item's, read from the item. The fixture saved the line in "each", so after this edit a CSV that
+    # writes the line's own column still says "each" while the page says "pack".
+    test "an inventory-item line's unit is its item's current unit" do
+      @f[:item].update!(unit: "pack")
+
+      assert_equal [ "B1", "M3 bolt", "2.0", "pack", nil ], row_for("B1")
+    end
+
     test "a design-file line the project permits names the file and its path in the bundle" do
       assert_equal [ "F1", "base.stl", "1.0", "each", "models/base.stl" ], row_for("F1")
     end

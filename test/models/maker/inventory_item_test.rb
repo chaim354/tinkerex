@@ -80,6 +80,25 @@ module Maker
       assert_equal "B1", line.reference
     end
 
+    # THE UNIT GOES WITH THE NAME (audit F-S16-2). A stock line reads its unit from its item, so
+    # once the pointer is dropped the line has only its own column to answer from — and the column
+    # is not kept in step with the item. The item's unit is edited after the line exists so that
+    # the column is stale when the item goes: without the copy, "2 g" of PETG would come back as
+    # "2 kg", the unit the line was last saved in.
+    test "destroying an item carries its unit onto the converted line" do
+      project = @user.maker_projects.create!(name: "Lamp1f")
+      bom = project.boms.create!(user: @user)
+      item = @user.maker_inventory_items.create!(name: "PETG", unit: "kg")
+      line = bom.lines.create!(user: @user, inventory_item_id: item.id, quantity: 2)
+      item.update!(unit: "g")
+      item.destroy!
+
+      line.reload
+      assert_equal :free_text, line.target_kind
+      assert_equal "PETG", line.part_name
+      assert_equal "g", line.unit
+    end
+
     # `maker_bom_lines` has its own `supplier_id` and `resolved_target`'s free-text shape already
     # renders `supplier_id`/`supplier_name`, so a conversion that left it nil dropped half of what
     # makes a line orderable into a column that was sitting there waiting for it. The rollup
