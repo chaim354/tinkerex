@@ -57,12 +57,32 @@ sign-ups are closed** — the page answers "Sign-ups are closed" and the link di
 either open them (`REGISTRATION`, section 4) or add accounts from the console (also section 4).
 No mail server is involved in any of this.
 
+**Then the app asks once which folder is the library** (on the share backend, the default). The
+next screen names the mounted folder — *the folder your docker-compose.yml is in*, or the path you
+typed in `LIBRARY_HOST_PATH` — and says what will happen to it: it is indexed every 15 minutes,
+uploads land in it, and deletions move into its `.trash/`. **Use this folder** confirms it.
+**Choose a folder inside it** opens a folder picker over it, to make the library one folder within
+it; the picker lists folders only, never a dot-folder, `.trash`, a link or another hidden or
+reserved name, and **Use this folder** then confirms the one you picked. The first scan runs after
+you confirm, not at sign-up. Until then nothing is scanned and every page brings you back to that
+screen, except Help and signing out. Creating the first account with `bin/rails tinkerex:owner`
+(section 4) confirms the whole mounted folder itself, so a console install is not asked.
+
+**To change it later**, open Settings → Library folder. With files already indexed it offers two
+outcomes. **Switch to this folder** keeps each file's projects, notes and tags when the new folder
+holds the same files (the old one moved or renamed on the host); if it holds a different set, the
+scan refuses, the way it refuses an unmounted share (`LIBRARY_SCAN_MAX_DELETE_PCT`, 20%), and the
+page says so. **Start over with this folder** forgets the catalog — every indexed file, its
+previews, notes, pins and the 3D models found in it — and keeps projects, tasks, inventory and
+BOMs. It never deletes or moves anything on disk.
+
 ### Where your files come from
 
-- **The folder the compose file is in is your library** — or the folder you name in section 3. It
-  is indexed on start, every 15 minutes after that, and whenever you press
-  **Rescan library** on the Files page. Anything you put in the folder by other means — a copy
-  over the network, a slicer saving into it — appears on the next scan.
+- **The folder the compose file is in is your library** — or the folder you name in section 3, or
+  a folder you choose inside it (above). Once you have confirmed it, it is indexed on every start,
+  every 15 minutes, and whenever you press **Rescan library** on the Files page. Anything you put
+  in the folder by other means — a copy over the network, a slicer saving into it — appears on the
+  next scan.
 - **Uploads in the browser land in the folder** as ordinary files, so the folder remains the
   truth and the app a view of it.
 - **Deleting in the app moves the file to `.trash/`** inside the folder (keyed by an id, so two
@@ -98,13 +118,18 @@ lists every line with its default.
   Desktop shares with containers, which by default includes your home directory. On Windows a
   folder on the Windows drive works; a large library is faster inside the WSL2 filesystem. The app
   is a view of that folder, not a copy: uploads land in it, deleted files move to its `.trash/`, and
-  anything another program puts there is indexed within 15 minutes.
+  anything another program puts there is indexed within 15 minutes. To pick the library from a
+  wider folder, mount a parent here — `~` works on Docker Desktop and Linux — run
+  `docker compose up -d` once, and choose the library inside it in the browser (section 2). Docker
+  lets the app see only what is mounted, which is why this line is still needed.
 - **`PUID` and `PGID`** (Linux) — the user and group the app runs as inside the container. By
   default it runs as **the owner of your folder**, so there is nothing to set when the folder is
   yours or an Unraid share (`99`/`100`). Set them when the folder is owned by root (the default is
   then `1000`; `id -u` and `id -g` print yours) or to run as a different user on purpose. Set both
   or neither: with `PUID` alone, `PGID` is `1000`. Files the app writes into your folder are owned
-  by that user, and the boot checks it can write there.
+  by that user, and the boot checks it can write there. A folder you choose inside it in the
+  browser must be writable by that user too; when it is not, the page refuses it, names the user
+  as `uid:gid`, and tells you to set `PUID` and `PGID` in `.env` to that folder's owner.
   Docker Desktop on Mac and Windows presents your folders as writable by any user, so there is
   nothing to set there. The app never changes your folder's ownership — it only probes it — with
   one exception: an empty folder owned by root (the one Docker itself creates on Linux for a
@@ -258,8 +283,9 @@ docker compose up -d                # with the same -f overlay as before, if you
 The database migrates itself when the container starts (the entrypoint runs `db:prepare` before
 Puma). `.env` is yours and nothing here touches it; `.env.example` in the repository may gain lines
 in a new release, so `diff` it against yours now and then. A library scan runs on start, so a file
-that changed on disk while the app was down is picked up. Building from source instead: `git pull`
-in the clone, then the overlay command from section 3 with `--build`.
+that changed on disk while the app was down is picked up. An install from before the library folder
+could be chosen is not asked: it keeps the whole mounted folder as its library. Building from source
+instead: `git pull` in the clone, then the overlay command from section 3 with `--build`.
 
 ## 7. Backups
 
@@ -313,13 +339,13 @@ compose*; the rest come from `.env`.
 | **Core** | | | |
 | `SECRET_KEY_BASE` | no | generated on the first start, kept at `storage/secret_key_base` in the volume | Signs sessions and cookies. Set it to use your own (`openssl rand -hex 64`); a blank value counts as unset. Changing or losing it signs everyone out and nothing else. |
 | `LIBRARY_BACKEND` | no (the image defaults to `share`) | `share` | Where the files live: `share` (a folder), `s3` (a bucket) or `chunk_remote` (the sync server). Chosen per deployment, never per user; the two overlays set it. An explicit blank refuses the boot, and so does any value other than these three spelled exactly (`S3`, or a stray space, included). |
-| `LIBRARY_PATH` | no | `/library` (the image default) | The folder inside the container to index. The boot checks that it exists, is a directory, and is writable by the app's user — by writing a probe file, because mode bits lie on network mounts. |
+| `LIBRARY_PATH` | no | `/library` (the image default) | The folder mounted inside the container. The library is this folder or one chosen inside it in the browser (section 2). The boot checks that it exists, is a directory, and is writable by the app's user — by writing a probe file, because mode bits lie on network mounts. |
 | `APP_HOST` | with `SMTP_ADDRESS` | `APP_HOST-IS-NOT-SET.invalid`, which without SMTP only ever lands in a message nothing can deliver | The host name (no scheme) that links in email point at; also the default HELO domain and the domain of the default sender. The boot refuses `SMTP_ADDRESS` without it. |
 | `FORCE_SSL` | when behind TLS | off | Set to `1` when the server is reached over HTTPS through a reverse proxy: redirects plain HTTP, marks cookies secure, makes mail links `https`. Setting it with no TLS in front locks you out. |
 | `RAILS_MAX_THREADS` | no | 3 (Puma), 5 (database pool); **the compose file sets 16** | Puma's thread count and the SQLite connection pool. 3 starves once a tool call is proxied through the app; 16 is what the author runs. |
 | `SOLID_QUEUE_IN_PUMA` | no | **on** in production | Runs the background workers (scans, thumbnails, trash purge, project intake, the changelog pull) inside the web container. `false`, `0` or `no` turns it off, for a split `bin/jobs` container. Outside production it is an opt-in, as it always was. |
 | **Compose only** (`docker-compose.yml` reads these; the app never sees them, except `LIBRARY_HOST_PATH`, passed through display-only, and `PUID`/`PGID`, which reach the entrypoint) | | | |
-| `LIBRARY_HOST_PATH` | no | the compose file's own folder (`.`) | The folder on the host bound to `/library`; a relative path is resolved against the compose file's directory. Also passed into the container display-only, so the Getting started panel can name the folder ("the folder your docker-compose.yml is in", or the path as typed). Section 3. |
+| `LIBRARY_HOST_PATH` | no | the compose file's own folder (`.`) | The folder on the host bound to `/library`; a relative path is resolved against the compose file's directory. Also passed into the container display-only, so the Getting started panel and the Library folder page can name the folder ("the folder your docker-compose.yml is in", or the path as typed). Section 3. |
 | `PUID`, `PGID` | no | the library folder's owner, else `1000` | The user and group the app runs as inside the container, and so the owner of every file it writes into your folder (section 3). Both unset, the folder's owner when it is not root, otherwise `1000`; with `PUID` set alone, `PGID` is `1000`. An Unraid share gives `99`/`100`; Docker Desktop needs nothing. The container starts as root and drops to them; `--user` on the container skips that and runs as given. |
 | `TINKEREX_PORT` | no | `8080` | The host port the web app is published on. |
 | `TINKEREX_IMAGE` | no | `ghcr.io/chaim354/tinkerex:latest` | The app image. `docker-compose.build.yml` builds `tinkerex:local` from the checkout instead. |
