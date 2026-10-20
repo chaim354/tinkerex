@@ -75,12 +75,12 @@ module Maker
       # nothing in the system will ever resolve.
       STALLED_AFTER = 15.minutes
 
-      # BOTH POLICY KWARGS DEFAULT SO EVERY EAGER CALLER IS BYTE-IDENTICAL, and there are ten callers:
-      # three in `FilesController` (`#current_thumbnail`, `#geometry`, `#enqueue_preview`),
-      # `Projects::UploadsController`, `Library::Reconciler`, `Addons::LibraryOutput`, `ThumbnailMap`
-      # and `MissingBackfill` pass neither; `Public::FilesController#enqueue_geometry` passes
-      # `retry_failed: false` (a read door holding no row); `V1::Maker::PreviewsController#create`
-      # passes `skip_unrenderable: false`.
+      # BOTH POLICY KWARGS DEFAULT SO EVERY EAGER CALLER IS BYTE-IDENTICAL, and there are eight
+      # callers: two in `FilesController` (`#current_thumbnail`, `#geometry`), `Library::Reconciler`,
+      # `Addons::LibraryOutput` (whose `.enqueue_preview` every upload door has called since
+      # F-S21-2, in place of a private copy per controller), `ThumbnailMap` and `MissingBackfill`
+      # pass neither; `Public::FilesController#enqueue_geometry` passes `retry_failed: false` (a read
+      # door holding no row); `V1::Maker::PreviewsController#create` passes `skip_unrenderable: false`.
       #
       # `skip_unrenderable:` is the ONE branch the comment above calls a deliberately different
       # policy from `V1::Maker::PreviewsController#create`: an API client polls, so it needs a row
