@@ -218,7 +218,7 @@ module Web
         post adjust_inventory_item_path(item), params: { transaction: { delta: "0", reason: "consumed" } }
       end
       assert_redirected_to inventory_item_path(item)
-      assert_match(/Enter a non-zero/, flash[:alert])
+      assert_match(/Delta must be a non-zero number/, flash[:alert])
     end
 
     test "adjust refuses a non-numeric delta" do
@@ -229,13 +229,14 @@ module Web
         post adjust_inventory_item_path(item), params: { transaction: { delta: "not-a-number", reason: "consumed" } }
       end
       assert_redirected_to inventory_item_path(item)
-      assert_match(/Enter a non-zero/, flash[:alert])
+      assert_match(/Delta must be a non-zero number/, flash[:alert])
     end
 
-    # A NON-FINITE OR OUT-OF-COLUMN AMOUNT IS REFUSED AT THE DOOR. BigDecimal("Infinity") parses
-    # and is not zero, so the zero-check alone let it into an immutable ledger (review, 2026-09-04):
+    # A NON-FINITE OR OUT-OF-COLUMN AMOUNT NEVER REACHES THE LEDGER. BigDecimal("Infinity") parses
+    # and is not zero, so a zero-check alone let it into an immutable ledger (review, 2026-09-04):
     # the row stored Infinity, the cached balance did not move, and the documented repair
-    # (rebuild_quantity_cached!) wrote Infinity back. NaN reached the DB as NULL and 500ed.
+    # (rebuild_quantity_cached!) wrote Infinity back. NaN reached the DB as NULL and 500ed. The
+    # refusal is Maker::InventoryTransaction's now, so this door shows the model's own message.
     test "adjust refuses a non-finite or out-of-column delta, at both doors" do
       item = item!("Screws")
       post!(item, 12, reason: "initial")
@@ -245,14 +246,16 @@ module Web
           post adjust_inventory_item_path(item), params: { transaction: { delta: bad, reason: "consumed" } }
         end
         assert_redirected_to inventory_item_path(item)
-        assert_match(/Enter a non-zero/, flash[:alert])
+        assert_match(/Delta must be a non-zero number/, flash[:alert])
       end
       assert_equal 12, item.reload.quantity_cached
 
       assert_no_difference -> { Maker::InventoryTransaction.count } do
         post inventory_items_path, params: { inventory_item: { name: "Bad start", initial_quantity: "Infinity" } }
       end
-      assert_equal 0, @user.maker_inventory_items.find_by!(name: "Bad start").quantity_cached
+      bad_start = @user.maker_inventory_items.find_by!(name: "Bad start")
+      assert_redirected_to inventory_item_path(bad_start)   # the item stands; only the amount is dropped
+      assert_equal 0, bad_start.quantity_cached
     end
 
     test "adjust drops a foreign project id but still posts" do
@@ -268,6 +271,23 @@ module Web
       assert_match(/Posted \+5 each \(restocked\)/, flash[:notice])
       last = item.transactions.reorder(created_at: :desc, id: :desc).first
       assert_nil last.project_id
+    end
+
+    # A ROW ALREADY WRITTEN WITH ANOTHER TENANT'S PROJECT (v1 stored one as sent until apply! learned
+    # to drop it) renders as "—", never as that project's name and link. insert_all plants the row
+    # the way the old door left it, beneath every validation, so this pins the PAGE on its own.
+    test "the ledger never names another tenant's project, even on a row already written with one" do
+      foreign = other_user!.maker_projects.create!(name: "Their Secret Lamp")
+      item = item!("Screws")
+      Maker::InventoryTransaction.insert_all([ { user_id: @user.id, inventory_item_id: item.id, delta: 5,
+                                                 reason: "restocked", project_id: foreign.id, created_at: Time.current } ])
+      item.rebuild_quantity_cached!
+
+      get inventory_item_path(item)
+      assert_response :success
+      assert_select "table.table.ledger tbody tr td.col-project", text: "—"
+      assert_not_includes response.body, foreign.name
+      assert_not_includes response.body, project_path(foreign)
     end
 
     test "adjust refuses a reason outside REASONS" do

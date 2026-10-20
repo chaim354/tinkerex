@@ -85,7 +85,8 @@
         <td class="num col-delta"><span class="<%= t.delta.negative? ? "delta-out" : "delta-in" %>"><%= signed(t.delta) %></span></td>
         <td class="num col-balance"><%= number_with_precision(@balances[t.id], precision: 3, strip_insignificant_zeros: true) %></td>
         <td><%= t.reason %></td>
-        <td class="col-project"><%= t.project ? link_to(t.project.name, project_path(t.project)) : "—" %></td>
+        <%# Only a project the item's owner owns is named. A row posted before apply! dropped foreign projects can still hold another tenant's id. %>
+        <td class="col-project"><%= t.project&.user_id == @item.user_id ? link_to(t.project.name, project_path(t.project)) : "—" %></td>
         <td class="col-note muted"><%= t.note %></td>
       </tr>
     <% end %>

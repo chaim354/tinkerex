@@ -13,12 +13,28 @@ module Maker
     # (`has_many :inventory_transactions, dependent: :nullify`) for exactly the reason a validated,
     # required association would break: the ledger is immutable (§ above) and a deleted project must
     # not strand a posted row unsavable. `optional: true` is what makes `includes(:project)` on the
-    # web ledger (InventoryItemsController#show) resolve without an association error, and a foreign
-    # or since-deleted project renders as "—" rather than 500ing. See
+    # web ledger (InventoryItemsController#show) resolve without an association error, and a
+    # since-deleted project renders as "—" rather than 500ing. TENANCY IS A NORMALISATION IN apply!,
+    # NOT A VALIDATION: a project the item's owner does not own is DROPPED there, at every door, and
+    # the stock change still posts (a check guarded on `if: project_id.present?` would be §14d's
+    # lock). A row written with a foreign project before apply! dropped them keeps that id; the item
+    # page shows "—" for it only because it compares the project's owner with the item's. See
     # test/models/maker/inventory_transaction_test.rb's "project_id is a soft reference" test.
     belongs_to :project, class_name: "Maker::Project", optional: true
 
-    validates :delta, presence: true, numericality: true
+    # THIS MODEL DECIDES WHAT A POSTABLE AMOUNT IS, FOR EVERY DOOR: web adjust and initial quantity,
+    # v1 adjust, BOM consume. It lived in the web controller alone, so v1 and consume posted what the
+    # web refused. Finite, non-zero, and inside the decimal(12,3) column: `in:` is Range#include?,
+    # false for ±Infinity and NaN ("1e400" parses to Infinity). A non-finite row is permanent damage:
+    # the ledger is immutable, so no later post, and no rebuild_quantity_cached! (it writes the
+    # Infinity back), can return the balance to a number. The checks see the amount at the column's
+    # scale, so "0.0001" is a zero. ON CREATE ONLY: before_update refuses every update outright, and
+    # must keep answering ReadOnlyRecord rather than a validation error.
+    MAX_DELTA = BigDecimal("999999999.999")
+    validates :delta, presence: true, on: :create, numericality: {
+      other_than: 0, in: -MAX_DELTA..MAX_DELTA,
+      message: "must be a non-zero number within ±#{ActiveSupport::NumberHelper.number_to_delimited(MAX_DELTA.to_s("F"))}"
+    }
     validates :reason, inclusion: { in: REASONS }
 
     after_create :apply_to_cached_balance
@@ -38,8 +54,11 @@ module Maker
     def self.apply!(item:, user:, delta:, reason: "adjusted", project_id: nil, note: nil)
       transaction do
         locked = Maker::InventoryItem.where(id: item.id, user_id: item.user_id).lock.first!   # SELECT ... FOR UPDATE on PG; serialized on SQLite
+        # A PROJECT THAT IS NOT THE ITEM OWNER'S IS DROPPED, NOT REFUSED: provenance is optional, so
+        # the stock change still posts and simply names no project.
+        project_id = project_id.presence && Maker::Project.where(id: project_id, user_id: locked.user_id).pick(:id)
         txn = locked.transactions.create!(
-          user: user, delta: delta, reason: reason, project_id: project_id, note: note
+          user: user, delta: delta, reason: reason, project_id: project_id, note: note.presence
         )
         item.reload if item.equal?(locked) == false
         txn

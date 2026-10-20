@@ -95,56 +95,31 @@ class InventoryItemsController < ApplicationController
     redirect_to inventory_items_path, notice: "Deleted #{name}."
   end
 
-  # POST /inventory/:id/adjust — the ledger's one door from the web, mirroring the v1 API's own
-  # adjust action (V1::Maker::InventoryItemsController#adjust) field-for-field.
+  # POST /inventory/:id/adjust — the ledger's one door from the web. WHAT A POSTABLE ROW IS (a
+  # finite, non-zero amount that fits the column, a known reason, a project of the item owner's own
+  # or none) is Maker::InventoryTransaction's to decide, for this door, the initial quantity below,
+  # v1's adjust and BOM consume alike. This action only turns its refusal into the page's alert.
   def adjust
-    delta = parse_delta(params.require(:transaction)[:delta])
-    return redirect_to(inventory_item_path(@item), alert: "Enter a non-zero amount.") if delta.nil?
-
-    reason = params[:transaction][:reason].presence || "adjusted"
-    unless Maker::InventoryTransaction::REASONS.include?(reason)
-      return redirect_to(inventory_item_path(@item), alert: "Pick a reason.")
-    end
-
-    # A FOREIGN PROJECT ID IS DROPPED, NOT REFUSED — find_by (not find) against the user's own
-    # projects, same shape as ProjectsController's own tenancy scoping. The adjustment still
-    # posts; it just carries no project, which is a safe silent narrowing (nobody's data leaks and
-    # nothing 500s) rather than a rejection of an otherwise-valid stock change.
-    project_id = params[:transaction][:project_id]
-    project = current_user.maker_projects.find_by(id: project_id) if project_id.present?
-
-    Maker::InventoryTransaction.apply!(item: @item, user: current_user, delta:, reason:,
-                                        project_id: project&.id, note: params[:transaction][:note].presence)
-    redirect_to inventory_item_path(@item), notice: "Posted #{signed(delta)} #{@item.unit} (#{reason})."
+    form = params.require(:transaction)
+    txn = Maker::InventoryTransaction.apply!(item: @item, user: current_user, delta: form[:delta],
+                                             reason: form[:reason].presence || "adjusted",
+                                             project_id: form[:project_id], note: form[:note])
+    redirect_to inventory_item_path(@item), notice: "Posted #{signed(txn.delta)} #{@item.unit} (#{txn.reason})."
+  rescue ActiveRecord::RecordInvalid => e
+    redirect_to inventory_item_path(@item), alert: e.record.errors.full_messages.to_sentence
   end
 
   private
 
-  # THE COLUMN IS decimal(12,3). BigDecimal() happily parses "Infinity", "-Infinity", "NaN" and
-  # "1e400", and none of them is zero?, so a zero-check alone let them through to apply! — measured
-  # in review: an Infinity row stores as Infinity while the cached balance stays put, so the
-  # model's quantity_cached == SUM(delta) invariant breaks silently, rebuild_quantity_cached! then
-  # writes Infinity, and the ledger being immutable, only deleting the item recovers; a NaN reaches
-  # the DB as NULL and 500s. Non-finite and out-of-column amounts answer nil here, the same
-  # "Enter a non-zero amount" refusal a non-number gets, at BOTH doors (adjust, initial quantity).
-  MAX_DELTA = BigDecimal("999999999.999")
-
-  def parse_delta(raw)
-    delta = BigDecimal(raw.to_s)
-    return nil unless delta.finite? && !delta.zero? && delta.abs <= MAX_DELTA
-    delta
-  rescue ArgumentError, TypeError
-    nil
-  end
-
+  # An amount the ledger refuses (zero, not a number, non-finite, out of range) posts nothing and the
+  # item stands, exactly as a blank one does: the field is optional, and the create already succeeded.
   def post_initial_quantity!(item)
     raw = params.dig(:inventory_item, :initial_quantity)
     return if raw.blank?
 
-    delta = parse_delta(raw)
-    return if delta.nil?
-
-    Maker::InventoryTransaction.apply!(item:, user: current_user, delta:, reason: "initial")
+    Maker::InventoryTransaction.apply!(item:, user: current_user, delta: raw, reason: "initial")
+  rescue ActiveRecord::RecordInvalid
+    nil
   end
 
   # 404 for a foreign or nonexistent id, never another user's data — current_user-scoped find,
