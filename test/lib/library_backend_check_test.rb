@@ -16,11 +16,19 @@ class LibraryBackendCheckTest < ActiveSupport::TestCase
     [ "", "   " ].each { |blank| assert_nil configured(blank), "#{blank.inspect} is unset, not unknown" }
   end
 
-  # THE VALIDATED NAME, NEVER THE RAW STRING: what comes back is the module's own frozen member of
-  # NAMES, so nothing downstream holds a value no check has seen.
-  test "configured: each known name comes back as the module's own name" do
+  # THE VALIDATED NAME, NEVER THE RAW STRING: what comes back is the module's own member of NAMES,
+  # so nothing downstream holds a value no check has seen -- and FROZEN, because a caller holding
+  # the module's own String could otherwise rewrite NAMES for the whole process (review of #420:
+  # `configured(...) << "x"` made it ["sharex", ...] with only a deprecation warning). Asserted with
+  # frozen?, never by appending: under a regression the append would SUCCEED and corrupt NAMES for
+  # every later test in this worker.
+  test "configured: each known name comes back as the module's own frozen name" do
     refute_empty LibraryBackendCheck::NAMES
-    LibraryBackendCheck::NAMES.each { |name| assert_same name, configured(name.dup) }
+    LibraryBackendCheck::NAMES.each do |name|
+      returned = configured(name.dup)
+      assert_same name, returned
+      assert_predicate returned, :frozen?, "a caller could rewrite NAMES through #{name.inspect}"
+    end
   end
 
   # REJECT, NEVER NORMALISE -- key_for's rule (§14a). A case or space variant is the operator's typo,

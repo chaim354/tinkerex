@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Refuse to boot a deployment whose library backend is misconfigured, rather than surfacing it as
 # a 500 on the first request. Mirrors lib/postgres_pooler_check.rb, which exists for the same
 # reason: a misconfiguration that only shows up later is worse than one that stops the boot.
@@ -40,7 +42,9 @@ module LibraryBackendCheck
 
   # THE BACKENDS A DEPLOYMENT MAY NAME, AND THE ONE LIST OF THEM. FileLayer.build's `case` has one
   # arm per name and no other (factory_test.rb pins both directions). The retired embedded `chunk`
-  # is absent on purpose: it is REFUSED, not aliased (CLAUDE.md §14a).
+  # is absent on purpose: it is REFUSED, not aliased (CLAUDE.md §14a). EACH MEMBER IS FROZEN, by the
+  # magic comment at the top of this file -- `configured` hands out these very Strings, and an
+  # unfrozen one let a caller's `<<` rewrite NAMES for the whole process.
   NAMES = %w[share s3 chunk_remote].freeze
 
   # A LIBRARY_BACKEND that names no backend: a typo, a case or space variant, or a retired name. An
