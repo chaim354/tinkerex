@@ -1093,6 +1093,22 @@ module FileLayer
       assert File.exist?(@root.join(".trash/#{id}/a.stl")), "and must not lose the bytes"
     end
 
+    # The same bug in the fourth verb that copied the shape: a catalog folder missing on disk whose
+    # re-creation fails (a FILE now at that path; a read-only remount) raised a raw Errno out of
+    # `write` — a 500 — where every other disk call in the verb answers FetchError.
+    test "write: a folder that cannot be re-created on disk is TRANSIENT, not a raw errno" do
+      dir_id = make_dir(name: "cad")
+      FileUtils.rm_rf(@root.join("cad"))
+      File.binwrite(@root.join("cad"), "not a directory")
+
+      err = assert_raises(FileLayer::FetchError) do
+        adapter.write(@user, parent_node_id: dir_id, name: "a.stl", io: StringIO.new("a"))
+      end
+      assert_match(/ENOTDIR|EEXIST/, err.message)
+      assert_not @user.nodes.exists?(storage_path: "cad/a.stl"), "a failed write must index nothing"
+      assert_equal "not a directory", File.binread(@root.join("cad")), "nor touch what is there"
+    end
+
     # THE FILTER #trashed TURNS ON, and it cannot live in the shared contract: chunk mode has no
     # scan tombstone to exclude (nothing polls its store), so there is no backend-neutral way to
     # ask this. S3Test carries the identical test for the identical reason — the Reconciler that
@@ -1222,6 +1238,99 @@ module FileLayer
 
       refute @user.nodes.find_by!(node_id: keep_id).deleted?, "a sibling outside the tree was tombstoned"
       assert File.exist?(@root.join("keep.stl"))
+    end
+
+    # ONLY LIVE ROWS TRAVEL WITH A FOLDER. The walk returns tombstones (FileLayer::Subtree), and the
+    # cascade used to rewrite every one it returned. A file removed in Finder is a SCAN tombstone — it
+    # keeps its path, its bytes are gone — and nulling that path turned it into a trash tombstone:
+    # listed in /trash with a Restore that can never work, and still listed after the folder is back.
+    test "a NAS-deleted file inside a later-deleted folder is never offered for restore" do
+      create_file!(name: "ballast.stl", bytes: "still here")
+      dir_id = make_dir(name: "F")
+      keep_id = adapter.write(@user, parent_node_id: dir_id, name: "keep.stl",
+                              io: StringIO.new("keep")).node_id
+      gone_id = adapter.write(@user, parent_node_id: dir_id, name: "c.stl", io: StringIO.new("c")).node_id
+      delete_file!(gone_id) # rm in Finder, then a scan: a SCAN tombstone, storage_path kept
+
+      adapter.delete(@user, node_id: dir_id)
+
+      assert_equal "F/c.stl", @user.nodes.find_by!(node_id: gone_id).storage_path,
+                   "the folder delete rewrote a scan tombstone into the trash shape"
+      assert_not_includes adapter.trashed(@user).map(&:node_id), gone_id
+
+      adapter.undelete(@user, node_id: dir_id)
+
+      assert_not_includes adapter.trashed(@user).map(&:node_id), gone_id
+      assert @user.nodes.find_by!(node_id: gone_id).deleted?, "a file the NAS removed came back"
+      assert @user.nodes.present.exists?(node_id: keep_id), "the folder's own contents did not come back"
+    end
+
+    # AN OLDER TOMBSTONE KEEPS ITS OWN DATE. The cascade re-stamped `updated_at` on every row the walk
+    # returned, so a file deleted days earlier inside the folder changed its "Deleted" date in the
+    # trash and restarted Maker::DeadNodes' grace window. The times are three DAYS apart, never
+    # compared at `.to_i` (§15), so a regression misses by days rather than by nothing.
+    test "a folder delete does not re-stamp an older tombstone" do
+      dir_id = make_dir(name: "F")
+      old_id = adapter.write(@user, parent_node_id: dir_id, name: "old.stl", io: StringIO.new("old")).node_id
+      adapter.write(@user, parent_node_id: dir_id, name: "keep.stl", io: StringIO.new("keep"))
+      travel_to(3.days.ago) { adapter.delete(@user, node_id: old_id) }
+      stamped = @user.nodes.find_by!(node_id: old_id).updated_at
+
+      adapter.delete(@user, node_id: dir_id)
+
+      assert_equal stamped, @user.nodes.find_by!(node_id: old_id).updated_at,
+                   "the folder delete re-stamped a tombstone it did not make"
+      entry = adapter.trashed(@user).find { |e| e.node_id == old_id }
+      assert_operator entry.deleted_at, :<, 2.days.ago, "the trash dates it to the folder's delete"
+    end
+
+    # A ROW WITH AN ENTRY OF ITS OWN IS NOT IN THE FOLDER'S. The ordinary replace — delete `x.stl`,
+    # upload a corrected `x.stl` — leaves two rows of that name in the folder: the trashed one, whose
+    # bytes sit in `.trash/<its id>/`, and the live one. Restoring the folder reached BOTH, both
+    # rebuilt the same path, and the second revive hit the partial unique index: a 500 mid-restore,
+    # with the bytes already back and every row the walk had not reached left without a path.
+    test "a restore after a replace does not 500 while the earlier entry exists" do
+      dir_id = make_dir(name: "F")
+      first_id = adapter.write(@user, parent_node_id: dir_id, name: "x.stl",
+                               io: StringIO.new("first")).node_id
+      adapter.delete(@user, node_id: first_id)
+      second_id = adapter.write(@user, parent_node_id: dir_id, name: "x.stl",
+                                io: StringIO.new("corrected")).node_id
+
+      adapter.delete(@user, node_id: dir_id)
+      assert_nothing_raised { adapter.undelete(@user, node_id: dir_id) }
+
+      assert_equal "F/x.stl", @user.nodes.find_by!(node_id: second_id).storage_path
+      assert_equal "corrected", adapter.read(@user, node_id: second_id)
+      first = @user.nodes.find_by!(node_id: first_id)
+      assert first.deleted?, "restoring the folder undid an earlier delete inside it"
+      assert_nil first.storage_path
+      assert_equal "first", File.binread(@root.join(".trash", first_id, "x.stl")),
+                   "the earlier delete's own entry was disturbed"
+    end
+
+    # A ROW THAT KEPT ITS PATH IS NOT IN THE FOLDER'S ENTRY EITHER. `write` never revives a scan
+    # tombstone, so a file removed in Finder and then uploaded again through the browser leaves two
+    # rows of that name in the folder — the scan tombstone and the new live one — and restoring the
+    # folder reached both, exactly as a replace does. The scan revives the tombstone by path when its
+    # bytes come back; the restore has no business doing it, least of all over another row's bytes.
+    test "a restore after a NAS deletion and a browser re-upload does not 500" do
+      create_file!(name: "ballast.stl", bytes: "still here")
+      dir_id = make_dir(name: "F")
+      gone_id = adapter.write(@user, parent_node_id: dir_id, name: "c.stl",
+                              io: StringIO.new("on the nas")).node_id
+      delete_file!(gone_id) # rm in Finder, then a scan: a SCAN tombstone, storage_path kept
+      again_id = adapter.write(@user, parent_node_id: dir_id, name: "c.stl",
+                               io: StringIO.new("uploaded again")).node_id
+
+      adapter.delete(@user, node_id: dir_id)
+      assert_nothing_raised { adapter.undelete(@user, node_id: dir_id) }
+
+      assert_equal "F/c.stl", @user.nodes.find_by!(node_id: again_id).storage_path
+      assert_equal "uploaded again", adapter.read(@user, node_id: again_id)
+      gone = @user.nodes.find_by!(node_id: gone_id)
+      assert gone.deleted?, "a file the NAS removed was revived over another row's bytes"
+      assert_equal "F/c.stl", gone.storage_path, "and it is no longer the scan's to revive by path"
     end
   end
 end
