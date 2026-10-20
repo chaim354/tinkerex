@@ -117,8 +117,9 @@ module Maker
     # using it inside #file_all's per-file loop would be a query pair per file across a run bounded
     # at MAX_MOVES (500). #place keeps its own memoized rules hash instead and re-derives this same
     # two-line lookup locally. This method is for callers OUTSIDE a large loop —
-    # ProjectIntake.destination_for (one call per addon-output file, never hundreds) and
-    # ProjectFolderIntake#project_intake_sentence (one call per flash message).
+    # ProjectIntake.destination_for (one call per addon-output file, never hundreds). The flash
+    # (ProjectFolderIntake) no longer calls it: a collision's folder comes off the sweep's own
+    # Filing, because re-deriving it from the name is wrong for a board zip (F-S06-1).
     def folder_for(user, name)
       Maker::FilingRules.for(user).fetch(ext_of(name), "other")
     end
