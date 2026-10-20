@@ -134,10 +134,11 @@ module SchemaMap
     [ "maker_items.primary_node_id",       "nodes.node_id",       "app", "primary file" ],
     [ "maker_models.cover_node_id",        "nodes.node_id",       "app", "cover" ],
     [ "maker_models.folder_node_id",       "nodes.node_id",       "app", "bundle dir" ],
-    # THE THIRD BARE-STRING JOIN OUT OF maker_models, and the one this file's own warning is
-    # about: an app-level reference nothing derives, so the arrow exists only because it was
-    # written here. Maker::ModelIntake keys an auto-catalogued model on the node it came from --
-    # a DIR for a folder model, a FILE for a one-file model -- which is why it points at
+    # THE THIRD BARE-STRING JOIN OUT OF maker_models: an app-level reference nothing derives, so
+    # the arrow is authored here — and leaving it out goes red, because the completeness rule
+    # (`classification_problems`, beside NOT_EDGES below) refuses a `*_id` column that is neither
+    # drawn nor listed. Maker::ModelIntake keys an auto-catalogued model on the node it came from
+    # -- a DIR for a folder model, a FILE for a one-file model -- which is why it points at
     # `nodes.node_id` and not at either kind specifically.
     #
     # maker_shelves DELIBERATELY HAS NO EDGE HERE. A shelf is a PATH PATTERN, not a node: it has

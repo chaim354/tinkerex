@@ -99,7 +99,11 @@ class SchemaMapTest < ActiveSupport::TestCase
     # beside it says nothing: `edges` draws every ownership column by construction.
     neither = SchemaMap.classification_problems([ widgets ], edges: [], not_edges: {})
     assert_equal 1, neither.size, neither.inspect
-    assert_match(/\Amaker_widgets\.project_id .*SchemaMap::EDGES.*SchemaMap::NOT_EDGES/, neither.first)
+    # THE WORDING IS PINNED, NOT JUST THE COLUMN: the "both" sentence names both lists too, so a
+    # looser pattern stayed green over a rule that answered every unclassified column "both drawn
+    # and listed" — the wrong fix, sending the reader to delete a listing that does not exist.
+    assert_match(/\Amaker_widgets\.project_id looks like a reference and nothing classifies it — draw it in SchemaMap::EDGES, or list it in SchemaMap::NOT_EDGES/,
+                 neither.first)
 
     assert_empty SchemaMap.classification_problems([ widgets ], edges: drawn, not_edges: {})
     assert_empty SchemaMap.classification_problems([ widgets ], edges: [], not_edges: listed)
