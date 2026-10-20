@@ -315,6 +315,24 @@ module Web
       assert_equal "base.stl", row["file"], "a hidden folder's file has no path in the zip, only its name"
     end
 
+    # THE SAME RULE FOR A BACKUP (F-S14-1). The bundle never carries a rescue copy, so the CSV must not
+    # name a zip path for one. `bundle_path_for` and `bundle_files` read the one `shown_rows` list;
+    # when they read two lists, the path came from the listing, which holds backups. It is filed in a
+    # SUBFOLDER because at the folder root the zip path and the bare name are the same string, and
+    # the assertion could not fail.
+    test "a BOM line pointing at a backup names the file, not a path the zip never carries" do
+      backup = make_file!(@user, "sign_backup.lbrn2", @f[:models], body: "backup")
+      @f[:bom].lines.create!(user: @user, node_id: backup.node_id, quantity: 1, unit: "each",
+                             reference: "L1", position: 3)
+
+      refute_includes manifest["files"].map { |f| f["path"] }, "models/sign_backup.lbrn2", "the zip never carries it"
+      get public_bom_path("ada", @project.slug, format: :csv)
+      assert_response :success
+      row = CSV.parse(response.body, headers: true).find { |r| r["part"] == "sign_backup.lbrn2" }
+      assert row, "the design-file line is in the CSV"
+      assert_equal "sign_backup.lbrn2", row["file"], "a backup has no path in the zip, only its name"
+    end
+
     # THE BUTTON, THE MANIFEST AND THE ZIP AGREE BY CONSTRUCTION — all three are
     # `Maker::PublicProject#bundle_files`, so this is the one assertion that says the count a
     # visitor reads is the list they will get.
