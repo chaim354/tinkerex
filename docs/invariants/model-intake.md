@@ -186,8 +186,8 @@
   directions). Shelves light Settings and stop being navigation; the 3D models view keeps one muted
   pointer to them.
 - **`Maker::ModelIntake::Prune` IS THE REPAIR HALF, AND IT IS NOT IN THE SWEEP ON PURPOSE.**
-  `attach_all` is one `insert_all … unique_by`, so tightening the rule fixes what is written NEXT
-  and leaves every row the loose rule wrote in place — a rule change here is not self-applying.
+  `attach_all` only ever ADDS the pairs it is missing, so tightening the rule fixes what is written
+  NEXT and leaves every row the loose rule wrote in place — a rule change here is not self-applying.
   A sweep that deleted what its plan no longer claims would also delete what a user attached BY
   HAND through `Models::AttachmentsController#create`, unattended, every fifteen minutes:
   `maker_file_attachments` has **no column saying which door wrote a row**. So the repair is
@@ -197,10 +197,24 @@
   the library root, which every node's ancestry reaches, making every hand-attached row prunable at
   once); it leaves **a tombstoned node** to `Maker::AttachmentReaper`'s grace window, since
   `classify` reads `.present` and a tombstone otherwise looks exactly like a file the rule no
-  longer claims; it leaves **a node outside the model's own folder** alone, because the sweep could
-  not have written that row; and an **unresolvable ancestry answers "not inside"**, keeping the row.
-  Its liveness query is deliberately NOT `.present` — with `.present` a tombstone has no parent, so
-  `inside?` protects it by accident and the liveness clause can be deleted green.
+  longer claims; it leaves **a node outside the model's own folder that the current rule places in
+  NO model** alone, because the sweep could not have written that row; and an **unresolvable
+  ancestry answers "not inside"**, keeping the row. Its liveness query is deliberately NOT
+  `.present` — with `.present` a tombstone has no parent, so `inside?` protects it by accident and
+  the liveness clause can be deleted green. **"Places in no model" is F-S07-2's fix (2026-10-19),
+  and a MOVE is why**: the guard asked only "outside?", but a move keeps the node_id (§14b), so a
+  mesh moved from `Widget/` into `Lamp/` kept its `Widget` row forever beside the `Lamp` row the
+  next sweep wrote — one file, two models. A node the rule places under ANOTHER key (another model,
+  or a folder a project or an import claims) belongs there wherever it sits. No column tells that
+  moved file from a hand attach of another model's file, so such an attach is listed too; the dry
+  run names it first, and the attach door's only caller today is the importer, posting to the
+  import it has just created. Pinned both ways in `model_intake_prune_test.rb`: the moved mesh is
+  RED under the old guard, and a PDF no model owns is RED with the guard deleted (that fixture must
+  not be another model's file — that is the moved shape). **Not covered, and not this guard's:** a
+  ONE-FILE model whose file moved keeps its row, because the first guard skips one-file models
+  entirely; that state, and retiring Prune into a reconciling sweep, are F-S07-2's full design,
+  which REVERSES this bullet and is the owner's to reopen
+  (`docs/AUDIT-2026-10-19-simplification.md` §4, measure-first).
 - **THE SWEEP NEVER CALLS THE PORT AND NEVER CALLS `ensure_library_folder!`.** It writes database
   rows only, which is what makes it identical on all three backends and testable without a library
   on disk. `folder_node_id` is set from the dir key the classifier already resolved; calling the
@@ -258,11 +272,17 @@
   line above the one that adds the key, so a key with no title is unreachable — and the tempting
   `fetch(key, key)` would ship a model **titled `d-enc`** if it ever became reachable, a visible bug
   wearing a successful sweep.
-- **THE STEADY-STATE PASS IS CONSTANT IN QUERY COUNT AND LINEAR IN PAYLOAD, and only the first is
-  asserted.** A no-op sweep costs 7 queries whatever the library size (measured), but the seventh is
-  one `INSERT … ON CONFLICT DO NOTHING` carrying every owned file — re-sent every tick, writing
-  nothing. Fine at the sizes measured (6,000 files in one folder completes); worth knowing before
-  anyone shortens the 15-minute interval.
+- **THE STEADY-STATE PASS WRITES NOTHING AND IS CONSTANT IN QUERY COUNT — both asserted — AND
+  LINEAR IN PAYLOAD, which is not.** `attach_all` plucks the (model, node) pairs that exist and
+  inserts only the missing ones, `Maker::ProjectIntake#attach`'s pluck-and-reject (F-S07-2,
+  2026-10-19). It used to re-send one `INSERT … ON CONFLICT DO NOTHING` carrying every owned file,
+  every tick: a write statement, so on SQLite it took the single write lock in order to write
+  nothing. Measured on `model_intake_test.rb`'s library, a no-op sweep is 9 statements, all reads
+  (one more once a `Projects/` root exists); the pluck is the statement the INSERT was, so the
+  count did not move. `writes_during` there is the guard, with the FIRST sweep as its positive
+  control — a helper blind to writes goes red there instead of passing — and any unconditional
+  write turns it red. The pluck still reads every owned pair: fine at the sizes measured (6,000
+  files in one folder completes), worth knowing before anyone shortens the 15-minute interval.
 - **THE SWEEP DOES NOT ATTACH TO IMPORT-ORIGIN MODELS.** A folder an import already claims is that
   model's — look, do not take. Both halves are pinned: no auto row is created for it, *and* its
   files are left unattached, which is the more damaging half and the one nothing was checking.

@@ -24,7 +24,12 @@ namespace :models do
       next unless run.any?
 
       puts "user #{user.id}:"
-      run.destroyed.each { |m| puts "  destroy model #{m.title.inspect} (a project or import claims its folder)" }
+      # THREE CLAIMANTS SINCE F-S07-1 -- the line once named two, and a folder discovery has not
+      # adopted yet has no project for an operator to go looking for (Prune.for_user says why).
+      run.destroyed.each do |m|
+        puts "  destroy model #{m.title.inspect} " \
+             "(a project, an import or project discovery claims its folder)"
+      end
       run.detached.each { |m, n| puts "  detach #{n} file#{'s' if n != 1} from #{m.title.inspect}" }
     end
   end

@@ -85,14 +85,44 @@ module Maker
       assert_includes attached, "f-body"
     end
 
-    # THE SWEEP COULD NOT HAVE WRITTEN THIS ROW -- the node is not under the model's folder -- so it
-    # is someone's deliberate attach and this repair does not get to overrule it.
+    # THE SWEEP COULD NOT HAVE WRITTEN THIS ROW -- the node is not under the model's folder AND the
+    # current rule places it in no model -- so it is someone's deliberate attach and this repair
+    # does not get to overrule it. `Manuals` is a shelf (the seeded `*`), and a PDF loose on it is
+    # no model's: nothing model-role keys there. THE FIXTURE USED TO BE `loose.stl`, which the rule
+    # places in its own one-file model -- the shape a MOVE leaves (the next test) -- so it pinned
+    # the F-S07-2 defect as if it were the guard.
     test "an attachment from outside the model's folder is left alone" do
-      @widget.file_attachments.create!(user: @user, node_id: "f-loose", role: "model")
+      dir("d-manuals", "Manuals", nil)
+      file("f-guide", "guide.pdf", "d-manuals")
+      @widget.file_attachments.create!(user: @user, node_id: "f-guide", role: "instructions")
 
       Maker::ModelIntake::Prune.for_user(user: @user, apply: true)
 
-      assert_includes attached, "f-loose"
+      assert_includes attached, "f-guide"
+    end
+
+    # A MOVE KEEPS THE NODE_ID (Library::Reconciler pairs by content, §14b), SO "OUTSIDE THE FOLDER"
+    # DOES NOT MEAN "THE SWEEP COULD NOT HAVE WRITTEN THIS ROW" (F-S07-2). The sweep attached
+    # body.stl to Widget while it sat there; moved into Lamp/, the next sweep attaches it to Lamp
+    # too and nothing removes Widget's row -- one file, two models. The rule places it under Lamp's
+    # key, so Lamp is the model it belongs to and Widget's row is stale, wherever the file now sits.
+    test "a mesh moved into another model's folder is detached from the model it left" do
+      dir("d-lamp", "Lamp", "d-shelf")
+      file("f-shade", "shade.stl", "d-lamp")
+      file("f-lid", "lid.stl", "d-widget")
+      Maker::ModelIntake.for_user(user: @user)
+      @user.nodes.find_by!(node_id: "f-body").update!(parent_node_id: "d-lamp")
+      Maker::ModelIntake.for_user(user: @user)
+      lamp = @user.maker_models.find_by!(auto_node_id: "d-lamp")
+      assert_includes lamp.file_attachments.pluck(:node_id), "f-body",
+                      "precondition: the sweep attaches the moved mesh to the model it moved into"
+      assert_includes attached, "f-body", "precondition: and nothing removed the row it left behind"
+
+      Maker::ModelIntake::Prune.for_user(user: @user, apply: true)
+
+      assert_not_includes attached, "f-body", "the moved mesh is still in the model it left"
+      assert_includes attached, "f-lid", "Widget is still a model, and keeps what is still its own"
+      assert_includes lamp.file_attachments.reload.pluck(:node_id), "f-body"
     end
 
     # A ONE-FILE MODEL HAS NO FOLDER, AND "no folder" IS NOT "the whole library". Dropping the

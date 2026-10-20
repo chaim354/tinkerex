@@ -1,10 +1,10 @@
 module Maker
   class ModelIntake
     # ONE-OFF REPAIR for auto models an EARLIER rule wrote. Maker::ModelIntake only ever INSERTS
-    # (attach_all is one `insert_all ... unique_by`), which is what makes a re-sweep free -- and it
-    # is also why tightening the rule cannot fix a library on its own: the rows the loose rule
-    # already wrote stay forever. Measured on a real share library the day the rule changed, six
-    # folder models held 2441 attachments of which 32 were meshes.
+    # (attach_all adds the pairs it is missing and never removes one), which is what makes a
+    # re-sweep free -- and it is also why tightening the rule cannot fix a library on its own: the
+    # rows the loose rule already wrote stay forever. Measured on a real share library the day the
+    # rule changed, six folder models held 2441 attachments of which 32 were meshes.
     #
     # NOT FOLDED INTO THE SWEEP, deliberately. A sweep that deleted what its plan no longer claims
     # would also delete what a user attached BY HAND through Models::AttachmentsController#create --
@@ -32,6 +32,12 @@ module Maker
                     .includes(:file_attachments).to_a
         return Result.new(destroyed: [], detached: [], applied: apply) if autos.empty?
 
+        # THE SWEEP'S OWN QUESTION, SO THREE CLAIMANTS -- an import, a project row, and discovery
+        # BY POSITION (F-S07-1, 2026-10-19). The third means a LEGACY auto row over a `Projects/<x>`
+        # discovery has not adopted yet is listed for destruction too, with no project there yet:
+        # a row the adoption would leave wrong anyway, named by the dry run before anything is
+        # written, and destroyed rather than dismissed, so the next sweep recreates it if the folder
+        # ever stops being discovery's (moved out of `Projects/`, or renamed to a dot-name).
         claimed = Maker::ModelIntake.claimed_folders(user, autos.map(&:auto_node_id))
         destroyed, keep = autos.partition { |m| claimed.include?(m.auto_node_id) }
         detached = stale_attachments(user, keep)
@@ -54,10 +60,21 @@ module Maker
       #   `classify` reads `.present`, so a tombstone is absent from the plan and would otherwise
       #   look exactly like a file the rule no longer claims.
       #
-      #   A NODE OUTSIDE THE MODEL'S OWN FOLDER IS LEFT ALONE. The sweep can only ever have
-      #   attached from inside it, so anything else was attached by hand and is the user's. This is
-      #   what makes the manual-attachment risk small enough to run unattended-ish: what survives
-      #   is exactly what the sweep could not have written.
+      #   A NODE OUTSIDE THE MODEL'S OWN FOLDER THAT THE CURRENT RULE PLACES IN NO MODEL IS LEFT
+      #   ALONE. The sweep could not have written that row, so it was attached by hand and is the
+      #   user's: what survives is exactly what the sweep could not have written.
+      #   "PLACES IN NO MODEL" IS THE HALF F-S07-2 ADDED (2026-10-19), AND A MOVE IS WHY. This guard
+      #   used to ask only "outside the folder?", on the premise that the sweep can only ever have
+      #   attached from inside it. But a move keeps the node_id (Library::Reconciler pairs by
+      #   content, §14b): the sweep wrote this row while the file sat inside, and moved into
+      #   another model's folder the file was attached there by the next sweep while this guard
+      #   kept the old row forever -- one file, two models. A node the rule places under ANOTHER
+      #   key belongs there wherever it sits, whether that key is another model or a folder a
+      #   project or an import claims.
+      #   No column tells that moved file from a hand attach of another model's file -- the door
+      #   writes the same role and position the sweep does -- so such an attach is listed too. The
+      #   dry run names it before anything is written, and no screen can make one today: the
+      #   attach door's only caller is the importer, posting to the IMPORT it has just created.
       def self.stale_attachments(user, models)
         ids = models.flat_map { |m| m.file_attachments.map(&:node_id) }.uniq
         return {} if ids.empty?
@@ -74,11 +91,12 @@ module Maker
         plan    = Maker::ModelIntake.classify(user)
 
         models.each_with_object({}) do |model, out|
-          wanted = plan.files_for(model.auto_node_id).to_set
-          stale  = model.file_attachments.reject do |att|
-            wanted.include?(att.node_id) ||
+          stale = model.file_attachments.reject do |att|
+            # The key the CURRENT rule gives this file -- nil when it places it in no model.
+            owner = plan.owners[att.node_id]
+            owner == model.auto_node_id ||
               !live.include?(att.node_id) ||
-              !inside?(tree, parents[att.node_id], model.folder_node_id)
+              (owner.nil? && !inside?(tree, parents[att.node_id], model.folder_node_id))
           end
           out[model] = stale if stale.any?
         end
