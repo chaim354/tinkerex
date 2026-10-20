@@ -28,6 +28,9 @@
 #   bin/ci --list          # the gate names, one per line
 #   bin/ci --list-ci       # the gates ci.yml must have a job for (what ci_hygiene_test reads)
 
+require "fileutils"
+require_relative "../lib/ci/leg_runs"   # plain Ruby; the app autoloads the same file as Ci::LegRuns
+
 GATES = {
   # Local convenience only — ci.yml does its own `bundle install` per job and never calls this.
   # This is the ONE gate CI deliberately does not run, which is why it is named in
@@ -74,10 +77,18 @@ GATES = {
   # `trap ... EXIT` fires however the shell leaves -- pass, fail, or interrupt -- so a red run does
   # not leak either. `${d:?}` is the guard that matters: if `mktemp -d` failed and `d` is empty, the
   # trap aborts instead of handing `rm -rf` an empty argument.
+  #
+  # EACH BACKEND LEG TEES ITS FULL-SUITE OUTPUT TO tmp/ci/<gate>.log, for the run-count comparison at
+  # the end of this file (§15, Ci::LegRuns) -- under `bash -c` with `pipefail`, never the single-string
+  # form: that runs under /bin/sh, where the status after `| tee` is tee's, always 0, and a red suite
+  # would report green (the chunk_remote gate below records that exact mistake). The cost is that the
+  # suite no longer sees a TTY and its output loses colour; CI never had one.
   "test" => ->(ci) do
-    ci.step "Tests: Rails (share backend)",
-            'd=$(mktemp -d); trap \'rm -rf "${d:?}"\' EXIT; ' \
-            'env LIBRARY_BACKEND=share LIBRARY_PATH="$d" bin/rails db:test:prepare test'
+    ci.step "Tests: Rails (share backend)", "bash", "-c", <<~'SH'
+      set -euo pipefail
+      d=$(mktemp -d); trap 'rm -rf "${d:?}"' EXIT
+      env LIBRARY_BACKEND=share LIBRARY_PATH="$d" bin/rails db:test:prepare test 2>&1 | tee tmp/ci/test.log
+    SH
   end,
 
   "test-s3" => ->(ci) do
@@ -85,11 +96,13 @@ GATES = {
     # the s3 boot guard is config-PRESENCE only and never touches the network (boot must not depend
     # on a third party being reachable). Any test that made a real S3 call fails here. That is the
     # point, not an oversight.
-    ci.step "Tests: Rails (s3 backend)",
-            "env LIBRARY_BACKEND=s3 LIBRARY_S3_BUCKET=ci-not-a-real-bucket " \
-            "LIBRARY_S3_REGION=us-east-1 LIBRARY_S3_ACCESS_KEY_ID=ci " \
-            "LIBRARY_S3_SECRET_ACCESS_KEY=ci LIBRARY_S3_PREFIX=library " \
-            "bin/rails db:test:prepare test"
+    ci.step "Tests: Rails (s3 backend)", "bash", "-c", <<~'SH'
+      set -euo pipefail
+      env LIBRARY_BACKEND=s3 LIBRARY_S3_BUCKET=ci-not-a-real-bucket \
+          LIBRARY_S3_REGION=us-east-1 LIBRARY_S3_ACCESS_KEY_ID=ci \
+          LIBRARY_S3_SECRET_ACCESS_KEY=ci LIBRARY_S3_PREFIX=library \
+          bin/rails db:test:prepare test 2>&1 | tee tmp/ci/test-s3.log
+    SH
   end,
 
   # `test-no-engine` WAS HERE AND IS GONE. It booted share with SYNC_ENGINE=0 and ran one focused
@@ -209,7 +222,8 @@ GATES = {
         test TEST=test/integration/chunk_remote_journey_test.rb 2>&1 | tee tmp/journey-ci.txt
       journey_code=${PIPESTATUS[0]}
 
-      LIBRARY_BACKEND=chunk_remote bin/rails test 2>&1 | tee tmp/chunk-remote-full.txt
+      # The full suite's log is this leg's entry in the run-count comparison at the end of this file.
+      LIBRARY_BACKEND=chunk_remote bin/rails test 2>&1 | tee tmp/ci/test-chunk-remote.log
       full_code=${PIPESTATUS[0]}
       set -e
 
@@ -273,6 +287,36 @@ unless unknown.empty?
         "       known gates: #{GATES.keys.join(" ")}"
 end
 
+# THE THREE BACKEND LEGS ARE COMPARED HERE, BY THIS FILE AND NOT BY A PERSON (CLAUDE.md §15). Each
+# tees its full-suite output to LEG_LOG; once every selected gate has run, Ci::LegRuns reads the LAST
+# `N runs, …` line of each log that was asked for, and the run fails unless every count is present
+# and all are equal. RUNS ONLY: assertions and skips differ between legs by structure (lib/ci/
+# leg_runs.rb has the numbers), so comparing them would fail every run. Fewer than two legs selected
+# means there is nothing to compare, and `bin/ci test` alone stays an ordinary one-leg run.
+#
+# STALE LOGS GO FIRST. A leg that dies before tee opens its log must read as "no summary" -- a
+# disagreement -- rather than as yesterday's count agreeing with today's.
+BACKEND_LEGS = %w[test test-s3 test-chunk-remote].freeze
+LEG_LOG = ->(gate) { "tmp/ci/#{gate}.log" }
+
 CI.run do
+  legs = BACKEND_LEGS & selected
+  FileUtils.mkdir_p("tmp/ci")
+  legs.each { |gate| FileUtils.rm_f(LEG_LOG.call(gate)) }
+
   selected.each { |gate| GATES.fetch(gate).call(self) }
+
+  if legs.size >= 2
+    verdict = Ci::LegRuns.verdict(legs.to_h { |gate| [ gate, LEG_LOG.call(gate) ] })
+    title = "Backend legs: identical RUN counts (CLAUDE.md §15)"
+    heading title, verdict.table, type: :title
+    report(title) do
+      unless verdict.agree?
+        failure "The backend legs disagree on RUN count, or a leg wrote no summary.",
+                "A run-count difference means a test depends on the ambient LIBRARY_BACKEND -- a real " \
+                "bug, not noise. Assertions and skips are not compared: they differ between legs by design."
+      end
+      results << verdict.agree?
+    end
+  end
 end

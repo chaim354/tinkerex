@@ -25,9 +25,13 @@ Run the full gate, not a subset:
 bin/ci
 ```
 
-- All gates must pass: style, scan, test, test-share, test-s3, system.
-- **The three test legs must report identical run/assertion counts.** A divergence means a
-  test depends on the ambient `LIBRARY_BACKEND` — that is a real bug, not noise.
+- All gates must pass — every gate `bin/ci --list-ci` names, plus `setup`, which bare `bin/ci`
+  runs locally. Read the tool, not a list here: a hand-copied list in this file once named a gate
+  that did not exist and asked for identical assertion counts, which never hold.
+- **`bin/ci` compares the three backend legs' RUN counts itself** (`test`, `test-s3`,
+  `test-chunk-remote` — CLAUDE.md §15) and goes red when they differ: a divergence means a test
+  depends on the ambient `LIBRARY_BACKEND`, a real bug, not noise. Assertion and skip counts differ
+  between legs by structure and are not compared.
 - **If anything is red, STOP.** Do not open a PR to "get it looked at". Report what failed,
   with the actual output.
 - If a gate cannot run here (a missing runner, an unavailable service), say so explicitly
@@ -93,12 +97,12 @@ reporting it. Do not silently continue as though it landed.
 Do not poll in a loop. Arm a monitor that emits one event per check and exits when the run
 completes, then report the results as a table.
 
-**First check whether CI will run at all.** `ci.yml` has a `paths:` allowlist (`app/`,
-`config/`, `db/`, `lib/`, `test/`, `bin/`, `ci/`, `Gemfile*`, `.ruby-version`, and itself),
-so a **docs-only or `client/**`-only PR triggers nothing** — `gh pr checks` reports "no
-checks reported" and the PR is still `MERGEABLE`/`CLEAN`. That is correct behaviour, not a
-broken pipeline. In that case say so plainly and let the local `bin/ci` run stand as the
-verification; do not imply CI validated the change.
+**First check whether CI will run at all.** `ci.yml`'s `paths:` filter runs on everything EXCEPT
+`docs/**`, `client/**` and `**.md`, with `CLAUDE.md`, `docs/invariants/**` and `docs/INSTALL.md`
+re-included because gates read them — so a **PR touching only the excluded paths triggers
+nothing**: `gh pr checks` reports "no checks reported" and the PR is still `MERGEABLE`/`CLEAN`.
+That is correct behaviour, not a broken pipeline. In that case say so plainly and let the local
+`bin/ci` run stand as the verification; do not imply CI validated the change.
 
 A monitor loop must therefore distinguish **"no checks exist"** from **"checks not reported
 yet"**. Treating an empty result as "keep waiting" spins until timeout — verify with one

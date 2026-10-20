@@ -68,7 +68,10 @@ class DocsHygieneTest < ActiveSupport::TestCase
   #
   # LOWERED 1,362 -> 1,360 ON 2026-10-14 (Phase 6, the maker half): §14j's first bullet lost the
   # bin/sync-server function it described, and §13 a sentence about a deploy.yml the sync repo deleted.
-  MAX_LINES = 1_360
+  #
+  # LOWERED 1,360 -> 1,358 ON 2026-10-19 (audit slice S-1, suite honesty): §15's "bin/ci PRINTS the
+  # three counts and never COMPARES them" became "bin/ci compares them" (Ci::LegRuns), two lines fewer.
+  MAX_LINES = 1_358
 
   test "CLAUDE.md stays under its line ceiling" do
     lines = CLAUDE_MD.readlines.size

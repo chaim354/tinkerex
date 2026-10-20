@@ -75,9 +75,9 @@ class FreshShareLibraryCleanupTest < ActiveSupport::TestCase
   # THE OTHER HALF, AND NOT DECORATION: removing the directory while leaving a Share adapter
   # pointing AT it in FileLayer.current trades a disk leak for a worse one — the next test in this
   # forked worker inherits an adapter whose root no longer exists, and fails somewhere that names
-  # neither this helper nor the test that leaked it. `use_fresh_share_library!` assigns
-  # FileLayer.current directly and so sets no @file_layer_backend_pinned, which is why the pin
-  # branch of test_helper's teardown does not cover it and this branch has its own reset.
+  # neither this helper nor the test that leaked it. The shared teardown resets the memo
+  # unconditionally now; this pins it for the helper's own adapter, and
+  # file_layer_memo_isolation_test.rb for a direct assignment, which that teardown once left alone.
   test "the Share adapter it installed is reset when the test tears down" do
     prior = FileLayer.instance_variable_get(:@current)
     run_probe(:mint)

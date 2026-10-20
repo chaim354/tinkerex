@@ -10,7 +10,6 @@ module Maker
     # THE BACKEND GATE LIVES ON THE FAN-OUT, NOT ON #perform -- Library::ScanJob's own comment has
     # the argument: a SCHEDULE may no-op, but a COMMAND naming a user must not silently do nothing.
     test "the scheduled fan-out declines on a scannable backend" do
-      pin_file_layer_backend("share")
       use_fresh_share_library!
 
       assert_no_enqueued_jobs { Maker::ModelIntakeJob.sweep_all! }
@@ -39,7 +38,6 @@ module Maker
     # `RecordInvalid: Path has already been taken` before it does anything. A fresh user reaching
     # its first sweep is the real production path, and it supplies the root shelf itself.
     test "perform sweeps even on a scannable backend when a caller names a user" do
-      pin_file_layer_backend("share")
       use_fresh_share_library!
       @user.nodes.create!(node_id: "f-1", name: "a.stl", kind: "file", mtime: 1, size: 1)
 
