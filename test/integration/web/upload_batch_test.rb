@@ -161,6 +161,14 @@ module Web
                    flash[:notice]
     end
 
+    # ONE such file is still the pre-batch condition: the loop re-raises it, and the class-level
+    # rescue_from answers it exactly as it did before the loop learned to catch NotFound.
+    test "one file the port refuses by name still gets the door's own answer, not the batch sentence" do
+      upload(".DS_Store")
+      assert_redirected_to files_path
+      assert_equal "File not found.", flash[:alert]
+    end
+
     # --- the single-file message is unchanged ----------------------------------------------
     #
     # Four suites assert the one-file sentence in full. Widening the door must not reword it.
