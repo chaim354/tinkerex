@@ -3,19 +3,18 @@
 # and the poll is the correctness fallback" shape the sync engine already uses (§12 step 1). The
 # periodic Maker::ProjectIntake run is what makes it correct; this is what makes it feel instant.
 #
-# A CONCERN, NOT A THIRD COPY, and that is a decision worth recording rather than defaulting to —
+# A CONCERN, NOT A SECOND COPY, and that is a decision worth recording rather than defaulting to —
 # CLAUDE.md's own tally of the port_writable? branch is the precedent this follows: "a NEW [inline
 # copy] needs an argument for being inline rather than a service, and a verb that more than one
-# caller performs does not have one." Two upload doors already needed this exact rescue-and-call
-# (FilesController#create/#finalize_upload); wiring in a THIRD (Projects::UploadsController#create,
-# then the project page's own inline share/s3 uploader and, since redesign slice 4 moved the hub's
-# Upload into the top bar, the build-log entries') is the second caller crossing into "more than
-# one" territory a second time, and copy-pasting the block below into a second controller — all of
-# it, including the reasoning for why StandardError is right here and wrong in the service — is
-# exactly the kind of drift this codebase keeps paying for and keeps writing down when it finds it
-# again. (FilesController#enqueue_preview has a near-duplicate in Projects::UploadsController today
-# — that pre-existing four-line, one-rescue duplication is a SMALLER trade this concern does not
-# try to retroactively fix; it is not a precedent for adding a THIRD copy of this longer one.)
+# caller performs does not have one." Two upload doors needed this exact rescue-and-call
+# (FilesController#create/#finalize_upload). A third did too while Projects::UploadsController
+# served a project-level route (the project page's own share/s3 uploader until redesign slice 4,
+# retired in F-S21-1, 2026-10-19), and the addon save door calls it through Tools::BaseController.
+# Copy-pasting the block below into each of them — all of it, including the reasoning for why
+# StandardError is right here and wrong in the service — is exactly the kind of drift this codebase
+# keeps paying for and keeps writing down when it finds it again. (The upload doors' preview
+# enqueue was duplicated that way, a private copy per controller, until F-S21-2 sent both through
+# Maker::Addons::LibraryOutput.enqueue_preview.)
 #
 # BEST-EFFORT, AND RESCUED WIDELY — StandardError, not a named list — FOR THE SAME REASON in every
 # controller that includes this: the write it follows has ALREADY SUCCEEDED (bytes in the store,
@@ -29,10 +28,13 @@
 # exactly as unanticipated as a FileLayer outage, and both must fail the SAME way: log and let the
 # upload the user actually asked for stand.
 #
-# CALL-SITE ORDERING, WHERE THIS CONCERN IS INCLUDED, IS NOT THIS FILE'S CALL — but it is worth a
-# pointer here because it is easy to get backwards. Where a controller ALSO makes its own explicit
-# `file_attachments.create!` for the same upload (Projects::UploadsController does; FilesController
-# does not), that create! MUST run before this call, not after — see that controller for why.
+# CALL-SITE ORDERING, FOR A CALLER THAT ALSO ATTACHES — none does today, and it is easy to get
+# backwards. Projects::UploadsController did, for its project-level route, until F-S21-1 retired
+# that route. A controller that makes its own explicit `file_attachments.create!` for a file landing
+# in a project folder must make it BEFORE this call. The sweep's own attach is an
+# `insert_all(unique_by:)` that silently skips a row already there. Reversed, the bare `create!`
+# lands second, hits index_maker_file_attachments_uniqueness the ordinary way, and raises
+# ActiveRecord::RecordNotUnique on every upload.
 #
 # THE RETURN VALUE USED TO BE THROWN AWAY BY EVERY CALLER, AND THAT WAS A REAL REGRESSION, NOT A
 # HARMLESS ONE. #intake_project_folder answers exactly what Maker::ProjectIntake.for_node answers —
@@ -47,9 +49,9 @@
 # nudge existed) to "the write quietly succeeds, the file quietly stays at the project root, and the
 # user sees a plain 'Uploaded x.' with no sign anything unusual happened" (after the eager nudge,
 # before this fix) — the SAME outcome (two distinct files, nothing lost), MISSING feedback. See
-# #left_unfiled_by_conflict? and #project_intake_notice below, and
-# project_upload_attach_test.rb's long-standing "duplicate filename" test for the full accounting of
-# the mechanism this restores feedback for, without changing it.
+# #left_unfiled_by_conflict? and #project_intake_notice below, and project_folder_intake_test.rb's
+# "a duplicate filename via the Files-page uploader" test for the full accounting of the mechanism
+# this restores feedback for, without changing it.
 #
 # THE RETURN VALUE IS NOW READ FOR WHAT THE SWEEP FILED AS WELL AS FOR WHAT IT COULD NOT (stage 4,
 # S4-2; stories 1.5, 4.1): #filed_sentence names the file and the folder off Result#plan, so an

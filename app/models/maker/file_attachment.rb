@@ -166,7 +166,10 @@ module Maker
       #
       # DELIBERATELY ABSENT: `.xnc` — it is a real Excellon extension (KiCad writes one) but it is
       # also the extension of nothing else, and tracespace identifies a drill layer from the
-      # FILENAME, so adding it later is a one-line edit here with no other consequence. It is left
+      # FILENAME, so adding it later is a one-line edit here: rows already attached as `other`
+      # follow by `classify_unclassified!` below (F-S33-1). What it does not reach is an existing
+      # user's FILING map: without the top-up migration every widening carries
+      # (`SeedPcbFilingRules`' shape), a user seeded earlier files `.xnc` into `other/`. It is left
       # out only because no fixture or live library in this repo has produced one; add it the day
       # one does. `.gbp` above is the solder-paste layer, NOT the `.gbp` some backup tools write.
       "gbr" => "pcb", "gtl" => "pcb", "gbl" => "pcb", "gts" => "pcb", "gbs" => "pcb",
@@ -344,6 +347,41 @@ module Maker
     # Best-effort role from a filename's extension; unknown -> "other".
     def self.role_for(name)
       ROLE_BY_EXT.fetch(File.extname(name.to_s).downcase.delete("."), "other")
+    end
+
+    # STORED ROLES FOLLOW THIS VOCABULARY BY ONE RULE, AND THIS IS ITS ONE OWNER (F-S33-1). `role`
+    # is written with the row, from `role_for` at the attach doors, so a row written before
+    # ROLE_BY_EXT learned its extension says `other` until something rewrites it. For seven
+    # widenings that was a hand-copied data migration (eight migrations rewrite stored roles; the
+    # eighth is the one RE-classification, `lbrn2` vector -> laser); two widenings never got one
+    # (`nc`/`tap`/`ngc`, and the Gerber layers, whose SeedPcbFilingRules seeds filing rules only),
+    # so an electronics project showed a photo where its board should be. This re-reads ONE user's
+    # `other` rows against TODAY's table and rewrites those it now names, which makes the row half
+    # of a widening the table edit and nothing else. Maker::ClassifyAttachmentRolesJob runs it daily
+    # for every user and `rake maker:classify_roles` runs it on demand. -> rows rewritten.
+    #
+    # `other` IS THE ONE VALUE IT TOUCHES, and it means "nothing classified this name when the row
+    # was written". The schema keeps no chosen-versus-derived column, so every other value is a
+    # decision and is never rewritten: the photo door's `image` on whatever node it is handed, a v1
+    # client's posted role. A client that posts `other`, or omits the role and gets the column
+    # default, is given the vocabulary's answer within a day, the same overwrite all seven
+    # from-`other` migrations made. What it cannot reach, by construction: a RE-classification (the
+    # `lbrn2` vector -> laser move) and an extension REMOVED from the table. Each still needs a
+    # migration.
+    #
+    # The name is read off the row's OWN user's node (node_ids are unique per user, not globally),
+    # and a row whose node is gone drops out of the join. One query per user plus one UPDATE per
+    # role with work to do, so zero writes in steady state. `update_all` skips the inclusion
+    # validation, which is safe only while every ROLE_BY_EXT value is one of ROLES; the
+    # table-derived test in file_attachment_classify_test.rb asserts every row it rewrites still
+    # validates.
+    def self.classify_unclassified!(user)
+      unclassified = user.maker_file_attachments.where(role: "other")
+      names = unclassified.joins("JOIN nodes ON nodes.user_id = maker_file_attachments.user_id " \
+                                 "AND nodes.node_id = maker_file_attachments.node_id")
+                          .pluck("maker_file_attachments.id", "nodes.name")
+      names.group_by { |_id, name| role_for(name) }.except("other")
+           .sum { |role, rows| unclassified.where(id: rows.map(&:first)).update_all(role:) }
     end
 
     # LightBurn and MillMage (same vendor, same convention) write a rescue copy of a project beside

@@ -66,16 +66,18 @@
   additionally put a SECOND folder somewhere the maker never chose. **NIL IS PART OF THE CONTRACT,
   NOT A FAILURE**, and every caller answers it rather than raising: the Files panel renders "This
   project's folder is in the trash or was removed" with a link to Trash,
-  `Projects::UploadsController#upload_parent` falls back to the library root (the `&.` is what
-  keeps that from being a 500 on every upload), `Maker::AttachToProject#move` returns
-  `:unavailable` and leaves the bytes where they are, and `Maker::ProjectFolderListing` answers
-  `available? == false`. A project whose `folder_node_id` was never set — the form path — still
-  mints, which is what `ProjectsController#create` depends on. **THE THREE DOOR TESTS IN
-  `projects_flow_test.rb` NEED THEIR REAL-SHARE FIXTURE AND MUST NOT BE "SIMPLIFIED" TO
+  `Maker::AttachToProject#move` returns `:unavailable` and leaves the bytes where they are, and
+  `Maker::ProjectFolderListing` answers `available? == false`, so `ProjectsController#show` gives
+  the top bar no destination and its Upload asks with the folder chooser rather than guess the
+  root. (`Projects::UploadsController#upload_parent` was a fourth answer, landing the file at the
+  library root, until F-S21-1 retired that controller's project-level route.) A project whose
+  `folder_node_id` was never set — the form path — still mints, which is what
+  `ProjectsController#create` depends on. **THE DOOR TESTS IN `projects_flow_test.rb` (two since
+  F-S21-1) NEED THEIR REAL-SHARE FIXTURE AND MUST NOT BE "SIMPLIFIED" TO
   `project_folder_rows!`:** measured, with rows alone `Projects/` has no `storage_path`, so
   restoring the re-minting branch raised `FileLayer::NotFound` into each caller's rescue and all
-  three guards stayed GREEN over the regression they exist for — §15's green-suite shape, masked by
-  the fixture rather than caught by the assertion.
+  three guards of the time stayed GREEN over the regression they exist for — §15's green-suite
+  shape, masked by the fixture rather than caught by the assertion.
 
 - **DIRECT CHILDREN ONLY, AND DOT-FOLDERS ARE SKIPPED.** `adoptable` scopes to
   `parent_node_id: root.node_id` and rejects any name starting with `.`. Without the depth limit,
@@ -507,8 +509,9 @@
   EFFECT.** Every caller threw it away until a review caught it: a same-named upload whose eager
   nudge lost a collision at its destination folder reported a silent "Uploaded x." with no sign the
   file had stayed at the project root. `ProjectFolderIntake#left_unfiled_by_conflict?` /
-  `#project_intake_notice` read the `:conflict` entry out of `Result#skips` for exactly this — but
-  only in the **three** doors whose response a user actually sees (`FilesController#create`'s HTML
-  branch, `Projects::UploadsController#create`, the addon save door). The JSON-only branches still
-  run the intake and still file what they can; they just don't surface it, because nothing
-  downstream reads that response key today.
+  `#project_intake_notice` read the `:conflict` entry out of `Result#skips` for exactly this, and
+  every door that runs the nudge reads it: `FilesController#create` (the HTML flash and, since stage
+  4 S4-3, the JSON `notice`), `#finalize_upload`'s JSON `notice` (S4-3), and the addon save door.
+  Save-to-library (`measure_controller.js`) reads `notice` off both upload doors through
+  `lib/chunk_upload.js`. `Projects::UploadsController#create` was a reader too until F-S21-1. Its
+  build-log photos land at the library root, which no project owns, so it no longer runs the nudge.

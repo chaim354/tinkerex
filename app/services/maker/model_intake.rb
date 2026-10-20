@@ -140,7 +140,11 @@ module Maker
     #     is the project's BEFORE the row exists. This used to be left to running discovery first,
     #     and that ordering could not hold: discovery is capped even inside Library::ScanJob's own
     #     sequence, and on chunk_remote the two sweeps are independent schedules. So whatever order
-    #     the sweeps run in, a folder discovery will adopt is never one model, not even for a tick.
+    #     the sweeps run in, this sweep never CREATES a model over a folder discovery will adopt.
+    #     It does not REMOVE one either: an auto row already there -- written before this claim
+    #     existed, or before its folder moved under `Projects/` -- stops accreting (its key is
+    #     dropped before `existing`) and survives until `rake models:prune` or the adoption door
+    #     (Projects::AdoptionsController) destroys it.
     #
     # EACH ASKS THE CLAIMANT, NEVER RE-TESTS A PATH, which keeps ProjectDiscovery's policy in one
     # place: its own reader decides, so a dot-folder it will never adopt is still catalogued here.
@@ -158,17 +162,39 @@ module Maker
           .to_set
     end
 
-    # ONE STATEMENT, NOT ONE QUERY PER FILE. `unique_by` names the existing uniqueness index, so a
-    # re-sweep of an already-attached library inserts nothing rather than raising. insert_all
-    # bypasses timestamp autofill, hence the explicit stamps.
+    # ONE PLUCK, THEN ONE STATEMENT FOR WHAT IS MISSING -- NEVER ONE QUERY PER FILE, AND NEVER A
+    # WRITE WHEN NOTHING IS MISSING. Maker::ProjectIntake#attach's shape, and its two layers for its
+    # two jobs:
+    #
+    #   THE PLUCK-AND-REJECT is what makes a sweep over an unchanged library WRITE NOTHING (F-S07-2,
+    #   2026-10-19). This used to re-send one `INSERT … ON CONFLICT DO NOTHING` carrying every file
+    #   the catalog owns, every tick -- a write statement, so on SQLite it took the single write
+    #   lock in order to write nothing. The pluck is the query that INSERT was, so the count stays
+    #   constant in N (model_intake_test.rb pins both). It is NOT a concurrency guard: a read, then
+    #   later a write.
+    #
+    #   `unique_by:`, NAMING the uniqueness index, still is: a pair another writer lands in that gap
+    #   is skipped by the database rather than raised, and it is skipped ONLY on that index.
+    #
+    # The explicit stamps are the app's clock, as they always were here. Without them insert_all
+    # fills both columns itself, from the database's clock (record_timestamps, which
+    # Maker::ProjectIntake#attach relies on) -- it does NOT skip them, as this comment once said.
     def self.attach_all(user, plan, models)
-      now = Time.current
-      rows = plan.owners.filter_map do |file_id, key|
+      pairs = plan.owners.filter_map do |file_id, key|
         model = models[key]
         next unless model
         next if model.dismissed_at.present?
 
-        { user_id: user.id, attachable_type: "Maker::Model", attachable_id: model.id,
+        [ model.id, file_id ]
+      end
+      return 0 if pairs.empty?
+
+      have = Maker::FileAttachment.where(user_id: user.id, attachable_type: "Maker::Model",
+                                         attachable_id: pairs.map(&:first).uniq)
+                                  .pluck(:attachable_id, :node_id).to_set
+      now  = Time.current
+      rows = pairs.reject { |pair| have.include?(pair) }.map do |model_id, file_id|
+        { user_id: user.id, attachable_type: "Maker::Model", attachable_id: model_id,
           node_id: file_id, role: Maker::FileAttachment.role_for(plan.names[file_id]), position: 0,
           created_at: now, updated_at: now }
       end

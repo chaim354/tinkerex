@@ -44,11 +44,11 @@ module Public
       owner = @pub.owner
       @info = FileLayer.current.stat(owner, node_id: @node.node_id)
       @kind = preview_kind(@node.name)
-      # ONE MAP FOR ONE NODE, not the project page's whole listing: `Maker::PublicProject#thumbs`
-      # covers `listing.node_ids + page_nodes.keys`, and loading `page_nodes` here would pull the
-      # build log, the BOM and every release onto a page that shows one file. `.for` backfills, which
-      # is what makes a poster appear on a file nobody has opened before — the same write-on-GET the
-      # public project page already does.
+      # ONE MAP FOR ONE NODE, not the project page's: `Maker::PublicProject#thumbs` covers everything
+      # that page paints, entry photos and image blocks out of `page_nodes` included, and loading
+      # `page_nodes` here would pull the build log, the BOM and every release onto a page that shows
+      # one file. `.for` backfills, which is what makes a poster appear on a file nobody has opened
+      # before — the same write-on-GET the public project page already does.
       @thumbnail = Maker::Previews::ThumbnailMap.for(owner, [ @node.node_id ]).thumb(@node.node_id)
       # A ZIP IS A BOARD WHEN ITS CONTENTS SAY SO, and a 3MF's colours/unit come from its manifest —
       # both are ONE bounded port read in the OWNER's name, judged on the catalog's `size` column

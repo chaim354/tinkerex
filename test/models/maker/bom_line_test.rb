@@ -70,6 +70,39 @@ module Maker
       assert_nil @bom.lines.build.target_kind
     end
 
+    # A STOCK LINE IS COUNTED IN ITS ITEM'S UNIT, READ FROM THE ITEM (audit F-S16-2). Consume takes
+    # `quantity` off the item's balance, so the unit a line reports is the item's. It used to be a
+    # copy written once, and only the web door wrote it: a v1 or desktop create kept the unit it
+    # sent, and an edit to the item's unit after the line existed left every line on the old one.
+    # The edit is driven here because no rule at create time could ever reach it.
+    test "a stock line reports its item's unit, and follows an edit to it" do
+      kg = @user.maker_inventory_items.create!(name: "PETG", unit: "kg")
+      line = @bom.lines.create!(user: @user, inventory_item: kg, quantity: 2, unit: "each")
+      assert_equal "kg", line.unit
+
+      kg.update!(unit: "g")
+      assert_equal "g", line.reload.unit
+    end
+
+    test "a file or a text line keeps the unit it was given" do
+      assert_equal "m",    @bom.lines.create!(user: @user, part_name: "Wire", quantity: 3, unit: "m").reload.unit
+      assert_equal "pack", @bom.lines.create!(user: @user, node_id: "n", quantity: 1, unit: "pack").reload.unit
+    end
+
+    # THE COLUMN STILL HOLDS A VALID UNIT ON A STOCK LINE, although nothing reads it there.
+    # `validates :unit` asks the reader, which answers with the item's unit, so a stray value sent
+    # for a stock line would pass and be stored. The column is read again the moment the line stops
+    # being a stock line, and a retarget (a v1 PATCH to a part name, which sends no unit) is a save
+    # like any other: a stray unit there refuses it.
+    test "a stock line stores its item's unit, so a line retargeted off the item keeps a valid one" do
+      kg = @user.maker_inventory_items.create!(name: "PETG", unit: "kg")
+      line = @bom.lines.create!(user: @user, inventory_item: kg, quantity: 2, unit: "furlong")
+
+      line.update!(inventory_item_id: nil, part_name: "PETG offcut")
+      assert_equal :free_text, line.target_kind
+      assert_equal "kg", line.reload.unit
+    end
+
     test "resolved_target returns the linked inventory item with its balance" do
       line = @bom.lines.create!(user: @user, inventory_item_id: @inv.id, quantity: 4)
       resolved = line.resolved_target
