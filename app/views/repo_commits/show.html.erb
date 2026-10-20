@@ -12,13 +12,15 @@
     three times — three copies is how a change reclassifies clutter as an ordinary add and
     still passes two thirds of the assertions. `checked` is the whole safety story: it is true
     for the tinkerex-edited group and false for the other two, deliberately (spec part 1), and
-    the mutation that flips either of the false ones is what test/integration/web has a case for. %>
+    the mutation that flips either of the false ones is what test/integration/web has a case for.
+    The ROWS come from @staging, the same RepoCommitsController::Staging whose offered_paths the
+    commit accepts, so a checkbox drawn here and a path the commit takes cannot disagree. %>
 <% groups = [
-     { key: "pending", title: "Edited in tinkerex", rows: @rows.values, checked: true, open: true,
+     { key: "pending", title: "Edited in tinkerex", rows: @staging.pending, checked: true, open: true,
        note: nil },
-     { key: "other", title: "Other changes", rows: @other_rows, checked: false, open: false,
+     { key: "other", title: "Other changes", rows: @staging.other, checked: false, open: false,
        note: "Changed outside tinkerex. Nothing here is committed unless you tick it." },
-     { key: "clutter", title: "OS clutter", rows: @clutter_rows, checked: false, open: false,
+     { key: "clutter", title: "OS clutter", rows: @staging.clutter, checked: false, open: false,
        note: "tinkerex never creates these." }
    ].reject { |group| group[:rows].empty? } %>
 <% listed = groups.flat_map { |group| group[:rows] } %>
@@ -85,9 +87,9 @@
                 </div>
                 <% if row.state == :deleted %>
                   <p class="commit-nodiff muted">deleted — nothing to diff</p>
-                <% elsif @binary_paths.include?(path) %>
+                <% elsif row.binary %>
                   <p class="commit-nodiff muted">binary — no diff</p>
-                <% elsif @node_id_by_path[path] %>
+                <% elsif @diff_node_ids[path] %>
                   <%# The diff is computed IN THE BROWSER from two blobs this page only points at:
                       HEAD's from repo_head_blob_path and the working tree's from the same blob
                       endpoint the file viewer reads. The server ships bytes and diffs neither.
@@ -100,7 +102,7 @@
                   <div class="commit-diff"
                        data-controller="diffview"
                        data-diffview-head-url-value="<%= repo_head_blob_path(@root.node_id, path: path) %>"
-                       data-diffview-work-url-value="<%= blob_file_path(@node_id_by_path[path]) %>"
+                       data-diffview-work-url-value="<%= blob_file_path(@diff_node_ids[path]) %>"
                        data-diffview-ext-value="<%= File.extname(path).downcase.delete(".") %>"></div>
                 <% end %>
               </li>
@@ -114,9 +116,9 @@
         LocalRepo#full_status stops at DEFAULT_STATUS_LIMIT because every row costs a content
         comparison against HEAD's blob (~15 ms per object over CIFS), and the remainder is counted
         rather than dropped silently. %>
-    <% if @truncated_count.positive? %>
+    <% if @staging.truncated_count.positive? %>
       <p class="muted commit-truncated">
-        <%= pluralize(@truncated_count, "further changed path") %> not listed — this repository has
+        <%= pluralize(@staging.truncated_count, "further changed path") %> not listed — this repository has
         more changes than the box shows at once.
       </p>
     <% end %>
