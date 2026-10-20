@@ -664,6 +664,69 @@ module Library
                          "per directory again, which is the N+1 this closed"
     end
 
+    # EVERY FILE A PASS CREATES, AND EVERY DIRECTORY IT WRITES, FIRST ASKS FOR A TOMBSTONE AT ITS
+    # PATH (#create_or_revive!, #ensure_dirs). The only index carrying `storage_path` used to be the
+    # live-row one, partial on `deleted = false`, which a `deleted = true` query cannot use — so each
+    # lookup read every row the user owns, and a first scan or a large import of N files cost ~N^2/2
+    # row visits. The query-COUNT guard above cannot see that: the count stays linear, it is the rows
+    # each query visits that grow. So this asserts the plan.
+    #
+    # EXPLAINED WITH ITS BINDS, OR IT PROVES NOTHING. SQLite may use a partial index only when the
+    # query's WHERE implies the index's, and it can tell that `deleted = ?` implies `deleted = true`
+    # only once the 1 is BOUND (binding re-prepares the statement). The bare SQL — what
+    # addon_origin_test's `explain_plan` explains — reports the user_id scan whether or not a real
+    # pass uses the index, so a bind-less version of this test could never go green.
+    #
+    # Postgres skips on the wording, as addon_origin_test does; all three bin/ci legs run SQLite, so
+    # the skip cannot fire there, and a skip is still a run. On Postgres a partial index is chosen
+    # only under a plan that sees the bound value — EXPLAIN both lookups there before relying on it.
+    test "both revive-by-path lookups reach the tombstone index rather than every row of the user" do
+      skip "EXPLAIN QUERY PLAN wording is SQLite's" unless ActiveRecord::Base.connection.adapter_name == "SQLite"
+
+      lookups = capture_revive_lookups do
+        reconcile([ s3_dir_obs("cad"), obs("cad/a.stl", "aaa") ], { "cad/a.stl" => "aaa" })
+      end
+      assert_equal %w[dir file], lookups.keys.sort,
+                   "expected exactly one revive-by-path lookup per kind, got #{lookups.keys.inspect}"
+
+      # Every lookup is planned before anything is asserted, so a failure names ALL the kinds that
+      # lost the index — dropping the index reads `["dir", "file"]`, dropping one lookup's `deleted`
+      # term reads that kind alone.
+      plans = lookups.to_h { |kind, (sql, binds)| [ kind, explain_plan(sql, binds) ] }
+      scanning = plans.reject { |_kind, plan| plan.include?("index_nodes_on_user_id_and_storage_path_tombstones") }
+      assert_equal [], scanning.keys.sort,
+                   "these revive lookups do not reach the tombstone index, so each reads every node the " \
+                   "user owns, once per node a pass writes:\n" +
+                   scanning.map { |kind, plan| "  #{kind}: #{plan}\n    #{lookups[kind].first}" }.join("\n")
+    end
+
+    # The revive-by-path SELECTs of one pass, keyed by the `kind` each one binds. Recognised by what
+    # they ASK — a whole row, by `storage_path` and `kind`, newest first — rather than by their full
+    # text, so a lookup that loses a term is still captured and its plan is still checked.
+    def capture_revive_lookups
+      found = {}
+      sub = ActiveSupport::Notifications.subscribe("sql.active_record") do |_, _, _, _, payload|
+        sql = payload[:sql]
+        next unless sql.start_with?('SELECT "nodes".*') && sql.include?('ORDER BY "nodes"."id" DESC')
+
+        binds = payload[:binds]
+        names = binds.map { |b| b.respond_to?(:name) ? b.name : nil }
+        next unless names.include?("storage_path") && names.include?("kind")
+
+        kind = binds.find { |b| b.respond_to?(:name) && b.name == "kind" }.value_for_database
+        found[kind] = [ sql, binds ]
+      end
+      yield
+      found
+    ensure
+      ActiveSupport::Notifications.unsubscribe(sub)
+    end
+
+    def explain_plan(sql, binds)
+      ActiveRecord::Base.connection.select_all("EXPLAIN QUERY PLAN #{sql}", "EXPLAIN", binds)
+                        .rows.map(&:last).join("\n")
+    end
+
     # THE FRESHNESS MITIGATION, and it is NOT optional. #live is plucked before the first write;
     # ensure_dirs then creates a LIVE dir node at "cad" and must write that back, or
     # match_live_paths reads a snapshot in which "cad" is unclaimed, the file observation falls

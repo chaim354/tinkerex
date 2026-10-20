@@ -602,7 +602,16 @@ module Library
         # `deleted` and pick an arbitrary row when both a tombstone and a live node exist. It
         # stays a LIVE query — #live holds `present` rows only and a tombstone is exactly what it
         # cannot answer for.
-        node ||= @user.nodes.where(storage_path: o.rel_path, kind: "dir").order(id: :desc).first
+        #
+        # `deleted: true` SAYS WHAT REACHING THIS LINE ALREADY MEANS — no present row holds this path
+        # (`row` was nil, or was the file tombstoned just above) — and it is what lets the planner
+        # use `index_nodes_on_user_id_and_storage_path_tombstones`. Without it this read every node
+        # the user owns, once per directory a pass writes (reconciler_test pins the plan). The one
+        # input it changes: a web mkdir landing at this exact path AFTER #live was plucked used to be
+        # adopted here; now the insert below meets the live-row unique index and fails this pass,
+        # and the next pass finds that row in #live.
+        node ||= @user.nodes.where(storage_path: o.rel_path, kind: "dir", deleted: true)
+                            .order(id: :desc).first
         node ||= @user.nodes.new(node_id: SecureRandom.uuid)
         node.update!(name: File.basename(o.rel_path), kind: "dir", deleted: false,
                      storage_path: o.rel_path, parent_node_id:, mtime: o.mtime)
@@ -730,6 +739,9 @@ module Library
     # #ensure_dirs both query for TOMBSTONES by path, and those stay live queries. §14a's two
     # tombstone kinds must not be collapsed, and an index that held both could not tell them
     # apart by path alone.
+    # Keeping those lookups live costs one seek each, not a read of every node the user owns:
+    # `index_nodes_on_user_id_and_storage_path_tombstones` (partial, `deleted = true`) is the
+    # database's index over exactly the rows this one leaves out.
     def live
       @live ||= @user.nodes.present.where.not(storage_path: nil)
                     .pluck(:storage_path, :id, :node_id, :kind, :name, :mtime, :size,
