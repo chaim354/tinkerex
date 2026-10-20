@@ -11,24 +11,32 @@
 #   Derived  — tables, columns, types, nullability, defaults, indexes, and the foreign-key
 #              constraints. Parsed out of the schema dumps, so a migration carries them for free.
 #   Authored — the structural relationships (EDGES) and the layout (LAYOUT). These CANNOT be
-#              derived: this schema joins the file layer by BARE STRING — `node_id`,
-#              `version_id`, `manifest_id`, `chunk_hash` — with no constraint anywhere, which is
-#              precisely the fact the map exists to show. 50 of the 103 links are like that.
+#              derived: this schema joins the file layer by BARE STRING — every arrow into
+#              `nodes.node_id` — with no constraint anywhere, which is precisely the fact the map
+#              exists to show. Most of its links are kept by the app alone; the page's legend
+#              counts each kind from the data.
 #
 # WHAT `problems` CATCHES, and the suite runs it on every leg:
 #   * an edge naming a table or column that no longer exists (a rename, a drop);
 #   * an edge drawn as a database foreign key that ISN'T one;
 #   * an edge drawn as app-level that the database DOES enforce;
 #   * a real `add_foreign_key` nobody drew;
-#   * a table absent from LAYOUT, or a LAYOUT entry naming a table that no longer exists.
+#   * a table absent from LAYOUT, or a LAYOUT entry naming a table that no longer exists;
+#   * a reference nobody classified. Every `*_id` column of the primary schema but `user_id`
+#     (which `edges` draws itself) is DRAWN in EDGES or LISTED in NOT_EDGES with the reason it is
+#     not a join — exactly one (`classification_problems`). That makes the authored half complete
+#     by check rather than by memory, and test/models/structural_orphan_test.rb with it: that test
+#     derives its cases from EDGES, so a pointer nobody drew was a pointer nothing considered.
 #
-# WHAT NOTHING HERE CATCHES — state it plainly, because the guard above reads stronger than it
-# is: a NEW app-level reference that nobody adds to EDGES. There is no constraint to notice and
-# no naming convention to key on (`project_id` is an ordinary app-level reference, `taskable_id`
-# is polymorphic, `manifest_id` points at a column that is not even a primary key, and
-# `folder_node_id` looks like nothing at all). The map will simply lack that arrow, with nothing
-# anywhere going red. Adding a relationship means adding a line to EDGES; that is the deal, and
-# it is the same deal CLAUDE.md's own invariants run on.
+# WHAT NOTHING HERE CATCHES — state it plainly, because the guard above reads stronger than it is:
+#   * a reference whose column name does not end in `_id`. None in the primary schema is a join
+#     the map could draw — `addon_key` names an addon, `content_token` and `chunk_hash` name
+#     content, `bom_revision` is a copy taken at release time — so name a new reference `*_id` (a
+#     node id `node_id` or `*_node_id`) and the rule asks about it for free;
+#   * a new target of a polymorphic pair EDGES already draws (`taskable_id` naming a third type):
+#     the column is classified, so nothing asks whether every target is;
+#   * an arrow to the WRONG target: the rule asks that a column be classified, not that the
+#     classification be true.
 module SchemaMap
   # The four databases (§4: Solid Queue/Cache/Cable each get their own).
   SOURCES = {
@@ -41,11 +49,12 @@ module SchemaMap
   OUTPUT   = "docs/schema-map.html"
   TEMPLATE = "lib/schema_map/template.html"
 
-  # Left-to-right columns on the canvas. Grouping is *architectural*, not alphabetical: the sync
-  # engine on the left, the maker layer in the middle, Rails' own plumbing and then the separate
-  # databases on the right — so the majority of arrows run a short distance rightwards and the
-  # long ones back to `nodes`/`versions` are visibly the exception. A new table must be placed
-  # here (`problems` refuses otherwise) because only a person can say where it belongs.
+  # Left-to-right columns on the canvas. Grouping is *architectural*, not alphabetical: accounts
+  # and the file layer on the left, the maker layer in the middle, Rails' own plumbing and then the
+  # separate databases on the right — so most arrows run LEFTWARDS, nearly all of them into the two
+  # tables everything else hangs off: `users` (ownership, which the page can hide) and `nodes` (the
+  # bare-string references the map exists to show). A new table must be placed here (`problems`
+  # refuses otherwise) because only a person can say where it belongs.
   LAYOUT = [
     { "label" => "Accounts & devices", "group" => "sync",
       "tables" => %w[users devices user_identities] },
@@ -59,12 +68,9 @@ module SchemaMap
     # backend (share and s3 index into it; chunk_remote mirrors a remote changelog into it).
     { "label" => "File layer", "group" => "sync",
       "tables" => %w[nodes] },
-    # chunk_remote's LOCAL MIRROR of a remote server's manifests (Stage 4). Its own row rather than
-    # a place among the engine tables above: those are the engine's, written by Sync::Commit in a
-    # deployment that IS the sync server, while this is written by a client that only talks to one.
-    # `remote_manifest_chunks.version_id` is an app-level reference to a `versions` row THIS
-    # DATABASE DOES NOT HAVE -- so there is no edge to draw, and drawing one would claim a join
-    # that cannot be made.
+    # chunk_remote's LOCAL MIRROR of a remote server's manifests (Stage 4), written by a client that
+    # only talks to a sync server (FileLayer::ChunkRemote::ChangelogSync). Its `version_id` names a
+    # version in THAT server's database, so it is listed in NOT_EDGES rather than drawn.
     { "label" => "Remote sync mirror", "group" => "sync",
       "tables" => %w[remote_manifest_chunks] },
     # `maker_repo_edits` sits here rather than with the projects: it is a row ABOUT A FILE, keyed
@@ -111,32 +117,13 @@ module SchemaMap
     # they now cross a PROCESS BOUNDARY as well, since the tables they pointed at belong to
     # chaim354/tinkerex-sync's database and are reached over HTTP.
     #
-    # `nodes.current_version_id` SURVIVES AS A COLUMN BUT NO LONGER AS AN EDGE HERE: on
-    # chunk_remote it holds a version id from the SYNC SERVER's `versions` table, which this
-    # database does not have -- exactly the situation the `remote_manifest_chunks` note above
-    # already describes, and drawing an edge would claim a join that cannot be made locally.
+    # `nodes.current_version_id` SURVIVES AS A COLUMN BUT NOT AS AN EDGE: NOT_EDGES says why.
     [ "nodes.parent_node_id",            "nodes.node_id",               "app", "child of" ],
     # --- the maker layer's grip on the file layer: every one a bare string, §14a ---
     [ "maker_file_attachments.node_id",    "nodes.node_id",       "app", "attaches" ],
     [ "maker_previews.node_id",            "nodes.node_id",       "app", "depicts" ],
     # `maker_file_attachments.version_id` and `maker_previews.version_id` are DELIBERATELY NOT
-    # drawn as edges into `versions.version_id`. This map used to claim both — "pinned" and
-    # "rendered from" — and that was wrong, not merely unenforced: the column is
-    # `FileLayer::FileInfo#content_token` under a backend-neutral name it kept from before that
-    # port existed (see the comment on `FileInfo`, app/services/file_layer/file_info.rb). It is a
-    # real version UUID in chunk mode, but on share/s3 it is a CONTENT HASH — a different value
-    # space, not merely a different row in the same table. And on share/s3 there is no row to
-    # point at regardless: `Version` records are created only by `Sync::Commit`, `Sync::Restore`
-    # and `Sync::Conflicts` (grep app/services for `.versions.create!` — three hits, all engine
-    # chunk-mode flows), so the `versions` table is empty for a share/s3 deployment's nodes. A
-    # foreign key that names a different table depending on which of three deployments is reading
-    # it is not a foreign key. The reason this is more than pedantry: Stage 3b reads this map to
-    # decide which tables move with the engine and which stay with the maker layer. Drawing the
-    # edge would tell it `maker_previews`/`maker_file_attachments` depend on the engine's
-    # `versions` table and pull two maker tables across the split they must not cross — the
-    # dependency that is real (a file's current content) already crosses the FileLayer port via
-    # `content_token`, which is precisely the seam that exists to carry it. See Stage 3 boundary
-    # design §5 (docs/superpowers/specs/2026-08-20-stage-3-boundary-design.md).
+    # drawn: each is a content token, not a join, and NOT_EDGES carries the argument.
     [ "maker_notes.node_id",               "nodes.node_id",       "app", "note on" ],
     # Stage 4, S4-8. TWO edges from one table, because a link is a statement about a PAIR: both
     # ends are `nodes.node_id`, both are bare strings, and neither is enforced by anything. Drawn
@@ -147,10 +134,11 @@ module SchemaMap
     [ "maker_items.primary_node_id",       "nodes.node_id",       "app", "primary file" ],
     [ "maker_models.cover_node_id",        "nodes.node_id",       "app", "cover" ],
     [ "maker_models.folder_node_id",       "nodes.node_id",       "app", "bundle dir" ],
-    # THE THIRD BARE-STRING JOIN OUT OF maker_models, and the one this file's own warning is
-    # about: an app-level reference nothing derives, so the arrow exists only because it was
-    # written here. Maker::ModelIntake keys an auto-catalogued model on the node it came from --
-    # a DIR for a folder model, a FILE for a one-file model -- which is why it points at
+    # THE THIRD BARE-STRING JOIN OUT OF maker_models: an app-level reference nothing derives, so
+    # the arrow is authored here — and leaving it out goes red, because the completeness rule
+    # (`classification_problems`, beside NOT_EDGES below) refuses a `*_id` column that is neither
+    # drawn nor listed. Maker::ModelIntake keys an auto-catalogued model on the node it came from
+    # -- a DIR for a folder model, a FILE for a one-file model -- which is why it points at
     # `nodes.node_id` and not at either kind specifically.
     #
     # maker_shelves DELIBERATELY HAS NO EDGE HERE. A shelf is a PATH PATTERN, not a node: it has
@@ -171,6 +159,10 @@ module SchemaMap
     # and the content token the port reported at release time. Soft like every arrow into `nodes`
     # above — a file deleted after a release keeps its row, and the page says so.
     [ "maker_release_files.node_id",        "nodes.node_id",      "app", "released file" ],
+    # A RELEASE RECORDS THE REPOSITORY ITS TAG WAS VERIFIED IN — a dir node, written by
+    # Maker::ReleaseSnapshot only when the tag resolved there — soft like every arrow into `nodes`
+    # above. It went undrawn until the completeness rule (NOT_EDGES, below) asked about it.
+    [ "maker_releases.repo_node_id",        "nodes.node_id",      "app", "tagged in" ],
     # AN IMAGE BLOCK POINTS AT THE PICTURE IT SHOWS (2026-09-09, content blocks), and the pointer
     # is a bare string like every one above it: the file can be deleted after the block was made,
     # and the block KEEPS ITS ROW and renders nothing (spec §8) rather than being swept — the same
@@ -238,6 +230,31 @@ module SchemaMap
     [ "solid_queue_recurring_executions.task_key", "solid_queue_recurring_tasks.key", "app", "task" ]
   ].freeze
 
+  # THE `*_id` COLUMNS OF THE PRIMARY SCHEMA THAT ARE DELIBERATELY NOT JOINS, each with the reason
+  # an arrow would be wrong. `classification_problems` asks every such column but `user_id` to be
+  # drawn in EDGES or listed here — exactly one — so a new `*_id` column cannot reach
+  # `bin/rails schema:map` (or a green suite) unclassified. Listing is the deliberate answer, never
+  # the convenient one: a structural pointer belongs in EDGES, where
+  # test/models/structural_orphan_test.rb then demands the `dependent:` decision for it.
+  NOT_EDGES = {
+    "nodes.node_id" =>
+      "a KEY, not a reference: the file layer's stable identity, which every arrow into `nodes` " \
+      "lands on",
+    "nodes.current_version_id" =>
+      "a version id from the SYNC SERVER's `versions` table (chunk_remote only), which this " \
+      "database does not have: an arrow would claim a join that cannot be made locally",
+    "remote_manifest_chunks.version_id" =>
+      "the same sync-server version id, naming the version a mirrored manifest belongs to: there " \
+      "is no `versions` row here to point at",
+    "maker_previews.version_id" =>
+      "FileLayer::FileInfo#content_token under the name it kept from before that port: a version " \
+      "id on chunk_remote, a CONTENT HASH on share/s3 — two value spaces, and neither keys a row " \
+      "in this database. This map once drew it into `versions`, a recorded mistake (CLAUDE.md §5)",
+    "maker_file_attachments.version_id" =>
+      "the same content token as maker_previews.version_id, and the same recorded mistake " \
+      "(CLAUDE.md §5)"
+  }.freeze
+
   class << self
     def root = defined?(Rails) ? Rails.root : Pathname.new(File.expand_path("..", __dir__))
     def output_path   = root.join(OUTPUT)
@@ -266,7 +283,8 @@ module SchemaMap
     # EDGES plus one derived ownership edge per table carrying `user_id`. Derived rather than
     # listed because they are all the same edge, and a new user-scoped table should get its
     # ownership arrow without anyone remembering to add one. `fk` records whether the database
-    # enforces THAT one — 10 of them do, 22 do not, and the legend says so.
+    # enforces THAT one — most do not (tinkerex#152 declined the rest: SQLite rebuilds a whole
+    # table to add one) — and the legend counts both from the data.
     def edges
       @edges ||= begin
         authored = EDGES.map { |f, t, k, l| { "f" => f, "t" => t, "k" => k, "l" => l } }
@@ -320,7 +338,44 @@ module SchemaMap
         out << "#{table}.#{column} is a foreign key no edge draws — add it to SchemaMap::EDGES"
       end
 
+      out.concat(classification_problems(tables))
+    end
+
+    # THE COMPLETENESS RULE. Every column `reference_shaped_columns` names is DRAWN (the source of a
+    # line in EDGES) or LISTED in NOT_EDGES with the reason it is not a join — exactly one. Its
+    # inputs are arguments so the suite can plant each failure on synthetic tables; `problems` runs
+    # it on the real dumps.
+    def classification_problems(tables, edges: EDGES, not_edges: NOT_EDGES)
+      asked = reference_shaped_columns(tables)
+      drawn = edges.map(&:first).to_set
+      out = asked.filter_map do |ref|
+        listed = not_edges.key?(ref)
+        next if drawn.include?(ref) != listed # exactly one of the two: classified
+
+        if listed
+          "#{ref} is both drawn in SchemaMap::EDGES and listed in SchemaMap::NOT_EDGES — it is one or the other"
+        else
+          "#{ref} looks like a reference and nothing classifies it — draw it in SchemaMap::EDGES, " \
+          "or list it in SchemaMap::NOT_EDGES with the reason it is not a join"
+        end
+      end
+      (not_edges.keys - asked).each do |ref|
+        out << "SchemaMap::NOT_EDGES lists #{ref}, which is not a *_id column the rule asks about " \
+               "(the primary schema's, user_id aside) — remove it"
+      end
       out
+    end
+
+    # What the rule asks about, as "table.column": every `*_id` column of the PRIMARY schema except
+    # `user_id`, which `edges` draws by construction — one derived ownership edge per column of that
+    # name. The other three dumps are Solid Queue/Cache/Cable's own schema: this app writes no
+    # migration there and decides no join in them.
+    def reference_shaped_columns(tables)
+      tables.select { |t| t["db"] == "primary" }.flat_map do |t|
+        t["columns"].filter_map do |c|
+          "#{t['name']}.#{c['n']}" if c["n"].end_with?("_id") && c["n"] != "user_id"
+        end
+      end
     end
 
     # ---- assembly + render -----------------------------------------------------
@@ -371,8 +426,8 @@ module SchemaMap
     private
 
     # Per-column badges the page draws. `key` marks a column something POINTS AT that is not a
-    # primary key — `nodes.node_id`, `chunks.chunk_hash` — which is most of what is load-bearing
-    # about this schema.
+    # primary key — `nodes.node_id` above all, which is most of what is load-bearing about this
+    # schema.
     #
     # It RETURNS A COPY and must keep doing so. `tables` is memoized, so badging the column hash in
     # place edited the PARSE RESULT: `SchemaMap.tables` then meant one thing before `data`/`payload`/

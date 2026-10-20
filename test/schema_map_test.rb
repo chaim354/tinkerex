@@ -13,8 +13,9 @@ require "test_helper"
 #   * The checked-in PAGE being behind the generator. One command fixes that, and the test says
 #     which command.
 #
-# What this canNOT see is stated in lib/schema_map.rb: a new app-level reference nobody draws.
-# There is no constraint to notice it by.
+# What this canNOT see is stated in lib/schema_map.rb — chiefly a reference whose column is not
+# named `*_id`. The reference nobody draws, which used to be the stated gap, now goes red: every
+# `*_id` column of the primary schema but `user_id` must be drawn in EDGES or listed in NOT_EDGES.
 class SchemaMapTest < ActiveSupport::TestCase
   test "every relationship the map draws still matches the schema it claims to describe" do
     # Each entry is already a sentence naming the table and the fix, so print them as-is.
@@ -85,18 +86,60 @@ class SchemaMapTest < ActiveSupport::TestCase
     assert_empty SchemaMap::EDGES.select { |_f, to, _k, _l| to == "users.id" }
   end
 
-  # Correction, 2026-08-20: this map used to draw both columns as edges into `versions.version_id`
-  # ("pinned" / "rendered from"), which was factually wrong on two of three deployments -- the
-  # column is a backend-polymorphic content_token (a real version UUID on chunk, a content hash on
-  # share/s3; see the comment beside their entries in SchemaMap::EDGES and FileLayer::FileInfo).
-  # `problems` cannot catch a reintroduction of this: `versions.version_id` is a real column, so a
-  # revived edge would parse cleanly and pass every check that method runs. This is the only guard
-  # against it coming back.
-  test "the two maker version_id columns are not drawn as edges into versions" do
-    refute SchemaMap::EDGES.any? { |from, to, _k, _l|
-      %w[maker_file_attachments.version_id maker_previews.version_id].include?(from) &&
-        to == "versions.version_id"
-    }
+  # THE COMPLETENESS RULE, ON SYNTHETIC INPUT (lib/schema_map.rb, `classification_problems`). The
+  # real schema passes once it is classified, so these plant each failure the rule exists for — and
+  # assert that every legitimate answer says NOTHING, because a rule that complained about every
+  # column would pass the planted cases alone.
+  test "a *_id column of the primary schema is drawn in EDGES or listed in NOT_EDGES, exactly one" do
+    widgets = synthetic_table("maker_widgets", %w[user_id project_id name])
+    drawn   = [ [ "maker_widgets.project_id", "maker_projects.id", "app", "for" ] ]
+    listed  = { "maker_widgets.project_id" => "a reason" }
+
+    # Neither — the reference nobody drew, which passed every guard before this rule. `user_id`
+    # beside it says nothing: `edges` draws every ownership column by construction.
+    neither = SchemaMap.classification_problems([ widgets ], edges: [], not_edges: {})
+    assert_equal 1, neither.size, neither.inspect
+    # THE WORDING IS PINNED, NOT JUST THE COLUMN: the "both" sentence names both lists too, so a
+    # looser pattern stayed green over a rule that answered every unclassified column "both drawn
+    # and listed" — the wrong fix, sending the reader to delete a listing that does not exist.
+    assert_match(/\Amaker_widgets\.project_id looks like a reference and nothing classifies it — draw it in SchemaMap::EDGES, or list it in SchemaMap::NOT_EDGES/,
+                 neither.first)
+
+    assert_empty SchemaMap.classification_problems([ widgets ], edges: drawn, not_edges: {})
+    assert_empty SchemaMap.classification_problems([ widgets ], edges: [], not_edges: listed)
+
+    # Both — which is also what re-drawing a listed column answers: the edges into `versions` this
+    # map once drew from the two maker `version_id` columns (CLAUDE.md §5) come back as this.
+    both = SchemaMap.classification_problems([ widgets ], edges: drawn, not_edges: listed)
+    assert_equal 1, both.size, both.inspect
+    assert_match(/\Amaker_widgets\.project_id is both drawn in SchemaMap::EDGES and listed/, both.first)
+  end
+
+  test "the rule asks the primary schema only, and NOT_EDGES may list nothing it does not ask about" do
+    # Solid Queue's own schema: this app writes no migration there, so its `*_id` columns are not
+    # ours to classify — `active_job_id` is ActiveJob's job UUID, not a join.
+    vendor = synthetic_table("solid_queue_jobs", %w[active_job_id], db: "queue")
+    assert_empty SchemaMap.classification_problems([ vendor ], edges: [], not_edges: {})
+
+    # A dropped or renamed column, an ownership column `edges` already draws, and a vendor column:
+    # each is an entry nothing asks about, so each is a stale one.
+    widgets = synthetic_table("maker_widgets", %w[user_id name])
+    %w[maker_widgets.gone_id maker_widgets.user_id solid_queue_jobs.active_job_id].each do |ref|
+      found = SchemaMap.classification_problems([ widgets, vendor ], edges: [], not_edges: { ref => "a reason" })
+      assert_equal 1, found.size, "#{ref}: #{found.inspect}"
+      assert_match(/\ASchemaMap::NOT_EDGES lists #{Regexp.escape(ref)}, /, found.first)
+    end
+  end
+
+  test "every *_id column of the primary schema is drawn in EDGES or listed in NOT_EDGES" do
+    # NON-EMPTY FIRST (CLAUDE.md §14e): a scan that quietly finds nothing classifies everything. The
+    # primary schema has dozens of these columns; the queue database, which an inverted filter would
+    # read instead, has under ten.
+    scanned = SchemaMap.reference_shaped_columns(SchemaMap.tables)
+    assert_operator scanned.size, :>=, 40, "scanned #{scanned.size} *_id columns: #{scanned.inspect}"
+
+    found = SchemaMap.classification_problems(SchemaMap.tables)
+    assert_equal [], found, "\n" + found.map { |p| "  - #{p}" }.join("\n")
   end
 
   private
@@ -108,5 +151,12 @@ class SchemaMapTest < ActiveSupport::TestCase
   # The same column as the page draws it: annotated with the badges `data` computes.
   def rendered_column(table, name)
     SchemaMap.data["tables"].find { |t| t["name"] == table }["columns"].find { |c| c["n"] == name }
+  end
+
+  # A table in the shape `SchemaMap.tables` parses a dump into — all the rule reads is the name,
+  # the database and the column names.
+  def synthetic_table(name, columns, db: "primary")
+    { "name" => name, "db" => db, "columns" => columns.map { |c| { "n" => c, "t" => "integer" } },
+      "indexes" => [] }
   end
 end
