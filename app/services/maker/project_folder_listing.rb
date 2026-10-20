@@ -68,10 +68,14 @@ module Maker
       # dir's OWN files — was right while the rest of the repo rendered as nested sections below;
       # with the browser there instead it reads "(3)" over a repository holding 203 files.
       #
-      # `subtree_file_ids` is the set ProjectsController#show keeps OUT of its thumbnail map for each
-      # Dir its #dirs_without_tiles names (a hidden panel, a browsed folder, a nested repository):
-      # that subtree draws no tiles, so backfilling a preview row and a render job per file is work
-      # for a picture no tile shows. BACKUPS ARE NOT IN EITHER ANSWER, and that is correct rather
+      # `subtree_file_ids` is the set ProjectsController#show subtracts from the TILE TERM of its
+      # thumbnail map for each Dir its #dirs_without_tiles names (a hidden panel, a browsed folder, a
+      # nested repository): that subtree draws no tiles, so a preview row and a render job per file
+      # would be work for a picture no tile shows. OUT OF THE TILE TERM, NOT OUT OF THE MAP: the map
+      # is the union of what the page paints, so an image in such a subtree comes back through the
+      # Photos term (Photos paints every image at any depth), and a generated file is excepted from
+      # the subtraction itself, because the Generated group tiles it wherever it physically sits
+      # (F-S15-1). BACKUPS ARE NOT IN EITHER ANSWER, and that is correct rather
       # than an oversight — `#bucket` diverts a backup out of `files` into the cross-cutting
       # `#backups` list, which the panel DOES render as tiles wherever the file physically sits, so
       # a rescue copy inside an untiled folder must keep its thumbnail.
