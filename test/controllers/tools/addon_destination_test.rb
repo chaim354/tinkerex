@@ -214,6 +214,21 @@ module Tools
       assert_default "d-new", "/new"
     end
 
+    # WITHIN ONE SAVE, THE FILE IT LISTED FIRST DECIDES. Both rows carry the same revision and the
+    # position-1 row is created FIRST, so `revision DESC, id` alone answers its folder; only
+    # `position` in #latest_output_folder's ORDER BY answers the first-listed file's.
+    test "within one save, the file it listed first decides where the tool starts" do
+      dir("d-first", "first")
+      dir("d-second", "second")
+      file("n-second", "second.svg", "d-second")
+      file("n-first", "first.svg", "d-first")
+      state = @user.maker_addon_states.create!(addon_key: "destkit", name: "two-file box", data: {}, revision: 2)
+      state.files.create!(node_id: "n-second", role: "output", position: 1, revision: 2)
+      state.files.create!(node_id: "n-first", role: "output", position: 0, revision: 2)
+      get tools_addon_path("destkit")
+      assert_default "d-first", "/first"
+    end
+
     # STEP 2'S ROOT IS AN ANSWER TOO, AND THIS IS THE ONE TEST THAT CAN SEE `empty?`-NOT-`any?` in
     # #destination_from_outputs. Step 3 cannot: its own `rows.first.nil?` answers nil for `[nil]`
     # either way, so the root test above stays green over `any?` (measured). Here `[nil].any?` is

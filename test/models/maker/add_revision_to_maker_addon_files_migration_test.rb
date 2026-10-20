@@ -14,6 +14,16 @@ require Dir[Rails.root.join("db/migrate/*_add_revision_to_maker_addon_files.rb")
 class AddRevisionToMakerAddonFilesMigrationTest < ActiveSupport::TestCase
   setup { @user = User.create!(email: "addon-file-revision-migration@example.com") }
 
+  # THE ROLLBACK RESTORES THE SCHEMA, NOT THE CONNECTION'S PREPARED STATEMENTS. `up` re-adds
+  # `revision` at the END of the table, where db/schema.rb's load put it between `position` and
+  # `role`. The fixture rollback brings the dump's order back, but a statement prepared in between
+  # keeps the column names it first reported, so the next identical query in this process reads
+  # SHIFTED values: library_output_test.rb went red with `[2026, 2026]` (the `updated_at` text) on
+  # seeds 2, 6 and 7. `reset_column_information` clears this connection's statement cache, and a
+  # teardown runs BEFORE the fixture rollback, so nothing is prepared again until the order is the
+  # dump's.
+  teardown { Maker::AddonFile.reset_column_information }
+
   test "backfills every existing row with its own state's current revision" do
     twice = @user.maker_addon_states.create!(addon_key: "boxes", name: "revised twice", data: {}, revision: 3)
     once = @user.maker_addon_states.create!(addon_key: "boxes", name: "revised once", data: {}, revision: 2)

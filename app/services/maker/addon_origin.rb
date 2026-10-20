@@ -96,12 +96,13 @@ module Maker
       # Maker::Addons::LibraryOutput leaves the older state's row in place on purpose. `to_h` below
       # keeps the LAST entry, so the most recently created claim wins.
       #
-      # A DETERMINISTIC CHOICE AMONG CLAIMANTS, NOT A CLAIM ABOUT WHO WROTE THE BYTES LAST —
-      # nothing on the row records that (`upsert_file!` does not touch `updated_at` when the
-      # attributes are unchanged). Not test-pinned either, for AddonState's reason: SQLite returns
-      # these rows in rowid order with or without the clause, so an assertion on the winner passes
-      # identically once it is removed — a guard that cannot fail. It is correctness against a
-      # planner that is free to reorder.
+      # A DETERMINISTIC CHOICE AMONG CLAIMANTS, NOT A CLAIM ABOUT WHO WROTE THE BYTES LAST. A row's
+      # `revision` cannot rank two states (each counts its own saves), and this reads no `updated_at`,
+      # though every rewrite by a claimant now moves it: a claimant that rewrote the node after a newer
+      # claim was created still loses to that claim. Not test-pinned either, for AddonState's reason:
+      # SQLite returns these rows in rowid order with or without the clause, so an assertion on the
+      # winner passes identically once it is removed — a guard that cannot fail. It is correctness
+      # against a planner that is free to reorder.
       claims = Maker::AddonFile.where(node_id: ids).order(:id).pluck(:node_id, :addon_state_id)
       return {} if claims.empty?
 
