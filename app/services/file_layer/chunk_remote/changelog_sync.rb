@@ -170,8 +170,10 @@ module FileLayer
               # arm reads its own shape and hands `upsert` what `apply_page` hands it. Handing over
               # nothing once let every resync repair a node's place and keep its stale content: a
               # file created while the mirror was behind listed at 0 bytes and 404'd on read, a
-              # changed one served its old bytes. No `version_id` (a directory, a symlink) is no
-              # content, like a change entry with no `version`, and leaves the row's own alone.
+              # changed one served its old bytes. No `version_id` is no content IN THIS REPLY -- a
+              # directory, a symlink, or a FILE whose current version no longer resolves on the
+              # server (tree.rs omits all three keys then) -- like a change entry with no `version`:
+              # nil, never the empty slice, which is truthy and would wipe the row's version and size.
               version = n["version_id"] ? n.slice("version_id", "size") : nil
               upsert(n, deleted: false, version:, manifest: n["manifest"])
             end

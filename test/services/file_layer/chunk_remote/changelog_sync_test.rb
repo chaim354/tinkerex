@@ -58,8 +58,9 @@ module FileLayer
                           "kind" => kind, "deleted" => deleted, "mode" => nil, "mtime" => 1 } }
         # `version` AND `manifest` TRAVEL TOGETHER, AS THE SERVER SENDS THEM (sync-protocol.md §8.3;
         # `Change` in tinkerex-sync's services/changes.rs): both on a `put` whose version still
-        # resolves, neither otherwise -- and the manifest rides on the ENTRY, beside `node`.
-        if size
+        # resolves, neither otherwise -- and the manifest rides on the ENTRY, beside `node`. So a
+        # `size:` given with any other op adds nothing: a move or a delete never carries content.
+        if size && op == "put"
           e["version"] = { "version_id" => "v-#{seq}", "manifest_id" => "m", "size" => size }
           e["manifest"] = [ { "hash" => "h-#{seq}", "offset" => 0, "length" => size } ]
         end
@@ -220,6 +221,24 @@ module FileLayer
         assert_equal [ "v-changed", 7 ], [ changed.current_version_id, changed.size ],
                      "a file changed while the mirror was behind still names its old version"
         assert_equal [ [ "h-changed", 0, 7 ] ], manifest_of("v-changed")
+      end
+
+      # A FILE CAN COME BACK FROM THE TREE WITH NO CONTENT KEYS AT ALL: the server sends
+      # `version_id`/`size`/`manifest` only while the node's current version still resolves, and
+      # omits all three otherwise (tinkerex-sync services/tree.rs:68-77). That is "this reply
+      # carries no content", the same as a change entry with no `version` -- never "the file is
+      # empty" -- so the row keeps what it had. The resync arm hands `upsert` nil for it, never the
+      # empty slice: that is a truthy Hash, and would wipe the version and size to nil.
+      test "a resync keeps a file's version and size when its tree node carries no content" do
+        @user.nodes.create!(node_id: "x", name: "x.stl", kind: "file", current_version_id: "v-keep", size: 7)
+        @user.update_column(:remote_sync_cursor, 5)
+        t = FakeTransport.new(pages: { 50 => [] }, oldest_seq: 50, head_seq: 50,
+                              tree: [ tree_node("x", "x.stl") ])
+        assert sync(t).resynced, "a pruned gap must resync"
+
+        x = @user.nodes.find_by(node_id: "x")
+        assert_equal [ "v-keep", 7, false ], [ x.current_version_id, x.size, x.deleted ],
+                     "a tree node with no content keys wiped the file's own version and size"
       end
 
       test "a resync SWEEPS local rows the server no longer lists" do
