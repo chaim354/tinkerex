@@ -562,6 +562,14 @@ Four rules, each driven by `test/system/o3dv_test.rb`:
   wedged until ✕ Image. A source switch therefore waits for the running import before asking for
   the next one. "`LoadModelFromUrlList` clears the viewer itself" holds only for an IDLE engine.
 
+**ONE KNOWN COST REMAINS: AN ORPHANED IMPORT LOGS ONE CONSOLE ERROR.** Leave the page or press
+✕ Image while a VALID file is still importing, and that import finishes on the destroyed engine.
+It then tries to remove a progress element `release()` already took out of the stage, which logs
+"Uncaught DOMException: Failed to execute 'removeChild' on 'Node'". This is cosmetic, and a failing
+import does not reach it. The fix is a per-engine mount `<div>`. It needs a CSS rule beside the
+addon-shared `.model-viewer-stage > div` and was left out of F-S22-1. A test that trips
+`assert_no_console_errors` on this message has met this case.
+
 **THE RESTORE IS PINNED FOR ALL THREE LAUNCHABLE VIEWERS** (the board, this one and the Measure view)
 by one helper, `WebHelpers#back_through_turbo_cache`. It proves the page came out of Turbo's cache
 before anything is asserted about it, because a Back that re-fetched the page would pass every

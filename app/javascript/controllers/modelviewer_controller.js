@@ -158,7 +158,12 @@ export default class extends Controller {
   // rest() (connect, ✕ Image, a failure) and disconnect(); a source switch never comes here (see
   // load()). REJECTING THE RECORD'S IMPORT FIRST is what lets a load still queued behind it (in
   // load()'s `await engine.importing`) see it is stale and exit. A promise that has already
-  // settled ignores the reject.
+  // settled ignores the reject. IT DOES NOT STOP A RUNNING IMPORT, and one cost of that remains:
+  // leave the page or press ✕ Image while a VALID file is still importing, and that import later
+  // finishes on the destroyed engine and tries to remove a progress element this method already
+  // took out of the stage. That logs "Uncaught DOMException: Failed to execute 'removeChild' on
+  // 'Node'". It is cosmetic. A per-engine mount <div> would fix it, but needs a CSS rule beside
+  // the addon-shared `.model-viewer-stage > div` (docs/invariants/files-preview.md).
   release() {
     const engine = this.engine
     this.engine = null

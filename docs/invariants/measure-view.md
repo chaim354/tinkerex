@@ -486,8 +486,12 @@
   - **One shared in-flight fetch.** The launch button stays clickable until the stage is drawn, so
     a second click joins the first fetch and the view is drawn once.
 
-  `rest()` is also the ONE place the selection is emptied. A drawing can start only from a rest,
-  so a second copy of that reset in `draw()` would be a guard no gesture can reach.
+  `rest()` is the ONE LIFECYCLE reset of the selection, and `draw()` does not repeat it. A drawing
+  can start only from a rest, so a second copy of that reset in `draw()` would be a guard no
+  gesture can reach. It is NOT the only place the set is emptied. `clearMarks()` empties it too,
+  on Reset and on a click on empty space. The two must stay separate: `clearMarks()` drops the
+  marks and keeps the drawing, while `rest()` takes the drawing down with them. Routing a Reset
+  through `rest()` would wipe the stage.
 
 - **`pick` COMPOSES `contourLabel` WITH `selectionStatus()`, WHICH IS WHAT SAVED THE ⌥ HINT.**
   `"part of a 2-contour object (⌥ for 30 × 10 mm)"` is the ONLY place the app says alt-click
