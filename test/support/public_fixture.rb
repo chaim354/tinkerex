@@ -97,9 +97,10 @@ module PublicFixture
                  password: PASSWORD, confirmed_at: Time.current, handle:)
   end
 
-  def sign_in_as(user)
-    post user_session_path, params: { user: { email: user.email, password: PASSWORD } }
-  end
+  # VERIFIED, through test_helper's `sign_in_web!`: the suites that include this module fail here,
+  # naming the email, if the owner they built cannot sign in. public_project_test.rb's "404 to its
+  # own signed-in owner" passed with nobody signed in while this posted and checked nothing.
+  def sign_in_as(user) = sign_in_web!(user, password: PASSWORD)
 
   # Rows PLUS the directory they claim to be — see this module's header for why it is not
   # `ensure_library_folder!`.

@@ -14,7 +14,6 @@ module Maker
     # THE BACKEND GATE LIVES ON THE FAN-OUT, NOT ON #perform — Library::ScanJob's own comment has
     # the argument: a SCHEDULE may no-op, but a COMMAND naming a user must not silently do nothing.
     test "the scheduled fan-out declines on a scannable backend" do
-      pin_file_layer_backend("share")
       use_fresh_share_library!
 
       assert_no_enqueued_jobs { Maker::ProjectDiscoveryJob.sweep_all! }
@@ -34,7 +33,6 @@ module Maker
 
     # #perform CARRIES NO GATE, so an explicit caller gets the sweep on any backend.
     test "perform sweeps on a scannable backend too" do
-      pin_file_layer_backend("share")
       use_fresh_share_library!
       dir("d-projects", "Projects", nil)
       dir("d-lamp", "Desk Lamp", "d-projects")
@@ -51,7 +49,6 @@ module Maker
     # synchronously and passes EAGER_MAX_PROJECTS; a `cap:` the job dropped on the floor would let
     # one click adopt fifty folders again with the door's own test still green (it stubs the job).
     test "perform honours an explicit cap and reports the run as capped" do
-      pin_file_layer_backend("share")
       use_fresh_share_library!
       dir("d-projects", "Projects", nil)
       dir("d-a", "Alpha", "d-projects")
@@ -90,7 +87,6 @@ module Maker
     # back by (content_hash, size), leaving the node at a path with no bytes and a download
     # returning a TERMINAL 404.
     test "the chain does not fire on a scannable backend" do
-      pin_file_layer_backend("share")
       use_fresh_share_library!
       dir("d-projects", "Projects", nil)
       dir("d-lamp", "Desk Lamp", "d-projects")

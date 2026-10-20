@@ -23,8 +23,9 @@ Authorisation, persistence, the `FileLayer` port, and backend selection. They ha
 already: `test/integration/web` is 31 files, and the ambient-backend risk is covered by `ci.yml`'s
 three `LIBRARY_BACKEND` legs.
 
-**Do not re-run the three-backend matrix through the browser.** Pin one backend per test with
-`pin_file_layer_backend` and let the port's own contracts do their job.
+**Do not re-run the three-backend matrix through the browser.** A test that needs a particular
+backend installs it itself (`use_fresh_share_library!`, or a direct `FileLayer.current =`; the shared
+teardown resets it) and lets the port's own contracts do their job.
 
 ## Every test here is mutation-checked
 

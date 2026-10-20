@@ -339,9 +339,9 @@ slot. A closed item keeps its row for the same reason it always did: the citatio
 bin/ci                 # bin/ci --list for gate names; config/ci.rb is the single definition.
                        # 7 gates (6 under CI -- `setup` is local-only, bin/ci --list-ci):
                        #   setup style scan test test-s3 test-chunk-remote system
-                       # THE THREE BACKEND LEGS ARE share / s3 / chunk_remote and must report
-                       # IDENTICAL run counts (§15). `test` IS the share leg; `test-share` and
-                       # `test-no-engine` were folded away with embedded chunk (2026-08-25).
+                       # THE THREE BACKEND LEGS ARE share / s3 / chunk_remote; bin/ci itself fails
+                       # when their RUN counts differ (§15). `test` IS the share leg; `test-share`
+                       # and `test-no-engine` were folded away with embedded chunk (2026-08-25).
 
 # ONE gate needs a SIBLING CHECKOUT. `test-chunk-remote` drives this app against a real
 # chaim354/tinkerex-sync server -- its Rust binary since 2026-10-14, which bin/sync-server builds
@@ -1265,15 +1265,13 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
   does not exist and excluded `test-chunk-remote` from the rule below, contradicting both §13 and
   `config/ci.rb`'s own comment. Read the tool, not the prose.)
 - **The three backend legs are `test` (share), `test-s3` and `test-chunk-remote`, and all three
-  must report identical run counts.** `test-chunk-remote` is included *because* it runs the full
-  suite — `config/ci.rb` says so in as many words: there is no in-process chunk backend any more,
-  so if it ran less, **the primary deployment's backend would be the only one without full
-  coverage.** It needs `../tinkerex-sync` checked out (§13).
-  **`bin/ci` PRINTS the three counts and never COMPARES them** — the rule has always relied on a
-  human reading them, and `tinkerex#131` records a small pre-existing flap (±2
-  assertions, ±1 skip) that varies between runs of the *same* leg, so it is nondeterminism rather
-  than a backend dependency. A ±2 difference is the known flap; a structural one means a test
-  depends on the ambient `LIBRARY_BACKEND` and is a real bug.
+  must report identical RUN counts — `bin/ci` COMPARES them itself** (`Ci::LegRuns`, over the log
+  each leg tees under `tmp/ci/`) and goes red when they differ or a leg wrote no summary.
+  `test-chunk-remote` is included *because* it runs the full suite: there is no in-process chunk
+  backend any more, so if it ran less, **the primary deployment's backend would be the only one
+  without full coverage** (it needs `../tinkerex-sync`, §13). Only RUNS are compared: assertions
+  and skips differ between legs by structure, and `tinkerex#131`'s ±2 assertion flap varies between
+  runs of the *same* leg. A RUN difference means a test depends on the ambient `LIBRARY_BACKEND`.
 - **Merging always needs an explicit go-ahead.** Never merge, never `--admin`-merge, never
   push to `main`.
 - If the gates are red or the work is partial, **stop and report** — do not open a PR to
