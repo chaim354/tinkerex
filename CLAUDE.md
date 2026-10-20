@@ -262,7 +262,7 @@ Deploy OVH only on explicit request. `docs/DEPLOY.md`.
                  gerber-svg (the pinned tracespace bundle under node, Maker::Previews::Gerber).
 /sidecar         GPL services invoked over HTTP only: boxes (GPL-3.0), openscad (GPL-2.0)
 /ops             Scripts that run ON the box, not in the app — backup-db.sh, installed by
-                 bin/backup-cron-install. No gate covers these; invariants in §14i.
+                 bin/backup-cron-install. Only its destination table is gated; invariants in §14i.
 /docs            sync-protocol.md, SYNC_SERVER.md, DEPLOY.md, roads-not-taken.md,
                  architecture-sync-engine.md, adr/
 /docs/invariants §14's AREA rules, one file per area — addons.md, measure-view.md,
@@ -486,13 +486,10 @@ area belongs there too, with a stub here.
   **loopback into the same Puma pool** (§14e's reentrancy bug). Only the adapter knows which
   situation it is in, which is why the caller cannot decide. The maker layer now names **zero**
   chunk-internals references (§14c).
-- **`finalize_upload` broadcasts by DEFAULT, with exactly one explicit opt-out** —
-  `Maker::Addons::LibraryOutput` passes `broadcast: false`, preserving what addon saves have
-  always done (never nudged live devices; open item, the record (§11)). `mkdir`/`move`/
-  `delete`/`undelete` broadcast unconditionally, so a caller cannot forget; this verb has two
-  callers wanting different behaviour for one fact, so it defaults to the safe answer (notify)
-  rather than delegating the choice — an unwritten third caller that forgets to opt out gets a
-  working nudge, not a silent gap.
+- **No port verb takes `device:` or `broadcast:`, and no upload mints a `devices` row** (enrolment
+  alone does, §8). The sync server attributes a commit to the device its bearer token names and
+  nudges the user's devices on EVERY commit, mutation and restore — an addon save's included — so
+  no caller here can forget a nudge or opt out of one. The adapter contract refuses both keywords.
 - **AN ORPHANED RESTORE IS REFUSED, ON EVERY BACKEND THAT CAN REACH THE STATE — AND THIS REVERSED
   AN EARLIER RULE** (which reparented an orphan to the library ROOT). Since `delete` cascades a
   whole directory in one call, restoring a CHILD before its PARENT is the **mainline** case, not an
@@ -1118,8 +1115,8 @@ binding only inside the preview stack. Nothing was dropped; this anchor stays: c
 ### 14i. Backup and restore → **`docs/invariants/backup-restore.md`**
 
 **Read that file before touching** `ops/backup-db.sh`, `bin/backup-db`, `bin/restore-db`,
-`bin/backup-status`, or `bin/backup-cron-install`. **Nothing in `bin/ci` can go red for any of it** —
-it is shell, cron and docs, and the shared failure mode is *you find out when you need a restore*.
+`bin/backup-status`, or `bin/backup-cron-install`. **`bin/ci` gates only their destination table** —
+the rest is shell, cron and docs, and the shared failure mode is *you find out when you need a restore*.
 The single-site rules live inside `ops/backup-db.sh` itself; that file carries the cross-file ones,
 including the unencrypted-archives decision. Nothing was dropped; this anchor stays.
 

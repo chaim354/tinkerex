@@ -121,11 +121,12 @@
     placeholder box — /files/thumbnails is session-authed, so a spinner here would turn forever, and
     a page with no cover simply has no hero, exactly as the private one.
 
-    `pub.cover_node` is the PERMITTED cover: a chosen cover is a raw column nothing validates, so an
-    unpermitted one renders nothing rather than becoming the page's largest picture.
-    `pub.thumbs` is already memoised for the page, so the hero costs no query of its own; a cover
-    outside the listing is simply not in that map and falls through to no picture, which is the
-    honest answer on a page that cannot poll. %>
+    `pub.cover_node` is the SHOWN cover: a chosen cover is a raw column nothing validates, so one the
+    project does not permit, or one under a folder the maker hid, renders nothing rather than
+    becoming the page's largest picture. The cover is the FIRST term of `pub.thumbs` wherever it
+    lives, in the folder or attached from outside it (2026-10-19, F-S14-1). The map is already
+    memoised for the page, so the hero costs no query of its own and shows whatever thumbnail is
+    READY. A pending one shows nothing, which is the honest answer on a page that cannot poll. %>
 <% if (cover = pub.cover_node) %>
   <div class="project-hero">
     <%= link_to pub.view_url_for(cover.node_id) do %>

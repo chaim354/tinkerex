@@ -51,8 +51,8 @@ module V1
       # can never take back, and a row that records nothing. A JSON NUMBER 1e400 decodes to
       # Float::INFINITY and posted too. "Infinity"/"-Infinity"/"NaN" as strings were already refused
       # as not-a-number; they stay so the whole family is pinned at this door. The message is asserted
-      # because the 422 must be the delta VALIDATION, never V1::BaseController's ArgumentError rescue:
-      # none of these inputs raises ArgumentError on this path.
+      # because the 422 must be the delta VALIDATION: none of these inputs raises ArgumentError on this
+      # path, and since F-S18-1 V1::BaseController maps none, so one that did would be a 500.
       test "adjust answers 422 for a zero, non-finite or out-of-column delta and posts nothing" do
         id = create_item
         post "/v1/maker/inventory_items/#{id}/adjust", params: { delta: 12, reason: "initial" },

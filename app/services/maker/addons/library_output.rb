@@ -191,7 +191,7 @@ module Maker
         hash = Digest::SHA256.hexdigest(bytes)
         manifest = [ { hash:, offset: 0, length: bytes.bytesize } ]
         begun = FileLayer.current.begin_upload(
-          user, device: addon_device(user), name: f[:name], parent_node_id:,
+          user, name: f[:name], parent_node_id:,
           node_id: existing&.node_id, base_version_id: existing&.current_version_id,
           size: bytes.bytesize, mtime: (Time.current.to_f * 1e9).to_i, manifest:
         )
@@ -202,19 +202,10 @@ module Maker
         # confirming something nothing between the two calls could have altered. See
         # FileLayer::Chunk#finalize_upload's own comment for the fuller argument (it is the same
         # one FilesController's `verify: true` is NOT this caller's case).
-        # broadcast: false PRESERVES WHAT ADDON SAVES HAVE ALWAYS DONE -- they have never nudged
-        # live devices, relying on the periodic sync instead. It is an explicit opt-out rather
-        # than the port's default so that a THIRD caller of finalize_upload is safe by default;
-        # see FileLayer::Chunk#finalize_upload's own comment. Not a decision this refactor makes
-        # -- just the pre-existing one, now stated out loud at the one door that wants it.
-        FileLayer.current.finalize_upload(user, commit_id: begun.commit_id, verify: false,
-                                          broadcast: false)
+        # No `broadcast: false` (F-X-1): the sync server nudges the user's devices on every
+        # finalize, this one included, and nothing on this side ever read the opt-out.
+        FileLayer.current.finalize_upload(user, commit_id: begun.commit_id, verify: false)
         begun.node_id
-      end
-
-      # A dedicated device so addon writes are attributable and don't reuse a UI/session device.
-      def addon_device(user)
-        user.devices.find_by(name: "addons") || Device.register!(user:, name: "addons")
       end
 
       # THE ONE STAT-THEN-ENQUEUE FOR A FILE WHOSE BYTES JUST LANDED IN THE LIBRARY, however they

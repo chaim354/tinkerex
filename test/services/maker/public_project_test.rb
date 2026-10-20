@@ -215,5 +215,96 @@ module Maker
       assert_includes html, "/u/ada/desk-lamp/files/#{@f[:pic].node_id}"
       assert_not_includes html, "https://x.example/p.gif", "an absolute image becomes its alt text (Task B)"
     end
+
+    # --- one "shown" answer (F-S14-1, 2026-10-19) ---------------------------------------------
+    #
+    # HIDING IS DECIDED BY ANCESTRY, AGAINST THE SAVED LAYOUT: a file is hidden when the depth-one
+    # folder it sits under, at ANY depth, is a panel the maker hid. Every DERIVED reader starts from
+    # `shown_rows` or asks the same ancestry question of a node it resolved elsewhere, and the
+    # thumbnail map is built from what the page PAINTS, so no two of them can answer differently
+    # about one file.
+    #
+    # NESTED ON PURPOSE. `models/deep/` is not a panel; only its depth-one parent is. A rule that
+    # asked a file's own folder instead of its ancestry would show every file below. Each reader is
+    # asserted beside a VISIBLE control, so no assertion can pass because the reader is empty.
+    # The map is asked about a node with a READY, CURRENT row. With no row it would answer nil
+    # whatever its input, and the control is what proves the row is current.
+    test "a file under a hidden folder, at any depth, is absent from every derived reader and from the thumbnail map" do
+      deep = @f[:deep]
+      nested_pic = make_file!(@user, "nested.jpg", deep, body: PNG_BYTES)
+      board = make_file!(@user, "board.kicad_sch", deep, body: "(kicad_sch (version 1))")
+      nested_repo = make_dir!(@user, "fw", deep)
+      make_dir!(@user, Library::RepoMetadata::DIR_NAME, nested_repo)
+      hidden_block = @project.blocks.create!(user: @user, kind: "image", node_id: nested_pic.node_id)
+      shown_block = @project.blocks.create!(user: @user, kind: "image", node_id: @f[:pic].node_id)
+      @project.update_column(:cover_node_id, nested_pic.node_id)
+      [ @f[:deep_file], @f[:pic] ].each do |node|
+        node.update!(content_hash: "h-#{node.node_id}")
+        ready_preview!(@user, node)
+      end
+      @project.update!(panels: { "hidden" => [ Maker::ProjectKind.folder_key(@f[:models].node_id) ] })
+      page = pub
+
+      assert_equal %w[README.md driver.kicad_sch firmware/README.md photos/pic.png],
+                   page.bundle_files.map(&:path), "nothing under models/ is in the zip, nested files included"
+      assert_nil page.bundle_path_for(@f[:deep_file].node_id), "a hidden file has no path in the zip"
+      assert_equal "photos/pic.png", page.bundle_path_for(@f[:pic].node_id)
+      assert_equal %w[driver.kicad_sch], page.kicad_rows.map { |r| r.node.name }
+      assert_includes page.photo_rows.map(&:node_id), @f[:pic].node_id
+      assert_not_includes page.photo_rows.map(&:node_id), nested_pic.node_id
+      assert_equal [ @f[:firmware].node_id ], page.repo_cards.keys, "the nested repository has no card"
+      assert_nil page.cover_node, "a hidden folder's picture is not the hero"
+      assert_nil page.block_image_node(hidden_block)
+      assert_equal @f[:pic].node_id, page.block_image_node(shown_block)&.node_id
+      assert page.thumbs.thumb(@f[:pic].node_id), "the control: a painted file's ready row is in the map"
+      assert_nil page.thumbs.thumb(@f[:deep_file].node_id),
+                 "the map is what the page PAINTS, and a hidden folder's file is painted nowhere"
+      # HIDDEN IS NOT UNPERMITTED (spec decision 2). Every nil above is a hidden file, never a refused one.
+      [ @f[:deep_file], nested_pic, board ].each { |node| assert page.permits?(node), node.name }
+    end
+
+    # HIDING IS DECIDED FROM THE PROJECT FOLDER DOWN, NEVER FROM THE LIBRARY ROOT (review of #430).
+    # A dir ABOVE the project folder can go missing from the catalog while the folder stays live:
+    # here `Projects/` is tombstoned. Every row's chain to the root is then broken, and
+    # `LibraryTree#ancestors_of` answers nil for the whole walk. A hiding rule that needed that chain
+    # read every row as shown. The listing walks DOWN from the folder, so it still holds the hidden
+    # folder's files, and they went back into the bundle, the Schematics and Photos panels and the
+    # repo cards. Nested files are included, and each reader keeps a visible control.
+    test "a missing folder above the project folder does not unhide a hidden folder" do
+      board = make_file!(@user, "board.kicad_sch", @f[:models], body: "(kicad_sch (version 1))")
+      nested_pic = make_file!(@user, "nested.jpg", @f[:deep], body: PNG_BYTES)
+      nested_repo = make_dir!(@user, "fw", @f[:deep])
+      make_dir!(@user, Library::RepoMetadata::DIR_NAME, nested_repo)
+      @project.update!(panels: { "hidden" => [ Maker::ProjectKind.folder_key(@f[:models].node_id) ] })
+      @user.nodes.find_by!(node_id: @f[:folder].parent_node_id).update_columns(deleted: true)
+      page = pub
+
+      assert page.listing.available?, "the precondition: the project folder itself is still live"
+      assert_nil page.tree.ancestors_of(@f[:models].node_id), "the precondition: the chain to the root is broken"
+      assert_includes page.listing.node_ids, board.node_id, "the precondition: the listing still holds the hidden files"
+      assert_equal %w[README.md driver.kicad_sch firmware/README.md photos/pic.png], page.bundle_files.map(&:path),
+                   "nothing under the hidden models/ is in the zip, nested files included"
+      assert_equal %w[driver.kicad_sch], page.kicad_rows.map { |r| r.node.name }
+      assert_includes page.photo_rows.map(&:node_id), @f[:pic].node_id
+      assert_not_includes page.photo_rows.map(&:node_id), nested_pic.node_id
+      assert_equal [ @f[:firmware].node_id ], page.repo_cards.keys, "the nested repository has no card"
+    end
+
+    # THE HIDING WALK STOPS ON A CYCLE. A cycle cannot exist on a mount, but rows can hold one
+    # (LibraryTree's own guard says why). This walk runs on an anonymous GET, for a cover or an entry
+    # photo attached from anywhere in the library, so without its `seen` set one bad pair of rows would
+    # hold a Puma thread forever. Bounded, so a missing guard fails here instead of hanging the suite.
+    # The first two answers are the control: the same walk does find a depth-one folder.
+    test "the hiding walk finds the depth-one folder, and stops on a parent cycle instead of hanging" do
+      folder_id = @f[:folder].node_id
+      @user.nodes.create!(node_id: "cyc-a", name: "alpha", kind: "dir", parent_node_id: "cyc-b", mtime: 1, size: 0)
+      @user.nodes.create!(node_id: "cyc-b", name: "bravo", kind: "dir", parent_node_id: "cyc-a", mtime: 1, size: 0)
+      tree = Maker::LibraryTree.new(@user)
+
+      assert_equal @f[:models].node_id, Maker::PublicProject.depth_one_dir(@f[:deep].node_id, tree:, folder_node_id: folder_id)
+      assert_nil Maker::PublicProject.depth_one_dir(folder_id, tree:, folder_node_id: folder_id),
+                 "the folder's own root is under no panel"
+      assert_nil Timeout.timeout(5) { Maker::PublicProject.depth_one_dir("cyc-a", tree:, folder_node_id: folder_id) }
+    end
   end
 end
