@@ -98,6 +98,31 @@ module Maker
                      "one live node at that name, not a second beside it"
         assert_equal "<svg>v2</svg>", FileLayer.current.read(@user, node_id: first.node_id)
       end
+
+      # EACH ROW CARRIES THE REVISION OF THE SAVE THAT LAST WROTE IT, AND A REPLACE RE-STAMPS IT.
+      # The re-stamp is the half a "stamp on create" spelling would miss: an in-place replace finds
+      # the state's existing row rather than creating one. A file the newer save did not emit keeps
+      # the older number, which is what tells a state's current outputs from the rows it keeps on
+      # purpose (#upsert_file!).
+      #
+      # THE STATE STARTS AT REVISION 2, NOT 1. The column defaults to 1, so at revision 1 a write
+      # that stamped nothing would pass the first assertion anyway (§15, default equals expected).
+      test "each file row carries the revision of the save that last wrote it" do
+        state = @user.maker_addon_states.create!(addon_key: "boxes", name: "Box R", data: {}, revision: 2)
+        kept, dropped, added = %w[kept dropped added].map { |w| "rev-#{w}-#{SecureRandom.hex(4)}.svg" }
+        svg = ->(name, **opts) { { name:, bytes: "<svg/>".b, content_type: "image/svg+xml", role: "output", **opts } }
+
+        first = Maker::Addons::LibraryOutput.write(user: @user, state:, parent_node_id: nil,
+                                                    files: [ svg.(kept), svg.(dropped) ])
+        assert_equal [ 2, 2 ], first.map { |af| af.reload.revision }
+
+        state.update!(revision: 3)
+        Maker::Addons::LibraryOutput.write(user: @user, state:, parent_node_id: nil,
+                                           files: [ svg.(added), svg.(kept, replace: true) ])
+
+        by_name = state.files.reload.to_h { |af| [ @user.nodes.find_by!(node_id: af.node_id).name, af.revision ] }
+        assert_equal({ added => 3, kept => 3, dropped => 2 }, by_name)
+      end
     end
   end
 end

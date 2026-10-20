@@ -359,6 +359,11 @@
 - **`maker_addon_states.revision` IS THE CURRENT NUMBER AND THERE IS NO COUNT COLUMN**, because
   nothing deletes a revision, so the count equals the number. Add one with the deletion, not before —
   today it would be a second value to keep in step for no present reader.
+- **`maker_addon_files.revision` IS NOT A COUNT EITHER: IT IS THE SAVE THAT LAST WROTE THAT ROW**,
+  stamped by `LibraryOutput#upsert_file!` on the update as much as the create. A state's CURRENT
+  outputs are its rows at its highest revision, and the rows earlier saves left stay (the save door
+  deletes no user bytes). `AddonState#files` and `#latest_output_folder` both order `revision DESC,
+  position, id`, so `files[0]` in `#states` and where a reopen starts are the latest save's output.
 - **`Host::LEVEL` 3 IS THE WHOLE FEATURE DETECT FOR REVISING, AND IT IS THE FIRST BUMP THAT FLIPPED
   NO CAPABILITY.** No name was added, for the same reason binary output has none at level 2: revising
   is the SAME `library:write` door growing an optional parameter, so a capability would answer `true`
@@ -387,9 +392,9 @@
 - **WHERE A SAVE STARTS IS `Tools::AddonsController#tool_destination_node_id`: FOUR STEPS, FIRST
   ANSWER WINS, AND NEVER SESSION OR USER STATE.** (1) `?in=` naming a live folder of the user's —
   New ▸ <tool> sets it to the folder the menu was opened from; (2) `?state=` naming one of this
-  tool's saved states — the folder THAT state's output lives in now, so a reopen link (they all
-  carry `state=` already) starts a revision where its file is, and `#resolve_placements`' owned arm
-  replaces it in place there; (3) the folder of the tool's most recent LIVE output, **mapped up to
+  tool's saved states — the folder THAT state's LATEST save's output lives in now (never a row an
+  earlier revision left behind), so a reopen link (they all carry `state=` already) starts a
+  revision where its file is, and `#resolve_placements`' owned arm replaces it in place there; (3) the folder of the tool's most recent LIVE output, **mapped up to
   its owning project's folder** when it sits inside one; (4) nil, the library root. The bundle's own
   "Save into" field shows this and changes it; the host decides only where that field begins, and
   there is no host destination bar (structural redesign spec §7, as slice 4 amended it). It replaced

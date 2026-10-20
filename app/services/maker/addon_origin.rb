@@ -80,7 +80,7 @@ module Maker
     # NOT TEST-PINNED, and said here rather than quietly left unguarded: the defect is a query PLAN,
     # not a query COUNT, so both spellings are constant in N and both pass every assertion in
     # addon_origin_test.rb. The numbers above are the guard. Same shape as Maker::AddonState's
-    # `order(:position, :id)` note.
+    # note on its `:id` tiebreak.
     def for(user:, node_ids:)
       ids = Array(node_ids).compact.uniq
       # NOT A GUARD, AND THE TEST BESIDE IT CANNOT FAIL — said rather than left to be discovered.
