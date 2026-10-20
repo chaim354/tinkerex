@@ -727,6 +727,108 @@ module Library
                         .rows.map(&:last).join("\n")
     end
 
+    # ----------------------------------------------- #live has ONE owner: #write! and #tombstone!
+
+    # #live MIRRORS `present` BECAUSE #write! AND #tombstone! ARE THE ONLY WAYS A PASS WRITES
+    # `nodes`. It used to be kept by hand at each write site, one of them was missed (0a160454,
+    # found in review), and nothing could notice: a stale key is silent until something reads it.
+    # So this drives passes through EVERY write site — new file and dir, edit, move, delete, revive,
+    # file→dir, dir→file, vanished dir — and after each pass compares the pass's OWN index with a
+    # fresh read of `present`. A write that bypasses the two helpers and leaves a key stale, missing
+    # or out of date goes red here, at whichever site it is. Mutation-checked at all eight: six go
+    # red, and the two kind-collision tombstones cannot, because the same key is rewritten a few
+    # lines later before anything reads it — no pass can observe a bypass there. The fresh read is
+    # spelled out below rather than taken through LiveRow.from, so a fault in that constructor
+    # cannot agree with itself.
+    #
+    # The facts asserted between passes are not decoration: each proves a site actually ran, so a
+    # fixture edit that stops reaching one fails here instead of quietly narrowing the property.
+    test "after every pass #live equals a fresh read of present, through all eight write sites" do
+      digest = ->(bytes) { Digest::SHA256.hexdigest(bytes) }
+
+      assert_live_is_present_after(
+        "create: dirs, and files under them and at the root",
+        [ dir_obs("cad"), dir_obs("old"),
+          obs("cad/a.stl", "a1"), obs("old/b.stl", "b"), obs("c.stl", "c"),
+          obs("thing", "t"), obs("gone.stl", "g") ],
+        { "cad/a.stl" => "a1", "old/b.stl" => "b", "c.stl" => "c", "thing" => "t", "gone.stl" => "g" }
+      )
+      ids = @user.nodes.present.pluck(:storage_path, :node_id).to_h
+      assert_equal 7, ids.size
+
+      assert_live_is_present_after(
+        "edit, move, delete, file->dir, vanished dir",
+        [ dir_obs("cad"), dir_obs("thing"),
+          obs("cad/a.stl", "a2-longer", mtime: T0 + 1), obs("cad/c.stl", "c"),
+          obs("thing/inner.stl", "i") ],
+        { "cad/a.stl" => "a2-longer", "cad/c.stl" => "c", "thing/inner.stl" => "i" }
+      )
+      assert_equal digest.call("a2-longer"), @user.nodes.present.find_by!(storage_path: "cad/a.stl").content_hash,
+                   "the in-place edit must have been re-stamped"
+      assert_equal ids["c.stl"], @user.nodes.present.find_by!(storage_path: "cad/c.stl").node_id,
+                   "c.stl must have MOVED, keeping its node_id"
+      assert_equal "dir", @user.nodes.present.find_by!(storage_path: "thing").kind,
+                   "the file at `thing` must have been tombstoned for the directory"
+      assert @user.nodes.find_by!(node_id: ids["old"]).deleted, "the vanished dir must be tombstoned"
+      assert @user.nodes.find_by!(node_id: ids["gone.stl"]).deleted, "the doomed file must be tombstoned"
+
+      assert_live_is_present_after(
+        "dir->file, two revives, a doomed file under the old dir",
+        [ dir_obs("cad"), obs("cad/a.stl", "a2-longer", mtime: T0 + 1), obs("cad/c.stl", "c"),
+          obs("thing", "t"), obs("gone.stl", "g") ],
+        { "cad/a.stl" => "a2-longer", "cad/c.stl" => "c", "thing" => "t", "gone.stl" => "g" }
+      )
+      assert_equal ids["thing"], @user.nodes.present.find_by!(storage_path: "thing").node_id,
+                   "the dir at `thing` must have been tombstoned and the FILE tombstone revived"
+      assert_equal ids["gone.stl"], @user.nodes.present.find_by!(storage_path: "gone.stl").node_id,
+                   "a restored file must revive its tombstone"
+      assert_nil @user.nodes.present.find_by(storage_path: "thing/inner.stl"),
+                 "the file under the old dir must be tombstoned"
+    end
+
+    # #live's rows are REPLACED, never re-stamped: a row that could be written in place would let a
+    # site update #live without going through #write!, which is the bypass the test above exists to
+    # catch. Both constructors are covered — `a.stl` is plucked unchanged, `b.stl` is written.
+    test "a #live row is immutable, whether it was plucked or written this pass" do
+      reconcile([ obs("a.stl", "aaa") ], { "a.stl" => "aaa" })
+      rec = Library::Reconciler.new(@user, observations: [ obs("a.stl", "aaa"), obs("b.stl", "bbbb") ],
+                                           unreadable_dirs: [], max_delete_pct: 100,
+                                           reader: ->(rel) { { "a.stl" => "aaa", "b.stl" => "bbbb" }.fetch(rel) })
+      rec.call
+      rows = rec.instance_variable_get(:@live)
+      assert_equal %w[a.stl b.stl], rows.keys.sort
+
+      rows.each do |path, row|
+        assert_kind_of Library::Reconciler::LiveRow, row
+        assert_raises(NoMethodError, FrozenError, "#{path}'s row accepted an in-place write") { row.size = 99 }
+      end
+    end
+
+    # Runs one pass, then asserts the pass's own #live equals `present` read fresh. `label` names
+    # the pass in the failure, with the keys that are stale (in #live, not present), missing, or
+    # out of date. Named assert_* so Minitest reports a failure at the CALL — which pass — rather
+    # than inside this helper.
+    def assert_live_is_present_after(label, observations, contents)
+      rec = Library::Reconciler.new(@user, observations:, unreadable_dirs: [], max_delete_pct: 100,
+                                           reader: ->(rel) { contents.fetch(rel) })
+      rec.call
+      mirror = rec.instance_variable_get(:@live)
+      assert_kind_of Hash, mirror, "#{label}: the pass kept no #live index to compare"
+
+      truth = @user.nodes.present.where.not(storage_path: nil)
+                   .pluck(:storage_path, :id, :node_id, :kind, :name, :mtime, :size, :content_hash, :parent_node_id)
+                   .to_h { |path, id, node_id, kind, name, mtime, size, hash, parent|
+                     [ path, Library::Reconciler::LiveRow.new(id:, node_id:, kind:, name:, mtime:, size:,
+                                                             content_hash: hash, parent_node_id: parent) ]
+                   }
+      stale   = mirror.keys - truth.keys
+      missing = truth.keys - mirror.keys
+      changed = (mirror.keys & truth.keys).reject { |path| mirror[path] == truth[path] }
+      assert_equal truth, mirror,
+                   "after the #{label} pass, #live is not `present`: stale #{stale.sort.inspect}, " \
+                   "missing #{missing.sort.inspect}, out of date #{changed.sort.inspect}"
+    end
+
     # THE FRESHNESS MITIGATION, and it is NOT optional. #live is plucked before the first write;
     # ensure_dirs then creates a LIVE dir node at "cad" and must write that back, or
     # match_live_paths reads a snapshot in which "cad" is unclaimed, the file observation falls
