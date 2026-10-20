@@ -602,7 +602,7 @@ area belongs there too, with a stub here.
   bytes await an `undelete` that then collides. Silent.
 - **Trash layout `.trash/<root id>/<root name>/<path beneath>` on share and s3 alike** — keyed by
   node_id, so same-named deletes never collide — and **MEMBERSHIP is `trash_root_node_id`, never
-  existence at a rebuilt key**: a folder restore revives exactly what its delete moved, purged or not.
+  existence at a rebuilt key**: a restore revives only its own members, and re-roots any it leaves behind.
 - **`undelete` is a FOURTH port verb.** "Undelete is just a move back" is *precluded*:
   `move` starts with `live_node!` (a tombstone isn't live) and resolves via `storage_path`,
   which is NULL — it would rename the library root.

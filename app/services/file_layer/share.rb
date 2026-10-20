@@ -558,7 +558,7 @@ module FileLayer
       # folder has no entry of its own under `.trash/<its id>/`, so the bytes check would answer
       # "its trashed bytes are gone (purged?)" — terminal, wrong, and a reason to give up on a file
       # that restoring the folder beside it would bring back.
-      key = FileLayer::TrashMembership.restorable!(user, node)
+      FileLayer::TrashMembership.restorable!(user, node)
 
       src = trash_dir(node.node_id).join(node.name)
       unless File.exist?(src)
@@ -608,7 +608,7 @@ module FileLayer
       # and a stale pair would make it re-hash the file for nothing.
       st = File.stat(dest)
       node.update!(deleted: false, storage_path: rel, trash_root_node_id: nil, size: st.size, mtime: nanos(st))
-      revive_members!(user, node, key)
+      revive_members!(user, node)
       stat(user, node_id: node.node_id)
     end
 
@@ -693,25 +693,35 @@ module FileLayer
     #
     # A member whose bytes did not come back is left TOMBSTONED rather than revived to a path with
     # nothing behind it: a live node over absent bytes is the vanished-file shape the mass-deletion
-    # guard exists for, and it would be this method creating it. Its own restore then answers from
-    # its own entry, which it has only if it was deleted on its own (FileLayer::TrashMembership).
+    # guard exists for, and it would be this method creating it. And it is RE-ROOTED, never left naming
+    # this folder (TrashMembership.release!): the folder's next delete writes the same root id, and a
+    # row still naming it would be adopted and revived over a same-named replacement. Its own restore
+    # then answers from its own entry, which it has only if it was deleted on its own.
     #
-    # ONLY WHAT WENT INTO THIS ENTRY COMES BACK WITH IT: the rows that recorded `key`, the root this
+    # ONLY WHAT WENT INTO THIS ENTRY COMES BACK WITH IT: the rows that recorded this root, which its
     # delete wrote. A scan tombstone in the folder recorded nothing (the scan revives it by path when
     # its bytes return), and a row deleted on its own before the folder recorded its own entry and is
     # restored on its own — even after the purge has taken that entry, which is the case the old
     # inference (revive whatever rebuilt path exists, skip whatever still owns a `.trash/<id>`) got
     # wrong: it revived the earlier `x.stl` over its replacement's bytes, or collided with the
     # replacement in the partial unique index and 500ed with the rows not yet reached left pathless.
-    def revive_members!(user, root, key)
-      FileLayer::TrashMembership.members(user, root, key).each do |child, beneath|
+    #
+    # The release runs in `ensure`, so a revive that raises partway (a scan racing the restore, the
+    # residual #undelete records) still leaves no row naming a folder that is back.
+    def revive_members!(user, root)
+      members = FileLayer::TrashMembership.members(user, root)
+      revived = Set.new
+      members.each do |child, beneath|
         rel = join_rel(root.storage_path, beneath)
         path = resolve_inside!(rel)
         next unless File.exist?(path)
 
         st = File.stat(path)
         child.update!(deleted: false, storage_path: rel, trash_root_node_id: nil, size: st.size, mtime: nanos(st))
+        revived << child.node_id
       end
+    ensure
+      FileLayer::TrashMembership.release!(user, members, revived) if members && revived
     end
 
     # Undo the entry dir when the move it was made for never landed, mirroring write's rm_f of

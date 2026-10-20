@@ -28,8 +28,8 @@
 # because it 500s: two same-named members of one folder, which is the ordinary replace — delete
 # `x.stl`, upload a corrected one, delete the folder. A live path is unique, so at most one of them was
 # live when the folder went; the newest is taken as the member and the others as their own entries.
-# The rest stays filed under the folder, and `undelete` restores such a row on its own once the folder
-# is back (FileLayer::TrashMembership).
+# The rest stays filed under the folder: its restore cannot bring such a row back (its bytes are in its
+# own entry) and re-roots it instead (FileLayer::TrashMembership.release!), so it is restored on its own.
 #
 # chunk_remote IS SKIPPED: its trash is the sync server's, and every row in its mirror has a NULL path,
 # so the trash shape means nothing there. Read from LIBRARY_BACKEND, which every Kamal destination sets.

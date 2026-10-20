@@ -29,6 +29,11 @@ module FileLayer
     # removes the entry DIRECTORY and never touches a row.
     def purge_trash_entry!(node_id) = FileUtils.rm_rf(@root.join(Library::Scanner::TRASH_PREFIX, node_id))
 
+    # And its other hook: one member's bytes gone from inside an entry, no row touched.
+    def lose_from_trash_entry!(root_id, path)
+      FileUtils.rm_rf(@root.join(Library::Scanner::TRASH_PREFIX, root_id, path))
+    end
+
     setup do
       @root = Pathname.new(Dir.mktmpdir("share-test"))
       @user = User.create!(email: "share-#{SecureRandom.hex(4)}@example.com")

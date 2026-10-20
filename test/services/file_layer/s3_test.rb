@@ -40,6 +40,11 @@ module FileLayer
       @fake.objects.delete_if { |key, _| key.start_with?(entry) }
     end
 
+    # And its other hook: one member's object gone from inside an entry, no row touched.
+    def lose_from_trash_entry!(root_id, path)
+      @fake.objects.delete("#{PREFIX}/#{Library::Scanner::TRASH_PREFIX}/#{root_id}/#{path}")
+    end
+
     PREFIX = "library".freeze
 
     setup do
@@ -2220,9 +2225,10 @@ module FileLayer
 
     # ---- Restoring a DIRECTORY (2026-10-20, F-S03-1 step 2) ----------------------------------
     #
-    # The inverse of the cascade above: read the entry exactly as #delete_directory! wrote it, copy
-    # every member back, put each marker back, revive the rows top-down, and only then sweep the
-    # entry. The rows that come back are the ones `trash_root_node_id` says the delete moved.
+    # The inverse of the cascade above: read the entry exactly as #delete wrote it, copy every member
+    # back, put each marker back, revive the rows top-down, re-root what did not come back, and only
+    # then sweep the entry. The rows that can come back are the ones `trash_root_node_id` says the
+    # delete moved; which of them do is what came back into the entry.
 
     test "restoring a directory returns the subtree with the same node ids and the same bytes" do
       dir_id = make_dir(name: "parts")
@@ -2313,6 +2319,58 @@ module FileLayer
       end
       assert_nothing_raised { adapter.undelete(@user, node_id: dir_id) }
       assert_equal %w[a.stl b.stl], ids.map { |id| adapter.read(@user, node_id: id) }
+    end
+
+    # A FOLDER IS BACK WHEN ANYTHING BENEATH IT CAME BACK, A DEEPER FOLDER'S MARKER INCLUDED. `F` and
+    # `F/sub` exist only as keys here (the observer synthesized both: no markers) and `F/sub/empty` was
+    # made by the app's mkdir (a marker). `sub`'s only file goes on its own, then `F` is deleted and
+    # restored. Counting only FILES beneath left `sub` in the trash while `empty` went live under it:
+    # the next scan minted a new node_id for `F/sub`, and `sub`'s own restore answered NotFound.
+    test "a folder held up only by a deeper folder's marker comes back with it" do
+      @fake.seed!("#{PREFIX}/F/sub/seed.stl", "seed", last_modified: Time.now)
+      scan!(max_delete_pct: 100)
+      f_id = @user.nodes.find_by!(storage_path: "F", kind: "dir").node_id
+      sub_id = @user.nodes.find_by!(storage_path: "F/sub", kind: "dir").node_id
+      empty_id = adapter.mkdir(@user, parent_node_id: sub_id, name: "empty").node_id
+      adapter.delete(@user, node_id: @user.nodes.find_by!(storage_path: "F/sub/seed.stl").node_id)
+      refute stored?("F/") || stored?("F/sub/"), "precondition: F and F/sub carry no marker"
+
+      adapter.delete(@user, node_id: f_id)
+      adapter.undelete(@user, node_id: f_id)
+
+      [ f_id, sub_id, empty_id ].each do |id|
+        assert @user.nodes.present.exists?(node_id: id), "#{id} did not come back as itself"
+      end
+      scan!(max_delete_pct: 100)
+      assert_equal sub_id, @user.nodes.present.find_by(storage_path: "F/sub")&.node_id,
+                   "the next scan minted a new node_id for F/sub"
+      assert_trash_spellings_agree "after restoring a folder held up by a deeper marker"
+    end
+
+    # A RESTORE THAT FAILS BEFORE ITS FOLDER IS BACK RE-ROOTS NOTHING. What a restore leaves behind is
+    # released in `ensure`, but only once the root is live again: here a scan racing the restore indexes
+    # the folder's path between the copy back and the revive (simulated inside the marker's PUT), so the
+    # root's own revive raises RecordNotUnique. Its members must still name it, or a retry once the race
+    # is cleared would bring the folder back without them.
+    test "a folder restore that fails before the folder is back keeps every member in its entry" do
+      dir_id = make_dir(name: "parts")
+      leaf_id = adapter.write(@user, parent_node_id: dir_id, name: "a.stl", io: StringIO.new("a")).node_id
+      adapter.delete(@user, node_id: dir_id)
+      user, fake = @user, @fake
+      @fake.client.stub_responses(:put_object, lambda { |ctx|
+        fake.seed!(ctx.params[:key], "")
+        if ctx.params[:key] == "#{PREFIX}/parts/"
+          user.nodes.create!(node_id: "scanned-#{SecureRandom.hex(4)}", name: "parts", kind: "dir",
+                             storage_path: "parts", deleted: false)
+        end
+        {}
+      })
+
+      assert_raises(ActiveRecord::RecordNotUnique) { adapter.undelete(@user, node_id: dir_id) }
+
+      assert @user.nodes.find_by!(node_id: dir_id).deleted?, "precondition: the folder did not come back"
+      assert_equal dir_id, @user.nodes.find_by!(node_id: leaf_id).trash_root_node_id,
+                   "a restore that never brought its folder back released the folder's members"
     end
   end
 end

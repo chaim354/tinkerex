@@ -759,7 +759,7 @@ module FileLayer
       # scatter to the root is not); a folder the SCAN tombstoned records no entry, so restoring into
       # one stays self-healing. BEFORE THE BYTES CHECK: a row that went in with its folder has no
       # object at `.trash/<its id>/<name>`, so the check would answer a terminal and wrong "purged?".
-      key = FileLayer::TrashMembership.restorable!(user, node)
+      FileLayer::TrashMembership.restorable!(user, node)
 
       # Reconstructed from parent + name, because delete released storage_path (Landmine 2).
       # live: false — see parent_dir_rel!.
@@ -768,7 +768,7 @@ module FileLayer
       dest_key = key_for_rel(rel)
       # The root and every member, top-down, each with its path beneath the root: the same names along
       # the same parent edge #entry_rels walked when the delete composed these keys.
-      walk = [ [ node, nil ] ] + FileLayer::TrashMembership.members(user, node, key)
+      walk = [ [ node, nil ] ] + FileLayer::TrashMembership.members(user, node)
 
       begin
         # PHASE 0 — WHAT CAME BACK INTO THE ENTRY, asked by HEAD per object and never inferred from a
@@ -800,23 +800,32 @@ module FileLayer
       end
 
       # PHASE 2 — the catalog, TOP-DOWN (a child's path is its parent's plus its name), and only the
-      # rows whose bytes came back: a file its object, a folder its marker or a file beneath it. A
-      # member left behind keeps its row in the trash rather than going live over nothing — the
-      # vanished-file shape the mass-deletion guard exists for — and answers its own restore from its
-      # own entry. Mirrors Share#revive_members!.
+      # rows whose bytes came back: a file its object, a folder its marker or ANYTHING beneath it — a
+      # file, or a deeper folder's marker (a folder the observer synthesized carries no marker of its
+      # own, and one holding only a made folder came back with nothing else). A member left behind
+      # keeps its row in the trash rather than going live over nothing — the vanished-file shape the
+      # mass-deletion guard exists for — and is RE-ROOTED (TrashMembership.release!), in `ensure` so a
+      # revive that raises partway still does it, but only once the root is back. Mirrors
+      # Share#revive_members!.
       copied = (files + markers).map { |row, _| row.node_id }.to_set
-      beneath_files = files.filter_map(&:last)
-      walk.each do |row, beneath|
-        came_back = beneath.nil? || copied.include?(row.node_id) ||
-                    (row.dir? && beneath_files.any? { |b| b.start_with?("#{beneath}/") })
-        next unless came_back
+      beneath_back = (files + markers).filter_map(&:last)
+      revived = Set.new
+      begin
+        walk.each do |row, beneath|
+          came_back = beneath.nil? || copied.include?(row.node_id) ||
+                      (row.dir? && beneath_back.any? { |b| b.start_with?("#{beneath}/") })
+          next unless came_back
 
-        path = beneath_rel(rel, beneath)
-        # Re-stat each file: the bytes are the same, but mtime/size/identity are what the next scan
-        # compares against, and a stale set would make it re-index the object for nothing. HEAD the
-        # DESTINATION — the object the next scan will list. #restored_stat never raises.
-        stats = row.file? ? restored_stat(key_for_rel(path)) : {}
-        row.update!(deleted: false, storage_path: path, trash_root_node_id: nil, **stats)
+          path = beneath_rel(rel, beneath)
+          # Re-stat each file: the bytes are the same, but mtime/size/identity are what the next scan
+          # compares against, and a stale set would make it re-index the object for nothing. HEAD the
+          # DESTINATION — the object the next scan will list. #restored_stat never raises.
+          stats = row.file? ? restored_stat(key_for_rel(path)) : {}
+          row.update!(deleted: false, storage_path: path, trash_root_node_id: nil, **stats)
+          revived << row.node_id
+        end
+      ensure
+        FileLayer::TrashMembership.release!(user, walk.drop(1), revived) if revived.include?(node.node_id)
       end
       # PHASE 3 — the entry's own copies, BEST-EFFORT and LAST: the restore has succeeded, and a
       # leftover is the purge job's (#sweep_trash).
