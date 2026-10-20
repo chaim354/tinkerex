@@ -32,9 +32,10 @@ class FilesController < ApplicationController
   # the node and the user. See app/controllers/concerns/file_delivery.rb.
   include FileDelivery
 
-  # WHICH VIEWER, AND A .gbrjob's LAYER LIST — shared verbatim with the sessionless public file page
-  # (stage 4, S4-5). See app/controllers/concerns/file_preview.rb; the three extension constants
-  # below are re-exposed, not redefined.
+  # WHICH VIEWER, AND THE BOARD IF THE FILE IS ONE — `#viewer_for`, the one answer the sessionless
+  # public file page asks too (stage 4, S4-5; the zip half since F-S10-2). See
+  # app/controllers/concerns/file_preview.rb; the three extension constants below are re-exposed,
+  # not redefined.
   include FilePreview
 
   # ?move_conflict=<id> — the prompt an attach leaves behind when the auto-move into the project
@@ -534,7 +535,12 @@ class FilesController < ApplicationController
   def show
     @node = current_user.nodes.present.find_by!(node_id: params[:id])
     @info = FileLayer.current.stat(current_user, node_id: @node.node_id)
-    @kind = preview_kind(@node.name)
+    # WHICH VIEWER, AND THE BOARD IF THIS IS ONE: FilePreview#viewer_for, the ONE answer a visitor's
+    # page asks too (F-S10-2) — the zip read, the layer list and the stackup choice live there, and
+    # `@kind` is final from this line, before `@editable` reads it. Only the URL is this page's, and
+    # the lambda never answers nil here: every live node of current_user has a private byte route.
+    @kind, @gerber_layers, @gerber_single =
+      viewer_for(user: current_user, node: @node, url: ->(n) { named_blob_file_path(n.node_id, filename: n.name) })
     # ONE WALK, READ BY THE SURFACES THAT STILL NEED IT. It USED to read "editing appears exactly
     # where committing could"; since 2026-09-10 editing is WIDER than committing, so this answers
     # the commit box and the pending count below, and Maker::TextSave decides the pending git edit
@@ -557,49 +563,14 @@ class FilesController < ApplicationController
     @pending_count = @repo_root && Maker::RepoEdit.pending_for(current_user, @repo_root.node_id).count
     token = @info&.content_token
     @thumbnail = token && current_thumbnail(@node, token)
-    # A ZIP IS A BOARD WHEN ITS CONTENTS SAY SO — the one preview kind decided by a READ rather than
-    # by the name. `preview_kind` answers from the name for the whole vocabulary and stays that way;
-    # this branch lives here beside `gerber_layers_for`'s `.gbrjob` read, the other server read a
-    # Gerber page makes. One port read, bounded and cached (Maker::GerberArchive).
-    @gerber_archive = Maker::GerberArchive.archive?(@node.name) &&
-                      Maker::GerberArchive.for(user: current_user, node: @node)
-    @kind = :gerber if @gerber_archive
     # WHAT THE 3D VIEWER'S IMPORTER CANNOT KNOW — the slicer's per-object filament colours and the
     # model's declared unit, which three.js's 3MFLoader ignores. nil for everything that is not a
     # 3MF (`for` refuses by NAME before it looks at anything else), so this is safe to call for any
     # file and costs a non-3MF nothing. On a 3MF it is the second read this action can make, beside
-    # the Gerber one above: ONE port read, bounded on the catalog's size column and cached by
-    # content token, so it is one query per view of one file and nothing after the first.
+    # the zip one `viewer_for` makes: ONE port read, bounded on the catalog's size column and cached
+    # by content token, so it is one query per view of one file and nothing after the first. A read
+    # with no decision in it, so it stays a line on each page rather than joining `viewer_for`.
     @viewer_manifest = Maker::ThreeMfManifest.for(user: current_user, node: @node)
-    # THE :gerber BRANCH'S LAYER LIST, BUILT HERE BECAUSE ONLY A `.gbrjob` NEEDS A QUERY AND A READ.
-    # An ordinary layer is its own whole answer; a job file's page renders the BOARD it names, which
-    # means resolving its siblings. Nil for every other kind, so the view's branch and this one
-    # cannot disagree about whether the page has a Gerber on it.
-    #
-    # A ZIPPED EXPORT IS ONE ENTRY — the zip's own URL plus the member paths the BROWSER extracts —
-    # built through `FilesHelper#gerber_archive_entry`, the one place that shape is spelled, so that
-    # no second literal of keys only a browser reads can drift: nothing on the server would report
-    # the two spellings diverging.
-    @gerber_layers =
-      if @gerber_archive
-        [ helpers.gerber_archive_entry(name: @node.name,
-                                       url: named_blob_file_path(@node.node_id, filename: @node.name),
-                                       members: @gerber_archive.stacked) ]
-      elsif @kind == :gerber
-        # THE OWNER IS THE VISITOR HERE AND THE URL IS THIS PAGE'S — both are arguments since the
-        # sibling walk became shared with the public file page (stage 4, S4-5). The lambda never
-        # answers nil on this side: every live node of current_user has a private byte route.
-        gerber_layers_for(user: current_user, node: @node,
-                          url: ->(n) { named_blob_file_path(n.node_id, filename: n.name) })
-      end
-    # THE STACKUP/SINGLE CHOICE IS THIS ONE FACT, decided once here rather than re-derived in the
-    # template from the size of the list above: a folder holding exactly one layer beside a job file
-    # would then read as "single" and lose its Top/Bottom toggle, which is a different question from
-    # the one the page is answering.
-    #
-    # AN ARCHIVE IS NEVER SINGLE, for the `.gbrjob` reason: a zip is a whole export, so the honest
-    # render is the BOARD, with Top and Bottom.
-    @gerber_single = @kind == :gerber && !gerber_job?(@node.name) && !@gerber_archive
     @attached_projects, @projects = attach_choices_for(@node)
     @notes = current_user.maker_notes.where(node_id: @node.node_id).order(created_at: :desc).to_a
     @new_note = current_user.maker_notes.new(node_id: @node.node_id)

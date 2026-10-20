@@ -43,34 +43,24 @@ module Public
       @node = @pub.deliverable!(params[:id])
       owner = @pub.owner
       @info = FileLayer.current.stat(owner, node_id: @node.node_id)
-      @kind = preview_kind(@node.name)
+      # WHICH VIEWER, AND THE BOARD IF THIS IS ONE: FilePreview#viewer_for, the ONE answer the
+      # maker's page asks too (F-S10-2), in the OWNER's name — only the URL builder is public.
+      # `layer_url_for` answers nil for a node this project does not permit, and every Gerber arm
+      # drops a nil, so a board renders without a layer the byte route would refuse rather than
+      # linking a visitor at a 404. For the zip's OWN entry it asks the `permits?` `deliverable!`
+      # just answered: one more query on a zip's page, constant, and the price of one builder.
+      @kind, @gerber_layers, @gerber_single =
+        viewer_for(user: owner, node: @node, url: ->(n) { @pub.layer_url_for(n) })
       # ONE MAP FOR ONE NODE, not the project page's: `Maker::PublicProject#thumbs` covers everything
       # that page paints, entry photos and image blocks out of `page_nodes` included, and loading
       # `page_nodes` here would pull the build log, the BOM and every release onto a page that shows
       # one file. `.for` backfills, which is what makes a poster appear on a file nobody has opened
       # before — the same write-on-GET the public project page already does.
       @thumbnail = Maker::Previews::ThumbnailMap.for(owner, [ @node.node_id ]).thumb(@node.node_id)
-      # A ZIP IS A BOARD WHEN ITS CONTENTS SAY SO, and a 3MF's colours/unit come from its manifest —
-      # both are ONE bounded port read in the OWNER's name, judged on the catalog's `size` column
-      # BEFORE any read and cached by content token, nil included. That bound is what makes them safe
-      # on a route a stranger can issue.
-      @gerber_archive = Maker::GerberArchive.archive?(@node.name) &&
-                        Maker::GerberArchive.for(user: owner, node: @node)
-      @kind = :gerber if @gerber_archive
+      # A ZIP'S LISTING (in `viewer_for`) AND A 3MF's MANIFEST ARE EACH ONE BOUNDED PORT READ in the
+      # OWNER's name, judged on the catalog's `size` column BEFORE any read and cached by content
+      # token, nil included. That bound is what makes them safe on a route a stranger can issue.
       @viewer_manifest = Maker::ThreeMfManifest.for(user: owner, node: @node)
-      # THE LAYER LIST IS THE SHARED WALK'S, AND ONLY THE URL BUILDER IS PUBLIC. `layer_url_for`
-      # answers nil for a sibling this project does not permit, which `gerber_layers_for`'s
-      # `filter_map` drops — so a board renders without a layer the byte route would refuse rather
-      # than linking a visitor at a 404.
-      @gerber_layers =
-        if @gerber_archive
-          [ helpers.gerber_archive_entry(name: @node.name,
-                                         url: @pub.file_url_for(@node.node_id, filename: @node.name),
-                                         members: @gerber_archive.stacked) ]
-        elsif @kind == :gerber
-          gerber_layers_for(user: owner, node: @node, url: ->(n) { @pub.layer_url_for(n) })
-        end
-      @gerber_single = @kind == :gerber && !gerber_job?(@node.name) && !@gerber_archive
       enqueue_geometry(owner) if @kind == :measure
     end
 

@@ -50,7 +50,7 @@ module Maker
   class GerberArchive
     # `members`: every pcb-role member path in the zip (String, name-ordered) — what the archive
     # HOLDS. `stacked`: the subset the VIEWER renders (never the .gbrjob), and the one field `app/`
-    # reads (`FilesController#show`, into the browser's one archive entry). `job_name`: the job
+    # reads (`FilePreview#viewer_for`, into the browser's one archive entry). `job_name`: the job
     # member's basename, or nil.
     #
     # `members` AND `job_name` HAVE HAD NO READER IN `app/` since the project pages' Fabrication
