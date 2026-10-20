@@ -163,7 +163,21 @@ module FileLayer
           nodes = body["nodes"] || []
           break if nodes.empty?
 
-          @user.transaction { nodes.each { |n| upsert(n, deleted: false) } }
+          @user.transaction do
+            nodes.each do |n|
+              # A TREE NODE CARRIES ITS CONTENT FLAT -- `version_id`, `size`, `manifest` beside its
+              # name (sync-protocol.md §8.4), where a change entry nests `version` (§8.3) -- so this
+              # arm reads its own shape and hands `upsert` what `apply_page` hands it. Handing over
+              # nothing once let every resync repair a node's place and keep its stale content: a
+              # file created while the mirror was behind listed at 0 bytes and 404'd on read, a
+              # changed one served its old bytes. No `version_id` is no content IN THIS REPLY -- a
+              # directory, a symlink, or a FILE whose current version no longer resolves on the
+              # server (tree.rs omits all three keys then) -- like a change entry with no `version`:
+              # nil, never the empty slice, which is truthy and would wipe the row's version and size.
+              version = n["version_id"] ? n.slice("version_id", "size") : nil
+              upsert(n, deleted: false, version:, manifest: n["manifest"])
+            end
+          end
           seen.concat(nodes.map { |n| n["node_id"] })
           after_id = body["next_after_id"].to_i
           break if after_id.zero?
@@ -180,12 +194,11 @@ module FileLayer
           entries.each do |entry|
             node = entry["node"]
             if node
-              # The manifest rides on the ENTRY, not inside its node payload, so it is handed down
-              # rather than dug out of `payload` in upsert -- which also serves /v1/tree, where it
-              # IS nested. One upsert, two payload shapes, and this is the seam between them.
-              @current_manifest = entry["manifest"]
-              upsert(node, deleted: node["deleted"], version: entry["version"])
-              @current_manifest = nil
+              # A CHANGE ENTRY CARRIES ITS CONTENT AT THE ENTRY LEVEL -- `version` and `manifest`
+              # beside `node`, never inside it -- and only on a `put` whose version still resolves
+              # (sync-protocol.md §8.3). Every other op omits both, and so does a `put` whose version
+              # was pruned since: `upsert` then leaves the row's content alone rather than nulling it.
+              upsert(node, deleted: node["deleted"], version: entry["version"], manifest: entry["manifest"])
               # A LIVE FILE LANDING SOMEWHERE is the only kind of entry that can need filing, so
               # only those parents are collected. Directories have nothing to file and a tombstone
               # is a removal; collecting either would enqueue sweeps for changes that cannot move
@@ -206,11 +219,20 @@ module FileLayer
         end
       end
 
+      # THE CONTENT ARRIVES AS TWO EXPLICIT ARGUMENTS, NEVER DUG OUT OF `payload`, because the two
+      # wire shapes keep it in different places: a change entry's `version`/`manifest` ride on the
+      # ENTRY, a tree node's lie flat on the NODE. Each caller reads its own shape; this reads
+      # neither. REQUIRED keywords, not defaults: a caller that forgets them is an ArgumentError,
+      # where the `version ||= payload["version"]` guess this replaced made forgetting SILENT -- the
+      # resync arm passed nothing, the guess looked for a key no tree has ever sent, and every
+      # resynced file kept stale content (CLAUDE.md §14e: the only test's fake shared the guess).
+      # `version` nil means "this payload carries no content", and leaves the row's own alone.
+      #
       # `size` COMES OFF THE VERSION AND LANDS ON THE NODE, which is the whole reason `stat_all` can
       # be ONE query here. `nodes.size` already exists and is NULL on chunk -- only
       # Library::Reconciler ever wrote it, and Chunk#stat_all pays a second query to `versions` for
       # what this loop can record once, at apply time.
-      def upsert(payload, deleted:, version: nil)
+      def upsert(payload, deleted:, version:, manifest:)
         row = @user.nodes.find_or_initialize_by(node_id: payload["node_id"])
         row.parent_node_id = payload["parent_node_id"]
         row.name = payload["name"]
@@ -219,7 +241,6 @@ module FileLayer
         row.mtime = payload["mtime"]
         row.deleted = !!deleted
 
-        version ||= payload["version"]
         if version
           row.current_version_id = version["version_id"]
           row.size = version["size"]
@@ -227,7 +248,7 @@ module FileLayer
           # POST /v1/chunks/download cannot be asked "what are the chunks for node X" -- only
           # "presign these hashes". Dropping it here would leave byte reads with no way to name the
           # chunks they need, and the only alternative is a new server endpoint the design forbids.
-          store_manifest(version["version_id"], payload["manifest"] || @current_manifest)
+          store_manifest(version["version_id"], manifest)
         end
         row.symlink_target = Base64.decode64(payload["symlink_target"]) if payload["symlink_target"]
 
