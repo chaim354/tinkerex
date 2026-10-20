@@ -74,6 +74,36 @@ module Web
       assert_not_equal settings_library_path, URI(response.location).path
     end
 
+    # Found in review: the redirect was HTML-only, so a JSON POST /files/rescan reached
+    # ScanJob.enqueue_for -- a command, ungated by design -- and indexed the whole unconfirmed mount.
+    # Mutation-checked: drop the 409 arm and the scan is enqueued.
+    test "while the folder is unconfirmed a non-HTML write is refused, and scans nothing" do
+      Setting.forget(KEY)
+
+      post rescan_files_path, headers: { "Accept" => "application/json" }
+
+      if @share
+        assert_response :conflict
+        assert_match(/Choose the library folder first/, json["error"])
+        assert_no_enqueued_jobs
+      else
+        assert_not_equal 409, response.status
+      end
+    end
+
+    # tinkerex:owner in another container, or any other process, writes the row behind this one's
+    # back; the setting is cached per request, never per process, so the next request follows it.
+    test "a choice written by another process is seen by the next request" do
+      Setting.forget(KEY)
+      get root_path
+      assert_response(@share ? :redirect : :success)
+
+      Setting.insert({ key: KEY, value: "", created_at: Time.current, updated_at: Time.current })
+
+      get root_path
+      assert_response :success
+    end
+
     test "once the folder is chosen nothing redirects" do
       assert_equal "", Setting.get(KEY), "the fixture's confirmed library"
 
@@ -303,7 +333,7 @@ module Web
     test "the Settings hub links the library page and names the folder" do
       get settings_path
 
-      assert_select "a.settings-name[href=?]", settings_library_path, text: "Library"
+      assert_select "a.settings-name[href=?]", settings_library_path, text: "Library folder"
       assert_select ".settings-fact", text: @share ? "whole folder" : /storage bucket|sync server/
     end
   end

@@ -149,11 +149,14 @@ class TinkerexTasksTest < ActiveSupport::TestCase
     # to share so the answer is the same on every CI leg.
     @root = use_fresh_share_library!
     ENV["DEMO_ACCOUNT_EMAIL"] = "Demo@Example.com"
+    # A FRESH share install: the demo, refused the folder choice, must not be left facing it.
+    Setting.forget(Tinkerex::LibraryRoot::KEY)
 
     recording_resets do |resets|
       assert_difference -> { User.count }, 1 do
         capture_io { invoke!("tinkerex:demo:setup") }
       end
+      assert_equal "", Setting.get(Tinkerex::LibraryRoot::KEY), "the console confirms the mount for the demo"
       demo = User.find_by!(email: "demo@example.com")
       assert demo.confirmed?
       assert_equal "demo", demo.handle

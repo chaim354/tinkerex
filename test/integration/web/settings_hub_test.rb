@@ -33,7 +33,7 @@ module Web
 
     # ============================================================ The hub
 
-    # EIGHT SINCE K (2026-10-20): the Library row leads, on every backend (settings_library_test.rb
+    # EIGHT SINCE K (2026-10-20): the Library folder row leads, on every backend (settings_library_test.rb
     # covers its fact per backend).
     test "the hub lists eight rows with facts and links" do
       @user.maker_shelves.create!(path: "Models")
@@ -51,7 +51,7 @@ module Web
       assert_response :success
       assert_select "ul.settings-list.settings-hub li", count: 8
       names = css_select("ul.settings-list.settings-hub li .settings-name").map { |el| el.text.strip }
-      assert_equal [ "Library", "Shelves", "Suppliers", "Locations", "Filing", "Tags", "Account", "Theme" ], names
+      assert_equal [ "Library folder", "Shelves", "Suppliers", "Locations", "Filing", "Tags", "Account", "Theme" ], names
       assert_select "a.settings-name[href=?]", settings_shelves_path
       assert_select "a.settings-name[href=?]", suppliers_path
       assert_select "a.settings-name[href=?]", locations_path

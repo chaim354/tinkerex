@@ -65,7 +65,7 @@ uploads land in it, and deletions move into its `.trash/`. **Use this folder** c
 it; the picker lists folders only, never a dot-folder, `.trash`, a link or another hidden or
 reserved name, and **Use this folder** then confirms the one you picked. The first scan runs after
 you confirm, not at sign-up. Until then nothing is scanned and every page brings you back to that
-screen, except Help and signing out. Creating the first account with `bin/rails tinkerex:owner`
+screen, except Help, your account and signing out. Creating the first account with `bin/rails tinkerex:owner`
 (section 4) confirms the whole mounted folder itself, so a console install is not asked.
 
 **To change it later**, open Settings → Library folder. With files already indexed it offers two
@@ -73,8 +73,10 @@ outcomes. **Switch to this folder** keeps each file's projects, notes and tags w
 holds the same files (the old one moved or renamed on the host); if it holds a different set, the
 scan refuses, the way it refuses an unmounted share (`LIBRARY_SCAN_MAX_DELETE_PCT`, 20%), and the
 page says so. **Start over with this folder** forgets the catalog — every indexed file, its
-previews, notes, pins and the 3D models found in it — and keeps projects, tasks, inventory and
-BOMs. It never deletes or moves anything on disk.
+previews, notes, pins and the 3D models found in it. Projects, tasks, inventory and BOMs stay, but
+a project no longer points at a folder, and a folder under `Projects/` in the new library becomes a
+project of its own, beside any old one of the same name. It never deletes or moves anything on
+disk.
 
 ### Where your files come from
 

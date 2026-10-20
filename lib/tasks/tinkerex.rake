@@ -69,6 +69,11 @@ namespace :tinkerex do
         why = Tinkerex::DemoReset.refusal
         abort "refused: #{why}" if why
         user = Tinkerex::DemoReset.create_account!(email)
+        # THE DEMO IS THE ONLY ACCOUNT HERE (the refusal above saw to that) and it may not change the
+        # library folder (Settings::LibraryController), so on a fresh share install the console
+        # confirms the mount for it, as tinkerex:owner does -- or every page would send the demo to a
+        # choice it is refused (found in review).
+        Tinkerex::LibraryRoot.clear! if Tinkerex::LibraryRoot.pending?
         puts "created #{email} (confirmed, handle #{Tinkerex::DemoReset::HANDLE}, a password nobody is told)"
       end
       run_reset.call(user)

@@ -58,7 +58,7 @@ class LibraryRootTest < ActiveSupport::TestCase
   # THROUGH THE REAL FACTORY, ON EVERY LEG: LIBRARY_BACKEND is pinned to share for this test, because
   # the claim is that FileLayer.build's Share lands on the new root -- which an injected adapter could
   # not show, and the s3 and chunk_remote legs' ambient adapter has no root at all.
-  test "choose! writes the choice, joins it onto the mount and resets the adapter" do
+  test "choose! writes the choice, and the factory adapter is on the new folder at once" do
     prior_backend = ENV["LIBRARY_BACKEND"]
     ENV["LIBRARY_BACKEND"] = "share"
     FileLayer.reset!
@@ -70,9 +70,39 @@ class LibraryRootTest < ActiveSupport::TestCase
     assert_equal "Workshop/3d", Setting.get(KEY)
     assert_equal @mount.join("Workshop/3d"), Tinkerex::LibraryRoot.path
     assert_equal @mount.join("Workshop/3d"), FileLayer.current.root,
-                 "choose! must reset FileLayer.current, or this process keeps serving the old root"
+                 "the adapter this process already built must serve the new root"
   ensure
     prior_backend.nil? ? ENV.delete("LIBRARY_BACKEND") : ENV["LIBRARY_BACKEND"] = prior_backend
+  end
+
+  # THE FORKED-WORKER CASE (found in review): a Solid Queue worker built its FileLayer.current before
+  # the folder was chosen in the WEB process, which no reset there can reach. The row is written behind
+  # this process's back and Current is cleared, as the executor does before the worker's next job:
+  # the SAME adapter object must answer the new root. Mutation-checked: fix Share's root at
+  # construction (`@root = Pathname.new(root || Tinkerex::LibraryRoot.path)`) and this goes red.
+  test "an adapter built before a change made in another process follows it at the next job" do
+    prior_backend = ENV["LIBRARY_BACKEND"]
+    ENV["LIBRARY_BACKEND"] = "share"
+    FileLayer.reset!
+    mkdirs("Workshop")
+    adapter = FileLayer.current
+    assert_equal @mount, adapter.root
+
+    Setting.where(key: KEY).update_all(value: "Workshop") # the web process's write, seen from here
+    Current.reset                                         # the executor, before this worker's next job
+
+    assert_same adapter, FileLayer.current, "nothing was reset"
+    assert_equal @mount.join("Workshop"), FileLayer.current.root
+  ensure
+    prior_backend.nil? ? ENV.delete("LIBRARY_BACKEND") : ENV["LIBRARY_BACKEND"] = prior_backend
+  end
+
+  test "a share adapter given a root keeps it, whatever the setting says" do
+    fixed = FileLayer::Share.new(root: @mount.to_s)
+    mkdirs("Workshop")
+    Setting.put(KEY, "Workshop")
+
+    assert_equal @mount, fixed.root
   end
 
   test "choose! with an empty string chooses the whole mount" do

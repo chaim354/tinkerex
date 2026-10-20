@@ -69,6 +69,17 @@ Minitest (three backend legs: share / s3 / chunk_remote — RUN counts must matc
 9. **(Found while building Task 4.)** The form posts `start_over=1` from the Start over button only,
    not `mode=switch|reset`: a plain submit (Switch, Use this folder, Enter) keeps the catalog, and
    the accent button carries no `value` for `accent_spend_test.rb` to read as its label.
+10. **(Found in review; reverses the spec's §2 "One process".)** Jobs do NOT run in the Puma process:
+    Solid Queue 1.7's Puma plugin forks its supervisor and workers (`start_forked`, the default
+    mode; `config/puma.rb` never sets `solid_queue_mode :async`). So `Setting.get` is cached per
+    request and per job in `Current`, never per process, and the factory-built `FileLayer::Share`
+    resolves its root per call (`Tinkerex::LibraryRoot.path`) instead of fixing it at construction.
+    Every process follows a change at its next request or job, nothing is reset, and the page's
+    "restart the jobs process" sentence is gone. Cost: one indexed query per request or job on
+    share; none off share (`pending?` asks the adapter first).
+11. **(Found in review.)** While pending, a non-HTML WRITE is refused 409 (a JSON
+    `POST /files/rescan` indexed the whole mount); `tinkerex:demo:setup` confirms the mount for a
+    freshly created demo account (refused the choice, it would otherwise face it forever).
 
 ## File map
 

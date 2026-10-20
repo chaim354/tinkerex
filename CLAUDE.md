@@ -636,6 +636,8 @@ area belongs there too, with a stub here.
 - **THE SHARE ROOT IS THE MOUNT PLUS A STORED RELATIVE CHOICE (`Tinkerex::LibraryRoot`).** The mount
   is probed at boot, the choice at selection; changing the choice is a scan under the mass-deletion
   guard, and only an explicit reset (`Library::Reset`) wipes the catalog, which never touches disk.
+  **The choice is read per request and per job (`Current`), NEVER memoised per process**: the in-Puma
+  job supervisor FORKS its workers, so a process-wide memo left every one on the old folder.
 - **ONE READING OF `LIBRARY_BACKEND`: `LibraryBackendCheck.configured` answers nil (unset or blank),
   a `NAMES` member, or `UnknownBackend` (a typo, `S3`, a stray space, the retired `chunk`) — rejected,
   never normalised.** The boot (`boot!`, the initializer's ONE call, pinned statically: the test env

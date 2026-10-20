@@ -72,8 +72,6 @@ module Settings
       # The ADAPTER's root, the one actually in use, rather than a second join of the two halves.
       @root_missing = !@pending && !FileLayer.current.root.directory?
       @refusal = current_user.library_scan_refusal
-      # A bin/jobs process of its own keeps its own FileLayer.current memo (Tinkerex::LibraryRoot).
-      @split_jobs = Rails.env.production? && !Tinkerex::SolidQueueInPuma.enabled?
     end
 
     def display(rel) = rel.empty? ? "the whole mounted folder" : rel

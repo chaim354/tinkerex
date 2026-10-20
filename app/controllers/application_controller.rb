@@ -40,9 +40,12 @@ class ApplicationController < ActionController::Base
   # A FRESH SHARE INSTALL CONFIRMS ITS LIBRARY FOLDER BEFORE ANYTHING ELSE (K, 2026-10-20). Every
   # signed-in HTML page goes to /settings/library while Tinkerex::LibraryRoot.pending?: that page and
   # Help skip this, Devise's own pages are excluded by the condition (sign-out among them), and
-  # Public:: stands on ActionController::Base and never reaches here (§14d). HTML only, so a poller
-  # or a JSON door answers as itself. Off share, or once chosen, the condition is one memoised read
-  # and no query. After authentication, so a signed-out visitor still meets the sign-in page first.
+  # Public:: stands on ActionController::Base and never reaches here (§14d). An HTML request is sent
+  # there; any other READ answers as itself (a poller, the chooser); any other WRITE is refused 409,
+  # so a JSON door cannot scan, upload or file into a folder nobody has chosen (found in review: a
+  # JSON POST /files/rescan indexed the whole mount). Off share the condition reads no setting; on
+  # share one cached read per request. After authentication, so a signed-out visitor still meets
+  # the sign-in page first.
   before_action :require_library_folder!,
                 if: -> { !devise_controller? && user_signed_in? && Tinkerex::LibraryRoot.pending? }
 
@@ -65,6 +68,10 @@ class ApplicationController < ActionController::Base
   private
 
   def require_library_folder!
-    redirect_to settings_library_path if request.format.html?
+    if request.format.html?
+      redirect_to settings_library_path
+    elsif !request.get? && !request.head?
+      render json: { error: "Choose the library folder first, at #{settings_library_path}." }, status: :conflict
+    end
   end
 end

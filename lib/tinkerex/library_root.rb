@@ -12,10 +12,13 @@ module Tinkerex
   # nothing is chosen and FileLayer.current can always be built (the CSP header resolves it per
   # response, §14a). Pending is a fact the web layer (the redirect) and the scan schedule consult.
   #
-  # ONE PROCESS. `choose!` resets FileLayer.current, which is memoised per process; every deployment
-  # this repo ships runs its jobs inside Puma (Tinkerex::SolidQueueInPuma), so the next request and
-  # the next job both see the new root. A separate bin/jobs process keeps the old root until it
-  # restarts, and /settings/library says so when SOLID_QUEUE_IN_PUMA is off.
+  # EVERY PROCESS FOLLOWS A CHANGE, AT ITS NEXT REQUEST OR JOB. The setting is cached per request and
+  # per job (Setting.get, Current), and the factory-built FileLayer::Share asks `path` per call
+  # rather than fixing its root at construction, so nothing needs resetting when the folder changes.
+  # That is not the obvious design and the obvious one was WRONG: "jobs run inside Puma" is false --
+  # Solid Queue's Puma plugin forks its supervisor and workers -- so a reset in the web process left
+  # every worker on the old folder until a restart (found in review). A job already running when the
+  # folder changes keeps the root it started with; Library::RootChangeJob queues behind it.
   module LibraryRoot
     KEY = "library.root".freeze
 
@@ -57,8 +60,8 @@ module Tinkerex
     # "No live node for any user": on share every account indexes the one library.
     def self.catalog_empty? = !Node.present.exists?
 
-    # Validates, probes, writes the row and resets the adapter, in that order; nothing is written
-    # unless every check passed. Returns the normalised relative path.
+    # Validates, probes and writes the row, in that order; nothing is written unless every check
+    # passed. Returns the normalised relative path. No adapter reset: the share root follows the row.
     def self.choose!(relative)
       rel, dir = resolve!(relative)
       begin
@@ -67,15 +70,11 @@ module Tinkerex
         raise Invalid, unwritable_message(rel)
       end
       Setting.put(KEY, rel)
-      FileLayer.reset!
       rel
     end
 
     # The whole mount: the console door's answer (an operator chose the mount by mounting it).
-    def self.clear!
-      Setting.put(KEY, "")
-      FileLayer.reset!
-    end
+    def self.clear! = Setting.put(KEY, "")
 
     # One folder's subfolders, for the chooser. DIRECTORIES ONLY, by lstat -- the Scanner's own
     # dispatch, so a symlink is neither listed nor followed -- and never a name `unchoosable?` refuses.

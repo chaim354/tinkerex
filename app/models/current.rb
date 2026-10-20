@@ -31,4 +31,9 @@
 # chunk_remote that is the WAN in the metadata path (CLAUDE.md §2), paid on every page.
 class Current < ActiveSupport::CurrentAttributes
   attribute :library_unreachable
+
+  # Setting.get's cache (K, 2026-10-20): per request and per job, never per process, because the
+  # in-Puma job supervisor forks its workers and a process-wide memo is never told about a write made
+  # in another process. app/models/setting.rb has the argument.
+  attribute :settings
 end
