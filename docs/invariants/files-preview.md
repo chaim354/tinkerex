@@ -65,7 +65,7 @@ badge — a deliberate behaviour change for `.pdf`. `FilesController#preview_kin
 browser's own viewer, which a browser handed a file named `.ai` downloads instead of rendering. The
 ROLE stays `vector` — where a file lives and what picture we can make of it remain two questions.
 
-Two consequences of the one table:
+Three consequences of the one table:
 
 - Every extension must satisfy `FilesController::EXT_RE` (`/\A[a-z0-9]{1,8}\z/`) or it renders a
   filter chip that links and **silently does nothing**. `markdown` is the bound, at exactly 8.
@@ -73,6 +73,21 @@ Two consequences of the one table:
   `Models::AttachmentsController` dispatches `ExtractPdfMetadataJob` on `instructions`, so `pdf`
   must stay `instructions`. A third copy in `importer_controller.js`'s `roleFor` has drifted; it is
   browser-only and the server re-derives authoritatively.
+- **STORED ROLES FOLLOW THE TABLE BY ONE RULE, NOT BY A MIGRATION PER WIDENING** (F-S33-1,
+  2026-10-19). `role` is written with the row, so a row attached before `ROLE_BY_EXT` learned its
+  extension says `other`. `Maker::FileAttachment.classify_unclassified!(user)` re-reads a user's
+  `other` rows against TODAY's table and rewrites the ones it now names: daily for every user
+  (`Maker::ClassifyAttachmentRolesJob`, `config/recurring.yml`) and on demand with
+  `rake maker:classify_roles`, the moment a widening deploy lands. So the ROLE half of a widening is
+  the table edit and nothing else: no re-derive migration, and no test of an old migration to touch.
+  Nine widenings carried that half by hand-copied migration and two never got one (`nc`/`tap`/`ngc`
+  on 2026-07-31, the Gerber extensions on 2026-09-06), which left an electronics project's hero on a
+  photo instead of its board. **`other` is the only value it rewrites**: it means "nothing
+  classified this name when the row was written", and every other value is a decision (a photo
+  door's `image`, a v1 client's post) that is never rewritten. Its limits, by construction: a
+  RE-classification (the `lbrn2` vector → laser move) and an extension removed from the table still
+  need a migration, and the per-user FILING map above is a separate store whose existing users still
+  need a top-up migration per widening (`Maker::FilingRules.seed!`'s `exists?` guard).
 
 ## `:kicanvas` is a preview kind with NO `ROLE_BY_EXT` entry behind it, on purpose
 
@@ -493,15 +508,18 @@ own embedded thumbnail. Both directions are asserted in `registry_test.rb`.
 **A ROLE IS WHERE A FILE FILES, NOT WHETHER IT RENDERS**, and the 2026-09-06 widening is where that
 is easiest to get wrong. `ROLE_BY_EXT` gained the mesh formats as `model`, but `.fcstd` is viewable
 and stays `cad_source` (it is a FreeCAD project you go back and edit; making it a `model` would MOVE
-it out of `cad/` on the user's NAS) and `.svg` stays `vector`. **The widening reaches existing users
-ONCE, by a data migration, never by a re-seed on read**
+it out of `cad/` on the user's NAS) and `.svg` stays `vector`. **The widening's FILING rules reach
+existing users ONCE, by a data migration, never by a re-seed on read**
 (`db/migrate/20260906140000_rederive_model_roles_and_seed_filing_rules.rb`, the shape
 `SeedPcbFilingRules` set): `Maker::FilingRules.seed!` stays guarded by `exists?` because
 `/settings/filing` promises a removed rule files into `other`, so the migration tops up only users
-who already hold rules (a user with none is seeded in full on their first read) and re-derives only
-`other` attachment roles on the thirteen extensions, ghost nodes skipped. Its `down` takes only those
-extensions on both doors — the folder column is free-form, and a hand-made rule filing something
-else into `models` must survive a rollback.
+who already hold rules (a user with none is seeded in full on their first read). It also re-derived
+`other` attachment roles on the thirteen extensions, ghost nodes skipped, and its `down` takes only
+those extensions on both doors — the folder column is free-form, and a hand-made rule filing
+something else into `models` must survive a rollback. **That ROLE half is no longer a migration's
+job** (F-S33-1, 2026-10-19): `Maker::FileAttachment.classify_unclassified!`, run daily, applies the
+same `other`-only rule to every extension the table names (the third consequence of the one table,
+above), so the next widening's migration carries the filing top-up alone.
 
 **THE ENGINE NORMALISES UP-AXIS AT IMPORT, SO THE CONTROLLER MUST NOT.** Each importer declares its
 format's up direction and `ThreeModelLoader` rotates the three object by -90° about X wherever that

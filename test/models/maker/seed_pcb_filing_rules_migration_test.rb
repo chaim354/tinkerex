@@ -104,10 +104,6 @@ module Maker
       assert_equal "models", @user.maker_filing_rules.find_by!(ext: "stl").folder
     end
 
-    # THE COPY, PINNED AGAINST THE MODEL. The migration names its own extension list and folder on
-    # purpose (a data migration runs against code that has moved on), and this is the only thing
-    # that would notice the copy drifting — the five `rederive_*_roles` migrations each carry the
-    # identical pairing for the identical reason.
     # A ROLLBACK TAKES ONLY WHAT `up` COULD HAVE WRITTEN. The folder column is free-form, so a
     # maker can map any extension into pcb by hand -- `.stp` before this ran, `.xnc` after it, the
     # extension file_attachment.rb's own comment invites -- and `down` spelled as "every pcb row"
@@ -126,9 +122,22 @@ module Maker
       assert_equal "pcb", @user.maker_filing_rules.find_by!(ext: "stp").folder, "an edited rule survives"
     end
 
-    test "the migration's extension list is exactly the pcb role, and its folder is ROLE_FOLDERS'" do
-      assert_equal Maker::FileAttachment::ROLE_BY_EXT.select { |_ext, role| role == "pcb" }.keys.sort,
-                   SeedPcbFilingRules::PCB_EXTS.sort
+    # THE COPY, PINNED AGAINST THE MODEL. The migration names its own extension list and folder on
+    # purpose (a data migration runs against code that has moved on), and this is the only thing
+    # that would notice the copy drifting — the five `rederive_*_roles` migrations each carry the
+    # identical pairing for the identical reason.
+    #
+    # PER KEY, THE FORM THE OTHER SEVEN MIGRATION TESTS USE: every extension the migration copied is
+    # still `pcb`. It was an EQUALITY with today's `pcb` role until F-S33-1 (2026-10-19), so adding
+    # the next Gerber extension (the `.xnc` file_attachment.rb invites) reddened this test of a
+    # migration that had already run. The vocabulary may grow past the copy now: attachment rows
+    # follow it by Maker::FileAttachment.classify_unclassified!, and existing users' FILING rule for
+    # a new key is a new top-up, never an edit of this one.
+    test "every extension the migration copied is still pcb, and its folder is ROLE_FOLDERS'" do
+      assert_equal 24, SeedPcbFilingRules::PCB_EXTS.size, "the list is the whole subject of this test"
+      SeedPcbFilingRules::PCB_EXTS.each do |ext|
+        assert_equal "pcb", Maker::FileAttachment::ROLE_BY_EXT[ext], "migration copies #{ext} as pcb"
+      end
       assert_equal Maker::ProjectFolders::ROLE_FOLDERS.fetch("pcb"), SeedPcbFilingRules::FOLDER
     end
 
