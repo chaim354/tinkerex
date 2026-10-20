@@ -456,7 +456,8 @@ class RepoEditFlowTest < ActionDispatch::IntegrationTest
   # listed file for an 8 kB binary sniff. #create rebuilt both lists again to decide what it would
   # accept. Every row is a content read compared against HEAD's blob, about 15 ms per object over
   # CIFS. And two computations are two definitions of "what the page offered": #create's
-  # intersection once disagreed with the render, and that shipped (the comment on #create says how).
+  # intersection disagreed with the render once while the staging panel was being built
+  # (c7539b98), caught by a test before it merged.
   #
   # COUNTED AT THE READ, NOT AT A METHOD. `File.binread` under the working tree is every content read
   # LocalRepo#row_for makes, including the `.gitignore`d branch's sniff, so a second computation of
