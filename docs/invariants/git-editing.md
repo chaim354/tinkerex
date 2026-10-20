@@ -464,6 +464,16 @@ with nothing offered in the other groups "none of them is checked" would be true
 reason. A "Select all" control is per-GROUP for the same reason and must never be global: a global
 one commits clutter by accident, which is this rule undone through a different door.
 
+**What the box draws and what the commit accepts are ONE value, computed once per request.**
+`RepoCommitsController#reconcile` builds a `Staging`: three groups of `LocalRepo::Row`, each path's
+row read once. The view renders its groups, and `#create` intersects the posted paths with
+`Staging#offered_paths`, the committable rows of all three. Assembling that list a second time beside
+the render is a second definition of "what the page offered", and the two disagreed once while the
+staging panel was being built (c7539b98: the commit answered "Nothing selected." for every path in the
+wider groups). `checked:` stays a literal in the view. Guarded by "a ticked OS-clutter path commits"
+and by "the box and the commit each read a listed path once", which counts the content reads per path
+across both actions (F-S13-1).
+
 ## An unselected deleted path survives in the new tree, with HEAD's bytes
 
 `CommitPaths#stage` answers a selected path that is gone from the working tree with `#remove`
@@ -582,7 +592,13 @@ shared predicate, not by a list of names" uses the first.
 ## Binary is decided by CONTENT, never by `Maker::FileAttachment.text?`
 
 git's own rule, and the panel takes it: a NUL byte within the first 8 kB
-(`RepoCommitsController::BINARY_SNIFF_BYTES`).
+(`Maker::Git::LocalRepo::BINARY_SNIFF_BYTES`). It is a field on the row, `LocalRepo::Row#binary`,
+decided by `#row_for` from the bytes it has already read. It used to be a separate pass that re-opened
+every listed file to sniff it: a second read per path, and a second path-keyed structure the view had
+to keep in step with the rows (F-S13-1). The `.gitignore`d row is the one exception and reads 8 kB of
+its own, because `#row_for` returns before reading that file in full. Pinned at both edges of the
+window by `local_repo_test.rb`'s "a NUL in the first 8 kB marks a row binary; text, and a NUL after
+8 kB, do not".
 
 **This is not the second-vocabulary mistake §14d warns about; it is a second AXIS.**
 `Maker::FileAttachment.text?` answers a NAME question — "should the file page offer a source
