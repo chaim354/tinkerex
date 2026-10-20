@@ -218,8 +218,8 @@ end
                  "(#{clear['CHUNK_REMOTE_URL'].inspect}), a name only the kamal network resolves"
   end
 
-  # THE ACCESSORY'S OWN ENV, READ OFF EVERY DESTINATION'S MERGED CONFIG (SECRETS_FILES names all
-  # four): `accessories:` is never overlaid, so the base block is what each of them boots.
+  # THE ACCESSORY'S OWN ENV, READ OFF EVERY DESTINATION'S MERGED CONFIG (LIBRARY_DESTINATIONS names
+  # all four): `accessories:` is never overlaid, so the base block is what each of them boots.
   # SYNC_SCHEDULER (D3, 2026-10-14) turns on the binary's in-process maintenance, which is OFF unless
   # set -- losing the line is a scheduler that silently never runs, and nothing else would notice.
   # CABLE_ADAPTER and RAILS_LOG_TO_STDOUT were the Ruby image's, and Phase 6 (2026-10-14) retired it,
@@ -229,7 +229,7 @@ end
   # SYNC_SCHEDULER presence check is also what keeps the absence ones from passing over an empty hash.
   test "the sync accessory runs its scheduler and carries none of the retired Ruby image's knobs, on every destination" do
     require "kamal"
-    SECRETS_FILES.each_key do |destination|
+    LIBRARY_DESTINATIONS.each do |destination|
       clear = Kamal::Configuration.create_from(
         config_file: ROOT.join("config/deploy.yml"), destination: destination
       ).accessory("sync").env.clear
@@ -587,13 +587,19 @@ end
   # are STATIC — they read the files as text and never run a `$(…)`, so they need no unlocked
   # vault and pass on a runner with no 1Password at all.
 
-  # nil is the base destination (`kamal deploy` with no -d), whose file is plain `.kamal/secrets`.
-  SECRETS_FILES = { nil => "secrets", "s3" => "secrets.s3", "share" => "secrets.share",
-                    "ovh" => "secrets.ovh" }.freeze
+  # THE FILES KAMAL READS FOR A DESTINATION, ASKED OF KAMAL — the question bin/secrets-preflight asks
+  # of the Kamal::Secrets it resolves through. Kamal::Secrets#secrets_files is public and vault-free:
+  # it builds `<path>-common` and `<path>` or `<path>.<destination>`, keeps the ones that exist, and
+  # parses nothing. This was a hand-written { destination => filename } map, a re-implementation of
+  # that rule and a second list of destinations beside the preflight's (F-S25-1).
+  def secrets_files(destination)
+    require "kamal"
+    Kamal::Secrets.new(destination: destination, secrets_path: ROOT.join(".kamal/secrets").to_s)
+                  .secrets_files.map { |path| Pathname.new(path) }
+  end
 
   # Key/value pairs a secrets file DEFINES, parsed without executing anything.
-  def secret_definitions(name)
-    path = ROOT.join(".kamal", name)
+  def secret_definitions(path)
     return {} unless path.exist?
 
     path.read.lines.filter_map { |line|
@@ -608,8 +614,8 @@ end
   end
 
   # The hostnames kamal-proxy will actually route for a destination, read off the MERGED config for
-  # the same reason required_secret_keys does — so array-replacement semantics are reflected here
-  # rather than re-implemented.
+  # the same reason Tinkerex::DeploySecrets.required does — so array-replacement semantics are
+  # reflected here rather than re-implemented.
   def proxy_hosts(destination)
     require "kamal"
     Kamal::Configuration.create_from(
@@ -617,81 +623,22 @@ end
     ).proxy.hosts
   end
 
-  # Straight from the MERGED deploy config, so the ANSWER cannot drift from what kamal will look
-  # up. env.secret is an array and kamal REPLACES arrays on merge (it unions hashes only) —
-  # reading the merged config means that replacement is reflected rather than re-implemented here.
-  def required_secret_keys(destination)
-    require "kamal"
-    config = Kamal::Configuration.create_from(
-      config_file: ROOT.join("config/deploy.yml"), destination: destination
-    )
-    keys = secret_key_names(config.raw_config)
-    raise "no secret keys resolved for #{destination || 'base'} — raw_config shape changed?" if keys.empty?
+  # The walk's own reader of raw_config, shared rather than copied: STRING keys, and why a
+  # symbol-keyed one asserts nothing, are in Tinkerex::DeploySecrets.at.
+  def at(node, *path) = Tinkerex::DeploySecrets.at(node, *path)
 
-    keys
-  end
-
-  # STRING keys throughout, and that is not interchangeable with symbols: raw_config is an
-  # ActiveSupport::InheritableOptions whose `dig(:env, :secret)` returns nil while
-  # `dig("env", "secret")` returns the list (the nesting below it is plain string-keyed Hashes). A
-  # symbol-keyed version returns [] for every destination, which makes the tests below pass while
-  # asserting NOTHING — caught only because minitest reported "Test is missing assertions".
-  def at(node, *path)
-    path.reduce(node) { |value, key| value.is_a?(Hash) ? value[key] : nil }
-  end
-
-  # EVERY PLACE KAMAL 2.12.0 RESOLVES A SECRET. The LIST OF SITES is hand-maintained — that is the
-  # part that drifted, while both this method and bin/secrets-preflight's twin claimed it could
-  # not: they collected `env.secret + registry.password`, two of NINE. Latent on today's config,
-  # but a `builder: secrets:` block or an accessory `env.secret` walks straight past both guards.
-  # `secret_key_names covers every site kamal reads` below plants a name at each arm; widen that
-  # test and bin/secrets-preflight in the same commit as this method.
-  #
-  # Reads the config only — no secret is resolved. Verified by fencing Dotenv.parse and
-  # Kamal::Secrets#[]/#key?/#to_h to raise and building all four destinations: the fence never
-  # trips, which is what keeps every test in this file STATIC and vault-free.
-  def secret_key_names(raw)
-    roles       = at(raw, "servers").is_a?(Hash)     ? at(raw, "servers").values     : []
-    accessories = at(raw, "accessories").is_a?(Hash) ? at(raw, "accessories").values : []
-
-    # env.secret — root (env.rb:35), per env tag (configuration.rb:286), per role (role.rb:20),
-    # per accessory (accessory.rb:126). An entry may be `VAR:SECRET`; kamal looks up the part AFTER
-    # the colon (Env#extract_alias) — the first half names the container's env var, not a key.
-    envs = [ at(raw, "env"), *at(raw, "env", "tags").to_h.values,
-             *roles.map { |role| at(role, "env") }, *accessories.map { |acc| at(acc, "env") } ]
-    keys = envs.flat_map { |env| Array(at(env, "secret")) }.map { |key| key.to_s.split(":", 2).last }
-
-    # registry password AND username — root (registry.rb:35) and per accessory (accessory.rb:141).
-    # ONLY the Array form is a secret reference (Registry#lookup); a bare String is the literal
-    # value, which `username: chaim354` in deploy.yml is. Collecting that would demand a secret
-    # named "chaim354" and block every deploy.
-    registries = [ at(raw, "registry"), *accessories.map { |acc| at(acc, "registry") } ]
-    keys += registries.flat_map { |reg| [ at(reg, "password"), at(reg, "username") ] }
-                      .grep(Array).map(&:first)
-
-    # Custom proxy TLS material — root and per role (proxy.rb:41,47), per accessory
-    # (accessory.rb:135). A role's `proxy:` specialization can be `true`/`false`, not a hash.
-    proxies = [ at(raw, "proxy"), *roles.map { |role| at(role, "proxy") },
-                *accessories.map { |acc| at(acc, "proxy") } ]
-    keys += proxies.flat_map { |p| [ at(p, "ssl", "certificate_pem"), at(p, "ssl", "private_key_pem") ] }
-
-    # builder.secrets (builder.rb:73) — the raw key LIST, never `config.builder.secrets`, which
-    # eagerly resolves each one through `config.secrets[key]` and would make this file need a vault.
-    keys += Array(at(raw, "builder", "secrets"))
-
-    # ssh.key_data (ssh.rb:43-44). Kamal treats an entry the secrets do not define as an INLINE
-    # literal key, so that deprecated spelling is reported MISSING rather than skipped — loud beats
-    # an empty key reaching an ssh handshake, and kamal 3 removes the inline form outright.
-    keys += Array(at(raw, "ssh", "key_data"))
-
-    keys.compact.uniq
-  end
-
-  test "secret_key_names covers every site kamal reads a secret from" do
-    # The real config exercises three arms; the other six are empty in it, so only a synthetic
-    # config can show they are reached at all. Set EQUALITY, not inclusion — the two decoys below
-    # are half of what this pins, and an over-collecting version fails LOUD but it still fails:
-    # every name it invents is reported MISSING and blocks the deploy.
+  # THE ORACLE FOR THE ONE WALK. Which names kamal resolves for a destination is
+  # Tinkerex::DeploySecrets.names, read by bin/secrets-preflight before every deploy and by the
+  # tests below — until 2026-10-19 (F-S25-1) this file and the preflight each held a copy, and only
+  # this file's was ever run by a test. Widen the walk and this test in the same commit.
+  test "the shared walk covers every site kamal reads a secret from" do
+    # The real config exercises four of the eleven arms planted below — root and accessory
+    # env.secret, the root registry, and ovh's root proxy TLS pair (measured 2026-10-19) — and the
+    # other seven are empty in it, so only a synthetic config can show they are reached at all. (The
+    # preflight's own fixture run, in test/lib/deploy_secrets_test.rb, plants those four.) Set
+    # EQUALITY, not inclusion — the two decoys below are half of what this pins, and an
+    # over-collecting version fails LOUD but it still fails: every name it invents is reported
+    # MISSING and blocks the deploy.
     raw = {
       "env" => { "secret" => [ "ROOT_ENV", "CONTAINER_VAR:ALIASED_ENV" ],
                  "tags" => { "beta" => { "secret" => [ "TAG_ENV" ] } } },
@@ -721,25 +668,26 @@ end
       ACCESSORY_CERT ACCESSORY_ENV ACCESSORY_KEY ACCESSORY_REGISTRY_PASSWORD ALIASED_ENV
       BUILDER_SECRET ROLE_CERT ROLE_ENV ROLE_KEY ROOT_CERT ROOT_ENV ROOT_KEY
       ROOT_REGISTRY_PASSWORD ROOT_REGISTRY_USERNAME SSH_KEY_DATA TAG_ENV
-    ], secret_key_names(raw).sort,
-                 "bin/secrets-preflight and this file each walk the deploy config for the names " \
-                 "kamal will resolve. A site dropped from either is a credential that deploys " \
-                 "UNCHECKED — the failure the preflight exists to make impossible. Note what is " \
-                 "deliberately absent: CONTAINER_VAR (an alias names the env var, the secret is " \
+    ], Tinkerex::DeploySecrets.names(raw).sort,
+                 "Tinkerex::DeploySecrets.names is the one walk bin/secrets-preflight and this file " \
+                 "read for the names kamal will resolve. A site dropped from it is a credential that " \
+                 "deploys UNCHECKED — the failure the preflight exists to make impossible. Note what " \
+                 "is deliberately absent: CONTAINER_VAR (an alias names the env var, the secret is " \
                  "after the colon) and a-literal-not-a-secret (only the Array form of a registry " \
                  "username/password is a secret reference)."
   end
 
   test "every secret a destination declares is defined in a file that destination actually reads" do
-    SECRETS_FILES.each do |destination, filename|
-      available = secret_definitions("secrets-common").keys | secret_definitions(filename).keys
+    LIBRARY_DESTINATIONS.each do |destination|
+      files = secrets_files(destination)
+      available = files.flat_map { |file| secret_definitions(file).keys }
 
-      required_secret_keys(destination).each do |key|
+      Tinkerex::DeploySecrets.required(destination, config_file: ROOT.join("config/deploy.yml")).each do |key|
         assert_includes available, key,
                         "#{destination || 'base'} declares #{key} in its deploy config but no " \
                         "secrets file it reads defines it. Kamal reads ONLY " \
-                        "[.kamal/secrets-common, .kamal/#{filename}] for this destination — in " \
-                        "particular `.kamal/secrets` is NOT read when -d is passed."
+                        "#{files.map { |file| file.relative_path_from(ROOT).to_s }} for this " \
+                        "destination — in particular `.kamal/secrets` is NOT read when -d is passed."
       end
     end
   end
@@ -751,9 +699,11 @@ end
     # a destination-specific credential parked here makes `kamal deploy -d share` shell out for a
     # credential a share container never holds — a pointless vault hit that can prompt, hang, or
     # fail for something the deploy does not even use. Put it in the destination's own file.
-    universal = SECRETS_FILES.keys.map { |d| required_secret_keys(d) }.reduce(:&)
+    universal = LIBRARY_DESTINATIONS.map { |destination|
+      Tinkerex::DeploySecrets.required(destination, config_file: ROOT.join("config/deploy.yml"))
+    }.reduce(:&)
 
-    secret_definitions("secrets-common").each_key do |key|
+    secret_definitions(ROOT.join(".kamal/secrets-common")).each_key do |key|
       assert_includes universal, key,
                       "#{key} is defined in .kamal/secrets-common but is not required by every " \
                       "destination (#{universal.sort.join(', ')} are). Move it to the .kamal/" \
@@ -767,10 +717,15 @@ end
     # comment at the top of each one. Every value must be a shell expansion — `$(bin/secret …)`,
     # `$(cat …)` or `$VAR` — which is exactly the property that keeps the credential itself out of
     # the repo while the reference to it stays readable.
-    ([ "secrets-common" ] + SECRETS_FILES.values).each do |filename|
-      secret_definitions(filename).each do |key, value|
+    files = LIBRARY_DESTINATIONS.flat_map { |destination| secrets_files(destination) }.uniq
+    assert_includes files, ROOT.join(".kamal/secrets-common"),
+                    "kamal names no .kamal/secrets-common for any destination, so this scan would skip " \
+                    "the one file every destination reads — has the secrets path moved?"
+
+    files.each do |file|
+      secret_definitions(file).each do |key, value|
         assert_match(/\A\$[({A-Z_]/, value,
-                     "#{key} in .kamal/#{filename} looks like a literal value. Secrets files are " \
+                     "#{key} in #{file.relative_path_from(ROOT)} looks like a literal value. Secrets files are " \
                      "committed to git — use $(bin/secret #{key} 'op://Vault/Item/field') so the " \
                      "reference is tracked and the credential is not.")
       end
@@ -790,10 +745,12 @@ end
   # STATIC AND VAULT-FREE like the .kamal tests above: it reads the merged config and resolves
   # nothing, so it passes on a bare runner with no 1Password.
 
-  # THE SAME FOUR DESTINATIONS AS SECRETS_FILES, reused rather than restated — a third list of
-  # destinations in this file is a third thing to forget when one is added or folded away (as
-  # `remote` was). The set is asserted explicitly below so trimming it cannot retire this guard.
-  LIBRARY_DESTINATIONS = SECRETS_FILES.keys.freeze
+  # EVERY DESTINATION KAMAL CAN DEPLOY, for every guard in this file — the one list
+  # bin/secrets-preflight also reads, which test/lib/deploy_secrets_test.rb holds equal to the
+  # config/deploy.<name>.yml files present. Reused rather than restated: it used to live in this file
+  # AND the preflight, two things to forget when a destination is added or folded away (as `remote`
+  # was). The set is asserted explicitly below so trimming it cannot retire this guard.
+  LIBRARY_DESTINATIONS = Tinkerex::DeploySecrets::DESTINATIONS
 
   # The knobs each backend cannot boot without. The chunk_remote and s3 lists are the PRODUCTION
   # constants, not copies, so a knob added to lib/library_backend_check.rb is enforced here on the
@@ -829,12 +786,12 @@ end
   UNDECIDED_LIBRARY_BACKEND = [].freeze
 
   # What would stop this destination's container booting, read off the MERGED config for the same
-  # reason required_secret_keys does — array replacement and hash deep-merge are reflected rather
-  # than re-implemented. A knob counts as CARRIED if env.clear holds a non-blank value for it OR
-  # env.secret names it: kamal injects the latter at deploy from the destination's own secrets file,
-  # and the sibling guard above ("every secret a destination declares is defined in a file that
-  # destination actually reads") is what proves that file defines it. The two compose; neither
-  # alone would catch a knob that is declared secret but never defined.
+  # reason Tinkerex::DeploySecrets.required does — array replacement and hash deep-merge are
+  # reflected rather than re-implemented. A knob counts as CARRIED if env.clear holds a non-blank
+  # value for it OR env.secret names it: kamal injects the latter at deploy from the destination's
+  # own secrets file, and the sibling guard above ("every secret a destination declares is defined
+  # in a file that destination actually reads") is what proves that file defines it. The two
+  # compose; neither alone would catch a knob that is declared secret but never defined.
   def library_backend_shortfall(destination)
     require "kamal"
     raw = Kamal::Configuration.create_from(
@@ -888,7 +845,9 @@ end
                    "LibraryBackendCheck refuses that at start, so " \
                    "`kamal deploy#{" -d #{destination}" if destination}` would build and push an " \
                    "image whose container never comes up. Put each knob in that destination's " \
-                   "env.clear, or in env.secret WITH a matching .kamal/#{SECRETS_FILES[destination]} line."
+                   "env.clear, or in env.secret WITH a matching line in a file kamal reads for it " \
+                   "(#{secrets_files(destination).map { |file| file.relative_path_from(ROOT).to_s }.join(' or ')}) " \
+                   "— its own, unless every destination needs the key (§14g)."
     end
 
     UNDECIDED_LIBRARY_BACKEND.each do |destination|
