@@ -638,21 +638,19 @@ area belongs there too, with a stub here.
   Library` and **took the boot down while every test stayed green** (test env skips it).
   **The S3 boot guard does NO NETWORK** — a boot depending on a third party turns a blip
   into a crash loop. Config *presence* is what boot can honestly check.
-- **`FileLayer.build` TELLS `check!` WHICH BACKEND IT RESOLVED; the guard's no-arg default is the
-  BOOT INITIALIZER's question and is deliberately DIFFERENT.** Calling `check!` with no arguments
-  let it re-read ENV with a default (`chunk`) Arc D Part 2 left behind when `build`'s became
-  `share` — so **the one backend reachable WITHOUT setting `LIBRARY_BACKEND` was the one the guard
-  never checked**, and `Share.new` raised a bare `KeyError` that broke `bin/ci setup`, a gate no CI
-  job runs (`LOCAL_ONLY_GATES`). Do NOT instead match the guard's own default to `build`'s:
-  measured, that refuses an unconfigured dev box's BOOT and moves the same failure one step
-  earlier. A port that cannot be CONSTRUCTED is not a scannable one — `Library::RepoMetadataPurge`
-  declines with a `reason`, rescuing `LibraryBackendCheck::Error` alone, never `KeyError` (too
-  broad) and never around the sweep (§15's silent-success shape).
-- **PRODUCTION REFUSES TO BOOT WITH `LIBRARY_BACKEND` BLANK (`required_in_production!`); the lib
-  default stays `chunk`-shaped** — blank, the CSP `connect_src` lambda resolved `FileLayer.current`
-  on EVERY response and 500'd `/up` from middleware. `ACTIVE_RECORD_ENCRYPTION_*` ENV keys apply ONLY
-  WHEN PRESENT (a nil splats over the credential). `docs/INSTALL.md` is the env reference a stranger
-  installs from, kept complete by `test/install_docs_test.rb`; `RAILS_MASTER_KEY` is never theirs.
+- **ONE READING OF `LIBRARY_BACKEND`: `LibraryBackendCheck.configured` answers nil (unset or blank),
+  a `NAMES` member, or `UnknownBackend` (a typo, `S3`, a stray space, the retired `chunk`) — rejected,
+  never normalised.** The boot (`boot!`, the initializer's ONE call, pinned statically: the test env
+  skips it) and the factory (`configured || "share"`) both consume it, and `check!` takes the name
+  with NO default — its `chunk` default checked nothing, so an unknown value booted and then 500'd
+  EVERY response, `/up` included (the CSP `connect_src` lambda resolves `FileLayer.current` each
+  time). **Unset is a state, not a default:** development boots (refusing it was measured to break an
+  unconfigured dev box one step EARLIER), production refuses (precompile's `SECRET_KEY_BASE_DUMMY`
+  exempt). `UnknownBackend` is an `ArgumentError`, never an `Error`: `Library::RepoMetadataPurge`
+  declines with a `reason` on `LibraryBackendCheck::Error` alone, never `KeyError`, never around the
+  sweep. `ACTIVE_RECORD_ENCRYPTION_*` ENV keys apply ONLY WHEN PRESENT (a nil splats over the
+  credential). `docs/INSTALL.md` is the env reference a stranger installs from, kept complete by
+  `test/install_docs_test.rb`; `RAILS_MASTER_KEY` is never theirs.
 - **`write(..., replace: true)` IS AN OPT-IN BESIDE THE CLOBBER REFUSAL, NOT A RELAXATION OF IT.** The
   refusal is still the default on both writable adapters and every existing caller omits the kwarg;
   `replace:` exists for a door that has just asked a user "this would replace `design/x.svg` —

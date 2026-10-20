@@ -802,11 +802,10 @@ end
   # check_share! can be asked statically: its real work is a File.exist? plus a write probe ON THE
   # BOX, which no test in this process can perform.
   #
-  # THE KEYS ALSO SERVE AS THE SET OF BACKENDS FileLayer.build ACCEPTS (its `case`, which has no
-  # constant to reuse). Deliberate: a destination resolving to anything else — unset, a typo, or
-  # the retired `chunk`, which build now REFUSES rather than aliases (§14a) — must fail HERE rather
-  # than depend on whatever it happens to inherit. Note check!'s own no-arg default is still
-  # "chunk", so an unset value is not self-correcting.
+  # THE KEYS ALSO SERVE AS THE SET OF BACKENDS FileLayer.build ACCEPTS — the same set as
+  # LibraryBackendCheck::NAMES, which postdates this table. Deliberate: a destination resolving to
+  # anything else — unset, a typo, or the retired `chunk`, which the boot and build both REFUSE
+  # rather than alias (§14a) — must fail HERE rather than depend on whatever it happens to inherit.
   LIBRARY_BACKEND_REQUIRED = {
     "chunk_remote" => LibraryBackendCheck::CHUNK_REMOTE_REQUIRED,
     "s3"           => LibraryBackendCheck::S3_REQUIRED,

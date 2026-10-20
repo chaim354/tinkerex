@@ -146,27 +146,16 @@ module FileLayer
       # destinations set LIBRARY_BACKEND explicitly, and LibraryBackendCheck refuses to boot on a
       # value it does not recognise — so this governs dev and test only, where hermetic wins.
       #
-      # THE RESOLVED VALUE IS PASSED TO THE GUARD, NEVER LEFT FOR IT TO RE-DERIVE — and it was,
-      # until 2026-08-26. `LibraryBackendCheck.check!` takes `backend:` defaulted to
-      # `env.fetch("LIBRARY_BACKEND", "chunk")`, and calling it with NO ARGUMENTS made it re-read
-      # ENV with a default of its own that had drifted from this one: Arc D Part 2 changed the
-      # line above from `chunk` to `share` and left the guard's behind on a value this method now
-      # REFUSES. With LIBRARY_BACKEND unset the two disagreed — this method built a Share, the
-      # guard matched no `when` arm and returned having checked nothing, and `Share.new`'s
-      # `ENV.fetch("LIBRARY_PATH")` raised a bare KeyError naming no setting. So THE ONE BACKEND
-      # REACHABLE WITHOUT SETTING LIBRARY_BACKEND WAS THE ONE THE GUARD NEVER CHECKED, which is
-      # the configuration a fresh clone has: it broke `bin/ci setup`, several frames away, inside
-      # the PurgeRepoMetadataNodes migration asking FileLayer.current for a capability.
-      #
-      # FIXED HERE RATHER THAN IN THE GUARD'S OWN DEFAULT, and that is not a stylistic pick —
-      # `check!` is ALSO called with no arguments by config/initializers/library_backend_check.rb,
-      # where the no-arg default governs whether an unconfigured dev box BOOTS. Measured both
-      # ways: making that default `share` refuses the boot of any dev box with nothing set, so
-      # `bin/setup` fails one step EARLIER instead of being fixed. The factory knows which backend
-      # it resolved; the initializer is asking a genuinely different question. Telling beats
-      # re-deriving — see also Library::ScanJob.scan_all!, which asks this factory rather than
-      # keeping a third copy of the same ENV read.
-      backend = ENV.fetch("LIBRARY_BACKEND", "share")
+      # THE NAME IS LibraryBackendCheck.configured's, THE ONE READING (2026-10-19): nil when nothing
+      # is named, which builds `share` here; a member of its NAMES; or UnknownBackend, an
+      # ArgumentError, for anything else -- the retired `chunk` included. The boot reads the same
+      # answer, and every arm below HANDS the name to check! rather than letting it re-derive one.
+      # It did re-derive until 2026-08-26, with a `chunk` default that had drifted from this
+      # method's `share`, so the one backend reachable WITHOUT setting LIBRARY_BACKEND was the one
+      # the guard never checked: `Share.new` raised a bare KeyError inside `bin/ci setup`'s
+      # PurgeRepoMetadataNodes migration. Telling beats re-deriving -- see also
+      # Library::ScanJob.scan_all!, which asks this factory rather than reading ENV a third time.
+      backend = LibraryBackendCheck.configured || "share"
       case backend
       when "share"
         # Validate before constructing: Share.new defaults to ENV.fetch("LIBRARY_PATH"), which
@@ -200,7 +189,9 @@ module FileLayer
         LibraryBackendCheck.check!(backend:)
         ChunkRemote.new
       else
-        raise ArgumentError, "unknown LIBRARY_BACKEND #{ENV['LIBRARY_BACKEND'].inspect}"
+        # Not an operator's typo -- `configured` refused that above. A name in NAMES with no arm
+        # here, which factory_test.rb pins against.
+        raise ArgumentError, "LIBRARY_BACKEND #{backend.inspect} is a known name with no adapter arm"
       end
     end
   end

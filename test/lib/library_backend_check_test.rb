@@ -2,9 +2,55 @@ require "test_helper"
 require "tmpdir"
 
 class LibraryBackendCheckTest < ActiveSupport::TestCase
-  test "chunk mode needs no library path" do
-    assert_nothing_raised { LibraryBackendCheck.check!(backend: "chunk", env: {}) }
+  # --- the one reading of LIBRARY_BACKEND ----------------------------------------------------
+  #
+  # THREE STATES, EACH NAMED: nothing named (unset or blank), a member of NAMES, or UnknownBackend.
+  # The boot (boot!) and the factory (FileLayer.build) both read this one answer. Before it, four
+  # readers applied four normalisations, and check!'s own default was the retired `chunk` -- a
+  # sentinel that matched no arm and so checked nothing, which let an unknown value pass both boot
+  # guards and then 500 every response through the CSP's connect_src lambda (CLAUDE.md §14a).
+  def configured(value) = LibraryBackendCheck.configured(env: { "LIBRARY_BACKEND" => value })
+
+  test "configured: unset or blank names nothing" do
+    assert_nil LibraryBackendCheck.configured(env: {})
+    [ "", "   " ].each { |blank| assert_nil configured(blank), "#{blank.inspect} is unset, not unknown" }
   end
+
+  # THE VALIDATED NAME, NEVER THE RAW STRING: what comes back is the module's own frozen member of
+  # NAMES, so nothing downstream holds a value no check has seen.
+  test "configured: each known name comes back as the module's own name" do
+    refute_empty LibraryBackendCheck::NAMES
+    LibraryBackendCheck::NAMES.each { |name| assert_same name, configured(name.dup) }
+  end
+
+  # REJECT, NEVER NORMALISE -- key_for's rule (§14a). A case or space variant is the operator's typo,
+  # and quietly fixing it would leave the deployment running on a guess nobody wrote down.
+  test "configured: a typo, a case or space variant, and the retired chunk are UNKNOWN" do
+    [ "chunk", "S3", "chunk-remote", " share", "nope" ].each do |value|
+      err = assert_raises(LibraryBackendCheck::UnknownBackend, value.inspect) { configured(value) }
+      assert_includes err.message, value.inspect, "the refusal must quote what was set"
+      assert_includes err.message, LibraryBackendCheck::NAMES.join(" | "), "and list what is accepted"
+    end
+  end
+
+  # `chunk` IS REFUSED, NOT ALIASED (CLAUDE.md §2, §14a), and its refusal must not read as a typo: a
+  # deployment still carrying it keeps its library on a sync server it was never pointed at.
+  test "configured: the retired chunk's refusal names the retirement, and only its refusal does" do
+    err = assert_raises(LibraryBackendCheck::UnknownBackend) { configured("chunk") }
+    assert_match(/retired/, err.message)
+    assert_includes err.message, "CHUNK_REMOTE_URL", "it must say what replaced it, not only that it is gone"
+    assert_no_match(/retired/, assert_raises(LibraryBackendCheck::UnknownBackend) { configured("nope") }.message)
+  end
+
+  # AN ArgumentError, AND DELIBERATELY NOT A LibraryBackendCheck::Error: Library::RepoMetadataPurge
+  # rescues Error alone, to DECLINE where no backend is configured, and an unknown value is a
+  # misconfigured DEPLOYMENT that must stay loud there (§14a).
+  test "UnknownBackend is an ArgumentError and never a LibraryBackendCheck::Error" do
+    assert_operator LibraryBackendCheck::UnknownBackend, :<, ArgumentError
+    assert_not LibraryBackendCheck::UnknownBackend <= LibraryBackendCheck::Error
+  end
+
+  # --- check! -------------------------------------------------------------------------------
 
   test "share mode refuses to boot without a path" do
     err = assert_raises(LibraryBackendCheck::Error) do
@@ -83,14 +129,6 @@ class LibraryBackendCheckTest < ActiveSupport::TestCase
     end
   end
 
-  # Chunk mode must not touch the filesystem at all — the guard returns before any probe.
-  test "chunk mode writes no probe" do
-    Dir.mktmpdir do |d|
-      LibraryBackendCheck.check!(backend: "chunk", env: { "LIBRARY_PATH" => d })
-      assert_equal [], Dir.children(d)
-    end
-  end
-
   # A leaked probe is invisible to the scan, so it can never become a ghost node the reconciler
   # cannot pair. This pins the NAME, which is the whole mechanism: the Scanner skips TEMP_PREFIX
   # at every depth, and a probe that did not carry it would be indexed by a scan racing this
@@ -142,13 +180,20 @@ class LibraryBackendCheckTest < ActiveSupport::TestCase
   test "defaults read the same ENV the factory reads" do
     prior_backend = ENV["LIBRARY_BACKEND"]
     prior_path = ENV["LIBRARY_PATH"]
-    ENV["LIBRARY_BACKEND"] = "share"
+    # Every name, so at least two of them differ from whatever the leg running this exported.
+    LibraryBackendCheck::NAMES.each do |name|
+      ENV["LIBRARY_BACKEND"] = name
+      assert_equal name, LibraryBackendCheck.configured
+    end
+    ENV["LIBRARY_BACKEND"] = nil
+    assert_nil LibraryBackendCheck.configured
+
     ENV["LIBRARY_PATH"] = nil
-    assert_raises(LibraryBackendCheck::Error) { LibraryBackendCheck.check! }
+    assert_raises(LibraryBackendCheck::Error) { LibraryBackendCheck.check!(backend: "share") }
 
     Dir.mktmpdir do |dir|
       ENV["LIBRARY_PATH"] = dir
-      assert_nothing_raised { LibraryBackendCheck.check! }
+      assert_nothing_raised { LibraryBackendCheck.check!(backend: "share") }
     end
   ensure
     ENV["LIBRARY_BACKEND"] = prior_backend
@@ -255,6 +300,17 @@ class LibraryBackendCheckTest < ActiveSupport::TestCase
 
   test "chunk_remote boots with both of the sync server's addresses and the admin token" do
     assert_nothing_raised { LibraryBackendCheck.check!(backend: "chunk_remote", env: CHUNK_REMOTE_ENV) }
+  end
+
+  # Nor the FILESYSTEM -- the s3 rule above, for the backend whose library lives on a sync server.
+  # (This was "chunk mode writes no probe" while the retired `chunk` could still reach check!.)
+  test "chunk_remote writes no probe and ignores LIBRARY_PATH" do
+    Dir.mktmpdir do |d|
+      assert_nothing_raised do
+        LibraryBackendCheck.check!(backend: "chunk_remote", env: CHUNK_REMOTE_ENV.merge("LIBRARY_PATH" => d))
+      end
+      assert_equal [], Dir.children(d)
+    end
   end
 
   # D1 (2026-10-13): a device that signs in to the maker app is handed SYNC_PUBLIC_URL as its sync

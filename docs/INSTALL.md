@@ -312,7 +312,7 @@ compose*; the rest come from `.env`.
 |---|---|---|---|
 | **Core** | | | |
 | `SECRET_KEY_BASE` | no | generated on the first start, kept at `storage/secret_key_base` in the volume | Signs sessions and cookies. Set it to use your own (`openssl rand -hex 64`); a blank value counts as unset. Changing or losing it signs everyone out and nothing else. |
-| `LIBRARY_BACKEND` | no (the image defaults to `share`) | `share` | Where the files live: `share` (a folder), `s3` (a bucket) or `chunk_remote` (the sync server). Chosen per deployment, never per user; the two overlays set it. An explicit blank refuses the boot. |
+| `LIBRARY_BACKEND` | no (the image defaults to `share`) | `share` | Where the files live: `share` (a folder), `s3` (a bucket) or `chunk_remote` (the sync server). Chosen per deployment, never per user; the two overlays set it. An explicit blank refuses the boot, and so does any value other than these three spelled exactly (`S3`, or a stray space, included). |
 | `LIBRARY_PATH` | no | `/library` (the image default) | The folder inside the container to index. The boot checks that it exists, is a directory, and is writable by the app's user — by writing a probe file, because mode bits lie on network mounts. |
 | `APP_HOST` | with `SMTP_ADDRESS` | `APP_HOST-IS-NOT-SET.invalid`, which without SMTP only ever lands in a message nothing can deliver | The host name (no scheme) that links in email point at; also the default HELO domain and the domain of the default sender. The boot refuses `SMTP_ADDRESS` without it. |
 | `FORCE_SSL` | when behind TLS | off | Set to `1` when the server is reached over HTTPS through a reverse proxy: redirects plain HTTP, marks cookies secure, makes mail links `https`. Setting it with no TLS in front locks you out. |

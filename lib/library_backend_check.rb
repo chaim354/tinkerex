@@ -38,6 +38,74 @@
 module LibraryBackendCheck
   Error = Class.new(StandardError)
 
+  # THE BACKENDS A DEPLOYMENT MAY NAME, AND THE ONE LIST OF THEM. FileLayer.build's `case` has one
+  # arm per name and no other (factory_test.rb pins both directions). The retired embedded `chunk`
+  # is absent on purpose: it is REFUSED, not aliased (CLAUDE.md §14a).
+  NAMES = %w[share s3 chunk_remote].freeze
+
+  # A LIBRARY_BACKEND that names no backend: a typo, a case or space variant, or a retired name. An
+  # ArgumentError, the factory's long-standing answer to an unknown value -- and deliberately NOT an
+  # Error: Library::RepoMetadataPurge rescues Error alone, to DECLINE where nothing is configured,
+  # and an unknown value is a misconfigured DEPLOYMENT that must stay loud there.
+  UnknownBackend = Class.new(ArgumentError)
+
+  # Refused with the reason, so a retired name does not read as a typo. Not aliased: a deployment
+  # still carrying `chunk` keeps its library on a sync server it was never pointed at, and serving
+  # it some other backend would hand it an empty library that reads as data loss.
+  RETIRED = {
+    "chunk" => "the embedded sync engine, retired 2026-08-25 -- a library on a sync server is now " \
+               "chunk_remote, which reaches it at CHUNK_REMOTE_URL"
+  }.freeze
+
+  # THE ONE READING OF LIBRARY_BACKEND, WITH THREE ANSWERS: nil when nothing is named (unset or
+  # blank), the member of NAMES it names, or UnknownBackend. The boot (boot!) and the factory
+  # (FileLayer.build) both consume it. They still ask it different questions -- the boot whether
+  # this deployment may START, the factory which adapter to BUILD, and on nil the factory builds the
+  # hermetic `share` while only production's boot refuses -- but neither derives the name itself.
+  #
+  # THE READERS IT REPLACED EACH NORMALISED DIFFERENTLY: the factory defaulted to `share`, check! to
+  # the retired `chunk` (matching no arm, a "check nothing" sentinel), and the production guard took
+  # anything non-blank -- so a typo passed both boot guards, and then every response 500'd, /up
+  # included, from the CSP's connect_src lambda: the symptom 287ddac5 fixed for a blank value only.
+  # (Tinkerex::Registration still reads the raw string for its own refusal. When it moves to this
+  # answer, HAND it the name rather than call a raising reader from its own initializer: one typo,
+  # one refusal.)
+  #
+  # REJECT, NEVER NORMALISE: " share" and "S3" are an operator's typo, and fixing them silently would
+  # leave the deployment running on a guess nobody wrote down. Returns the member of NAMES itself,
+  # never the raw string, so nothing downstream holds a value no check has seen.
+  def self.configured(env: ENV)
+    return nil if unset?(env)
+
+    raw = env["LIBRARY_BACKEND"]
+    name = NAMES.find { |known| known == raw }
+    return name if name
+
+    retired = " (#{RETIRED[raw]})" if RETIRED.key?(raw)
+    raise UnknownBackend, "unknown LIBRARY_BACKEND #{raw.inspect}#{retired}: expected one of #{NAMES.join(' | ')}"
+  end
+
+  # Unset and blank are ONE state, defined once: an empty line in a .env or a compose variable that
+  # expanded to nothing names no backend any more than a missing one does. `configured` and
+  # required_in_production! both ask this, so the two cannot disagree about what "unset" means.
+  def self.unset?(env) = env["LIBRARY_BACKEND"].to_s.strip.empty?
+  private_class_method :unset?
+
+  # THE BOOT'S QUESTION, AND config/initializers/library_backend_check.rb's ONLY CALL (pinned
+  # statically by library_backend_required_test.rb: the test env skips that file). Each state gets
+  # one answer. UNKNOWN refuses every boot -- `bin/rails db:prepare` in the entrypoint included --
+  # rather than booting into a 500 on every response. NAMED runs that backend's own check!. NOTHING
+  # NAMED is the one answer that depends on the environment: production refuses
+  # (required_in_production!), development boots and the factory builds share. Do NOT make
+  # development refuse it as well -- measured, that breaks an unconfigured dev box's `bin/setup` one
+  # step EARLIER rather than fixing anything (§14a).
+  def self.boot!(env: ENV, production: Rails.env.production?)
+    name = configured(env:)
+    return check!(env:, backend: name) if name
+
+    required_in_production!(env:, production:)
+  end
+
   # The knobs an s3 library cannot be built without. NOT LIBRARY_S3_REGION — it defaults to
   # "auto" (R2's value, matching Storage::S3ChunkStore's own default), and NOT LIBRARY_S3_ENDPOINT
   # or LIBRARY_S3_PREFIX, which are genuinely optional (endpoint = R2/SeaweedFS/MinIO; prefix = a
@@ -89,43 +157,48 @@ module LibraryBackendCheck
   # good value from a bad one.
   CHUNK_REMOTE_REQUIRED = %w[CHUNK_REMOTE_URL SYNC_ADMIN_TOKEN SYNC_PUBLIC_URL].freeze
 
-  # Reads the same ENV vars, with the same defaults, as FileLayer.build — the factory calls this
+  # One backend's own configuration, for a NAME its caller already resolved: boot! passes what
+  # `configured` read, and each of FileLayer.build's arms passes its own -- the factory calls this
   # too, so a bad configuration gets this explanation even when the boot guard did not run (the
   # test env) or when ENV changed after boot.
   #
-  # ONE injection seam: `env`. This used to be `check!(backend:, path:)`, and phase 3 could have
-  # bolted an `env:` beside it for s3's five knobs — but `path:` was only ever env["LIBRARY_PATH"]
-  # spelled differently, and two ways to inject config into one method is how the third backend
-  # invents a third way. `backend:` defaults out of the same Hash (kwarg defaults evaluate left to
-  # right, so `env` is bound by the time it is read), which also retires a second, separate read
-  # of the real ENV.
+  # `backend:` HAS NO DEFAULT, AND THAT IS THE FIX. It defaulted to env.fetch("LIBRARY_BACKEND",
+  # "chunk") until 2026-10-19 -- the retired name, matching no arm, as a "check nothing" sentinel --
+  # and that private default had already drifted from the factory's once (§14a: the one backend
+  # reachable without setting LIBRARY_BACKEND was the one the guard never checked).
+  #
+  # ONE injection seam for configuration: `env`. This used to be `check!(backend:, path:)`, and
+  # phase 3 could have bolted an `env:` beside it for s3's five knobs — but `path:` was only ever
+  # env["LIBRARY_PATH"] spelled differently, and two ways to inject config into one method is how
+  # the third backend invents a third way.
   #
   # A hybrid was considered and is a TRAP, recorded so it is not "restored": `path: nil` cannot
   # mean both "unset" and "not passed". The existing share tests pass `path: nil` and expect a
   # raise, but the share CI leg runs with LIBRARY_PATH set — so a `path:` defaulting to
   # env["LIBRARY_PATH"] would silently read the ambient value and those tests would stop testing.
-  def self.check!(env: ENV, backend: env.fetch("LIBRARY_BACKEND", "chunk"))
+  def self.check!(backend:, env: ENV)
     case backend
     when "share" then check_share!(env["LIBRARY_PATH"])
     when "s3"    then check_s3!(env)
     when "chunk_remote" then check_chunk_remote!(env)
     end
-    # No `else`: an unknown backend is FileLayer.build's ArgumentError to raise, not this guard's.
-    # Duplicating it here would give the operator two different messages for one typo.
+    # No `else`: both callers pass a name `configured` has already validated, and an unknown value
+    # is refused THERE, once, with one message.
   end
 
-  # PRODUCTION REFUSES TO BOOT WITH NO BACKEND NAMED. check!'s own default (`chunk`, deliberately
-  # NOT the factory's `share` — §14a) lets an unconfigured development box boot; in production the
-  # same gap used to boot cleanly and then 500 on EVERY request, /up included, because the CSP
-  # header's connect_src lambda resolves FileLayer.current per response and the raise happens in
-  # middleware. Exempt: the image build's assets:precompile, which Rails marks with
-  # SECRET_KEY_BASE_DUMMY and which boots production with nothing set.
+  # PRODUCTION REFUSES TO BOOT WITH NO BACKEND NAMED -- boot!'s answer for the nothing-named state.
+  # Development boots on it and the factory builds share (§14a); in production the same gap used to
+  # boot cleanly and then 500 on EVERY request, /up included, because the CSP header's connect_src
+  # lambda resolves FileLayer.current per response and the raise happens in middleware. Exempt: the
+  # image build's assets:precompile, which Rails marks with SECRET_KEY_BASE_DUMMY and which boots
+  # production with nothing set. An UNKNOWN value is not this method's to judge: boot! asks
+  # `configured` first, which refuses it in every environment.
   def self.required_in_production!(env: ENV, production: Rails.env.production?)
     return nil unless production
     return nil if env["SECRET_KEY_BASE_DUMMY"].present?
-    return nil if env["LIBRARY_BACKEND"].to_s.strip.present?
+    return nil unless unset?(env)
 
-    raise Error, "LIBRARY_BACKEND is not set (share | s3 | chunk_remote). A production deployment " \
+    raise Error, "LIBRARY_BACKEND is not set (#{NAMES.join(' | ')}). A production deployment " \
                  "must name its library backend; without one every request, /up included, answers 500."
   end
 
