@@ -2,6 +2,7 @@ require "test_helper"
 require_relative "adapter_contract"
 require_relative "adapter_write_contract"
 require_relative "adapter_mutation_contract"
+require_relative "adapter_trash_entry_contract"
 
 module FileLayer
   # The Share adapter over a plain mounted directory: no chunks, no versions, no history —
@@ -13,6 +14,7 @@ module FileLayer
     # module: Phase 3's S3 adapter includes it, and so cannot answer these differently.
     include FileLayerWritableContract
     include FileLayerMutationContract
+    include FileLayerTrashEntryContract
 
     # The hooks FileLayerMutationContract requires. Share's real door for creating a file is the
     # port's own write, which is exactly what the four extracted tests used inline before they
@@ -22,6 +24,15 @@ module FileLayer
     end
 
     def make_dir(name:) = adapter.mkdir(@user, parent_node_id: nil, name:).node_id
+
+    # FileLayerTrashEntryContract's purge hook: Library::TrashPurgeJob reclaiming an aged entry, which
+    # removes the entry DIRECTORY and never touches a row.
+    def purge_trash_entry!(node_id) = FileUtils.rm_rf(@root.join(Library::Scanner::TRASH_PREFIX, node_id))
+
+    # And its other hook: one member's bytes gone from inside an entry, no row touched.
+    def lose_from_trash_entry!(root_id, path)
+      FileUtils.rm_rf(@root.join(Library::Scanner::TRASH_PREFIX, root_id, path))
+    end
 
     setup do
       @root = Pathname.new(Dir.mktmpdir("share-test"))
@@ -1256,6 +1267,9 @@ module FileLayer
 
       assert_equal "F/c.stl", @user.nodes.find_by!(node_id: gone_id).storage_path,
                    "the folder delete rewrote a scan tombstone into the trash shape"
+      assert_nil @user.nodes.find_by!(node_id: gone_id).trash_root_node_id,
+                 "the folder delete filed a scan tombstone into its entry"
+      assert_equal dir_id, @user.nodes.find_by!(node_id: keep_id).trash_root_node_id
       assert_not_includes adapter.trashed(@user).map(&:node_id), gone_id
 
       adapter.undelete(@user, node_id: dir_id)
@@ -1280,6 +1294,8 @@ module FileLayer
 
       assert_equal stamped, @user.nodes.find_by!(node_id: old_id).updated_at,
                    "the folder delete re-stamped a tombstone it did not make"
+      assert_equal old_id, @user.nodes.find_by!(node_id: old_id).trash_root_node_id,
+                   "the folder delete claimed an older entry as its own"
       entry = adapter.trashed(@user).find { |e| e.node_id == old_id }
       assert_operator entry.deleted_at, :<, 2.days.ago, "the trash dates it to the folder's delete"
     end

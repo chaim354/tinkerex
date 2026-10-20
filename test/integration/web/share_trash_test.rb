@@ -87,6 +87,20 @@ module Web
              "and the trashed bytes must survive the refusal"
     end
 
+    # THE REFUSAL NAMES THE FOLDER THAT WAS DELETED, not the nearest one. A file two levels down in
+    # a deleted folder went into that folder's trash entry; naming its own parent sent the maker to
+    # restore `sub`, which is refused the same way, one level at a time up a nested folder.
+    test "a refused restore names the folder whose delete took the file" do
+      file_id = index!("F/sub/x.stl", "x")
+      delete file_path(@user.nodes.find_by!(storage_path: "F", kind: "dir").node_id)
+
+      post restore_trash_path(file_id)
+
+      assert_redirected_to trash_index_path
+      assert_match(/Restore "F" first/, flash[:alert])
+      assert @user.nodes.find_by!(node_id: file_id).deleted, "a refused restore must not half-apply"
+    end
+
     # THE LIE TASK 7 REPORTED, in the spelling it reported it in. The size lives on the node row
     # here, not on a Version, and the page has to read the port to find it.
     test "the trash reports a real size on the share backend -- it used to be an em-dash" do

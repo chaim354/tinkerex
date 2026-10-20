@@ -2,6 +2,7 @@ require "test_helper"
 require_relative "adapter_contract"
 require_relative "adapter_write_contract"
 require_relative "adapter_mutation_contract"
+require_relative "adapter_trash_entry_contract"
 require_relative "../../support/fake_s3"
 
 module FileLayer
@@ -21,6 +22,7 @@ module FileLayer
     # S3#write put_object straight over the user's file while Share, three feet away, refuses.
     include FileLayerWritableContract
     include FileLayerMutationContract
+    include FileLayerTrashEntryContract
 
     # The hooks FileLayerMutationContract requires. S3's real door for creating a file is the
     # port's own write, which is exactly what the four extracted tests used inline before they
@@ -30,6 +32,18 @@ module FileLayer
     end
 
     def make_dir(name:) = adapter.mkdir(@user, parent_node_id: nil, name:).node_id
+
+    # FileLayerTrashEntryContract's purge hook: Library::TrashPurgeJob reclaiming an aged entry, which
+    # deletes every object under its first segment after `.trash/` and never touches a row.
+    def purge_trash_entry!(node_id)
+      entry = "#{PREFIX}/#{Library::Scanner::TRASH_PREFIX}/#{node_id}/"
+      @fake.objects.delete_if { |key, _| key.start_with?(entry) }
+    end
+
+    # And its other hook: one member's object gone from inside an entry, no row touched.
+    def lose_from_trash_entry!(root_id, path)
+      @fake.objects.delete("#{PREFIX}/#{Library::Scanner::TRASH_PREFIX}/#{root_id}/#{path}")
+    end
 
     PREFIX = "library".freeze
 
@@ -2022,10 +2036,21 @@ module FileLayer
       assert stored?("parts/b.stl"), "a source was deleted despite the failure"
     end
 
-    test "an empty directory deletes" do
+    # The degenerate walk: the entry is the folder's marker alone. It must come back as the marker too,
+    # or the next scan finds nothing at the prefix and tombstones the folder it just restored.
+    test "an empty directory deletes and restores too" do
+      create_file!(name: "ballast.stl", bytes: "still here")
       dir_id = make_dir(name: "empty")
       adapter.delete(@user, node_id: dir_id)
       assert @user.nodes.find_by!(node_id: dir_id).deleted?
+
+      adapter.undelete(@user, node_id: dir_id)
+
+      assert stored?("empty/"), "the folder's marker did not come back"
+      refute stored?(".trash/#{dir_id}/empty/"), "the entry was not consumed"
+      scan!
+      assert_equal dir_id, @user.nodes.present.find_by(storage_path: "empty", kind: "dir")&.node_id,
+                   "the restored folder did not survive the next scan as itself"
     end
 
     # A SCAN TOMBSTONE IS NOT PART OF THE FOLDER. The walk returns tombstones (FileLayer::Subtree)
@@ -2051,6 +2076,7 @@ module FileLayer
       [ dir_id, live_id ].each { |id| assert_nil @user.nodes.find_by!(node_id: id).storage_path }
       assert_equal "cad/b.stl", gone.reload.storage_path,
                    "the folder delete rewrote a scan tombstone into the trash shape"
+      assert_nil gone.trash_root_node_id, "the folder delete filed a scan tombstone into its entry"
       assert_not_includes adapter.trashed(@user).map(&:node_id), gone_id
     end
 
@@ -2177,6 +2203,174 @@ module FileLayer
                    "#{id}'s bytes are in the entry, but it is not a trash tombstone"
       end
       assert_equal ids.sort, (adapter.trashed(@user).map(&:node_id) & ids).sort
+    end
+
+    # ONE PRECONDITION FOR EVERY COPY A DELETE MAKES, a folder's members included. The single-file
+    # path always sent the row's ETag as copy_source_if_match; the folder path sent nothing, so a
+    # member another tool had overwritten since the scan was trashed — and then deleted from its key
+    # — with bytes nobody indexed. Refusing until the next scan re-reads the member is the file
+    # path's existing answer, now the folder's too.
+    test "a folder delete refuses when a member changed since the scan, and moves nothing" do
+      dir_id = make_dir(name: "parts")
+      adapter.write(@user, parent_node_id: dir_id, name: "a.stl", io: StringIO.new("a"))
+      leaf_id = adapter.write(@user, parent_node_id: dir_id, name: "b.stl", io: StringIO.new("b")).node_id
+      @fake.seed!("#{PREFIX}/parts/b.stl", "overwritten by someone else")
+
+      assert_raises(FileLayer::FetchError) { adapter.delete(@user, node_id: dir_id) }
+
+      refute @user.nodes.find_by!(node_id: leaf_id).deleted?, "a member was tombstoned anyway"
+      assert_equal "overwritten by someone else", @fake.objects["#{PREFIX}/parts/b.stl"].body
+      assert stored?("parts/a.stl"), "a source was deleted despite the refusal"
+    end
+
+    # ---- Restoring a DIRECTORY (2026-10-20, F-S03-1 step 2) ----------------------------------
+    #
+    # The inverse of the cascade above: read the entry exactly as #delete wrote it, copy every member
+    # back, put each marker back, revive the rows top-down, re-root what did not come back, and only
+    # then sweep the entry. The rows that can come back are the ones `trash_root_node_id` says the
+    # delete moved; which of them do is what came back into the entry.
+
+    test "restoring a directory returns the subtree with the same node ids and the same bytes" do
+      dir_id = make_dir(name: "parts")
+      sub_id = adapter.mkdir(@user, parent_node_id: dir_id, name: "stl").node_id
+      leaf_id = adapter.write(@user, parent_node_id: sub_id, name: "a.stl",
+                              io: StringIO.new("solid a\n")).node_id
+      attachment = attach!(leaf_id)
+
+      adapter.delete(@user, node_id: dir_id)
+      adapter.undelete(@user, node_id: dir_id)
+
+      # THE NODE IDS ARE WHAT EVERY ATTACHMENT, BOM LINE AND TAG IS KEYED ON. A restore that minted
+      # new ones would look perfect — the files are back, the bytes are right — while every project
+      # that referenced them has quietly lost them.
+      [ dir_id, sub_id, leaf_id ].each do |id|
+        assert @user.nodes.present.exists?(node_id: id), "#{id} did not come back as itself"
+      end
+      assert_equal "parts/stl/a.stl", @user.nodes.find_by!(node_id: leaf_id).storage_path
+      assert_equal "solid a\n", adapter.read(@user, node_id: leaf_id)
+      assert_not orphaned?(attachment)
+      %w[parts/ parts/stl/].each { |marker| assert stored?(marker), "#{marker} did not come back" }
+      assert_empty @fake.objects.keys.grep(%r{\A#{PREFIX}/\.trash/#{dir_id}/}), "the entry was not consumed"
+
+      scan!(max_delete_pct: 100)
+      assert_equal leaf_id, @user.nodes.present.find_by(storage_path: "parts/stl/a.stl")&.node_id,
+                   "the next scan minted a new node_id for the restored bytes"
+    end
+
+    # THE RESTORE READS THE ENTRY ROOT-RELATIVE, as the delete wrote it: `.trash/<root id>/<root
+    # name>/<path beneath>`, never the folder's former full path, which the cascade NULLed and which
+    # for a nested folder carries ancestors the entry does not hold.
+    test "a nested folder restores from its root-relative entry, beside its parent's marker" do
+      cad_id = make_dir(name: "cad")
+      parts_id = adapter.mkdir(@user, parent_node_id: cad_id, name: "parts").node_id
+      stl_id = adapter.mkdir(@user, parent_node_id: parts_id, name: "stl").node_id
+      leaf_id = adapter.write(@user, parent_node_id: stl_id, name: "a.stl",
+                              io: StringIO.new("solid a\n")).node_id
+      adapter.delete(@user, node_id: parts_id)
+
+      adapter.undelete(@user, node_id: parts_id)
+
+      assert_equal "solid a\n", @fake.objects["#{PREFIX}/cad/parts/stl/a.stl"]&.body
+      %w[cad/ cad/parts/ cad/parts/stl/].each { |marker| assert stored?(marker), "#{marker} is missing" }
+      assert_empty @fake.objects.keys.grep(%r{\A#{PREFIX}/\.trash/}), "the entry was not consumed"
+      assert_equal "cad/parts/stl/a.stl", @user.nodes.find_by!(node_id: leaf_id).storage_path
+    end
+
+    # A FOLDER'S DESTINATION IS A WHOLE PREFIX. A HEAD on `<key>` and `<key>/` cannot see a folder the
+    # bucket holds only as keys beneath it (no marker, not yet indexed), and restoring into one would
+    # merge the entry into somebody else's files. Refused, with nothing copied and the entry intact.
+    test "a folder restore refuses a prefix something else now holds, and copies nothing" do
+      dir_id = make_dir(name: "parts")
+      leaf_id = adapter.write(@user, parent_node_id: dir_id, name: "a.stl", io: StringIO.new("a")).node_id
+      adapter.delete(@user, node_id: dir_id)
+      @fake.seed!("#{PREFIX}/parts/other.stl", "someone else's") # an unindexed folder, no marker
+      copies = @fake.calls[:copy_object]
+
+      assert_raises(FileLayer::UnsupportedOperation) { adapter.undelete(@user, node_id: dir_id) }
+
+      assert_equal copies, @fake.calls[:copy_object], "a refused restore copied something"
+      refute stored?("parts/a.stl")
+      assert stored?(".trash/#{dir_id}/parts/a.stl"), "the entry did not survive the refusal"
+      assert @user.nodes.find_by!(node_id: leaf_id).deleted?
+    end
+
+    # THE COPY PHASE IS ALL OR NOTHING, BY COMPENSATION. S3 has no multi-key transaction, so a copy
+    # failing on the second member leaves the first copied back at its key with every row still in
+    # the trash — an unclaimed key the next scan indexes under a NEW node_id (§14a's landmine, from
+    # the restore side). So every key the phase wrote is deleted again before the FetchError: the
+    # library is as it was, the entry is intact, and the retry starts clean.
+    test "a folder restore whose copy fails partway revives nothing and leaves no copied-back object" do
+      dir_id = make_dir(name: "parts")
+      ids = %w[a.stl b.stl].map do |name|
+        adapter.write(@user, parent_node_id: dir_id, name:, io: StringIO.new(name)).node_id
+      end
+      adapter.delete(@user, node_id: dir_id)
+      @fake.fault_after!(:copy_object, 1, "InternalError")
+
+      assert_raises(FileLayer::FetchError) { adapter.undelete(@user, node_id: dir_id) }
+
+      @fake.clear_faults!
+      [ dir_id, *ids ].each do |id|
+        assert @user.nodes.find_by!(node_id: id).deleted?, "#{id} was revived by a failed restore"
+      end
+      %w[parts/ parts/a.stl parts/b.stl].each { |rel| refute stored?(rel), "#{rel} was left copied back" }
+      %w[parts/ parts/a.stl parts/b.stl].each do |rel|
+        assert stored?(".trash/#{dir_id}/#{rel}"), "the entry lost #{rel}"
+      end
+      assert_nothing_raised { adapter.undelete(@user, node_id: dir_id) }
+      assert_equal %w[a.stl b.stl], ids.map { |id| adapter.read(@user, node_id: id) }
+    end
+
+    # A FOLDER IS BACK WHEN ANYTHING BENEATH IT CAME BACK, A DEEPER FOLDER'S MARKER INCLUDED. `F` and
+    # `F/sub` exist only as keys here (the observer synthesized both: no markers) and `F/sub/empty` was
+    # made by the app's mkdir (a marker). `sub`'s only file goes on its own, then `F` is deleted and
+    # restored. Counting only FILES beneath left `sub` in the trash while `empty` went live under it:
+    # the next scan minted a new node_id for `F/sub`, and `sub`'s own restore answered NotFound.
+    test "a folder held up only by a deeper folder's marker comes back with it" do
+      @fake.seed!("#{PREFIX}/F/sub/seed.stl", "seed", last_modified: Time.now)
+      scan!(max_delete_pct: 100)
+      f_id = @user.nodes.find_by!(storage_path: "F", kind: "dir").node_id
+      sub_id = @user.nodes.find_by!(storage_path: "F/sub", kind: "dir").node_id
+      empty_id = adapter.mkdir(@user, parent_node_id: sub_id, name: "empty").node_id
+      adapter.delete(@user, node_id: @user.nodes.find_by!(storage_path: "F/sub/seed.stl").node_id)
+      refute stored?("F/") || stored?("F/sub/"), "precondition: F and F/sub carry no marker"
+
+      adapter.delete(@user, node_id: f_id)
+      adapter.undelete(@user, node_id: f_id)
+
+      [ f_id, sub_id, empty_id ].each do |id|
+        assert @user.nodes.present.exists?(node_id: id), "#{id} did not come back as itself"
+      end
+      scan!(max_delete_pct: 100)
+      assert_equal sub_id, @user.nodes.present.find_by(storage_path: "F/sub")&.node_id,
+                   "the next scan minted a new node_id for F/sub"
+      assert_trash_spellings_agree "after restoring a folder held up by a deeper marker"
+    end
+
+    # A RESTORE THAT FAILS BEFORE ITS FOLDER IS BACK RE-ROOTS NOTHING. What a restore leaves behind is
+    # released in `ensure`, but only once the root is live again: here a scan racing the restore indexes
+    # the folder's path between the copy back and the revive (simulated inside the marker's PUT), so the
+    # root's own revive raises RecordNotUnique. Its members must still name it, or a retry once the race
+    # is cleared would bring the folder back without them.
+    test "a folder restore that fails before the folder is back keeps every member in its entry" do
+      dir_id = make_dir(name: "parts")
+      leaf_id = adapter.write(@user, parent_node_id: dir_id, name: "a.stl", io: StringIO.new("a")).node_id
+      adapter.delete(@user, node_id: dir_id)
+      user, fake = @user, @fake
+      @fake.client.stub_responses(:put_object, lambda { |ctx|
+        fake.seed!(ctx.params[:key], "")
+        if ctx.params[:key] == "#{PREFIX}/parts/"
+          user.nodes.create!(node_id: "scanned-#{SecureRandom.hex(4)}", name: "parts", kind: "dir",
+                             storage_path: "parts", deleted: false)
+        end
+        {}
+      })
+
+      assert_raises(ActiveRecord::RecordNotUnique) { adapter.undelete(@user, node_id: dir_id) }
+
+      assert @user.nodes.find_by!(node_id: dir_id).deleted?, "precondition: the folder did not come back"
+      assert_equal dir_id, @user.nodes.find_by!(node_id: leaf_id).trash_root_node_id,
+                   "a restore that never brought its folder back released the folder's members"
     end
   end
 end

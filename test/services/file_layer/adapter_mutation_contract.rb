@@ -28,22 +28,18 @@
 #
 # WHAT THIS DELIBERATELY DOES NOT PIN:
 #
-#   - DIRECTORY DELETION. That is `dir_deletable`, and both answers are correct: chunk cascades
-#     via Sync::SubtreeDelete, share strands children at paths that no longer exist while their
-#     bytes sit in .trash, s3 has no directory at all. Asserted below as a capability-conditional,
-#     never as one fixed expectation.
-#   - WHERE THE BYTES GO. Share's `.trash/<node_id>/<name>` layout is share's own test; s3 trashes
-#     by key prefix; chunk moves no bytes. Encoding one backend's storage layout in a shared
-#     contract is the leak the port exists to prevent.
-#   - `undelete`'s DESTINATION FOR AN ORPHAN is NOT on this list any more either. It used to read
-#     "Share restores under the (tombstoned) parent's path... chunk restores to the ROOT... Both
-#     are right for their backend" -- that divergence is now CLOSED: an orphaned restore is
-#     REFUSED on every backend that can reach the state at all, rather than answered differently
-#     per adapter (CLAUDE.md 14a has the full argument for why the old rule was overturned by its
-#     own recorded evidence). Pinned below, gated on `dir_deletable?` for the same reason the
-#     delete-refusal test further down is: a cascading directory delete is the only PORT door that
-#     ever produces a live child under a tombstoned parent, and share/s3 have no such door at all
-#     -- see test_mutation_contract_undelete_refuses_an_orphan_whose_parent_is_still_tombstoned.
+#   - HOW MANY CALLS A FOLDER RESTORE TAKES. Share and s3 bring the whole subtree back in one
+#     `undelete(folder)`; chunk_remote's sync server restores one node per call, so its child takes
+#     a second. Both are right for their trash, and the folder case below accepts either -- what it
+#     pins is that the folder and its contents come back AS THEMSELVES, folder first.
+#   - WHERE THE BYTES GO. Share's `.trash/<root id>/<root name>/...` layout is share's own test, s3's
+#     identical key shape is s3's; chunk moves no bytes. Encoding one backend's storage layout in a
+#     shared contract is the leak the port exists to prevent.
+#   - `undelete`'s DESTINATION FOR AN ORPHAN is NOT on this list any more, and neither is DIRECTORY
+#     DELETION: both were capability-conditional on the retired `dir_deletable`, and both are pinned
+#     below UNCONDITIONALLY now that every backend cascades a folder delete. An orphaned restore is
+#     REFUSED everywhere (CLAUDE.md 14a) -- see
+#     test_mutation_contract_undelete_refuses_an_orphan_whose_parent_is_still_tombstoned.
 #   - A MOVE ONTO A TAKEN NAME is NOT on this list any more -- Task 4 closed it. All three
 #     backends now refuse it identically through the port (UnsupportedOperation), pinned below
 #     rather than left to each adapter's own suite -- see
@@ -215,5 +211,29 @@ module FileLayerMutationContract
            "a child survived as a live node under a deleted directory"
     assert_nil @user.nodes.find_by!(node_id: child_id).storage_path,
                "a trash tombstone must release its path or create_or_revive! will revive it"
+  end
+
+  # THE INVERSE OF THE CASCADE ABOVE, AND WHAT MAKES OFFERING IT SAFE: a folder delete the user cannot
+  # undo is a delete nobody should be handed. UNCONDITIONAL — every backend cascades, so every
+  # backend must restore. How many calls that takes is the one permitted divergence (this file's
+  # header): share and s3 revive the subtree in the folder's own call; chunk_remote's sync server
+  # restores the child with a second one. Either way the folder comes back FIRST and its child comes
+  # back AS ITSELF — the same node_id, under that same folder, with its own bytes. On share and s3 a
+  # child the folder's call failed to revive cannot be rescued by the second call: it was never in an
+  # entry of its own, so that call answers NotFound and this goes red.
+  def test_mutation_contract_a_deleted_folder_comes_back_with_its_contents
+    dir_id = make_dir(name: "restore-me")
+    child_id = make_file(name: "kid.stl", bytes: "kid bytes")
+    adapter.move(@user, node_id: child_id, new_parent_node_id: dir_id, new_name: "kid.stl")
+    adapter.delete(@user, node_id: dir_id)
+
+    adapter.undelete(@user, node_id: dir_id)
+
+    assert_not @user.nodes.find_by!(node_id: dir_id).deleted, "the folder did not come back as itself"
+    adapter.undelete(@user, node_id: child_id) if @user.nodes.find_by!(node_id: child_id).deleted?
+    child = @user.nodes.find_by!(node_id: child_id)
+    assert_not child.deleted, "the child did not come back as itself"
+    assert_equal dir_id, child.parent_node_id, "the child came back outside its folder"
+    assert_equal "kid bytes", adapter.read(@user, node_id: child_id)
   end
 end

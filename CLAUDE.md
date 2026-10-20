@@ -464,14 +464,14 @@ area belongs there too, with a stub here.
   SubtreeDelete; **share** renames into `.trash` in one atomic call; **s3** copies-then-deletes per
   object, capped at `S3::DIR_DELETE_MAX_OBJECTS` and refusing above it, writing the catalog **only
   once the bucket agrees** (a delete failing *after* a tombstone leaves an unclaimed key that mints
-  a new `node_id` and orphans every attachment, silently). Both writable adapters tombstone the one
-  walk, `FileLayer::Subtree`, **by the parent edge, never a `storage_path` prefix** (a moved child's
-  path is stale until a scan pairs it). **`undelete` refuses an orphan** rather than reparenting to
-  the root — a refusal is recoverable, a scatter is not — discriminating on the **tombstone kind**,
-  not on `deleted:`: a SCAN tombstone keeps its path and restoring into one is self-healing, so
-  `parent&.deleted?` breaks it (measured). **`dir_deletable` was the 6th capability and is
-  RETIRED** — it gated this while share and s3 refused, then varied on nothing, and a capability
-  earns its place by **varying**.
+  a new `node_id` and orphans every attachment, silently). Both writable adapters walk
+  `FileLayer::Subtree` **by the parent edge, never a `storage_path` prefix** (a moved child's path
+  is stale until a scan pairs it), and tombstone only its LIVE rows. **`undelete` refuses an
+  orphan** rather than reparenting to the root — a refusal is recoverable, a scatter is not —
+  discriminating on **`trash_root_node_id`**, not on `deleted:`: a SCAN tombstone records no entry
+  and restoring into one is self-healing, so `parent&.deleted?` breaks it (measured).
+  **`dir_deletable` was the 6th capability and is RETIRED** — it gated this while share and s3
+  refused, then varied on nothing, and a capability earns its place by **varying**.
 - **`begin_upload`/`put_chunk`/`finalize_upload` are port verbs, and NONE of the three is the
   byte-taking `write` above.** The port never holds a byte: `begin_upload` returns presigned PUT
   URLs for whichever chunks the store is missing, and the caller PUTs straight to object storage —
@@ -595,23 +595,23 @@ area belongs there too, with a stub here.
   loop** (`node_ids.map { stat }` is behaviorally identical): the query count must be
   **constant in N**, asserted as constant rather than a literal (chunk_remote needs 2, share/s3 1).
 - **THE TWO TOMBSTONE KINDS — the thing most likely to get "simplified" away.** A **scan**
-  tombstone **keeps** `storage_path`; a **trash** tombstone **NULLs it** and is revivable
-  only by `undelete`. Collapse them and `Reconciler#create_or_revive!` hands a **new,
-  unrelated file the trashed node's `node_id`** — with every attachment, BOM link and tag —
-  while the old bytes await an `undelete` that then collides. Silent.
-- **Trash layout `.trash/<node_id>/<name>`, keyed by `node_id`** — which is *why* two
-  same-named deletes can't collide, and why `undelete` has one place to look.
+  tombstone **keeps** `storage_path`; a **trash** tombstone **NULLs it**, names its entry in
+  `trash_root_node_id` (the suites assert the two spellings agree on every row), and is revivable
+  only by `undelete`. Collapse them and `Reconciler#create_or_revive!` hands a **new, unrelated
+  file the trashed node's `node_id`** — with every attachment, BOM link and tag — while the old
+  bytes await an `undelete` that then collides. Silent.
+- **Trash layout `.trash/<root id>/<root name>/<path beneath>` on share and s3 alike** — keyed by
+  node_id, so same-named deletes never collide — and **MEMBERSHIP is `trash_root_node_id`, never
+  existence at a rebuilt key**: a restore revives only its own members, and re-roots any it leaves behind.
 - **`undelete` is a FOURTH port verb.** "Undelete is just a move back" is *precluded*:
   `move` starts with `live_node!` (a tombstone isn't live) and resolves via `storage_path`,
   which is NULL — it would rename the library root.
 - **Order is load-bearing both ways:** `delete` is **move-then-tombstone** (the reverse
   fails *silently* — the next scan resurrects it); `undelete` is **move-then-revive**.
   `EXDEV` → `FetchError`, **never** a copy+delete fallback.
-- **`delete` refuses directories; `move` ALLOWS them.** A dir delete strands children at
-  paths that no longer exist while their bytes sit in `.trash`, where the scan refuses to
-  look. A moved dir leaves the bytes observable **at an observable destination**, so pairing
-  rescues the children — that qualifier is load-bearing (see §14b). On **S3 both refuse
-  dirs**, because there is no directory and no rename: a dir node's key doesn't exist.
+- **Share's `move` ALLOWS directories; s3's refuses them** (no directory, no rename: a dir node's
+  key doesn't exist). A moved dir leaves the bytes observable **at an observable destination**, so
+  pairing rescues the children — that qualifier is load-bearing (see §14b).
 - **An unmounted share must never read as "your file is permanently gone":** `undelete` and
   `read` raise **`FetchError`** (retryable → 503), not `NotFound` (terminal → 404).
   `FetchError` → 503 and `UnsupportedOperation` → 422 are mapped once at `FilesController`.
