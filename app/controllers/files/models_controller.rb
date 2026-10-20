@@ -44,6 +44,9 @@ module Files
       # the ALREADY-LOADED :file_attachments include -- a `where.missing` would be a second query and
       # would disagree with what the cards render.
       @models.reject! { |m| m.auto? && m.file_attachments.empty? }
+      # GROUPED BY PROJECT (Maker::ModelProjects), AFTER every filter and the sort: an empty group never
+      # renders, and the chosen sort holds inside each one.
+      @groups = Maker::ModelProjects.group(current_user, @models)
       @covers = Maker::Previews::ThumbnailMap.for(current_user, @models.map(&:cover_node_id))
       @all_tags = current_user.maker_tags.order(:name).pluck(:name)
       @status = @filters[:status]

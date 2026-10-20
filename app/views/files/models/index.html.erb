@@ -53,12 +53,34 @@
 <%# Shelves are a Settings rule since slice 5, not navigation; this is the one pointer left to them. %>
 <p class="muted models-shelves-hint">Which folders count as models: <%= link_to "Settings → Shelves", settings_shelves_path %>.</p>
 
+<%# SORTED INTO PROJECTS (2026-10-20, Maker::ModelProjects): one group per project whose folder holds
+    a model, by project name, then "Not in a project" last. When no model is in any project there is
+    one group with no project, and it renders as the plain grid with no heading, because a lone "Not
+    in a project" heading over every model would tell the maker nothing. ONE thumbs controller
+    around every group, never one per grid: each instance polls on its own. %>
 <% if @models.empty? %>
   <p class="empty">No models yet. Import your first one.</p>
 <% else %>
-  <div class="projects-grid" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
-    <% @models.each do |model| %>
-      <%= render "models/card", model:, thumb: @covers.thumb(model.cover_node_id) %>
+  <% headed = @groups.any?(&:project) %>
+  <div class="models-groups" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+    <% @groups.each do |group| %>
+      <section class="models-group">
+        <% if headed %>
+          <h2 class="group-head">
+            <% if group.project %>
+              <%= link_to group.project.name, project_path(group.project) %>
+            <% else %>
+              Not in a project
+            <% end %>
+            <span class="muted">(<%= group.models.size %>)</span>
+          </h2>
+        <% end %>
+        <div class="projects-grid">
+          <% group.models.each do |model| %>
+            <%= render "models/card", model:, thumb: @covers.thumb(model.cover_node_id) %>
+          <% end %>
+        </div>
+      </section>
     <% end %>
   </div>
 <% end %>
