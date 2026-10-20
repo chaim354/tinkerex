@@ -50,8 +50,7 @@ module MoveConflicts
     #     rather than through the association, which is the one place the scoping is spelled by
     #     hand and so the one worth naming here. Both are safe by the same fact — @project comes
     #     from Projects::AttachmentsController#set_project (current_user.maker_projects).
-    #   Projects::UploadsController           — #attach_target (current_user.maker_projects /
-    #                                           .maker_build_log_entries).
+    #   Projects::UploadsController           — #create (current_user.maker_build_log_entries.find).
     #   Models::AttachmentsController         — #set_model (current_user.maker_models).
     #   Projects::EntryPhotosController       — current_user.maker_build_log_entries.find.
     #   V1::Maker::FileAttachmentsController  — #resolve_parent (current_user.public_send(...)).
