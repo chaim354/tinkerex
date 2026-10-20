@@ -33,13 +33,10 @@ module Projects
       attrs[:part_name] = nil unless kind == "text"
       case kind
       when "stock"
+        # The composer's unit field is for file and text lines. A stock line is counted in its
+        # item's unit, which Maker::BomLine#unit reads from the item at every door (audit F-S16-2),
+        # so nothing is looked up or copied here; a foreign item is the model's to refuse.
         return back_to(project, alert: "Pick a stock item.") if attrs[:inventory_item_id].blank?
-        # A STOCK LINE IS COUNTED IN ITS ITEM'S UNIT. Consume subtracts `quantity` from the item, so a
-        # line that said "2 kg" of an item stocked in "each" would take 2 each while the row read kg
-        # (found in review). The composer's unit field is for file and text lines; a stock line takes
-        # the item's. A foreign item resolves to nothing here and is left for the model to refuse.
-        item = current_user.maker_inventory_items.find_by(id: attrs[:inventory_item_id])
-        attrs[:unit] = item.unit if item
       when "file"
         # SCOPED TO THIS USER'S LIVE NODES, not a bare Node.find_by — an unscoped lookup would let
         # a crafted node_id point a line at another tenant's file (CLAUDE.md §8).

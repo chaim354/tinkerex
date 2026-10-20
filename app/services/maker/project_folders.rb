@@ -13,8 +13,12 @@ module Maker
   # it into one row per EXTENSION.
   #
   # THE ANSWER COMES FROM THE FILENAME, NEVER FROM A STORED `role` COLUMN. An attachment row's role
-  # is a snapshot taken when the row was written; a file can be swept before any row exists, and a
-  # stale row would misfile it. `role_for` is pure and current, and so is `ext_of` below.
+  # is written with the row, and a row stored `other` catches up with a later widening of
+  # ROLE_BY_EXT only when `Maker::FileAttachment.classify_unclassified!`'s daily sweep reaches it —
+  # the ONE mechanism that keeps stored roles following the vocabulary, so a widening needs no
+  # role re-derive migration (F-S33-1). Filing still cannot read the column: a file can be swept
+  # before any row exists, and a row can trail the table by up to a day. `role_for` is pure and
+  # current, and so is `ext_of` below.
   #
   # `default_folder_for`'S `fetch` WITH NO DEFAULT IS THE GUARD ROLE_FOLDERS STILL NEEDS. It is
   # LOUD if ever reached — an unmapped role raises KeyError, not a swallowed default. What makes

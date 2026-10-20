@@ -347,6 +347,58 @@ module Web
       assert_select ".project-hero", { count: 0 }, "a hidden folder's image must not be the page's largest picture"
     end
 
+    # HIDDEN IS DECIDED BY ANCESTRY, NEVER BY THE CAPPED LISTING (F-S14-1). The listing stops at
+    # FILE_CAP in NAME order across the whole folder, so a picture in a hidden folder whose name
+    # sorts past the cap is not in it. The hero (`find_by`) and an image block (`page_nodes`)
+    # resolve nodes outside the listing, so a rule built from the listing never saw them: the hidden
+    # folder's picture became the page's largest image. The audit traced this and this test drives
+    # it. The rows are plain, with no bytes, because only the cap is under test, the same seeding
+    # public_bundle_test.rb uses. The picture is real, because the last request downloads it: the
+    # file stays permitted.
+    test "a hidden folder's picture past FILE_CAP is neither the hero nor an image block, and still delivers" do
+      Maker::ProjectFolderListing::FILE_CAP.times do |i|
+        @user.nodes.create!(node_id: "cap-#{i}", name: format("cap-%03d.stl", i), kind: "file",
+                            parent_node_id: @f[:folder].node_id, size: 1, mtime: 1)
+      end
+      late = make_file!(@user, "z.jpg", @f[:photos], body: PublicFixture::PNG_BYTES)
+      block = @project.blocks.create!(user: @user, kind: "image", node_id: late.node_id)
+      @project.update_column(:cover_node_id, late.node_id)
+      @project.update!(panels: { "hidden" => [ Maker::ProjectKind.folder_key(@f[:photos].node_id) ] })
+      assert_nil Maker::ProjectFolderListing.new(@user, @project.reload).row_for(late.node_id),
+                 "the precondition: the capped listing does not hold the picture"
+
+      get path
+
+      assert_response :success
+      assert_select ".project-hero", { count: 0 }, "a hidden folder's picture must not be the hero past the cap either"
+      assert_select "section.block-panel[id=?]", block.layout_key, { count: 0 },
+                    "nor an image block, which would be the Photos leak with a caption under it"
+
+      get public_file_path("ada", @project.slug, late.node_id)
+      assert_response :success, "hidden is not unpermitted: the file still answers its own link"
+    end
+
+    # THE THUMBNAIL MAP IS WHAT THE PAGE PAINTS, NOT EVERYTHING IT MAY DELIVER (F-S14-1). Building the
+    # map from every listed and referenced file queued renders on an anonymous GET for files the page
+    # never draws: a hidden folder's file, and a backup, which a visitor's page never renders.
+    # `content_hash` is stamped on all three because the backfill skips a node with no content token,
+    # and without it the two refusals would pass whatever the map held. The painted image is the
+    # control: it shows the GET did backfill.
+    test "a visit backfills thumbnails for what the page paints, never a hidden folder's file or a backup" do
+      backup = make_file!(@user, "sign_backup.lbrn2", @f[:folder], body: "<LightBurnProject/>")
+      [ @f[:pic], @f[:deep_file], backup ].each { |node| node.update!(content_hash: "h-#{node.node_id}") }
+      @project.update!(panels: { "hidden" => [ Maker::ProjectKind.folder_key(@f[:models].node_id) ] })
+
+      get path
+
+      assert_response :success
+      assert @user.maker_previews.exists?(node_id: @f[:pic].node_id, kind: "thumbnail"),
+             "the control: a painted image's thumbnail is queued"
+      assert_not @user.maker_previews.exists?(node_id: @f[:deep_file].node_id),
+                 "models/deep/x.stl sits under a hidden folder and is painted nowhere"
+      assert_not @user.maker_previews.exists?(node_id: backup.node_id), "a backup is never painted for a visitor"
+    end
+
     # --- 7. the BOM: three columns, and what is absent ------------------------------
 
     test "the public BOM has exactly Ref, Part and Qty" do
@@ -363,6 +415,18 @@ module Web
       assert_not_includes body, "Acme Supply", "who they buy from is a private business relationship"
       assert_select "table.public-bom .col-stock", false
       assert_select "table.public-bom .col-supplier", false
+    end
+
+    # A STOCK LINE IS PUBLISHED IN ITS ITEM'S UNIT (audit F-S16-2), the unit the maker's own Consume
+    # counts it in. The fixture saved the line in "each", so after this edit only a table that asks
+    # the item can say "pack"; one that prints the line's own column still says "2 each".
+    test "a public BOM stock line shows its item's current unit" do
+      @f[:item].update!(unit: "pack")
+
+      get path
+      assert_select "table.public-bom tbody tr", text: /M3 bolt/ do
+        assert_select "td.col-qty", text: "2 pack"
+      end
     end
 
     test "a BOM file line links to the public file URL" do
@@ -508,6 +572,21 @@ module Web
                     public_file_preview_path("ada", @project.slug, original.node_id, "thumbnail")
       assert_select ".project-hero img[src=?]", public_file_path("ada", @project.slug, original.node_id),
                     { count: 0 }, "a .heic must not be embedded as raw bytes"
+    end
+
+    # THE HERO IS THE MAP'S FIRST TERM (F-S14-1). A cover attached from OUTSIDE the folder is in
+    # neither the listing nor `page_nodes`, which were the two sources the map was built from. Its
+    # READY thumbnail never reached the hero, while the card and the maker's own hero showed it. An
+    # STL is the shape this takes, because a 3D-print project's derived cover prefers a model.
+    test "a cover attached from outside the folder leads with its ready thumbnail" do
+      @project.file_attachments.create!(user: @user, node_id: @f[:outsider].node_id, role: "model", position: 0)
+      ready_cover!(@f[:outsider])
+      @project.update_column(:cover_node_id, @f[:outsider].node_id)
+
+      get path
+
+      assert_select ".project-hero img[src=?]",
+                    public_file_preview_path("ada", @project.slug, @f[:outsider].node_id, "thumbnail")
     end
 
     test "a cover the project does not permit renders no hero at all" do

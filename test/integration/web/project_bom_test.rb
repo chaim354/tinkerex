@@ -226,11 +226,23 @@ module Web
     # A STOCK LINE IS COUNTED IN ITS ITEM'S UNIT. Consume subtracts the line's quantity from the item,
     # so the unit the row shows must be the unit the item is stocked in; the composer's unit field
     # applies to file and text lines only (review, 2026-09-04).
+    #
+    # THE RULE IS THE MODEL'S, NOT THIS DOOR'S (audit F-S16-2): Maker::BomLine#unit reads the item,
+    # and the door copies nothing. This stays green with the door's old lookup-and-copy deleted and
+    # goes red when the model's rule is reverted, which is what shows the rule moved rather than
+    # vanished. A unit the form never offers is overridden as well, not refused.
     test "a stock line takes its item's unit, whatever the composer sent" do
       item = item!(name: "PETG", unit: "kg")
-      post project_bom_lines_path(@project),
-           params: { bom_line: { target_kind: "stock", inventory_item_id: item.id, quantity: "2", unit: "each" } }
-      assert_equal "kg", Maker::BomLine.last.unit
+      assert_difference "Maker::BomLine.count", 2 do
+        post project_bom_lines_path(@project),
+             params: { bom_line: { target_kind: "stock", inventory_item_id: item.id, quantity: "2", unit: "each" } }
+        post project_bom_lines_path(@project),
+             params: { bom_line: { target_kind: "stock", inventory_item_id: item.id, quantity: "3", unit: "furlong" } }
+      end
+      assert_equal %w[kg kg], @project.current_bom.lines.map(&:unit)
+
+      get project_path(@project)
+      assert_equal [ "2 kg", "3 kg" ], css_select("table.bom-lines td.col-qty").map { |td| td.text.strip }
     end
 
     test "target_kind text with a blank part name is refused" do
@@ -267,8 +279,9 @@ module Web
 
     # --- quantity and unit validation ------------------------------------------------------------
 
-    # THE UNIT CASE IS A TEXT LINE ON PURPOSE: a stock line takes its item's unit at the door, so a
-    # bad unit on one is overridden, not refused; only file and text lines carry the composer's.
+    # THE UNIT CASE IS A TEXT LINE ON PURPOSE: a stock line is counted in its item's unit
+    # (Maker::BomLine#unit), so a bad unit sent for one is overridden, not refused; only file and
+    # text lines carry the composer's.
     test "quantity and unit are validated" do
       item = item!(name: "NEMA17")
       assert_no_difference "Maker::BomLine.count" do

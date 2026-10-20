@@ -252,9 +252,6 @@ root to: "home#index"
     # Free-form spreadsheets. Shallow like tasks and build-log entries: create is nested under the
     # project, the grid page and its autosave/CSV live at /sheets/:id.
     resources :sheets, only: %i[create show update destroy], module: :projects, shallow: true
-    # Inline upload-and-attach (share/s3 multipart write). Chunk mode uploads via
-    # /files/{begin,finalize}_upload then POSTs the node_id to the attachments endpoint.
-    resources :uploads, only: :create, module: :projects
     # "Look at my library NOW" — the per-project scan button. SINGULAR: there is no scan record
     # and nothing to identify, only a verb. It is nested rather than shallow because the project is
     # what the redirect and the flash are about, and the door files nothing on a scannable backend
@@ -304,7 +301,10 @@ root to: "home#index"
   # attachment_path.)
   post "attachments", to: "projects/attachments#create", as: :attachments
 
-  # Inline photo upload on a build-log entry (share/s3 multipart), same Projects::UploadsController.
+  # Inline photo upload on a build-log entry (share/s3 multipart write). Chunk mode uploads via
+  # /files/{begin,finalize}_upload, then POSTs the node_id to entry_photos below. This is
+  # Projects::UploadsController's only route: the project-level one went in F-S21-1 (2026-10-19),
+  # because the top bar uploads into a project's folder through FilesController.
   resources :build_log_entries, only: [], module: :projects do
     resources :uploads, only: :create
   end

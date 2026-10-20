@@ -33,6 +33,18 @@ module Web
       post files_path, params: { file: files.size == 1 ? files.first : files }
     end
 
+    # The house stub helper (Minitest 6 has no Object#stub). Replaces a SINGLETON method for the
+    # block, removing an inherited one after.
+    def replacing(owner, name, replacement)
+      mod = owner.singleton_class
+      own = mod.instance_methods(false).include?(name)
+      original = mod.instance_method(name)
+      mod.define_method(name, &replacement)
+      yield
+    ensure
+      own ? mod.define_method(name, original) : mod.remove_method(name)
+    end
+
     # --- the batch lands -------------------------------------------------------------------
 
     test "three files in one selection all land, and the flash counts them" do
@@ -126,6 +138,37 @@ module Web
       assert_match(/b\.stl/, flash[:alert].to_s)
     end
 
+    # --- WHAT THE PORT REFUSES BY NAME, MID-BATCH (F-S21-2) ------------------------------------
+    #
+    # Both writable adapters raise FileLayer::NotFound for a condition that belongs to ONE file: a
+    # name the library reserves (`.DS_Store`, `._x`, `.git`), a name that is not a leaf, or a file
+    # over FileLayer::MAX_BYTES. The loop isolated only UnsupportedOperation and FetchError, so a
+    # `.DS_Store` in the middle of a selection escaped it. a.stl landed, the class-level rescue_from
+    # said "File not found.", and b.stl was never tried.
+
+    test "a reserved name in the middle of a selection refuses only that file, and the rest land" do
+      upload("a.stl", ".DS_Store", "b.stl")
+
+      assert_response :redirect
+      %w[a.stl b.stl].each do |name|
+        assert @user.nodes.present.exists?(name:), "#{name} should have landed"
+        assert_path_exists @root.join(name)
+      end
+      assert_not @user.nodes.exists?(name: ".DS_Store"), "the refused file has no node"
+      assert_not @root.join(".DS_Store").exist?, "and no bytes"
+      assert_nil flash[:alert]
+      assert_equal "Uploaded 2 files. This one was not uploaded: .DS_Store (the library cannot store it).",
+                   flash[:notice]
+    end
+
+    # ONE such file is still the pre-batch condition: the loop re-raises it, and the class-level
+    # rescue_from answers it exactly as it did before the loop learned to catch NotFound.
+    test "one file the port refuses by name still gets the door's own answer, not the batch sentence" do
+      upload(".DS_Store")
+      assert_redirected_to files_path
+      assert_equal "File not found.", flash[:alert]
+    end
+
     # --- the single-file message is unchanged ----------------------------------------------
     #
     # Four suites assert the one-file sentence in full. Widening the door must not reword it.
@@ -182,6 +225,52 @@ module Web
       assert_response :created
       assert_equal @user.nodes.present.find_by!(name: "one.stl").node_id,
                    JSON.parse(response.body)["node_id"]
+    end
+
+    # --- ONE STAT-THEN-ENQUEUE FOR EVERY UPLOAD DOOR (F-S21-2) ---------------------------------
+    #
+    # The loop called an `enqueue_preview` it did not define, and each controller that includes it
+    # carried its own near-identical private copy (FilesController, Projects::UploadsController)
+    # beside Maker::Addons::LibraryOutput.enqueue_preview, the one Maker::TextSave already uses. Every
+    # upload door now goes through that one. Recording what it is handed is what tells "every door
+    # enqueues THROUGH it" from "every door enqueues": a door back on a copy of its own still enqueues
+    # a job, and hands the recorder nothing.
+    def preview_enqueues(&)
+      calls = []
+      record = ->(user, node_id, name) { calls << [ user.id, node_id, name ]; nil }
+      replacing(Maker::Addons::LibraryOutput, :enqueue_preview, record, &)
+      calls
+    end
+
+    test "both multipart doors enqueue each file's preview through LibraryOutput's one stat-then-enqueue" do
+      entry = @user.maker_projects.create!(name: "Lamp").build_log_entries.create!(user: @user, body: "x")
+
+      calls = preview_enqueues do
+        upload("part.stl", "plate.stl")
+        post build_log_entry_uploads_path(entry), params: { file: [ uploaded("photo.png") ] }
+      end
+
+      landed = @user.nodes.present.where(name: %w[part.stl plate.stl photo.png]).pluck(:node_id, :name)
+      assert_equal 3, landed.size, "every file should have landed"
+      assert_equal landed.map { |node_id, name| [ @user.id, node_id, name ] }.sort, calls.sort
+    end
+
+    # THE PRESIGNED DOOR (chunk_remote) finalizes one file per request. The deployment is made
+    # syncable here because the door is `syncable`-gated. Constructing a ChunkRemote dials nothing,
+    # and its finalize is stood in for, so this proves what the DOOR does with a finalized file, not
+    # what a sync server answers.
+    test "the presigned door's finalize enqueues through the same one" do
+      FileLayer.current = FileLayer::ChunkRemote.new
+      info = FileLayer::FileInfo.new(node_id: SecureRandom.uuid, name: "bracket.stl", kind: "file",
+                                     size: 3, mtime: 1, content_token: "v1")
+      finalized = FileLayer::UploadFinalized.new(version_id: "v1", seq: 7, info:)
+
+      calls = replacing(FileLayer.current, :finalize_upload, ->(*, **) { finalized }) do
+        preview_enqueues { post finalize_upload_files_path, params: { commit_id: "c1" }, as: :json }
+      end
+
+      assert_response :success
+      assert_equal [ [ @user.id, info.node_id, "bracket.stl" ] ], calls
     end
   end
 end

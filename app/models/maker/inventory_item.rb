@@ -63,7 +63,7 @@ module Maker
       # owner. The contrast worth drawing is with the association-level `dependent: :nullify` on
       # Maker::Supplier and Maker::Location, which is not scoped at all — clearing a foreign
       # pointer can at worst repair an illegal cross-tenant reference, whereas the halves here
-      # WRITE this user's item name and supplier into a row, which on someone else's row would be
+      # WRITE this user's item name, unit and supplier into a row, which on someone else's row would be
       # a disclosure. `inventory_item_belongs_to_user` makes such a row unreachable today, so the
       # scope costs one clause and removes the question; keeping the final nullify inside the same
       # scope is a behavioural wash and keeps the method reading as one operation.
@@ -106,7 +106,14 @@ module Maker
           lines.where(supplier_id: nil)
                .update_all(supplier_id: supplier_id, updated_at: Time.current)
         end
-        lines.update_all(part_name: name, updated_at: Time.current)
+        # THE UNIT GOES WITH THE NAME (audit F-S16-2). A stock line has no unit of its own — it reads
+        # its item's (Maker::BomLine#unit) — so once the pointer is dropped the line answers from its
+        # own column, which nothing keeps in step with the item. Written here, in the name's
+        # statement and before the pointer goes, "2 g of PETG" cannot come back as whatever unit the
+        # line was last saved in. Only the converted lines take it: they are the ones that were
+        # reading the item's unit (`target_kind` is :inventory_item for exactly them), so a line that
+        # keeps its own target keeps its own unit too.
+        lines.update_all(part_name: name, unit:, updated_at: Time.current)
       end
 
       mine.update_all(inventory_item_id: nil, updated_at: Time.current)
