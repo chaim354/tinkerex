@@ -242,6 +242,24 @@ module Maker
       assert_equal small, big
     end
 
+    # A NO-OP SWEEP WRITES NOTHING (F-S07-2, 2026-10-19). Constant in query count is the test
+    # above; this is what those queries ARE. The sweep used to re-send one
+    # `INSERT … ON CONFLICT DO NOTHING` carrying every file it owns, every tick -- a write
+    # statement, so on SQLite it took the one write lock in order to write nothing, every fifteen
+    # minutes, forever. attach_all now plucks the pairs that exist and inserts only the missing
+    # ones, Maker::ProjectIntake#attach's shape.
+    #
+    # THE FIRST SWEEP IS THE POSITIVE CONTROL. It writes (the models, the seeded shelves), so a
+    # helper that cannot see a write at all -- a wrong event name, a pattern that matches nothing --
+    # goes red here instead of passing the assertion that matters (§14e).
+    test "a sweep over an unchanged library writes nothing" do
+      assert_not_empty writes_during { Maker::ModelIntake.for_user(user: @user) },
+                       "precondition: the first sweep writes, so the helper can see a write"
+
+      assert_empty writes_during { Maker::ModelIntake.for_user(user: @user) },
+                   "a sweep over an unchanged library wrote"
+    end
+
     # THE POINT OF KEYING ON node_id RATHER THAN A PATH. Library::Reconciler's pairing by
     # (content_hash, size) keeps a renamed node's node_id, so renaming the folder in Finder must
     # keep ONE catalog entry -- a path key would abandon the old row and mint a second, and the
@@ -296,6 +314,18 @@ module Maker
       counter = ->(*, payload) { n += 1 unless payload[:name].in?(%w[SCHEMA TRANSACTION]) }
       ActiveSupport::Notifications.subscribed(counter, "sql.active_record", &block)
       n
+    end
+
+    # count_queries' subscription, kept to the statements that WRITE -- the ones that take
+    # SQLite's single write lock. Returns the SQL rather than a count, so a red run names the
+    # statement that wrote.
+    WRITE_SQL = /\A\s*(INSERT|UPDATE|DELETE|REPLACE)\b/i
+
+    def writes_during(&block)
+      writes = []
+      collector = ->(*, payload) { writes << payload[:sql] if payload[:sql].match?(WRITE_SQL) }
+      ActiveSupport::Notifications.subscribed(collector, "sql.active_record", &block)
+      writes
     end
   end
 end
