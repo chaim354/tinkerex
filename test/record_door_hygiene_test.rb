@@ -39,6 +39,16 @@ class RecordDoorHygieneTest < ActiveSupport::TestCase
                  "the pattern no longer recognises every write resource in #{DOOR} itself, so it " \
                  "cannot be trusted to recognise them anywhere else"
 
+    # THE EXEMPTIONS ARE PINNED TOO, ONE ASSERTION PER ARM. An `exempt?` answering true for
+    # everything passes the scan over any file at all — measured in review: with that mutation and
+    # bin/migrate-record restored, this test stayed green.
+    refute exempt?("bin/migrate-record"), "a second client must never be exempt"
+    refute exempt?(".claude/commands/finish-branch.md"), "Markdown outside docs/ is instructions, in scope"
+    refute exempt?("docs/superpowers/specs/2026-08-27-git-tracked-projects-spike.sh"),
+           "a script under docs/ can call the wire; only its Markdown is exempt"
+    assert exempt?("docs/superpowers/plans/2026-08-31-forgejo-to-kaneo.md"), "docs/ Markdown is history"
+    assert exempt?("test/log_cli_test.rb"), "the door's own tests stub these endpoints"
+
     offenders = tracked.reject { |path| exempt?(path) }.select do |path|
       file = Rails.root.join(path)
       file.file? && file.binread.match?(KANEO_WRITE_RESOURCE)

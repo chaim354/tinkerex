@@ -97,7 +97,9 @@ module Log
   #     payload at `api`'s raise site — the FAILING request, a GET with no body — so the common
   #     outage reported "nothing to file" for a write. Per-verb rescues were added after measured
   #     losses to compensate, and `close` never got one: its failed PUT spooled {"status": "done"}
-  #     under an opaque task id, naming no issue.
+  #     under an opaque task id, naming no issue. So every write verb opens a phase BEFORE its
+  #     first read, with ONE deliberate exception: setup's vocabulary read decides what there is to
+  #     write at all, and setup is idempotent — re-running it is its refile.
   #   - NOTHING ACCUMULATES ACROSS CALLS, so a loop failing on its Nth write cannot re-spool the
   #     N-1 already filed.
   Unfiled = Struct.new(:what, :payload)
@@ -587,14 +589,26 @@ module Log
   # naive version is silently idempotent — which reads as "I closed it" for an issue somebody else
   # closed for a different reason. The board this reads is already fetched, so the check is free.
   #
-  # THE PHASE WRAPS THE PUT ALONE, AND ITS RECORD NAMES EVERY NUMBER NOT YET CLOSED. The board read
-  # stays outside: a board that cannot be read leaves nothing known to close, and inside the phase
-  # `close 99` — a number no task carries — would spool a record nobody can file. The record names
-  # the numbers after this one as well, because a failure stops the loop: they were never attempted,
-  # and a record naming one of three is refiled as one of three.
+  # TWO KINDS OF PHASE, AND THE LOOKUP BETWEEN THEM IS IN NEITHER.
+  #
+  # THE BOARD FETCH IS A PHASE, NAMING EVERY NUMBER. close runs at merge (CLAUDE.md §15), and with
+  # Kaneo down the fetch is its first wire call. Outside a phase, that failure spooled nothing while
+  # exit 3 said a write had been spooled; `bin/log status` then exited 0, and the arc stayed open
+  # with nothing anywhere saying so — tinkerex#154's failure, in silence. Caught in review.
+  #
+  # EACH PUT IS A PHASE, NAMING EVERY NUMBER NOT YET CLOSED. A failure stops the loop, so the
+  # numbers after it were never attempted, and a record naming one of three is refiled as one of
+  # three.
+  #
+  # THE PER-NUMBER LOOKUP IS IN NEITHER. The board is cached by then, so a lookup that fails means a
+  # board that WAS read carries no such number — and a record for `close 99` could never be filed.
   def close(argv)
     numbers = argv.map { |a| issue_number!(a) }
     raise UsageError, "close needs at least one issue number" if numbers.empty?
+
+    move = { status: CLOSED_STATUS }
+    record = ->(rest) { "close #{rest.map { |n| "##{n}" }.join(' ')}" }
+    filing(record.call(numbers), move) { task_index }
 
     numbers.each_with_index do |number, i|
       task = task_for(number)
@@ -604,8 +618,7 @@ module Log
         next
       end
 
-      move = { status: CLOSED_STATUS }
-      filing("close #{numbers.drop(i).map { |n| "##{n}" }.join(' ')}", move) do
+      filing(record.call(numbers.drop(i)), move) do
         api(:put, "/api/task/status/#{task.fetch('id')}", move)
       end
       puts "closed ##{number} #{task['title']}"
@@ -705,8 +718,9 @@ module Log
   rescue Unreachable => e
     warn "bin/log: Kaneo is unreachable — #{e.message}"
 
-    # No `filing` phase was open when this failed — a read verb, or a write's read that sits outside
-    # its phase on purpose (close, setup). See Unreachable.
+    # No `filing` phase was open when this failed: a read verb; setup's vocabulary read (re-running
+    # setup is its refile); or close looking up a number that a board it DID read does not carry.
+    # See Unreachable and close.
     if e.unfiled.nil?
       warn "bin/log: nothing to file (no write was in flight)."
       return EXIT_UNREACHABLE

@@ -76,7 +76,7 @@ class LogCliTest < ActiveSupport::TestCase
     # ANCHORED TO THE DOCUMENTED LINE, NOT A SUBSTRING. `assert_includes usage, "arc"` cannot
     # fail — "se-arc-h" contains it — so deleting the arc line entirely left the guard green,
     # and arc is the subcommand this whole migration exists for. Reproduced before this changed.
-    %w[setup arc open deploy note show search status].each do |name|
+    %w[setup arc open deploy note close show search status].each do |name|
       assert_match(/^\s*bin\/log #{Regexp.escape(name)}\b/, err,
                    "usage has no line documenting `#{name}`")
     end
@@ -1258,20 +1258,42 @@ class LogCliTest < ActiveSupport::TestCase
     assert_match(/close needs at least one issue number/, err)
   end
 
-  # AN OUTAGE IS EXIT 3, AND FOR close IT SPOOLS NOTHING — WHICH IS TRUE OF THE OLD RECORD TOO,
-  # despite what this test used to be called. Both versions resolve the issue BEFORE writing, so an
-  # unreachable server fails on that read, and the read sits OUTSIDE close's `filing` phase. The
-  # number is not lost by it: what asked for the close is the branch, which is still there. The
-  # default KANEO_URL in run_log points at a dead port, which is the outage.
-  #
-  # THE EMPTY SPOOL IS ASSERTED, NOT ASSUMED. Moving the read inside the phase reads like tidying,
-  # and it would make `close 99` — a number no task carries — spool a record nobody can file.
-  test "close during an outage exits 3 rather than reporting a close that never happened" do
-    _out, err, code = run_log("close", "152", env: { "KANEO_TOKEN" => "t0ken" })
+  # AN OUTAGE IS EXIT 3, AND EXIT 3 MEANS THE WRITE WAS SPOOLED (CLAUDE.md §13) — FOR close TOO.
+  # With Kaneo down, close's first wire call is the board fetch, and that fetch used to sit outside
+  # every phase: exit 3, "nothing to file", an empty spool, and `bin/log status` then exiting 0. close
+  # runs at merge (§15), so that was tinkerex#154 — merged with its arc still open — coming back with
+  # nothing anywhere saying so. This test asserted that loss as correct for one revision; review
+  # caught it. The default KANEO_URL in run_log points at a dead port, which is the outage.
+  test "close during an outage exits 3 and spools every issue it was asked to close" do
+    _out, err, code = run_log("close", "152", "153", env: {
+      "KANEO_TOKEN" => "t0ken", "LOG_BRANCH" => "claude/example"
+    })
 
     assert_equal 3, code, "expected EXIT_UNREACHABLE, got #{code}: #{err}"
     refute_match(/closed #152/, err, "an unreachable close claimed to have closed something")
-    assert_empty Dir.glob(File.join(@spool, "*.md")), "close spooled a record for a READ that failed"
+    header = spooled_record[/^# unfiled: .*$/].to_s
+    assert_match(/^# unfiled: close .*#152\b.*#153\b/, header, "the record must name every issue left open")
+
+    _out, _err, status_code = run_log("status")
+    assert_equal 4, status_code, "status must report the close as unfiled work, or the outage stays silent"
+  end
+
+  # THE PER-NUMBER LOOKUP STAYS OUTSIDE EVERY PHASE, AND THIS IS WHY. The board fetch is cached, so a
+  # lookup that fails after it means a board that WAS read has no such number — and a record for it
+  # could never be filed: `bin/log status` would report it forever.
+  test "closing a number the readable board does not carry spools nothing" do
+    stub = StubKaneo.new(routes: RESOLVED.merge(
+      "GET /task/tasks" => board({ "id" => "a", "number" => 10, "title" => "open one", "status" => "to-do" })
+    ))
+
+    _out, err, code = run_log("close", "99", env: { "KANEO_URL" => stub.url, "KANEO_TOKEN" => "k" })
+
+    assert_equal 3, code, err
+    assert_match(/no issue #99/, err)
+    assert_empty Dir.glob(File.join(@spool, "*.md")), "a close of a number no task carries was spooled"
+    assert_empty stub.requests.select { |r| r.method == "PUT" }, "close wrote to a task it never resolved"
+  ensure
+    stub&.shutdown
   end
 
   # --- unfiled records -------------------------------------------------------------------------
