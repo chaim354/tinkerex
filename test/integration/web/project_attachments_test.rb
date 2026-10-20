@@ -117,11 +117,10 @@ module Web
       assert_select "p.sweep-note a[href=?]", edit_project_path(project)
     end
 
-    # A HUB TILE OPENS THE LIBRARY WITH THE FILE SELECTED (structural redesign §6 and §7, slice 6),
-    # never the file page: library_file_path. Both shapes of the link are here — a file at the
-    # library ROOT has no parent, so Rails drops the nil `folder` and the link is /files?selected=…;
-    # a folder file names its folder.
-    test "attached files render as tiles opening the Library with the file selected" do
+    # A HUB TILE OPENS THE FILE — its file page, never the Library with the file selected, which is
+    # where it went until the owner asked for it to just open (2026-10-20). Both a Linked file at the
+    # library ROOT and a folder file, because the old Library link was shaped differently for each.
+    test "attached files render as tiles opening the file" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
       # attach_node's node sits at the library ROOT, outside the project's folder — the LINKED
@@ -133,10 +132,9 @@ module Web
       get project_path(project)
       assert_response :success
       assert_select ".attachments-panel .attachment-group .attachment-tile", 2
-      assert_select ".attachment-group .attachment-tile a[href=?]", files_path(selected: "n-1")
-      assert_select ".attachment-group .attachment-tile a[href=?]", files_path(folder:, selected: "n-lid")
-      assert_select ".attachment-tile a[href=?]", file_path("n-1"), 0
-      assert_select ".attachment-tile a[href=?]", file_path("n-lid"), 0
+      assert_select ".attachment-group .attachment-tile a[href=?]", file_path("n-1")
+      assert_select ".attachment-group .attachment-tile a[href=?]", file_path("n-lid")
+      assert_select ".attachment-tile a[href*='selected=']", 0
     end
 
     # WAS: "degrades to an unavailable placeholder". That placeholder was the bug — a file deleted
@@ -638,9 +636,9 @@ module Web
         assert_select "table.project-files td.col-section", text: "models"
         assert_select "table.project-files td.col-origin", text: "—"
         assert_select ".view-toggle button.toggle.active", text: "List"
-        # THE NAME OPENS THE LIBRARY WITH THE FILE SELECTED (slice 6), the tile's own target.
-        assert_select "table.project-files td.col-name a[href=?]", files_path(folder: "d-models", selected: "n-bracket"),
-                      text: "bracket.stl"
+        # THE NAME OPENS THE FILE, the tile's own target.
+        assert_select "table.project-files td.col-name a[href=?]", file_path("n-bracket"), text: "bracket.stl"
+        assert_select "table.project-files a[href*='selected=']", 0
       end
 
       # A BARE `?view=list` IS INERT NOW. The old url survived in bookmarks and would otherwise
