@@ -545,6 +545,28 @@ until that class lands, so the class must be added BEFORE the engine is construc
 `failed`) instead, which is also what the system test drives. The failure contract is unchanged from
 the Three.js viewer: any error puts the server-rendered thumbnail poster back.
 
+**THE 3D VIEWER'S LIFECYCLE IS THE BOARD'S, PLUS ONE RULE THE ENGINE ADDS** (F-S22-1, 2026-10-19).
+Four rules, each driven by `test/system/o3dv_test.rb`:
+
+- **Connect rests the element.** A Turbo-restored snapshot of an open viewer is reset to the
+  poster, as the board's is (the `:gerber` section above). The clone carries `--ready`, the state
+  and the dims over a blank cloned canvas, and the fresh controller has no engine.
+- **One staleness token.** `generation` is set in `initialize` and bumped by ✕ Image and by a
+  disconnect, and only the latest load may act.
+- **The engine is ONE record.** Its callbacks close over that record, never over a controller
+  field. `Destroy()` does not stop a running import, so a callback routed through the controller
+  let a released engine's late failure fail the next load.
+- **One import per engine.** A load asked for while one runs is silently dropped
+  (`ThreeModelLoader.LoadModel`'s `inProgress`). Before dropping it, `LoadModelFromInputFiles` has
+  thrown away the running import's progress element, so that import throws and the engine is
+  wedged until ✕ Image. A source switch therefore waits for the running import before asking for
+  the next one. "`LoadModelFromUrlList` clears the viewer itself" holds only for an IDLE engine.
+
+**THE RESTORE IS PINNED FOR ALL THREE LAUNCHABLE VIEWERS** (the board, this one and the Measure view)
+by one helper, `WebHelpers#back_through_turbo_cache`. It proves the page came out of Turbo's cache
+before anything is asserted about it, because a Back that re-fetched the page would pass every
+"rests at the poster" assertion against a page that was never open.
+
 **ON S3 A VIEWER'S FETCH LEAVES THE ORIGIN, AND BOTH HALVES OF LETTING IT ARE STATED ONCE.** The
 blob route answers a presigned redirect to the bucket, so the 3D viewer, KiCanvas, the Gerber viewer
 and the public bundle all fetch cross-origin. The browser reads that response only if (1) the

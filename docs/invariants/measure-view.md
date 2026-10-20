@@ -473,6 +473,22 @@
   depending on how it was reached. The empty arm is still reachable where it is honest: unpicking
   the LAST part leaves its size on screen beside "nothing selected".
 
+- **THE CONTROLLER OWNS THE STAGE, AND `--ready` IS ONLY ITS PROJECTION (F-S09-1, 2026-10-19).**
+  `draw()` alone adds `measure-view--ready`, and `rest()` alone removes it. `rest()` runs from
+  `connect()` and from ✕ Image, and it drops the shapes, the SVG and the selection with the class.
+  So the class always means "this controller drew what is on the stage". Before, it could mean
+  something else. A Turbo Back restored a drawn, marked stage over a fresh controller that held no
+  shapes, which left Print promising a part and Reset throwing. Four comments had argued
+  correctness from "the button is display:none". Two rules keep this true, and
+  `measure_print_test.rb` drives both:
+  - **One load generation.** A load paints only while its number is the latest, and its error
+    reaches the readout on the same condition.
+  - **One shared in-flight fetch.** The launch button stays clickable until the stage is drawn, so
+    a second click joins the first fetch and the view is drawn once.
+
+  `rest()` is also the ONE place the selection is emptied. A drawing can start only from a rest,
+  so a second copy of that reset in `draw()` would be a guard no gesture can reach.
+
 - **`pick` COMPOSES `contourLabel` WITH `selectionStatus()`, WHICH IS WHAT SAVED THE ⌥ HINT.**
   `"part of a 2-contour object (⌥ for 30 × 10 mm)"` is the ONLY place the app says alt-click
   exists, and until 2026-09-03 it was shown only OUTSIDE select mode — i.e. exactly where marking
