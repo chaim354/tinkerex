@@ -395,6 +395,33 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
            "the addon's output never reached the library"
   end
 
+  # NEITHER UPLOAD DOOR MINTS A `devices` ROW (F-X-1, 2026-10-19). Both did -- a "web-session" row per
+  # uploading user, an "addons" row per saving one -- to have a value for a `device:` keyword no
+  # adapter read; each a row in the table §8 calls the API's ONLY credential, its plaintext token
+  # discarded at birth. A Device row now comes only from enrolment. HERE, not in a file of their own,
+  # for the reason the sync-grant test below gives: the gate runs this file alone and fails on a skip.
+  test "a web upload mints no devices row" do
+    skip_unless_remote_server
+    sign_in
+    assert_no_difference -> { Device.count }, "a web upload minted a Device row" do
+      upload_through_ui("#{journey_prefix}-nodevice.stl", "no device #{journey_prefix}".b)
+    end
+  end
+
+  test "an addon save mints no devices row" do
+    skip_unless_remote_server
+    user = sign_in
+    state = Maker::AddonState.create!(user:, addon_key: "journey", name: "j", data: {})
+    files = [ { name: "#{journey_prefix}-nodevice.svg", bytes: "<svg>#{journey_prefix}</svg>".b,
+                content_type: "image/svg+xml", role: "output" } ]
+
+    assert_no_difference -> { Device.count }, "an addon save minted a Device row" do
+      Maker::Addons::LibraryOutput.write(user:, state:, parent_node_id: nil, files:)
+    end
+    assert user.nodes.present.exists?(name: "#{journey_prefix}-nodevice.svg"),
+           "the save must have landed, or the count above proves nothing"
+  end
+
   # GAP (c). LibraryBroadcast.batch degrades to a bare `yield` without the engine
   # (library_broadcast.rb:21), so N moves are N changelog pulls -- two WAN round-trips per file
   # inside a browser-facing request. Arc B's fix gives `batch` a real job on chunk_remote:

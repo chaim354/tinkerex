@@ -74,7 +74,11 @@ class DocsHygieneTest < ActiveSupport::TestCase
   #
   # LOWERED 1,358 -> 1,356 ON 2026-10-19 (audit slice F-S01-1, one reading of LIBRARY_BACKEND): §14a's
   # two bullets about check!'s `chunk` default became one bullet about the reading that replaced it.
-  MAX_LINES = 1_356
+  #
+  # LOWERED 1,356 -> 1,353 ON 2026-10-19 (audit slice F-X-1, the dead port kwargs): §14a's
+  # "finalize_upload broadcasts by DEFAULT, with exactly one explicit opt-out" described a keyword
+  # no adapter read; it became the rule that replaced it, 3 lines shorter.
+  MAX_LINES = 1_353
 
   test "CLAUDE.md stays under its line ceiling" do
     lines = CLAUDE_MD.readlines.size
