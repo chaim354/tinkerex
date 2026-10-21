@@ -46,6 +46,10 @@ module Settings
     # clears a lock, since a locked-out person is the usual reason to be here. Devise keeps the
     # password's salt in the session, so the account's other browser sessions end; its desktop
     # devices keep their tokens, which the page says.
+    #
+    # A REFUSED RESET PUTS THE ROW BACK BEFORE THE PAGE RE-RENDERS (found in review): the unlock and
+    # the confirmation are assigned in memory before Devise validates the password, so without the
+    # restore the page reported "unlocked" over an account the database still holds locked.
     def reset_password
       password = params.require(:user)[:password].to_s
       @user.assign_attributes(password:, locked_at: nil, failed_attempts: 0, unlock_token: nil)
@@ -53,6 +57,7 @@ module Settings
       if password_given?(@user, password) && @user.save
         redirect_to edit_settings_user_path(@user), status: :see_other, notice: "New password set for #{@user.email}."
       else
+        @user.restore_attributes(%i[locked_at failed_attempts unlock_token confirmed_at])
         render :edit, status: :unprocessable_entity
       end
     end

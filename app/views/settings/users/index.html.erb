@@ -39,8 +39,12 @@
   <div class="form-errors" role="alert"><%= @new_user.errors.full_messages.to_sentence %>.</div>
 <% end %>
 <%# scope: :user -- form_with url: has no model object here, so scope: is what names the fields
-    user[email], user[password] and user[admin], which Settings::UsersController#new_user_params
-    requires (CLAUDE.md §14d). The password is visible text: the admin reads it out or pastes it. %>
+    user[email], user[password] and user[admin], which Settings::UsersController#create reads
+    (CLAUDE.md §14d). The password is visible text: the admin reads it out or pastes it.
+    EACH FIELD STATES ITS OWN VALUE, from @new_user, because with no model a scoped field falls back
+    to the instance variable its scope names -- @user, which this page never sets -- so a refused
+    add came back with the Admin box unticked, and fixing the password made a non-admin (found in
+    review). %>
 <%= form_with url: settings_users_path, scope: :user, class: "settings-add" do |f| %>
   <label>
     <span>Email</span>
@@ -53,7 +57,7 @@
   </label>
   <label>
     <span>Admin</span>
-    <%= f.check_box :admin %>
+    <%= f.check_box :admin, checked: @new_user.admin? %>
   </label>
   <%= f.submit "Add account", class: "btn primary" %>
 <% end %>

@@ -167,6 +167,19 @@ module Web
       end
     end
 
+    # Found in review: the box read @user, which this page never sets, so it came back unticked and a
+    # corrected resubmit made a non-admin.
+    test "a refused add keeps the Admin box as it was sent" do
+      sign_in_as(@admin)
+
+      post settings_users_path, params: { user: { email: "short@example.com", password: "short", admin: "1" } }
+      assert_response :unprocessable_entity
+      assert_select "input[type=checkbox][name=?][checked]", "user[admin]", count: 1
+
+      post settings_users_path, params: { user: { email: "short@example.com", password: "short", admin: "0" } }
+      assert_select "input[type=checkbox][name=?][checked]", "user[admin]", count: 0
+    end
+
     # ============================================================ one account's page
 
     test "the account page names the fields its three forms send" do
@@ -230,6 +243,23 @@ module Web
       end
       assert @member.reload.valid_password?(PASSWORD)
       assert sso.reload.encrypted_password.blank?
+    end
+
+    # Found in review: the unlock was assigned before the password was refused, so the re-rendered
+    # page said nothing of a lock the database still held, and the field read the account's @user
+    # and refilled the rejected password.
+    test "a refused reset still shows the lock, keeps it, and does not refill the password" do
+      @member.update_columns(locked_at: Time.current, failed_attempts: 10)
+      sign_in_as(@admin)
+
+      patch reset_password_settings_user_path(@member), params: { user: { password: "short" } }
+
+      assert_response :unprocessable_entity
+      assert_match(/Locked after too many wrong passwords/, response.body)
+      assert @member.reload.access_locked?
+      assert_select "form[action=?] input[name=?]", reset_password_settings_user_path(@member), "user[password]" do |fields|
+        assert_nil fields.first["value"], "the rejected password must not come back in the field"
+      end
     end
 
     test "make and remove admin; the demo account cannot be made one" do

@@ -113,8 +113,11 @@ module Users
       # THE LAST ADMIN STAYS WHILE ANYONE ELSE IS HERE (2026-10-21): accounts are managed at Settings →
       # Users by an admin, so deleting the only one leaves accounts nobody can manage but a console.
       # This is the only door that can: Settings::UsersController never acts on the signed-in account.
-      # Asked before the password, because no password makes it right. The sole account may still go.
-      if resource.last_account_manager? && User.where.not(id: resource.id).exists?
+      # Asked before the password, because no password makes it right. The sole account may still go,
+      # and the demo account is not "anyone else": it can never be made an admin, so counting it would
+      # keep an owner with only the demo beside them (OVH) from ever deleting their account.
+      others = User.where.not(id: resource.id).where.not(email: Tinkerex::Demo.email.to_s)
+      if resource.last_account_manager? && others.exists?
         resource.errors.add(:base, LAST_ADMIN_REFUSAL)
         clean_up_passwords(resource)
         set_minimum_password_length

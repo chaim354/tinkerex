@@ -23,11 +23,12 @@
   <p class="muted">Signs <%= @user.email %> out of every browser and unlocks the account. A desktop app
     already signed in keeps syncing.</p>
   <%# scope: :user, for the reason the add form on the Users page gives: the field must be
-      user[password]. %>
+      user[password]. `value: nil` because that scope also makes the field read @user, which on this
+      page IS the account -- so a refused reset would otherwise refill the rejected password. %>
   <%= form_with url: reset_password_settings_user_path(@user), method: :patch, scope: :user, class: "settings-add" do |f| %>
     <label>
       <span>New password</span>
-      <%= f.text_field :password, required: true, minlength: Devise.password_length.min,
+      <%= f.text_field :password, value: nil, required: true, minlength: Devise.password_length.min,
                        autocomplete: "new-password", spellcheck: false %>
     </label>
     <%= f.submit "Set password", class: "btn primary" %>

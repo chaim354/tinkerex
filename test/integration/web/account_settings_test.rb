@@ -133,6 +133,21 @@ module Web
       assert_not User.exists?(@user.id)
     end
 
+    # Found in review: the demo can never be made an admin, so an owner whose only neighbour is the
+    # demo (OVH) must not be held to "make another account an admin".
+    test "the only admin may delete their account when the only other account is the demo" do
+      prior = ENV["DEMO_ACCOUNT_EMAIL"]
+      ENV["DEMO_ACCOUNT_EMAIL"] = "demo@example.com"
+      @user.update!(admin: true)
+      User.create!(email: "demo@example.com", password: PASSWORD, confirmed_at: Time.current)
+
+      delete user_registration_path, params: { user: { current_password: PASSWORD } }
+
+      assert_not User.exists?(@user.id)
+    ensure
+      prior ? ENV["DEMO_ACCOUNT_EMAIL"] = prior : ENV.delete("DEMO_ACCOUNT_EMAIL")
+    end
+
     test "the only account on a server may delete itself, admin or not" do
       @user.update!(admin: true)
 
