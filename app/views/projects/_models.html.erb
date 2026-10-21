@@ -12,7 +12,7 @@
   ITS OWN `thumbs` CONTROLLER, for the reason projects/_attachments gives: no ancestor covers it.
 %>
 <% if @project_models %>
-  <section class="panel models-panel" id="models"
+  <section class="panel models-panel<%= " panel--quiet" if @project_models.models.empty? %>" id="models"
            data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
     <div class="panel-head">
       <h2><%= panel_title(@panel_layout, "models") %></h2>

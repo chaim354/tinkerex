@@ -436,10 +436,11 @@ class ProjectsController < ApplicationController
     # of the Files panel: behind 300 listed tiles, a recent file past the cap would wait renders for
     # a slot (project_attachments_test.rb).
     recent_ids = @recent_files.map(&:node_id)
+    # The model cards' covers SECOND, after the recent row: BACKFILL_LIMIT is first-come, as above.
+    model_cover_ids = @project_models ? @project_models.models.filter_map(&:cover_node_id) : []
     @page_thumbs = Maker::Previews::ThumbnailMap.for(
-      current_user, recent_ids + tile_ids + @photo_rows.map(&:node_id) + block_thumb_ids +
-                    (@cover_node ? [ cover_id ] : []) +
-                    (@project_models ? @project_models.models.filter_map(&:cover_node_id) : [])
+      current_user, recent_ids + model_cover_ids + tile_ids + @photo_rows.map(&:node_id) + block_thumb_ids +
+                    (@cover_node ? [ cover_id ] : [])
     )
     # TILE_IDS ONLY, NOT THE PHOTO ROWS. Every tile this page can render — a folder section,
     # Backups, Generated, Linked — carries `contextmenu->filemenu#open`; `_log_entry`'s photos and

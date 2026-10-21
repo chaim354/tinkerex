@@ -53,6 +53,7 @@ module Web
       assert_select "section.models-panel form[action=?]", model_project_path(@knob, @project)
       assert_select "section.models-panel form[action=?]", model_project_path(@shade, @project), count: 0
       assert_select "section.models-panel a[href=?]", new_project_model_path(@project), text: "Add model"
+      assert_select "section.models-panel.panel--quiet", 0
     end
 
     test "a linked model's files leave Linked from elsewhere" do
@@ -79,15 +80,51 @@ module Web
 
       get project_path(bare)
 
-      assert_select "section.models-panel", text: /No models yet\./
+      assert_select "section.models-panel.panel--quiet", text: /No models yet\./
       assert_select "section.models-panel a[href=?]", new_project_model_path(bare)
     end
 
+    # ALWAYS ON, AND A SAVED ORDER THAT PREDATES IT DOES NOT NAME IT (a product decision, 2026-10-21):
+    # Maker::ProjectKind.layout_for keeps an unnamed fixed key in its preset tail, which on a tabbed
+    # page is the LAST tab's pane. Pinned so the panel is placed there, not dropped and not doubled.
+    test "a stored tabbed order that does not name models renders the panel in the last tab" do
+      build, parts = Maker::ProjectKind.tab_key("3f9a1b2c4d5e"), Maker::ProjectKind.tab_key("a0c4d8e2f611")
+      @project.update!(panels: { "order" => [ "attachments", "photos", build, "build_log", "tasks", parts, "bom", "publish" ],
+                                 "titles" => { build => "Build", parts => "Parts" } })
+      # A row, so Build renders a pane of its own and "last" is a real choice between two.
+      @project.build_log_entries.create!(user: @user, body: "Glued the base.", logged_at: Time.current)
+
+      get project_path(@project)
+
+      assert_response :success
+      assert_select "section.tab-pane", 2
+      assert_select "section.models-panel", 1
+      assert_select "section.tab-pane#tab-parts section.models-panel .model-name", text: "Shade"
+      assert_select "section.tab-pane#tab-build section.models-panel", 0
+    end
+
+    # HIDDEN, THE EDITOR STILL SHOWS A SLOT: @project_models is nil, the partial renders nothing, and
+    # projects/_panel_slot draws its placeholder — the ghost the maker drags and shows again.
+    test "in the page editor a hidden Models panel is a placeholder slot" do
+      @project.update!(panels: { "hidden" => %w[models] })
+
+      get edit_layout_project_path(@project)
+
+      assert_response :success
+      assert_select "div.panel-slot.panel-slot--hidden[data-key='models'] section.panel--placeholder", 1
+      assert_select "section.models-panel", 0
+    end
+
     test "the page's query count does not grow with the number of models" do
+      shown = 1 # Shade, from setup; Knob is never attached here
       counts = [ 1, 4 ].map do |n|
         n.times { |i| located_model!("Located #{n} #{i}"); attach(elsewhere_model!("Linked #{n} #{i}")) }
+        shown += 2 * n
         get project_path(@project)
-        count_queries { get project_path(@project) }
+        queries = count_queries { get project_path(@project) }
+        # THE PANEL IS REALLY THERE: a page that silently stopped rendering it would count flat too.
+        assert_select ".models-panel .model-card", shown
+        queries
       end
 
       assert_equal counts.first, counts.last,

@@ -122,6 +122,9 @@
   /* Quiet (S4-1): the heading, the badge and one sentence on one line. `.panel--quiet` already
      zeroes the head's margin and hides the `.mono.muted` count; the sentence needs its own. */
   .folder-panel.panel--quiet > p { margin: 0; }
+  /* Quiet (2026-10-21), as Tasks is: an empty Models panel is its heading, Add model and "No models
+     yet." on one line, so its sentence needs the same reset. */
+  .models-panel.panel--quiet > p { margin: 0; }
 
   /* --- Files panel: 96px tiles, Detach in the corner on hover --- */
   .attachments-panel .panel-path { font-size: 12px; margin-left: 8px; }
