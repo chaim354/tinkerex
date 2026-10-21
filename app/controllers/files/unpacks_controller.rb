@@ -14,23 +14,27 @@ module Files
   # Upload button said it saves to and makes no row — Maker::ModelIntake's shelves catalogue the
   # folder like any other model folder.
   class UnpacksController < ApplicationController
+    # A BOUND ON THE MKDIRS ONE REQUEST CAN ASK FOR; dirs past it are left out (files fall back to the root).
+    MAX_DIRS = 1000
+
     # POST /files/unpack_folder (JSON) { parent_node_id, name, dirs: [...], first_model_name }
     #   -> 201 { folder_node_id, folder_url, folder_map: { "" => id, "sub/dir" => id } }
     def create
       parent = parent_dir
       return render(json: { error: "not_found" }, status: :not_found) if parent == :missing
 
-      # THE FIFTH WEB DOOR THAT MINTS A LEAF NAME, and it asks the same two questions in the same
-      # breath as the other four (CLAUDE.md §14c): syntax, then the library's own namespace.
-      name = params.require(:name).to_s
-      unless leaf_ok?(name)
-        return render(json: { error: "#{name.inspect} is not a valid folder name" },
-                      status: :unprocessable_entity)
-      end
+      # THE SIXTH WEB DOOR THAT MINTS A LEAF NAME, and it asks the same two questions in the same
+      # breath as the other five (CLAUDE.md §14c): syntax, then the library's own namespace. A
+      # non-String (a JSON array) is refused, not stringified into a folder named `["a"]`.
+      name = params.require(:name)
+      return invalid_name(name) unless name.is_a?(String) && leaf_ok?(name)
 
       dest = destination(parent, params[:first_model_name].to_s)
-      folder = Maker::LibraryFolder.create_child!(current_user, parent_node_id: dest&.node_id,
-                                                  name: free_name(dest, name))
+      # ASKED AGAIN OF THE NAME THAT WILL BE MADE: " 2" can push a 254-byte name past the limit.
+      final = free_name(dest, name)
+      return invalid_name(final) unless leaf_ok?(final)
+
+      folder = Maker::LibraryFolder.create_child!(current_user, parent_node_id: dest&.node_id, name: final)
       render json: { folder_node_id: folder.node_id, folder_url: files_path(folder: folder.node_id),
                      folder_map: folder_map(folder) }, status: :created
     rescue FileLayer::FetchError
@@ -67,14 +71,22 @@ module Files
       Maker::MoveNode.valid_leaf_name?(name) && !Library::ReservedNames.reserved?(name)
     end
 
+    def invalid_name(name)
+      label = name.is_a?(String) ? name.inspect : "That"
+      render json: { error: "#{label} is not a valid folder name" }, status: :unprocessable_entity
+    end
+
     # AT A PROJECT'S OWN FOLDER THE ZIP GOES WHERE FILING WOULD PUT ITS FIRST MODEL — `models/` for
     # every user today (Maker::ProjectFolders.folder_for reads the per-user filing rules). The
     # project root is the sweep's inbox (§14f), and intake moves FILES only, so a folder left there
     # would never be filed. A project's SUBFOLDER is where the maker chose, and is used as it is.
+    # ONLY A MODEL NAME STEERS IT: anything else (a crafted `readme.pdf`) would file the folder under
+    # docs/, so a name whose role is not "model" falls back to a model's folder.
     def destination(parent, first_model_name)
       return parent if parent.nil? || !current_user.maker_projects.exists?(folder_node_id: parent.node_id)
 
-      sub = Maker::ProjectFolders.folder_for(current_user, first_model_name.presence || "model.stl")
+      model = first_model_name if Maker::FileAttachment.role_for(first_model_name) == "model"
+      sub = Maker::ProjectFolders.folder_for(current_user, model || "model.stl")
       Maker::LibraryFolder.create_child!(current_user, parent_node_id: parent.node_id, name: sub)
     end
 
@@ -82,6 +94,7 @@ module Files
     # folder called `dragon` on every backend (LibraryBrowseController#create_folder says why).
     # CASE-FOLDED, because a share on macOS or over SMB is case-insensitive: `Dragon` and `dragon`
     # are one name there, and the mkdir would land on the existing folder.
+    # NOT RACE-FREE, AND ACCEPTED: two unpacks of one zip at once can pick the same name and share a folder (create_child! finds or creates).
     def free_name(dest, name)
       taken = current_user.nodes.present.where(parent_node_id: dest&.node_id).pluck(:name).map(&:downcase).to_set
       return name unless taken.include?(name.downcase)
@@ -99,7 +112,7 @@ module Files
     # `.hidden`, an ordinary name anywhere else.
     def folder_map(folder)
       map = { "" => folder.node_id }
-      Array(params[:dirs]).grep(String).reject(&:blank?).uniq.each do |rel|
+      Array(params[:dirs]).grep(String).reject(&:blank?).uniq.first(MAX_DIRS).each do |rel|
         segs = rel.split("/").reject(&:blank?)
         next if segs.empty? || !segs.all? { |s| leaf_ok?(s) && !s.start_with?(".") }
 

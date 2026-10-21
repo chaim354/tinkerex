@@ -58,6 +58,16 @@ module Web
       assert_equal [ "models", folder.node_id ], [ node(made.parent_node_id).name, node(made.parent_node_id).parent_node_id ]
     end
 
+    test "at a project's own folder a first name that is not a model still lands in models/" do
+      project = @user.maker_projects.create!(name: "Iris")
+      folder = mkdir("iris", mkdir("Projects"))
+      project.update_column(:folder_node_id, folder.node_id)
+
+      body = unpack(parent_node_id: folder.node_id, name: "crafted", dirs: [], first_model_name: "readme.pdf")
+
+      assert_equal "models", node(node(body["folder_node_id"]).parent_node_id).name
+    end
+
     test "a project's subfolder is used as it is" do
       project = @user.maker_projects.create!(name: "Lamp")
       folder = mkdir("lamp", mkdir("Projects"))
@@ -95,7 +105,19 @@ module Web
         assert_response :unprocessable_entity
         unpack(name: ".trash", dirs: [])
         assert_response :unprocessable_entity
+        unpack(name: [ "a" ], dirs: [])
+        assert_response :unprocessable_entity
       end
+    end
+
+    test "a numbered name pushed past the byte limit is refused and makes nothing" do
+      long = "d" * 254
+      mkdir(long)
+
+      assert_no_difference -> { @user.nodes.count } do
+        unpack(name: long, dirs: [])
+      end
+      assert_response :unprocessable_entity
     end
 
     test "a subfolder with a bad segment is left out, so its files fall back to the root" do
@@ -103,6 +125,17 @@ module Web
 
       assert_response :created
       assert_equal [ "", "ok" ], body["folder_map"].keys.sort
+    end
+
+    # NO LEADING DOT, so only the per-segment leaf_ok? stands between these and a mkdir:
+    # `__MACOSX` is reserved (Library::OsClutter), `a\b` fails valid_leaf_name?.
+    test "a subfolder segment that is reserved or invalid is left out, with nothing made for it" do
+      body = unpack(name: "kit", dirs: [ "ok", "__MACOSX/x", "a\\b/c" ])
+
+      assert_response :created
+      assert_equal [ "", "ok" ], body["folder_map"].keys.sort
+      assert_equal [ "ok" ], @user.nodes.present.where(parent_node_id: body["folder_node_id"]).pluck(:name)
+      assert_equal [ "ok" ], @root.join("kit").children.map { |c| c.basename.to_s }
     end
 
     test "another user's folder is a 404 and makes nothing" do
@@ -127,8 +160,12 @@ module Web
     end
 
     test "finish on a folder that is not this user's is a 404 and enqueues nothing" do
+      other = User.create!(email: "unpack-other-#{SecureRandom.hex(4)}@example.com",
+                           password: WEB_PASSWORD, confirmed_at: Time.current)
+      theirs = FileLayer.current.mkdir(other, parent_node_id: nil, name: "theirs")
+
       assert_no_enqueued_jobs(only: Maker::ModelIntakeJob) do
-        post files_unpacked_path(format: :json), params: { folder_node_id: "nope" }.to_json,
+        post files_unpacked_path(format: :json), params: { folder_node_id: theirs.node_id }.to_json,
                                                  headers: { "CONTENT_TYPE" => "application/json" }
       end
       assert_response :not_found
