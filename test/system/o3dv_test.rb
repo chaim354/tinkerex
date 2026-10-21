@@ -127,6 +127,43 @@ class O3dvTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # "USE THIS VIEW AS PREVIEW" (2026-10-20). What only a browser settles: that the engine draws the
+  # current camera into a PNG at the server's thumbnail size, that the bytes leave without a
+  # `fetch(data:)` the CSP's connect-src would refuse, and that the CSRF header the fetch carries is
+  # one the session accepts. The door's refusals are request-level (file_preview_test.rb).
+  test "the current view becomes the file's preview" do
+    node = write_model!(name: "bracket.stl", body: binary_stl)
+    view_in_3d!(node)
+    assert_rendered(MeshFixture::STL_DIMS)
+    click_on "Use this view as preview"
+    assert_selector ".mv-status", text: "Saved as the preview."
+    row = @user.maker_previews.find_by!(node_id: node.node_id, kind: "thumbnail")
+    assert_equal "viewer", row.source
+    assert_equal [ 512, 512 ], [ row.width, row.height ]
+    assert_no_console_errors
+  end
+
+  # THE OPEN VIEWER'S BAR AT 375px (design-system.md rule 11). shell_test.rb's phone sweep launches
+  # the Gerber viewer but not this one, and "Use this view as preview" took the open bar's buttons
+  # to 435px: unwrapped, the page scrolled sideways to 464. The viewport is set through CDP for the
+  # reason that sweep records (headless Chrome will not resize a window below 500px).
+  #
+  # MUTATION (§15; run for real, output in the PR, then reverted): dropping `flex-wrap: wrap` from
+  # pages/preview.css's `.mv-actions` reds it with scrollWidth 464.
+  test "the open viewer's bar wraps at phone width instead of pushing the page sideways" do
+    node = write_model!(name: "bracket.stl", body: binary_stl)
+    page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
+                                    width: 375, height: 812, deviceScaleFactor: 1, mobile: false)
+    view_in_3d!(node)
+    assert_rendered(MeshFixture::STL_DIMS)
+    assert_selector ".mv-actions button", text: "Use this view as preview"
+    assert page.evaluate_script("document.documentElement.scrollWidth <= window.innerWidth"),
+           "the open 3D viewer scrolls sideways at 375px (scrollWidth " \
+           "#{page.evaluate_script('document.documentElement.scrollWidth')})"
+  ensure
+    page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
+  end
+
   # ---- 3MF: the slicer's colours and the declared unit, which the importer cannot read ----------
 
   # THE ONE CLAIM ONLY A BROWSER CAN SETTLE. Everything about the manifest itself is a unit test
@@ -448,6 +485,36 @@ class O3dvTest < ApplicationSystemTestCase
     assert_selector ".model-viewer[data-modelviewer-state='ready']"
     assert_selector ".model-viewer-dims", text: MeshFixture::GLB_DIMS
     assert_selector ".model-viewer-stage canvas", count: 1, visible: :all
+    assert_no_console_errors
+  end
+
+  # A PREVIEW IS TAKEN ONLY OF A MODEL THAT IS SHOWING (2026-10-20). A switch points the preview door
+  # at the NEW file before its import has run, so while the PLY's bytes are held the stage holds
+  # anything but the PLY and the door already names it. "Use this view as preview" must do nothing
+  # there. The status is read straight after the click because usePreview writes "Saving preview…"
+  # before its first await, so a save that started cannot hide from it.
+  #
+  # MUTATION (§15; run for real, output in the PR, then reverted): dropping usePreview's
+  # `data-modelviewer-state !== "ready"` arm reds it on the status assertion.
+  test "a switch mid-import saves no preview until the new model is showing" do
+    stl = write_model!(name: "body.stl", body: binary_stl)
+    ply = write_model!(name: "shell.ply", body: MeshFixture::PLY)
+    visit model_path(switcher_model!(stl, ply))
+    click_on "View in 3D"
+    assert_selector ".model-viewer-dims", text: MeshFixture::STL_DIMS
+
+    gate_xhr!("shell.ply")
+    find("select.model-viewer-source").select("shell.ply")
+    wait_until_held("shell.ply")
+    click_on "Use this view as preview"
+    assert_equal "", find(".mv-status", visible: :all).text(:all)
+
+    release_xhr("shell.ply")
+    assert_selector ".model-viewer[data-modelviewer-state='ready']"
+    assert_selector ".model-viewer-dims", text: MeshFixture::PLY_DIMS
+    click_on "Use this view as preview"
+    assert_selector ".mv-status", text: "Saved as the preview."
+    assert_equal [ ply.node_id ], @user.maker_previews.where(source: "viewer").pluck(:node_id)
     assert_no_console_errors
   end
 

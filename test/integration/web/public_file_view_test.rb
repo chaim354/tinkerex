@@ -85,6 +85,11 @@ module Web
       assert_select "[data-modelviewer-url-value=?]",
                     public_file_path("ada", @project.slug, @f[:base].node_id, filename: "base.stl")
       assert_select "[data-modelviewer-lazy-value=?]", "true"
+      # "USE THIS VIEW AS PREVIEW" IS THE MAKER'S (2026-10-20): the partial offers it only when its
+      # caller passes `preview_url:`, and a visitor's page passes none — neither the door nor the
+      # button that would post to it.
+      assert_select "[data-modelviewer-preview-url-value]", count: 0
+      assert_select "button[data-action=?]", "modelviewer#usePreview", count: 0
       assert_no_private_urls
     end
 

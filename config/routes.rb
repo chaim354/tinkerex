@@ -195,6 +195,12 @@ root to: "home#index"
   post "files/:node_id/links", to: "files/links#create", as: :file_links
   resources :file_links, only: %i[destroy], controller: "files/links"
 
+  # --- A file's preview chosen in the 3D viewer (2026-10-20; keyed by node_id, session auth) ---
+  # The node_id shape of the notes and links routes above. POST takes the viewer's PNG; DELETE
+  # hands the thumbnail back to the server renderer (Files::PreviewsController).
+  post   "files/:node_id/preview", to: "files/previews#create",  as: :file_preview
+  delete "files/:node_id/preview", to: "files/previews#destroy"
+
   # Sidebar places (structural redesign spec §4.1). `:id` IS THE FOLDER'S node_id, not the row's,
   # so the Unpin button names the folder it unpins and a stale row id can never unpin the wrong one.
   resources :pins, only: %i[create destroy]
