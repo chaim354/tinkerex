@@ -93,8 +93,8 @@ lists. Accepted with this design (the alternative was a new link table).
 
 ## Routes
 
-- `POST /models/:model_id/projects` `{ project_id }` → attach. HTML redirects back with the
-  notice; JSON answers `{ project_id, model_id, created }`.
+- `POST /models/:model_id/projects` `{ project_id }` → attach. HTML only: redirects back with the
+  notice (no caller wants JSON).
 - `DELETE /models/:model_id/projects/:id` (`:id` is the project) → detach, redirect back with
   "Detached <model> from <project>."
 - `GET /projects/:project_id/models/new?q=` → the picker.

@@ -519,6 +519,9 @@ module Web
         "project new" => new_project_path,
         "project edit" => edit_project_path(@project),
         "project attachment new" => new_project_attachment_path(@project),
+        # 2026-10-21: the Add-model picker. @model ("Bracket") is catalogued, so the results arm
+        # renders, not the empty one.
+        "project model new" => new_project_model_path(@project),
         "project sheet" => sheet_path(@sheet),
         "projects/boms" => project_bom_path(@project),
         # Stage 2, S2-5. @project wears "laser" (setup above), so this renders shared/_result_group

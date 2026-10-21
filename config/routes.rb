@@ -242,6 +242,9 @@ root to: "home#index"
       # `on: :collection` keeps it nested despite `shallow: true`.
       post :relocate, on: :collection
     end
+    # THE ADD-MODEL PICKER (2026-10-21, attach-a-model spec): the project page's Models panel opens
+    # it. `new` only — the attach itself is POST /models/:model_id/projects, one door for both ends.
+    resources :models, only: %i[new], module: :projects
     resources :build_log_entries, only: %i[create destroy], module: :projects, shallow: true
     resources :tasks, only: %i[create update destroy], module: :projects, shallow: true
     # THE BILL OF MATERIALS (stage 2, S2-4). ONE bom per project on the web -- the latest revision,
@@ -410,6 +413,10 @@ root to: "home#index"
     # identical either way, so the importer's attach step is unaffected.
     resources :attachments, only: %i[create destroy], module: :models
     resources :print_runs, only: %i[create destroy], module: :models, shallow: true
+    # A MODEL'S PROJECTS (2026-10-21, attach-a-model spec): attach (create) and detach (destroy).
+    # NOT shallow, for the reason `attachments` above is not: a shallow DELETE /projects/:id would
+    # be projects#destroy. `:id` is the PROJECT's slug.
+    resources :projects, only: %i[create destroy], module: :models
   end
 
 
