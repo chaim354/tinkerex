@@ -73,9 +73,12 @@ screen, except Help, changing your email or password, and signing out. Creating 
 with `bin/rails tinkerex:owner` (section 4) confirms the whole mounted folder itself, so a console
 install is not asked.
 
-**To change it later**, open Settings → Library folder. With files already indexed it offers two
-outcomes. **Switch to this folder** keeps each file's projects, notes and tags when the new folder
-holds the same files (the old one moved or renamed on the host); if it holds a different set, the
+**To change it later**, an admin opens Settings → Library folder. The folder is every account's
+library, so only an admin chooses or changes it: any other account sees the same page read-only, and
+one that signs in before the folder is first confirmed waits there until an admin confirms it. With
+files already indexed it offers two outcomes. **Switch to this folder** keeps each file's projects,
+notes and tags when the new folder holds the same files (the old one moved or renamed on the host);
+if it holds a different set, the
 scan refuses, the way it refuses an unmounted share (`LIBRARY_SCAN_MAX_DELETE_PCT`, 20%), and the
 page says so. **Start over with this folder** forgets the catalog — every indexed file, its
 previews, notes, pins and the 3D models found in it. Projects, tasks, inventory and BOMs stay, and

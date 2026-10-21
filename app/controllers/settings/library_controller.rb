@@ -1,15 +1,24 @@
 # WHICH FOLDER IS THE LIBRARY (K, 2026-10-20). One page, two states told apart by
 # Tinkerex::LibraryRoot.pending?: the first-run confirmation, and once chosen, the change form. On s3
 # and chunk_remote it renders the "where files come from" partial with nothing to choose, so the
-# Settings link never leads to a dead end. Session-authed like every Settings page; on share every
-# account shares the one library and sign-ups are closed (§8), so any signed-in account may change it
-# -- except the shared demo, which keeps its credentials for the same reason.
+# Settings link never leads to a dead end. Session-authed like every Settings page.
+#
+# ONLY AN ADMIN CHOOSES THE FOLDER (2026-10-21, the owner's call once Settings → Users gave the server
+# an admin). On share every account indexes the one library, so a change rescans every account's
+# catalog and Start over forgets every account's files: the change is to the SERVER, not to the
+# account making it. Every other account sees the folder and its state, read-only. The gate asks
+# User#can_manage_accounts?, the Users page's own answer, so the shared demo never passes it whatever
+# its row says -- and is still refused first, by name. First run is no exception: every door that
+# makes the first account makes it the admin (sign-up, tinkerex:owner), and a plain account that
+# meets a pending library waits on the read-only page until an admin confirms it. `children` is gated
+# with `update`: it lists the MOUNT, folders outside the library, and only the change form calls it.
 module Settings
   class LibraryController < ApplicationController
     # The page the redirect points at must not redirect to itself.
     skip_before_action :require_library_folder!
     before_action :require_share!, only: %i[update children]
     before_action :refuse_demo_account!, only: :update
+    before_action :require_admin!, only: %i[update children]
 
     def show
       load_page
@@ -65,6 +74,8 @@ module Settings
       @share = Tinkerex::LibraryRoot.share?
       return unless @share
 
+      @can_change = current_user.can_manage_accounts?
+
       @pending = Tinkerex::LibraryRoot.pending?
       @relative = Tinkerex::LibraryRoot.relative.to_s
       @catalog_empty = Tinkerex::LibraryRoot.catalog_empty?
@@ -96,6 +107,16 @@ module Settings
 
       redirect_to settings_library_path, alert: "The shared demo account can't change the library folder.",
                                          status: :see_other
+    end
+
+    def require_admin!
+      return if current_user.can_manage_accounts?
+
+      message = "Only an admin can change the library folder."
+      respond_to do |format|
+        format.json { render json: { error: message }, status: :forbidden }
+        format.html { redirect_to settings_library_path, alert: message, status: :see_other }
+      end
     end
   end
 end
