@@ -134,7 +134,8 @@ The catalog then sees an ordinary model folder: `Maker::ModelIntake`'s shelves (
 - **`unpack_folder`:** a plain folder destination; a project root → its filing folder; a
   project subfolder used as-is; a taken name → `<name> 2`; reserved and invalid names refused;
   a bad subfolder segment falls back to the root; another user's parent → 404; blank parent →
-  library root. Run on all three backend legs (it creates folders through the port).
+  library root. Pinned to a fresh share library: they assert where folders go, not which
+  backend holds them (Maker::LibraryFolder is the backend-neutral door, tested on its own).
 - **`unpacked`:** enqueues `Maker::ModelIntakeJob` for the current user; another user's folder →
   404.
 - **`zip_bundle.js`:** through the Import page's existing system test (it must still import a

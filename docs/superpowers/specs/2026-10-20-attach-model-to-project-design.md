@@ -132,5 +132,6 @@ costs: two queries.
   query filters by title and excludes dismissed models.
 - **Project page:** linked model files no longer appear in "Linked from elsewhere"; the budget test
   extended with N linked and N in-folder models.
-- **System:** attach from a model page → card on the project page → Detach → card gone, files still
-  in the library.
+- **No system test:** attach, detach and the picker are plain forms with no Stimulus, so
+  `test/system/README.md`'s rule keeps them at the request level (above), where the round trip —
+  attach → card → Detach → files still in the library — is asserted.
