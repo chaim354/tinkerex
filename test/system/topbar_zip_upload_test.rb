@@ -19,6 +19,10 @@ require "zip"
 #   - `return parent` as the first line of Files::UnpacksController#destination: the project test RED
 #     on `["models", <project folder>]` vs `["stargate", <Projects>]` — `iris/` made at the project
 #     root, the sweep's inbox; the other two green.
+#   - THE LAZY INFLATE: unpackZip handing `upload` the LISTED entry instead of `await entry.load()`
+#     (lib/zip_unpack.js): both unpack tests RED — the first at `assert_current_path` (every entry
+#     refused, so nothing landed and there was no folder to open), the project test at "gate.stl
+#     never landed"; the no-model test green.
 class TopbarZipUploadTest < ApplicationSystemTestCase
   setup do
     @root = use_fresh_share_library!

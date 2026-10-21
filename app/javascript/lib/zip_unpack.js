@@ -1,18 +1,24 @@
 import { postJSON } from "lib/chunk_upload"
-import { extOf, isZip, readZipBundle } from "lib/zip_bundle"
+import { extOf, isZip, listZipBundle } from "lib/zip_bundle"
 
 // THE TOP BAR'S UPLOAD WHEN THE SELECTION HOLDS A MODEL ZIP (2026-10-21; spec
 // docs/superpowers/specs/2026-10-20-zip-upload-unpacks-models-design.md). Shared by both upload
 // flows — zip_upload_controller.js (share/s3) and uploader_controller.js (chunk_remote) — which
 // differ only in the per-file door, passed in as `upload(file, parentNodeId)` resolving to
 // { nodeId } or throwing.
+//
+// NOTHING IS INFLATED TO DECIDE. A zip is LISTED (lib/zip_bundle.js#listZipBundle) and judged by
+// its entry names alone, so a firmware or Gerber zip that holds no model is uploaded whole without
+// ever being decompressed in the page. A model zip is then inflated ONE ENTRY AT A TIME, each just
+// before its own upload, so the page never holds a whole unpacked archive in memory.
 
 export { isZip }
 
 // Sort a selection into MODEL ZIPS (unpacked) and everything else (uploaded as it is). Each .zip is
-// read once. "Model" is the server's vocabulary — `modelExts` is Maker::FileAttachment::MODEL_EXTS,
-// rendered into the page — never a list kept here. A zip JSZip cannot open is "everything else": it
-// uploads as a file, exactly as it did before this existed, and its name is reported.
+// listed once, never inflated here. "Model" is the server's vocabulary — `modelExts` is
+// Maker::FileAttachment::MODEL_EXTS, rendered into the page — never a list kept here. A zip JSZip
+// cannot open is "everything else": it uploads as a file, exactly as it did before this existed,
+// and its name is reported.
 export async function splitSelection(files, modelExts) {
   const zips = []
   const rest = []
@@ -21,7 +27,7 @@ export async function splitSelection(files, modelExts) {
     if (!isZip(file)) { rest.push(file); continue }
     let entries
     try {
-      entries = await readZipBundle(file)
+      entries = await listZipBundle(file)
     } catch (e) {
       console.warn(`could not open ${file.name}:`, e)
       unreadable.push(file.name)
@@ -35,9 +41,11 @@ export async function splitSelection(files, modelExts) {
   return { zips, rest, unreadable }
 }
 
-// Unpack ONE model zip: the folder map from the server, every entry through `upload`, then the
-// catalog nudge. A failed entry is recorded and passed over — the importer's rule: one refused
-// name must not lose the other seventeen. THROWS only when the folder itself could not be made.
+// Unpack ONE model zip: the folder map from the server, every entry inflated (`load()`) and sent
+// through `upload` one at a time, then the catalog nudge. The inflate is INSIDE the per-entry try:
+// a failed entry — an unreadable member as much as a refused name — is recorded as `dir/name` (two
+// `readme.txt` in different folders must stay two lines) and passed over, the importer's rule: one
+// bad entry must not lose the other seventeen. THROWS only when the folder itself could not be made.
 async function unpackZip({ file, entries, firstModel }, { parentNodeId, unpackUrl, unpackedUrl, upload, setStatus }) {
   const made = await postJSON(unpackUrl, {
     parent_node_id: parentNodeId || null,
@@ -48,12 +56,14 @@ async function unpackZip({ file, entries, firstModel }, { parentNodeId, unpackUr
   const failed = []
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i]
+    const path = entry.dir ? `${entry.dir}/${entry.name}` : entry.name
     setStatus(`Unpacking ${file.name} — ${i + 1}/${entries.length}`)
     try {
-      await upload(entry.blob, made.folder_map[entry.dir] ?? made.folder_map[""])
+      const blob = await entry.load()
+      await upload(blob, made.folder_map[entry.dir] ?? made.folder_map[""])
     } catch (e) {
-      console.warn(`skipped ${entry.dir ? `${entry.dir}/` : ""}${entry.name}:`, e)
-      failed.push(entry.name)
+      console.warn(`skipped ${path}:`, e)
+      failed.push(path)
     }
   }
   const landed = entries.length - failed.length
@@ -92,6 +102,7 @@ export async function uploadSplit(split, { parentNodeId, unpackUrl, unpackedUrl,
   }
 
   let uploaded = 0
+  const restFailed = new Set()
   for (let i = 0; i < split.rest.length; i++) {
     const file = split.rest[i]
     setStatus(`Uploading ${file.name}…${split.rest.length > 1 ? ` (${i + 1} of ${split.rest.length})` : ""}`)
@@ -100,13 +111,17 @@ export async function uploadSplit(split, { parentNodeId, unpackUrl, unpackedUrl,
       uploaded += 1
     } catch (e) {
       console.error(e)
+      restFailed.add(file.name)
       failed.push(`${file.name} (${e.message})`)
     }
   }
 
   const landing = split.zips.length === 1 && split.rest.length === 0 && unpacked.length === 1
     ? unpacked[0].folderUrl : null
-  return { unpacked, uploaded, failed, unreadable: split.unreadable, landing }
+  // `unreadable` NAMES ONLY THE ZIPS THAT THEN UPLOADED AS THEY ARE. One whose own upload failed is
+  // already in `failed`, with the reason; listing it in both would report it uploaded and not.
+  const unreadable = split.unreadable.filter((name) => !restFailed.has(name))
+  return { unpacked, uploaded, failed, unreadable, landing }
 }
 
 // The end of a run, the same for both flows. ANYTHING THAT WENT WRONG STAYS ON SCREEN — a reload
@@ -114,14 +129,17 @@ export async function uploadSplit(split, { parentNodeId, unpackUrl, unpackedUrl,
 // a reload of this page so the new files show.
 export function reportAndLand(out, setStatus) {
   if (out.unpacked.length === 0 && out.uploaded === 0) {
-    setStatus(`Upload failed: ${out.failed.join(", ")}`)
+    setStatus(out.failed.length > 0 ? `Upload failed: ${out.failed.join(", ")}` : "Nothing was uploaded.")
     return
   }
   if (out.failed.length > 0 || out.unreadable.length > 0) {
     const parts = []
     if (out.unpacked.length > 0) parts.push(`unpacked ${out.unpacked.map((u) => u.name).join(", ")}`)
     if (out.uploaded > 0) parts.push(`uploaded ${out.uploaded} ${out.uploaded === 1 ? "file" : "files"}`)
-    if (out.unreadable.length > 0) parts.push(`couldn't open ${out.unreadable.join(", ")}, so uploaded it as is`)
+    if (out.unreadable.length > 0) {
+      const asIs = out.unreadable.length === 1 ? "it as it is" : "them as they are"
+      parts.push(`couldn't open ${out.unreadable.join(", ")}, so uploaded ${asIs}`)
+    }
     if (out.failed.length > 0) parts.push(`failed: ${out.failed.join(", ")}`)
     const line = parts.join("; ")
     setStatus(`${line.charAt(0).toUpperCase()}${line.slice(1)}. Reload to see them.`)
