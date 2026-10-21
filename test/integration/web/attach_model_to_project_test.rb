@@ -104,6 +104,24 @@ module Web
       assert_equal %w[n-twin], model.file_attachments.reload.pluck(:node_id)
     end
 
+    # A SHARED FILE IS ITS OWNER'S LINK (Maker::AttachToProject.owners_by_node, the Models panel's
+    # rule). @model is the older row on n-stl, so the project's n-stl row is @model's card; detaching
+    # the newer model must not take it. Mutation-checked: #destroy over ALL of the model's node ids
+    # leaves only n-pdf here, and this goes red.
+    test "detach leaves a shared file's row to the older model that owns it" do
+      file("n-arm", "arm.stl")
+      newer = @user.maker_models.create!(title: "Arm", origin: "import")
+      %w[n-stl n-arm].each { |id| newer.file_attachments.create!(user: @user, node_id: id, role: "model") }
+      Maker::AttachToProject.new(user: @user, project: @project).attach_model(@model)
+      Maker::AttachToProject.new(user: @user, project: @project).attach_model(newer)
+      assert_equal %w[n-arm n-pdf n-stl], node_ids
+
+      delete model_project_path(newer, @project)
+
+      assert_equal "Detached Arm from Desk Lamp.", flash[:notice]
+      assert_equal %w[n-pdf n-stl], node_ids
+    end
+
     test "detaching a model that is not in the project says so" do
       delete model_project_path(@model, @project)
 

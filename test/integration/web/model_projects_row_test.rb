@@ -38,6 +38,25 @@ module Web
       assert_select options, model_projects_path(shade), text: "Desk"
     end
 
+    # THE LOCATED CHIP HAS NO ×: the model is the project's by where it is, so there is no row to
+    # detach and a button here would only answer "wasn't in".
+    test "a model inside a project's folder shows that project's chip with no Detach" do
+      folder = project_folder_rows!(@user, @lamp)
+      @user.nodes.create!(node_id: "d-arm", name: "arm", kind: "dir", parent_node_id: folder.node_id, mtime: 1, size: 0)
+      arm = model_with_file("Arm", parent: "d-arm", folder: "d-arm")
+
+      get files_path(folder: "d-arm")
+
+      assert_response :success
+      assert_select ".model-strip .model-projects .project-chip", count: 1
+      assert_select ".model-strip .model-projects .project-chip", text: "Lamp" do
+        assert_select "button", count: 0
+        assert_select "form", count: 0
+      end
+      assert_select ".model-strip .model-projects form[action=?]", model_project_path(arm, @lamp), count: 0
+      assert_select ".model-strip .model-projects select[name='project_id'] option", text: "Desk"
+    end
+
     test "the model page shows the same row" do
       knob = model_with_file("Knob", parent: nil)
 

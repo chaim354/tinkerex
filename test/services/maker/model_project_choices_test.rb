@@ -62,5 +62,55 @@ module Maker
       assert_nil c.located
       assert_equal [ @bench, @desk, @lamp ], c.available
     end
+
+    # THE PANEL'S RULE (Maker::AttachToProject.owners_by_node): a project's row on a shared file is
+    # the OLDER model's link. Showing it on the newer model too put a × there whose detach deleted
+    # the older model's row — the one card the project's Models panel showed.
+    test "a project linked through a shared file is the older model's, not the newer one's" do
+      @user.nodes.create!(node_id: "n-shared", name: "shared.stl", kind: "file", mtime: 1, size: 1)
+      @user.nodes.create!(node_id: "n-arm", name: "arm.stl", kind: "file", mtime: 1, size: 1)
+      older = @user.maker_models.create!(title: "older", origin: "import")
+      newer = @user.maker_models.create!(title: "newer", origin: "import")
+      older.file_attachments.create!(user: @user, node_id: "n-shared", role: "model")
+      %w[n-shared n-arm].each { |id| newer.file_attachments.create!(user: @user, node_id: id, role: "model") }
+      @desk.file_attachments.create!(user: @user, node_id: "n-shared", role: "model")
+
+      assert_equal [ @desk ], Maker::ModelProjectChoices.for(@user, older).linked
+      newer_choices = Maker::ModelProjectChoices.for(@user, newer)
+      assert_empty newer_choices.linked
+      assert_equal [ @bench, @desk, @lamp ], newer_choices.available
+    end
+
+    test "a project linked only through a deleted file is not linked" do
+      @user.nodes.create!(node_id: "n-gone", name: "gone.stl", kind: "file", parent_node_id: "d-shade",
+                          mtime: 1, size: 1, deleted: true)
+      @shade.file_attachments.create!(user: @user, node_id: "n-gone", role: "model")
+      @desk.file_attachments.create!(user: @user, node_id: "n-gone", role: "model")
+
+      c = choices
+
+      assert_empty c.linked
+      assert_equal [ @bench, @desk ], c.available
+    end
+
+    test "an archived project still holds its folder's model as located" do
+      @lamp.update!(status: "archived")
+
+      c = choices
+
+      assert_equal @lamp, c.located
+      assert_equal [ @bench, @desk ], c.available
+    end
+
+    test "a hollow model offers nothing to attach to" do
+      dir("d-empty", "empty", nil)
+      hollow = @user.maker_models.create!(title: "empty", origin: "auto", auto_node_id: "d-empty", folder_node_id: "d-empty")
+      assert hollow.hollow?
+
+      c = Maker::ModelProjectChoices.for(@user, hollow)
+
+      assert_empty c.linked
+      assert_empty c.available
+    end
   end
 end
