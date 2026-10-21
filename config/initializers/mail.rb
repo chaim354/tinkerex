@@ -16,7 +16,8 @@ Rails.application.config.after_initialize do
   else
     Rails.logger.warn("SMTP_ADDRESS is not set: confirmation and password-reset mail cannot be sent. " \
                       "The first account (the owner) needs no mail; set SMTP_ADDRESS before opening " \
-                      "sign-ups or inviting a second account. bin/rails tinkerex:owner and " \
-                      "tinkerex:password are the console doors meanwhile.")
+                      "sign-ups or inviting a second account. Meanwhile an admin adds accounts and " \
+                      "resets passwords under Settings -> Users, and bin/rails tinkerex:owner and " \
+                      "tinkerex:password are the console doors.")
   end
 end

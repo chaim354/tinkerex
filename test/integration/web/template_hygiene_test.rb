@@ -113,8 +113,13 @@ module Web
       # refuses to leave `private` while its maker has none, and once one is published the handle
       # itself locks (Maker::Project's own validation, User#handle_locked?) — so the order below is
       # the only one that works, not a preference.
+      #
+      # AN ADMIN, so Settings → Users renders (2026-10-21), with a second account for its per-account
+      # page: the signed-in account's own is the Account page, never one under /settings/users.
       @user = User.create!(email: "hygiene-#{SecureRandom.hex(4)}@example.com", handle: "hygiene",
-                           password: PASSWORD, confirmed_at: Time.current)
+                           password: PASSWORD, confirmed_at: Time.current, admin: true)
+      @other_account = User.create!(email: "hygiene-other-#{SecureRandom.hex(4)}@example.com",
+                                    confirmed_at: Time.current, omniauth_signup: true)
       sign_in_web!(@user, password: PASSWORD)
       @user.nodes.create!(node_id: "d-laser", name: "laser", kind: "dir")
       @user.nodes.create!(node_id: "d-empty", name: "empty", kind: "dir")
@@ -555,6 +560,9 @@ module Web
         # K (2026-10-20): the library folder page. One template for its states; the fixture confirms
         # the library, so the chosen state renders here (and the no-folder state on s3/chunk_remote).
         "settings/library" => settings_library_path,
+        # Accounts (2026-10-21): the list with its add form, and one other account's page.
+        "settings/users" => settings_users_path,
+        "settings/users edit" => edit_settings_user_path(@other_account),
         # Onboarding (2026-10-13): the Help page needs no fixture. Its three backend arms are
         # rendered by help_page_test.rb, which swaps the capabilities the page reads.
         "help" => help_path,

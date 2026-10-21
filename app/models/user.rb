@@ -135,6 +135,21 @@ class User < ApplicationRecord
 
   normalizes :email, with: ->(e) { e.to_s.strip.downcase }
 
+  # WHO MAY MANAGE ACCOUNTS (Settings → Users; docs/superpowers/specs/2026-10-21-admin-users-design.md).
+  # `admin` is the stored flag; this is the ANSWER, and the shared demo account never gets a yes
+  # whatever its row says, because strangers are signed into it by one click (Tinkerex::Demo). The
+  # Users gate, the Settings hub row and the last-admin count all ask this, never `admin?` alone.
+  def can_manage_accounts? = admin? && !Tinkerex::Demo.demo?(self)
+
+  # The accounts `can_manage_accounts?` says yes to, as a query. The demo's address is excluded by
+  # value; with no demo configured `email <> ''` excludes nobody, since an email is never blank.
+  scope :account_managers, -> { where(admin: true).where.not(email: Tinkerex::Demo.email.to_s) }
+
+  # The only account left that can manage accounts. A count, not a lock: two admins acting in the
+  # same instant can both pass it -- recorded in the design, and `tinkerex:admin` repairs a server
+  # left with none.
+  def last_account_manager? = can_manage_accounts? && !User.account_managers.where.not(id:).exists?
+
   # THE HANDLE IS THE FIRST SEGMENT OF EVERY PUBLIC URL (/u/<handle>/<slug>, spec §2.2), so it is
   # lowercase, URL-safe and unique, claimed once under Settings → Account, and LOCKED while any
   # project is unlisted or public -- a rename would break every link a maker has already handed out.

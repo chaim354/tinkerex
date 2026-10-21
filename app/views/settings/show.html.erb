@@ -25,6 +25,13 @@
     <%= link_to "Tags", settings_tags_path, class: "settings-name" %>
     <span class="settings-fact"><%= pluralize(@tag_count, "tag") %></span>
   </li>
+  <%# Users (2026-10-21): admins only, by the same answer the page's own gate asks. %>
+  <% if current_user.can_manage_accounts? %>
+    <li>
+      <%= link_to "Users", settings_users_path, class: "settings-name" %>
+      <span class="settings-fact"><%= pluralize(@user_count, "account") %></span>
+    </li>
+  <% end %>
   <li>
     <%= link_to "Account", edit_user_registration_path, class: "settings-name" %>
     <span class="settings-fact"><%= current_user.email %></span>

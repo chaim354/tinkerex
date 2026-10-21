@@ -48,6 +48,20 @@ module Web
     # folder sat unindexed until Rescan. Enqueued, never performed here: on the s3 leg a performed
     # scan would list a bucket with stub credentials. On a CONFIRMED library (the fixture row): the
     # fresh-install case is the next test.
+    # THE FIRST ACCOUNT IS THE ADMIN, AND NO LATER SIGN-UP CAN ASK TO BE ONE: Devise's sign_up_params
+    # permits email and the two passwords only, so a forged user[admin] is dropped.
+    test "the first account is the admin; a later sign-up is not, even when it asks to be" do
+      sign_up("owner@example.com")
+      assert User.find_by!(email: "owner@example.com").admin?, "the owner manages accounts"
+
+      delete destroy_user_session_path
+      ENV["REGISTRATION"] = "open"
+      post user_registration_path, params: { user: { email: "second@example.com", password: PASSWORD,
+                                                     password_confirmation: PASSWORD, admin: "1" } }
+
+      assert_not User.find_by!(email: "second@example.com").admin?
+    end
+
     test "the first account's sign-up enqueues the first library scan; a later account's does not" do
       if FileLayer.current.capabilities.scannable?
         assert_enqueued_with(job: Library::ScanJob) { sign_up("owner@example.com") }
