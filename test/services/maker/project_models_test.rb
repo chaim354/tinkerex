@@ -44,18 +44,26 @@ module Maker
       Maker::ProjectModels.for(@user, @lamp, attached_node_ids: @lamp.file_attachments.pluck(:node_id))
     end
 
-    test "a model in the folder and a linked one both show, by title; only the linked one is linked" do
+    # "apple" before "Banana": a case-sensitive sort would put the capital first.
+    test "a model in the folder and a linked one both show, by title ignoring case; only the linked one is linked" do
       file("n-shade", "shade.stl", "d-shade")
-      shade = auto_model("shade", "d-shade", attach: "n-shade")
+      apple = auto_model("apple", "d-shade", attach: "n-shade")
       file("n-benchy", "benchy.stl", "d-loose")
-      benchy = auto_model("Benchy", "n-benchy")
+      banana = auto_model("Banana", "n-benchy")
       link(@lamp, "n-benchy")
 
       r = for_lamp
 
-      assert_equal [ benchy, shade ], r.models
-      assert_equal Set[benchy.id], r.linked_ids
+      assert_equal [ apple, banana ], r.models
+      assert_equal Set[banana.id], r.linked_ids
       assert_equal Set["n-benchy"], r.owned_node_ids
+    end
+
+    test "an emptied auto model in the folder does not show — hidden, as the 3D models view hides it" do
+      @user.maker_models.create!(title: "shade", origin: "auto", auto_node_id: "d-shade",
+                                 folder_node_id: "d-shade")
+
+      assert_empty for_lamp.models
     end
 
     test "a one-file model loose in models/ is in the folder" do
@@ -105,6 +113,22 @@ module Maker
       link(@lamp, "n-shared")
 
       assert_equal [ older ], for_lamp.models
+    end
+
+    # PINS A DEFERRED EDGE, not a wish: the oldest owner is dismissed, so the file reads as that
+    # model's and the newer catalogued one gets no card. Why it is left — see
+    # Maker::AttachToProject.owners_by_node.
+    test "a file whose oldest owner is dismissed shows no model, not the newer owner" do
+      file("n-shared", "shared.stl", "d-loose")
+      auto_model("Gone", "n-shared").update!(dismissed_at: Time.current)
+      newer = @user.maker_models.create!(title: "Kept", origin: "import")
+      newer.file_attachments.create!(user: @user, node_id: "n-shared", role: "model")
+      link(@lamp, "n-shared")
+
+      r = for_lamp
+
+      assert_empty r.models
+      assert_empty r.owned_node_ids
     end
 
     test "a project with no folder still shows its linked models" do

@@ -60,6 +60,12 @@ module Maker
     # OLDEST Maker::Model row naming the node) for a whole list in ONE query, for the project page's
     # Models panel (Maker::ProjectModels), which asks it of every attached file at once. The two are
     # the same ORDER BY id read two ways; attach_model_test.rb pins that they agree.
+    #
+    # A DISMISSED OLDEST OWNER STILL WINS, KNOWINGLY (deferred, not fixed): a node whose oldest model
+    # row is a dismissed model answers that model, so the panel shows no card for a newer catalogued
+    # model on the same file (project_models_test.rb pins it). Skipping dismissed rows here would
+    # split this from #model_owning, and #model_owning cannot skip them — its :model_bundle move
+    # guard must keep a dismissed model's folder from being gutted.
     def self.owners_by_node(user, node_ids)
       return {} if node_ids.empty?
 

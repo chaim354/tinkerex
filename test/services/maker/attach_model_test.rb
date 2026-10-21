@@ -44,6 +44,9 @@ module Maker
       again = service.attach_model(@model)
 
       refute again.created
+      # Still a bundle of one, not :empty_model — "nothing new" is not "nothing there".
+      assert_equal :model_bundle, again.relocation
+      assert_equal 1, again.attachments.size
       assert_equal 1, @project.file_attachments.count
     end
 
@@ -59,14 +62,29 @@ module Maker
     end
 
     test "owners_by_node answers the oldest model per node — #model_owning's rule" do
-      file("n-shared", "shared.stl")
+      # A THROWAWAY MODEL FIRST, so the owner's id is not the project's: with equal ids a project
+      # row would read as the right answer and the attachable_type filter would go untested.
+      @user.maker_models.create!(title: "Throwaway", origin: "import")
+      owner = @user.maker_models.create!(title: "Owner", origin: "import")
       newer = @user.maker_models.create!(title: "Other", origin: "import")
-      member(@model, "n-shared")
+      refute_equal @project.id, owner.id
+      stranger = User.create!(email: "am-x-#{SecureRandom.hex(4)}@example.com",
+                              confirmed_at: Time.current, omniauth_signup: true)
+      theirs = stranger.maker_models.create!(title: "Theirs", origin: "import")
+      file("n-shared", "shared.stl")
+      file("n-project-only", "loose.stl")
+      # Rows OLDER than the owner's that must not win: another user's model naming the same
+      # node_id, and this project's own row on it.
+      theirs.file_attachments.create!(user: stranger, node_id: "n-shared", role: "other")
+      @project.file_attachments.create!(user: @user, node_id: "n-shared", role: "model")
+      member(owner, "n-shared")
       member(newer, "n-shared")
+      # Attached to the project only — no model owns it.
+      @project.file_attachments.create!(user: @user, node_id: "n-project-only", role: "model")
 
-      assert_equal({ "n-shared" => @model.id },
-                   Maker::AttachToProject.owners_by_node(@user, [ "n-shared", "n-none" ]))
-      assert_equal @model, service.model_owning(@user.nodes.find_by!(node_id: "n-shared"))
+      assert_equal({ "n-shared" => owner.id },
+                   Maker::AttachToProject.owners_by_node(@user, [ "n-shared", "n-project-only", "n-none" ]))
+      assert_equal owner, service.model_owning(@user.nodes.find_by!(node_id: "n-shared"))
       assert_equal({}, Maker::AttachToProject.owners_by_node(@user, []))
     end
   end

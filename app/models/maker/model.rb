@@ -66,6 +66,14 @@ module Maker
 
     def auto? = origin == "auto"
 
+    # A SWEEP-MADE MODEL WHOSE FILES ARE ALL GONE — an emptied folder. The catalog HIDES it rather
+    # than dismissing or destroying it (docs/invariants/model-intake.md: the row keeps the title and
+    # tags and returns the moment a file does), so every place that lists models must hide it the
+    # same way: the 3D models view, a folder's model strip (Maker::ModelFolder) and a project's
+    # Models panel (Maker::ProjectModels). ONE predicate, because three copies of the rule are three
+    # chances to disagree. Reads the loaded :file_attachments when the caller included them.
+    def hollow? = auto? && file_attachments.empty?
+
     def to_param = slug
 
     # The node representing this model: explicit override, else first image, else first model file
