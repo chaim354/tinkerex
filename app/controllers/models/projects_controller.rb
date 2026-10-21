@@ -42,11 +42,17 @@ module Models
       # THE TABLE, NOT `project.file_attachments`: that association carries an `order(:position)`
       # scope, and a DELETE … ORDER BY is not portable. No callbacks to lose — Maker::FileAttachment
       # has none (Maker::AttachToProject#attach_bundle's insert_all relies on the same fact).
-      current_user.maker_file_attachments
-                  .where(attachable_type: "Maker::Project", attachable_id: project.id,
-                         node_id: @model.file_attachments.pluck(:node_id))
-                  .delete_all
-      redirect_back_or_to project_path(project), notice: "Detached #{@model.title} from #{project.name}."
+      #
+      # `attachable_type` IS NOT REDUNDANT WITH `attachable_id`: a project and a model can share an
+      # id, and without the type this would delete the model's OWN rows for the same files.
+      removed = current_user.maker_file_attachments
+                            .where(attachable_type: "Maker::Project", attachable_id: project.id,
+                                   node_id: @model.file_attachments.pluck(:node_id))
+                            .delete_all
+      # THE COUNT, NOT A BLIND "Detached": a stale page or a second click deletes nothing, and
+      # saying it did would be the one false notice on this door.
+      notice = removed.zero? ? "#{@model.title} wasn't in #{project.name}." : "Detached #{@model.title} from #{project.name}."
+      redirect_back_or_to project_path(project), notice:
     end
 
     private

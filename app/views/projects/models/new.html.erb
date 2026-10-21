@@ -2,23 +2,27 @@
 
 <div class="page-head"><h1>Add a model to <%= @project.name %></h1></div>
 
-<%= form_with url: new_project_model_path(@project), method: :get, class: "picker-search" do |f| %>
-  <%= f.search_field :q, value: params[:q], placeholder: "Search your models by title…", autofocus: true %>
-  <%= f.submit "Search", class: "btn" %>
-<% end %>
-
-<% if @results.empty? %>
-  <p class="muted">No models found<%= " for “#{params[:q]}”" if params[:q].present? %>.</p>
+<% if @archived %>
+  <p class="muted"><%= @project.name %> is archived — unarchive it to attach models.</p>
 <% else %>
-  <div class="picker-results">
-    <% @results.each do |model| %>
-      <div class="picker-result">
-        <span class="picker-name"><%= model.title %></span>
-        <%= button_to "Attach", model_projects_path(model),
-                      params: { project_id: @project.slug, return_to: "project" }, class: "btn small" %>
-      </div>
-    <% end %>
-  </div>
+  <%= form_with url: new_project_model_path(@project), method: :get, class: "picker-search" do |f| %>
+    <%= f.search_field :q, value: @q, placeholder: "Search your models by title…", autofocus: true %>
+    <%= f.submit "Search", class: "btn" %>
+  <% end %>
+
+  <% if @results.empty? %>
+    <p class="muted">No models found<%= " for “#{@q}”" if @q %>.</p>
+  <% else %>
+    <div class="picker-results">
+      <% @results.each do |model| %>
+        <div class="picker-result">
+          <span class="picker-name"><%= model.title %></span>
+          <%= button_to "Attach", model_projects_path(model),
+                        params: { project_id: @project.slug, return_to: "project" }, class: "btn small" %>
+        </div>
+      <% end %>
+    </div>
+  <% end %>
 <% end %>
 
 <p><%= link_to "← Back to project", project_path(@project), class: "linkbtn" %></p>
