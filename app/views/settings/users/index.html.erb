@@ -1,0 +1,59 @@
+<% content_for :title, "Users — Tinkerex" %>
+
+<%# ACCOUNTS, FOR AN ADMIN (Settings::UsersController). The list, then the add form, whose button is
+    the page's one accent (design-system.md rule 13). The signed-in row links to the Account page,
+    never to a page here: your own account is changed there, behind your password. %>
+<div class="page-head">
+  <h1>Users</h1>
+  <%= link_to "Settings", settings_path, class: "btn ghost small" %>
+</div>
+
+<p class="muted">
+  <% if capabilities.syncable? %>
+    Each account has a library of its own on the sync server, made the first time it is used.
+  <% else %>
+    Every account on this server sees the same library folder, and can open, change and delete every
+    file in it. Add only people you would hand the folder to.
+  <% end %>
+</p>
+
+<ul class="settings-list">
+  <% @users.each do |user| %>
+    <li>
+      <% if user == current_user %>
+        <%= link_to user.email, edit_user_registration_path, class: "settings-name" %>
+        <span class="settings-fact">you</span>
+      <% else %>
+        <%= link_to user.email, edit_settings_user_path(user), class: "settings-name" %>
+      <% end %>
+      <% if user.can_manage_accounts? %>
+        <span class="settings-fact">admin</span>
+      <% end %>
+      <span class="settings-fact"><%= user.last_sign_in_at ? "signed in #{time_ago_in_words(user.last_sign_in_at)} ago" : "never signed in" %></span>
+    </li>
+  <% end %>
+</ul>
+
+<h2>Add an account</h2>
+<% if @new_user.errors.any? %>
+  <div class="form-errors" role="alert"><%= @new_user.errors.full_messages.to_sentence %>.</div>
+<% end %>
+<%# scope: :user -- form_with url: has no model object here, so scope: is what names the fields
+    user[email], user[password] and user[admin], which Settings::UsersController#new_user_params
+    requires (CLAUDE.md §14d). The password is visible text: the admin reads it out or pastes it. %>
+<%= form_with url: settings_users_path, scope: :user, class: "settings-add" do |f| %>
+  <label>
+    <span>Email</span>
+    <%= f.email_field :email, value: @new_user.email, required: true, autocomplete: "off" %>
+  </label>
+  <label>
+    <span>Password</span>
+    <%= f.text_field :password, required: true, minlength: Devise.password_length.min,
+                     autocomplete: "new-password", spellcheck: false %>
+  </label>
+  <label>
+    <span>Admin</span>
+    <%= f.check_box :admin %>
+  </label>
+  <%= f.submit "Add account", class: "btn primary" %>
+<% end %>
