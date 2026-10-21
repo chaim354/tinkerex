@@ -86,8 +86,8 @@ module SchemaMap
                      maker_tags maker_tasks maker_pins] },
     { "label" => "Models & projects", "group" => "maker",
       "tables" => %w[maker_models maker_print_runs maker_projects maker_build_log_entries
-                     maker_sheets maker_shelves maker_filing_rules maker_connections
-                     maker_project_blocks maker_releases maker_release_files] },
+                     maker_sheets maker_shelves maker_shelf_groups maker_filing_rules
+                     maker_connections maker_project_blocks maker_releases maker_release_files] },
     { "label" => "Inventory & BOM", "group" => "maker",
       "tables" => %w[maker_boms maker_bom_lines maker_inventory_items
                      maker_inventory_transactions maker_suppliers maker_locations] },
@@ -148,10 +148,6 @@ module SchemaMap
     # drawn nor listed. Maker::ModelIntake keys an auto-catalogued model on the node it came from
     # -- a DIR for a folder model, a FILE for a one-file model -- which is why it points at
     # `nodes.node_id` and not at either kind specifically.
-    #
-    # maker_shelves DELIBERATELY HAS NO EDGE HERE. A shelf is a PATH PATTERN, not a node: it has
-    # to be able to name `Projects/*/models`, one folder per project, none of which need exist.
-    # There is nothing to join, and drawing an arrow would claim otherwise.
     [ "maker_models.auto_node_id",         "nodes.node_id",       "app", "catalogued from" ],
     [ "maker_projects.cover_node_id",      "nodes.node_id",       "app", "cover" ],
     [ "maker_projects.folder_node_id",     "nodes.node_id",       "app", "Projects/<slug>" ],
@@ -204,6 +200,9 @@ module SchemaMap
     [ "maker_inventory_transactions.project_id",      "maker_projects.id",        "app", "consumed by" ],
     [ "maker_locations.parent_id",                    "maker_locations.id",       "app", "inside" ],
     [ "maker_print_runs.model_id",                    "maker_models.id",          "app", "print of" ],
+    # A SHELF IN A GROUP (2026-10-20). Display only, so the group's `dependent: :nullify` leaves the
+    # shelf standing; the folder name a shelf joins Maker::FilingRule by is a string, not an edge.
+    [ "maker_shelves.shelf_group_id",                 "maker_shelf_groups.id",    "app", "in group" ],
     [ "maker_taggings.tag_id",                        "maker_tags.id",            "app", "tag" ],
     [ "maker_addon_files.addon_state_id",             "maker_addon_states.id",    "fk",  "saved by" ],
     [ "maker_addon_state_revisions.addon_state_id",   "maker_addon_states.id",    "fk",  "history of" ],

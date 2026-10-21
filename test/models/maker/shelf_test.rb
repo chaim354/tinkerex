@@ -1,94 +1,63 @@
 require "test_helper"
 
 module Maker
+  # A SHELF IS A FOLDER INSIDE EVERY PROJECT (2026-10-20), so its name answers the same question
+  # Maker::FilingRule#folder answers, through the SAME check (Maker::FilingRule.plain_segment?).
+  # The model catalog's shelves are Maker::ModelIntake::SHELVES and are tested beside it.
   class ShelfTest < ActiveSupport::TestCase
     setup do
       @user = User.create!(email: "shelf-#{SecureRandom.hex(4)}@example.com",
                            confirmed_at: Time.current, omniauth_signup: true)
     end
 
-    test "the root is a valid path and matches the root" do
-      shelf = @user.maker_shelves.create!(path: "")
-      assert_predicate shelf, :persisted?
-      assert Maker::Shelf.matches?("", "")
+    def other_user!
+      User.create!(email: "shelf-o-#{SecureRandom.hex(4)}@example.com",
+                   confirmed_at: Time.current, omniauth_signup: true)
     end
 
-    test "a literal path matches only itself" do
-      assert Maker::Shelf.matches?("Models", "Models")
-      assert_not Maker::Shelf.matches?("Models", "models")
-      assert_not Maker::Shelf.matches?("Models", "Models/Benchy")
-      assert_not Maker::Shelf.matches?("Models", "")
+    test "the name is normalised the way a filing rule's folder is" do
+      assert_equal "laser", @user.maker_shelves.create!(name: " Laser ").name
     end
 
-    test "a star matches exactly one segment" do
-      assert Maker::Shelf.matches?("Projects/*/models", "Projects/desk-lamp/models")
-      assert_not Maker::Shelf.matches?("Projects/*/models", "Projects/models")
-      assert_not Maker::Shelf.matches?("Projects/*/models", "Projects/desk-lamp/models/parts")
-    end
-
-    # THE REJECTIONS ARE THE POINT. A shelf path is compared against real library paths, so a
-    # traversal segment or a reserved name is a typo worth refusing at the door -- and this asks
-    # the SAME two questions LibraryBrowseController#create_folder asks rather than a private,
-    # weaker spelling (14b).
-    test "traversal, absolute, empty and reserved segments are refused" do
-      [ "..", "a/../b", "/Models", "Models/", "Models//parts", ".trash", "a/.trash/b",
-        ".maker-tmp-x" ].each do |bad|
-        shelf = @user.maker_shelves.new(path: bad)
+    test "a reserved name, a slash and a blank are refused" do
+      { ".trash" => "isn't allowed", "a/b" => "isn't allowed", "" => "can't be blank" }.each do |bad, msg|
+        shelf = @user.maker_shelves.new(name: bad)
         assert_not shelf.valid?, "#{bad.inspect} should be refused"
-        assert_includes shelf.errors[:path].join, "isn't allowed"
+        assert_includes shelf.errors[:name].join, msg
       end
     end
 
-    test "a star is allowed only as a whole segment" do
-      assert @user.maker_shelves.new(path: "Projects/*/models").valid?
-      assert_not @user.maker_shelves.new(path: "Projects/*x/models").valid?
+    test "a name is unique per user, and another user may hold the same one" do
+      @user.maker_shelves.create!(name: "laser")
+      assert_not @user.maker_shelves.new(name: "Laser").valid?
+      assert other_user!.maker_shelves.new(name: "laser").valid?
     end
 
-    test "paths are unique per user" do
-      @user.maker_shelves.create!(path: "Models")
-      assert_not @user.maker_shelves.new(path: "Models").valid?
-    end
-
-    # EVERY SEEDED PATH MUST SURVIVE THIS CLASS'S OWN VALIDATION. Nothing else checks that: once
-    # seeding is wired up, an invalid SEEDS entry surfaces as create! raising for every user on
-    # their first visit, at the door rather than here.
-    # THE STATE THAT USED TO BE PERMANENT. A user holding a seed path with no stamp -- a process
-    # that died between the rows and the stamp, or someone who created "" themselves -- made every
-    # later call raise "Path has already been taken" forever, on the recurring sweep's own first
-    # line. Found by Task 7's implementer when the plan's own job test hit it.
-    test "seeding tolerates a seed path the user already has" do
-      @user.maker_shelves.create!(path: "")
-
-      assert_nothing_raised { Maker::Shelf.seed_once!(@user) }
-
-      assert_equal [ "", "*", "Models", "Projects/*/models" ], @user.maker_shelves.order(:path).pluck(:path)
-      assert_predicate @user.reload.shelves_seeded_at, :present?
-    end
-
-    test "every seeded path is valid" do
-      Maker::Shelf::SEEDS.each do |seeded|
-        assert @user.maker_shelves.new(path: seeded).valid?, "#{seeded.inspect} should be valid"
+    test "the default view is automatic or one of the project views" do
+      Maker::Project::VIEWS.each do |view|
+        assert @user.maker_shelves.new(name: "s-#{view}", default_view: view).valid?, view
       end
+      automatic = @user.maker_shelves.create!(name: "auto", default_view: "")
+      assert_nil automatic.default_view
+      grid = @user.maker_shelves.new(name: "grid", default_view: "grid")
+      assert_not grid.valid?
+      assert_predicate grid.errors[:default_view], :any?
     end
 
-    # NIL IS NOT THE ROOT. "" is; a missing path is a caller that forgot one, and letting it
-    # validate defers the failure to the database's NOT NULL as a 500.
-    test "a nil path is refused rather than deferred to the database" do
-      shelf = @user.maker_shelves.new(path: nil)
+    # §14d: a `*_belongs_to_user` check guarded on presence, safe because ShelfGroup nullifies.
+    test "another user's group is refused" do
+      theirs = other_user!.maker_shelf_groups.create!(name: "Theirs")
+      shelf = @user.maker_shelves.new(name: "laser", shelf_group_id: theirs.id)
       assert_not shelf.valid?
-      assert_includes shelf.errors[:path].join, "isn't allowed"
+      assert_includes shelf.errors[:shelf_group_id], "isn't one of your groups"
+
+      mine = @user.maker_shelf_groups.create!(name: "Mine")
+      assert @user.maker_shelves.new(name: "laser", shelf_group: mine).valid?
     end
 
-    test "seeding is idempotent and does not resurrect deleted rows" do
-      Maker::Shelf.seed_once!(@user)
-      assert_equal [ "", "*", "Models", "Projects/*/models" ], @user.maker_shelves.order(:path).pluck(:path)
-
-      Maker::Shelf.seed_once!(@user)
-      assert_equal Maker::Shelf::SEEDS.size, @user.maker_shelves.count
-
-      @user.maker_shelves.destroy_all
-      Maker::Shelf.seed_once!(@user.reload)
-      assert_empty @user.maker_shelves.reload
+    test "only other is the fallback" do
+      assert_predicate @user.maker_shelves.new(name: "other"), :fallback?
+      assert_not_predicate @user.maker_shelves.new(name: "laser"), :fallback?
     end
   end
 end

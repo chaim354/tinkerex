@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_20_190000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_20_190100) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -433,12 +433,25 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_20_190000) do
     t.index ["user_id", "project_id", "position"], name: "index_maker_sheets_on_project_position"
   end
 
-  create_table "maker_shelves", force: :cascade do |t|
+  create_table "maker_shelf_groups", force: :cascade do |t|
     t.datetime "created_at", null: false
-    t.string "path", default: "", null: false
+    t.string "name", null: false
+    t.integer "position", default: 0, null: false
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
-    t.index ["user_id", "path"], name: "index_maker_shelves_on_user_id_and_path", unique: true
+    t.index ["user_id", "name"], name: "index_maker_shelf_groups_on_user_id_and_name", unique: true
+  end
+
+  create_table "maker_shelves", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "default_view"
+    t.string "name", null: false
+    t.integer "position", default: 0, null: false
+    t.integer "shelf_group_id"
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["shelf_group_id"], name: "index_maker_shelves_on_shelf_group_id"
+    t.index ["user_id", "name"], name: "index_maker_shelves_on_user_id_and_name", unique: true
   end
 
   create_table "maker_suppliers", force: :cascade do |t|
@@ -565,7 +578,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_20_190000) do
     t.bigint "remote_sync_cursor", default: 0, null: false
     t.datetime "reset_password_sent_at"
     t.string "reset_password_token"
-    t.datetime "shelves_seeded_at"
     t.integer "sign_in_count", default: 0, null: false
     t.string "sync_device_token"
     t.string "unconfirmed_email"

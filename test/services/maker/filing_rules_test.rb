@@ -25,7 +25,7 @@ module Maker
     # THE KEYS THE VOCABULARY CANNOT CARRY ARE SEEDED BESIDE IT, NOT INSTEAD OF IT (stage 4, S4-2).
     # A user seeded today gets a `pcb` destination for their KiCad files; a user seeded before this
     # gets one from the migration. `Maker::FilingRules.seed!`'s `exists?` guard is untouched — the
-    # top-up is a migration, which runs once, because /settings/filing promises a REMOVED rule
+    # top-up is a migration, which runs once, because the Shelves page promises a REMOVED rule
     # files into `other` and a per-read fill-in would resurrect it.
     test "a KiCad schematic and board have a destination the vocabulary could never give them" do
       map = Maker::FilingRules.for(@user)

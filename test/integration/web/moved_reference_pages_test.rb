@@ -7,9 +7,11 @@ module Web
   # highlighted. The map was not the thing that was wrong; the URLs were.
   #
   # SHELVES MOVED BACK IN SLICE 5 (structural redesign). Models stopped being a section and became a
-  # Library view, so the section a shelf serves is Settings — the rule for what counts as a model —
-  # and `/settings/shelves` is the page again, lighting Settings. Suppliers and locations stay under
-  # Inventory, which is still a section. The URL and the lit item still agree on all three.
+  # Library view, so the section a shelf serves is Settings, and `/settings/shelves` is the page
+  # again, lighting Settings. Since 2026-10-20 that page is the project-folder Shelves (it was
+  # Filing, whose `/settings/filing` now redirects there too); the model catalog's shelves became a
+  # built-in rule with no page. Suppliers and locations stay under Inventory, which is still a
+  # section. The URL and the lit item still agree on all three.
   #
   # THREE THINGS HERE FAIL SILENTLY AND THAT IS WHY THIS FILE EXISTS:
   #
@@ -47,6 +49,7 @@ module Web
 
     test "the old paths still redirect, permanently, to a page that renders" do
       { "/models/shelves" => "/settings/shelves",
+        "/settings/filing" => "/settings/shelves",
         "/settings/suppliers" => "/inventory/suppliers",
         "/settings/locations" => "/inventory/locations" }.each do |old, want|
         get old

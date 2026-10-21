@@ -1,9 +1,9 @@
-/* The model catalog: index toolbar, the detail page's two columns, the file tree, print log,
-   and the shelf rows Settings::ShelvesController renders (they stayed in this sheet). */
+/* The model catalog: index toolbar, the detail page's two columns, the file tree, print log. The
+   shelf rows the old model-shelves settings page drew left with that page (2026-10-20). */
 @layer pages {
   /* The detail page's rules below (hero, gallery, file tree, print settings) were migrated from the
      old models.css with the token substitution applied; the toolbar, the card cover, the print log,
-     the drop zone and the shelf rows were rewritten for PR 3. The .badge.mstatus-* rules are NOT
+     and the drop zone were rewritten for PR 3. The .badge.mstatus-* rules are NOT
      here — they are components. The index toolbar is the .toolbar component, so this page only
      sizes what sits in it; the status filters are .chip and carry no page rule at all. */
   .models-toolbar { margin-bottom: 14px; }
@@ -56,16 +56,6 @@
   .ps-grid dt { color: var(--fg-muted); white-space: nowrap; }
   .ps-grid dd { margin: 0; }
 
-  /* The shelves settings page. A shelf row is path + status + Remove on one line, which needs the
-     button_to override: button_to emits a block-level <form>, so without it "Remove" drops onto its
-     own line under the two spans. */
-  .shelf-list { list-style: none; padding: 0; margin: 0 0 20px; max-width: 640px; }
-  .shelf-list li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
-  .shelf-list li form { display: inline; margin: 0; }
-  .shelf-path { font-family: var(--font-mono); font-size: 13px; }
-  .shelf-status { margin-left: auto; font: 11px/1.4 var(--font-mono); }
-  .shelf-add { display: flex; align-items: center; gap: 10px; }
-
   /* A MODEL'S COVER IS SQUARE (2026-10-20). `.project-card .thumb` is a fixed 120px tall in a grid
      whose columns are at least 150px wide, so a square render sat in a short, wide box. Model cards
      only: project and explore cards keep their banner shape. The status badge that sat over the
@@ -77,8 +67,6 @@
      `.project-card .project-thumb-empty .rail-icon`: the card carries `.project-card` too. */
   .model-hero-empty .rail-icon { width: 48px; height: 48px; color: var(--fg-muted); }
 
-  /* The 3D models view's one pointer at the Settings rule that decides what counts as a model. */
-  .models-shelves-hint { margin: 0 0 14px; font-size: 13px; }
   /* The 3D models view grouped by project: the head is the .group-head component, and only the
      space between groups is this page's. */
   .models-group + .models-group { margin-top: var(--space-5); }

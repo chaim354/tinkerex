@@ -194,7 +194,7 @@ module Projects
       project
     end
 
-    # THE MODEL THIS FOLDER HAD ALREADY BECOME (story 1.3). The seeded `*` shelf makes every
+    # THE MODEL THIS FOLDER HAD ALREADY BECOME (story 1.3). The built-in `*` shelf makes every
     # top-level folder a shelf, so `designs/tray` was catalogued as a Maker::Model before anyone
     # thought to call it a project. Maker::ModelIntake stops accreting the instant a project claims
     # the folder — its own comment says so — but the ROW SURVIVES, so the folder would be a project

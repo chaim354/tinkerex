@@ -85,7 +85,10 @@ module Web
       assert_select ".model-card[href=?]", model_path(shown), count: 1
       assert_select ".model-card", text: /Gone/, count: 0
       assert_select ".page-head a.btn.primary[href=?]", new_model_path, text: "Import model"
-      assert_select "a[href=?]", settings_shelves_path
+      # NO POINTER AT SETTINGS (2026-10-20): which folders are models is a built-in rule now
+      # (Maker::ModelIntake::SHELVES), and /settings/shelves is the project-folder Shelves page,
+      # which says nothing about this view. The "Settings -> Shelves" hint that sat here went.
+      assert_select "main a[href=?]", settings_shelves_path, count: 0
       # Model tiles are links, never selection items (a model is not a file in a listing).
       assert_select "[data-selection-target]", count: 0
     end

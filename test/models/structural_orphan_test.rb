@@ -120,6 +120,10 @@ class StructuralOrphanTest < ActiveSupport::TestCase
       parent = u.maker_locations.create!(name: "Cabinet")
       [ parent, u.maker_locations.create!(name: "Shelf A", parent: parent) ]
     },
+    "maker_shelves.shelf_group_id" => ->(u) {
+      g = u.maker_shelf_groups.create!(name: "Fabrication")
+      [ g, u.maker_shelves.create!(name: "laser", shelf_group: g) ]
+    },
     "maker_print_runs.model_id" => ->(u) {
       m = u.maker_models.create!(title: "Benchy")
       [ m, m.print_runs.create!(user: u, outcome: "success", printed_on: Date.current) ]

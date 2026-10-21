@@ -54,9 +54,9 @@ class User < ApplicationRecord
   has_many :maker_build_log_entries, class_name: "Maker::BuildLogEntry", dependent: :destroy
   has_many :maker_locations, class_name: "Maker::Location", dependent: :destroy
   has_many :maker_suppliers, class_name: "Maker::Supplier", dependent: :destroy
-  # Stage 3, S3-1: the per-user extension map (Maker::FilingRules, /settings/filing). `:destroy`
-  # for the same reason as the reference lists just above -- no callbacks, no dependents, nothing
-  # a faster delete would need to skip.
+  # Stage 3, S3-1: the per-user extension map (Maker::FilingRules, edited on /settings/shelves).
+  # `:destroy` for the same reason as the reference lists just above -- no callbacks, no
+  # dependents, nothing a faster delete would need to skip.
   has_many :maker_filing_rules, class_name: "Maker::FilingRule", dependent: :destroy
   # `:destroy`, not `:delete_all`, only because there is no reason to reach for the faster one:
   # the row carries no callbacks and no dependents. What is NOT optional is that this line
@@ -95,6 +95,7 @@ class User < ApplicationRecord
   has_many :maker_models, class_name: "Maker::Model", dependent: :destroy
   has_many :maker_print_runs, through: :maker_models, source: :print_runs
   has_many :maker_shelves, class_name: "Maker::Shelf", dependent: :destroy
+  has_many :maker_shelf_groups, class_name: "Maker::ShelfGroup", dependent: :destroy
   has_many :identities, class_name: "UserIdentity", dependent: :destroy
 
   # Human-identity auth via Devise (CLAUDE.md §8; replaces the hand-rolled password +

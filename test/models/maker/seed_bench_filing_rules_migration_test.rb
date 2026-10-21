@@ -6,7 +6,7 @@ module Maker
   # SeedPcbFilingRules' shape and an attachment-role re-derive in RederiveCodeRoles' shape, both in
   # one migration because they are one fact.
   #
-  # `seed!`'s `exists?` GUARD MUST NOT BE WEAKENED INTO A TOP-UP. /settings/filing promises that a
+  # `seed!`'s `exists?` GUARD MUST NOT BE WEAKENED INTO A TOP-UP. The Shelves page promises that a
   # removed rule "will file into other until you add a new one", so a per-extension fill-in on every
   # read would resurrect a rule the user deliberately deleted. A migration runs ONCE, which is what
   # makes the top-up safe.
@@ -85,7 +85,7 @@ module Maker
       assert_equal "pcb", @user.maker_filing_rules.find_by!(ext: "kicad_sch").folder
     end
 
-    # THE USER WHO ALREADY ADDED `.mage` BY HAND at /settings/filing before this ran: their folder
+    # THE USER WHO ALREADY ADDED `.mage` BY HAND on the Filing page before this ran: their folder
     # survives and no duplicate row appears. ON CONFLICT DO NOTHING is not an upsert, and this is
     # what says the difference matters. (It does not pin `unique_by:` — the bare form skips too;
     # what naming the index buys is that only the EXPECTED collision is swallowed, which no test

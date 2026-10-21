@@ -16,7 +16,7 @@ module ShellHelper
     "inventory" => %w[inventory_items suppliers locations],
     "tools" => %w[tools],
     "trash" => %w[trash],
-    # The hub and its own children (settings/tags, settings/filing_rules, settings/shelves) light the
+    # The hub and its own children (settings/tags, settings/shelves, settings/library) light the
     # rail FOOT's Settings link, not a rail item — through this one entry, because the key is the
     # controller path's first segment and every one of them is `settings/…`.
     #
@@ -25,10 +25,8 @@ module ShellHelper
     # Inventory, so clicking Settings landed a maker on a page where Settings went dark and something
     # else was highlighted: `/inventory/suppliers` and `/inventory/locations` now read like what they
     # are, and the old paths 301 (config/routes.rb) and must keep doing so.
-    # SHELVES MADE THE SAME MOVE TO /models/shelves AND MADE IT BACK in slice 5, the other way to
-    # make URL and light agree: Models stopped being a section, so the rule for what counts as a
-    # model has no section to serve but Settings. That is why `shelves` left the "models" entry —
-    # a top-level `shelves` controller no longer exists for it to name.
+    # /settings/shelves is the Shelves page (2026-10-20: the folders filed into inside each
+    # project), a setting like its siblings, so `shelves` names no section of its own.
     "settings" => %w[settings],
     # /help lights the rail foot's Help, as the hub lights Settings: a page the rail links to must
     # not render with nothing lit (design-system.md rule 8).

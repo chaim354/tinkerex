@@ -182,14 +182,16 @@
   projects keep their group, on the claim rule above. Constant in queries, pinned with models nested
   in project folders by `page_query_budget_test.rb`; `model_projects_test.rb` and
   `models_by_project_test.rb` carry the rest, each mutation-checked.
-- **SHELVES ARE A SETTINGS RULE AT `Settings::ShelvesController` / `/settings/shelves` (slice 5),
-  AND ONLY ONE REDIRECT MAY EXIST BETWEEN THE TWO PATHS.** It reverses the 2026-09-10 move to
-  `/models/shelves`: with Models a Library view, Settings is the only section shelves serve.
-  `/models/shelves` 301s to `/settings/shelves`, declared above `resources :models` or it matches
-  `models#show id=shelves`; the old `settings/shelves → /models/shelves` line went in the same
-  change, because keeping both is a redirect loop (`moved_reference_pages_test.rb` asserts both
-  directions). Shelves light Settings and stop being navigation; the 3D models view keeps one muted
-  pointer to them.
+- **THE CATALOG'S SHELVES ARE NOT A SETTING ANY MORE, AND NOTHING ON THE 3D MODELS VIEW POINTS AT
+  ONE (2026-10-20).** They were a Settings rule at `/settings/shelves` from slice 5 (and at
+  `/models/shelves` from 2026-09-10 until then) until they became `Maker::ModelIntake::SHELVES`.
+  That path now belongs to the project-folder Shelves page (`Settings::ShelvesController`, the
+  filing folders; CLAUDE.md §14f's area, not this file's), so a "which folders count as models"
+  link there would land a maker on a page about something else — `models_redirects_test.rb` pins
+  its absence. **ONLY ONE REDIRECT MAY EXIST BETWEEN THE TWO OLD PATHS**: `/models/shelves` still
+  301s to `/settings/shelves`, declared above `resources :models` or it matches
+  `models#show id=shelves`, and a `settings/shelves → /models/shelves` line is a redirect loop
+  (`moved_reference_pages_test.rb` follows every old path to a page that renders).
 - **`Maker::ModelIntake::Prune` IS THE REPAIR HALF, AND IT IS NOT IN THE SWEEP ON PURPOSE.**
   `attach_all` only ever ADDS the pairs it is missing, so tightening the rule fixes what is written
   NEXT and leaves every row the loose rule wrote in place — a rule change here is not self-applying.
@@ -265,9 +267,9 @@
   its OWN path (the walk's ids run nearest-first and its segments furthest-first); on `:broken`
   every id the walk touched is cached `nil`, which is sound because they all share the broken
   suffix. Mutation-checked by two tests that go red on a per-hop write.
-- **`path_for` IS THE ONE ANCESTRY DEFINITION AND HAS THREE CALLERS OUTSIDE THIS SWEEP** —
-  `Settings::ShelvesController`, `FilesController#folder_paths_for` (the flat view's Folder column)
-  and `Tools::LibraryFolders` (the addon save-folder picker). The last two each carried a
+- **`path_for` IS THE ONE ANCESTRY DEFINITION, AND THE WEB LAYER ASKS IT TOO** — among its callers
+  outside this sweep are `FilesController#folder_paths_for` (the flat view's Folder column) and
+  `Tools::LibraryFolders` (the addon save-folder picker). Those two each carried a
   byte-identical whole-dir pluck with its own in-memory walk, and the three disagreed on a parent
   cycle: `nil` here, a literal `"…"` spliced into the rendered path there, and unbounded recursion
   in the third — `SystemStackError`, a 500 on every `/tools/:addon` page for that user. **Do not

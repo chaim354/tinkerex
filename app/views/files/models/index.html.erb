@@ -51,9 +51,6 @@
   </select>
 </form>
 
-<%# Shelves are a Settings rule since slice 5, not navigation; this is the one pointer left to them. %>
-<p class="muted models-shelves-hint">Which folders count as models: <%= link_to "Settings → Shelves", settings_shelves_path %>.</p>
-
 <%# SORTED INTO PROJECTS (2026-10-20, Maker::ModelProjects): one group per project whose folder holds
     a model, by project name, then "Not in a project" last. When no model is in any project there is
     one group with no project, and it renders as the plain grid with no heading, because a lone "Not

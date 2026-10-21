@@ -25,26 +25,24 @@ module Maker
     # page cannot filter by. Two today.
     BEYOND_ROLE_BY_EXT = { "kicad_sch" => "pcb", "kicad_pcb" => "pcb" }.freeze
 
-    # IDEMPOTENT, GUARDED BY `exists?` RATHER THAN A STAMP COLUMN — unlike Maker::Shelf.seed_once!,
-    # which needs `users.shelves_seeded_at` specifically because it must tell "never seeded" apart
-    # from "seeded, then every row deleted" (an all-rows-deleted user must never reseed — that
-    # would fight a deliberate "I use none of these" the same way re-filing a subfolder would fight
-    # a user's own filing, §14f). `exists?` CANNOT tell those two states apart — it reads false in
-    # both — so, UNLIKE Shelf, this guard does NOT protect a fully-emptied user from being reseeded
-    # on their next read. That is an accepted gap, not an oversight: an emptied filing map recovers
-    # to the same thirteen-role default a brand-new user gets, the reasonable, low-stakes outcome
-    # here (a shelf's "I use none of these" is a real product choice; a folder for every extension
-    # existing again is not a comparable loss).
+    # IDEMPOTENT, GUARDED BY `exists?` RATHER THAN A STAMP COLUMN. A stamp is the only way to tell
+    # "never seeded" apart from "seeded, then every row deleted" — `exists?` reads false in both —
+    # so this guard does NOT protect a fully-emptied user from being reseeded on their next read.
+    # That is an accepted gap, not an oversight: an emptied filing map recovers to the same
+    # thirteen-role default a brand-new user gets, and the shelves it names come back with it
+    # (Maker::Shelves.ensure! derives them from these rows). It is reachable through the Shelves
+    # page by removing every shelf but `other`, and the outcome is the reasonable, low-stakes one:
+    # a folder for every extension existing again is not a loss worth a column to prevent.
     #
     # WHAT `exists?` DOES PROTECT, MUTATION-CHECKED RATHER THAN ASSUMED: a user who holds ANY row
     # at all, seeded or not. Dropping this guard lets `seed!` attempt all
     # Maker::FileAttachment::ROLE_BY_EXT.size rows on EVERY read — and `insert_all`'s own default
     # `ON CONFLICT DO NOTHING` (no `unique_by:`/`on_duplicate:` given) quietly no-ops the ones that
     # already exist, so a FULLY seeded user's count does not move and an edited row is not
-    # overwritten either way. What the guard alone stops is a user holding only SOME rows — one
-    # custom rule made before ever visiting /settings/filing, reachable in practice only by a
-    # direct POST or the console — from silently getting every MISSING extension topped up from
-    # the seed instead of staying at exactly the row count they made.
+    # overwritten either way. What the guard alone stops is a user holding only SOME rows — the
+    # rules left after removing shelves, or one custom rule made before ever visiting the Shelves
+    # page by a direct POST or the console — from silently getting every MISSING extension topped
+    # up from the seed instead of staying at exactly the rows they kept.
     def self.seed!(user)
       return if user.maker_filing_rules.exists?
 

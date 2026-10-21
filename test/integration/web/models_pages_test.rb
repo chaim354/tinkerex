@@ -3,8 +3,8 @@ require "test_helper"
 module Web
   # The model catalog after PR 3 (spec §8): a Files-style toolbar on the index with the status
   # filters as chips, a card with no status badge (2026-10-20), button actions on the model page, a print
-  # composer that opens on demand, and a drop-zone import field. (The shelves page's buttons moved
-  # to shelves_test.rb in slice 5, with the page, to Settings.)
+  # composer that opens on demand, and a drop-zone import field. (The model catalog's shelves page
+  # moved to Settings in slice 5 and was retired on 2026-10-20 for Maker::ModelIntake::SHELVES.)
   #
   # The index is the Library's 3D models view at /files/models since slice 5; the model page is
   # asserted over a FOLDERLESS model, the kind that keeps it (a folder model redirects to its strip —

@@ -842,28 +842,6 @@ module Web
                               "files/models#index")
     end
 
-    # THIS PAGE GROWS ON TWO AXES AT ONCE -- one row per shelf, and each row's live/missing
-    # indicator scanned against every DIRECTORY in the library -- so it is seeded on both. The scan
-    # is Ruby over ONE pluck that Settings::ShelvesController#decorate memoizes across the whole map; drop
-    # that memo and the page costs a pluck per shelf, which is precisely the linear-in-rows shape
-    # this file exists for and which no assertion about the rendered markup can see.
-    test "shelves#index does not grow with shelves or directories" do
-      # Stamped, so seeding is not a write inside the measured requests. It would be absorbed by the
-      # warm-up render either way; this makes what is being counted unambiguous.
-      @user.update_column(:shelves_seeded_at, Time.current)
-      add = lambda do |prefix, count|
-        count.times do |i|
-          @user.maker_shelves.create!(path: "#{prefix}#{i}")
-          @user.nodes.create!(node_id: "sd-#{prefix}#{i}", name: "#{prefix}#{i}", kind: "dir",
-                              size: 0, mtime: 1_700_000_000_000_000_000)
-        end
-      end
-      assert_constant_queries(settings_shelves_path,
-                              -> { add.call("s", SMALL) },
-                              -> { add.call("l", LARGE - SMALL) },
-                              "shelves#index")
-    end
-
     test "models#show does not grow with attachments or print runs" do
       model = @user.maker_models.create!(title: "Shown", slug: "shown")
       add = lambda do |prefix, count|
@@ -1266,19 +1244,18 @@ module Web
                               "search#index")
     end
 
-    # STAGE 2, S2-6 (the Filing count added in stage 3, S3-1): five plain counts, one per
-    # reference list -- each a single `SELECT COUNT(*)`, independent of how many rows it is
-    # counting, so growing all five together is what proves none of them was quietly rewritten
-    # into something that scans rows. Rules are created directly, not through
-    # Maker::FilingRules.seed! -- #show never seeds (its own header: a bare count must not
-    # side-effect 82 rows into existence), so this measures the plain count alone.
-    test "settings#show does not grow with shelves, suppliers, locations, filing rules or tags" do
+    # STAGE 2, S2-6: four plain counts, one per reference list (the Filing count that stage 3,
+    # S3-1 added went with the Filing row, 2026-10-20) -- each a single `SELECT COUNT(*)`,
+    # independent of how many rows it is counting, so growing all four together is what proves
+    # none of them was quietly rewritten into something that scans rows. Shelves are created
+    # directly, not through Maker::Shelves.ensure! -- #show never seeds (its own header: a bare
+    # count must not side-effect 82 filing rules into existence), so this measures the count alone.
+    test "settings#show does not grow with shelves, suppliers, locations or tags" do
       add = lambda do |prefix, count|
         count.times do |i|
-          @user.maker_shelves.create!(path: "#{prefix}shelf#{i}")
+          @user.maker_shelves.create!(name: "#{prefix}shelf#{i}")
           @user.maker_suppliers.create!(name: "#{prefix}sup#{i}")
           @user.maker_locations.create!(name: "#{prefix}loc#{i}")
-          @user.maker_filing_rules.create!(ext: "#{prefix}e#{i}", folder: "other")
           @user.maker_tags.create!(name: "#{prefix}tag#{i}")
         end
       end
@@ -1322,39 +1299,42 @@ module Web
                               "settings/tags#index")
     end
 
-    # STAGE 3, S3-1: THE FILING RULES LIST. Rows are created directly (not through
-    # Maker::FilingRules.seed!) BEFORE the first request, so #index's own `seed!` call sees
-    # `exists?` true and never runs its insert_all -- the measurement below is of the plain
-    # `order(:ext)` read alone, the same steady-state argument the thumbnail-backfill comment
-    # above makes for the file pages.
-    test "settings/filing_rules#index does not grow with the number of rules" do
+    # THE SHELVES PAGE ON ITS RULES AXIS (stage 3, S3-1, when it was Filing). Rows are created
+    # directly (not through Maker::FilingRules.seed!) BEFORE the first request, so #index's own
+    # `seed!` call sees `exists?` true and never runs its insert_all, and Maker::Shelves.ensure!'s
+    # one insert (`other`) lands in the warm-up render -- the measurement below is of the steady
+    # state, the same argument the thumbnail-backfill comment above makes for the file pages. Every
+    # rule here files into `other`, so this grows the chips inside ONE card.
+    test "settings/shelves#index does not grow with the number of rules" do
       add = lambda do |prefix, count|
         count.times { |i| @user.maker_filing_rules.create!(ext: "#{prefix}e#{i}", folder: "other") }
       end
-      assert_constant_queries(settings_filing_rules_path,
+      assert_constant_queries(settings_shelves_path,
                               -> { add.call("s", SMALL) },
                               -> { add.call("l", LARGE - SMALL) },
-                              "settings/filing_rules#index")
+                              "settings/shelves#index")
     end
 
-    # STAGE 4, S4-2: THE SAME PAGE ON ITS OTHER AXIS, AND THE ONE THE CARD LAYOUT ADDED. The case
-    # above grows RULES inside a single folder, which the obvious wrong implementation -- a
-    # `where(folder:)` inside the card partial -- survives untouched, because the number of CARDS
-    # never moves there. Eleven cards over one query is the property; a maker who invents folders
-    # is the reader who pays for the other shape. Every row here names a folder of its own, so the
-    # page renders 14 cards small and 26 large, and a per-card query shows as +12.
-    #
-    # Rows are created directly (not through Maker::FilingRules.seed!) BEFORE the first request, so
-    # #index's own `seed!` sees `exists?` true and never runs its insert_all -- the same
-    # steady-state argument the case above and the thumbnail-backfill comment both make.
-    test "settings/filing_rules#index does not grow with the number of folders" do
+    # THE SAME PAGE ON ITS OTHER TWO AXES: SHELVES AND GROUPS (stage 4, S4-2 grew cards; 2026-10-20
+    # grew groups). The case above grows RULES inside a single card, which the obvious wrong
+    # implementation -- a `where(folder:)` inside the card partial -- survives untouched, because
+    # the number of CARDS never moves there. Each iteration here adds a rule naming a folder of its
+    # own, a group, and that folder's shelf inside the group, so the page grows one card AND one
+    # group section per step: a per-card rules query, a per-group shelves query or a per-card
+    # groups lookup each shows as growth. The rows exist before the first request, so the warm-up
+    # render absorbs any insert Maker::Shelves.ensure! makes.
+    test "settings/shelves#index does not grow with the number of shelves or groups" do
       add = lambda do |prefix, count|
-        count.times { |i| @user.maker_filing_rules.create!(ext: "#{prefix}e#{i}", folder: "#{prefix}f#{i}") }
+        count.times do |i|
+          @user.maker_filing_rules.create!(ext: "#{prefix}e#{i}", folder: "#{prefix}f#{i}")
+          group = @user.maker_shelf_groups.create!(name: "#{prefix}g#{i}")
+          @user.maker_shelves.create!(name: "#{prefix}f#{i}", shelf_group: group)
+        end
       end
-      assert_constant_queries(settings_filing_rules_path,
+      assert_constant_queries(settings_shelves_path,
                               -> { add.call("s", SMALL) },
                               -> { add.call("l", LARGE - SMALL) },
-                              "settings/filing_rules#index (folders)")
+                              "settings/shelves#index (shelves and groups)")
     end
 
     # STAGE 4, S4-5: /u/:handle GREW PER-CARD WORK (a cover thumbnail and the maker's handle), so it

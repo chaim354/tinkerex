@@ -66,10 +66,10 @@ module Web
       get "/help"
       assert_response :success
       assert_select "main .page-head h1", text: "Help"
-      %w[library Projects/ Filing Rescan Trash Tools owner sign-ups].each do |word|
+      %w[library Projects/ Shelves Rescan Trash Tools owner sign-ups].each do |word|
         assert_match(/#{Regexp.escape(word)}/i, main_text, "help page should mention #{word}")
       end
-      [ settings_filing_rules_path, tools_path, trash_index_path, settings_shelves_path,
+      [ tools_path, trash_index_path, settings_shelves_path,
         files_models_path, edit_user_registration_path ].each do |path|
         assert_select "main a[href=?]", path
       end

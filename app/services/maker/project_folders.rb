@@ -4,7 +4,7 @@ module Maker
   # STAGE 3, S3-1: THE MAP IS NOW PER USER, AND ROLE_FOLDERS IS ITS SEED, NOT ITS ANSWER.
   # `folder_for(user, name)` reads `Maker::FilingRules.for(user)` — the user's own rows, seeded
   # once from ROLE_FOLDERS over `Maker::FileAttachment::ROLE_BY_EXT` and edited from then on at
-  # /settings/filing (spec §5). `default_folder_for(name)` is the OLD pure function, kept for the
+  # /settings/shelves (spec §5). `default_folder_for(name)` is the OLD pure function, kept for the
   # one caller that still needs an answer with no user in hand: the seed itself, which cannot ask
   # `Maker::FilingRules.for` the very map it is about to build. A hand-written ext => folder hash
   # beside ROLE_BY_EXT is the exact drift `FilesHelper::EXT_FAMILIES` was rewritten to end
@@ -80,7 +80,7 @@ module Maker
       # THE SAME FOLDER AS `gcode`, DELIBERATELY — two roles, one directory, exactly as
       # `instructions` and `document` both name `docs`. A maker's CNC work is one place on the NAS:
       # the MillMage project and the toolpath it exports belong side by side. `ROLE_FOLDERS.values
-      # .uniq` is what /settings/filing renders a card per, so this adds no card.
+      # .uniq` is the seed's shelf list (one card each on /settings/shelves), so this adds no card.
       "cnc_design"     => "cnc",
       "laser"          => "laser",
       "vector"         => "design",

@@ -234,7 +234,7 @@
         This is the folder of the project <%= link_to @folder_project.name, project_path(@folder_project) %>.
         <% if @folder_project.autofile? %>
           Files left loose here are filed into type folders within 15 minutes, except a README and
-          anything in a git repository (<%= link_to "Filing", settings_filing_rules_path %>).
+          anything in a git repository (<%= link_to "Shelves", settings_shelves_path %>).
         <% else %>
           Automatic filing is off for this project, so files here stay where you put them.
         <% end %>
