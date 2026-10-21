@@ -1,5 +1,6 @@
 import { Controller } from "@hotwired/stimulus"
 import { uploadChunkFile } from "lib/chunk_upload"
+import { isZip, reportAndLand, splitSelection, uploadSplit } from "lib/zip_unpack"
 
 // Browser-side upload (chunk two-phase). Thin wrapper over lib/chunk_upload so the importer and
 // this control share one implementation.
@@ -15,43 +16,68 @@ import { uploadChunkFile } from "lib/chunk_upload"
 // the end rather than per file, so a batch is one navigation.
 export default class extends Controller {
   static targets = ["input", "status"]
-  static values  = { beginUrl: String, finalizeUrl: String, attachUrl: String, redirectUrl: String, parentNodeId: String }
+  static values  = { beginUrl: String, finalizeUrl: String, attachUrl: String, redirectUrl: String, parentNodeId: String,
+                     unpackUrl: String, unpackedUrl: String, modelExts: Array }
 
   async upload() {
     const files = Array.from(this.inputTarget.files || [])
     if (files.length === 0) return
-    const failed = []
-    let done = 0
     try {
-      for (const file of files) {
-        const progress = files.length > 1 ? ` (${done + 1} of ${files.length})` : ""
-        try {
-          this.setStatus(`Uploading ${file.name}…${progress}`)
-          const { nodeId } = await uploadChunkFile(file, {
-            beginUrl: this.beginUrlValue, finalizeUrl: this.finalizeUrlValue, parentNodeId: this.parentNodeIdValue
+      // THE TOP BAR UNPACKS A MODEL ZIP (2026-10-21; spec docs/superpowers/specs/
+      // 2026-10-20-zip-upload-unpacks-models-design.md). Only where the view passed the unpack doors
+      // — the top bar does, the build log's "Upload & attach" does not — and only for a selection
+      // holding a .zip, so every other upload takes the loop below exactly as before.
+      if (this.unpackUrlValue && files.some(isZip)) {
+        const split = await splitSelection(files, this.modelExtsValue)
+        if (split.zips.length > 0) {
+          const out = await uploadSplit(split, {
+            parentNodeId: this.parentNodeIdValue,
+            unpackUrl: this.unpackUrlValue,
+            unpackedUrl: this.unpackedUrlValue,
+            upload: (file, parentNodeId) => uploadChunkFile(file, {
+              beginUrl: this.beginUrlValue, finalizeUrl: this.finalizeUrlValue, parentNodeId
+            }),
+            setStatus: (text) => this.setStatus(text)
           })
-          if (this.hasAttachUrlValue && this.attachUrlValue) {
-            this.setStatus(`Attaching ${file.name}…${progress}`)
-            await this.postAttach(nodeId)
-          }
-          done += 1
-        } catch (e) {
-          // Recorded and carried past, not rethrown: losing files 4 and 5 because file 3 hit a
-          // name that was already taken is the failure this loop exists to avoid.
-          failed.push(`${file.name} (${e.message})`); console.error(e)
+          reportAndLand(out, (text) => this.setStatus(text))
+          return
         }
       }
-
-      if (done === 0) {
-        this.setStatus(`Upload failed: ${failed.join(", ")}`)
-        return
-      }
-      this.setStatus(failed.length ? `Uploaded ${done}; failed: ${failed.join(", ")}` : "Done.")
-      if (this.hasRedirectUrlValue && this.redirectUrlValue) window.location.href = this.redirectUrlValue
-      else window.location.reload()
+      await this.uploadEach(files)
     } finally {
       this.inputTarget.value = ""
     }
+  }
+
+  async uploadEach(files) {
+    const failed = []
+    let done = 0
+    for (const file of files) {
+      const progress = files.length > 1 ? ` (${done + 1} of ${files.length})` : ""
+      try {
+        this.setStatus(`Uploading ${file.name}…${progress}`)
+        const { nodeId } = await uploadChunkFile(file, {
+          beginUrl: this.beginUrlValue, finalizeUrl: this.finalizeUrlValue, parentNodeId: this.parentNodeIdValue
+        })
+        if (this.hasAttachUrlValue && this.attachUrlValue) {
+          this.setStatus(`Attaching ${file.name}…${progress}`)
+          await this.postAttach(nodeId)
+        }
+        done += 1
+      } catch (e) {
+        // Recorded and carried past, not rethrown: losing files 4 and 5 because file 3 hit a
+        // name that was already taken is the failure this loop exists to avoid.
+        failed.push(`${file.name} (${e.message})`); console.error(e)
+      }
+    }
+
+    if (done === 0) {
+      this.setStatus(`Upload failed: ${failed.join(", ")}`)
+      return
+    }
+    this.setStatus(failed.length ? `Uploaded ${done}; failed: ${failed.join(", ")}` : "Done.")
+    if (this.hasRedirectUrlValue && this.redirectUrlValue) window.location.href = this.redirectUrlValue
+    else window.location.reload()
   }
 
   async postAttach(nodeId) {
