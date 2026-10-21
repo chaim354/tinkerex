@@ -33,8 +33,8 @@ says so on purpose). A GUI that adds accounts needs someone it is *for*.
   it is the only account, and for every test's first user, since the suite has no user fixtures.
   This is the same argument `Library::ScanJob.enqueue_first_for` makes for the first scan.
 - **The migration marks the oldest existing account admin.** Every live deployment then has one
-  without a console visit. Where the oldest account is the demo (possible on OVH), the demo rule
-  below makes that admin inert and the console task is the remedy.
+  without a console visit. The demo account (`DEMO_ACCOUNT_EMAIL`, read when the migration runs) is
+  passed over for the oldest real one, so OVH gets a working admin too.
 - **`bin/rails 'tinkerex:admin[EMAIL]'` grants admin from the console.** The recovery door: an
   OIDC-only server (`User.from_omniauth` mints the first account and is deliberately not an admin
   door — the provider decides who signs in, not who administers), a server whose only admin was the
@@ -50,11 +50,15 @@ says so on purpose). A GUI that adds accounts needs someone it is *for*.
 - **The page lives at `/settings/users`**, a "Users" row on the Settings hub shown only to admins.
   `ShellHelper`'s `"settings" => %w[settings]` already lights Settings for every `settings/…`
   controller, so the sidebar needs no change.
-- **The last admin cannot be removed** — not demoted, not deleted from this page, and not
-  self-deleted from the Account page while other accounts exist. A server with accounts and no admin
-  is recoverable only from the console. The check is a count, not a lock: two admins demoting each
-  other in the same instant can both succeed; recorded, not guarded, because the console task
-  repairs it and the window needs two admins acting at once.
+- **The last admin cannot be removed, and only one door needs a guard for it.** The Users page never
+  acts on the signed-in account (your own account is the Account page's, behind your password), and
+  the one acting is an admin, so demoting or deleting *another* account there always leaves at least
+  one. A last-admin check on that page could never fire, so it would be a guard nobody can make
+  fail (§15); there is none. The one door that can remove the last admin is the Account page's
+  self-delete, which refuses while other accounts exist. A server with accounts and no admin is
+  recoverable only from the console. Two admins demoting each other in the same instant can both
+  succeed; recorded, not guarded, because the console task repairs it.
+  *(Amended while planning: the design first had a last-admin refusal on the Users page as well.)*
 
 ## The page
 
@@ -62,7 +66,9 @@ says so on purpose). A GUI that adds accounts needs someone it is *for*.
 
 One row per account, newest last, in the existing `settings-list` component, so it fits 375px without
 a sideways scroll (design-system.md rule 11). Each row: the email; an "admin" mark; "you"
-on the signed-in account; last sign-in (`last_sign_in_at`, "never" when nil); and the row's actions.
+on the signed-in account; last sign-in (`last_sign_in_at`, "never" when nil). The email links to that
+account's own page (`/settings/users/:id/edit`), which holds the three actions below; the "you" row
+links to the Account page instead.
 
 ### Add an account
 
@@ -75,46 +81,49 @@ checkbox. On submit:
 - **On a scannable backend (share, s3) a scan is queued for the new account at once.** Each account
   holds its own catalog of the one library, filled by `Library::ScanJob` per user; without this the
   new account opens an empty library and the Getting started panel until the next 15-minute sweep.
-  The call goes through the same scannable-and-not-pending gate `enqueue_first_for` applies.
+  Gated on `scannable?`; the folder is confirmed by construction, because the page sits behind
+  `require_library_folder!`.
 - The form says what the account will see, keyed on the backend: on share and s3, that **every
   account sees the same library folder and can edit and delete every file in it**
-  (`Tinkerex::Registration::SINGLE_LIBRARY_BACKENDS` is the list); on chunk_remote, that the account
+  (keyed on `capabilities.syncable?`, true only on chunk_remote); on chunk_remote, that the account
   gets its own library, created on first use (`FileLayer::ChunkRemote::Provisioning`).
 
 ### Reset a password
 
-A per-row form with one visible password field. It sets the password, sets `confirmed_at` if it was
+A form on the account's page with one visible password field. A blank password is refused
+explicitly: `User#password_required?` answers false for a passwordless (OIDC) account, so Devise
+would save a blank one as a silent no-op. It sets the password, sets `confirmed_at` if it was
 nil, and clears a lock (`locked_at`, `failed_attempts`) — the GUI twin of `tinkerex:password`, plus
 the unlock, since a locked-out user is the usual reason to be here. Devise stores the password's salt
 in the session, so the account is signed out of its other browser sessions by Devise's existing
 behaviour. **Device tokens are not revoked**: a desktop client keeps syncing. That is deliberate
 scope, stated on the form.
 
-The admin resets their **own** password on the Account page, which asks for the current one; the
-row for "you" offers no reset here.
+The admin resets their **own** password on the Account page, which asks for the current one; every
+action here refuses the signed-in account and redirects there.
 
 ### Make / remove admin
 
-A button per row (`button_to`, PATCH). Removing admin from the last admin is refused with a message.
+A button on the account's page (`button_to`, PATCH, the state asked for rather than a toggle).
 The demo account cannot be made admin (refused; the predicate would ignore it anyway, and a row
 saying "admin" over an account that is not would mislead).
 
 ### Delete an account
 
-A per-row link to a confirmation page that names what goes — the account's projects, notes, tags,
+A section of the account's page that names what goes — the account's projects, notes, tags,
 pins and its copy of the library catalog — and what stays: **every file on disk**. The admin types
 the account's email to confirm; a mismatch re-renders with an error. Then `user.destroy`, the
 existing cascade (`app/models/user.rb`'s `dependent:` list, checked complete by
 `test/models/tenant_cleanup_test.rb`).
 
 Refused: deleting **yourself** (the Account page does that, behind your password —
-`Users::RegistrationsController#destroy`), and deleting the **last admin**. On chunk_remote the page
+`Users::RegistrationsController#destroy`). On chunk_remote the page
 also says the account's library **on the sync server is not removed**: none of the eight endpoints
 this app calls (CLAUDE.md §6) deletes one.
 
 ### Who reaches it
 
-- `before_action :require_admin!` on every action. A non-admin (and the demo) is redirected to
+- `before_action :require_account_manager!` on every action. A non-admin (and the demo) is redirected to
   `/settings` with "Only an admin can manage accounts." (`303`), the same shape as
   `refuse_demo_account!`.
 - The page stays behind `require_library_folder!` like every other page: an admin on a fresh share
@@ -138,12 +147,11 @@ restore.
 - **Add:** the new account can sign in through the real sign-in form; it is confirmed; no mail is
   delivered; a scan is enqueued on share/s3 and not on chunk_remote; a taken email and a short
   password re-render with errors.
-- **Reset:** the old password fails and the new one signs in; a locked account is unlocked; the
-  "you" row offers no reset.
-- **Admin toggle:** promote and demote work; demoting the last admin is refused; the demo cannot be
-  promoted.
-- **Delete:** a wrong email changes nothing; the right one removes the account; self and the last
-  admin are refused.
+- **Reset:** the old password fails and the new one signs in; a locked account is unlocked; a blank
+  password is refused, for a passwordless account too.
+- **Admin toggle:** promote and demote work; the demo cannot be promoted.
+- **Delete:** a wrong email changes nothing; the right one removes the account.
+- **Self:** every action on the signed-in account redirects to the Account page and changes nothing.
 - **Account page:** the last admin with other accounts present cannot self-delete; the sole account
   can.
 - **First admin:** the first sign-up and the first `tinkerex:owner` account are admin; a second
