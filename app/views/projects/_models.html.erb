@@ -1,0 +1,38 @@
+<%#
+  THE MODELS PANEL (2026-10-21; docs/superpowers/specs/2026-10-20-attach-model-to-project-design.md).
+  The project's 3D models as cards: the ones its folder holds (a folder or a lone model file under
+  `models/`, placed by Maker::ModelProjects — the answer the 3D models view groups by) and the ones
+  attached from elsewhere (Maker::AttachToProject#attach_model). Built by Maker::ProjectModels in
+  ProjectsController#show, and NIL WHEN THE LAYOUT HIDES THIS PANEL — then this renders nothing,
+  which in edit mode is the placeholder.
+
+  ONLY AN ATTACHED MODEL HAS DETACH. A model in the folder is the project's by where it is, and
+  moving the folder out is what removes it; a Detach there would delete rows and change nothing.
+
+  ITS OWN `thumbs` CONTROLLER, for the reason projects/_attachments gives: no ancestor covers it.
+%>
+<% if @project_models %>
+  <section class="panel models-panel" id="models"
+           data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+    <div class="panel-head">
+      <h2><%= panel_title(@panel_layout, "models") %></h2>
+      <%= link_to "Add model", new_project_model_path(@project), class: "btn small" %>
+    </div>
+    <%= panel_intro(@panel_layout, "models") %>
+    <% if @project_models.models.empty? %>
+      <p class="muted">No models yet.</p>
+    <% else %>
+      <div class="projects-grid">
+        <% @project_models.models.each do |model| %>
+          <div class="project-model">
+            <%= render "models/card", model: model, thumb: @page_thumbs.thumb(model.cover_node_id) %>
+            <% if @project_models.linked_ids.include?(model.id) %>
+              <%= button_to "Detach", model_project_path(model, @project), method: :delete, class: "btn small",
+                            form: { data: { turbo_confirm: "Detach #{model.title} from #{@project.name}?" } } %>
+            <% end %>
+          </div>
+        <% end %>
+      </div>
+    <% end %>
+  </section>
+<% end %>

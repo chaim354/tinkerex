@@ -370,13 +370,22 @@ class ProjectsController < ApplicationController
     # renders anywhere. One query pair (Maker::AddonOrigin.for's own contract), regardless of N.
     @generated = Maker::AddonOrigin.for(user: current_user, node_ids: @listing.node_ids)
     @generated_ids = @generated.keys.to_set
+    # THE MODELS PANEL (2026-10-21; docs/superpowers/specs/2026-10-20-attach-model-to-project-design.md):
+    # the models in this project's folder plus the ones attached from elsewhere, derived from rows
+    # that already exist (Maker::ProjectModels). ONLY WHEN THE PANEL SHOWS — and that condition is
+    # load-bearing, not a saving: a carded model's files leave "Linked from elsewhere" below, so with
+    # the panel hidden they would be on the page nowhere at all.
+    @project_models = if @panel_layout.visible?("models")
+      Maker::ProjectModels.for(current_user, @project, attached_node_ids: @attachments.map(&:node_id))
+    end
+    carded = @project_models&.owned_node_ids || Set.new
     # "Linked" is a FOLDER question, asked of the tree, not a LIST question: the listing is capped
     # at FILE_CAP, so an attached file past the cap, or inside a repository the walk never entered
     # (DIR_CAP), is absent from `node_ids` while sitting squarely in the folder — it must not
     # reappear as "linked from elsewhere". `section` is the file's own library path (not scoped to
     # this folder, since a Linked file lives somewhere else in it entirely) — @listing.path_for
     # reads the same tree this listing already built, so this costs no extra query either.
-    @linked_rows = @attachments.reject { |a| @listing.contains?(@page_nodes[a.node_id]) }
+    @linked_rows = @attachments.reject { |a| @listing.contains?(@page_nodes[a.node_id]) || carded.include?(a.node_id) }
                                .map { |a|
                                  node = @page_nodes[a.node_id]
                                  Maker::ProjectFolderListing::Row.new(node:, attachment: a, linked: true,
@@ -429,7 +438,8 @@ class ProjectsController < ApplicationController
     recent_ids = @recent_files.map(&:node_id)
     @page_thumbs = Maker::Previews::ThumbnailMap.for(
       current_user, recent_ids + tile_ids + @photo_rows.map(&:node_id) + block_thumb_ids +
-                    (@cover_node ? [ cover_id ] : [])
+                    (@cover_node ? [ cover_id ] : []) +
+                    (@project_models ? @project_models.models.filter_map(&:cover_node_id) : [])
     )
     # TILE_IDS ONLY, NOT THE PHOTO ROWS. Every tile this page can render — a folder section,
     # Backups, Generated, Linked — carries `contextmenu->filemenu#open`; `_log_entry`'s photos and

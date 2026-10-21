@@ -8,6 +8,9 @@
   .build-log-panel .panel-head > details.composer[open] { flex-basis: 100%; }
   /* --- Index --- */
   .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 16px; }
+  /* THE MODELS PANEL (2026-10-21): a model card with its Detach under it, centred. */
+  .models-panel .project-model { display: flex; flex-direction: column; gap: 6px; }
+  .models-panel .project-model > form { align-self: center; }
   /* Deliberately NOT `align-items: center` here: `.project-card` is a flex item of `.project-tile`
      with no explicit width, so `align-items: center` sizes it to shrink-to-fit (its content's own
      width) instead of stretching it — which starves `.project-card .thumb`'s `width: 100%` down to
