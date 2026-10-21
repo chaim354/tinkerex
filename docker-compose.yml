@@ -10,7 +10,7 @@
 # the accounts/mail knobs (.env.example lists them; docs/INSTALL.md explains them). A network share
 # instead of a folder needs no .env: see the commented `library` lines below.
 # docker-compose.build.yml rebuilds all four images from a clone instead of pulling them;
-# docker-compose.chunk_remote.yml adds the sync server (INSTALL.md section 5).
+# docker-compose.chunk_remote.yml adds the sync server, a work in progress (INSTALL.md section 9).
 
 services:
   web:

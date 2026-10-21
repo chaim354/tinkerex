@@ -8,12 +8,12 @@ desktop sync client lives in `chaim354/tinkerex-client` and is still being broug
 
 ## Status
 
-It runs on real hardware, every day, for its author. There are three ways to hold the files, chosen
-per deployment: a **folder you point it at** (a NAS share, a directory on the box), **your own S3
-bucket**, or the **sync server** (`chaim354/tinkerex-sync`), which adds per-account libraries,
-versions and restore, and is what the desktop client syncs against. The first two keep your files as
-plain files you can edit with anything else. It is open source under the Apache License 2.0, and the
-images are published on ghcr.io under `chaim354`.
+It runs on real hardware, every day, for its author. It holds your files in a **folder you point it
+at** — a directory on the box, or a NAS share — as plain files you can edit with anything else; that
+is the default, and the install below sets it up. Other ways to hold them (your own S3 bucket, or the
+sync server that adds per-account libraries and versions) are a work in progress, collected under
+Advanced in the guide. It is open source under the Apache License 2.0, and the images are published
+on ghcr.io under `chaim354`.
 
 ## Quick start
 
@@ -32,9 +32,8 @@ it. Nothing to generate, edit or chown first; the full guide, with every setting
 ## First run
 
 The first account you create is the owner: it is confirmed on the spot, without a mail server, and
-sign-ups close behind it. Later accounts come from the console, as section 4 of the guide shows; open
-sign-ups exist only with the sync server, where each account has its own library. The folder the
-compose file is in is your library, files and all. To keep the file somewhere else,
+sign-ups close behind it. Later accounts come from the console, as section 4 of the guide shows.
+The folder the compose file is in is your library, files and all. To keep the file somewhere else,
 `LIBRARY_HOST_PATH=/path/to/files` in a `.env` beside it names the folder instead. Files on another
 computer's network share work too: the compose file carries the lines for it, commented out, and the
 guide's section 3 walks through them.
