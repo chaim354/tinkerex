@@ -1,5 +1,6 @@
-# Console doors for a server with no mail (docs/DEPLOY.md "Accounts"). The password is read from
-# TINKEREX_PASSWORD so it never sits in argv — `ps`, shell history and the deploy log all see argv.
+# Console doors for a server with no mail, or with no admin signed in to do the same at Settings →
+# Users (docs/INSTALL.md section 4). The password is read from TINKEREX_PASSWORD so it never sits in
+# argv — `ps`, shell history and the deploy log all see argv.
 namespace :tinkerex do
   # A lambda, not a `def`: a method defined inside a rake namespace block lands on Object,
   # process-wide, and every other rake file and the app itself can then see it.
@@ -19,7 +20,8 @@ namespace :tinkerex do
     # .enqueue_first_for says why it is the door's job). Decided before the create, because
     # afterwards there is always an account.
     first = !User.exists?
-    user = User.create!(email:, password: pw, confirmed_at: Time.current)
+    # The first account is the admin (Settings → Users), as the sign-up form's is.
+    user = User.create!(email:, password: pw, confirmed_at: Time.current, admin: first)
     # An operator at a console chose the mount by mounting it (K §3): confirm it, so the first scan
     # below is not paused waiting for a browser. After the create, so an account that fails to
     # save confirms nothing.
@@ -35,6 +37,20 @@ namespace :tinkerex do
     pw = tinkerex_password.call
     u.update!(password: pw, confirmed_at: u.confirmed_at || Time.current)
     puts "#{email} updated"
+  end
+
+  # THE RECOVERY DOOR for a server with no admin: one whose accounts all came from single sign-on
+  # (User.from_omniauth is not an admin door -- the provider decides who signs in, not who
+  # administers), or one restored from before admins existed with its oldest account gone.
+  desc "Make an account an admin: bin/rails tinkerex:admin[EMAIL]"
+  task :admin, [ :email ] => :environment do |_t, args|
+    email = args[:email].to_s.strip.downcase
+    abort "usage: bin/rails tinkerex:admin[EMAIL]" if email.blank?
+    u = User.find_by(email:) or abort "no account #{email.inspect}"
+    # Strangers are signed into the demo by one click; User#can_manage_accounts? ignores its flag.
+    abort "#{email} is the shared demo account (DEMO_ACCOUNT_EMAIL) and cannot be an admin" if Tinkerex::Demo.demo?(u)
+    u.update!(admin: true)
+    puts "#{email} is an admin"
   end
 
   # THE PUBLIC DEMO (Tinkerex::DemoReset). Both tasks take the address from DEMO_ACCOUNT_EMAIL, never

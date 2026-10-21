@@ -120,14 +120,20 @@ module Users
 
     protected
 
-    # The first account is confirmed on the spot: a self-hoster has no mail server on day one,
-    # and Devise's own create path (build, save, then branch on active_for_authentication?)
-    # signs a confirmed account straight in. skip_confirmation! must run BEFORE save, which is
-    # why this hooks build_resource rather than an after_create. Protected, as Devise's own is:
-    # a public method on a controller is an action.
+    # The first account is the owner: confirmed on the spot, because a self-hoster has no mail server
+    # on day one (Devise's own create path -- build, save, then branch on active_for_authentication?
+    # -- signs a confirmed account straight in), and the admin who manages every account after it at
+    # Settings → Users. Both must be set BEFORE save, which is why this hooks build_resource rather
+    # than an after_create -- and the admin flag is decided here rather than in a User callback, which
+    # would also make the demo account (minted alone by Tinkerex::DemoReset) and every test's first
+    # user an admin. A later sign-up cannot ask for it: sign_up_params permits email and the two
+    # passwords only. Protected, as Devise's own is: a public method on a controller is an action.
     def build_resource(hash = {})
       super
-      resource.skip_confirmation! if Tinkerex::Registration.first_owner?
+      return unless Tinkerex::Registration.first_owner?
+
+      resource.skip_confirmation!
+      resource.admin = true
     end
 
     private

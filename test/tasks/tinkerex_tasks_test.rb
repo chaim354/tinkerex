@@ -18,6 +18,7 @@ class TinkerexTasksTest < ActiveSupport::TestCase
     Rails.application.load_tasks unless Rake::Task.task_defined?("tinkerex:owner")
     Rake::Task["tinkerex:owner"].reenable
     Rake::Task["tinkerex:password"].reenable
+    Rake::Task["tinkerex:admin"].reenable
     Rake::Task["tinkerex:demo:setup"].reenable
     Rake::Task["tinkerex:demo:reset"].reenable
     ENV["TINKEREX_PASSWORD"] = PASSWORD
@@ -100,6 +101,37 @@ class TinkerexTasksTest < ActiveSupport::TestCase
     u.reload
     assert u.confirmed?
     assert u.valid_password?(PASSWORD)
+  end
+
+  # --- Admins (Settings → Users) -------------------------------------------------------------------
+
+  test "owner makes the first account an admin and a later one not" do
+    User.delete_all
+    invoke!("tinkerex:owner", "first@example.com")
+    invoke!("tinkerex:owner", "second@example.com")
+
+    assert User.find_by!(email: "first@example.com").admin?
+    assert_not User.find_by!(email: "second@example.com").admin?
+  end
+
+  test "admin makes an existing account an admin" do
+    u = User.create!(email: "promote@example.com", password: PASSWORD, confirmed_at: Time.current)
+
+    capture_io { invoke!("tinkerex:admin", "promote@example.com") }
+
+    assert u.reload.admin?
+  end
+
+  test "admin refuses a blank address, an unknown one and the demo account" do
+    assert_raises(SystemExit) { capture_io { invoke!("tinkerex:admin") } }
+    assert_raises(SystemExit) { capture_io { invoke!("tinkerex:admin", "nobody@example.com") } }
+
+    ENV["DEMO_ACCOUNT_EMAIL"] = "demo@example.com"
+    demo = User.create!(email: "demo@example.com", password: PASSWORD, confirmed_at: Time.current)
+    err = assert_raises(SystemExit) { capture_io { invoke!("tinkerex:admin", "demo@example.com") } }
+
+    assert_match(/demo/, err.message)
+    assert_not demo.reload.admin?
   end
 
   # --- The demo account (tinkerex:demo:*) ----------------------------------------------------------
