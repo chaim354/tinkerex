@@ -174,6 +174,7 @@ ambient `LIBRARY_BACKEND` name.
 
 - **Making the library-folder change admin-only.** Today any account changes it for everyone; with
   an admin role that is arguably wrong, but it is a behaviour change to an existing page and gets its
-  own decision.
+  own decision. *Decided the same day: admin-only, first run included; other accounts see the page
+  read-only (`Settings::LibraryController`'s header).*
 - Invite links, revoking device tokens on reset, an audit log of admin actions, and removing a
   deleted account's library from the sync server.
