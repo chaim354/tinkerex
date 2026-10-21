@@ -49,6 +49,31 @@ module Maker
     # holding one `.stl` and twenty `.mage` files would have catalogued all twenty into that model.
     EXCLUDED_ROLES = %w[cnc_design code document gcode laser vector].freeze
 
+    # THE SHELVES ARE BUILT IN (2026-10-20). A shelf is a folder that is not itself a model: a
+    # model-role file directly on one is its own model, and each of its subfolders is one model.
+    # These four were per-user `maker_shelves` rows edited at /settings/shelves until that page was
+    # retired; every live user held exactly these four when it went, so fixing them changed no
+    # one's catalog, and `maker_shelves` now means something else (Maker::Shelf).
+    #
+    # `*` -- EVERY TOP-LEVEL FOLDER IS A SHELF -- IS THE ONE THAT IS EASY TO READ AS REDUNDANT NEXT
+    # TO `""`, AND REMOVING IT BREAKS THE HEADLINE CASE. `""` alone makes each top-level folder ONE
+    # model holding its whole subtree: measured on a real share library, `3D Models/` collapsed into
+    # a single entry and `Projects/` became one entry. `Projects/*/models` is still needed beside
+    # it: `*` makes `Projects` a shelf, and the deeper pattern is the NEARER shelf inside `models/`.
+    SHELVES = [ "", "*", "Models", "Projects/*/models" ].freeze
+    # A whole segment may be this and nothing else.
+    WILDCARD = "*".freeze
+
+    # Does `pattern` name `path`? Both are "" for the library root, segments joined by "/".
+    # A "*" segment matches exactly one segment -- never zero, never several.
+    def self.shelf_matches?(pattern, path)
+      ps = pattern.to_s.split("/")
+      xs = path.to_s.split("/")
+      return false unless ps.size == xs.size
+
+      ps.zip(xs).all? { |p, x| p == WILDCARD || p == x }
+    end
+
     # What one run did. `status` is :ok or :capped -- a caller has to be able to tell "your library
     # is catalogued" from "there is more of it than one run will do".
     #
@@ -81,7 +106,6 @@ module Maker
     end
 
     def self.for_user(user:, cap: nil)
-      Maker::Shelf.seed_once!(user)
       cap ||= max_models
       plan = classify(user)
 
@@ -207,11 +231,11 @@ module Maker
     end
     private_class_method :attach_all
 
-    # PURE. Reads `nodes` and `maker_shelves`, writes nothing, and is the whole rule.
-    def self.classify(user)
-      tree     = Maker::LibraryTree.new(user)
-      patterns = user.maker_shelves.pluck(:path)
-      shelves  = shelf_dir_ids(tree, patterns, user)
+    # PURE. Reads `nodes` only, writes nothing, and is the whole rule. `patterns:` is SHELVES in
+    # production; a test passes its own so a fixture can hold a file with no shelf above it.
+    def self.classify(user, patterns: SHELVES)
+      tree    = Maker::LibraryTree.new(user)
+      shelves = shelf_dir_ids(tree, patterns, user)
 
       owners  = {}
       titles  = {}
@@ -273,12 +297,12 @@ module Maker
     # Which DIR node_ids (plus nil, the library root) the shelf patterns name.
     def self.shelf_dir_ids(tree, patterns, user)
       ids = Set.new
-      ids << nil if patterns.any? { |p| Maker::Shelf.matches?(p, "") }
+      ids << nil if patterns.any? { |p| shelf_matches?(p, "") }
       user.nodes.present.where(kind: "dir").pluck(:node_id).each do |dir_id|
         path = tree.path_for(dir_id)
         next if path.nil?
 
-        ids << dir_id if patterns.any? { |p| Maker::Shelf.matches?(p, path) }
+        ids << dir_id if patterns.any? { |p| shelf_matches?(p, path) }
       end
       ids
     end

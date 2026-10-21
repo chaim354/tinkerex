@@ -1,8 +1,7 @@
 # The model catalog and shelves
 
 > CLAUDE.md §14k's area file. Read before touching `app/services/maker/model_intake.rb`,
-> `app/services/maker/library_tree.rb`, `app/models/maker/shelf.rb`,
-> `app/controllers/settings/shelves_controller.rb`, `app/jobs/maker/model_intake_job.rb`,
+> `app/services/maker/library_tree.rb`, `app/jobs/maker/model_intake_job.rb`,
 > `app/services/maker/model_intake/prune.rb`, `app/services/maker/model_folder.rb`,
 > `app/services/maker/model_projects.rb`,
 > `app/views/files/_model_strip.html.erb`, `Files::ModelsController` (the 3D models view),
@@ -13,33 +12,27 @@
 - **A FOLDER IS EITHER A SHELF OR A MODEL, AND THE NEAREST SHELF ANCESTOR DECIDES.** A model-role
   file directly under a shelf is its own one-file model; anything deeper belongs to the shelf's
   direct child folder, which claims its whole subtree. **Nearest, not furthest** — `chain.index`,
-  never `rindex`: marking a folder inside a model a shelf is how a user splits one model into
-  several, and the furthest match silently ignores them. Mutation-checked.
+  never `rindex`: the built-in shelves nest (`""` sits above every `*`, and `*`'s `Projects` above
+  `Projects/*/models`), so the furthest match makes the root everyone's shelf and each top-level
+  folder one model — the collapse `*` exists to prevent. Mutation-checked.
 - **A SHELF IS A PATH PATTERN AND A MODEL IS A NODE ID. The two identities differ on purpose and
-  neither may be "unified".** Only a pattern can express `Projects/*/models` — one rule over a
-  folder per project, none of which need exist. Only a node_id survives a rename: `Library::
+  neither may be "unified".** The patterns are `Maker::ModelIntake::SHELVES` — `""`, `*`, `Models`,
+  `Projects/*/models` — FIXED IN CODE since 2026-10-20; until then they were per-user rows edited
+  at `/settings/shelves`, and every live user held exactly these four when that page went.
+  `classify` takes them as `patterns:` so a test can build a fixture with no shelf above a file;
+  nothing in production passes any. Only a pattern can express `Projects/*/models` — one rule over
+  a folder per project, none of which need exist. Only a node_id survives a rename: `Library::
   Reconciler` pairs by `(content_hash, size)` and keeps a renamed node's `node_id` (§14b), so a
   path key would abandon a renamed folder's row and mint a second, leaving two models for one
-  folder. The cost of path-keyed shelves — a renamed folder silently stops matching — is paid by
-  the settings page's live/missing indicator (`/settings/shelves`), which is therefore not
-  decoration.
-- **THE WILDCARD CLAUSE IN `Shelf`'S PATH VALIDATION CANNOT BE DELEGATED, and composing the two
-  library-name checks is not enough.** `*` is an ordinary legal filename byte, so
-  `valid_leaf_name?("*x")` is TRUE and `reserved?("*x")` is FALSE — neither composed check knows
-  this class has a wildcard syntax at all. Without the explicit clause `Projects/*x/models` saves
-  happily and then matches nothing, forever, silently.
-- **`Shelf.seed_once!` USES `find_or_create_by!`, AND `create!` IS A PERMANENT-FAILURE STATE.** A
-  user holding a seed path *without* the stamp raised "Path has already been taken" on every later
-  call — permanently, because the stamp that would stop it being retried is written after the rows,
-  and this sits on the recurring sweep's first line. Reachable two ways: a process dying between
-  the rows and the stamp, and anyone creating `""` themselves before their first sweep.
-  `RecordNotUnique` is rescued to a stamp for the concurrent case (the settings page and the sweep
-  racing), on the same reading `Models::AttachmentsController#create` records for a double-clicked
-  Attach.
-- **SEEDING HAPPENS ONCE, GUARDED BY `users.shelves_seeded_at`.** Ensuring the three defaults on
-  every sweep would resurrect every row a user deleted — the fight-the-user shape §14f exists to
-  prevent. Both first-touch doors, the settings page and the sweep, call the same method so neither
-  has to be first.
+  folder. **The cost of a path-keyed shelf is now visible only as models disappearing**: the
+  settings page's live/missing indicator went with the per-user rows. Renaming a project's
+  `models/` folder stops `Projects/*/models` matching it and its files key to the project's own
+  folder, which the project claims — so the models there stop growing and a new mesh is never
+  catalogued, with nothing saying why. (A top-level `Models/` is safe to rename: `*` still names
+  it, which is also why two patterns naming one folder is not an ambiguity — the shelves are a SET.)
+- **THE PER-USER SHELF RULES WENT WITH THE PER-USER SHELVES (2026-10-20)** — the wildcard clause in
+  `Shelf`'s path validation, `seed_once!`'s `find_or_create_by!`, and seeding once behind
+  `users.shelves_seeded_at` guarded code that no longer exists; their story is in git history.
 - **DELETING AN AUTO MODEL DISMISSES IT; DESTROYING IT MAKES THE SWEEP RECREATE IT.** The row is
   the memory. `Maker::ModelIntake` must look up existing rows **without** the `catalogued` scope —
   filtering dismissed rows out of its own lookup is exactly how they come back, and the partial

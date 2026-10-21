@@ -501,22 +501,23 @@ module Library
     # above.
     #
     # `bracket.stl` exists only on disk, so a model keyed on it at all is proof the reconcile ran
-    # first. WHICH model it is proves the rest: loose at `Projects/desk-lamp/`, the seeded `*` shelf
-    # makes the project's own folder its key; the intake then files it into
-    # `Projects/desk-lamp/models/`, under the seeded `Projects/*/models` shelf, where it is its own
-    # model titled "bracket".
+    # first. WHICH model it is proves the rest: loose at `Projects/desk-lamp/`, the built-in `*`
+    # shelf makes the project's own folder its key; the intake then files it into
+    # `Projects/desk-lamp/models/`, under the built-in `Projects/*/models` shelf, where it is its
+    # own model titled "bracket" (Maker::ModelIntake::SHELVES).
     #
     # MUTATION-CHECKED: moving intake_models(user) above intake_project_folders(user) in
     # Library::ScanJob#perform turns this RED with [] — re-measured 2026-10-19 (F-S07-1).
     #
     # THAT VALUE HAS MOVED THREE TIMES, AND THIS COMMENT TRAILED EVERY MOVE. ["Projects"] until
-    # `Maker::Shelf::SEEDS` gained `"*"` (re-measured 2026-08-26); then ["desk-lamp"], the project's
-    # whole folder as one model nothing reaps, until the catalog began dropping a folder a project
-    # claims (2026-09-02). Since then the key it would mint is CLAIMED, so the swap catalogues
-    # nothing at the old path and the model arrives a scan late: under `Projects/` this ordering
-    # changes the TIMING, not the answer — and a folder discovery has not adopted yet is claimed by
-    # position too (F-S07-1). It still changes the ANSWER where a project's root is itself a shelf;
-    # Library::ScanJob#intake_models has that case, which this test does not reach.
+    # the shelves (now `Maker::ModelIntake::SHELVES`) gained `"*"` (re-measured 2026-08-26); then
+    # ["desk-lamp"], the project's whole folder as one model nothing reaps, until the catalog began
+    # dropping a folder a project claims (2026-09-02). Since then the key it would mint is CLAIMED,
+    # so the swap catalogues nothing at the old path and the model arrives a scan late: under
+    # `Projects/` this ordering changes the TIMING, not the answer — and a folder discovery has not
+    # adopted yet is claimed by position too (F-S07-1). It still changes the ANSWER where a
+    # project's root is itself a shelf; Library::ScanJob#intake_models has that case, which this
+    # test does not reach.
     test "cataloguing runs after the project intake, so a filed file is its own model" do
       File.binwrite(File.join(@root, @folder.storage_path, "bracket.stl"), "solid")
 
@@ -766,8 +767,8 @@ module Library
 
     # A DISCOVERED PROJECT'S MESH IS FILED AND CATALOGUED IN THE SAME PERFORM. `panel.svg` above is
     # role "vector", so Maker::ModelIntake.classify never looks at it; `bracket.stl` it does.
-    # `Projects/` is a shelf (the seeded `*`) and `Desk Lamp` is not, so while bracket.stl is loose
-    # at the folder's root its key is the folder; one intake later it sits under the seeded
+    # `Projects/` is a shelf (the built-in `*`) and `Desk Lamp` is not, so while bracket.stl is
+    # loose at the folder's root its key is the folder; one intake later it sits under the built-in
     # `Projects/*/models` shelf and is its own model, titled "bracket".
     #
     # THE ORDER NOW DECIDES WHEN, NOT WHETHER (F-S07-1, 2026-10-19). This test used to assert first

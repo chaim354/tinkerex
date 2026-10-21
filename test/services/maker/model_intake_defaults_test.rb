@@ -1,15 +1,16 @@
 require "test_helper"
 
 module Maker
-  # THE FOUR CASES THE FEATURE WAS ASKED FOR, AGAINST THE SEEDED SHELF SET AND NOTHING ELSE.
+  # THE FOUR CASES THE FEATURE WAS ASKED FOR, AGAINST THE BUILT-IN SHELF SET AND NOTHING ELSE
+  # (Maker::ModelIntake::SHELVES -- per-user seeded rows until 2026-10-20, the same four).
   #
   # Every other test in this suite builds its own shelves, which means all of them would stay green
   # while the DEFAULTS produced something nobody wants -- and they did. Measured on a real share
-  # library before `*` was seeded: `3D Models/` collapsed into one catalog entry titled "3D Models"
-  # holding every file beneath it, and the whole `Projects/` tree became one entry titled
-  # "Projects". The rule was right and the seeded set was wrong, and no test could see it.
+  # library before `*` was one of them: `3D Models/` collapsed into one catalog entry titled
+  # "3D Models" holding every file beneath it, and the whole `Projects/` tree became one entry
+  # titled "Projects". The rule was right and the shelf set was wrong, and no test could see it.
   #
-  # So this file pins the defaults specifically. If SEEDS changes, this is the test that should
+  # So this file pins the defaults specifically. If SHELVES changes, this is the test that should
   # argue with you.
   class ModelIntakeDefaultsTest < ActiveSupport::TestCase
     setup do
@@ -45,7 +46,7 @@ module Maker
       @user.nodes.create!(node_id:, name:, kind: "file", parent_node_id: parent, mtime: 1, size: 1)
     end
 
-    test "the seeded shelves produce one model per design, not one per top-level folder" do
+    test "the built-in shelves produce one model per design, not one per top-level folder" do
       Maker::ModelIntake.for_user(user: @user)
 
       assert_equal %w[Enclosure benchy bracket enclosure],
@@ -73,7 +74,7 @@ module Maker
     end
 
     # THE DEEPER PATTERN IS THE NEARER SHELF, so `Projects/*/models` is not shadowed by `*` making
-    # `Projects` one. Both seeds are load-bearing and they do different work.
+    # `Projects` one. Both shelves are load-bearing and they do different work.
     #
     # `desk-lamp` ITSELF IS NOT A MODEL, AND THIS USED TO PIN THE OPPOSITE (until F-S07-1,
     # 2026-10-19): `*` makes it the shelf's direct child, so `cad/mount.stl` keyed to it and the

@@ -1177,8 +1177,7 @@ Four rules survive on **this** side of the boundary:
 ### 14k. The model catalog and shelves → **`docs/invariants/model-intake.md`**
 
 **Read that file before touching** `app/services/maker/{model_intake*,library_tree.rb,model_folder.rb}`,
-`app/models/maker/{model,item,shelf}.rb`, `app/controllers/settings/shelves_controller.rb`,
-`app/views/files/_model_strip.html.erb`, `app/jobs/maker/model_intake_job.rb`, or `maker_models`'
+`app/models/maker/{model,item}.rb`, `app/views/files/_model_strip.html.erb`, `app/jobs/maker/model_intake_job.rb`, or `maker_models`'
 `origin`, `auto_node_id`, `folder_node_id`, `dismissed_at`. Nearest-shelf; a shelf is a PATH and a model
 a NODE ID; dismissing is not deleting; ScanJob ordering; `path_for`'s cycle guard and memo; Model and
 Item are TWO catalogs; which files a model claims and which model a folder shows; `rake models:prune`.
