@@ -153,7 +153,7 @@ class ProjectsController < ApplicationController
     @blocks_by_key = @blocks.index_by(&:layout_key)
     @panel_layout = @project.panel_layout(folders: @listing.panel_folders,
                                           blocks: @blocks.map { |b| [ b.key, b.kind ] })
-    # WHAT THE CHOOSER CALLS EACH PANEL. The ten fixed labels plus one per folder — its own name,
+    # WHAT THE CHOOSER CALLS EACH PANEL. The eleven fixed labels plus one per folder — its own name,
     # which is the only label a folder key could honestly carry. Built here rather than in the
     # chooser because the chooser has no listing of its own, and a label map assembled in a view
     # would be a second definition the panels door could not reuse. A key with no entry cannot

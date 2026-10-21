@@ -102,6 +102,16 @@ module Maker
       assert_equal [ @bench, @desk ], c.available
     end
 
+    test "a model removed from the catalog offers nothing to attach to" do
+      link(@desk)
+      @shade.update!(dismissed_at: Time.current)
+
+      c = choices
+
+      assert_equal [ @desk ], c.linked, "its links stay detachable"
+      assert_empty c.available
+    end
+
     test "a hollow model offers nothing to attach to" do
       dir("d-empty", "empty", nil)
       hollow = @user.maker_models.create!(title: "empty", origin: "auto", auto_node_id: "d-empty", folder_node_id: "d-empty")

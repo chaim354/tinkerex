@@ -61,6 +61,20 @@ module Web
       assert_empty node_ids
     end
 
+    # ONLY AN AUTO MODEL IS DISMISSED (an import is destroyed), and it keeps its file rows: the
+    # refusal is the dismissal's, not the empty-model one's.
+    test "a model removed from the catalog is refused and attaches nothing" do
+      file("n-gear", "gear.stl")
+      gear = @user.maker_models.create!(title: "Gear", origin: "auto", auto_node_id: "n-gear", dismissed_at: Time.current)
+      gear.file_attachments.create!(user: @user, node_id: "n-gear", role: "model")
+
+      post model_projects_path(gear), params: { project_id: @project.slug }
+
+      assert_redirected_to model_path(gear)
+      assert_equal "Gear was removed from the catalog, so it can't be attached.", flash[:alert]
+      assert_empty node_ids
+    end
+
     test "an archived project is refused" do
       @project.update!(status: "archived")
 
@@ -157,6 +171,26 @@ module Web
       assert_select ".picker-result .picker-name", text: "Shade", count: 0
       assert_select "form[action=?] input[name='project_id'][value=?]", model_projects_path(base), @project.slug
       assert_select "form[action=?] input[name='return_to'][value='project']", model_projects_path(base)
+    end
+
+    # HOLLOW IS Maker::Model#hollow? — an auto model with no file rows — and the picker filters it
+    # in SQL, BEFORE the limit: RECENT_LIMIT of them, all newer than Shade, would otherwise fill the
+    # no-query page and push every real model off it. An auto model WITH a file row is listed.
+    test "the picker leaves out hollow models before its limit, so they cannot crowd real ones off" do
+      @model.update_column(:updated_at, 1.day.ago)
+      Projects::ModelsController::RECENT_LIMIT.times do |i|
+        @user.maker_models.create!(title: "Hollow #{i}", origin: "auto", auto_node_id: "d-hollow-#{i}")
+      end
+      file("n-gear", "gear.stl")
+      gear = @user.maker_models.create!(title: "Gear", origin: "auto", auto_node_id: "n-gear")
+      gear.file_attachments.create!(user: @user, node_id: "n-gear", role: "model")
+
+      get new_project_model_path(@project)
+
+      assert_response :success
+      assert_select ".picker-result .picker-name", text: /Hollow/, count: 0
+      assert_select ".picker-result .picker-name", text: "Shade"
+      assert_select ".picker-result .picker-name", text: "Gear"
     end
 
     test "the picker with no query lists recent models" do

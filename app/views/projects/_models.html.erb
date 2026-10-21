@@ -6,8 +6,10 @@
   ProjectsController#show, and NIL WHEN THE LAYOUT HIDES THIS PANEL — then this renders nothing,
   which in edit mode is the placeholder.
 
-  ONLY AN ATTACHED MODEL HAS DETACH. A model in the folder is the project's by where it is, and
-  moving the folder out is what removes it; a Detach there would delete rows and change nothing.
+  ONLY A LINKED MODEL HAS DETACH. A model in the folder is the project's by where it is, and a
+  Detach there would delete rows the next project intake writes back, changing nothing. MOVING IT
+  OUT DOES NOT REMOVE IT: Maker::ProjectIntake attached its files to the project while it was
+  inside, and moving keeps those rows, so it stays on the panel as a linked card — with Detach.
 
   ITS OWN `thumbs` CONTROLLER, for the reason projects/_attachments gives: no ancestor covers it.
 %>

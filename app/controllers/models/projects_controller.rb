@@ -17,7 +17,17 @@ module Models
     before_action :set_model
 
     # POST /models/:model_id/projects { project_id (slug), return_to? }
+    #
+    # A DISMISSED MODEL IS REFUSED: the maker removed it from the catalog (ModelsController#destroy),
+    # and every list of models leaves it out, so an attach would write rows for a card the Models
+    # panel never draws (Maker::ProjectModels is catalogued only). Its page offers no dropdown
+    # (Maker::ModelProjectChoices); this is the door a stale page or a crafted POST still reaches.
     def create
+      if @model.dismissed_at.present?
+        return redirect_back_or_to(model_path(@model),
+                                   alert: "#{@model.title} was removed from the catalog, so it can't be attached.")
+      end
+
       project = current_user.maker_projects.find_by!(slug: params.require(:project_id).to_s)
       if project.status == "archived"
         return redirect_back_or_to(model_path(@model),

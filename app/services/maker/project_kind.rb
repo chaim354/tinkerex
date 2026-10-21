@@ -198,7 +198,7 @@ module Maker
     # --- the layout -----------------------------------------------------------------------------
 
     # `folder:<node_id>` — a panel that is one of the project folder's own subfolders rather than
-    # one of the ten fixed keys. THE NODE ID AND NOT THE PATH, AND THE HONEST REASON IS NARROWER
+    # one of the eleven fixed keys. THE NODE ID AND NOT THE PATH, AND THE HONEST REASON IS NARROWER
     # THAN "A RENAME KEEPS THE ID": it does on chunk_remote, where the id is the sync server's and a
     # rename arrives as a move; on share and s3 the scan pairs renamed FILES by content and never
     # DIRECTORIES (Library::Reconciler#vanished_nodes is `kind: "file"`), so a Finder rename of a

@@ -47,7 +47,7 @@ module Maker
     # preset, and `other` is the column default, so a migration alone changes no page (spec §4).
     #
     # ADD A PANEL HERE OR IT RENDERS FOR NOBODY. projects/show.html.erb loops over
-    # `Maker::Project#visible_panels` and renders `projects/_<key>`; a tenth partial dropped into
+    # `Maker::Project#visible_panels` and renders `projects/_<key>`; a new partial dropped into
     # the view directory with no entry here is a file no page reaches, and a `render` appended
     # under the loop is a panel the chooser cannot list — one question with two answers (§14a).
     # The key IS the partial's basename; keep them equal.

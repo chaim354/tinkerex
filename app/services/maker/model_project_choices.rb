@@ -10,6 +10,9 @@ module Maker
   #               minus the located one. A chip with ×.
   #   available — every other non-archived project, for the dropdown. None for a hollow model
   #               (Maker::Model#hollow?): it has no files, so its attach would only be refused.
+  #               None for a DISMISSED one either: the maker removed it from the catalog, and
+  #               Models::ProjectsController#create refuses it rather than put it back on a
+  #               project's Models panel through a side door.
   #
   # ONE RULE FOR "LINKED", SHARED WITH Maker::ProjectModels: a project's row on a file belongs to that
   # file's OWNER model (Maker::AttachToProject.owners_by_node — the oldest model row per file), and
@@ -40,7 +43,7 @@ module Maker
       end
       open = user.maker_projects.where.not(status: "archived").to_a.reject { |p| p.id == located&.id }
       linked, available = open.partition { |p| linked_ids.include?(p.id) }
-      available = [] if model.hollow?
+      available = [] if model.hollow? || model.dismissed_at.present?
       Choices.new(located:, linked: by_name(linked), available: by_name(available))
     end
 

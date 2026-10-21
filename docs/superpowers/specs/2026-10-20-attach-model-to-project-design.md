@@ -46,12 +46,16 @@ same page with "Attached <model> to <project>."
 square preview, title), ordered by title, each linking to the model:
 
 - **Linked** models carry a **Detach** button.
-- **In-folder** models carry none: they are the project's by where they are, and moving the folder
-  out is what removes them. A model that is both shows once, as in-folder.
+- **In-folder** models carry none: they are the project's by where they are. Moving one out does
+  NOT remove it — project intake attached its files to the project while it was inside, and those
+  rows stay, so it becomes a linked card, with Detach. A model that is both shows once, as
+  in-folder.
 
 The panel head has **Add model**, which opens a picker at `/projects/:project_id/models/new?q=`:
 the user's catalogued models matching the title query, or the 40 most recently updated with no
-query, each with an Attach button. It is `Projects::AttachmentsController#new`'s page for models.
+query, each with an Attach button. Hollow models (`Maker::Model#hollow?`) are left out in SQL,
+before the limit, so they cannot crowd real ones off the page. It is
+`Projects::AttachmentsController#new`'s page for models.
 With no models the panel says "No models yet." beside the Add button.
 
 The panel is a regular panel: on by default, hideable and placeable from the layout drawer like
@@ -68,24 +72,25 @@ A model with no live files is refused (`:empty_model`) — "That model has no fi
 than recorded as an attach of nothing.
 
 **A project's models are derived on each render** (`Maker::ProjectModels.for(user, project,
-attachments:)`, new, read-only):
+attached_node_ids:)`, new, read-only — the project's LIVE attached node ids):
 
 1. **Linked:** for the project's live attached node ids, the models owning them by `#model_owning`'s
    rule — oldest `Maker::Model` row per node — in ONE query over `maker_file_attachments`, not one
    per node. The rule is shared with `Maker::AttachToProject`, not copied, so "which model owns this
-   file" has one answer.
-2. **In-folder:** catalogued models whose `folder_node_id` is a dir under the project's folder, or
-   whose `auto_node_id` is a file under it. Ancestry comes from the library tree
-   (`Maker::LibraryTree`), not from `Maker::ProjectFolderListing`, whose walk is capped at
-   `FILE_CAP` files.
+   file" has one answer. A shared file whose older owner is another model links that older model.
+2. **In-folder:** catalogued models `Maker::ModelProjects` places in this project — the nearest
+   project folder at-or-above the model, the answer the 3D models view groups by — so the panel
+   and that view cannot disagree.
 
-Both use the `catalogued` scope, so a dismissed auto model never shows. Bundles attached before
-this ships appear as cards with no migration.
+Both use the `catalogued` scope and drop hollow models, so a dismissed or emptied auto model never
+shows. Bundles attached before this ships appear as cards with no migration.
 
-**Detaching** deletes this project's `Maker::FileAttachment` rows whose node is one of the model's
-attached files — every row, live or tombstoned — and nothing else: no file moves, nothing is
-deleted from the library, the model and its own rows are untouched. A row that was ALSO attached by
-hand before the model owned it goes with the model, which is the same rule attaching uses.
+**Detaching** deletes this project's `Maker::FileAttachment` rows for the files the model OWNS
+(`Maker::AttachToProject.owners_by_node`, the oldest model row per file), live or tombstoned, and
+nothing else: a file shared with an older model is that model's link and stays, no file moves,
+nothing is deleted from the library, and the model and its own rows are untouched. A row that was
+ALSO attached by hand before the model owned it goes with the model, which is the same rule
+attaching uses.
 
 **What the snapshot means.** A file added to the model after the attach gets no project row. The
 card always opens the live model, so it is one click away; it is not in the project's own file
@@ -94,7 +99,8 @@ lists. Accepted with this design (the alternative was a new link table).
 ## Routes
 
 - `POST /models/:model_id/projects` `{ project_id }` → attach. HTML only: redirects back with the
-  notice (no caller wants JSON).
+  notice (no caller wants JSON). A hollow or dismissed model is never offered: the model's
+  dropdown is empty for one, and a dismissed model's POST is refused.
 - `DELETE /models/:model_id/projects/:id` (`:id` is the project) → detach, redirect back with
   "Detached <model> from <project>."
 - `GET /projects/:project_id/models/new?q=` → the picker.
@@ -102,8 +108,9 @@ lists. Accepted with this design (the alternative was a new link table).
 `Models::ProjectsController` (new) and `Projects::ModelsController` (new, `new` only). Models
 resolve by slug through `current_user.maker_models`, projects through `current_user.maker_projects`,
 so another user's model or project is a 404 and never names anything of theirs. An archived
-project is refused like the file attach dropdown refuses it. Redirects go back through `url_from`,
-never to an absolute URL.
+project is refused like the file attach dropdown refuses it. Redirects are `redirect_back_or_to`,
+so a foreign-host referer falls back to the model or project page, never off-site; the picker's
+attach (`return_to=project`) goes to the project's Models panel.
 
 ## Cost
 
@@ -127,9 +134,9 @@ costs: two queries.
   folder excluded.
 - **`Maker::AttachToProject#attach_model`:** attaches every live file once, idempotent on repeat,
   refuses a model with no live files, never moves a node.
-- **Controllers:** attach and detach round trip; detach removes only this project's rows for this
-  model's files; another user's model/project → 404; an archived project refused; the picker's
-  query filters by title and excludes dismissed models.
+- **Controllers:** attach and detach round trip; detach removes only this project's rows for the
+  files this model owns; another user's model/project → 404; an archived project and a dismissed
+  model refused; the picker's query filters by title and excludes dismissed and hollow models.
 - **Project page:** linked model files no longer appear in "Linked from elsewhere"; the budget test
   extended with N linked and N in-folder models.
 - **No system test:** attach, detach and the picker are plain forms with no Stimulus, so
