@@ -56,7 +56,6 @@ module Web
       user.maker_models.create!(title: "Dragon", print_status: "printed")
       get files_models_path
       assert_select ".model-card .model-name", text: "Dragon"
-      assert_select ".model-card .badge.mstatus-printed"
     end
 
     test "index shows only the current user's models" do

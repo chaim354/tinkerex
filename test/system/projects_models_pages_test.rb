@@ -32,6 +32,9 @@ require "application_system_test_case"
 #     no matches`. That is the mutation the 2026-09-08 rewrite of this test replaced the old one
 #     with — the old bullet named `ProjectsController#resolve_project_view`, a method the folder
 #     panels deleted along with the page-wide `project_view` cookie it wrote.
+#   - Deleting `.model-card .thumb { height: auto; aspect-ratio: 1 / 1; }` from pages/models.css
+#     reddens the square-card test at its equality: `Expected: 176  Actual: 120` — the card's cover
+#     falls back to `.project-card .thumb`'s fixed 120px height (2026-10-20).
 class ProjectsModelsPagesTest < ApplicationSystemTestCase
   setup do
     @root = use_fresh_share_library!
@@ -92,6 +95,25 @@ class ProjectsModelsPagesTest < ApplicationSystemTestCase
     within("#project-tasks .tasks-group.status-todo") { click_on "Done" }
     assert_selector "#project-tasks .tasks-group.status-done .task-row .task-state--done"
     assert_no_selector "#project-tasks .tasks-group.status-todo .task-row"
+    assert_no_console_errors
+  end
+
+  # SQUARE, MEASURED IN A BROWSER: a stylesheet rule cannot be asserted from a request test.
+  # `.project-card .thumb` is a fixed 120px tall in a grid whose columns are at least 150px wide, so
+  # the model card's square render sat in a short, wide box until pages/models.css gave the model
+  # card alone `aspect-ratio: 1 / 1` (2026-10-20).
+  test "a model card's preview box is square" do
+    node = create_node!(@user, node_id: SecureRandom.uuid, name: "benchy.stl", kind: "file")
+    model = @user.maker_models.create!(title: "Benchy", print_status: "printed")
+    model.file_attachments.create!(user: @user, node_id: node.node_id, role: "model")
+    visit files_models_path
+    assert_selector ".model-card .thumb"
+    w, h = page.evaluate_script(<<~JS)
+      (() => { const r = document.querySelector(".model-card .thumb").getBoundingClientRect();
+               return [Math.round(r.width), Math.round(r.height)] })()
+    JS
+    assert_operator w, :>, 120, "the column should be wider than the old fixed 120px height"
+    assert_equal w, h
     assert_no_console_errors
   end
 

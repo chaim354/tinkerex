@@ -2,7 +2,7 @@ require "test_helper"
 
 module Web
   # The model catalog after PR 3 (spec §8): a Files-style toolbar on the index with the status
-  # filters as chips, the status badge over the cover, button actions on the model page, a print
+  # filters as chips, a card with no status badge (2026-10-20), button actions on the model page, a print
   # composer that opens on demand, and a drop-zone import field. (The shelves page's buttons moved
   # to shelves_test.rb in slice 5, with the page, to Settings.)
   #
@@ -42,10 +42,14 @@ module Web
       assert_select "a[href=?]", model_path(@model)
     end
 
-    test "a model card keeps its badge, which the stylesheet places over the cover" do
+    # NO STATUS BADGE ON THE CARD (2026-10-20, the owner's call): it covered the corner of the
+    # picture, and the status is one click away -- the chips above the grid filter by it and the
+    # model's own page shows it.
+    test "a model card carries no status badge" do
       get files_models_path
-      assert_select ".model-card .badge.mstatus-printed", text: /printed/i
+      assert_select ".model-card", minimum: 1
       assert_select ".model-card .model-name", text: "Benchy"
+      assert_select ".model-card .badge", count: 0
     end
 
     # NO EMOJI IN THE INTERFACE (slice 5 retired the cube placeholders): an empty cover is the 3D models

@@ -2,7 +2,7 @@
    and the shelf rows Settings::ShelvesController renders (they stayed in this sheet). */
 @layer pages {
   /* The detail page's rules below (hero, gallery, file tree, print settings) were migrated from the
-     old models.css with the token substitution applied; the toolbar, the card badge, the print log,
+     old models.css with the token substitution applied; the toolbar, the card cover, the print log,
      the drop zone and the shelf rows were rewritten for PR 3. The .badge.mstatus-* rules are NOT
      here — they are components. The index toolbar is the .toolbar component, so this page only
      sizes what sits in it; the status filters are .chip and carry no page rule at all. */
@@ -66,10 +66,11 @@
   .shelf-status { margin-left: auto; font: 11px/1.4 var(--font-mono); }
   .shelf-add { display: flex; align-items: center; gap: 10px; }
 
-  /* The card's badge sits OVER the cover: the card's markup is untouched (it still renders the
-     badge after the name), so the placement is this rule and nothing else. */
-  .model-card { position: relative; }
-  .model-card .badge { position: absolute; top: 6px; left: 6px; }
+  /* A MODEL'S COVER IS SQUARE (2026-10-20). `.project-card .thumb` is a fixed 120px tall in a grid
+     whose columns are at least 150px wide, so a square render sat in a short, wide box. Model cards
+     only: project and explore cards keep their banner shape. The status badge that sat over the
+     cover's corner is gone; the chips above the grid and the model page carry the status. */
+  .model-card .thumb { height: auto; aspect-ratio: 1 / 1; }
 
   /* An empty hero is the 3D models icon (slice 5; no emoji in the interface), at the size the
      glyph it replaced was set. The model CARD's empty cover is sized by pages/projects.css's
