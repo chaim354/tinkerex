@@ -25,7 +25,7 @@ module Settings
     # POST /settings/users {user: {email, password, admin}}. Confirmed on the spot, as tinkerex:owner
     # does: the admin chose this person, and a self-hosted server usually has no mail to confirm by.
     def create
-      @new_user = User.new(new_user_params.merge(confirmed_at: Time.current))
+      @new_user = User.new(new_user_params.merge(confirmed_at: Time.current, admin: params.dig(:user, :admin) == "1"))
       if password_given?(@new_user, new_user_params[:password]) && @new_user.save
         # ON A SCANNABLE BACKEND (share, s3) EACH ACCOUNT HOLDS ITS OWN CATALOG OF THE ONE LIBRARY,
         # filled by Library::ScanJob per user, so without this the new account opens an empty library
@@ -102,7 +102,10 @@ module Settings
                   alert: "Your own account is changed here, behind your current password."
     end
 
-    def new_user_params = params.require(:user).permit(:email, :password, :admin)
+    # `admin` IS READ ON ITS OWN in #create, never permitted here: a role key in a permit list is what
+    # Brakeman's PermitAttributes check exists to catch, and `== "1"` says exactly what the checkbox
+    # sends rather than leaving the cast to whatever the column accepts.
+    def new_user_params = params.require(:user).permit(:email, :password)
 
     # A BLANK PASSWORD IS REFUSED HERE, NOT LEFT TO DEVISE: User#password_required? answers false when
     # there is neither a password nor a digest (the single sign-on seam), so a blank one would make a
