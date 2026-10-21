@@ -140,7 +140,7 @@ class UploaderTest < ApplicationSystemTestCase
       zip.get_output_stream("kit/part.stl")  { |io| io.write("solid p\nendsolid\n") }
       zip.get_output_stream("kit/notes.txt") { |io| io.write("n") }
     end
-    attach_file(zip_path, make_visible: true)
+    attach_file("topbar_upload_file", zip_path, make_visible: true)
 
     folder = nil
     assert_eventually("the zip was never unpacked") do
@@ -152,6 +152,9 @@ class UploaderTest < ApplicationSystemTestCase
     end
     assert_equal "solid p\nendsolid\n", FileLayer.current.read(@user, node_id: part.node_id)
     refute @user.nodes.exists?(name: "kit.zip", deleted: false)
+    # The run ENDS by opening the unpacked folder; reading the console before then would miss
+    # anything logged by the last upload or the catalog nudge.
+    assert_current_path files_path(folder: folder.node_id), wait: 30
     assert_no_console_errors
   end
 

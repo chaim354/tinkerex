@@ -20,6 +20,10 @@ export default class extends Controller {
                      unpackUrl: String, unpackedUrl: String, modelExts: Array }
 
   async upload() {
+    // ONE ZIP RUN AT A TIME: a selection made while one is being read or unpacked is ignored, not
+    // raced against it — the port's clobber check is not a lock (see the header), and the run's
+    // navigation would cut the second off part-way.
+    if (this.busy) return
     const files = Array.from(this.inputTarget.files || [])
     if (files.length === 0) return
     try {
@@ -27,26 +31,42 @@ export default class extends Controller {
       // 2026-10-20-zip-upload-unpacks-models-design.md). Only where the view passed the unpack doors
       // — the top bar does, the build log's "Upload & attach" does not — and only for a selection
       // holding a .zip, so every other upload takes the loop below exactly as before.
-      if (this.unpackUrlValue && files.some(isZip)) {
-        const split = await splitSelection(files, this.modelExtsValue)
-        if (split.zips.length > 0) {
-          const out = await uploadSplit(split, {
-            parentNodeId: this.parentNodeIdValue,
-            unpackUrl: this.unpackUrlValue,
-            unpackedUrl: this.unpackedUrlValue,
-            upload: (file, parentNodeId) => uploadChunkFile(file, {
-              beginUrl: this.beginUrlValue, finalizeUrl: this.finalizeUrlValue, parentNodeId
-            }),
-            setStatus: (text) => this.setStatus(text)
-          })
-          reportAndLand(out, (text) => this.setStatus(text))
-          return
-        }
+      // NEVER WITH AN ATTACH URL: the unpack skips postAttach and redirectUrl, which that control needs.
+      if (this.unpackUrlValue && !this.attachUrlValue && files.some(isZip)) {
+        this.busy = true
+        if (await this.unpack(files)) return
       }
       await this.uploadEach(files)
     } finally {
+      this.busy = false
       this.inputTarget.value = ""
     }
+  }
+
+  // True when the selection was unpacked; false sends it to uploadEach as it is — no model zip in
+  // it, or A READER FAILURE, which must never block an ordinary upload.
+  async unpack(files) {
+    this.setStatus("Reading…")
+    let split
+    try {
+      split = await splitSelection(files, this.modelExtsValue)
+    } catch (e) {
+      console.warn("could not read the selection's zips; uploading it as it is:", e)
+      return false
+    }
+    if (split.zips.length === 0) return false
+
+    const out = await uploadSplit(split, {
+      parentNodeId: this.parentNodeIdValue,
+      unpackUrl: this.unpackUrlValue,
+      unpackedUrl: this.unpackedUrlValue,
+      upload: (file, parentNodeId) => uploadChunkFile(file, {
+        beginUrl: this.beginUrlValue, finalizeUrl: this.finalizeUrlValue, parentNodeId
+      }),
+      setStatus: (text) => this.setStatus(text)
+    })
+    reportAndLand(out, (text) => this.setStatus(text))
+    return true
   }
 
   async uploadEach(files) {

@@ -13,23 +13,32 @@ import { isZip, reportAndLand, splitSelection, uploadSplit } from "lib/zip_unpac
 // JSON door (uploadPortFile) one at a time.
 //
 // A SELECTION WITH NO .zip NEVER REACHES JSZip, so the ordinary upload pays nothing for this.
+//
+// ONE RUN AT A TIME: a second selection made while a zip is being read or unpacked is ignored, not
+// raced against the first — the per-file doors' clobber check is a check, not a lock (CLAUDE.md
+// §14a), and the first run's navigation would cut the second off part-way.
 export default class extends Controller {
   static targets = ["input", "parent", "status"]
   static values = { createUrl: String, unpackUrl: String, unpackedUrl: String, modelExts: Array }
 
   async change() {
+    if (this.busy) return
     const files = Array.from(this.inputTarget.files || [])
     if (files.length === 0) return
     if (!files.some(isZip)) return this.element.requestSubmit()
 
-    this.setStatus("Reading…")
-    const split = await splitSelection(files, this.modelExtsValue)
-    if (split.zips.length === 0) {
-      this.setStatus("")
-      return this.element.requestSubmit()
-    }
-
+    this.busy = true
+    let unpacking = false
     try {
+      this.setStatus("Reading…")
+      const split = await this.sortSelection(files)
+      if (!split || split.zips.length === 0) {
+        this.setStatus("")
+        return this.element.requestSubmit()
+      }
+
+      // The input is cleared only on THIS path: the form path above posts the input's own files.
+      unpacking = true
       const out = await uploadSplit(split, {
         parentNodeId: this.parentTarget.value,
         unpackUrl: this.unpackUrlValue,
@@ -39,7 +48,19 @@ export default class extends Controller {
       })
       reportAndLand(out, (text) => this.setStatus(text))
     } finally {
-      this.inputTarget.value = ""
+      this.busy = false
+      if (unpacking) this.inputTarget.value = ""
+    }
+  }
+
+  // A READER FAILURE NEVER BLOCKS AN ORDINARY UPLOAD: null sends the selection through the form as
+  // it is, exactly as it went before this controller existed.
+  async sortSelection(files) {
+    try {
+      return await splitSelection(files, this.modelExtsValue)
+    } catch (e) {
+      console.warn("could not read the selection's zips; uploading it as it is:", e)
+      return null
     }
   }
 

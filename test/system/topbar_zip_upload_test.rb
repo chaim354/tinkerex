@@ -23,6 +23,11 @@ require "zip"
 #     (lib/zip_unpack.js): both unpack tests RED — the first at `assert_current_path` (every entry
 #     refused, so nothing landed and there was no folder to open), the project test at "gate.stl
 #     never landed"; the no-model test green.
+#   - EVERY ZIP A MODEL ZIP: splitSelection's `if (firstModel)` → `if (firstModel || true)`, with
+#     `firstModel: firstModel || entries[0]` (lib/zip_unpack.js): the no-model test RED at the listing
+#     assertion — firmware.zip unpacked, the page opened on main.c and README.md; the other two green.
+#     First run against a bare `assert_text`, which PASSED on the status line "Unpacking firmware.zip
+#     — …" and left only the find_by! to catch it; that is why the wait is scoped to `main#main`.
 class TopbarZipUploadTest < ApplicationSystemTestCase
   setup do
     @root = use_fresh_share_library!
@@ -63,7 +68,9 @@ class TopbarZipUploadTest < ApplicationSystemTestCase
     visit files_path(folder: @cad.node_id)
     attach_file("topbar_upload_file", zip, make_visible: true)
 
-    assert_text "firmware.zip"
+    # IN THE LISTING, not anywhere on the page: the top bar's status line names the zip while one is
+    # being unpacked, which a bare `assert_text` accepted (the every-zip-a-model mutation, header).
+    assert_selector "main#main", text: "firmware.zip"
     assert_equal @cad.node_id, @user.nodes.present.find_by!(name: "firmware.zip").parent_node_id
     refute @user.nodes.present.exists?(name: "main.c")
     assert_no_console_errors
@@ -83,6 +90,9 @@ class TopbarZipUploadTest < ApplicationSystemTestCase
     models = @user.nodes.find_by!(node_id: unpacked.parent_node_id)
     assert_equal [ "models", folder.node_id ], [ models.name, models.parent_node_id ]
     eventually("gate.stl never landed") { @user.nodes.present.find_by(name: "gate.stl", parent_node_id: unpacked.node_id) }
+    # The run ENDS by opening the unpacked folder; reading the console before then would miss
+    # anything logged by the catalog nudge.
+    assert_current_path files_path(folder: unpacked.node_id), wait: 30
     assert_no_console_errors
   end
 
