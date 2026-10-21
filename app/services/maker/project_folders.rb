@@ -99,6 +99,12 @@ module Maker
       "other"          => "other"
     }.freeze
 
+    # WHERE A FILE GOES WHEN THE USER'S RULES NAME NOTHING FOR ITS EXTENSION — and so the one
+    # subfolder the intake sweep looks back into. A file sitting in `other/` whose extension HAS a
+    # rule now is the app's own earlier "no rule for this", not the user's filing, so it is re-sorted
+    # (Maker::ProjectIntake.resortable?; docs/invariants/project-intake.md, "ROOT = INBOX").
+    OTHER = ROLE_FOLDERS.fetch("other")
+
     # TODAY'S PURE FUNCTION, WITH NO USER IN HAND. Used by `Maker::FilingRules.seed!` to build the
     # per-extension seed rows (ROLE_BY_EXT's extension -> role -> this), and available to any
     # future caller that genuinely has no user — there is none today; every web door in this app
@@ -121,7 +127,7 @@ module Maker
     # (ProjectFolderIntake) no longer calls it: a collision's folder comes off the sweep's own
     # Filing, because re-deriving it from the name is wrong for a board zip (F-S06-1).
     def folder_for(user, name)
-      Maker::FilingRules.for(user).fetch(ext_of(name), "other")
+      Maker::FilingRules.for(user).fetch(ext_of(name), OTHER)
     end
 
     # `File.extname(...).downcase.delete(".")` — THE SAME EXTRACTION Maker::FileAttachment.role_for

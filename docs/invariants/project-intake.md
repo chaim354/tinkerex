@@ -315,11 +315,27 @@
   a user moving a README in from elsewhere, and refusing there would strand it outside the folder.
   Guard: `project_intake_test.rb` ("a README at the root is attached but never filed away").
 
-- **ROOT = INBOX IS THE WHOLE SORT RULE, AND IT IS STATELESS.** Only files at a project
-  folder's own root are ever filed; anything already in a subfolder — including one filed
-  "wrong" by hand — is never revisited, and no column records that a file was "handled."
-  Position is the marker. Re-filing a subfolder would fight the user every 15 minutes, and
-  on chunk each round of that fight is a changelog entry broadcast to every device.
+- **ROOT = INBOX, PLUS WHAT `other/` NO LONGER HOLDS — AND IT IS STATELESS.** Files at a project
+  folder's own root are filed; anything in any other subfolder — including one filed "wrong" by
+  hand — is never revisited, and no column records that a file was "handled." Position is the
+  marker. Re-filing a subfolder would fight the user every 15 minutes, and on chunk each round of
+  that fight is a changelog entry broadcast to every device.
+  **`other/` is the one exception, on the owner's word (2026-10-20):** a file DIRECTLY in the
+  project's `other/` (`Maker::ProjectFolders::OTHER`) whose extension has a rule naming another
+  folder is re-sorted into it. `other/` is the sweep's own answer for "no rule for this", so such a
+  file is the app's earlier "don't know", not the maker's filing — catan's three `.mage` files went
+  into `other/` on 2026-09-06, the day before `.mage` got `cnc/`, and stayed there. What triggers it
+  is a rule APPEARING (a vocabulary widening's migration, or an Add at `/settings/filing`), so the
+  periodic sweep catches it; no nudge does, because no file arrival signals a rule change. Three
+  things not to undo: **`Maker::ProjectIntake.resortable?` decides by NAME alone** and is the ONE
+  predicate both `#call`'s selection and `.inbox_count` (both caps' count) use, so a cap counts
+  exactly what the run files — and counting every file in `other/` instead would make a library
+  full of unrecognised files refuse every run; **direct children only**, since a folder the maker
+  made inside `other/` is their filing; and **a selected file whose destination works out to
+  `other/` again stays put** (`:already_filed` — reachable as a board zip whose `gbr` rule names
+  `other`), never a move onto its own parent reported as a filing every sweep. **The cost, accepted:**
+  a file with a rule that the maker parks in `other/` by hand moves out on the next sweep; a folder
+  of their own, anywhere else, is what keeps it.
 - **A SWEEP OVER `nodes`, NOT A HOOK PER DOOR — because there are SEVEN doors and no
   funnel.** `FilesController#create` (share/s3), `#finalize_upload` (chunk),
   `Library::Reconciler` (the scan), a device push landing on the sync server,
