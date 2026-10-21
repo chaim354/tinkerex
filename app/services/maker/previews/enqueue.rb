@@ -164,6 +164,7 @@ module Maker
       # each used to keep and the stalled arm each lost with it:
       #
       #   no row, or one never saved                       -> true  (there is nothing to show)
+      #   a `viewer` row, asked with NO content token      -> false (nothing says it is stale)
       #   CONTENT moved since it was built                 -> true  (whatever its status says)
       #   a `viewer` row at the current content            -> false (the maker's choice stands)
       #   RENDERER moved since it was built                -> true  (whatever its status says)
@@ -190,6 +191,12 @@ module Maker
       # happens to start with the same two coordinates.
       def needs_job?(preview, version_id:, revision:, retry_failed:)
         return true if preview.nil? || preview.new_record?
+        # A CALLER THAT NAMES NO CONTENT CANNOT CALL A VIEWER ROW STALE (2026-10-20, found in
+        # review). The v1 previews API takes a POST with no `version_id` -- tinkerex-client sends
+        # none when it has none -- and nil reads as a content change on the next line, which handed
+        # the picture the maker chose back to the renderer, repointed at nil, for good. A caller
+        # that DOES name a different token is a content claim and still repoints.
+        return false if preview.viewer? && version_id.blank?
         return true if preview.version_id != version_id
         # THE MAKER'S CHOICE OUTRANKS A RENDERER UPGRADE (2026-10-20): same content, so no job.
         return false if preview.viewer?

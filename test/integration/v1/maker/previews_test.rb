@@ -200,6 +200,27 @@ module V1
         assert_response :created
         assert_equal "thumbnail", JSON.parse(response.body)["kind"]
       end
+
+      # A VERSION-LESS POST DOES NOT TAKE A PICTURE THE MAKER CHOSE (2026-10-20, found in review).
+      # tinkerex-client leaves `version_id` out when it has none, refuse_stale_version! has nothing
+      # to compare, and Enqueue used to read the nil as a content change: the viewer row went back
+      # to the renderer, repointed at nil, and the next page view repointed it again -- the chosen
+      # angle gone for good. Maker::Previews::Enqueue.needs_job? is where it is refused.
+      test "a POST with no version_id leaves a viewer-chosen thumbnail as it is" do
+        token = register(email: "viewer@example.com")
+        user  = User.find_by!(email: "viewer@example.com")
+        row = user.maker_previews.create!(node_id: "chosen.stl", version_id: "v1", kind: "thumbnail",
+                                          status: "ready", source: "viewer")
+        row.asset.attach(io: StringIO.new("\x89PNG chosen".b), filename: "t.png", content_type: "image/png")
+
+        assert_no_enqueued_jobs only: ::Maker::GeneratePreviewJob do
+          post "/v1/maker/previews", params: { preview: { node_id: "chosen.stl" } },
+               as: :json, headers: auth(token)
+        end
+        assert_response :ok
+        row.reload
+        assert_equal [ "viewer", "ready", "v1" ], [ row.source, row.status, row.version_id ]
+      end
     end
   end
 end

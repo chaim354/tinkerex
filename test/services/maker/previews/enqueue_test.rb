@@ -370,6 +370,17 @@ module Maker
                                                                     kind: "thumbnail")
         assert Maker::Previews::Enqueue.current_preview?(row, name: "part.stl", version_id: row.version_id)
       end
+
+      # A VERSION-LESS ASK IS NOT A CONTENT CHANGE (found in review): the v1 previews API forwards a
+      # POST that names no `version_id` as nil, and nil != "v1" used to repoint the maker's picture.
+      test "a request that names no content leaves a viewer preview alone" do
+        row = ready_thumbnail!(source: "viewer")
+        assert_no_enqueued_jobs only: Maker::GeneratePreviewJob do
+          Maker::Previews::Enqueue.call(user: @user, node_id: row.node_id, name: "part.stl", version_id: nil)
+        end
+        row.reload
+        assert_equal [ "viewer", "ready", "v1" ], [ row.source, row.status, row.version_id ]
+      end
     end
   end
 end
