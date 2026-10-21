@@ -164,6 +164,12 @@ root to: "home#index"
   # member route spelled `:id/:action` would swallow this; there is not one, and adding one would.
   namespace :files do
     resources :text_files, only: %i[new create]
+    # A MODEL ZIP UNPACKED BY THE TOP BAR'S UPLOAD (2026-10-21; docs/superpowers/specs/
+    # 2026-10-20-zip-upload-unpacks-models-design.md). The browser unzips and uploads each entry
+    # through the ordinary doors; these two only make the folders and nudge the catalog, so no zip
+    # byte reaches Rails (§15). Two segments, POST only — nothing in `resources :files` matches them.
+    post "unpack_folder", to: "unpacks#create", as: :unpack_folder
+    post "unpacked",      to: "unpacks#finish", as: :unpacked
   end
 
   # --- Review and commit, for a repository the maker brought (session-authed; never the v1 API,
