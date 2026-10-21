@@ -111,6 +111,36 @@ module Web
       end
     end
 
+    # --- the last admin (2026-10-21) -------------------------------------------
+
+    test "the only admin cannot delete their account while other accounts exist" do
+      @user.update!(admin: true)
+      User.create!(email: "other@example.com", password: PASSWORD, confirmed_at: Time.current)
+
+      assert_no_difference "User.count" do
+        delete user_registration_path, params: { user: { current_password: PASSWORD } }
+      end
+      assert_response :unprocessable_entity
+      assert_match(/only admin/, response.body)
+    end
+
+    test "an admin may delete their account when another admin remains" do
+      @user.update!(admin: true)
+      User.create!(email: "other@example.com", password: PASSWORD, confirmed_at: Time.current, admin: true)
+
+      delete user_registration_path, params: { user: { current_password: PASSWORD } }
+
+      assert_not User.exists?(@user.id)
+    end
+
+    test "the only account on a server may delete itself, admin or not" do
+      @user.update!(admin: true)
+
+      delete user_registration_path, params: { user: { current_password: PASSWORD } }
+
+      assert_not User.exists?(@user.id)
+    end
+
     test "deleting an account leaves other users untouched" do
       other = User.create!(email: "bystander@example.com", password: PASSWORD,
                            confirmed_at: Time.current)

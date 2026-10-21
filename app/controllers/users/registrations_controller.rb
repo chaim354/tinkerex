@@ -28,6 +28,9 @@ module Users
     DEMO_ACCOUNT_REFUSAL = "This is the shared demo account: its email and password can't be " \
                            "changed and it can't be deleted. It resets every night.".freeze
 
+    LAST_ADMIN_REFUSAL = "You are this server's only admin. Make another account an admin under " \
+                         "Settings → Users before deleting yours.".freeze
+
     # A DELIVERY FAILURE MUST NOT LOOK LIKE A BROKEN APP, BECAUSE THE ACCOUNT ALREADY EXISTS.
     # Devise mails the confirmation from an `after_commit` on the user, so the row is COMMITTED
     # before the SMTP connection is even attempted. Production leaves `raise_delivery_errors` at
@@ -107,6 +110,18 @@ module Users
     # NOT a `before_action`: the failure has to re-render the settings page with the error
     # attached to the resource, which needs the same resource that #edit renders.
     def destroy
+      # THE LAST ADMIN STAYS WHILE ANYONE ELSE IS HERE (2026-10-21): accounts are managed at Settings →
+      # Users by an admin, so deleting the only one leaves accounts nobody can manage but a console.
+      # This is the only door that can: Settings::UsersController never acts on the signed-in account.
+      # Asked before the password, because no password makes it right. The sole account may still go.
+      if resource.last_account_manager? && User.where.not(id: resource.id).exists?
+        resource.errors.add(:base, LAST_ADMIN_REFUSAL)
+        clean_up_passwords(resource)
+        set_minimum_password_length
+        respond_with_navigational(resource) { render :edit, status: :unprocessable_entity }
+        return
+      end
+
       supplied = params.dig(:user, :current_password).to_s
       if resource.valid_password?(supplied)
         super
