@@ -30,8 +30,7 @@ module Web
 
     test "a folder gets a new folder named after the zip, with every requested subfolder" do
       cad = mkdir("cad")
-      body = unpack(parent_node_id: cad.node_id, name: "dragon", dirs: [ "parts/tail", "docs" ],
-                    first_model_name: "body.stl")
+      body = unpack(parent_node_id: cad.node_id, name: "dragon", dirs: [ "parts/tail", "docs" ])
 
       assert_response :created
       folder = node(body["folder_node_id"])
@@ -45,12 +44,12 @@ module Web
       assert @root.join("cad", "dragon", "parts", "tail").directory?, "the folders are real on the share"
     end
 
-    test "at a project's own folder the zip unpacks where filing puts a model" do
+    test "at a project's own folder the zip unpacks into models/, the shelf the catalog reads" do
       project = @user.maker_projects.create!(name: "Stargate")
       folder = mkdir("stargate", mkdir("Projects"))
       project.update_column(:folder_node_id, folder.node_id)
 
-      body = unpack(parent_node_id: folder.node_id, name: "iris", dirs: [], first_model_name: "gate.stl")
+      body = unpack(parent_node_id: folder.node_id, name: "iris", dirs: [])
 
       assert_response :created
       made = node(body["folder_node_id"])
@@ -58,14 +57,24 @@ module Web
       assert_equal [ "models", folder.node_id ], [ node(made.parent_node_id).name, node(made.parent_node_id).parent_node_id ]
     end
 
-    test "at a project's own folder a first name that is not a model still lands in models/" do
+    # THE SHELF, NOT THE FILING RULE: a maker who files `stl` into `prints/` still gets the unpacked
+    # folder in `models/`, because Maker::ModelIntake::SHELVES names `Projects/*/models` and nothing
+    # else under a project — a folder in `prints/` would never become a model. Mutation-checked:
+    # #destination through Maker::ProjectFolders.folder_for(current_user, "model.stl") goes RED here
+    # with "prints".
+    test "at a project's own folder the unpack lands in models/ whatever the filing rule for stl says" do
+      Maker::FilingRules.seed!(@user)
+      @user.maker_filing_rules.find_by!(ext: "stl").update!(folder: "prints")
+      assert_equal "prints", Maker::ProjectFolders.folder_for(@user, "gate.stl")
       project = @user.maker_projects.create!(name: "Iris")
       folder = mkdir("iris", mkdir("Projects"))
       project.update_column(:folder_node_id, folder.node_id)
 
-      body = unpack(parent_node_id: folder.node_id, name: "crafted", dirs: [], first_model_name: "readme.pdf")
+      body = unpack(parent_node_id: folder.node_id, name: "gate", dirs: [])
 
-      assert_equal "models", node(node(body["folder_node_id"]).parent_node_id).name
+      assert_response :created
+      dest = node(node(body["folder_node_id"]).parent_node_id)
+      assert_equal [ "models", folder.node_id ], [ dest.name, dest.parent_node_id ]
     end
 
     test "a project's subfolder is used as it is" do
@@ -74,7 +83,7 @@ module Web
       project.update_column(:folder_node_id, folder.node_id)
       parts = mkdir("parts", folder)
 
-      body = unpack(parent_node_id: parts.node_id, name: "shade", dirs: [], first_model_name: "shade.stl")
+      body = unpack(parent_node_id: parts.node_id, name: "shade", dirs: [])
 
       assert_equal parts.node_id, node(body["folder_node_id"]).parent_node_id
     end

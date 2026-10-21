@@ -11,13 +11,13 @@ module Files
   #
   # ModelsController#ensure_folders is the Import page's twin, and the two differ on purpose: that
   # one builds `Models/<slug>/` for a catalogue row it has just made; this one builds wherever the
-  # Upload button said it saves to and makes no row — Maker::ModelIntake's shelves catalogue the
-  # folder like any other model folder.
+  # Upload button said it saves to (a project's `models/` at its root, #destination) and makes no
+  # row — Maker::ModelIntake's shelves catalogue the folder like any other model folder.
   class UnpacksController < ApplicationController
     # A BOUND ON THE MKDIRS ONE REQUEST CAN ASK FOR; dirs past it are left out (files fall back to the root).
     MAX_DIRS = 1000
 
-    # POST /files/unpack_folder (JSON) { parent_node_id, name, dirs: [...], first_model_name }
+    # POST /files/unpack_folder (JSON) { parent_node_id, name, dirs: [...] }
     #   -> 201 { folder_node_id, folder_url, folder_map: { "" => id, "sub/dir" => id } }
     def create
       parent = parent_dir
@@ -29,7 +29,7 @@ module Files
       name = params.require(:name)
       return invalid_name(name) unless name.is_a?(String) && leaf_ok?(name)
 
-      dest = destination(parent, params[:first_model_name].to_s)
+      dest = destination(parent)
       # ASKED AGAIN OF THE NAME THAT WILL BE MADE: " 2" can push a 254-byte name past the limit.
       final = free_name(dest, name)
       return invalid_name(final) unless leaf_ok?(final)
@@ -76,18 +76,23 @@ module Files
       render json: { error: "#{label} is not a valid folder name" }, status: :unprocessable_entity
     end
 
-    # AT A PROJECT'S OWN FOLDER THE ZIP GOES WHERE FILING WOULD PUT ITS FIRST MODEL — `models/` for
-    # every user today (Maker::ProjectFolders.folder_for reads the per-user filing rules). The
+    # AT A PROJECT'S OWN FOLDER THE ZIP GOES TO `models/` — THE SHELF THE CATALOG READS, NOT WHERE
+    # FILING WOULD SEND AN STL. Maker::ModelIntake::SHELVES names `Projects/*/models`, and only a
+    # folder under a shelf becomes a model; Maker::ProjectFolders.folder_for reads the maker's own
+    # filing rules, which can send `stl` to `prints/` or `other/`, and a folder unpacked there would
+    # never be catalogued. ROLE_FOLDERS' "model" entry is the same `models` the shelf names. The
     # project root is the sweep's inbox (§14f), and intake moves FILES only, so a folder left there
-    # would never be filed. A project's SUBFOLDER is where the maker chose, and is used as it is.
-    # ONLY A MODEL NAME STEERS IT: anything else (a crafted `readme.pdf`) would file the folder under
-    # docs/, so a name whose role is not "model" falls back to a model's folder.
-    def destination(parent, first_model_name)
+    # would never be filed either. A project's SUBFOLDER is where the maker chose, and is used as it is.
+    # THE SHELF REACHES ONLY `Projects/`, AND THAT IS ACCEPTED: outside it `models/<zip>/` is not a
+    # model of its own, and the `*` shelf above the project decides what it is. Probed 2026-10-21:
+    # at `3D/lamp/` nothing is catalogued (the project claims its own folder, the shelf's child); at
+    # a top-level `lamp/`, itself a shelf, all of `models/` is ONE model titled "models". The zip
+    # spec's Limitations says so.
+    def destination(parent)
       return parent if parent.nil? || !current_user.maker_projects.exists?(folder_node_id: parent.node_id)
 
-      model = first_model_name if Maker::FileAttachment.role_for(first_model_name) == "model"
-      sub = Maker::ProjectFolders.folder_for(current_user, model || "model.stl")
-      Maker::LibraryFolder.create_child!(current_user, parent_node_id: parent.node_id, name: sub)
+      models = Maker::ProjectFolders::ROLE_FOLDERS.fetch("model")
+      Maker::LibraryFolder.create_child!(current_user, parent_node_id: parent.node_id, name: models)
     end
 
     # A TAKEN NAME GETS A NUMBER, and "taken" is any live child — a FILE called `dragon` blocks a

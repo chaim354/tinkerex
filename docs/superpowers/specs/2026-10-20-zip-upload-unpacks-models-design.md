@@ -15,7 +15,7 @@ Decisions taken with the owner before this was written:
 | question | answer |
 |---|---|
 | What happens to a zip holding 3D model files? | Unpacked automatically, no extra click |
-| Where do the files go? | A new folder named after the zip, in the folder Upload "Saves to"; at a project root, where filing puts a model |
+| Where do the files go? | A new folder named after the zip, in the folder Upload "Saves to"; at a project root, in its `models/` |
 | The original zip? | Discarded — only the unpacked files are saved, as the Import page does |
 | Where does the unpacking happen? | In the browser (JSZip), through the existing per-file upload doors |
 
@@ -41,9 +41,10 @@ the status reads "Unpacking <name>.zip — 4/18" and each entry is uploaded on i
 else in the same selection, and any zip with no model-role entry (Gerbers, firmware, a source
 dump), uploads exactly as today.
 
-When the selection was one model zip, the browser lands on the new folder. Otherwise it reloads
-the page it was on, as the chunk flow does today, with the status line naming what was unpacked
-and what failed.
+When the selection was one model zip, the browser lands on the new folder; otherwise a clean run
+reloads the page it was on. **Anything that went wrong keeps the status line on screen and does not
+reload** — a reload would wipe the one line naming what was unpacked, what uploaded as it is, and
+what failed.
 
 **"Model-role" is the server's vocabulary, not a second list.** The page receives the extensions
 `Maker::FileAttachment::ROLE_BY_EXT` maps to `"model"` (stl, 3mf, obj, step, stp, gltf, glb, ply,
@@ -57,10 +58,11 @@ A new folder named after the zip without `.zip`, inside the upload's destination
 Upload button says it "Saves to" (`FolderDestination`), or the folder the chooser returned on a
 page with none.
 
-1. **At a project root the folder goes where filing would put a model.** When the destination is
-   a project's own folder (`Maker::Project#folder_node_id`), the unpack folder is created inside
-   `Maker::ProjectFolders.folder_for(user, <the zip's first model-role entry>)` — `models` for
-   every user today. Stargate becomes
+1. **At a project root the folder goes in `models/`, the shelf the catalog reads.** When the
+   destination is a project's own folder (`Maker::Project#folder_node_id`), the unpack folder is
+   created inside `models/` (`Maker::ProjectFolders::ROLE_FOLDERS["model"]`) — always, NOT where
+   the maker's filing rules send an `.stl`: those are per user and can say `prints/` or `other/`,
+   which no shelf names, so a folder there would never be catalogued. Stargate becomes
    `Projects/stargate/models/stargate-with-a-working-iris-model_files/`. Anywhere else, including
    a project's subfolder, the destination is used as it is.
 2. **One wrapper folder is dropped.** When every entry sits under the same single top-level
@@ -77,19 +79,26 @@ The catalog then sees an ordinary model folder: `Maker::ModelIntake`'s shelves (
 
 ## Components
 
-1. **`app/javascript/lib/zip_bundle.js` (new).** `readZipBundle(file)` → `{ entries: [{ name, dir,
-   blob }], hasModel(exts) }`: the JSZip read, clutter skip, de-dupe by `dir/name` and wrapper
-   strip, moved out of `importer_controller.js#choose`. The importer imports it; its title
-   derivation, roles and summary stay where they are. One implementation, so the Import page and
-   Upload cannot disagree about what a zip holds.
-2. **`POST /files/unpack_folder` (new, JSON, `FilesController` or a small sibling controller).**
-   Params `{ parent_node_id, name, dirs: [], first_model_name }`. Resolves the destination (rule 1
-   above), picks a free name (rule 4), creates the folder and every requested subfolder, and
-   answers `{ folder_node_id, folder_url, folder_map: { "" => id, "sub/dir" => id } }`. Creates
-   folders only — never bytes, so §15 is untouched. The same guards as `ModelsController#ensure_folders`
-   and `LibraryBrowseController#create_folder`: `Maker::MoveNode.valid_leaf_name?` and
-   `Library::ReservedNames.reserved?` on the folder name and on every subfolder segment, with a
-   bad subfolder falling back to the root as the importer's does. The parent must be one of
+1. **`app/javascript/lib/zip_bundle.js` (new).** `listZipBundle(file)` → `[{ name, dir, load }]`,
+   LAZY: it reads the archive's index only, and `load()` inflates one entry when it is about to be
+   uploaded, so a zip with no model is never decompressed and a model zip never sits in memory
+   whole. `readZipBundle(file)` → `[{ name, dir, blob }]` is the EAGER form, for the Import page.
+   Both share the clutter skip, wrapper strip and `dir/name` de-dupe moved out of
+   `importer_controller.js#choose`; "does it hold a model?" is `lib/zip_unpack.js#splitSelection`
+   asking the listed names (there is no `hasModel`). The importer's title derivation, roles and
+   summary stay where they are. One reader, so the Import page and Upload cannot disagree about
+   what a zip holds.
+2. **`POST /files/unpack_folder` (new, JSON, `Files::UnpacksController#create`).** Params
+   `{ parent_node_id, name, dirs: [] }`. Resolves the destination (rule 1 above — at a project root
+   always `models/`), picks a free name (rule 4), creates the folder and every requested
+   subfolder, and answers `{ folder_node_id, folder_url, folder_map: { "" => id, "sub/dir" => id } }`.
+   Creates folders only — never bytes, so §15 is untouched. The same guards as
+   `ModelsController#ensure_folders` and `LibraryBrowseController#create_folder`:
+   `Maker::MoveNode.valid_leaf_name?` and `Library::ReservedNames.reserved?` on the folder name and
+   on every subfolder segment. `name` must be a String (a JSON array is refused, not stringified),
+   and the NUMBERED name is checked again, since `" 2"` can push a long name past the byte limit. A
+   subfolder with a bad or dot-prefixed segment is left out, so its files fall back to the root as
+   the importer's do; at most `MAX_DIRS = 1000` subfolders per request. The parent must be one of
    `current_user`'s live dir nodes (or blank for the library root). Folder creation goes through
    `Maker::LibraryFolder`, so all three backends share it. `FileLayer::FetchError` → 503, an
    invalid name → 422, another user's parent → 404.
@@ -129,15 +138,27 @@ The catalog then sees an ordinary model folder: `Maker::ModelIntake`'s shelves (
 - No server-side unzip, no size cap beyond the browser's own memory (a 30 MB model zip is
   ordinary).
 
+## Limitations
+
+- **A project adopted outside `Projects/` does not get its unpacked folder catalogued as a model of
+  its own.** `models/` is a shelf only under `Projects/*/models`; elsewhere the `*` shelf above the
+  project decides. Probed: at `3D/lamp/` nothing is catalogued (the project claims its own folder,
+  which is that shelf's child); at a top-level `lamp/`, itself a shelf, all of `models/` is
+  catalogued as ONE model titled `models`. The files land either way.
+
 ## Tests
 
-- **`unpack_folder`:** a plain folder destination; a project root → its filing folder; a
-  project subfolder used as-is; a taken name → `<name> 2`; reserved and invalid names refused;
-  a bad subfolder segment falls back to the root; another user's parent → 404; blank parent →
-  library root. Pinned to a fresh share library: they assert where folders go, not which
-  backend holds them (Maker::LibraryFolder is the backend-neutral door, tested on its own).
+- **`unpack_folder`:** a plain folder destination; a project root → `models/`, even when the
+  user's filing rule sends `stl` elsewhere; a project subfolder used as-is; a taken name →
+  `<name> 2`; reserved and invalid names refused; a bad subfolder segment falls back to the root;
+  another user's parent → 404; blank parent → library root. Pinned to a fresh share library: they
+  assert where folders go, not which backend holds them (Maker::LibraryFolder is the
+  backend-neutral door, tested on its own).
 - **`unpacked`:** enqueues `Maker::ModelIntakeJob` for the current user; another user's folder →
   404.
+- **The seam** (`unpack_to_models_panel_test.rb`): unpack at a project root, upload an STL into the
+  returned folder, sweep → the project's Models panel (`Maker::ProjectModels`) has a model titled
+  after the zip.
 - **`zip_bundle.js`:** through the Import page's existing system test (it must still import a
   fixture zip) plus a wrapper-folder fixture.
 - **System, per backend leg** (the upload controls branch on `port_writable?`, so an assertion

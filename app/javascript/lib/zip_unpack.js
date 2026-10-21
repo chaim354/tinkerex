@@ -35,7 +35,7 @@ export async function splitSelection(files, modelExts) {
       continue
     }
     const firstModel = entries.find((e) => modelExts.includes(extOf(e.name)))
-    if (firstModel) zips.push({ file, entries, firstModel })
+    if (firstModel) zips.push({ file, entries })
     else rest.push(file)
   }
   return { zips, rest, unreadable }
@@ -46,12 +46,11 @@ export async function splitSelection(files, modelExts) {
 // a failed entry — an unreadable member as much as a refused name — is recorded as `dir/name` (two
 // `readme.txt` in different folders must stay two lines) and passed over, the importer's rule: one
 // bad entry must not lose the other seventeen. THROWS only when the folder itself could not be made.
-async function unpackZip({ file, entries, firstModel }, { parentNodeId, unpackUrl, unpackedUrl, upload, setStatus }) {
+async function unpackZip({ file, entries }, { parentNodeId, unpackUrl, unpackedUrl, upload, setStatus }) {
   const made = await postJSON(unpackUrl, {
     parent_node_id: parentNodeId || null,
     name: file.name.replace(/\.zip$/i, ""),
-    dirs: [...new Set(entries.map((e) => e.dir).filter(Boolean))],
-    first_model_name: firstModel.name
+    dirs: [...new Set(entries.map((e) => e.dir).filter(Boolean))]
   })
   const failed = []
   for (let i = 0; i < entries.length; i++) {
