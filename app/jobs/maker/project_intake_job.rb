@@ -72,7 +72,9 @@ module Maker
     #
     # ONLY WHEN THE FILE LANDED AT A PROJECT FOLDER'S ROOT — both a cost control and a faithful
     # reading of the rule. §14f's "ROOT = INBOX IS THE WHOLE SORT RULE" means a file arriving deeper
-    # is already where someone put it and there is nothing to file. One indexed `exists?` per
+    # is already where someone put it and there is nothing to file. (`other/` is re-sorted, but by
+    # the periodic sweep, not here: what it catches is a filing rule appearing, which no file
+    # arrival signals.) One indexed `exists?` per
     # finalize is the price, paid on the sync hot path, and it is what stops this enqueueing for
     # every commit in the library.
     #

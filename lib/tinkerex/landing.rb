@@ -55,7 +55,7 @@ module Tinkerex
                alt: "An SVG file: a hexagonal tray with slots for the cards and wells for the tokens"),
       Tile.new(source: "Projects/catan/design/jig for pieces.dxf",
                alt: "A DXF file: a hexagonal jig that holds pieces while they are engraved"),
-      Tile.new(source: "Projects/catan/other/desert+any.mage",
+      Tile.new(source: "Projects/catan/cnc/desert+any.mage",
                alt: "A MillMage file: a hexagonal frame and its pieces, for the CNC"),
       Tile.new(source: "Projects/catan/models/robber.3mf",
                alt: "A 3MF file: the robber, ready to slice"),

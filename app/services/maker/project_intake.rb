@@ -1,6 +1,7 @@
 module Maker
   # Make the catalog agree with what is in a project's library folder: attach every file under it,
-  # and file whatever is loose at its root into a category subfolder.
+  # and file whatever is loose at its root into a category subfolder — plus whatever sits in its
+  # `other/` that the user's filing rules now send somewhere else (.resortable?).
   #
   # WHY A SWEEP RATHER THAN A HOOK ON EVERY WRITE. A file can reach `Projects/<slug>/` seven ways —
   # FilesController#create (share/s3), #finalize_upload (chunk), Library::Reconciler (the scan),
@@ -19,8 +20,9 @@ module Maker
   # here touches Sync::*, the changelog, conflicts, locks or the mounts.
   class ProjectIntake
     # WHAT HAPPENED TO ONE INBOX FILE — one row for every file #file_all was handed, the ones a
-    # FetchError abort never reached included. `skip` is why the file stayed at the project root (a
-    # Symbol), nil when it was filed. `folder` is the destination #place decided on: where the file
+    # FetchError abort never reached included. `skip` is why the file stayed where it was — the
+    # project root, or `other/` for a re-sort (a Symbol) — nil when it was filed. `folder` is the
+    # destination #place decided on: where the file
     # now is, where a DRY run says it WOULD go, or the folder a failed move tried (for a
     # `:conflict`, the occupied one the flash names). It is nil for a refusal, and on every row the
     # abort writes — the file that raised included, whatever #place had picked for it.
@@ -222,6 +224,33 @@ module Maker
       Destination.new(project:, folder: folder_name, occupied_by: occupied)
     end
 
+    # WHETHER A FILE IN A PROJECT'S `other/` IS RE-SORTED: its extension now has a rule naming some
+    # other folder. `other/` is where the sweep puts a file it has no rule for, so a file there that
+    # has a rule since is the app's own earlier "don't know" — `.mage` was filed into `other/` on
+    # 2026-09-06 and given `cnc/` the next day, and sat in `other/` on the share from then on.
+    #
+    # BY NAME ALONE, here and in #call's selection, so the caps below count exactly the set #call
+    # files. A `.zip` is never opened to decide; #place may still send a selected board zip to pcb/.
+    def self.resortable?(rules, name)
+      rules.fetch(Maker::ProjectFolders.ext_of(name), Maker::ProjectFolders::OTHER) !=
+        Maker::ProjectFolders::OTHER
+    end
+
+    # How many files a sweep of these project folders would file: the loose files at their roots
+    # plus the .resortable? ones directly inside their `other/`. .for_user and .for_node take their
+    # caps against this BEFORE the first move. The rules are read only when some `other/` holds a
+    # file, so a library with no `other/` folders pays the root count and one more query.
+    def self.inbox_count(user, folder_node_ids)
+      loose = user.nodes.present.where(kind: "file", parent_node_id: folder_node_ids).count
+      others = user.nodes.present.where(kind: "dir", name: Maker::ProjectFolders::OTHER,
+                                        parent_node_id: folder_node_ids).select(:node_id)
+      names = user.nodes.present.where(kind: "file", parent_node_id: others).pluck(:name)
+      return loose if names.empty?
+
+      rules = Maker::FilingRules.for(user)
+      loose + names.count { |name| resortable?(rules, name) }
+    end
+
     def self.for_project(user:, project:, dry_run: false, move: true)
       new(user:, project:, dry_run:, move:).call
     end
@@ -266,8 +295,10 @@ module Maker
       cap ||= max_moves
       projects = user.maker_projects.where.not(folder_node_id: nil).to_a
 
-      # ONE query for the whole run's inbox, and it is what makes "checked before the first move"
-      # true. An observer cannot decide this per project: the cap is a property of the run.
+      # ONE COUNT for the whole run's inbox (.inbox_count — the roots plus what `other/` no longer
+      # holds, a fixed handful of queries however many projects there are), and it is what makes
+      # "checked before the first move" true. An observer cannot decide this per project: the cap
+      # is a property of the run.
       #
       # THIS IS ALSO THE ONLY RunResult.new CALL IN THE METHOD, DELIBERATELY — an earlier version
       # short-circuited `projects.empty?` with a second, separately-worded construction that
@@ -278,8 +309,7 @@ module Maker
       # situation (nothing to file) but disagreed on `status`, because 0 > cap is true in both yet
       # only one of them ever reached that comparison. One construction site cannot disagree with
       # itself. Pinned by the "zero-projects and zero-loose-files agree" test below.
-      inbox_total = user.nodes.present
-                        .where(kind: "file", parent_node_id: projects.map(&:folder_node_id)).count
+      inbox_total = inbox_count(user, projects.map(&:folder_node_id))
 
       # A dry run never refuses — seeing this number is the entire reason to run one.
       refused = !dry_run && inbox_total > cap
@@ -334,11 +364,11 @@ module Maker
       project = owning_project(user, node)
       return nil unless project
 
-      inbox = user.nodes.present.where(kind: "file", parent_node_id: project.folder_node_id).count
+      inbox = inbox_count(user, [ project.folder_node_id ])
       cap = eager_max_moves
       if inbox > cap
         Rails.logger.warn("Maker::ProjectIntake: attaching but NOT filing #{project.slug} — " \
-                          "#{inbox} loose files is over the #{cap}-file eager cap. The periodic " \
+                          "#{inbox} files to file is over the #{cap}-file eager cap. The periodic " \
                           "sweep will file the rest on its own schedule; raise " \
                           "PROJECT_ORGANIZE_EAGER_MAX_MOVES to file more inline.")
       end
@@ -474,11 +504,14 @@ module Maker
         return Result.new(attached:, status: :ok)
       end
 
-      # THE INBOX IS THE ROOT, AND ONLY THE ROOT. Anything already in a subfolder is the user's
-      # filing — including filing we would disagree with — and position is what records that, so
-      # there is no state to keep. Re-filing a subfolder would fight the user every 15 minutes, and
-      # on chunk each round of that fight is a changelog entry broadcast to every device.
-      inbox = full_records(files.select { |n| n.parent_node_id == folder.node_id })
+      # THE INBOX IS THE ROOT, PLUS WHAT `other/` NO LONGER HOLDS. Anything in any other subfolder
+      # is the user's filing — including filing we would disagree with — and position is what
+      # records that, so there is no state to keep. Re-filing those would fight the user every 15
+      # minutes, and on chunk each round of that fight is a changelog entry broadcast to every
+      # device. `other/` is the exception because it is the sweep's own answer for "no rule", and
+      # only a file whose extension has a rule now leaves it (#resort?): a re-sorted file is never
+      # selected again, and one that collides stays and is retried, exactly as a root file does.
+      inbox = full_records(files.select { |n| n.parent_node_id == folder.node_id || resort?(n) })
       # ONE NUDGE FOR THE WHOLE RUN, not one per file. Each move is its own Sync::Mutation.apply and
       # each ensure_path! its own folder creation, so filing 25 files broadcast 26 times — against
       # Sync::LibraryChannel's own stated contract ("never per-operation") and, on managed Postgres, 500
@@ -531,7 +564,24 @@ module Maker
     # extension out of a name," so this does not duplicate the vocabulary itself, only the one
     # memoized-hash fetch around it.
     def folder_for(name)
-      filing_rules.fetch(Maker::ProjectFolders.ext_of(name), "other")
+      filing_rules.fetch(Maker::ProjectFolders.ext_of(name), Maker::ProjectFolders::OTHER)
+    end
+
+    # The project's own `other/` directly under its folder, or nil. Looked up, never created, and
+    # memoized like #live_folder: #resort? asks once per file of the walk.
+    def other_folder_id
+      return @other_folder_id if defined?(@other_folder_id)
+
+      @other_folder_id = @user.nodes.present
+                              .where(parent_node_id: live_folder.node_id, kind: "dir",
+                                     name: Maker::ProjectFolders::OTHER).pick(:node_id)
+    end
+
+    # A file directly in `other/` (never deeper — a folder inside `other/` is the user's) that the
+    # rules now file elsewhere. The SAME predicate .inbox_count counts with.
+    def resort?(node)
+      node.parent_node_id == other_folder_id && other_folder_id.present? &&
+        self.class.resortable?(filing_rules, node.name)
     end
 
     # A BOARD IN A WRAPPER FILES WITH THE BOARD (stage 4, S4-2; story 2.8). `Maker::GerberArchive
@@ -820,6 +870,13 @@ module Maker
       return Filing.new(name: node.name, folder: nil, skip: refusal) if refusal
 
       dest = board_folder_for(node) || folder_for(node.name)
+      # A BOARD ZIP SELECTED OUT OF `other/` BY ITS NAME, WHOSE GERBER-LAYER RULE SENDS IT STRAIGHT
+      # BACK THERE (a maker who pointed `gbr` at `other`), STAYS PUT. Without this the "move" would be
+      # onto its own parent: a no-op reported as a filing, on every sweep.
+      if dest == Maker::ProjectFolders::OTHER && node.parent_node_id != live_folder.node_id
+        return Filing.new(name: node.name, folder: dest, skip: :already_filed)
+      end
+
       # Before create_child! and Maker::MoveNode.call, so a dry run creates no folder and writes
       # nothing — the reason it is a `dry run` and not a `report`.
       #
@@ -871,7 +928,9 @@ module Maker
     # raised with several different messages for different causes (AttachToProject#log_failure
     # includes it for the same reason), and the class name alone cannot tell them apart later.
     def skip(node, reason, error, folder:)
-      Rails.logger.warn("Maker::ProjectIntake: left #{node.name.inspect} at the root of " \
+      at_root = node.parent_node_id == live_folder.node_id
+      where = at_root ? "at the root" : "in #{Maker::ProjectFolders::OTHER}/"
+      Rails.logger.warn("Maker::ProjectIntake: left #{node.name.inspect} #{where} of " \
                         "#{@project.slug} — #{error.class}: #{error.message}")
       Filing.new(name: node.name, folder:, skip: reason)
     end

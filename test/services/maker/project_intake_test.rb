@@ -591,13 +591,111 @@ module Maker
       assert_equal %w[design], made
     end
 
-    # ROOT = INBOX. A file the user filed by hand — even "wrong" — is never touched again.
+    # ROOT = INBOX. A file the user filed by hand — even "wrong" — is never touched again (other/,
+    # the sweep's own "no rule" folder, is the one exception; see the re-sorting tests below).
     test "a file already in a subfolder is left exactly where it is" do
       sub = dir("cnc")
       node = file("panel.svg", parent: sub.node_id) # svg in cnc/ is "wrong", and that is allowed
       result = intake
       assert_equal 0, result.moved
       assert_equal "cnc", parent_name(node)
+    end
+
+    # --- re-sorting other/ ----------------------------------------------------------
+    #
+    # `other/` IS THE SWEEP'S OWN "no rule for this", so a file there whose extension has a rule
+    # NOW is re-sorted. The case that asked for it: catan's three `.mage` files, filed into other/
+    # on 2026-09-06 and given cnc/ the next day, sat in other/ on the share from then on.
+
+    test "a file in other/ whose extension now has a folder is re-sorted into it" do
+      other = dir("other")
+      node = file("desert+any.mage", parent: other.node_id)
+
+      result = intake
+
+      assert_equal 1, result.moved
+      assert_equal [ [ "desert+any.mage", "cnc" ] ], result.plan
+      assert_equal "cnc", parent_name(node)
+      assert_equal node.node_id, @user.nodes.find_by(name: "desert+any.mage").node_id,
+                   "a re-sort is a move: the node_id, and every attachment on it, survives"
+    end
+
+    test "a file in other/ that still has no rule stays in other/" do
+      other = dir("other")
+      node = file("mystery.xyz", parent: other.node_id)
+
+      assert_equal 0, intake.moved
+      assert_equal "other", parent_name(node)
+    end
+
+    # THE STORY ITSELF: a category becoming available is a rule appearing, and the next sweep acts.
+    test "a rule added later re-sorts what other/ was holding for it" do
+      other = dir("other")
+      node = file("mystery.xyz", parent: other.node_id)
+      assert_equal 0, intake.moved
+
+      @user.maker_filing_rules.create!(ext: "xyz", folder: "cad")
+
+      assert_equal 1, intake.moved
+      assert_equal "cad", parent_name(node)
+      assert_equal 0, intake.moved, "a re-sorted file is never selected again"
+    end
+
+    # DIRECT CHILDREN ONLY. A folder the maker made inside other/ is their filing, like any other.
+    test "a file in a folder inside other/ is left where it is" do
+      other = dir("other")
+      kept = dir("old jigs", parent: other.node_id)
+      node = file("edge test.mage", parent: kept.node_id)
+
+      assert_equal 0, intake.moved
+      assert_equal "old jigs", parent_name(node)
+    end
+
+    # ONLY `other/`: the rule that every other subfolder is the user's filing is untouched.
+    test "a file in another subfolder whose rule names a different folder is still left alone" do
+      laser = dir("laser")
+      node = file("desert+any.mage", parent: laser.node_id)
+
+      assert_equal 0, intake.moved
+      assert_equal "laser", parent_name(node)
+    end
+
+    test "a re-sort that collides stays in other/, still attached, and says so" do
+      cnc = dir("cnc")
+      file("edge test.mage", parent: cnc.node_id)
+      other = dir("other")
+      node = file("edge test.mage", parent: other.node_id)
+
+      log = StringIO.new
+      original_logger = Rails.logger
+      Rails.logger = Logger.new(log)
+      begin
+        result = intake
+      ensure
+        Rails.logger = original_logger
+      end
+
+      assert_equal [ [ "edge test.mage", :conflict ] ], result.skips
+      assert_equal "cnc", result.conflict_folder("edge test.mage")
+      assert_equal other.node_id, node.reload.parent_node_id
+      assert @project.file_attachments.exists?(node_id: node.node_id)
+      assert_match %(left "edge test.mage" in other/ of #{@project.slug}), log.string
+    end
+
+    # A board zip is selected out of other/ by NAME (`zip` → archives), then #place reads it and
+    # asks the Gerber-layer rule — which this maker has pointed at `other`. Moving it would be a
+    # move onto its own parent, reported as a filing on every sweep.
+    test "a board zip whose layer rule names other/ stays in other/ rather than moving onto itself" do
+      Maker::FilingRules.seed!(@user)
+      @user.maker_filing_rules.find_by!(ext: "gbr").update!(folder: "other")
+      other = dir("other")
+      zip = file_with_bytes("Gerber_lamp.zip", board_zip_bytes, parent: other.node_id)
+
+      result = intake
+
+      assert_equal 0, result.moved
+      assert_equal [ [ "Gerber_lamp.zip", :already_filed ] ], result.skips
+      assert_equal other.node_id, zip.reload.parent_node_id
     end
 
     test "filing is idempotent — a second run moves nothing" do
@@ -1176,6 +1274,21 @@ module Maker
       assert_equal 4, run.inbox_total
     end
 
+    # THE CAP COUNTS WHAT THE RUN WOULD FILE: the root, plus the other/ files with a rule now —
+    # and NOT the other/ files that would stay, or a library full of unrecognised files would
+    # refuse every sweep it ever ran.
+    test "the run cap counts other/ files the rules now send elsewhere, and only those" do
+      other = dir("other")
+      2.times { |i| file("job#{i}.mage", parent: other.node_id) }
+      3.times { |i| file("blob#{i}.xyz", parent: other.node_id) }
+      file("panel.svg")
+
+      run = Maker::ProjectIntake.for_user(user: @user, cap: 2)
+      assert_equal 3, run.inbox_total
+      assert_equal :refused_too_many_moves, run.status
+      assert_equal 0, run.results.sum { |_p, r| r.moved }
+    end
+
     # A dry run must never refuse: seeing the number is the entire reason to run one.
     test "a dry run reports over the cap instead of refusing" do
       3.times { |i| file("p#{i}.svg") }
@@ -1330,6 +1443,22 @@ module Maker
         result = Maker::ProjectIntake.for_node(user: @user, node:)
         assert_equal 0, result.moved
         assert_equal 4, result.attached, "the attach half still runs, as it does for a whole run"
+      ensure
+        ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"] = prior
+      end
+    end
+
+    # The eager count is the same .inbox_count, so a backlog sitting in other/ keeps an upload's
+    # response attach-only exactly as a backlog at the root does.
+    test "for_node's eager cap counts the other/ files a sweep would re-sort" do
+      other = dir("other")
+      3.times { |i| file("job#{i}.mage", parent: other.node_id) }
+      node = file("trigger.svg")
+      prior = ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"]
+      ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"] = "2"
+      begin
+        result = Maker::ProjectIntake.for_node(user: @user, node:)
+        assert_equal 0, result.moved
       ensure
         ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"] = prior
       end
