@@ -244,7 +244,8 @@
         folder view whose folder a catalogued model names and no project claims. %>
     <% if @folder_model %>
       <%= render "files/model_strip", model: @folder_model, cover_live: @strip_cover_live, covers: @strip_covers,
-                 print_runs: @strip_print_runs, printers: @strip_printers, materials: @strip_materials %>
+                 print_runs: @strip_print_runs, printers: @strip_printers, materials: @strip_materials,
+                 projects: @strip_projects %>
     <% end %>
 <% if @truncated %>
   <p class="truncated">

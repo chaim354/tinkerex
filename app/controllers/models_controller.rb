@@ -103,6 +103,9 @@ class ModelsController < ApplicationController
     @file_count = count_files(@file_tree)
     @print_runs = @model.print_runs.reorder(printed_on: :desc, id: :desc).to_a
     @printers, @materials = Maker::PrintRun.composer_choices(current_user)
+    # THE "IN PROJECTS" ROW (2026-10-21, attach-a-model spec) — the folder strip renders the same
+    # partial off the same object, so the two pages offer the same projects.
+    @project_choices = Maker::ModelProjectChoices.for(current_user, @model)
   end
 
   # GET /models/new — the import form (the importer Stimulus controller drives it).

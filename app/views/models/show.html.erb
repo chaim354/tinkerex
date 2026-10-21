@@ -162,6 +162,7 @@
       <% if @model.tags.any? %><dt>Tags</dt><dd><%= @model.tag_list %></dd><% end %>
       <dt>Added</dt><dd><%= @model.created_at.strftime("%Y-%m-%d") %></dd>
     </dl>
+    <%= render "models/projects", model: @model, choices: @project_choices %>
 
     <% if @model.print_settings.present? %>
       <section class="model-print-settings">
